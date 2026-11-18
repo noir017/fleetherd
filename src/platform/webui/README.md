@@ -1861,7 +1861,8 @@ their licence in a LICENSE file rather than in header comments, so minification 
 erase every notice while the tarball ships only this project's own LICENSE — MIT requires the
 notice to travel with the copy. `scripts/third-party-licenses.mjs` reduces esbuild's metafile
 input list to the packages that actually contributed a module, reads each one's licence verbatim,
-and the build refuses to finish if the file it wrote does not name them. It is not served by
+and the build stops if any of them ships no licence file at all — the names are printed — or if the
+file it wrote does not name them. It is not served by
 `/assets/` (that route is `.js` only); it ships in `dist`, which `package.json` `files` carries.
 
 The reader's half was checked in Chromium on 2026-11-18: a `.ts` file highlighted with its gutter,

@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { collectLicenses, packageDirOf, renderLicenses } from './third-party-licenses.mjs';
+import { collectLicenses, licenseFailure, packageDirOf, renderLicenses } from './third-party-licenses.mjs';
 
 /**
  * The build's licence file is the only thing in the tarball that says whose code the bundle
@@ -54,7 +54,7 @@ describe('the bundled packages’ licences', () => {
     expect(licenses.map((l) => l.text)).toEqual(['three licence', 'one licence']);
   });
 
-  it('names a package that ships no licence instead of inventing one', () => {
+  it('names a package that ships no licence instead of inventing one, and stops the build', () => {
     pkg('node_modules/bare', { 'index.js': '' });
     const { licenses, missing } = collectLicenses(['node_modules/bare/index.js'], {
       readdir: (d) => fs.readdirSync(path.join(root, d)),
@@ -62,6 +62,10 @@ describe('the bundled packages’ licences', () => {
     });
     expect(licenses).toEqual([]);
     expect(missing).toEqual(['bare']);
+    // The build's own gate: redistributing `bare` without a notice is what it refuses.
+    expect(licenseFailure({ licenses, missing })).toContain('bare');
+    expect(licenseFailure({ licenses: [], missing: [] })).toContain('no third-party licence');
+    expect(licenseFailure({ licenses: [{ name: 'one' }], missing: [] })).toBeNull();
   });
 
   it('writes every licence verbatim under its package name and file', () => {

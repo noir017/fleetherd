@@ -71,6 +71,21 @@ export function collectLicenses(inputs, { readdir = fs.readdirSync, readFile = f
   return { licenses, missing };
 }
 
+/**
+ * Why a build must stop, or null when it may go on.
+ *
+ * A package with no licence file is not a warning: the bundle is redistributed, and shipping it
+ * without that package's notice is exactly what this file exists to prevent. Every missing name
+ * is reported at once, because fixing them one build at a time helps nobody.
+ */
+export function licenseFailure({ licenses, missing }) {
+  if (missing.length > 0) {
+    return `no licence file in ${missing.join(', ')} — the bundle would carry them without a notice`;
+  }
+  if (licenses.length === 0) return 'no third-party licence found — the bundle would ship without notices';
+  return null;
+}
+
 /** The file's text. Each licence keeps its own wording and copyright line, untouched. */
 export function renderLicenses(licenses) {
   const rule = '='.repeat(80);

@@ -25,7 +25,7 @@ import { gzipSync } from 'node:zlib';
 
 import { build } from 'esbuild';
 
-import { collectLicenses, renderLicenses } from './third-party-licenses.mjs';
+import { collectLicenses, licenseFailure, renderLicenses } from './third-party-licenses.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const out = path.join(root, 'dist', 'webui-assets');
@@ -50,8 +50,8 @@ const result = await build({
   chunkNames: 'chunk-[hash]',
   assetNames: 'asset-[hash]',
   metafile: true,
-  // Licence headers from CodeMirror and the lezer grammars are MIT and have to travel with the
-  // bytes; `eof` keeps them in the file rather than dropping them with the other comments.
+  // Any licence comment a dependency does write into its source stays in the output. These
+  // packages keep theirs in a LICENSE file instead, so the notices are collected below.
   legalComments: 'eof',
   logLevel: 'warning',
 });
@@ -73,17 +73,16 @@ fs.writeFileSync(
 );
 
 // MIT obligations that minification would otherwise erase: CodeMirror keeps its licence in a
-// LICENSE file, not in header comments, so `legalComments` has nothing to keep. Every package
-// whose modules reached the bundle contributes its own text, verbatim, and the file ships beside
-// the chunks (the npm tarball carries `dist`). `test -f dist/webui-assets/licenses.txt` is not a
-// build check anywhere — the assertion is here, where the inputs are known.
+// LICENSE file, not in header comments. Every package whose modules reached the bundle contributes
+// its own text, verbatim, and the file ships beside the chunks (the npm tarball carries `dist`).
+// release.yml only checks that the file exists; whether it says anything is decided here, where
+// the inputs are known. A package with no licence file stops the build — redistributing its code
+// without a notice is the one thing this file exists to prevent.
 const { licenses, missing } = collectLicenses(Object.keys(result.metafile.inputs));
-if (licenses.length === 0) {
-  console.error('build-webui-assets: no third-party licence found — the bundle would ship without notices');
+const failure = licenseFailure({ licenses, missing });
+if (failure) {
+  console.error(`build-webui-assets: ${failure}`);
   process.exit(1);
-}
-if (missing.length > 0) {
-  console.warn(`build-webui-assets: no licence file in ${missing.join(', ')} (they ship none)`);
 }
 const licensesFile = path.join(out, 'licenses.txt');
 fs.writeFileSync(licensesFile, renderLicenses(licenses), 'utf8');
