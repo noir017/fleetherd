@@ -4331,7 +4331,7 @@ describe('webui page: the settings page', () => {
    * The default agent stays a plain row above them, and there is no `Default model` or
    * `Permissions` section any more.
    */
-  const permissions = (prefix: string, current: number, labels = ['plan', 'ask', 'edits', 'auto', 'full']) => ({
+  const permissions = (prefix: string, current: number, labels = ['plan', 'ask', 'edits', 'auto', 'full'], extra: Record<string, unknown> = {}) => ({
     label: 'Permissions',
     buttonId: 'stg:p:' + prefix,
     value: labels[current],
@@ -4339,6 +4339,7 @@ describe('webui page: the settings page', () => {
       kind: 'choice',
       options: labels.map((label, i) => ({ buttonId: 'sts:p:' + prefix + ':' + i, label, current: i === current })),
     },
+    ...extra,
   });
   const agentRow = (id: string, kind: string, model: Record<string, unknown>, perm: Record<string, unknown>, here = false) => ({
     buttonId: String(model.buttonId),
@@ -4366,7 +4367,10 @@ describe('webui page: the settings page', () => {
           group: 'Agents',
           control: { kind: 'choice', options: [{ buttonId: 'sts:r:0', label: 'cc', current: true }] },
         },
-        agentRow('cc', 'Claude Code', { buttonId: 'stg:m:0', value: 'harness default', unset: true }, permissions('0', 1), true),
+        agentRow('cc', 'Claude Code', { buttonId: 'stg:m:0', value: 'harness default', unset: true }, permissions('0', 1, undefined, {
+          unset: true,
+          valueNote: 'not set',
+        }), true),
         agentRow('oc@box', 'OpenCode', { buttonId: 'stg:m:1', value: LONG_MODEL, valueNote: 'pod.yaml' }, permissions('1', 0, [
           'plan',
           'ask',
@@ -4526,6 +4530,18 @@ describe('webui page: the settings page', () => {
     expect(text(h, '#settings-body .set-group')).toEqual(['Agents']);
   });
 
+  it('says a permission level is not set, as a list field says it', async () => {
+    const h = await opened(agentList());
+    const rows = Array.from(h.doc.querySelectorAll('#settings-body .set-item.ag'));
+    // A choice field keeps the note: the selected level alone cannot say it was never set.
+    const cc = rows[0]!.querySelectorAll('.set-field')[1]!;
+    expect(cc.querySelector('.set-seg')).not.toBeNull();
+    expect(cc.querySelector('.set-fsub .set-vnote')?.textContent).toBe('not set');
+    // A level that was set has no such line.
+    const oc = rows[1]!.querySelectorAll('.set-field')[1]!;
+    expect(oc.querySelector('.set-fsub')).toBeNull();
+  });
+
   it('opens an agent’s model from its row, by the field’s own button id', async () => {
     const h = await opened(agentList());
     await h.click('#settings-body .set-item.ag button.set-fopen[data-btn="stg:m:0"]');
@@ -4561,7 +4577,8 @@ describe('webui page: the settings page', () => {
     expect(field.closest('.set-field')?.querySelector('.set-flabel')?.textContent).toBe('Instructions');
     expect(field.querySelector('.set-fnote')?.textContent).toBe('@ references in ~/.claude/CLAUDE.md');
     expect(Array.from(field.querySelectorAll('.set-fnote code')).map((c) => c.textContent)).toEqual(['@', '~/.claude/CLAUDE.md']);
-    expect(field.querySelector('.set-vnote')?.textContent).toBe('box');
+    // The machine it is read on is in the title, where it does not eat the summary's width.
+    expect(field.getAttribute('title')).toBe('box · `@` references in `~/.claude/CLAUDE.md`');
     expect(field.getAttribute('data-fk')).toBeTruthy();
     // An agent whose harness reads nothing of its own has no such field.
     expect(h.doc.querySelectorAll('#settings-body [data-instr-agent]')).toHaveLength(1);
@@ -5139,14 +5156,18 @@ describe('webui page: the settings page', () => {
       const css = narrow();
       // One column, so the fields cannot fight the agent's name for the width.
       expect(css).toContain('.set-item.ag{grid-template-columns:minmax(0,1fr)}');
-      expect(css).toContain('.set-item.ag>.set-fields{flex-direction:column;');
+      expect(css).toContain('.set-item.ag>.set-fields{display:flex;flex-direction:column;');
       // A value row is the whole line, and tall enough to tap; the segments grow with it.
       expect(css).toMatch(/\.set-item\.ag \.set-fopen\{[^}]*min-height:44px/);
       expect(css).toMatch(/\.set-item\.ag \.set-seg button\{[^}]*min-height:44px/);
-      // None of that leaks onto the desktop, which keeps the fields beside the agent.
+      // None of that leaks onto the desktop, which keeps the fields in their columns.
       const desktop = renderPage('Chat', false).replace(css, '');
       expect(desktop).not.toContain('.set-item.ag{grid-template-columns:minmax(0,1fr)}');
-      expect(desktop).toContain('.set-item.ag{grid-template-columns:minmax(0,auto) minmax(0,1fr)');
+      expect(desktop).toContain('.set-item.ag{grid-template-columns:96px minmax(0,1fr)');
+      // Fixed columns, so Model and Permissions start at the same x on every agent's row.
+      expect(desktop).toContain('.set-fields{display:grid;grid-template-columns:150px 252px minmax(0,1fr)');
+      // A long model id or an instruction summary is cut inside its column, not let into the next.
+      expect(desktop).toMatch(/\.set-fopen\{[^}]*max-width:100%/);
     });
 
     it('works the same controls at phone width', async () => {
@@ -15617,7 +15638,7 @@ describe('webui page: the instruction editor', () => {
     expect(sec.querySelectorAll('[data-instr-agent]')).toHaveLength(0);
     const own = h.doc.querySelector('#settings-body .set-item.ag [data-instr-agent="cc"]');
     expect(own?.closest('.set-field')?.querySelector('.set-flabel')?.textContent).toBe('Instructions');
-    expect(own?.querySelector('.set-vnote')?.textContent).toBe('box');
+    expect(own?.getAttribute('title')).toContain('box · ');
     expect(own?.querySelector('.set-fnote')?.innerHTML).toContain('<code>~/.claude/rules</code>');
     // An agent whose harness has nothing of its own is not offered.
     expect(h.doc.querySelectorAll('#settings-body [data-instr-agent]')).toHaveLength(1);
