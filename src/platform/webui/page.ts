@@ -506,21 +506,25 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
    gives way to a narrow header; the control must not be what gets squeezed out. */
 #kill-agent{flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;padding:4px 6px}
 #kill-agent:hover{color:#f87171;background:rgba(248,113,113,.15)}
-/* The terminal takes the place of the transcript and the composer, not of the whole view: the
-   header stays, so the sidebar button, the topic name and the way back out are all still
-   where they were a moment ago. One class on #chat swaps the two.
+/* The terminal is a panel at the bottom of the conversation rather than a mode over it: the
+   transcript and the composer stay on screen and usable, and the panel keeps the height it was
+   given — half the chat until the divider above it is dragged, and that height afterwards.
 
-   It is a window rather than a mode, which is what the title bar below is for. Minimizing only
-   hides it — the iframe stays mounted and its WebSocket stays up, which is both what makes
-   coming back instant and what keeps the switcher's marker lit. So visibility is a class, never
-   a teardown. */
+   Closed, it is PARKED rather than hidden. display:none takes the iframe's box away, and a frame
+   with no box is one a browser may throttle, freeze or throw away — a discarded frame is a closed
+   WebSocket, which is exactly what a topic switch used to look like. Out of the flex flow, at its
+   own size and invisible, the transcript gets the room back and the connection never notices. */
 #term-toggle{margin-left:0}
 /* The size of its neighbours' icons (the power button, the clock), which are 14px SVGs. */
 #term-toggle .ic{width:14px;height:14px}
 #term-toggle.on{color:#4ade80}
-#term{display:none;flex:1;min-height:0;background:#000;flex-direction:column}
-#chat.term #log,#chat.term #typing,#chat.term #note,#chat.term #bar{display:none}
-#chat.term #term{display:flex}
+#term-grip{display:none;flex:0 0 auto;height:9px;position:relative;cursor:row-resize;touch-action:none;background:transparent}
+#chat.term #term-grip{display:block}
+#term-grip::after{content:'';position:absolute;left:50%;top:4px;width:48px;height:2px;margin-left:-24px;border-radius:1px;background:#333}
+#term-grip:hover::after,#term-grip:focus-visible::after,#term-grip.drag::after{background:#555}
+#term-grip:focus-visible{outline:1px solid #3a6ea5;outline-offset:-2px}
+#term{display:flex;flex:0 0 auto;flex-direction:column;height:50%;min-height:0;background:#000}
+#chat:not(.term) #term{position:absolute;left:0;right:0;bottom:0;visibility:hidden;pointer-events:none}
 #term-bar{display:flex;align-items:center;gap:4px;padding:4px 6px 4px 12px;background:#161616;border-bottom:1px solid var(--line);flex:0 0 auto}
 .term-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dim);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px}
 #term-end:hover{color:#f87171;background:rgba(248,113,113,.15)}
@@ -871,15 +875,19 @@ select.skill-field{appearance:auto}
 .hist-key{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:10.5px}
 .hist-excerpt{font-size:11.5px;color:#c9c9c9;line-height:1.45;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
 /* The conversation in the transcript's place. #lib-log is #log's twin; #chat.lib swaps them, and the
-   composer for the read-only bar, the way #chat.term swaps in the terminal — and wins over it. */
+   composer for the read-only bar. It wins over the terminal too: a record parks the panel rather
+   than sharing the screen with it (paintFrames is where the frame's on class is decided). */
 #lib-log,#lib-bar,#lib-title,#lib-tag{display:none}
 #lib-log{flex:1;overflow-y:auto;padding:20px 16px 8px;max-width:860px;width:100%;margin:0 auto}
 #chat.lib #lib-log{display:block}
 #chat.lib #lib-bar{display:block}
 #chat.lib #lib-title{display:block}
 #chat.lib #lib-tag{display:inline-flex;align-items:center;gap:5px;flex:none}
-#chat.lib #log,#chat.lib #typing,#chat.lib #note,#chat.lib #bar,#chat.lib #term,
+#chat.lib #log,#chat.lib #typing,#chat.lib #note,#chat.lib #bar,#chat.lib #term-grip,
 #chat.lib #topic-title,#chat.lib #topic-status,#chat.lib #kill-agent,#chat.lib #term-toggle,#chat.lib #files-toggle{display:none}
+/* The terminal is parked under the record rather than unmounted: display:none would take the
+   iframe's box away, and a record is not a reason to hang up on a shell. */
+#chat.lib #term{position:absolute;left:0;right:0;bottom:0;visibility:hidden;pointer-events:none}
 .lib-head{display:flex;flex-direction:column;gap:3px;margin:0 0 18px;padding:0 0 12px;border-bottom:1px solid var(--line)}
 #lib-bar{border-top:1px solid var(--line);padding:10px 16px 14px;max-width:860px;width:100%;margin:0 auto}
 #lib-note{margin-bottom:8px}
@@ -978,13 +986,13 @@ select.skill-field{appearance:auto}
 .skill-hist-main{flex:1 1 260px;min-width:0}
 .skill-hist-action{font-weight:600}
 .skill-hist-meta{font-size:11.5px;color:var(--dim);overflow-wrap:anywhere}
-/* One host for every mounted terminal, of which exactly one is visible. Visibility is a class
-   rather than the hidden attribute because the rule that sizes an iframe would have to fight
-   it: display:block on the element beats hidden's user-agent display:none, and the loser of
-   that fight is not obvious from reading either rule. */
-#term-frames{flex:1;min-height:0}
-#term-frames iframe{display:none;width:100%;height:100%;border:0}
-#term-frames iframe.on{display:block}
+/* One host for every mounted terminal, of which exactly one is visible. Every frame is laid out
+   in the same box, so showing another one is not a resize: a hidden frame that is display:none
+   has no box at all, and a browser may then discard it — taking its WebSocket with it. Visibility
+   is a class on a frame that keeps its size. */
+#term-frames{position:relative;flex:1;min-height:0}
+#term-frames iframe{position:absolute;inset:0;width:100%;height:100%;border:0;visibility:hidden}
+#term-frames iframe.on{visibility:visible}
 
 #log{flex:1;overflow-y:auto;padding:20px 16px 8px;max-width:860px;width:100%;margin:0 auto}
 .m{margin:0 0 18px;max-width:100%;overflow-wrap:anywhere;animation:fade .18s ease-out}
@@ -1726,6 +1734,13 @@ button:disabled{opacity:.5;cursor:default}
   #term-bar{padding:2px 4px 2px 12px;gap:8px}
   #term-min,#term-end{display:inline-flex;align-items:center;justify-content:center;
     min-width:44px;height:44px;font-size:18px}
+  /* The divider is dragged by a finger here, so it gets a thumb's height and a thicker line.
+     And the panel is the last thing on the page, which makes the home indicator its business
+     rather than the composer's. */
+  #term-grip{height:20px}
+  #term-grip::after{top:9px;width:56px;height:3px;margin-left:-28px;border-radius:2px}
+  #chat.term #bar{padding-bottom:10px}
+  #term{padding-bottom:env(safe-area-inset-bottom,0px)}
   /* The reader's way out, for the same finger: it measured 35x30 at 390px in Chromium before this.
      The bar gives up its vertical padding to it, as the chat header does to the drawer toggle.
      Download grows too — at 12px with 1px of padding it was a 22px-tall target beside the file's
@@ -1795,7 +1810,8 @@ const SCRIPT = `
       optsBtn=$('opts-toggle'), optsMenu=$('opts-menu'), manageBtn=$('manage-toggle'), manageMenu=$('manage-menu'),
       calmBtn=$('calm-toggle'), calmState=$('calm-state'),
       idleWhy=$('idle-why'), idleList=$('idle-list'), idleGo=$('idle-go'), idleCancel=$('idle-cancel'), chatTitle=$('topic-title'), chatStatus=$('topic-status'),
-      chat=$('chat'), termBtn=$('term-toggle'), termHost=$('term-frames'),
+      chat=$('chat'), chatHead=$('chat-header'), composer=$('bar'),
+      termBtn=$('term-toggle'), termHost=$('term-frames'), termEl=$('term'), termGrip=$('term-grip'),
       termName=$('term-name'), termMinBtn=$('term-min'), termEndBtn=$('term-end'),
       schedToggle=$('schedules-toggle'), schedAlert=$('sched-alert'), schedList=$('schedules-list'), schedSummary=$('schedules-summary'), schedReadBtn=$('sched-read'),
       schedFilterHost=$('sched-filter'), schedNewBtn=$('sched-new'),
@@ -1882,7 +1898,7 @@ const SCRIPT = `
   // Whether the shared secret is still a way in. False means the gate above has no field and
   // the only thing that can sign anyone in is the proxy in front (sso.password: false).
   var PASSWORD_LOGIN = __PASSWORD__;
-  // A terminal window belongs to a TOPIC, not to the page: 'open' is shown, 'min' is hidden and
+  // A terminal panel belongs to a TOPIC, not to the page: 'open' is shown, 'min' is hidden and
   // still connected, absent is no window at all. Keyed this way because the alternative — one
   // window that follows whichever topic is on screen — would tear down the connection to the
   // topic being left, which is both a surprise (the pane you minimized is gone) and the end of
@@ -4666,8 +4682,8 @@ const SCRIPT = `
       if(view) views[id] = view; else delete views[id];
       return;
     }
-    // No box to measure (the terminal window is over the transcript), or at the bottom, which is
-    // what no entry already means.
+    // No box to measure (the page is still laying out), or at the bottom, which is what no entry
+    // already means.
     var el = (log.clientHeight && !atBottom()) ? firstVisible() : null;
     if(!el){ delete views[id]; return; }
     views[id] = { key: el.getAttribute('data-k'),
@@ -6972,9 +6988,56 @@ const SCRIPT = `
 
 
   // ── Terminal ───────────────────────────────────────────────────────────────
-  // A window over the transcript, one per topic. The iframe holds ttyd's own terminal, which is
-  // why this is a hundred lines instead of a terminal emulator. Nothing here speaks to the agent
-  // — the two share a topic id and nothing else.
+  // A panel at the bottom of the conversation, one per topic. The iframe holds ttyd's own
+  // terminal, which is why this is a hundred lines instead of a terminal emulator. Nothing here
+  // speaks to the agent — the two share a topic id and nothing else.
+
+  // How tall the panel is, in pixels, once the divider has been dragged. 0 means "half the
+  // chat": recomputed rather than frozen, so a phone and a desktop each get half of their own
+  // screen, and a panel that was never resized follows a window that changes size.
+  var TERM_H_KEY = 'aa_term_h', TERM_MIN = 120, TERM_MIN_LOG = 120;
+  var termH = 0;
+  try { var storedTermH = parseInt(localStorage.getItem(TERM_H_KEY) || '', 10); if(storedTermH > 0) termH = storedTermH; } catch(x){}
+
+  /**
+   * What the panel may be: never taller than the chat it sits in, and never so tall that the
+   * transcript has no lines left. What is above it is measured rather than guessed — a phone's
+   * header and two-row composer are most of the chat, and a fixed allowance sized for a desktop
+   * would leave the log 20px tall there. On a window too short for both, the chat wins.
+   */
+  function termLimits(){
+    var room = chat.clientHeight;
+    if(!room) return {min:TERM_MIN, max:TERM_MIN + 40};
+    var fixed = chatHead.clientHeight + composer.clientHeight + (termGrip.offsetHeight || 12) + TERM_MIN_LOG;
+    var max = Math.min(room, Math.max(TERM_MIN, room - fixed));
+    return {min:Math.min(TERM_MIN, max), max:max};
+  }
+  function termHeight(){
+    var lim = termLimits();
+    return Math.max(lim.min, Math.min(lim.max, termH || Math.round(chat.clientHeight * 0.5)));
+  }
+  // Set as a pixel height rather than a percentage: a closed panel is parked at this size, and
+  // it must not change under a hidden iframe — a resize there is a redraw the reader never asked
+  // for, and on some backends a detach.
+  function paintTermHeight(){
+    // While a record from History is up, #bar and the divider are display:none and measure 0 —
+    // a ceiling worked out from those would be ~100px too generous, and the panel would come
+    // back from the record too tall. closeLib paints again once they are back on screen.
+    if(libOn()) return;
+    var lim = termLimits(), h = termHeight();
+    termEl.style.height = h + 'px';
+    termGrip.setAttribute('aria-valuenow', String(h));
+    termGrip.setAttribute('aria-valuemin', String(lim.min));
+    termGrip.setAttribute('aria-valuemax', String(lim.max));
+  }
+  function setTermHeight(h){
+    var lim = termLimits();
+    termH = Math.max(lim.min, Math.min(lim.max, Math.round(h)));
+    paintTermHeight();
+  }
+  function saveTermHeight(){
+    try { if(termH) localStorage.setItem(TERM_H_KEY, String(termH)); else localStorage.removeItem(TERM_H_KEY); } catch(x){}
+  }
 
   // What the address bar should say now. The topic and the pane are both worth surviving a
   // reload, and both are written the same way so neither can silently drop the other.
@@ -6996,6 +7059,11 @@ const SCRIPT = `
     var state = topic ? termState[topic] : undefined;
     var on = state === 'open';
     chat.classList.toggle('term', on);
+    // After the class, so the divider the panel is measured against is on screen and has its
+    // height — and only while it is on screen: painting a closed panel would resize the parked
+    // iframe for nothing, which is the redraw this design exists to avoid. Before mountTerm, so
+    // a window opened for the first time is born at the height it will keep.
+    if(on) paintTermHeight();
     termBtn.classList.toggle('on', Boolean(state));
     termBtn.title = on ? 'Minimize the terminal' : (state ? 'Show the terminal (still running)' : 'Terminal');
     // Only ever rendered where a session can actually be ended; see TERM_END.
@@ -7015,13 +7083,29 @@ const SCRIPT = `
     termHost.appendChild(frame);
   }
 
-  /** Exactly one mounted terminal is visible: the current topic's, and only while it is open. */
+  /**
+   * Exactly one mounted terminal is visible: the current topic's, and only while it is open and
+   * nothing else covers the chat.
+   *
+   * A record from History is why the second half is here rather than in the stylesheet. The
+   * panel's own visibility is inherited, and an iframe's rule saying visible wins over it — so a
+   * parent rule alone leaves the terminal painted over the record, visible and unclickable. The
+   * frame's on class is the one thing that decides, and openLib/closeLib repaint through here.
+   */
   function paintFrames(){
-    var on = topic && termState[topic]==='open';
+    var on = Boolean(topic && termState[topic]==='open' && !libOn());
     for(var id in termFrames){
       if(!Object.prototype.hasOwnProperty.call(termFrames, id)) continue;
-      termFrames[id].classList.toggle('on', Boolean(on) && id===topic);
+      var live = on && id===topic;
+      termFrames[id].classList.toggle('on', live);
+      // Per frame, not only on the panel: with one topic's terminal open, another topic's frame
+      // is still mounted and hidden, and inert is what keeps it out of reach from script.
+      termFrames[id].toggleAttribute('inert', !live);
     }
+    // Inert as well as invisible: visibility keeps the keyboard out, but an iframe can still be
+    // focused from script — and a terminal that grabs focus while it is parked is typing going
+    // somewhere the person cannot see. This one covers the panel's own two buttons.
+    termEl.toggleAttribute('inert', !on);
     var cur = null;
     for(var i=0;i<topics.length;i++){ if(topics[i].id===topic){ cur=topics[i]; break; } }
     termName.textContent = cur && cur.title ? cur.title : 'Untitled';
@@ -7039,9 +7123,13 @@ const SCRIPT = `
 
   function showTerm(){
     if(!TERM_OK || !topic) return;
+    // Opening the panel takes height from the transcript, and a reader who was at the bottom
+    // would otherwise find the newest message pushed under the divider.
+    var stick = atBottom();
     termState[topic] = 'open';
     history.replaceState(null,'',urlNow());
     applyTerm();
+    if(stick) toBottom();
   }
 
   // Hidden, not unmounted: the point of minimizing is that whatever is running in there keeps
@@ -8457,6 +8545,52 @@ const SCRIPT = `
     });
     termMinBtn.addEventListener('click', minTerm);
     termEndBtn.addEventListener('click', endTerm);
+
+    // Dragging the divider. The new height comes from the POINTER's travel rather than from the
+    // panel's box: a drag grabbed anywhere on the strip must not jump on the first move, and the
+    // panel's own bottom edge is the window's, which does not move.
+    var termDrag = null;
+    termGrip.addEventListener('pointerdown', function(e){
+      if(!topic || !termState[topic]) return;
+      e.preventDefault();
+      termDrag = {y:e.clientY, h:termHeight()};
+      termGrip.classList.add('drag');
+      if(termGrip.setPointerCapture) try { termGrip.setPointerCapture(e.pointerId); } catch(x){}
+    });
+    termGrip.addEventListener('pointermove', function(e){
+      if(termDrag) setTermHeight(termDrag.h - (e.clientY - termDrag.y));
+    });
+    var endTermDrag = function(){
+      if(!termDrag) return;
+      termDrag = null;
+      termGrip.classList.remove('drag');
+      saveTermHeight();
+    };
+    // On the window, not the strip: when the capture fails the pointerup can land anywhere, and
+    // a drag that never ends leaves the next pointermove still resizing the panel.
+    window.addEventListener('pointerup', endTermDrag);
+    window.addEventListener('pointercancel', endTermDrag);
+    termGrip.addEventListener('lostpointercapture', endTermDrag);
+    // Back to half the chat, the same gesture the two side panels offer for their width.
+    termGrip.addEventListener('dblclick', function(){
+      termH = 0;
+      paintTermHeight();
+      saveTermHeight();
+    });
+    // A divider is a control, so it answers the keyboard as well as the pointer.
+    termGrip.addEventListener('keydown', function(e){
+      if(e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+      e.preventDefault();
+      setTermHeight(termHeight() + (e.key === 'ArrowUp' ? 24 : -24));
+      saveTermHeight();
+    });
+    // A shorter window may leave a stored height taller than the chat; the transcript keeps its
+    // lines. Not while the panel is closed (the parked iframe must not be resized for nothing),
+    // and not while a record is up — its composer is hidden, so there is nothing to measure
+    // against; closeLib does it when the record goes.
+    window.addEventListener('resize', function(){
+      if(topic && termState[topic]==='open' && !libOn()) paintTermHeight();
+    });
   }
 
   readBtn.addEventListener('click', function(){
@@ -9013,6 +9147,8 @@ const SCRIPT = `
       closeModelPop();
       if(!hints.hidden){ hints.hidden = true; hints.innerHTML = ''; }
       chat.classList.add('lib');
+      // The terminal goes behind the record rather than over it — and stays connected there.
+      paintFrames();
     }
     libId = id;
     libSession = null;
@@ -9109,6 +9245,11 @@ const SCRIPT = `
     if(!libOn()) return;
     libSeq++;
     chat.classList.remove('lib');
+    // The topic underneath is back on screen, so its terminal is too — same frame, same socket.
+    paintFrames();
+    // And its height is worked out again: a window that changed size under the record could not
+    // be measured while the composer and the divider were display:none.
+    if(topic && termState[topic]==='open') paintTermHeight();
     libId = null;
     libSession = null;
     forgetLibLines();
@@ -13079,20 +13220,9 @@ __GATE__
     </div>
     <div id="typing" hidden>...</div>
     <div id="note"></div>
-    <!-- A window, not a mode: the bar is what makes minimize and close two different things.
-         The dash hides it and leaves the session connected; the cross ends the session, and is
-         rendered only where the daemon was given a way to do that. -->
-    <div id="term">
-      <div id="term-bar">
-        <span id="term-name" class="term-name"></span>
-        <button type="button" class="btn-icon" id="term-min" title="Minimize — the terminal keeps running">&#8211;</button>
-        <button type="button" class="btn-icon" id="term-end" title="End this terminal session" hidden>&times;</button>
-      </div>
-      <div id="term-frames"></div>
-    </div>
     <div id="bar">
-      <!-- The agent's live status. Inside #bar rather than above it so it goes away with the
-           composer in terminal mode, and so it reads as part of the place you type. -->
+      <!-- The agent's live status. Inside #bar rather than above it so it reads as part of the
+           place you type. -->
       <!-- The topic's machine cannot be reached (paintMachineNote). Beside the status line, for
            the same reason it is inside #bar: it is about what typing here will do. -->
       <!-- The daemon came back from a restart serving a different page than this one (checkBuild).
@@ -13142,6 +13272,21 @@ __GATE__
           <button type="submit" title="Send (Enter)">Send</button>
         </div>
       </form>
+    </div>
+    <!-- The panel's divider, dragged like the side panel's. Only on screen while the panel is,
+         and never when the daemon serves no terminal at all: it is a control, not decoration. -->
+    <div id="term-grip" role="separator" aria-orientation="horizontal" aria-label="Resize the terminal panel" aria-controls="term" title="Drag to resize · double-click for half the screen" tabindex="0"></div>
+    <!-- A panel, not a mode: the bar is what makes minimize and close two different things.
+         The dash hides it and leaves the session connected; the cross ends the session, and is
+         rendered only where the daemon was given a way to do that. Below the composer, so the
+         transcript and the place you type are both above it and neither is covered. -->
+    <div id="term">
+      <div id="term-bar">
+        <span id="term-name" class="term-name"></span>
+        <button type="button" class="btn-icon" id="term-min" title="Minimize — the terminal keeps running">&#8211;</button>
+        <button type="button" class="btn-icon" id="term-end" title="End this terminal session" hidden>&times;</button>
+      </div>
+      <div id="term-frames"></div>
     </div>
   </section>
   <!-- The side panel: the same .panel as the sidebar, on the right. A column of its own on a wide

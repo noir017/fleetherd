@@ -7118,6 +7118,22 @@ describe('webui page: the terminal window', () => {
     h.doc.querySelector<HTMLIFrameElement>('#term-frames iframe.on');
   const srcOf = (h: { doc: Document }): string | null => shown(h)?.getAttribute('src') ?? null;
 
+  /**
+   * jsdom has no layout, so the boxes the panel is measured against are given here: the chat, the
+   * header and the composer above it, and the divider. Desktop proportions, so the heights below
+   * are the ones a person would see: 800 tall, 50 header, 100 composer, 9 divider, 120 transcript
+   * left over — a panel may be 521 at most.
+   */
+  const laidOut = (h: Harness): void => {
+    const stub = (id: string, prop: string, value: number): void => {
+      Object.defineProperty(h.el(id), prop, { configurable: true, get: () => value });
+    };
+    stub('chat', 'clientHeight', 800);
+    stub('chat-header', 'clientHeight', 50);
+    stub('bar', 'clientHeight', 100);
+    stub('term-grip', 'offsetHeight', 9);
+  };
+
   it('offers nothing at all when the daemon serves no terminal', async () => {
     const h = await open();
     await h.emit(sync('a1b2c3d4', [message('m1', '<p>hi</p>')], ['a1b2c3d4']));
@@ -7179,16 +7195,23 @@ describe('webui page: the terminal window', () => {
     await h.click('#term-toggle');
     const mounted = shown(h);
     expect(mounted).not.toBeNull();
+    expect(h.el('term').hasAttribute('inert')).toBe(false);
 
     await h.click('#term-min');
     expect(h.el('chat').className).not.toContain('term');
     expect(h.window.location.search).toBe('?t=a1b2c3d4');
     expect(frames(h)).toHaveLength(1);
     expect(shown(h)).toBeNull();
+    // Parked means out of reach as well as out of sight: a hidden iframe can still take focus
+    // from script, and a terminal that grabs it is typing going somewhere nobody can see.
+    expect(h.el('term').hasAttribute('inert')).toBe(true);
+    expect(frames(h)[0]?.hasAttribute('inert')).toBe(true);
 
     // Back in, and it is the same element — not a second connection to the same session.
     await h.click('#term-toggle');
     expect(shown(h)).toBe(mounted);
+    expect(h.el('term').hasAttribute('inert')).toBe(false);
+    expect(frames(h)[0]?.hasAttribute('inert')).toBe(false);
   });
 
   it('keeps one window per topic, each attached across a switch', async () => {
@@ -7214,6 +7237,90 @@ describe('webui page: the terminal window', () => {
     await h.click('[data-topic="a1b2c3d4"]');
     expect(srcOf(h)).toBe('term/?arg=a1b2c3d4');
     expect(frames(h)).toHaveLength(2);
+  });
+
+  it('docks the panel under the conversation instead of covering it', async () => {
+    // What changed: the terminal used to swap itself in for the transcript and the composer.
+    // The panel now sits at the bottom of #chat, under both, so reading and typing carry on
+    // while it is open — and the divider above it is the only thing that moves.
+    const h = await open({ terminal: true });
+    await h.emit(sync('a1b2c3d4', [message('m1', '<p>hi</p>')], ['a1b2c3d4']));
+    await h.click('#term-toggle');
+
+    expect(h.el('chat').className).toContain('term');
+    const ids = [...h.el('chat').children].map((el) => el.id);
+    expect(ids.indexOf('term')).toBeGreaterThan(ids.indexOf('bar'));
+    expect(ids.indexOf('term-grip')).toBe(ids.indexOf('term') - 1);
+    // The transcript is not hidden by the terminal's class any more, and it is still painted.
+    expect(renderPage('Chat', true)).not.toContain('#chat.term #log');
+    expect(h.painted()).toBe(1);
+  });
+
+  it('parks a closed panel rather than taking the frame out of the layout', async () => {
+    // The bug this fixes: display:none leaves an iframe with no box, and a browser may discard a
+    // frame it is not laying out — which closes its WebSocket, so a topic switch looked like a
+    // dropped connection. Asserted as text, since jsdom does not evaluate the stylesheet.
+    const css = renderPage('Chat', true);
+    expect(css).toContain(
+      '#chat:not(.term) #term{position:absolute;left:0;right:0;bottom:0;visibility:hidden;pointer-events:none}'
+    );
+    expect(css).toContain('#term-frames iframe{position:absolute;inset:0;width:100%;height:100%;border:0;visibility:hidden}');
+    expect(css).not.toContain('#term-frames iframe{display:none');
+    // And the other half of that pair: the shown frame really is visible, and the divider is
+    // only on screen while the panel is. Deleting either rule used to leave every test green.
+    expect(css).toContain('#term-frames iframe.on{visibility:visible}');
+    expect(css).toContain('#chat.term #term-grip{display:block}');
+  });
+
+  it('opens at half the chat, and a drag on the divider is the height it keeps', async () => {
+    const h = await open({ terminal: true });
+    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4']));
+    laidOut(h);
+    await h.click('#term-toggle');
+    expect(h.el('term').style.height).toBe('400px');
+
+    const grip = h.el('term-grip');
+    grip.dispatchEvent(new h.window.MouseEvent('pointerdown', { bubbles: true, clientY: 500 }));
+    grip.dispatchEvent(new h.window.MouseEvent('pointermove', { bubbles: true, clientY: 400 }));
+    grip.dispatchEvent(new h.window.MouseEvent('pointerup', { bubbles: true, clientY: 400 }));
+    expect(h.el('term').style.height).toBe('500px');
+    expect(h.window.localStorage.getItem('aa_term_h')).toBe('500');
+
+    // Clamped both ways: the transcript keeps a few lines above, and the panel stays usable.
+    grip.dispatchEvent(new h.window.MouseEvent('pointerdown', { bubbles: true, clientY: 500 }));
+    grip.dispatchEvent(new h.window.MouseEvent('pointermove', { bubbles: true, clientY: 0 }));
+    grip.dispatchEvent(new h.window.MouseEvent('pointerup', { bubbles: true, clientY: 0 }));
+    expect(h.el('term').style.height).toBe('521px');
+    grip.dispatchEvent(new h.window.MouseEvent('pointerdown', { bubbles: true, clientY: 0 }));
+    grip.dispatchEvent(new h.window.MouseEvent('pointermove', { bubbles: true, clientY: 800 }));
+    grip.dispatchEvent(new h.window.MouseEvent('pointerup', { bubbles: true, clientY: 800 }));
+    expect(h.el('term').style.height).toBe('120px');
+  });
+
+  it('comes back at the height it was left, across a reload', async () => {
+    const h = await open({ terminal: true, storage: { aa_term_h: '512' } });
+    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4']));
+    laidOut(h);
+    await h.click('#term-toggle');
+    expect(h.el('term').style.height).toBe('512px');
+  });
+
+  it('answers a double-click and the arrow keys, so the divider is not only a drag target', async () => {
+    const h = await open({ terminal: true, storage: { aa_term_h: '400' } });
+    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4']));
+    laidOut(h);
+    await h.click('#term-toggle');
+
+    const grip = h.el('term-grip');
+    grip.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }));
+    expect(h.el('term').style.height).toBe('424px');
+    grip.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    grip.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    expect(h.el('term').style.height).toBe('376px');
+
+    grip.dispatchEvent(new h.window.MouseEvent('dblclick', { bubbles: true }));
+    expect(h.el('term').style.height).toBe('400px');
+    expect(h.window.localStorage.getItem('aa_term_h')).toBeNull();
   });
 
   it('has no close button unless the daemon can end a session', async () => {
@@ -13273,12 +13380,83 @@ describe('webui page: the History tab', () => {
 
     // The topic underneath is still there, untouched, for the way back.
     expect(h.painted()).toBe(1);
-    // And the stylesheet takes the composer, the header's topic controls and the terminal away while
-    // it is up — as text, because jsdom's CSSOM is not to be trusted with this (see Testing).
+    // And the stylesheet takes the composer, the header's topic controls and the terminal's
+    // divider away while it is up — as text, because jsdom's CSSOM is not to be trusted with
+    // this (see Testing). The terminal itself is only parked: a record is no reason to hang up
+    // on a shell, so its frame keeps its box under the record.
     expect(renderPage('Chat', false)).toContain(
-      '#chat.lib #log,#chat.lib #typing,#chat.lib #note,#chat.lib #bar,#chat.lib #term,\n' +
+      '#chat.lib #log,#chat.lib #typing,#chat.lib #note,#chat.lib #bar,#chat.lib #term-grip,\n' +
         '#chat.lib #topic-title,#chat.lib #topic-status,#chat.lib #kill-agent,#chat.lib #term-toggle,#chat.lib #files-toggle{display:none}'
     );
+    expect(renderPage('Chat', false)).toContain(
+      '#chat.lib #term{position:absolute;left:0;right:0;bottom:0;visibility:hidden;pointer-events:none}'
+    );
+  });
+
+  it('parks the terminal while a record covers the chat, and shows it again on the way out', async () => {
+    // The frame's own rule says `visibility:visible`, and that beats anything the panel inherits
+    // — so a CSS rule on #term leaves the terminal painted over the record, visible and
+    // unclickable. The record has to take the frame out of `on`, which is paintFrames' job.
+    const h = await open({
+      terminal: true,
+      replies: { 'api/history': page([row()]), 'api/history/read?id=1': read() },
+    });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#term-toggle');
+    const frame = h.doc.querySelector('#term-frames iframe.on');
+    expect(frame).not.toBeNull();
+    expect(h.el('term').hasAttribute('inert')).toBe(false);
+
+    await onHistory(h);
+    await openRow(h);
+    expect(libOn(h)).toBe(true);
+    // Boolean, not the element: a failure should say what happened, not try to print a jsdom frame.
+    expect(Boolean(h.doc.querySelector('#term-frames iframe.on'))).toBe(false);
+    // Invisible is not enough on its own: an iframe can still be focused from script.
+    expect(h.el('term').hasAttribute('inert')).toBe(true);
+
+    await h.click('#lib-close');
+    expect(libOn(h)).toBe(false);
+    expect(h.doc.querySelector('#term-frames iframe.on') === frame).toBe(true);
+    expect(h.el('term').hasAttribute('inert')).toBe(false);
+  });
+
+  it('measures the panel again when a record closes, rather than under it', async () => {
+    // #bar and the divider are display:none while a record is up, so they measure 0. A resize
+    // there used to work out a ceiling ~100px too generous and leave the panel at that height
+    // after the record went — on a phone turned sideways, the log a few pixels tall.
+    const h = await open({
+      terminal: true,
+      replies: { 'api/history': page([row()]), 'api/history/read?id=1': read() },
+    });
+    await h.emit(sync(A, [], [A]));
+    const stub = (id: string, prop: string, value: number): void => {
+      Object.defineProperty(h.el(id), prop, { configurable: true, get: () => value });
+    };
+    stub('chat', 'clientHeight', 800);
+    stub('chat-header', 'clientHeight', 50);
+    stub('bar', 'clientHeight', 100);
+    stub('term-grip', 'offsetHeight', 9);
+    await h.click('#term-toggle');
+    expect(h.el('term').style.height).toBe('400px');
+
+    await onHistory(h);
+    await openRow(h);
+    // The record takes the composer and the divider off screen, and the window shrinks.
+    stub('bar', 'clientHeight', 0);
+    stub('term-grip', 'offsetHeight', 0);
+    stub('chat', 'clientHeight', 500);
+    h.window.dispatchEvent(new h.window.Event('resize'));
+    await tick();
+    // Nothing to measure against: the panel keeps the height it had, out of sight.
+    expect(h.el('term').style.height).toBe('400px');
+
+    // Back on screen both have their heights again, and the panel is measured once more:
+    // 500 - (50 header + 100 composer + 9 divider + 120 transcript) = 221.
+    stub('bar', 'clientHeight', 100);
+    stub('term-grip', 'offsetHeight', 9);
+    await h.click('#lib-close');
+    expect(h.el('term').style.height).toBe('221px');
   });
 
   it('says a read was cut short where the reader lands, and says nothing when it was not', async () => {

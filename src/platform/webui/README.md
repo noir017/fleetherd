@@ -833,7 +833,9 @@ what is on screen, with a `+` while the library goes further.
 
 **An opened conversation covers the topic; it does not replace it.** `openLib` reads it into
 `#lib-log`, a twin of `#log`, and `#chat.lib` swaps the two and the composer for a read-only bar,
-the way `#chat.term` swaps in the terminal. Decisions in it:
+the way `#chat.term` shows the terminal below them. A terminal that is open when a record is
+opened is parked rather than left painted over it — see
+[the terminal pane](#the-terminal-pane). Decisions in it:
 
 - **The same bubbles.** The daemon renders the read as WebMessages (`room.ts` historyMessages): the
   operator's prompt escaped and unrendered, as `record` posts it; a reply as markdown; consecutive
@@ -1614,9 +1616,13 @@ last — anything painted while it is up, including a message typed into the gap
 
 ## The terminal pane
 
-Off by default. Turned on, the chat header grows a `>_` button that opens a terminal **window**
-over the transcript — a shell in this machine, in which any coding-agent CLI can be run
-directly, TUI and all.
+Off by default. Turned on, the chat header grows a `>_` button that opens a terminal **panel** at
+the bottom of the conversation — a shell in this machine, in which any coding-agent CLI can be
+run directly, TUI and all. It opens at half the chat's height, clamped so the header, the composer
+and a few lines of transcript keep their room, with a divider above it: drag it (arrow keys work
+too, a double-click goes back to half) and the panel keeps that height, in `localStorage`, across
+a reload. The transcript and the composer stay on screen and usable throughout, which is the
+difference between this and the full-height window it used to be.
 
 **The daemon owns none of it.** It does not spawn a PTY and does not speak the terminal's
 protocol; it proxies, behind the session cookie, to a [`ttyd`](https://github.com/tsl0922/ttyd)
@@ -1637,9 +1643,9 @@ What the pane shows is whatever that ttyd was told to run. That is exactly why i
 CLI — and also why nothing in it reaches the conversation: no transcript, no reverse CLI, no
 topic history. The two share a topic id and nothing else.
 
-### A window per topic, and what its two buttons mean
+### A panel per topic, and what its two buttons mean
 
-The window belongs to a topic, not to the page. Its title bar carries exactly two controls, and
+The panel belongs to a topic, not to the page. Its title bar carries exactly two controls, and
 the whole design is in the difference between them:
 
 - **Minimize** hides it. The iframe stays mounted and its WebSocket stays up, so coming back is
@@ -1647,10 +1653,19 @@ the whole design is in the difference between them:
 - **Close** ends the session, after a confirmation. It is a server round trip, not a teardown,
   because dropping an iframe only hangs up on a shell that carries on without us.
 
-Switching topics therefore does not move one window around: each topic keeps its own, mounted
-and attached until it is closed. The alternative — a single window following whichever topic is
+Switching topics therefore does not move one panel around: each topic keeps its own, mounted
+and attached until it is closed. The alternative — a single panel following whichever topic is
 on screen — hangs up on the topic being left, which surprises (the terminal you minimized is
 gone) and makes the marker meaningless, since at most one topic could ever be lit.
+
+**Closed, the panel is parked — never `display:none`, and never `visibility` on an ancestor
+alone.** A frame with no layout box is one a browser may throttle, freeze or discard, and a
+discarded frame is a closed WebSocket; a parent's `visibility:hidden` is inherited, but the
+iframe's own rule says `visible` and wins. So `paintFrames` is the one place that decides:
+it toggles `on` on the current topic's frame, and parks the panel (`position:absolute` at its
+last pixel height, `visibility:hidden`, `inert`) when nothing should be showing it. That is why
+`openLib` and `closeLib` call it: a record from History is a second reason for the frame to be
+off, and it is not a CSS class on the panel.
 
 The marker itself is a `>_` glyph on the topic row, fed by `terminal-sessions.ts` counting the
 **live connections** this daemon is proxying. Read it as "a page is attached to this topic's
@@ -2344,6 +2359,10 @@ link following the list, every way back (Close, the Topics tab, a link out of th
 link), no seen mark and no paste or drop while covered, the phone drawer, nothing remembered over a
 reload, a failed read, and the daemon with no library at all. Sixteen mutations of page.ts, one per
 decision above, each fail a test there (`project-scripts/talkcode-history-tab/mutate.py`).
+
+The terminal panel is driven there too: it docks under the composer with the transcript still
+painted, a drag on its divider is the height it writes to `aa_term_h` and reads back on the next
+page, the arrow keys and a double-click move it, and a topic switch leaves the frame mounted.
 
 Four things about it that are not obvious:
 

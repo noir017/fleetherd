@@ -70,6 +70,14 @@ All notable changes to this project are documented here. The format is based on
   any other turn's, declined if nobody answers within the hour.
 - **`permissions: ask` on Codex now asks.** It puts Codex in `read-only`, which asks before every
   edit and command, where it used to leave it in `agent`, whose own reviewer answered instead.
+- **The web UI's terminal is a panel under the conversation, not a window over it.** Opening it
+  used to swap out the transcript and the composer, so reading what the agent had said while a
+  command ran meant minimizing, and going back to the chat meant losing sight of the terminal.
+  It now docks at the bottom of the chat at half its height, with a divider above it: drag the
+  divider (or use the arrow keys; a double-click goes back to half) and the panel keeps that
+  height, in the browser, across a reload. The transcript and the composer stay on screen and
+  usable the whole time, and on a phone the divider's strip is 20px tall instead of 9px, so a
+  finger can grab it.
 
 ### Fixed
 
@@ -85,6 +93,14 @@ All notable changes to this project are documented here. The format is based on
   now says `Exit plan mode` and carries the plan the user is being asked to approve, where it used
   to read `ExitPlanMode` or the raw `{"allowedPrompts":…}` JSON. A run of three backticks in that
   content is shown as two, so a file's own fence cannot end the bubble's code block.
+- **A panel that was not on screen no longer looks like a dropped terminal connection.** It was
+  hidden with `display:none`, which takes the iframe's box away — and a frame with no box is one
+  a browser may throttle, freeze or throw away, which closes its WebSocket: the terminal then
+  comes back as ttyd's reconnect and a redraw, or stays dead, instead of being the shell that
+  was running. Closed — and while a record from History covers the chat — the panel is now
+  parked: out of the flex flow at the size it had, invisible and `inert`. The frame keeps its
+  box and its socket, so switching away and back is the same terminal, with no reconnect and no
+  redraw.
 
 ## [3.11.0] - 2026-11-18
 

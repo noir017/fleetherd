@@ -389,11 +389,16 @@ own. A topic you are reading when it happens does not notify. Turn it on in each
 
 Turned on, the chat header grows a `>_` button that
 opens a real shell on the machine the daemon runs on — so you can drive *any*
-coding-agent CLI, TUI and all, from the same page. It is a window per topic, and
-its two buttons mean different things: minimize hides it while everything keeps
-running and stays attached, close ends the session for good. The topic list marks
-which topics have a terminal open. The daemon does not implement a terminal: it
-proxies, behind the same login, to a
+coding-agent CLI, TUI and all, from the same page. It is a panel at the bottom of
+the conversation, half the chat tall to begin with: the transcript and the
+composer stay on screen and usable, and the divider above it drags to whatever
+height you want (the arrow keys work too, a double-click goes back to half). That
+height is kept in the browser and comes back after a reload. It is one panel per
+topic, and its two buttons mean different things: minimize parks it while
+everything keeps running and stays attached — switch to another topic and back
+and it is the same terminal, not a reconnect — and close ends the session for
+good. The topic list marks which topics have a terminal open. The daemon does not
+implement a terminal: it proxies, behind the same login, to a
 [`ttyd`](https://github.com/tsl0922/ttyd) you run on a unix socket. Off unless you
 ask for it.
 
