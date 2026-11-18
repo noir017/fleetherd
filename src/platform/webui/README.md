@@ -2283,6 +2283,10 @@ link), no seen mark and no paste or drop while covered, the phone drawer, nothin
 reload, a failed read, and the daemon with no library at all. Sixteen mutations of page.ts, one per
 decision above, each fail a test there (`project-scripts/talkcode-history-tab/mutate.py`).
 
+The terminal panel is driven there too: it docks under the composer with the transcript still
+painted, a drag on its divider is the height it writes to `aa_term_h` and reads back on the next
+page, the arrow keys and a double-click move it, and a topic switch leaves the frame mounted.
+
 Four things about it that are not obvious:
 
 - **The stubs are installed in `beforeParse`**, before the inline script runs. Evaluating the

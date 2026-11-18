@@ -7151,6 +7151,87 @@ describe('webui page: the terminal window', () => {
     expect(frames(h)).toHaveLength(2);
   });
 
+  it('docks the panel under the conversation instead of covering it', async () => {
+    // What changed: the terminal used to swap itself in for the transcript and the composer.
+    // The panel now sits at the bottom of #chat, under both, so reading and typing carry on
+    // while it is open — and the divider above it is the only thing that moves.
+    const h = await open({ terminal: true });
+    await h.emit(sync('a1b2c3d4', [message('m1', '<p>hi</p>')], ['a1b2c3d4']));
+    await h.click('#term-toggle');
+
+    expect(h.el('chat').className).toContain('term');
+    const ids = [...h.el('chat').children].map((el) => el.id);
+    expect(ids.indexOf('term')).toBeGreaterThan(ids.indexOf('bar'));
+    expect(ids.indexOf('term-grip')).toBe(ids.indexOf('term') - 1);
+    // The transcript is not hidden by the terminal's class any more, and it is still painted.
+    expect(renderPage('Chat', true)).not.toContain('#chat.term #log');
+    expect(h.painted()).toBe(1);
+  });
+
+  it('parks a closed panel rather than taking the frame out of the layout', async () => {
+    // The bug this fixes: display:none leaves an iframe with no box, and a browser may discard a
+    // frame it is not laying out — which closes its WebSocket, so a topic switch looked like a
+    // dropped connection. Asserted as text, since jsdom does not evaluate the stylesheet.
+    const css = renderPage('Chat', true);
+    expect(css).toContain(
+      '#chat:not(.term) #term{position:absolute;left:0;right:0;bottom:0;visibility:hidden;pointer-events:none}'
+    );
+    expect(css).toContain('#term-frames iframe{position:absolute;inset:0;width:100%;height:100%;border:0;visibility:hidden}');
+    expect(css).not.toContain('#term-frames iframe{display:none');
+  });
+
+  it('opens at half the chat, and a drag on the divider is the height it keeps', async () => {
+    const h = await open({ terminal: true });
+    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4']));
+    // jsdom has no layout: the chat is given a height, which is what the panel measures.
+    Object.defineProperty(h.el('chat'), 'clientHeight', { value: 800, configurable: true });
+    await h.click('#term-toggle');
+    expect(h.el('term').style.height).toBe('400px');
+
+    const grip = h.el('term-grip');
+    grip.dispatchEvent(new h.window.MouseEvent('pointerdown', { bubbles: true, clientY: 500 }));
+    grip.dispatchEvent(new h.window.MouseEvent('pointermove', { bubbles: true, clientY: 400 }));
+    grip.dispatchEvent(new h.window.MouseEvent('pointerup', { bubbles: true, clientY: 400 }));
+    expect(h.el('term').style.height).toBe('500px');
+    expect(h.window.localStorage.getItem('aa_term_h')).toBe('500');
+
+    // Clamped both ways: the transcript keeps a few lines above, and the panel stays usable.
+    grip.dispatchEvent(new h.window.MouseEvent('pointerdown', { bubbles: true, clientY: 500 }));
+    grip.dispatchEvent(new h.window.MouseEvent('pointermove', { bubbles: true, clientY: 0 }));
+    grip.dispatchEvent(new h.window.MouseEvent('pointerup', { bubbles: true, clientY: 0 }));
+    expect(h.el('term').style.height).toBe('580px');
+    grip.dispatchEvent(new h.window.MouseEvent('pointerdown', { bubbles: true, clientY: 0 }));
+    grip.dispatchEvent(new h.window.MouseEvent('pointermove', { bubbles: true, clientY: 800 }));
+    grip.dispatchEvent(new h.window.MouseEvent('pointerup', { bubbles: true, clientY: 800 }));
+    expect(h.el('term').style.height).toBe('120px');
+  });
+
+  it('comes back at the height it was left, across a reload', async () => {
+    const h = await open({ terminal: true, storage: { aa_term_h: '512' } });
+    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4']));
+    Object.defineProperty(h.el('chat'), 'clientHeight', { value: 800, configurable: true });
+    await h.click('#term-toggle');
+    expect(h.el('term').style.height).toBe('512px');
+  });
+
+  it('answers a double-click and the arrow keys, so the divider is not only a drag target', async () => {
+    const h = await open({ terminal: true, storage: { aa_term_h: '512' } });
+    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4']));
+    Object.defineProperty(h.el('chat'), 'clientHeight', { value: 800, configurable: true });
+    await h.click('#term-toggle');
+
+    const grip = h.el('term-grip');
+    grip.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }));
+    expect(h.el('term').style.height).toBe('536px');
+    grip.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    grip.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    expect(h.el('term').style.height).toBe('488px');
+
+    grip.dispatchEvent(new h.window.MouseEvent('dblclick', { bubbles: true }));
+    expect(h.el('term').style.height).toBe('400px');
+    expect(h.window.localStorage.getItem('aa_term_h')).toBeNull();
+  });
+
   it('has no close button unless the daemon can end a session', async () => {
     // Nothing here could end one, so the control that claims to does not exist. The alternative
     // — a close that only hides — is the same word meaning two different things on two
@@ -12948,11 +13029,16 @@ describe('webui page: the History tab', () => {
 
     // The topic underneath is still there, untouched, for the way back.
     expect(h.painted()).toBe(1);
-    // And the stylesheet takes the composer, the header's topic controls and the terminal away while
-    // it is up — as text, because jsdom's CSSOM is not to be trusted with this (see Testing).
+    // And the stylesheet takes the composer, the header's topic controls and the terminal's
+    // divider away while it is up — as text, because jsdom's CSSOM is not to be trusted with
+    // this (see Testing). The terminal itself is only parked: a record is no reason to hang up
+    // on a shell, so its frame keeps its box under the record.
     expect(renderPage('Chat', false)).toContain(
-      '#chat.lib #log,#chat.lib #typing,#chat.lib #note,#chat.lib #bar,#chat.lib #term,\n' +
+      '#chat.lib #log,#chat.lib #typing,#chat.lib #note,#chat.lib #bar,#chat.lib #term-grip,\n' +
         '#chat.lib #topic-title,#chat.lib #topic-status,#chat.lib #kill-agent,#chat.lib #term-toggle,#chat.lib #files-toggle{display:none}'
+    );
+    expect(renderPage('Chat', false)).toContain(
+      '#chat.lib #term{position:absolute;left:0;right:0;bottom:0;visibility:hidden;pointer-events:none}'
     );
   });
 

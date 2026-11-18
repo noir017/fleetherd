@@ -5,6 +5,26 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **The web UI's terminal is a panel under the conversation, not a window over it.** Opening it
+  used to swap out the transcript and the composer, so reading what the agent had said while a
+  command ran meant minimizing, and going back to the chat meant losing sight of the terminal.
+  It now docks at the bottom of the chat at half its height, with a divider above it: drag the
+  divider (or use the arrow keys; a double-click goes back to half) and the panel keeps that
+  height, in the browser, across a reload. The transcript and the composer stay on screen and
+  usable the whole time, and on a phone the divider is a thumb's height.
+
+### Fixed
+
+- **A topic switch no longer looks like a dropped terminal connection.** A closed panel was
+  hidden with `display:none`, which takes the iframe's box away — and a frame with no box is one
+  a browser may throttle, freeze or throw away, which closes its WebSocket and, with a `tmux`
+  wrapper, can take the client with it. Closed (and while a record from History covers the
+  chat), the panel is now parked: out of the flex flow at the size it had, invisible. The frame
+  keeps its box and its socket, so switching away and back is the same terminal — no reconnect
+  and no redraw.
+
 ## [3.11.0] - 2026-11-18
 
 ### Added
