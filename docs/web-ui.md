@@ -296,14 +296,29 @@ is read-only: it lists what changed, shows a diff, and takes comments into the c
 here stages, commits or discards, because an agent is usually working in that repository at the
 same time.
 
-The bar has three comparisons. **Working** is the working tree against `HEAD`, untracked files
-included; **Branch** is the working tree against the merge base of `HEAD` and a base branch, so
-committed and uncommitted work read together; **Committed** is `HEAD` against that merge base. The
-base starts at the repository's default branch (`origin/HEAD`, else `main` or `master`) and can be
-changed in the picker. A repository with no commits works too. Every path is relative to the
-repository root, also when the topic's directory is a subdirectory of it. A directory the agent just
-created is listed file by file; where there are too many untracked files to count them all, a row
-says the counts were not read rather than showing `+0 −0`.
+The bar has three comparisons and the history. **Working** is the working tree against `HEAD`,
+untracked files included; **Branch** is the working tree against the merge base of `HEAD` and a base
+branch, so committed and uncommitted work read together; **Committed** is `HEAD` against that merge
+base. The base starts at the repository's default branch (`origin/HEAD`, else `main` or `master`)
+and can be changed in the picker. A repository with no commits works too. Every path is relative to
+the repository root, also when the topic's directory is a subdirectory of it. A directory the agent
+just created is listed file by file; where there are too many untracked files to count them all, a
+row says the counts were not read rather than showing `+0 −0`.
+
+**Commits** lists the history itself: each commit with its short sha, subject, author and how long
+ago. **Load more** pages further back. Opening one shows its message — the body folded away until
+you ask for it — and the files it changed; **← Commits** goes back, and **Refresh** re-reads the
+list. A file opened there is read from that commit and not from the working tree, and a line
+comment made on it carries the short sha beside the file and lines, so an agent cannot take it for
+a remark about today's file. The base picker belongs to the three comparisons and is not shown in
+**Commits**.
+
+An empty comparison says which one is empty and what it was compared against, and offers **See
+commits** rather than leaving the right half of the window blank; a directory that is not inside a
+repository says so in the middle of the window instead of reading as a failed request. On a wide
+window the first file of a comparison opens by itself; a turn's own changes and a phone's list wait
+to be picked, because a phone's two columns are stacked there and an opened file would push the
+list out of sight.
 
 Clicking a file shows its diff — one column or two, from the button in the bar; a phone opens on one
 column. Selecting lines in the diff offers **Comment**; the file, the line range, which side of the

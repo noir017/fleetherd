@@ -737,14 +737,24 @@ like the skills page, and full-screen on a phone. **Read-only** — there is no 
 or checkout in it, here or in the daemon behind it; changing a repository while an agent works in it
 belongs in the conversation, where the agent can be asked what it meant.
 
-**Three comparisons.** `working` is the working tree against HEAD, untracked files included;
-`branch` is the working tree against the merge base of HEAD and a base branch, so committed and
-uncommitted changes read together; `committed` is HEAD against that merge base. The base starts as
-`origin/HEAD`, else `main`, else `master`, and can be picked from the branch list. A repository
-with no commits works too: `working` and `branch` list its files as additions, `committed` is empty.
-Every path in the window is relative to the **repository root**, not to the topic's directory, which
-may be a subdirectory of it. A directory that is not in a repository is answered as `not-git` with a
-sentence, not as an empty list.
+**Three comparisons, and the history.** `working` is the working tree against HEAD, untracked files
+included; `branch` is the working tree against the merge base of HEAD and a base branch, so
+committed and uncommitted changes read together; `committed` is HEAD against that merge base. The
+base starts as `origin/HEAD`, else `main`, else `master`, and can be picked from the branch list. A
+repository with no commits works too: `working` and `branch` list its files as additions,
+`committed` is empty. `commits` lists the history instead: short sha, subject, author and age per
+commit, **Load more** paging by `skip`, and one commit opened in the same column — the way back, its
+header with a foldable body, then its files. Every path in the window is relative to the
+**repository root**, not to the topic's directory, which may be a subdirectory of it. A directory
+that is not in a repository is answered as `not-git` with a sentence, not as an empty list.
+
+**What an empty pane says.** A comparison with nothing in it writes which comparison and what it
+was compared against in the middle of the diff pane, with a button that switches to `commits`; a
+`not-git` answer does the same with the daemon's sentence instead of the red note (an `error`
+still gets the note), and a turn's own changes say only that the turn changed nothing. A
+comparison list with files but nothing selected opens its first file on a wide window; the
+turn-changes view and a phone's list ask the reader to pick one (under 640px the two columns are
+stacked, and an opened diff would push the list out of sight).
 
 **Data.** [`useGitPanel`](../adapter.ts) hands the room `status`, `file` and `branches`;
 [`daemon/git-panel.ts`](../../daemon/git-panel.ts) implements them over
