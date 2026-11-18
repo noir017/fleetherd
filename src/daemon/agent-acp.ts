@@ -970,15 +970,15 @@ export function modeControlOf(
 
 /**
  * Whether this agent's modes are left out of its permission levels — read for the settings
- * screen, and never set — so that it is offered `auto` alone.
+ * screen, and never set — so that it is offered `ask` and `auto` alone.
  *
  * agy, for two reasons. Its modes could not be measured on 2026-11-18 (the probing machine's login
  * had expired, and `session/new` answers `Authentication required` before it reports any), so
  * nothing says what they do now. And what was measured before says its names do not mean what the
  * levels' do: on 1.5.1 (2026-11-06) its `default` — "Ask before edits and commands" — asked before
  * a command but wrote into its working directory without asking, so `ask` there would be a level
- * that lets edits through unseen. The gateway's half still holds for agy: a level that asks puts
- * whatever it does ask to the person.
+ * that lets edits through unseen. The gateway's half still holds for agy: `ask` puts whatever it
+ * does ask to the person, and its own mode stays as it is (applyPermissionLevel).
  */
 function modesLeftOut(def: AgentDef): boolean {
   return def.harness === 'agy';

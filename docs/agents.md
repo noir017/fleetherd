@@ -182,7 +182,8 @@ agents:
 ```
 
 Each harness reports its modes itself, and a level is offered only where the harness has a mode
-for it — measured on 2026-11-18:
+for it — except `ask`, which a harness reporting no modes at all still gets (footnote 2). Measured
+on 2026-11-18:
 
 | harness | `plan` | `ask` | `edits` | `auto` | `full` |
 |---|---|---|---|---|---|
@@ -190,18 +191,29 @@ for it — measured on 2026-11-18:
 | Codex (`codex`) | — | `read-only` | `workspace-write` | `workspace-write` | `agent-full-access` |
 | OpenCode (`opencode`) | `plan` | — | — | `build` | — |
 | CodeBuddy (`custom`) | `plan` | `default` | `acceptEdits` | `default` | `bypassPermissions` |
-| agy, gemini, dsh | — | — | — | (unchanged) | — |
+| agy, gemini, dsh | — | —² | — | (unchanged) | — |
 
 ¹ Not offered when claude-agent-acp runs as root outside a sandbox: Claude Code refuses it there.
+² `ask` is offered to these too, though they report no mode for it. Only the gateway's half
+applies: every request the harness does make is put to you, and whatever it does without asking is
+not stopped. On agy (1.5.1, measured 2026-11-06) that means it asks before a command and writes
+files without asking.
 
 - Leaving `permissions` out is what every agent had before levels existed: every request approved,
-  and the harness left in whatever mode it starts in — its own settings, or a pinned `options.mode`.
-  It reads as `auto`; setting `auto` explicitly puts the harness in the mode in the table.
+  and the harness left in the mode it is in — the mode its session reports, or the pinned
+  `options.mode` when the gateway has not seen one. The row shows the level that adds up to,
+  marked unset because nothing is stored: `full` when that mode is `bypassPermissions`,
+  `agent-full-access` or CodeBuddy's `fullAccess` (nothing is asked at all), `auto` otherwise —
+  the gateway approves what is asked. Setting `auto` explicitly puts the harness in the mode the
+  table gives.
 - `/setting permissions.<agent> <level>` changes it from chat, or the agent's row on the
   [settings page](settings.md); a pod's agent is written to `podPermissions`. A change applies at
   once: running sessions are switched to the new mode, and the next request is answered the new way.
   The harness can still move its own mode — Claude Code leaves `plan` when you approve its plan —
   and a session that starts again (`/new`, a restart, an idle reclaim) starts in the level's mode.
+- `fleetherd api-agent` (`harness: custom`, `args: [api-agent, …]`) is the one agent with a single
+  level. It only calls a cloud API, runs nothing on this machine and never sends a permission
+  request, so `auto` is the only level it offers; any other is refused with that reason.
 - Each request appears in the chat as a message with the command and the agent's own options as
   buttons ("Allow", "Reject", …). An edit or a write also shows what it will change — the diff, or
   the text that goes into the file — so the answer is about the change and not only its name. A
@@ -229,7 +241,8 @@ file and ran a command:
   mode on the card.
 - **agy.** Its modes are not used. They could not be read on the day (its login had expired), and
   its `default` mode, when last measured, asked before commands but wrote into its working
-  directory without asking. A level that asks still puts whatever agy does ask to you.
+  directory without asking. That is why `ask` is offered for it and says so: the requests agy does
+  make still reach you, and its writes do not wait.
 
 ## Quota command
 
