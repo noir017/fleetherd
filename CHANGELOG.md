@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.13.0] - 2026-11-18
+
 ### Added
 
 - **The git window reads a repository's history.** Its three comparisons — the working tree, the
