@@ -9695,7 +9695,7 @@ const SCRIPT = `
           // a repository is already explained in the pane, and a second red sentence about
           // branches beside it would read as a different failure.
           gitState.branchError = (d && d.text) || 'Could not read the branches.';
-          gitState.branchStale = !!(d && d.reason === 'not-git');
+          gitState.branchStale = gitNoRepo(d);
           if(!gitState.notGit) gitNote(gitState.branchError, true);
           return;
         }
@@ -9777,6 +9777,20 @@ const SCRIPT = `
       +(sub ? '<div class="gb-sub">'+text(sub)+'</div>' : '')
       +(act ? '<button type="button" data-gact="'+text(act)+'">'+text(actLabel || act)+'</button>' : '')
       +'</div>';
+  }
+
+  /**
+   * An answer that there is no repository to read: the directory is not in one (not-git), or it is
+   * gone (missing — a topic whose worktree was removed). Both are the window's empty state, not a
+   * failed request.
+   */
+  function gitNoRepo(d){
+    return !!(d && (d.reason === 'not-git' || d.reason === 'missing'));
+  }
+
+  function gitBlankNoRepo(d){
+    if(d.reason === 'missing') gitBlank('Directory not found.', d.text || 'This topic\u2019s directory no longer exists.');
+    else gitBlank('Not a git repository.', d.text || 'This directory is not inside a git repository.');
   }
 
   /** Which comparison came back empty, said in its own terms — the base is the answer's, not a guess. */
@@ -9889,7 +9903,7 @@ const SCRIPT = `
         // Anything but "this is not a repository" keeps what is on screen: the rows it has are
         // still true, and a reader who asked for more — or one looking at a commit — has not lost
         // it. A turn's own refresh failing must not throw the commit away under them.
-        if(!(d && d.reason === 'not-git')){
+        if(!gitNoRepo(d)){
           gitNote((d && (d.text || d.error))
             || (more ? 'Could not read more commits.' : 'Could not read the commits.'), true);
           // The first page failing leaves "Loading…" in the column; there is no list to keep.
@@ -9911,7 +9925,7 @@ const SCRIPT = `
         gitDestroyView();
         gitPaintCommits();
         gitNote('', false);
-        gitBlank('Not a git repository.', d.text || 'This directory is not inside a git repository.');
+        gitBlankNoRepo(d);
         return;
       }
       gitState.notGit = false;
@@ -10027,12 +10041,12 @@ const SCRIPT = `
         gitDestroyView();
         gitDiffEl.textContent = '';
         gitLayoutBtn.hidden = true;
-        if(d && d.reason === 'not-git'){
+        if(gitNoRepo(d)){
           // The window exists for a repository; outside one there is nothing to compare, and a
           // red note beside an empty list read as a request that failed rather than an answer.
           gitState.notGit = true;
           gitNote('', false);
-          gitBlank('Not a git repository.', d.text || 'This directory is not inside a git repository.');
+          gitBlankNoRepo(d);
           return;
         }
         gitState.notGit = false;

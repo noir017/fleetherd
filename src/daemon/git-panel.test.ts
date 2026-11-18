@@ -182,6 +182,22 @@ describe('git panel', () => {
     expect(await gitCommitFile(mounted, 'abc1234', 'a.txt')).toMatchObject({ ok: false });
   });
 
+  it('answers missing for a topic whose directory was removed, not that git could not run', async () => {
+    // A worktree cleaned up after its work merged: git cannot start in a directory that is gone,
+    // and the spawn error names git — "spawn git ENOENT" here, "fork/exec /usr/bin/git" on a host.
+    const gone = localWorkspace(path.join(dir, 'removed-worktree'));
+    const status = await gitStatus(gone, 'working');
+    expect(status).toMatchObject({ ok: false, reason: 'missing' });
+    expect(status.ok ? '' : status.text).toContain('removed-worktree');
+    expect(await gitLog(gone, 0)).toMatchObject({ ok: false, reason: 'missing' });
+    // A failure to start in a directory that IS there stays an error: nothing is gone.
+    const broken: Workspace = {
+      ...ws,
+      run: async () => ({ code: -1, output: Buffer.alloc(0), stderr: '', truncated: false, timedOut: false, spawnError: 'spawn git EACCES' }),
+    };
+    expect(await gitStatus(broken, 'working')).toMatchObject({ ok: false, reason: 'error' });
+  });
+
   it('pages the history newest first and says whether another page follows', async () => {
     repo();
     for (let i = 1; i <= 55; i++) {

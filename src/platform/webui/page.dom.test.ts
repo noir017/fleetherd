@@ -15115,6 +15115,20 @@ describe('webui page: the git window', () => {
     expect(h.el('git-files').querySelectorAll('.git-file').length).toBe(0);
   });
 
+  it('says the directory is gone, not that git failed, for a topic whose directory was removed', async () => {
+    const gone = { ok: false, reason: 'missing', text: "This topic's directory no longer exists: /srv/wt/feature" };
+    const h = await open({
+      replies: { [`api/git/branches?t=${A}`]: gone, [statusPath('working')]: gone },
+    });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#git-toggle');
+    await until('the sentence', () => Boolean(h.el('git-diff').querySelector('.git-blank')));
+
+    expect(h.el('git-diff').querySelector('.gb-title')?.textContent).toBe('Directory not found.');
+    expect(h.el('git-diff').textContent).toContain('/srv/wt/feature');
+    expect(h.el('git-note').hidden).toBe(true);
+  });
+
   it('repaints the pane when a directory that was not a repository becomes one', async () => {
     const status: Record<string, unknown> = {
       ok: false,
