@@ -3197,6 +3197,20 @@ function metaToolName(meta: unknown): string | undefined {
   return undefined;
 }
 
+/**
+ * The verb for a request that names no tool and has no `_meta` to name it, read off the tool's own
+ * arguments: `file_path` beside the text it will put there is a write, beside `old_string`/
+ * `new_string` an edit. A `command` needs no verb — the command IS what the user is deciding on —
+ * and anything else is left as the bare preview rather than guessed at.
+ */
+function inferToolName(rawInput: unknown): string | undefined {
+  if (!rawInput || typeof rawInput !== 'object') return undefined;
+  const raw = rawInput as Record<string, unknown>;
+  if (typeof raw.file_path !== 'string') return undefined;
+  if (typeof raw.content === 'string') return 'Write';
+  return 'Edit';
+}
+
 /** One `diff` content item as lines a chat bubble can show; empty when it carries no lines. */
 function diffPreview(path: string, oldText: string | null | undefined, newText: string): string {
   const body: string[] = [];
@@ -3251,7 +3265,7 @@ export function permissionRequestOf(req: RequestPermissionRequest): AgentPermiss
   // so it is named the way the tool row names it and the server rides in the title.
   const mcp = agyMcpCall(req.toolCall.rawInput);
   const preview = buildInputPreview(req.toolCall.rawInput);
-  const named = metaToolName(req.toolCall._meta);
+  const named = metaToolName(req.toolCall._meta) ?? inferToolName(req.toolCall.rawInput);
   const title =
     (mcp && `${agyMcpLabel(mcp)} — ${mcp.server}`) ||
     stripCode(req.toolCall.title ?? '') ||

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { RequestError, type RequestPermissionRequest } from '@agentclientprotocol/sdk';
-import { createAcpAgentFactory, PERMISSION_DECLINED_CODE, permissionResponse, permissionRequestOf } from './agent-acp.js';
+import { createAcpAgentFactory, decidePermission, PERMISSION_DECLINED_CODE, permissionResponse, permissionRequestOf } from './agent-acp.js';
 import { parseConfig, type Config } from '../config/schema.js';
 import type { AgentSession, AgentStreamHandlers } from './agent.js';
 import type { AgentPermissionRequest, PermissionAnswer } from '../types.js';
@@ -91,6 +91,16 @@ describe('permissionRequestOf', () => {
     });
   });
 
+  it('reads the verb off the arguments when the request names nothing at all', () => {
+    // The same CodeBuddy frame without the _meta hint: a file_path beside content is a write, and
+    // a bare path was the card that said nothing about what was about to happen to it.
+    const req: RequestPermissionRequest = {
+      ...REQUEST,
+      toolCall: { toolCallId: 't7', rawInput: { file_path: '/w/hello.txt', content: 'banana\n' } },
+    };
+    expect(permissionRequestOf(req)).toMatchObject({ title: 'Write: /w/hello.txt', detail: 'banana' });
+  });
+
   it('does not repeat a shell call’s description as its change', () => {
     // claude-agent-acp puts the Bash call's own description in `content`; the command is the title.
     const req: RequestPermissionRequest = {
@@ -149,6 +159,28 @@ describe('permissionResponse', () => {
     expect(permissionResponse(REQUEST, { kind: 'unattended' })).toEqual({
       outcome: { outcome: 'selected', optionId: 'allow-once' },
     });
+  });
+
+  it('answers a harness whose option ids are its own (codex: accept / acceptForSession / cancel)', () => {
+    // Measured on codex-acp 2.5.0: the ids carry no meaning a client may rely on, so the kind is
+    // what `auto` picks and what a tapped button's own id echoes back.
+    const req: RequestPermissionRequest = {
+      ...REQUEST,
+      options: [
+        { optionId: 'accept', name: 'Allow', kind: 'allow_once' },
+        { optionId: 'acceptForSession', name: 'Allow for this session', kind: 'allow_always' },
+        { optionId: 'cancel', name: 'Reject', kind: 'reject_once' },
+      ],
+    };
+    expect(decidePermission(req)).toEqual({ outcome: { outcome: 'selected', optionId: 'accept' } });
+    expect(permissionResponse(req, { kind: 'selected', optionId: 'acceptForSession' })).toEqual({
+      outcome: { outcome: 'selected', optionId: 'acceptForSession' },
+    });
+    expect(permissionRequestOf(req).options).toEqual([
+      { optionId: 'accept', label: 'Allow' },
+      { optionId: 'acceptForSession', label: 'Allow for this session' },
+      { optionId: 'cancel', label: 'Reject' },
+    ]);
   });
 
   it('cancels with the turn', () => {
