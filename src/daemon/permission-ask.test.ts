@@ -124,6 +124,14 @@ describe('the bubble a permission request is posted as', () => {
     expect(text).toContain('No answer within 60 min declines it.');
   });
 
+  it('cannot let a title that carries a fence end its own block either', () => {
+    // `_meta` tool names reach the title without going through stripCode, so the title needs the
+    // same neutralisation the detail gets.
+    const text = composePermissionPrompt('Wr\nite```: /path', DEFAULT_ASK_TIMEOUT_MS);
+    expect(text.match(/^```$/gm)).toHaveLength(2);
+    expect(text).toContain('Wr\nite``: /path');
+  });
+
   it('cannot let the file’s own fence split the bubble in two', () => {
     // A Write of a markdown file is the everyday case: three backticks in the content would end
     // the block early on every platform that reads a fence line by line.

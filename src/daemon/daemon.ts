@@ -428,10 +428,12 @@ const PERMISSION_TITLE_MAX = 600;
  *
  * The detail is a preview, and a preview must not be able to end the block it sits in: a file whose
  * content contains a fence would otherwise split the bubble in two on the platforms that read a
- * fence line by line. A run of three or more backticks is shown as two.
+ * fence line by line. The same holds for the title, which a harness's `_meta` can put a fence in
+ * just as easily. A run of three or more backticks is shown as two, in both.
  */
 export function composePermissionPrompt(title: string, timeoutMs: number, detail?: string): string {
-  const shown = title.length > PERMISSION_TITLE_MAX ? `${title.slice(0, PERMISSION_TITLE_MAX)}…` : title;
+  const shown = (title.length > PERMISSION_TITLE_MAX ? `${title.slice(0, PERMISSION_TITLE_MAX)}…` : title)
+    .replace(/`{3,}/g, '``');
   const change = detail ? `\n\n\`\`\`\n${detail.replace(/`{3,}/g, '``')}\n\`\`\`` : '';
   const minutes = Math.round(timeoutMs / 60_000);
   return `🔐 The agent asks to run:\n\`\`\`\n${shown}\n\`\`\`${change}\nNo answer within ${minutes} min declines it.`;

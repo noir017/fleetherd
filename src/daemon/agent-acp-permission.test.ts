@@ -101,6 +101,101 @@ describe('permissionRequestOf', () => {
     expect(permissionRequestOf(req)).toMatchObject({ title: 'Write: /w/hello.txt', detail: 'banana' });
   });
 
+  it('leaves a bare file path alone rather than calling it an edit', () => {
+    // A read (or a delete) asks with nothing but a path. Calling that `Edit:` would tell the user
+    // the agent is about to change a file it only wants to look at.
+    const req: RequestPermissionRequest = {
+      ...REQUEST,
+      toolCall: { toolCallId: 't8', rawInput: { file_path: '/w/a.txt' } },
+    };
+    expect(permissionRequestOf(req)).toEqual({
+      title: '/w/a.txt',
+      options: [
+        { optionId: 'allow-once', label: 'Allow' },
+        { optionId: 'reject', label: 'Reject' },
+      ],
+    });
+  });
+
+  it('shows a titleless edit’s own change, which is where CodeBuddy puts the diff', () => {
+    // CodeBuddy's Edit: no title, no kind, no `content` — `{file_path, old_string, new_string}`.
+    const req: RequestPermissionRequest = {
+      ...REQUEST,
+      toolCall: {
+        toolCallId: 't9',
+        rawInput: { file_path: '/w/src/app.ts', old_string: 'const PORT = 3000;', new_string: 'const PORT = 8080;' },
+      },
+    };
+    expect(permissionRequestOf(req)).toMatchObject({
+      title: 'Edit: /w/src/app.ts',
+      detail: '--- /w/src/app.ts\n+++ /w/src/app.ts\n-const PORT = 3000;\n+const PORT = 8080;',
+    });
+  });
+
+  it('takes the tool name from `_meta` even when the arguments alone would say nothing', () => {
+    // The name is the only thing that distinguishes a read from an edit here, so this is the test
+    // that pins the `_meta` read itself: without it the card falls back to the bare path.
+    const req: RequestPermissionRequest = {
+      ...REQUEST,
+      toolCall: {
+        toolCallId: 't10',
+        rawInput: { file_path: '/w/a.txt' },
+        _meta: { 'codebuddy.ai/toolName': 'Read' },
+      },
+    };
+    expect(permissionRequestOf(req)).toMatchObject({ title: 'Read: /w/a.txt' });
+  });
+
+  it('says what an ExitPlanMode request is about, not its raw JSON', () => {
+    // The frame codebuddy 2.181.0 sent in plan mode on 2026-11-18, verbatim but for the ids: no
+    // title, no kind, the tool named in `_meta`, and the plan the user must read also in `_meta`.
+    const plan = '# Plan: create planwrite.txt\n\n## Steps\n1. Write the file.\n2. Reply done.';
+    const req: RequestPermissionRequest = {
+      ...REQUEST,
+      toolCall: {
+        toolCallId: 't11',
+        rawInput: {},
+        _meta: {
+          'codebuddy.ai/toolName': 'ExitPlanMode',
+          'codebuddy.ai/planFilePath': '/h/.codebuddy/plans/plan.md',
+          'codebuddy.ai/plan': plan,
+        },
+      },
+      options: [
+        { optionId: 'allow_always', name: 'Always Allow', kind: 'allow_always' },
+        { optionId: 'allow', name: 'Allow', kind: 'allow_once' },
+        { optionId: 'reject', name: 'Reject', kind: 'reject_once' },
+        { optionId: 'reject_and_exit_plan', name: 'Exit plan mode', kind: 'reject_once' },
+      ],
+    };
+    expect(permissionRequestOf(req)).toMatchObject({
+      title: 'Exit plan mode',
+      detail: plan,
+      options: [
+        { optionId: 'allow_always', label: 'Always Allow' },
+        { optionId: 'allow', label: 'Allow' },
+        { optionId: 'reject', label: 'Reject' },
+        { optionId: 'reject_and_exit_plan', label: 'Exit plan mode' },
+      ],
+    });
+  });
+
+  it('names the prompts an ExitPlanMode request wants pre-approved when there is no plan text', () => {
+    // The other frame the same harness sent: `allowedPrompts` and nothing else.
+    const req: RequestPermissionRequest = {
+      ...REQUEST,
+      toolCall: {
+        toolCallId: 't12',
+        rawInput: { allowedPrompts: [{ tool: 'Bash', prompt: 'run echo redirect to create cmd.txt' }] },
+        _meta: { 'codebuddy.ai/toolName': 'ExitPlanMode' },
+      },
+    };
+    expect(permissionRequestOf(req)).toMatchObject({
+      title: 'Exit plan mode',
+      detail: 'Bash: run echo redirect to create cmd.txt',
+    });
+  });
+
   it('does not repeat a shell call’s description as its change', () => {
     // claude-agent-acp puts the Bash call's own description in `content`; the command is the title.
     const req: RequestPermissionRequest = {
