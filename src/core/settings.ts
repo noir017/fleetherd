@@ -672,9 +672,9 @@ function settingGroup(row: SettingRow): string {
 /** A sentence under a group heading, for what every row in it shares. */
 function settingGroupNote(row: SettingRow): string | undefined {
   // The Agents group's first row is the default agent, and its note speaks for the per-agent
-  // settings that follow: the model's timing and the permission level's, said once for the group.
+  // rows below it: the model's timing and the permission level's, said once for the group.
   if (row.id === 'agent') {
-    return 'What each agent starts a new session with, and how much it may do without you. A model applies from that agent’s next session (`/new` starts one); `/model` changes it in one topic only. A permission level applies at once, to running sessions too: `plan`, `ask` and `edits` put what it wants to do to you as buttons, `auto` approves it, `full` asks nothing. Which levels are offered depends on what its harness can put to you.';
+    return 'The agent rows below carry each agent’s own settings; the Default agent row only picks who answers a new conversation. A model applies from that agent’s next session (`/new` starts one); `/model` changes it in one topic only. A permission level applies at once, to running sessions too: `plan`, `ask` and `edits` put what it wants to do to you as buttons, `auto` approves it, `full` asks nothing. Which levels are offered depends on what its harness can put to you.';
   }
   if (row.id === 'review.agent') {
     return 'An agent reads a conversation that has gone quiet and writes what it learned into the skill library. The review runs with its tools switched off and every permission refused.';
@@ -1815,10 +1815,11 @@ function settingsListScreen(
   let defaultAgent: { screen: SettingsScreenRow; note?: string } | undefined;
   for (const [i, row] of rows.entries()) {
     const screen = drawn[i]!;
-    // Every row with a target is a per-agent setting (SettingRow.target), so a setting added per
-    // agent later joins its agent's row here without this list having to grow.
-    if (row.target) {
-      const field = settingsScreenField(row, screen);
+    // The per-agent settings there are today. A new one is added here and given a name in
+    // FIELD_LABEL, whose Record is over exactly these two ids so no chat label can stand in.
+    const id = row.id;
+    if ((id === 'model' || id === 'permissions') && row.target) {
+      const field = settingsScreenField(FIELD_LABEL[id], screen);
       const merged = byTarget.get(row.target);
       if (merged?.control.kind === 'agent') merged.control.fields.push(field);
       else {
@@ -1861,12 +1862,15 @@ function settingsListScreen(
 }
 
 /** What a per-agent setting is called inside its agent's row. */
-const FIELD_LABEL: Partial<Record<SettingId, string>> = { model: 'Model', permissions: 'Permissions' };
+const FIELD_LABEL: Record<'model' | 'permissions', SettingsScreenField['label']> = {
+  model: 'Model',
+  permissions: 'Permissions',
+};
 
 /** The field a per-agent row becomes inside its agent's row. */
-function settingsScreenField(row: SettingRow, screen: SettingsScreenRow): SettingsScreenField {
+function settingsScreenField(label: SettingsScreenField['label'], screen: SettingsScreenRow): SettingsScreenField {
   return {
-    label: FIELD_LABEL[row.id] ?? row.label,
+    label,
     buttonId: screen.buttonId,
     ...(screen.value !== undefined ? { value: screen.value } : {}),
     ...(screen.unset ? { unset: true } : {}),

@@ -643,8 +643,8 @@ export type SettingsScreenControl =
  * exactly the value screen it did before the rows were merged.
  */
 export interface SettingsScreenField {
-  /** What the setting is called (`Model`, `Permissions`). */
-  label: string;
+  /** What the setting is called. A new per-agent setting widens this union with its own name. */
+  label: 'Model' | 'Permissions';
   /** The `stg:` id of the setting's own row; a tap posts it to open that setting's values. */
   buttonId: string;
   /** The current value, already formatted for display. */
