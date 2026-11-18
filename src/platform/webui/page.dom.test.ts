@@ -4325,6 +4325,80 @@ describe('webui page: the settings page', () => {
     return m;
   };
 
+  /**
+   * The shape the daemon now sends for agents: one row per agent under `Agents`, each carrying its
+   * own fields — Model opening a value screen, Permissions a closed list — beside the agent's name.
+   * The default agent stays a plain row above them, and there is no `Default model` or
+   * `Permissions` section any more.
+   */
+  const permissions = (prefix: string, current: number, labels = ['plan', 'ask', 'edits', 'auto', 'full']) => ({
+    label: 'Permissions',
+    buttonId: 'stg:p:' + prefix,
+    value: labels[current],
+    control: {
+      kind: 'choice',
+      options: labels.map((label, i) => ({ buttonId: 'sts:p:' + prefix + ':' + i, label, current: i === current })),
+    },
+  });
+  const agentRow = (id: string, kind: string, model: Record<string, unknown>, perm: Record<string, unknown>, here = false) => ({
+    buttonId: String(model.buttonId),
+    label: id,
+    target: id,
+    targetKind: kind,
+    ...(here ? { here: true } : {}),
+    group: 'Agents',
+    control: { kind: 'agent', fields: [{ label: 'Model', control: { kind: 'list' }, ...model }, perm] },
+  });
+  const agentList = (id = 'm1'): Record<string, unknown> => ({
+    ...message(id, '<p>Settings</p>'),
+    buttons: [
+      { id: 'stg:r:0', label: 'Default agent · cc' },
+      { id: 'stg:m:0', label: 'cc · Claude Code' },
+    ],
+    settings: {
+      level: 'list',
+      groups: [{ name: 'Agents' }],
+      rows: [
+        {
+          buttonId: 'stg:r:0',
+          label: 'Default agent',
+          value: 'cc',
+          group: 'Agents',
+          control: { kind: 'choice', options: [{ buttonId: 'sts:r:0', label: 'cc', current: true }] },
+        },
+        agentRow('cc', 'Claude Code', { buttonId: 'stg:m:0', value: 'harness default', unset: true }, permissions('0', 1), true),
+        agentRow('oc@box', 'OpenCode', { buttonId: 'stg:m:1', value: LONG_MODEL, valueNote: 'pod.yaml' }, permissions('1', 0, [
+          'plan',
+          'ask',
+          'edits',
+          'auto',
+          'full',
+          'bypass permissions',
+        ])),
+      ],
+    },
+  });
+
+  /** The instructions panel's answer for agentList: cc has files of its own, oc@box does not. */
+  const INSTR = {
+    dir: '/c/instructions',
+    on: true,
+    global: [{ name: 'common.md', layer: 'common', exists: true, size: 5, agents: ['cc'] }],
+    agents: [
+      { id: 'cc', harness: 'claude', host: 'box', own: '`@` references in `~/.claude/CLAUDE.md`' },
+      { id: 'oc@box', harness: 'opencode', host: 'local' },
+    ],
+  };
+  const INSTR_REFS = {
+    ok: true,
+    agent: 'cc',
+    host: 'box',
+    root: '~/.claude/CLAUDE.md',
+    rootState: 'managed',
+    summary: '`@` references',
+    refs: [],
+  };
+
   const text = (h: Harness, sel: string): string[] =>
     Array.from(h.doc.querySelectorAll(sel)).map((e) => e.textContent ?? '');
   const clicks = (h: Harness) => h.calls.filter((c) => c.path === 'api/click').map((c) => c.body);
@@ -4410,6 +4484,152 @@ describe('webui page: the settings page', () => {
     expect(face(link?.querySelector('.set-chev'))).toBe('[chevronRight]');
     // One column of sections: no grid of rows left over from the two-column layout.
     expect(body.querySelector('.set-rows')).toBeNull();
+  });
+
+  it('draws one row per agent, with a labelled control for each of its settings', async () => {
+    const h = await opened(agentList());
+    const rows = Array.from(h.doc.querySelectorAll('#settings-body .set-item.ag'));
+    expect(rows).toHaveLength(2);
+
+    // The agent on the left: its id, what it is, and whether it answers this topic.
+    const cc = rows[0]!;
+    expect(cc.querySelector('.set-label span')?.textContent).toBe('cc');
+    expect(cc.querySelector('.set-kind')?.textContent).toBe('Claude Code');
+    expect(cc.querySelector('.set-badge.here')?.textContent).toBe('this topic');
+    expect(Array.from(cc.querySelectorAll('.set-flabel')).map((l) => l.textContent)).toEqual(['Model', 'Permissions']);
+
+    // Model is a value that opens its own screen, with a placeholder when nothing is set.
+    const model = cc.querySelector('button.set-fopen');
+    expect(model?.getAttribute('data-btn')).toBe('stg:m:0');
+    expect(model?.querySelector('.set-v')?.textContent).toBe('harness default');
+    expect(model?.querySelector('.set-v')?.classList.contains('unset')).toBe(true);
+    expect(face(model?.querySelector('.set-chev'))).toBe('[chevronRight]');
+
+    // Permissions is the same closed list a global row draws: short values as a segmented control.
+    expect(Array.from(cc.querySelectorAll('.set-seg button')).map((b) => [b.textContent, b.getAttribute('aria-checked')])).toEqual([
+      ['plan', 'false'],
+      ['ask', 'true'],
+      ['edits', 'false'],
+      ['auto', 'false'],
+      ['full', 'false'],
+    ]);
+
+    // A pod's value says where it comes from, and a list too long for segments is a select.
+    const oc = rows[1]!;
+    expect(oc.querySelector('button.set-fopen .set-v')?.textContent).toBe(LONG_MODEL);
+    expect(oc.querySelector('button.set-fopen .set-vnote')?.textContent).toBe('pod.yaml');
+    expect((oc.querySelector('select.set-select') as HTMLSelectElement).value).toBe('sts:p:1:0');
+
+    // Every control on the row is a redraw-surviving focus target.
+    for (const el of Array.from(cc.querySelectorAll('button, select'))) expect(el.getAttribute('data-fk'), el.outerHTML).toBeTruthy();
+    // The per-setting sections are gone: Agents is the whole screen.
+    expect(text(h, '#settings-body .set-group')).toEqual(['Agents']);
+  });
+
+  it('opens an agent’s model from its row, by the field’s own button id', async () => {
+    const h = await opened(agentList());
+    await h.click('#settings-body .set-item.ag button.set-fopen[data-btn="stg:m:0"]');
+    expect(clicks(h)).toEqual([{ topic: A, messageId: 'm1', buttonId: 'stg:m:0' }]);
+    expect(h.doc.querySelector('#settings-body button.set-fopen[data-btn="stg:m:0"]')?.classList.contains('busy')).toBe(true);
+  });
+
+  it('writes a permission level from the agent’s row, by the option’s button id', async () => {
+    const h = await opened(agentList());
+    await h.click('#settings-body .set-item.ag .set-seg button[data-btn="sts:p:0:3"]');
+    expect(clicks(h)).toEqual([{ topic: A, messageId: 'm1', buttonId: 'sts:p:0:3' }]);
+    expect(h.doc.querySelector('#settings-body .set-seg button[data-btn="sts:p:0:3"]')?.getAttribute('aria-checked')).toBe('true');
+    expect(h.doc.querySelector('#settings-body .set-seg button[data-btn="sts:p:0:1"]')?.getAttribute('aria-checked')).toBe('false');
+
+    // The daemon's answer redraws the row with the level it wrote.
+    const answered = agentList();
+    const row = (answered.settings as { rows: Array<Record<string, any>> }).rows[1]!;
+    row.control.fields[1].control.options.forEach((o: { current: boolean }, i: number) => (o.current = i === 3));
+    await h.emit({ t: 'msg', msg: answered });
+    expect(h.doc.querySelector('#settings-body .set-item.ag .set-seg button[aria-checked="true"]')?.textContent).toBe('auto');
+  });
+
+  it('puts an agent’s own instruction files on its row, and no longer lists them in a section', async () => {
+    const h = await opened(agentList(), {
+      instructions: true,
+      replies: { 'api/instructions': INSTR, 'api/instructions/refs?agent=cc': INSTR_REFS },
+    });
+
+    // The panel answers after the screen is drawn: the field joins the row without a reopen.
+    await until('the instructions field', () => Boolean(h.doc.querySelector('#settings-body .set-item.ag [data-instr-agent]')));
+    const field = h.doc.querySelector('#settings-body .set-item.ag [data-instr-agent]')!;
+    expect(field.getAttribute('data-instr-agent')).toBe('cc');
+    expect(field.closest('.set-field')?.querySelector('.set-flabel')?.textContent).toBe('Instructions');
+    expect(field.querySelector('.set-fnote')?.textContent).toBe('@ references in ~/.claude/CLAUDE.md');
+    expect(Array.from(field.querySelectorAll('.set-fnote code')).map((c) => c.textContent)).toEqual(['@', '~/.claude/CLAUDE.md']);
+    expect(field.querySelector('.set-vnote')?.textContent).toBe('box');
+    expect(field.getAttribute('data-fk')).toBeTruthy();
+    // An agent whose harness reads nothing of its own has no such field.
+    expect(h.doc.querySelectorAll('#settings-body [data-instr-agent]')).toHaveLength(1);
+    // The section keeps the gateway's files; the agents are no longer repeated under it.
+    expect(text(h, '.instr-sec .set-group')).toEqual(['Instructions']);
+    expect(h.doc.querySelector('.instr-sec [data-instr-agent]')).toBeNull();
+
+    // And the field opens what the old row opened: the file window on that agent's files.
+    await h.click('#settings-body .set-item.ag [data-instr-agent="cc"]');
+    await until('the editor', () => h.el('files').hidden === false);
+    expect(h.el('files-title').textContent).toBe('cc · own instructions');
+    expect(h.calls.some((c) => c.path === 'api/instructions/refs?agent=cc')).toBe(true);
+  });
+
+  it('names every field with the agent it belongs to, for a screen reader', async () => {
+    const h = await opened(agentList(), { instructions: true, replies: { 'api/instructions': INSTR } });
+    await until('the instructions field', () => Boolean(h.doc.querySelector('#settings-body [data-instr-agent]')));
+    // Several agents' rows are on one page, so "Model" alone says nothing about whose it is.
+    expect(h.doc.querySelector('button.set-fopen[data-fk="r1f0"]')?.getAttribute('aria-label')).toBe('cc · Model: harness default');
+    expect(h.doc.querySelector('.set-item.ag .set-seg')?.getAttribute('aria-label')).toBe('cc · Permissions');
+    expect(h.doc.querySelector('#settings-body select.set-select')?.getAttribute('aria-label')).toBe('oc@box · Permissions');
+    expect(h.doc.querySelector('[data-instr-agent="cc"]')?.getAttribute('aria-label')).toBe('cc · Instructions');
+  });
+
+  it('does not redraw under a control still waiting on the daemon', async () => {
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    const h = await opened(agentList(), {
+      instructions: true,
+      replies: { 'api/instructions': INSTR },
+      held: { 'api/instructions': held },
+    });
+    await h.click('#settings-body .set-item.ag .set-seg button[data-btn="sts:p:0:3"]');
+    const tapped = h.doc.querySelector('#settings-body .set-seg button[data-btn="sts:p:0:3"]') as HTMLButtonElement;
+    expect(tapped.classList.contains('busy')).toBe(true);
+
+    // The list arrives while that tap is still out: the control keeps its optimistic state, and
+    // the field waits for the answer that redraws the list anyway.
+    release();
+    await tick();
+    await tick();
+    expect(h.doc.querySelector('#settings-body .set-seg button[data-btn="sts:p:0:3"]')).toBe(tapped);
+    expect(tapped.classList.contains('busy')).toBe(true);
+    expect(tapped.disabled).toBe(true);
+    expect(tapped.getAttribute('aria-checked')).toBe('true');
+    expect(h.doc.querySelector('#settings-body [data-instr-agent]')).toBeNull();
+
+    await h.emit({ t: 'msg', msg: agentList() });
+    expect(h.doc.querySelector('#settings-body .set-item.ag [data-instr-agent="cc"]')).not.toBeNull();
+  });
+
+  it('keeps focus where it was when the instruction list arrives late', async () => {
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    const h = await opened(agentList(), {
+      instructions: true,
+      replies: { 'api/instructions': INSTR },
+      held: { 'api/instructions': held },
+    });
+    const model = h.doc.querySelector('#settings-body button.set-fopen[data-fk="r1f0"]') as HTMLButtonElement;
+    model.focus();
+    expect(h.doc.activeElement).toBe(model);
+
+    release();
+    await until('the instructions field', () => Boolean(h.doc.querySelector('#settings-body [data-instr-agent]')));
+    // The row is new markup; focus is back on the same control, by its key.
+    expect(h.doc.activeElement?.getAttribute('data-fk')).toBe('r1f0');
+    expect(h.doc.activeElement).not.toBe(model);
   });
 
   it('flips a switch in one tap, showing the new state before the daemon answers', async () => {
@@ -4913,6 +5133,20 @@ describe('webui page: the settings page', () => {
       const html = renderPage('Chat', false);
       expect(html).toMatch(/\.set-opt\{[^}]*min-height:44px/);
       expect(html).toMatch(/\.set-nav button\{[^}]*min-height:44px/);
+    });
+
+    it('moves an agent’s fields under its name, at the height a thumb needs', () => {
+      const css = narrow();
+      // One column, so the fields cannot fight the agent's name for the width.
+      expect(css).toContain('.set-item.ag{grid-template-columns:minmax(0,1fr)}');
+      expect(css).toContain('.set-item.ag>.set-fields{flex-direction:column;');
+      // A value row is the whole line, and tall enough to tap; the segments grow with it.
+      expect(css).toMatch(/\.set-item\.ag \.set-fopen\{[^}]*min-height:44px/);
+      expect(css).toMatch(/\.set-item\.ag \.set-seg button\{[^}]*min-height:44px/);
+      // None of that leaks onto the desktop, which keeps the fields beside the agent.
+      const desktop = renderPage('Chat', false).replace(css, '');
+      expect(desktop).not.toContain('.set-item.ag{grid-template-columns:minmax(0,1fr)}');
+      expect(desktop).toContain('.set-item.ag{grid-template-columns:minmax(0,auto) minmax(0,1fr)');
     });
 
     it('works the same controls at phone width', async () => {
@@ -14841,8 +15075,21 @@ describe('webui page: the instruction editor', () => {
     buttons: [{ id: 'stg:r:0', label: 'Idle reclaim · 15m' }],
     settings: {
       level: 'list',
-      groups: [{ name: 'Conversations' }],
-      rows: [{ buttonId: 'stg:r:0', label: 'Idle reclaim', value: '15m', group: 'Conversations', control: { kind: 'list' } }],
+      groups: [{ name: 'Agents' }, { name: 'Conversations' }],
+      rows: [
+        {
+          buttonId: 'stg:a:0',
+          label: 'cc',
+          target: 'cc',
+          targetKind: 'Claude Code',
+          group: 'Agents',
+          control: {
+            kind: 'agent',
+            fields: [{ label: 'Model', buttonId: 'stg:a:0', value: 'harness default', unset: true, control: { kind: 'list' } }],
+          },
+        },
+        { buttonId: 'stg:r:0', label: 'Idle reclaim', value: '15m', group: 'Conversations', control: { kind: 'list' } },
+      ],
     },
   };
   const LIST = {
@@ -14915,12 +15162,12 @@ describe('webui page: the instruction editor', () => {
     expect(h.calls.some((c) => c.path.startsWith('api/instructions'))).toBe(false);
   });
 
-  it('lists the gateway’s files and the agents that have files of their own, under the daemon’s rows', async () => {
+  it('lists the gateway’s files under the daemon’s rows, and each agent’s own files on its agent row', async () => {
     const h = await opened();
     const sec = h.doc.querySelector('.instr-sec') as HTMLElement;
     // After the /setting rows, not in place of them.
     expect(h.el('settings-body').lastElementChild).toBe(sec);
-    expect(h.doc.querySelector('#settings-body .set-item .set-label')?.textContent).toBe('Idle reclaim');
+    expect(h.doc.querySelector('#settings-body .set-item.set-open .set-label')?.textContent).toBe('Idle reclaim');
     const globals = Array.from(sec.querySelectorAll('[data-instr-global]')).map((b) => [
       b.getAttribute('data-instr-global'),
       b.querySelector('.set-label')?.textContent,
@@ -14931,11 +15178,15 @@ describe('webui page: the instruction editor', () => {
       ['common.md', 'Every agent', 'cc, cx', 'common.md'],
       ['claude.md', 'Claude Code', 'cc', 'claude.md · not written'],
     ]);
-    // An agent whose harness has nothing of its own (here: none named) is not offered.
-    const agents = Array.from(sec.querySelectorAll('[data-instr-agent]'));
-    expect(agents.map((b) => b.getAttribute('data-instr-agent'))).toEqual(['cc']);
-    expect(agents[0]?.querySelector('.set-kind')?.textContent).toBe('box');
-    expect(agents[0]?.querySelector('.set-hint')?.innerHTML).toContain('<code>~/.claude/rules</code>');
+    // The section is the gateway's files only: an agent's own files are a field on its own row.
+    expect(Array.from(sec.querySelectorAll('.set-group')).map((e) => e.textContent)).toEqual(['Instructions']);
+    expect(sec.querySelectorAll('[data-instr-agent]')).toHaveLength(0);
+    const own = h.doc.querySelector('#settings-body .set-item.ag [data-instr-agent="cc"]');
+    expect(own?.closest('.set-field')?.querySelector('.set-flabel')?.textContent).toBe('Instructions');
+    expect(own?.querySelector('.set-vnote')?.textContent).toBe('box');
+    expect(own?.querySelector('.set-fnote')?.innerHTML).toContain('<code>~/.claude/rules</code>');
+    // An agent whose harness has nothing of its own is not offered.
+    expect(h.doc.querySelectorAll('#settings-body [data-instr-agent]')).toHaveLength(1);
   });
 
   it('opens a global file in the file window, without the controls a fixed list has no use for', async () => {
