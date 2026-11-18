@@ -33,6 +33,8 @@ const PATHS = {
   stop: '<rect x="6" y="6" width="12" height="12" rx="1.5" fill="currentColor"/>',
   mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21M8.5 21h7"/>',
   terminal: '<rect x="3" y="4.5" width="18" height="15" rx="2"/><path d="m7 9.5 3 2.5-3 2.5M12.5 15H17"/>',
+  // The chat header's way into the repository a topic works in: a branch with two ends.
+  git: '<circle cx="6.5" cy="6" r="2.5"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="8" r="2.5"/><path d="M6.5 8.5v7M17.5 10.5c0 3.5-3.5 4.5-8 4.5"/>',
   // Marks in a menu's buttons (core: ● the current choice, ☑ / ☐ a toggle, ⌂ a workdir root).
   dot: '<circle cx="12" cy="12" r="4.5" fill="currentColor" stroke="none"/>',
   boxOn: '<rect x="4" y="4" width="16" height="16" rx="3"/><path d="m8 12.3 2.8 2.8L16.2 9"/>',
@@ -84,6 +86,10 @@ const PATHS = {
     '<circle cx="12" cy="12" r="9"/><path d="M3 12h18"/>' +
     '<path d="M12 3c2.4 2.5 3.6 5.5 3.6 9s-1.2 6.5-3.6 9c-2.4-2.5-3.6-5.5-3.6-9S9.6 5.5 12 3z"/>',
   subagent: '<path d="M6 4v8a3 3 0 0 0 3 3h10.5"/><path d="m15.5 11 4 4-4 4"/>',
+  // A turn's changes (the entry under a reply): two panes, one gaining lines and one losing them.
+  diff:
+    '<rect x="3" y="4" width="8" height="16" rx="1.5"/><rect x="13" y="4" width="8" height="16" rx="1.5"/>' +
+    '<path d="M7 10v4M5 12h4M15 12h4"/>',
   // A machine the gateway cannot reach: a signal's arcs, struck through.
   offline:
     '<path d="M2.5 8.8a14 14 0 0 1 19 0M5.6 12.3a9.5 9.5 0 0 1 12.8 0M8.8 15.7a5 5 0 0 1 6.4 0"/>' +

@@ -16,7 +16,7 @@
  */
 import { z } from 'zod';
 
-import type { ButtonSpec, MessageKind } from '../adapter.js';
+import type { ButtonSpec, MessageKind, TurnChangeEntry } from '../adapter.js';
 import type { AgentCatalog, AgentStatus, OfflineMachine, SettingsScreen, SlashCommandSpec } from '../../types.js';
 import { MAX_TOPICS, type Topic } from './topics.js';
 
@@ -240,6 +240,35 @@ export const ModelChooseRequestSchema = z
   .strict();
 
 /**
+ * The git window's query string (`GET api/git/status`, `api/git/file`).
+ *
+ * The query is checked by hand rather than by a schema because these are GETs, but the three
+ * values still go through zod so the vocabulary lives in one place: the mode is the closed set the
+ * panel understands, and the base and path are bounded strings. Neither is trusted by the daemon:
+ * the base has to name a branch the repository lists, and the path has to be one the change list
+ * returned, before either reaches a git command.
+ */
+export const GIT_MODES = ['working', 'branch', 'committed'] as const;
+
+export const GitStatusQuerySchema = z
+  .object({
+    mode: z.enum(GIT_MODES),
+    base: z.string().min(1).max(300).optional(),
+  })
+  .strict();
+
+export const GitFileQuerySchema = z
+  .object({
+    mode: z.enum(GIT_MODES),
+    base: z.string().min(1).max(300).optional(),
+    path: z.string().min(1).max(4096),
+  })
+  .strict();
+
+export type GitStatusQuery = z.infer<typeof GitStatusQuerySchema>;
+export type GitFileQuery = z.infer<typeof GitFileQuerySchema>;
+
+/**
  * One operation on one managed skill.
  *
  * A discriminated union, so each verb carries exactly the fields it needs and a body carrying
@@ -322,6 +351,62 @@ export type SkillOpRequest = z.infer<typeof SkillOpRequestSchema>;
  */
 export const ReviewOpRequestSchema = z.object({ action: z.literal('dismiss'), text: z.string().min(1).max(2000) }).strict();
 export type ReviewOpRequest = z.infer<typeof ReviewOpRequestSchema>;
+
+/**
+ * The file window's writes.
+ *
+ * Every one names its topic, because the files are that conversation's — on that conversation's
+ * machine. `path` is a path, not free text: the daemon normalizes it against the topic's workspace
+ * and refuses anything outside, so the check that matters is there, not here; what this bounds is
+ * only the buffer a body can be.
+ *
+ * `mtimeMs` and `size` are the version check: the file as the page last read it. `missing: true`
+ * is the create case. A missing expectation would be a write with no check at all, so the schema
+ * asks for both, and the page sends what it read.
+ */
+export const FilesWriteRequestSchema = z
+  .object({
+    topic: TopicId,
+    path: z.string().min(1).max(4096),
+    /** Characters, not bytes; the daemon refuses one over 1 MiB of UTF-8. */
+    text: z.string().max(1_100_000),
+    mtimeMs: z.number().int().min(0).optional(),
+    size: z.number().int().min(0).optional(),
+    /** The content version read with the file: what a same-length edit cannot change unnoticed. */
+    sha256: z
+      .string()
+      .regex(/^[0-9a-f]{64}$/, 'not a sha256')
+      .optional(),
+    missing: z.boolean().optional(),
+    /** The person chose "overwrite" after a conflict: skip the version check, nothing else. */
+    force: z.boolean().optional(),
+  })
+  .strict();
+export type FilesWriteRequest = z.infer<typeof FilesWriteRequestSchema>;
+
+export const FilesCreateRequestSchema = z
+  .object({
+    topic: TopicId,
+    path: z.string().min(1).max(4096),
+    /** A directory, rather than an empty file. */
+    dir: z.boolean().default(false),
+  })
+  .strict();
+export type FilesCreateRequest = z.infer<typeof FilesCreateRequestSchema>;
+
+export const FilesRenameRequestSchema = z
+  .object({
+    topic: TopicId,
+    from: z.string().min(1).max(4096),
+    to: z.string().min(1).max(4096),
+  })
+  .strict();
+export type FilesRenameRequest = z.infer<typeof FilesRenameRequestSchema>;
+
+export const FilesRemoveRequestSchema = z
+  .object({ topic: TopicId, path: z.string().min(1).max(4096) })
+  .strict();
+export type FilesRemoveRequest = z.infer<typeof FilesRemoveRequestSchema>;
 
 /**
  * Validate one inbound body against a schema.
@@ -564,6 +649,16 @@ export interface WebMessage {
    * folded lines of a tool bubble.
    */
   kind?: MessageKind;
+  /**
+   * What this turn changed in the workspace (`daemon/turn-changes.ts`): how many files, and the
+   * line counts. Set on the last message of a finished turn, by `WebRoom.attachTurnChanges`.
+   *
+   * Part of the message rather than a separate event on purpose: the transcript store and the
+   * browser's cache keep the whole message, so the entry is still under the reply after a reload,
+   * a reconnect or a daemon restart — and it is drawn only while the page has somewhere to open
+   * the diff (`window.openGitWindow`), which is what keeps it off a page without that panel.
+   */
+  turnChanges?: TurnChangeEntry;
   /**
    * The run of the daemon this message was said in (that run's sync `epoch`), set only on a message
    * kept on disk from an EARLIER run — a topic's transcript, restored at startup.

@@ -348,6 +348,43 @@ export const WebuiConfigSchema = z.object({
         .optional(),
     })
     .default({}),
+  /**
+   * The file window: browse and edit the files of whichever machine a topic's agent runs on.
+   *
+   * Off by default, and this is the fourth security decision here rather than a convenience. The
+   * page already puts the login secret in front of talking to an agent; opening this puts it in
+   * front of WRITING files on the agent's machine — which is running commands by another route, so
+   * the distance from a leaked token to arbitrary code becomes a save button. Keep it off unless
+   * you would also turn the terminal on.
+   *
+   * Reach: each topic's working directory, plus `roots`. A path is normalized and must land under
+   * one of those; a `..` that climbs out is refused. Symlinks inside a root are followed, so what a
+   * link points at is writable through it — a workspace laid out as links into mounted volumes is
+   * a normal arrangement, and resolving them would refuse the files this exists for.
+   */
+  files: z
+    .object({
+      enabled: z.boolean().default(false),
+      /**
+       * Directories reachable from every topic besides its own working directory. Absolute, or
+       * `~/…` (expanded on the machine the agent runs on — a remote agent's home, not this one).
+       *
+       * Checked for shape at load, because a relative entry would be silently inert: containment
+       * is decided against absolute paths, so nothing under a relative root could ever match it.
+       */
+      roots: z
+        .array(
+          z
+            .string()
+            .min(1)
+            .refine(
+              (p) => /^(?:~(?:\/|$)|\/|[A-Za-z]:[\\/])/.test(p),
+              'files.roots entries must be absolute (or start with ~/); a relative one would match nothing'
+            )
+        )
+        .default([]),
+    })
+    .default({}),
   ...common,
 });
 

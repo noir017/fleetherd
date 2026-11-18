@@ -64,6 +64,19 @@ import type {
 import type {
   ButtonSpec,
   ConversationWorkdir,
+  GitBranchesResult,
+  GitFileResult,
+  GitMode,
+  GitPanel,
+  GitStatusResult,
+  FilesPanel,
+  FilesPanelCreateResult,
+  FilesPanelListResult,
+  FilesPanelReadResult,
+  FilesPanelRemoveResult,
+  FilesPanelRenameResult,
+  FilesPanelSearchResult,
+  FilesPanelWriteResult,
   HistoryPanel,
   HistoryPanelHit,
   HistoryPanelPage,
@@ -87,6 +100,10 @@ import type {
   SkillPanelResult,
   SkillsPanel,
   SkillPanelSearches,
+  TurnChangeEntry,
+  TurnChangeFileResult,
+  TurnChangesPanel,
+  TurnChangeStatusResult,
 } from '../adapter.js';
 import type { WebuiPlatformConfig } from '../config-schemas.js';
 import { escapeHtml, renderWebMarkdown, renderWebToolLines } from '../web-markdown.js';
@@ -453,6 +470,8 @@ export class WebRoom {
   private readonly nonces = new Set<string>();
   private commands: SlashCommandSpec[] = [];
 
+  /** Read-only git for a topic's directory — see `useGitPanel`. */
+  private gitPanel: GitPanel | null = null;
   private onMsg: ((m: InboundMessage) => void) | null = null;
   private onBtn: ((ev: ButtonInteraction) => void) | null = null;
   /** Injected by the daemon; absent in a deployment (or a test) that never offered one. */
@@ -465,12 +484,16 @@ export class WebRoom {
   private schedulePanel: SchedulePanel | null = null;
   /** The model switch for a topic's conversation — see `useModelPicker`. */
   private modelPicker: ModelPicker | null = null;
+  /** A turn's changed files, for the transcript's change entry — see `useTurnChanges`. */
+  private turnChangesPanel: TurnChangesPanel | null = null;
   /** The daemon's managed skills and every operation on them — see `useSkillsPanel`. */
   private skillsPanel: SkillsPanel | null = null;
   /** The automatic reviews the daemon recorded — see `useReviewPanel`. */
   private reviewPanel: ReviewPanel | null = null;
   /** The conversation library, for the history page — see `useHistoryPanel`. */
   private historyPanel: HistoryPanel | null = null;
+  /** The files of each topic's machine, for the file window — see `useFilesPanel`. */
+  private filesPanel: FilesPanel | null = null;
   /** Likewise, but it acts: ends an idle topic's agent process. See `closeIdle`. */
   private idleReclaim: ((ref: ConversationRef) => boolean) | null = null;
   /** Likewise, but broader: ends a topic's agent and every agent under it. See `killTopic`. */
@@ -554,6 +577,7 @@ export class WebRoom {
     }
     this.disposeRoom(victim.id);
     this.forgetKept(victim.id);
+    this.forgetTurnChanges(victim.id);
     this.topics.delete(victim.id);
     // The one record of which topic went, and what it was called. The daemon's binding for it
     // stays in conversations.json (as it does for a ×), so this line is how its session id can
@@ -607,6 +631,7 @@ export class WebRoom {
     this.disposeRoom(id);
     // A star defers to the ×, kept transcript and all.
     this.forgetKept(id);
+    this.forgetTurnChanges(id);
     if (!this.topics.delete(id)) return false;
     this.announceTopics();
     return true;
@@ -633,6 +658,7 @@ export class WebRoom {
       if (kept?.starred) continue;
       this.disposeRoom(id);
       this.forgetKept(id);
+      this.forgetTurnChanges(id);
     }
     this.topics.clear();
     const fresh = this.topics.full() ? this.topics.current() : this.topics.create();
@@ -817,6 +843,98 @@ export class WebRoom {
     return this.modelPicker.choose(this.conversation(topic), value);
   }
 
+  /**
+   * Accept the daemon's turn changes: one turn's changed files, and one of them read whole.
+   * The records themselves are written by the turn (daemon/turn-changes.ts), not here — this is
+   * the read side the page's window calls.
+   */
+  useTurnChanges(panel: TurnChangesPanel): void {
+    this.turnChangesPanel = panel;
+  }
+
+  /** One turn's changed files, for the window the change entry opens. */
+  async turnChangesStatus(topic: string, turn: number): Promise<TurnChangeStatusResult> {
+    if (!this.turnChangesPanel) return { ok: false, reason: 'error', text: 'This daemon records no turn changes.' };
+    if (!this.topics.has(topic)) return { ok: false, reason: 'error', text: 'No such topic.' };
+    return this.turnChangesPanel.status(this.conversation(topic), turn);
+  }
+
+  /** One changed file of one turn: both sides and its unified diff. */
+  async turnChangesFile(topic: string, turn: number, rel: string): Promise<TurnChangeFileResult> {
+    if (!this.turnChangesPanel) return { ok: false, text: 'This daemon records no turn changes.' };
+    if (!this.topics.has(topic)) return { ok: false, text: 'No such topic.' };
+    return this.turnChangesPanel.file(this.conversation(topic), turn, rel);
+  }
+
+  /**
+   * Hang a finished turn's change summary off a message — `messageId` is the one that turn last
+   * posted, captured by the daemon at turn end.
+   *
+   * An id rather than "the newest message in the topic": the end snapshot is taken off the turn,
+   * so by the time it lands the topic may already hold the next turn's reply, and an entry under
+   * that one would name a turn it does not belong to. An id the topic no longer has (the ring
+   * rotated, a message removed) means no entry, which is the honest answer.
+   *
+   * The page draws one line under the message and opens the diff window from there, and because
+   * the entry is part of the message the transcript store keeps, it is still there after a reload,
+   * a reconnect and a restart.
+   */
+  attachTurnChanges(topicId: string, entry: TurnChangeEntry, messageId?: string): void {
+    if (!messageId || !this.topics.has(topicId)) return;
+    const room = this.rooms.get(topicId);
+    if (!room) return;
+    const rec = room.stored.get(messageId);
+    if (!rec || rec.msg.own || rec.msg.turnChanges) return;
+    rec.msg = { ...rec.msg, turnChanges: entry };
+    this.emit(topicId, { t: 'msg', msg: rec.msg });
+    this.keep(topicId);
+  }
+
+  /**
+   * A topic is going: tell the daemon to forget its turn-change records, so their snapshots do not
+   * outlive the only page that could ever have shown them. Best-effort — the topic is gone either
+   * way, and a panel that has no such operation is a deployment without the feature.
+   */
+  private forgetTurnChanges(topicId: string): void {
+    const panel = this.turnChangesPanel;
+    if (!panel?.forget) return;
+    try {
+      panel.forget(this.conversation(topicId));
+    } catch {
+      // Nothing here is worth breaking a deletion over.
+    }
+  }
+
+  /**
+   * Accept the daemon's read-only view of the repository a topic's directory sits in. A facade
+   * like the panels above: the git commands run on the machine the agent runs on, through
+   * `ConversationRegistry.workspaceForRef`, so this side never assumes the daemon's own filesystem.
+   */
+  useGitPanel(panel: GitPanel): void {
+    this.gitPanel = panel;
+  }
+
+  /** One comparison's change list, for the git window. */
+  async gitStatus(topic: string, mode: GitMode, base?: string): Promise<GitStatusResult> {
+    if (!this.gitPanel) return { ok: false, reason: 'error', text: 'This daemon offers no git window.' };
+    if (!this.topics.has(topic)) return { ok: false, reason: 'error', text: 'No such topic.' };
+    return this.gitPanel.status(this.conversation(topic), mode, base);
+  }
+
+  /** One changed file's two sides and patch, for the git window's diff. */
+  async gitFile(topic: string, mode: GitMode, base: string | undefined, path: string): Promise<GitFileResult> {
+    if (!this.gitPanel) return { ok: false, text: 'This daemon offers no git window.' };
+    if (!this.topics.has(topic)) return { ok: false, text: 'No such topic.' };
+    return this.gitPanel.file(this.conversation(topic), mode, base, path);
+  }
+
+  /** The branches a base may name, for the git window's picker. */
+  async gitBranches(topic: string): Promise<GitBranchesResult> {
+    if (!this.gitPanel) return { ok: false, text: 'This daemon offers no git window.' };
+    if (!this.topics.has(topic)) return { ok: false, text: 'No such topic.' };
+    return this.gitPanel.branches(this.conversation(topic));
+  }
+
   /** Every task, for the panel. `enabled: false` when the daemon offered none (a test daemon). */
   schedules(): { enabled: boolean; tasks: SchedulePanelTask[] } {
     if (!this.schedulePanel) return { enabled: false, tasks: [] };
@@ -932,6 +1050,64 @@ export class WebRoom {
       messages: historyMessages(read.messages),
       ...(read.note ? { note: read.note } : {}),
     };
+  }
+
+  /**
+   * Accept the daemon's file window: list, read, write, create, rename, delete and search, on
+   * whichever machine a topic's agent runs on (`daemon/file-panel.ts`).
+   *
+   * A facade, and the one panel here that writes: every path is resolved and fenced by the daemon
+   * against the topic's workspace, so the page cannot name a file outside it however it spells the
+   * path. The page never learns which machine it is talking to either — the daemon's Workspace
+   * answers the same way on both (`daemon/workspace.ts`).
+   */
+  useFilesPanel(panel: FilesPanel): void {
+    this.filesPanel = panel;
+  }
+
+  /** The files off, or no topic — the same sentence for both, because the page can do nothing about either. */
+  private noFiles(topic: string): { ok: false; error: string } {
+    return { ok: false, error: this.filesPanel ? `no such topic: ${topic}` : 'the file window is turned off in this daemon' };
+  }
+
+  async filesList(topic: string, path: string): Promise<FilesPanelListResult> {
+    if (!this.filesPanel || !this.topics.has(topic)) return this.noFiles(topic);
+    return this.filesPanel.list(this.conversation(topic), path);
+  }
+
+  async filesRead(topic: string, path: string, preview = false): Promise<FilesPanelReadResult> {
+    if (!this.filesPanel || !this.topics.has(topic)) return this.noFiles(topic);
+    return this.filesPanel.read(this.conversation(topic), path, { preview });
+  }
+
+  async filesWrite(
+    topic: string,
+    path: string,
+    text: string,
+    expect: { mtimeMs?: number; size?: number; sha256?: string; missing?: boolean; force?: boolean }
+  ): Promise<FilesPanelWriteResult> {
+    if (!this.filesPanel || !this.topics.has(topic)) return this.noFiles(topic);
+    return this.filesPanel.write(this.conversation(topic), path, text, expect);
+  }
+
+  async filesCreate(topic: string, path: string, dir: boolean): Promise<FilesPanelCreateResult> {
+    if (!this.filesPanel || !this.topics.has(topic)) return this.noFiles(topic);
+    return this.filesPanel.create(this.conversation(topic), path, dir);
+  }
+
+  async filesRename(topic: string, from: string, to: string): Promise<FilesPanelRenameResult> {
+    if (!this.filesPanel || !this.topics.has(topic)) return this.noFiles(topic);
+    return this.filesPanel.rename(this.conversation(topic), from, to);
+  }
+
+  async filesRemove(topic: string, path: string): Promise<FilesPanelRemoveResult> {
+    if (!this.filesPanel || !this.topics.has(topic)) return this.noFiles(topic);
+    return this.filesPanel.remove(this.conversation(topic), path);
+  }
+
+  async filesSearch(topic: string, query: string): Promise<FilesPanelSearchResult | { ok: false; error: string }> {
+    if (!this.filesPanel || !this.topics.has(topic)) return this.noFiles(topic);
+    return this.filesPanel.search(this.conversation(topic), query);
   }
 
   /** Accept the daemon's way of ending an idle topic's agent process — see `closeIdle`. */

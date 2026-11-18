@@ -31,6 +31,24 @@ describe('webui page', () => {
     expect(html).not.toContain('${');
   });
 
+  it('loads its code view on demand, not with the page', () => {
+    // The bundle is an ES module under assets/, imported the first time a file needs it. Nothing
+    // here is a script element, so a page that never shows code never downloads the editor — and
+    // a build with no assets (the placeholder is null) still has a complete page.
+    expect(scriptOf(html)).toContain('window.__fhCodeView');
+    expect(scriptOf(html)).toContain('import(new URL(CODEVIEW, document.baseURI).href)');
+    expect(html).toMatch(/var CODEVIEW = null;/);
+    expect(html).not.toMatch(/<script[^>]+src=/);
+  });
+
+  it('carries the built bundle when it is handed one, by a path a sub-path mount still resolves', () => {
+    const built = renderPage('Chat', false, true, false, 'assets/codeview-abc123.js');
+    expect(scriptOf(built)).toContain("var CODEVIEW = 'assets/codeview-abc123.js';");
+    // Relative, like api/events and manifest.webmanifest: an absolute /assets/ would leave a proxy
+    // prefix behind and 404 the editor.
+    expect(scriptOf(built)).not.toContain("'/assets/");
+  });
+
   it('loads nothing from anywhere', () => {
     expect(html).not.toMatch(/(?:src|href)\s*=\s*["']https?:/);
     expect(html).not.toContain('//cdn');

@@ -144,6 +144,7 @@ import { ReviewService, reviewCandidatesFrom, type ReviewCandidate, type ReviewL
 import { ReviewStateStore } from './review-state.js';
 import { buildReviewPanel } from './review-panel.js';
 import { buildHistoryPanel } from './history-panel.js';
+import { buildFilesPanel } from './file-panel.js';
 import { standingInstructions } from './instructions.js';
 import { selfInvocation } from './reverse-cli-shim.js';
 import {
@@ -172,6 +173,7 @@ import { VoiceIntake } from './voice.js';
 import { ScheduleService } from './schedule-service.js';
 import { panelEditInput, panelTaskDetail, panelTasks } from './schedule-panel.js';
 import { buildSkillsPanel } from './skills-panel.js';
+import { buildGitPanel } from './git-panel.js';
 import { SkillsRepo, prepareSkillsRepo, skillsRemoteOf } from './skills-repo.js';
 import { SkillLibrary, type LibraryAsker } from './skill-library.js';
 import { skillHarnessOf } from './managed-skills.js';
@@ -2094,6 +2096,33 @@ export class Daemon {
       list: (ref) => this.registry.modelPickerForRef(ref),
       choose: (ref, value) => this.registry.chooseModelForRef(ref, value),
     });
+    /**
+     * A turn's changed files: the list the change entry opens, one file out of the two trees, and
+     * the forget that follows a deleted topic. The records are the turn's own — see TurnChanges.
+     */
+    adapter.useTurnChanges?.({
+      status: (ref, turn) => this.registry.turnChangesStatusForRef(ref, turn),
+      file: (ref, turn, path) => this.registry.turnChangesFileForRef(ref, turn, path),
+      // A topic the page deleted: its records and the refs keeping their trees go with it.
+      forget: (ref) => this.registry.turnChangesForgetForRef(ref),
+    });
+    // The file window: off unless the operator turned it on. Writing a file on an agent's machine
+    // is running commands by another route — the same ceiling as the terminal, and the same
+    // explicit opt-in. Nothing is injected when it is off, so a route that somehow got past the
+    // server's own 404 still finds no panel to act through.
+    const platform = this.config.platforms[id];
+    if (platform?.type === 'webui' && platform.files.enabled) {
+      adapter.useFilesPanel?.(
+        buildFilesPanel({
+          instance: id,
+          roots: platform.files.roots,
+          workspaceForRef: (ref) => this.registry.workspaceForRef(ref),
+        })
+      );
+    }
+    // The web UI's git window: read-only, on whichever machine the conversation's agent runs.
+    // The registry answers where its next session would start; nothing is started or recorded.
+    adapter.useGitPanel?.(buildGitPanel((ref) => this.registry.workspaceForRef(ref)));
   }
 
   /**

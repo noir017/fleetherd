@@ -55,6 +55,12 @@ export interface FrameHeader {
   target?: string;
   requires?: string;
   owned?: string;
+  // The editor's version check (remote/ops.go opEditWrite).
+  size?: number;
+  mtimeMs?: number;
+  sha256?: string;
+  expectMissing?: boolean;
+  force?: boolean;
   atomic?: boolean;
   bash?: string;
   argv?: string[];

@@ -52,6 +52,8 @@ naming it, and they are all of them:
 | `terminal-sessions.ts` | The bookkeeping either side of those bytes: who is attached, and the operator's command for ending a session |
 | `protocol.ts` | `.strict()` zod schemas for every inbound body; the outbound event union |
 | `reading.ts` | Which files the page can read in place, and the HTML it is given for one. Pure. |
+| `codeview/` | The CodeMirror bundle the page loads on demand: the editor and the diff — see [The code view](#the-code-view) |
+| `assets.ts` | Where that bundle was built to, and the entry the page is told to import |
 | `page.ts` | The whole page (HTML + CSS + JS) as a module-level string |
 | `manifest.ts` | The web app manifest and the icon, as strings, for the same reason `page.ts` is one |
 | `icons.ts` | The page's icons, hand-drawn inline SVG, and which emoji each one replaces — see [Icons](#icons) |
@@ -711,6 +713,89 @@ taken away. A refresh button asks by hand and reports a failure; on a skill's pa
 unless the editor holds unsaved text. Every name has a copy button, with the `execCommand` fallback a plain-http
 origin needs.
 
+## The git window
+
+The branch icon in the chat header opens the repository the topic's directory sits in: what changed,
+one file's diff, and line comments that go back into the composer. It is a window over the transcript
+like the skills page, and full-screen on a phone. **Read-only** — there is no stage, commit, discard
+or checkout in it, here or in the daemon behind it; changing a repository while an agent works in it
+belongs in the conversation, where the agent can be asked what it meant.
+
+**Three comparisons.** `working` is the working tree against HEAD, untracked files included;
+`branch` is the working tree against the merge base of HEAD and a base branch, so committed and
+uncommitted changes read together; `committed` is HEAD against that merge base. The base starts as
+`origin/HEAD`, else `main`, else `master`, and can be picked from the branch list. A repository
+with no commits works too: `working` and `branch` list its files as additions, `committed` is empty.
+Every path in the window is relative to the **repository root**, not to the topic's directory, which
+may be a subdirectory of it. A directory that is not in a repository is answered as `not-git` with a
+sentence, not as an empty list.
+
+**Data.** [`useGitPanel`](../adapter.ts) hands the room `status`, `file` and `branches`;
+[`daemon/git-panel.ts`](../../daemon/git-panel.ts) implements them over
+`ConversationRegistry.workspaceForRef`, so the commands run on whichever machine the conversation's
+agent runs on. Three routes carry it — `GET api/git/status?t=&mode=&base=`,
+`GET api/git/file?t=&mode=&base=&path=` and `GET api/git/branches?t=` — with the query validated by
+`GitStatusQuerySchema` / `GitFileQuerySchema` in `protocol.ts`. A refusal from git (`not-git`, a
+comparison with no merge base, a path not in the list) is a 200 with its own sentence, like the model
+list's "no models"; only a malformed query is a 400.
+
+**How the commands are run.** Every call is argv, never a shell. The path a person names is placed
+only after `--`, and it is first checked against the change list git itself returned, so a path the
+list did not name cannot be read even if a request invents one. Git runs with
+`-c core.quotepath=off -c color.ui=never`, `--no-ext-diff --no-renames` and `-z`, and with
+`GIT_OPTIONAL_LOCKS=0` (an agent is usually working in the repository at the same moment, and
+`git status` must not take the index lock to refresh it) and `LC_ALL=C`.
+
+**The listing a file open reuses.** A status answer hands the panel everything the comparison
+resolved — the repository root, the branch list, the merge base, the changed paths and their stats —
+and `buildGitPanel` keeps it for 15 seconds. Opening a file in that window is then only its two
+sides and its patch; without the reuse every file click re-ran the whole comparison, which on a
+remote host is a round trip per command and one numstat per untracked file. A refresh, a mode change
+or a base change calls `status` again and overwrites the entry, and the key includes the comparison,
+so one comparison's rows are never read under another's.
+
+**Untracked files and symlinks.** `git status` runs with `--untracked-files=all`, so a directory the
+agent just created is listed as its files rather than one `dir/` row that could only be refused. The
+per-file numstat calls are bounded to 200 per answer and four in flight; a row past that cap says
+its counts were not read (`statsUnknown`) instead of showing a `+0 −0` nobody measured. A symlink is
+compared by its TARGET TEXT, on both sides: the committed side is the blob, which already holds the
+target, and the working side is read with `readlink` rather than followed. A non-zero exit from
+`readlink` is its ordinary "not a symlink" answer; a timeout or a spawn failure is an error, because
+a link whose target could not be read must not be shown as the target's bytes.
+
+**Caps, and why a truncated answer is not content.** One side of a file may be 1 MiB; past that the
+file is `tooLarge` and all three strings are empty. A NUL byte in either side, or a numstat `-`, is
+`binary` and likewise empty. The workspace keeps the END of a command's output past its cap (the
+remote host's ring buffer), so a truncated change list is reported as `truncated` rather than parsed
+from its tail, and truncated file content is `tooLarge`. A patch is capped separately (4 MiB): a
+rewrite of a large file can produce a diff bigger than either side, and one that may be the tail of
+a bigger one is not a diff — it comes back `tooLarge` with `patchTooLarge`, which the page words as
+the diff being too large, not the file. `truncated` on a status answer means only the LIST is
+incomplete; a cut-off numstat merely leaves the counts out. The line counts for an
+untracked file come from `git diff --no-index --numstat` — the same text `git add --intent-to-add`
+would produce — rather than a temporary index, because a remote host has no way to delete one and
+leaving it behind in the repository would be worse than one extra command per untracked file.
+
+**Line comments.** Selecting lines in a diff (the code view's `onSelect`) offers **Comment**; the
+text is inserted into the composer — never sent — as the file, line range and side (`(old)` or
+`(new)`), a fenced block of the selected lines, then the comment, with several comments separated
+by a blank line. The side matters: an old-side line number read as a new-file line number points at
+the wrong line. Without `codeView()` there is no selection, so the comment affordance is **not
+offered**: the fallback is the unified patch with `+` and `−` coloured, which is readable but cannot
+say which lines were chosen.
+
+**Two callers.** `openGitWindow()` with no argument is the header's view. `openGitWindow({ title,
+statusUrl, fileUrl })` fixes the two addresses, hides the mode controls, and appends `&path=` to
+`fileUrl`; the turn-changes view uses that. Both refresh the change list when a turn in the topic
+ends, and neither reloads an open diff under the reader.
+
+**The editor button.** Each row offers **Edit** only when the page has an `openFileEditor` function,
+and calls it with the file's ABSOLUTE path — the repository root joined with the root-relative path
+this list shows, because the editor resolves a relative one against the topic's directory. The
+editor keeps its own workspace fence, so a file outside the topic's directory can still be refused
+there. `openFileEditor` is that function; until it exists the button is not drawn rather than drawn
+dead.
+
 ## The History tab
 
 The sidebar's header is two tabs, **Topics** and **History** (since 2026-11-11; 2.58.0 shipped the
@@ -843,6 +928,32 @@ never a permission prompt nobody asked for.
 | `maxMessageLength` | 20000 | Not a platform limit. A ceiling so one runaway reply does not become an unbounded DOM node redrawn several times a second |
 | `maxEditsPerMessage` | unset | Nothing here ever refuses an edit |
 | `toolPreviewLimit` | 2000 | The only platform that declares one: see [Tool bubbles](#tool-bubbles) |
+
+## A turn's changes
+
+Every turn run here records what it changed in its workspace, and its reply carries a line for it.
+`daemon/turn-changes.ts` snapshots the work tree before the prompt and after the turn (`GIT_DIR` +
+`GIT_WORK_TREE` + a per-snapshot index in `~/.fleetherd/snapshots/<hash of the root>` on the
+agent's machine, `add -A`, `write-tree`), diffs the two trees, and keeps the last 50 turns of each
+conversation in `<configDir>/turn-changes.json`. The design notes are in that file's header; what
+matters here is the page's half:
+
+- **The entry is a field of the message** (`WebMessage.turnChanges`), not a transcript event of its
+  own. The transcript store and the browser's cache keep whole messages, so a reload, a reconnect
+  and a daemon restart all bring the entry back with the reply it belongs to — nothing has to be
+  re-fetched or re-derived. It is hung off the message the turn last posted, which the daemon
+  captures at turn end: the end snapshot runs after the turn, and by the time it lands the topic
+  may already hold the next turn's reply.
+- **It is drawn only when the page can open a window** (`window.openGitWindow`, the git panel's).
+  The check is at draw time, so a page served without that panel shows no entry at all rather than a
+  button that does nothing; the two URLs it hands over are `api/turn-changes/status` and
+  `api/turn-changes/file`, and the window appends `&path=<the URL-encoded path>` to `fileUrl`.
+- **Only where something can show it.** The daemon snapshots for a platform that implements
+  `attachTurnChanges`, which is this one; every chat platform skips the work for free.
+- **One directory, two topics, is not separated.** A turn's diff is its own "before" against its
+  own "after", so when two topics work in the same directory at the same time each one's diff
+  contains the other's edits. Splitting them would need a barrier across agents; the honest answer
+  is the one in [docs/web-ui.md](../../../docs/web-ui.md).
 
 ## Tool bubbles
 
@@ -1623,6 +1734,56 @@ commands is not.
   iframe (`display:block`) beats the user agent's `[hidden]{display:none}`, and the loser of
   that fight is not obvious from reading either rule.
 
+## The file window
+
+Off by default. Turned on, the chat header grows a folder button that opens a window over the
+transcript: a directory tree on the left (a drawer on a phone), breadcrumbs and a filename search
+above, and an editor on the right. It shows the files of **whichever machine the topic's agent runs
+on** — this one, or a remote host — because `ConversationRegistry.workspaceForRef` answers that
+with one interface on both (`daemon/workspace.ts`).
+
+The work is in `daemon/file-panel.ts`; this directory owns the page and the routes. Three
+decisions shape it:
+
+- **Reach is a path rule, not a sandbox.** Each topic's working directory, the git
+  repository it sits in (the git panel names files from the repository root), plus
+  `platforms.<id>.files.roots`. A path from the page is normalized and must sit under one of them;
+  a `..` that climbs out is refused, never clamped. Symlinks are followed and not resolved for
+  that check — a workspace of links into mounted volumes is normal here — so what a link inside a
+  root points at is writable through it. The ceiling is the agent's own tool access, which is why
+  this is opt-in like the terminal.
+- **A save is checked, and the file stays the file it was.** The write follows a symlink to its
+  target, keeps the existing file's permission bits (a new file gets the umask default), writes a
+  temporary beside it, fsyncs and renames. It carries the size, mtime and SHA-256 the page read.
+  The hash is what catches a same-length edit inside one timestamp tick, and it is checked once
+  before the temporary is written and once immediately before the rename. That is **a check before
+  the write, not an atomic compare-and-swap**: a writer landing between the last check and the
+  rename is overwritten. A mismatch comes back as a conflict, which the page puts to the person as
+  reload / overwrite / cancel. Overwrite is an explicit `force`, not an unchecked default. Both
+  machines implement the same rules (`remote/ops.go` `opEditWrite` is the host's half).
+- **A save does not change bytes the person did not edit.** The read keeps a UTF-8 BOM in the text,
+  and reports the file's line ending; the page normalizes CRLF to LF for the textarea (which would
+  do it anyway) and puts CRLF back on save, so a file opened and saved untouched is the same bytes.
+  A file that MIXES endings, or uses only CR, cannot be kept as it is by an editor: the page says
+  above the editor which ending a save will write, instead of changing it quietly.
+- **Folders are managed from the tree.** New file, new folder, rename and delete act on the file
+  the editor holds, and a folder row carries its own rename and delete buttons. A folder is deleted
+  only when it is empty — the daemon refuses anything else and the page shows its sentence ("That
+  folder is not empty. Delete its contents first.") — and deleting the folder the open file lives
+  in asks the same unsaved-changes question a close would before anything is sent.
+- **What can be edited is decided by content, not by name.** ≤ 1 MiB, valid UTF-8, no NUL — past
+  that (or for an image, which is shown as a `data:` URL up to 5 MiB) the file is shown with its
+  details and no editor. Markdown gets a rendered preview tab, built by `web-markdown.ts` on the
+  server, so the preview cannot be more permissive than a message.
+
+A file can be opened from elsewhere: `window.openFileEditor(path)` takes a path relative to the
+topic's working directory or absolute on that machine, and the git panel uses it.
+
+Routes are `GET /api/files/list|read|search` and `POST /api/files/write|create|rename|remove`.
+Every one answers 404 when the feature is off, and the page is told at render time (`FILES_OK`),
+so a page older than the config has no button to press. A successful write is a log line naming
+the operator, the machine and the file.
+
 ## Security
 
 New trust boundary, so it is spelled out. The port binds every interface by default and what
@@ -1663,6 +1824,36 @@ is behind it is an agent with full tool access.
    in the `<title>` of the equally-open page, so this widens nothing.
 8. **An upgrade is gated separately, because it has to be** — it never reaches `route()`, so
    nothing above applies to it automatically. See [the terminal pane](#the-terminal-pane).
+9. **`script-src 'self'` is the code view: the only file it reaches is one this build wrote.**
+   The page still has no external script; the policy admits one more *same-origin* URL, which is
+   the entry `GET /assets/<file>` serves (see [The code view](#the-code-view)). The asset route
+   reads only `dist/webui-assets/`: one path segment, no leading dot, a `.js` extension, and the
+   resolved parent must still be that directory.
+
+   What keeps a file the agent sent from being that URL is point 5 — with its exception stated
+   too: a download is `attachment` + `nosniff`, and its type is `application/octet-stream` unless
+   it is one of the raster images `inlineImageType` admits, which are served as themselves so the
+   page can draw them. An agent's `.js` is in the first group: a file to save, never something
+   this origin parses or runs, and `server.test.ts` pins it. The reader serves no file at all — it
+   sends HTML this daemon built from the bytes.
+
+   **The claim stops at this file's own handlers.** `server.test.ts` reads `server.ts` and pins
+   that only the asset route and `sw.js` — the fixed string in `sw.ts` — write a JavaScript
+   content type. `/term/` is outside that promise: `proxyRequest` copies ttyd's headers verbatim,
+   so what type the terminal page arrives as is ttyd's to decide, and a test boots a fake upstream
+   answering `text/javascript` to show it is passed through untouched. Nothing loads `/term/` as a
+   script (it is an iframe `src`), and the terminal needs the session like everything else — but
+   "no JavaScript under this origin" would be a claim this daemon cannot keep, so it is not made.
+10. **The file window is a second writer on the agent's machine, and is off unless asked for.**
+   `platforms.<id>.files.enabled` puts the login secret in front of *writing files where the agent
+   runs*; that is running commands by another route, so it is opt-in like the terminal, and with
+   it off every `/api/files/…` route is 404 rather than a hidden button over live endpoints. The
+   reach rule is the daemon's, not the page's: a normalized path under the topic's working
+   directory, its git repository or a configured `files.roots`, with `..` refused (`daemon/file-panel.ts` `locate`).
+   Symlinks are followed, so a link inside a root carries the write to its target — the same
+   statement `docs/web-ui.md` makes to the operator, and the reason this is not sold as a sandbox.
+   Every save is version-checked and every write is logged. Do not add a write route that skips
+   that check, or a page-side path rule standing in for the daemon's.
 
 **Not solved here:** TLS (put a reverse proxy in front), and DNS rebinding — a `Host`
 allowlist would break the reverse-proxy deployment this is expected to run behind, so the
@@ -1756,11 +1947,13 @@ full-screen page it was, so the conversation stays visible around the document b
 
 It does not bend point 5, it goes round it. `GET view/<token>` (`server.ts` `view`) resolves the
 same download token, reads at most `MAX_READ_BYTES` (512 KiB) of the file, and answers JSON:
-`{ name, size, shown, html }`. The `html` is `reading.ts`'s — `renderWebMarkdown` for a `.md`, the
+`{ name, size, shown, html }` — plus `text`, the decoded head, for a `text` file and never for a
+markdown one. The `html` is `reading.ts`'s — `renderWebMarkdown` for a `.md`, the
 file's text through `escapeHtml` inside a `<pre class="src">` for everything else on its list — so
 the page puts into its DOM exactly what it already puts there for every streamed reply, under the
-same CSP. An `.html` or an `.svg` is on that list *as source*: the browser never receives the file,
-so there is nothing that could render it.
+same CSP. The page gives `text` to [the code view](#the-code-view) when it has one and otherwise
+keeps the `<pre>`; both are the same cut of the same file. An `.html` or an `.svg` is on that list
+*as source*: the browser never receives the file, so there is nothing that could render it.
 
 - **`reading.ts` `readableKind` is the closed list, read by both ends** — the arrangement
   `inlineImageType` has. `index.ts` sets `file.view` (the URL, from `WebRoom.viewUrl`, next to where
@@ -1784,6 +1977,66 @@ The real-browser half — files delivered through the real adapter's `sendFile`,
 1280 and 390 px, the window's margins and dimmed backdrop, **Download** saving the file, no CSP
 violation, the close button 44px on a phone — was checked in Chromium on 2026-11-04
 (`project-scripts/talkcode-file-reader/e2e.mts`).
+
+### The code view
+
+A text file is shown in CodeMirror 6 with its grammar's colours, and the same bundle is what the
+git diff panel and the file editor are built on (`codeview/`). It is the page's one built asset:
+`src/platform/webui/codeview/` is bundled by `scripts/build-webui-assets.mjs` into
+`dist/webui-assets/`, given a content-hashed name, and served by `GET /assets/<file>` behind the
+session. Markdown keeps the rendered HTML — the code view is for what is read as source.
+
+**`page.ts` `codeView()` is the only way in.** It resolves to the API below, or to null when
+there is no bundle or the bundle would not load; the reader then keeps the `<pre>` the server
+already sent, which is a complete answer rather than an error state.
+
+```js
+codeView(): Promise<{ editor, diff } | null>
+editor(parent, { doc, name, readOnly?, onChange?, onSave? }) → { getDoc, setDoc, focus, destroy }
+diff(parent, { name, original, modified, layout, onSelect? }) → { setLayout, destroy }
+```
+
+Five things about it are decisions, not detail:
+
+- **The entry is a loader and nothing else** (`codeview/index.ts`). esbuild keeps what an entry
+  chunk imports statically inside that chunk, and a dynamic chunk importing the same module gets a
+  second copy rather than sharing it. Two copies of `@codemirror/state` are two `Compartment`
+  types, so `compartment.reconfigure(...)` from one is an effect the other's editor ignores
+  *silently* — which is how the first build rendered every file in one colour with no error
+  anywhere (measured in Chromium, 2026-11-18). With the entry importing one dynamic chunk, the app
+  and the grammars are siblings and share one copy.
+- **The specifier is made absolute before `import()`.** `import('assets/x.js')` in an inline
+  classic script fails with "Failed to resolve module specifier" in Chromium (same date), so the
+  page resolves `CODEVIEW` against `document.baseURI` first. That is still relative to the page's
+  own URL, so a reverse proxy sub-path mounts the bundle under its prefix like every other URL here.
+- **Each language is its own chunk.** Every extension in `codeview/app.ts` `LANG` is a dynamic
+  import, so opening a `.go` file downloads the editor and the Go grammar, not the other fifteen.
+  An extension with no grammar opens as plain text rather than as the wrong one.
+- **The palette is the page's.** The theme reads `--bg`, `--fg`, `--dim` and `--line`, so the
+  editor cannot drift from the page; the token colours are a dark set tuned against those, since
+  there is no light page either. The reader hands it a full-height column (`#reader-body.cv`) —
+  CodeMirror scrolls itself, and two nested scrollers is what makes a phone unusable.
+- **`onSave` is `Mod-s`** (Control on Windows and Linux, Command on a Mac), and `onSelect` reports
+  1-based line numbers plus the text of the main selection, or null when it is emptied. The diff
+  rebuilds itself on `setLayout` because `MergeView` and a unified view are different objects —
+  the package's own `reconfigure` does not change the layout.
+
+A source checkout started with `node --import tsx src/cli.ts start` needs one
+`npm run build:assets` first (it is part of `npm run build` for a release). Until that has run,
+`CODEVIEW` is null and code files stay in the `<pre>` — the same page, without the editor.
+
+**The build writes `licenses.txt` beside the chunks.** CodeMirror and the lezer grammars keep
+their licence in a LICENSE file rather than in header comments, so minification would otherwise
+erase every notice while the tarball ships only this project's own LICENSE — MIT requires the
+notice to travel with the copy. `scripts/third-party-licenses.mjs` reduces esbuild's metafile
+input list to the packages that actually contributed a module, reads each one's licence verbatim,
+and the build stops if any of them ships no licence file at all — the names are printed — or if the
+file it wrote does not name them. It is not served by
+`/assets/` (that route is `.js` only); it ships in `dist`, which `package.json` `files` carries.
+
+The reader's half was checked in Chromium on 2026-11-18: a `.ts` file highlighted with its gutter,
+at 1280 and at 390 px (where it wraps and nothing overflows), no CSP violation in the console, and
+a `diff()` drag reporting `{ side: 'old', from: 1, to: 2, text }` from a real selection.
 
 ### The other door: `sso.ts`
 
@@ -1980,6 +2233,15 @@ safety), `auth.test.ts` (constant-time compare, throttle, expiry), `protocol.tes
 rejection), `room.test.ts` and `index.test.ts` (the adapter contract), `server.test.ts` (real
 sockets: the auth gate, the CSRF locks, the download headers, and that `stop()` terminates
 with a stream open), `page.test.ts` (the script parses and nothing was eaten).
+
+`server.test.ts` also holds the asset route: the immutable JavaScript headers, the guarded
+session, every spelling of a traversal that must 404, and the pin that only `/assets/` and `sw.js`
+handle a JavaScript content type — with a fake ttyd serving one through `/term/` beside it, which
+is what keeps that pin honest about its own scope. `page.dom.test.ts` drives the reader through a
+fake `window.__fhCodeView` — an editor for a text file, destroyed when another file replaces it
+and when the window closes — through a bundle that will not load (the `<pre>` returns, and the
+console is warned exactly once however many files follow), and through a page with no bundle at
+all.
 
 `page.dom.test.ts` is the one that covers the client script's *behaviour*. It loads what the
 daemon serves into jsdom, stubs `EventSource` and `fetch`, and drives the page through the

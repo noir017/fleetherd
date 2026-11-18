@@ -39,11 +39,13 @@
  * leak a socket; it hangs Ctrl-C forever.
  */
 import { createReadStream } from 'node:fs';
-import { open, stat } from 'node:fs/promises';
+import { open, readFile, stat } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { Socket } from 'node:net';
+import path from 'node:path';
 import { brotliCompress, constants as zlibConstants, createGzip, gzip, gzipSync } from 'node:zlib';
 
+import { ASSET_FILE, loadAssets, type WebAssets } from './assets.js';
 import { SESSION_COOKIE, readCookie, sessionCookie, type WebAuth } from './auth.js';
 import { ICON_PNG, ICON_SVG, renderManifest } from './manifest.js';
 import { servePage } from './page.js';
@@ -56,6 +58,8 @@ import {
   DeleteTopicRequestSchema,
   EndTerminalRequestSchema,
   FramedSendHeaderSchema,
+  GitFileQuerySchema,
+  GitStatusQuerySchema,
   LoginRequestSchema,
   MAX_BODY_BYTES,
   SendRequestSchema,
@@ -68,6 +72,10 @@ import {
   SeenRequestSchema,
   SkillOpRequestSchema,
   ReviewOpRequestSchema,
+  FilesWriteRequestSchema,
+  FilesCreateRequestSchema,
+  FilesRenameRequestSchema,
+  FilesRemoveRequestSchema,
   StarTopicRequestSchema,
   TOPIC_ID,
   parseBody,
@@ -156,12 +164,13 @@ export function createWebServer(
   instance: WebuiInstance,
   terminal: TerminalSettings,
   sso?: WebSso,
-  push?: WebPush
+  push?: WebPush,
+  assets: WebAssets = loadAssets()
 ): WebServer {
   const sockets = new Set<Socket>();
   const streams = new Set<Stream>();
   const upstreams: UpstreamSet = new Set<Socket>();
-  const ctx: Ctx = { room, auth, instance, streams, terminal, upstreams, sso, push, warned: new Map() };
+  const ctx: Ctx = { room, auth, instance, streams, terminal, upstreams, sso, push, assets, warned: new Map() };
 
   const server = createServer((req, res) => {
     void route(req, res, ctx).catch((e: unknown) => {
@@ -307,6 +316,8 @@ interface Ctx {
   warned: Map<string, number>;
   /** Push notifications (webpush.ts); absent in a test that does not care, which then offers none. */
   push?: WebPush;
+  /** The built code view, if a build ever ran — see `assets.ts`. */
+  assets: WebAssets;
   /** The page as last served — see `servedPage`. */
   page?: ServedPage;
 }
@@ -412,11 +423,23 @@ const GUARDED: Route[] = [
   // takes — the same warm-up /model does), and the switch, which is /model's.
   { method: 'GET', path: '/api/models', run: modelList },
   { method: 'POST', path: '/api/models', run: modelChoose },
+  // What one turn changed in its workspace, and one of those files read out of the turn's two
+  // snapshots. Both are read-only and both take a topic id, a turn number and (for the file) a
+  // path relative to the repository root; the daemon refuses a path that turn did not change.
+  { method: 'GET', path: '/api/turn-changes/status', run: turnChangesStatus },
+  { method: 'GET', path: '/api/turn-changes/file', run: turnChangesFile },
   { method: 'GET', path: '/api/skills', run: skillsList },
   { method: 'POST', path: '/api/skills/op', run: skillsOp },
   { method: 'GET', path: '/api/reviews', run: reviewsList },
   // Dismissing a preference suggestion — the Reviews tab's only write, to reviews.json alone.
   { method: 'POST', path: '/api/reviews/op', run: reviewsOp },
+  // The git window: the change list for one comparison, one file's two sides and patch, and the
+  // branches a base may name. Read-only — there is no stage, commit or discard route here, and
+  // nothing in `daemon/git-panel.ts` writes to a repository. All three take `?t=` and run on the
+  // machine the topic's agent runs on.
+  { method: 'GET', path: '/api/git/status', run: gitStatusView },
+  { method: 'GET', path: '/api/git/file', run: gitFileView },
+  { method: 'GET', path: '/api/git/branches', run: gitBranchesView },
   // The history page: every conversation in the library, a keyword search over them, and one
   // opened whole. Read-only, and the same store `fleetherd sessions` reads. Every parameter is in
   // the query string rather than a body, so the checks are here — there is no schema to hold them.
@@ -429,6 +452,9 @@ const GUARDED: Route[] = [
   // The same token, rendered for the reader instead of handed over: JSON holding HTML built by
   // `reading.ts`, never the file's own bytes or type. See `view`.
   { method: 'GET', path: '/view/', prefix: true, run: ({ req, res, rest }, ctx) => view(req, res, ctx.room, rest) },
+  // The code view's bundle, and the language chunks it imports. The one route that serves a
+  // script off disk — see `asset`, and the security note beside the page's CSP.
+  { method: 'GET', path: '/assets/', prefix: true, run: ({ req, res, rest }, ctx) => asset(req, res, ctx.assets, rest) },
   // The terminal pane's backend. Listed unconditionally even though the feature is usually
   // off, so this table stays the complete answer to "what is reachable"; `terminalPage`
   // answers 404 when it is off, which is the truth about the route either way.
@@ -436,6 +462,18 @@ const GUARDED: Route[] = [
   // Ending a session, as opposed to closing a pane. Guarded like everything else, and refused
   // outright when the operator configured no way to do it — see `terminal-sessions.ts`.
   { method: 'POST', path: '/api/terminal/end', run: endTerminal },
+  // ── The file window (platforms.<id>.files) ────────────────────────────────
+  // Listed as a group, and like the terminal's routes they answer 404 when the feature is off
+  // (`filesOn`) — the table stays the complete list of what exists, the answer says whether this
+  // deployment has it. Reads are GET with every parameter in the query string; writes are POST
+  // with a `.strict()` body in protocol.ts.
+  { method: 'GET', path: '/api/files/list', run: filesList },
+  { method: 'GET', path: '/api/files/read', run: filesRead },
+  { method: 'GET', path: '/api/files/search', run: filesSearch },
+  { method: 'POST', path: '/api/files/write', run: filesWrite },
+  { method: 'POST', path: '/api/files/create', run: filesCreate },
+  { method: 'POST', path: '/api/files/rename', run: filesRename },
+  { method: 'POST', path: '/api/files/remove', run: filesRemove },
 ];
 
 /**
@@ -573,6 +611,10 @@ function servedPage(ctx: Ctx): ServedPage {
     ctx.terminal.enabled,
     passwordLogin(ctx.instance),
     ctx.terminal.sessions.canEnd,
+    // Relative, like every other URL on the page: a gateway mounted under a sub-path serves the
+    // bundle from `<prefix>/assets/` and the page's own import resolves the same way.
+    ctx.assets.codeview === null ? null : `assets/${ctx.assets.codeview}`,
+    filesOn(ctx),
   ] as const;
   const key = JSON.stringify(args);
   if (ctx.page?.key === key) return ctx.page;
@@ -629,10 +671,21 @@ const PAGE_HEADERS: Record<string, string> = {
   // ttyd's terminal, with its IME and file transfer, against re-implementing all of it here.
   //
   // `worker-src 'self'` is what lets the page register sw.js (webpush.ts says why there is one).
-  // It names where a WORKER may be loaded from and nothing else: the page's own scripts are still
-  // inline only, so no same-origin file — an agent's upload included — can run as one.
+  // It names where a WORKER may be loaded from and nothing else.
+  //
+  // `script-src 'self'` is the code view (`/assets/`, see `asset`) and nothing else THIS FILE
+  // writes: the page's own script is still inline, and the only other JavaScript response a
+  // handler here produces is sw.js. `/term/` is not this file's to promise — `proxyRequest`
+  // copies the upstream's headers verbatim, so its Content-Type is ttyd's, whatever ttyd decides
+  // to serve (server.test.ts pins a fake upstream answering as JavaScript). What is left is the
+  // hole an agent's file could climb through, and it is not one: a download is `attachment` with
+  // `nosniff`, and its type is `application/octet-stream` unless it is one of the closed set of
+  // raster images `inlineImageType` admits — so no bytes the agent wrote are ever parsed as a
+  // script on this origin, and the reader shows an `.html` as source rather than a document. The
+  // route is behind the session like everything else, and `server.test.ts` pins that no other
+  // handler here carries a JavaScript content type.
   'Content-Security-Policy':
-    "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-src 'self'; frame-ancestors 'self'; manifest-src 'self'; worker-src 'self'; form-action 'none'; base-uri 'none'",
+    "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline' 'self'; img-src 'self' data:; connect-src 'self'; frame-src 'self'; frame-ancestors 'self'; manifest-src 'self'; worker-src 'self'; form-action 'none'; base-uri 'none'",
   'X-Content-Type-Options': 'nosniff',
   'Referrer-Policy': 'no-referrer',
 };
@@ -1028,6 +1081,42 @@ async function modelChoose({ req, res }: Req, ctx: Ctx): Promise<void> {
 }
 
 /**
+ * The two parameters every turn-changes route needs: which topic, and which turn.
+ *
+ * The topic id is the same hex shape protocol.ts enforces on the way in, and the turn number is
+ * the daemon's own — a positive integer, bounded so a nonsense number never reaches a lookup.
+ * Anything else is a 400: these are GETs, so there is no schema to hold the check.
+ */
+function turnChangeQuery(url: URL): { topic: string; turn: number } | undefined {
+  const topic = url.searchParams.get('t') ?? '';
+  const turn = Number(url.searchParams.get('turn') ?? '');
+  if (!/^[0-9a-f]{8}$/.test(topic)) return undefined;
+  if (!Number.isInteger(turn) || turn < 1 || turn > 1_000_000) return undefined;
+  return { topic, turn };
+}
+
+/** One turn's changed files — the answer the git window's status tab reads. */
+async function turnChangesStatus({ req, res, url }: Req, ctx: Ctx): Promise<void> {
+  const q = turnChangeQuery(url);
+  if (!q) return send(req, res, 400, { error: 'a topic id and a turn number are required' });
+  // A well-formed question with no record answers with the failure shape, 200: the window shows
+  // the daemon's own sentence rather than a protocol error.
+  send(req, res, 200, await ctx.room.turnChangesStatus(q.topic, q.turn));
+}
+
+/** One changed file of one turn: both sides whole, and its unified diff. */
+async function turnChangesFile({ req, res, url }: Req, ctx: Ctx): Promise<void> {
+  const q = turnChangeQuery(url);
+  const p = url.searchParams.get('path') ?? '';
+  if (!q || !p) return send(req, res, 400, { error: 'a topic id, a turn number and a path are required' });
+  // A path is only ever a repository-relative name; this bound is about absurd input, and the
+  // daemon's own check — was it changed in this turn — is what actually decides.
+  if (p.length > 4096) return send(req, res, 400, { error: 'that path is too long' });
+  const answer = await ctx.room.turnChangesFile(q.topic, q.turn, p);
+  send(req, res, answer.ok ? 200 : 404, answer);
+}
+
+/**
  * Every managed skill, for the page's skills window. `enabled: false` when this daemon was
  * started without the panel (tests, mostly), so the page can say so instead of pretending the
  * gateway has no skills.
@@ -1068,6 +1157,44 @@ async function reviewsOp({ req, res }: Req, ctx: Ctx): Promise<void> {
   if (!parsed) return;
   const result = ctx.room.reviewOp(parsed);
   send(req, res, result.ok ? 200 : 400, result.ok ? result.list : { error: result.error });
+}
+
+/**
+ * The git window's change list. 200 even for "not a git repository" and for a comparison git
+ * could not make: those are answers with a sentence, like the model list's "no models", not a
+ * failure of the request. Only a malformed query is a 400.
+ */
+async function gitStatusView({ req, res, url }: Req, ctx: Ctx): Promise<void> {
+  const topic = url.searchParams.get('t') ?? '';
+  if (!TOPIC_ID.test(topic)) return send(req, res, 400, { error: 'not a topic id' });
+  const base = url.searchParams.get('base');
+  const parsed = parseBody(GitStatusQuerySchema, {
+    mode: url.searchParams.get('mode') ?? '',
+    ...(base ? { base } : {}),
+  });
+  if (!parsed.ok) return send(req, res, 400, { error: parsed.error });
+  send(req, res, 200, await ctx.room.gitStatus(topic, parsed.value.mode, parsed.value.base));
+}
+
+/** One file's two sides and patch, for the diff. The path is checked again in git-panel.ts. */
+async function gitFileView({ req, res, url }: Req, ctx: Ctx): Promise<void> {
+  const topic = url.searchParams.get('t') ?? '';
+  if (!TOPIC_ID.test(topic)) return send(req, res, 400, { error: 'not a topic id' });
+  const base = url.searchParams.get('base');
+  const parsed = parseBody(GitFileQuerySchema, {
+    mode: url.searchParams.get('mode') ?? '',
+    ...(base ? { base } : {}),
+    path: url.searchParams.get('path') ?? '',
+  });
+  if (!parsed.ok) return send(req, res, 400, { error: parsed.error });
+  send(req, res, 200, await ctx.room.gitFile(topic, parsed.value.mode, parsed.value.base, parsed.value.path));
+}
+
+/** The branches a base may name, for the git window's picker. */
+async function gitBranchesView({ req, res, url }: Req, ctx: Ctx): Promise<void> {
+  const topic = url.searchParams.get('t') ?? '';
+  if (!TOPIC_ID.test(topic)) return send(req, res, 400, { error: 'not a topic id' });
+  send(req, res, 200, await ctx.room.gitBranches(topic));
 }
 
 /** How many conversations one page may carry. The store's own ceiling; a page asks for 50. */
@@ -1194,6 +1321,34 @@ async function readHead(file: string, limit: number): Promise<{ bytes: Buffer; s
   }
 }
 
+/**
+ * One file from the built asset directory — the code view's entry module and its language chunks.
+ *
+ * This is the only route that serves a script off disk, and it serves only what
+ * `scripts/build-webui-assets.mjs` wrote: `ASSET_FILE` is one path segment with no leading dot,
+ * no separator and no `%`, and the resolved parent must still be the asset directory. Together
+ * that leaves no spelling of `..` or of an encoded separator that reaches `readFile` with
+ * anything but a name inside `dist/webui-assets/`.
+ *
+ * `immutable` because the name carries a content hash: the bytes behind a URL never change, and
+ * a rebuild publishes a new name that the freshly rendered page points at. `text/javascript`
+ * rather than sniffing is the point of the route — no agent-sent file can reach it, since a
+ * download is served as an octet-stream attachment (see `download`) and never from here.
+ */
+async function asset(req: IncomingMessage, res: ServerResponse, assets: WebAssets, name: string): Promise<void> {
+  if (!ASSET_FILE.test(name)) return send(req, res, 404, { error: 'no such asset' });
+  const dir = path.resolve(assets.dir);
+  const file = path.resolve(dir, name);
+  if (path.dirname(file) !== dir) return send(req, res, 404, { error: 'no such asset' });
+  const bytes = await readFile(file).catch(() => undefined);
+  if (!bytes) return send(req, res, 404, { error: 'no such asset' });
+  body(req, res, 200, bytes, {
+    'Content-Type': 'text/javascript; charset=utf-8',
+    'Cache-Control': 'public, max-age=31536000, immutable',
+    'X-Content-Type-Options': 'nosniff',
+  });
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Terminal
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1237,6 +1392,117 @@ async function endTerminal({ req, res }: Req, ctx: Ctx): Promise<void> {
   const result = await ctx.terminal.sessions.end(parsed.topic);
   if (!result.ok) return send(req, res, 500, { error: result.error });
   send(req, res, 200, { ok: true });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The file window
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Whether this deployment has the file window at all.
+ *
+ * A route that exists while the feature is off answers 404, not 403 — the same choice the terminal
+ * makes, and for the same reason: a page built before the operator turned it on should not be able
+ * to tell "this daemon has no such thing" from "you may not use it". The page hides the button
+ * either way; this is the answer to a hand-written request.
+ */
+function filesOn(ctx: Ctx): boolean {
+  // `?.` because a hand-built instance in a test predates the field; the parsed config always has
+  // it, and a missing block means "off", which is the safe answer.
+  return ctx.instance.files?.enabled === true;
+}
+
+/** `topic` and `path` from a query string, checked by shape. Returns the pair or a reason. */
+function filesQuery(url: URL): { topic: string; path: string } | { error: string } {
+  const topic = url.searchParams.get('topic') ?? '';
+  if (!TOPIC_ID.test(topic)) return { error: 'not a topic id' };
+  const path = url.searchParams.get('path') ?? '';
+  if (path.length > 4096) return { error: 'that path is too long' };
+  return { topic, path };
+}
+
+/** One directory of a topic's machine. */
+async function filesList({ req, res, url }: Req, ctx: Ctx): Promise<void> {
+  if (!filesOn(ctx)) return send(req, res, 404, { error: 'no such route' });
+  const q = filesQuery(url);
+  if ('error' in q) return send(req, res, 400, q);
+  const r = await ctx.room.filesList(q.topic, q.path);
+  send(req, res, r.ok ? 200 : 400, r);
+}
+
+/** One file, whole, or what it is instead (image, binary, too big). */
+async function filesRead({ req, res, url }: Req, ctx: Ctx): Promise<void> {
+  if (!filesOn(ctx)) return send(req, res, 404, { error: 'no such route' });
+  const q = filesQuery(url);
+  if ('error' in q) return send(req, res, 400, q);
+  const preview = url.searchParams.get('preview') === '1';
+  const r = await ctx.room.filesRead(q.topic, q.path, preview);
+  send(req, res, r.ok ? 200 : 400, r);
+}
+
+/** Filename matches, from git where there is a repository and a bounded walk where there is not. */
+async function filesSearch({ req, res, url }: Req, ctx: Ctx): Promise<void> {
+  if (!filesOn(ctx)) return send(req, res, 404, { error: 'no such route' });
+  const topic = url.searchParams.get('topic') ?? '';
+  if (!TOPIC_ID.test(topic)) return send(req, res, 400, { error: 'not a topic id' });
+  const q = (url.searchParams.get('q') ?? '').trim();
+  if (!q) return send(req, res, 400, { error: 'a search needs a word to look for' });
+  if (q.length > 200) return send(req, res, 400, { error: 'that search is too long' });
+  const r = await ctx.room.filesSearch(topic, q);
+  send(req, res, r.ok ? 200 : 400, r);
+}
+
+/**
+ * One save. A conflict answers 409 with what the file is now, so the page can put the three
+ * choices to the person instead of reporting a save that did not happen; everything else that
+ * failed is 400 with the machine's own sentence.
+ */
+async function filesWrite({ req, res }: Req, ctx: Ctx): Promise<void> {
+  if (!filesOn(ctx)) return send(req, res, 404, { error: 'no such route' });
+  const parsed = await readBody(req, res, FilesWriteRequestSchema);
+  if (!parsed) return;
+  const r = await ctx.room.filesWrite(
+    parsed.topic,
+    parsed.path,
+    parsed.text,
+    parsed.force
+      ? { force: true }
+      : parsed.missing === true
+        ? { missing: true }
+        : {
+            ...(parsed.mtimeMs !== undefined ? { mtimeMs: parsed.mtimeMs } : {}),
+            ...(parsed.size !== undefined ? { size: parsed.size } : {}),
+            ...(parsed.sha256 !== undefined ? { sha256: parsed.sha256 } : {}),
+          }
+  );
+  send(req, res, r.ok ? 200 : 'conflict' in r ? 409 : 400, r);
+}
+
+/** A new empty file, or a new directory. */
+async function filesCreate({ req, res }: Req, ctx: Ctx): Promise<void> {
+  if (!filesOn(ctx)) return send(req, res, 404, { error: 'no such route' });
+  const parsed = await readBody(req, res, FilesCreateRequestSchema);
+  if (!parsed) return;
+  const r = await ctx.room.filesCreate(parsed.topic, parsed.path, parsed.dir === true);
+  send(req, res, r.ok ? 200 : 400, r);
+}
+
+/** Move or rename one entry. */
+async function filesRename({ req, res }: Req, ctx: Ctx): Promise<void> {
+  if (!filesOn(ctx)) return send(req, res, 404, { error: 'no such route' });
+  const parsed = await readBody(req, res, FilesRenameRequestSchema);
+  if (!parsed) return;
+  const r = await ctx.room.filesRename(parsed.topic, parsed.from, parsed.to);
+  send(req, res, r.ok ? 200 : 400, r);
+}
+
+/** Delete one file or one empty directory. */
+async function filesRemove({ req, res }: Req, ctx: Ctx): Promise<void> {
+  if (!filesOn(ctx)) return send(req, res, 404, { error: 'no such route' });
+  const parsed = await readBody(req, res, FilesRemoveRequestSchema);
+  if (!parsed) return;
+  const r = await ctx.room.filesRemove(parsed.topic, parsed.path);
+  send(req, res, r.ok ? 200 : 400, r);
 }
 
 /**

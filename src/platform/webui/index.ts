@@ -431,10 +431,11 @@ function parseKept(value: unknown): Kept | null {
   if (!value || typeof value !== 'object') return null;
   const { msg, text } = value as { msg?: Record<string, unknown>; text?: unknown };
   if (!msg || typeof text !== 'string') return null;
-  const { id, own, html, at, g, reactions, quote, file, nonce, kind } = msg;
+  const { id, own, html, at, g, reactions, quote, file, nonce, kind, turnChanges } = msg;
   if (typeof id !== 'string' || typeof html !== 'string' || typeof at !== 'number' || typeof g !== 'number') return null;
   const k = keptKind(kind);
   const q = keptQuote(quote);
+  const tc = keptTurnChanges(turnChanges);
   const f = file as { name?: unknown; url?: unknown; image?: unknown } | undefined;
   return {
     text,
@@ -456,7 +457,24 @@ function parseKept(value: unknown): Kept | null {
       // The kinds the page draws differently, restored across a restart so the marking — and a
       // report's folding — survives a reload exactly as it was.
       ...(k ? { kind: k } : {}),
+      // A turn's change entry is part of its reply: without it a restart would take the line, and
+      // the way into that turn's diff, off every reply that had one.
+      ...(tc ? { turnChanges: tc } : {}),
     },
+  };
+}
+
+/** A kept reply's turn-change entry: four counts, each a non-negative integer, or nothing. */
+function keptTurnChanges(value: unknown): WebMessage['turnChanges'] {
+  const v = value as { turn?: unknown; files?: unknown; additions?: unknown; deletions?: unknown; truncated?: unknown } | undefined;
+  const count = (n: unknown): n is number => typeof n === 'number' && Number.isInteger(n) && n >= 0;
+  if (!v || !count(v.turn) || !count(v.files) || !count(v.additions) || !count(v.deletions)) return undefined;
+  return {
+    turn: v.turn,
+    files: v.files,
+    additions: v.additions,
+    deletions: v.deletions,
+    ...(v.truncated === true ? { truncated: true as const } : {}),
   };
 }
 
@@ -499,6 +517,7 @@ type Outbound = Pick<
   | 'renameThread'
   | 'measureRendered'
   | 'fetchHistory'
+  | 'attachTurnChanges'
 >;
 
 /**
@@ -543,6 +562,17 @@ function outbound(room: WebRoom, instance: WebuiInstance): Outbound {
       const kind = opts?.kind;
       const part = { own: false, html: webMessageHtml(kind, text), ...(kind ? { kind } : {}) };
       return ref(topic, room.post(topic, part, text).id);
+    },
+    /**
+     * The turn's changes, hung off the reply it just ended. Not an outbound message: the entry is
+     * a field the page draws under that one message, so this edits the room's own copy and tells
+     * the page to repaint it. `reply` is the message the turn last posted — without it (a turn that
+     * posted nothing) there is nothing to hang an entry on. Unknown or gone topics are ignored: the
+     * transcript may have been dropped between the turn and its end snapshot.
+     */
+    attachTurnChanges(address, entry, reply) {
+      if (address.channel !== CHANNEL || !address.thread) return;
+      room.attachTurnChanges(address.thread, entry, reply?.messageId);
     },
     async editMessage(r, text) {
       room.revise(topicOf(r.address, 'editMessage'), r.messageId, text);
@@ -701,6 +731,7 @@ function lifecycle(
   PlatformAdapter,
   | 'onMessage'
   | 'onButton'
+  | 'useGitPanel'
   | 'onCommand'
   | 'useWorkdirLookup'
   | 'useLivenessLookup'
@@ -709,10 +740,12 @@ function lifecycle(
   | 'useSkillsPanel'
   | 'useReviewPanel'
   | 'useHistoryPanel'
+  | 'useFilesPanel'
   | 'useIdleReclaim'
   | 'useTopicKill'
   | 'useAgentCatalog'
   | 'useModelPicker'
+  | 'useTurnChanges'
   | 'registerCommands'
   | 'start'
   | 'stop'
@@ -763,6 +796,11 @@ function lifecycle(
      */
     useHistoryPanel: (panel) => room.useHistoryPanel(panel),
     /**
+     * The only implementor, and the same reason once more: a chat app has no file window, and the
+     * editor's write is a write on the machine the agent runs on — off unless `files.enabled`.
+     */
+    useFilesPanel: (panel) => room.useFilesPanel(panel),
+    /**
      * The only implementor because it is the only platform that lists its conversations' agents
      * (the dots above) and so the only one with somewhere to offer "close the idle ones".
      */
@@ -782,6 +820,17 @@ function lifecycle(
      * in: a chat app has `/model` and its menu, which is a message.
      */
     useModelPicker: (picker) => room.useModelPicker(picker),
+    /**
+     * The only implementor because it is the only platform with a window to put a diff in: a chat
+     * app's agent reports what it changed as a message. Read-only; see `useGitPanel`.
+     */
+    useGitPanel: (panel) => room.useGitPanel(panel),
+    /**
+     * The only implementor, and the same reason once more: what a turn changed on disk is shown by
+     * opening a diff, and a chat app has neither a window for one nor a reply that could carry the
+     * link. Read-only — the records are written by the turn itself.
+     */
+    useTurnChanges: (panel) => room.useTurnChanges(panel),
     /**
      * Accepted and never called.
      *

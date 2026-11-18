@@ -235,8 +235,9 @@ drops the camera's EXIF data, location included.
 **Reading a file without downloading it.** When the agent sends a Markdown file, a log, a
 CSV or a source file, click its name and it opens in a window over the conversation; **Download**
 beside the name saves it as before. Markdown is rendered like a reply, with headings, tables and
-code blocks; anything else is shown as plain text. An `.html` or `.svg` file is shown as its source
-and is never run. A file over 512 KB shows its first 512 KB and says so, and the **Download** link
+code blocks; anything else opens in a code view with syntax highlighting and line numbers, wrapping
+on a phone — a browser that could not load the editor shows the same text plain. An `.html` or
+`.svg` file is shown as its source and is never run. A file over 512 KB shows its first 512 KB and says so, and the **Download** link
 in the window's bar fetches the whole file. PDFs, office documents and other binary files have no
 preview and stay downloads. Like the download link, preview works only until the daemon restarts;
 a message from before a restart keeps the plain download link.
@@ -286,6 +287,35 @@ says nothing; the refresh button in the window's header asks by hand and reports
 page that button also re-reads the skill — unless the editor holds unsaved text, which it never
 overwrites.
 
+## Changes
+
+The branch icon in the chat header opens the repository the topic's working directory sits in. It
+is read-only: it lists what changed, shows a diff, and takes comments into the composer — nothing
+here stages, commits or discards, because an agent is usually working in that repository at the
+same time.
+
+The bar has three comparisons. **Working** is the working tree against `HEAD`, untracked files
+included; **Branch** is the working tree against the merge base of `HEAD` and a base branch, so
+committed and uncommitted work read together; **Committed** is `HEAD` against that merge base. The
+base starts at the repository's default branch (`origin/HEAD`, else `main` or `master`) and can be
+changed in the picker. A repository with no commits works too. Every path is relative to the
+repository root, also when the topic's directory is a subdirectory of it. A directory the agent just
+created is listed file by file; where there are too many untracked files to count them all, a row
+says the counts were not read rather than showing `+0 −0`.
+
+Clicking a file shows its diff — one column or two, from the button in the bar; a phone opens on one
+column. Selecting lines in the diff offers **Comment**; the file, the line range, which side of the
+diff they came from, the selected lines in a code block and your comment are inserted into the
+composer, where you can edit them and send when you are ready. Several comments accumulate. Nothing
+is sent from the window. A browser where the code view is unavailable gets the plain patch with
+added and removed lines coloured instead; there is no line selection in that mode, so **Comment** is
+not offered.
+
+The list refreshes when a turn in the topic ends, so it follows what the agent just did. Each row
+has an **Edit** button when the page also has a file editor; it opens that file by its absolute
+path. The editor applies its own workspace fence, so a file outside the topic's directory may still
+be refused there.
+
 ## History
 
 The topic list has two tabs at its top: **Topics** and **History**. History lists every
@@ -311,6 +341,29 @@ or timings.
 it. On a phone, picking a conversation closes the drawer; open it again and tap **Topics** to go
 back. Neither the tab nor the conversation is remembered: a reload opens on Topics, on the topic in
 the address.
+
+## A turn's changes
+
+When a topic works in a git work tree, each turn records what it changed: a snapshot of the
+work tree is taken just before the agent is asked and another when the turn ends, and the reply
+ends with a line — `3 files changed +12 -4`. A turn that changed nothing gets no line.
+Tapping it opens that turn's diff, file by file,
+in the git window; the list is also how you get from "something changed" to the file that did.
+
+The snapshots are the daemon's own, under `~/.fleetherd/snapshots/<hash of the repository root>`
+on the machine the agent runs on, and the project's `.git` is never touched. `.gitignore` decides
+what a snapshot takes, with git's own exception: a file a snapshot has already recorded stays in
+it even if it is ignored afterwards. A topic keeps its last 50 turns, across restarts; older ones
+are deleted and their objects pruned.
+
+The first snapshot has three seconds. A snapshot that fails, or a turn slower than that to get
+going, simply has no entry — the turn itself is never delayed past that or failed. Only turns
+on the web UI are recorded: a chat reply has nowhere to put a diff, and a directory that is not
+a git work tree has nothing to compare.
+
+Two topics working in the **same directory** at the same time see each other's edits: each one's
+diff is "the work tree before my prompt" against "the work tree after", so an edit the other made
+in between is in both. Two chats on one project at once is the one case this does not separate.
 
 ## Notifications
 
@@ -365,6 +418,51 @@ printf '#!/bin/sh\nexec tmux -L aa-web new -A -s "aa-$1"\n' > /usr/local/bin/aa-
 chmod +x /usr/local/bin/aa-terminal.sh
 ttyd -i ~/.config/fleetherd/webui-term-web.sock -b /term -W -a -O \
      -T xterm-256color /usr/local/bin/aa-terminal.sh
+```
+
+## Files
+
+Turned on, the chat header grows a folder button that opens a file browser and editor for the
+machine the topic's agent runs on — this one, or a remote host, whichever the topic uses. The left
+side is a directory tree that expands as you open it (a drawer on a phone); the right side holds
+the breadcrumbs, a filename search over the project, and the file itself. Files up to 1 MiB of
+UTF-8 text are editable; images (PNG, JPEG, GIF, WebP, up to 5 MiB) are shown, and anything else
+(binary, not UTF-8, or over the limit) is named with a sentence saying why it cannot be edited
+here. Markdown has a Preview tab.
+
+Off unless you ask for it, and the reason is the same as the terminal's: a save is a write on that
+machine, which is running commands by another route. What it can reach is each topic's working
+directory, the git repository that directory is in, plus `roots` — nothing else. Paths are normalized and must land under one of those; a
+`..` that tries to climb out is refused. **Symlinks inside those directories are followed**, so
+whatever a link points at can be edited through it; that is deliberate, because a workspace laid
+out as links into mounted volumes is normal, but it also means `roots` is as far as this is a
+boundary. The ceiling is the agent's own tool access, which is why it is opt-in like the terminal.
+
+Every save is checked: if the file changed on the machine since you opened it — its size, its
+timestamp, or the SHA-256 of its bytes — the editor offers reload, overwrite or cancel instead of
+quietly replacing someone else's work. The check happens immediately before the write and again
+just before the file is replaced, but it is a check, not a lock: two saves landing in the same
+instant can still overwrite each other. Saves keep the file's permissions, write through symlinks
+rather than replacing them, and leave a BOM and a uniform CRLF or LF as they were, so opening and
+saving a file you did not edit returns the same bytes. A file that mixes endings, or uses only CR,
+cannot be held as it is by an editor: the window says above the editor which ending a save will
+write instead of changing it quietly. Each write is logged with who, which machine and which file.
+New file, new folder, rename and delete act on the file the editor has open; a folder row also
+carries its own rename and delete buttons. A folder is deleted only when it is empty — otherwise
+the window says so and leaves it alone — and deleting the folder the open file lives in asks about
+unsaved changes first.
+
+```yaml
+platforms:
+  web:
+    type: webui
+    token: ${WEB_TOKEN}
+    files:
+      enabled: true
+      # Optional: directories reachable from every topic besides its own working
+      # directory. Absolute, or ~/… on the machine the agent runs on.
+      roots:
+        - /srv/shared
 ```
 
 ## Exposing it

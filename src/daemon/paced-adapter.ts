@@ -68,13 +68,23 @@ const PACING = {
   useReviewPanel: 'unpaced',
   // Registers the history page's reads; the page asks over its own HTTP routes, not chat traffic.
   useHistoryPanel: 'unpaced',
+  // Registers the file window's operations; they go over the page's own HTTP routes.
+  useFilesPanel: 'unpaced',
   // Ends an agent process on this machine; nothing is written to the chat.
   useIdleReclaim: 'unpaced',
   // Ends a topic's agent and the agents under it; nothing is written to the chat.
   useTopicKill: 'unpaced',
+  // Registers the git window's reads; the page asks over its own HTTP routes, not chat traffic.
+  useGitPanel: 'unpaced',
   // Registers a callback, read while drawing an empty topic; writes nothing to the chat.
   useAgentCatalog: 'unpaced',
   useModelPicker: 'unpaced',
+  // Registers the turn-change reads; the page asks over its own HTTP routes, not chat traffic.
+  useTurnChanges: 'unpaced',
+  // Hangs a finished turn's summary off a message the turn has already written. Not chat traffic
+  // the platform meters: it edits the page's own copy of that message, and `editMessage` for the
+  // body has already been paced.
+  attachTurnChanges: 'unpaced',
   // Not chat traffic at all: the one implementor draws it in its own page, and the status board
   // already throttles it. Queueing a status behind a platform's flood pause would only show a
   // stale one later.

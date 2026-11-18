@@ -141,6 +141,166 @@ export interface ModelPicker {
   choose(ref: ConversationRef, value: string): Promise<ModelPickerResult>;
 }
 
+/**
+ * One file a turn changed, as `git diff --numstat` counts it — the shape both workspace windows
+ * read (the git panel's status list and a turn's change list), so neither invents its own.
+ *
+ * `path` is always relative to the repository root. `binary` means the two sides are not text:
+ * `additions`/`deletions` are 0 because git counts no lines for it.
+ */
+export interface TurnChangeFile {
+  path: string;
+  status: 'added' | 'deleted' | 'modified';
+  additions: number;
+  deletions: number;
+  binary?: true;
+}
+
+/** Where a turn's two trees are from, for a window's header. `base` is the tree it started at. */
+export interface TurnChangeRepo {
+  root: string;
+  branch?: string;
+  base?: string;
+}
+
+/** One turn's change list, or why there is none. */
+export type TurnChangeStatusResult =
+  | { ok: true; repo: TurnChangeRepo; files: TurnChangeFile[]; truncated?: true }
+  | { ok: false; reason: 'not-git' | 'error'; text: string };
+
+/**
+ * One changed file of one turn, read out of the two trees.
+ *
+ * `original` and `modified` are the whole file on each side (empty for a side that does not have
+ * it), which is what a code view's diff takes; `patch` is the file's unified diff, the plain-text
+ * way out when no code view is available. For a binary or oversized file all three are empty and
+ * the flag says which.
+ */
+export type TurnChangeFileResult =
+  | {
+      ok: true;
+      path: string;
+      status: 'added' | 'deleted' | 'modified';
+      original: string;
+      modified: string;
+      patch: string;
+      binary?: true;
+      tooLarge?: true;
+    }
+  | { ok: false; text: string };
+
+/**
+ * The entry a finished turn hangs off its reply: how many files, and the line counts. The page
+ * draws one line for it and opens `openGitWindow` on the turn's two routes; a message that came
+ * out of the transcript cache carries it too, so it survives a reload and a reconnect.
+ */
+export interface TurnChangeEntry {
+  turn: number;
+  files: number;
+  additions: number;
+  deletions: number;
+  truncated?: true;
+}
+
+/**
+ * What `useTurnChanges` hands a platform: one turn's change list and one changed file. Read only,
+ * and the same snapshot pair the entry was counted from.
+ */
+export interface TurnChangesPanel {
+  status(ref: ConversationRef, turn: number): Promise<TurnChangeStatusResult>;
+  /** `path` must be one of the turn's changed files; anything else is refused. */
+  file(ref: ConversationRef, turn: number, path: string): Promise<TurnChangeFileResult>;
+  /**
+   * The conversation is gone from the page: drop its records and release the refs that keep
+   * their trees, so a deleted topic does not go on holding snapshots for ever.
+   */
+  forget?(ref: ConversationRef): void;
+}
+
+/**
+ * Which comparison the web UI's git window is showing (`useGitPanel`).
+ *
+ * `working` is the working tree against HEAD, untracked files included; `branch` is the working
+ * tree against the merge base of HEAD and a base branch, so a committed change and an uncommitted
+ * one read together; `committed` is HEAD against that merge base. Every path is relative to the
+ * REPOSITORY root, which is not the conversation's directory when that directory is a subdirectory
+ * of the repo.
+ */
+export type GitMode = 'working' | 'branch' | 'committed';
+
+/** One changed file as the git window's list draws it. `binary` has no line counts to show. */
+export interface GitStatusFile {
+  path: string;
+  status: 'added' | 'deleted' | 'modified';
+  additions: number;
+  deletions: number;
+  binary?: true;
+  /**
+   * The line counts were not read: more untracked files than the panel stats in one answer, or the
+   * per-file stats command failed. The row says so rather than showing a `+0 −0` it did not measure.
+   */
+  statsUnknown?: true;
+}
+
+/**
+ * What one comparison currently holds.
+ *
+ * `truncated` means the change list itself was too large to read whole — never "here are the last
+ * few files", because the host keeps the END of a command's output and a tail of records is not a
+ * list. A failure is a sentence for the person, with `not-git` told apart so the page can say
+ * "this directory is not a repository" rather than "git failed".
+ */
+export type GitStatusResult =
+  | {
+      ok: true;
+      repo: { root: string; branch?: string; base?: string };
+      files: GitStatusFile[];
+      truncated?: true;
+    }
+  | { ok: false; reason: 'not-git' | 'error'; text: string };
+
+/**
+ * One file's two sides and its patch, for the diff view.
+ *
+ * `original` and `modified` are whole texts — what `codeView().diff` takes — and `patch` is the
+ * unified diff for the plain-text fallback. `binary` or `tooLarge` sets all three to empty strings:
+ * there is no text to show, and half a file would read as a diff that lost lines. `patchTooLarge`
+ * says the two sides are within their cap but the unified diff was not, so the page can name the
+ * diff rather than the file.
+ */
+export type GitFileResult =
+  | {
+      ok: true;
+      path: string;
+      status: 'added' | 'deleted' | 'modified';
+      original: string;
+      modified: string;
+      patch: string;
+      binary?: true;
+      tooLarge?: true;
+      patchTooLarge?: true;
+    }
+  | { ok: false; text: string };
+
+/** The base branches the window can compare against, and the two it starts from. */
+export type GitBranchesResult =
+  | { ok: true; branch?: string; base?: string; branches: string[] }
+  | { ok: false; text: string };
+
+/**
+ * What `useGitPanel` hands a platform: read-only git for a conversation's directory, on whichever
+ * machine its agent runs.
+ *
+ * There is deliberately no stage, commit, discard or checkout here. The window is for reading what
+ * changed while an agent works; a write would race that agent and belongs in the conversation,
+ * where the agent can be asked what it meant.
+ */
+export interface GitPanel {
+  status(ref: ConversationRef, mode: GitMode, base?: string): Promise<GitStatusResult>;
+  file(ref: ConversationRef, mode: GitMode, base: string | undefined, path: string): Promise<GitFileResult>;
+  branches(ref: ConversationRef): Promise<GitBranchesResult>;
+}
+
 /** What `useSchedulePanel` hands a platform: the list, and the operations on one task. */
 export interface SchedulePanel {
   list(): SchedulePanelTask[];
@@ -546,6 +706,133 @@ export interface HistoryPanelRead {
 }
 
 /**
+ * What `useFilesPanel` hands a platform: the files of the machine a topic's agent runs on, and the
+ * writes an editor needs.
+ *
+ * Every method takes the conversation's `ref`, because the machine and the directory are that
+ * conversation's — one browser tab can have two topics open on two hosts. Paths are absolute on
+ * that machine; the daemon decides whether one is inside the topic's workspace (the conversation's
+ * working directory plus `platforms.<id>.files.roots`) and refuses the rest.
+ *
+ * The two read shapes are split on purpose: a file that cannot be edited is still worth showing,
+ * so `read` answers what it is and why it is read-only rather than failing.
+ */
+export type FilesPanelKind = 'text' | 'image' | 'binary' | 'big';
+
+/** One entry of a directory listing. `dir` is decided after following links, as everywhere else. */
+export interface FilesPanelEntry {
+  name: string;
+  dir: boolean;
+}
+
+export interface FilesPanelListing {
+  /** The directory as the daemon resolved it (absolute on that machine). */
+  path: string;
+  /** The same directory relative to the workspace root; absent for a path inside an extra root. */
+  rel?: string;
+  entries: FilesPanelEntry[];
+}
+
+/** One file's content, or what it is instead of text. */
+export interface FilesPanelFile {
+  path: string;
+  /** The file's directory on that machine, so the page never has to split a path itself. */
+  dir: string;
+  rel?: string;
+  name: string;
+  size: number;
+  mtimeMs: number;
+  kind: FilesPanelKind;
+  /** Present for `text`: the whole file, decoded as UTF-8 — a BOM included, not eaten. */
+  text?: string;
+  /**
+   * Present for `text`: the line ending a save will write. A textarea hands back LF whatever it
+   * was given, so the page puts CRLF back before saving.
+   */
+  eol?: 'crlf' | 'lf';
+  /**
+   * Present when that is a CHANGE: the file mixes endings, or uses only CR. The page says what
+   * saving will do above the editor instead of normalizing it silently.
+   */
+  eolWarning?: 'mixed' | 'cr';
+  /** Present for `text` and true when the file starts with a UTF-8 BOM. */
+  bom?: boolean;
+  /**
+   * Present for `text`: the hex SHA-256 of the bytes read, sent back on save. The size and mtime
+   * alone cannot see a same-length replacement inside one timestamp tick.
+   */
+  sha256?: string;
+  /** Present for `image`: a `data:` URL (CSP's `img-src` already allows those). */
+  dataUrl?: string;
+  /** Present for `text` when the caller asked for a preview and the name is Markdown. */
+  html?: string;
+  /** Why a file is shown rather than edited — the sentence the page puts above it. */
+  note?: string;
+}
+
+/**
+ * A conflict, told apart from a failure. `exists: false` means the file the caller wanted to
+ * replace is gone; `true` means someone else has it now, and `size`/`mtimeMs` say what it is.
+ */
+export interface FilesPanelConflict {
+  ok: false;
+  conflict: true;
+  exists: boolean;
+  size?: number;
+  mtimeMs?: number;
+  error: string;
+}
+
+export type FilesPanelError = { ok: false; error: string };
+
+export type FilesPanelListResult = ({ ok: true } & FilesPanelListing) | FilesPanelError;
+export type FilesPanelReadResult = ({ ok: true } & FilesPanelFile) | FilesPanelError;
+export type FilesPanelWriteResult =
+  | { ok: true; mtimeMs: number; size: number; sha256: string }
+  | FilesPanelConflict
+  | FilesPanelError;
+export type FilesPanelCreateResult = { ok: true; path: string; dir: boolean } | FilesPanelError;
+export type FilesPanelRenameResult = { ok: true; path: string } | FilesPanelError;
+/** `removed: false` when there was nothing there — the same answer both machines give. */
+export type FilesPanelRemoveResult = { ok: true; removed: boolean } | FilesPanelError;
+
+export interface FilesPanelHit {
+  path: string;
+  rel?: string;
+  name: string;
+  dir: boolean;
+}
+
+export interface FilesPanelSearchResult {
+  ok: true;
+  hits: FilesPanelHit[];
+  /** More matched than one answer carries, so the page says "first N" rather than "N". */
+  truncated: boolean;
+}
+
+/** One write's expectation: the size and mtime the page last read, or `missing` for a new file. */
+export interface FilesPanelExpect {
+  mtimeMs?: number;
+  size?: number;
+  /** The hex SHA-256 of the bytes read — the check size and mtime cannot make. */
+  sha256?: string;
+  missing?: boolean;
+  /** Overwrite whatever is there — the person's answer to a conflict. */
+  force?: boolean;
+}
+
+export interface FilesPanel {
+  list(ref: ConversationRef, path: string): Promise<FilesPanelListResult>;
+  /** `preview` also renders a Markdown file's HTML (`web-markdown.ts`), for the md tab. */
+  read(ref: ConversationRef, path: string, opts?: { preview?: boolean }): Promise<FilesPanelReadResult>;
+  write(ref: ConversationRef, path: string, text: string, expect: FilesPanelExpect): Promise<FilesPanelWriteResult>;
+  create(ref: ConversationRef, path: string, dir: boolean): Promise<FilesPanelCreateResult>;
+  rename(ref: ConversationRef, from: string, to: string): Promise<FilesPanelRenameResult>;
+  remove(ref: ConversationRef, path: string): Promise<FilesPanelRemoveResult>;
+  search(ref: ConversationRef, query: string): Promise<FilesPanelSearchResult | FilesPanelError>;
+}
+
+/**
  * Platform capability interface. One layer above Satori so the core classes depend only on
  * capabilities, not concrete platforms; missing capabilities degrade gracefully in the
  * implementation (see capabilities).
@@ -703,6 +990,18 @@ export interface PlatformAdapter {
   useLivenessLookup?(lookup: (ref: ConversationRef) => boolean): void;
 
   /**
+   * Hand the platform a read-only view of the git repository the conversation's directory sits in:
+   * the change list for one of three comparisons, one file's two sides and patch, and the branches
+   * a base can be chosen from. `daemon/git-panel.ts` runs the git commands on the machine the
+   * agent runs on (`ConversationRegistry.workspaceForRef`), so a browser sees a remote host's
+   * repository the same way it sees the gateway's own.
+   *
+   * Optional and web-UI-only for the reason the seams above are: a chat app has no window to put a
+   * diff in, and the agent already reports what it changed.
+   */
+  useGitPanel?(panel: GitPanel): void;
+
+  /**
    * Hand the platform a way to ask whether a scheduled task posts into the conversation at one of
    * its addresses.
    *
@@ -776,6 +1075,15 @@ export interface PlatformAdapter {
   useHistoryPanel?(panel: HistoryPanel): void;
 
   /**
+   * Hand the platform the files of the machines topics run on, for the web UI's file window.
+   *
+   * Web-UI-only for the reason the panels above are, and off unless the operator turned
+   * `platforms.<id>.files.enabled` on — writing a file is running commands by another route, so
+   * the page's login secret is the only thing in front of it, exactly as for the terminal.
+   */
+  useFilesPanel?(panel: FilesPanel): void;
+
+  /**
    * Hand the platform a way to end the agent process behind a conversation that is idle — what the
    * idle sweeper does on its timer, asked for now. Answers whether a process was ended.
    *
@@ -832,6 +1140,23 @@ export interface PlatformAdapter {
    * are: a chat app has `/model` and its menu, and nowhere persistent to put a control.
    */
   useModelPicker?(picker: ModelPicker): void;
+
+  /**
+   * Hand the platform one turn's change list and one changed file — what the page's change entry
+   * opens. Optional and web-UI-only for the reason the seams above are: a chat app has no window
+   * to show a diff in, and its reply has no room for a control that opens one.
+   */
+  useTurnChanges?(panel: TurnChangesPanel): void;
+
+  /**
+   * Hang a finished turn's change summary off the reply it ended — `reply` is the message this turn
+   * last posted, captured by the runner at turn end, so a slow snapshot cannot land under a later
+   * turn's answer. No reply (a turn that posted nothing) means no entry.
+   *
+   * Its presence is also the daemon's answer to "does this platform show turn changes at all":
+   * the snapshots are only taken where something can show them.
+   */
+  attachTurnChanges?(address: ConversationAddress, entry: TurnChangeEntry, reply?: MessageRef): void;
 
   /**
    * Show the agent's live status for the conversation at an address — model, context, cost, cache

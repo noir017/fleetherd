@@ -92,4 +92,20 @@ describe('renderReading', () => {
     const head = whole('中'.repeat(4));
     expect(renderReading('text', head, 100)?.shown).toBe(12);
   });
+
+  it('hands the page the source of a text file, and never of a markdown one', () => {
+    // The page's code view edits and highlights the source itself; markdown is shown rendered, so
+    // handing it a source too would make every caller choose between two answers.
+    const src = 'package main\n\nfunc main() {}\n';
+    expect(renderReading('text', whole(src), src.length)?.text).toBe(src);
+    expect(renderReading('markdown', whole('# Title\n'), 8)?.text).toBeUndefined();
+  });
+
+  it('cuts the source at the same byte as the HTML, so both views show the same head', () => {
+    const line = 'x'.repeat(99) + '\n';
+    const head = whole(line.repeat(MAX_READ_BYTES / line.length) + 'y'.repeat(MAX_READ_BYTES % line.length));
+    const r = renderReading('text', head, MAX_READ_BYTES * 2);
+    expect(r?.text?.length).toBe(r?.shown);
+    expect(r?.text).not.toContain('y');
+  });
 });

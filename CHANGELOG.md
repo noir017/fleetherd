@@ -5,6 +5,82 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **A code file the agent sends is shown highlighted in the web UI's reader.** It used to open as
+  escaped text in a `<pre>` — readable, but every token the same colour, for a file whose whole
+  point is to be read as code. A text file now opens in a CodeMirror 6 editor: its language's
+  colours, line numbers, and wrapping on a phone, with the same cut-at-512-KB notice above it.
+  Markdown keeps the rendered view, and a daemon built without the bundle still shows the plain
+  text. The bundle is built by esbuild into `dist/webui-assets/` with a content-hashed name and
+  served by `GET /assets/<file>` behind the session; the page loads it the first time a file needs
+  it, and each language is its own chunk — opening a Go file does not download the other
+  sixteen grammars. It is also the editor and diff the git-diff panel and file editor will use.
+  The page's CSP gains `script-src 'self'` for that one route, and nothing the agent sent can be
+  it: downloads are still `attachment` + `nosniff`, so a `.js` the agent wrote is never parsed by
+  this origin. The build also writes `licenses.txt` beside the chunks — the licences of every
+  package it bundled, which minification would otherwise erase and which MIT requires the copy to
+  carry. A source checkout needs one `npm run build:assets` before `tsx src/cli.ts start`.
+- **A turn's changes, under its reply in the web UI.** A topic whose files are a git work tree now
+  gets a snapshot of the work tree before the agent is asked and another when the turn ends, and
+  the reply ends with a line — `3 files changed +12 -4` — that opens that turn's diff in the git
+  window. A turn that changed nothing leaves its reply as it was. The project's own `.git` is never
+  written to: the snapshots are a repository of their own under
+  `~/.fleetherd/snapshots/<hash of the repository root>` on the machine the agent runs on, built
+  with a separate `GIT_DIR`, `GIT_WORK_TREE` and an index of its own. `.gitignore` still decides
+  what a snapshot takes, with git's own exception: a file a snapshot has already recorded stays in
+  it even if it is ignored later. The first snapshot has three seconds and a failure costs only
+  that turn's entry; the second is taken after the reply has gone and nothing waits on it. Each
+  topic keeps its last 50 turns, in a file that survives a restart, and the objects behind them are
+  pruned periodically. The entry is part of the message, so a reload, a reconnect and a restart all
+  bring it back. Only the web UI does this — a chat reply has nowhere to put a diff — and a page
+  whose git window is absent draws no entry at all. Two topics working in the same directory at the
+  same time see each other's edits in their diffs.
+- **The web UI can browse and edit the files of the machine a topic's agent runs on.** A folder
+  button in the chat header opens a window with a directory tree that expands as it is opened (a
+  drawer on a phone), breadcrumbs, a filename search, and an editor — CodeMirror where the page has
+  it, a plain text box otherwise. It works the same whether the agent is here or on a remote host,
+  because both machines answer `Workspace` the same way. UTF-8 text up to 1 MiB is editable; images
+  up to 5 MiB are shown in place; Markdown gets a rendered preview. New file, new folder, rename and
+  delete are there, each confirmed — folders are renamed and deleted from their own row in the tree,
+  and a folder is deleted only when it is empty. A save is version-checked: the size, mtime and SHA-256 the
+  page read, checked before the temporary is written and again just before the rename. A file that
+  changed since it was read comes back as a conflict with reload, overwrite and cancel, rather than
+  replacing someone else's work. That check is advisory — it happens before the write, not as an
+  atomic compare-and-swap, and a writer landing between the last check and the rename is
+  overwritten. A save keeps the file's bytes otherwise: a BOM, and a uniform CRLF or LF, survive a
+  save the person did not edit; a file whose endings are mixed (or only CR) says above the editor
+  which ending a save will write. Off by default — a save writes a file where the agent runs, so it is the terminal's kind
+  of opt-in — and when off the button is absent and every route answers 404. Reach is each topic's
+  working directory, the git repository it is in, and `files.roots`; paths are normalized and `..` cannot climb out, while
+  symlinks inside those directories are followed as they always are on these workspaces.
+
+- **The web UI shows what changed in the repository a topic works in, and takes comments on the
+  lines.** A branch icon in the chat header opens a read-only window: the changed files with their
+  `+x −y`, and one file's diff on click. Three comparisons are offered — the working tree against
+  `HEAD` (untracked files included), the working tree against the merge base of `HEAD` and a base
+  branch, and `HEAD` against that merge base — with the base chosen from the branch list and
+  defaulting to the repository's own. Git runs on whichever machine the topic's agent runs on, and
+  every path is relative to the repository root even when the topic works in a subdirectory.
+  Selecting lines in a diff and writing a comment inserts the file, the line range, a code block of
+  the selected lines and the comment into the composer; nothing is sent from the window. Without
+  the code view the window falls back to the coloured patch, which has no line selection and so
+  offers no **Comment**. The list refreshes by itself when a turn in the topic ends.
+
+### Changed
+
+- **A remote host has a checked write, and `stat` reports a file's mode.** `fleetherd-remote`'s
+  editor-facing write (`editWrite`) writes through a symlink to its target, keeps the existing
+  file's permission bits, gives a new file the umask's default, and refuses a save whose size,
+  mtime or SHA-256 is not the one the caller last saw — checked before the temporary is written and
+  again immediately before the rename, which is still a check before the write rather than an
+  atomic compare-and-swap. A mismatch is a conflict the gateway turns into the page's dialog. It
+  writes a temporary beside the file, fsyncs, then renames. `rename` and `removeEntry` (one file or
+  one empty directory, never a tree) join it, and `stat` now carries the permission bits. Deleting
+  what is already gone answers `removed:false` on both machines. The local `Workspace` implements
+  the same rules, so the editor behaves identically on both machines.
+
+
 ## [3.10.0] - 2026-11-17
 
 ### Fixed

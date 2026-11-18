@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -78,6 +80,12 @@ func (d *daemon) op(ctx context.Context, h *Header, body []byte) (any, []byte, e
 			return opWriteFileAtomic(path, body, h.Mode, h.Append)
 		}
 		return opWriteFile(path, body, h.Mode, h.Append)
+	case "editWrite":
+		return opEditWrite(path, body, h.MtimeMs, h.Size, h.Sha256, h.ExpectMissing, h.Force)
+	case "rename":
+		return opRename(path, expandHome(h.Target), expandHome(h.Owned))
+	case "removeEntry":
+		return opRemoveEntry(path, expandHome(h.Owned))
 	case "ensureLink":
 		return opEnsureLink(expandHome(h.Target), path, expandHome(h.Requires), expandHome(h.Owned))
 	case "removeLink":
@@ -106,6 +114,9 @@ func opStat(path string) (any, []byte, error) {
 	}
 	return map[string]any{
 		"exists": true, "dir": st.IsDir(), "size": st.Size(), "mtimeMs": st.ModTime().UnixMilli(),
+		// The permission bits, so the editor can tell a read-only file from a writable one before
+		// it offers to save. Not the type bits: os.FileMode.Perm keeps exactly what chmod takes.
+		"mode": uint32(st.Mode().Perm()),
 	}, nil, nil
 }
 
@@ -338,6 +349,239 @@ func opWriteFileAtomic(path string, body []byte, mode uint32, appendMode bool) (
 		return nil, nil, err
 	}
 	return map[string]any{"path": path}, nil, nil
+}
+
+// ── the editor's writes ──────────────────────────────────────────────────────────────────────
+//
+// opWriteFile and opWriteFileAtomic are the gateway's own writes: they make a file owner-only and
+// replace it, which is right for an attachment or an instructions file the gateway owns. Neither
+// can edit the operator's file. opWriteFileAtomic changes the mode to 0600, its rename replaces a
+// symlink with a regular file, and neither notices that someone else changed the file since the
+// page read it. opEditWrite is the one write an editor may use, and all three differences are why
+// it exists:
+//
+//   - it writes through a symlink to the file it points at (a workspace laid out as links into
+//     mounted volumes is normal — workdir-scan.ts), and leaves the link alone;
+//   - it keeps the file's permission bits, and a NEW file gets whatever the umask gives a plain
+//     `open(…, 0666)` — never the 0600 that makes a source file unreadable to its own tooling;
+//   - it takes the size and mtime the page last saw and refuses to overwrite a file that has
+//     changed since, as a CONFLICT the page can put to the person rather than an error.
+//
+// The write itself is the same shape as opWriteFileAtomic: a temporary file in the same directory,
+// fsynced, then renamed over the target, so a reader sees the old bytes or the new ones.
+
+// opEditWrite replaces one file with `body`, if it is still what the caller last saw.
+//
+// A conflict is answered as `rpc-ok` with `ok: false` and what the file is now — not as an
+// `rpc-err`. The gateway has to tell "someone else changed it" (a choice for the person: reload,
+// overwrite, cancel) from "the write failed" (permission, disk full), and an error string cannot
+// carry that distinction without both ends parsing prose.
+//
+// `force` is the person's answer to that choice: overwrite whatever is there. It skips the version
+// check and nothing else — the link, the mode and the atomic replace still apply, because those are
+// about not damaging the file, not about who wins the race.
+//
+// The check is advisory, not a CAS: a stat, a hash, the write and the fsync all happen before the
+// rename, so a writer that lands in that window is overwritten. The hash is what makes the window
+// as small as it can be without a lock — the file is hashed once before the temporary is written
+// and once again immediately before the rename, which catches a same-size, same-mtime edit that
+// the stat alone cannot see. What is left between that second hash and the rename is the window.
+// The gateway offers reload / overwrite / cancel from this; it does not promise nobody can write
+// between the check and the replace.
+func opEditWrite(path string, body []byte, mtimeMs, size int64, wantSha string, expectMissing, force bool) (any, []byte, error) {
+	// Resolve the link, not the path: writing through it is the whole point, and a rename onto
+	// the link itself would replace the link with a regular file. A path that does not exist yet
+	// has no link to resolve, and its own (possibly linked) directory is enough.
+	target := path
+	if st, err := os.Lstat(path); err == nil && st.Mode()&fs.ModeSymlink != 0 {
+		resolved, err := filepath.EvalSymlinks(path)
+		if err != nil {
+			return nil, nil, err
+		}
+		target = resolved
+	} else if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return nil, nil, err
+	}
+	st, err := os.Stat(target)
+	exists := err == nil
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return nil, nil, err
+	}
+	if exists && st.IsDir() {
+		return nil, nil, fmt.Errorf("%s is a directory", path)
+	}
+	conflict := func(exists bool, size, mtimeMs int64) (any, []byte, error) {
+		return map[string]any{"ok": false, "conflict": true, "exists": exists, "size": size, "mtimeMs": mtimeMs}, nil, nil
+	}
+	if expectMissing {
+		if exists && !force {
+			return conflict(true, st.Size(), st.ModTime().UnixMilli())
+		}
+	} else if !force {
+		if !exists {
+			return conflict(false, 0, 0)
+		}
+		if st.Size() != size || st.ModTime().UnixMilli() != mtimeMs {
+			return conflict(true, st.Size(), st.ModTime().UnixMilli())
+		}
+		if wantSha != "" {
+			got, err := fileSHA256(target)
+			if err != nil {
+				return nil, nil, err
+			}
+			if !strings.EqualFold(got, wantSha) {
+				return conflict(true, st.Size(), st.ModTime().UnixMilli())
+			}
+		}
+	}
+
+	dir := filepath.Dir(target)
+	if di, err := os.Stat(dir); err != nil || !di.IsDir() {
+		return nil, nil, fmt.Errorf("%s is not a directory", dir)
+	}
+	f, tmp, err := createEditTemp(dir, filepath.Base(target))
+	if err != nil {
+		return nil, nil, err
+	}
+	fail := func(err error) (any, []byte, error) {
+		f.Close()
+		os.Remove(tmp)
+		return nil, nil, err
+	}
+	if _, err := f.Write(body); err != nil {
+		return fail(err)
+	}
+	// The mode the file already had, set explicitly: the temp file was created with the umask's
+	// answer, which is only what a NEW file should keep. Chmod after writing and before the sync,
+	// so the rename cannot publish a file whose mode is still on its way to disk.
+	if exists {
+		if err := f.Chmod(st.Mode().Perm()); err != nil {
+			return fail(err)
+		}
+	}
+	if err := f.Sync(); err != nil {
+		return fail(err)
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(tmp)
+		return nil, nil, err
+	}
+	// Last look before the rename: the same size, mtime and hash the check above accepted. This
+	// is what keeps the advisory window to the gap between here and the rename rather than the
+	// whole write plus fsync.
+	if !force {
+		raced := false
+		now, statErr := os.Stat(target)
+		if exists {
+			if statErr != nil || now.Size() != st.Size() || now.ModTime().UnixMilli() != st.ModTime().UnixMilli() {
+				raced = true
+			}
+		} else if statErr == nil {
+			raced = true
+		}
+		if !raced && exists && wantSha != "" {
+			got, herr := fileSHA256(target)
+			if herr != nil || !strings.EqualFold(got, wantSha) {
+				raced = true
+			}
+		}
+		if raced {
+			os.Remove(tmp)
+			again, statErr := os.Stat(target)
+			if statErr != nil {
+				return conflict(false, 0, 0)
+			}
+			return conflict(true, again.Size(), again.ModTime().UnixMilli())
+		}
+	}
+	if err := os.Rename(tmp, target); err != nil {
+		os.Remove(tmp)
+		return nil, nil, err
+	}
+	after, err := os.Stat(target)
+	if err != nil {
+		return nil, nil, err
+	}
+	return map[string]any{"ok": true, "size": after.Size(), "mtimeMs": after.ModTime().UnixMilli()}, nil, nil
+}
+
+// createEditTemp makes an empty file beside the one about to be replaced. Its random suffix keeps
+// two saves of the same file apart; the O_EXCL is what makes a collision an error rather than one
+// writer silently truncating the other's temporary.
+//
+// The mode handed to OpenFile is 0666, not 0600, so the kernel applies the umask exactly as it
+// would for any file the person creates — the caller chmods afterwards only when it is preserving
+// an existing file's mode.
+func createEditTemp(dir, base string) (*os.File, string, error) {
+	var last error
+	for i := 0; i < 10; i++ {
+		var b [6]byte
+		if _, err := rand.Read(b[:]); err != nil {
+			return nil, "", err
+		}
+		name := filepath.Join(dir, "."+base+".tmp-"+hex.EncodeToString(b[:]))
+		f, err := os.OpenFile(name, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o666)
+		if err == nil {
+			return f, name, nil
+		}
+		if !errors.Is(err, fs.ErrExist) {
+			return nil, "", err
+		}
+		last = err
+	}
+	return nil, "", last
+}
+
+// opRename moves one entry within `owned`. Both ends must be strictly inside it: the page is
+// allowed to reorganise a workspace, never to move a file out of one. A symlink is renamed as the
+// link it is; its target is not touched.
+func opRename(from, to, owned string) (any, []byte, error) {
+	if owned == "" {
+		return nil, nil, errors.New("rename needs the directory both paths must stay inside")
+	}
+	if !within(from, owned) || !within(to, owned) {
+		return nil, nil, fmt.Errorf("refusing to rename %s to %s: not both under %s", from, to, owned)
+	}
+	if _, err := os.Lstat(from); err != nil {
+		return nil, nil, err
+	}
+	if _, err := os.Lstat(to); err == nil {
+		return nil, nil, fmt.Errorf("refusing to rename %s to %s: something is already there", from, to)
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return nil, nil, err
+	}
+	if err := os.Rename(from, to); err != nil {
+		return nil, nil, err
+	}
+	return map[string]any{"path": to}, nil, nil
+}
+
+// opRemoveEntry deletes one file or one EMPTY directory. Not a tree: the editor's delete is the
+// person's, and a directory with something in it is a question the page has not asked them.
+// `os.Remove` is exactly that rule — it refuses a non-empty directory — so there is no second
+// check to keep in step with it. That refusal is recognised by errno (ENOTEMPTY, or EEXIST on the
+// BSDs) and answered as `{notEmpty: true}` rather than as an error. A symlink is removed as the
+// link; its target is untouched.
+func opRemoveEntry(path, owned string) (any, []byte, error) {
+	if owned == "" {
+		return nil, nil, errors.New("removeEntry needs the directory the path must stay inside")
+	}
+	if !within(path, owned) {
+		return nil, nil, fmt.Errorf("refusing to remove %s: not under %s", path, owned)
+	}
+	if err := os.Remove(path); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return map[string]any{"removed": false, "path": path}, nil, nil
+		}
+		// A directory that still holds something is the person's next question, not a failure, so
+		// it comes back as an answer. The errno is the test — never the message, which is the
+		// platform's prose and would catch a path that merely has "not empty" in its name.
+		if errors.Is(err, syscall.ENOTEMPTY) || errors.Is(err, syscall.EEXIST) {
+			return map[string]any{"removed": false, "notEmpty": true, "path": path}, nil, nil
+		}
+		return nil, nil, err
+	}
+	return map[string]any{"removed": true, "path": path}, nil, nil
 }
 
 // under reports whether a symlink's destination lies inside `dir`. A relative destination is read

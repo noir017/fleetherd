@@ -123,6 +123,8 @@ interface Harness {
   clipboard: string[];
   /** Everything the page raised in an `alert()`. */
   alerts: string[];
+  /** Everything the page wrote to `console.warn` — its one report of a bundle that would not load. */
+  warnings: string[];
   /** Every question the page put to `confirm()`, whatever it was answered. */
   confirms: string[];
   /** Every MediaRecorder the page constructed (only with the `mic` option), oldest first. */
@@ -466,6 +468,14 @@ function installMic(w: any, mic: { types: string[]; deny?: boolean }, recorders:
   w.MediaRecorder = FakeMediaRecorder;
 }
 
+/**
+ * The page a test loads. `codeview` is the built bundle's name, or absent for a daemon with no
+ * assets at all — the two states `codeView()` distinguishes before it ever imports anything.
+ */
+function pageOf(terminal: boolean, password: boolean, terminalEnd: boolean, codeview?: string, files = false): string {
+  return renderPage('Chat', terminal, password, terminalEnd, codeview ?? null, files);
+}
+
 async function open(
   opts: {
     url?: string;
@@ -494,6 +504,8 @@ async function open(
     terminal?: boolean;
     /** Whether the daemon was given a way to END a terminal session (terminal.endCommand). */
     terminalEnd?: boolean;
+    /** Whether the daemon has the file window (platforms.<id>.files.enabled). */
+    files?: boolean;
     /** Whether the shared secret is still a way in, i.e. which of the two gates is served. */
     password?: boolean;
     /**
@@ -537,6 +549,19 @@ async function open(
       webpLies?: boolean;
       viaImg?: [number, number];
     };
+    /**
+     * What to put on `window.__fhCodeView` before the script runs — the seam `codeView()` checks
+     * before it imports the real bundle. Absent means the page has no bundle, which is the
+     * degradation the reader must survive; jsdom cannot evaluate a real dynamic `import`, so this
+     * fake is also the only way the highlighted path can be driven here at all.
+     */
+    codeView?: { editor: (...args: any[]) => any; diff: (...args: any[]) => any };
+    /**
+     * The bundle the served page names (`renderPage`'s fifth argument). Absent means a page with no
+     * built assets at all. A name that does not exist is how the load-failure path is driven:
+     * jsdom rejects a dynamic import, exactly as a browser does for a hash a rebuild deleted.
+     */
+    codeviewUrl?: string;
   } = {}
 ): Promise<Harness> {
   const {
@@ -551,6 +576,7 @@ async function open(
     confirm = true,
     terminal = false,
     terminalEnd = false,
+    files = false,
     password = true,
     mic,
     hang = [],
@@ -559,6 +585,8 @@ async function open(
     shortenLong = false,
     push,
     photos,
+    codeView,
+    codeviewUrl,
   } = opts;
   const pushLog: PushLog = { unsubscribed: false, listeners: [] };
   const photoLog: PhotoLog = {
@@ -574,10 +602,11 @@ async function open(
   const calls: Call[] = [];
   const clipboard: string[] = [];
   const alerts: string[] = [];
+  const warnings: string[] = [];
   const confirms: string[] = [];
   const longTimers: number[] = [];
 
-  const dom = new JSDOM(renderPage('Chat', terminal, password, terminalEnd), {
+  const dom = new JSDOM(pageOf(terminal, password, terminalEnd, codeviewUrl, files), {
     url,
     runScripts: 'dangerously',
     pretendToBeVisual: true,
@@ -625,9 +654,15 @@ async function open(
       (w as any).alert = (s: string) => {
         alerts.push(String(s));
       };
+      // jsdom's console is its own realm's, and nothing here would otherwise see the page's
+      // single warning about a code view that would not load.
+      (w as any).console.warn = (...args: unknown[]) => {
+        warnings.push(args.map(String).join(' '));
+      };
       if (mic) installMic(w, mic, recorders);
       if (push) installPush(w, push, pushLog);
       if (photos) installPhotos(w, photos, photoLog);
+      if (codeView) (w as any).__fhCodeView = codeView;
       if (shortenLong) {
         const real = w.setTimeout.bind(w) as (fn: () => void, ms: number) => number;
         (w as any).setTimeout = (fn: () => void, ms: number): number => {
@@ -685,6 +720,7 @@ async function open(
     idb,
     clipboard,
     alerts,
+    warnings,
     confirms,
     recorders,
     longTimers,
@@ -1165,6 +1201,122 @@ describe('webui page: reading a file the agent sent', () => {
     expect(rows[0]?.querySelector('a[data-view]')).toBeNull();
     expect(rows[0]?.querySelector('a.view')).toBeNull();
     expect(rows[1]?.querySelector('a[data-view]')).not.toBeNull();
+  });
+
+  /** A stand-in for the loaded bundle: the reader only ever asks it for an editor. */
+  function fakeCodeView(log: { calls: Array<{ doc: string; name: string; readOnly?: boolean }>; destroyed: number }) {
+    return {
+      editor(parent: HTMLElement, o: { doc: string; name: string; readOnly?: boolean }) {
+        log.calls.push(o);
+        const el = parent.ownerDocument.createElement('div');
+        el.className = 'cm-editor';
+        el.textContent = o.doc;
+        parent.appendChild(el);
+        let doc = o.doc;
+        return {
+          getDoc: () => doc,
+          setDoc: (next: string) => {
+            doc = next;
+            el.textContent = next;
+          },
+          focus: () => {},
+          destroy: () => {
+            log.destroyed++;
+            el.remove();
+          },
+        };
+      },
+      diff() {
+        throw new Error('the reader never asks for a diff');
+      },
+    };
+  }
+
+  it('shows a text file in the code view when the page has one, instead of the server pre', async () => {
+    const log = { calls: [] as Array<{ doc: string; name: string; readOnly?: boolean }>, destroyed: 0 };
+    const h = await open({
+      codeView: fakeCodeView(log),
+      replies: {
+        'view/aa': { ...reading('<pre class="src"><code>package main</code></pre>', 3 * 1048576, 524288), name: 'main.go', text: 'package main\n' },
+      },
+    });
+    await h.emit(sync(T, [readable('m1', 'main.go', 'aa')], [T]));
+    await h.click('#log a[data-view]');
+    await until('the code view', () => h.el('reader-body').querySelector('.cm-editor') !== null);
+
+    expect(log.calls[0]).toEqual({ doc: 'package main\n', name: 'main.go', readOnly: true });
+    // One view of the file, not two: the server's escaped copy is not also on screen.
+    expect(h.el('reader-body').querySelector('.src')).toBeNull();
+    // The cut notice still stands above it, and the body has handed its scrolling to the editor.
+    expect(h.el('reader-body').querySelector('.reader-note')?.textContent).toBe(
+      'Showing the first 512 KB of 3.0 MB. Download it for the rest.'
+    );
+    expect(h.el('reader-body').classList.contains('cv')).toBe(true);
+
+    // Closing drops the view rather than leaving CodeMirror's listeners on a detached node.
+    await h.click('#reader-close');
+    expect(log.destroyed).toBe(1);
+    expect(h.el('reader-body').classList.contains('cv')).toBe(false);
+  });
+
+  it('keeps the server pre for a text file when there is no code view, which is a build with no bundle', async () => {
+    const h = await open({
+      replies: { 'view/aa': { ...reading('<pre class="src"><code>one\ntwo</code></pre>'), text: 'one\ntwo' } },
+    });
+    await h.emit(sync(T, [readable('m1', 'run.log', 'aa')], [T]));
+    await h.click('#log a[data-view]');
+    await until('the plain text', () => h.el('reader-body').querySelector('.src') !== null);
+    expect(h.el('reader-body').textContent).toBe('one\ntwo');
+    expect(h.el('reader-body').classList.contains('cv')).toBe(false);
+  });
+
+  it('falls back to the pre when the bundle will not load, and warns about it exactly once', async () => {
+    // The case that only happens in production: the page names a hash a rebuild has since deleted,
+    // so the import 404s. jsdom refuses a dynamic import outright, which is the same rejection.
+    const h = await open({
+      codeviewUrl: 'assets/codeview-gone.js',
+      replies: {
+        'view/aa': { ...reading('<pre class="src"><code>one</code></pre>'), text: 'one' },
+        'view/bb': { ...reading('<pre class="src"><code>two</code></pre>'), text: 'two' },
+      },
+    });
+    const warns = () => h.warnings.filter((w) => w.includes('code view unavailable'));
+    await h.emit(sync(T, [readable('m1', 'one.log', 'aa'), readable('m2', 'two.log', 'bb')], [T]));
+    await h.click('#log a[data-view]');
+    await until('the plain text', () => h.el('reader-body').querySelector('.src') !== null);
+    expect(h.el('reader-body').classList.contains('cv')).toBe(false);
+    expect(warns()).toHaveLength(1);
+
+    // A second file finds the same failed promise: the reader degrades again, the log stays quiet.
+    const links = Array.from(h.doc.querySelectorAll('#log a[data-view]')) as HTMLAnchorElement[];
+    links[1]?.click();
+    await until('the second file', () => (h.el('reader-body').textContent ?? '').includes('two'));
+    expect(h.el('reader-body').classList.contains('cv')).toBe(false);
+    expect(warns()).toHaveLength(1);
+  });
+
+  it('destroys the open editor when another file takes its place', async () => {
+    const log = { calls: [] as Array<{ doc: string; name: string; readOnly?: boolean }>, destroyed: 0 };
+    const h = await open({
+      codeView: fakeCodeView(log),
+      replies: {
+        'view/aa': { ...reading('<pre class="src"><code>one</code></pre>', 3, 3), name: 'one.ts', text: 'one' },
+        'view/bb': { ...reading('<pre class="src"><code>two</code></pre>', 3, 3), name: 'two.ts', text: 'two' },
+      },
+    });
+    await h.emit(sync(T, [readable('m1', 'one.ts', 'aa'), readable('m2', 'two.ts', 'bb')], [T]));
+
+    await h.click('#log a[data-view]');
+    await until('the first editor', () => (h.el('reader-body').textContent ?? '') === 'one');
+    const links = Array.from(h.doc.querySelectorAll('#log a[data-view]')) as HTMLAnchorElement[];
+    links[1]?.click();
+    await until('the second editor', () => (h.el('reader-body').textContent ?? '') === 'two');
+
+    // One handle, one replacement: the first view is gone rather than left listening on a node
+    // that has been detached from the document.
+    expect(log.calls.map((c) => c.doc)).toEqual(['one', 'two']);
+    expect(log.destroyed).toBe(1);
+    expect(h.el('reader-body').querySelectorAll('.cm-editor')).toHaveLength(1);
   });
 });
 
@@ -12776,7 +12928,7 @@ describe('webui page: the History tab', () => {
     // it is up — as text, because jsdom's CSSOM is not to be trusted with this (see Testing).
     expect(renderPage('Chat', false)).toContain(
       '#chat.lib #log,#chat.lib #typing,#chat.lib #note,#chat.lib #bar,#chat.lib #term,\n' +
-        '#chat.lib #topic-title,#chat.lib #topic-status,#chat.lib #kill-agent,#chat.lib #term-toggle{display:none}'
+        '#chat.lib #topic-title,#chat.lib #topic-status,#chat.lib #kill-agent,#chat.lib #term-toggle,#chat.lib #files-toggle{display:none}'
     );
   });
 
@@ -13016,5 +13168,1133 @@ describe('webui page: the History tab', () => {
 
     expect(h.el('history-count').textContent).toBe('');
     expect(h.el('history-more').hidden).toBe(true);
+  });
+});
+
+/**
+ * What a turn changed, under its reply (daemon/turn-changes.ts, WebMessage.turnChanges).
+ *
+ * The entry is a control that opens the git panel's window, and that window is another file's
+ * (`window.openGitWindow`). So there are two states worth pinning: a page that has it draws the
+ * entry and calls it with the turn's two URLs, and a page that does not must draw nothing at all —
+ * a button that opens nothing is worse than no button.
+ */
+describe('the page: a turn’s changes', () => {
+  const A = 'a1b2c3d4';
+  const withChanges = (id: string, turn: number) => ({
+    ...message(id, '<p>done</p>'),
+    turnChanges: { turn, files: 3, additions: 12, deletions: 4 },
+  });
+
+  it('shows the counts under the reply and opens the window on the turn', async () => {
+    const h = await open();
+    const opened: Array<Record<string, unknown>> = [];
+    (h.window as unknown as { openGitWindow: (o: Record<string, unknown>) => void }).openGitWindow = (o) => opened.push(o);
+    await h.emit(sync(A, [withChanges('w1', 2)], [A]));
+
+    const row = h.doc.querySelector('.tc button[data-turns]');
+    expect(row).not.toBeNull();
+    expect(row?.textContent).toContain('3 files changed');
+    expect(row?.textContent).toContain('+12');
+    expect(row?.textContent).toContain('-4');
+    expect(h.doc.querySelector('.tc .ic-diff')).not.toBeNull();
+
+    await h.click('button[data-turns]');
+    expect(opened).toHaveLength(1);
+    expect(opened[0]).toMatchObject({ title: 'Turn 2 changes' });
+    expect(String(opened[0]!.statusUrl)).toBe(`api/turn-changes/status?t=${A}&turn=2`);
+    expect(String(opened[0]!.fileUrl)).toBe(`api/turn-changes/file?t=${A}&turn=2`);
+  });
+
+  it('draws nothing at all when the page has no window to open', async () => {
+    const h = await open();
+    // The page carries the git window; take it away to stand for a page served without one.
+    delete (h.window as unknown as { openGitWindow?: unknown }).openGitWindow;
+    await h.emit(sync(A, [withChanges('w1', 2)], [A]));
+    expect(h.el('log').textContent).toContain('done');
+    expect(h.doc.querySelector('.tc')).toBeNull();
+    expect(h.doc.querySelector('button[data-turns]')).toBeNull();
+  });
+
+  it('opens the real git window on the turn, and reads a file through the turn’s own route', async () => {
+    const status = `api/turn-changes/status?t=${A}&turn=2`;
+    const file = `api/turn-changes/file?t=${A}&turn=2&path=src%2Fa.ts`;
+    const h = await open({
+      replies: {
+        [status]: {
+          ok: true,
+          repo: { root: '/srv/project' },
+          files: [{ path: 'src/a.ts', status: 'modified', additions: 1, deletions: 1 }],
+        },
+        [file]: {
+          ok: true,
+          path: 'src/a.ts',
+          status: 'modified',
+          original: 'one\n',
+          modified: 'two\n',
+          patch: '@@ -1 +1 @@\n-one\n+two\n',
+        },
+      },
+    });
+    await h.emit(sync(A, [withChanges('w1', 2)], [A]));
+    await h.click('button[data-turns]');
+    await until('the turn’s list', () => h.el('git-files').querySelectorAll('.git-file').length === 1);
+    expect(h.el('git-title').textContent).toBe('Turn 2 changes');
+    expect(h.el('git-modes').hidden).toBe(true);
+    await h.click('[data-gpath="src/a.ts"]');
+    // One path= and the encoded name: the entry hands over the bare route, the window appends.
+    await until('the turn’s file', () => h.calls.some((c) => c.path === file));
+    await until('the patch', () => Boolean(h.el('git-diff').querySelector('.git-patch')));
+    expect(h.el('git-diff').textContent).toContain('+two');
+  });
+
+  it('is still there after a reconnect, and the browser’s copy keeps it for a reload', async () => {
+    const h = await open();
+    (h.window as unknown as { openGitWindow: (o: Record<string, unknown>) => void }).openGitWindow = () => {};
+    await h.emit(sync(A, [withChanges('w1', 4)], [A]));
+    expect(h.doc.querySelectorAll('.tc button[data-turns]')).toHaveLength(1);
+
+    // A dropped stream comes back as a full sync with the same room in it — what the daemon kept.
+    await h.emit(sync(A, [withChanges('w1', 4)], [A]));
+    expect(h.doc.querySelectorAll('.tc button[data-turns]')).toHaveLength(1);
+
+    // And the cache the next visit reads holds the entry with the message it belongs to.
+    // SAVE_MS (400) after the change, so this waits on a timer rather than on a microtask.
+    let cached: { turnChanges?: unknown } | undefined;
+    for (let i = 0; i < 60 && !cached?.turnChanges; i++) {
+      const record = await readRecord(h.idb, A);
+      cached = record?.list?.find((m) => m.id === 'w1') as { turnChanges?: unknown } | undefined;
+      if (!cached?.turnChanges) await new Promise((r) => setTimeout(r, 50));
+    }
+    expect(cached?.turnChanges).toMatchObject({ turn: 4 });
+  });
+});
+
+/**
+ * The file window: a topic's machine, a tree, and an editor (page.ts "the file window").
+ *
+ * The daemon's side is tested where it lives (`daemon/file-panel.test.ts`); what is asserted here
+ * is what a person would see and do — the button appearing only when the feature is on, a file
+ * opening, the editor holding what was typed, a save carrying the version it read, the conflict
+ * dialog's three answers, and the confirmation that keeps a tap from throwing an edit away.
+ *
+ * Two editor paths, because the page has two: the plain textarea it always has, and CodeMirror
+ * behind `window.__fhCodeView` (which is null in production until the asset lands).
+ */
+describe('webui page: the file window', () => {
+  const T = 'aaaaaaaa';
+  const LIST = `api/files/list?topic=${T}`;
+  const READ = `api/files/read?topic=${T}&path=${encodeURIComponent('/w/a.txt')}`;
+  const rootEntry = { name: 'a.txt', dir: false };
+  const listing = { ok: true, path: '/w', rel: '', entries: [rootEntry, { name: 'sub', dir: true }] };
+  const SHA = 'a'.repeat(64);
+  const file = {
+    ok: true,
+    path: '/w/a.txt',
+    dir: '/w',
+    rel: 'a.txt',
+    name: 'a.txt',
+    size: 3,
+    mtimeMs: 5,
+    kind: 'text',
+    text: 'abc',
+    eol: 'lf',
+    sha256: SHA,
+  };
+
+  async function openFiles(over: Record<string, unknown> = {}) {
+    const h = await open({
+      files: true,
+      url: `http://localhost:8787/?t=${T}`,
+      replies: { [LIST]: listing, [READ]: file, ...over },
+    });
+    await h.click('#files-toggle');
+    await until('the tree', () => h.el('files-tree-list').querySelectorAll('[data-fx-file]').length > 0);
+    return h;
+  }
+
+  async function openA(h: Harness): Promise<void> {
+    await h.click('[data-fx-file="/w/a.txt"]');
+    await until('the editor', () => Boolean(h.el('files-editor').querySelector('textarea')));
+  }
+
+  const editorText = (h: Harness): HTMLTextAreaElement =>
+    h.el('files-editor').querySelector('textarea') as HTMLTextAreaElement;
+
+  it('hides the button and offers no openFileEditor when the daemon has the feature off', async () => {
+    const h = await open({ url: `http://localhost:8787/?t=${T}`, replies: { [LIST]: listing, [READ]: file } });
+    expect(h.el('files-toggle').hidden).toBe(true);
+    // Absent rather than inert: the git panel offers its Edit only where this is a function.
+    expect(typeof (h.window as unknown as { openFileEditor?: unknown }).openFileEditor).toBe('undefined');
+    await tick();
+    expect(h.el('files').hidden).toBe(true);
+    expect(h.calls.some((c) => c.path.startsWith('api/files/'))).toBe(false);
+  });
+
+  it('opens a file from the tree, edits it in the plain-text fallback and saves with its version', async () => {
+    const h = await openFiles({ 'api/files/write': { ok: true, mtimeMs: 6, size: 4 } });
+    expect(h.el('files-toggle').hidden).toBe(false);
+    expect(typeof (h.window as unknown as { openFileEditor?: unknown }).openFileEditor).toBe('function');
+    // From the header there is no file yet: on a phone the tree drawer starts open, so the window
+    // is not an empty pane, and picking a file puts it away.
+    expect(h.el('files').classList.contains('tree-open')).toBe(true);
+    expect(h.el('files-title').textContent).toBe('Files');
+
+    await openA(h);
+    expect(h.el('files').classList.contains('tree-open')).toBe(false);
+    expect(h.el('files-title').textContent).toBe('a.txt');
+    expect(editorText(h).value).toBe('abc');
+    // The fallback, not the code view: nothing put a CodeMirror node there.
+    expect(h.el('files-editor').querySelector('.fake-cm')).toBeNull();
+    expect(h.el('files-save').hasAttribute('disabled')).toBe(true);
+
+    const ta = editorText(h);
+    ta.value = 'abcd';
+    ta.dispatchEvent(new h.window.Event('input', { bubbles: true }));
+    expect(h.el('files-dirty').hidden).toBe(false);
+    expect(h.el('files-save').hasAttribute('disabled')).toBe(false);
+
+    await h.click('#files-save');
+    await until('the save', () => h.calls.some((c) => c.path === 'api/files/write'));
+    const save = h.calls.find((c) => c.path === 'api/files/write')!;
+    expect(save.body).toEqual({ topic: T, path: '/w/a.txt', text: 'abcd', mtimeMs: 5, size: 3, sha256: SHA });
+    expect(h.el('files-dirty').hidden).toBe(true);
+    expect(h.el('files-save').hasAttribute('disabled')).toBe(true);
+  });
+
+  it('saves from Ctrl+S as well as from the button', async () => {
+    const h = await openFiles({ 'api/files/write': { ok: true, mtimeMs: 6, size: 5 } });
+    await openA(h);
+    const ta = editorText(h);
+    ta.value = 'abcde';
+    ta.dispatchEvent(new h.window.Event('input', { bubbles: true }));
+    ta.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 's', ctrlKey: true, bubbles: true }));
+    await until('the keyed save', () => h.calls.some((c) => c.path === 'api/files/write'));
+    expect(h.calls.find((c) => c.path === 'api/files/write')!.body.text).toBe('abcde');
+  });
+
+  it('uses the code view when it is there, and saves the document it holds', async () => {
+    const h = await openFiles({ 'api/files/write': { ok: true, mtimeMs: 7, size: 6 } });
+    type Fake = { type: (v: string) => void; save: () => void };
+    let fake: Fake | null = null;
+    (h.window as unknown as { __fhCodeView: unknown }).__fhCodeView = {
+      editor(parent: HTMLElement, o: { doc: string; onChange?: (d: string) => void; onSave?: () => void }) {
+        const el = h.doc.createElement('div');
+        el.className = 'fake-cm';
+        el.textContent = o.doc;
+        parent.appendChild(el);
+        const state = { doc: o.doc };
+        fake = {
+          type: (v: string) => {
+            state.doc = v;
+            el.textContent = v;
+            o.onChange?.(v);
+          },
+          save: () => o.onSave?.(),
+        };
+        return { getDoc: () => state.doc, setDoc: (v: string) => (state.doc = v), focus: () => {}, destroy: () => {} };
+      },
+    };
+    await h.click('[data-fx-file="/w/a.txt"]');
+    await until('the code view', () => Boolean(h.el('files-editor').querySelector('.fake-cm')));
+    expect(h.el('files-editor').querySelector('textarea')).toBeNull();
+
+    (fake as Fake | null)!.type('abcdef');
+    expect(h.el('files-dirty').hidden).toBe(false);
+    (fake as Fake | null)!.save();
+    await until('the save', () => h.calls.some((c) => c.path === 'api/files/write'));
+    expect(h.calls.find((c) => c.path === 'api/files/write')!.body.text).toBe('abcdef');
+  });
+
+  it('offers reload, overwrite or cancel when the file changed under the editor', async () => {
+    // One object, mutated between requests: the harness hands back whatever `replies` holds when
+    // the answer is read, and replacement would leave the page's copy pointing at the old one.
+    const writeReply: Record<string, unknown> = { ok: true, mtimeMs: 6, size: 4 };
+    const h = await openFiles({ 'api/files/write': writeReply });
+    await openA(h);
+    const ta = editorText(h);
+    ta.value = 'mine';
+    ta.dispatchEvent(new h.window.Event('input', { bubbles: true }));
+
+    h.status['api/files/write'] = 409;
+    writeReply.ok = false;
+    writeReply.conflict = true;
+    writeReply.exists = true;
+    writeReply.size = 9;
+    writeReply.mtimeMs = 10;
+    await h.click('#files-save');
+    await until('the conflict dialog', () => !h.el('files-conflict').hidden);
+    expect(h.el('files-conflict-text').textContent).toMatch(/changed on the machine/);
+    // Nothing was thrown away: the editor still holds the typed text.
+    expect(editorText(h).value).toBe('mine');
+
+    // Overwrite is the same write with the check skipped.
+    h.status['api/files/write'] = 200;
+    writeReply.ok = true;
+    writeReply.mtimeMs = 11;
+    writeReply.size = 4;
+    writeReply.conflict = false;
+    await h.click('#files-overwrite');
+    await until('the forced save', () => h.calls.filter((c) => c.path === 'api/files/write').length >= 2);
+    const forced = h.calls.filter((c) => c.path === 'api/files/write')[1]!;
+    expect(forced.body).toEqual({ topic: T, path: '/w/a.txt', text: 'mine', force: true });
+    expect(h.el('files-conflict').hidden).toBe(true);
+  });
+
+  it('asks before a close or another file throws unsaved changes away', async () => {
+    const h = await openFiles({ [READ.replace('/w/a.txt', '/w/a.txt')]: file });
+    await openA(h);
+    const ta = editorText(h);
+    ta.value = 'unsaved';
+    ta.dispatchEvent(new h.window.Event('input', { bubbles: true }));
+
+    await h.click('#files-close');
+    expect(h.confirms.at(-1)).toMatch(/Discard the unsaved changes/);
+    // Answered yes (the harness's confirm does): the window is gone.
+    expect(h.el('files').hidden).toBe(true);
+  });
+
+  it('keeps the window open when the unsaved confirmation is refused', async () => {
+    const h = await open({
+      files: true,
+      confirm: false,
+      url: `http://localhost:8787/?t=${T}`,
+      replies: { [LIST]: listing, [READ]: file },
+    });
+    await h.click('#files-toggle');
+    await until('the tree', () => h.el('files-tree-list').querySelectorAll('[data-fx-file]').length > 0);
+    await openA(h);
+    const ta = editorText(h);
+    ta.value = 'unsaved';
+    ta.dispatchEvent(new h.window.Event('input', { bubbles: true }));
+
+    await h.click('#files-close');
+    expect(h.el('files').hidden).toBe(false);
+    expect(editorText(h).value).toBe('unsaved');
+  });
+
+  it('puts a BOM and CRLF back on save, and keeps a file that ends without a newline', async () => {
+    const win = {
+      ...file,
+      path: '/w/win.txt',
+      rel: 'win.txt',
+      name: 'win.txt',
+      size: 7,
+      mtimeMs: 6,
+      text: '\uFEFFa\r\nb',
+      eol: 'crlf',
+      bom: true,
+      sha256: 'c'.repeat(64),
+    };
+    const h = await openFiles({
+      [`api/files/read?topic=${T}&path=${encodeURIComponent('/w/win.txt')}`]: win,
+      'api/files/write': { ok: true, mtimeMs: 9, size: 7, sha256: 'd'.repeat(64) },
+    });
+    (h.window as unknown as { openFileEditor: (p: string) => void }).openFileEditor('/w/win.txt');
+    await until('the editor', () => Boolean(h.el('files-editor').querySelector('textarea')));
+    // What the textarea shows: LF, with the BOM still the first character.
+    expect(editorText(h).value).toBe('\uFEFFa\nb');
+
+    editorText(h).dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 's', ctrlKey: true, bubbles: true }));
+    await until('the save', () => h.calls.some((c) => c.path === 'api/files/write'));
+    const body = h.calls.find((c) => c.path === 'api/files/write')!.body;
+    expect(body.text).toBe('\uFEFFa\r\nb');
+    expect(body.sha256).toBe('c'.repeat(64));
+    expect(body.size).toBe(7);
+    // The new version replaces the baseline, so the next save carries the hash just written.
+    expect(h.el('files-dirty').hidden).toBe(true);
+    // Uniform CRLF is byte-exact, so nothing is announced.
+    expect(h.el('files-eol').hidden).toBe(true);
+  });
+
+  it('warns what a save will do to mixed line endings, and does it', async () => {
+    const mixed = {
+      ...file,
+      path: '/w/mixed.txt',
+      rel: 'mixed.txt',
+      name: 'mixed.txt',
+      size: 6,
+      mtimeMs: 6,
+      text: 'a\r\nb\n',
+      eol: 'crlf',
+      eolWarning: 'mixed',
+      sha256: 'e'.repeat(64),
+    };
+    const h = await openFiles({
+      [`api/files/read?topic=${T}&path=${encodeURIComponent('/w/mixed.txt')}`]: mixed,
+      'api/files/write': { ok: true, mtimeMs: 9, size: 8, sha256: 'f'.repeat(64) },
+    });
+    (h.window as unknown as { openFileEditor: (p: string) => void }).openFileEditor('/w/mixed.txt');
+    await until('the editor', () => Boolean(h.el('files-editor').querySelector('textarea')));
+    expect(h.el('files-eol').hidden).toBe(false);
+    expect(h.el('files-eol').textContent).toBe(
+      'This file mixes line endings; saving will normalize them to CRLF.'
+    );
+    expect(editorText(h).value).toBe('a\nb\n');
+
+    editorText(h).dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 's', ctrlKey: true, bubbles: true }));
+    await until('the save', () => h.calls.some((c) => c.path === 'api/files/write'));
+    expect(h.calls.find((c) => c.path === 'api/files/write')!.body.text).toBe('a\r\nb\r\n');
+  });
+
+  it('warns about a pure-CR file and saves it as LF', async () => {
+    const classic = {
+      ...file,
+      path: '/w/classic.txt',
+      rel: 'classic.txt',
+      name: 'classic.txt',
+      size: 4,
+      mtimeMs: 6,
+      text: 'a\rb\r',
+      eol: 'lf',
+      eolWarning: 'cr',
+      sha256: 'e'.repeat(64),
+    };
+    const h = await openFiles({
+      [`api/files/read?topic=${T}&path=${encodeURIComponent('/w/classic.txt')}`]: classic,
+      'api/files/write': { ok: true, mtimeMs: 9, size: 4, sha256: 'f'.repeat(64) },
+    });
+    (h.window as unknown as { openFileEditor: (p: string) => void }).openFileEditor('/w/classic.txt');
+    await until('the editor', () => Boolean(h.el('files-editor').querySelector('textarea')));
+    expect(h.el('files-eol').textContent).toBe('This file uses CR line endings; saving will normalize them to LF.');
+    expect(editorText(h).value).toBe('a\nb\n');
+
+    editorText(h).dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 's', ctrlKey: true, bubbles: true }));
+    await until('the save', () => h.calls.some((c) => c.path === 'api/files/write'));
+    expect(h.calls.find((c) => c.path === 'api/files/write')!.body.text).toBe('a\nb\n');
+  });
+
+  it('moves the new-file directory up when the folder it named is deleted', async () => {
+    const h = await openFiles({
+      [`api/files/list?topic=${T}&path=${encodeURIComponent('/w/sub')}`]: {
+        ok: true,
+        path: '/w/sub',
+        rel: 'sub',
+        entries: [],
+      },
+      'api/files/remove': { ok: true, removed: true },
+      'api/files/create': { ok: true, path: '/w/x.txt', dir: false },
+    });
+    // Opening the folder is what puts the tree's cursor on it.
+    await h.click('[data-fx-dir="/w/sub"]');
+    await h.click('[data-fx-dir-delete="/w/sub"]');
+    await until('the delete', () => h.calls.some((c) => c.path === 'api/files/remove'));
+
+    await h.click('#files-new-file');
+    (h.el('files-new-name') as HTMLInputElement).value = 'x.txt';
+    await h.click('#files-new-go');
+    await until('the create', () => h.calls.some((c) => c.path === 'api/files/create'));
+    expect(h.calls.find((c) => c.path === 'api/files/create')!.body).toEqual({
+      topic: T,
+      path: '/w/x.txt',
+      dir: false,
+    });
+  });
+
+  it('keeps unsaved text across a successful rename instead of re-reading the file', async () => {
+    const h = await openFiles({ 'api/files/rename': { ok: true, path: '/w/b.txt' } });
+    await openA(h);
+    const ta = editorText(h);
+    ta.value = 'draft';
+    ta.dispatchEvent(new h.window.Event('input', { bubbles: true }));
+
+    await h.click('#files-rename-open');
+    (h.el('files-rename-name') as HTMLInputElement).value = 'b.txt';
+    await h.click('#files-rename-go');
+    await until('the rename', () => h.el('files-title').textContent === 'b.txt');
+
+    expect(editorText(h).value).toBe('draft');
+    expect(h.el('files-dirty').hidden).toBe(false);
+    // No read of the new path: the editor's text is the person's, and the disk copy is older.
+    expect(h.calls.some((c) => c.path === `api/files/read?topic=${T}&path=${encodeURIComponent('/w/b.txt')}`)).toBe(false);
+
+    await h.click('#files-save');
+    await until('the save after rename', () => h.calls.some((c) => c.path === 'api/files/write'));
+    expect(h.calls.find((c) => c.path === 'api/files/write')!.body).toMatchObject({ path: '/w/b.txt', text: 'draft' });
+  });
+
+  it('keeps the dirty mark when a rename fails', async () => {
+    const h = await openFiles({ 'api/files/rename': { ok: false, error: 'something is already there' } });
+    h.status['api/files/rename'] = 400;
+    await openA(h);
+    const ta = editorText(h);
+    ta.value = 'draft';
+    ta.dispatchEvent(new h.window.Event('input', { bubbles: true }));
+
+    await h.click('#files-rename-open');
+    (h.el('files-rename-name') as HTMLInputElement).value = 'b.txt';
+    await h.click('#files-rename-go');
+    await until('the refusal', () => h.el('files-note').textContent!.includes('already there'));
+
+    expect(h.el('files-title').textContent).toBe('a.txt');
+    expect(editorText(h).value).toBe('draft');
+    expect(h.el('files-dirty').hidden).toBe(false);
+  });
+
+  it('keeps the dirty mark when a conflict Reload fails, so a close still asks', async () => {
+    const writeReply: Record<string, unknown> = { ok: true, mtimeMs: 6, size: 4 };
+    const h = await openFiles({ 'api/files/write': writeReply });
+    await openA(h);
+    const ta = editorText(h);
+    ta.value = 'mine';
+    ta.dispatchEvent(new h.window.Event('input', { bubbles: true }));
+
+    h.status['api/files/write'] = 409;
+    writeReply.ok = false;
+    writeReply.conflict = true;
+    writeReply.exists = true;
+    await h.click('#files-save');
+    await until('the conflict dialog', () => !h.el('files-conflict').hidden);
+
+    h.status[READ] = 404;
+    await h.click('#files-reload');
+    await until('the failed reload', () => !h.el('files-note').hidden);
+    expect(editorText(h).value).toBe('mine');
+    expect(h.el('files-dirty').hidden).toBe(false);
+
+    await h.click('#files-close');
+    expect(h.confirms.at(-1)).toMatch(/Discard the unsaved changes/);
+  });
+
+  it('renames a folder from its row, and says what it is renaming', async () => {
+    const h = await openFiles({ 'api/files/rename': { ok: true, path: '/w/renamed' } });
+    await h.click('[data-fx-dir-rename="/w/sub"]');
+    expect(h.el('files-rename-what').textContent).toBe('Rename folder');
+    expect((h.el('files-rename-name') as HTMLInputElement).value).toBe('sub');
+
+    (h.el('files-rename-name') as HTMLInputElement).value = 'renamed';
+    await h.click('#files-rename-go');
+    await until('the rename', () => h.calls.some((c) => c.path === 'api/files/rename'));
+    expect(h.calls.find((c) => c.path === 'api/files/rename')!.body).toEqual({
+      topic: T,
+      from: '/w/sub',
+      to: '/w/renamed',
+    });
+    expect(h.confirms.at(-1)).toMatch(/Rename "sub" to "renamed"/);
+    await until('the note', () => h.el('files-note').textContent === 'Renamed.');
+  });
+
+  it('deletes an empty folder only after a confirmation that says so', async () => {
+    const h = await openFiles({ 'api/files/remove': { ok: true, removed: true } });
+    await h.click('[data-fx-dir-delete="/w/sub"]');
+    expect(h.confirms.at(-1)).toMatch(/Only an empty folder can be deleted/);
+    await until('the delete', () => h.calls.some((c) => c.path === 'api/files/remove'));
+    expect(h.calls.find((c) => c.path === 'api/files/remove')!.body).toEqual({ topic: T, path: '/w/sub' });
+    await until('the note', () => h.el('files-note').textContent === 'Deleted.');
+  });
+
+  it('shows the not-empty refusal when a folder with something in it is deleted', async () => {
+    const h = await openFiles({ 'api/files/remove': { ok: false, error: 'That folder is not empty. Delete its contents first.' } });
+    h.status['api/files/remove'] = 400;
+    await h.click('[data-fx-dir-delete="/w/sub"]');
+    await until('the refusal', () => h.el('files-note').textContent!.includes('not empty'));
+    expect(h.el('files-note').textContent).toBe('That folder is not empty. Delete its contents first.');
+  });
+
+  it('asks before deleting the folder the open file lives in, and posts nothing if refused', async () => {
+    const inside = {
+      ...file,
+      path: '/w/sub/a.txt',
+      dir: '/w/sub',
+      rel: 'sub/a.txt',
+      name: 'a.txt',
+    };
+    const h = await open({
+      files: true,
+      confirm: false,
+      url: `http://localhost:8787/?t=${T}`,
+      replies: {
+        [LIST]: listing,
+        [`api/files/read?topic=${T}&path=${encodeURIComponent('/w/sub/a.txt')}`]: inside,
+      },
+    });
+    await h.click('#files-toggle');
+    await until('the tree', () => h.el('files-tree-list').querySelectorAll('[data-fx-dir]').length > 0);
+    (h.window as unknown as { openFileEditor: (p: string) => void }).openFileEditor('/w/sub/a.txt');
+    await until('the editor', () => Boolean(h.el('files-editor').querySelector('textarea')));
+    const ta = editorText(h);
+    ta.value = 'unsaved';
+    ta.dispatchEvent(new h.window.Event('input', { bubbles: true }));
+
+    await h.click('[data-fx-dir-delete="/w/sub"]');
+    // The unsaved question came first and was answered no: nothing was sent.
+    expect(h.confirms.at(-1)).toMatch(/Discard the unsaved changes/);
+    expect(h.calls.some((c) => c.path === 'api/files/remove')).toBe(false);
+    expect(editorText(h).value).toBe('unsaved');
+  });
+
+  it('opens a file named by another panel (window.openFileEditor) and shows a Markdown preview', async () => {
+    const h = await open({
+      files: true,
+      url: `http://localhost:8787/?t=${T}`,
+      replies: {
+        [LIST]: listing,
+        [READ]: file,
+        [`api/files/read?topic=${T}&path=${encodeURIComponent('/w/notes.md')}&preview=1`]: {
+          ...file,
+          path: '/w/notes.md',
+          rel: 'notes.md',
+          name: 'notes.md',
+          html: '<h1>Hi</h1>',
+        },
+        [`api/files/read?topic=${T}&path=${encodeURIComponent('/w/notes.md')}`]: {
+          ...file,
+          path: '/w/notes.md',
+          rel: 'notes.md',
+          name: 'notes.md',
+          text: '# Hi\n',
+        },
+      },
+    });
+    (h.window as unknown as { openFileEditor: (p: string) => void }).openFileEditor('/w/notes.md');
+    expect(h.el('files').classList.contains('tree-open')).toBe(false);
+    await until('the file from another panel', () => h.el('files-title').textContent === 'notes.md');
+    expect(h.el('files').hidden).toBe(false);
+
+    await h.click('#files-preview-toggle');
+    await until('the preview', () => h.el('files-preview').querySelector('h1') !== null);
+    expect(h.el('files-editor').hidden).toBe(true);
+    expect(h.el('files-preview-toggle').textContent).toBe('Edit');
+
+    await h.click('#files-preview-toggle');
+    expect(h.el('files-preview').hidden).toBe(true);
+    expect(h.el('files-editor').hidden).toBe(false);
+  });
+});
+
+/** A fake `window.__fhCodeView`, recording what the page asked it to draw. */
+interface FakeDiff {
+  parent: HTMLElement;
+  options: {
+    name: string;
+    original: string;
+    modified: string;
+    layout: string;
+    onSelect?: (sel: { side: 'old' | 'new'; from: number; to: number; text: string } | null) => void;
+  };
+  layouts: string[];
+  destroyed: number;
+}
+
+function installCodeView(h: Harness): FakeDiff[] {
+  const diffs: FakeDiff[] = [];
+  (h.window as any).__fhCodeView = {
+    diff(parent: HTMLElement, options: FakeDiff['options']) {
+      const rec: FakeDiff = { parent, options, layouts: [], destroyed: 0 };
+      diffs.push(rec);
+      return {
+        setLayout(layout: string) {
+          rec.layouts.push(layout);
+        },
+        destroy() {
+          rec.destroyed++;
+        },
+      };
+    },
+  };
+  return diffs;
+}
+
+describe('webui page: the git window', () => {
+  const A = 'a1b2c3d4';
+  const statusPath = (mode: string, base = ''): string =>
+    `api/git/status?t=${A}&mode=${mode}${base ? `&base=${encodeURIComponent(base)}` : ''}`;
+  const filePath = (mode: string, file: string, base = ''): string =>
+    `api/git/file?t=${A}&mode=${mode}${base ? `&base=${encodeURIComponent(base)}` : ''}&path=${encodeURIComponent(file)}`;
+
+  /** A complete change list, and one file that both sides of the diff can read. */
+  const replies = (extra: Record<string, unknown> = {}): Record<string, unknown> => ({
+    [`api/git/branches?t=${A}`]: { ok: true, branch: 'main', base: 'main', branches: ['main', 'origin/main'] },
+    [statusPath('working')]: {
+      ok: true,
+      repo: { root: '/srv/project', branch: 'main', base: 'main' },
+      files: [
+        { path: 'src/a.ts', status: 'modified', additions: 3, deletions: 1 },
+        { path: 'new.txt', status: 'added', additions: 2, deletions: 0 },
+      ],
+    },
+    [statusPath('branch', 'main')]: {
+      ok: true,
+      repo: { root: '/srv/project', branch: 'main', base: 'main' },
+      files: [{ path: 'src/a.ts', status: 'modified', additions: 4, deletions: 1 }],
+    },
+    [filePath('working', 'src/a.ts')]: {
+      ok: true,
+      path: 'src/a.ts',
+      status: 'modified',
+      original: 'one\ntwo\n',
+      modified: 'one\nTWO\nthree\n',
+      patch: '@@ -1,2 +1,3 @@\n one\n-two\n+TWO\n+three\n',
+    },
+    [filePath('working', 'new.txt')]: {
+      ok: true,
+      path: 'new.txt',
+      status: 'added',
+      original: '',
+      modified: 'new\nlines\n',
+      patch: '@@ -0,0 +1,2 @@\n+new\n+lines\n',
+    },
+    ...extra,
+  });
+
+  async function openWindow(h: Harness): Promise<void> {
+    await h.emit(sync(A, [message('m1', '<p>work</p>')], [A]));
+    await h.click('#git-toggle');
+    await until('the change list', () => h.el('git-files').querySelectorAll('.git-file').length > 0);
+  }
+
+  it('opens from the chat header with the change list, and switches comparison from the bar', async () => {
+    const h = await open({ replies: replies() });
+    await openWindow(h);
+
+    expect(h.el('git').hidden).toBe(false);
+    expect(h.el('git-title').textContent).toBe('Changes');
+    expect(h.el('git-branch').textContent).toBe('main');
+    expect(h.el('git-modes').hidden).toBe(false);
+    expect(h.el('git-base').hidden).toBe(true);
+    const rows = Array.from(h.el('git-files').querySelectorAll('.git-file'));
+    expect(rows.map((r) => [r.querySelector('.gf-path')?.textContent, r.querySelector('.gf-status')?.textContent])).toEqual([
+      ['src/a.ts', 'M'],
+      ['new.txt', 'A'],
+    ]);
+    expect(rows[0]?.querySelector('.gf-stat')?.textContent).toContain('+3');
+
+    await h.click('[data-gm="branch"]');
+    await until('the branch comparison', () => h.calls.some((c) => c.path === statusPath('branch', 'main')));
+    expect(Array.from(h.el('git-modes').querySelectorAll('.git-mode.on')).map((b) => b.getAttribute('data-gm'))).toEqual([
+      'branch',
+    ]);
+    // The base picker appears with the branches the daemon named, and the answer's base is chosen.
+    await until('the base picker', () => !h.el('git-base').hidden);
+    expect(Array.from(h.el('git-base').querySelectorAll('option')).map((o) => o.textContent)).toEqual([
+      'main',
+      'origin/main',
+    ]);
+    expect((h.el('git-base') as HTMLSelectElement).value).toBe('main');
+  });
+
+  it('draws a file through codeView, and falls back to the coloured patch when it is not there', async () => {
+    const h = await open({ replies: replies() });
+    const diffs = installCodeView(h);
+    await openWindow(h);
+
+    await h.click('[data-gpath="src/a.ts"]');
+    await until('the code view', () => diffs.length === 1);
+    const first = diffs[0]!;
+    expect(first.options.name).toBe('src/a.ts');
+    expect(first.options.original).toBe('one\ntwo\n');
+    expect(first.options.modified).toBe('one\nTWO\nthree\n');
+    // A desktop page opens the two-column diff, and the button offers the other way.
+    expect(first.options.layout).toBe('split');
+    expect(h.el('git-layout').hidden).toBe(false);
+    expect(h.el('git-layout').textContent).toBe('Unified');
+
+    await h.click('#git-layout');
+    expect(first.layouts).toEqual(['unified']);
+    expect(h.el('git-layout').textContent).toBe('Split');
+
+    // No code view on this page: the same read, as a plain patch with + and − coloured. There is
+    // no selection there, so the comment affordance must stay hidden.
+    delete (h.window as any).__fhCodeView;
+    await h.click('[data-gpath="new.txt"]');
+    await until('the plain patch', () => Boolean(h.el('git-diff').querySelector('.git-patch')));
+    expect(first.destroyed).toBe(1);
+    expect(h.el('git-diff').querySelectorAll('.git-patch .pa').length).toBeGreaterThanOrEqual(2);
+    expect(h.el('git-layout').hidden).toBe(true);
+    // No code view means no selection, so the comment affordance stays hidden.
+    expect(h.el('git-sel').hidden).toBe(true);
+  });
+
+  it('turns a selected range into a line comment in the composer, and never sends it', async () => {
+    const h = await open({ replies: replies() });
+    const diffs = installCodeView(h);
+    await openWindow(h);
+    await h.click('[data-gpath="src/a.ts"]');
+    await until('the code view', () => diffs.length === 1);
+
+    // A drag covers part of each line; the comment still quotes lines 2-3 of the new side whole.
+    diffs[0]!.options.onSelect?.({ side: 'new', from: 2, to: 3, text: 'WO\nthr' });
+    await tick();
+    expect(h.el('git-sel').hidden).toBe(false);
+    expect(h.el('git-sel-what').textContent).toBe('New lines 2\u20133');
+
+    await h.click('#git-comment-open');
+    expect(h.el('git-comment').hidden).toBe(false);
+    expect(h.el('git-comment-what').textContent).toBe('src/a.ts:L2-L3 \u00b7 new side');
+    (h.el('git-comment-text') as HTMLTextAreaElement).value = 'Looks good';
+    await h.click('#git-comment-add');
+
+    expect((h.el('input') as HTMLTextAreaElement).value).toBe(
+      ['src/a.ts:L2-L3 (new)', '```', 'TWO', 'three', '```', 'Looks good'].join('\n')
+    );
+    expect(h.el('git-comment').hidden).toBe(true);
+    expect(h.el('git-note').textContent).toContain('Added to the message');
+    // Inserting is all it does: nothing has been sent to the daemon.
+    expect(h.calls.some((c) => c.path === 'api/send')).toBe(false);
+  });
+
+  it('re-reads the change list when the topic turn ends, but leaves the open diff alone', async () => {
+    const h = await open({ replies: replies() });
+    const diffs = installCodeView(h);
+    await openWindow(h);
+    await h.click('[data-gpath="src/a.ts"]');
+    await until('the code view', () => diffs.length === 1);
+    const before = h.calls.filter((c) => c.path === statusPath('working')).length;
+
+    await h.emit({ t: 'typing', on: false });
+    await until('a refreshed list', () => h.calls.filter((c) => c.path === statusPath('working')).length === before + 1);
+    expect(diffs[0]?.destroyed).toBe(0);
+  });
+
+  it('opens a fixed pair of URLs for the turn-change view, with no comparison controls', async () => {
+    const h = await open({
+      replies: {
+        'api/git/status?t=turn1&mode=working': {
+          ok: true,
+          repo: { root: '/srv/project', branch: 'feature' },
+          files: [{ path: 'src/a.ts', status: 'modified', additions: 1, deletions: 1 }],
+        },
+        'api/git/file?t=turn1&mode=working&path=src%2Fa.ts': {
+          ok: true,
+          path: 'src/a.ts',
+          status: 'modified',
+          original: 'one\n',
+          modified: 'two\n',
+          patch: '@@ -1 +1 @@\n-one\n+two\n',
+        },
+      },
+    });
+    await h.emit(sync(A, [message('m1', '<p>work</p>')], [A]));
+    (h.window as any).openGitWindow({
+      title: 'Changes this turn',
+      statusUrl: 'api/git/status?t=turn1&mode=working',
+      fileUrl: 'api/git/file?t=turn1&mode=working',
+    });
+    await until('the fixed list', () => h.el('git-files').querySelectorAll('.git-file').length === 1);
+
+    expect(h.el('git-title').textContent).toBe('Changes this turn');
+    expect(h.el('git-modes').hidden).toBe(true);
+    expect(h.el('git-base').hidden).toBe(true);
+
+    await h.click('[data-gpath="src/a.ts"]');
+    await until('the fixed diff', () => h.calls.some((c) => c.path === 'api/git/file?t=turn1&mode=working&path=src%2Fa.ts'));
+    await until('the plain patch', () => Boolean(h.el('git-diff').querySelector('.git-patch')));
+    expect(h.el('git-diff').textContent).toContain('+two');
+  });
+
+  it('closes on Escape, its button and the backdrop', async () => {
+    const h = await open({ replies: replies() });
+    await openWindow(h);
+
+    h.doc.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Escape' }));
+    await tick();
+    expect(h.el('git').hidden).toBe(true);
+
+    await h.click('#git-toggle');
+    await until('the list again', () => h.el('git-files').querySelectorAll('.git-file').length > 0);
+    await h.click('#git-close');
+    expect(h.el('git').hidden).toBe(true);
+
+    await h.click('#git-toggle');
+    await until('the list a third time', () => h.el('git-files').querySelectorAll('.git-file').length > 0);
+    h.el('git').dispatchEvent(new h.window.MouseEvent('click', { bubbles: true }));
+    expect(h.el('git').hidden).toBe(true);
+  });
+
+  it('hands the editor an absolute path, and a key on Edit stays with Edit', async () => {
+    const h = await open({ replies: replies() });
+    const edited: string[] = [];
+    (h.window as any).openFileEditor = (p: string) => edited.push(p);
+    await openWindow(h);
+
+    const edit = h.el('git-files').querySelector('.gf-edit') as HTMLElement;
+    expect(edit.getAttribute('data-gedit')).toBe('/srv/project/src/a.ts');
+    await h.click('.gf-edit');
+    expect(edited).toEqual(['/srv/project/src/a.ts']);
+    // The click on Edit must not also open the row's diff.
+    expect(h.calls.some((c) => c.path === filePath('working', 'src/a.ts'))).toBe(false);
+
+    // Enter on the button is the button's press, not the row's "open the diff".
+    edit.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await tick();
+    expect(h.calls.some((c) => c.path === filePath('working', 'src/a.ts'))).toBe(false);
+  });
+
+  it('opens the file window on the file when the daemon has files on, and offers no Edit when off', async () => {
+    const read = `api/files/read?topic=${A}&path=${encodeURIComponent('/srv/project/src/a.ts')}`;
+    const h = await open({
+      files: true,
+      replies: replies({
+        [`api/files/list?topic=${A}&path=${encodeURIComponent('/srv/project/src')}`]: {
+          ok: true,
+          path: '/srv/project/src',
+          rel: 'src',
+          entries: [{ name: 'a.ts', dir: false }],
+        },
+        [read]: {
+          ok: true,
+          path: '/srv/project/src/a.ts',
+          dir: '/srv/project/src',
+          rel: 'src/a.ts',
+          name: 'a.ts',
+          size: 4,
+          mtimeMs: 1,
+          kind: 'text',
+          text: 'one\n',
+          eol: 'lf',
+          sha256: 'a'.repeat(64),
+        },
+      }),
+    });
+    await openWindow(h);
+    await h.click('.gf-edit');
+    await until('the file read', () => h.calls.some((c) => c.path === read));
+    expect(h.el('files').hidden).toBe(false);
+
+    // The same list on a daemon with the file window off: no control that would do nothing.
+    const off = await open({ replies: replies() });
+    await openWindow(off);
+    expect(off.el('git-files').querySelector('.gf-edit')).toBeNull();
+  });
+
+  it('drops a file answer that arrives after the comparison changed', async () => {
+    let release = (): void => {};
+    const gate = new Promise<void>((r) => (release = r));
+    const h = await open({
+      replies: replies(),
+      held: { [filePath('working', 'src/a.ts')]: gate },
+    });
+    const diffs = installCodeView(h);
+    await openWindow(h);
+    await h.click('[data-gpath="src/a.ts"]');
+    await within('the file request', 1000, () => h.calls.some((c) => c.path === filePath('working', 'src/a.ts')));
+
+    await h.click('[data-gm="branch"]');
+    await until('the branch answer', () => h.calls.some((c) => c.path === statusPath('branch', 'main')));
+    release();
+    await tick();
+    await tick();
+
+    // The old file's answer belongs to the comparison that was left: no diff, and no selection
+    // that a comment could be written against with an empty path.
+    expect(diffs).toHaveLength(0);
+    expect(h.el('git-diff').textContent).not.toContain('TWO');
+    expect(h.el('git-sel').hidden).toBe(true);
+  });
+
+  it('closes when another topic is opened', async () => {
+    const B = 'b2c3d4e5';
+    const h = await open({ replies: replies() });
+    await h.emit(sync(A, [], [A, B]));
+    await h.click('#git-toggle');
+    await until('the list', () => h.el('git-files').querySelectorAll('.git-file').length > 0);
+
+    await h.click(`[data-topic="${B}"]`);
+    expect(h.el('git').hidden).toBe(true);
+  });
+
+  it('re-reads the comparison when the base branch changes', async () => {
+    const h = await open({
+      replies: replies({
+        [`api/git/branches?t=${A}`]: { ok: true, branch: 'main', base: 'main', branches: ['main', 'dev'] },
+        [statusPath('branch', 'dev')]: {
+          ok: true,
+          repo: { root: '/srv/project', branch: 'main', base: 'dev' },
+          files: [],
+        },
+      }),
+    });
+    await openWindow(h);
+    await h.click('[data-gm="branch"]');
+    await until('the default base', () => h.calls.some((c) => c.path === statusPath('branch', 'main')));
+    await until('the picker', () => !h.el('git-base').hidden);
+
+    const picker = h.el('git-base') as HTMLSelectElement;
+    picker.value = 'dev';
+    picker.dispatchEvent(new h.window.Event('change', { bubbles: true }));
+    await until('the new base', () => h.calls.some((c) => c.path === statusPath('branch', 'dev')));
+  });
+
+  it('picks the first branch as the base when the repository names no default', async () => {
+    const h = await open({
+      replies: replies({
+        [`api/git/branches?t=${A}`]: { ok: true, branch: 'feature', branches: ['feature', 'topic'] },
+        [statusPath('branch', 'feature')]: {
+          ok: true,
+          repo: { root: '/srv/project', branch: 'feature', base: 'feature' },
+          files: [],
+        },
+      }),
+    });
+    await openWindow(h);
+    await h.click('[data-gm="branch"]');
+    await until('the first branch as base', () => h.calls.some((c) => c.path === statusPath('branch', 'feature')));
+    expect((h.el('git-base') as HTMLSelectElement).value).toBe('feature');
+  });
+
+  it('shows the daemon sentence for a failed read, not "no changes"', async () => {
+    const h = await open({
+      replies: {
+        [statusPath('working')]: { ok: false, reason: 'error', text: 'git status failed: index file corrupt' },
+      },
+    });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#git-toggle');
+    await until('the failure', () => h.el('git-note').textContent!.includes('index file corrupt'));
+    expect(h.el('git-files').textContent).not.toContain('No changes');
+  });
+
+  it('shows why the base picker has no branches, and keeps saying it under the list', async () => {
+    const h = await open({
+      replies: replies({ [`api/git/branches?t=${A}`]: { ok: false, text: 'too many branches to list' } }),
+    });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#git-toggle');
+    await until('the branch failure', () => h.el('git-note').textContent!.includes('too many branches'));
+    // The status answer came after it and still did not wipe the sentence.
+    expect(h.el('git-files').querySelectorAll('.git-file').length).toBeGreaterThan(0);
+  });
+
+  it('draws the rows it did get when the list itself is incomplete', async () => {
+    const h = await open({
+      replies: {
+        [statusPath('working')]: {
+          ok: true,
+          repo: { root: '/srv/project', branch: 'main', base: 'main' },
+          files: [{ path: 'src/a.ts', status: 'modified', additions: 1, deletions: 1 }],
+          truncated: true,
+        },
+      },
+    });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#git-toggle');
+    await until('the partial list', () => h.el('git-files').querySelectorAll('.git-file').length === 1);
+    expect(h.el('git-note').textContent).toContain('too many changes');
+    expect(h.el('git-files').textContent).toContain('src/a.ts');
+    // A row that was drawn from an incomplete list is still a real row: it opens.
+    await h.click('[data-gpath="src/a.ts"]');
+    await until('the file request', () => h.calls.some((c) => c.path === filePath('working', 'src/a.ts')));
+  });
+
+  it('drops a file answer when a failed refresh cleared the open file', async () => {
+    let release = (): void => {};
+    const gate = new Promise<void>((r) => (release = r));
+    const h = await open({ replies: replies(), held: { [filePath('working', 'src/a.ts')]: gate } });
+    const diffs = installCodeView(h);
+    await openWindow(h);
+    await h.click('[data-gpath="src/a.ts"]');
+    await within('the file request', 1000, () => h.calls.some((c) => c.path === filePath('working', 'src/a.ts')));
+
+    // The refresh fails after the path has been cleared; the file answer must not land in the
+    // empty pane and hand a comment an empty file name.
+    h.status[statusPath('working')] = 500;
+    await h.emit({ t: 'typing', on: false });
+    await until('the failure', () => h.el('git-note').textContent!.includes('Could not read the changes'));
+    release();
+    await tick();
+    await tick();
+
+    expect(diffs).toHaveLength(0);
+    expect(h.el('git-diff').textContent).toBe('');
+  });
+
+  it('drops a file answer when the file has left the change list', async () => {
+    let release = (): void => {};
+    const gate = new Promise<void>((r) => (release = r));
+    const list = {
+      ok: true,
+      repo: { root: '/srv/project', branch: 'main', base: 'main' },
+      files: [
+        { path: 'src/a.ts', status: 'modified', additions: 3, deletions: 1 },
+        { path: 'new.txt', status: 'added', additions: 2, deletions: 0 },
+      ],
+    };
+    const h = await open({
+      replies: { ...replies(), [statusPath('working')]: list },
+      held: { [filePath('working', 'src/a.ts')]: gate },
+    });
+    const diffs = installCodeView(h);
+    await openWindow(h);
+    await h.click('[data-gpath="src/a.ts"]');
+    await within('the file request', 1000, () => h.calls.some((c) => c.path === filePath('working', 'src/a.ts')));
+
+    list.files = [list.files[1]!];
+    await h.emit({ t: 'typing', on: false });
+    await until('the notice', () => h.el('git-diff').textContent!.includes('no longer in the changes'));
+    release();
+    await tick();
+    await tick();
+
+    expect(diffs).toHaveLength(0);
+    expect(h.el('git-sel').hidden).toBe(true);
+  });
+
+  it('names a too-large file and a too-large diff differently', async () => {
+    const big = (patchTooLarge: boolean) => ({
+      ok: true,
+      path: 'src/a.ts',
+      status: 'modified',
+      original: '',
+      modified: '',
+      patch: '',
+      tooLarge: true,
+      ...(patchTooLarge ? { patchTooLarge: true } : {}),
+    });
+    const h = await open({
+      replies: replies({
+        [filePath('working', 'src/a.ts')]: big(false),
+        [filePath('working', 'new.txt')]: { ...big(true), path: 'new.txt' },
+        [statusPath('working')]: {
+          ok: true,
+          repo: { root: '/srv/project', branch: 'main', base: 'main' },
+          files: [
+            { path: 'src/a.ts', status: 'modified', additions: 1, deletions: 1 },
+            { path: 'new.txt', status: 'added', additions: 2, deletions: 0 },
+          ],
+        },
+      }),
+    });
+    await openWindow(h);
+
+    await h.click('[data-gpath="src/a.ts"]');
+    await until('the file notice', () => h.el('git-diff').textContent === 'This file is too large to show.');
+    await h.click('[data-gpath="new.txt"]');
+    await until('the diff notice', () => h.el('git-diff').textContent === "This file's diff is too large to show.");
+  });
+
+  it('says the counts were not read instead of drawing +0 −0', async () => {
+    const h = await open({
+      replies: {
+        [statusPath('working')]: {
+          ok: true,
+          repo: { root: '/srv/project', branch: 'main', base: 'main' },
+          files: [{ path: 'many/a.txt', status: 'added', additions: 0, deletions: 0, statsUnknown: true }],
+        },
+      },
+    });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#git-toggle');
+    await until('the row', () => h.el('git-files').querySelectorAll('.git-file').length === 1);
+
+    expect(h.el('git-files').textContent).toContain('counts not read');
+    expect(h.el('git-files').textContent).not.toContain('+0');
+  });
+
+  it('writes which side of the diff a comment is on', async () => {
+    const h = await open({ replies: replies() });
+    const diffs = installCodeView(h);
+    await openWindow(h);
+    await h.click('[data-gpath="src/a.ts"]');
+    await until('the code view', () => diffs.length === 1);
+
+    diffs[0]!.options.onSelect?.({ side: 'old', from: 2, to: 2, text: 'tw' });
+    await tick();
+    await h.click('#git-comment-open');
+    expect(h.el('git-comment-what').textContent).toContain('old side');
+    (h.el('git-comment-text') as HTMLTextAreaElement).value = 'Removed on purpose';
+    await h.click('#git-comment-add');
+    expect((h.el('input') as HTMLTextAreaElement).value).toBe(
+      ['src/a.ts:L2 (old)', '```', 'two', '```', 'Removed on purpose'].join('\n')
+    );
   });
 });

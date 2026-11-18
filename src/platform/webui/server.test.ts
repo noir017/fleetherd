@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 
 import { WebuiConfigSchema } from '../config-schemas.js';
 import type {
+  FilesPanel,
   ReviewPanelEntry,
   SchedulePanel,
   SchedulePanelEdit,
@@ -17,6 +18,7 @@ import type {
   SkillPanelEntry,
 } from '../adapter.js';
 import { WebAuth } from './auth.js';
+import { loadAssets, type WebAssets } from './assets.js';
 import { diskUploadStore } from './index.js';
 import { MAX_READ_BYTES } from './reading.js';
 import { WebRoom, type WebuiInstance } from './room.js';
@@ -75,7 +77,8 @@ async function boot(
     socket: '/nonexistent.sock',
   },
   sso?: WebSso,
-  push?: WebPush
+  push?: WebPush,
+  assets?: WebAssets
 ): Promise<Booted> {
   const port = await freePort();
   const instance: WebuiInstance = {
@@ -96,7 +99,11 @@ async function boot(
     instance,
     { enabled: terminal.enabled, socket: terminal.socket, sessions },
     sso,
-    push
+    push,
+    // A test that does not hand in a build gets an empty one, not whatever the developer's last
+    // `npm run build` left in dist: the page's CODEVIEW and the route's answers are then the same
+    // on every machine, and this file does not read outside its own temp directory.
+    assets ?? loadAssets(path.join(dir, `no-assets-${port}`))
   );
   await server.start();
   running.push(server);
@@ -381,6 +388,114 @@ describe('webui server: installing it as an app', () => {
     const csp = (await fetch(`${base}/`)).headers.get('content-security-policy') ?? '';
     expect(csp).toContain("manifest-src 'self'");
     expect(csp).toContain("img-src 'self' data:");
+  });
+});
+
+/**
+ * A built asset directory as `scripts/build-webui-assets.mjs` leaves one: hashed module names, all
+ * `.js`, with a manifest naming the entry. Written per test under the file's own temp directory.
+ */
+function buildAssets(files: Record<string, string>): WebAssets {
+  const at = fs.mkdtempSync(path.join(dir, 'assets-'));
+  for (const [name, body] of Object.entries(files)) fs.writeFileSync(path.join(at, name), body);
+  const codeview = Object.keys(files).find((n) => n.startsWith('codeview-')) ?? null;
+  fs.writeFileSync(path.join(at, 'manifest.json'), JSON.stringify({ codeview }));
+  return loadAssets(at);
+}
+
+describe('webui server: the code view’s bundle', () => {
+  const entry = 'codeview-abc123.js';
+  const chunk = 'chunk-def456.js';
+
+  it('serves the built entry and its lazily loaded chunks as immutable JavaScript', async () => {
+    const assets = buildAssets({ [entry]: 'export default {editor(){}}', [chunk]: 'export const a=1;' });
+    const { base, port } = await boot({}, undefined, undefined, undefined, assets);
+    const cookie = await signIn(base);
+    for (const name of [entry, chunk]) {
+      const res = await rawGet(port, `/assets/${name}`, { cookie });
+      expect(res.status, name).toBe(200);
+      expect(res.headers['content-type']).toBe('text/javascript; charset=utf-8');
+      // The name carries a content hash, so the bytes behind it never change.
+      expect(res.headers['cache-control']).toBe('public, max-age=31536000, immutable');
+      // Same pin as every other file this server hands out: declared type, never sniffed.
+      expect(res.headers['x-content-type-options']).toBe('nosniff');
+      expect(res.body.toString('utf8')).toContain('export');
+    }
+  });
+
+  it('is guarded like every other route, and answers 404 for anything not built', async () => {
+    const assets = buildAssets({ [entry]: 'export default 1;' });
+    const { base, port } = await boot({}, undefined, undefined, undefined, assets);
+    expect((await fetch(`${base}/assets/${entry}`)).status).toBe(401);
+    const cookie = await signIn(base);
+    expect((await rawGet(port, '/assets/codeview-nope.js', { cookie })).status).toBe(404);
+    // The manifest is a build artefact too, and not a module: the route's one type would be a lie.
+    expect((await rawGet(port, '/assets/manifest.json', { cookie })).status).toBe(404);
+    // A directory that was never built answers 404 rather than throwing.
+    const bare = await boot({}, undefined, undefined, undefined, loadAssets(path.join(dir, 'not-built')));
+    expect((await rawGet(bare.port, `/assets/${entry}`, { cookie: await signIn(bare.base) })).status).toBe(404);
+  });
+
+  it('has no spelling of a path that reaches a file outside the asset directory', async () => {
+    const assets = buildAssets({ [entry]: 'export default 1;' });
+    const { base, port } = await boot({}, undefined, undefined, undefined, assets);
+    // A neighbour of the directory, containing bytes that must never be served.
+    fs.writeFileSync(path.join(dir, 'secret.js'), 'stolen bytes');
+    const cookie = await signIn(base);
+    for (const p of [
+      '/assets/../secret.js',
+      '/assets/%2e%2e/secret.js',
+      '/assets/..%2fsecret.js',
+      '/assets/%2e%2e%2fsecret.js',
+      '/assets/./secret.js',
+      '/assets/secret.js/../../secret.js',
+      `/assets/${encodeURIComponent('../secret.js')}`,
+    ]) {
+      const res = await rawGet(port, p, { cookie });
+      expect(res.status, p).toBe(404);
+      expect(res.body.toString('utf8'), p).not.toContain('stolen');
+    }
+  });
+
+  it('names the entry in the page it serves, relatively, and only when a build exists', async () => {
+    const bare = await boot();
+    expect(await (await fetch(`${bare.base}/`)).text()).toContain('var CODEVIEW = null;');
+
+    const built = await boot({}, undefined, undefined, undefined, buildAssets({ [entry]: 'export default 1;' }));
+    const html = await (await fetch(`${built.base}/`)).text();
+    // Relative, so a gateway behind a reverse proxy under a sub-path loads its own bundle.
+    expect(html).toContain(`var CODEVIEW = 'assets/${entry}';`);
+  });
+
+  it('lets the page import that bundle through the CSP, and still nothing from another origin', async () => {
+    const { base } = await boot();
+    const csp = (await fetch(`${base}/`)).headers.get('content-security-policy') ?? '';
+    expect(csp).toContain("script-src 'unsafe-inline' 'self'");
+    expect(csp).toContain("default-src 'none'");
+    expect(csp).not.toContain('script-src http');
+  });
+
+  it('writes a JavaScript content type in two places only: the assets and the service worker', async () => {
+    // What this pins is what THIS FILE writes, and no more: a route of its own that handed a file
+    // back with its own type would be the failure. It cannot speak for `/term/`, which copies the
+    // upstream's headers verbatim — the test above shows a fake ttyd answering text/javascript
+    // untouched — so the security note says this file, not this origin.
+    const source = fs.readFileSync(new URL('./server.ts', import.meta.url), 'utf8');
+    const at = [...source.matchAll(/'Content-Type': '(text\/javascript[^']*)'/g)];
+    expect(at).toHaveLength(2);
+    /** The name of the handler each occurrence sits in. */
+    const enclosing = (index: number): string | undefined =>
+      [...source.slice(0, index).matchAll(/(?:async )?function (\w+)/g)].at(-1)?.[1];
+    expect(at.map((m) => enclosing(m.index ?? 0))).toEqual(['sendServiceWorker', 'asset']);
+    // And the behavioural half: a file the agent sent is JavaScript by NAME and octet-stream by
+    // type, so the CSP's 'self' never lets one run as the second.
+    const { base, room } = await boot();
+    const cookie = await signIn(base);
+    const url = room.publish(new URL(import.meta.url).pathname, 'evil.js');
+    const res = await fetch(`${base}/${url}`, { headers: { cookie } });
+    expect(res.headers.get('content-type')).toBe('application/octet-stream');
+    expect(res.headers.get('content-disposition')).toContain('attachment');
+    expect(res.headers.get('x-content-type-options')).toBe('nosniff');
   });
 });
 
@@ -2123,6 +2238,107 @@ describe('webui server: traffic', () => {
   });
 });
 
+describe('webui server: the git window', () => {
+  const status = {
+    ok: true as const,
+    repo: { root: '/srv/project', branch: 'main', base: 'main' },
+    files: [{ path: 'src/a.ts', status: 'modified' as const, additions: 3, deletions: 1 }],
+  };
+  const file = {
+    ok: true as const,
+    path: 'src/a.ts',
+    status: 'modified' as const,
+    original: 'a\n',
+    modified: 'a\nb\n',
+    patch: '@@ -1 +1,2 @@\n a\n+b\n',
+  };
+
+  it('answers the change list for the mode and base it was asked for', async () => {
+    const { base, room, topic } = await boot();
+    const cookie = await signIn(base);
+    const calls: unknown[] = [];
+    room.useGitPanel({
+      status: async (ref, mode, base) => {
+        calls.push({ ref, mode, base });
+        return status;
+      },
+      file: async () => file,
+      branches: async () => ({ ok: true, branch: 'main', base: 'main', branches: ['main'] }),
+    });
+
+    const res = await fetch(`${base}/api/git/status?t=${topic}&mode=branch&base=origin%2Fmain`, { headers: { cookie } });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual(status);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ mode: 'branch', base: 'origin/main' });
+
+    const branches = await fetch(`${base}/api/git/branches?t=${topic}`, { headers: { cookie } });
+    expect(await branches.json()).toEqual({ ok: true, branch: 'main', base: 'main', branches: ['main'] });
+  });
+
+  it('carries one file through with its path, and hands a refusal back as an answer', async () => {
+    const { base, room, topic } = await boot();
+    const cookie = await signIn(base);
+    const calls: Array<{ mode: string; base: string | undefined; path: string }> = [];
+    room.useGitPanel({
+      status: async () => status,
+      file: async (_ref, mode, base, path) => {
+        calls.push({ mode, base, path });
+        return path === 'src/a.ts' ? file : { ok: false, text: 'That file is not one of the changes shown.' };
+      },
+      branches: async () => ({ ok: true, branches: [] }),
+    });
+
+    const ok = await fetch(`${base}/api/git/file?t=${topic}&mode=working&path=${encodeURIComponent('src/a.ts')}`, {
+      headers: { cookie },
+    });
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toEqual(file);
+
+    const refused = await fetch(`${base}/api/git/file?t=${topic}&mode=working&path=README.md`, { headers: { cookie } });
+    expect(refused.status).toBe(200);
+    expect(await refused.json()).toEqual({ ok: false, text: 'That file is not one of the changes shown.' });
+    expect(calls).toEqual([{ mode: 'working', base: undefined, path: 'src/a.ts' }, { mode: 'working', base: undefined, path: 'README.md' }]);
+  });
+
+  it('refuses a malformed query before it reaches the daemon', async () => {
+    const { base, room, topic } = await boot();
+    const cookie = await signIn(base);
+    let called = false;
+    room.useGitPanel({
+      status: async () => {
+        called = true;
+        return status;
+      },
+      file: async () => file,
+      branches: async () => ({ ok: true, branches: [] }),
+    });
+
+    for (const path of [
+      `/api/git/status?t=${topic}`,
+      `/api/git/status?t=${topic}&mode=staged`,
+      `/api/git/status?t=not-a-topic&mode=working`,
+      `/api/git/status?t=${topic}&mode=working&base=${'x'.repeat(301)}`,
+      `/api/git/file?t=${topic}&mode=working`,
+      `/api/git/file?t=${topic}&mode=working&path=`,
+    ]) {
+      expect((await fetch(`${base}${path}`, { headers: { cookie } })).status, path).toBe(400);
+    }
+    expect(called).toBe(false);
+  });
+
+  it('is behind the session like every other route', async () => {
+    const { base, topic } = await boot();
+    for (const path of [
+      `/api/git/status?t=${topic}&mode=working`,
+      `/api/git/file?t=${topic}&mode=working&path=a.txt`,
+      `/api/git/branches?t=${topic}`,
+    ]) {
+      expect((await fetch(`${base}${path}`)).status, path).toBe(401);
+    }
+  });
+});
+
 describe('webui server: lifecycle', () => {
   it('reports a port it cannot bind instead of letting the daemon run on half-working', async () => {
     // Without this, EADDRINUSE arrives as an asynchronous 'error' event, gets swallowed by the
@@ -2165,11 +2381,14 @@ describe('webui server: lifecycle', () => {
  * Deliberately not a WebSocket library — the proxy under test never parses a frame, so a
  * handshake that looks right on the wire plus a byte echo is exactly the contract it has.
  */
-function fakeTtyd(socketPath: string): Promise<{ seen: string[]; close: () => Promise<void> }> {
+function fakeTtyd(
+  socketPath: string,
+  type = 'text/html'
+): Promise<{ seen: string[]; close: () => Promise<void> }> {
   const seen: string[] = [];
   const server = http.createServer((req, res) => {
     seen.push(req.url ?? '');
-    res.writeHead(200, { 'content-type': 'text/html', 'x-from': 'ttyd' });
+    res.writeHead(200, { 'content-type': type, 'x-from': 'ttyd' });
     res.end('<html>terminal</html>');
   });
   server.on('upgrade', (req, socket) => {
@@ -2263,6 +2482,23 @@ describe('webui server: terminal', () => {
     expect(up.status).toBe(101);
     expect(up.echo).toBe('hello');
     expect(ttyd.seen).toContain('/term/ws');
+    await ttyd.close();
+  });
+
+  it('passes the upstream content type through, so what /term/ serves is ttyd’s to decide', async () => {
+    // The reason the security note says "the only JavaScript THIS FILE writes" rather than "the
+    // only JavaScript under this origin": the proxy copies headers verbatim, so a ttyd that
+    // served a .js (or the next ttyd release adding one) would answer as JavaScript and this
+    // server would neither know nor change it. Pinned rather than assumed, because the wording
+    // of that note depends on it.
+    const socketPath = path.join(dir, 'ttyd.sock');
+    const ttyd = await fakeTtyd(socketPath, 'text/javascript');
+    const { base } = await boot({}, { enabled: true, socket: socketPath });
+    const cookie = await signIn(base);
+    const res = await fetch(`${base}/term/bundle.js`, { headers: { cookie } });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('text/javascript');
+    expect(await res.text()).toContain('terminal');
     await ttyd.close();
   });
 
@@ -2453,6 +2689,140 @@ describe('webui server: terminal', () => {
   });
 });
 
+describe('webui server: the file window', () => {
+  const post = (base: string, cookie: string, route: string, body: unknown) =>
+    fetch(`${base}${route}`, { method: 'POST', headers: { ...JSON_HEADERS, cookie }, body: JSON.stringify(body) });
+
+  /** The smallest panel the routes can reach: the daemon's own is tested in daemon/file-panel.test.ts. */
+  function fakePanel(): { panel: FilesPanel; seen: string[] } {
+    const seen: string[] = [];
+    const ok = <T extends object>(v: T) => ({ ok: true as const, ...v });
+    const panel: FilesPanel = {
+      async list(_ref, p) {
+        seen.push(`list ${p}`);
+        return ok({ path: '/w', rel: '', entries: [{ name: 'a.txt', dir: false }] });
+      },
+      async read(_ref, p) {
+        seen.push(`read ${p}`);
+        return ok({
+          path: p,
+          dir: '/w',
+          rel: 'a.txt',
+          name: 'a.txt',
+          size: 3,
+          mtimeMs: 5,
+          kind: 'text' as const,
+          text: 'abc',
+          sha256: 'a'.repeat(64),
+        });
+      },
+      async write(_ref, p, text, expect) {
+        seen.push(`write ${p} ${text} ${JSON.stringify(expect)}`);
+        if (p.endsWith('stale.txt')) {
+          return { ok: false as const, conflict: true as const, exists: true, size: 9, mtimeMs: 10, error: 'changed' };
+        }
+        return { ok: true as const, mtimeMs: 6, size: text.length, sha256: 'b'.repeat(64) };
+      },
+      async create(_ref, p, dir) {
+        seen.push(`create ${p} ${dir}`);
+        return { ok: true as const, path: p, dir };
+      },
+      async rename(_ref, from, to) {
+        seen.push(`rename ${from} ${to}`);
+        return { ok: true as const, path: to };
+      },
+      async remove(_ref, p) {
+        seen.push(`remove ${p}`);
+        return { ok: true as const, removed: true };
+      },
+      async search(_ref, q) {
+        seen.push(`search ${q}`);
+        return { ok: true as const, hits: [{ path: '/w/a.txt', rel: 'a.txt', name: 'a.txt', dir: false }], truncated: false };
+      },
+    };
+    return { panel, seen };
+  }
+
+  it('answers 404 on every route when the feature is off', async () => {
+    const { base, topic } = await boot();
+    const cookie = await signIn(base);
+    const q = `topic=${topic}&path=a.txt&q=x`;
+    for (const route of ['/api/files/list', '/api/files/read', '/api/files/search']) {
+      expect((await fetch(`${base}${route}?${q}`, { headers: { cookie } })).status, route).toBe(404);
+    }
+    for (const [route, body] of [
+      ['/api/files/write', { topic, path: 'a.txt', text: 'x' }],
+      ['/api/files/create', { topic, path: 'a.txt', dir: false }],
+      ['/api/files/rename', { topic, from: 'a.txt', to: 'b.txt' }],
+      ['/api/files/remove', { topic, path: 'a.txt' }],
+    ] as const) {
+      expect((await post(base, cookie, route, body)).status, route).toBe(404);
+    }
+  });
+
+  it('lists, reads and writes through the injected panel when it is on', async () => {
+    const { base, room, topic } = await boot({ files: { enabled: true, roots: [] } });
+    const files = fakePanel();
+    room.useFilesPanel(files.panel);
+    const cookie = await signIn(base);
+
+    const list = await fetch(`${base}/api/files/list?topic=${topic}&path=`, { headers: { cookie } });
+    expect(list.status).toBe(200);
+    expect(await list.json()).toMatchObject({ ok: true, path: '/w', entries: [{ name: 'a.txt', dir: false }] });
+
+    const read = await fetch(`${base}/api/files/read?topic=${topic}&path=/w/a.txt&preview=1`, { headers: { cookie } });
+    expect(await read.json()).toMatchObject({ ok: true, kind: 'text', text: 'abc', sha256: 'a'.repeat(64) });
+
+    const save = await post(base, cookie, '/api/files/write', {
+      topic,
+      path: '/w/a.txt',
+      text: 'hello',
+      mtimeMs: 5,
+      size: 3,
+      sha256: 'a'.repeat(64),
+    });
+    expect(save.status).toBe(200);
+    expect(await save.json()).toMatchObject({ ok: true, mtimeMs: 6, size: 5 });
+    // The whole version — sha included — reaches the panel.
+    expect(files.seen.at(-1)).toBe(`write /w/a.txt hello {"mtimeMs":5,"size":3,"sha256":"${'a'.repeat(64)}"}`);
+
+    // A conflict is 409, with what the file is now — the page's three-way choice hangs off it.
+    const stale = await post(base, cookie, '/api/files/write', { topic, path: '/w/stale.txt', text: 'x', mtimeMs: 1, size: 1 });
+    expect(stale.status).toBe(409);
+    expect(await stale.json()).toMatchObject({ ok: false, conflict: true, exists: true, size: 9 });
+
+    expect((await post(base, cookie, '/api/files/create', { topic, path: '/w/new.txt', dir: false })).status).toBe(200);
+    expect((await post(base, cookie, '/api/files/rename', { topic, from: '/w/a.txt', to: '/w/b.txt' })).status).toBe(200);
+    expect((await post(base, cookie, '/api/files/remove', { topic, path: '/w/b.txt' })).status).toBe(200);
+    const search = await fetch(`${base}/api/files/search?topic=${topic}&q=a`, { headers: { cookie } });
+    expect(await search.json()).toMatchObject({ ok: true, hits: [{ rel: 'a.txt' }] });
+  });
+
+  it('validates the query and the body before anything reaches a machine', async () => {
+    const { base, room, topic } = await boot({ files: { enabled: true, roots: [] } });
+    room.useFilesPanel(fakePanel().panel);
+    const cookie = await signIn(base);
+
+    expect((await fetch(`${base}/api/files/list?topic=nope&path=`, { headers: { cookie } })).status).toBe(400);
+    expect((await fetch(`${base}/api/files/search?topic=${topic}&q=`, { headers: { cookie } })).status).toBe(400);
+    // .strict(): an extra key is a refused body, not an ignored one.
+    const extra = await post(base, cookie, '/api/files/write', { topic, path: 'a', text: 'x', rm: '-rf' });
+    expect(extra.status).toBe(400);
+    // The explicit overwrite is a body the schema accepts; whether it skips the check is the
+    // daemon's business, not the protocol's.
+    expect((await post(base, cookie, '/api/files/write', { topic, path: '/w/a', text: 'x', force: true })).status).toBe(200);
+  });
+
+  it('serves the page with the button revealed only when the feature is on', async () => {
+    const off = await boot();
+    const offPage = await fetch(`${off.base}/`).then((r) => r.text());
+    expect(offPage).toContain('var FILES_OK = false;');
+    const on = await boot({ files: { enabled: true, roots: [] } });
+    const onPage = await fetch(`${on.base}/`).then((r) => r.text());
+    expect(onPage).toContain('var FILES_OK = true;');
+  });
+});
+
 describe('webui server: notifications and what the operator has seen', () => {
   const P256 = 'BCVxsr7N_eNgVRqvHtD0zTZsEc6-VV-JvLexhqUzORcxaOzi6-AYWXvTBHm4bjyPjs7Vd8pZGH6SRpkNtoIAiw4';
   const post = (base: string, cookie: string, route: string, body: unknown) =>
@@ -2472,7 +2842,7 @@ describe('webui server: notifications and what the operator has seen', () => {
     expect(body).not.toContain("'fetch'");
     const page = await fetch(`${base}/`);
     expect(page.headers.get('content-security-policy')).toContain("worker-src 'self'");
-    expect(page.headers.get('content-security-policy')).toContain("script-src 'unsafe-inline';");
+    expect(page.headers.get('content-security-policy')).toContain("script-src 'unsafe-inline' 'self';");
   });
 
   it('hands out the push key only behind the session, and keeps a subscription to a real push service', async () => {
@@ -2528,5 +2898,81 @@ describe('webui server: notifications and what the operator has seen', () => {
     const child = room.createTopic('[cx] part', topic);
     expect((await post(base, cookie, '/api/topics/delete', { topic })).status).toBe(200);
     expect(room.topicList().find((t) => t.id === child.id)?.parent).toBeUndefined();
+  });
+});
+
+describe('WebServer: a turn’s changes', () => {
+  const status = {
+    ok: true as const,
+    repo: { root: '/work/app', branch: 'main', base: 'abc' },
+    files: [{ path: 'src/a.ts', status: 'modified' as const, additions: 3, deletions: 1 }],
+  };
+  const file = {
+    ok: true as const,
+    path: 'src/a.ts',
+    status: 'modified' as const,
+    original: 'a\n',
+    modified: 'b\n',
+    patch: '-a\n+b\n',
+  };
+
+  it('answers one turn’s file list and one of its files, both read through the room', async () => {
+    const { base, room, topic } = await boot();
+    const cookie = await signIn(base);
+    const asked: string[] = [];
+    room.useTurnChanges({
+      status: async (ref, turn) => {
+        asked.push(`status ${ref.thread} ${turn}`);
+        return status;
+      },
+      file: async (ref, turn, path) => {
+        asked.push(`file ${ref.thread} ${turn} ${path}`);
+        return file;
+      },
+    });
+
+    const list = await fetch(`${base}/api/turn-changes/status?t=${topic}&turn=2`, { headers: { cookie } });
+    expect(list.status).toBe(200);
+    expect(await list.json()).toEqual(status);
+
+    const one = await fetch(`${base}/api/turn-changes/file?t=${topic}&turn=2&path=${encodeURIComponent('src/a.ts')}`, {
+      headers: { cookie },
+    });
+    expect(one.status).toBe(200);
+    expect(await one.json()).toEqual(file);
+    expect(asked).toEqual([`status ${topic} 2`, `file ${topic} 2 src/a.ts`]);
+  });
+
+  it('answers a record it does not have with the failure shape, and refuses a malformed query', async () => {
+    const { base, room, topic } = await boot();
+    const cookie = await signIn(base);
+    room.useTurnChanges({
+      status: async () => ({ ok: false, reason: 'error', text: 'no changes were recorded for turn 9' }),
+      file: async () => ({ ok: false, text: 'src/a.ts did not change in that turn' }),
+    });
+
+    const missing = await fetch(`${base}/api/turn-changes/status?t=${topic}&turn=9`, { headers: { cookie } });
+    expect(missing.status).toBe(200);
+    expect(await missing.json()).toMatchObject({ ok: false, reason: 'error' });
+
+    const noFile = await fetch(`${base}/api/turn-changes/file?t=${topic}&turn=9&path=nope`, { headers: { cookie } });
+    expect(noFile.status).toBe(404);
+
+    for (const path of [
+      '/api/turn-changes/status',
+      `/api/turn-changes/status?t=${topic}`,
+      '/api/turn-changes/status?t=zzzz&turn=1',
+      `/api/turn-changes/status?t=${topic}&turn=0`,
+      `/api/turn-changes/file?t=${topic}&turn=1`,
+    ]) {
+      expect((await fetch(`${base}${path}`, { headers: { cookie } })).status, path).toBe(400);
+    }
+  });
+
+  it('is behind the session like every other route', async () => {
+    const { base, topic } = await boot();
+    for (const path of ['/api/turn-changes/status?t=' + topic + '&turn=1', '/api/turn-changes/file?t=' + topic + '&turn=1&path=a']) {
+      expect((await fetch(`${base}${path}`)).status, path).toBe(401);
+    }
   });
 });
