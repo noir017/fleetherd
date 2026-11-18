@@ -44,15 +44,18 @@ each row is changed in place with the control that fits it:
   switch: one tap writes it;
 - **a short list** is a segmented control (idle reclaim: off, 15m, 1h, 4h, 12h) or a
   dropdown (default agent, conversation scope), written as soon as you pick;
-- **an agent** is one row: its id and harness, then a field per setting beside it —
-  **Model** (the whole model id, or *harness default* in grey when none is set, with
-  a pod's value marked as such) and **Permissions** (the levels its harness has a
-  mode for, a segmented control or a dropdown as with any short list). Tapping the
+- **the agents** are a table under **Agents**: one row per agent — its id and
+  harness — and a column per setting. **Model** is the whole model id, with a pod's
+  value marked as such; **Permissions** is a dropdown of the levels its harness has
+  a mode for, or the level as plain text where it is the only one. A value that is
+  not set is in italics and is what applies (*harness default*, or the level the
+  agent is at), with where it comes from under it when that is known. Tapping the
   model opens that agent's models, with the current one ticked, and a field that
   filters them as you type and takes a name the list does not have (**Use**). The
   agent answering the topic you opened the page from is marked *this topic*. With
-  the instruction editor on, an agent whose harness reads files of its own has a
-  third field, **Instructions**, which opens them.
+  the instruction editor on, the table has an **Instructions** column: **Edit files**
+  opens what that agent's harness reads of its own. On a phone each agent is a card,
+  its settings one per line under its name.
 
 What each change did is said in a banner at the top — saved, already set, or why
 it was refused — and a request that never reached the gateway puts the control
@@ -68,10 +71,10 @@ to ask, then stops it — a second or two, once per agent until it is redefined 
 the screen says *Asking … for its models* meanwhile. An agent whose harness offers
 no model choice, or that does not start, says which, and a name can still be typed.
 
-**Permissions** is a field on each agent's row. Its levels are the ones that agent's harness has a
+**Permissions** is a column of the agents table. Its levels are the ones that agent's harness has a
 mode for, so they come from a running session the same way a model list does: until the gateway
-knows them the field opens a screen of its own, which asks (*Asking … for its modes*), and from
-then on the levels are a control on the row. Each level names the harness's mode it means — *ask
+knows them the cell opens a screen of its own, which asks (*Asking … for its modes*), and from
+then on the levels are a dropdown in the row. Each level names the harness's mode it means — *ask
 (Read-only)* on Codex, *ask (Manual)* on Claude Code. Changing it from chat is safe enough to offer
 because only a person reaches `/setting` — nothing an agent sends, schedules or hands a sub-agent is
 read as a command — and anyone who can type here could already answer the agent's permission

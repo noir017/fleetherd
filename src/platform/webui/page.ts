@@ -934,7 +934,7 @@ select.skill-field{appearance:auto}
    opened in, which read as though they were that topic's (2026-11-05). */
 #settings-page{position:fixed;inset:0;z-index:20;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;padding:24px}
 #settings-page[hidden]{display:none}
-#settings-box{display:flex;flex-direction:column;width:min(720px,100%);max-height:100%;overflow:hidden;background:var(--bg);border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 30px rgba(0,0,0,.5)}
+#settings-box{display:flex;flex-direction:column;width:min(900px,100%);max-height:100%;overflow:hidden;background:var(--bg);border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 30px rgba(0,0,0,.5)}
 #settings-bar{display:flex;align-items:center;gap:8px;padding:6px 10px 6px 16px;border-bottom:1px solid var(--line);min-height:var(--headh)}
 .set-heading{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px;line-height:1.25}
 #settings-title{font-size:13px;font-weight:600}
@@ -1294,23 +1294,44 @@ select.skill-field{appearance:auto}
 .set-seg button[aria-checked="true"]{background:#2b3a4c;color:#fff;font-weight:600}
 .set-select{max-width:260px;min-height:32px;padding:4px 28px 4px 10px;border:1px solid var(--line);border-radius:6px;background:var(--field) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%239a9a9a' stroke-width='1.5'/%3E%3C/svg%3E") no-repeat right 10px center;color:var(--fg);font:inherit;font-size:13px;text-overflow:ellipsis;-webkit-appearance:none;appearance:none;cursor:pointer}
 .set-select:focus-visible,.set-seg button:focus-visible{outline:2px solid var(--own-edge);outline-offset:1px}
-/* A per-agent row: the agent in a fixed first column, and its settings in fixed columns after it,
-   so the same field starts at the same x on every row. Left to their own widths, a segmented
-   Permissions and a select pushed their row's Model to different places. The last column takes
-   what is left; at phone width the row is one column and the fields stack (the narrow block). */
-.set-item.ag{grid-template-columns:96px minmax(0,1fr);gap:4px 16px;align-items:start}
-.set-fields{display:grid;grid-template-columns:150px 252px minmax(0,1fr);gap:6px 14px;min-width:0}
-.set-field{display:flex;flex-direction:column;align-items:flex-start;gap:3px;min-width:0;max-width:100%}
-.set-flabel{font-size:10.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#8a8a8a}
-.set-fopen{display:flex;align-items:center;gap:8px;min-width:0;max-width:100%;min-height:32px;padding:3px 6px;border:0;border-radius:6px;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer;transition:background .12s}
-.set-fopen:hover{background:#1f1f1f}
-.set-fopen:focus-visible{outline:2px solid var(--own-edge);outline-offset:-2px}
-/* Under a choice control: a level that is not set says so. The selected level alone cannot tell
-   "auto, never set" from "auto, saved", and a list field's value already carries its note. */
-.set-fsub{display:flex;flex-wrap:wrap;gap:2px 6px}
-/* An instruction summary is prose, not a value: one line here, the whole of it in the title. */
-.set-fnote{min-width:0;max-width:260px;font-size:12.5px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.set-fnote code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.95em}
+/* The Agents section is a table: one header row, then one row per agent, every row on the same
+   column template, so an agent's Model, Permissions and Instructions sit under their headings.
+   The tracks are minmax(0,…fr) — never sized by their content — so rows that are separate grids
+   still share every column edge. A label per field on every row (the first layout) repeated three
+   words sixteen times on a real gateway, and fixed pixel columns cut model ids and summaries to a
+   few letters; here a value gets its column's whole width and an ellipsis only past it. */
+.ag-head{display:grid;column-gap:16px;padding:8px 14px;border-bottom:1px solid var(--line);background:#151515;font-size:10.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#8a8a8a}
+.set-item.ag-row{column-gap:16px;row-gap:2px;align-items:start;padding:8px 14px}
+.ag-head.c2,.set-item.ag-row.c2{grid-template-columns:minmax(0,1fr) minmax(0,2fr)}
+.ag-head.c3,.set-item.ag-row.c3{grid-template-columns:minmax(0,1fr) minmax(0,1.6fr) minmax(0,1.1fr)}
+.ag-head.c4,.set-item.ag-row.c4{grid-template-columns:minmax(0,.95fr) minmax(0,1.6fr) minmax(0,1fr) minmax(0,.75fr)}
+.ag-who{min-width:0;padding-top:6px}
+.ag-id{display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;font-size:13.5px;line-height:1.35;color:var(--fg);overflow-wrap:anywhere}
+.ag-kind{margin-top:1px;font-size:11.5px;color:var(--dim)}
+.ag-cell{min-width:0}
+.ag-lab{display:none}
+.ag-val{display:flex;flex-direction:column;align-items:stretch;gap:2px;min-width:0}
+.ag-open{display:flex;align-items:center;gap:6px;min-width:0;min-height:32px;margin:0 -8px;padding:3px 8px;border:0;border-radius:6px;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer;transition:background .12s}
+.ag-open:hover{background:#1f1f1f}
+.ag-open:focus-visible{outline:2px solid var(--own-edge);outline-offset:-2px}
+.ag-open .set-v{flex:1 1 auto}
+.ag-txt{flex:1 1 auto;min-width:0;font-size:12.5px;color:#c9d6e2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ag-fixed{display:flex;align-items:center;min-height:32px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;color:#c9d6e2}
+.ag-val>.set-select{width:100%;max-width:none}
+.ag-dash{display:flex;align-items:center;min-height:32px;color:#4a4a4a}
+/* Not set reads the way an unset model always has here: the value in italics, which is what
+   applies. A "not set" line under fifteen of sixteen agents was the loudest thing on the page. */
+.ag-fixed.unset{font-family:inherit;font-style:italic;color:var(--dim)}
+.set-select.unset{font-style:italic;color:var(--dim)}
+.set-select.unset option{font-style:normal;color:var(--fg)}
+.ag-legend{padding:8px 14px;border-top:1px solid var(--line);font-size:11.5px;color:var(--dim)}
+/* What a value cannot say by itself — not set, where it comes from, when it lands — on a line of
+   its own under it, the same for a select, a value and a fixed level. */
+.ag-note{display:flex;flex-wrap:wrap;align-items:center;gap:4px;font-size:11px;line-height:1.35;color:var(--dim)}
+/* An agent's own instruction summary is a sentence: the title holds it on a desktop, where the
+   column is narrow; a phone's card has the width, and nothing to hover. */
+.ag-own{display:none}
+.ag-own code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.95em}
 /* A row with a screen of its own (a model) or a way to another menu: the whole row is the target. */
 .set-open{width:100%;border:0;border-radius:0;background:none;text-align:left;font:inherit;color:inherit;cursor:pointer;transition:background .12s}
 .set-open:hover{background:#1f1f1f}
@@ -1741,12 +1762,18 @@ button:disabled{opacity:.5;cursor:default}
   .set-item.sw{grid-template-columns:minmax(0,1fr) auto}
   .set-item>.set-ctl{justify-self:stretch}
   .set-item.sw>.set-ctl{justify-self:end}
-  /* An agent's fields go under its name, one per line, at the height a thumb needs. */
-  .set-item.ag{grid-template-columns:minmax(0,1fr)}
-  .set-item.ag>.set-fields{display:flex;flex-direction:column;align-items:stretch;gap:10px}
-  .set-item.ag .set-fopen{width:100%;min-height:44px}
-  .set-item.ag .set-seg button{min-height:44px}
-  .set-item.ag .set-fnote{max-width:none}
+  /* No table at phone width: each agent is a card, its name on top and one labelled line per
+     setting under it, at the height a thumb needs. A setting the agent does not have is left out
+     rather than drawn as a dash with nothing to line up with. */
+  .ag-head{display:none}
+  .set-item.ag-row,.set-item.ag-row.c2,.set-item.ag-row.c3,.set-item.ag-row.c4{grid-template-columns:minmax(0,1fr);row-gap:6px;padding:12px}
+  .ag-who{display:flex;align-items:baseline;flex-wrap:wrap;gap:2px 8px;padding-top:0}
+  .ag-kind{margin-top:0}
+  .ag-cell{display:grid;grid-template-columns:92px minmax(0,1fr);align-items:start;column-gap:10px}
+  .ag-cell.none{display:none}
+  .ag-lab{display:block;padding-top:13px;font-size:12.5px;color:var(--dim)}
+  .ag-open,.ag-fixed{min-height:44px}
+  .ag-own{display:block}
   .set-seg{display:flex;width:100%}
   .set-seg button{flex:1;min-height:40px;padding:0 4px}
   .set-select{max-width:none;width:100%;min-height:44px;font-size:16px}
@@ -5160,20 +5187,23 @@ const SCRIPT = `
     h += settingsNotice(s.notice);
     var notes = {}, groups = s.groups || [];
     for(var g=0;g<groups.length;g++) notes[groups[g].name] = groups[g].note;
-    var rows = s.rows || [], group = null, open = false;
+    var rows = s.rows || [], group = null, open = false, headed = false;
+    var cols = settingsAgentCols(rows);
     for(var i=0;i<rows.length;i++){
       var r = rows[i], name = String(r.group == null ? '' : r.group);
       if(name !== group){
-        if(open) h += '</div></section>';
+        if(open) h += (headed ? settingsAgentLegend(cols) : '') + '</div></section>';
         group = name;
+        headed = false;
         h += '<section class="set-sec">'+(name ? '<h3 class="set-group">'+text(name)+'</h3>' : '')
           + (notes[name] ? '<p class="set-gnote">'+inl(notes[name])+'</p>' : '')
           + '<div class="set-card">';
         open = true;
       }
-      h += settingsItem(r, i);
+      if(r.control && r.control.kind === 'agent' && !headed){ h += settingsAgentHead(cols); headed = true; }
+      h += settingsItem(r, i, cols);
     }
-    if(open) h += '</div></section>';
+    if(open) h += (headed ? settingsAgentLegend(cols) : '') + '</div></section>';
     return h;
   }
 
@@ -5187,14 +5217,14 @@ const SCRIPT = `
       + (r.hint ? '<div class="set-hint">'+inl(r.hint)+'</div>' : '') + '</div>';
   }
 
-  function settingsItem(r, i){
+  function settingsItem(r, i, cols){
     var c = r.control || { kind: 'list' };
     if(c.kind === 'switch'){
       return '<div class="set-item sw">' + settingsText(r)
         + '<div class="set-ctl"><button type="button" class="set-switch" role="switch" aria-checked="'+(c.on ? 'true' : 'false')+'"'
         + ' aria-label="'+text(r.label)+'" data-fk="r'+i+'" data-btn="'+text(c.set)+'"></button></div></div>';
     }
-    if(c.kind === 'agent') return settingsAgent(r, i, c.fields || []);
+    if(c.kind === 'agent') return settingsAgent(r, i, c.fields || [], cols || []);
     if(c.kind === 'choice') return '<div class="set-item">' + settingsText(r) + '<div class="set-ctl">'+settingsChoice(r.label, c.options || [], 'r'+i, r.value)+'</div></div>';
     // A row with a screen of its own, or a way to another menu: the whole row is the button.
     var value = '';
@@ -5207,50 +5237,101 @@ const SCRIPT = `
   }
 
   /**
-   * One agent's row: its name, kind and badges on the left, one labelled control per setting
-   * beside it.
+   * The columns every agent row shares, in the order the agents' fields name them, with
+   * Instructions last when any agent has files of its own. Decided once for the whole table, so an
+   * agent without a setting gets an empty cell under its heading instead of shifting the rest left.
+   */
+  function settingsAgentCols(rows){
+    var seen = {}, cols = [], instr = false;
+    for(var i=0;i<rows.length;i++){
+      var c = rows[i].control;
+      if(!c || c.kind !== 'agent') continue;
+      var f = c.fields || [];
+      for(var k=0;k<f.length;k++){
+        if(!seen[f[k].label]){ seen[f[k].label] = true; cols.push(f[k].label); }
+        if(f[k].unset) cols.unset = true;
+      }
+      if(instrOwn(rows[i].target || rows[i].label)) instr = true;
+    }
+    if(instr) cols.push('Instructions');
+    return cols;
+  }
+
+  // The one sentence the italics need, said once under the table rather than on every row.
+  function settingsAgentLegend(cols){
+    return cols.unset ? '<div class="ag-legend">Values in italics are not set: what is shown is what applies.</div>' : '';
+  }
+
+  // The table's one header: the headings a row of every agent would otherwise repeat. Hidden from
+  // a screen reader, which gets the agent and the setting in each control's own name instead.
+  function settingsAgentHead(cols){
+    var h = '<div class="ag-head c'+(cols.length+1)+'" aria-hidden="true"><span>Agent</span>';
+    for(var k=0;k<cols.length;k++) h += '<span>'+text(cols[k])+'</span>';
+    return h + '</div>';
+  }
+
+  /**
+   * One agent's row of the table: who it is, then one cell per column.
    *
    * The daemon sends the fields and every button id, so this only lays them out: Model is a value
-   * that opens the agent's own screen (the same one a model row used to open), Permissions is the
-   * closed list settingsChoice already draws. Instructions is the page's own field — it comes from
-   * the instructions panel, not /setting — so it is added once that list has arrived, and only for
-   * an agent whose harness reads files of its own. It replaces the section's old "Each agent's own"
-   * subsection: one row per agent, everything about that agent on it.
+   * that opens the agent's own screen, Permissions the closed list its harness can honour.
+   * Instructions is the page's own column — it comes from the instructions panel, not /setting —
+   * filled once that list has arrived, for an agent whose harness reads files of its own. Each
+   * cell carries its heading too, which only a phone's card shows.
    */
-  function settingsAgent(r, i, fields){
-    var h = '';
-    for(var k=0;k<fields.length;k++) h += settingsField(r.label, fields[k], 'r'+i+'f'+k);
-    var own = instrOwn(r.target || r.label);
-    if(own) h += instrField(r.label, own, 'r'+i+'i');
-    return '<div class="set-item ag">' + settingsText(r) + '<div class="set-fields">' + h + '</div></div>';
+  function settingsAgent(r, i, fields, cols){
+    var here = r.here ? '<span class="set-badge here" title="Answers the topic \\u201c'+text(settingsTopicName(settingsTopic))+'\\u201d">this topic</span>' : '';
+    var h = '<div class="ag-who"><div class="ag-id"><span class="ag-name">'+text(r.label)+'</span>'+here+'</div>'
+      + (r.targetKind ? '<div class="ag-kind">'+text(r.targetKind)+'</div>' : '')+'</div>';
+    for(var c=0;c<cols.length;c++){
+      var col = cols[c], inner = '';
+      if(col === 'Instructions'){
+        var own = instrOwn(r.target || r.label);
+        if(own) inner = instrField(r.label, own, 'r'+i+'i');
+      } else {
+        for(var k=0;k<fields.length;k++) if(fields[k].label === col){ inner = settingsField(r.label, fields[k], 'r'+i+'f'+k); break; }
+      }
+      h += '<div class="ag-cell'+(inner ? '' : ' none')+'"><span class="ag-lab">'+text(col)+'</span><div class="ag-val">'
+        + (inner || '<span class="ag-dash" aria-hidden="true">\\u2014</span>')+'</div></div>';
+    }
+    return '<div class="set-item ag-row c'+(cols.length+1)+'" role="group" aria-label="'+text(r.label)+'">'+h+'</div>';
   }
 
   // agent is the row's name, carried into every control's accessible name: several agents' rows
   // sit on one page, so a reader that hears only "Model" cannot tell whose it is.
   function settingsField(agent, f, key){
-    var c = f.control || { kind: 'list' };
-    var h = '<div class="set-field"><span class="set-flabel">' + text(f.label) + '</span>';
+    var c = f.control || { kind: 'list' }, v = f.value == null ? '' : String(f.value);
+    // What the value cannot say by itself, under it. A selected level cannot say it was never set,
+    // so a choice without the daemon's note still says that much.
+    // The italics say "not set" (settingsAgentLegend); the line under a value says only where it
+    // comes from — a pinned mode, a running session's, a pod's file — which the italics cannot.
+    var note = f.valueNote ? String(f.valueNote).replace(/^not set(?: \\u00b7 )?/, '') : '';
+    var unset = f.unset ? ' unset' : '', tip = f.unset ? text(v + ' (not set)') : text(v);
+    var badge = f.effectLabel ? '<span class="set-badge restart"'+(f.effectDetail ? ' title="'+text(f.effectDetail)+'"' : '')+'>'+text(f.effectLabel)+'</span>' : '';
+    var foot = note || badge ? '<div class="ag-note">'+(note ? '<span>'+text(note)+'</span>' : '')+badge+'</div>' : '';
     if(c.kind === 'choice'){
-      // The selected option cannot say whether the level was ever set: the daemon's note does,
-      // and where it sends none the page says it in the same pill a list field's value carries.
-      var note = f.valueNote ? text(f.valueNote) : (f.unset ? 'not set' : '');
-      return h + settingsChoice(agent + ' · ' + f.label, c.options || [], key, f.value)
-        + (note ? '<span class="set-fsub"><span class="set-vnote">' + note + '</span></span>' : '') + '</div>';
+      var opts = c.options || [];
+      // One level on offer (an API agent asks about nothing) is a fact, not a control: a select
+      // with a single option invites a tap that cannot change anything.
+      if(opts.length < 2){
+        var only = opts[0];
+        return '<span class="ag-fixed'+unset+'" title="'+(only && only.detail ? text(only.detail) : tip)+'">'+text(only ? only.label : v)+'</span>' + foot;
+      }
+      // Always a select here, never the segmented control a global row gets: five levels side by
+      // side do not fit a column, and a table whose rows are a segment bar or a select by turns
+      // has no column left to read down.
+      return settingsChoice(agent + ' \\u00b7 ' + f.label, opts, key, v, true, f.unset ? 'unset' : '') + foot;
     }
-    return h + '<button type="button" class="set-fopen" data-fk="' + key + '" data-btn="' + text(f.buttonId) + '"'
-      + ' aria-label="' + text(agent + ' · ' + f.label + ': ' + (f.value == null ? '' : f.value)) + '">'
-      + '<span class="set-vv"><span class="set-v' + (f.unset ? ' unset' : '') + '" title="' + text(f.value == null ? '' : f.value) + '">'
-      + text(f.value == null ? '' : f.value) + '</span>'
-      + (f.valueNote ? '<span class="set-vnote">' + text(f.valueNote) + '</span>' : '')
-      + (f.effectLabel ? '<span class="set-badge restart"' + (f.effectDetail ? ' title="' + text(f.effectDetail) + '"' : '') + '>'
-        + text(f.effectLabel) + '</span>' : '')
-      + '</span><span class="set-chev" aria-hidden="true">' + IC.icon.chevronRight + '</span></button></div>';
+    return '<button type="button" class="ag-open" data-fk="' + key + '" data-btn="' + text(f.buttonId) + '"'
+      + ' aria-label="' + text(agent + ' \\u00b7 ' + f.label + ': ' + v) + '">'
+      + '<span class="set-v' + unset + '" title="' + tip + '">' + text(v) + '</span>'
+      + '<span class="set-chev" aria-hidden="true">' + IC.icon.chevronRight + '</span></button>' + foot;
   }
 
   // key is what its controls' data-fk is built from: a row's ("r3"), or one field of an agent's
   // row ("r3f1"), so a redraw can put focus back on the exact control that was used.
-  function settingsChoice(label, opts, key, value){
-    var short = opts.length > 0 && opts.length <= 5;
+  function settingsChoice(label, opts, key, value, select, cls){
+    var short = !select && opts.length > 0 && opts.length <= 5;
     for(var k=0;k<opts.length;k++) if(String(opts[k].label).length > 6) short = false;
     var h = '', any = false;
     if(short){
@@ -5270,7 +5351,7 @@ const SCRIPT = `
     }
     // A value none of the options names (a window typed by hand, 90m) is still shown as what it is.
     if(!any) h = '<option value="" selected disabled>'+text(value == null ? '' : value)+'</option>' + h;
-    return '<select class="set-select" data-fk="'+key+'" aria-label="'+text(label)+'">'+h+'</select>';
+    return '<select class="set-select'+(cls ? ' '+cls : '')+'" data-fk="'+key+'" aria-label="'+text(label)+'">'+h+'</select>';
   }
 
   function settingsValues(s){
@@ -12060,18 +12141,18 @@ const SCRIPT = `
   }
 
   /**
-   * An agent row's third field: what its harness reads on its own machine besides the gateway's
-   * files, and the way into the file window on them — what the section's "Each agent's own" row
-   * used to be, now on the agent's own row. The host is in the title rather than a pill beside
-   * the summary: in the row's last column the summary is what has to stay readable.
+   * An agent's Instructions cell: the way into the file window on what its harness reads on its own
+   * machine besides the gateway's files. The summary of where those come from is a sentence, so a
+   * desktop keeps it in the title — in a table column it was a few letters and an ellipsis — and a
+   * phone's card, which has the width, shows it under the button.
    */
   function instrField(agent, a, key){
     var host = a.host === 'local' ? 'this machine' : a.host;
-    return '<div class="set-field"><span class="set-flabel">Instructions</span>'
-      + '<button type="button" class="set-fopen" data-fk="' + key + '" data-instr-agent="' + text(a.id) + '"'
-      + ' aria-label="' + text(agent + ' · Instructions') + '" title="' + text(host + ' · ' + a.own) + '">'
-      + '<span class="set-vv"><span class="set-fnote">' + inl(a.own) + '</span></span>'
-      + '<span class="set-chev" aria-hidden="true">' + IC.icon.chevronRight + '</span></button></div>';
+    return '<button type="button" class="ag-open" data-fk="' + key + '" data-instr-agent="' + text(a.id) + '"'
+      + ' aria-label="' + text(agent + ' \\u00b7 Instructions') + '" title="' + text(host + ' \\u00b7 ' + String(a.own).replace(/\\x60/g, '')) + '">'
+      + '<span class="ag-txt">Edit files</span>'
+      + '<span class="set-chev" aria-hidden="true">' + IC.icon.chevronRight + '</span></button>'
+      + '<div class="ag-note ag-own">' + inl(a.own) + (a.host === 'local' ? '' : ' \\u00b7 ' + text(host)) + '</div>';
   }
 
   /**
