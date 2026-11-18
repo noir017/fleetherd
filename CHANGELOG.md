@@ -5,6 +5,18 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **A permission request shows what it will change, not only the tool's name.** With
+  `permissions: ask`, an edit arrived as a card reading `Edit src/app.ts` and nothing else: the
+  diff the agent had sent with the request was dropped before the card was drawn, so approving it
+  was a decision about a filename. The card now carries the change under the title — a unified
+  diff for an edit or a write, or the text a write will put in the file, bounded to a preview that
+  says how much it left out. CodeBuddy Code sends no title at all and puts the tool's name in
+  `_meta`, so its Write used to reach the chat as a bare path; it now reads `Write: <path>` with
+  the content beneath. A run of three backticks in that content is shown as two, so a file's own
+  fence cannot end the bubble's code block.
+
 ## [3.11.0] - 2026-11-18
 
 ### Added

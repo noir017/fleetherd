@@ -51,6 +51,82 @@ describe('permissionRequestOf', () => {
     };
     expect(permissionRequestOf(req).title).toBe('MCP list_notes — notes-server');
   });
+
+  it('carries the diff of an edit, so the card asks about the change and not just its name', () => {
+    // As claude-agent-acp 0.81.2 sends an Edit (measured 2026-11-18).
+    const req: RequestPermissionRequest = {
+      ...REQUEST,
+      toolCall: {
+        toolCallId: 't3',
+        title: 'Edit src/app.ts',
+        kind: 'edit',
+        content: [
+          { type: 'diff', path: '/w/src/app.ts', oldText: 'const PORT = 3000;\n', newText: 'const PORT = 8080;\n' },
+        ],
+        locations: [{ path: '/w/src/app.ts' }],
+        rawInput: { file_path: '/w/src/app.ts', old_string: 'PORT = 3000', new_string: 'PORT = 8080' },
+      },
+    };
+    expect(permissionRequestOf(req)).toMatchObject({
+      title: 'Edit src/app.ts',
+      detail: '--- /w/src/app.ts\n+++ /w/src/app.ts\n-const PORT = 3000;\n+const PORT = 8080;',
+    });
+  });
+
+  it('names a titleless CodeBuddy request and shows what its Write will put in the file', () => {
+    // Exactly the frame codebuddy 2.181.0 sent on 2026-11-18: no title, no kind, no content —
+    // the tool's name in _meta and the change in rawInput. It used to reach the user as a bare
+    // path, with nothing saying it was a write and nothing saying what would be written.
+    const req: RequestPermissionRequest = {
+      ...REQUEST,
+      toolCall: {
+        toolCallId: 't4',
+        rawInput: { file_path: '/w/hello.txt', content: 'banana\n' },
+        _meta: { 'codebuddy.ai/toolName': 'Write' },
+      },
+    };
+    expect(permissionRequestOf(req)).toMatchObject({
+      title: 'Write: /w/hello.txt',
+      detail: 'banana',
+    });
+  });
+
+  it('does not repeat a shell call’s description as its change', () => {
+    // claude-agent-acp puts the Bash call's own description in `content`; the command is the title.
+    const req: RequestPermissionRequest = {
+      ...REQUEST,
+      toolCall: {
+        toolCallId: 't5',
+        title: 'npm test',
+        kind: 'execute',
+        content: [{ type: 'content', content: { type: 'text', text: 'Run the unit tests' } }],
+        rawInput: { command: 'npm test', description: 'Run the unit tests' },
+      },
+    };
+    expect(permissionRequestOf(req)).toEqual({
+      title: 'npm test',
+      options: [
+        { optionId: 'allow-once', label: 'Allow' },
+        { optionId: 'reject', label: 'Reject' },
+      ],
+    });
+  });
+
+  it('bounds the change preview, saying how much it left out', () => {
+    const big = 'x'.repeat(5000);
+    const req: RequestPermissionRequest = {
+      ...REQUEST,
+      toolCall: {
+        toolCallId: 't6',
+        title: 'Write big.txt',
+        kind: 'edit',
+        content: [{ type: 'diff', path: '/w/big.txt', oldText: null, newText: big }],
+      },
+    };
+    const detail = permissionRequestOf(req).detail ?? '';
+    expect(detail.length).toBeLessThan(1_400);
+    expect(detail).toContain('more characters)');
+  });
 });
 
 describe('permissionResponse', () => {

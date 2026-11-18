@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { Daemon } from './daemon.js';
+import { composePermissionPrompt, Daemon } from './daemon.js';
 import { parseConfig } from '../config/schema.js';
 import { DEFAULT_ASK_TIMEOUT_MS } from '../ipc/protocol.js';
 import type { PlatformAdapter } from '../platform/adapter.js';
@@ -30,11 +30,21 @@ const TOUCH: AgentPermissionRequest = {
   ],
 };
 
+/** An edit, as claude-agent-acp sends one: the change rides along with the title. */
+const EDIT: AgentPermissionRequest = {
+  title: 'Edit src/app.ts',
+  detail: '--- /w/src/app.ts\n+++ /w/src/app.ts\n-const PORT = 3000;\n+const PORT = 8080;',
+  options: [
+    { optionId: 'allow-once', label: 'Allow' },
+    { optionId: 'reject', label: 'Reject' },
+  ],
+};
+
 afterEach(() => {
   vi.useRealTimers();
 });
 
-function rig(caps: { buttons?: boolean } = {}) {
+function rig(caps: { buttons?: boolean } = {}, request: AgentPermissionRequest = TOUCH) {
   const sent: string[] = [];
   const buttonSends: Array<{ text: string; buttons: Array<{ id: string; label: string }> }> = [];
   const buttonEdits: Array<{ text: string }> = [];
@@ -49,7 +59,7 @@ function rig(caps: { buttons?: boolean } = {}) {
           conversationId,
           // Every turn asks once, the way claude does before a file-writing Bash call.
           runTurn: async (_input: unknown, handlers: AgentStreamHandlers) => {
-            answers.push(await handlers.onPermission!(TOUCH));
+            answers.push(await handlers.onPermission!(request));
           },
           abort: () => {},
           dispose: () => {},
@@ -106,6 +116,23 @@ function rig(caps: { buttons?: boolean } = {}) {
   return { send, click, sent, buttonSends, buttonEdits, answers, daemon: d };
 }
 
+describe('the bubble a permission request is posted as', () => {
+  it('shows the change under the title when the request carries one', () => {
+    const text = composePermissionPrompt('Edit src/app.ts', DEFAULT_ASK_TIMEOUT_MS, '-const PORT = 3000;\n+const PORT = 8080;');
+    expect(text).toContain('Edit src/app.ts');
+    expect(text).toContain('-const PORT = 3000;\n+const PORT = 8080;');
+    expect(text).toContain('No answer within 60 min declines it.');
+  });
+
+  it('cannot let the file’s own fence split the bubble in two', () => {
+    // A Write of a markdown file is the everyday case: three backticks in the content would end
+    // the block early on every platform that reads a fence line by line.
+    const text = composePermissionPrompt('Write notes.md', DEFAULT_ASK_TIMEOUT_MS, '```ts\nx\n```');
+    expect(text.match(/^```$/gm)).toHaveLength(4); // the title's pair and the detail's pair
+    expect(text).toContain('``ts');
+  });
+});
+
 describe('a permission request in the chat', () => {
   it('shows what the agent wants to run, with its own options as the buttons', async () => {
     const r = rig();
@@ -114,6 +141,15 @@ describe('a permission request in the chat', () => {
     expect(bubble.text).toContain('touch probe-file.txt');
     expect(bubble.text).toContain('No answer within 60 min declines it');
     expect(bubble.buttons.map((b) => b.label)).toEqual(['Allow', 'Reject']);
+  });
+
+  it('shows the change an edit will make, not just its name', async () => {
+    const r = rig({}, EDIT);
+    await r.send('change the port');
+    const bubble = r.buttonSends.at(-1)!;
+    expect(bubble.text).toContain('Edit src/app.ts');
+    expect(bubble.text).toContain('-const PORT = 3000;');
+    expect(bubble.text).toContain('+const PORT = 8080;');
   });
 
   it('hands back the option the user tapped, by the agent\'s own id', async () => {

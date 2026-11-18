@@ -19,6 +19,7 @@ import type {
   RequestPermissionResponse,
   SessionConfigOption,
   SessionUpdate,
+  ToolCallUpdate,
 } from '@agentclientprotocol/sdk';
 import type {
   AgentElicitation,
@@ -3170,17 +3171,98 @@ export function decidePermission(req: RequestPermissionRequest): RequestPermissi
  */
 export const PERMISSION_DECLINED_CODE = -32001;
 
-/** A permission request as the user is shown it: the tool call's title, and the agent's options. */
+/** How much of a permission request's change preview reaches the chat. */
+const PERMISSION_DETAIL_MAX = 1200;
+
+/** How much of a vendor-supplied tool name a title falls back to. */
+const PERMISSION_TOOL_NAME_MAX = 40;
+
+/**
+ * The tool's own name, for a request whose tool call carries no title.
+ *
+ * CodeBuddy Code 2.181.0 sends every `session/request_permission` with nothing but `rawInput` and
+ * `_meta["codebuddy.ai/toolName"]` — measured 2026-11-18 — so a Write arrived as a bare file path
+ * with no word saying it was a write. ACP reserves `_meta` for exactly this kind of extension, and
+ * the key's `…/toolName` tail is read rather than the vendor prefix, so another adapter naming its
+ * tool the same way is covered without a second arm.
+ */
+function metaToolName(meta: unknown): string | undefined {
+  if (!meta || typeof meta !== 'object') return undefined;
+  for (const [key, value] of Object.entries(meta as Record<string, unknown>)) {
+    if (typeof value !== 'string' || !/(^|\/)toolName$/.test(key)) continue;
+    const name = value.trim();
+    if (!name) continue;
+    return name.length > PERMISSION_TOOL_NAME_MAX ? `${name.slice(0, PERMISSION_TOOL_NAME_MAX - 1)}…` : name;
+  }
+  return undefined;
+}
+
+/** One `diff` content item as lines a chat bubble can show; empty when it carries no lines. */
+function diffPreview(path: string, oldText: string | null | undefined, newText: string): string {
+  const body: string[] = [];
+  for (const line of (oldText ?? '').replace(/\n+$/, '').split('\n')) if (line !== '') body.push(`-${line}`);
+  for (const line of newText.replace(/\n+$/, '').split('\n')) if (line !== '') body.push(`+${line}`);
+  return body.length ? [`--- ${path}`, `+++ ${path}`, ...body].join('\n') : '';
+}
+
+/**
+ * What the tool will change, for the card's second block: ACP's `content` (a diff for an edit, the
+ * text a write will put in the file), or — for a harness that carries the change in the tool's own
+ * arguments instead — `rawInput.content` beside a `file_path` (CodeBuddy Code's Write, 2026-11-18).
+ *
+ * A shell call's text content is its `description` ("Clean and rebuild"), not a change, and the
+ * command is already the title — so it contributes nothing here. Bounded, because a Write of a
+ * whole file is pages long and this is a preview, not the editor.
+ */
+function permissionDetailOf(toolCall: ToolCallUpdate): string | undefined {
+  const parts: string[] = [];
+  for (const c of toolCall.content ?? []) {
+    if (c.type === 'diff') parts.push(diffPreview(c.path, c.oldText, c.newText));
+    else if (c.type === 'content' && c.content.type === 'text' && toolCall.kind !== 'execute') {
+      parts.push(c.content.text);
+    }
+  }
+  if (parts.length === 0) {
+    const raw = toolCall.rawInput;
+    if (raw && typeof raw === 'object') {
+      const { file_path: file, content } = raw as { file_path?: unknown; content?: unknown };
+      if (typeof file === 'string' && typeof content === 'string' && content.trim()) {
+        parts.push(content.replace(/\n+$/, ''));
+      }
+    }
+  }
+  const text = parts.filter(Boolean).join('\n\n').trim();
+  if (!text) return undefined;
+  if (text.length <= PERMISSION_DETAIL_MAX) return text;
+  return `${text.slice(0, PERMISSION_DETAIL_MAX)}\n… (${text.length - PERMISSION_DETAIL_MAX} more characters)`;
+}
+
+/**
+ * A permission request as the user is shown it: what the tool is, what it will change, and the
+ * agent's own options.
+ *
+ * The change matters more than the name: "Edit src/app.ts" alone asks the user to approve an edit
+ * they cannot see, which is not a decision. So a diff (or the text a write will put in the file)
+ * rides along in `detail`, and the title falls back to the tool's name plus its argument when the
+ * harness sends no title at all.
+ */
 export function permissionRequestOf(req: RequestPermissionRequest): AgentPermissionRequest {
   // agy's generic MCP call is titled `Bash` too, and this card has no preview line for the server,
   // so it is named the way the tool row names it and the server rides in the title.
   const mcp = agyMcpCall(req.toolCall.rawInput);
+  const preview = buildInputPreview(req.toolCall.rawInput);
+  const named = metaToolName(req.toolCall._meta);
   const title =
     (mcp && `${agyMcpLabel(mcp)} — ${mcp.server}`) ||
     stripCode(req.toolCall.title ?? '') ||
-    buildInputPreview(req.toolCall.rawInput) ||
+    (named ? (preview ? `${named}: ${preview}` : named) : preview) ||
     'a tool call';
-  return { title, options: req.options.map((o) => ({ optionId: o.optionId, label: o.name || o.optionId })) };
+  const detail = permissionDetailOf(req.toolCall);
+  return {
+    title,
+    ...(detail ? { detail } : {}),
+    options: req.options.map((o) => ({ optionId: o.optionId, label: o.name || o.optionId })),
+  };
 }
 
 /**

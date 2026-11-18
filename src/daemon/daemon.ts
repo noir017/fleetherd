@@ -421,13 +421,20 @@ const PERMISSION_TITLE_MAX = 600;
 
 /**
  * The bubble a `permissions: ask` request is posted as: what the agent wants to run, in a code
- * block because it usually is code (a shell command, a path), and what happens if nobody answers —
- * said up front, since the answer decides whether the turn can go on.
+ * block because it usually is code (a shell command, a path), then — when the request carries one —
+ * the change itself, so approving an edit is a decision about the diff rather than about its name.
+ * What happens if nobody answers is said up front, since the answer decides whether the turn can go
+ * on.
+ *
+ * The detail is a preview, and a preview must not be able to end the block it sits in: a file whose
+ * content contains a fence would otherwise split the bubble in two on the platforms that read a
+ * fence line by line. A run of three or more backticks is shown as two.
  */
-export function composePermissionPrompt(title: string, timeoutMs: number): string {
+export function composePermissionPrompt(title: string, timeoutMs: number, detail?: string): string {
   const shown = title.length > PERMISSION_TITLE_MAX ? `${title.slice(0, PERMISSION_TITLE_MAX)}…` : title;
+  const change = detail ? `\n\n\`\`\`\n${detail.replace(/`{3,}/g, '``')}\n\`\`\`` : '';
   const minutes = Math.round(timeoutMs / 60_000);
-  return `🔐 The agent asks to run:\n\`\`\`\n${shown}\n\`\`\`\nNo answer within ${minutes} min declines it.`;
+  return `🔐 The agent asks to run:\n\`\`\`\n${shown}\n\`\`\`${change}\nNo answer within ${minutes} min declines it.`;
 }
 
 /**
@@ -2450,7 +2457,7 @@ export class Daemon {
     const answer = await this.askButtons(
       platform,
       address,
-      composePermissionPrompt(request.title, DEFAULT_ASK_TIMEOUT_MS),
+      composePermissionPrompt(request.title, DEFAULT_ASK_TIMEOUT_MS, request.detail),
       request.options.map((o) => o.label),
       DEFAULT_ASK_TIMEOUT_MS,
       conversationId,

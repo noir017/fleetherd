@@ -175,8 +175,9 @@ agents:
 ```
 
 - Each request appears in the chat as a message with the command and the agent's own options as
-  buttons ("Allow", "Reject", …). Answer by tapping; a typed reply goes to the agent as your next
-  message instead.
+  buttons ("Allow", "Reject", …). An edit or a write also shows what it will change — the diff, or
+  the text that goes into the file — so the answer is about the change and not only its name.
+  Answer by tapping; a typed reply goes to the agent as your next message instead.
 - Nobody answering within an hour declines the request. The agent is told nobody answered, not
   that you refused, and the turn continues. A reminder is posted after half an hour.
 - `/stop` cancels a pending request together with the turn.
