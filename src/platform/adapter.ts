@@ -210,6 +210,11 @@ export interface TurnChangesPanel {
   status(ref: ConversationRef, turn: number): Promise<TurnChangeStatusResult>;
   /** `path` must be one of the turn's changed files; anything else is refused. */
   file(ref: ConversationRef, turn: number, path: string): Promise<TurnChangeFileResult>;
+  /**
+   * The conversation is gone from the page: drop its records and release the refs that keep
+   * their trees, so a deleted topic does not go on holding snapshots for ever.
+   */
+  forget?(ref: ConversationRef): void;
 }
 
 /** What `useSchedulePanel` hands a platform: the list, and the operations on one task. */
@@ -912,14 +917,14 @@ export interface PlatformAdapter {
   useTurnChanges?(panel: TurnChangesPanel): void;
 
   /**
-   * Hang a finished turn's change summary off the reply it ends. Called by the daemon after the
-   * turn, so the page can draw the entry under it — and, because the message keeps it, after a
-   * reload and a reconnect as well.
+   * Hang a finished turn's change summary off the reply it ended — `reply` is the message this turn
+   * last posted, captured by the runner at turn end, so a slow snapshot cannot land under a later
+   * turn's answer. No reply (a turn that posted nothing) means no entry.
    *
    * Its presence is also the daemon's answer to "does this platform show turn changes at all":
    * the snapshots are only taken where something can show them.
    */
-  attachTurnChanges?(address: ConversationAddress, entry: TurnChangeEntry): void;
+  attachTurnChanges?(address: ConversationAddress, entry: TurnChangeEntry, reply?: MessageRef): void;
 
   /**
    * Show the agent's live status for the conversation at an address — model, context, cost, cache

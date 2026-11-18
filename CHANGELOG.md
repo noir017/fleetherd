@@ -10,10 +10,11 @@ All notable changes to this project are documented here. The format is based on
 - **A turn's changes, under its reply in the web UI.** A topic whose files are a git work tree now
   gets a snapshot of the work tree before the agent is asked and another when the turn ends, and
   the reply ends with a line — `3 files changed +12 -4` — that opens that turn's diff in the git
-  window. The project's own `.git` is never written to: the snapshots are a repository of their own
-  under `~/.fleetherd/snapshots/<hash of the repository root>` on the machine the agent runs on,
-  built with a separate `GIT_DIR`, `GIT_WORK_TREE` and a per-snapshot index, so every `.gitignore`
-  in the work tree applies as usual. The first snapshot has three seconds and a failure costs only
+  window. A turn that changed nothing leaves its reply as it was. The project's own `.git` is never
+  written to: the snapshots are a repository of their own under
+  `~/.fleetherd/snapshots/<hash of the repository root>` on the machine the agent runs on, built
+  with a separate `GIT_DIR`, `GIT_WORK_TREE` and an index of its own, so every `.gitignore` in the
+  work tree applies as usual. The first snapshot has three seconds and a failure costs only
   that turn's entry; the second is taken after the reply has gone and nothing waits on it. Each
   topic keeps its last 50 turns, in a file that survives a restart, and the objects behind them are
   pruned periodically. The entry is part of the message, so a reload, a reconnect and a restart all

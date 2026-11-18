@@ -3474,6 +3474,11 @@ ${formatTokens(left)} left before compaction — ${name}`;
     return this.turnChanges.file(this.idForRef(ref), ref, turn, path);
   }
 
+  /** The page dropped this conversation's topic: its turn-change records go with it. */
+  turnChangesForgetForRef(ref: ConversationRef): void {
+    this.turnChanges.forget(this.idForRef(ref), ref);
+  }
+
   /**
    * The conversation an address belongs to, taking the long way round through the scope and the
    * alias table rather than letting the caller build a key — because neither is a platform's

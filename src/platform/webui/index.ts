@@ -547,13 +547,14 @@ function outbound(room: WebRoom, instance: WebuiInstance): Outbound {
     },
     /**
      * The turn's changes, hung off the reply it just ended. Not an outbound message: the entry is
-     * a field the page draws under the last message of that turn, so this edits the room's own copy
-     * and tells the page to repaint it. Unknown or gone topics are ignored — the transcript may have
-     * been dropped between the turn and its end snapshot.
+     * a field the page draws under that one message, so this edits the room's own copy and tells
+     * the page to repaint it. `reply` is the message the turn last posted — without it (a turn that
+     * posted nothing) there is nothing to hang an entry on. Unknown or gone topics are ignored: the
+     * transcript may have been dropped between the turn and its end snapshot.
      */
-    attachTurnChanges(address, entry) {
+    attachTurnChanges(address, entry, reply) {
       if (address.channel !== CHANNEL || !address.thread) return;
-      room.attachTurnChanges(address.thread, entry);
+      room.attachTurnChanges(address.thread, entry, reply?.messageId);
     },
     async editMessage(r, text) {
       room.revise(topicOf(r.address, 'editMessage'), r.messageId, text);

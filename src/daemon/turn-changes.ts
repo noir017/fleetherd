@@ -9,7 +9,8 @@ import type {
   TurnChangeFileResult,
   TurnChangeStatusResult,
 } from '../platform/adapter.js';
-import { DEFAULT_RUN_TIMEOUT_MS, type Workspace, type WorkspaceRunResult } from './workspace.js';
+import type { MessageRef } from '../types.js';
+import { DEFAULT_RUN_TIMEOUT_MS, type Workspace, type WorkspaceRunResult, type WorkspaceStat } from './workspace.js';
 
 /**
  * What one turn changed in its workspace, for the web UI's page: a snapshot of the work tree
@@ -20,24 +21,37 @@ import { DEFAULT_RUN_TIMEOUT_MS, type Workspace, type WorkspaceRunResult } from 
  * git directory created by `git init` for this purpose alone. The project's own `.git` is never
  * written to: an index of ours inside it would race every `git status` the agent runs, and a
  * failed snapshot must be unable to leave the real repository in a state nobody asked for.
- * `GIT_DIR` + `GIT_WORK_TREE` + a per-snapshot `GIT_INDEX_FILE` are the whole coupling: `add -A`
+ * `GIT_DIR` + `GIT_WORK_TREE` + a `GIT_INDEX_FILE` of our own are the whole coupling: `add -A`
  * reads the work tree (so every `.gitignore` in it applies as usual) and writes objects into our
- * store, and `write-tree` answers a tree id without creating a commit.
+ * store, and `write-tree` answers a tree id without creating a commit. When the work tree is an
+ * ancestor of that store (`$HOME` itself, say), the store's own path is written into its
+ * `info/exclude` first: otherwise `git add` refuses the nested repository.
  *
- * ── `sh -c`, twice, and why ─────────────────────────────────────────────────
+ * ── `sh -c`, for three fixed scripts ────────────────────────────────────────
  * `Workspace.run` takes argv and never a shell, which is what keeps a path with a space or a `;`
  * in it from becoming a command. The cost is that `~` is not expanded: argv is handed to exec as
  * written. So the home directory of the machine the agent runs on is read with a FIXED script —
- * `printf %s "${HOME:-}"` — and a temporary index is removed with `rm -f -- "$1"`, the dynamic
- * part passed as a positional argument rather than spliced into the script. The alternative, one
- * interpolated command string per call, is the thing that rule exists to prevent. A machine with
- * no `sh` (Windows) simply gets no turn changes: the snapshot is skipped and the turn goes on.
+ * `printf %s "${HOME:-}"` — and a file is removed, or the exclude line written, with a fixed
+ * script whose dynamic parts are positional arguments, never spliced into the text. The
+ * alternative, one interpolated command string per call, is the thing that rule exists to
+ * prevent. A machine with no `sh` (Windows) simply gets no turn changes: the snapshot is skipped
+ * and the turn goes on.
  *
  * ── Bounded, always ─────────────────────────────────────────────────────────
- * The start snapshot sits between the person's message and the agent reading it, so it has
- * `SNAPSHOT_START_TIMEOUT_MS` and gives up: a turn whose snapshot failed or was too slow is a
- * turn with no entry, never a turn held behind git. The end snapshot is taken after the turn has
- * already been flushed and reported, and nothing waits on it.
+ * The start snapshot sits between the person's message and the agent reading it. Its git commands
+ * carry a timeout, and `start` races the WHOLE of it against `SNAPSHOT_START_TIMEOUT_MS` as well:
+ * a remote host that has gone away leaves `ws.run` waiting for a reconnect that may never come,
+ * and no per-command timeout is carried across that link. When the race is lost the turn goes on
+ * with no entry, and that directory is remembered as too slow for `SLOW_REPO_MS` so the next
+ * turns do not each pay the same wait. The end snapshot is taken after the turn has been flushed
+ * and reported, and nothing waits on it.
+ *
+ * ── Which reply, and which number ───────────────────────────────────────────
+ * A turn takes its number when it ends — synchronously, in `finish` — so two turns that end close
+ * together cannot swap numbers, and a slow snapshot cannot make a later turn's reply show an
+ * earlier turn's diff. The reply it hangs off is the message this turn last posted, captured by
+ * the runner at turn end and carried in the handle; "the last message in the topic" would be the
+ * NEXT turn's reply whenever this turn's ending snapshot was slower than that turn.
  *
  * ── Two turns in one directory ──────────────────────────────────────────────
  * The diff of a turn is "the work tree before the prompt" against "the work tree after it". When
@@ -49,10 +63,11 @@ import { DEFAULT_RUN_TIMEOUT_MS, type Workspace, type WorkspaceRunResult } from 
  * Each conversation keeps its last KEEP_TURNS records in `<configDir>/turn-changes.json`; the git
  * objects are kept alive by refs (`refs/turns/<conversation>/<turn>/{start,end}`), because a tree
  * id in a JSON file is not reachability and a `gc` would otherwise delete what those records
- * point at. Dropping a record deletes its refs, and a periodic `git gc --prune=<a day ago>`
+ * point at. Dropping a record deletes its refs — through the snapshot repository that record
+ * names, which is not necessarily the newest one's — and a periodic `git gc --prune=<a day ago>`
  * collects the objects. The date rather than `--prune=now` on purpose: a concurrent snapshot has
  * loose objects written but not yet in a tree, and `now` would delete them between `add` and
- * `write-tree`.
+ * `write-tree`. A topic deleted from the page forgets its records and their refs at once.
  */
 
 /** The start snapshot's budget, the whole of it — see the header. */
@@ -61,6 +76,8 @@ export const SNAPSHOT_START_TIMEOUT_MS = 3_000;
 export const KEEP_TURNS = 50;
 /** The file under `configDir()` the records live in. */
 export const TURN_CHANGES_FILE = 'turn-changes.json';
+/** After a snapshot that failed or ran out of time, its directory is left alone this long. */
+const SLOW_REPO_MS = 10 * 60_000;
 
 /** A file's contents past this are not read back for the diff window — the flags say so instead. */
 const FILE_MAX_BYTES = 256 << 10;
@@ -72,11 +89,21 @@ const END_TIMEOUT_MS = DEFAULT_RUN_TIMEOUT_MS;
 const MAX_FILES = 2_000;
 /** How much `git diff` output is read before it is cut (the tail is kept, as everywhere here). */
 const DIFF_MAX_BYTES = 8 << 20;
+/** How many turns' diffs are cached. The trees never change, so a hit is always right. */
+const DIFF_CACHE = 64;
+/**
+ * An `index.lock` older than this belongs to nobody: a `git add` we killed at the deadline leaves
+ * one behind (SIGKILL runs no cleanup), and without this every later snapshot would fall back to a
+ * temporary index — a full scan — for ever.
+ */
+const STALE_LOCK_MS = 5 * 60_000;
 /** `gc` runs after this many finished snapshots in one repository, at most once an hour. */
 const GC_EVERY = 20;
 const GC_MIN_GAP_MS = 60 * 60 * 1000;
 /** Objects younger than this survive a gc — see the header for why not `now`. */
 const GC_PRUNE = '1.day.ago';
+/** `rm -f -- "$1" "$1.lock"`: the dynamic half is a positional argument, never part of the text. */
+const RM_SCRIPT = 'rm -f -- "$1" "$1.lock"';
 
 /** One finished turn, as the file keeps it. Small on purpose: the counts, not the file list. */
 interface TurnRecord {
@@ -112,7 +139,11 @@ export interface TurnChangesHandle {
   startTree: string;
   root: string;
   gitDir: string;
-  branch?: string;
+  /**
+   * The message this turn last posted, as the runner captured it at turn end. The entry is hung
+   * off exactly this one — see the header for why not "the last message in the topic".
+   */
+  reply?: MessageRef;
 }
 
 export interface TurnChangesOptions {
@@ -133,6 +164,18 @@ interface Repo {
   gitDir: string;
 }
 
+/** What one `add -A` + `write-tree` said. `said` is absent when git never answered. */
+interface TreeAttempt {
+  tree?: string;
+  locked: boolean;
+  said: boolean;
+}
+
+interface Diff {
+  files: TurnChangeFile[];
+  truncated: boolean;
+}
+
 export class TurnChanges {
   private readonly store: string;
   private readonly state: State = { v: 1, conversations: {} };
@@ -142,6 +185,12 @@ export class TurnChanges {
   private readonly gcSeen = new Map<string, { count: number; at: number }>();
   /** Directories already reported as "not a git work tree", so the log says it once each. */
   private readonly notGit = new Set<string>();
+  /** Directories whose snapshots failed or timed out recently, and until when — see SLOW_REPO_MS. */
+  private readonly slow = new Map<string, number>();
+  /** The next turn number per conversation, so it is taken at turn end rather than after a diff. */
+  private readonly numbering = new Map<string, number>();
+  /** Diffs already computed, by `<git dir>\0<start tree>\0<end tree>` — the trees never change. */
+  private readonly diffs = new Map<string, Diff>();
   private readonly log: (line: string) => void;
 
   constructor(private readonly opts: TurnChangesOptions) {
@@ -152,8 +201,9 @@ export class TurnChanges {
 
   /**
    * Snapshot the work tree, before the prompt. Undefined — the turn is skipped — when this
-   * conversation has no workspace, its directory is not a git work tree, or the snapshot did not
-   * finish within `SNAPSHOT_START_TIMEOUT_MS`. Never throws.
+   * conversation has no workspace, its directory is not a git work tree, the snapshot did not
+   * finish within `SNAPSHOT_START_TIMEOUT_MS`, or an earlier one in the same directory did not.
+   * Never throws, and never leaves the caller waiting on a machine that went away.
    */
   async start(
     id: string,
@@ -163,42 +213,38 @@ export class TurnChanges {
   ): Promise<TurnChangesHandle | undefined> {
     // Only a page can show the result; a chat platform has nowhere to put it and no file route.
     if (typeof platform.attachTurnChanges !== 'function') return undefined;
-    try {
-      const ws = this.opts.workspaceFor(ref);
-      if (!ws) return undefined;
-      const deadline = Date.now() + (this.opts.startTimeoutMs ?? SNAPSHOT_START_TIMEOUT_MS);
-      const repo = await this.repoOf(ws, deadline);
-      if (!repo) return undefined;
-      const startTree = await this.treeOf(ws, repo, deadline);
-      if (!startTree) {
-        // A timeout or a failing git: skipped, said once, and the turn goes on without an entry.
-        this.log(`[changes] ${id}: the start snapshot did not finish; no entry for this turn`);
-        return undefined;
-      }
-      const branch = await this.branchOf(ws, repo, deadline);
-      return {
-        id,
-        ref,
-        ws,
-        platform,
-        address,
-        startTree,
-        root: repo.root,
-        gitDir: repo.gitDir,
-        ...(branch ? { branch } : {}),
-      };
-    } catch (e) {
+    const ws = this.opts.workspaceFor(ref);
+    if (!ws) return undefined;
+    const key = `${ws.host}\u0000${ws.root}`;
+    if ((this.slow.get(key) ?? 0) > Date.now()) return undefined;
+    const budget = this.opts.startTimeoutMs ?? SNAPSHOT_START_TIMEOUT_MS;
+    let timedOut = false;
+    const work = this.begin(id, ref, platform, address, ws, key).catch((e) => {
       this.log(`[changes] ${id}: no start snapshot (${reasonOf(e)})`);
       return undefined;
+    });
+    const handle = await withinDeadline(work, budget, () => {
+      timedOut = true;
+    });
+    if (handle) {
+      this.slow.delete(key);
+      return handle;
     }
+    if (timedOut) {
+      this.markSlow(key);
+      this.log(`[changes] ${id}: the start snapshot took over ${budget} ms; no entry this turn`);
+    }
+    return undefined;
   }
 
   /**
    * Take the end snapshot, record the turn and tell the page — in the background, after the turn
-   * has been reported. Nothing awaits this and nothing it does can fail a turn.
+   * has been reported. The turn's NUMBER is taken here, synchronously, so it follows the order the
+   * turns ended in even when their snapshots finish out of order.
    */
   finish(handle: TurnChangesHandle): void {
-    void this.settle(handle).catch((e) => {
+    const turn = this.takeNumber(handle.id);
+    void this.settle(handle, turn).catch((e) => {
       this.log(`[changes] ${handle.id}: end snapshot failed (${reasonOf(e)})`);
     });
   }
@@ -247,23 +293,68 @@ export class TurnChanges {
     return { ...answer, original: before.text ?? '', modified: after.text ?? '', patch };
   }
 
+  /**
+   * Forget one conversation's records — the page deleted its topic. The refs go too, through the
+   * snapshot repository each record names, so the trees become collectable. Best-effort: the file
+   * is what the page reads, and it is already forgotten by the time this returns.
+   */
+  forget(id: string, ref: ConversationRef): void {
+    const turns = this.state.conversations[id]?.turns;
+    if (!turns) return;
+    delete this.state.conversations[id];
+    this.numbering.delete(id);
+    void this.save();
+    if (turns.length === 0) return;
+    const ws = this.opts.workspaceFor(ref);
+    if (!ws) {
+      this.log(`[changes] ${id}: forgot its records, but has no workspace to release their refs`);
+      return;
+    }
+    for (const [gitDir, list] of byGitDir(turns)) {
+      void this.releaseRefs(ws, gitDir, id, list, 'dropped topic');
+    }
+  }
+
   // ── The turn's two snapshots ───────────────────────────────────────────────
 
-  private async settle(handle: TurnChangesHandle): Promise<void> {
+  /** Everything `start` waits for, and the half a hard deadline may abandon. */
+  private async begin(
+    id: string,
+    ref: ConversationRef,
+    platform: PlatformAdapter,
+    address: ConversationAddress,
+    ws: Workspace,
+    key: string
+  ): Promise<TurnChangesHandle | undefined> {
+    const deadline = Date.now() + (this.opts.startTimeoutMs ?? SNAPSHOT_START_TIMEOUT_MS);
+    const repo = await this.repoOf(ws, deadline);
+    if (!repo) return undefined;
+    const startTree = await this.treeOf(ws, repo, deadline);
+    if (!startTree) {
+      // A git that failed, or an index that could not be used twice: leave this directory alone
+      // for a while rather than paying for the same failure on every turn.
+      this.markSlow(key);
+      this.log(`[changes] ${id}: the start snapshot failed; no entry this turn`);
+      return undefined;
+    }
+    return { id, ref, ws, platform, address, startTree, root: repo.root, gitDir: repo.gitDir };
+  }
+
+  private async settle(handle: TurnChangesHandle, turn: number): Promise<void> {
     const repo: Repo = { root: handle.root, gitDir: handle.gitDir };
     const endTree = await this.treeOf(handle.ws, repo, Date.now() + END_TIMEOUT_MS);
     if (!endTree) {
-      this.log(`[changes] ${handle.id}: the end snapshot did not finish; this turn is not recorded`);
+      this.log(`[changes] ${handle.id}: the end snapshot failed; turn ${turn} is not recorded`);
       return;
     }
-    const diff = await this.diffOf(handle.ws, {
-      startTree: handle.startTree,
-      endTree,
-      gitDir: handle.gitDir,
-    });
-    if (!diff) return;
-    const turns = (this.state.conversations[handle.id] ??= { turns: [] });
-    const turn = (turns.turns[turns.turns.length - 1]?.turn ?? 0) + 1;
+    // Read at the end, from the PROJECT's repository: at the start the budget is spent, and our
+    // snapshot repository's HEAD would name the wrong branch (and its own, at that).
+    const branch = await this.branchOf(handle.ws, repo, Date.now() + END_TIMEOUT_MS);
+    const diff = await this.diffOf(handle.ws, { startTree: handle.startTree, endTree, gitDir: handle.gitDir });
+    if (!diff) {
+      this.log(`[changes] ${handle.id}: could not diff the two trees of turn ${turn}`);
+      return;
+    }
     const additions = diff.files.reduce((n, f) => n + f.additions, 0);
     const deletions = diff.files.reduce((n, f) => n + f.deletions, 0);
     const record: TurnRecord = {
@@ -272,7 +363,7 @@ export class TurnChanges {
       root: handle.root,
       gitDir: handle.gitDir,
       host: handle.ws.host,
-      ...(handle.branch ? { branch: handle.branch } : {}),
+      ...(branch ? { branch } : {}),
       startTree: handle.startTree,
       endTree,
       files: diff.files.length,
@@ -280,17 +371,24 @@ export class TurnChanges {
       deletions,
       ...(diff.truncated ? { truncated: true as const } : {}),
     };
-    turns.turns.push(record);
+    const turns = (this.state.conversations[handle.id] ??= { turns: [] });
+    // Kept in turn order even though the snapshots finish in their own: a slow one must not look
+    // like a later turn.
+    const at = turns.turns.findIndex((t) => t.turn > turn);
+    turns.turns.splice(at < 0 ? turns.turns.length : at, 0, record);
     this.keepRefs(handle.ws, handle.id, record);
     this.dropOld(handle.ws, handle.id);
     await this.save();
-    this.attach(handle, {
-      turn,
-      files: record.files,
-      additions,
-      deletions,
-      ...(record.truncated ? { truncated: true as const } : {}),
-    });
+    // A turn that changed nothing has nothing to open; its record still keeps the numbering.
+    if (record.files > 0) {
+      this.attach(handle, {
+        turn,
+        files: record.files,
+        additions,
+        deletions,
+        ...(record.truncated ? { truncated: true as const } : {}),
+      });
+    }
     this.maybeGc(handle.ws, handle.gitDir);
   }
 
@@ -301,7 +399,7 @@ export class TurnChanges {
     if (!root) {
       if (!this.notGit.has(ws.root)) {
         this.notGit.add(ws.root);
-        console.log(`[changes] not a git work tree, so no turn changes here: ${ws.root}`);
+        this.log(`[changes] not a git work tree, so no turn changes here: ${ws.root}`);
       }
       return undefined;
     }
@@ -312,50 +410,105 @@ export class TurnChanges {
       return undefined;
     }
     const hash = createHash('sha256').update(root).digest('hex').slice(0, 16);
-    const gitDir = `${dir}/.fleetherd/snapshots/${hash}/.git`;
+    const snapDir = `${dir}/.fleetherd/snapshots/${hash}`;
+    const gitDir = `${snapDir}/.git`;
     // Idempotent, and cheap next to `add -A`; re-running it is what makes a wiped snapshot
     // directory recover without a daemon restart.
-    const init = await git(ws, ['init', '-q', `${dir}/.fleetherd/snapshots/${hash}`], {
-      cwd: ws.root,
-      timeoutMs: left(deadline),
-    });
+    const init = await git(ws, ['init', '-q', snapDir], { cwd: ws.root, timeoutMs: left(deadline) });
     if (!init || init.code !== 0) return undefined;
+    // A work tree that CONTAINS the snapshot repository (`$HOME` as the project root, or a
+    // `.fleetherd` somebody keeps inside a checkout) cannot be added to it: git sees a nested
+    // repository with no commit and refuses the whole add. Our own `info/exclude` — inside our
+    // git dir, never the project's — is enough to keep it out.
+    const rel = relativeUnder(root, snapDir);
+    if (rel && !(await this.excludeSnapDir(ws, gitDir, rel, deadline))) {
+      this.log(`[changes] could not keep ${snapDir} out of ${root}; no turn changes there`);
+      return undefined;
+    }
     return { root, gitDir };
   }
 
-  /** `add -A` + `write-tree` against a throwaway index; the tree id, or undefined. */
+  /** Keep the snapshot repository out of its own work tree — see `repoOf`. */
+  private async excludeSnapDir(ws: Workspace, gitDir: string, rel: string, deadline: number): Promise<boolean> {
+    const r = await shell(ws, `mkdir -p "$(dirname "$1")" && printf '%s\\n' "$2" > "$1"`, [`${gitDir}/info/exclude`, `/${rel}/`], left(deadline));
+    return r?.code === 0;
+  }
+
+  /**
+   * `add -A` + `write-tree`, on a shared index when it is free and a temporary one when it is not.
+   *
+   * The shared index is the difference between 0.04 s and 0.4 s on a 20k-file tree, and the whole
+   * point is fitting inside the start budget. Only one process can hold it (git's `index.lock`),
+   * so a second turn in the same directory falls back to a temporary index rather than losing its
+   * entry — the fallback is slow, not wrong, and the hard deadline still bounds what the turn
+   * pays. A shared index that failed for any other reason is thrown away, so the next turn
+   * rebuilds it instead of failing the same way twice a turn.
+   */
   private async treeOf(ws: Workspace, repo: Repo, deadline: number): Promise<string | undefined> {
-    if (left(deadline) <= 0) return undefined;
-    // Per snapshot, so two turns of two topics in one directory cannot fight over an index.
-    const index = `${path.dirname(repo.gitDir)}/index-${randomUUID()}`;
-    const env = { GIT_DIR: repo.gitDir, GIT_WORK_TREE: repo.root, GIT_INDEX_FILE: index };
+    const dir = path.dirname(repo.gitDir);
+    const shared = `${dir}/index`;
+    await this.clearStaleLock(ws, dir);
+    const first = await this.addTree(ws, repo, shared, deadline);
+    if (first.tree) return first.tree;
+    // No answer at all — a timeout, a dead link — is not something a second run can fix.
+    if (!first.said) return undefined;
+    if (!first.locked) void shell(ws, RM_SCRIPT, [shared], 5_000);
+    const temp = `${dir}/index-${randomUUID()}`;
     try {
-      const add = await git(ws, ['add', '-A'], { cwd: repo.root, env, timeoutMs: left(deadline) });
-      if (!add || add.code !== 0) return undefined;
-      const tree = await git(ws, ['write-tree'], { cwd: repo.root, env, timeoutMs: left(deadline) });
-      const id = tree?.code === 0 ? tree.output.toString('utf8').trim() : '';
-      return /^[0-9a-f]{40}([0-9a-f]{24})?$/.test(id) ? id : undefined;
+      const second = await this.addTree(ws, repo, temp, deadline);
+      return second.tree;
     } finally {
-      await shell(ws, 'rm -f -- "$1" "$1.lock"', [index], 5_000);
+      // Off the turn's clock: `start` has already stopped waiting for this whole operation (the
+      // race in `start`), so the cleanup gets its own small budget instead of the deadline's
+      // leftovers — which would be a millisecond and leave the temporary index behind.
+      await shell(ws, RM_SCRIPT, [temp], 5_000);
     }
   }
 
+  /** Remove an `index.lock` a killed snapshot left behind — see STALE_LOCK_MS. */
+  private async clearStaleLock(ws: Workspace, dir: string): Promise<void> {
+    const lock = `${dir}/index.lock`;
+    const st = await ws.stat(lock).catch((): WorkspaceStat => ({ exists: false }));
+    if (!st.exists || Date.now() - (st.mtimeMs ?? 0) < STALE_LOCK_MS) return;
+    await shell(ws, RM_SCRIPT, [lock], 5_000);
+  }
+
+  private async addTree(ws: Workspace, repo: Repo, index: string, deadline: number): Promise<TreeAttempt> {
+    const env = { GIT_DIR: repo.gitDir, GIT_WORK_TREE: repo.root, GIT_INDEX_FILE: index };
+    const add = await git(ws, ['add', '-A'], { cwd: repo.root, env, timeoutMs: left(deadline) });
+    if (!add) return { locked: false, said: false };
+    if (add.code !== 0) {
+      const said = `${add.stderr}\n${add.output.toString('utf8')}`;
+      if (/index\.lock/.test(said)) return { locked: true, said: true };
+      this.log(`[changes] add failed in ${repo.root}: ${said.trim().split('\n').pop() ?? `exit ${add.code}`}`);
+      return { locked: false, said: true };
+    }
+    const tree = await git(ws, ['write-tree'], { cwd: repo.root, env, timeoutMs: left(deadline) });
+    const id = tree?.code === 0 ? tree.output.toString('utf8').trim() : '';
+    return { tree: /^[0-9a-f]{40}([0-9a-f]{24})?$/.test(id) ? id : undefined, locked: false, said: tree !== undefined };
+  }
+
+  /**
+   * The project's current branch, from the project's own repository — no GIT_DIR, so this is the
+   * HEAD an operator would see, not our snapshot store's. Detached and unborn HEADs answer
+   * nothing, which is the truth: neither names a branch.
+   */
   private async branchOf(ws: Workspace, repo: Repo, deadline: number): Promise<string | undefined> {
-    const r = await git(ws, ['rev-parse', '--abbrev-ref', 'HEAD'], {
-      env: { GIT_DIR: repo.gitDir },
-      timeoutMs: left(deadline),
-    });
+    const r = await git(ws, ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: repo.root, timeoutMs: left(deadline) });
     const name = r?.code === 0 ? r.output.toString('utf8').trim() : '';
-    // A detached HEAD answers "HEAD", which names no branch; a repository with no commit fails.
     return name && name !== 'HEAD' ? name : undefined;
   }
 
   // ── Reading the two trees ─────────────────────────────────────────────────
 
+  /** The diff of two trees, computed once. The trees never change, so a cached answer always holds. */
   private async diffOf(
     ws: Workspace,
     t: { startTree: string; endTree: string; gitDir: string }
-  ): Promise<{ files: TurnChangeFile[]; truncated: boolean } | undefined> {
+  ): Promise<Diff | undefined> {
+    const key = `${t.gitDir}\u0000${t.startTree}\u0000${t.endTree}`;
+    const hit = this.diffs.get(key);
+    if (hit) return hit;
     const env = { GIT_DIR: t.gitDir };
     const range = [t.startTree, t.endTree];
     const [numstat, raw] = await Promise.all([
@@ -366,18 +519,26 @@ export class TurnChanges {
     const counts = parseNumstat(numstat.output.toString('utf8'), numstat.truncated);
     const statuses = parseRaw(raw.output.toString('utf8'), raw.truncated);
     const files: TurnChangeFile[] = [];
-    for (const [p, status] of statuses) {
+    for (const [p, st] of statuses) {
       const n = counts.get(p);
       files.push({
         path: p,
-        status,
+        status: st,
         additions: n?.additions ?? 0,
         deletions: n?.deletions ?? 0,
         ...(n?.binary ? { binary: true as const } : {}),
       });
     }
-    const truncated = numstat.truncated || raw.truncated || files.length > MAX_FILES;
-    return { files: files.slice(0, MAX_FILES), truncated };
+    const value: Diff = {
+      files: files.slice(0, MAX_FILES),
+      truncated: numstat.truncated || raw.truncated || files.length > MAX_FILES,
+    };
+    if (this.diffs.size >= DIFF_CACHE) {
+      const oldest = this.diffs.keys().next().value;
+      if (oldest !== undefined) this.diffs.delete(oldest);
+    }
+    this.diffs.set(key, value);
+    return value;
   }
 
   /** One side of one file, whole — or that it is too large to be worth sending. */
@@ -422,7 +583,7 @@ export class TurnChanges {
   private keepRefs(ws: Workspace, id: string, r: TurnRecord): void {
     const head = refHead(id, r);
     const input = `update ${head}/start ${r.startTree}\nupdate ${head}/end ${r.endTree}\n`;
-    void git(ws, ['update-ref', '--stdin'], { env: { GIT_DIR: r.gitDir }, stdin: input });
+    void this.checkRefs(ws, r.gitDir, input, `turn ${r.turn}`);
   }
 
   /** Drop this conversation's oldest turns, records and refs, past KEEP_TURNS. */
@@ -431,9 +592,29 @@ export class TurnChanges {
     const turns = this.state.conversations[id]?.turns;
     if (!turns || turns.length <= keep) return;
     const gone = turns.splice(0, turns.length - keep);
-    const lines = gone.map((r) => `delete ${refHead(id, r)}/start\ndelete ${refHead(id, r)}/end\n`).join('');
-    const gitDir = gone[gone.length - 1]?.gitDir;
-    if (gitDir) void git(ws, ['update-ref', '--stdin'], { env: { GIT_DIR: gitDir }, stdin: lines });
+    // Each record names its own snapshot repository: a conversation may have moved between
+    // machines or directories, and deleting only through the newest one would leave the rest.
+    for (const [gitDir, list] of byGitDir(gone)) {
+      void this.releaseRefs(ws, gitDir, id, list, 'older than the kept turns');
+    }
+  }
+
+  private releaseRefs(ws: Workspace, gitDir: string, id: string, list: TurnRecord[], why: string): Promise<void> {
+    const input = list.map((r) => `delete ${refHead(id, r)}/start\ndelete ${refHead(id, r)}/end\n`).join('');
+    return this.checkRefs(ws, gitDir, input, why);
+  }
+
+  /**
+   * `git update-ref --stdin`, with its answer looked at. A dropped result is how a ref gets lost
+   * quietly: the JSON keeps naming trees that the next gc then collects, and the entry turns into
+   * "the repository is no longer reachable" a day later.
+   */
+  private async checkRefs(ws: Workspace, gitDir: string, input: string, why: string): Promise<void> {
+    const r = await git(ws, ['update-ref', '--stdin'], { env: { GIT_DIR: gitDir }, stdin: input });
+    if (!r || r.code !== 0) {
+      const said = r ? `${r.stderr}\n${r.output.toString('utf8')}`.trim().split('\n').pop() : 'no answer';
+      this.log(`[changes] could not update the snapshot refs in ${gitDir} (${why}): ${said}`);
+    }
   }
 
   private maybeGc(ws: Workspace, gitDir: string): void {
@@ -461,12 +642,29 @@ export class TurnChanges {
     return this.state.conversations[id]?.turns.find((t) => t.turn === turn);
   }
 
+  /** The next turn number of a conversation, taken synchronously — see the header. */
+  private takeNumber(id: string): number {
+    const known = this.numbering.get(id);
+    if (known !== undefined) {
+      this.numbering.set(id, known + 1);
+      return known;
+    }
+    const turns = this.state.conversations[id]?.turns ?? [];
+    const turn = turns.reduce((n, t) => Math.max(n, t.turn), 0) + 1;
+    this.numbering.set(id, turn + 1);
+    return turn;
+  }
+
   private attach(handle: TurnChangesHandle, entry: TurnChangeEntry): void {
     try {
-      handle.platform.attachTurnChanges?.(handle.address, entry);
+      handle.platform.attachTurnChanges?.(handle.address, entry, handle.reply);
     } catch (e) {
       this.log(`[changes] ${handle.id}: could not attach turn ${entry.turn} to its reply (${reasonOf(e)})`);
     }
+  }
+
+  private markSlow(key: string): void {
+    this.slow.set(key, Date.now() + SLOW_REPO_MS);
   }
 
   private load(): void {
@@ -496,6 +694,45 @@ export class TurnChanges {
     this.writing = this.writing.catch((e) => this.log(`[changes] could not write ${this.store}: ${reasonOf(e)}`));
     return this.writing;
   }
+}
+
+/**
+ * Resolve with whatever `work` answers, or with undefined after `ms` — whichever comes first.
+ *
+ * The reason this exists beside the per-command timeouts: a remote host that has gone away makes
+ * `ws.run` wait for a reconnect, and no timeout is carried across that link. The abandoned work
+ * is left to finish or be killed on its own; nothing of it can reach the turn.
+ */
+function withinDeadline<T>(work: Promise<T | undefined>, ms: number, onTimeout: () => void): Promise<T | undefined> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      onTimeout();
+      resolve(undefined);
+    }, ms);
+    timer.unref?.();
+    const done = (v: T | undefined): void => {
+      clearTimeout(timer);
+      resolve(v);
+    };
+    void work.then(done, () => done(undefined));
+  });
+}
+
+/** Group records by the snapshot repository they belong to, keeping the file's order. */
+function byGitDir(records: readonly TurnRecord[]): Map<string, TurnRecord[]> {
+  const out = new Map<string, TurnRecord[]>();
+  for (const r of records) {
+    const list = out.get(r.gitDir);
+    if (list) list.push(r);
+    else out.set(r.gitDir, [r]);
+  }
+  return out;
+}
+
+/** The path of `p` under `root`, or undefined when it is not under it. POSIX, as the host is. */
+function relativeUnder(root: string, p: string): string | undefined {
+  const base = root.endsWith('/') ? root : `${root}/`;
+  return p.startsWith(base) ? p.slice(base.length) : undefined;
 }
 
 /** A tree's/objects' identity is all the ref needs; the conversation key may not be a ref name. */
@@ -590,9 +827,9 @@ async function git(
 /**
  * A fixed script run through `sh -c`, its dynamic half passed as positional arguments.
  *
- * The only two uses are reading `$HOME` and unlinking a temporary index (see the header). Nothing
- * a person or an agent typed ever lands in the script text: the arguments after `fleetherd` are
- * `$1`, `$2`, …, and the script itself is a constant.
+ * The only uses are reading `$HOME`, unlinking a file, and writing the exclude line (see the
+ * header). Nothing a person or an agent typed ever lands in the script text: the arguments after
+ * `fleetherd` are `$1`, `$2`, …, and the script itself is a constant.
  */
 async function shell(
   ws: Workspace,

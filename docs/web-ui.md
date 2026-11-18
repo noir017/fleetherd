@@ -316,7 +316,8 @@ the address.
 
 When a topic works in a git work tree, each turn records what it changed: a snapshot of the
 work tree is taken just before the agent is asked and another when the turn ends, and the reply
-ends with a line — `3 files changed +12 -4`. Tapping it opens that turn's diff, file by file,
+ends with a line — `3 files changed +12 -4`. A turn that changed nothing gets no line.
+Tapping it opens that turn's diff, file by file,
 in the git window; the list is also how you get from "something changed" to the file that did.
 
 The snapshots are the daemon's own, under `~/.fleetherd/snapshots/<hash of the repository root>`

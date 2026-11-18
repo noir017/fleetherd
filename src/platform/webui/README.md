@@ -856,7 +856,9 @@ matters here is the page's half:
 - **The entry is a field of the message** (`WebMessage.turnChanges`), not a transcript event of its
   own. The transcript store and the browser's cache keep whole messages, so a reload, a reconnect
   and a daemon restart all bring the entry back with the reply it belongs to — nothing has to be
-  re-fetched or re-derived.
+  re-fetched or re-derived. It is hung off the message the turn last posted, which the daemon
+  captures at turn end: the end snapshot runs after the turn, and by the time it lands the topic
+  may already hold the next turn's reply.
 - **It is drawn only when the page can open a window** (`window.openGitWindow`, the git panel's).
   The check is at draw time, so a page served without that panel shows no entry at all rather than a
   button that does nothing; the two URLs it hands over are `api/turn-changes/status` and

@@ -424,7 +424,7 @@ export interface TurnRunnerDeps {
    * The turn is over: take the "after" snapshot, record the turn and hang the summary off its
    * reply. Called once per successful start, never awaited, and it must not throw.
    */
-  turnChangesEnd?(handle: TurnChangesHandle): void;
+  turnChangesEnd?(handle: TurnChangesHandle, reply?: MessageRef): void;
 }
 
 /**
@@ -538,6 +538,12 @@ interface TurnRef {
   model?: string;
   /** Reasoning effort the harness reports for this turn (see AgentStreamHandlers.onEffort). */
   effort?: string;
+  /**
+   * The last message this render posted — the text stream's newest segment, or the newest tool
+   * bubble when the turn ended on one. What the turn's change entry hangs off: the last message of
+   * the reply, whichever way the render ended. Undefined when the turn posted nothing.
+   */
+  lastRef?: MessageRef;
   /**
    * The text of the segment being written now, and of the last segment that had any. What a turn
    * ends on is the segment after its last tool, but a turn can end ON a tool — so the last one with
@@ -864,7 +870,7 @@ export class TurnRunner {
       this.endHistoryTurn(turnId, historyEndOf(end, this.clock.now()));
       // And what the turn changed on disk. Last, and not awaited: the reply has already been
       // flushed and reported, and a slow end snapshot must not hold any of that open.
-      if (changes) this.endTurnChanges(changes);
+      if (changes) this.endTurnChanges(changes, ref.lastRef);
     }
   }
 
@@ -884,9 +890,10 @@ export class TurnRunner {
     }
   }
 
-  private endTurnChanges(handle: TurnChangesHandle): void {
+  private endTurnChanges(handle: TurnChangesHandle, reply: MessageRef | undefined): void {
     try {
-      this.deps.turnChangesEnd?.(handle);
+      handle.reply = reply;
+      this.deps.turnChangesEnd?.(handle, reply);
     } catch (e) {
       console.warn(`[turn] ${handle.id} could not finish the turn's changes:`, e instanceof Error ? e.message : e);
     }
@@ -1297,7 +1304,12 @@ export class TurnRunner {
   ): Render {
     // StreamBuffer factory closure: sink bound to this address, callable repeatedly to rotate a
     // fresh buffer per segment — trailing text below a tool bubble goes to a new message, not editing the prior one.
-    const makeStream = (): StreamBuffer => this.makeStreamBuffer(platform, address);
+    // Every message this render posts is remembered on `ref.lastRef`, so the turn's change entry
+    // can hang off the reply it ended with instead of "whatever is newest in the topic" later.
+    const makeStream = (): StreamBuffer =>
+      this.makeStreamBuffer(platform, address, undefined, (r) => {
+        ref.lastRef = r;
+      });
     // Tool bubbles are billed to the same per-chat budget as everything else, but in the lane that
     // may be dropped under congestion — see OutboundClass.
     const progressLane = outboundLane(platform, 'progress');
@@ -1347,7 +1359,11 @@ export class TurnRunner {
         // ordinary — the pacing lives in the adapter (daemon/paced-adapter.ts). Marked as a tool
         // bubble for the platform that draws one differently (SendOptions); the mark rides on the
         // send alone, since the edits below restate a message whose kind is already known.
-        sendBubble: (text) => progressLane.sendMessage(address, text, { kind: 'tools' }),
+        sendBubble: async (text) => {
+          const bubble = await progressLane.sendMessage(address, text, { kind: 'tools' });
+          ref.lastRef = bubble;
+          return bubble;
+        },
         // accumulate mode flushes whole tool progress/completion into one bubble (address closure).
         // Capability-gated: on platforms with editMessage=false (QQ/LINE/WeCom) editMessage throws, so
         // pass undefined to let ToolRenderer degrade to separate (one new bubble per tool) instead of
@@ -1780,7 +1796,9 @@ export class TurnRunner {
      * How a new message is sent, when it is not a plain send to `address` — a side answer replies
      * to its question (sendAside). Edits still go to the ref this returns.
      */
-    post?: (text: string) => Promise<MessageRef>
+    post?: (text: string) => Promise<MessageRef>,
+    /** Told about every message this buffer posts, in order — the turn's reply-entry bookkeeping. */
+    onSent?: (ref: MessageRef) => void
   ): StreamBuffer {
     return new StreamBuffer(
       {
@@ -1808,6 +1826,7 @@ export class TurnRunner {
         send: async (text) => {
           try {
             const ref = await (post ? post(text) : platform.sendMessage(address, text));
+            onSent?.(ref);
             console.log(`[out] send ok (${text.length} chars) → ${ref.messageId}`);
             return ref;
           } catch (e) {

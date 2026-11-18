@@ -63,7 +63,7 @@ function rig(cwd: string, runTurn: (h: AgentStreamHandlers) => Promise<void>) {
   };
 
   const sent: string[] = [];
-  const entries: TurnChangeEntry[] = [];
+  const entries: Array<{ entry: TurnChangeEntry; reply?: string }> = [];
   const addresses: ConversationAddress[] = [];
   let seq = 0;
   const platform = {
@@ -77,9 +77,9 @@ function rig(cwd: string, runTurn: (h: AgentStreamHandlers) => Promise<void>) {
     addReaction: async () => {},
     startTyping: async () => {},
     stopTyping: async () => {},
-    attachTurnChanges: (address: ConversationAddress, entry: TurnChangeEntry) => {
+    attachTurnChanges: (address: ConversationAddress, entry: TurnChangeEntry, reply?: { messageId: string }) => {
       addresses.push(address);
-      entries.push(entry);
+      entries.push({ entry, ...(reply ? { reply: reply.messageId } : {}) });
     },
   } as unknown as PlatformAdapter;
 
@@ -115,8 +115,10 @@ describe('a turn’s snapshots and the turn', () => {
     expect(h.sent).toEqual(['Done.']);
 
     await within(() => h.entries.length === 1);
-    expect(h.entries[0]).toEqual({ turn: 1, files: 2, additions: 2, deletions: 0 });
-    // The entry is attached to the lane the person wrote in — the topic it is drawn in.
+    expect(h.entries[0]?.entry).toEqual({ turn: 1, files: 2, additions: 2, deletions: 0 });
+    // Hung off the reply this turn actually posted, not off "the newest message" later on.
+    expect(h.entries[0]?.reply).toBe('m1');
+    // And it is attached to the lane the person wrote in — the topic it is drawn in.
     expect(h.addresses[0]).toMatchObject({ channel: 'c1' });
   });
 
@@ -160,6 +162,18 @@ describe('a turn’s snapshots and the turn', () => {
     await within(() => h.sent.length > 0);
     expect(h.sent[0]).toBe('Partial.');
     await within(() => h.entries.length === 1);
-    expect(h.entries[0]?.files).toBe(1);
+    expect(h.entries[0]?.entry.files).toBe(1);
+  });
+
+  it('posts no entry for a turn that changed nothing', async () => {
+    const dir = repo();
+    const h = rig(dir, async (t) => {
+      t.onText('Said nothing was needed.');
+    });
+    h.reg.route(inbound('just talk'));
+    await within(() => h.sent.length > 0);
+    // Give the end snapshot time to run: it has to record the turn without an entry.
+    await new Promise((r) => setTimeout(r, 300));
+    expect(h.entries).toEqual([]);
   });
 });

@@ -560,6 +560,7 @@ export class WebRoom {
     }
     this.disposeRoom(victim.id);
     this.forgetKept(victim.id);
+    this.forgetTurnChanges(victim.id);
     this.topics.delete(victim.id);
     // The one record of which topic went, and what it was called. The daemon's binding for it
     // stays in conversations.json (as it does for a ×), so this line is how its session id can
@@ -613,6 +614,7 @@ export class WebRoom {
     this.disposeRoom(id);
     // A star defers to the ×, kept transcript and all.
     this.forgetKept(id);
+    this.forgetTurnChanges(id);
     if (!this.topics.delete(id)) return false;
     this.announceTopics();
     return true;
@@ -639,6 +641,7 @@ export class WebRoom {
       if (kept?.starred) continue;
       this.disposeRoom(id);
       this.forgetKept(id);
+      this.forgetTurnChanges(id);
     }
     this.topics.clear();
     const fresh = this.topics.full() ? this.topics.current() : this.topics.create();
@@ -847,25 +850,42 @@ export class WebRoom {
   }
 
   /**
-   * Hang a finished turn's change summary off the reply it ended — the last message in the topic
-   * that is the agent's, not the operator's.
+   * Hang a finished turn's change summary off a message — `messageId` is the one that turn last
+   * posted, captured by the daemon at turn end.
    *
-   * The page draws one line under it and opens the diff window from there, and because the entry
-   * is part of the message the transcript store keeps, it is still there after a reload, a
-   * reconnect and a restart. A turn that posted nothing (an agent that answered with no visible
-   * output) has no reply to hang it off, so the last message's own entry is left alone rather than
-   * being overwritten by a turn that is not its own.
+   * An id rather than "the newest message in the topic": the end snapshot is taken off the turn,
+   * so by the time it lands the topic may already hold the next turn's reply, and an entry under
+   * that one would name a turn it does not belong to. An id the topic no longer has (the ring
+   * rotated, a message removed) means no entry, which is the honest answer.
+   *
+   * The page draws one line under the message and opens the diff window from there, and because
+   * the entry is part of the message the transcript store keeps, it is still there after a reload,
+   * a reconnect and a restart.
    */
-  attachTurnChanges(topicId: string, entry: TurnChangeEntry): void {
-    if (!this.topics.has(topicId)) return;
+  attachTurnChanges(topicId: string, entry: TurnChangeEntry, messageId?: string): void {
+    if (!messageId || !this.topics.has(topicId)) return;
     const room = this.rooms.get(topicId);
     if (!room) return;
-    let last: Stored | undefined;
-    for (const s of room.stored.values()) last = s;
-    if (!last || last.msg.own || last.msg.turnChanges) return;
-    last.msg = { ...last.msg, turnChanges: entry };
-    this.emit(topicId, { t: 'msg', msg: last.msg });
+    const rec = room.stored.get(messageId);
+    if (!rec || rec.msg.own || rec.msg.turnChanges) return;
+    rec.msg = { ...rec.msg, turnChanges: entry };
+    this.emit(topicId, { t: 'msg', msg: rec.msg });
     this.keep(topicId);
+  }
+
+  /**
+   * A topic is going: tell the daemon to forget its turn-change records, so their snapshots do not
+   * outlive the only page that could ever have shown them. Best-effort — the topic is gone either
+   * way, and a panel that has no such operation is a deployment without the feature.
+   */
+  private forgetTurnChanges(topicId: string): void {
+    const panel = this.turnChangesPanel;
+    if (!panel?.forget) return;
+    try {
+      panel.forget(this.conversation(topicId));
+    } catch {
+      // Nothing here is worth breaking a deletion over.
+    }
   }
 
   /** Every task, for the panel. `enabled: false` when the daemon offered none (a test daemon). */
