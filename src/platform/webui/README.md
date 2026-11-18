@@ -1818,14 +1818,15 @@ the operator, the machine and the file.
 ## The instruction editor
 
 Off by default (`platforms.<id>.instructions.enabled`). Turned on, the settings page ends with an
-**Instructions** section: the gateway's own files (`common.md` and one per harness layer that a
-configured agent reads, `daemon/instructions.ts`), then each agent whose harness reads files of its
-own. A row opens **the file window** in a second mode — the same editor, dirty mark, conflict
-dialog and save — whose tree is a fixed list instead of a directory, and which hides what makes no
-sense for one (new, rename, delete, search, breadcrumbs). `fileSrc` is that mode; `filesGet` and
-`filesPost` hand its requests to `instrGet`/`instrPost`, which is the whole of its reach into the
-window's code. Escape closes the editor alone, over the settings page it came from, and closing it
-asks the list again so a saved file shows as written.
+**Instructions** section for the gateway's own files (`common.md` and one per harness layer that a
+configured agent reads, `daemon/instructions.ts`), and an agent whose harness reads files of its own
+gets an **Instructions** field on its row under Agents, from the same answer. Either opens **the
+file window** in a second mode — the same editor, dirty mark, conflict dialog and save — whose tree
+is a fixed list instead of a directory, and which hides what makes no sense for one (new, rename,
+delete, search, breadcrumbs). `fileSrc` is that mode; `filesGet` and `filesPost` hand its requests
+to `instrGet`/`instrPost`, which is the whole of its reach into the window's code. Escape closes the
+editor alone, over the settings page it came from, and closing it asks the list again so a saved
+file shows as written.
 
 The page never sends a path of its own. It names a target: a global file by name, or an agent and
 a path it got from that agent's list — and the daemon (`daemon/instructions-panel.ts`) walks the

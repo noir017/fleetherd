@@ -1263,6 +1263,21 @@ select.skill-field{appearance:auto}
 .set-seg button[aria-checked="true"]{background:#2b3a4c;color:#fff;font-weight:600}
 .set-select{max-width:260px;min-height:32px;padding:4px 28px 4px 10px;border:1px solid var(--line);border-radius:6px;background:var(--field) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%239a9a9a' stroke-width='1.5'/%3E%3C/svg%3E") no-repeat right 10px center;color:var(--fg);font:inherit;font-size:13px;text-overflow:ellipsis;-webkit-appearance:none;appearance:none;cursor:pointer}
 .set-select:focus-visible,.set-seg button:focus-visible{outline:2px solid var(--own-edge);outline-offset:1px}
+/* A per-agent row: the agent on the left, and its settings side by side beside it — each field
+   under the name of what it sets, so a model, a permission level and a set of instruction files
+   read as three columns of one row rather than three rows. At phone width the fields move under
+   the agent's name, one per line (the narrow block below). */
+.set-item.ag{grid-template-columns:minmax(0,auto) minmax(0,1fr);align-items:start}
+.set-fields{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px 16px;min-width:0}
+.set-field{display:flex;flex-direction:column;align-items:flex-start;gap:3px;min-width:0;max-width:100%}
+.set-flabel{font-size:10.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#8a8a8a}
+.set-fopen{display:flex;align-items:center;gap:8px;min-width:0;min-height:32px;padding:3px 8px;border:0;border-radius:6px;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer;transition:background .12s}
+.set-fopen:hover{background:#1f1f1f}
+.set-fopen:focus-visible{outline:2px solid var(--own-edge);outline-offset:-2px}
+/* An instruction summary is prose, not a value: one line here, the whole of it in the title, and
+   the machine it is read on as the note beside it. */
+.set-fnote{min-width:0;max-width:260px;font-size:12.5px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.set-fnote code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.95em}
 /* A row with a screen of its own (a model) or a way to another menu: the whole row is the target. */
 .set-open{width:100%;border:0;border-radius:0;background:none;text-align:left;font:inherit;color:inherit;cursor:pointer;transition:background .12s}
 .set-open:hover{background:#1f1f1f}
@@ -1693,6 +1708,12 @@ button:disabled{opacity:.5;cursor:default}
   .set-item.sw{grid-template-columns:minmax(0,1fr) auto}
   .set-item>.set-ctl{justify-self:stretch}
   .set-item.sw>.set-ctl{justify-self:end}
+  /* An agent's fields go under its name, one per line, at the height a thumb needs. */
+  .set-item.ag{grid-template-columns:minmax(0,1fr)}
+  .set-item.ag>.set-fields{flex-direction:column;align-items:stretch;gap:10px}
+  .set-item.ag .set-fopen{width:100%;min-height:44px}
+  .set-item.ag .set-seg button{min-height:44px}
+  .set-item.ag .set-fnote{max-width:none}
   .set-seg{display:flex;width:100%}
   .set-seg button{flex:1;min-height:40px;padding:0 4px}
   .set-select{max-width:none;width:100%;min-height:44px;font-size:16px}
@@ -5075,7 +5096,8 @@ const SCRIPT = `
    * each row is changed with, and the button id every control posts. Nothing here parses a label
    * or decides a value — the grid did, because a label was all it had. What IS decided here is
    * presentation: a choice of up to five short values is drawn as a segmented control (one tap,
-   * every option visible), a longer one as a select.
+   * every option visible), a longer one as a select, and a per-agent row puts one labelled
+   * control per setting beside the agent's name.
    *
    * Every interactive element carries data-fk, a key that survives a redraw (the row's index and
    * the part of it), so focus can be put back after the daemon's answer replaces the markup.
@@ -5139,7 +5161,8 @@ const SCRIPT = `
         + '<div class="set-ctl"><button type="button" class="set-switch" role="switch" aria-checked="'+(c.on ? 'true' : 'false')+'"'
         + ' aria-label="'+text(r.label)+'" data-fk="r'+i+'" data-btn="'+text(c.set)+'"></button></div></div>';
     }
-    if(c.kind === 'choice') return '<div class="set-item">' + settingsText(r) + '<div class="set-ctl">'+settingsChoice(r, c.options || [], i)+'</div></div>';
+    if(c.kind === 'agent') return settingsAgent(r, i, c.fields || []);
+    if(c.kind === 'choice') return '<div class="set-item">' + settingsText(r) + '<div class="set-ctl">'+settingsChoice(r.label, c.options || [], 'r'+i, r.value)+'</div></div>';
     // A row with a screen of its own, or a way to another menu: the whole row is the button.
     var value = '';
     if(c.kind !== 'link' && r.value != null){
@@ -5150,17 +5173,52 @@ const SCRIPT = `
       + settingsText(r) + value + '<span class="set-chev" aria-hidden="true">'+IC.icon.chevronRight+'</span></button>';
   }
 
-  function settingsChoice(r, opts, i){
+  /**
+   * One agent's row: its name, kind and badges on the left, one labelled control per setting
+   * beside it.
+   *
+   * The daemon sends the fields and every button id, so this only lays them out: Model is a value
+   * that opens the agent's own screen (the same one a model row used to open), Permissions is the
+   * closed list settingsChoice already draws. Instructions is the page's own field — it comes from
+   * the instructions panel, not /setting — so it is added once that list has arrived, and only for
+   * an agent whose harness reads files of its own. It replaces the section's old "Each agent's own"
+   * subsection: one row per agent, everything about that agent on it.
+   */
+  function settingsAgent(r, i, fields){
+    var h = '';
+    for(var k=0;k<fields.length;k++) h += settingsField(fields[k], 'r'+i+'f'+k);
+    var own = instrOwn(r.target || r.label);
+    if(own) h += instrField(own, 'r'+i+'i');
+    return '<div class="set-item ag">' + settingsText(r) + '<div class="set-fields">' + h + '</div></div>';
+  }
+
+  function settingsField(f, key){
+    var c = f.control || { kind: 'list' };
+    var h = '<div class="set-field"><span class="set-flabel">' + text(f.label) + '</span>';
+    if(c.kind === 'choice') return h + settingsChoice(f.label, c.options || [], key, f.value) + '</div>';
+    return h + '<button type="button" class="set-fopen" data-fk="' + key + '" data-btn="' + text(f.buttonId) + '"'
+      + ' aria-label="' + text(f.label + ': ' + (f.value == null ? '' : f.value)) + '">'
+      + '<span class="set-vv"><span class="set-v' + (f.unset ? ' unset' : '') + '" title="' + text(f.value == null ? '' : f.value) + '">'
+      + text(f.value == null ? '' : f.value) + '</span>'
+      + (f.valueNote ? '<span class="set-vnote">' + text(f.valueNote) + '</span>' : '')
+      + (f.effectLabel ? '<span class="set-badge restart"' + (f.effectDetail ? ' title="' + text(f.effectDetail) + '"' : '') + '>'
+        + text(f.effectLabel) + '</span>' : '')
+      + '</span><span class="set-chev" aria-hidden="true">' + IC.icon.chevronRight + '</span></button></div>';
+  }
+
+  // key is what its controls' data-fk is built from: a row's ("r3"), or one field of an agent's
+  // row ("r3f1"), so a redraw can put focus back on the exact control that was used.
+  function settingsChoice(label, opts, key, value){
     var short = opts.length > 0 && opts.length <= 5;
     for(var k=0;k<opts.length;k++) if(String(opts[k].label).length > 6) short = false;
     var h = '', any = false;
     if(short){
       for(var j=0;j<opts.length;j++){
         var o = opts[j];
-        h += '<button type="button" role="radio" aria-checked="'+(o.current ? 'true' : 'false')+'" data-fk="r'+i+'o'+j+'" data-btn="'+text(o.buttonId)+'"'
+        h += '<button type="button" role="radio" aria-checked="'+(o.current ? 'true' : 'false')+'" data-fk="'+key+'o'+j+'" data-btn="'+text(o.buttonId)+'"'
           + (o.detail ? ' title="'+text(o.detail)+'"' : '')+'>'+text(o.label)+'</button>';
       }
-      return '<div class="set-seg" role="radiogroup" aria-label="'+text(r.label)+'">'+h+'</div>';
+      return '<div class="set-seg" role="radiogroup" aria-label="'+text(label)+'">'+h+'</div>';
     }
     for(var n=0;n<opts.length;n++){
       var p = opts[n];
@@ -5170,8 +5228,8 @@ const SCRIPT = `
       h += '<option value="'+text(p.buttonId)+'"'+(p.current ? ' selected' : '')+(p.detail ? ' title="'+text(p.detail)+'"' : '')+'>'+text(p.label)+'</option>';
     }
     // A value none of the options names (a window typed by hand, 90m) is still shown as what it is.
-    if(!any) h = '<option value="" selected disabled>'+text(r.value == null ? '' : r.value)+'</option>' + h;
-    return '<select class="set-select" data-fk="r'+i+'" aria-label="'+text(r.label)+'">'+h+'</select>';
+    if(!any) h = '<option value="" selected disabled>'+text(value == null ? '' : value)+'</option>' + h;
+    return '<select class="set-select" data-fk="'+key+'" aria-label="'+text(label)+'">'+h+'</select>';
   }
 
   function settingsValues(s){
@@ -11516,12 +11574,46 @@ const SCRIPT = `
     instrFetch('api/instructions').then(function(res){
       instrBusy = false;
       instrData = res.ok ? res.body : {error: (res.body && res.body.error) || 'The instructions could not be listed.'};
-      instrSection();
+      instrArrived();
     }, function(){
       instrBusy = false;
       instrData = {error:'Could not reach the daemon.'};
-      instrSection();
+      instrArrived();
     });
+  }
+
+  /**
+   * The list arrived (or failed): an agent's row carries an Instructions field built from it, so
+   * the list is drawn again — renderSettings puts focus and scroll back where the operator left
+   * them. A value screen has no agent rows and is left alone: redrawing it would undo a filter.
+   */
+  function instrArrived(){
+    if(!INSTR_OK || !settingsMsg || settingsPage.hidden) return;
+    var s = settingsMsg.settings;
+    if(!s || s.level !== 'list') return;
+    renderSettings();
+  }
+
+  /** The instructions one agent reads on its own machine, from the panel's list, or null. */
+  function instrOwn(id){
+    if(!INSTR_OK || !instrData || instrData.error) return null;
+    var a = instrData.agents || [];
+    for(var i=0;i<a.length;i++) if(a[i].id === id && a[i].own) return a[i];
+    return null;
+  }
+
+  /**
+   * An agent row's third field: what its harness reads on its own machine besides the gateway's
+   * files, and the way into the file window on them — what the section's "Each agent's own" row
+   * used to be, now on the agent's own row.
+   */
+  function instrField(a, key){
+    return '<div class="set-field"><span class="set-flabel">Instructions</span>'
+      + '<button type="button" class="set-fopen" data-fk="' + key + '" data-instr-agent="' + text(a.id) + '"'
+      + ' title="' + text(a.own) + '">'
+      + '<span class="set-vv"><span class="set-fnote">' + inl(a.own) + '</span>'
+      + '<span class="set-vnote">' + text(a.host === 'local' ? 'this machine' : a.host) + '</span></span>'
+      + '<span class="set-chev" aria-hidden="true">' + IC.icon.chevronRight + '</span></button></div>';
   }
 
   /**
@@ -11559,17 +11651,8 @@ const SCRIPT = `
         f.agents && f.agents.length ? f.agents.join(', ') : 'No configured agent reads it', f.exists ? f.name : f.name + ' · not written', !f.exists);
     }
     h += '</div>';
-    var own = [], a = d.agents || [];
-    for(var j=0;j<a.length;j++) if(a[j].own) own.push(a[j]);
-    if(own.length){
-      h += '<h3 class="set-group">Each agent’s own</h3><p class="set-gnote">'
-        + inl('What an agent’s harness reads on its own machine besides these: its rules, the files they reference, what its config lists. Read and saved there; the gateway keeps no copy.')
-        + '</p><div class="set-card">';
-      for(var k=0;k<own.length;k++){
-        h += instrRow('data-instr-agent', own[k].id, own[k].id, own[k].host === 'local' ? 'this machine' : own[k].host, own[k].own, '', false);
-      }
-      h += '</div>';
-    }
+    // Each agent's own files are not a list of their own: they are the Instructions field on that
+    // agent's row in Agents, drawn from this same answer (settingsAgent).
     return h + '</section>';
   }
 
