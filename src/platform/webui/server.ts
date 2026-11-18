@@ -59,7 +59,10 @@ import {
   DeleteTopicRequestSchema,
   EndTerminalRequestSchema,
   FramedSendHeaderSchema,
+  GitCommitFileQuerySchema,
+  GitCommitQuerySchema,
   GitFileQuerySchema,
+  GitLogQuerySchema,
   GitStatusQuerySchema,
   LoginRequestSchema,
   MAX_BODY_BYTES,
@@ -438,13 +441,17 @@ const GUARDED: Route[] = [
   { method: 'GET', path: '/api/reviews', run: reviewsList },
   // Dismissing a preference suggestion — the Reviews tab's only write, to reviews.json alone.
   { method: 'POST', path: '/api/reviews/op', run: reviewsOp },
-  // The git window: the change list for one comparison, one file's two sides and patch, and the
-  // branches a base may name. Read-only — there is no stage, commit or discard route here, and
-  // nothing in `daemon/git-panel.ts` writes to a repository. All three take `?t=` and run on the
-  // machine the topic's agent runs on.
+  // The git window: the change list for one comparison, one file's two sides and patch, the
+  // branches a base may name, and the repository's history — one page of commits, one commit and
+  // one of its files. Read-only — there is no stage, commit or discard route here, and nothing in
+  // `daemon/git-panel.ts` writes to a repository. All take `?t=` and run on the machine the
+  // topic's agent runs on.
   { method: 'GET', path: '/api/git/status', run: gitStatusView },
   { method: 'GET', path: '/api/git/file', run: gitFileView },
   { method: 'GET', path: '/api/git/branches', run: gitBranchesView },
+  { method: 'GET', path: '/api/git/log', run: gitLogView },
+  { method: 'GET', path: '/api/git/commit', run: gitCommitView },
+  { method: 'GET', path: '/api/git/commit-file', run: gitCommitFileView },
   // The history page: every conversation in the library, a keyword search over them, and one
   // opened whole. Read-only, and the same store `fleetherd sessions` reads. Every parameter is in
   // the query string rather than a body, so the checks are here — there is no schema to hold them.
@@ -1226,6 +1233,36 @@ async function gitBranchesView({ req, res, url }: Req, ctx: Ctx): Promise<void> 
   const topic = url.searchParams.get('t') ?? '';
   if (!TOPIC_ID.test(topic)) return send(req, res, 400, { error: 'not a topic id' });
   send(req, res, 200, await ctx.room.gitBranches(topic));
+}
+
+/** One page of the history, newest first. A page past the end is an empty page, not an error. */
+async function gitLogView({ req, res, url }: Req, ctx: Ctx): Promise<void> {
+  const topic = url.searchParams.get('t') ?? '';
+  if (!TOPIC_ID.test(topic)) return send(req, res, 400, { error: 'not a topic id' });
+  const parsed = parseBody(GitLogQuerySchema, { skip: url.searchParams.get('skip') ?? '0' });
+  if (!parsed.ok) return send(req, res, 400, { error: parsed.error });
+  send(req, res, 200, await ctx.room.gitLog(topic, parsed.value.skip));
+}
+
+/** One commit and the files it changed. The sha is resolved and the list checked in git-panel.ts. */
+async function gitCommitView({ req, res, url }: Req, ctx: Ctx): Promise<void> {
+  const topic = url.searchParams.get('t') ?? '';
+  if (!TOPIC_ID.test(topic)) return send(req, res, 400, { error: 'not a topic id' });
+  const parsed = parseBody(GitCommitQuerySchema, { sha: url.searchParams.get('sha') ?? '' });
+  if (!parsed.ok) return send(req, res, 400, { error: parsed.error });
+  send(req, res, 200, await ctx.room.gitCommit(topic, parsed.value.sha));
+}
+
+/** One file of one commit, from its parent's version to the commit's. */
+async function gitCommitFileView({ req, res, url }: Req, ctx: Ctx): Promise<void> {
+  const topic = url.searchParams.get('t') ?? '';
+  if (!TOPIC_ID.test(topic)) return send(req, res, 400, { error: 'not a topic id' });
+  const parsed = parseBody(GitCommitFileQuerySchema, {
+    sha: url.searchParams.get('sha') ?? '',
+    path: url.searchParams.get('path') ?? '',
+  });
+  if (!parsed.ok) return send(req, res, 400, { error: parsed.error });
+  send(req, res, 200, await ctx.room.gitCommitFile(topic, parsed.value.sha, parsed.value.path));
 }
 
 /** How many conversations one page may carry. The store's own ceiling; a page asks for 50. */

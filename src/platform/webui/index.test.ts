@@ -114,6 +114,9 @@ describe('webui adapter: the daemon\'s panels', () => {
       status: async () => ({ ok: false as const, reason: 'not-git' as const, text: 'no' }),
       file: async () => ({ ok: false as const, text: 'no' }),
       branches: async () => ({ ok: false as const, text: 'no' }),
+      log: async () => ({ ok: false as const, reason: 'not-git' as const, text: 'no' }),
+      commit: async () => ({ ok: false as const, reason: 'not-git' as const, text: 'no' }),
+      commitFile: async () => ({ ok: false as const, text: 'no' }),
     };
     a.useGitPanel?.(panel);
     expect(handed).toHaveBeenCalledWith(panel);
