@@ -2238,6 +2238,107 @@ describe('webui server: traffic', () => {
   });
 });
 
+describe('webui server: the git window', () => {
+  const status = {
+    ok: true as const,
+    repo: { root: '/srv/project', branch: 'main', base: 'main' },
+    files: [{ path: 'src/a.ts', status: 'modified' as const, additions: 3, deletions: 1 }],
+  };
+  const file = {
+    ok: true as const,
+    path: 'src/a.ts',
+    status: 'modified' as const,
+    original: 'a\n',
+    modified: 'a\nb\n',
+    patch: '@@ -1 +1,2 @@\n a\n+b\n',
+  };
+
+  it('answers the change list for the mode and base it was asked for', async () => {
+    const { base, room, topic } = await boot();
+    const cookie = await signIn(base);
+    const calls: unknown[] = [];
+    room.useGitPanel({
+      status: async (ref, mode, base) => {
+        calls.push({ ref, mode, base });
+        return status;
+      },
+      file: async () => file,
+      branches: async () => ({ ok: true, branch: 'main', base: 'main', branches: ['main'] }),
+    });
+
+    const res = await fetch(`${base}/api/git/status?t=${topic}&mode=branch&base=origin%2Fmain`, { headers: { cookie } });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual(status);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ mode: 'branch', base: 'origin/main' });
+
+    const branches = await fetch(`${base}/api/git/branches?t=${topic}`, { headers: { cookie } });
+    expect(await branches.json()).toEqual({ ok: true, branch: 'main', base: 'main', branches: ['main'] });
+  });
+
+  it('carries one file through with its path, and hands a refusal back as an answer', async () => {
+    const { base, room, topic } = await boot();
+    const cookie = await signIn(base);
+    const calls: Array<{ mode: string; base: string | undefined; path: string }> = [];
+    room.useGitPanel({
+      status: async () => status,
+      file: async (_ref, mode, base, path) => {
+        calls.push({ mode, base, path });
+        return path === 'src/a.ts' ? file : { ok: false, text: 'That file is not one of the changes shown.' };
+      },
+      branches: async () => ({ ok: true, branches: [] }),
+    });
+
+    const ok = await fetch(`${base}/api/git/file?t=${topic}&mode=working&path=${encodeURIComponent('src/a.ts')}`, {
+      headers: { cookie },
+    });
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toEqual(file);
+
+    const refused = await fetch(`${base}/api/git/file?t=${topic}&mode=working&path=README.md`, { headers: { cookie } });
+    expect(refused.status).toBe(200);
+    expect(await refused.json()).toEqual({ ok: false, text: 'That file is not one of the changes shown.' });
+    expect(calls).toEqual([{ mode: 'working', base: undefined, path: 'src/a.ts' }, { mode: 'working', base: undefined, path: 'README.md' }]);
+  });
+
+  it('refuses a malformed query before it reaches the daemon', async () => {
+    const { base, room, topic } = await boot();
+    const cookie = await signIn(base);
+    let called = false;
+    room.useGitPanel({
+      status: async () => {
+        called = true;
+        return status;
+      },
+      file: async () => file,
+      branches: async () => ({ ok: true, branches: [] }),
+    });
+
+    for (const path of [
+      `/api/git/status?t=${topic}`,
+      `/api/git/status?t=${topic}&mode=staged`,
+      `/api/git/status?t=not-a-topic&mode=working`,
+      `/api/git/status?t=${topic}&mode=working&base=${'x'.repeat(301)}`,
+      `/api/git/file?t=${topic}&mode=working`,
+      `/api/git/file?t=${topic}&mode=working&path=`,
+    ]) {
+      expect((await fetch(`${base}${path}`, { headers: { cookie } })).status, path).toBe(400);
+    }
+    expect(called).toBe(false);
+  });
+
+  it('is behind the session like every other route', async () => {
+    const { base, topic } = await boot();
+    for (const path of [
+      `/api/git/status?t=${topic}&mode=working`,
+      `/api/git/file?t=${topic}&mode=working&path=a.txt`,
+      `/api/git/branches?t=${topic}`,
+    ]) {
+      expect((await fetch(`${base}${path}`)).status, path).toBe(401);
+    }
+  });
+});
+
 describe('webui server: lifecycle', () => {
   it('reports a port it cannot bind instead of letting the daemon run on half-working', async () => {
     // Without this, EADDRINUSE arrives as an asynchronous 'error' event, gets swallowed by the

@@ -713,6 +713,7 @@ function lifecycle(
   PlatformAdapter,
   | 'onMessage'
   | 'onButton'
+  | 'useGitPanel'
   | 'onCommand'
   | 'useWorkdirLookup'
   | 'useLivenessLookup'
@@ -801,6 +802,11 @@ function lifecycle(
      * in: a chat app has `/model` and its menu, which is a message.
      */
     useModelPicker: (picker) => room.useModelPicker(picker),
+    /**
+     * The only implementor because it is the only platform with a window to put a diff in: a chat
+     * app's agent reports what it changed as a message. Read-only; see `useGitPanel`.
+     */
+    useGitPanel: (panel) => room.useGitPanel(panel),
     /**
      * The only implementor, and the same reason once more: what a turn changed on disk is shown by
      * opening a diff, and a chat app has neither a window for one nor a reply that could carry the

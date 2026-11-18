@@ -173,6 +173,7 @@ import { VoiceIntake } from './voice.js';
 import { ScheduleService } from './schedule-service.js';
 import { panelEditInput, panelTaskDetail, panelTasks } from './schedule-panel.js';
 import { buildSkillsPanel } from './skills-panel.js';
+import { buildGitPanel } from './git-panel.js';
 import { SkillsRepo, prepareSkillsRepo, skillsRemoteOf } from './skills-repo.js';
 import { SkillLibrary, type LibraryAsker } from './skill-library.js';
 import { skillHarnessOf } from './managed-skills.js';
@@ -2119,6 +2120,9 @@ export class Daemon {
         })
       );
     }
+    // The web UI's git window: read-only, on whichever machine the conversation's agent runs.
+    // The registry answers where its next session would start; nothing is started or recorded.
+    adapter.useGitPanel?.(buildGitPanel((ref) => this.registry.workspaceForRef(ref)));
   }
 
   /**

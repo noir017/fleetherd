@@ -13722,3 +13722,502 @@ describe('webui page: the file window', () => {
     expect(h.el('files-editor').hidden).toBe(false);
   });
 });
+
+/** A fake `window.__fhCodeView`, recording what the page asked it to draw. */
+interface FakeDiff {
+  parent: HTMLElement;
+  options: {
+    name: string;
+    original: string;
+    modified: string;
+    layout: string;
+    onSelect?: (sel: { side: 'old' | 'new'; from: number; to: number; text: string } | null) => void;
+  };
+  layouts: string[];
+  destroyed: number;
+}
+
+function installCodeView(h: Harness): FakeDiff[] {
+  const diffs: FakeDiff[] = [];
+  (h.window as any).__fhCodeView = {
+    diff(parent: HTMLElement, options: FakeDiff['options']) {
+      const rec: FakeDiff = { parent, options, layouts: [], destroyed: 0 };
+      diffs.push(rec);
+      return {
+        setLayout(layout: string) {
+          rec.layouts.push(layout);
+        },
+        destroy() {
+          rec.destroyed++;
+        },
+      };
+    },
+  };
+  return diffs;
+}
+
+describe('webui page: the git window', () => {
+  const A = 'a1b2c3d4';
+  const statusPath = (mode: string, base = ''): string =>
+    `api/git/status?t=${A}&mode=${mode}${base ? `&base=${encodeURIComponent(base)}` : ''}`;
+  const filePath = (mode: string, file: string, base = ''): string =>
+    `api/git/file?t=${A}&mode=${mode}${base ? `&base=${encodeURIComponent(base)}` : ''}&path=${encodeURIComponent(file)}`;
+
+  /** A complete change list, and one file that both sides of the diff can read. */
+  const replies = (extra: Record<string, unknown> = {}): Record<string, unknown> => ({
+    [`api/git/branches?t=${A}`]: { ok: true, branch: 'main', base: 'main', branches: ['main', 'origin/main'] },
+    [statusPath('working')]: {
+      ok: true,
+      repo: { root: '/srv/project', branch: 'main', base: 'main' },
+      files: [
+        { path: 'src/a.ts', status: 'modified', additions: 3, deletions: 1 },
+        { path: 'new.txt', status: 'added', additions: 2, deletions: 0 },
+      ],
+    },
+    [statusPath('branch', 'main')]: {
+      ok: true,
+      repo: { root: '/srv/project', branch: 'main', base: 'main' },
+      files: [{ path: 'src/a.ts', status: 'modified', additions: 4, deletions: 1 }],
+    },
+    [filePath('working', 'src/a.ts')]: {
+      ok: true,
+      path: 'src/a.ts',
+      status: 'modified',
+      original: 'one\ntwo\n',
+      modified: 'one\nTWO\nthree\n',
+      patch: '@@ -1,2 +1,3 @@\n one\n-two\n+TWO\n+three\n',
+    },
+    [filePath('working', 'new.txt')]: {
+      ok: true,
+      path: 'new.txt',
+      status: 'added',
+      original: '',
+      modified: 'new\nlines\n',
+      patch: '@@ -0,0 +1,2 @@\n+new\n+lines\n',
+    },
+    ...extra,
+  });
+
+  async function openWindow(h: Harness): Promise<void> {
+    await h.emit(sync(A, [message('m1', '<p>work</p>')], [A]));
+    await h.click('#git-toggle');
+    await until('the change list', () => h.el('git-files').querySelectorAll('.git-file').length > 0);
+  }
+
+  it('opens from the chat header with the change list, and switches comparison from the bar', async () => {
+    const h = await open({ replies: replies() });
+    await openWindow(h);
+
+    expect(h.el('git').hidden).toBe(false);
+    expect(h.el('git-title').textContent).toBe('Changes');
+    expect(h.el('git-branch').textContent).toBe('main');
+    expect(h.el('git-modes').hidden).toBe(false);
+    expect(h.el('git-base').hidden).toBe(true);
+    const rows = Array.from(h.el('git-files').querySelectorAll('.git-file'));
+    expect(rows.map((r) => [r.querySelector('.gf-path')?.textContent, r.querySelector('.gf-status')?.textContent])).toEqual([
+      ['src/a.ts', 'M'],
+      ['new.txt', 'A'],
+    ]);
+    expect(rows[0]?.querySelector('.gf-stat')?.textContent).toContain('+3');
+
+    await h.click('[data-gm="branch"]');
+    await until('the branch comparison', () => h.calls.some((c) => c.path === statusPath('branch', 'main')));
+    expect(Array.from(h.el('git-modes').querySelectorAll('.git-mode.on')).map((b) => b.getAttribute('data-gm'))).toEqual([
+      'branch',
+    ]);
+    // The base picker appears with the branches the daemon named, and the answer's base is chosen.
+    await until('the base picker', () => !h.el('git-base').hidden);
+    expect(Array.from(h.el('git-base').querySelectorAll('option')).map((o) => o.textContent)).toEqual([
+      'main',
+      'origin/main',
+    ]);
+    expect((h.el('git-base') as HTMLSelectElement).value).toBe('main');
+  });
+
+  it('draws a file through codeView, and falls back to the coloured patch when it is not there', async () => {
+    const h = await open({ replies: replies() });
+    const diffs = installCodeView(h);
+    await openWindow(h);
+
+    await h.click('[data-gpath="src/a.ts"]');
+    await until('the code view', () => diffs.length === 1);
+    const first = diffs[0]!;
+    expect(first.options.name).toBe('src/a.ts');
+    expect(first.options.original).toBe('one\ntwo\n');
+    expect(first.options.modified).toBe('one\nTWO\nthree\n');
+    // A desktop page opens the two-column diff, and the button offers the other way.
+    expect(first.options.layout).toBe('split');
+    expect(h.el('git-layout').hidden).toBe(false);
+    expect(h.el('git-layout').textContent).toBe('Unified');
+
+    await h.click('#git-layout');
+    expect(first.layouts).toEqual(['unified']);
+    expect(h.el('git-layout').textContent).toBe('Split');
+
+    // No code view on this page: the same read, as a plain patch with + and − coloured. There is
+    // no selection there, so the comment affordance must stay hidden.
+    delete (h.window as any).__fhCodeView;
+    await h.click('[data-gpath="new.txt"]');
+    await until('the plain patch', () => Boolean(h.el('git-diff').querySelector('.git-patch')));
+    expect(first.destroyed).toBe(1);
+    expect(h.el('git-diff').querySelectorAll('.git-patch .pa').length).toBeGreaterThanOrEqual(2);
+    expect(h.el('git-layout').hidden).toBe(true);
+    // No code view means no selection, so the comment affordance stays hidden.
+    expect(h.el('git-sel').hidden).toBe(true);
+  });
+
+  it('turns a selected range into a line comment in the composer, and never sends it', async () => {
+    const h = await open({ replies: replies() });
+    const diffs = installCodeView(h);
+    await openWindow(h);
+    await h.click('[data-gpath="src/a.ts"]');
+    await until('the code view', () => diffs.length === 1);
+
+    diffs[0]!.options.onSelect?.({ side: 'new', from: 2, to: 3, text: 'two\nTHREE\n' });
+    await tick();
+    expect(h.el('git-sel').hidden).toBe(false);
+    expect(h.el('git-sel-what').textContent).toBe('New lines 2\u20133');
+
+    await h.click('#git-comment-open');
+    expect(h.el('git-comment').hidden).toBe(false);
+    expect(h.el('git-comment-what').textContent).toBe('src/a.ts:L2-L3 \u00b7 new side');
+    (h.el('git-comment-text') as HTMLTextAreaElement).value = 'Looks good';
+    await h.click('#git-comment-add');
+
+    expect((h.el('input') as HTMLTextAreaElement).value).toBe(
+      ['src/a.ts:L2-L3 (new)', '```', 'two', 'THREE', '```', 'Looks good'].join('\n')
+    );
+    expect(h.el('git-comment').hidden).toBe(true);
+    expect(h.el('git-note').textContent).toContain('Added to the message');
+    // Inserting is all it does: nothing has been sent to the daemon.
+    expect(h.calls.some((c) => c.path === 'api/send')).toBe(false);
+  });
+
+  it('re-reads the change list when the topic turn ends, but leaves the open diff alone', async () => {
+    const h = await open({ replies: replies() });
+    const diffs = installCodeView(h);
+    await openWindow(h);
+    await h.click('[data-gpath="src/a.ts"]');
+    await until('the code view', () => diffs.length === 1);
+    const before = h.calls.filter((c) => c.path === statusPath('working')).length;
+
+    await h.emit({ t: 'typing', on: false });
+    await until('a refreshed list', () => h.calls.filter((c) => c.path === statusPath('working')).length === before + 1);
+    expect(diffs[0]?.destroyed).toBe(0);
+  });
+
+  it('opens a fixed pair of URLs for the turn-change view, with no comparison controls', async () => {
+    const h = await open({
+      replies: {
+        'api/git/status?t=turn1&mode=working': {
+          ok: true,
+          repo: { root: '/srv/project', branch: 'feature' },
+          files: [{ path: 'src/a.ts', status: 'modified', additions: 1, deletions: 1 }],
+        },
+        'api/git/file?t=turn1&mode=working&path=src%2Fa.ts': {
+          ok: true,
+          path: 'src/a.ts',
+          status: 'modified',
+          original: 'one\n',
+          modified: 'two\n',
+          patch: '@@ -1 +1 @@\n-one\n+two\n',
+        },
+      },
+    });
+    await h.emit(sync(A, [message('m1', '<p>work</p>')], [A]));
+    (h.window as any).openGitWindow({
+      title: 'Changes this turn',
+      statusUrl: 'api/git/status?t=turn1&mode=working',
+      fileUrl: 'api/git/file?t=turn1&mode=working',
+    });
+    await until('the fixed list', () => h.el('git-files').querySelectorAll('.git-file').length === 1);
+
+    expect(h.el('git-title').textContent).toBe('Changes this turn');
+    expect(h.el('git-modes').hidden).toBe(true);
+    expect(h.el('git-base').hidden).toBe(true);
+
+    await h.click('[data-gpath="src/a.ts"]');
+    await until('the fixed diff', () => h.calls.some((c) => c.path === 'api/git/file?t=turn1&mode=working&path=src%2Fa.ts'));
+    await until('the plain patch', () => Boolean(h.el('git-diff').querySelector('.git-patch')));
+    expect(h.el('git-diff').textContent).toContain('+two');
+  });
+
+  it('closes on Escape, its button and the backdrop', async () => {
+    const h = await open({ replies: replies() });
+    await openWindow(h);
+
+    h.doc.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Escape' }));
+    await tick();
+    expect(h.el('git').hidden).toBe(true);
+
+    await h.click('#git-toggle');
+    await until('the list again', () => h.el('git-files').querySelectorAll('.git-file').length > 0);
+    await h.click('#git-close');
+    expect(h.el('git').hidden).toBe(true);
+
+    await h.click('#git-toggle');
+    await until('the list a third time', () => h.el('git-files').querySelectorAll('.git-file').length > 0);
+    h.el('git').dispatchEvent(new h.window.MouseEvent('click', { bubbles: true }));
+    expect(h.el('git').hidden).toBe(true);
+  });
+
+  it('hands the editor an absolute path, and a key on Edit stays with Edit', async () => {
+    const h = await open({ replies: replies() });
+    const edited: string[] = [];
+    (h.window as any).openFileEditor = (p: string) => edited.push(p);
+    await openWindow(h);
+
+    const edit = h.el('git-files').querySelector('.gf-edit') as HTMLElement;
+    expect(edit.getAttribute('data-gedit')).toBe('/srv/project/src/a.ts');
+    await h.click('.gf-edit');
+    expect(edited).toEqual(['/srv/project/src/a.ts']);
+    // The click on Edit must not also open the row's diff.
+    expect(h.calls.some((c) => c.path === filePath('working', 'src/a.ts'))).toBe(false);
+
+    // Enter on the button is the button's press, not the row's "open the diff".
+    edit.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await tick();
+    expect(h.calls.some((c) => c.path === filePath('working', 'src/a.ts'))).toBe(false);
+  });
+
+  it('drops a file answer that arrives after the comparison changed', async () => {
+    let release = (): void => {};
+    const gate = new Promise<void>((r) => (release = r));
+    const h = await open({
+      replies: replies(),
+      held: { [filePath('working', 'src/a.ts')]: gate },
+    });
+    const diffs = installCodeView(h);
+    await openWindow(h);
+    await h.click('[data-gpath="src/a.ts"]');
+    await within('the file request', 1000, () => h.calls.some((c) => c.path === filePath('working', 'src/a.ts')));
+
+    await h.click('[data-gm="branch"]');
+    await until('the branch answer', () => h.calls.some((c) => c.path === statusPath('branch', 'main')));
+    release();
+    await tick();
+    await tick();
+
+    // The old file's answer belongs to the comparison that was left: no diff, and no selection
+    // that a comment could be written against with an empty path.
+    expect(diffs).toHaveLength(0);
+    expect(h.el('git-diff').textContent).not.toContain('TWO');
+    expect(h.el('git-sel').hidden).toBe(true);
+  });
+
+  it('closes when another topic is opened', async () => {
+    const B = 'b2c3d4e5';
+    const h = await open({ replies: replies() });
+    await h.emit(sync(A, [], [A, B]));
+    await h.click('#git-toggle');
+    await until('the list', () => h.el('git-files').querySelectorAll('.git-file').length > 0);
+
+    await h.click(`[data-topic="${B}"]`);
+    expect(h.el('git').hidden).toBe(true);
+  });
+
+  it('re-reads the comparison when the base branch changes', async () => {
+    const h = await open({
+      replies: replies({
+        [`api/git/branches?t=${A}`]: { ok: true, branch: 'main', base: 'main', branches: ['main', 'dev'] },
+        [statusPath('branch', 'dev')]: {
+          ok: true,
+          repo: { root: '/srv/project', branch: 'main', base: 'dev' },
+          files: [],
+        },
+      }),
+    });
+    await openWindow(h);
+    await h.click('[data-gm="branch"]');
+    await until('the default base', () => h.calls.some((c) => c.path === statusPath('branch', 'main')));
+    await until('the picker', () => !h.el('git-base').hidden);
+
+    const picker = h.el('git-base') as HTMLSelectElement;
+    picker.value = 'dev';
+    picker.dispatchEvent(new h.window.Event('change', { bubbles: true }));
+    await until('the new base', () => h.calls.some((c) => c.path === statusPath('branch', 'dev')));
+  });
+
+  it('picks the first branch as the base when the repository names no default', async () => {
+    const h = await open({
+      replies: replies({
+        [`api/git/branches?t=${A}`]: { ok: true, branch: 'feature', branches: ['feature', 'topic'] },
+        [statusPath('branch', 'feature')]: {
+          ok: true,
+          repo: { root: '/srv/project', branch: 'feature', base: 'feature' },
+          files: [],
+        },
+      }),
+    });
+    await openWindow(h);
+    await h.click('[data-gm="branch"]');
+    await until('the first branch as base', () => h.calls.some((c) => c.path === statusPath('branch', 'feature')));
+    expect((h.el('git-base') as HTMLSelectElement).value).toBe('feature');
+  });
+
+  it('shows the daemon sentence for a failed read, not "no changes"', async () => {
+    const h = await open({
+      replies: {
+        [statusPath('working')]: { ok: false, reason: 'error', text: 'git status failed: index file corrupt' },
+      },
+    });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#git-toggle');
+    await until('the failure', () => h.el('git-note').textContent!.includes('index file corrupt'));
+    expect(h.el('git-files').textContent).not.toContain('No changes');
+  });
+
+  it('shows why the base picker has no branches, and keeps saying it under the list', async () => {
+    const h = await open({
+      replies: replies({ [`api/git/branches?t=${A}`]: { ok: false, text: 'too many branches to list' } }),
+    });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#git-toggle');
+    await until('the branch failure', () => h.el('git-note').textContent!.includes('too many branches'));
+    // The status answer came after it and still did not wipe the sentence.
+    expect(h.el('git-files').querySelectorAll('.git-file').length).toBeGreaterThan(0);
+  });
+
+  it('draws the rows it did get when the list itself is incomplete', async () => {
+    const h = await open({
+      replies: {
+        [statusPath('working')]: {
+          ok: true,
+          repo: { root: '/srv/project', branch: 'main', base: 'main' },
+          files: [{ path: 'src/a.ts', status: 'modified', additions: 1, deletions: 1 }],
+          truncated: true,
+        },
+      },
+    });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#git-toggle');
+    await until('the partial list', () => h.el('git-files').querySelectorAll('.git-file').length === 1);
+    expect(h.el('git-note').textContent).toContain('too many changes');
+    expect(h.el('git-files').textContent).toContain('src/a.ts');
+    // A row that was drawn from an incomplete list is still a real row: it opens.
+    await h.click('[data-gpath="src/a.ts"]');
+    await until('the file request', () => h.calls.some((c) => c.path === filePath('working', 'src/a.ts')));
+  });
+
+  it('drops a file answer when a failed refresh cleared the open file', async () => {
+    let release = (): void => {};
+    const gate = new Promise<void>((r) => (release = r));
+    const h = await open({ replies: replies(), held: { [filePath('working', 'src/a.ts')]: gate } });
+    const diffs = installCodeView(h);
+    await openWindow(h);
+    await h.click('[data-gpath="src/a.ts"]');
+    await within('the file request', 1000, () => h.calls.some((c) => c.path === filePath('working', 'src/a.ts')));
+
+    // The refresh fails after the path has been cleared; the file answer must not land in the
+    // empty pane and hand a comment an empty file name.
+    h.status[statusPath('working')] = 500;
+    await h.emit({ t: 'typing', on: false });
+    await until('the failure', () => h.el('git-note').textContent!.includes('Could not read the changes'));
+    release();
+    await tick();
+    await tick();
+
+    expect(diffs).toHaveLength(0);
+    expect(h.el('git-diff').textContent).toBe('');
+  });
+
+  it('drops a file answer when the file has left the change list', async () => {
+    let release = (): void => {};
+    const gate = new Promise<void>((r) => (release = r));
+    const list = {
+      ok: true,
+      repo: { root: '/srv/project', branch: 'main', base: 'main' },
+      files: [
+        { path: 'src/a.ts', status: 'modified', additions: 3, deletions: 1 },
+        { path: 'new.txt', status: 'added', additions: 2, deletions: 0 },
+      ],
+    };
+    const h = await open({
+      replies: { ...replies(), [statusPath('working')]: list },
+      held: { [filePath('working', 'src/a.ts')]: gate },
+    });
+    const diffs = installCodeView(h);
+    await openWindow(h);
+    await h.click('[data-gpath="src/a.ts"]');
+    await within('the file request', 1000, () => h.calls.some((c) => c.path === filePath('working', 'src/a.ts')));
+
+    list.files = [list.files[1]!];
+    await h.emit({ t: 'typing', on: false });
+    await until('the notice', () => h.el('git-diff').textContent!.includes('no longer in the changes'));
+    release();
+    await tick();
+    await tick();
+
+    expect(diffs).toHaveLength(0);
+    expect(h.el('git-sel').hidden).toBe(true);
+  });
+
+  it('names a too-large file and a too-large diff differently', async () => {
+    const big = (patchTooLarge: boolean) => ({
+      ok: true,
+      path: 'src/a.ts',
+      status: 'modified',
+      original: '',
+      modified: '',
+      patch: '',
+      tooLarge: true,
+      ...(patchTooLarge ? { patchTooLarge: true } : {}),
+    });
+    const h = await open({
+      replies: replies({
+        [filePath('working', 'src/a.ts')]: big(false),
+        [filePath('working', 'new.txt')]: { ...big(true), path: 'new.txt' },
+        [statusPath('working')]: {
+          ok: true,
+          repo: { root: '/srv/project', branch: 'main', base: 'main' },
+          files: [
+            { path: 'src/a.ts', status: 'modified', additions: 1, deletions: 1 },
+            { path: 'new.txt', status: 'added', additions: 2, deletions: 0 },
+          ],
+        },
+      }),
+    });
+    await openWindow(h);
+
+    await h.click('[data-gpath="src/a.ts"]');
+    await until('the file notice', () => h.el('git-diff').textContent === 'This file is too large to show.');
+    await h.click('[data-gpath="new.txt"]');
+    await until('the diff notice', () => h.el('git-diff').textContent === "This file's diff is too large to show.");
+  });
+
+  it('says the counts were not read instead of drawing +0 −0', async () => {
+    const h = await open({
+      replies: {
+        [statusPath('working')]: {
+          ok: true,
+          repo: { root: '/srv/project', branch: 'main', base: 'main' },
+          files: [{ path: 'many/a.txt', status: 'added', additions: 0, deletions: 0, statsUnknown: true }],
+        },
+      },
+    });
+    await h.emit(sync(A, [], [A]));
+    await h.click('#git-toggle');
+    await until('the row', () => h.el('git-files').querySelectorAll('.git-file').length === 1);
+
+    expect(h.el('git-files').textContent).toContain('counts not read');
+    expect(h.el('git-files').textContent).not.toContain('+0');
+  });
+
+  it('writes which side of the diff a comment is on', async () => {
+    const h = await open({ replies: replies() });
+    const diffs = installCodeView(h);
+    await openWindow(h);
+    await h.click('[data-gpath="src/a.ts"]');
+    await until('the code view', () => diffs.length === 1);
+
+    diffs[0]!.options.onSelect?.({ side: 'old', from: 4, to: 4, text: 'two\n' });
+    await tick();
+    await h.click('#git-comment-open');
+    expect(h.el('git-comment-what').textContent).toContain('old side');
+    (h.el('git-comment-text') as HTMLTextAreaElement).value = 'Removed on purpose';
+    await h.click('#git-comment-add');
+    expect((h.el('input') as HTMLTextAreaElement).value).toBe(
+      ['src/a.ts:L4 (old)', '```', 'two', '```', 'Removed on purpose'].join('\n')
+    );
+  });
+});

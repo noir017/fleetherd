@@ -74,6 +74,8 @@ const PACING = {
   useIdleReclaim: 'unpaced',
   // Ends a topic's agent and the agents under it; nothing is written to the chat.
   useTopicKill: 'unpaced',
+  // Registers the git window's reads; the page asks over its own HTTP routes, not chat traffic.
+  useGitPanel: 'unpaced',
   // Registers a callback, read while drawing an empty topic; writes nothing to the chat.
   useAgentCatalog: 'unpaced',
   useModelPicker: 'unpaced',
