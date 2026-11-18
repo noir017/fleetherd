@@ -4,6 +4,8 @@ import type {
   SessionModeSelector,
   SettingsScreen,
   SettingsScreenControl,
+  SettingsScreenField,
+  SettingsScreenFieldControl,
   SettingsScreenGroup,
   SettingsScreenNotice,
   SettingsScreenOption,
@@ -635,18 +637,18 @@ function effectLabel(row: SettingRow): string | undefined {
  * of the table: a new setting that falls through to the default is a compile error, not a row
  * stranded under the wrong heading.
  *
- * The model rows are a group of their own, one row per agent under one heading, rather than a row
- * per agent each titled "Default model": with ten agents that was ten identical titles in a column,
- * and the switch for sub-agent confirmation lost among them (reported 2026-11-05).
+ * The per-agent rows are one group, headed by the default agent and then one row per agent, rather
+ * than a row per agent each titled "Default model": with ten agents that was ten identical titles
+ * in a column, and the switch for sub-agent confirmation lost among them (reported 2026-11-05).
+ * The model and permission rows for an agent are merged into that one row (settingsListScreen), so
+ * a setting added per agent later joins them instead of growing a third run of headings.
  */
 function settingGroup(row: SettingRow): string {
   switch (row.id) {
     case 'agent':
-      return 'Agents';
     case 'model':
-      return 'Default model';
     case 'permissions':
-      return 'Permissions';
+      return 'Agents';
     case 'delegation':
       return 'Sub-agents';
     case 'idle':
@@ -669,11 +671,10 @@ function settingGroup(row: SettingRow): string {
 
 /** A sentence under a group heading, for what every row in it shares. */
 function settingGroupNote(row: SettingRow): string | undefined {
-  if (row.id === 'model') {
-    return 'What each agent starts a new session with. A change applies from that agent’s next session (`/new` starts one); `/model` changes it in one topic only.';
-  }
-  if (row.id === 'permissions') {
-    return 'How much each agent may do without you. `plan`, `ask` and `edits` put what it asks to do to you as buttons; `auto` approves it; `full` runs the harness with nothing asked. Only the levels an agent’s harness has a mode for are offered. Applies at once, to running sessions too.';
+  // The Agents group's first row is the default agent, and its note speaks for the per-agent
+  // rows below it: the model's timing and the permission level's, said once for the group.
+  if (row.id === 'agent') {
+    return 'The agent rows below carry each agent’s own settings; the Default agent row only picks who answers a new conversation. A model applies from that agent’s next session (`/new` starts one); `/model` changes it in one topic only. A permission level applies at once, to running sessions too: `plan`, `ask` and `edits` put what it wants to do to you as buttons, `auto` approves it, `full` asks nothing. Which levels are offered depends on what its harness can put to you.';
   }
   if (row.id === 'review.agent') {
     return 'An agent reads a conversation that has gone quiet and writes what it learned into the skill library. The review runs with its tools switched off and every permission refused.';
@@ -1786,6 +1787,11 @@ export function buildSettingsMenu(menu: {
  * with the value split out of the label, and a control per row (settingControl). The `sts:` ids a
  * switch or a choice carries index `choices`, which the daemon keeps with the menu — the same
  * freeze-the-list rule `stv:` follows, so an id means the value it meant when it was drawn.
+ *
+ * A per-agent setting is not a row of its own: every row with the same `target` becomes one field
+ * inside that agent's row (control `agent`), under the one Agents heading. The fields keep the
+ * `stg:` ids their rows had, so a tap opens the same value screen it opened before the merge, and
+ * the chat menu's own buttons — built from the same row list — are untouched.
  */
 function settingsListScreen(
   reqId: string,
@@ -1798,15 +1804,46 @@ function settingsListScreen(
     choices.push({ row, raw });
     return settingSetButtonId(reqId, choices.length - 1);
   };
-  const groups: SettingsScreenGroup[] = [];
-  const screenRows: SettingsScreenRow[] = rows.map((row, i) => {
-    const group = settingGroup(row);
-    if (groups.at(-1)?.name !== group) {
-      const note = settingGroupNote(row);
-      groups.push({ name: group, ...(note ? { note } : {}) });
+  // Draw every row of the frozen list first, in its own order: `choose` numbers an `sts:` id by
+  // the order it is called in, and a click resolves that number against the list the daemon kept.
+  // Merging as we go would put a permissions field before the next agent's model row and renumber
+  // every choice after the first agent.
+  const drawn = rows.map((row, i) => settingsScreenRow(reqId, row, i, settingGroup(row), input, choose));
+  const agentRows: SettingsScreenRow[] = [];
+  const byTarget = new Map<string, SettingsScreenRow>();
+  const tail: Array<{ screen: SettingsScreenRow; note?: string }> = [];
+  let defaultAgent: { screen: SettingsScreenRow; note?: string } | undefined;
+  for (const [i, row] of rows.entries()) {
+    const screen = drawn[i]!;
+    // The per-agent settings there are today. A new one is added here and given a name in
+    // FIELD_LABEL, whose Record is over exactly these two ids so no chat label can stand in.
+    const id = row.id;
+    if ((id === 'model' || id === 'permissions') && row.target) {
+      const field = settingsScreenField(FIELD_LABEL[id], screen);
+      const merged = byTarget.get(row.target);
+      if (merged?.control.kind === 'agent') merged.control.fields.push(field);
+      else {
+        const agentRow = agentScreenRow(screen, field);
+        byTarget.set(row.target, agentRow);
+        agentRows.push(agentRow);
+      }
+      continue;
     }
-    return settingsScreenRow(reqId, row, i, group, input, choose);
-  });
+    const placed = { screen, note: settingGroupNote(row) };
+    if (row.id === 'agent') defaultAgent = placed;
+    else tail.push(placed);
+  }
+  const groups: SettingsScreenGroup[] = [];
+  const screenRows: SettingsScreenRow[] = [];
+  const place = (screen: SettingsScreenRow, note?: string): void => {
+    screenRows.push(screen);
+    if (groups.at(-1)?.name !== screen.group) groups.push({ name: screen.group, ...(note ? { note } : {}) });
+  };
+  // The default agent heads the group; the agents follow in the order their model rows had, so
+  // the row a person learned to find does not move when a setting is added to it.
+  if (defaultAgent) place(defaultAgent.screen, defaultAgent.note);
+  for (const agentRow of agentRows) place(agentRow);
+  for (const placed of tail) place(placed.screen, placed.note);
   if (extra) {
     groups.push({ name: 'More' });
     screenRows.push({ buttonId: extra.id, label: extra.label, group: 'More', control: { kind: 'link' } });
@@ -1822,6 +1859,49 @@ function settingsListScreen(
     },
     choices,
   };
+}
+
+/** What a per-agent setting is called inside its agent's row. */
+const FIELD_LABEL: Record<'model' | 'permissions', SettingsScreenField['label']> = {
+  model: 'Model',
+  permissions: 'Permissions',
+};
+
+/** The field a per-agent row becomes inside its agent's row. */
+function settingsScreenField(label: SettingsScreenField['label'], screen: SettingsScreenRow): SettingsScreenField {
+  return {
+    label,
+    buttonId: screen.buttonId,
+    ...(screen.value !== undefined ? { value: screen.value } : {}),
+    ...(screen.unset ? { unset: true } : {}),
+    ...(screen.valueNote ? { valueNote: screen.valueNote } : {}),
+    ...(screen.effectLabel ? { effectLabel: screen.effectLabel, effectDetail: screen.effectDetail } : {}),
+    control: fieldControl(screen.control),
+  };
+}
+
+/** One agent's row, from the first of its setting rows and the first field inside it. */
+function agentScreenRow(screen: SettingsScreenRow, field: SettingsScreenField): SettingsScreenRow {
+  return {
+    buttonId: field.buttonId,
+    label: screen.label,
+    ...(screen.target ? { target: screen.target } : {}),
+    ...(screen.targetKind ? { targetKind: screen.targetKind } : {}),
+    ...(screen.here ? { here: true } : {}),
+    group: 'Agents',
+    control: { kind: 'agent', fields: [field] },
+  };
+}
+
+/** A field is changed by a choice or by its own value screen; nothing else fits in an agent's row. */
+function fieldControl(control: SettingsScreenControl): SettingsScreenFieldControl {
+  switch (control.kind) {
+    case 'choice':
+    case 'list':
+      return control;
+    default:
+      throw new Error(`a ${control.kind} control cannot be drawn as an agent field`);
+  }
 }
 
 /** One row of the list screen. */

@@ -753,7 +753,10 @@ the `EXPERIENCE` knobs because they are not in the file at all.
 A platform that draws its own screen (the web UI, `capabilities.settingsScreen`) gets the same
 table as data as well (`SettingsScreen`): the group each row sits under, a one-line hint, when a
 change lands where that is not "now", and the control it is changed with (`settingControl` —
-switch, choice, or a screen of its own). Those are presentation, but they are decided here with the
+switch, choice, or a screen of its own). Rows for the same agent are merged into one row whose
+control is `agent`, with a `SettingsScreenField` per setting — the agent's model and permission
+level today — and the fields keep the `stg:` ids their own rows had, so a tap opens the same
+value screen it did before. Those are presentation, but they are decided here with the
 rest of the table so a new setting cannot compile without them. A switch or a choice posts
 `sts:<reqId>:<n>`, an index into the `choices` the list was drawn with, which the daemon freezes
 with the menu exactly as it freezes `stv:` options. A chat platform never builds any of it.

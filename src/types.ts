@@ -589,7 +589,10 @@ export interface SettingsScreenRow {
   targetKind?: string;
   /** The target is the agent answering the conversation this screen was opened in. */
   here?: boolean;
-  /** The current value, already formatted for display. Absent on a row that opens another menu. */
+  /**
+   * The current value, already formatted for display. Absent on a row that opens another menu, and
+   * on an `agent` row — the values there are its fields'.
+   */
   value?: string;
   /** Nothing is set, and `value` says what that means (`harness default`): drawn as a placeholder. */
   unset?: boolean;
@@ -620,12 +623,51 @@ export interface SettingsScreenRow {
  * - `list`: the row opens the setting's own value screen (`buttonId`) — a list that is long, has
  *   to be fetched, or accepts a typed value (a model).
  * - `link`: the row leads to another menu, not to a value (the scheduled tasks).
+ * - `agent`: the row is one agent, and every setting it has is a `SettingsScreenField` inside it
+ *   (its model and permission level today). `buttonId` is the first field's, so a tap on the row
+ *   opens the same setting it always did.
  */
 export type SettingsScreenControl =
   | { kind: 'switch'; on: boolean; set: string }
   | { kind: 'choice'; options: SettingsScreenOption[] }
   | { kind: 'list' }
-  | { kind: 'link' };
+  | { kind: 'link' }
+  | { kind: 'agent'; fields: SettingsScreenField[] };
+
+/**
+ * One setting of a single agent, drawn inside that agent's row (`SettingsScreenControl`'s `agent`).
+ *
+ * The same facts a top-level row carries, without the group: the field's own label names the
+ * setting, and the group's note says when a change lands. `buttonId` is the `stg:` id the setting
+ * had as a row of its own — a field is where that row went, not a new control — so a tap opens
+ * exactly the value screen it did before the rows were merged.
+ */
+export interface SettingsScreenField {
+  /** What the setting is called. A new per-agent setting widens this union with its own name. */
+  label: 'Model' | 'Permissions';
+  /** The `stg:` id of the setting's own row; a tap posts it to open that setting's values. */
+  buttonId: string;
+  /** The current value, already formatted for display. */
+  value?: string;
+  /** Nothing is set, and `value` says what that means (`harness default`): drawn as a placeholder. */
+  unset?: boolean;
+  /** Where the value comes from, when that is not simply config.yaml (`from pod.yaml`, `set here`). */
+  valueNote?: string;
+  /** When a change lands, where the group's note does not already say it. */
+  effectLabel?: string;
+  /** The whole sentence behind `effectLabel`. */
+  effectDetail?: string;
+  /** How the field is changed from the agent's row. */
+  control: SettingsScreenFieldControl;
+}
+
+/**
+ * How a field is changed: the subset of `SettingsScreenControl` a per-agent setting can have. A
+ * switch or a link belongs to a row of its own, never inside an agent's row.
+ */
+export type SettingsScreenFieldControl =
+  | { kind: 'choice'; options: SettingsScreenOption[] }
+  | { kind: 'list' };
 
 /** A section of the list: its heading, and a sentence that applies to every row in it. */
 export interface SettingsScreenGroup {
