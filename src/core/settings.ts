@@ -1,4 +1,4 @@
-import type { Config, PermissionLevel, SessionScope } from '../config/schema.js';
+import type { AgentDef, Config, PermissionLevel, SessionScope } from '../config/schema.js';
 import { agentDisplayName, findAgent, PERMISSION_LEVELS, REVIEW_ARGS_HARNESSES } from '../config/schema.js';
 import type {
   SessionModeSelector,
@@ -22,6 +22,7 @@ import {
   offeredLevelsFor,
   parseLevel,
   unsetLevel,
+  type UnsetLevelSource,
 } from './permission-levels.js';
 /**
  * `/setting` as data: which config.yaml fields are editable from chat, what each accepts, when a
@@ -202,7 +203,13 @@ export type AgentModelList =
 
 /** What is known of one agent's session modes — AgentModelList's twin, asked by the same session. */
 export type AgentModes =
-  | { kind: 'list'; options: SessionModeSelector['options'] }
+  /**
+   * `current` is the mode the session reports — a live one where there is one, else the last the
+   * gateway asked about. It is what an unset level is read off (unsetLevel): a session's mode
+   * outranks a pinned `options.mode`, which the harness may not have taken. Absent when the source
+   * did not report one.
+   */
+  | { kind: 'list'; options: SessionModeSelector['options']; current?: string }
   | { kind: 'loading' }
   /** Asked, and the harness reports no mode selector. */
   | { kind: 'none' }
@@ -429,8 +436,15 @@ function reviewModelValue(cfg: Config): string {
  * defaults to set, and folding them into one row would make the screen lie about which one it
  * shows. Order is config order, so the rows (and therefore the button indices) are stable across
  * restarts.
+ *
+ * `modes` is what the gateway knows of each agent's session modes, for the permission rows: an
+ * unset level is read off the mode a session reports, which only the daemon can answer.
  */
-export function settingsRows(cfg: Config, pods?: PodModels): SettingRow[] {
+export function settingsRows(
+  cfg: Config,
+  pods?: PodModels,
+  modes?: (agentId: string) => AgentModes | undefined
+): SettingRow[] {
   const rows: SettingRow[] = [
     {
       id: 'agent',
@@ -451,21 +465,7 @@ export function settingsRows(cfg: Config, pods?: PodModels): SettingRow[] {
     });
   }
   // One permission row per agent, after the model rows, for the reason those are one per agent.
-  for (const agent of cfg.agents) {
-    // Unset approves everything the agent asks and leaves the harness's mode alone (config/schema.ts
-    // says why) — but a pinned full-access mode asks nothing at all, so that case shows `full`, read
-    // off the mode rather than stored, and the row says so (unsetLevel).
-    const unset = agent.permissions === undefined;
-    rows.push({
-      id: 'permissions',
-      target: agent.id,
-      label: `Permissions · ${agent.id}`,
-      value: agent.permissions ?? unsetLevel(agent),
-      ...(unset ? { unset: true, valueNote: 'not set · from its mode' } : {}),
-      effect: 'live',
-      ...(pods?.has(agent.id) ? { pod: {} } : {}),
-    });
-  }
+  for (const agent of cfg.agents) rows.push(permissionRow(agent, pods, modes));
   rows.push(
     {
       id: 'delegation',
@@ -528,6 +528,48 @@ export function settingsRows(cfg: Config, pods?: PodModels): SettingRow[] {
     }
   );
   return rows;
+}
+
+/**
+ * One permission row. Unset approves everything the agent asks and leaves the harness's mode alone
+ * (config/schema.ts says why) — but a full-access mode asks nothing at all, so that case shows
+ * `full`. A session's mode outranks the pinned one, which the harness may not have taken
+ * (unsetLevel), and the row says which it read.
+ */
+function permissionRow(
+  agent: AgentDef,
+  pods: PodModels | undefined,
+  modes?: (agentId: string) => AgentModes | undefined
+): SettingRow {
+  const unset = agent.permissions === undefined;
+  const known = modes?.(agent.id);
+  const live = known?.kind === 'list' ? known.current : undefined;
+  const inferred = unsetLevel(agent, live);
+  return {
+    id: 'permissions',
+    target: agent.id,
+    label: `Permissions · ${agent.id}`,
+    value: agent.permissions ?? inferred.level,
+    ...(unset ? { unset: true, valueNote: unsetNote(inferred.from) } : {}),
+    effect: 'live',
+    ...(pods?.has(agent.id) ? { pod: {} } : {}),
+  };
+}
+
+/**
+ * Where an unset permission row's level was read from, in the words a screen puts beside the value.
+ * `none` says only that nothing is stored: there is no mode to name, and claiming one would be the
+ * "from its mode" a harness with no modes cannot honour.
+ */
+function unsetNote(from: UnsetLevelSource): string {
+  switch (from) {
+    case 'session':
+      return 'not set · from its session’s mode';
+    case 'pin':
+      return 'not set · from its pinned mode';
+    case 'none':
+      return 'not set';
+  }
 }
 
 /** One sentence on what a setting decides — the detail screen's subtitle. */
@@ -790,7 +832,7 @@ export function resolveSettingKey(key: string, cfg: Config, ctx: SettingsContext
   const norm = key.trim().replace(/^\//, '').toLowerCase();
   if (!norm) return { kind: 'unknown', key };
 
-  const rows = settingsRows(cfg, ctx.pods);
+  const rows = settingsRows(cfg, ctx.pods, ctx.modes);
   const perAgent = perAgentTarget(norm, cfg);
   if (perAgent !== undefined) {
     if (perAgent.target === null) {
@@ -1007,15 +1049,17 @@ function permissionOptions(row: SettingRow, cfg: Config, ctx: SettingsContext): 
     return [{ raw: 'auto', label: `auto — ${API_AGENT_DETAIL}`, title: 'auto', detail: API_AGENT_DETAIL }];
   }
   const modes = knownModes(row, ctx);
-  if (!modes) return [];
-  const ids = modes.map((m) => m.value);
+  // agy's modes are left out in code (agent-acp.ts modesLeftOut), not because the harness cannot
+  // report them — so a probe that failed, its login expired, must not take `ask` off the screen.
+  const ids = def?.harness === 'agy' ? [] : modes?.map((m) => m.value);
+  if (!ids) return [];
   const offered = def ? offeredLevelsFor(def, ids) : offeredLevels(ids);
   const pinned = def?.options['mode'];
   // A harness with no mode the gateway can set: `ask` there is the gateway's half alone.
   const withoutMode = ids.length === 0 ? (def?.harness === 'agy' ? 'agy' : 'none') : undefined;
   return PERMISSION_LEVELS.filter((l) => offered.includes(l) || (!row.unset && l === row.value)).map((level) => {
     const mode = levelMode(level, ids, pinned === undefined ? undefined : String(pinned));
-    const name = mode ? (modes.find((m) => m.value === mode)?.name ?? mode) : undefined;
+    const name = mode ? (modes?.find((m) => m.value === mode)?.name ?? mode) : undefined;
     const detail = `${levelDetail(level, withoutMode)}${name ? ` (${name})` : ''}`;
     return { raw: level, label: `${level} — ${detail}`, title: level, detail };
   });
@@ -1298,7 +1342,10 @@ function parsePermissionsValue(
     };
   }
   const modes = knownModes(row, ctx);
-  if (!modes) {
+  // agy's modes are left out whatever a probe says, so the same two levels are accepted for it
+  // even while it cannot be asked (permissionOptions).
+  const ids = def?.harness === 'agy' ? [] : modes?.map((m) => m.value);
+  if (!ids) {
     return {
       kind: 'value',
       value: level,
@@ -1306,7 +1353,6 @@ function parsePermissionsValue(
       note: `${row.target}'s modes are not known yet. If its harness has none for \`${level}\`, its mode stays as it is and only the answer to its requests changes.`,
     };
   }
-  const ids = modes.map((m) => m.value);
   const offered = def ? offeredLevelsFor(def, ids) : offeredLevels(ids);
   if (!offered.includes(level) && (row.unset === true || level !== row.value)) {
     return {
@@ -1455,8 +1501,9 @@ export function readSettingValue(row: SettingRow, cfg: Config): string | number 
 }
 
 /**
- * The level a permission row writes, not the merged one: unset reads `auto` on the screen, and
- * picking `auto` there is a write (from then on the gateway sets the harness's mode), not "already".
+ * The level a permission row writes, not the merged one: unset shows whatever level its mode adds
+ * up to (`full` or `auto`), and picking one there is a write (from then on the gateway sets the
+ * harness's mode), not "already".
  */
 function storedPermissions(row: SettingRow, cfg: Config): PermissionLevel | undefined {
   if (!row.target) return undefined;
@@ -1537,11 +1584,14 @@ export function settingAckText(result: SettingApplyResult): string {
 
 // ─────────────────────────────── text surface ───────────────────────────────
 
-/** The bare `/setting` answer for a platform that cannot carry a menu. */
-export function settingsListText(cfg: Config): string {
-  const rows = settingsRows(cfg);
-  // A value that is not stored says so here too: `full` read off a pinned mode would otherwise
-  // look like a level someone chose.
+/**
+ * The bare `/setting` answer for a platform that cannot carry a menu. `modes` is settingsRows':
+ * what a permission row's unset level is read off.
+ */
+export function settingsListText(cfg: Config, modes?: (agentId: string) => AgentModes | undefined): string {
+  const rows = settingsRows(cfg, undefined, modes);
+  // A value that is not stored says so here too: `full` read off a mode would otherwise look
+  // like a level someone chose.
   const lines = rows.map(
     (row) =>
       `\`${settingKeyOf(row)}\` — ${row.label}: \`${row.value}\`${row.valueNote ? ` (${row.valueNote})` : ''}`
@@ -1622,12 +1672,14 @@ function modelListHint(row: SettingRow, cfg: Config, ctx: SettingsContext): stri
 /** The permission row's sentence: nothing when its levels are known, else why not and what to type. */
 function permissionsHint(row: SettingRow, cfg: Config, ctx: SettingsContext): string | undefined {
   const agentId = row.target;
-  if (!agentId || !ctx.modes) return undefined;
-  const typed = `\`/setting ${settingKeyOf(row)} <level>\``;
+  if (!agentId) return undefined;
   const def = findAgent(cfg, agentId);
+  // Before the catalog: the API agent's answer does not depend on any mode being known.
   if (def && isApiAgent(def)) {
     return `${agentId} is a fleetherd api-agent: it calls a cloud API and never asks for permission, so \`auto\` is the only level it has.`;
   }
+  if (!ctx.modes) return undefined;
+  const typed = `\`/setting ${settingKeyOf(row)} <level>\``;
   const known = ctx.modes(agentId);
   switch (known?.kind) {
     case 'list':
@@ -1669,7 +1721,10 @@ export function settingsMenuSurface(caps: {
 export function settingDetailText(row: SettingRow, cfg: Config, ctx: SettingsContext): string {
   const options = settingOptions(row, cfg, ctx);
   const key = settingKeyOf(row);
-  const lines = [`**${row.label}** — \`${row.value}\``, settingDescription(row), ''];
+  // A value that is not stored says so, as on the screen: `full` read off a mode is not a
+  // level someone chose here.
+  const note = row.valueNote ? ` (${row.valueNote})` : '';
+  const lines = [`**${row.label}** — \`${row.value}\`${note}`, settingDescription(row), ''];
   if (options.length > 0) {
     const shown = options.slice(0, DETAIL_OPTION_MAX);
     lines.push('Accepts:', ...shown.map((o) => `\`/setting ${key} ${o.raw}\` — ${o.label}`));
@@ -1898,8 +1953,8 @@ function settingsScreenRow(
   // A model row's "next session" is said once, in its group's note, rather than on every row.
   const effect = row.id === 'model' ? undefined : effectLabel(row);
   const def = row.target ? findAgent(input.cfg, row.target) : undefined;
-  const unset = row.id === 'model' && row.value === MODEL_UNSET;
-  const note = row.id === 'model' ? modelValueNote(row, input.cfg) : undefined;
+  const unset = rowUnset(row);
+  const note = rowValueNote(row, input.cfg);
   return {
     buttonId: settingRowButtonId(reqId, index),
     // `Default model · cc` is two facts in one chat label. On a screen the group heading is the
@@ -1909,8 +1964,9 @@ function settingsScreenRow(
     ...(def ? { targetKind: agentKindOf(def) } : {}),
     ...(row.target && row.target === input.here ? { here: true } : {}),
     // `harness default`, not `(harness default)`: the parentheses were a chat label's way of saying
-    // "not a model name", which a screen says by drawing it as a placeholder.
-    value: unset ? 'harness default' : row.value,
+    // "not a model name", which a screen says by drawing it as a placeholder. A permission row's
+    // unset value is a real level (`full` / `auto`) and keeps its own words.
+    value: unset && row.id === 'model' ? 'harness default' : row.value,
     ...(unset ? { unset: true } : {}),
     ...(note ? { valueNote: note } : {}),
     ...(hint ? { hint } : {}),
@@ -1918,6 +1974,28 @@ function settingsScreenRow(
     group,
     control: rowControl(row, index, input, choose),
   };
+}
+
+/**
+ * Whether a screen draws a row as unset: a model with no value, or a permission row whose level
+ * was read off a mode rather than stored. `row.unset` is the table's own answer; a model's is the
+ * placeholder its value carries.
+ */
+function rowUnset(row: SettingRow): boolean {
+  return row.unset ?? (row.id === 'model' && row.value === MODEL_UNSET);
+}
+
+/**
+ * The few words beside a list row's value: a permission row's own note (`not set · …`), or a pod
+ * agent's model saying whose it is. Undefined where there is nothing to say.
+ */
+function rowValueNote(row: SettingRow, cfg: Config): string | undefined {
+  return row.valueNote ?? (row.id === 'model' ? modelValueNote(row, cfg) : undefined);
+}
+
+/** Where a value screen's head says its value came from: the row's note, else a model's own source. */
+function valueSource(row: SettingRow, cfg: Config): string | undefined {
+  return row.valueNote ?? (row.id === 'model' ? modelSourceSentence(row, cfg) : undefined);
 }
 
 /**
@@ -2068,8 +2146,8 @@ function settingsValueScreen(
     current: o.raw === current,
   }));
   const def = row.target ? findAgent(extra.cfg, row.target) : undefined;
-  const unset = row.id === 'model' && row.value === MODEL_UNSET;
-  const source = row.id === 'model' ? modelSourceSentence(row, extra.cfg) : undefined;
+  const unset = rowUnset(row);
+  const source = valueSource(row, extra.cfg);
   // The review model's list is the reviewer's, so the header names that agent the way a per-agent
   // row names its own — otherwise "Now: agent's own" would leave the agent implicit.
   const listAgent = modelListAgent(row, extra.cfg);
@@ -2085,7 +2163,7 @@ function settingsValueScreen(
       label: VALUE_SCREEN_LABEL[row.id] ?? row.label,
       ...(listAgent ? { target: listAgent } : {}),
       ...(listDef ? { targetKind: agentKindOf(listDef) } : {}),
-      value: unset ? 'harness default' : row.value,
+      value: unset && row.id === 'model' ? 'harness default' : row.value,
       ...(unset ? { unset: true } : {}),
       description: settingDescription(row),
       ...(extra.hint ? { hint: extra.hint } : {}),

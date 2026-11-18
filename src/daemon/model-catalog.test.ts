@@ -130,7 +130,7 @@ describe('ModelCatalog', () => {
     const asking = t.catalog.ask('oc');
     expect(t.catalog.modes('oc')).toEqual({ kind: 'loading' });
     await asking;
-    expect(t.catalog.modes('oc')).toEqual({ kind: 'list', options: MODES.options });
+    expect(t.catalog.modes('oc')).toEqual({ kind: 'list', options: MODES.options, current: 'build' });
     expect(t.catalog.shouldAskModes('oc')).toBe(false);
     expect(t.created).toHaveLength(1);
   });
@@ -138,7 +138,7 @@ describe('ModelCatalog', () => {
   it('answers modes from a live session first, and says "none" for a harness with no modes', async () => {
     const live = setup();
     live.setLiveModes(MODES);
-    expect(live.catalog.modes('oc')).toEqual({ kind: 'list', options: MODES.options });
+    expect(live.catalog.modes('oc')).toEqual({ kind: 'list', options: MODES.options, current: 'build' });
     expect(live.created).toEqual([]);
 
     const none = setup({ selector: SELECTOR, ensure: async () => {} });

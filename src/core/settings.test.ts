@@ -421,15 +421,15 @@ describe("a pod agent's model row", () => {
 });
 
 describe("an agent's permission level", () => {
-  const CODEX: SettingsContext['modes'] = () => ({
-    kind: 'list',
-    options: [
-      { value: 'read-only', name: 'Read-only' },
-      { value: 'workspace-write', name: 'Workspace access' },
-      { value: 'agent', name: 'Auto review' },
-      { value: 'agent-full-access', name: 'Full access' },
-    ],
-  });
+  const CODEX_OPTIONS = [
+    { value: 'read-only', name: 'Read-only' },
+    { value: 'workspace-write', name: 'Workspace access' },
+    { value: 'agent', name: 'Auto review' },
+    { value: 'agent-full-access', name: 'Full access' },
+  ];
+  const CODEX: SettingsContext['modes'] = () => ({ kind: 'list', options: CODEX_OPTIONS });
+  /** A live session's modes, in a mode the harness did not necessarily pin. */
+  const liveModes = (current: string): SettingsContext['modes'] => () => ({ kind: 'list', options: CODEX_OPTIONS, current });
   const withModes = (modes: SettingsContext['modes']): SettingsContext => ({ ...ctx, modes });
 
   it('resolves every spelling of the key, a bare one to the agent answering here', () => {
@@ -460,13 +460,13 @@ describe("an agent's permission level", () => {
       routing: { default: 'cx' },
     });
     const full = settingsRows(pinned).find((x) => x.id === 'permissions')!;
-    expect(full).toMatchObject({ value: 'full', unset: true, valueNote: 'not set · from its mode' });
+    expect(full).toMatchObject({ value: 'full', unset: true, valueNote: 'not set · from its pinned mode' });
     // The text surface says it too, so an inferred level cannot be mistaken for a chosen one.
-    expect(settingsListText(pinned)).toContain('`full` (not set · from its mode)');
+    expect(settingsListText(pinned)).toContain('`full` (not set · from its pinned mode)');
     // Nothing is stored: picking `auto` is still a write.
     expect(readSettingValue(full, pinned)).toBeUndefined();
-    // Any mode that is not full access asks at most for things the gateway approves.
-    expect(row('permissions.cc')).toMatchObject({ value: 'auto', unset: true, valueNote: 'not set · from its mode' });
+    // With no mode to go by, `auto` is what the gateway does, and the note claims nothing more.
+    expect(row('permissions.cc')).toMatchObject({ value: 'auto', unset: true, valueNote: 'not set' });
     // A level that is written is the level, not an inference.
     const stored = parseConfig({
       platforms: { tg: { type: 'telegram', token: 't' } },
@@ -475,6 +475,60 @@ describe("an agent's permission level", () => {
     });
     expect(settingsRows(stored).find((x) => x.id === 'permissions')).toMatchObject({ value: 'ask' });
     expect(settingsRows(stored).find((x) => x.id === 'permissions')?.unset).toBeUndefined();
+  });
+
+  it('reads an unset level off a live session’s mode before the pin', () => {
+    // No pin, but the session is in full access: that is what is in force.
+    const noPin = parseConfig({
+      platforms: { tg: { type: 'telegram', token: 't' } },
+      agents: [{ id: 'cx', harness: 'codex' }],
+      routing: { default: 'cx' },
+    });
+    expect(settingsRows(noPin, undefined, liveModes('bypassPermissions')).find((x) => x.id === 'permissions')).toMatchObject({
+      value: 'full',
+      unset: true,
+      valueNote: 'not set · from its session’s mode',
+    });
+    // A pin the harness did not take does not make it full either.
+    const pinned = parseConfig({
+      platforms: { tg: { type: 'telegram', token: 't' } },
+      agents: [{ id: 'cx', harness: 'codex', options: { mode: 'bypassPermissions' } }],
+      routing: { default: 'cx' },
+    });
+    expect(settingsRows(pinned, undefined, liveModes('read-only')).find((x) => x.id === 'permissions')).toMatchObject({
+      value: 'auto',
+      valueNote: 'not set · from its session’s mode',
+    });
+  });
+
+  it('marks an unset permission row as unset on the settings screen and in its detail', () => {
+    const pinned = parseConfig({
+      platforms: { tg: { type: 'telegram', token: 't' } },
+      agents: [{ id: 'cx', harness: 'codex', options: { mode: 'agent-full-access' } }],
+      routing: { default: 'cx' },
+    });
+    const rows = settingsRows(pinned);
+    const view = buildSettingsMenu({
+      reqId: 'r1',
+      rows,
+      screen: { cfg: pinned, options: (r) => settingOptions(r, pinned, ctx) },
+    });
+    if (view.screen?.level !== 'list') throw new Error('no list screen');
+    const screenRow = view.screen.rows.find((r) => r.group === 'Permissions')!;
+    expect(screenRow).toMatchObject({ value: 'full', unset: true, valueNote: 'not set · from its pinned mode' });
+
+    const perm = rows.find((r) => r.id === 'permissions')!;
+    const values = buildSettingValueMenu({
+      reqId: 'r2',
+      row: perm,
+      options: settingOptions(perm, pinned, ctx),
+      page: 0,
+      screen: { cfg: pinned },
+    });
+    if (values.screen?.level !== 'values') throw new Error('no value screen');
+    expect(values.screen.head).toMatchObject({ value: 'full', unset: true, source: 'not set · from its pinned mode' });
+
+    expect(settingDetailText(perm, pinned, ctx)).toContain('`full` (not set · from its pinned mode)');
   });
 
   it('offers ask on a harness with no modes, saying it stops only what that harness asks', () => {
@@ -504,6 +558,20 @@ describe("an agent's permission level", () => {
     expect(parseSettingValue(r, 'ask', agyCfg, agyCtx)).toMatchObject({ kind: 'value', value: 'ask' });
   });
 
+  it('keeps ask on agy’s row when its modes could not be read at all', () => {
+    // Its modes are left out in code, not because the probe failed: an expired login must not take
+    // the one level that still holds (the gateway's half) off the screen.
+    const agyCfg = parseConfig({
+      platforms: { tg: { type: 'telegram', token: 't' } },
+      agents: [{ id: 'ag', harness: 'agy' }],
+      routing: { default: 'ag' },
+    });
+    const failed: SettingsContext = { boundAgent: 'ag', models: [], modes: () => ({ kind: 'error', reason: 'login expired' }) };
+    const r = settingsRows(agyCfg).find((x) => x.id === 'permissions')!;
+    expect(settingOptions(r, agyCfg, failed).map((o) => o.raw)).toEqual(['ask', 'auto']);
+    expect(parseSettingValue(r, 'plan', agyCfg, failed)).toMatchObject({ kind: 'invalid' });
+  });
+
   it('gives the API agent auto alone, and refuses anything else with the reason', () => {
     const apiCfg = parseConfig({
       platforms: { tg: { type: 'telegram', token: 't' } },
@@ -512,13 +580,15 @@ describe("an agent's permission level", () => {
     });
     const apiCtx: SettingsContext = { boundAgent: 'agapi', models: [], modes: () => ({ kind: 'none' }) };
     const r = settingsRows(apiCfg).find((x) => x.id === 'permissions')!;
-    expect(r.value).toBe('auto');
+    expect(r).toMatchObject({ value: 'auto', unset: true, valueNote: 'not set' });
     expect(settingOptions(r, apiCfg, apiCtx).map((o) => o.raw)).toEqual(['auto']);
     expect(parseSettingValue(r, 'ask', apiCfg, apiCtx)).toMatchObject({
       kind: 'invalid',
       reason: expect.stringContaining('api-agent'),
     });
     expect(parseSettingValue(r, 'auto', apiCfg, apiCtx)).toEqual({ kind: 'value', value: 'auto', display: 'auto' });
+    // The reason is given even before any modes are known: this agent's answer does not use them.
+    expect(settingTypedOnlyHint(r, apiCfg, { boundAgent: 'agapi', models: [] })).toContain('api-agent');
   });
 
   it('does not offer back a level merely inferred from an unset full-access mode', () => {

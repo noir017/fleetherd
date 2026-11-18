@@ -166,16 +166,32 @@ export function isApiAgent(def: Pick<AgentDef, 'harness' | 'command' | 'args'>):
 export const API_AGENT_DETAIL =
   'the only one that applies: it calls a cloud API, runs nothing on this machine and never asks for permission';
 
+/** Where an unset level's mode came from: a session, the agent's pinned `options.mode`, or neither. */
+export type UnsetLevelSource = 'session' | 'pin' | 'none';
+
+export interface UnsetLevel {
+  level: PermissionLevel;
+  from: UnsetLevelSource;
+}
+
 /**
- * The level an agent with no `permissions` is effectively at. Unset leaves the harness in the mode
- * it starts in and the gateway approves everything, so the only thing that changes what it may do
- * unasked is that mode: a full-access one asks nothing, which is `full`; any other mode asks at
- * most for things the gateway then approves, which is `auto`. A mode the gateway cannot see (no
- * `options.mode` pin, a harness default of its own) reads `auto`, the safe answer.
+ * The level an agent with no `permissions` is effectively at, and where the mode it was read from
+ * came from. Unset leaves the harness in the mode it is in and the gateway approves everything, so
+ * the only thing that changes what it may do unasked is that mode: a full-access one asks nothing,
+ * which is `full`; any other mode asks at most for things the gateway then approves, which is
+ * `auto`.
+ *
+ * `current` is what a session reports; without one the agent's pinned `options.mode` stands in,
+ * because that is where the session starts. A pin is not proof — a harness that does not offer the
+ * mode skips it with a log line (daemon/agent-acp.ts applyPinnedOptions) — but it is the only
+ * answer left when no session is up. A mode the gateway cannot see at all reads `auto`: approving is
+ * what the gateway does with whatever is asked, and nothing here says the harness asks nothing.
  */
-export function unsetLevel(def: Pick<AgentDef, 'options'>): PermissionLevel {
-  const mode = def.options['mode'];
-  return mode !== undefined && FULL_LEVEL_MODES.includes(String(mode)) ? 'full' : 'auto';
+export function unsetLevel(def: Pick<AgentDef, 'options'>, current?: string): UnsetLevel {
+  const pinned = def.options['mode'];
+  const mode = current ?? (pinned === undefined ? undefined : String(pinned));
+  const from: UnsetLevelSource = current !== undefined ? 'session' : pinned !== undefined ? 'pin' : 'none';
+  return { level: mode !== undefined && FULL_LEVEL_MODES.includes(mode) ? 'full' : 'auto', from };
 }
 
 /**

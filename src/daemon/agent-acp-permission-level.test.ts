@@ -299,6 +299,8 @@ describe('the ACP runtime under a permission level', () => {
     const seen: string[] = [];
     await session.runTurn({ prompt: 'ask', sessionToken: 't' }, handlers(async (r) => (seen.push(r.title), { kind: 'selected', optionId: 'cancel' })));
     expect(seen).toEqual(['Edit files']);
+    // Nothing was sent to move the mode: there is none to move, and the gateway's half is the level.
+    expect(entries().filter((e) => 'set_mode' in e)).toEqual([]);
     expect(entries()).toEqual([{ answer: { outcome: { outcome: 'selected', optionId: 'cancel' } } }]);
   });
 

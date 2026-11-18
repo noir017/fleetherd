@@ -175,9 +175,9 @@ harness 也有（见脚注 2）。2026-11-18 实测：
 ² 这些 harness 也提供 `ask`，即使它们报不出对应模式。此时只有网关这一半成立：它实际发出的请求都会交给你，
 不请示就做的事拦不住。agy（1.5.1，2026-11-06 实测）就是跑命令前会问、改文件不问。
 
-- 不写 `permissions` 就是有等级之前的行为：所有请求一律批准，harness 保持它启动时的模式（它自己的设置，或
-  `options.mode` 钉的值）。这一行会显示这个状态相当于哪个等级，并标为未设置（什么都没存）：模式是
-  `bypassPermissions`、`agent-full-access` 或 CodeBuddy 的 `fullAccess` 时显示 `full`（什么都不问），
+- 不写 `permissions` 就是有等级之前的行为：所有请求一律批准，harness 保持它当前所处的模式——会话报过就用会话
+  的模式，没有就用 `options.mode` 钉的值。这一行会显示这个状态相当于哪个等级，并标为未设置（什么都没存）：
+  模式是 `bypassPermissions`、`agent-full-access` 或 CodeBuddy 的 `fullAccess` 时显示 `full`（什么都不问），
   其余显示 `auto`（问什么批什么）。明确设成 `auto` 时，会把 harness 放进上表里的模式。
 - 在聊天里用 `/setting permissions.<智能体> <等级>` 修改，或在[设置页](settings.md)该智能体那一行改；pod 声明的
   智能体写进 `podPermissions`。改动立即生效：正在运行的会话马上切到新模式，下一个请求按新等级处理。harness

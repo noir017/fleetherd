@@ -77,12 +77,19 @@ describe('unsetLevel', () => {
     }).agents[0]!;
 
   it('reads a pinned full-access mode as full, and anything else — or nothing — as auto', () => {
-    expect(unsetLevel(def({ mode: 'agent-full-access' }))).toBe('full');
-    expect(unsetLevel(def({ mode: 'bypassPermissions' }))).toBe('full');
+    expect(unsetLevel(def({ mode: 'agent-full-access' }))).toEqual({ level: 'full', from: 'pin' });
+    expect(unsetLevel(def({ mode: 'bypassPermissions' }))).toEqual({ level: 'full', from: 'pin' });
     // CodeBuddy's own spelling of the same mode, which `full` maps to only where it is the first one.
-    expect(unsetLevel(def({ mode: 'fullAccess' }))).toBe('full');
-    expect(unsetLevel(def({ mode: 'plan' }))).toBe('auto');
-    expect(unsetLevel(def({}))).toBe('auto');
+    expect(unsetLevel(def({ mode: 'fullAccess' }))).toEqual({ level: 'full', from: 'pin' });
+    expect(unsetLevel(def({ mode: 'plan' }))).toEqual({ level: 'auto', from: 'pin' });
+    expect(unsetLevel(def({}))).toEqual({ level: 'auto', from: 'none' });
+  });
+
+  it('prefers the mode a live session reports over the pin', () => {
+    // A session in full access is full even with no pin, and a pin the harness never took does not
+    // make it full: the live mode is the one in force.
+    expect(unsetLevel(def({}), 'bypassPermissions')).toEqual({ level: 'full', from: 'session' });
+    expect(unsetLevel(def({ mode: 'bypassPermissions' }), 'plan')).toEqual({ level: 'auto', from: 'session' });
   });
 });
 

@@ -200,11 +200,12 @@ not stopped. On agy (1.5.1, measured 2026-11-06) that means it asks before a com
 files without asking.
 
 - Leaving `permissions` out is what every agent had before levels existed: every request approved,
-  and the harness left in whatever mode it starts in — its own settings, or a pinned `options.mode`.
-  The row shows the level that adds up to, marked unset because nothing is stored: `full` when that
-  mode is `bypassPermissions`, `agent-full-access` or CodeBuddy's `fullAccess` (nothing is asked at
-  all), `auto` otherwise — the gateway approves what is asked. Setting `auto` explicitly puts the
-  harness in the mode the table gives.
+  and the harness left in the mode it is in — the mode its session reports, or the pinned
+  `options.mode` when the gateway has not seen one. The row shows the level that adds up to,
+  marked unset because nothing is stored: `full` when that mode is `bypassPermissions`,
+  `agent-full-access` or CodeBuddy's `fullAccess` (nothing is asked at all), `auto` otherwise —
+  the gateway approves what is asked. Setting `auto` explicitly puts the harness in the mode the
+  table gives.
 - `/setting permissions.<agent> <level>` changes it from chat, or the agent's row on the
   [settings page](settings.md); a pod's agent is written to `podPermissions`. A change applies at
   once: running sessions are switched to the new mode, and the next request is answered the new way.

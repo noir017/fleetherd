@@ -95,7 +95,13 @@ export class ModelCatalog {
     if (!def) return undefined;
     const live = this.deps.liveModes(agentId);
     if (live && live.options.length > 0) {
-      const modes: AgentModes = { kind: 'list', options: live.options };
+      // `current` rides along: a permission row with no level set shows what its mode adds up to,
+      // and the live session's mode is the one that is actually in force.
+      const modes: AgentModes = {
+        kind: 'list',
+        options: live.options,
+        ...(live.current ? { current: live.current } : {}),
+      };
       this.knownModes.set(def, modes);
       return modes;
     }
@@ -141,7 +147,9 @@ export class ModelCatalog {
         selector && selector.options.length > 0 ? { kind: 'list', options: selector.options } : { kind: 'none' };
       const offered = session.permissionModes?.();
       const modes: AgentModes =
-        offered && offered.options.length > 0 ? { kind: 'list', options: offered.options } : { kind: 'none' };
+        offered && offered.options.length > 0
+          ? { kind: 'list', options: offered.options, ...(offered.current ? { current: offered.current } : {}) }
+          : { kind: 'none' };
       console.log(
         `[models] asked ${def.id} for its models: ${models.kind === 'list' ? `${models.options.length}` : 'none offered'}, ` +
           `modes: ${modes.kind === 'list' ? modes.options.map((m) => m.value).join(' ') : 'none'} (${Date.now() - started}ms)`
