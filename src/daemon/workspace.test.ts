@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { WorkspaceConflictError, localWorkspace, remoteWorkspace } from './workspace.js';
+import { WorkspaceConflictError, localWorkspace, remoteWorkspace, sameContent } from './workspace.js';
 
 describe('localWorkspace', () => {
   let dir: string;
@@ -152,9 +152,29 @@ describe('localWorkspace', () => {
     expect(await ws.remove(path.join(dir, 'sub'))).toEqual({ removed: true });
     // Deleting what is already gone is the same answer the host gives, not an error.
     expect(await ws.remove(path.join(dir, 'b.txt'))).toEqual({ removed: false });
-    await expect(ws.remove(path.join(dir, 'full'))).rejects.toThrow();
+    // A directory with something in it is an answer the caller can explain, not a thrown errno.
+    expect(await ws.remove(path.join(dir, 'full'))).toEqual({ removed: false, notEmpty: true });
     expect(fs.existsSync(path.join(dir, 'full', 'keep'))).toBe(true);
     await expect(ws.remove(path.join(dir, '..'))).rejects.toThrow(/not under/);
+  });
+});
+
+describe('sameContent', () => {
+  it('answers whether a file still has these bytes, and false when it cannot be read', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sha-'));
+    try {
+      const file = path.join(dir, 'a.txt');
+      fs.writeFileSync(file, 'abc');
+      const sha = createHash('sha256').update('abc').digest('hex');
+      expect(await sameContent(file, sha)).toBe(true);
+      expect(await sameContent(file, 'b'.repeat(64))).toBe(false);
+      // A path that cannot be read (here a directory) is "not this content", which the write
+      // turns into a conflict — the same answer the host gives.
+      expect(await sameContent(dir, sha)).toBe(false);
+      expect(await sameContent(path.join(dir, 'missing'), sha)).toBe(false);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

@@ -1652,6 +1652,8 @@ decisions shape it:
 - **A save does not change bytes the person did not edit.** The read keeps a UTF-8 BOM in the text,
   and reports the file's line ending; the page normalizes CRLF to LF for the textarea (which would
   do it anyway) and puts CRLF back on save, so a file opened and saved untouched is the same bytes.
+  A file that MIXES endings, or uses only CR, cannot be kept as it is by an editor: the page says
+  above the editor which ending a save will write, instead of changing it quietly.
 - **Folders are managed from the tree.** New file, new folder, rename and delete act on the file
   the editor holds, and a folder row carries its own rename and delete buttons. A folder is deleted
   only when it is empty — the daemon refuses anything else and the page shows its sentence ("That

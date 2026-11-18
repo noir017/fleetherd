@@ -6,9 +6,25 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { ConversationRef } from '../core/conversation.js';
-import { MAX_EDIT_BYTES, buildFilesPanel } from './file-panel.js';
+import { MAX_EDIT_BYTES, buildFilesPanel, lineEndings } from './file-panel.js';
 import type { Workspace } from './workspace.js';
 import { WorkspaceConflictError, localWorkspace } from './workspace.js';
+
+describe('lineEndings', () => {
+  it('is silent for a file whose endings a save will keep', () => {
+    expect(lineEndings('a\r\nb\r\n')).toEqual({ eol: 'crlf' });
+    expect(lineEndings('a\nb\n')).toEqual({ eol: 'lf' });
+    expect(lineEndings('no breaks')).toEqual({ eol: 'lf' });
+  });
+
+  it('names the ending a mixed file will be normalized to, and the CR case', () => {
+    // The first break decides a tie, which is what the top of the file shows.
+    expect(lineEndings('a\r\nb\n')).toEqual({ eol: 'crlf', warning: 'mixed' });
+    expect(lineEndings('a\nb\r\n')).toEqual({ eol: 'lf', warning: 'mixed' });
+    // A pure-CR file cannot be held by an editor at all.
+    expect(lineEndings('a\rb\r')).toEqual({ eol: 'lf', warning: 'cr' });
+  });
+});
 
 const REF: ConversationRef = { platform: 'webui', channel: 'main', thread: '0a0b0c0d', kind: 'thread', user: 'owner' };
 
@@ -198,6 +214,20 @@ describe('buildFilesPanel on this machine', () => {
     });
     expect(r).toMatchObject({ ok: false, conflict: true, exists: true });
     expect(fs.readFileSync(file, 'utf8')).toBe('bbbb\n');
+  });
+
+  it('flags a mixed file a save would normalize, and a uniform one it would not', async () => {
+    fs.writeFileSync(path.join(dir, 'mixed.txt'), 'a\r\nb\n');
+    fs.writeFileSync(path.join(dir, 'cr.txt'), 'a\rb\r');
+    fs.writeFileSync(path.join(dir, 'uniform.txt'), 'a\r\nb\r\n');
+    const mixed = await panel().read(REF, 'mixed.txt');
+    expect(mixed.ok && mixed.eol).toBe('crlf');
+    expect(mixed.ok && mixed.eolWarning).toBe('mixed');
+    const cr = await panel().read(REF, 'cr.txt');
+    expect(cr.ok && cr.eol).toBe('lf');
+    expect(cr.ok && cr.eolWarning).toBe('cr');
+    const uniform = await panel().read(REF, 'uniform.txt');
+    expect(uniform.ok && uniform.eolWarning).toBeUndefined();
   });
 
   it('deletes what is already gone as an answer, and says which it was', async () => {
@@ -424,6 +454,20 @@ describe('buildFilesPanel against a remote host (a fake workspace)', () => {
     // Without a ~/ root the window still works: HOME is only needed to expand one.
     const without = buildFilesPanel({ instance: 'webui', roots: [], workspaceForRef: () => ws });
     expect((await without.list(REF, '')).ok).toBe(true);
+  });
+
+  it('turns the host not-empty flag into one sentence, without reading a message', async () => {
+    const ws = fakeHost({
+      async remove() {
+        // No error, no text: just the flag both machines agree on.
+        return { removed: false, notEmpty: true };
+      },
+    });
+    const panel = buildFilesPanel({ instance: 'webui', roots: [], workspaceForRef: () => ws });
+    expect(await panel.remove(REF, 'sub')).toEqual({
+      ok: false,
+      error: 'That folder is not empty. Delete its contents first.',
+    });
   });
 
   it('refuses when the topic has no workspace, instead of guessing one', async () => {

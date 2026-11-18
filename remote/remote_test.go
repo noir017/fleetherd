@@ -804,8 +804,8 @@ func TestRenameAndRemoveEntryStayInRoot(t *testing.T) {
 	}
 	_ = os.MkdirAll(filepath.Join(root, "full"), 0o755)
 	_ = os.WriteFile(filepath.Join(root, "full", "keep"), []byte("k"), 0o600)
-	if r, _, _ := rpc(t, g, &Header{Op: "removeEntry", Path: "~/ws/full", Owned: "~/ws"}, nil); r.T != "rpc-err" {
-		t.Fatalf("a non-empty directory must be refused: %+v", r)
+	if r, res, _ := rpc(t, g, &Header{Op: "removeEntry", Path: "~/ws/full", Owned: "~/ws"}, nil); r.T != "rpc-ok" || res["notEmpty"] != true || res["removed"] != false {
+		t.Fatalf("a non-empty directory must be an answer, by errno: %+v %v", r, res)
 	}
 	if _, err := os.Stat(filepath.Join(root, "full", "keep")); err != nil {
 		t.Fatalf("a refused delete must leave the tree alone: %v", err)

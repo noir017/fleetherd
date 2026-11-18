@@ -390,8 +390,10 @@ timestamp, or the SHA-256 of its bytes — the editor offers reload, overwrite o
 quietly replacing someone else's work. The check happens immediately before the write and again
 just before the file is replaced, but it is a check, not a lock: two saves landing in the same
 instant can still overwrite each other. Saves keep the file's permissions, write through symlinks
-rather than replacing them, and leave a BOM and CRLF as they were, so opening and saving a file you
-did not edit returns the same bytes. Each write is logged with who, which machine and which file.
+rather than replacing them, and leave a BOM and a uniform CRLF or LF as they were, so opening and
+saving a file you did not edit returns the same bytes. A file that mixes endings, or uses only CR,
+cannot be held as it is by an editor: the window says above the editor which ending a save will
+write instead of changing it quietly. Each write is logged with who, which machine and which file.
 New file, new folder, rename and delete act on the file the editor has open; a folder row also
 carries its own rename and delete buttons. A folder is deleted only when it is empty — otherwise
 the window says so and leaves it alone — and deleting the folder the open file lives in asks about

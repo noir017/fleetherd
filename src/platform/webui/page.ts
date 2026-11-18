@@ -1391,6 +1391,7 @@ button:disabled{opacity:.5;cursor:default}
 #files-q-go{display:inline-flex;align-items:center;justify-content:center;width:30px;flex:none;background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);cursor:pointer}
 #files-q-go .ic{width:14px;height:14px}
 #files-note{margin:8px 12px 0;padding:7px 9px;border-radius:5px;background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.25);color:#fbbf24;font-size:12px;line-height:1.45;overflow-wrap:anywhere}
+#files-eol{margin:8px 12px 0;padding:7px 9px;border-radius:5px;background:rgba(56,189,248,.08);border:1px solid rgba(56,189,248,.25);color:#9ecbff;font-size:12px;line-height:1.45;overflow-wrap:anywhere}
 #files-editor{flex:1;min-height:0;overflow:auto;background:#141414}
 #files-editor .fx-text{display:block;width:100%;height:100%;min-height:100%;resize:none;border:0;outline:0;background:#141414;color:var(--fg);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px;line-height:1.55;padding:12px 14px;tab-size:4}
 #files-preview{flex:1;min-height:0;overflow:auto;padding:16px 22px;max-width:860px;width:100%;margin:0 auto;font-size:14px;line-height:1.6}
@@ -9694,7 +9695,7 @@ const SCRIPT = `
   var filesWin=$('files'), filesTitle=$('files-title'), filesWhere=$('files-where'),
       filesTreeEl=$('files-tree'), filesTreeList=$('files-tree-list'), filesHits=$('files-hits'),
       filesCrumbs=$('files-crumbs'), filesEditor=$('files-editor'), filesPreview=$('files-preview'),
-      filesNote=$('files-note'), filesConflict=$('files-conflict'), filesConflictText=$('files-conflict-text'),
+      filesNote=$('files-note'), filesEol=$('files-eol'), filesConflict=$('files-conflict'), filesConflictText=$('files-conflict-text'),
       filesSaveBtn=$('files-save'), filesPreviewBtn=$('files-preview-toggle'),
       filesRenameBtn=$('files-rename-open'), filesDeleteBtn=$('files-delete'), filesDirtyTag=$('files-dirty'),
       filesNewRow=$('files-new-row'), filesNewName=$('files-new-name'),
@@ -9754,10 +9755,13 @@ const SCRIPT = `
     var at = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\\\'));
     return at < 0 ? p : p.slice(at+1);
   }
-  /** The editor holds LF; a save puts back the file's own line ending. */
-  function fxToDoc(text){ return String(text || '').replace(/\\r\\n/g, '\\n'); }
+  /**
+   * The editor holds LF; a save puts back the ending the read reported. Lone CR is normalized too:
+   * no editor holds it, and the file panel has already said so above the editor.
+   */
+  function fxToDoc(text){ return String(text || '').replace(/\\r\\n/g, '\\n').replace(/\\r/g, '\\n'); }
   function fxFromDoc(doc){
-    var lf = String(doc || '').replace(/\\r\\n/g, '\\n');
+    var lf = String(doc || '').replace(/\\r\\n/g, '\\n').replace(/\\r/g, '\\n');
     return fileEol === 'crlf' ? lf.replace(/\\n/g, '\\r\\n') : lf;
   }
   function fileShortRoot(p){
@@ -9934,6 +9938,14 @@ const SCRIPT = `
     // go back out on save. A BOM is a character in the text, so it is kept without a flag.
     fileEol = d.eol === 'crlf' ? 'crlf' : 'lf';
     fileSha = d.sha256 || '';
+    // A save that would change this file's endings says so before it happens.
+    var eolWarn = d.eolWarning;
+    filesEol.hidden = !eolWarn;
+    filesEol.textContent = eolWarn === 'cr'
+      ? 'This file uses CR line endings; saving will normalize them to LF.'
+      : eolWarn === 'mixed'
+        ? 'This file mixes line endings; saving will normalize them to ' + (fileEol === 'crlf' ? 'CRLF' : 'LF') + '.'
+        : '';
     fileSaved = fxToDoc(d.text || '');
     filePreviewing = false;
     fileView = null;
@@ -10160,6 +10172,8 @@ const SCRIPT = `
     fileSeq++;
     filePath = ''; fileRel = ''; fileName = ''; fileKind = ''; fileBase = null; fileView = null;
     fileEol = 'lf'; fileSha = '';
+    filesEol.hidden = true;
+    filesEol.textContent = '';
     setFileDirty(false);
     filesTitle.textContent = 'Files';
     filesWhere.textContent = fileRoot;
@@ -10199,6 +10213,9 @@ const SCRIPT = `
     filesPost('remove', {topic:fileTopic, path:abs}).then(function(res){
       if(!res.ok) return filesSay(fileMsg(res, res.body));
       if(inside) clearOpenFile();
+      // Where "New file" would land must not be the folder that just went. An empty folder cannot
+      // contain it, but the tree's own cursor may be on that folder with no file open.
+      if(fileDir === abs || fileDir.indexOf(abs + fileSep) === 0) fileDir = parent;
       forgetTreeBelow(abs);
       filesSay(res.body.removed === false ? 'It was already gone.' : 'Deleted.');
       reloadDir(parent);
@@ -10267,6 +10284,8 @@ const SCRIPT = `
     filesConflict.hidden = true;
     filesPreview.hidden = true;
     filesPreview.innerHTML = '';
+    filesEol.hidden = true;
+    filesEol.textContent = '';
     filesHits.hidden = true;
     filesHits.innerHTML = '';
     filesEditor.textContent = '';
@@ -10307,6 +10326,8 @@ const SCRIPT = `
     filesHits.hidden = true;
     filesHits.innerHTML = '';
     filesConflict.hidden = true;
+    filesEol.hidden = true;
+    filesEol.textContent = '';
   }
 
   if(FILES_OK){
@@ -11745,6 +11766,10 @@ __GATE__
             <button type="button" id="files-q-go" title="Search" aria-label="Search">${icon('search')}</button>
           </div>
           <div id="files-note" role="status" hidden></div>
+          <!-- What a save will do to this file's line endings, when that is a change: mixed
+               endings, or a file that uses only CR (which an editor cannot hold). Shown before
+               the editor rather than changing the file quietly on the first save. -->
+          <div id="files-eol" role="status" hidden></div>
           <div id="files-editor"></div>
           <div id="files-preview" hidden></div>
           <div id="files-conflict" hidden>

@@ -586,10 +586,15 @@ export interface FilesPanelFile {
   /** Present for `text`: the whole file, decoded as UTF-8 — a BOM included, not eaten. */
   text?: string;
   /**
-   * Present for `text`: the file's line ending. A textarea hands back LF whatever it was given,
-   * so the page puts CRLF back before saving.
+   * Present for `text`: the line ending a save will write. A textarea hands back LF whatever it
+   * was given, so the page puts CRLF back before saving.
    */
   eol?: 'crlf' | 'lf';
+  /**
+   * Present when that is a CHANGE: the file mixes endings, or uses only CR. The page says what
+   * saving will do above the editor instead of normalizing it silently.
+   */
+  eolWarning?: 'mixed' | 'cr';
   /** Present for `text` and true when the file starts with a UTF-8 BOM. */
   bom?: boolean;
   /**

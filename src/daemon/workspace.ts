@@ -139,9 +139,11 @@ export interface Workspace {
   /**
    * Delete one file or one empty directory — never a tree. Stays inside `owned`, as `rename` does.
    * `removed: false` when there was nothing there: deleting what is already gone is an answer, not
-   * an error, and both machines say so.
+   * an error, and both machines say so. `notEmpty: true` when it was a directory that still holds
+   * something — recognised by errno on both sides, never by the message — so the caller can show
+   * the sentence it wrote instead of the machine's.
    */
-  remove(p: string, owned?: string): Promise<{ removed: boolean }>;
+  remove(p: string, owned?: string): Promise<{ removed: boolean; notEmpty?: boolean }>;
 }
 
 /** The workspace of an agent's conversation that works in `root`, on the agent's machine. */
@@ -289,8 +291,16 @@ export function localWorkspace(root: string): Workspace {
         if ((e as NodeJS.ErrnoException).code === 'ENOENT') return { removed: false };
         throw e;
       }
-      if (st.isDirectory()) await fs.promises.rmdir(p);
-      else await fs.promises.unlink(p);
+      try {
+        if (st.isDirectory()) await fs.promises.rmdir(p);
+        else await fs.promises.unlink(p);
+      } catch (e) {
+        // The errno, not the words: a directory that still holds something is an answer, and the
+        // host says the same thing by ENOTEMPTY (EEXIST on the BSDs).
+        const code = (e as NodeJS.ErrnoException).code;
+        if (code === 'ENOTEMPTY' || code === 'EEXIST') return { removed: false, notEmpty: true };
+        throw e;
+      }
       return { removed: true };
     },
   };
@@ -344,7 +354,9 @@ async function assertStillExpected(
     raced = Boolean(now);
   } else {
     raced = !now || now.size !== before.size || Math.trunc(now.mtimeMs) !== Math.trunc(before.mtimeMs);
-    if (!raced && expect.sha256) raced = (await sha256File(target)) !== expect.sha256;
+    // A hash that cannot be taken is the file being unreadable or gone since the check: treat it
+    // exactly as the host does (raced, so a conflict), not as a failed write.
+    if (!raced && expect.sha256) raced = !(await sameContent(target, expect.sha256));
   }
   if (!raced) return;
   throw new WorkspaceConflictError(
@@ -380,6 +392,19 @@ async function writeBeside(target: string, data: Uint8Array, before: Stats | nul
 /** The hex SHA-256 of a file's bytes — the editor's content version. */
 async function sha256File(p: string): Promise<string> {
   return createHash('sha256').update(await fs.promises.readFile(p)).digest('hex');
+}
+
+/**
+ * Whether `p` still holds the bytes with this hash. Any failure to read it answers false, so the
+ * last check before a rename treats an unreadable file as a conflict — the same answer the host
+ * gives — rather than as a failed write.
+ */
+export async function sameContent(p: string, expected: string): Promise<boolean> {
+  try {
+    return (await sha256File(p)) === expected;
+  } catch {
+    return false;
+  }
 }
 
 async function statOrNull(p: string): Promise<Stats | null> {

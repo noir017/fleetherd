@@ -559,7 +559,9 @@ func opRename(from, to, owned string) (any, []byte, error) {
 // opRemoveEntry deletes one file or one EMPTY directory. Not a tree: the editor's delete is the
 // person's, and a directory with something in it is a question the page has not asked them.
 // `os.Remove` is exactly that rule — it refuses a non-empty directory — so there is no second
-// check to keep in step with it. A symlink is removed as the link; its target is untouched.
+// check to keep in step with it. That refusal is recognised by errno (ENOTEMPTY, or EEXIST on the
+// BSDs) and answered as `{notEmpty: true}` rather than as an error. A symlink is removed as the
+// link; its target is untouched.
 func opRemoveEntry(path, owned string) (any, []byte, error) {
 	if owned == "" {
 		return nil, nil, errors.New("removeEntry needs the directory the path must stay inside")
@@ -570,6 +572,12 @@ func opRemoveEntry(path, owned string) (any, []byte, error) {
 	if err := os.Remove(path); err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return map[string]any{"removed": false, "path": path}, nil, nil
+		}
+		// A directory that still holds something is the person's next question, not a failure, so
+		// it comes back as an answer. The errno is the test — never the message, which is the
+		// platform's prose and would catch a path that merely has "not empty" in its name.
+		if errors.Is(err, syscall.ENOTEMPTY) || errors.Is(err, syscall.EEXIST) {
+			return map[string]any{"removed": false, "notEmpty": true, "path": path}, nil, nil
 		}
 		return nil, nil, err
 	}

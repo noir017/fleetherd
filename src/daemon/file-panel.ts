@@ -259,18 +259,7 @@ function fail(e: unknown): { ok: false; error: string } {
   return { ok: false, error: e instanceof Error ? e.message : String(e) };
 }
 
-/**
- * The refusal a delete gets, with the one case a person can act on spelled out. Both machines say
- * "not empty" in their own words (`ENOTEMPTY` locally, `directory not empty` from the host), so the
- * sentence is made here once rather than matched in the page twice.
- */
-function failRemove(e: unknown): { ok: false; error: string } {
-  const message = e instanceof Error ? e.message : String(e);
-  if (/not empty|ENOTEMPTY/i.test(message)) {
-    return { ok: false, error: 'That folder is not empty. Delete its contents first.' };
-  }
-  return fail(e);
-}
+
 
 // ── the operations ───────────────────────────────────────────────────────────────────────────
 
@@ -369,7 +358,7 @@ function decodeRead(
   const sha256 = createHash('sha256').update(bytes).digest('hex');
   const bom = text.startsWith(BOM);
   // The page puts this back before saving: a textarea hands back LF whatever was in it.
-  const eol: 'crlf' | 'lf' = text.includes('\r\n') ? 'crlf' : 'lf';
+  const { eol, warning } = lineEndings(text);
   // Rendered without the BOM, which is not part of the first line's markdown.
   const html = preview && MARKDOWN.test(base.name) ? renderWebMarkdown(bom ? text.slice(1) : text) : undefined;
   return {
@@ -379,9 +368,44 @@ function decodeRead(
     text,
     sha256,
     eol,
+    ...(warning ? { eolWarning: warning } : {}),
     ...(bom ? { bom: true } : {}),
     ...(html !== undefined ? { html } : {}),
   };
+}
+
+/**
+ * The line ending a save will write, and whether that is a change to what is there.
+ *
+ * Uniform LF and uniform CRLF are byte-exact through a save. Anything else — mixed endings, or a
+ * file that uses only CR, which the editor cannot even hold (a textarea normalizes every ending to
+ * LF) — is normalized to one ending, and `warning` is what makes the page say so above the editor
+ * rather than changing the file behind the person's back.
+ */
+export function lineEndings(text: string): { eol: 'crlf' | 'lf'; warning?: 'mixed' | 'cr' } {
+  const { crlf, lf, cr, first } = countEndings(text);
+  if (crlf > 0 && lf === 0 && cr === 0) return { eol: 'crlf' };
+  if (lf > 0 && crlf === 0 && cr === 0) return { eol: 'lf' };
+  // Only CR breaks: nothing an editor can hold. A file with no breaks at all is just LF-shaped.
+  if (crlf === 0 && lf === 0) return cr > 0 ? { eol: 'lf', warning: 'cr' } : { eol: 'lf' };
+  // Mixed. The ending of the FIRST break wins a tie, which is what a person reading the top of
+  // the file sees; with more of one than the other, the majority wins.
+  const eol = crlf > lf ? 'crlf' : lf > crlf ? 'lf' : first === 'crlf' ? 'crlf' : 'lf';
+  return { eol, warning: 'mixed' };
+}
+
+/** How many CRLF, LF and lone-CR breaks a text has, and which kind comes first. */
+function countEndings(text: string): { crlf: number; lf: number; cr: number; first?: 'crlf' | 'lf' | 'cr' } {
+  const counts: { crlf: number; lf: number; cr: number; first?: 'crlf' | 'lf' | 'cr' } = { crlf: 0, lf: 0, cr: 0 };
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch !== '\r' && ch !== '\n') continue;
+    const kind = ch === '\n' ? 'lf' : text[i + 1] === '\n' ? 'crlf' : 'cr';
+    if (kind === 'crlf') i += 1;
+    counts[kind] += 1;
+    if (!counts.first) counts.first = kind;
+  }
+  return counts;
 }
 
 async function panelWrite(
@@ -467,12 +491,16 @@ async function panelRemove(env: PanelEnv, ref: ConversationRef, input: string): 
     const at = await locate(env, ws, input);
     if (at.abs === at.root) throw new FilesRefusal('a root itself cannot be deleted');
     const r = await ws.remove(at.abs, at.root);
+    // A directory that still holds something is the one refusal a person can act on. Both machines
+    // report it as a flag — recognised by errno, never by the message — and the sentence is written
+    // here once.
+    if (r.notEmpty) return { ok: false, error: 'That folder is not empty. Delete its contents first.' };
     // Both machines answer the same for a file that was already gone, and both say which it was:
     // "deleted" when something went, "was already gone" when nothing did.
     logWrite(env, ws, r.removed ? 'deleted' : 'found already gone', at);
     return { ok: true, removed: r.removed };
   } catch (e) {
-    return failRemove(e);
+    return fail(e);
   }
 }
 

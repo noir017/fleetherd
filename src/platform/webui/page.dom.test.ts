@@ -13249,6 +13249,92 @@ describe('webui page: the file window', () => {
     expect(body.size).toBe(7);
     // The new version replaces the baseline, so the next save carries the hash just written.
     expect(h.el('files-dirty').hidden).toBe(true);
+    // Uniform CRLF is byte-exact, so nothing is announced.
+    expect(h.el('files-eol').hidden).toBe(true);
+  });
+
+  it('warns what a save will do to mixed line endings, and does it', async () => {
+    const mixed = {
+      ...file,
+      path: '/w/mixed.txt',
+      rel: 'mixed.txt',
+      name: 'mixed.txt',
+      size: 6,
+      mtimeMs: 6,
+      text: 'a\r\nb\n',
+      eol: 'crlf',
+      eolWarning: 'mixed',
+      sha256: 'e'.repeat(64),
+    };
+    const h = await openFiles({
+      [`api/files/read?topic=${T}&path=${encodeURIComponent('/w/mixed.txt')}`]: mixed,
+      'api/files/write': { ok: true, mtimeMs: 9, size: 8, sha256: 'f'.repeat(64) },
+    });
+    (h.window as unknown as { openFileEditor: (p: string) => void }).openFileEditor('/w/mixed.txt');
+    await until('the editor', () => Boolean(h.el('files-editor').querySelector('textarea')));
+    expect(h.el('files-eol').hidden).toBe(false);
+    expect(h.el('files-eol').textContent).toBe(
+      'This file mixes line endings; saving will normalize them to CRLF.'
+    );
+    expect(editorText(h).value).toBe('a\nb\n');
+
+    editorText(h).dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 's', ctrlKey: true, bubbles: true }));
+    await until('the save', () => h.calls.some((c) => c.path === 'api/files/write'));
+    expect(h.calls.find((c) => c.path === 'api/files/write')!.body.text).toBe('a\r\nb\r\n');
+  });
+
+  it('warns about a pure-CR file and saves it as LF', async () => {
+    const classic = {
+      ...file,
+      path: '/w/classic.txt',
+      rel: 'classic.txt',
+      name: 'classic.txt',
+      size: 4,
+      mtimeMs: 6,
+      text: 'a\rb\r',
+      eol: 'lf',
+      eolWarning: 'cr',
+      sha256: 'e'.repeat(64),
+    };
+    const h = await openFiles({
+      [`api/files/read?topic=${T}&path=${encodeURIComponent('/w/classic.txt')}`]: classic,
+      'api/files/write': { ok: true, mtimeMs: 9, size: 4, sha256: 'f'.repeat(64) },
+    });
+    (h.window as unknown as { openFileEditor: (p: string) => void }).openFileEditor('/w/classic.txt');
+    await until('the editor', () => Boolean(h.el('files-editor').querySelector('textarea')));
+    expect(h.el('files-eol').textContent).toBe('This file uses CR line endings; saving will normalize them to LF.');
+    expect(editorText(h).value).toBe('a\nb\n');
+
+    editorText(h).dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 's', ctrlKey: true, bubbles: true }));
+    await until('the save', () => h.calls.some((c) => c.path === 'api/files/write'));
+    expect(h.calls.find((c) => c.path === 'api/files/write')!.body.text).toBe('a\nb\n');
+  });
+
+  it('moves the new-file directory up when the folder it named is deleted', async () => {
+    const h = await openFiles({
+      [`api/files/list?topic=${T}&path=${encodeURIComponent('/w/sub')}`]: {
+        ok: true,
+        path: '/w/sub',
+        rel: 'sub',
+        entries: [],
+      },
+      'api/files/remove': { ok: true, removed: true },
+      'api/files/create': { ok: true, path: '/w/x.txt', dir: false },
+    });
+    // Opening the folder is what puts the tree's cursor on it.
+    await h.click('[data-fx-dir="/w/sub"]');
+    await h.click('[data-fx-dir-delete="/w/sub"]');
+    await until('the delete', () => h.calls.some((c) => c.path === 'api/files/remove'));
+
+    await h.click('#files-new-file');
+    (h.el('files-new-name') as HTMLInputElement).value = 'x.txt';
+    await h.click('#files-new-go');
+    await until('the create', () => h.calls.some((c) => c.path === 'api/files/create'));
+    expect(h.calls.find((c) => c.path === 'api/files/create')!.body).toEqual({
+      topic: T,
+      path: '/w/x.txt',
+      dir: false,
+    });
   });
 
   it('keeps unsaved text across a successful rename instead of re-reading the file', async () => {

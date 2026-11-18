@@ -379,9 +379,9 @@ export class RemoteHost extends EventEmitter {
    * whether anything was there: deleting what is already gone is an answer, not an error, so the
    * page and the local half agree on it.
    */
-  async removeEntry(path: string, owned: string): Promise<{ removed: boolean }> {
+  async removeEntry(path: string, owned: string): Promise<{ removed: boolean; notEmpty?: boolean }> {
     const { res } = await this.rpc('removeEntry', { path, owned });
-    return { removed: res.removed === true };
+    return { removed: res.removed === true, ...(res.notEmpty === true ? { notEmpty: true } : {}) };
   }
 
   /**

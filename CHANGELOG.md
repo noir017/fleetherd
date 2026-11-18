@@ -19,8 +19,9 @@ All notable changes to this project are documented here. The format is based on
   changed since it was read comes back as a conflict with reload, overwrite and cancel, rather than
   replacing someone else's work. That check is advisory — it happens before the write, not as an
   atomic compare-and-swap, and a writer landing between the last check and the rename is
-  overwritten. A save keeps the file's bytes otherwise: a BOM and CRLF survive a save the person did
-  not edit. Off by default — a save writes a file where the agent runs, so it is the terminal's kind
+  overwritten. A save keeps the file's bytes otherwise: a BOM, and a uniform CRLF or LF, survive a
+  save the person did not edit; a file whose endings are mixed (or only CR) says above the editor
+  which ending a save will write. Off by default — a save writes a file where the agent runs, so it is the terminal's kind
   of opt-in — and when off the button is absent and every route answers 404. Reach is each topic's
   working directory plus `files.roots`; paths are normalized and `..` cannot climb out, while
   symlinks inside those directories are followed as they always are on these workspaces.
