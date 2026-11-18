@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.13.1] - 2026-11-18
+
 ### Changed
 
 - **The settings page's agents are a table.** 3.13.0 put each agent's settings on its row, but
