@@ -13073,10 +13073,11 @@ describe('webui page: the file window', () => {
   const editorText = (h: Harness): HTMLTextAreaElement =>
     h.el('files-editor').querySelector('textarea') as HTMLTextAreaElement;
 
-  it('hides the button and does nothing when the daemon has the feature off', async () => {
+  it('hides the button and offers no openFileEditor when the daemon has the feature off', async () => {
     const h = await open({ url: `http://localhost:8787/?t=${T}`, replies: { [LIST]: listing, [READ]: file } });
     expect(h.el('files-toggle').hidden).toBe(true);
-    (h.window as unknown as { openFileEditor: (p: string) => void }).openFileEditor('/w/a.txt');
+    // Absent rather than inert: the git panel offers its Edit only where this is a function.
+    expect(typeof (h.window as unknown as { openFileEditor?: unknown }).openFileEditor).toBe('undefined');
     await tick();
     expect(h.el('files').hidden).toBe(true);
     expect(h.calls.some((c) => c.path.startsWith('api/files/'))).toBe(false);
@@ -13085,6 +13086,7 @@ describe('webui page: the file window', () => {
   it('opens a file from the tree, edits it in the plain-text fallback and saves with its version', async () => {
     const h = await openFiles({ 'api/files/write': { ok: true, mtimeMs: 6, size: 4 } });
     expect(h.el('files-toggle').hidden).toBe(false);
+    expect(typeof (h.window as unknown as { openFileEditor?: unknown }).openFileEditor).toBe('function');
     expect(h.el('files-title').textContent).toBe('Files');
 
     await openA(h);

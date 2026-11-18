@@ -10332,6 +10332,10 @@ const SCRIPT = `
 
   if(FILES_OK){
     filesToggleBtn.hidden = false;
+    // Only when the feature is on: another panel (the git one) asks typeof window.openFileEditor
+    // to decide whether to offer an Edit, and a function that answers "no" by doing nothing would
+    // offer a control that silently does nothing.
+    window.openFileEditor = openFileEditor;
     filesToggleBtn.addEventListener('click', function(){ setMenu(null, false); openFilesWindow(topic); });
     filesTreeToggle.addEventListener('click', function(){ filesWin.classList.toggle('tree-open'); });
     $('files-close').addEventListener('click', closeFiles);
@@ -10406,14 +10410,13 @@ const SCRIPT = `
   /**
    * Open one file, from another panel. path is relative to the topic's working directory or
    * absolute on that machine. The git panel's file rows call this (window.openFileEditor), which
-   * is why it is on window rather than reachable only from this closure.
+   * is why it is on window rather than reachable only from this closure — and why it is assigned
+   * only when the feature is on.
    */
   function openFileEditor(path){
-    if(!FILES_OK) return;
     if(filesWin.hidden || fileTopic !== topic) openFilesWindow(topic, path);
     else openFile(path);
   }
-  window.openFileEditor = openFileEditor;
 
   // Grow to fit, and let the max-height in the stylesheet decide where to stop — it is stated
   // in dvh there, which on a phone with the keyboard up is the viewport that is actually left.

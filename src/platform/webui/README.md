@@ -1634,7 +1634,8 @@ with one interface on both (`daemon/workspace.ts`).
 The work is in `daemon/file-panel.ts`; this directory owns the page and the routes. Three
 decisions shape it:
 
-- **Reach is a path rule, not a sandbox.** Each topic's working directory, plus
+- **Reach is a path rule, not a sandbox.** Each topic's working directory, the git
+  repository it sits in (the git panel names files from the repository root), plus
   `platforms.<id>.files.roots`. A path from the page is normalized and must sit under one of them;
   a `..` that climbs out is refused, never clamped. Symlinks are followed and not resolved for
   that check — a workspace of links into mounted volumes is normal here — so what a link inside a
@@ -1717,7 +1718,7 @@ is behind it is an agent with full tool access.
    runs*; that is running commands by another route, so it is opt-in like the terminal, and with
    it off every `/api/files/…` route is 404 rather than a hidden button over live endpoints. The
    reach rule is the daemon's, not the page's: a normalized path under the topic's working
-   directory or a configured `files.roots`, with `..` refused (`daemon/file-panel.ts` `locate`).
+   directory, its git repository or a configured `files.roots`, with `..` refused (`daemon/file-panel.ts` `locate`).
    Symlinks are followed, so a link inside a root carries the write to its target — the same
    statement `docs/web-ui.md` makes to the operator, and the reason this is not sold as a sandbox.
    Every save is version-checked and every write is logged. Do not add a write route that skips

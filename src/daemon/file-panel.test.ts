@@ -307,6 +307,27 @@ describe('buildFilesPanel on this machine', () => {
       expect(r.hits.every((h) => h.dir === false)).toBe(true);
     }
   });
+
+  it('reaches the whole repository from a topic working in a subdirectory of it, and no further', async () => {
+    try {
+      execFileSync('git', ['init', '-q'], { cwd: dir });
+    } catch {
+      return; // no git on this machine
+    }
+    fs.mkdirSync(path.join(dir, 'apps', 'web'), { recursive: true });
+    fs.mkdirSync(path.join(dir, 'packages'));
+    fs.writeFileSync(path.join(dir, 'packages', 'lib.ts'), 'x');
+    const sub = buildFilesPanel({
+      instance: 'webui',
+      roots: [],
+      workspaceForRef: () => localWorkspace(path.join(dir, 'apps', 'web')),
+      log: (line) => logs.push(line),
+    });
+    // The git panel names files from the repository root, as absolute paths.
+    expect((await sub.read(REF, path.join(dir, 'packages', 'lib.ts'))).ok).toBe(true);
+    // The repository is the edge: its parent is still outside.
+    expect((await sub.list(REF, path.dirname(dir))).ok).toBe(false);
+  });
 });
 
 describe('buildFilesPanel against a remote host (a fake workspace)', () => {

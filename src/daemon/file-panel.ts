@@ -204,6 +204,12 @@ async function resolveRoots(env: PanelEnv, ws: Workspace): Promise<Roots> {
   }
   base = P.normalize(base);
   const roots = [base];
+  // The repository the working directory sits in. A git panel names a file from the REPO root, so
+  // a topic working in a subdirectory (`repo/apps/web`) has to reach `repo/packages/…` too. Not a
+  // configured scope: it is the project the person is already in, and it is only as wide as the
+  // checkout. A lookup that did not answer (timeout) is not cached as "no repository here".
+  const repo = await repoRoot(ws, base);
+  if (repo && !roots.includes(repo)) roots.push(repo);
   for (const raw of env.extraRoots) {
     const wantsHome = raw === '~' || raw.startsWith('~/');
     if (wantsHome && !home) {
@@ -213,6 +219,24 @@ async function resolveRoots(env: PanelEnv, ws: Workspace): Promise<Roots> {
     if (!roots.includes(abs)) roots.push(abs);
   }
   return { roots, home };
+}
+
+/**
+ * The root of the git repository `base` is in, asked of the machine that has the files.
+ *
+ * Undefined for a directory that is not a repository, and for a machine where git is not installed
+ * (`spawnError`): neither is a reason to refuse the window. A timeout IS a failure to answer, and
+ * throws so `rootsOf` does not keep a rootless answer — the next open asks again.
+ */
+async function repoRoot(ws: Workspace, base: string): Promise<string | undefined> {
+  const r = await ws.run(['git', '-C', base, 'rev-parse', '--show-toplevel']);
+  if (r.spawnError || r.code !== 0) {
+    if (r.timedOut) throw new FilesRefusal(`git did not answer on ${ws.host}; try opening the file again`);
+    return undefined;
+  }
+  const P = sep(ws);
+  const top = P.normalize(r.output.toString('utf8').trim());
+  return top && P.isAbsolute(top) ? top : undefined;
 }
 
 /**

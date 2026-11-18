@@ -23,7 +23,7 @@ All notable changes to this project are documented here. The format is based on
   save the person did not edit; a file whose endings are mixed (or only CR) says above the editor
   which ending a save will write. Off by default — a save writes a file where the agent runs, so it is the terminal's kind
   of opt-in — and when off the button is absent and every route answers 404. Reach is each topic's
-  working directory plus `files.roots`; paths are normalized and `..` cannot climb out, while
+  working directory, the git repository it is in, and `files.roots`; paths are normalized and `..` cannot climb out, while
   symlinks inside those directories are followed as they always are on these workspaces.
 
 ### Changed

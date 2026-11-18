@@ -379,7 +379,7 @@ here. Markdown has a Preview tab.
 
 Off unless you ask for it, and the reason is the same as the terminal's: a save is a write on that
 machine, which is running commands by another route. What it can reach is each topic's working
-directory, plus `roots` — nothing else. Paths are normalized and must land under one of those; a
+directory, the git repository that directory is in, plus `roots` — nothing else. Paths are normalized and must land under one of those; a
 `..` that tries to climb out is refused. **Symlinks inside those directories are followed**, so
 whatever a link points at can be edited through it; that is deliberate, because a workspace laid
 out as links into mounted volumes is normal, but it also means `roots` is as far as this is a

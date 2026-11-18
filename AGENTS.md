@@ -373,7 +373,8 @@ Do not weaken these without saying so explicitly in the PR:
    reason the terminal is the third: with it on, the login secret stops guarding *talking to an agent* and
    starts guarding *writing files where the agent runs*, which is running commands by another route.
    With it off there is no button and every route answers 404 — the terminal's arrangement, not a
-   hidden control over live endpoints. Reach is each topic's working directory plus `files.roots`;
+   hidden control over live endpoints. Reach is each topic's working directory, the git repository it sits in (so the git panel's
+   Edit works from a subdirectory), and `files.roots`;
    a path is normalized and must land under one of them, and a `..` that climbs out is refused
    (`daemon/file-panel.ts` `locate`). Symlinks are followed and NOT resolved for that check, so
    whatever a link inside a root points at is writable through it — deliberate, because a workspace
