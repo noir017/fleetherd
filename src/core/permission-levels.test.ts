@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { asksPerson, levelDetail, levelMode, offeredLevels, parseLevel } from './permission-levels.js';
-import { PERMISSION_LEVELS } from '../config/schema.js';
+import {
+  asksPerson,
+  isApiAgent,
+  levelDetail,
+  levelMode,
+  offeredLevels,
+  offeredLevelsFor,
+  parseLevel,
+  unsetLevel,
+} from './permission-levels.js';
+import { parseConfig, PERMISSION_LEVELS, type AgentDef } from '../config/schema.js';
 
 /**
  * The level table. The mode lists are what each harness reported on 2026-11-18
@@ -30,8 +39,50 @@ describe('offeredLevels', () => {
     expect(offeredLevels(CODEBUDDY)).toEqual(['plan', 'ask', 'edits', 'auto', 'full']);
   });
 
-  it('offers auto alone to a harness with no modes: approving is the gateway’s whatever the harness has', () => {
-    expect(offeredLevels([])).toEqual(['auto']);
+  it('offers ask and auto to a harness with no modes: the gateway can still put its requests to you', () => {
+    expect(offeredLevels([])).toEqual(['ask', 'auto']);
+    // Only the empty case. A harness that reports modes has said what it asks about, and ask is
+    // offered only where one of those modes means it.
+    expect(offeredLevels(['plan'])).toEqual(['plan', 'auto']);
+  });
+});
+
+describe('offeredLevelsFor and isApiAgent', () => {
+  const def = (agent: Record<string, unknown>): AgentDef =>
+    parseConfig({ platforms: { discord: { type: 'discord', token: 't' } }, agents: [agent], routing: { default: String(agent['id']) } })
+      .agents[0]!;
+
+  it('reads the API agent off the command and its first argument', () => {
+    expect(isApiAgent(def({ id: 'a', harness: 'custom', command: 'fleetherd', args: ['api-agent', 'antigravity'] }))).toBe(true);
+    expect(isApiAgent(def({ id: 'a', harness: 'custom', command: '/opt/ua/bin/talkcode', args: ['api-agent', 'mailbox'] }))).toBe(true);
+    // The same binary, not the api-agent: an ordinary custom harness keeps its levels.
+    expect(isApiAgent(def({ id: 'a', harness: 'custom', command: 'fleetherd', args: [] }))).toBe(false);
+    expect(isApiAgent(def({ id: 'a', harness: 'custom', command: 'my-agent', args: ['api-agent'] }))).toBe(false);
+    expect(isApiAgent(def({ id: 'a', harness: 'claude' }))).toBe(false);
+  });
+
+  it('gives the API agent auto alone, whatever modes a probe reported', () => {
+    const api = def({ id: 'a', harness: 'custom', command: 'fleetherd', args: ['api-agent', 'antigravity'] });
+    expect(offeredLevelsFor(api, ['default', 'acceptEdits', 'plan', 'bypassPermissions'])).toEqual(['auto']);
+    expect(offeredLevelsFor(def({ id: 'a', harness: 'agy' }), [])).toEqual(['ask', 'auto']);
+  });
+});
+
+describe('unsetLevel', () => {
+  const def = (options: Record<string, string>): AgentDef =>
+    parseConfig({
+      platforms: { discord: { type: 'discord', token: 't' } },
+      agents: [{ id: 'a', harness: 'codex', options }],
+      routing: { default: 'a' },
+    }).agents[0]!;
+
+  it('reads a pinned full-access mode as full, and anything else — or nothing — as auto', () => {
+    expect(unsetLevel(def({ mode: 'agent-full-access' }))).toBe('full');
+    expect(unsetLevel(def({ mode: 'bypassPermissions' }))).toBe('full');
+    // CodeBuddy's own spelling of the same mode, which `full` maps to only where it is the first one.
+    expect(unsetLevel(def({ mode: 'fullAccess' }))).toBe('full');
+    expect(unsetLevel(def({ mode: 'plan' }))).toBe('auto');
+    expect(unsetLevel(def({}))).toBe('auto');
   });
 });
 
@@ -54,6 +105,8 @@ describe('levelMode', () => {
     expect(levelMode(undefined, CLAUDE)).toBeUndefined();
     expect(levelMode('plan', CODEX)).toBeUndefined();
     expect(levelMode('full', CLAUDE_AS_ROOT)).toBeUndefined();
+    // ask on a harness with no modes: only the gateway's half holds, so there is no mode to set.
+    expect(levelMode('ask', [])).toBeUndefined();
   });
 
   it('takes a pinned options.mode as where auto goes, and only auto', () => {
@@ -72,5 +125,15 @@ describe('parseLevel and levelDetail', () => {
 
   it('says what every level does', () => {
     for (const level of PERMISSION_LEVELS) expect(levelDetail(level).length).toBeGreaterThan(10);
+  });
+
+  it('says only what the gateway can promise where there is no mode to set', () => {
+    // A harness that asks nothing on its own: the level stops what it does ask, and nothing else.
+    expect(levelDetail('ask', 'none')).toContain('only what it asks about');
+    expect(levelDetail('ask', 'none')).toContain('what it does without asking is not stopped');
+    // agy's measured behaviour: commands ask, writes do not.
+    expect(levelDetail('ask', 'agy')).toContain('writes files without asking');
+    // The other levels keep their own words; none of them is offered without a mode anyway.
+    expect(levelDetail('auto', 'none')).toBe(levelDetail('auto'));
   });
 });

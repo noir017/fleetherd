@@ -1016,13 +1016,14 @@ describe("an agent's permission level", () => {
     expect(answer).toContain('(Plan)');
   });
 
-  it('offers auto alone to a harness that reports no modes', async () => {
+  it('offers ask and auto to a harness that reports no modes, saying what ask can stop', async () => {
     const r = textRig();
     await r.send('/setting permissions.cc');
     const answer = r.replies().at(-1)!;
+    expect(answer).toContain('`/setting permissions.cc ask`');
     expect(answer).toContain('`/setting permissions.cc auto`');
     expect(answer).not.toContain('permissions.cc plan`');
-    expect(answer).toContain('reports no session modes');
+    expect(answer).toContain('what it does without asking is not stopped');
   });
 
   it('writes a pod agent to podPermissions, over the pod’s own', async () => {

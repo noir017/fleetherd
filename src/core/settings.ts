@@ -13,7 +13,16 @@ import { agentKindOf } from './agent-menu.js';
 import { formatButtonId, parseButtonId } from './button-id.js';
 import { matchModels, type ModelOption } from './model-menu.js';
 import { pageCount, pageOf, pageSlice, truncateLabel, wrapPage } from './paging.js';
-import { levelDetail, levelMode, offeredLevels, parseLevel } from './permission-levels.js';
+import {
+  API_AGENT_DETAIL,
+  isApiAgent,
+  levelDetail,
+  levelMode,
+  offeredLevels,
+  offeredLevelsFor,
+  parseLevel,
+  unsetLevel,
+} from './permission-levels.js';
 /**
  * `/setting` as data: which config.yaml fields are editable from chat, what each accepts, when a
  * change takes effect, and every string either surface says.
@@ -139,6 +148,14 @@ export interface SettingRow {
   label: string;
   /** Current value, already formatted for display. */
   value: string;
+  /**
+   * Nothing is set, and `value` is what that means rather than a stored value: a permission row
+   * with no `agents[].permissions` shows the level its mode implies (unsetLevel). A screen draws
+   * it as a placeholder.
+   */
+  unset?: boolean;
+  /** Where the value comes from, when that is not the file (`not set · from its mode`). */
+  valueNote?: string;
   effect: SettingEffect;
 }
 
@@ -164,7 +181,8 @@ export interface SettingsContext {
   lists?: (agentId: string) => AgentModelList | undefined;
   /**
    * What the gateway knows of an agent's session modes (the same catalog), which decide the
-   * permission levels its row offers. Absent: nothing can ask, and only `auto` is offered.
+   * permission levels its row offers. Absent: the modes are unknown, so a permission row offers
+   * none and asks for one to be typed.
    */
   modes?: (agentId: string) => AgentModes | undefined;
   /** The pods' agents and the model each pod gives, so a key resolves to a row that knows it. */
@@ -385,13 +403,6 @@ export function delegationValue(confirm: Config['delegation']['confirm']): 'on' 
 const MODEL_UNSET = '(harness default)';
 
 /**
- * How an unset `agents[].permissions` reads: it approves like `auto`, and differs only in leaving
- * the harness's mode as the harness chose it (config/schema.ts says why) — not a difference worth a
- * fourth word on a screen. Picking `auto` writes it, and from then on the mode is the gateway's.
- */
-const PERMISSIONS_UNSET: PermissionLevel = 'auto';
-
-/**
  * What an unset `review.model` means: the reviewer's own `model`, or the harness default when the
  * agent has none either. Deliberately not MODEL_UNSET — a review does not fall back to the harness
  * before it falls back to the agent.
@@ -441,11 +452,16 @@ export function settingsRows(cfg: Config, pods?: PodModels): SettingRow[] {
   }
   // One permission row per agent, after the model rows, for the reason those are one per agent.
   for (const agent of cfg.agents) {
+    // Unset approves everything the agent asks and leaves the harness's mode alone (config/schema.ts
+    // says why) — but a pinned full-access mode asks nothing at all, so that case shows `full`, read
+    // off the mode rather than stored, and the row says so (unsetLevel).
+    const unset = agent.permissions === undefined;
     rows.push({
       id: 'permissions',
       target: agent.id,
       label: `Permissions · ${agent.id}`,
-      value: agent.permissions ?? PERMISSIONS_UNSET,
+      value: agent.permissions ?? unsetLevel(agent),
+      ...(unset ? { unset: true, valueNote: 'not set · from its mode' } : {}),
       effect: 'live',
       ...(pods?.has(agent.id) ? { pod: {} } : {}),
     });
@@ -963,10 +979,11 @@ export function settingOptions(row: SettingRow, cfg: Config, ctx: SettingsContex
 /**
  * What the agent's modes are known to be, for its permission row: the mode ids and names, or
  * undefined while they are not known (being asked, never asked, or the agent did not start). No
- * catalog to ask (`ctx.modes` absent) reads as a harness with no modes.
+ * catalog to ask (`ctx.modes` absent) is unknown too, not a harness with none: only a harness that
+ * reported none gets `ask` without a mode (offeredLevels).
  */
 function knownModes(row: SettingRow, ctx: SettingsContext): SessionModeSelector['options'] | undefined {
-  if (!ctx.modes) return [];
+  if (!ctx.modes) return undefined;
   const known = row.target ? ctx.modes(row.target) : undefined;
   if (known?.kind === 'list') return known.options;
   return known?.kind === 'none' ? [] : undefined;
@@ -974,20 +991,32 @@ function knownModes(row: SettingRow, ctx: SettingsContext): SessionModeSelector[
 
 /**
  * The levels a permission row offers: those its agent's harness has a mode for (offeredLevels),
- * each saying which of the harness's modes it means. Empty while the modes are not known — the row
- * then opens a screen of its own, which asks for them (settingControl). The value set now is kept
- * even where it is not offered, so a screen never hides what is in force.
+ * each saying which of the harness's modes it means; `ask` too where it reports none, and `auto`
+ * alone for the API agent (offeredLevelsFor). Empty while the modes are not known — the row then
+ * opens a screen of its own, which asks for them (settingControl). The value set now is kept even
+ * where it is not offered, so a screen never hides what is in force — but a value merely inferred
+ * from an unset level's mode (row.unset) is not: tapping it would write something the harness
+ * cannot honour.
  */
 function permissionOptions(row: SettingRow, cfg: Config, ctx: SettingsContext): SettingOption[] {
+  const def = row.target ? findAgent(cfg, row.target) : undefined;
+  // The API agent never asks, so no other level has anything to decide — and its modes need not be
+  // known first, since the answer does not depend on them. A value hand-written into config.yaml is
+  // not offered back; picking `auto` is how it gets put right.
+  if (def && isApiAgent(def)) {
+    return [{ raw: 'auto', label: `auto — ${API_AGENT_DETAIL}`, title: 'auto', detail: API_AGENT_DETAIL }];
+  }
   const modes = knownModes(row, ctx);
   if (!modes) return [];
   const ids = modes.map((m) => m.value);
-  const offered = offeredLevels(ids);
-  const pinned = row.target ? findAgent(cfg, row.target)?.options['mode'] : undefined;
-  return PERMISSION_LEVELS.filter((l) => offered.includes(l) || l === row.value).map((level) => {
+  const offered = def ? offeredLevelsFor(def, ids) : offeredLevels(ids);
+  const pinned = def?.options['mode'];
+  // A harness with no mode the gateway can set: `ask` there is the gateway's half alone.
+  const withoutMode = ids.length === 0 ? (def?.harness === 'agy' ? 'agy' : 'none') : undefined;
+  return PERMISSION_LEVELS.filter((l) => offered.includes(l) || (!row.unset && l === row.value)).map((level) => {
     const mode = levelMode(level, ids, pinned === undefined ? undefined : String(pinned));
     const name = mode ? (modes.find((m) => m.value === mode)?.name ?? mode) : undefined;
-    const detail = `${levelDetail(level)}${name ? ` (${name})` : ''}`;
+    const detail = `${levelDetail(level, withoutMode)}${name ? ` (${name})` : ''}`;
     return { raw: level, label: `${level} — ${detail}`, title: level, detail };
   });
 }
@@ -1073,7 +1102,7 @@ export function parseSettingValue(
     case 'model':
       return parseModelValue(input, row, cfg, ctx);
     case 'permissions':
-      return parsePermissionsValue(input, row, ctx);
+      return parsePermissionsValue(input, row, cfg, ctx);
     case 'review.agent':
       return parseReviewAgentValue(input, cfg);
     case 'review.model':
@@ -1243,12 +1272,30 @@ function parseReviewModelValue(
 /**
  * A permission level. Refused when the agent's modes are known and its harness has none for it —
  * the same rule that keeps it off the screen, so typing cannot set what a tap could not — unless
- * it is the level already set. Taken with a note while the modes are not known.
+ * it is the level already set (not one merely inferred for an unset row, which nothing stores).
+ * The API agent is refused every level but `auto`, with the reason. Taken with a note while the
+ * modes are not known.
  */
-function parsePermissionsValue(input: string, row: SettingRow, ctx: SettingsContext): ParsedSettingValue {
+function parsePermissionsValue(
+  input: string,
+  row: SettingRow,
+  cfg: Config,
+  ctx: SettingsContext
+): ParsedSettingValue {
   const level = parseLevel(input);
   if (!level) {
     return { kind: 'invalid', reason: `\`${input}\` is not a permission level. One of: ${PERMISSION_LEVELS.join(', ')}.` };
+  }
+  const def = row.target ? findAgent(cfg, row.target) : undefined;
+  if (def && isApiAgent(def)) {
+    if (level === 'auto') return { kind: 'value', value: level, display: level };
+    return {
+      kind: 'invalid',
+      reason:
+        `${row.target} is a fleetherd api-agent: it only calls a cloud API, runs nothing on this ` +
+        'machine and never asks for permission, so there is nothing for another level to decide. ' +
+        '`auto` is the only level for it.',
+    };
   }
   const modes = knownModes(row, ctx);
   if (!modes) {
@@ -1259,8 +1306,9 @@ function parsePermissionsValue(input: string, row: SettingRow, ctx: SettingsCont
       note: `${row.target}'s modes are not known yet. If its harness has none for \`${level}\`, its mode stays as it is and only the answer to its requests changes.`,
     };
   }
-  const offered = offeredLevels(modes.map((m) => m.value));
-  if (!offered.includes(level) && level !== row.value) {
+  const ids = modes.map((m) => m.value);
+  const offered = def ? offeredLevelsFor(def, ids) : offeredLevels(ids);
+  if (!offered.includes(level) && (row.unset === true || level !== row.value)) {
     return {
       kind: 'invalid',
       reason: `${row.target}'s harness has no mode for \`${level}\`, so it is not offered there. Offered: ${offered.join(', ')}.`,
@@ -1492,7 +1540,12 @@ export function settingAckText(result: SettingApplyResult): string {
 /** The bare `/setting` answer for a platform that cannot carry a menu. */
 export function settingsListText(cfg: Config): string {
   const rows = settingsRows(cfg);
-  const lines = rows.map((row) => `\`${settingKeyOf(row)}\` — ${row.label}: \`${row.value}\``);
+  // A value that is not stored says so here too: `full` read off a pinned mode would otherwise
+  // look like a level someone chose.
+  const lines = rows.map(
+    (row) =>
+      `\`${settingKeyOf(row)}\` — ${row.label}: \`${row.value}\`${row.valueNote ? ` (${row.valueNote})` : ''}`
+  );
   return [
     'Settings saved in config.yaml:',
     ...lines,
@@ -1526,7 +1579,7 @@ export function settingTypedOnlyHint(
   ctx: SettingsContext
 ): string | undefined {
   if (row.id === 'model') return modelListHint(row, cfg, ctx);
-  if (row.id === 'permissions') return permissionsHint(row, ctx);
+  if (row.id === 'permissions') return permissionsHint(row, cfg, ctx);
   if (row.id === 'review.model') {
     if (cfg.review?.api) return REVIEW_API_MODEL;
     return cfg.review
@@ -1567,16 +1620,24 @@ function modelListHint(row: SettingRow, cfg: Config, ctx: SettingsContext): stri
 }
 
 /** The permission row's sentence: nothing when its levels are known, else why not and what to type. */
-function permissionsHint(row: SettingRow, ctx: SettingsContext): string | undefined {
+function permissionsHint(row: SettingRow, cfg: Config, ctx: SettingsContext): string | undefined {
   const agentId = row.target;
   if (!agentId || !ctx.modes) return undefined;
   const typed = `\`/setting ${settingKeyOf(row)} <level>\``;
+  const def = findAgent(cfg, agentId);
+  if (def && isApiAgent(def)) {
+    return `${agentId} is a fleetherd api-agent: it calls a cloud API and never asks for permission, so \`auto\` is the only level it has.`;
+  }
   const known = ctx.modes(agentId);
   switch (known?.kind) {
     case 'list':
       return undefined;
     case 'none':
-      return `${agentId}'s harness reports no session modes, so \`auto\` is the only level it can honour here.`;
+      // `ask` is offered here because the gateway's half still holds — it says what that half can
+      // promise, which for agy is narrower still (measured: commands ask, writes do not).
+      return def?.harness === 'agy'
+        ? `${agentId}'s modes are not used, so \`ask\` puts the requests it does make to you — it asks before a command and writes files without asking. \`auto\` approves everything.`
+        : `${agentId}'s harness reports no session mode, so the gateway cannot make it ask: \`ask\` puts only the requests it does make to you, and what it does without asking is not stopped.`;
     case 'loading':
       return `Asking ${agentId} for its modes… A level can be typed meanwhile: ${typed}.`;
     case 'error':

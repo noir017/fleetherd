@@ -453,6 +453,88 @@ describe("an agent's permission level", () => {
     expect(settingLocation(r)).toEqual({ kind: 'agent', agentId: 'cc', key: 'permissions' });
   });
 
+  it('shows the level an unset agent’s mode adds up to, marked as not stored', () => {
+    const pinned = parseConfig({
+      platforms: { tg: { type: 'telegram', token: 't' } },
+      agents: [{ id: 'cx', harness: 'codex', options: { mode: 'agent-full-access' } }],
+      routing: { default: 'cx' },
+    });
+    const full = settingsRows(pinned).find((x) => x.id === 'permissions')!;
+    expect(full).toMatchObject({ value: 'full', unset: true, valueNote: 'not set · from its mode' });
+    // The text surface says it too, so an inferred level cannot be mistaken for a chosen one.
+    expect(settingsListText(pinned)).toContain('`full` (not set · from its mode)');
+    // Nothing is stored: picking `auto` is still a write.
+    expect(readSettingValue(full, pinned)).toBeUndefined();
+    // Any mode that is not full access asks at most for things the gateway approves.
+    expect(row('permissions.cc')).toMatchObject({ value: 'auto', unset: true, valueNote: 'not set · from its mode' });
+    // A level that is written is the level, not an inference.
+    const stored = parseConfig({
+      platforms: { tg: { type: 'telegram', token: 't' } },
+      agents: [{ id: 'cx', harness: 'codex', permissions: 'ask', options: { mode: 'agent-full-access' } }],
+      routing: { default: 'cx' },
+    });
+    expect(settingsRows(stored).find((x) => x.id === 'permissions')).toMatchObject({ value: 'ask' });
+    expect(settingsRows(stored).find((x) => x.id === 'permissions')?.unset).toBeUndefined();
+  });
+
+  it('offers ask on a harness with no modes, saying it stops only what that harness asks', () => {
+    const none: SettingsContext['modes'] = () => ({ kind: 'none' });
+    const c = withModes(none);
+    const options = settingOptions(row('permissions.cc'), cfg, c);
+    expect(options.map((o) => o.raw)).toEqual(['ask', 'auto']);
+    expect(options.find((o) => o.raw === 'ask')?.detail).toContain('what it does without asking is not stopped');
+    // Typed, it is accepted — and the levels that need a mode are not.
+    expect(parseSettingValue(row('permissions.cc'), 'ask', cfg, c)).toEqual({ kind: 'value', value: 'ask', display: 'ask' });
+    for (const level of ['plan', 'edits', 'full'] as const) {
+      expect(parseSettingValue(row('permissions.cc'), level, cfg, c)).toMatchObject({ kind: 'invalid' });
+    }
+  });
+
+  it('names what agy does not ask about when ask is offered for it', () => {
+    const agyCfg = parseConfig({
+      platforms: { tg: { type: 'telegram', token: 't' } },
+      agents: [{ id: 'ag', harness: 'agy' }],
+      routing: { default: 'ag' },
+    });
+    const agyCtx: SettingsContext = { boundAgent: 'ag', models: [], modes: () => ({ kind: 'none' }) };
+    const r = settingsRows(agyCfg).find((x) => x.id === 'permissions')!;
+    const ask = settingOptions(r, agyCfg, agyCtx).find((o) => o.raw === 'ask');
+    // Measured on agy 1.5.1 (2026-11-06): it asks before a command and writes without asking.
+    expect(ask?.detail).toContain('writes files without asking');
+    expect(parseSettingValue(r, 'ask', agyCfg, agyCtx)).toMatchObject({ kind: 'value', value: 'ask' });
+  });
+
+  it('gives the API agent auto alone, and refuses anything else with the reason', () => {
+    const apiCfg = parseConfig({
+      platforms: { tg: { type: 'telegram', token: 't' } },
+      agents: [{ id: 'agapi', harness: 'custom', command: 'fleetherd', args: ['api-agent', 'antigravity'] }],
+      routing: { default: 'agapi' },
+    });
+    const apiCtx: SettingsContext = { boundAgent: 'agapi', models: [], modes: () => ({ kind: 'none' }) };
+    const r = settingsRows(apiCfg).find((x) => x.id === 'permissions')!;
+    expect(r.value).toBe('auto');
+    expect(settingOptions(r, apiCfg, apiCtx).map((o) => o.raw)).toEqual(['auto']);
+    expect(parseSettingValue(r, 'ask', apiCfg, apiCtx)).toMatchObject({
+      kind: 'invalid',
+      reason: expect.stringContaining('api-agent'),
+    });
+    expect(parseSettingValue(r, 'auto', apiCfg, apiCtx)).toEqual({ kind: 'value', value: 'auto', display: 'auto' });
+  });
+
+  it('does not offer back a level merely inferred from an unset full-access mode', () => {
+    const pinned = parseConfig({
+      platforms: { tg: { type: 'telegram', token: 't' } },
+      agents: [{ id: 'cx', harness: 'custom', command: '/bin/agent', options: { mode: 'bypassPermissions' } }],
+      routing: { default: 'cx' },
+    });
+    const none: SettingsContext['modes'] = () => ({ kind: 'none' });
+    const c = withModes(none);
+    const r = settingsRows(pinned).find((x) => x.id === 'permissions')!;
+    expect(r.value).toBe('full');
+    expect(settingOptions(r, pinned, c).map((o) => o.raw)).toEqual(['ask', 'auto']);
+    expect(parseSettingValue(r, 'full', pinned, c)).toMatchObject({ kind: 'invalid' });
+  });
+
   it('offers the levels the harness has a mode for, each naming the mode it means', () => {
     const options = settingOptions(row('permissions.cc'), cfg, withModes(CODEX));
     expect(options.map((o) => o.raw)).toEqual(['ask', 'edits', 'auto', 'full']);
