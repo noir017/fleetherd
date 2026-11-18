@@ -2243,6 +2243,15 @@ and when the window closes — through a bundle that will not load (the `<pre>` 
 console is warned exactly once however many files follow), and through a page with no bundle at
 all.
 
+**`page.dom.test.ts` runs outside the coverage run** (`npm run test:coverage` is two vitest
+runs). Every test compiles the whole page script again in a fresh jsdom realm, and V8's precise
+coverage keeps counters for every script it ever compiled, whatever `coverage.include` later
+reports — so under `--coverage` the file's heap grew with its test count and the worker died at
+the 258th of 623 (2026-11-18, after the git and file windows). Those counters measured nothing
+anyway: the client script is a string in `page.ts`, not a file `src/**/*.ts` matches. The file
+also closes each test's windows after it (`liveWindows`), which is what keeps the plain run near
+800 MB; a test that opens a window outside `open()` should close it itself.
+
 `page.dom.test.ts` is the one that covers the client script's *behaviour*. It loads what the
 daemon serves into jsdom, stubs `EventSource` and `fetch`, and drives the page through the
 events `room.ts` actually emits — asserting on what a person would see: messages on screen, the

@@ -475,12 +475,14 @@ describe('turn changes: the repository it keeps', () => {
         },
       }),
     });
-    const [first, second] = await Promise.all([
+    const both = await Promise.all([
       slow.changes.start(ID, REF, slow.platform, ADDRESS),
       slow.changes.start(ID, REF, slow.platform, ADDRESS),
     ]);
-    expect(first).toBeDefined();
-    expect(second).toBeUndefined();
+    // Which call reaches the queue first is not the order they were made in — each resolves its
+    // repository with git before queueing, and on a loaded machine the second can get there first
+    // (2026-11-18, the coverage run). What holds either way: one snapshot, one busy.
+    expect(both.filter((h) => h !== undefined)).toHaveLength(1);
     // The queued turn never reached git — that is what "busy" means here.
     expect(adds).toBe(1);
     // And nothing was remembered as slow: the next turn runs its own snapshot.
