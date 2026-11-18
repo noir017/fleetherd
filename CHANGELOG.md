@@ -13,17 +13,19 @@ All notable changes to this project are documented here. The format is based on
   It now docks at the bottom of the chat at half its height, with a divider above it: drag the
   divider (or use the arrow keys; a double-click goes back to half) and the panel keeps that
   height, in the browser, across a reload. The transcript and the composer stay on screen and
-  usable the whole time, and on a phone the divider is a thumb's height.
+  usable the whole time, and on a phone the divider's strip is 20px tall instead of 9px, so a
+  finger can grab it.
 
 ### Fixed
 
-- **A topic switch no longer looks like a dropped terminal connection.** A closed panel was
+- **A panel that was not on screen no longer looks like a dropped terminal connection.** It was
   hidden with `display:none`, which takes the iframe's box away — and a frame with no box is one
-  a browser may throttle, freeze or throw away, which closes its WebSocket and, with a `tmux`
-  wrapper, can take the client with it. Closed (and while a record from History covers the
-  chat), the panel is now parked: out of the flex flow at the size it had, invisible. The frame
-  keeps its box and its socket, so switching away and back is the same terminal — no reconnect
-  and no redraw.
+  a browser may throttle, freeze or throw away, which closes its WebSocket: the terminal then
+  comes back as ttyd's reconnect and a redraw, or stays dead, instead of being the shell that
+  was running. Closed — and while a record from History covers the chat — the panel is now
+  parked: out of the flex flow at the size it had, invisible and `inert`. The frame keeps its
+  box and its socket, so switching away and back is the same terminal, with no reconnect and no
+  redraw.
 
 ## [3.11.0] - 2026-11-18
 
