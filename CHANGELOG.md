@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.12.0] - 2026-11-18
+
 ### Added
 
 - **Scheduled tasks can be created in the web UI.** The task panel managed and edited tasks but
