@@ -717,7 +717,10 @@ describe('stopping background output', () => {
     expect(sink.tools).toEqual(['Bash']);
     expect(sink.closes()).toBe(0);
 
+    // What a restart waits for (ConversationRegistry.turnsInProgress): the merger is idle now.
+    expect(session.backgroundActive?.()).toBe(true);
     expect(session.stopBackground?.()).toBe(true);
+    expect(session.backgroundActive?.()).toBe(false);
     // Sealed at once rather than when the quiet timer gets round to it: the user has just been
     // told it stopped, and in `once` mode an unsealed burst has not even been sent.
     expect(sink.closes()).toBe(1);
@@ -745,6 +748,7 @@ describe('stopping background output', () => {
     // The post-turn title report opened a follow-up state — it does on every conversation after
     // every turn — but nothing is working, so "stopped the background work" would be untrue.
     expect(session.stopBackground?.()).toBe(false);
+    expect(session.backgroundActive?.()).toBe(false);
     expect(sink.closes()).toBe(0);
   });
 
@@ -755,6 +759,8 @@ describe('stopping background output', () => {
     const running = session.runTurn({ prompt: 'SLOW: run the long script', sessionToken: 'tok' }, turn.handlers);
     await until(() => turn.tools.length > 0);
     expect(session.stopBackground?.()).toBe(false);
+    // Counted as the turn it is, not twice.
+    expect(session.backgroundActive?.()).toBe(false);
     await running;
   });
 

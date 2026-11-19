@@ -252,6 +252,18 @@ export interface AgentSession {
    */
   stopBackground?(): boolean;
   /**
+   * Whether a follow-up burst is putting output on screen right now, with no turn running — the
+   * work stopBackground stops.
+   *
+   * Read by a restart's wait for the work in progress (ConversationRegistry.turnsInProgress): the
+   * merger is idle during a burst, so the gateway used to count nothing in progress and stop at
+   * once, cutting the agent off mid-work. On 2026-11-18 that agent was running the gateway's own
+   * update over ssh, and the update died with it, leaving the gateway down for nine hours.
+   *
+   * Optional, like stopBackground: a runtime with no out-of-turn output never has one.
+   */
+  backgroundActive?(): boolean;
+  /**
    * Ask a side question (`/btw`): answered from everything the conversation holds, without
    * stopping the turn that may be running, and without the question or its answer becoming part of
    * the conversation's context.

@@ -2192,6 +2192,10 @@ function createAcpSession(
     cancelFollowUpQuiet = undefined;
     const burst = followUpState;
     followUpState = undefined;
+    // Logged on every way a burst ends — quiet, /stop, a new turn, the child gone — because the
+    // host's `fleetherd update` reads "in progress" off this log (docker/fleetherd-host in_progress)
+    // and pairs this line with "output arrived outside a turn".
+    if (burstRendering) console.log(`[acp] ${conversationId}: follow-up closed (${reason})`);
     burstRendering = false;
     if (!burst) return;
     flushPendingTools(burst.state);
@@ -2981,6 +2985,10 @@ function createAcpSession(
       if (conn && active) void conn.agent.notify('session/cancel', { sessionId: active.sessionId });
       if (turnStopped) turnStopped();
       else stoppedWhileStarting = true;
+    },
+
+    backgroundActive(): boolean {
+      return !turnState && burstRendering;
     },
 
     stopBackground(): boolean {

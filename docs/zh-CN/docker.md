@@ -84,7 +84,7 @@ docker compose up -d
 docker compose pull && docker compose up -d
 ```
 
-停止容器时，网关收到的是 SIGTERM。如果有轮次或定时任务正在跑，网关会等它们跑完再停，最多等 30 分钟。等待期间：
+停止容器时，网关收到的是 SIGTERM。如果有轮次或定时任务正在跑，或者智能体在轮次结束后还在干活（汇报它自己起的后台任务），网关会等它们跑完再停，最多等 30 分钟。等待期间：
 
 - 每个有轮次在跑的会话会收到一句提示，说明重启在等它；
 - 会开启新轮次的消息不交给智能体，网关回一句「等它回来后再发一次」；
@@ -105,6 +105,7 @@ fleetherd logs          # docker logs -t --tail 200
 fleetherd doctor        # 其余参数都交给容器里的 fleetherd CLI
 ```
 
-有轮次或定时任务正在跑时，`update` 和 `restart` 会列出它们，并让网关先跑完。后面的步骤转到后台进行，命令立刻返回，
-这样即使是让智能体去更新网关，它这一轮也能先结束。日志在 compose 目录下的 `update.log`。`--force` 会立刻停掉网关，
-切断正在跑的东西。compose 文件默认读 `~/apps/fleetherd` 里的（`FLEETHERD_APP_DIR` 可以改）。
+`update` 和 `restart` 的切换过程脱离当前终端运行，写进 compose 目录下的 `update.log`，所以命令所在的会话断了也能做完——
+智能体更新自己所在的网关时就是这样，重启会把它停掉。有东西正在跑时，它们会列出来、让网关先跑完，然后命令立刻返回，
+这样即使是让智能体去更新网关，它这一轮也能先结束；否则跟着日志一直等到网关回来。镜像没变但容器没在运行时，`update`
+也会把它启动。`--force` 会立刻停掉网关，切断正在跑的东西。compose 文件默认读 `~/apps/fleetherd` 里的（`FLEETHERD_APP_DIR` 可以改）。

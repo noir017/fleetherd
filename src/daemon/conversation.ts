@@ -1134,11 +1134,18 @@ export class ConversationRegistry {
     if (state) state.lastActivityAt = this.clock.now();
   }
 
-  /** Conversations with a turn running, or a batch inside its merge window about to start one. */
+  /**
+   * Conversations at work: a turn running, a batch inside its merge window about to start one, or —
+   * with neither — the agent reporting in on background work it started (AgentSession.backgroundActive).
+   */
   turnsInProgress(): number {
     let n = 0;
-    for (const state of this.conversations.values()) if (!state.merger.isIdle()) n++;
+    for (const [id, state] of this.conversations) if (this.atWork(id, state)) n++;
     return n;
+  }
+
+  private atWork(id: ConversationId, state: ConversationState): boolean {
+    return !state.merger.isIdle() || this.agents.peek(id)?.backgroundActive?.() === true;
   }
 
   /**
@@ -1150,7 +1157,7 @@ export class ConversationRegistry {
   beginDrain(): void {
     this.draining = true;
     for (const [id, state] of this.conversations) {
-      if (state.merger.isIdle()) continue;
+      if (!this.atWork(id, state)) continue;
       // No lane yet means a first batch still inside its merge window: it is about to run, and the
       // refusal is not what it will get, so there is nothing to explain to it.
       const lane = this.laneOf(id);

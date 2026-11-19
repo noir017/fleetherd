@@ -98,6 +98,8 @@ function rig(steer?: SteerOutcome) {
   const steered: string[] = [];
   const sent: Array<{ channel: string; text: string }> = [];
   const release = new Map<string, () => void>();
+  /** Conversations whose agent is reporting in on background work, with no turn running. */
+  const background = new Set<string>();
   const sessions = new Map<string, AgentSession>();
   const factory: AgentFactory = {
     getOrCreate(conversationId) {
@@ -118,6 +120,7 @@ function rig(steer?: SteerOutcome) {
               }
             : {}),
           abort: () => release.get(conversationId)?.(),
+          backgroundActive: () => [...background].some((c) => conversationId.includes(c)),
           dispose: () => {},
         } as AgentSession;
         sessions.set(conversationId, s);
@@ -163,7 +166,7 @@ function rig(steer?: SteerOutcome) {
     await settle();
   };
   const said = (channel: string): string[] => sent.filter((s) => s.channel === channel).map((s) => s.text);
-  return { reg, send, finish, prompts, steered, said };
+  return { reg, send, finish, prompts, steered, said, background };
 }
 
 describe('while the gateway waits to restart', () => {
@@ -187,6 +190,24 @@ describe('while the gateway waits to restart', () => {
     expect(r.reg.turnsInProgress()).toBe(1);
 
     await r.finish('busy');
+    expect(r.reg.turnsInProgress()).toBe(0);
+  });
+
+  it('waits for an agent working on its own after its turn ended', async () => {
+    // The harness re-invoked itself when a background task finished: the merger is idle, and a
+    // restart that counted only turns stopped at once, cutting the agent off mid-command.
+    const r = rig();
+    await r.send('bg', 'release, then report');
+    await r.finish('bg');
+    expect(r.reg.turnsInProgress()).toBe(0);
+
+    r.background.add('bg');
+    expect(r.reg.turnsInProgress()).toBe(1);
+    r.reg.beginDrain();
+    await settle();
+    expect(r.said('bg').at(-1)).toMatch(/restarts when this turn is done/);
+
+    r.background.delete('bg');
     expect(r.reg.turnsInProgress()).toBe(0);
   });
 
