@@ -7,7 +7,7 @@ import { libraryLine } from '../ipc/tools.js';
 import type { PlatformAdapter } from '../platform/adapter.js';
 import type { ConversationId, InboundMessage } from '../types.js';
 import { formatLaneTitle } from './conversation.js';
-import type { Delegation } from './delegation.js';
+import type { Delegation, TopicAt } from './delegation.js';
 import type { ExternalCaller } from './external-mcp.js';
 import type { ExternalTopic, ExternalTopics } from './external-topics.js';
 import type { LibraryAsker, SkillLibrary } from './skill-library.js';
@@ -68,8 +68,8 @@ export class ExternalCalls {
         return this.topicsOf(caller);
       case 'task': {
         if (action.action.kind === 'task-agents') return agentsText(this.deps.delegation.externalAgents());
-        const key = action.in !== undefined ? this.owned(caller, action.in) : this.parentOwned(caller, subTopicOf(action.action));
-        const result = await this.deps.delegation.handleExternal(key, action.action);
+        const place = action.in !== undefined ? this.owned(caller, action.in) : this.parentOwned(caller, subTopicOf(action.action));
+        const result = await this.deps.delegation.handleExternal(place.key, action.action, place.at);
         // The CLI's printer says "this conversation has opened no sub-agent topics", and a caller
         // has no conversation (agentsText is the same split for `task-agents`).
         if (action.action.kind === 'task-list' && (result as TaskListResult).tasks.length === 0) {
@@ -181,7 +181,11 @@ export class ExternalCalls {
       // The record is keyed by the topic, not the conversation id, which moves with the scope.
       const key = this.deps.conversationAt(t.platform, t.address)?.key;
       if (!key) continue;
-      const list = (await this.deps.delegation.handleExternal(key, { kind: 'task-list', limit: 200 })) as TaskListResult;
+      const list = (await this.deps.delegation.handleExternal(
+        key,
+        { kind: 'task-list', limit: 200 },
+        { platform: t.platform, address: t.address }
+      )) as TaskListResult;
       const busy = list.tasks.filter((r) => r.stage === 'working' || r.stage === 'retrying').length;
       rows.push({ topic: `${t.platform}:${formatAddress(t.address)}`, title: t.title, opened: t.openedAt, subtasks: list.total, working: busy });
     }
@@ -198,18 +202,19 @@ export class ExternalCalls {
     return false;
   }
 
-  /** The caller's coordination topic named `topic`, or the refusal. */
-  private owned(caller: ExternalCaller, topic: string): ConversationId {
+  /** The caller's coordination topic named `topic`, or the refusal. The address goes with it. */
+  private owned(caller: ExternalCaller, topic: string): { key: ConversationId; at: TopicAt } {
     const { id } = this.platform();
     const address = this.addressOf(caller, topic, id);
-    const key = address ? this.deps.conversationAt(id, address)?.key : undefined;
-    const t = address ? this.deps.topics.get(id, address) : undefined;
+    if (!address) throw notYours(topic);
+    const key = this.deps.conversationAt(id, address)?.key;
+    const t = this.deps.topics.get(id, address);
     if (!key || !t || t.caller !== caller.name || t.platform !== id || !this.present(t)) throw notYours(topic);
-    return key;
+    return { key, at: { platform: id, address } };
   }
 
   /** The caller's coordination topic a sub-task `topic` is nested under, or the refusal. */
-  private parentOwned(caller: ExternalCaller, topic: string): ConversationId {
+  private parentOwned(caller: ExternalCaller, topic: string): { key: ConversationId; at: TopicAt } {
     const { id, adapter } = this.platform();
     const address = this.addressOf(caller, topic, id);
     const parent = address ? adapter.parentOf?.(address) : undefined;
@@ -253,7 +258,7 @@ export class ExternalCalls {
     const adapter = this.deps.platforms.get(t.platform);
     let say: string;
     if (/^\/stop(\s|$)/i.test(msg.content.trim())) {
-      const n = key ? this.deps.delegation.stopOpened(key) : 0;
+      const n = key ? this.deps.delegation.stopOpened(key, new Set(), { platform, address }) : 0;
       say = n ? `⏹ Stopped ${n} sub-agent${n === 1 ? '' : 's'} under this topic.` : 'Nothing under this topic was running.';
     } else {
       say =

@@ -1104,7 +1104,7 @@ export class Daemon {
       },
       questionOf: (id) => this.questionOf(id),
       // A coordination topic an external caller opened: no agent, and its updates are only shown.
-      externalOf: (id) => this.externalOwner(id),
+      externalOf: (platform, address) => this.externalOwner(platform, address),
       // Buttons only, like a permission request: a sentence typed instead ("use cx for the second")
       // is the person's next message to the agent, which proposes again — not a guess at a button.
       confirm: async ({ adapter, address, conversation, text, labels, timeoutMs, signal }) => {
@@ -1199,20 +1199,12 @@ export class Daemon {
   }
 
   /**
-   * The coordination topic an external caller opened, as Delegation reads it. The record is keyed
-   * by the topic's own id, so a conversation id computed under the current scope is resolved to
-   * its address first — by its lane when that address is a record, else by asking each record what
-   * key it has now.
+   * The coordination topic an external caller opened, as Delegation reads it. Asked by the address
+   * the entrance validated, never by conversation id: under per_channel an id names a whole channel
+   * and cannot say which thread is the caller's.
    */
-  private externalOwner(id: ConversationId): ExternalOwner | undefined {
-    const lane = this.registry.laneFor(id);
-    // The lane is the fast path, not the only one: under per_channel every thread of a channel
-    // shares one conversation id, and the lane's address is whichever thread last ran — not
-    // necessarily the coordination topic. A miss must fall back to the records, or the caller's
-    // tasks are refused and `tell` starts a turn in the topic.
-    const t =
-      (lane !== undefined ? this.externalTopics.get(lane.platformId, lane.address) : undefined) ??
-      this.externalTopics.all().find((topic) => this.registry.conversationAt(topic.platform, topic.address)?.key === id);
+  private externalOwner(platform: string, address: ConversationAddress): ExternalOwner | undefined {
+    const t = this.externalTopics.get(platform, address);
     return t && { caller: t.caller, platform: t.platform, address: t.address, title: t.title };
   }
 

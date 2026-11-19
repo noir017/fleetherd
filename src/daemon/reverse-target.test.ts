@@ -44,8 +44,6 @@ function adapter(id: string, type: string, sent: Sent[]): PlatformAdapter {
     startTyping: async () => {},
     stopTyping: async () => {},
     measureRendered: (t: string) => t.length,
-    parentOf: () => undefined,
-    childrenOf: () => [],
   } as unknown as PlatformAdapter;
 }
 
@@ -56,7 +54,7 @@ afterEach(async () => {
   for (const d of dirs.splice(0)) fs.rmSync(d, { recursive: true, force: true });
 });
 
-async function rig(scope?: 'per_channel') {
+async function rig() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aa-target-'));
   dirs.push(dir);
   const socket = path.join(dir, 'd.sock');
@@ -81,9 +79,8 @@ async function rig(scope?: 'per_channel') {
     dispose: (id) => void sessions.delete(id),
   };
   const store = new ConversationStore(path.join(dir, 'conversations.json'));
-  const config = scope === undefined ? cfg : { ...cfg, session: { ...cfg.session, scope } };
   const daemon = new Daemon(
-    config,
+    cfg,
     new Map([
       ['tg', adapter('tg', 'telegram', sent)],
       ['web', adapter('web', 'webui', sent)],
@@ -105,7 +102,7 @@ async function rig(scope?: 'per_channel') {
     });
     await new Promise((r) => setTimeout(r, 40));
   };
-  return { socket, sent, tokens, inbound, daemon };
+  return { socket, sent, tokens, inbound };
 }
 
 // `direct` like the live deployment's Telegram DM topics and the web UI's: a group/thread would be
@@ -206,35 +203,6 @@ describe('a coordination topic an external caller opened', () => {
       const guarded = COORDINATION_WRITE_ACTIONS.has(name as IpcAction['kind']);
       expect(guarded || name in exempt, `${name} accepts --channel but is neither guarded nor exempt`).toBe(true);
     }
-  });
-
-  it('finds the topic under per_channel, where every thread shares one conversation id', async () => {
-    writeRecord(2);
-    const r = await rig('per_channel');
-    await r.inbound(WEB_TOPIC, 'hello');
-    const d = (
-      r.daemon as unknown as {
-        delegation: {
-          handleExternal(key: string, action: IpcAction): Promise<unknown>;
-          place(key: string): unknown;
-          tell(place: unknown, lines: string[], shown: string[]): void;
-        };
-      }
-    ).delegation;
-
-    // The caller's tasks are accepted: the owner is found by scanning the records, not the lane.
-    await expect(d.handleExternal('web#main', { kind: 'task-list' })).resolves.toMatchObject({ tasks: [], total: 0 });
-
-    // tell shows the update in the topic, never starts a turn there.
-    const before = r.tokens.length;
-    d.tell(d.place('web#main'), ['a sub-task finished'], ['🔔 part finished']);
-    await new Promise((res) => setTimeout(res, 20));
-    expect(r.tokens).toHaveLength(before);
-    expect(r.sent.at(-1)).toMatchObject({
-      platform: 'web',
-      address: { channel: 'main', thread: 'e1000000' },
-      text: '🔔 part finished',
-    });
   });
 });
 

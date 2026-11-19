@@ -25,6 +25,7 @@ import {
   Delegation,
   PROPOSAL_GATHER_MS,
   type DelegationDeps,
+  type TopicAt,
 } from './delegation.js';
 import { TurnOutcomes } from './turn-outcomes.js';
 import { TurnFailure } from './agent.js';
@@ -2070,12 +2071,15 @@ describe('naming a /super topic', () => {
 describe('Delegation: a coordination topic an external caller opened', () => {
   const E = 'web#main#eeeeeeee';
   const C = 'web#main#c1000000';
+  const at = (key: string): TopicAt => ({ platform: 'web', address: addrOf(key) });
 
   /** A rig where E is `gem`'s coordination topic: no agent bound, a record saying whose it is. */
   const external = (opts: Parameters<typeof rig>[0] = {}) => {
     const r = rig(opts);
-    r.deps.externalOf = (id) =>
-      id === E ? { caller: 'gem', platform: 'web', address: addrOf(E), title: '[gem] Trip' } : undefined;
+    r.deps.externalOf = (platform, address) =>
+      platform === 'web' && address.thread === addrOf(E).thread
+        ? { caller: 'gem', platform: 'web', address: addrOf(E), title: '[gem] Trip' }
+        : undefined;
     return r;
   };
 
@@ -2083,7 +2087,7 @@ describe('Delegation: a coordination topic an external caller opened', () => {
     for (const confirm of [false, 'first'] as const) {
       const r = external({ answer: null });
       r.deps.config.delegation.confirm = confirm;
-      const res = (await r.d.handleExternal(E, task('cc', 'Book the hotel'))) as TaskNewResult;
+      const res = (await r.d.handleExternal(E, task('cc', 'Book the hotel'), at(E))) as TaskNewResult;
       expect(res.result).toMatch(/waiting for the person to tap Start/);
       expect(res.result).toMatch(/nobody tells you .* check with list/);
       r.clock.advance(PROPOSAL_GATHER_MS);
@@ -2099,14 +2103,14 @@ describe('Delegation: a coordination topic an external caller opened', () => {
 
   it('needs the agent named, and never offers task-send', async () => {
     const r = external();
-    await expect(r.d.handleExternal(E, task(undefined, 'x'))).rejects.toThrow(/name the agent/);
-    await expect(r.d.handleExternal(E, { kind: 'task-send', topic: 'c1000000', text: 'rm -rf' })).rejects.toThrow(/not offered/);
-    await expect(r.d.handleExternal(P, { kind: 'task-agents' })).rejects.toThrow(/not a coordination topic/);
+    await expect(r.d.handleExternal(E, task(undefined, 'x'), at(E))).rejects.toThrow(/name the agent/);
+    await expect(r.d.handleExternal(E, { kind: 'task-send', topic: 'c1000000', text: 'rm -rf' }, at(E))).rejects.toThrow(/not offered/);
+    await expect(r.d.handleExternal(P, { kind: 'task-agents' }, at(P))).rejects.toThrow(/not a coordination topic/);
   });
 
   it('starts on Start, under the topic, with the caller named above the task', async () => {
     const r = external();
-    await r.d.handleExternal(E, task('cc', 'Book the hotel'));
+    await r.d.handleExternal(E, task('cc', 'Book the hotel'), at(E));
     r.clock.advance(PROPOSAL_GATHER_MS);
     await settle();
     await settle();
@@ -2118,7 +2122,7 @@ describe('Delegation: a coordination topic an external caller opened', () => {
 
   it('shows what its sub-tasks did in the topic, and runs no turn there', async () => {
     const r = external();
-    await r.d.handleExternal(E, task('cc', 'Book the hotel'));
+    await r.d.handleExternal(E, task('cc', 'Book the hotel'), at(E));
     r.clock.advance(PROPOSAL_GATHER_MS);
     await settle();
     await settle();
@@ -2132,18 +2136,18 @@ describe('Delegation: a coordination topic an external caller opened', () => {
     ]);
     expect(r.calls.filter(([c]) => c === 'prompt')).toEqual([]);
     // …and the caller reads it itself.
-    const list = (await r.d.handleExternal(E, { kind: 'task-list' })) as TaskListResult;
+    const list = (await r.d.handleExternal(E, { kind: 'task-list' }, at(E))) as TaskListResult;
     expect(list.tasks.map((t) => [t.topic, t.stage])).toEqual([['web:main/c1000000', 'review']]);
   });
 
   it('says in a caller\'s own terms when a sub-task has no reply yet', async () => {
     const r = external();
-    await r.d.handleExternal(E, task('cc', 'Book the hotel'));
+    await r.d.handleExternal(E, task('cc', 'Book the hotel'), at(E));
     r.clock.advance(PROPOSAL_GATHER_MS);
     await settle();
     await settle();
     seedTurn(r.history, C, [{ role: 'user', text: 'go' }], 'running');
-    const read = (await r.d.handleExternal(E, { kind: 'task-read', topic: 'c1000000', reply: true })) as TaskReadResult;
+    const read = (await r.d.handleExternal(E, { kind: 'task-read', topic: 'c1000000', reply: true }, at(E))) as TaskReadResult;
     expect(read.reply).toBeUndefined();
     expect(read.note).toMatch(/no turn in this topic has ended normally yet/);
     expect(read.note).toMatch(/status shows where it is/);
@@ -2152,23 +2156,112 @@ describe('Delegation: a coordination topic an external caller opened', () => {
 
   it('lists the agents as from no machine of the gateway', async () => {
     const r = external();
-    const res = (await r.d.handleExternal(E, { kind: 'task-agents' })) as TaskAgentsResult;
+    const res = (await r.d.handleExternal(E, { kind: 'task-agents' }, at(E))) as TaskAgentsResult;
     expect(res.agents.every((a) => a.here === false)).toBe(true);
     expect(r.d.externalAgents().agents.map((a) => a.id)).toEqual(['oc2', 'cc', 'cx', 'local']);
   });
 
   it('acts only on its own sub-tasks, and says who stopped one', async () => {
     const r = external();
-    await r.d.handleExternal(E, task('cc', 'Book the hotel'));
+    await r.d.handleExternal(E, task('cc', 'Book the hotel'), at(E));
     r.clock.advance(PROPOSAL_GATHER_MS);
     await settle();
     await settle();
     r.busy.add(C);
-    await expect(r.d.handleExternal(E, { kind: 'task-status', topic: 'web:main/c9999999' })).rejects.toThrow(
+    await expect(r.d.handleExternal(E, { kind: 'task-status', topic: 'web:main/c9999999' }, at(E))).rejects.toThrow(
       /not a sub-task under a topic you opened/
     );
-    const stopped = (await r.d.handleExternal(E, { kind: 'task-stop', topic: 'c1000000' })) as TaskActionResult;
+    const stopped = (await r.d.handleExternal(E, { kind: 'task-stop', topic: 'c1000000' }, at(E))) as TaskActionResult;
     expect(stopped.result).toMatch(/^Stopped\./);
     expect(r.posted.find((p) => p.to === C && p.text.startsWith('⏹'))?.text).toBe('⏹ Stopped by gem (external) in [Trip](?t=eeeeeeee).');
+  });
+});
+
+/**
+ * `per_channel` folds every thread of a channel into one conversation id. The caller's address is
+ * carried explicitly, so an ordinary thread in that channel is never mistaken for the caller's
+ * coordination topic — and two callers' sub-tasks never meet.
+ */
+describe('Delegation: a shared channel key under per_channel', () => {
+  // What `per_channel` gives every thread of the channel.
+  const SHARED = 'web#main';
+  const A: TopicAt = { platform: 'web', address: { channel: 'main', thread: 'e1000000' } };
+  const B: TopicAt = { platform: 'web', address: { channel: 'main', thread: 'f0000000' } };
+  const T = 'web#main#t1';
+
+  function shared(opts: Parameters<typeof rig>[0] = {}) {
+    const r = rig(opts);
+    r.deps.externalOf = (platform, address) =>
+      platform === 'web' && (address.thread === 'e1000000' || address.thread === 'f0000000')
+        ? {
+            caller: address.thread === 'e1000000' ? 'gem' : 'other',
+            platform: 'web',
+            address,
+            title: address.thread === 'e1000000' ? '[gem] Trip' : '[other] Job',
+          }
+        : undefined;
+    return r;
+  }
+
+  const openedParents = (r: ReturnType<typeof rig>): string[] =>
+    r.calls.filter(([c]) => c === 'openTask').map(([, o]) => keyOf((o as { parent: ConversationAddress }).parent));
+
+  it('keeps an ordinary thread out of the caller\'s topic and sub-tasks', async () => {
+    const r = shared();
+    r.bound.set(T, 'cc');
+    // The caller opens one sub-task in its topic.
+    await r.d.handleExternal(SHARED, task('cc', 'Book the hotel'), A);
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    await settle();
+    // The ordinary thread opens its own.
+    await r.d.handle(T, task('cc', 'Local work'));
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    await settle();
+    expect(openedParents(r)).toEqual(['web#main#e1000000', T]);
+
+    const list = (await r.d.handle(T, { kind: 'task-list' })) as TaskListResult;
+    expect(list.tasks.map((t) => t.topic)).toEqual(['web:main/c2000000']);
+    await expect(r.d.handle(T, { kind: 'task-read', topic: 'web:main/c1000000' })).rejects.toThrow(
+      /not a topic this conversation opened/
+    );
+    await expect(r.d.handle(T, { kind: 'task-stop', topic: 'web:main/c1000000' })).rejects.toThrow(
+      /not a topic this conversation opened/
+    );
+
+    // A new one goes under the thread, never under the caller's topic.
+    await r.d.handle(T, task('cc', 'More local work'));
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    await settle();
+    expect(openedParents(r).at(-1)).toBe(T);
+
+    // The thread's update is its own: it is told in T, never written into the caller's topic.
+    r.activity.set('web#main#c2000000', { outcome: { kind: 'done', at: 5, line: 'Done.' } });
+    r.replies.set('web#main#c2000000', 'Done.');
+    r.d.childChanged('web#main#c2000000');
+    r.clock.advance(CARD_DELAY_MS);
+    await settle();
+    expect(r.posted.some((p) => p.to === keyOf(A.address) && p.kind === 'report')).toBe(false);
+    expect(r.posted.some((p) => p.to === T && p.kind === 'report')).toBe(true);
+    expect(r.calls.filter(([c]) => c === 'prompt')).toHaveLength(1);
+  });
+
+  it('keeps two callers\' sub-tasks apart', async () => {
+    const r = shared();
+    await r.d.handleExternal(SHARED, task('cc', 'A work'), A);
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    await settle();
+    await r.d.handleExternal(SHARED, task('cc', 'B work'), B);
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    await settle();
+
+    const a = (await r.d.handleExternal(SHARED, { kind: 'task-list' }, A)) as TaskListResult;
+    const b = (await r.d.handleExternal(SHARED, { kind: 'task-list' }, B)) as TaskListResult;
+    expect(a.tasks.map((t) => t.topic)).toEqual(['web:main/c1000000']);
+    expect(b.tasks.map((t) => t.topic)).toEqual(['web:main/c2000000']);
   });
 });

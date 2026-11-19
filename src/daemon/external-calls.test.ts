@@ -30,7 +30,7 @@ const GEM: ExternalCaller = { name: 'gem', tools: ['skills', 'tasks'] };
 const OTHER: ExternalCaller = { name: 'other', tools: ['tasks'] };
 const keyOf = (a: ConversationAddress): string => `web#${a.channel}#${a.thread ?? ''}`;
 
-function rig(opts: { skills?: ExternalCallsDeps['skills']; taskList?: TaskListResult } = {}) {
+function rig(opts: { skills?: ExternalCallsDeps['skills']; taskList?: TaskListResult; sharedKey?: boolean } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fleetherd-external-'));
   dirs.push(dir);
   const file = path.join(dir, 'external-topics.json');
@@ -69,7 +69,7 @@ function rig(opts: { skills?: ExternalCallsDeps['skills']; taskList?: TaskListRe
     }),
     platforms: new Map([['web', adapter]]),
     topics,
-    conversationAt: (_p, a) => ({ key: `${keyOf(a)}${scope}` }),
+    conversationAt: (_p, a) => ({ key: opts.sharedKey ? 'web#main' : `${keyOf(a)}${scope}` }),
     delegation: {
       handleExternal: async (key, action) => {
         handled.push({ key, kind: action.kind });
@@ -146,6 +146,20 @@ describe('ExternalCalls: ownership', () => {
     await expect(theirs).rejects.toThrow(/is not a topic you opened, or a sub-task under one/);
     await expect(none).rejects.toThrow(/is not a topic you opened, or a sub-task under one/);
     expect(r.handled).toEqual([]);
+  });
+
+  it('keeps two callers apart when per_channel gives their topics one shared key', async () => {
+    const r = rig({ sharedKey: true });
+    const a = await open(r, GEM, 'a');
+    const b = await open(r, OTHER, 'b');
+
+    // Ownership is by address and caller, not by the conversation id they now share.
+    await expect(r.calls.call(OTHER, { kind: 'task', in: a, action: { kind: 'task-list' } })).rejects.toThrow(
+      /is not a topic you opened, or a sub-task under one/
+    );
+    const listed = decode(await r.calls.call(GEM, { kind: 'topics' })) as { topics: Array<{ topic: string }> };
+    expect(listed.topics.map((t) => t.topic)).toEqual([a]);
+    expect(b).not.toBe(a);
   });
 
   it('reaches a sub-task only through its parent, which has to be the caller\'s', async () => {
