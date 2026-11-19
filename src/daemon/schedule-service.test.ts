@@ -396,3 +396,99 @@ describe('ScheduleService.addFromPanel', () => {
     expect((await service.addFromPanel({ cron: '0 3 * * *', bash: 'ls', host: null }, WEB_T1)).run).toEqual({ kind: 'bash', command: 'ls', timeoutMs: 600_000 });
   });
 });
+
+/**
+ * A coordination topic an external caller opened runs no agent turn (AGENTS.md security invariant
+ * 11). The guard lives here, not in the caller: add/edit refuse the target, and a run that predates
+ * the topic is refused at the run too.
+ */
+describe('ScheduleService: an external caller\'s coordination topic', () => {
+  const COORD = 'web#main#e1000000';
+  const target = { platform: 'web', address: { channel: 'main', thread: 'e1000000' } };
+
+  function guardFixture(preloaded?: ScheduleTask) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aa-schedule-coordination-'));
+    dirs.push(dir);
+    const store = new ScheduleStore(path.join(dir, 'schedules.json'));
+    if (preloaded) store.put(preloaded);
+    const config = parseConfig({
+      platforms: { web: { type: 'webui', token: 'w' } },
+      agents: [{ id: 'cc', harness: 'claude' }],
+      routing: { default: 'cc' },
+    });
+    const posted: Array<{ text: string }> = [];
+    const runs: string[] = [];
+    const platform = {
+      capabilities: { maxMessageLength: 0, thread: true, standaloneThread: true },
+      measureRendered: (t: string) => t.length,
+      sendMessage: async (address: unknown, text: string) => {
+        posted.push({ text });
+        return { address, messageId: 'm' };
+      },
+    };
+    const registry = {
+      conversationAt: (p: string, a: { channel: string; thread?: string }) => ({ key: `${p}#${a.channel}#${a.thread ?? ''}` }),
+      platformFor: () => 'web',
+      boundAgentOf: () => 'cc',
+      workdirOf: () => undefined,
+      runScheduledPrompt: async () => {
+        runs.push('run');
+        return { status: 'ok' };
+      },
+    };
+    const service = new ScheduleService(
+      config,
+      new Map([['web', platform]]) as unknown as ConstructorParameters<typeof ScheduleService>[1],
+      registry as unknown as ConstructorParameters<typeof ScheduleService>[2],
+      { now: () => NOW, schedule: () => () => {} },
+      store,
+      path.join(dir, 'runs'),
+      (key) => key === COORD
+    );
+    return { service, store, posted, runs };
+  }
+
+  it('refuses to register an agent run there, storing and posting nothing', async () => {
+    const { service, store, posted } = guardFixture();
+
+    await expect(service.add({ cron: '0 8 * * *', prompt: 'x', session: 'new' }, 'web#main#t0', target)).rejects.toThrow(
+      /coordination topic an external caller opened, and it runs no agent turn/
+    );
+    expect(store.list()).toEqual([]);
+    expect(posted).toEqual([]);
+  });
+
+  it('refuses an edit that moves an agent run there', async () => {
+    const { service, store } = guardFixture();
+    const task = await service.addFromPanel(
+      { cron: '0 8 * * *', prompt: 'x', session: 'new' },
+      { platform: 'web', address: { channel: 'main', thread: 't1' } }
+    );
+
+    await expect(service.editFromPanel(task.id, {}, target)).rejects.toThrow(/runs no agent turn/);
+    expect(store.get(task.id)!.target.thread).toBe('t1');
+  });
+
+  it('refuses at the run too, for a task written before the topic existed', async () => {
+    const built = buildTask(
+      { cron: '0 8 * * *', prompt: 'x', session: 'new' },
+      {
+        now: NOW,
+        id: 'c0ffee',
+        defaultTz: 'Asia/Shanghai',
+        agents: ['cc'],
+        from: { key: 'web#main#t0', platform: 'web', agent: 'cc' },
+        target,
+        targetConversation: { key: COORD },
+        canOpenTopic: true,
+      }
+    );
+    if (!built.ok) throw new Error(built.error);
+    const { service, posted, runs } = guardFixture(built.task);
+
+    const out = await service.runTask('c0ffee', undefined, 5_000);
+    expect(out.run).toMatchObject({ status: 'failed', error: expect.stringMatching(/runs no agent turn/) });
+    expect(runs).toEqual([]);
+    expect(posted).toEqual([]);
+  });
+});

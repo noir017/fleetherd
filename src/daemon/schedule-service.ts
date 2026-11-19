@@ -74,7 +74,13 @@ export class ScheduleService {
     private readonly clock: { now(): number; schedule(fn: () => void, ms: number): () => void },
     private readonly store: ScheduleStore,
     /** `<configDir>/schedule-runs` — one directory of bash logs per task. */
-    private readonly runsDir: string
+    private readonly runsDir: string,
+    /**
+     * Whether a conversation is a coordination topic an external caller opened (daemon.ts
+     * externalOwner). Such a topic runs no agent turn (AGENTS.md security invariant 11), so no
+     * scheduled agent run may start in or post to one.
+     */
+    private readonly coordinationTopic: (key: ConversationId) => boolean = () => false
   ) {
     // The daemon's own zone (TZ, else the host's) is what "8 o'clock" means to whoever set it up.
     this.defaultTz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
@@ -179,8 +185,25 @@ export class ScheduleService {
     return platform;
   }
 
+  /**
+   * Refuse an agent run whose target is a coordination topic an external caller opened. That topic
+   * has no agent, and a scheduled turn there would be one outside the caller's ownership record
+   * (AGENTS.md security invariant 11). A bash task posts text but starts no turn, so it is not
+   * refused here.
+   */
+  private assertNotCoordinationTopic(task: ScheduleTask): void {
+    if (task.run.kind !== 'agent') return;
+    const key = this.registry.conversationAt(task.target.platform, targetAddress(task))?.key;
+    if (key !== undefined && this.coordinationTopic(key)) {
+      throw new Error(
+        `"${targetId(task.target)}" is a coordination topic an external caller opened, and it runs no agent turn; a scheduled task cannot run or post there`
+      );
+    }
+  }
+
   /** The model check, then the write and the card — the end of both adds. */
   private async commitAdd(task: ScheduleTask, caller: ConversationId | undefined): Promise<void> {
+    this.assertNotCoordinationTopic(task);
     if (task.run.kind === 'agent' && task.run.model !== undefined) {
       // The list is the agent's own (`/model` shows the same one), so a typo is refused HERE,
       // while the registering agent can still retry in this turn with a name that exists.
@@ -274,6 +297,7 @@ export class ScheduleService {
     input: Pick<EditTaskInput, 'model' | 'agent'>,
     caller: ConversationId | undefined
   ): Promise<void> {
+    this.assertNotCoordinationTopic(next);
     const named = input.model !== undefined || input.agent !== undefined;
     if (named && next.run.kind === 'agent' && next.run.model !== undefined) {
       const why = await this.registry.scheduledModelProblem(next.run.agent, next.run.model, caller);
@@ -637,6 +661,9 @@ export class ScheduleService {
     if (!platform) return { status: 'failed', error: `platform instance "${task.target.platform}" is not configured any more` };
     try {
       if (task.run.kind === 'bash') return await this.runBash(task, task.run, platform, planned, signal);
+      // A task written before its target became a coordination topic, or one whose topic was
+      // opened after it was added: refuse at the run too, never only at add/edit.
+      this.assertNotCoordinationTopic(task);
       return await this.runAgent(task, task.run, platform, planned);
     } catch (e) {
       return { status: 'failed', error: e instanceof Error ? e.message : String(e) };

@@ -1,6 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { afterAll, describe, expect, it } from 'vitest';
 import { renderResult } from './reverse.js';
 import type { ScheduleTaskView, SessionListResult, SessionReadResult, SessionSearchResult, TaskReadResult } from '../ipc/protocol.js';
+import { SkillLibrary } from '../daemon/skill-library.js';
+import { createSkill, writeSkillFile } from '../daemon/skills-store.js';
 
 /** What an agent reads for `sessions read`: the row fields it must not have to guess at. */
 
@@ -63,25 +68,27 @@ describe('sessions read output', () => {
 });
 
 describe('skills show output', () => {
-  const show = (data: Record<string, unknown>): string =>
-    renderResult({ kind: 'skills', action: 'show', name: 'deploy-check' }, data).stdout;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'reverse-skill-show-'));
+  afterAll(() => fs.rmSync(dir, { recursive: true, force: true }));
+  createSkill({ name: 'deploy-check', description: 'Use when checking a deploy', body: 'the body', now: 0 }, dir);
+  writeSkillFile({ name: 'deploy-check', file: 'references/more.md', content: 'more', now: 0 }, dir);
+  createSkill({ name: 'bare', description: 'Use when nothing else applies', body: 'bare body', now: 0 }, dir);
+  const library = new SkillLibrary(() => dir);
+  const asker = { agent: 'cc', host: 'local', harness: 'claude' };
+  const show = (name: string, file?: string): string =>
+    renderResult({ kind: 'skills', action: 'show', name }, library.show(name, file, asker, true, 0)).stdout;
 
   it('prints the skill\'s other files, which show --file reads one of', () => {
-    const out = show({
-      name: 'deploy-check',
-      file: 'SKILL.md',
-      version: 'abc',
-      status: 'active',
-      content: 'body',
-      files: ['scripts/check.sh', 'references/more.md'],
-    });
-    expect(out).toMatch(/^files: scripts\/check\.sh, references\/more\.md$/m);
-    expect(out).toContain('\n\nbody');
+    const out = show('deploy-check');
+    expect(out).toMatch(/^files: references\/more\.md$/m);
+    expect(out).toContain('\n\nthe body');
   });
 
-  it('prints no files line when there are none, or when one of them is what was read', () => {
-    expect(show({ name: 'x', file: 'SKILL.md', content: 'b' })).not.toMatch(/^files:/m);
-    expect(show({ name: 'x', file: 'references/a.md', content: 'b' })).not.toMatch(/^files:/m);
+  it('prints no files line when one of them is what was read, or when there are none', () => {
+    const one = show('deploy-check', 'references/more.md');
+    expect(one).toMatch(/^file: references\/more\.md$/m);
+    expect(one).not.toMatch(/^files:/m);
+    expect(show('bare')).not.toMatch(/^files:/m);
   });
 });
 

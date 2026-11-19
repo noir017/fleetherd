@@ -78,7 +78,7 @@ export class ExternalCalls {
             count: 0,
             note:
               total > 0
-                ? `${total} sub-task${total === 1 ? '' : 's'} in this topic; raise limit to list them`
+                ? `${total} sub-task${total === 1 ? '' : 's'} in this topic; raise limit to list ${total === 1 ? 'it' : 'them'}`
                 : 'this topic has no sub-tasks yet; propose one with action new',
           });
         }

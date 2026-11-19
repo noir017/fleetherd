@@ -1104,7 +1104,16 @@ export class Daemon {
     if (schedules) {
       // On the PACED adapters, like everything else: a scheduled run's notice and output wait their
       // turn on the chat's write budget.
-      this.schedules = new ScheduleService(config, this.platforms, this.registry, clock, schedules.store, schedules.runsDir);
+      this.schedules = new ScheduleService(
+        config,
+        this.platforms,
+        this.registry,
+        clock,
+        schedules.store,
+        schedules.runsDir,
+        // A coordination topic an external caller opened runs no agent turn (invariant 11).
+        (key) => this.externalTopics.get(key) !== undefined
+      );
     }
     if (history) {
       // Constructed even when `review:` is absent: the sweep is what checks that, so a `/reload`

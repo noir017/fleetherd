@@ -214,6 +214,21 @@ describe('ExternalCalls: tasks list', () => {
     };
     expect(out).toEqual({ count: 0, note: 'this topic has no sub-tasks yet; propose one with action new' });
   });
+
+  it('says how many a limit hid, in the caller\'s words and with the right singular', async () => {
+    const cases: Array<[number, string]> = [
+      [3, '3 sub-tasks in this topic; raise limit to list them'],
+      [1, '1 sub-task in this topic; raise limit to list it'],
+    ];
+    for (const [total, note] of cases) {
+      const r = rig({ taskList: { tasks: [], total } });
+      const topic = await open(r);
+      const out = decode(
+        await r.calls.call(GEM, { kind: 'task', in: topic, action: { kind: 'task-list', limit: 0 } })
+      ) as { count: number; note: string };
+      expect(out).toEqual({ count: 0, note });
+    }
+  });
 });
 
 describe('ExternalCalls: what the person types in a coordination topic', () => {
