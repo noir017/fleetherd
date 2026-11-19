@@ -4579,7 +4579,7 @@ describe('webui page: the settings page', () => {
   const INSTR = {
     dir: '/c/instructions',
     on: true,
-    global: [{ name: 'common.md', layer: 'common', exists: true, size: 5, agents: ['cc'] }],
+    global: [{ name: 'common.md', layer: 'common', exists: true, size: 5, agents: ['cc'], reach: 'every agent' }],
     agents: [
       { id: 'cc', harness: 'claude', host: 'box', own: '`@` references in `~/.claude/CLAUDE.md`' },
       { id: 'oc@box', harness: 'opencode', host: 'local' },
@@ -15946,8 +15946,8 @@ describe('webui page: the instruction editor', () => {
     dir: '/c/instructions',
     on: true,
     global: [
-      { name: 'common.md', layer: 'common', exists: true, size: 5, agents: ['cc', 'cx'] },
-      { name: 'claude.md', layer: 'claude', exists: false, agents: ['cc'] },
+      { name: 'common.md', layer: 'common', exists: true, size: 5, agents: ['cc', 'cx'], reach: 'every agent' },
+      { name: 'claude.md', layer: 'claude', exists: false, agents: ['cc'], reach: 'every Claude Code agent' },
     ],
     agents: [
       { id: 'cc', harness: 'claude', host: 'box', file: '~/.claude/CLAUDE.md', own: '`@` references in `~/.claude/CLAUDE.md`, and `~/.claude/rules`' },
@@ -16033,6 +16033,71 @@ describe('webui page: the instruction editor', () => {
       [null, 'Its own files', '@ references in ~/.claude/CLAUDE.md, and ~/.claude/rules · box', null],
     ]);
     expect(h.doc.querySelector('.ag-card[data-ag="cc"] .ag-file:not([data-instr-file]) .ag-fsub')?.innerHTML).toContain('<code>~/.claude/rules</code>');
+    // Every shared file has a reader, so there is no layer-no-one-reads row.
+    expect(h.doc.querySelector('[data-instr-orphans]')).toBeNull();
+  });
+
+  it('says who reads a shared file from the daemon, and names the layer when another kind shares it', async () => {
+    const shared = {
+      ...LIST,
+      global: [
+        { name: 'common.md', layer: 'common', exists: true, size: 5, agents: ['cc', 'mh'], reach: 'every agent' },
+        { name: 'claude.md', layer: 'claude', exists: true, size: 3, agents: ['cc', 'mh'], reach: 'the claude layer' },
+      ],
+    };
+    const h = await opened({}, shared);
+    expect(h.doc.querySelector('.ag-card[data-ag="cc"] [data-instr-file="g:claude.md"] .ag-fsub')?.textContent).toBe(
+      'the claude layer · 2 read it'
+    );
+    await h.click('.ag-card[data-ag="cc"] [data-instr-file="g:claude.md"]');
+    await until('the editor', () => Boolean(editor(h)));
+    expect(h.el('files-tree-list').querySelector('[data-fx-file="g:claude.md"] .fx-sub')?.textContent).toBe('the claude layer');
+  });
+
+  it('lists a layer file no agent reads under the Agents cards, and opens it so it can be cleared', async () => {
+    const ORPHAN = 'api/instructions/read?scope=global&name=mh.md';
+    const mhFile = {
+      ok: true,
+      path: '/c/instructions/mh.md',
+      dir: '/c/instructions',
+      name: 'mh.md',
+      size: 4,
+      mtimeMs: 11,
+      kind: 'text',
+      text: 'old\n',
+      eol: 'lf',
+      sha256: SHA,
+    };
+    const list = {
+      ...LIST,
+      global: [...LIST.global, { name: 'mh.md', layer: 'mh', exists: true, size: 4, agents: [], reach: 'the mh layer' }],
+    };
+    const h = await opened({ [ORPHAN]: mhFile, 'api/instructions/write': { ok: true, mtimeMs: 12, size: 0, sha256: 'a'.repeat(64) } }, list);
+    const row = h.doc.querySelector('[data-instr-orphans]');
+    expect(row?.textContent).toContain('Instructions no agent reads');
+    expect(row?.textContent).toContain('mh.md');
+    // common.md is on every agent's card, never a layer no one reads.
+    expect(row?.textContent).not.toContain('common.md');
+    await h.click('[data-instr-orphans]');
+    await until('the tree', () => tree(h).includes('g:mh.md'));
+    expect(tree(h)).toEqual(['g:mh.md']);
+    expect(h.el('files-title').textContent).toBe('Instructions no agent reads');
+    expect(h.el('files-tree-list').querySelector('[data-fx-file="g:mh.md"] .fx-sub')?.textContent).toBe('the mh layer · no agent reads it');
+    await h.click('[data-fx-file="g:mh.md"]');
+    await until('the editor', () => Boolean(editor(h)));
+    expect(editor(h).value).toBe('old\n');
+    type(h, '');
+    await h.click('#files-save');
+    await until('the save', () => writes(h).length === 1);
+    expect(writes(h)[0]!.body).toEqual({ scope: 'global', name: 'mh.md', text: '', mtimeMs: 11, size: 4, sha256: SHA });
+    await until('the answer', () => /Saved/.test(h.el('files-note').textContent ?? ''));
+    expect(h.el('files-note').textContent).toContain('No configured agent reads this file.');
+  });
+
+  it('never counts common.md as a layer no agent reads, even with no agent configured', async () => {
+    const list = { ...LIST, global: [{ name: 'common.md', layer: 'common', exists: true, size: 5, agents: [], reach: 'every agent' }] };
+    const h = await opened({}, list);
+    expect(h.doc.querySelector('[data-instr-orphans]')).toBeNull();
   });
 
   it('opens a shared file in the file window, on that agent’s whole list, without the controls a fixed list has no use for', async () => {

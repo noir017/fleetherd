@@ -106,13 +106,16 @@ its own on its machine. A row opens the agent's whole list in the same editor th
 [file window](web-ui.md) uses — the same save, and the same check that the file did not change
 since you opened it. There is no list of the gateway's files apart from the agents: `common.md` is
 on every card, and the agent's layer file — `claude.md`, or the layer its `instructions` names (its
-id by default) — on every card that reads it, each marked with how many agents read it, because
-that is who an edit reaches.
+id by default) — on every card that reads it, each marked with who reads it and how many, because
+that is who an edit reaches. A layer that only its own kind reads says *every Claude Code agent*;
+when another kind shares it, or one of that kind reads a different layer, it says *the claude layer*
+instead — and a file no agent reads says so.
 
 An agent whose delivery is off — a pod's agent whose file another agent on that machine already
 delivers with a different layer — says **Not delivering** on its card instead of listing that file
 among the ones it gets. Its layer file stays in the list and editable, and **Its own files** still
-opens, so the clash can be fixed from the page.
+opens, so the clash can be fixed from the page. If no other agent reads that layer, the file is
+listed under **Instructions no agent reads**, like any layer with no reader.
 
 ```yaml
 platforms:
@@ -135,6 +138,14 @@ on every machine an agent that reads it is configured for; the editor then says 
 host that does not answer gets it the next time an agent starts there. A save that would put any
 agent over 32 KiB is refused before anything is written. Sessions already running keep what they
 read when they started.
+
+**A layer whose agent is gone.** Deleting or renaming the last agent that read a layer — a custom
+layer, or a preset one like `codex` — leaves its `<layer>.md` in the directory. It stays listed,
+once, as **Instructions no agent reads** — under the Agents cards, or at the foot of the page when
+there are no agent cards. Open it and save it empty, so a later agent given that layer does not
+inherit the old text. The gateway does not delete the file for you. On a case-sensitive filesystem,
+a file that differs from a known layer only in case — `Codex.md` beside `codex.md` — is not listed
+as an orphan layer either; delete it by hand.
 
 **Each agent's own files.** An agent whose harness reads instruction files of its own on its
 machine — besides the one the gateway places — lists them under the shared ones (on the card, as one

@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { AgentDef } from '../config/schema.js';
 import { configDir } from '../config/load.js';
-import { instructionsHome, instructionsOff, type InstructionsHome } from '../config/instructions.js';
+import { instructionsHome, instructionsOff, isInstructionLayer, type InstructionsHome } from '../config/instructions.js';
 import { selfInvocation } from './reverse-cli-shim.js';
 import { envOf, isUnderEitherName } from '../legacy-name.js';
 
@@ -85,9 +85,11 @@ export type Composed = { kind: 'text'; text: string } | { kind: 'none' } | { kin
 /**
  * `common.md`, then `<name>.md`, from `dir`, each trimmed and joined by a blank line. A missing file
  * is an empty layer; any other read error is thrown — an unreadable file must not read as "nothing
- * to deliver", which would take the link back.
+ * to deliver", which would take the link back. A name that is not a layer is nothing to deliver:
+ * `readLayer` joins it to `dir`, so `../x` would otherwise read outside the gateway's directory.
  */
 export function composeInstructions(dir: string, name: string): Composed {
+  if (!isInstructionLayer(name)) return { kind: 'none' };
   return joinLayers(['common.md', `${name}.md`].map((file) => readLayer(dir, file)));
 }
 

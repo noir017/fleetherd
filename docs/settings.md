@@ -59,8 +59,11 @@ each row is changed in place with the control that fits it:
     dropdown where one has a long name), with what the chosen level does under it —
     or the level as plain text where it is the only one.
   - **Instructions**, with the [instruction editor](instructions.md#editing-them-in-the-web-ui)
-    on: every file that agent reads — the shared ones kept on the gateway, marked by
-    how many agents read them, then its own on its machine.
+    on: every file that agent reads — the shared ones kept on the gateway, marked with who
+    reads them and how many (`every Claude Code agent`, or `the claude layer` when another
+    kind of agent shares it), then its own on its machine. A layer file no agent reads — left
+    by an agent that is gone, or one whose delivery is off — is listed once under the cards, as
+    *Instructions no agent reads* — or at the foot of the page when there are no agent cards.
 
 What each change did is said in a banner at the top — saved, already set, or why
 it was refused — and a request that never reached the gateway puts the control

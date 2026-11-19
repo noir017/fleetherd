@@ -101,11 +101,14 @@ export function harnessSources(def: InstructionsAgent, home: string): HarnessSou
   if (!where) return undefined;
   const P = path.posix;
   const at = (...p: string[]): string => P.join(home, ...p);
+  // The delivered file as the page names it: an agent's `instructions.file` may have moved it, and
+  // a summary that kept naming the harness's default file would send the person to the wrong one.
+  const delivered = home && where.file.startsWith(`${home}/`) ? `~/${where.file.slice(home.length + 1)}` : where.file;
   switch (harnessKind(def.harness, def.command)) {
     case 'claude':
       return {
         delivered: where.file,
-        summary: '`@` references in `~/.claude/CLAUDE.md`, and `~/.claude/rules`',
+        summary: `\`@\` references in \`${delivered}\`, and \`~/.claude/rules\``,
         files: [],
         ruleDirs: [at('.claude', 'rules')],
         syntax: { references: claudeReferences, resolve: resolveClaudeReference, hops: 4 },
@@ -113,7 +116,7 @@ export function harnessSources(def: InstructionsAgent, home: string): HarnessSou
     case 'codebuddy':
       return {
         delivered: where.file,
-        summary: '`@` references in `~/.codebuddy/CODEBUDDY.md`, and `~/.codebuddy/rules`',
+        summary: `\`@\` references in \`${delivered}\`, and \`~/.codebuddy/rules\``,
         files: [],
         ruleDirs: [at('.codebuddy', 'rules')],
         syntax: { references: codebuddyReferences, resolve: resolveAgainstFile, hops: 4 },

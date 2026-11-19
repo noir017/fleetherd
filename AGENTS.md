@@ -409,14 +409,23 @@ Do not weaken these without saying so explicitly in the PR:
    that are not the page's — which a message to one agent never is. With it off there is no
    section and every `/api/instructions…` route answers 404, whether or not the daemon handed the
    page a panel. Reach is fixed by the daemon, never by the page (`daemon/instructions-panel.ts`):
-   the gateway's own files by name (`common.md` and the `<layer>.md` names in `HARNESS_LAYERS`), and
-   on an agent's machine only the files that agent's harness reads at that moment — its rules, the
-   files its instruction files reference, what its config lists (`instruction-imports.ts`
-   `harnessSources`) — walked again on that machine for every read and write, so a reference taken
-   out closes its file. That walk follows what the files say, so whatever a reference names is
-   readable and writable through it, as the agent's own user: the text that names it is the
-   operator's (or, for a host's own files, already the agent's to write), and the editor does
-   not go beyond it. The gateway's delivered copies on a host are listed and never written here.
+   the gateway's own files by name (`common.md`, every layer a configured agent is placed on — an
+   agent whose delivery is off still names its layer — and, as orphans, every other legal
+   `<layer>.md` in that directory that is a regular file: a layer left behind by an agent that is
+   gone; a name that differs from a known layer only in case is not a second layer, and a layer
+   name is a plain file name or nothing — `config/instructions.ts` `isInstructionLayer` guards
+   `instructionsHome` and `composeInstructions`, so a name with `/` or `..` never becomes a path).
+   A known layer's file is followed through a symlink for both reading and writing — deliberate,
+   because a dotfile kept in a repository and linked into place is the normal arrangement (the
+   reason invariant 9 gives for the file window); `lstat` is used only to keep a link from being
+   discovered as an orphan layer of its own. And on an agent's machine only the files that agent's
+   harness reads at that moment — its rules, the files its instruction files reference, what its
+   config lists (`instruction-imports.ts` `harnessSources`) — walked again on that machine for
+   every read and write, so a reference taken out closes its file. That walk follows what the files
+   say, so whatever a reference names is readable and writable through it, as the agent's own user:
+   the text that names it is the operator's (or, for a host's own files, already the agent's to
+   write), and the editor does not go beyond it. The gateway's delivered copies on a host are
+   listed and never written here.
    Writes go through `Workspace.writeFile` with the same version check as the file window; a save of
    a global file is placed on every machine at once and refused before it is written if any agent
    would get more than the delivery cap; every write is logged with who, which machine and which

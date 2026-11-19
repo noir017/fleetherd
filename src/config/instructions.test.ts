@@ -86,6 +86,23 @@ describe('instructionsHome', () => {
     ).toMatchObject({ file: '/a/y/F' });
   });
 
+  it('refuses a layer that is not a plain file name, so nothing can be read outside the directory', () => {
+    for (const layer of ['../x', 'a/b', '..', 'Common', 'COMMON', '.hidden', '']) {
+      expect(
+        instructionsHome({ id: 'mh', harness: 'custom', command: 'my-harness', instructions: { file: '~/f.md', layer } }, '/h'),
+        layer
+      ).toBeUndefined();
+    }
+    // The id is the default layer, and an id that is not a file name delivers nothing either.
+    expect(
+      instructionsHome({ id: 'mh@box', harness: 'custom', command: 'my-harness', instructions: { file: '~/f.md' } }, '/h')
+    ).toBeUndefined();
+    // A legal custom layer still resolves.
+    expect(
+      instructionsHome({ id: 'mh', harness: 'custom', command: 'my-harness', instructions: { file: '~/f.md', layer: 'my-harness' } }, '/h')
+    ).toMatchObject({ name: 'my-harness' });
+  });
+
   it('keeps the placement of an agent whose delivery the merge turned off, and says it is off', () => {
     const off = { file: '~/.claude/CLAUDE.md', layer: 'claude', off: true as const };
     expect(instructionsHome({ id: 'cc', harness: 'claude', instructions: off }, '/h')).toEqual({

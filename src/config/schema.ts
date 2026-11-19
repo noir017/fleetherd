@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { ToolMode as ToolModeType, TurnFailureReason } from '../types.js';
 import { PlatformConfigSchema, type PlatformInstance } from '../platform/config-schemas.js';
-import { instructionClashes, instructionConflictMessage } from './instructions.js';
+import { INSTRUCTION_LAYER_RE, instructionClashes, instructionConflictMessage, isInstructionLayer } from './instructions.js';
 
 /**
  * Config schema + defaults.
@@ -69,22 +69,12 @@ const InstructionFileSchema = z
     message: "instructions.file is the file on the agent's host: `~/…` or an absolute path",
   });
 
-/**
- * The layer's name becomes `<layer>.md` in the gateway's instructions directory: a plain file name.
- * `common` is compared without regard to case: on a case-insensitive filesystem `Common.md` IS
- * `common.md`, so such a layer would hand its agent the common text twice.
- */
 const InstructionLayerSchema = z
   .string()
-  .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/, 'instructions.layer is a file name: letters, digits, dot, dash and underscore')
+  .regex(INSTRUCTION_LAYER_RE, 'instructions.layer is a file name: letters, digits, dot, dash and underscore')
   .refine((l) => l.toLowerCase() !== 'common', {
     message: 'instructions.layer cannot be "common": common.md is the layer every agent gets',
   });
-
-/** Whether `layer` can name a `<layer>.md` beside `common.md`. */
-function instructionLayerOk(layer: string): boolean {
-  return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(layer) && layer.toLowerCase() !== 'common';
-}
 
 /**
  * Where an agent's harness reads the operator's instructions, when the gateway cannot know it: any
@@ -320,7 +310,7 @@ function agentRules<
     })
     // The layer defaults to the id, which is an id rather than a file name: refuse one that could
     // escape the instructions directory instead of quietly delivering somewhere else.
-    .refine((a) => !a.instructions || instructionLayerOk(a.instructions.layer ?? a.id), {
+    .refine((a) => !a.instructions || isInstructionLayer(a.instructions.layer ?? a.id), {
       message: 'instructions.layer defaults to the agent id, which is not a file name here; set instructions.layer',
       path: ['instructions', 'layer'],
     });
