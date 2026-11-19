@@ -28,15 +28,15 @@ import { DEFAULT_RUN_TIMEOUT_MS, type Workspace, type WorkspaceRunResult, type W
  * ancestor of that store (`$HOME` itself, say), the store's own path is written into its
  * `info/exclude` first: otherwise `git add` refuses the nested repository.
  *
- * ── `sh -c`, for three fixed scripts ────────────────────────────────────────
+ * ── `sh -c`, for two fixed scripts ─────────────────────────────────────────
  * `Workspace.run` takes argv and never a shell, which is what keeps a path with a space or a `;`
  * in it from becoming a command. The cost is that `~` is not expanded: argv is handed to exec as
  * written. So the home directory of the machine the agent runs on is read with a FIXED script —
- * `printf %s "${HOME:-}"` — and a file is removed, or the exclude line written, with a fixed
- * script whose dynamic parts are positional arguments, never spliced into the text. The
- * alternative, one interpolated command string per call, is the thing that rule exists to
- * prevent. A machine with no `sh` (Windows) simply gets no turn changes: the snapshot is skipped
- * and the turn goes on.
+ * `printf %s "${HOME:-}"` — and a file is removed with a fixed script whose dynamic parts are
+ * positional arguments, never spliced into the text. The exclude line is not a script at all: it
+ * goes through `writeFile`, a temporary beside it and a rename. The alternative, one interpolated
+ * command string per call, is the thing that rule exists to prevent. A machine with no `sh`
+ * (Windows) simply gets no turn changes: the snapshot is skipped and the turn goes on.
  *
  * ── Bounded, always ─────────────────────────────────────────────────────────
  * The start snapshot sits between the person's message and the agent reading it. Its git commands
@@ -99,6 +99,11 @@ const DIFF_CACHE = 64;
  * minutes — the very thing the busy/slow split exists to prevent.
  */
 const MIN_QUEUED_BUDGET_MS = 500;
+/**
+ * The answer for a queued command that never ran because its budget went to the wait. It reads as
+ * a timeout, which is what happened to the snapshot: no process was killed, none was started.
+ */
+const NO_BUDGET: WorkspaceRunResult = { code: null, output: Buffer.alloc(0), stderr: '', truncated: false, timedOut: true };
 
 /**
  * An `index.lock` older than this belongs to nobody: a `git add` we killed at the deadline leaves
@@ -221,6 +226,8 @@ export class TurnChanges {
   private readonly numbering = new Map<string, number>();
   /** One snapshot at a time per snapshot repository — see `treeOf`. */
   private readonly treeChains = new Map<string, Promise<void>>();
+  /** One `git init` at a time per snapshot directory — see `initSnapshot`. */
+  private readonly initChains = new Map<string, Promise<void>>();
   /** How many snapshots are queued or running per repository — see `treeOf`'s budget floor. */
   private readonly treeBusy = new Map<string, number>();
   /** Conversations whose topic the page dropped; an end snapshot still running must not revive them. */
@@ -495,25 +502,74 @@ export class TurnChanges {
     const snapDir = `${dir}/.fleetherd/snapshots/${hash}`;
     const gitDir = `${snapDir}/.git`;
     // Idempotent, and cheap next to `add -A`; re-running it is what makes a wiped snapshot
-    // directory recover without a daemon restart.
-    const init = await git(ws, ['init', '-q', snapDir], { cwd: ws.root, timeoutMs: left(deadline) });
-    if (!init || init.code !== 0) return undefined;
+    // directory recover without a daemon restart. One at a time, though: see `initSnapshot`.
+    const init = await this.initSnapshot(ws, root, snapDir, deadline);
+    if (!init || init.code !== 0) {
+      this.log(`[changes] could not prepare ${snapDir} (${whyNoInit(init)}); no turn changes for ${root}`);
+      return undefined;
+    }
     // A work tree that CONTAINS the snapshot repository (`$HOME` as the project root, or a
     // `.fleetherd` somebody keeps inside a checkout) cannot be added to it: git sees a nested
     // repository with no commit and refuses the whole add. Our own `info/exclude` — inside our
     // git dir, never the project's — is enough to keep it out.
     const rel = relativeUnder(root, snapDir);
-    if (rel && !(await this.excludeSnapDir(ws, gitDir, rel, deadline))) {
+    if (rel && !(await this.excludeSnapDir(ws, gitDir, rel))) {
       this.log(`[changes] could not keep ${snapDir} out of ${root}; no turn changes there`);
       return undefined;
     }
     return { root, gitDir };
   }
 
-  /** Keep the snapshot repository out of its own work tree — see `repoOf`. */
-  private async excludeSnapDir(ws: Workspace, gitDir: string, rel: string, deadline: number): Promise<boolean> {
-    const r = await shell(ws, `mkdir -p "$(dirname "$1")" && printf '%s\\n' "$2" > "$1"`, [`${gitDir}/info/exclude`, `/${rel}/`], left(deadline));
-    return r?.code === 0;
+  /**
+   * `git init` for one snapshot directory, one at a time.
+   *
+   * Re-running it is what recovers a wiped snapshot directory, but running it twice AT ONCE on the
+   * same directory is not safe: it takes `.git/config`'s lock and copies the template hooks, and
+   * the loser fails with "File exists" — which used to drop that turn's snapshot silently
+   * (2026-11-19, the release workflow's Test step). Two topics in one directory is the documented
+   * normal case (see the header), and their starts reach this together.
+   */
+  private initSnapshot(ws: Workspace, root: string, snapDir: string, deadline: number): Promise<WorkspaceRunResult | undefined> {
+    const previous = this.initChains.get(snapDir) ?? Promise.resolve();
+    const run = previous.then(() => {
+      // A start that waited its budget away must not spawn a command it cannot finish: the kill
+      // would be logged as git's timeout, not the wait's, and the process is wasted. (`treeOf`
+      // keeps the same floor for the same reason.)
+      if (Date.now() >= deadline) return NO_BUDGET;
+      return git(ws, ['init', '-q', snapDir], { cwd: root, timeoutMs: left(deadline) });
+    });
+    const settled = run.then(
+      () => undefined,
+      () => undefined
+    );
+    this.initChains.set(snapDir, settled);
+    // Dropped once it is the last one through: a process that has seen many repositories must not
+    // keep one promise per snapshot directory for its lifetime.
+    void settled.then(() => {
+      if (this.initChains.get(snapDir) === settled) this.initChains.delete(snapDir);
+    });
+    return run;
+  }
+
+  /**
+   * Keep the snapshot repository out of its own work tree — see `repoOf`.
+   *
+   * Through `writeFile`'s temporary-beside-it and rename, never a shell redirect: a redirect
+   * truncates the file in place, and a `git add` from the other start of the same repository
+   * could read it empty and sweep the store into the tree (2026-11-19 review).
+   *
+   * No deadline of its own: the write is idempotent, `start` races the whole snapshot against
+   * `SNAPSHOT_START_TIMEOUT_MS`, and a write that race leaves behind is bounded by the
+   * workspace's 30 s remote cap.
+   */
+  private async excludeSnapDir(ws: Workspace, gitDir: string, rel: string): Promise<boolean> {
+    try {
+      await ws.mkdirp(`${gitDir}/info`);
+      await ws.writeFile(`${gitDir}/info/exclude`, Buffer.from(`/${rel}/\n`), { force: true });
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   /**
@@ -948,6 +1004,14 @@ function left(deadline: number): number {
   return Math.max(1, deadline - Date.now());
 }
 
+/** Why an init left no snapshot, in one line — never `exit null` for a kill or a missing command. */
+function whyNoInit(r: WorkspaceRunResult | undefined): string {
+  if (!r) return 'no answer';
+  if (r.timedOut) return 'timed out';
+  if (r.code === null) return r.spawnError ?? 'did not run';
+  return lastLine(r.stderr) ?? `exit ${r.code}`;
+}
+
 /** The last line of a command's output that says anything, for a one-line log. */
 function lastLine(text: string): string | undefined {
   const lines = text
@@ -977,9 +1041,9 @@ async function git(
 /**
  * A fixed script run through `sh -c`, its dynamic half passed as positional arguments.
  *
- * The only uses are reading `$HOME`, unlinking a file, and writing the exclude line (see the
- * header). Nothing a person or an agent typed ever lands in the script text: the arguments after
- * `fleetherd` are `$1`, `$2`, …, and the script itself is a constant.
+ * The only uses are reading `$HOME` and unlinking a file (see the header). Nothing a person or an
+ * agent typed ever lands in the script text: the arguments after `fleetherd` are `$1`, `$2`, …,
+ * and the script itself is a constant.
  */
 async function shell(
   ws: Workspace,
