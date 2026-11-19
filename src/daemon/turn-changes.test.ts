@@ -59,6 +59,8 @@ interface Bench {
   ran: Ran[];
   platform: PlatformAdapter;
   entries: Array<{ address: ConversationAddress; entry: TurnChangeEntry; reply?: MessageRef }>;
+  /** What the service said, for a test about a snapshot it refused. */
+  logs: string[];
   /** Wait for the next entry to arrive (the end snapshot is not awaited by the turn). */
   next: () => Promise<TurnChangeEntry>;
 }
@@ -69,6 +71,7 @@ function bench(o: { files?: Record<string, string>; ws?: (ws: Workspace) => Work
   const spy = spyWorkspace(repo);
   const ws = o.ws ? o.ws(spy.ws) : spy.ws;
   const entries: Bench['entries'] = [];
+  const logs: string[] = [];
   const waiting: Array<() => void> = [];
   const platform = {
     attachTurnChanges(address: ConversationAddress, entry: TurnChangeEntry, reply?: MessageRef) {
@@ -80,7 +83,7 @@ function bench(o: { files?: Record<string, string>; ws?: (ws: Workspace) => Work
     dir,
     clock: { now: () => 1_700_000_000_000 },
     workspaceFor: () => ws,
-    log: () => {},
+    log: (line) => logs.push(line),
     // Real git under a loaded machine (the full suite) can take seconds; the production 3 s budget
     // would turn that into a flaky "no snapshot". A test about the budget sets its own.
     startTimeoutMs: 30_000,
@@ -104,7 +107,7 @@ function bench(o: { files?: Record<string, string>; ws?: (ws: Workspace) => Work
         take();
       });
     });
-  return { changes, repo, dir, ws, ran: spy.ran, platform, entries, next };
+  return { changes, repo, dir, ws, ran: spy.ran, platform, entries, logs, next };
 }
 
 /** Start a turn and hang the entry off a reply, as the runner does at turn end. */
@@ -223,6 +226,33 @@ describe('turn changes: bounded, and not repeated when a directory is slow', () 
     expect(await slow.changes.start(ID, REF, slow.platform, ADDRESS)).toBeUndefined();
     expect(Date.now() - began).toBeLessThan(1_000);
     expect(slow.ran.length).toBe(calls);
+  });
+
+  it('does not start a queued init whose budget went to the wait', async () => {
+    // The first init holds the queue past the second start's deadline. The second must not spawn
+    // a git it cannot wait for, and the log must say the wait timed out — never `exit null`.
+    let inits = 0;
+    const slow = bench({
+      opts: { startTimeoutMs: 150 },
+      ws: (ws) => ({
+        ...ws,
+        run: async (argv, o) => {
+          if (argv[1] === 'init') {
+            inits += 1;
+            if (inits === 1) await new Promise((r) => setTimeout(r, 300));
+          }
+          return ws.run(argv, o);
+        },
+      }),
+    });
+    const both = await Promise.all([
+      slow.changes.start(ID, REF, slow.platform, ADDRESS),
+      slow.changes.start(ID, REF, slow.platform, ADDRESS),
+    ]);
+    expect(both).toEqual([undefined, undefined]);
+    await within(() => slow.logs.some((l) => l.includes('(timed out)')));
+    expect(inits).toBe(1);
+    expect(slow.logs.join('\n')).not.toContain('exit null');
   });
 
   it('never lets the end snapshot hold the turn open', async () => {
@@ -631,6 +661,62 @@ describe('turn changes: the repository it keeps', () => {
       const answer = await changes.status(ID, REF, 1);
       if (!answer.ok) throw new Error(answer.text);
       expect(answer.files.map((f) => f.path)).toEqual(['a.txt']);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('replaces the exclude line, so an add beside it never sees it empty', async () => {
+    // The work tree that contains the snapshot store ($HOME as the project root) needs
+    // `info/exclude`; two starts of one repository rewrite the same line. A redirect would truncate
+    // it first, and the other start's `git add` would read it empty and sweep the store into the
+    // tree. The write is held here to make that window as wide as it can be.
+    const root = repoWith({ 'a.txt': 'one\n' });
+    vi.stubEnv('HOME', root);
+    try {
+      const shown = { attachTurnChanges: () => {} } as unknown as PlatformAdapter;
+      const first = new TurnChanges({
+        dir: fs.mkdtempSync(path.join(os.tmpdir(), 'turn-changes-exclude-')),
+        clock: { now: () => 0 },
+        workspaceFor: () => localWorkspace(root),
+        log: () => {},
+      });
+      const warm = await first.start(ID, REF, shown, ADDRESS);
+      expect(warm).toBeDefined();
+      first.finish(warm!);
+      await within(async () => (await first.status(ID, REF, 1)).ok);
+
+      const snap = snapRoot(root);
+      const exclude = `${snap}/.git/info/exclude`;
+      const line = `/${path.relative(fs.realpathSync(root), snap)}/\n`;
+      expect(fs.readFileSync(exclude, 'utf8')).toBe(line);
+
+      let held = 0;
+      const base = localWorkspace(root);
+      const env = { GIT_DIR: `${snap}/.git`, GIT_WORK_TREE: fs.realpathSync(root), GIT_INDEX_FILE: `${snap}/check` };
+      const hooked: Workspace = {
+        ...base,
+        writeFile: async (p, data, want) => {
+          if (p !== exclude) return base.writeFile(p, data, want);
+          held += 1;
+          // The replacement is in flight and the rename has not happened: an `add` running now
+          // must still see the complete line, not an empty file.
+          const add = await base.run(['git', 'add', '-A'], { cwd: root, env });
+          expect(add.code).toBe(0);
+          const staged = (await base.run(['git', 'ls-files'], { cwd: root, env })).output.toString('utf8');
+          expect(staged.trim().split('\n')).toEqual(['a.txt']);
+          return base.writeFile(p, data, want);
+        },
+      };
+      const second = new TurnChanges({
+        dir: fs.mkdtempSync(path.join(os.tmpdir(), 'turn-changes-exclude-')),
+        clock: { now: () => 0 },
+        workspaceFor: () => hooked,
+        log: () => {},
+      });
+      expect(await second.start(ID, REF, shown, ADDRESS)).toBeDefined();
+      expect(held, 'the exclude is replaced through writeFile, not a redirect').toBe(1);
+      expect(fs.readFileSync(exclude, 'utf8')).toBe(line);
     } finally {
       vi.unstubAllEnvs();
     }

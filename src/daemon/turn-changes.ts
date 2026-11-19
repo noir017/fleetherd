@@ -99,6 +99,11 @@ const DIFF_CACHE = 64;
  * minutes — the very thing the busy/slow split exists to prevent.
  */
 const MIN_QUEUED_BUDGET_MS = 500;
+/**
+ * The answer for a queued command that never ran because its budget went to the wait. It reads as
+ * a timeout, which is what happened to the snapshot: no process was killed, none was started.
+ */
+const NO_BUDGET: WorkspaceRunResult = { code: null, output: Buffer.alloc(0), stderr: '', truncated: false, timedOut: true };
 
 /**
  * An `index.lock` older than this belongs to nobody: a `git add` we killed at the deadline leaves
@@ -500,7 +505,7 @@ export class TurnChanges {
     // directory recover without a daemon restart. One at a time, though: see `initSnapshot`.
     const init = await this.initSnapshot(ws, root, snapDir, deadline);
     if (!init || init.code !== 0) {
-      this.log(`[changes] could not prepare ${snapDir} (${init ? lastLine(init.stderr) ?? `exit ${init.code}` : 'no answer'}); no turn changes for ${root}`);
+      this.log(`[changes] could not prepare ${snapDir} (${whyNoInit(init)}); no turn changes for ${root}`);
       return undefined;
     }
     // A work tree that CONTAINS the snapshot repository (`$HOME` as the project root, or a
@@ -508,7 +513,7 @@ export class TurnChanges {
     // repository with no commit and refuses the whole add. Our own `info/exclude` — inside our
     // git dir, never the project's — is enough to keep it out.
     const rel = relativeUnder(root, snapDir);
-    if (rel && !(await this.excludeSnapDir(ws, gitDir, rel, deadline))) {
+    if (rel && !(await this.excludeSnapDir(ws, gitDir, rel))) {
       this.log(`[changes] could not keep ${snapDir} out of ${root}; no turn changes there`);
       return undefined;
     }
@@ -526,7 +531,13 @@ export class TurnChanges {
    */
   private initSnapshot(ws: Workspace, root: string, snapDir: string, deadline: number): Promise<WorkspaceRunResult | undefined> {
     const previous = this.initChains.get(snapDir) ?? Promise.resolve();
-    const run = previous.then(() => git(ws, ['init', '-q', snapDir], { cwd: root, timeoutMs: left(deadline) }));
+    const run = previous.then(() => {
+      // A start that waited its budget away must not spawn a command it cannot finish: the kill
+      // would be logged as git's timeout, not the wait's, and the process is wasted. (`treeOf`
+      // keeps the same floor for the same reason.)
+      if (Date.now() >= deadline) return NO_BUDGET;
+      return git(ws, ['init', '-q', snapDir], { cwd: root, timeoutMs: left(deadline) });
+    });
     const settled = run.then(
       () => undefined,
       () => undefined
@@ -540,10 +551,21 @@ export class TurnChanges {
     return run;
   }
 
-  /** Keep the snapshot repository out of its own work tree — see `repoOf`. */
-  private async excludeSnapDir(ws: Workspace, gitDir: string, rel: string, deadline: number): Promise<boolean> {
-    const r = await shell(ws, `mkdir -p "$(dirname "$1")" && printf '%s\\n' "$2" > "$1"`, [`${gitDir}/info/exclude`, `/${rel}/`], left(deadline));
-    return r?.code === 0;
+  /**
+   * Keep the snapshot repository out of its own work tree — see `repoOf`.
+   *
+   * Through `writeFile`'s temporary-beside-it and rename, never a shell redirect: a redirect
+   * truncates the file in place, and a `git add` from the other start of the same repository
+   * could read it empty and sweep the store into the tree (2026-11-19 review).
+   */
+  private async excludeSnapDir(ws: Workspace, gitDir: string, rel: string): Promise<boolean> {
+    try {
+      await ws.mkdirp(`${gitDir}/info`);
+      await ws.writeFile(`${gitDir}/info/exclude`, Buffer.from(`/${rel}/\n`), { force: true });
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   /**
@@ -978,6 +1000,14 @@ function left(deadline: number): number {
   return Math.max(1, deadline - Date.now());
 }
 
+/** Why an init left no snapshot, in one line — never `exit null` for a kill or a missing command. */
+function whyNoInit(r: WorkspaceRunResult | undefined): string {
+  if (!r) return 'no answer';
+  if (r.timedOut) return 'timed out';
+  if (r.code === null) return r.spawnError ?? 'did not run';
+  return lastLine(r.stderr) ?? `exit ${r.code}`;
+}
+
 /** The last line of a command's output that says anything, for a one-line log. */
 function lastLine(text: string): string | undefined {
   const lines = text
@@ -1007,9 +1037,9 @@ async function git(
 /**
  * A fixed script run through `sh -c`, its dynamic half passed as positional arguments.
  *
- * The only uses are reading `$HOME`, unlinking a file, and writing the exclude line (see the
- * header). Nothing a person or an agent typed ever lands in the script text: the arguments after
- * `fleetherd` are `$1`, `$2`, …, and the script itself is a constant.
+ * The only uses are reading `$HOME` and unlinking a file (see the header). Nothing a person or an
+ * agent typed ever lands in the script text: the arguments after `fleetherd` are `$1`, `$2`, …,
+ * and the script itself is a constant.
  */
 async function shell(
   ws: Workspace,
