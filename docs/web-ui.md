@@ -253,10 +253,11 @@ about a quarter of the bytes. The page itself is downloaded once per version: a 
 only asks the daemon whether it changed, and the first reload after an upgrade gets the
 new one. A tab you are not looking at stops receiving after 15 seconds and catches up
 the moment you come back to it, and going back to a topic you just left fetches only
-what was said since. Every topic waiting for your answer — green in the sidebar — is fetched
-in the background before you open it, in the order the sidebar lists them, and kept in
-the browser, so tapping it shows the conversation at once and fetches only what was said
-since — after a reload too. A reply that arrives while one is waiting is fetched again. Attached files go up as they are, not in a text encoding a third
+what was said since. Every topic that needs you — green in the sidebar, and a scheduled run
+or a sub-agent that has finished or is asking — is fetched in the background before you open
+it, in the order the sidebar lists them, and kept in the browser, so tapping it shows its
+latest state at once — after a reload too, and for a topic you left while it was still
+working. Anything that changes in it afterwards, an edit included, has it fetched again. Attached files go up as they are, not in a text encoding a third
 larger. Sends carry a nonce, so the page retries safely on a
 link that drops them. A send that gets no answer at all does not stay grey: after 15
 seconds (longer for a big attachment, up to 5 minutes) it turns red with **Retry**,

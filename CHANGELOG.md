@@ -5,6 +5,28 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **A topic that needs you opens on its latest state, including one you left mid-turn.** The
+  web UI's background fetch of "needs you" topics (3.1.0, 3.10.0) still left most taps waiting:
+  of 871 streams the live gateway opened from 2026-11-17 to 11-19, only a third found the page's
+  copy current — 27% sent the whole topic again, 41% replayed what the copy was missing. The page
+  kept three copies of a topic — the one held in memory after you left it, the cached record, and
+  the prefetched one — each with its own rule for being current, and opened whichever came first
+  in a fixed order rather than the newest. So the commonest case never benefited: a topic you
+  started, left, and came back to once it finished was skipped by the prefetch because it was held
+  in memory, and then opened on that copy, as it was when you left. Scheduled runs and finished
+  sub-agents were not fetched at all, and "current" meant the row's `lastAt`, which an edit does
+  not move. Each topic row now names its newest event (`last`, sent within 300 ms of any change);
+  the page keeps one copy per topic, in memory and IndexedDB, written only when it is newer, and a
+  copy is current exactly when it has reached the row's `last`. Everything that needs you is fetched
+  under that one rule — scheduled runs, sub-agents and topics this page left included — and opening
+  any topic is one path: put the copy up, resume the stream from it. A resumed stream also sends
+  each message once, as it now is, instead of every edit it went through. Measured in Chromium at
+  400 ms RTT / 500 kbps (`project-scripts/fleetherd-topic-copies/topics.mts`), tap to the final
+  reply on screen: a topic left mid-turn 538 → 125 ms, a scheduled run 929 → 109 ms, a finished
+  sub-agent 899 → 93 ms, each now opened with nothing missed and no "checking" line.
+
 ## [3.13.2] - 2026-11-19
 
 ### Fixed
