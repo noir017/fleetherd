@@ -131,6 +131,7 @@ import {
   addressOf,
   conversationKey,
   formatAddress,
+  formatTarget,
   parseTarget,
   type ConversationAddress,
   type ConversationRef,
@@ -270,6 +271,21 @@ const GATEWAY_QUERY_KINDS = {
 } as const satisfies Partial<Record<IpcAction['kind'], true>>;
 type GatewayQuery = Extract<IpcAction, { kind: keyof typeof GATEWAY_QUERY_KINDS }>;
 const isGatewayQuery = (a: IpcAction): a is GatewayQuery => a.kind in GATEWAY_QUERY_KINDS;
+
+/**
+ * Chat actions that write into the conversation they name. A coordination topic an external
+ * caller opened refuses all of them: only the gateway writes there (its 🔔 updates and the answer
+ * to what the person typed), never an agent (AGENTS.md security invariant 11).
+ */
+const COORDINATION_WRITE_ACTIONS: ReadonlySet<IpcAction['kind']> = new Set([
+  'send-message',
+  'reply',
+  'edit-message',
+  'send-file',
+  'react',
+  'delete',
+  'create-thread',
+]);
 
 /**
  * The conversation library's three questions (history/store.ts). Split from GATEWAY_QUERY_KINDS
@@ -1111,8 +1127,8 @@ export class Daemon {
         clock,
         schedules.store,
         schedules.runsDir,
-        // A coordination topic an external caller opened runs no agent turn (invariant 11).
-        (key) => this.externalTopics.get(key) !== undefined
+        // A coordination topic an external caller opened: no scheduled run, card or notice.
+        (platform, address) => this.externalTopics.get(platform, address) !== undefined
       );
     }
     if (history) {
@@ -1181,9 +1197,18 @@ export class Daemon {
     return { calls, mcp };
   }
 
-  /** The coordination topic an external caller opened, as Delegation reads it. */
+  /**
+   * The coordination topic an external caller opened, as Delegation reads it. The record is keyed
+   * by the topic's own id, so a conversation id computed under the current scope is resolved to
+   * its address first — by its lane, or, for a topic that never ran a turn, by asking each record
+   * what key it has now.
+   */
   private externalOwner(id: ConversationId): ExternalOwner | undefined {
-    const t = this.externalTopics.get(id);
+    const lane = this.registry.laneFor(id);
+    const t =
+      lane !== undefined
+        ? this.externalTopics.get(lane.platformId, lane.address)
+        : this.externalTopics.all().find((topic) => this.registry.conversationAt(topic.platform, topic.address)?.key === id);
     return t && { caller: t.caller, platform: t.platform, address: t.address, title: t.title };
   }
 
@@ -1464,9 +1489,10 @@ export class Daemon {
   }
 
   /**
-   * Adapter for the current reverse command: the instance a qualified `--channel` named, else the
-   * one the calling conversation is on. Reads the scratch slots (see lastResolvedConversationId:
-   * valid because this runs synchronously after resolveAddress within one dispatch).
+   * The adapter, and the instance id, for the current reverse command: the instance a qualified
+   * `--channel` named, else the one the calling conversation is on. Reads the scratch slots (see
+   * lastResolvedConversationId: valid because this runs synchronously after resolveAddress within
+   * one dispatch).
    *
    * An unqualified override still goes to the conversation's own instance, as it always has — an
    * address alone can't identify a platform. The qualified form (`tg:5865716608/8068`, what
@@ -1474,7 +1500,7 @@ export class Daemon {
    * The instance was already checked against config when IPC parsed the value, so a miss here means
    * the conversation expired, not that the agent named a platform that does not exist.
    */
-  private reverseAdapter(): PlatformAdapter {
+  private reverseAdapter(): { id: string; adapter: PlatformAdapter } {
     const id = this.lastResolvedConversationId;
     const pid = this.lastResolvedPlatform ?? (id ? this.registry.platformFor(id) : undefined);
     if (!pid) throw new Error('cannot resolve the platform instance for this reverse command (conversation expired?)');
@@ -1484,7 +1510,21 @@ export class Daemon {
     // resolve" reads as an expired conversation, and "cannot open a topic" would send the agent
     // looking for a `--session` workaround for what is really an outage.
     if (!adapter) throw new Error(`platform instance "${pid}" is not running`);
-    return adapter;
+    return { id: pid, adapter };
+  }
+
+  /**
+   * An agent may not write into a coordination topic an external caller opened: only the gateway
+   * posts there (its 🔔 updates and the answer to what the person typed). `--channel` is the
+   * agent's own declaration, so it is refused here rather than trusted (security invariant 11).
+   */
+  private assertAgentMayWrite(platformId: string | undefined, address: ConversationAddress, action: IpcAction): void {
+    if (!platformId || !COORDINATION_WRITE_ACTIONS.has(action.kind)) return;
+    if (this.externalTopics.get(platformId, address)) {
+      throw new Error(
+        `"${formatTarget(platformId, address)}" is a coordination topic an external caller opened; an agent cannot write there — only the gateway posts its updates and answers there`
+      );
+    }
   }
 
   /**
@@ -1517,7 +1557,7 @@ export class Daemon {
   /** Execute one reverse command (address already resolved and validated by IPC). */
   private async handleReverse(action: IpcAction, address: ConversationAddress): Promise<unknown> {
     // Resolve BEFORE any await: the conversation scratch slot is only synchronously valid.
-    const platform = this.reverseAdapter();
+    const { id: platformId, adapter: platform } = this.reverseAdapter();
     const conversation = this.lastResolvedConversationId;
     // A reverse command means the agent is still working for this conversation — even between turns,
     // which is the case idle reclaim would otherwise get wrong: a turn that ended after starting a
@@ -1530,6 +1570,7 @@ export class Daemon {
     if (isSessionsQuery(action)) return this.handleSessionsQuery(action);
     // Questions for the gateway itself, not actions on a chat — answered before the chat switch.
     if (isGatewayQuery(action)) return this.handleGatewayQuery(action, address);
+    this.assertAgentMayWrite(platformId, address, action);
     switch (action.kind) {
       case 'send-message':
         return platform.sendMessage(address, action.text);

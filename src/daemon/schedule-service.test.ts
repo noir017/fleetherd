@@ -6,6 +6,7 @@ import { buildTask, type ScheduleTask } from '../core/schedule.js';
 import { parseConfig } from '../config/schema.js';
 import { ScheduleService } from './schedule-service.js';
 import { ScheduleStore } from './schedule-store.js';
+import { ExternalTopics } from './external-topics.js';
 
 /**
  * `setTags` is the web panel's tag editor — the one write that is not `ScheduleService.op`.
@@ -406,7 +407,7 @@ describe('ScheduleService: an external caller\'s coordination topic', () => {
   const COORD = 'web#main#e1000000';
   const target = { platform: 'web', address: { channel: 'main', thread: 'e1000000' } };
 
-  function guardFixture(preloaded?: ScheduleTask) {
+  function guardFixture(preloaded?: ScheduleTask, isCoordinationTopic?: (platform: string, address: { channel: string; thread?: string }) => boolean) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aa-schedule-coordination-'));
     dirs.push(dir);
     const store = new ScheduleStore(path.join(dir, 'schedules.json'));
@@ -416,13 +417,13 @@ describe('ScheduleService: an external caller\'s coordination topic', () => {
       agents: [{ id: 'cc', harness: 'claude' }],
       routing: { default: 'cc' },
     });
-    const posted: Array<{ text: string }> = [];
+    const posted: Array<{ address: unknown; text: string }> = [];
     const runs: string[] = [];
     const platform = {
       capabilities: { maxMessageLength: 0, thread: true, standaloneThread: true },
       measureRendered: (t: string) => t.length,
       sendMessage: async (address: unknown, text: string) => {
-        posted.push({ text });
+        posted.push({ address, text });
         return { address, messageId: 'm' };
       },
     };
@@ -431,6 +432,7 @@ describe('ScheduleService: an external caller\'s coordination topic', () => {
       platformFor: () => 'web',
       boundAgentOf: () => 'cc',
       workdirOf: () => undefined,
+      laneFor: () => undefined,
       runScheduledPrompt: async () => {
         runs.push('run');
         return { status: 'ok' };
@@ -443,7 +445,7 @@ describe('ScheduleService: an external caller\'s coordination topic', () => {
       { now: () => NOW, schedule: () => () => {} },
       store,
       path.join(dir, 'runs'),
-      (key) => key === COORD
+      isCoordinationTopic ?? ((platform, address) => platform === 'web' && address.channel === 'main' && address.thread === 'e1000000')
     );
     return { service, store, posted, runs, dir };
   }
@@ -484,7 +486,7 @@ describe('ScheduleService: an external caller\'s coordination topic', () => {
     expect(store.get(task.id)!.target.thread).toBe('t1');
   });
 
-  it('refuses at the run too, for a task written before the topic existed', async () => {
+  it('refuses a manual run immediately, and a timed one at the run', async () => {
     const built = buildTask(
       { cron: '0 8 * * *', prompt: 'x', session: 'new' },
       {
@@ -499,10 +501,22 @@ describe('ScheduleService: an external caller\'s coordination topic', () => {
       }
     );
     if (!built.ok) throw new Error(built.error);
-    const { service, posted, runs } = guardFixture(built.task);
+    const { service, store, posted, runs } = guardFixture(built.task);
 
-    const out = await service.runTask('c0ffee', undefined, 5_000);
-    expect(out.run).toMatchObject({ status: 'failed', error: expect.stringMatching(/coordination topic an external caller opened/) });
+    // `schedule run` and the web UI's Run button: the refusal is the answer, now.
+    await expect(service.runTask('c0ffee', undefined, 5_000)).rejects.toThrow(/coordination topic an external caller opened/);
+    expect(() => service.op('c0ffee', 'run', undefined, false)).toThrow(/coordination topic an external caller opened/);
+    expect(runs).toEqual([]);
+    expect(posted).toEqual([]);
+
+    // A timer goes through the scheduler, not runTask: the run guard refuses it and records it.
+    const started = service.scheduler.runNow('c0ffee');
+    if (typeof started === 'string') throw new Error(started);
+    await started.done;
+    expect(store.get('c0ffee')!.lastRun).toMatchObject({
+      status: 'failed',
+      error: expect.stringMatching(/coordination topic an external caller opened/),
+    });
     expect(runs).toEqual([]);
     expect(posted).toEqual([]);
   });
@@ -525,9 +539,136 @@ describe('ScheduleService: an external caller\'s coordination topic', () => {
     if (!built.ok) throw new Error(built.error);
     const { service, posted } = guardFixture(built.task);
 
-    const out = await service.runTask('ba5h00', undefined, 5_000);
-    expect(out.run).toMatchObject({ status: 'failed', error: expect.stringMatching(/coordination topic an external caller opened/) });
+    await expect(service.runTask('ba5h00', undefined, 5_000)).rejects.toThrow(/coordination topic an external caller opened/);
+    expect(fs.existsSync(marker)).toBe(false);
+    const started = service.scheduler.runNow('ba5h00');
+    if (typeof started === 'string') throw new Error(started);
+    await started.done;
     expect(fs.existsSync(marker)).toBe(false);
     expect(posted).toEqual([]);
+  });
+
+  it('writes no card into the topic, for a change made after it was opened', async () => {
+    const built = buildTask(
+      { cron: '0 8 * * *', prompt: 'x', session: 'new' },
+      {
+        now: NOW,
+        id: 'ca4d00',
+        defaultTz: 'Asia/Shanghai',
+        agents: ['cc'],
+        from: { key: 'web#main#t0', platform: 'web', agent: 'cc' },
+        target,
+        canOpenTopic: true,
+      }
+    );
+    if (!built.ok) throw new Error(built.error);
+    const { service, posted } = guardFixture(built.task);
+
+    service.card(undefined, built.task, 'paused');
+    service.op('ca4d00', 'pause', 'web#main#t0');
+    service.op('ca4d00', 'resume', 'web#main#t0');
+    service.op('ca4d00', 'remove', 'web#main#t0');
+    expect(posted).toEqual([]);
+  });
+
+  it('moves a task out without writing the old coordination topic', async () => {
+    const built = buildTask(
+      { cron: '0 8 * * *', prompt: 'x', session: 'new' },
+      {
+        now: NOW,
+        id: 'm0ve00',
+        defaultTz: 'Asia/Shanghai',
+        agents: ['cc'],
+        from: { key: 'web#main#t0', platform: 'web', agent: 'cc' },
+        target,
+        canOpenTopic: true,
+      }
+    );
+    if (!built.ok) throw new Error(built.error);
+    const { service, posted } = guardFixture(built.task);
+
+    await service.editFromPanel('m0ve00', {}, { platform: 'web', address: { channel: 'main', thread: 't1' } });
+    // The card reaches the new target only; the topic it left is not written to.
+    expect(posted.map((p) => p.address)).toEqual([{ channel: 'main', thread: 't1' }]);
+  });
+
+  it('posts no expiry or missed notice into the topic', async () => {
+    const fixed = buildTask(
+      { cron: '0 8 * * *', prompt: 'x', session: 'fixed' },
+      {
+        now: NOW,
+        id: 'e771e0',
+        defaultTz: 'Asia/Shanghai',
+        agents: ['cc'],
+        from: { key: 'web#main#t0', platform: 'web', agent: 'cc' },
+        target,
+        targetConversation: { key: COORD },
+        canOpenTopic: true,
+      }
+    );
+    if (!fixed.ok) throw new Error(fixed.error);
+    const expired = guardFixture({ ...fixed.task, expiresAt: NOW - 1 });
+    expired.service.scheduler.start();
+    expect(expired.posted).toEqual([]);
+
+    // 10:00 Shanghai was due two hours before NOW: past the one-hour catch-up grace.
+    const missed = buildTask(
+      { cron: '0 10 * * *', prompt: 'x', session: 'new' },
+      {
+        now: NOW,
+        id: 'm155e0',
+        defaultTz: 'Asia/Shanghai',
+        agents: ['cc'],
+        from: { key: 'web#main#t0', platform: 'web', agent: 'cc' },
+        target,
+        canOpenTopic: true,
+      }
+    );
+    if (!missed.ok) throw new Error(missed.error);
+    // Registered before the 10:00 due time, and looked at two hours after it.
+    const late = guardFixture({ ...missed.task, createdAt: NOW - 3 * 3_600_000 });
+    late.service.scheduler.start();
+    await new Promise((r) => setImmediate(r));
+    expect(late.posted).toEqual([]);
+  });
+
+  it('keeps refusing after a scope change: the record is keyed by the topic, not the conversation', async () => {
+    const topicsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aa-schedule-topics-'));
+    dirs.push(topicsDir);
+    const file = path.join(topicsDir, 'external-topics.json');
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        version: 1,
+        topics: [
+          {
+            key: 'web#main#e1000000',
+            caller: 'gem',
+            platform: 'web',
+            address: { channel: 'main', thread: 'e1000000' },
+            title: '[gem] tasks',
+            openedAt: '2026-11-19T00:00:00.000Z',
+          },
+        ],
+      })
+    );
+    const topics = new ExternalTopics(file);
+    const built = buildTask(
+      { cron: '0 8 * * *', prompt: 'x', session: 'new' },
+      {
+        now: NOW,
+        id: '5c0pe0',
+        defaultTz: 'Asia/Shanghai',
+        agents: ['cc'],
+        // The conversation id the task was registered under, from a scope since reloaded away.
+        from: { key: 'web#main#e1000000@old-scope', platform: 'web', agent: 'cc' },
+        target,
+        canOpenTopic: true,
+      }
+    );
+    if (!built.ok) throw new Error(built.error);
+    const { service } = guardFixture(built.task, (platform, address) => topics.get(platform, address) !== undefined);
+
+    await expect(service.runTask('5c0pe0', undefined, 0)).rejects.toThrow(/coordination topic an external caller opened/);
   });
 });

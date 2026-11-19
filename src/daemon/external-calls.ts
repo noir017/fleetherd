@@ -155,7 +155,7 @@ export class ExternalCalls {
     if (!address.thread) throw new Error(`platform instance "${id}" opened no topic`);
     const key = this.deps.conversationAt(id, address)?.key;
     if (!key) throw new Error("this deployment's session scope gives a topic no conversation of its own");
-    this.deps.topics.add({ key, caller: caller.name, platform: id, address, title: name, openedAt: new Date(this.deps.now()).toISOString() });
+    this.deps.topics.add({ caller: caller.name, platform: id, address, title: name, openedAt: new Date(this.deps.now()).toISOString() });
     void adapter
       .sendMessage(
         address,
@@ -178,7 +178,10 @@ export class ExternalCalls {
     const rows: Array<Record<string, unknown>> = [];
     for (const t of this.deps.topics.of(caller.name)) {
       if (!this.present(t)) continue;
-      const list = (await this.deps.delegation.handleExternal(t.key, { kind: 'task-list', limit: 200 })) as TaskListResult;
+      // The record is keyed by the topic, not the conversation id, which moves with the scope.
+      const key = this.deps.conversationAt(t.platform, t.address)?.key;
+      if (!key) continue;
+      const list = (await this.deps.delegation.handleExternal(key, { kind: 'task-list', limit: 200 })) as TaskListResult;
       const busy = list.tasks.filter((r) => r.stage === 'working' || r.stage === 'retrying').length;
       rows.push({ topic: `${t.platform}:${formatAddress(t.address)}`, title: t.title, opened: t.openedAt, subtasks: list.total, working: busy });
     }
@@ -190,7 +193,7 @@ export class ExternalCalls {
   private present(t: ExternalTopic): boolean {
     const adapter = this.deps.platforms.get(t.platform);
     if (adapter?.hasThread?.(t.address) !== false) return adapter !== undefined;
-    this.deps.topics.remove(t.key);
+    this.deps.topics.remove(t.platform, t.address);
     console.log(`[external-mcp] forgot ${t.key}: the topic was deleted`);
     return false;
   }
@@ -200,7 +203,7 @@ export class ExternalCalls {
     const { id } = this.platform();
     const address = this.addressOf(caller, topic, id);
     const key = address ? this.deps.conversationAt(id, address)?.key : undefined;
-    const t = key ? this.deps.topics.get(key) : undefined;
+    const t = address ? this.deps.topics.get(id, address) : undefined;
     if (!key || !t || t.caller !== caller.name || t.platform !== id || !this.present(t)) throw notYours(topic);
     return key;
   }
@@ -240,14 +243,17 @@ export class ExternalCalls {
    * True when it was one; false hands the message on to routing as usual.
    */
   intercept(msg: InboundMessage): boolean {
+    const platform = msg.conversation.platform;
     const address = addressOf(msg.conversation);
-    const key = this.deps.conversationAt(msg.conversation.platform, address)?.key;
-    const t = key ? this.deps.topics.get(key) : undefined;
-    if (!key || !t || t.platform !== msg.conversation.platform) return false;
+    // By the topic's own id: the conversation id moves with the session scope, and this answer
+    // must not stop working when `/reload` changes it.
+    const t = this.deps.topics.get(platform, address);
+    if (!t || t.platform !== platform) return false;
+    const key = this.deps.conversationAt(platform, address)?.key;
     const adapter = this.deps.platforms.get(t.platform);
     let say: string;
     if (/^\/stop(\s|$)/i.test(msg.content.trim())) {
-      const n = this.deps.delegation.stopOpened(key);
+      const n = key ? this.deps.delegation.stopOpened(key) : 0;
       say = n ? `⏹ Stopped ${n} sub-agent${n === 1 ? '' : 's'} under this topic.` : 'Nothing under this topic was running.';
     } else {
       say =

@@ -5,6 +5,7 @@ import path from 'node:path';
 import { Daemon } from './daemon.js';
 import { ConversationStore } from './conversation-store.js';
 import { parseConfig } from '../config/schema.js';
+import { configDir } from '../config/load.js';
 import { callDaemon } from '../ipc/client.js';
 import type { ListChannelsResult } from '../ipc/protocol.js';
 import type { PlatformAdapter } from '../platform/adapter.js';
@@ -118,6 +119,43 @@ describe('--channel <instance>:<address>', () => {
     const resp = await callDaemon(r.socket, { kind: 'send-message', text: 'cross', channelId: 'web:main/t1' }, token);
     expect(resp).toMatchObject({ ok: true });
     expect(r.sent).toEqual([{ platform: 'web', address: { channel: 'main', thread: 't1' }, text: 'cross' }]);
+  });
+
+  it('refuses every agent write into an external caller\'s coordination topic', async () => {
+    // The record the entrance would have written; a v1 file on purpose (the daemon migrates it).
+    const dir = configDir();
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, 'external-topics.json'),
+      JSON.stringify({
+        version: 1,
+        topics: [
+          {
+            key: 'web#main#e1000000',
+            caller: 'gem',
+            platform: 'web',
+            address: { channel: 'main', thread: 'e1000000' },
+            title: '[gem] tasks',
+            openedAt: '2026-11-19T00:00:00.000Z',
+          },
+        ],
+      })
+    );
+    const r = await rig();
+    await r.inbound(TG_TOPIC, 'hello');
+    const token = r.tokens[0]!;
+    r.sent.length = 0;
+
+    const send = await callDaemon(r.socket, { kind: 'send-message', text: 'x', channelId: 'web:main/e1000000' }, token);
+    expect(send).toMatchObject({ ok: false });
+    expect((send as { error: string }).error).toMatch(/coordination topic an external caller opened/);
+    const reply = await callDaemon(
+      r.socket,
+      { kind: 'reply', text: 'x', messageId: 'm1', channelId: 'web:main/e1000000' },
+      token
+    );
+    expect(reply).toMatchObject({ ok: false });
+    expect(r.sent).toEqual([]);
   });
 
   it('keeps the unqualified form on the caller\'s platform, colons and all', async () => {

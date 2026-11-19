@@ -41,6 +41,7 @@ function rig(opts: { skills?: ExternalCallsDeps['skills']; taskList?: TaskListRe
   const handled: Array<{ key: string; kind: string }> = [];
   const searched: unknown[] = [];
   let next = 0;
+  let scope = '';
   const adapter = {
     capabilities: { thread: true },
     parentOf: (a: ConversationAddress) => (a.thread && parents.has(a.thread) ? { channel: 'main', thread: parents.get(a.thread)! } : undefined),
@@ -68,7 +69,7 @@ function rig(opts: { skills?: ExternalCallsDeps['skills']; taskList?: TaskListRe
     }),
     platforms: new Map([['web', adapter]]),
     topics,
-    conversationAt: (_p, a) => ({ key: keyOf(a) }),
+    conversationAt: (_p, a) => ({ key: `${keyOf(a)}${scope}` }),
     delegation: {
       handleExternal: async (key, action) => {
         handled.push({ key, kind: action.kind });
@@ -93,7 +94,7 @@ function rig(opts: { skills?: ExternalCallsDeps['skills']; taskList?: TaskListRe
     render: (action, data) => JSON.stringify({ kind: action.kind, data }),
     now: () => Date.UTC(2026, 10, 19),
   };
-  return { calls: new ExternalCalls(deps), topics, file, threads, parents, posted, handled, stopped, searched };
+  return { calls: new ExternalCalls(deps), topics, file, threads, parents, posted, handled, stopped, searched, setScope: (s: string) => (scope = s) };
 }
 
 const open = async (r: ReturnType<typeof rig>, caller = GEM, title?: string): Promise<string> => {
@@ -108,9 +109,9 @@ describe('ExternalCalls: open', () => {
     expect(topic).toBe('web:main/e1000000');
     expect(r.posted[0]).toEqual({ to: 'e1000000', text: '(created [gem] Trip plan)' });
     expect(r.posted[1]!.text).toMatch(/^Opened by \*\*gem\*\*, outside this gateway/);
-    expect(r.topics.get('web#main#e1000000')).toMatchObject({ caller: 'gem', platform: 'web', title: '[gem] Trip plan' });
+    expect(r.topics.get('web', { channel: 'main', thread: 'e1000000' })).toMatchObject({ caller: 'gem', platform: 'web', title: '[gem] Trip plan' });
     // Survives a restart: the record is the file.
-    expect(new ExternalTopics(r.file).of('gem').map((t) => t.key)).toEqual(['web#main#e1000000']);
+    expect(new ExternalTopics(r.file).of('gem').map((t) => t.key)).toEqual(['web:main/e1000000']);
     expect(fs.statSync(r.file).mode & 0o777).toBe(0o600);
   });
 
@@ -173,7 +174,7 @@ describe('ExternalCalls: ownership', () => {
     expect(listed.topics).toEqual([
       { topic: 'web:main/e2000000', title: '[gem] two', opened: '2026-11-19T00:00:00.000Z', subtasks: 2, working: 1 },
     ]);
-    expect(r.topics.get('web#main#e1000000')).toBeUndefined();
+    expect(r.topics.get('web', { channel: 'main', thread: 'e1000000' })).toBeUndefined();
     expect(decode(await r.calls.call(OTHER, { kind: 'topics' }))).toMatchObject({ count: 0 });
   });
 });
@@ -250,5 +251,22 @@ describe('ExternalCalls: what the person types in a coordination topic', () => {
     expect(r.posted.at(-1)!.text).toBe('⏹ Stopped 2 sub-agents under this topic.');
     // Any other topic goes on to routing.
     expect(r.calls.intercept(msg('aaaaaaaa', 'hello'))).toBe(false);
+  });
+
+  it('keeps answering and owning the topic after a scope change', async () => {
+    const r = rig();
+    const topic = await open(r, GEM, 'one');
+    // `/reload` with another session.scope: the same address now maps to a different conversation.
+    r.setScope('@scope2');
+
+    // The person typing is still answered, never routed to an agent.
+    expect(r.calls.intercept(msg('e1000000', 'hello'))).toBe(true);
+    expect(r.posted.at(-1)!.text).toMatch(/has no agent: nothing typed here reaches one/);
+    // Ownership is still found by the topic's own id, and delegation gets the key the new scope gives it.
+    await r.calls.call(GEM, { kind: 'task', in: topic, action: { kind: 'task-list' } });
+    expect(r.handled).toEqual([{ key: 'web#main#e1000000@scope2', kind: 'task-list' }]);
+    const listed = decode(await r.calls.call(GEM, { kind: 'topics' })) as { topics: unknown[] };
+    expect(listed.topics).toHaveLength(1);
+    expect(r.handled.at(-1)).toEqual({ key: 'web#main#e1000000@scope2', kind: 'task-list' });
   });
 });
