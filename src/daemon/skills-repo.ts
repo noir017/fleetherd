@@ -10,6 +10,7 @@ import {
   gitSync,
   hasHead,
   initRepo,
+  isMissingRef,
   isRepo,
 } from './skills-git.js';
 import type { Config } from '../config/schema.js';
@@ -364,8 +365,10 @@ function refExists(root: string, ref: string): boolean {
   try {
     gitSync(root, ['rev-parse', '--verify', '-q', ref]);
     return true;
-  } catch {
-    return false;
+  } catch (e) {
+    // A ref that has not been fetched yet is not there; git failing outright is not that.
+    if (isMissingRef(e)) return false;
+    throw e;
   }
 }
 

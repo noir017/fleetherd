@@ -109,11 +109,31 @@ export function gitAsync(cwd: string, args: string[], env: NodeJS.ProcessEnv, ti
   });
 }
 
+/** A git call that ran and exited non-zero. `status` is its exit code; absent when it never ran. */
+class GitError extends Error {
+  readonly status?: number;
+
+  constructor(message: string, status?: number) {
+    super(message);
+    this.name = 'GitError';
+    this.status = status;
+  }
+}
+
+/**
+ * Whether git exited 1 refusing a ref it was asked to resolve — `rev-parse --verify -q` does that
+ * for a ref that does not exist yet (a fresh repository's HEAD, a branch not fetched). Every other
+ * failure is git not answering at all, and must not read as "there is nothing there".
+ */
+export function isMissingRef(e: unknown): boolean {
+  return e instanceof GitError && e.status === 1;
+}
+
 function gitError(args: string[], e: unknown): Error {
-  const err = e as { stderr?: Buffer | string; message?: string; code?: string };
+  const err = e as { stderr?: Buffer | string; message?: string; code?: string; status?: number | null };
   if (err.code === 'ENOENT') return new Error('git is not installed; the managed skills need it');
   const stderr = err.stderr ? String(err.stderr).trim() : '';
-  return new Error(`git ${args[0]}: ${stderr || err.message || String(e)}`);
+  return new GitError(`git ${args[0]}: ${stderr || err.message || String(e)}`, typeof err.status === 'number' ? err.status : undefined);
 }
 
 let gitChecked: boolean | undefined;
@@ -147,8 +167,12 @@ export function hasHead(root: string): boolean {
   try {
     gitSync(root, ['rev-parse', '--verify', '-q', 'HEAD^{commit}']);
     return true;
-  } catch {
-    return false;
+  } catch (e) {
+    // Only a ref that does not resolve means "no commit yet". Anything else — git missing, the
+    // spawn refused, the directory not a repository — answered as false would read as an empty
+    // history, and a caller like the review's would silently see nothing was ever written.
+    if (isMissingRef(e)) return false;
+    throw e;
   }
 }
 
@@ -273,19 +297,22 @@ function parseLogRecord(rec: string): LogEntry {
  * `conversation`, committed at or after `sinceMs`, newest first and each once. `--grep` only
  * narrows: it matches a substring, and `telegram#1` is a prefix of `telegram#12`, so each hit's
  * trailer is compared whole before its paths count.
+ *
+ * `sinceMs` 0 means no cutoff. The cutoff is an ISO time, not `@<seconds>`: `--since` is parsed by
+ * git's approxidate, which reads `@0` as *now* and `@1` as the 1st of this month, so a small
+ * timestamp silently cut the log off at the moment it ran — a commit made in an earlier second
+ * was dropped (the flake this was found through, 2026-11-20). Git compares whole seconds, so the
+ * window starts at the second containing `sinceMs`: it can include a commit from that second,
+ * never drop one after it.
  */
 export function conversationCommitPaths(root: string, conversation: string, sinceMs: number): string[] {
   if (!hasHead(root)) return [];
   const needles = TRAILER_PREFIXES.map((p) => `${p}Conversation: ${conversation}`);
-  const log = gitSync(root, [
-    'log',
-    '-z',
-    `--since=@${Math.floor(sinceMs / 1000)}`,
-    '--fixed-strings',
-    ...needles.map((n) => `--grep=${n}`),
-    '--format=%H%x1f%B',
-    'HEAD',
-  ]);
+  const args = ['log', '-z'];
+  // Whole seconds, which is all git compares: the fraction would be dropped anyway.
+  if (Number.isFinite(sinceMs) && sinceMs > 0) args.push(`--since=${new Date(Math.floor(sinceMs / 1000) * 1000).toISOString()}`);
+  args.push('--fixed-strings', ...needles.map((n) => `--grep=${n}`), '--format=%H%x1f%B', 'HEAD');
+  const log = gitSync(root, args);
   const out: string[] = [];
   for (const rec of log.split('\0')) {
     const [hash = '', body = ''] = rec.replace(/^\n+/, '').split('\x1f');
