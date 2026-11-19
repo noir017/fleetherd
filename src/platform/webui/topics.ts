@@ -35,6 +35,18 @@ export interface Topic {
   /** Epoch ms of the last message either way; the switcher orders by it. */
   lastAt: number;
   /**
+   * The id of the newest event this topic has, in the same shape the stream numbers events with
+   * and `TopicSnapshot.last` reports: `<topic>.<run>.<seq>`.
+   *
+   * It exists because `lastAt` is not a version: that moves only when something is POSTED, so a
+   * reply edited after it was sent — the last thing said in a topic, changed once more — leaves
+   * `lastAt` exactly where it was, and a page comparing a cached copy against it cannot tell that
+   * the copy is stale. Set by `topicList()` on every row, never persisted: it names this
+   * process's numbering, which a restart starts over. `0` for a topic no event has been emitted
+   * in since this process began, which is the same position a sync of that room would carry.
+   */
+  last?: string;
+  /**
    * The operator starred it: never given up to make room, and spared by "Clear all topics".
    *
    * Persisted, unlike every flag below it, because it is the operator's decision rather than a

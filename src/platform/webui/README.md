@@ -1202,6 +1202,12 @@ full re-send of the conversation. A `Last-Event-ID` the backlog no longer reache
 a full sync rather than handing over a transcript with a hole in it, and the cross-topic
 `topics` event deliberately carries no id so it cannot move a resume point.
 
+The replay is folded by message: a reply still streaming when the stream dropped is in the
+backlog once per flush, so the page is handed its last body once, where it first appeared, and
+every other event keeps its order. The last event carries the newest number in the replay even
+when the message it belonged to was folded back — the page resumes from the last id it saw, so
+an id below the room's would leave it looking caught up while it is not.
+
 **The id names the process that sent it** (`<topic>.<run>.<seq>`, the run being `startedAt` in
 base 36). Numbering restarts at 1 with every process and the backlog starts empty, so through a
 crash — no `bye`, `EventSource` reconnecting by itself with its old id — the new process used to
@@ -1610,6 +1616,14 @@ of 2.48 KB (`project-scripts/talkcode-webui-net/events.mts`, 2026-11-10). Three 
 - **A kind of its own, not a variant of `topics`.** A page from before this that is still open
   across the upgrade ignores `topic-rows`; handed a `topics` with no list in it, it would have read
   "every topic is gone" and opened a new one.
+
+Each row also carries `last`: the id of the topic's newest event, in the same
+`<topic>.<run>.<seq>` shape the stream numbers events with and a snapshot reports. `lastAt` is
+not a version — it moves only when something is posted, so a reply edited after it was sent left
+the row looking unchanged and the page trusting a copy that was stale. `last` moves with every
+event, and `emit` announces the list on a 300 ms throttle — the first change starts the clock and
+later ones ride along, so a burst costs one list rather than one per event, and a stream that
+never goes quiet still reports where it stands.
 
 **The page reconciles; it does not rebuild.** A `sync` carries the whole topic, and the obvious
 reading of that — empty `#log`, paint it again — is what made entering a topic jarring: the

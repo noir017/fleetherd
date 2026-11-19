@@ -158,6 +158,23 @@ const MAX_MESSAGES = 1000;
 const MAX_BACKLOG = 300;
 
 /**
+ * How long a topic-list announcement is held after an event, so a burst of them costs one list.
+ *
+ * A row now carries the topic's newest event id (`Topic.last`), which every emitted event moves —
+ * including an edit flushed from the hold queue, where nothing was posted and `lastAt` never
+ * moves. That is the case this exists for: a reply edited after it went out must reach the
+ * sidebar, or the page keeps showing a cached copy it believes is current.
+ *
+ * A throttle, not a debounce, and that distinction is the point: the clock starts at the FIRST
+ * change of a burst and changes during the window ride along, so a topic that keeps emitting
+ * still reports where it stands instead of waiting for a silence a long stream never gives.
+ * `topicList()` is not free (a workdir and a liveness lookup per topic), so 300 ms is also what
+ * keeps a turn's lifecycle events — typing, edits, a reaction — from rebuilding it each time.
+ * Short enough that a page opening a topic cannot routinely beat the row it is checking against.
+ */
+const TOPIC_LIST_MS = 300;
+
+/**
  * How many files stay downloadable, across all topics: the agent's sent files and the operator's
  * own pictures (see `submit`) share the one table.
  */
@@ -536,6 +553,8 @@ export class WebRoom {
    */
   private sent: { rows: Map<string, string>; order: string[] } | null = null;
   private topicsVer = 0;
+  /** A topic-list announcement waiting out `TOPIC_LIST_MS`; see `scheduleTopics`. */
+  private topicTimer: NodeJS.Timeout | null = null;
   private readonly dirCache = new Map<string, { at: number; dir?: Topic['dir'] }>();
   /**
    * Who has a terminal pane attached. Absent when the feature is off, and in every test that
@@ -1372,6 +1391,10 @@ export class WebRoom {
       const line = stage === 'answer' ? this.questionLine(room) : t.outcome?.line;
       return {
         ...t,
+        // The event id a page compares its cached copy against. Built from the same number and in
+        // the same shape as a stream's SSE id and `snapshot().last`, so the three cannot disagree
+        // about where the topic stands — and so a row can be used as a resume point directly.
+        last: `${t.id}.${this.run}.${room?.seq ?? 0}`,
         running,
         ...(running && room?.typingSince ? { runningSince: room.typingSince } : {}),
         // Before `running` in meaning, not just in this object: a question on screen holds the
@@ -1416,10 +1439,38 @@ export class WebRoom {
 
   /** Work out the topic list, act on stage changes, and bring every client up to it. Returns it. */
   private announceTopics(): Topic[] {
+    // This one is at least as new as anything a timer was holding, so let it go: a `post` that
+    // announces synchronously right after its own `emit` must not leave a second one pending.
+    this.cancelTopics();
     const topics = this.topicList();
     this.watchStages(topics);
     this.sendTopics(topics, flagsOf(topics));
     return topics;
+  }
+
+  /**
+   * Announce the topic list once the burst of events has passed (see `TOPIC_LIST_MS`).
+   *
+   * Scheduled from `emit`, because a row's `last` moves with every event — including one that
+   * says nothing about the list otherwise: an edit flushed from the hold queue, a reaction, a
+   * deletion. The callers that do change the list directly (`post`, `setTyping`, a retired
+   * question) announce synchronously and drop this timer on the way, so this is never a second
+   * list for the same change.
+   */
+  private scheduleTopics(): void {
+    if (this.topicTimer) return;
+    this.topicTimer = setTimeout(() => {
+      this.topicTimer = null;
+      this.announceTopics();
+    }, TOPIC_LIST_MS);
+    // Never the reason the process stays alive; `dispose` clears it.
+    this.topicTimer.unref();
+  }
+
+  /** Drop a pending announcement; the one being made instead covers everything it would have. */
+  private cancelTopics(): void {
+    if (this.topicTimer) clearTimeout(this.topicTimer);
+    this.topicTimer = null;
   }
 
   /**
@@ -1491,8 +1542,11 @@ export class WebRoom {
     this.clients.add(client);
     const room = this.roomOf(topicId);
     const missed = this.replayFrom(room, topicId, lastEventId);
-    const ok = missed
-      ? missed.every((entry) => this.deliver(client, entry.ev, entry.seq)) &&
+    // A message edited N times while the stream was away left N copies of a growing body in the
+    // backlog; the page only ever needs the last (see `mergeReplay`).
+    const replay = missed && mergeReplay(missed);
+    const ok = replay
+      ? replay.every((entry) => this.deliver(client, entry.ev, entry.seq)) &&
         // Status is state and is not in the backlog (see the `status` event), so a resumed stream
         // is told the current one outright — it may have changed, or been cleared, during the gap.
         this.deliver(client, { t: 'status', ...(room.status ? { status: room.status } : {}) }) &&
@@ -1514,7 +1568,7 @@ export class WebRoom {
         this.deliver(client, this.syncEvent(topicId, room, topics), room.seq);
     if (ok) {
       console.log(
-        `[webui] client attached to ${topicId}${missed ? ` (resumed, ${missed.length} missed)` : ' (full sync)'}; ${this.clients.size} watching`
+        `[webui] client attached to ${topicId}${replay ? ` (resumed, ${replay.length} missed)` : ' (full sync)'}; ${this.clients.size} watching`
       );
     }
     return () => {
@@ -1645,6 +1699,8 @@ export class WebRoom {
     for (const client of this.clients) {
       if (client.topic === topicId) this.deliver(client, ev, room.seq, (data ??= JSON.stringify(ev)));
     }
+    // The row's `last` just moved. Held briefly so a burst is one list (see `TOPIC_LIST_MS`).
+    this.scheduleTopics();
   }
 
   /**
@@ -2070,6 +2126,8 @@ export class WebRoom {
     this.liveTimer = null;
     for (const t of this.notifyTimers.values()) clearTimeout(t);
     this.notifyTimers.clear();
+    // After the flush above, which emits every held edit and so arms it again.
+    this.cancelTopics();
   }
 
   // ── Inbound (page → daemon) ────────────────────────────────────────────────
@@ -2328,6 +2386,47 @@ export function isControlMenuButton(id: string): boolean {
 export function isControlMenu(msg: WebMessage): boolean {
   if (msg.buttons.length === 0) return msg.settings !== undefined;
   return msg.buttons.every((b) => isControlMenuButton(b.id));
+}
+
+/**
+ * Fold a replay down to one event per message, at the place the message first appeared.
+ *
+ * A message being streamed is re-emitted whole on every flush, so a topic that was being
+ * answered when the stream dropped keeps up to `MAX_BACKLOG` copies of the same growing body.
+ * Replaying them all is what the page would then paint: the same bubble rewritten over and over
+ * on a link that just proved it is weak. What it needs is the final body once.
+ *
+ * The rules, and why each one:
+ * - Only `msg` events are folded, by `msg.id`; everything else (a deletion, a reaction, typing)
+ *   is an event in its own right and keeps its place and order.
+ * - The survivor stays where the message FIRST appeared, because a later non-message event may
+ *   describe it (`del`, a reaction) and moving it below that event would apply it out of order.
+ * - It carries its LAST content, which is what the room holds now.
+ * - The last event sent carries the newest number in the replay. The page takes its resume point
+ *   from the SSE id of the last event it received, and a folded message is no longer at the end:
+ *   without this, resuming right after a replay would ask for events the page already has, or
+ *   worse, sit on a number below the room's and look caught up while it is not. Ids only ever
+ *   move forward here — the survivor keeps its first number and the tail is raised, never lowered.
+ */
+export function mergeReplay(entries: ReadonlyArray<{ seq: number; ev: WebEvent }>): Array<{ seq: number; ev: WebEvent }> {
+  const out: Array<{ seq: number; ev: WebEvent }> = [];
+  const seen = new Map<string, number>();
+  for (const entry of entries) {
+    if (entry.ev.t === 'msg') {
+      const at = seen.get(entry.ev.msg.id);
+      if (at !== undefined) {
+        // Same place, newest body: the message as the room holds it, without a second copy.
+        out[at] = { ...out[at]!, ev: entry.ev };
+        continue;
+      }
+      seen.set(entry.ev.msg.id, out.length);
+    }
+    out.push(entry);
+  }
+  const newest = entries[entries.length - 1]?.seq;
+  const tail = out[out.length - 1];
+  if (tail && newest !== undefined && tail.seq !== newest) out[out.length - 1] = { ...tail, seq: newest };
+  return out;
 }
 
 /**
