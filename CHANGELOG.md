@@ -5,6 +5,18 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **Two topics in one repository no longer lose a turn's change list when they start together.**
+  Each turn first prepares the gateway's snapshot repository for the topic's directory, and that
+  ran `git init` every time. Two topics starting a turn in the same repository at once ran it
+  concurrently, and `git init` is not safe to run that way: one side lost the race on
+  `.git/config` or a template hook and exited 128, and that turn kept no snapshot — its "changes
+  this turn" were simply missing, with nothing in the log. The same race made a release-gating
+  test fail now and then. Preparing a snapshot directory is now done one at a time, a turn whose
+  time ran out waiting does not start one, a failure is logged with its reason, and the exclude
+  line is written by replacing the file rather than truncating it in place.
+
 ## [3.16.0] - 2026-11-19
 
 ### Added
