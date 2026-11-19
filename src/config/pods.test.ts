@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mergePodAgents, podAgentModels, readPods, writePods, type PodsState } from './pods.js';
+import { instructionsHome } from './instructions.js';
 import { loadConfig, readConfig } from './load.js';
 import { ConfigSchema, PodFileSchema } from './schema.js';
 
@@ -88,15 +89,18 @@ describe('mergePodAgents', () => {
   });
 
   // A host must never be able to keep the gateway's config from loading, so a pod's agent yields to
-  // config.yaml's on the same machine (the schema refuses a clash between config.yaml's own).
-  it('leaves out a pod agent that would take a config.yaml agent’s instruction file, and says which', () => {
+  // config.yaml's on the same machine — but it stays an agent, only its delivery is turned off.
+  it('turns delivery off for a pod agent whose file a config.yaml agent already delivers', () => {
     const cfg = { hosts: { box: { ssh: 'u@box' } }, agents: [{ id: 'cc', harness: 'claude', host: 'box' }] };
     const { raw: out, skipped } = mergePodAgents(cfg, {
       box: record([{ id: 'mh', harness: 'custom', command: 'my-harness', instructions: { file: '~/.claude/CLAUDE.md' } }]),
     });
-    expect((out.agents as Array<{ id: string }>).map((a) => a.id)).toEqual(['cc']);
+    expect(out.agents).toEqual([
+      expect.objectContaining({ id: 'cc' }),
+      expect.objectContaining({ id: 'mh@box', instructions: false }),
+    ]);
     expect(skipped).toEqual([
-      'instructions.mh@box: "mh@box" (layer "mh") and "cc" (layer "claude") both deliver ~/.claude/CLAUDE.md on host "box"; kept "cc"',
+      'instructions.mh@box: "mh@box" (layer "mh") and "cc" (layer "claude") both deliver ~/.claude/CLAUDE.md on host "box"; "cc" keeps it, so nothing is delivered to "mh@box"',
     ]);
   });
 
@@ -143,6 +147,10 @@ describe('agents[].instructions', () => {
 
   it('refuses an id that cannot be the default layer', () => {
     expect(parsed({ file: '~/.my-harness/AGENTS.md' }, 'a/b').success).toBe(false);
+  });
+
+  it('keeps instructions: false out of pod.yaml: the gateway sets it, a pod does not', () => {
+    expect(PodFileSchema.safeParse({ agents: [{ id: 'a', harness: 'claude', instructions: false }] }).success).toBe(false);
   });
 });
 
@@ -279,9 +287,10 @@ routing:
   });
 
   // pods.json can hold a clash an older version wrote, or one somebody edited in. Neither may stop
-  // the gateway: the first agent keeps the file, the other is left out, and loading goes on.
-  it('loads — and starts — with a pods.json that already holds two agents fighting over one file', () => {
-    fs.writeFileSync(path.join(dir, 'config.yaml'), yamlFor('a@box'));
+  // the gateway: the first agent keeps the file, the other keeps running without delivery, and a
+  // routing that names the second still loads.
+  it('loads, and starts, with a pods.json whose agents fight over one file — routing included', () => {
+    fs.writeFileSync(path.join(dir, 'config.yaml'), yamlFor('b@box'));
     writePods(dir, {
       box: record([
         { id: 'a', harness: 'custom', command: 'my-harness', instructions: { file: '~/.my-harness/AGENTS.md' } },
@@ -290,9 +299,13 @@ routing:
     });
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
-      expect(readConfig().config.agents.map((a) => a.id)).toEqual(['a@box']);
-      expect(loadConfig().agents.map((a) => a.id)).toEqual(['a@box']);
-      expect(warn).toHaveBeenCalledWith(expect.stringContaining('left out instructions.b@box'));
+      const { config } = readConfig();
+      expect(config.agents.map((a) => a.id)).toEqual(['a@box', 'b@box']);
+      const b = config.agents.find((a) => a.id === 'b@box')!;
+      expect(b.instructions).toBe(false);
+      expect(instructionsHome(b, '~')).toBeUndefined();
+      expect(loadConfig().agents.map((a) => a.id)).toEqual(['a@box', 'b@box']);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('nothing is delivered to "b@box"'));
     } finally {
       warn.mockRestore();
     }
@@ -313,5 +326,21 @@ routing:
     expect(readPods(dir)).toEqual({});
     fs.writeFileSync(path.join(dir, 'pods.json'), '{nope');
     expect(readPods(dir)).toEqual({});
+  });
+
+  it('refuses instructions: false in config.yaml: the merge sets it, not the file', () => {
+    fs.writeFileSync(
+      path.join(dir, 'config.yaml'),
+      `platforms:
+  tg: { type: telegram, token: t }
+agents:
+  - id: cc
+    harness: claude
+    instructions: false
+routing:
+  default: cc
+`
+    );
+    expect(() => readConfig()).toThrow(/agents\.0\.instructions: false is not a setting/);
   });
 });

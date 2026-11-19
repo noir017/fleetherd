@@ -12182,6 +12182,13 @@ const SCRIPT = `
     renderSettings();
   }
 
+  /** One agent's row of a list answer, or null. */
+  function instrAgentIn(d, id){
+    var a = (d && d.agents) || [];
+    for(var i=0;i<a.length;i++) if(a[i].id === id) return a[i];
+    return null;
+  }
+
   /** What one agent's harness reads on its own machine, from a list answer, or null. */
   function instrOwnIn(d, id){
     var a = (d && d.agents) || [];
@@ -12221,7 +12228,8 @@ const SCRIPT = `
     var id = String(r.target || r.label), d = instrData, h = '<div class="ag-field ag-instr"><span class="ag-lab">Instructions</span><div class="ag-val">';
     if(!d) return h + '<span class="ag-wait">Loading…</span></div></div>';
     if(d.error) return h + '<span class="ag-err">' + text(d.error) + '</span></div></div>';
-    var g = instrSharedIn(d, id), own = instrOwnIn(d, id), n = 0;
+    var row = instrAgentIn(d, id), g = instrSharedIn(d, id), own = instrOwnIn(d, id), n = 0;
+    if(row && row.notDelivered) return h + '<span class="ag-none">Not delivering: its instruction file is already delivered to another agent on the same machine with a different layer.</span></div></div>';
     if(!g.length && !own) return h + '<span class="ag-none">Its harness reads no instruction file the gateway knows of.</span></div></div>';
     h += '<div class="ag-files">';
     for(var k=0;k<g.length;k++){

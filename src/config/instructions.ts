@@ -12,8 +12,9 @@ import type { AgentDef } from './schema.js';
  * the other's text. The check runs in ConfigSchema (instructionClashes), which may not reach up
  * into `daemon/` (AGENTS.md, Layering), and it must use the same table delivery does — a second copy
  * here would let a load accept what the daemon then overwrites. Only config.yaml's own agents are
- * refused there: a pod's are filtered by config/pods.ts and daemon/pods.ts, because a host must
- * never be able to keep the gateway from loading.
+ * refused there: a pod's have their delivery turned off by config/pods.ts (they stay agents) and
+ * daemon/pods.ts refuses a pod.yaml that clashes inside itself, because a host must never be able
+ * to keep the gateway from loading.
  *
  * ── Where, per harness ────────────────────────────────────────────────────────────────────────────
  * Probed 2026-11-04 except where said: a symlink at the path below pointing to a file holding a
@@ -87,6 +88,9 @@ function expandInstructionFile(file: string, home: string): string {
 
 /** Where `def`'s harness reads its user-level instruction file under `home` (see the header). */
 export function instructionsHome(def: InstructionsAgent, home: string): InstructionsHome | undefined {
+  // The merge's off marker (config/pods.ts): another agent on this machine already delivers this
+  // file with its own layer, so nothing is placed and the link there is left alone.
+  if (def.instructions === false) return undefined;
   if (def.instructions) {
     const file = expandInstructionFile(def.instructions.file, home);
     return { name: def.instructions.layer ?? def.id, file, requires: path.dirname(file) };

@@ -75,6 +75,13 @@ describe('instructionsHome', () => {
       )
     ).toMatchObject({ file: '/home/other/.my-harness/AGENTS.md' });
   });
+
+  it('reads the merge’s false as "deliver nothing", for a preset file and a named one alike', () => {
+    expect(instructionsHome({ id: 'cc', harness: 'claude', instructions: false }, '/h')).toBeUndefined();
+    expect(
+      instructionsHome({ id: 'mh', harness: 'custom', command: 'my-harness', instructions: false }, '/h')
+    ).toBeUndefined();
+  });
 });
 
 const claude = (id: string, extra: Partial<PlacedInstructionsAgent> = {}): PlacedInstructionsAgent => ({
@@ -147,6 +154,10 @@ describe('instructionClashes', () => {
         { id: 'mh', harness: 'custom', command: 'my-harness' },
       ])
     ).toEqual([]);
+  });
+
+  it('does not count an agent whose delivery was turned off: it takes no file', () => {
+    expect(conflicts([claude('cc'), claude('cc2', { instructions: false })])).toEqual([]);
   });
 });
 

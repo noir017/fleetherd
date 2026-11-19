@@ -4948,6 +4948,20 @@ describe('webui page: the settings page', () => {
     await until('its files', () => h.calls.some((c) => c.path === 'api/instructions/refs?agent=cc'));
   });
 
+  it('says an agent is not being delivered to, rather than that its harness has no file', async () => {
+    const off = {
+      ...INSTR,
+      agents: [{ id: 'cc', harness: 'claude', host: 'box' }, { id: 'oc@box', harness: 'opencode', host: 'local', notDelivered: true }],
+    };
+    const h = await opened(agentList(), { instructions: true, replies: { 'api/instructions': off } });
+    await until('the files', () => Boolean(h.doc.querySelector('#settings-body .ag-card[data-ag="cc"] [data-instr-agent]')));
+    const oc = await openCard(h, 'oc@box');
+    expect(oc.querySelector('[data-instr-agent]')).toBeNull();
+    expect(oc.querySelector('.ag-instr .ag-none')?.textContent).toBe(
+      'Not delivering: its instruction file is already delivered to another agent on the same machine with a different layer.'
+    );
+  });
+
   it('names every control with the agent it belongs to, for a screen reader', async () => {
     const h = await opened(agentList(), { instructions: true, replies: { 'api/instructions': INSTR } });
     await until('the files', () => Boolean(h.doc.querySelector('#settings-body [data-instr-agent]')));

@@ -75,6 +75,12 @@ export function writePods(dir: string, state: PodsState): void {
  * the id the gateway names a pod's agent by (`<id>@<host>`) is not the one its layer may use — the
  * pod.yaml id is, without the host. Setting it now keeps the layer stable if the host id changes
  * and saves every reader of the merged config from having to strip `@host` itself.
+ *
+ * An agent whose file another agent on that machine already delivers keeps its place in the list —
+ * routing and conversations treat it like any other — but its `instructions` becomes `false`, the
+ * gateway's own marker for "do not deliver" (offInstructionClashes below). A host must not be able
+ * to keep the gateway from starting, and an agent it declared must not disappear from under a
+ * routing rule.
  */
 export function mergePodAgents(raw: Record<string, unknown>, pods: PodsState): { raw: Record<string, unknown>; skipped: string[] } {
   const own = Array.isArray(raw.agents) ? (raw.agents as unknown[]) : [];
@@ -82,18 +88,17 @@ export function mergePodAgents(raw: Record<string, unknown>, pods: PodsState): {
   const levels = podStringsOf(raw, 'podPermissions');
   const skipped: string[] = [];
   const declared = podAgents(raw, pods, skipped);
-  const dropped = dropInstructionClashes(own, declared, skipped);
-  const added = declared
-    .filter(({ agent }) => !dropped.has(agent.id))
-    .map(({ agent }) => {
-      const model = models[agent.id];
-      const level = levels[agent.id];
-      return {
-        ...agent,
-        ...(model !== undefined ? { model } : {}),
-        ...(level !== undefined ? { permissions: level } : {}),
-      };
-    });
+  const off = offInstructionClashes(own, declared, skipped);
+  const added = declared.map(({ agent }) => {
+    const model = models[agent.id];
+    const level = levels[agent.id];
+    return {
+      ...agent,
+      ...(off.has(agent.id) ? { instructions: false as const } : {}),
+      ...(model !== undefined ? { model } : {}),
+      ...(level !== undefined ? { permissions: level } : {}),
+    };
+  });
   const ownIds = new Set(own.map(idOf));
   for (const key of Object.keys(models)) {
     if (ownIds.has(key)) skipped.push(`podModels.${key}: ${key} is defined in config.yaml, so its model is agents[].model there`);
@@ -119,39 +124,41 @@ type DeclaredAgent = { agent: PodAgent & { id: string; host: string }; model: st
 
 /**
  * The pod agents whose instruction file another agent on the same machine already delivers, and a
- * line for each. config.yaml comes first in the merged list, so `instructionClashes` keeps its
- * agent's layer; among a pod's own, the first keeps it.
+ * line for each. They stay in the config — routing and conversations treat them like any other
+ * agent — but `instructions: false` stops the delivery: nothing is written, and the link there is
+ * left alone (config/instructions.ts instructionsHome).
  *
- * Left out here rather than refused by ConfigSchema, because nothing a pod declares may fail the
- * gateway's config: a host that cannot keep the daemon from starting is worse than one of its agents
- * missing (the rule that already leaves a bad pod entry out, above). A clash entirely inside
+ * config.yaml comes first in the merged list, so `instructionClashes` keeps its agent's layer;
+ * among a pod's own, the first keeps it. Nothing a pod declares may fail the gateway's config: a
+ * host that could keep the daemon from starting is worse than one of its agents not getting the
+ * text (the rule that already leaves a bad pod entry out, above). A clash entirely inside
  * config.yaml is not touched — the schema refuses that file.
  *
  * The pod's own file is checked when it is read (daemon/pods.ts), so this is for what pods.json
  * already holds: an older read, or a hand edit.
  */
-function dropInstructionClashes(own: unknown[], declared: DeclaredAgent[], skipped: string[]): Set<string> {
+function offInstructionClashes(own: unknown[], declared: DeclaredAgent[], skipped: string[]): Set<string> {
   const parsed = own.flatMap((a) => {
     const r = AgentDefSchema.safeParse(a);
     // A malformed agent fails the schema later, with its own message; it takes no part here.
     return r.success ? [r.data] : [];
   });
   const podIds = new Set(declared.map(({ agent }) => agent.id));
-  const drop = new Set<string>();
+  const off = new Set<string>();
   for (const g of instructionClashes([...parsed, ...declared.map(({ agent }) => agent)])) {
     const keep = g.members[0];
     if (!keep) continue;
     const where = g.machine ? `on host "${g.machine}"` : 'on this machine';
     for (const m of g.members) {
       if (!podIds.has(m.id) || m.layer === keep.layer) continue;
-      drop.add(m.id);
+      off.add(m.id);
       skipped.push(
         `instructions.${m.id}: "${m.id}" (layer "${m.layer}") and "${keep.id}" (layer "${keep.layer}") ` +
-          `both deliver ${g.file} ${where}; kept "${keep.id}"`
+          `both deliver ${g.file} ${where}; "${keep.id}" keeps it, so nothing is delivered to "${m.id}"`
       );
     }
   }
-  return drop;
+  return off;
 }
 
 /** The pods' agents in merge order, validated and renamed, each with the model the pod gave it. */

@@ -150,6 +150,9 @@ async function listAll(env: Env): Promise<InstructionsPanelList> {
       host: def.host ?? 'local',
       ...(where ? { file: where.file.split(path.sep).join('/') } : {}),
       ...(own ? { own } : {}),
+      // The merge turned its delivery off (config/pods.ts): it reads no file of the gateway's, and
+      // must not be listed under the layer another agent owns.
+      ...(def.instructions === false ? { notDelivered: true as const } : {}),
     };
   });
   const global: InstructionsGlobalFile[] = [];

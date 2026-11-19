@@ -944,6 +944,11 @@ export interface InstructionsAgent {
   /** The harness's user-level file, `~`-relative, when it has one. */
   file?: string;
   /**
+   * Its instructions are not delivered: the gateway set it off because the file is already
+   * delivered to another agent on that machine with a different layer (config/pods.ts).
+   */
+  notDelivered?: true;
+  /**
    * What its harness reads of its own besides the delivered file — rules, references, a config's
    * list — in one line; absent for a harness with nothing known (daemon/instruction-imports.ts).
    */

@@ -54,8 +54,9 @@ A clash between two of config.yaml's own agents is refused when the file is load
 `/reload`, which then keeps the old config running), naming both agents, the file and their layers.
 A pod's agents can never stop the gateway: two of one `pod.yaml`'s agents that clash make that file
 not apply — the host keeps what was read before, like any other bad line — and a pod agent that
-clashes with a config.yaml agent on the same machine is left out, config.yaml's winning, with a line
-in the daemon log.
+clashes with a config.yaml agent on the same machine stays configured and keeps running, but its
+instructions are not delivered: nothing is written and the link there is left alone, and a line in
+the daemon log names the file and the agent that already delivers it.
 
 ## How it reaches the agent
 

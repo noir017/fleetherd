@@ -177,6 +177,32 @@ describe('placeInstructions', () => {
       else process.env.FLEETHERD_CONFIG_DIR = saved;
     }
   });
+
+  it('places nothing for an agent whose delivery the merge turned off', () => {
+    const savedDir = process.env.FLEETHERD_CONFIG_DIR;
+    const savedArgv = process.argv[1];
+    process.env.FLEETHERD_CONFIG_DIR = path.dirname(dir);
+    // Make selfInvocation() see the CLI, so this exercises delivery rather than the test guard.
+    process.argv[1] = '/usr/bin/fleetherd';
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      fs.writeFileSync(path.join(dir, 'common.md'), 'mine\n');
+      fs.mkdirSync(path.join(home, '.codex'));
+      const off = { id: 'cx', harness: 'codex', env: {}, instructions: false } as unknown as AgentDef;
+      expect(placeInstructions(off, home)).toBeUndefined();
+      expect(fs.existsSync(codex().file)).toBe(false);
+      expect(fs.existsSync(ownedDir(home))).toBe(false);
+      // Without the marker the same agent is delivered to, so the check above is the marker's doing.
+      const on = { id: 'cx', harness: 'codex', env: {} } as unknown as AgentDef;
+      expect(placeInstructions(on, home)?.outcome).toBe('linked');
+    } finally {
+      log.mockRestore();
+      if (savedArgv === undefined) process.argv.splice(1, 1);
+      else process.argv[1] = savedArgv;
+      if (savedDir === undefined) delete process.env.FLEETHERD_CONFIG_DIR;
+      else process.env.FLEETHERD_CONFIG_DIR = savedDir;
+    }
+  });
 });
 
 describe('RemoteHosts.placeInstructions', () => {
@@ -293,6 +319,17 @@ describe('RemoteHosts.placeInstructions', () => {
     const dsh = { id: 'd', harness: 'dsh', env: {} } as unknown as AgentDef;
     await hosts.placeInstructions(host as unknown as RemoteHost, dsh, '/home/u', welcome);
     expect(host.writeFile).not.toHaveBeenCalled();
+    expect(host.removeLink).not.toHaveBeenCalled();
+  });
+
+  it('places nothing for an agent whose delivery the merge turned off, and leaves its link alone', async () => {
+    const hosts = new RemoteHosts();
+    const host = fakeHost();
+    fs.writeFileSync(path.join(dir, 'common.md'), 'mine\n');
+    const off = { id: 'cx', harness: 'codex', env: {}, instructions: false } as unknown as AgentDef;
+    expect(await hosts.placeInstructions(host as unknown as RemoteHost, off, '/home/u', welcome)).toBeUndefined();
+    expect(host.writeFile).not.toHaveBeenCalled();
+    expect(host.ensureLink).not.toHaveBeenCalled();
     expect(host.removeLink).not.toHaveBeenCalled();
   });
 });

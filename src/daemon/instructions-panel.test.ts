@@ -90,6 +90,14 @@ describe('the list', () => {
     expect(list.global.find((g) => g.name === 'agy.md')).toMatchObject({ exists: true, size: 4, agents: [] });
   });
 
+  it('marks an agent whose delivery the merge turned off, and lists it under no layer', async () => {
+    const withOff = [...agents, def('cx2', 'codex', { instructions: false })];
+    const list = await panel({ agents: () => withOff }).list();
+    expect(list.agents.find((a) => a.id === 'cx2')).toEqual({ id: 'cx2', harness: 'codex', host: 'local', notDelivered: true });
+    expect(list.global.find((g) => g.name === 'codex.md')?.agents).toEqual(['cx']);
+    expect(list.global.find((g) => g.name === 'common.md')?.agents).toEqual(['cc', 'cx', 'cc-r']);
+  });
+
   it("lists a custom agent's layer by its id, and a pod agent's by the id in its pod.yaml", async () => {
     const custom = [
       def('mh', 'custom', { command: 'my-harness', instructions: { file: '~/.my-harness/AGENTS.md' } }),
