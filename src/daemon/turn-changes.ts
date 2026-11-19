@@ -221,6 +221,8 @@ export class TurnChanges {
   private readonly numbering = new Map<string, number>();
   /** One snapshot at a time per snapshot repository — see `treeOf`. */
   private readonly treeChains = new Map<string, Promise<void>>();
+  /** One `git init` at a time per snapshot directory — see `initSnapshot`. */
+  private readonly initChains = new Map<string, Promise<void>>();
   /** How many snapshots are queued or running per repository — see `treeOf`'s budget floor. */
   private readonly treeBusy = new Map<string, number>();
   /** Conversations whose topic the page dropped; an end snapshot still running must not revive them. */
@@ -495,9 +497,12 @@ export class TurnChanges {
     const snapDir = `${dir}/.fleetherd/snapshots/${hash}`;
     const gitDir = `${snapDir}/.git`;
     // Idempotent, and cheap next to `add -A`; re-running it is what makes a wiped snapshot
-    // directory recover without a daemon restart.
-    const init = await git(ws, ['init', '-q', snapDir], { cwd: ws.root, timeoutMs: left(deadline) });
-    if (!init || init.code !== 0) return undefined;
+    // directory recover without a daemon restart. One at a time, though: see `initSnapshot`.
+    const init = await this.initSnapshot(ws, root, snapDir, deadline);
+    if (!init || init.code !== 0) {
+      this.log(`[changes] could not prepare ${snapDir} (${init ? lastLine(init.stderr) ?? `exit ${init.code}` : 'no answer'}); no turn changes for ${root}`);
+      return undefined;
+    }
     // A work tree that CONTAINS the snapshot repository (`$HOME` as the project root, or a
     // `.fleetherd` somebody keeps inside a checkout) cannot be added to it: git sees a nested
     // repository with no commit and refuses the whole add. Our own `info/exclude` — inside our
@@ -508,6 +513,31 @@ export class TurnChanges {
       return undefined;
     }
     return { root, gitDir };
+  }
+
+  /**
+   * `git init` for one snapshot directory, one at a time.
+   *
+   * Re-running it is what recovers a wiped snapshot directory, but running it twice AT ONCE on the
+   * same directory is not safe: it takes `.git/config`'s lock and copies the template hooks, and
+   * the loser fails with "File exists" — which used to drop that turn's snapshot silently
+   * (2026-11-19, the release workflow's Test step). Two topics in one directory is the documented
+   * normal case (see the header), and their starts reach this together.
+   */
+  private initSnapshot(ws: Workspace, root: string, snapDir: string, deadline: number): Promise<WorkspaceRunResult | undefined> {
+    const previous = this.initChains.get(snapDir) ?? Promise.resolve();
+    const run = previous.then(() => git(ws, ['init', '-q', snapDir], { cwd: root, timeoutMs: left(deadline) }));
+    const settled = run.then(
+      () => undefined,
+      () => undefined
+    );
+    this.initChains.set(snapDir, settled);
+    // Dropped once it is the last one through: a process that has seen many repositories must not
+    // keep one promise per snapshot directory for its lifetime.
+    void settled.then(() => {
+      if (this.initChains.get(snapDir) === settled) this.initChains.delete(snapDir);
+    });
+    return run;
   }
 
   /** Keep the snapshot repository out of its own work tree — see `repoOf`. */

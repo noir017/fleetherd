@@ -518,6 +518,51 @@ describe('turn changes: the repository it keeps', () => {
     expect(order).toEqual(['add', 'write-tree', 'add', 'write-tree']);
   }, 60_000);
 
+  it('prepares the snapshot repository once, even when two turns start together', async () => {
+    // `git init` is idempotent on an existing repository, but not safe to run twice AT ONCE on the
+    // same directory: it takes `.git/config`'s lock and copies the template hooks, and the loser
+    // fails with "File exists" (2026-11-19, the release workflow). Two topics in one directory
+    // start their turns together, and the loser used to lose its snapshot with no log at all.
+    let inits = 0;
+    let holdFirst = true;
+    const together = bench({
+      ws: (ws) => ({
+        ...ws,
+        run: async (argv, o) => {
+          if (argv[1] !== 'init') return ws.run(argv, o);
+          if (inits > 0) {
+            // Exactly what a second real `git init` answers while the first holds the lock.
+            return {
+              code: 128,
+              output: Buffer.alloc(0),
+              stderr: "fatal: Unable to create '/s/.git/config.lock': File exists.",
+              truncated: false,
+              timedOut: false,
+            };
+          }
+          inits += 1;
+          try {
+            // Hold the first one open so the other start reaches git while it is still running:
+            // the queue must keep the second call from arriving here at all.
+            if (holdFirst) {
+              holdFirst = false;
+              await new Promise((r) => setTimeout(r, 300));
+            }
+            return await ws.run(argv, o);
+          } finally {
+            inits -= 1;
+          }
+        },
+      }),
+    });
+    const [one, two] = await Promise.all([
+      together.changes.start(ID, REF, together.platform, ADDRESS),
+      together.changes.start(ID, REF, together.platform, ADDRESS),
+    ]);
+    expect(one).toBeDefined();
+    expect(two).toBeDefined();
+  }, 60_000);
+
   it('falls back to a temporary index when the shared one is busy', async () => {
     // What a second turn in the same directory meets: `git add` cannot take the index.lock.
     let busy = 0;
@@ -678,7 +723,9 @@ describe('turn changes: the repository it keeps', () => {
     fs.writeFileSync(path.join(b.repo, 'a.txt'), 'changed\n');
     b.changes.finish(handle);
     await b.next();
-    expect(refs(b.repo)).toHaveLength(2);
+    // The entry is announced before `update-ref` has answered (the refs are what a gc must keep,
+    // not what the page reads), so a loaded machine can get here first.
+    await within(() => refs(b.repo).length === 2);
 
     b.changes.forget(ID, REF);
     expect((await b.changes.status(ID, REF, 1)).ok).toBe(false);
