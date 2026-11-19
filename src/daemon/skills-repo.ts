@@ -171,13 +171,18 @@ export interface SkillsRepoOptions {
 export class SkillsRepo {
   private chain: Promise<unknown> = Promise.resolve();
   private phase: Phase = 'ok';
+  /** Whether the last `start()` cycle could not run at all; see `start`. */
+  private cycleBroken = false;
   private readonly log: (message: string) => void;
 
   constructor(private readonly opts: SkillsRepoOptions) {
     this.log = opts.log ?? ((m) => console.log(m));
   }
 
-  /** One fetch → integrate → push. Errors are logged, never thrown: the next cycle tries again. */
+  /**
+   * One fetch → integrate → push. The cycle's own errors are logged and it resolves; one before
+   * it — a copy `ready()` cannot read — rejects, so a caller can tell the two apart.
+   */
   sync(): Promise<void> {
     return this.exclusive(async () => {
       const remote = this.ready();
@@ -222,9 +227,16 @@ export class SkillsRepo {
 
   /** Sync now and then every `intervalMs`. Returns the stop function; the timer never holds the process. */
   start(intervalMs = SKILLS_SYNC_INTERVAL_MS): () => void {
-    // A failure inside the cycle is logged and `sync()` resolves; one before it (a copy `ready()`
-    // cannot read) rejects. Left unhandled, that rejection would end the process.
-    const cycle = (): void => void this.sync().catch((e: unknown) => this.log(`[skills] the sync cycle failed: ${firstLine(e)}`));
+    // `sync()` resolves after logging a failure inside the cycle, but rejects for one before it (a
+    // copy `ready()` cannot read). Catching it here is not about the process outliving the
+    // rejection — the daemon's global handler does that — but about one `[skills]` line naming the
+    // step, and one more when it works again, instead of one line per cycle.
+    const cycle = (): void => {
+      void this.sync().then(
+        () => this.cycleRan(),
+        (e: unknown) => this.cycleFailed(e)
+      );
+    };
     cycle();
     const timer = setInterval(cycle, intervalMs);
     timer.unref?.();
@@ -371,6 +383,18 @@ export class SkillsRepo {
     this.log(
       local ? `[skills] the gateway's copy of the skills repository works again` : `[skills] ${redactRepoUrl(remote.url)} answers again`
     );
+  }
+
+  private cycleFailed(e: unknown): void {
+    if (this.cycleBroken) return;
+    this.cycleBroken = true;
+    this.log(`[skills] the sync cycle could not run (${firstLine(e)}); the next cycle tries again`);
+  }
+
+  private cycleRan(): void {
+    if (!this.cycleBroken) return;
+    this.cycleBroken = false;
+    this.log(`[skills] the sync cycle runs again`);
   }
 
   private now(): number {

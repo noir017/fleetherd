@@ -132,7 +132,9 @@ export function isMissingRef(e: unknown): boolean {
 
 function gitError(args: string[], e: unknown): Error {
   const err = e as { stderr?: Buffer | string; message?: string; code?: string; status?: number | null };
-  if (err.code === 'ENOENT') return new Error('git is not installed; the managed skills need it');
+  // A missing binary and a cwd that is gone both report ENOENT; either way no git ran, and the
+  // failure is the gateway's own copy, not the remote's.
+  if (err.code === 'ENOENT') return new GitError('git is not installed; the managed skills need it');
   const stderr = err.stderr ? String(err.stderr).trim() : '';
   return new GitError(`git ${args[0]}: ${stderr || err.message || String(e)}`, typeof err.status === 'number' ? err.status : undefined);
 }

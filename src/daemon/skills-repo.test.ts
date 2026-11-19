@@ -291,6 +291,26 @@ describe('SkillsRepo when the gateway\'s copy is the broken side', () => {
     await expect(repo().sync()).rejects.toThrow(/not a git repository/);
   });
 
+  it('says once that a cycle cannot run, however many fail, and once when it runs again', async () => {
+    const root = repoRoot(dir);
+    fs.mkdirSync(root, { recursive: true });
+    fs.writeFileSync(path.join(root, '.git'), 'gitdir: /nonexistent\n');
+    const r = repo();
+    let stop = r.start(10);
+    await until('a cycle to fail', () => logs.some((l) => /the sync cycle could not run/.test(l)));
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(logs.filter((l) => /the sync cycle could not run/.test(l))).toHaveLength(1);
+    stop();
+
+    fs.rmSync(root, { recursive: true, force: true });
+    prepareSkillsRepo(dir);
+    stop = r.start(10);
+    await until('a cycle to run again', () => logs.some((l) => /the sync cycle runs again/.test(l)));
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(logs.filter((l) => /the sync cycle runs again/.test(l))).toHaveLength(1);
+    stop();
+  });
+
   it('names a local git failure as the gateway\'s copy, not the remote as unreachable', async () => {
     seedRemote();
     prepareSkillsRepo(dir);
