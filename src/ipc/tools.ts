@@ -143,8 +143,8 @@ export function toolInputSchema(tool: NativeTool): Record<string, unknown> {
   const spec = specOf(tool);
   const properties: Record<string, Record<string, unknown>> = {};
   const required: string[] = [];
-  const prop = (name: string, description: string | undefined): Record<string, unknown> => ({
-    type: 'string',
+  const prop = (name: string, description: string | undefined, type = 'string'): Record<string, unknown> => ({
+    type,
     ...(description ? { description } : {}),
     ...(tool.enums?.[name] ? { enum: [...tool.enums[name]] } : {}),
   });
@@ -154,9 +154,24 @@ export function toolInputSchema(tool: NativeTool): Record<string, unknown> {
   }
   for (const opt of optionsOf(spec, tool)) {
     const key = optionKey(opt);
-    properties[key] = prop(key, opt.description);
+    properties[key] = prop(key, opt.description, isSwitch(opt) ? 'boolean' : 'string');
   }
   return { type: 'object', properties, required, additionalProperties: false };
+}
+
+/**
+ * An option that takes no value (`--reply`, `--full`): commander gives it `true`, and so does a
+ * tool call — a boolean, or the string a model may send instead. Every other option is a string.
+ */
+export function isSwitch(opt: ReverseOption): boolean {
+  return !/[<[]/.test(opt.flags);
+}
+
+/** A switch's value from a tool call: true, or absent (undefined) for false and its spellings. */
+function switchValue(name: string, v: unknown, tool: string): true | undefined {
+  if (v === true || v === 'true') return true;
+  if (v === undefined || v === null || v === false || v === 'false' || v === '') return undefined;
+  throw new Error(`${tool}: ${name} is true or false`);
 }
 
 /**
@@ -215,6 +230,11 @@ export function toolAction(tool: NativeTool, args: unknown): IpcAction {
   const opts: Record<string, unknown> = {};
   for (const opt of options) {
     const key = optionKey(opt);
+    if (isSwitch(opt)) {
+      const on = switchValue(key, given[key], tool.name);
+      if (on) opts[key] = true;
+      continue;
+    }
     const v = value(key);
     if (v !== undefined) opts[key] = opt.parse ? opt.parse(v) : v;
   }
@@ -223,4 +243,33 @@ export function toolAction(tool: NativeTool, args: unknown): IpcAction {
 
 export function findNativeTool(name: string): NativeTool | undefined {
   return NATIVE_TOOLS.find((t) => t.name === name);
+}
+
+/** How many library skills the `skills` tool's description names before it falls back to counts. */
+export const LIBRARY_NAMES_MAX = 40;
+
+/**
+ * From the daemon's `skills categories` answer: `In the library: 协作: grilling, siyuan-notes;
+ * other: email-reader.` — the library skills that reach this agent, by category — or
+ * `In the library: 运维 6, 开发 2, other 3.` past LIBRARY_NAMES_MAX names, or from a daemon that
+ * does not send names. Empty when the library has nothing for this agent.
+ */
+export function libraryLine(result: unknown): string {
+  const r = result as { library?: number; categories?: Array<{ name: string; count: number; library?: unknown }> } | undefined;
+  if (!r?.library || !Array.isArray(r.categories) || r.categories.length === 0) return '';
+  const named = r.categories.map((c) => ({
+    name: c.name,
+    skills: Array.isArray(c.library) ? c.library.filter((n): n is string => typeof n === 'string') : undefined,
+  }));
+  if (named.every((c) => c.skills !== undefined)) {
+    const total = named.reduce((n, c) => n + c.skills!.length, 0);
+    if (total === 0) return '';
+    if (total <= LIBRARY_NAMES_MAX) {
+      return `In the library: ${named
+        .filter((c) => c.skills!.length > 0)
+        .map((c) => `${c.name}: ${c.skills!.join(', ')}`)
+        .join('; ')}.`;
+    }
+  }
+  return `In the library: ${r.categories.map((c) => `${c.name} ${c.count}`).join(', ')}.`;
 }

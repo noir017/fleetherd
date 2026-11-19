@@ -121,6 +121,8 @@ this is web UI only.
   `delegation.confirm: false`) starts every sub-task as the agent proposes it and posts the card
   afterwards as a record. All three reach only conversations you talk to directly — a sub-agent's
   own topic still confirms every time. Only you can change it — no agent command reaches it.
+- A caller outside the gateway can propose sub-tasks too, from a topic of its own, through the
+  [MCP entrance](external-mcp.md). Its cards always wait for Start, whatever this setting says.
 - A part can run on another model from the agent's `/model` list, when you ask for one or the
   part plainly needs it (`task-new --model`). The card names it, because the model decides what the
   part costs. A model the agent does not offer is refused when proposed; one the agent cannot

@@ -18,6 +18,7 @@ import { HistoryStore } from '../history/store.js';
 import { importWebuiTranscripts } from '../history/import-webui.js';
 import { installDaemonLog } from './log-file.js';
 import { mcpSession } from './mcp.js';
+import { renderResult } from './reverse.js';
 import { legacyConfigDirNote, migrateHostDir } from '../legacy-name.js';
 
 /**
@@ -95,6 +96,10 @@ export async function runStart(): Promise<void> {
     );
   }
   const daemon = new Daemon(cfg, platforms, agents, socket, store, workdirUsage, schedules, openHistory());
+  daemon.renderToolsWith((action, data) => {
+    const out = renderResult(action, data);
+    return [out.stdout, out.stderr].filter(Boolean).join('\n');
+  });
 
   await daemon.run();
   console.log(`🚀 fleetherd daemon is running (socket: ${socket})`);

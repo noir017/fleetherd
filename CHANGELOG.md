@@ -5,6 +5,24 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **Callers from outside: an MCP entrance for web agents.** A web agent — Gemini's, reached
+  through an MCP proxy — works with the account's own mail, calendar and logged-in sites, which no
+  agent here has; what it lacked was the other direction, using this gateway's skills and agents.
+  An `mcp:` block now opens an MCP server over HTTP for it (POST `/mcp`), with a bearer token per
+  caller named by its environment variable and a tool list per caller. `skills` searches and reads
+  the library and writes nothing. `tasks` opens a topic of the caller's own in the web UI and
+  proposes sub-tasks there; every one waits on the Start card whatever `/setting delegation` says,
+  its updates are shown in that topic rather than run as a turn, and the caller follows them with
+  `list` and `read`. There is no `task-send`, `send_file` or `schedule`: such a caller reads pages
+  and mail nobody vetted, so it may propose, and only a person starts. A caller sees and stops only
+  sub-tasks under topics it opened; removing it (or its variable) and `/reload` revokes it. See
+  [Callers from outside](docs/external-mcp.md) and security invariant 11 in AGENTS.md.
+- **Instructions for web-agent-driver.** A `custom` agent whose command is `wad` gets the
+  standing instructions at `~/.wad/AGENTS.md` (`common.md` + `wad.md`), which wad puts before a
+  new web conversation's first message — the web page has no file of its own to read.
+
 ## [3.14.0] - 2026-11-19
 
 ### Fixed

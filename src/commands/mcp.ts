@@ -2,10 +2,23 @@ import { createInterface } from 'node:readline';
 import { PassThrough, type Readable } from 'node:stream';
 import { encode } from '@toon-format/toon';
 import { callDaemon, clientTimeoutFor, parseEnvTimeout } from '../ipc/client.js';
+import {
+  answerMcpMessage,
+  answerMcpPayload,
+  PARSE_ERROR,
+  rpcError,
+  type JsonRpcResponse,
+  type McpServer,
+  type McpTool,
+  type McpToolText,
+} from '../ipc/mcp-rpc.js';
 import type { IpcAction, IpcResponse } from '../ipc/protocol.js';
-import { findNativeTool, NATIVE_TOOLS, toolAction, toolInputSchema } from '../ipc/tools.js';
+import { findNativeTool, libraryLine, NATIVE_TOOLS, toolAction, toolInputSchema } from '../ipc/tools.js';
 import { friendlyError, normalizeActionPaths, renderResult } from './reverse.js';
 import { envOf } from '../legacy-name.js';
+
+export { MCP_PROTOCOL_VERSIONS, type JsonRpcResponse } from '../ipc/mcp-rpc.js';
+export { LIBRARY_NAMES_MAX, libraryLine } from '../ipc/tools.js';
 
 /**
  * `fleetherd mcp` — an MCP server on stdio that gives an agent `send_file`, `schedule` and `skills`
@@ -28,9 +41,8 @@ import { envOf } from '../legacy-name.js';
  *    against. Not this process's CWD: ACP's stdio entry has no `cwd`, so where the harness starts
  *    the server is up to the harness.
  *
- * Hand-rolled rather than built on @modelcontextprotocol/sdk. The surface is four methods with no
- * state (initialize, ping, tools/list, tools/call), and doing it here keeps the message handling a
- * pure function the tests can drive, with nothing between it and the wire to version-skew.
+ * The JSON-RPC half is ipc/mcp-rpc.ts, shared with the external entrance over HTTP
+ * (daemon/external-mcp.ts); this file is the tools an agent's own session gets, and the stdio.
  *
  * stdout is the protocol stream and nothing else: one JSON-RPC message per line. Anything meant
  * for a human goes to stderr, which the harness keeps out of the stream.
@@ -43,18 +55,6 @@ import { envOf } from '../legacy-name.js';
  * sessions, Pss_Anon 60 MB apiece next to a 187 MB daemon, under a 1 GB limit). Every remote
  * session holding one, a handful of sub-agents was enough to fill the container.
  */
-
-/** MCP revisions this server can answer in, newest first. The tool surface used is the same in all. */
-export const MCP_PROTOCOL_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'] as const;
-
-type JsonRpcId = string | number | null;
-
-export interface JsonRpcResponse {
-  jsonrpc: '2.0';
-  id: JsonRpcId;
-  result?: unknown;
-  error?: { code: number; message: string };
-}
 
 export interface McpDeps {
   /** Send one action to the daemon. */
@@ -69,54 +69,21 @@ export interface McpDeps {
   version: string;
 }
 
-/** JSON-RPC error codes this server answers with (the spec's reserved range). */
-const PARSE_ERROR = -32700;
-const INVALID_REQUEST = -32600;
-const METHOD_NOT_FOUND = -32601;
-const INVALID_PARAMS = -32602;
-const INTERNAL_ERROR = -32603;
-
-const fail = (id: JsonRpcId, code: number, message: string): JsonRpcResponse => ({
-  jsonrpc: '2.0',
-  id,
-  error: { code, message },
-});
-
 /**
  * Answer one incoming JSON-RPC message, or return undefined when it wants no answer — a
- * notification (`notifications/initialized`, `notifications/cancelled`), or a response to a request
- * this server never sends.
+ * notification, or a response to a request this server never sends (ipc/mcp-rpc.ts).
  */
-export async function handleMcpMessage(msg: unknown, deps: McpDeps): Promise<JsonRpcResponse | undefined> {
-  if (typeof msg !== 'object' || msg === null || Array.isArray(msg)) return fail(null, INVALID_REQUEST, 'Invalid Request');
-  const m = msg as { jsonrpc?: unknown; id?: unknown; method?: unknown; params?: unknown };
-  const id = typeof m.id === 'string' || typeof m.id === 'number' ? m.id : null;
-  if (typeof m.method !== 'string') return undefined; // a response, or noise: nothing to answer
-  if (m.id === undefined) return undefined; // a notification
-  if (m.jsonrpc !== '2.0') return fail(id, INVALID_REQUEST, 'Invalid Request: jsonrpc must be "2.0"');
-  try {
-    const result = await dispatch(m.method, m.params, deps);
-    return 'error' in result ? { jsonrpc: '2.0', id, error: result.error } : { jsonrpc: '2.0', id, result: result.ok };
-  } catch (e) {
-    return fail(id, INTERNAL_ERROR, e instanceof Error ? e.message : String(e));
-  }
+export function handleMcpMessage(msg: unknown, deps: McpDeps): Promise<JsonRpcResponse | undefined> {
+  return answerMcpMessage(msg, nativeServer(deps));
 }
 
-type Outcome = { ok: unknown } | { error: { code: number; message: string } };
-
-async function dispatch(method: string, params: unknown, deps: McpDeps): Promise<Outcome> {
-  switch (method) {
-    case 'initialize':
-      return { ok: initializeResult(params, deps.version) };
-    case 'ping':
-      return { ok: {} };
-    case 'tools/list':
-      return { ok: { tools: await listTools(deps) } };
-    case 'tools/call':
-      return callTool(params, deps);
-    default:
-      return { error: { code: METHOD_NOT_FOUND, message: `Method not found: ${method}` } };
-  }
+/** The native tools as one MCP server, calling the daemon through `deps`. */
+function nativeServer(deps: McpDeps): McpServer {
+  return {
+    version: deps.version,
+    listTools: () => listTools(deps),
+    callTool: (name, args) => callTool(name, args, deps),
+  };
 }
 
 /**
@@ -133,7 +100,7 @@ async function dispatch(method: string, params: unknown, deps: McpDeps): Promise
  * searches in 19 hours, across every conversation. A name costs a few tokens on every request;
  * past LIBRARY_NAMES_MAX the line goes back to counts, so a large library does not grow the tool.
  */
-async function listTools(deps: McpDeps): Promise<Array<{ name: string; description: string; inputSchema: unknown }>> {
+async function listTools(deps: McpDeps): Promise<McpTool[]> {
   let library = '';
   try {
     const res = await Promise.race([
@@ -151,79 +118,24 @@ async function listTools(deps: McpDeps): Promise<Array<{ name: string; descripti
   }));
 }
 
-/** How many library skills the `skills` tool's description names before it falls back to counts. */
-export const LIBRARY_NAMES_MAX = 40;
-
-/**
- * From the daemon's `skills categories` answer: `In the library: 协作: grilling, siyuan-notes;
- * other: email-reader.` — the library skills that reach this agent, by category — or
- * `In the library: 运维 6, 开发 2, other 3.` past LIBRARY_NAMES_MAX names, or from a daemon that
- * does not send names. Empty when the library has nothing for this agent.
- */
-export function libraryLine(result: unknown): string {
-  const r = result as { library?: number; categories?: Array<{ name: string; count: number; library?: unknown }> } | undefined;
-  if (!r?.library || !Array.isArray(r.categories) || r.categories.length === 0) return '';
-  const named = r.categories.map((c) => ({
-    name: c.name,
-    skills: Array.isArray(c.library) ? c.library.filter((n): n is string => typeof n === 'string') : undefined,
-  }));
-  if (named.every((c) => c.skills !== undefined)) {
-    const total = named.reduce((n, c) => n + c.skills!.length, 0);
-    if (total === 0) return '';
-    if (total <= LIBRARY_NAMES_MAX) {
-      return `In the library: ${named
-        .filter((c) => c.skills!.length > 0)
-        .map((c) => `${c.name}: ${c.skills!.join(', ')}`)
-        .join('; ')}.`;
-    }
-  }
-  return `In the library: ${r.categories.map((c) => `${c.name} ${c.count}`).join(', ')}.`;
-}
-
-/**
- * Version negotiation per the spec: answer in the client's revision when this server knows it,
- * otherwise in the newest one it knows and let the client decide whether it can live with that.
- *
- * No `instructions`: the field exists, and Claude Code puts it into the system prompt — which is
- * exactly the kind of text from the gateway this server exists to avoid.
- */
-function initializeResult(params: unknown, version: string): unknown {
-  const asked = (params as { protocolVersion?: unknown } | undefined)?.protocolVersion;
-  const protocolVersion = (MCP_PROTOCOL_VERSIONS as readonly unknown[]).includes(asked)
-    ? (asked as string)
-    : MCP_PROTOCOL_VERSIONS[0];
-  return {
-    protocolVersion,
-    capabilities: { tools: { listChanged: false } },
-    serverInfo: { name: 'fleetherd', version },
-  };
-}
-
-/** A tool result the model reads: text, flagged as an error when the call did not happen. */
-const toolText = (text: string, isError = false): Outcome => ({
-  ok: { content: [{ type: 'text', text }], ...(isError ? { isError: true } : {}) },
-});
-
 /**
  * tools/call. An unknown tool is a protocol error (the spec's -32602), but everything after that
  * is a tool result with `isError` — bad arguments, a daemon that refused — because those are for
  * the model to read and correct, and a protocol error is what a harness shows to nobody.
  */
-async function callTool(params: unknown, deps: McpDeps): Promise<Outcome> {
-  const p = (params ?? {}) as { name?: unknown; arguments?: unknown };
-  const tool = typeof p.name === 'string' ? findNativeTool(p.name) : undefined;
-  if (!tool) return { error: { code: INVALID_PARAMS, message: `Unknown tool: ${String(p.name)}` } };
-
+async function callTool(name: string, args: unknown, deps: McpDeps): Promise<McpToolText | undefined> {
+  const tool = findNativeTool(name);
+  if (!tool) return undefined;
   let action: IpcAction;
   try {
-    action = normalizeActionPaths(toolAction(tool, p.arguments), deps.cwd, deps.home);
+    action = normalizeActionPaths(toolAction(tool, args), deps.cwd, deps.home);
   } catch (e) {
-    return toolText(encode({ error: e instanceof Error ? e.message : String(e) }), true);
+    return { text: encode({ error: e instanceof Error ? e.message : String(e) }), isError: true };
   }
   const resp = await deps.call(action);
-  if (!resp.ok) return toolText(encode(friendlyError(resp.error, deps.socket)), true);
+  if (!resp.ok) return { text: encode(friendlyError(resp.error, deps.socket)), isError: true };
   const out = renderResult(action, resp.data);
-  return toolText([out.stdout, out.stderr].filter(Boolean).join('\n'));
+  return { text: [out.stdout, out.stderr].filter(Boolean).join('\n') };
 }
 
 /** Entry point for `fleetherd mcp`: serve stdin → stdout until stdin closes. */
@@ -250,6 +162,7 @@ export async function runMcp(version: string): Promise<void> {
  */
 export async function serveMcp(input: Readable, write: (line: string) => void, deps: McpDeps): Promise<void> {
   const send = (r: JsonRpcResponse | JsonRpcResponse[]): void => write(`${JSON.stringify(r)}\n`);
+  const server = nativeServer(deps);
   // Calls are answered as they finish, not in arrival order: a slow upload must not hold up a ping.
   const inFlight = new Set<Promise<void>>();
   const lines = createInterface({ input, crlfDelay: Infinity });
@@ -259,18 +172,12 @@ export async function serveMcp(input: Readable, write: (line: string) => void, d
     try {
       msg = JSON.parse(line);
     } catch {
-      send(fail(null, PARSE_ERROR, 'Parse error'));
+      send(rpcError(null, PARSE_ERROR, 'Parse error'));
       continue;
     }
-    const answer = Array.isArray(msg)
-      ? Promise.all(msg.map((one) => handleMcpMessage(one, deps))).then((rs) => {
-          // A batch (allowed by revisions before 2025-06-18) is answered as one array, or not at all.
-          const answered = rs.filter((r): r is JsonRpcResponse => r !== undefined);
-          if (answered.length) send(answered);
-        })
-      : handleMcpMessage(msg, deps).then((r) => {
-          if (r) send(r);
-        });
+    const answer = answerMcpPayload(msg, server).then((r) => {
+      if (r) send(r);
+    });
     const tracked = answer.catch((e: unknown) => console.error('[mcp]', e instanceof Error ? e.message : e));
     inFlight.add(tracked);
     void tracked.finally(() => inFlight.delete(tracked));

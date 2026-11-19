@@ -128,8 +128,9 @@ get an explicit Hyrum's Law warning and a contract test.
 **Single sources of truth.** Several lists are deliberately defined once and consumed
 in many places. Extend the source, never a copy:
 - `ipc/commands.ts` `REVERSE_COMMANDS` → CLI registration, the `fleetherd help` pages
-  (`HELP_TOPICS`), the native tools' parameters and validation (`ipc/tools.ts`), the commands an
-  agent on a remote host may run back here (`daemon/remote-hosts.ts`), docs.
+  (`HELP_TOPICS`), the native tools' parameters and validation (`ipc/tools.ts`), the external MCP
+  entrance's tools (`ipc/external-tools.ts`), the commands an agent on a remote host may run back
+  here (`daemon/remote-hosts.ts`), docs.
 - `core/command-translate.ts` `GENERIC_COMMANDS` → the registered slash menu + translation.
 - `core/settings.ts` — the `/setting` table → the menu rows, the text list, value validation,
   the config path patched, and the ack sentence.
@@ -421,6 +422,39 @@ Do not weaken these without saying so explicitly in the PR:
    would get more than the delivery cap; every write is logged with who, which machine and which
    file. Do not add a route that takes a free path, a write that skips the check, or a harness rule
    anywhere but `harnessSources`.
+
+11. **The external MCP entrance lets a program outside the gateway propose work, and only
+   propose it** (`daemon/external-mcp.ts`, `docs/external-mcp.md`). Its callers are
+   neither a person nor an agent the gateway started: a web agent behind an MCP proxy, reading pages
+   and mail nobody vetted, so whatever it asks for may have been written by whoever wrote those. It
+   is off without an `mcp:` block, and it borrows nothing from the web UI. What holds it:
+   - **A token per caller**, named in config by its environment variable and never written there,
+     compared in constant time over SHA-256 digests (no early exit, no length leak), read from the
+     environment on every request — so removing a caller or its variable and `/reload` revokes it.
+     A token under 24 characters, or equal to a web UI login secret, is refused, never accepted on
+     a weaker check. A request with an `Origin` header is refused (no browser has a reason to call).
+   - **Two tools, and only those listed for the caller.** `skills` is `search` and `show`; every
+     write is refused at the tool and again in the daemon (`ipc/external-tools.ts`,
+     `daemon/external-calls.ts`), so a caller never adds to what every agent reads (invariant 8).
+     `tasks` is the sub-agent commands minus `task-send` — refused in `Delegation.handleExternal`
+     too — because a sub-agent has a shell and a running turn takes what is sent to it: an injected
+     instruction must not reach one without a tap. No `send_file`, no `schedule`.
+   - **Every sub-task waits on the card**, in the caller's own coordination topic, whatever
+     `delegation.confirm` says (`Delegation.startsAtOnce`): invariant 6's lowered tiers are about
+     agents the person talks to, not a caller from outside. A typed reply there reaches no agent
+     (the daemon answers it, `ExternalCalls.intercept`), so Cancel is the only no, and nothing is
+     ever started by text.
+   - **Ownership is the topic.** A caller acts only from topics it opened
+     (`<configDir>/external-topics.json`), and reaches a sub-task only through the platform's record
+     of its parent. Another caller's topic and a topic that does not exist get the same refusal.
+     A caller holds at most `MAX_TOPICS_PER_CALLER` topics (`daemon/external-calls.ts`): the web UI
+     evicts the oldest unstarred topic to make room, and a caller opening topics in a loop must not
+     push out the person's.
+   - **No turn runs in a coordination topic.** Sub-agent updates are shown there and never sent as a
+     prompt (`Delegation.tell`); the caller polls with `list` and `read`.
+   It reaches no host: the entrance runs in the daemon and touches only the skill library and the
+   sub-agent commands. Do not add a tool to it that writes, sends into a running turn, or starts
+   anything without the card; do not let it share a credential or a port with the web UI.
 
 ## Adding things
 

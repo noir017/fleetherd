@@ -12038,7 +12038,7 @@ const SCRIPT = `
   // target, and the daemon checks it against what that harness reads now.
   var instrData = null, instrBusy = false, instrFor = null;
   var INSTR_LAYER = {common:'Every agent', claude:'Claude Code', codex:'Codex', opencode:'OpenCode',
-    agy:'Antigravity', codebuddy:'CodeBuddy', atomcode:'AtomCode'};
+    agy:'Antigravity', codebuddy:'CodeBuddy', atomcode:'AtomCode', wad:'Web agent (wad)'};
 
   function instrFetch(url){
     return fetch(url, {credentials:'same-origin'}).then(function(r){

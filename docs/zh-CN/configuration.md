@@ -73,7 +73,7 @@ workdir:                      # 可选；目录选择菜单（/cd、/new）
 见[网页端](web-ui.md)，`title:` 见[话题命名](topic-names.md)，`voice:` 见[语音消息](voice.md)，`hosts:` 和
 `agents[].host` 见[远程主机](remote-hosts.md)，`agents[].hooks` 见
 [智能体](agents.md#启动前钩子)，`review:` 和 `skills:` 见[技能](skills.md)，`delegation:` 见
-[子代理](sub-agents.md)。
+[子代理](sub-agents.md)，`mcp:` 见[外部调用方](external-mcp.md)。
 其中几项也能在聊天里直接改、不用重启——见[在聊天里改配置](settings.md)。
 
 ## 守护进程运行时改配置

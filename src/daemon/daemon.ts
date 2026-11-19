@@ -180,7 +180,12 @@ import { buildGitPanel } from './git-panel.js';
 import { SkillsRepo, prepareSkillsRepo, skillsRemoteOf } from './skills-repo.js';
 import { SkillLibrary, type LibraryAsker } from './skill-library.js';
 import { skillHarnessOf } from './managed-skills.js';
-import { commandSurface, Delegation } from './delegation.js';
+import { commandSurface, Delegation, type ExternalOwner } from './delegation.js';
+import { ExternalCalls } from './external-calls.js';
+import { ExternalMcp } from './external-mcp.js';
+import { ExternalTopics } from './external-topics.js';
+import { packageVersion } from '../remote/binaries.js';
+import { encode } from '@toon-format/toon';
 import type { ScheduleStore } from './schedule-store.js';
 import { DRAIN_LIMIT_MS, describeInProgress, nothingInProgress, whenIdle, type InProgress } from './restart-drain.js';
 import { taskListText } from '../core/schedule.js';
@@ -937,6 +942,20 @@ export class Daemon {
   /** Sub-agents: the task commands, their confirmation cards, and the updates (daemon/delegation.ts). */
   private readonly delegation: Delegation;
 
+  /**
+   * The external MCP entrance (daemon/external-mcp.ts): callers outside the gateway, their
+   * coordination topics, and the calls they make. Listening only when config.yaml has `mcp:`.
+   */
+  private readonly externalTopics = new ExternalTopics(path.join(configDir(), 'external-topics.json'));
+  private readonly externalCalls: ExternalCalls;
+  private readonly externalMcp: ExternalMcp;
+  /**
+   * How a reverse command's result is printed (commands/reverse.ts renderResult), for the external
+   * entrance's answers. Handed in by `start` (renderToolsWith) because the printers are commands/'s
+   * and daemon/ does not import upward; without it an answer is the result's plain TOON.
+   */
+  private renderTool: (action: IpcAction, data: unknown) => string = (_action, data) => encode(data);
+
   constructor(
     private readonly config: Config,
     platforms: Map<string, PlatformAdapter>,
@@ -1067,6 +1086,8 @@ export class Daemon {
         return { agent, generation: this.store?.conversationGeneration(id) ?? 0 };
       },
       questionOf: (id) => this.questionOf(id),
+      // A coordination topic an external caller opened: no agent, and its updates are only shown.
+      externalOf: (id) => this.externalOwner(id),
       // Buttons only, like a permission request: a sentence typed instead ("use cx for the second")
       // is the person's next message to the agent, which proposes again — not a guess at a button.
       confirm: async ({ adapter, address, conversation, text, labels, timeoutMs, signal }) => {
@@ -1079,6 +1100,7 @@ export class Daemon {
         return outcome?.kind === 'option' ? (outcome.labels[0] ?? null) : null;
       },
     });
+    ({ calls: this.externalCalls, mcp: this.externalMcp } = this.buildExternal(clock));
     if (schedules) {
       // On the PACED adapters, like everything else: a scheduled run's notice and output wait their
       // turn on the chat's write budget.
@@ -1122,6 +1144,49 @@ export class Daemon {
     );
   }
 
+  /**
+   * The external MCP entrance's two halves: what a call does (external-calls.ts) and the HTTP door
+   * (external-mcp.ts). Built once; the door reads `config.mcp` and the tokens on every request, so a
+   * reload needs nothing from here but a re-bind when the address moved.
+   */
+  private buildExternal(clock: { now(): number }): { calls: ExternalCalls; mcp: ExternalMcp } {
+    const calls = new ExternalCalls({
+      config: this.config,
+      platforms: this.platforms,
+      topics: this.externalTopics,
+      conversationAt: (platform, address) => this.registry.conversationAt(platform, address),
+      delegation: this.delegation,
+      skills: this.skillLibrary,
+      render: (action, data) => this.renderTool(action, data),
+      now: () => clock.now(),
+    });
+    const mcp = new ExternalMcp({
+      settings: () => this.config.mcp,
+      env: () => process.env,
+      // A caller's token must not be a web UI login secret: holding it would hold the web UI too.
+      reserved: () => Object.values(this.config.platforms).flatMap((p) => (p.type === 'webui' ? [p.token] : [])),
+      call: (caller, action) => calls.call(caller, action),
+      libraryLine: () => calls.libraryLine(),
+      version: packageVersion(),
+    });
+    return { calls, mcp };
+  }
+
+  /** The coordination topic an external caller opened, as Delegation reads it. */
+  private externalOwner(id: ConversationId): ExternalOwner | undefined {
+    const t = this.externalTopics.get(id);
+    return t && { caller: t.caller, platform: t.platform, address: t.address, title: t.title };
+  }
+
+  /**
+   * How the external MCP entrance prints a reverse command's result: the CLI's own printers
+   * (commands/reverse.ts renderResult), handed in by `start` — the same answer an agent gets from the
+   * native tools. daemon/ does not import commands/ (AGENTS.md Layering), as remoteHosts.serveMcpWith.
+   */
+  renderToolsWith(render: (action: IpcAction, data: unknown) => string): void {
+    this.renderTool = render;
+  }
+
   async run(): Promise<void> {
     this.startSkillsRepo();
     // Wire + start every configured platform instance; they all converge on the same
@@ -1163,6 +1228,11 @@ export class Daemon {
     // Each remote agent's directory list, read now so the first bare `/cc` has a menu to offer.
     this.registry.warmRemoteScans();
     await this.ipc.start();
+    // The external MCP entrance, after IPC like the rest of what reaches the daemon from outside.
+    // A port it cannot bind is said loudly and costs only this entrance: the chat platforms are up.
+    await this.externalMcp
+      .configure()
+      .catch((e: Error) => console.error(`[external-mcp] ⚠️  not listening: ${e.message}`));
     // Turns the last daemon never finished — a drain that ran out of time, or a crash. After the
     // platforms are up (each gets a line where it ran) and after IPC (a continue it schedules needs
     // its agent's reverse commands to work).
@@ -1332,6 +1402,7 @@ export class Daemon {
     // First, so nothing new starts while the rest goes down. Bash runs in flight are signalled and
     // record themselves as interrupted; agent runs end with the registry below.
     this.schedules?.scheduler.stop();
+    await this.externalMcp.stop();
     await this.ipc.stop();
     // Deliver what the pacer is still holding BEFORE the adapters go down: a queued write is
     // somebody's reply, and a lane that was paced or paused at the wrong moment must not lose it
@@ -1957,6 +2028,10 @@ export class Daemon {
     // A tier change voids what Delegation remembered. This is the `/reload` half: a change away and
     // back across two reloads, with no `task-new` in between, is invisible to a read at propose time.
     if (diff.sections.includes('delegation')) this.delegation.forgetConfirmations();
+    // Callers are read per request; only a moved host or port, or the block coming or going, needs this.
+    if (diff.sections.includes('mcp')) {
+      void this.externalMcp.configure().catch((e: Error) => console.error(`[external-mcp] ⚠️  not listening: ${e.message}`));
+    }
     const respawn = this.registry.respawnAgents(new Set([...diff.agentsChanged, ...diff.agentsRemoved]));
     // Only when the set changed: re-registering is a platform API call per instance, and Telegram
     // and Discord rate-limit it.
@@ -2748,6 +2823,9 @@ export class Daemon {
       if (this.recentRouted.has(key)) return; // same source message already routed (slash≡message platforms)
       this.recentRouted.set(key, now);
     }
+    // A coordination topic an external caller opened has no agent: what the person types there is
+    // answered by the gateway, never routed to one (external-calls.ts intercept).
+    if (this.externalCalls.intercept(msg)) return;
     this.registry.route(msg);
   }
 

@@ -2066,3 +2066,93 @@ describe('naming a /super topic', () => {
     expect(jobInCommand('/superb x')).toBeUndefined();
   });
 });
+
+describe('Delegation: a coordination topic an external caller opened', () => {
+  const E = 'web#main#eeeeeeee';
+  const C = 'web#main#c1000000';
+
+  /** A rig where E is `gem`'s coordination topic: no agent bound, a record saying whose it is. */
+  const external = (opts: Parameters<typeof rig>[0] = {}) => {
+    const r = rig(opts);
+    r.deps.externalOf = (id) =>
+      id === E ? { caller: 'gem', platform: 'web', address: addrOf(E), title: '[gem] Trip' } : undefined;
+    return r;
+  };
+
+  it('puts every sub-task on the card, whatever delegation.confirm says, and says nothing will tell the caller', async () => {
+    for (const confirm of [false, 'first'] as const) {
+      const r = external({ answer: null });
+      r.deps.config.delegation.confirm = confirm;
+      const res = (await r.d.handleExternal(E, task('cc', 'Book the hotel'))) as TaskNewResult;
+      expect(res.result).toMatch(/waiting for the person to tap Start/);
+      expect(res.result).toMatch(/nobody tells you .* check with list/);
+      r.clock.advance(PROPOSAL_GATHER_MS);
+      await settle();
+      expect(r.cards).toHaveLength(1);
+      expect(r.cards[0]!.text).toMatch(/^\*\*gem \(external\) wants to start a sub-agent\*\*/);
+      // Nobody reads a typed reply here: the card does not invite one.
+      expect(r.cards[0]!.text).toContain('gem is outside this gateway and does not read this topic. Cancel refuses');
+      expect(r.cards[0]!.text).not.toContain('say what to change');
+      expect(r.calls.filter(([c]) => c === 'openTask')).toEqual([]);
+    }
+  });
+
+  it('needs the agent named, and never offers task-send', async () => {
+    const r = external();
+    await expect(r.d.handleExternal(E, task(undefined, 'x'))).rejects.toThrow(/name the agent/);
+    await expect(r.d.handleExternal(E, { kind: 'task-send', topic: 'c1000000', text: 'rm -rf' })).rejects.toThrow(/not offered/);
+    await expect(r.d.handleExternal(P, { kind: 'task-agents' })).rejects.toThrow(/not a coordination topic/);
+  });
+
+  it('starts on Start, under the topic, with the caller named above the task', async () => {
+    const r = external();
+    await r.d.handleExternal(E, task('cc', 'Book the hotel'));
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    await settle();
+    const opened = r.calls.filter(([c]) => c === 'openTask').map(([, o]) => o as { parent: ConversationAddress; header: string });
+    expect(opened.map((o) => keyOf(o.parent))).toEqual([E]);
+    expect(opened[0]!.header).toBe('**↳ From gem (external) · [Trip](?t=eeeeeeee)**');
+    expect(r.posted.find((p) => p.to === E && p.kind === 'dispatch')?.text).toMatch(/started by gem \(external\)/);
+  });
+
+  it('shows what its sub-tasks did in the topic, and runs no turn there', async () => {
+    const r = external();
+    await r.d.handleExternal(E, task('cc', 'Book the hotel'));
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    await settle();
+    r.activity.set(C, { outcome: { kind: 'done', at: 5, line: 'Booked.' } });
+    r.replies.set(C, 'Booked: the one by the station.');
+    r.d.childChanged(C);
+    r.clock.advance(CARD_DELAY_MS);
+    await settle();
+    expect(r.posted.filter((p) => p.to === E && p.kind === 'report').map((p) => p.text)).toEqual([
+      '🔔 part (cc @ near) — turn ended: Booked.',
+    ]);
+    expect(r.calls.filter(([c]) => c === 'prompt')).toEqual([]);
+    // …and the caller reads it itself.
+    const list = (await r.d.handleExternal(E, { kind: 'task-list' })) as TaskListResult;
+    expect(list.tasks.map((t) => [t.topic, t.stage])).toEqual([['web:main/c1000000', 'review']]);
+  });
+
+  it('lists the agents as from no machine of the gateway', async () => {
+    const r = external();
+    const res = (await r.d.handleExternal(E, { kind: 'task-agents' })) as TaskAgentsResult;
+    expect(res.agents.every((a) => a.here === false)).toBe(true);
+    expect(r.d.externalAgents().agents.map((a) => a.id)).toEqual(['oc2', 'cc', 'cx', 'local']);
+  });
+
+  it('acts only on its own sub-tasks, and says who stopped one', async () => {
+    const r = external();
+    await r.d.handleExternal(E, task('cc', 'Book the hotel'));
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    await settle();
+    r.busy.add(C);
+    await expect(r.d.handleExternal(E, { kind: 'task-status', topic: 'web:main/c9999999' })).rejects.toThrow(/not a topic this conversation opened/);
+    const stopped = (await r.d.handleExternal(E, { kind: 'task-stop', topic: 'c1000000' })) as TaskActionResult;
+    expect(stopped.result).toMatch(/^Stopped\./);
+    expect(r.posted.find((p) => p.to === C && p.text.startsWith('⏹'))?.text).toBe('⏹ Stopped by gem (external) in [Trip](?t=eeeeeeee).');
+  });
+});

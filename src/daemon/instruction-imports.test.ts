@@ -149,8 +149,9 @@ describe('harnessSources', () => {
     expect(cx.files).toEqual([{ path: '/h/.codex/AGENTS.override.md', note: expect.stringContaining('instead of AGENTS.md') }]);
   });
 
-  it('knows nothing for atomcode, gemini, dsh or another command', () => {
+  it('knows nothing for atomcode, wad, gemini, dsh or another command', () => {
     expect(harnessSources({ harness: 'custom', command: 'atomcode' }, '/h')).toBeUndefined();
+    expect(harnessSources({ harness: 'custom', command: 'wad' }, '/h')).toBeUndefined();
     expect(harnessSources({ harness: 'custom', command: 'other' }, '/h')).toBeUndefined();
     for (const harness of ['gemini', 'dsh'] as const) expect(harnessSources({ harness }, '/h')).toBeUndefined();
   });

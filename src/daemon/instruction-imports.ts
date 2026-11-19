@@ -149,6 +149,7 @@ export function harnessSources(def: Pick<AgentDef, 'harness' | 'command'>, home:
         ruleDirs: [],
       };
     case 'atomcode':
+    case 'wad':
       return undefined;
     default: {
       const _exhaustive: never = where.name;
