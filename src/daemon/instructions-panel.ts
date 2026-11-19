@@ -468,7 +468,8 @@ async function writeGlobal(env: Env, name: string, text: string, data: Buffer, e
   const abs = globalFile(env, name);
   const dir = env.dir();
   const layers = affectedLayers(name, env.agents());
-  assertFits(dir, name, text, layers);
+  // Delivery keeps every affected layer; the size check only counts the ones somebody still gets.
+  assertFits(dir, name, text, checkedLayers(name, env.agents()));
   // The directory is the feature's switch (instructions.ts): writing the first file into it is the
   // person turning it on, which is what they asked for by saving.
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -482,6 +483,21 @@ async function writeGlobal(env: Env, name: string, text: string, data: Buffer, e
 function affectedLayers(name: string, agents: readonly AgentDef[]): Set<string> {
   const layer = name.slice(0, -'.md'.length);
   return new Set(layerNames(agents).filter((l) => name === 'common.md' || l === layer));
+}
+
+/**
+ * The affected layers somebody still gets: an agent whose delivery is off reads nothing, so its
+ * layer must not fail a save over a size nobody would receive.
+ */
+function checkedLayers(name: string, agents: readonly AgentDef[]): Set<string> {
+  const layer = name.slice(0, -'.md'.length);
+  const read = new Set<string>();
+  for (const def of agents) {
+    if (instructionsOff(def)) continue;
+    const where = instructionsHome(def, '~');
+    if (where) read.add(where.name);
+  }
+  return new Set([...read].filter((l) => name === 'common.md' || l === layer));
 }
 
 /**

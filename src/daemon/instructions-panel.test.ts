@@ -191,6 +191,26 @@ describe('global files', () => {
     expect(r).toMatchObject({ ok: false, error: expect.stringMatching(/claude agents would be given \d+ bytes.*Nothing was saved/) });
     expect(fs.existsSync(path.join(gateway, 'common.md'))).toBe(false);
   });
+
+  it('leaves a layer whose only agent has delivery off out of the cap, and still checks one that is read', async () => {
+    fs.mkdirSync(gateway, { recursive: true });
+    fs.writeFileSync(path.join(gateway, 'cx2.md'), 'c'.repeat(INSTRUCTIONS_MAX_BYTES - 100));
+    const at = (off: boolean): AgentDef =>
+      def('cx2', 'codex', {
+        instructions: off
+          ? { file: '~/.codex/AGENTS.md', layer: 'cx2', off: true }
+          : { file: '~/.codex/AGENTS.md', layer: 'cx2' },
+      });
+    const saved = await panel({ agents: () => [at(true)] }).write({ scope: 'global', name: 'common.md' }, 'x'.repeat(200), {
+      missing: true,
+    });
+    expect(saved.ok).toBe(true);
+    fs.rmSync(path.join(gateway, 'common.md'), { force: true });
+    const refused = await panel({ agents: () => [at(false)] }).write({ scope: 'global', name: 'common.md' }, 'x'.repeat(200), {
+      missing: true,
+    });
+    expect(refused).toMatchObject({ ok: false, error: expect.stringMatching(/cx2 agents would be given \d+ bytes.*Nothing was saved/) });
+  });
 });
 
 describe("an agent's references", () => {

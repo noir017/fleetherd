@@ -92,7 +92,8 @@ function expandInstructionFile(file: string, home: string): string {
  * the web UI lists the layer and the harness's own files — so only delivery is skipped.
  */
 export function instructionsOff(def: InstructionsAgent): boolean {
-  return def.instructions !== undefined && 'off' in def.instructions && def.instructions.off === true;
+  const i = def.instructions;
+  return typeof i === 'object' && i !== null && 'off' in i && i.off === true;
 }
 
 /** Where `def`'s harness reads its user-level instruction file under `home` (see the header). */

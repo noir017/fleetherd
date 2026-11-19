@@ -96,6 +96,8 @@ describe('instructionsHome', () => {
     expect(instructionsOff({ id: 'cc', harness: 'claude', instructions: off })).toBe(true);
     expect(instructionsOff({ id: 'cc', harness: 'claude' })).toBe(false);
     expect(instructionsOff({ id: 'mh', harness: 'custom', command: 'my-harness', instructions: { file: '~/x' } })).toBe(false);
+    // A non-object is not a marker, and must not throw on `'off' in`.
+    expect(instructionsOff({ id: 'cc', harness: 'claude', instructions: false as unknown as { file: string } })).toBe(false);
   });
 });
 
