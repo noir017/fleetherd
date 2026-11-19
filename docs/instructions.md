@@ -114,7 +114,8 @@ instead — and a file no agent reads says so.
 An agent whose delivery is off — a pod's agent whose file another agent on that machine already
 delivers with a different layer — says **Not delivering** on its card instead of listing that file
 among the ones it gets. Its layer file stays in the list and editable, and **Its own files** still
-opens, so the clash can be fixed from the page.
+opens, so the clash can be fixed from the page. If no other agent reads that layer, the file is
+listed under **Instructions no agent reads**, like any layer with no reader.
 
 ```yaml
 platforms:

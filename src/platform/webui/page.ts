@@ -12219,7 +12219,7 @@ const SCRIPT = `
     return n ? f.reach + ' · ' + n + (n === 1 ? ' reads it' : ' read it') : instrReach(f);
   }
 
-  /** The gateway's files no configured agent reads: a layer left by an agent that has gone. */
+  /** The gateway's files no configured agent reads: a layer left by an agent that is gone, or one whose delivery is off. */
   function instrOrphans(d){
     var g = (d && d.global) || [], out = [];
     for(var i=0;i<g.length;i++) if(g[i].layer !== 'common' && !(g[i].agents || []).length) out.push(g[i]);

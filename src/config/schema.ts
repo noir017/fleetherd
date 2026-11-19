@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { ToolMode as ToolModeType, TurnFailureReason } from '../types.js';
 import { PlatformConfigSchema, type PlatformInstance } from '../platform/config-schemas.js';
-import { instructionClashes, instructionConflictMessage } from './instructions.js';
+import { INSTRUCTION_LAYER_RE, instructionClashes, instructionConflictMessage, isInstructionLayer } from './instructions.js';
 
 /**
  * Config schema + defaults.
@@ -68,21 +68,6 @@ const InstructionFileSchema = z
   .refine((p) => (p.startsWith('~/') ? p.length > 2 : p.startsWith('/')) && !p.endsWith('/'), {
     message: "instructions.file is the file on the agent's host: `~/…` or an absolute path",
   });
-
-/**
- * The layer's name becomes `<layer>.md` in the gateway's instructions directory, so it has to be a
- * plain file name. `common` is compared without regard to case: on a case-insensitive filesystem
- * `Common.md` IS `common.md`, so such a layer would hand its agent the common text twice.
- *
- * Exported because the instruction editor is handed agent definitions by callers the schema never
- * saw, and must refuse the same names (daemon/instructions-panel.ts).
- */
-export const INSTRUCTION_LAYER_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
-
-/** Whether `layer` can name a `<layer>.md` beside `common.md`. */
-export function isInstructionLayer(layer: string): boolean {
-  return INSTRUCTION_LAYER_RE.test(layer) && layer.toLowerCase() !== 'common';
-}
 
 const InstructionLayerSchema = z
   .string()

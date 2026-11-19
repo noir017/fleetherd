@@ -409,10 +409,13 @@ Do not weaken these without saying so explicitly in the PR:
    that are not the page's — which a message to one agent never is. With it off there is no
    section and every `/api/instructions…` route answers 404, whether or not the daemon handed the
    page a panel. Reach is fixed by the daemon, never by the page (`daemon/instructions-panel.ts`):
-   the gateway's own files by name (`common.md`, the layer names configured agents read, and, as
-   orphans, every other legal `<layer>.md` in that directory that is a regular file — a layer left
-   behind by an agent that is gone; a symlink is not taken, and neither is a name that differs from
-   a known layer only in case), and on an agent's machine only the files that agent's harness reads
+   the gateway's own files by name (`common.md`, every layer a configured agent is placed on — an
+   agent whose delivery is off still names its layer — and, as orphans, every other legal
+   `<layer>.md` in that directory that is a regular file: a layer left behind by an agent that is
+   gone; a symlink is not taken, and neither is a name that differs from a known layer only in
+   case; a layer name is a plain file name or nothing — `config/instructions.ts`
+   `isInstructionLayer` guards `instructionsHome` and `composeInstructions`, so a name with `/` or
+   `..` never becomes a path), and on an agent's machine only the files that agent's harness reads
    at that moment — its rules, the files its instruction files reference, what its config lists
    (`instruction-imports.ts`
    `harnessSources`) — walked again on that machine for every read and write, so a reference taken

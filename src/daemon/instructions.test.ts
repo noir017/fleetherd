@@ -65,6 +65,14 @@ describe('composeInstructions', () => {
     expect(composeInstructions(dir, 'codex')).toMatchObject({ kind: 'too-big' });
   });
 
+  it('has nothing to deliver for a name that is not a layer, and never reads outside the directory', () => {
+    // A file beside the instructions directory that `../outside` would otherwise pick up.
+    fs.writeFileSync(path.join(home, 'gateway', 'outside.md'), 'not an instruction\n');
+    for (const name of ['../outside', 'a/b', '..', 'Common', '']) {
+      expect(composeInstructions(dir, name), name).toEqual({ kind: 'none' });
+    }
+  });
+
   it('throws on a file it cannot read, so that never reads as "nothing to deliver"', () => {
     fs.mkdirSync(path.join(dir, 'common.md'));
     expect(() => composeInstructions(dir, 'codex')).toThrow();

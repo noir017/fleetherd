@@ -46,6 +46,22 @@ import type { AgentDef } from './schema.js';
 export const HARNESS_LAYERS = ['claude', 'codex', 'opencode', 'agy', 'codebuddy', 'atomcode'] as const;
 export type HarnessLayer = (typeof HARNESS_LAYERS)[number];
 
+/**
+ * The layer's name becomes `<layer>.md` in the gateway's instructions directory, so it has to be a
+ * plain file name. `common` is compared without regard to case: on a case-insensitive filesystem
+ * `Common.md` IS `common.md`, so such a layer would hand its agent the common text twice.
+ *
+ * It lives here, beside `instructionsHome`, because that is the one path delivery, the conflict
+ * check and the instruction editor all go through: a caller the config schema never saw must not
+ * be able to turn a layer into `../x`. The schema imports it too, so there is one rule.
+ */
+export const INSTRUCTION_LAYER_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+/** Whether `layer` can name a `<layer>.md` beside `common.md`. */
+export function isInstructionLayer(layer: string): boolean {
+  return INSTRUCTION_LAYER_RE.test(layer) && layer.toLowerCase() !== 'common';
+}
+
 /** The harness a preset or a known `custom` command is, or undefined when nothing is known of it. */
 export function harnessKind(harness: AgentDef['harness'], command?: string): HarnessLayer | undefined {
   switch (harness) {
@@ -99,8 +115,12 @@ export function instructionsOff(def: InstructionsAgent): boolean {
 /** Where `def`'s harness reads its user-level instruction file under `home` (see the header). */
 export function instructionsHome(def: InstructionsAgent, home: string): InstructionsHome | undefined {
   if (def.instructions) {
+    const name = def.instructions.layer ?? def.id;
+    // A caller the schema never saw must not turn this into `<configDir>/instructions/../x.md`:
+    // the layer is a plain file name, or nothing is delivered for it.
+    if (!isInstructionLayer(name)) return undefined;
     const file = expandInstructionFile(def.instructions.file, home);
-    return { name: def.instructions.layer ?? def.id, file, requires: path.dirname(file) };
+    return { name, file, requires: path.dirname(file) };
   }
   switch (harnessKind(def.harness, def.command)) {
     case 'claude':

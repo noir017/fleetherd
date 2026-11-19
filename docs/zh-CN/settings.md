@@ -50,8 +50,8 @@ Replies、Voice、Reviews —— 每一行用适合它的控件就地修改：
     选中的等级是什么意思；只有一个等级时直接显示文字。
   - **Instructions**（打开[指令编辑器](instructions.md#在-web-ui-里编辑)后才有）：这个智能体会读的
     所有文件 —— 先是网关上共用的，标明谁在读、有几个在读（`every Claude Code agent`，被别的种类共用时
-    是 `the claude layer`），再是它所在机器上它自己的。智能体已经不在、层文件还留在网关上的，会在卡片
-    下方单独列成一行 *Instructions no agent reads*——没有智能体卡片时在页面末尾。
+    是 `the claude layer`），再是它所在机器上它自己的。没有智能体读的层文件——智能体已经不在了，或者投递
+    被关掉了——会在卡片下方单独列成一行 *Instructions no agent reads*——没有智能体卡片时在页面末尾。
 
 每次改动的结果显示在顶部横幅里 —— 已保存、本来就是这个值，或者被拒绝的原因；请求
 没送到网关时，控件会恢复原状并提示。页面顶部写明这些设置存在 config.yaml 里、对所有

@@ -212,6 +212,8 @@ describe('who reads a layer', () => {
   });
 
   it('does not count an agent whose delivery is off as a reader of its kind', async () => {
+    fs.mkdirSync(gateway, { recursive: true });
+    fs.writeFileSync(path.join(gateway, 'mine.md'), 'mine\n');
     const withOff = [
       def('cc', 'claude'),
       def('cc2', 'claude', { instructions: { file: '~/.claude/CLAUDE.md', layer: 'mine', off: true } }),

@@ -3,7 +3,15 @@ import fs from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 
-import { isInstructionLayer, type AgentDef } from '../config/schema.js';
+import {
+  HARNESS_LAYERS,
+  harnessKind,
+  instructionsHome,
+  instructionsOff,
+  isInstructionLayer,
+  type HarnessLayer,
+} from '../config/instructions.js';
+import type { AgentDef } from '../config/schema.js';
 import type {
   FilesPanelExpect,
   InstructionsAgent,
@@ -20,7 +28,6 @@ import type {
 import { buildHarnessEnv, remoteAgentHome } from './agent-common.js';
 import { MAX_EDIT_BYTES, readForEditor } from './file-panel.js';
 import { globBase, globRegex, harnessSources, hasGlob, type HarnessSources } from './instruction-imports.js';
-import { HARNESS_LAYERS, harnessKind, instructionsHome, instructionsOff, type HarnessLayer } from '../config/instructions.js';
 import {
   INSTRUCTIONS_MAX_BYTES,
   instructionsDir,
