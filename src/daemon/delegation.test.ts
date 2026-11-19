@@ -125,7 +125,7 @@ function manualClock() {
 
 const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
 
-function rig(opts: { answer?: string | null; failOpen?: string; failModel?: string; noHistory?: boolean } = {}) {
+function rig(opts: { answer?: string | null | 'manual'; failOpen?: string; failModel?: string; noHistory?: boolean } = {}) {
   const clock = manualClock();
   const posted: Array<{ to: string; text: string; kind?: string }> = [];
   const parents = new Map<string, string>(); // child key → parent key
@@ -141,7 +141,8 @@ function rig(opts: { answer?: string | null; failOpen?: string; failModel?: stri
   /** Agents over their usage limit (TurnOutcomes' cooldown), as the registry reports them. */
   const cooling = new Set<string>();
   const calls: Array<[string, unknown]> = [];
-  const cards: Array<{ text: string; labels: string[]; signal: AbortSignal }> = [];
+  const cards: Array<{ text: string; labels: string[]; signal: AbortSignal; address: ConversationAddress; conversation: string }> = [];
+  const pending: Array<{ text: string; labels: string[]; address: ConversationAddress; conversation: string; resolve: (v: string | null) => void }> = [];
   let threads = 0;
   let handResult: 'started' | 'joined' | 'queued' = 'started';
   const history = tempHistory();
@@ -255,8 +256,11 @@ function rig(opts: { answer?: string | null; failOpen?: string; failModel?: stri
     // A gateway without node:sqlite has no library at all (see DelegationDeps.history).
     ...(opts.noHistory ? {} : { history }),
     questionOf: (k: string) => questions.get(k),
-    confirm: ({ text, labels, signal }) => {
-      cards.push({ text, labels, signal });
+    confirm: ({ text, labels, signal, address, conversation }) => {
+      cards.push({ text, labels, signal, address, conversation });
+      if (opts.answer === 'manual') {
+        return new Promise<string | null>((resolve) => pending.push({ text, labels, address, conversation, resolve }));
+      }
       return Promise.resolve(opts.answer === undefined ? (labels[0] ?? null) : opts.answer);
     },
   };
@@ -280,6 +284,7 @@ function rig(opts: { answer?: string | null; failOpen?: string; failModel?: stri
     cooling,
     calls,
     cards,
+    pending,
     setHandResult: (v: 'started' | 'joined' | 'queued') => {
       handResult = v;
     },
@@ -447,8 +452,8 @@ describe('Delegation: proposing, and the card every start waits on', () => {
     const releases: Array<(v: string | null) => void> = [];
     const d = new Delegation({
       ...(r.d as unknown as { deps: DelegationDeps }).deps,
-      confirm: ({ text, labels, signal }) => {
-        r.cards.push({ text, labels, signal });
+      confirm: ({ text, labels, signal, address, conversation }) => {
+        r.cards.push({ text, labels, signal, address, conversation });
         return new Promise((res) => {
           releases.push(res);
           signal.addEventListener('abort', () => res(null));
@@ -478,8 +483,8 @@ describe('Delegation: proposing, and the card every start waits on', () => {
     const releases: Array<(v: string | null) => void> = [];
     const d = new Delegation({
       ...(r.d as unknown as { deps: DelegationDeps }).deps,
-      confirm: ({ text, labels, signal }) => {
-        r.cards.push({ text, labels, signal });
+      confirm: ({ text, labels, signal, address, conversation }) => {
+        r.cards.push({ text, labels, signal, address, conversation });
         return new Promise((res) => {
           releases.push(res);
           signal.addEventListener('abort', () => res(null));
@@ -832,8 +837,8 @@ describe('Delegation: confirming each agent only the first time', () => {
     // card has already taken its place.
     const d = new Delegation({
       ...(r.d as unknown as { deps: DelegationDeps }).deps,
-      confirm: ({ text, labels, signal }) => {
-        r.cards.push({ text, labels, signal });
+      confirm: ({ text, labels, signal, address, conversation }) => {
+        r.cards.push({ text, labels, signal, address, conversation });
         return new Promise((res) => {
           releases.push(res);
         });
@@ -2246,6 +2251,34 @@ describe('Delegation: a shared channel key under per_channel', () => {
     expect(r.posted.some((p) => p.to === keyOf(A.address) && p.kind === 'report')).toBe(false);
     expect(r.posted.some((p) => p.to === T && p.kind === 'report')).toBe(true);
     expect(r.calls.filter(([c]) => c === 'prompt')).toHaveLength(1);
+  });
+
+  it('keeps two callers\' Start cards and Starts apart', async () => {
+    const r = shared({ answer: 'manual' });
+    await r.d.handleExternal(SHARED, task('cc', 'A work'), A);
+    await r.d.handleExternal(SHARED, task('cc', 'B work'), B);
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    await settle();
+
+    // One card in each topic, each with only its caller's task.
+    expect(r.cards).toHaveLength(2);
+    const cardA = r.cards.find((c) => c.address.thread === 'e1000000')!;
+    const cardB = r.cards.find((c) => c.address.thread === 'f0000000')!;
+    expect(cardA.text).toContain('A work');
+    expect(cardA.text).not.toContain('B work');
+    expect(cardB.text).toContain('B work');
+    expect(cardB.text).not.toContain('A work');
+
+    // A taps Start on its own card: only A's task starts, under A's topic.
+    const a = r.pending.find((p) => p.address.thread === 'e1000000')!;
+    a.resolve(a.labels[0]!);
+    await settle();
+    await settle();
+    const opened = r.calls.filter(([c]) => c === 'openTask').map(([, o]) => o as { parent: ConversationAddress; text: string });
+    expect(opened).toHaveLength(1);
+    expect(keyOf(opened[0]!.parent)).toBe('web#main#e1000000');
+    expect(opened[0]!.text).toBe('A work');
   });
 
   it('keeps two callers\' sub-tasks apart', async () => {

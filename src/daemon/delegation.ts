@@ -1,7 +1,7 @@
 import type { Config } from '../config/schema.js';
 import { findAgent } from '../config/schema.js';
 import { formatCost, formatElapsed } from '../core/busy-snapshot.js';
-import { parseTarget, type ConversationAddress } from '../core/conversation.js';
+import { formatTarget, parseTarget, type ConversationAddress } from '../core/conversation.js';
 import { stopInputNote } from '../core/inbound-merger.js';
 import { formatRuntimeFooter } from '../core/runtime-footer.js';
 import type { CommandSurface } from '../core/command-translate.js';
@@ -559,14 +559,15 @@ export class Delegation {
       ...(a.title ? { title: a.title } : {}),
       ...(a.model ? { model: a.model } : {}),
     };
+    const key = this.cardKey(here);
     if (this.startsAtOnce(here, item.agent)) {
       const { opened, failed } = await this.start(here, [item]);
-      this.queueStartedCard(here.key, opened, failed, { platform: here.platformId, address: here.address });
+      this.queueStartedCard(key, opened, failed, { platform: here.platformId, address: here.address });
       // The card's position, the same fact `item` carries when a confirmation card is gathering.
-      const card = this.started.get(here.key);
+      const card = this.started.get(key);
       return { item: card ? card.opened.length + card.failed.length : 1, result: startedResult(opened, failed) };
     }
-    const g = this.gathering.get(here.key) ?? {
+    const g = this.gathering.get(key) ?? {
       items: [],
       cancel: () => undefined,
       at: { platform: here.platformId, address: here.address },
@@ -574,12 +575,12 @@ export class Delegation {
     g.cancel();
     g.items.push(item);
     g.at = { platform: here.platformId, address: here.address };
-    this.gathering.set(here.key, g);
-    if (this.onScreen.has(here.key)) {
+    this.gathering.set(key, g);
+    if (this.onScreen.has(key)) {
       // A card is up and unanswered: re-render it now, so it shows every item proposed so far.
-      void this.putUp(here.key);
+      void this.putUp(key);
     } else {
-      g.cancel = this.deps.clock.schedule(() => void this.putUp(here.key), PROPOSAL_GATHER_MS);
+      g.cancel = this.deps.clock.schedule(() => void this.putUp(key), PROPOSAL_GATHER_MS);
     }
     if (ext) {
       return {
@@ -1320,7 +1321,7 @@ export class Delegation {
     if (!this.owed.has(id)) return;
     const parent = this.parentOf(id);
     if (!parent) return;
-    this.queueUpdates(parent.key, [id], { platform: parent.platformId, address: parent.address });
+    this.queueUpdates(this.cardKey(parent), [id], { platform: parent.platformId, address: parent.address });
   }
 
   /** Gather news from `children` for one card to `key`, CARD_DELAY_MS from the first. */
@@ -1354,14 +1355,15 @@ export class Delegation {
    * is the whole point.
    */
   private holdUpdates(here: Place, agentId: string, children: Set<ConversationId>): void {
+    const key = this.cardKey(here);
     const at = { platform: here.platformId, address: here.address };
-    const h = this.held.get(here.key);
+    const h = this.held.get(key);
     if (h) {
       for (const c of children) h.children.add(c);
       h.at = at;
       return;
     }
-    this.held.set(here.key, { agent: agentId, children: new Set(children), at });
+    this.held.set(key, { agent: agentId, children: new Set(children), at });
     const n = children.size;
     console.log(`[delegation] ${agentId} is over its usage limit; holding ${n} update(s) for ${here.key}`);
     void here.adapter
@@ -1591,6 +1593,16 @@ export class Delegation {
     const lane = at !== undefined ? { platformId: at.platform, address: at.address } : this.deps.registry.laneFor(key);
     const adapter = lane ? this.deps.platforms.get(lane.platformId) : undefined;
     return lane && adapter ? { key, platformId: lane.platformId, address: lane.address, adapter } : undefined;
+  }
+
+  /**
+   * The key the per-topic bookkeeping uses (`gathering`, `started`, `updates`, `held`). An
+   * external caller's topic is keyed by its own id, because under per_channel its conversation id
+   * is shared with the whole channel — two callers would otherwise merge their cards. An ordinary
+   * conversation keeps its id.
+   */
+  private cardKey(here: Place): ConversationId {
+    return this.externalOf(here) ? formatTarget(here.platformId, here.address) : here.key;
   }
 
   /**
