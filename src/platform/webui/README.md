@@ -927,13 +927,14 @@ never a permission prompt nobody asked for.
   names where a worker may come from and lets no same-origin file run as a page script.
 - **It does keep the topic a push is about** (`keepTopic`, since 3.10.0): when no page of the site is
   on screen, it fetches `api/topic` for that topic and writes it to the
-  [transcript cache](#the-local-transcript-cache), in the record format `cache-script.ts` gives both
-  writers. A phone shows the notification while the page is frozen or not running at all, and the
+  [transcript cache](#the-local-transcript-cache), in the record format and under the write rule
+  `cache-script.ts` gives both writers. A phone shows the notification while the page is frozen or not running at all, and the
   page's own prefetch only runs on screen — so without this the person tapped the notification
   before anything was fetched. The worker's CSP gains `connect-src 'self'` for it and nothing wider;
   a redirect off the origin (an expired access session's sign-in page) is refused, not followed. The
   notification is shown first and does not wait on the fetch, every failure is silent, and a page
-  open in the background is told what was written so it does not fetch it again.
+  open in the background is told what was written, so it neither fetches it again nor puts up an
+  older copy it holds in memory.
 - The key is made once and kept in `webui-push-<instance>/` (0700, files 0600): every subscription
   names it, so a new key would orphan every device. A subscription the push service answers 404/410
   for is dropped.
@@ -1364,19 +1365,74 @@ nobody else, and "the file never left the browser" and "the server threw it away
 ## The local transcript cache
 
 A transcript lives in the daemon's memory. That is still true, and it used to mean the page went
-blank whenever the daemon did. Now the browser keeps its own copy, in **IndexedDB** — one record
-per topic, holding the message list as a JSON *string* rather than an object graph, so the byte
-budget below is measurable and nothing rests on how a structured clone treats these objects.
-localStorage was the obvious alternative and is too small: one topic with code blocks in it runs
-to hundreds of kilobytes against a ~5MB origin budget shared with everything else.
-
-It buys two things:
+blank whenever the daemon did. Now the browser keeps a copy of each topic, and every way into a
+topic starts from it. It buys three things:
 
 - **A topic paints before the stream has answered** — on a reload, on a topic switch, on a link
   slow enough that the round trip is visible.
+- **A stream resumes from the copy** instead of sending the whole topic again.
 - **A daemon restart costs the conversation its liveness, not its contents.** The old messages
   stay on screen, above a divider that says where they came from, and the agent still has the
   context to carry on below them.
+
+**One copy per topic, one version, one rule.** A copy says what it is a copy of: `last`, the id of
+the last event it reflects — `<topic>.<run>.<seq>`, the stream's own ids, which each topic row and
+`api/topic` carry too. `newer` (`cache-script.ts`) decides which of two copies is newer: the later
+run (the daemon's start time in base 36, the sync's `epoch`), then the later event; a copy with no
+`last` stands before every event of its run. A copy is the topic as it stands when its `last` is its
+row's, or past it — a row reports its events up to 300 ms after them. Nothing else is compared:
+`lastAt` moves only on a new message, and a streamed reply is one message edited to the end.
+
+**Two layers behind one `put` and one `get`.** Memory keeps the eight topics most recently put, whole,
+4000 messages between them: no database read, and all a browser without IndexedDB has. IndexedDB
+keeps a record per topic, the message list as a JSON *string* so the byte budget below is measurable
+(localStorage is too small: one topic with code blocks runs to hundreds of kilobytes against ~5MB for
+the origin). `cachePut` reads the old record in the same readwrite transaction it writes in, and
+writes only a copy at least as new; the page and the [service worker](#notifications) both write
+through it, and memory keeps the same rule. So of two writers racing — the page on its way out of a
+topic, a fetch that left before that, another tab, a push — the older never lands last. `vers`, the
+newest copy the page knows of per topic (from every put, read and peek, and the worker's message),
+is what decides how to open a topic and what to fetch without reading the database; `get` takes
+memory unless `vers` says the database has newer. The topic on screen is put on the way out and
+every 400 ms while it changes (a streamed reply upserts the same message every second or so), and
+only once its sync, or the copy it was entered from, has said what it is.
+
+**One way into a topic** (`enter`, on a switch and on loading the page). The copy goes up and the
+stream opens with `?last=`: the daemon replays what came after and then sends `resumed`, which ends
+the catch-up as a sync would; when its backlog no longer reaches, it sends the whole topic, reconciled
+over what is on screen. A copy that is its row's latest goes up without "Checking for anything said
+while you were away". With nothing to resume from — no copy, one of another run, one cut to fit, an
+empty room (whose choice of agents only a sync carries), a page before its first sync, so a reload —
+the stream asks for a sync and whatever copy there is is painted as it comes. Memory is put up at
+once; the database is waited on only when it may hold a copy to resume from, for at most 300 ms (a
+read is a few; mobile Safari's has been known to hang). The echoes a copy carries are claimed as a
+sync claims them, and a send the previous page left unsure is judged at the end of the replay
+(`settleOnResume`), never on the copy alone: the copy may predate the send. Switching back to a
+1000-message topic this way went from 85.0 KB and 3.7 s to a few hundred bytes and 1.4 s, at 400 ms /
+500 kbps in Chromium (2026-11-10).
+
+**What needs the person is fetched before it is opened.** One rule: a topic whose stage is a question,
+a failure or a finished reply (`NEEDS_ORDER`) — a scheduled run's and a sub-agent's too, each opened
+from its own row or notification — that is not on screen and whose copy is not its row's latest is
+fetched from `GET api/topic` and put. A topic this page left is no exception: left mid-turn, its copy
+is the turn half done. Up to 20, in the order the needs-you rows are drawn, three at a time (the
+median topic is 11 KB gzipped, so each fetch is mostly round trip), and only while the tab is visible
+and its stream up. Each version of a row is fetched once: a failure is asked again a minute later, an
+answer not until the row moves, even one that is not the row's version. A request that never comes
+back is aborted after that minute. Nothing is fetched without IndexedDB: memory holds eight topics,
+and fetching twenty into it would push them out and fetch them again for ever. The route is
+read-only (no subscriber, no list event, no seen mark), and its answer can be 1.5 MB of JSON, so it
+is gzipped on libuv's pool rather than with `gzipSync`, which would stall every stream in the process.
+
+Through 3.13 the same topic could be on the page three times — held in memory when it was left, a
+database record matched to its row by `lastAt`, a copy fetched before it was opened — and entering
+took them in a fixed order, memory first, rather than the newest. The prefetch skipped what was held,
+so the everyday case (send, look elsewhere while it works, tap the row when it turns green) put the
+topic up as it was left and caught it up from the stream a second or two later; and an edit moves no
+`lastAt`, so a copy of half a reply passed for current. Of 871 stream opens on the live gateway from
+2026-11-17, 27% were full syncs, 41% resumes that replayed something (10 events in the median), 32%
+replayed nothing. The measurement behind the earlier fixes opened only topics that had finished
+before the page loaded, and counted messages rather than reading the last one.
 
 **Messages are keyed `<epoch>:<id>`, not `<id>`, and that is load-bearing.** `nextId` counts from
 `w1` per process, so a restarted daemon hands the same ids out again — verified on the wire: the
@@ -1391,91 +1447,18 @@ Cached messages of the CURRENT generation produce exactly the keys the incoming 
 the ordinary path — same daemon, cache matching the ring — reuses every node and writes no DOM at
 all. The cache is a head start, not a second source of truth.
 
-**Rotation, because a cache that only grows is the same bug more slowly.** A whole topic is kept
-(up to the daemon's own 1000 messages, within 2M characters — the tail when it is over), the least
-recently written topics are evicted past 100, and a write refused for space drops everything but
-the topic being read and tries once before the cache is written off for the session with one
-`console.warn`. Writes are coalesced into a 400ms window: a streamed reply upserts the same message
-every second or so and each one would otherwise re-serialise the whole topic. Through 3.9.0 it was
-the last 200 messages within 512KB, in 24 topics; the live gateway's 200 kept topics, measured on
-2026-11-17, ran to 356 messages and 817K characters at the longest and 87K in the median, so whole
-topics cost a few megabytes and a record of a whole topic can be *resumed from*, not only painted.
-
-**A record says what it is a copy of** (since 3.10.0): `epoch`, the daemon run it came from;
-`lastAt`, the topic row's as of it, which is what tells a copy that has the latest reply from one
-that does not; and `last`, the id of the last event it reflects, kept only when nothing of that run
-was cut to fit. A topic opened with such a record from this run is entered the way a held one is
-(below): painted, and its stream opened with `?last=`. The topic on screen is stamped only once its
-sync or `resumed` has arrived — before that the screen is whatever the cache painted, and stamping
-it with the row's `lastAt` would pass an old copy off as current. Opening a topic the page knows
-nothing about yet (every topic, right after a reload) reads its record first, for at most 300 ms,
-because that read decides how the stream opens; a topic known to have no resumable record opens at
-once, as before. A send the previous page left unsure is judged at the end of the replay
-(`settleOnResume`), never on the record alone: the record may predate the send.
-
-**Going back to a topic in the same tab resumes it from memory** (`held`, since 2.56.0).
-Before, every switch was a full sync — up to 1000 messages, 85 KB gzipped and 3.4–3.7 s at
-500 kbps for a long topic — because this cache kept 200 and a switch empties memory, so it saved
-nothing on the way back. Now the topic being left is kept in memory whole (every message on screen,
-the run it belongs to, and `lastEv`, the id of the last event that reached it), and coming back puts
-it up at once and opens the stream with `?last=` — the backlog replays what was said meanwhile,
-then a `resumed` event says the catch-up is over (there is no sync to say it), which takes the
-waiting line away. When the backlog no longer reaches, the daemon sends the whole topic as before
-and it is reconciled over what is on screen. Chosen over two alternatives: putting the whole ring in
-IndexedDB would mean re-serialising up to 1.5 MB every 400 ms while a long topic streams; a sync
-that sends only the tail and fetches the rest on scroll would change what every reader of a sync
-assumes (claiming echoes, settling unsure sends, landing on a message, the unread count). (3.10.0
-did put whole topics in IndexedDB, once it was measured: streaming 10 s into a 1000-message topic of
-1.28M characters under 4× CPU throttling blocked the main thread 548 ms against 3.9.0's 490 ms with
-its 200-message records — about 2 ms a write. `held` stays: it needs no database read, and it is
-what a browser without IndexedDB has.) Bounded
-at 8 topics and 4000 messages between them, least recently left first; a topic left before its
-stream said where it was, or held from a daemon that has since restarted, is entered the old way.
-Measured in Chromium at 400 ms / 500 kbps on 2026-11-10: switching back to a 1000-message topic went
-from 85.0 KB and 3.7 s to a few hundred bytes and 1.4 s, which is the time it takes to draw 1000
-messages on that (loaded) machine; the first visit to that topic is unchanged, at 86 KB.
-
-**A topic that needs an answer is fetched before it is opened** (since 3.1.0, into the cache since
-3.10.0). The green rows are the ones a person is about to tap, and tapping one used to cost the same
-full sync as any first visit. The page fetches every one of them (up to 20) in the background, in the
-order the needs-you rows are drawn (questions, then failures, then finished replies, newest first
-within a stage), skipping a scheduled run, the topic on screen, any topic already held, and any
-whose record in the cache is this run's and as of the row's `lastAt` — three requests at a time, and
-only while the tab is visible and its stream is up. Each answer is written to the cache as a whole,
-resumable record, so opening the topic is what opening a held one is: the messages go up at once
-and the stream opens with `?last=<the snapshot's id>`, so what follows is a resumed stream rather
-than a sync — its status and machine state, the topic list when the page's copy is behind, and
-`resumed`. A copy older than the row is fetched again (a reply moves `lastAt`); one that arrives
-after the person opened the topic, from another run of the daemon, for a topic that has gone, or
-after this page wrote a newer record of it on the way out, is dropped. A failed fetch is not retried
-at once: that row's failure stands for a minute, and the next list event after it is what asks
-again. A request that never comes back is aborted after the same minute, so hung answers cannot
-fill every slot for good — and a body that does not parse is just another failure. What the page
-knows each record to be is kept in `local` (from every write and read, and from the service
-worker), so deciding what to fetch reads no database.
-
-Through 3.9.0 the copies lived in memory (`pre`): four topics, 2000 messages, one request at a time.
-On the 2026-11-17 report that "needs you" topics still loaded slowly once there were many of them,
-the causes were that a fifth topic was never fetched; that a reload, or a PWA the phone had closed,
-lost them all; and that fetching starts only when the page is looked at, which on a phone is the
-moment the person is already tapping. The cache answers the first two, the
-[service worker](#notifications) the third, and three at a time because the median topic is 11 KB
-gzipped — mostly round trip on a slow link. (The memory budget could also evict the first topic to
-fit the third and then fetch it again, for ever, with three of a thousand messages in the top four;
-no live topic was that long.) Measured in Chromium at 400 ms / 500 kbps on 2026-11-17, eight topics
-in "needs you" sized like the live ones (21 to 356 messages), against 3.9.0: all eight fetched in
-the background (243 KB) against four (99 KB); opening the sixth row, 356 messages, went from 93.8 KB
-and 2.2 s to nothing on the wire and 0.26 s; after a reload, opening the seventh went from 61.1 KB
-and 1.0 s to nothing and 0.14 s, and nothing was fetched again where 3.9.0 fetched its four anew
-(`project-scripts/fleetherd-needs-cache/needs.mts`). The cost is the bytes spent on a topic the
-person may not open, which is why it happens only where the sidebar already says the person is
-wanted. The route is `GET api/topic`, read-only (no subscriber, no list event, no seen mark); its
-answer carries the row's `lastAt`, for the service worker, which has no topic list to stamp a record
-with, and can be 1.5 MB of JSON, so it is gzipped on libuv's pool rather than with `gzipSync`,
-which would stall every stream in the process.
+**Rotation, because a cache that only grows is the same bug more slowly.** A record holds a whole
+topic (up to the daemon's own 1000 messages, within 2M characters — the tail when it is over, and
+then without a `last`, since a resume would replay onto a hole), the least recently written topics
+are evicted past 100, and a write refused for space drops everything but the topic being read and
+tries once before the cache is written off for the session with one `console.warn`. The live
+gateway's 200 kept topics, measured on 2026-11-17, ran to 356 messages and 817K characters at the
+longest and 87K in the median, so whole topics cost a few megabytes. Writing them whole was measured
+too: streaming 10 s into a 1000-message topic under 4× CPU throttling blocked the main thread 548 ms
+against 490 ms with 200-message records — about 2 ms a write.
 
 **A browser with no IndexedDB is a supported configuration.** Private windows and old engines
-both produce one; the cache is the only thing that goes, and `page.dom.test.ts` holds that.
+both produce one; memory is then the only layer, and `page.dom.test.ts` holds that.
 
 **What is NOT cached: anything typed here.** The cache holds what the daemon sent and nothing else.
 A message this page sent and has not had acknowledged lives in `aa_unsent` instead ([above](#built-for-a-bad-connection)):
@@ -1500,9 +1483,9 @@ topic, and both only do work at the moment of a switch.
 
 **Where you were reading is kept as a message, not as a pixel offset.** On the way out,
 `saveView` records the first message on screen and how far its top sits from the top of the
-viewport. A scrollTop would not survive the way back in. The transcript is rebuilt from the cache,
-which keeps only the tail of a topic too large for its budget, and then reconciled against a ring of
-1000. So on such a topic the sync inserts older messages *above* the one being read, and a restored
+viewport. A scrollTop would not survive the way back in. The transcript is rebuilt from its copy —
+from the database, only the tail of a topic too large for its budget — and then reconciled against
+a ring of 1000. So on such a topic the sync inserts older messages *above* the one being read, and a restored
 offset would land that many rows off. A binary search over `#log`'s children finds that message with one forced layout,
 not one per message.
 
@@ -1511,7 +1494,7 @@ not one per message.
   Putting you back on the last message you saw would leave the new ones under the fold, which is
   the opposite of what you were doing.
 - **`land` runs twice on the way in, and the second time is conditional.** It runs first when the
-  cache paints, which is the first real paint, so there is no visible jump. It runs again when
+  copy paints, which is the first real paint, so there is no visible jump. It runs again when
   the sync lands, because the sync may have put the head of the topic above the message. The second
   run only happens if `scrollTop` is still what the first one left: once you have scrolled the
   cached transcript, it is not the page's to move. A reconnect's sync, as opposed to an entry's,
@@ -1554,9 +1537,7 @@ Measured in Chromium on switches into a 250-message topic, 31 per run, compared 
 before the change. `saveView` costs at most 0.1ms, which is the resolution of Chrome's timer.
 `loadDraft` costs about 1ms, and only when the two
 composers hold different text, which is `grow()`'s layout. Click to transcript painted was
-84.6–90.7ms before and 88.6–92.6ms after, which is within run-to-run noise. The cache read
-(~7ms), `adopt` (~20ms) and the sync handler (~35ms) are where a switch spends its time, and none
-of them changed.
+84.6–90.7ms before and 88.6–92.6ms after, which is within run-to-run noise.
 
 **Not solved here:** a voice recording is the one piece of composer state that still does not
 follow its topic. Stop it after switching, and it goes to the topic on screen.

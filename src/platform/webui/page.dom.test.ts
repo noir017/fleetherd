@@ -340,6 +340,16 @@ async function within(what: string, ms: number, ok: () => boolean): Promise<void
   throw new Error(`never happened within ${ms} ms: ${what}`);
 }
 
+/** `within`, for a condition that is itself a database read — one the prefetch's debounce comes before. */
+async function withinAsync(what: string, ms: number, ok: () => Promise<boolean>): Promise<void> {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    if (await ok()) return;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  throw new Error(`never happened within ${ms} ms: ${what}`);
+}
+
 /** The same wait, for a condition that is itself a database read. */
 async function untilAsync(what: string, ok: () => Promise<boolean>): Promise<void> {
   for (let i = 0; i < 50; i++) {
@@ -350,9 +360,9 @@ async function untilAsync(what: string, ok: () => Promise<boolean>): Promise<voi
 }
 
 /**
- * Wait for the stream to open at url. A topic the page has not looked at yet is entered only once
- * its cache record has been read (page.ts enterFromCache), since that read decides whether the
- * stream resumes or asks for a sync — so the stream opens an IndexedDB turn after the click.
+ * Wait for the stream to open at url. A topic whose copy is not in memory may be entered only once
+ * its record has been read (page.ts enter), since that read decides whether the stream resumes or
+ * asks for a sync — so the stream can open an IndexedDB turn after the click.
  */
 async function opens(h: Harness, url: string): Promise<void> {
   await within(`the stream opens at ${url}`, 1000, () => {
@@ -762,8 +772,8 @@ async function open(
     photos: photoLog,
     cached: (topic) => readCache(idb, topic),
     emit: async (ev) => {
-      // A switch to a topic the page has not looked at opens its stream only once the cache has
-      // been read (enterFromCache), and the stream of the topic left is closed at once — so an event
+      // A switch to a topic whose copy is not in memory may open its stream only once the database
+      // has been read (enter), and the stream of the topic left is closed at once — so an event
       // emitted straight after a click waits for the stream it is meant for.
       await within('a stream to deliver to', 1000, () => streams.some((s) => !s.closed));
       live().onmessage?.({ data: JSON.stringify(ev) });
@@ -792,7 +802,6 @@ async function open(
 interface CacheRecord {
   list: Array<Record<string, unknown>>;
   epoch?: number;
-  lastAt?: number;
   last?: string;
 }
 
@@ -819,7 +828,7 @@ function readRecord(idb: IDBFactory | null, topic: string): Promise<CacheRecord 
         resolve(null);
       };
       get.onsuccess = () => {
-        const rec = get.result as { json?: string; epoch?: number; lastAt?: number; last?: string } | undefined;
+        const rec = get.result as { json?: string; epoch?: number; last?: string } | undefined;
         db.close();
         if (!rec?.json) return resolve(null);
         const { json, ...meta } = rec;
@@ -2946,58 +2955,70 @@ describe('webui page: a full topic list, and the topics worth keeping', () => {
   });
 });
 
-describe('webui page: a topic held in memory', () => {
+/** An event as a browser delivers one that carried an `id:` — a sync is numbered too. */
+async function delivered(h: Harness, ev: Record<string, unknown>, id: string): Promise<void> {
+  await within('a stream to deliver to', 1000, () => h.streams.some((s) => !s.closed));
+  h.live().onmessage?.({ data: JSON.stringify(ev), lastEventId: id });
+  await tick();
+}
+
+/** What the last message in the transcript says. */
+function lastSaid(h: Harness): string {
+  const all = h.doc.querySelectorAll('#log > .m');
+  return all[all.length - 1]?.textContent ?? '';
+}
+
+/**
+ * A topic's copy (page.ts put / get / enter): one per topic, in memory and in IndexedDB, as of the
+ * last event it reflects. Going back to a topic puts its copy up and resumes the stream from there.
+ */
+describe('webui page: going back to a topic this page left', () => {
   const A = 'a1b2c3d4';
   const B = 'b2c3d4e5';
-  /** An event as a browser delivers one that carried an `id:` — a sync is numbered too. */
-  const numbered = async (h: Harness, ev: Record<string, unknown>, id: string): Promise<void> => {
-    await within('a stream to deliver to', 1000, () => h.streams.some((s) => !s.closed));
-    h.live().onmessage?.({ data: JSON.stringify(ev), lastEventId: id });
-    await tick();
-  };
   const many = (n: number): Array<Record<string, unknown>> =>
     Array.from({ length: n }, (_, i) => message(`w${i + 1}`, `<p>line ${i + 1}</p>`));
 
   it('puts a topic back whole and resumes its stream, instead of being sent all of it again', async () => {
     // Back and forth between two long topics was a full sync every time — 85 KB gzipped for 1000
-    // messages — because the cache keeps 200 and a switch empties memory.
+    // messages — because the cache kept 200 and a switch empties memory.
     const h = await open();
-    await numbered(h, sync(A, many(300), [A, B]), `${A}.run.300`);
+    await delivered(h, sync(A, many(300), [A, B]), `${A}.run.300`);
     await h.click(`[data-topic="${B}"]`);
-    await numbered(h, sync(B, [message('b1', '<p>in B</p>')], [A, B]), `${B}.run.1`);
+    await delivered(h, sync(B, [message('b1', '<p>in B</p>')], [A, B]), `${B}.run.1`);
     expect(h.painted()).toBe(1);
 
     await h.click(`[data-topic="${A}"]`);
     // On screen at once, every one of them, before the stream has said anything.
     expect(h.painted()).toBe(300);
     await opens(h, `api/events?t=${A}&last=${encodeURIComponent(`${A}.run.300`)}`);
+    // The row does not say this copy is its latest, so the page says it is still checking.
     expect(h.waiting()).not.toBeNull();
     // What was said meanwhile is replayed; then the daemon says the catch-up is over.
-    await numbered(h, { t: 'msg', msg: message('w301', '<p>said while away</p>') }, `${A}.run.301`);
+    await delivered(h, { t: 'msg', msg: message('w301', '<p>said while away</p>') }, `${A}.run.301`);
     await h.emit({ t: 'resumed' });
     expect(h.painted()).toBe(301);
     expect(h.waiting()).toBeNull();
-    expect(h.el('log').lastElementChild?.textContent).toContain('said while away');
+    expect(lastSaid(h)).toContain('said while away');
   });
 
   it('takes the whole topic as before when the daemon can no longer resume it', async () => {
     const h = await open();
-    await numbered(h, sync(A, many(5), [A, B]), `${A}.run.5`);
+    await delivered(h, sync(A, many(5), [A, B]), `${A}.run.5`);
     await h.click(`[data-topic="${B}"]`);
-    await numbered(h, sync(B, [], [A, B]), `${B}.run.0`);
+    await delivered(h, sync(B, [], [A, B]), `${B}.run.0`);
     await h.click(`[data-topic="${A}"]`);
     expect(h.painted()).toBe(5);
     // The backlog did not reach that far: a sync, which is reconciled over what is on screen.
-    await numbered(h, sync(A, many(7).slice(2), [A, B]), `${A}.run.400`);
+    await delivered(h, sync(A, many(7).slice(2), [A, B]), `${A}.run.400`);
     expect(h.painted()).toBe(5);
     expect(h.waiting()).toBeNull();
     expect(h.el('log').textContent).not.toContain('line 1');
     expect(h.el('log').textContent).toContain('line 7');
   });
 
-  it('holds nothing for a topic left before its stream said where it was', async () => {
+  it('keeps nothing to resume from for a topic left before its stream said where it was', async () => {
     const h = await open();
-    await numbered(h, sync(A, many(3), [A, B]), `${A}.run.3`);
+    await delivered(h, sync(A, many(3), [A, B]), `${A}.run.3`);
     await h.click(`[data-topic="${B}"]`);
     // Left again before B's sync arrived: there is no position to resume B from.
     await h.click(`[data-topic="${A}"]`);
@@ -3005,27 +3026,46 @@ describe('webui page: a topic held in memory', () => {
     await opens(h, `api/events?t=${B}`);
   });
 
-  it('does not put back a topic held from a daemon that has since restarted', async () => {
+  it('does not resume a copy from a daemon that has since restarted', async () => {
     const h = await open();
-    await numbered(h, sync(A, many(3), [A, B]), `${A}.run.3`);
+    await delivered(h, sync(A, many(3), [A, B]), `${A}.run.3`);
     await h.click(`[data-topic="${B}"]`);
-    await numbered(h, sync(B, [], [A, B], { epoch: 2 }), `${B}.other.0`);
+    await delivered(h, sync(B, [], [A, B], { epoch: 2 }), `${B}.other.0`);
+    await h.click(`[data-topic="${A}"]`);
+    await opens(h, `api/events?t=${A}`);
+    // Still painted, as the history it now is.
+    expect(h.painted()).toBe(3);
+  });
+
+  it('forgets its copy of a topic the list no longer has', async () => {
+    // No IndexedDB, so memory is the only copy there is.
+    const h = await open({ idb: null });
+    await delivered(h, sync(A, many(3), [A, B, 'c3d4e5f6']), `${A}.run.3`);
+    await h.click(`[data-topic="${B}"]`);
+    await delivered(h, sync(B, [], [A, B, 'c3d4e5f6']), `${B}.run.0`);
+    // A goes from the list (deleted in another tab): its copy goes with it — memory nobody could
+    // read again. Listed once more, it is entered like a topic never seen.
+    await h.emit({ t: 'topic-rows', tv: 2, rows: [], gone: [A] });
+    await h.emit({ t: 'topics', tv: 3, topics: sync(B, [], [A, B, 'c3d4e5f6']).topics as unknown[] });
     await h.click(`[data-topic="${A}"]`);
     await opens(h, `api/events?t=${A}`);
   });
 
-  it('forgets what it held for a topic the list no longer has', async () => {
-    // No IndexedDB, so the cache's record of A — resumable too — cannot stand in for what was held.
+  it('resumes from memory in a browser with no IndexedDB', async () => {
     const h = await open({ idb: null });
-    await numbered(h, sync(A, many(3), [A, B, 'c3d4e5f6']), `${A}.run.3`);
+    await delivered(h, sync(A, many(4), [A, B]), `${A}.run.4`);
     await h.click(`[data-topic="${B}"]`);
-    await numbered(h, sync(B, [], [A, B, 'c3d4e5f6']), `${B}.run.0`);
-    // A goes from the list (deleted in another tab): its held copy goes with it — memory nobody
-    // could read again. Listed once more, it is entered like any topic, not put back from memory.
-    await h.emit({ t: 'topic-rows', tv: 2, rows: [], gone: [A] });
-    await h.emit({ t: 'topics', tv: 3, topics: (sync(B, [], [A, B, 'c3d4e5f6']).topics as unknown[]) });
+    await delivered(h, sync(B, [message('b1', '<p>in B</p>')], [A, B]), `${B}.run.1`);
     await h.click(`[data-topic="${A}"]`);
-    await opens(h, `api/events?t=${A}`);
+    expect(h.painted()).toBe(4);
+    expect(lastSaid(h)).toContain('line 4');
+    await opens(h, `api/events?t=${A}&last=${encodeURIComponent(`${A}.run.4`)}`);
+    await delivered(h, { t: 'msg', msg: message('w5', '<p>line 5</p>') }, `${A}.run.5`);
+    await h.emit({ t: 'resumed' });
+    expect(lastSaid(h)).toContain('line 5');
+    // And back to B the same way, from the copy put on the way out of it.
+    await h.click(`[data-topic="${B}"]`);
+    await opens(h, `api/events?t=${B}&last=${encodeURIComponent(`${B}.run.1`)}`);
   });
 });
 
@@ -3034,57 +3074,161 @@ describe('webui page: a topic fetched before it is opened', () => {
   const B = 'b2c3d4e5';
   const C = 'c3d4e5f6';
   const url = (id: string): string => `api/topic?t=${id}`;
-  /** A topic row as the daemon sends it; `stage` is what makes it need a person. */
+  /**
+   * A topic row as the daemon sends it: `stage` is what makes it need a person, and `last` is the
+   * id of its newest event, which is what a copy is matched against.
+   */
   const row = (id: string, over: Record<string, unknown> = {}): Record<string, unknown> => ({
     id,
     title: `Topic ${id}`,
     lastAt: 1000,
     running: false,
     msgCount: 0,
+    last: `${id}.run.0`,
     ...over,
   });
-  /** A snapshot as `api/topic` answers one; `lastAt` is the row's as of these messages. */
+  /** A snapshot as `api/topic` answers one. */
   const snap = (
     topic: string,
     messages: Array<Record<string, unknown>>,
     last: string,
-    lastAt = 1000,
     epoch = 1
-  ): Record<string, unknown> => ({ topic, epoch, last, lastAt, messages });
+  ): Record<string, unknown> => ({ topic, epoch, last, lastAt: 1000, messages });
   const fetched = (h: Harness, id: string): boolean => h.calls.some((c) => c.path === url(id));
+  const times = (h: Harness, id: string): number => h.calls.filter((c) => c.path === url(id)).length;
   const asked = (h: Harness): string[] => h.calls.filter((c) => c.path.startsWith('api/topic')).map((c) => c.path);
   /** Whether the topic's record has been written, by the prefetch or by anyone. */
   const kept = (h: Harness, id: string) => async (): Promise<boolean> => (await readRecord(h.idb, id)) !== null;
+  const keptAt = (h: Harness, id: string, last: string) => async (): Promise<boolean> =>
+    (await readRecord(h.idb, id))?.last === last;
 
-  it('fetches a topic that needs an answer into the cache, and opening it paints before the stream says anything', async () => {
-    const h = await open({ replies: { [url(B)]: snap(B, [message('w9', '<p>from B</p>')], `${B}.run.4`, 900) } });
+  it('fetches a topic that needs an answer, and opening it paints the latest before the stream says anything', async () => {
+    const h = await open({ replies: { [url(B)]: snap(B, [message('w9', '<p>from B</p>')], `${B}.run.4`) } });
     await h.emit(
-      sync(A, [message('a1', '<p>in A</p>')], [A, B], { topics: [row(A), row(B, { stage: 'answer', lastAt: 900 })] })
+      sync(A, [message('a1', '<p>in A</p>')], [A, B], { topics: [row(A), row(B, { stage: 'answer', last: `${B}.run.4` })] })
     );
     await within('the prefetch goes out', 2000, () => fetched(h, B));
-    await untilAsync('the copy is in the cache', kept(h, B));
-    const rec = await readRecord(h.idb, B);
-    // Whole, so it says where its stream can be resumed from; and as of which reply.
-    expect(rec).toMatchObject({ epoch: 1, lastAt: 900, last: `${B}.run.4` });
+    await withinAsync('the copy is in the cache', 2000, kept(h, B));
+    // Whole, so it says where its stream can be resumed from.
+    expect(await readRecord(h.idb, B)).toMatchObject({ epoch: 1, last: `${B}.run.4` });
     expect(h.painted()).toBe(1);
 
+    const before = h.calls.length;
     await h.click(`[data-topic="${B}"]`);
-    await until('B is painted from the cache', () => (h.el('log').textContent ?? '').includes('from B'));
-    // The whole point: no sync for B has been sent, and its reply is already on screen.
-    expect(h.painted()).toBe(1);
-    // And the stream resumes from the snapshot's id, so only what came after it is replayed.
+    expect(lastSaid(h)).toContain('from B');
+    // The row's own last: this is B as it stands, and nothing says more may be coming.
+    expect(h.waiting()).toBeNull();
     await opens(h, `api/events?t=${B}&last=${encodeURIComponent(`${B}.run.4`)}`);
+    expect(h.calls.slice(before).filter((c) => c.path.startsWith('api/topic'))).toEqual([]);
   });
 
-  it('leaves the topic on screen and a scheduled run alone', async () => {
-    const h = await open();
+  it('puts up a topic left mid-turn as it finished, when the turn only edited its reply', async () => {
+    // The everyday case behind the report of 2026-11-19: send, look elsewhere while it works, come
+    // back when its row turns green. A reply is one message edited as it streams, so the row's last
+    // moves and its lastAt does not. Through 3.13 a topic left was never fetched, and came back as
+    // it was left — "working on it" — to be caught up by its stream a second or two later.
+    const replies: Record<string, unknown> = {};
+    const h = await open({ replies });
+    await delivered(h, sync(A, [message('w1', '<p>earlier</p>')], [A, B], { topics: [row(A), row(B)] }), `${A}.run.1`);
+    (h.el('input') as HTMLTextAreaElement).value = 'go on';
+    await h.click('#composer button[type="submit"]');
+    const nonce = h.calls.find((c) => c.path === 'api/send')?.body.nonce as string;
+    const echo = { ...message('w2', '<div class="raw">go on</div>', true), nonce };
+    await delivered(h, { t: 'msg', msg: echo }, `${A}.run.2`);
+    await delivered(h, { t: 'msg', msg: message('w3', '<p>working on it</p>') }, `${A}.run.3`);
+
+    await h.click(`[data-topic="${B}"]`);
+    await delivered(
+      h,
+      sync(B, [message('b1', '<p>in B</p>')], [A, B], { topics: [row(A, { running: true, last: `${A}.run.3` }), row(B)] }),
+      `${B}.run.1`
+    );
+    replies[url(A)] = snap(A, [message('w1', '<p>earlier</p>'), echo, message('w3', '<p>all done</p>')], `${A}.run.9`);
+    await h.emit({ t: 'topic-rows', tv: 2, rows: [row(A, { stage: 'review', last: `${A}.run.9` })] });
+    await within('A is fetched', 2000, () => fetched(h, A));
+    await withinAsync('its copy is kept', 2000, keptAt(h, A, `${A}.run.9`));
+
+    const before = h.calls.length;
+    await h.click(`[data-topic="${A}"]`);
+    // As it finished, at once, and with nothing to say that more may be coming.
+    expect(lastSaid(h)).toContain('all done');
+    expect(h.el('log').textContent).not.toContain('working on it');
+    expect(h.waiting()).toBeNull();
+    // Resumed from the row's last, so the daemon has nothing to replay and sends no sync.
+    await opens(h, `api/events?t=${A}&last=${encodeURIComponent(`${A}.run.9`)}&tv=2`);
+    expect(h.calls.slice(before).filter((c) => c.path.startsWith('api/topic'))).toEqual([]);
+    await h.emit({ t: 'resumed' });
+    expect(h.painted()).toBe(3);
+    expect(lastSaid(h)).toContain('all done');
+  });
+
+  it('puts up a topic left mid-turn as it finished, when the turn posted a tool bubble and a reply', async () => {
+    const replies: Record<string, unknown> = {};
+    const h = await open({ replies });
+    await delivered(h, sync(A, [message('w1', '<p>the task</p>', true)], [A, B], { topics: [row(A), row(B)] }), `${A}.run.1`);
+    await delivered(h, { t: 'msg', msg: message('w2', '<p>starting</p>') }, `${A}.run.2`);
+    await h.click(`[data-topic="${B}"]`);
+    await delivered(h, sync(B, [], [A, B], { topics: [row(A, { running: true, last: `${A}.run.2` }), row(B)] }), `${B}.run.0`);
+
+    const tools = { ...message('w3', webMessageHtml('tools', '💻 Bash: "npm test" ✓ 4.1s')), kind: 'tools' };
+    replies[url(A)] = snap(
+      A,
+      [message('w1', '<p>the task</p>', true), message('w2', '<p>starting</p>'), tools, message('w4', '<p>tests pass</p>')],
+      `${A}.run.14`
+    );
+    await h.emit({ t: 'topic-rows', tv: 2, rows: [row(A, { stage: 'review', last: `${A}.run.14`, lastAt: 1200, msgCount: 4 })] });
+    await withinAsync('its copy is kept', 2000, keptAt(h, A, `${A}.run.14`));
+
+    await h.click(`[data-topic="${A}"]`);
+    expect(h.painted()).toBe(4);
+    expect(h.doc.querySelectorAll('#log .tl')).toHaveLength(1);
+    expect(lastSaid(h)).toContain('tests pass');
+    expect(h.waiting()).toBeNull();
+    await opens(h, `api/events?t=${A}&last=${encodeURIComponent(`${A}.run.14`)}&tv=2`);
+  });
+
+  it('fetches a scheduled run and a sub-agent that finished, and opens each as it finished', async () => {
+    // Neither is a green row in the switcher — a run lives in the panel, a sub-agent's reply goes
+    // to the agent that opened it — but each is opened from its own row or its notification, and
+    // was the whole topic again every time.
+    const R = 'c3d4e5f6';
+    const S = 'd4e5f6a7';
+    const h = await open({
+      push: { permission: 'granted', subscribed: true },
+      replies: {
+        [url(R)]: snap(R, [message('r1', '<p>the run reported</p>')], `${R}.run.5`),
+        [url(S)]: snap(S, [message('s1', '<p>the sub-agent reported</p>')], `${S}.run.7`),
+      },
+    });
     await h.emit(
-      sync(A, [], [A, B, C], {
-        topics: [row(A, { stage: 'answer' }), row(B, { stage: 'answer', scheduled: true })],
+      sync(A, [], [A], {
+        topics: [
+          row(A),
+          row(R, { stage: 'review', scheduled: true, title: '[cc] ⏰ After close', last: `${R}.run.5` }),
+          row(S, { stage: 'review', parent: A, last: `${S}.run.7` }),
+        ],
       })
     );
+    await withinAsync('both are kept', 2000, async () => (await kept(h, R)()) && (await kept(h, S)()));
+    for (const [id, said, last] of [
+      [R, 'the run reported', `${R}.run.5`],
+      [S, 'the sub-agent reported', `${S}.run.7`],
+    ] as const) {
+      // Opened from its notification.
+      for (const fn of h.push.listeners) fn({ data: { goto: id } });
+      await tick();
+      expect(lastSaid(h)).toContain(said);
+      expect(h.waiting()).toBeNull();
+      await opens(h, `api/events?t=${id}&last=${encodeURIComponent(last)}`);
+    }
+    expect(times(h, R)).toBe(1);
+    expect(times(h, S)).toBe(1);
+  });
+
+  it('leaves the topic on screen alone', async () => {
+    const h = await open();
+    await h.emit(sync(A, [], [A, B, C], { topics: [row(A, { stage: 'answer' }), row(B), row(C)] }));
     await new Promise((r) => setTimeout(r, 600));
-    // A is being read already, B is a scheduled lane the switcher does not even list.
     expect(asked(h)).toEqual([]);
   });
 
@@ -3100,7 +3244,7 @@ describe('webui page: a topic fetched before it is opened', () => {
       gates[url(id)] = new Promise<void>((r) => (open1[id] = r));
     }
     const h = await open({ replies, held: gates });
-    await h.emit(sync(A, [], [A, ...ids], { topics: [row(A), ...ids.map((id) => row(id, { stage: 'answer' }))] }));
+    await h.emit(sync(A, [], [A, ...ids], { topics: [row(A), ...ids.map((id) => row(id, { stage: 'answer', last: `${id}.run.1` }))] }));
     await within('three in flight', 2000, () => asked(h).length === 3);
     await new Promise((r) => setTimeout(r, 100));
     expect(asked(h)).toHaveLength(3);
@@ -3109,7 +3253,7 @@ describe('webui page: a topic fetched before it is opened', () => {
     await within('a fourth once one is in', 2000, () => asked(h).length === 4);
     for (const id of ids) open1[id]!();
     await within('all six', 2000, () => asked(h).length === 6);
-    for (const id of ids) await untilAsync(`${id} is cached`, kept(h, id));
+    for (const id of ids) await withinAsync(`${id} is cached`, 2000, kept(h, id));
   });
 
   it('fetches them nearest the top of the sidebar first, not in the order the daemon listed them', async () => {
@@ -3142,26 +3286,31 @@ describe('webui page: a topic fetched before it is opened', () => {
     expect(asked(h)).toEqual([ans1, ans2, failed, rev1, rev2, rev3].map(url));
   });
 
-  it('fetches it again when a new reply moves the row', async () => {
-    const h = await open({ replies: { [url(B)]: snap(B, [message('w1', '<p>one</p>')], `${B}.run.1`, 900) } });
-    const list = [row(A), row(B, { stage: 'answer', lastAt: 900 })];
-    await h.emit(sync(A, [], [A, B], { topics: list }));
-    await within('the first prefetch', 2000, () => fetched(h, B));
-    await untilAsync('the first copy', kept(h, B));
+  it('fetches it again when the row’s last moves, though its lastAt does not', async () => {
+    // An edit moves no lastAt — the reply streaming into one message is edits all the way down —
+    // so a copy matched by lastAt was taken for current while the reply went on growing.
+    const replies: Record<string, unknown> = { [url(B)]: snap(B, [message('w1', '<p>half</p>')], `${B}.run.1`) };
+    const h = await open({ replies });
+    await h.emit(sync(A, [], [A, B], { topics: [row(A), row(B, { stage: 'answer', last: `${B}.run.1` })] }));
+    await withinAsync('the first copy', 2000, keptAt(h, B, `${B}.run.1`));
 
-    await h.emit({ t: 'topic-rows', tv: 2, rows: [row(B, { stage: 'answer', lastAt: 1200, msgCount: 2 })] });
-    await within('the second prefetch', 2000, () => h.calls.filter((c) => c.path === url(B)).length === 2);
+    replies[url(B)] = snap(B, [message('w1', '<p>whole</p>')], `${B}.run.6`);
+    await h.emit({ t: 'topic-rows', tv: 2, rows: [row(B, { stage: 'answer', last: `${B}.run.6` })] });
+    await withinAsync('the second copy', 2000, keptAt(h, B, `${B}.run.6`));
+    expect(times(h, B)).toBe(2);
+    await h.click(`[data-topic="${B}"]`);
+    expect(lastSaid(h)).toContain('whole');
   });
 
   it('drops an answer that arrives after the person has opened the topic', async () => {
     let release = (): void => {};
     const gate = new Promise<void>((r) => (release = r));
     const h = await open({ replies: { [url(B)]: snap(B, [message('w1', '<p>stale</p>')], `${B}.run.1`) }, held: { [url(B)]: gate } });
-    await h.emit(sync(A, [], [A, B], { topics: [row(A), row(B, { stage: 'answer' })] }));
+    await h.emit(sync(A, [], [A, B], { topics: [row(A), row(B, { stage: 'answer', last: `${B}.run.1` })] }));
     await within('the prefetch goes out', 2000, () => fetched(h, B));
 
     // Opened while the answer was still on the wire, and left again before its stream said
-    // where it got to — so nothing else could put B up from memory.
+    // where it got to — so nothing else could put B up.
     await h.click(`[data-topic="${B}"]`);
     release();
     await tick();
@@ -3172,6 +3321,34 @@ describe('webui page: a topic fetched before it is opened', () => {
     await opens(h, `api/events?t=${B}`);
   });
 
+  it('does not put a fetched copy over a newer one the page kept while it was on the wire', async () => {
+    // The fetch was in flight when B was opened, read on and left again: the copy the page put on
+    // the way out is newer than the answer, which lands after it and must not be written over it —
+    // in memory or in the database.
+    let release = (): void => {};
+    const gate = new Promise<void>((r) => (release = r));
+    const h = await open({
+      replies: { [url(B)]: snap(B, [message('w1', '<p>from the fetch</p>')], `${B}.run.1`) },
+      held: { [url(B)]: gate },
+    });
+    await h.emit(sync(A, [], [A, B], { topics: [row(A), row(B, { stage: 'answer', last: `${B}.run.1` })] }));
+    await within('the prefetch goes out', 2000, () => fetched(h, B));
+
+    await h.click(`[data-topic="${B}"]`);
+    await delivered(h, { t: 'msg', msg: message('b7', '<p>said since</p>') }, `${B}.run.7`);
+    await h.click(`[data-topic="${A}"]`);
+    await withinAsync('the page’s copy', 2000, keptAt(h, B, `${B}.run.7`));
+    release();
+    await new Promise((r) => setTimeout(r, 50));
+
+    const rec = await readRecord(h.idb, B);
+    expect(rec?.last).toBe(`${B}.run.7`);
+    expect(rec?.list.map((m) => m.id)).toEqual(['b7']);
+    await h.click(`[data-topic="${B}"]`);
+    expect(lastSaid(h)).toContain('said since');
+    await opens(h, `api/events?t=${B}&last=${encodeURIComponent(`${B}.run.7`)}`);
+  });
+
   it('fetches nothing while the tab is hidden', async () => {
     const h = await open({ replies: { [url(B)]: snap(B, [], `${B}.run.0`) } });
     Object.defineProperty(h.doc, 'visibilityState', { value: 'hidden', configurable: true });
@@ -3180,7 +3357,7 @@ describe('webui page: a topic fetched before it is opened', () => {
     expect(fetched(h, B)).toBe(false);
   });
 
-  it('fetches nothing in a browser with no IndexedDB, where there is nowhere to keep it', async () => {
+  it('fetches nothing in a browser with no IndexedDB, where memory could not keep twenty', async () => {
     const h = await open({ idb: null, replies: { [url(B)]: snap(B, [], `${B}.run.0`) } });
     await h.emit(sync(A, [], [A, B], { topics: [row(A), row(B, { stage: 'answer' })] }));
     await new Promise((r) => setTimeout(r, 600));
@@ -3192,35 +3369,44 @@ describe('webui page: a topic fetched before it is opened', () => {
     await h.emit(sync(A, [], [A, B], { topics: [row(A), row(B, { stage: 'answer' })] }));
     await within('the first attempt', 2000, () => fetched(h, B));
     await new Promise((r) => setTimeout(r, 600));
-    expect(h.calls.filter((c) => c.path === url(B))).toHaveLength(1);
+    expect(times(h, B)).toBe(1);
   });
 
   it('asks for a topic once, even when the list moves again', async () => {
-    // The copy is matched to the row by lastAt. Without that, the next pass reads the copy as
-    // missing, fetches it again, and the page never stops asking.
     const h = await open({ replies: { [url(B)]: snap(B, [message('w1', '<p>x</p>')], `${B}.run.1`) } });
-    await h.emit(sync(A, [], [A, B], { topics: [row(A), row(B, { stage: 'answer' })] }));
-    await within('the prefetch', 2000, () => fetched(h, B));
-    await untilAsync('the copy', kept(h, B));
+    await h.emit(sync(A, [], [A, B], { topics: [row(A), row(B, { stage: 'answer', last: `${B}.run.1` })] }));
+    await withinAsync('the copy', 2000, kept(h, B));
 
     // The same row, sent again: another list event must not be read as "this copy is stale".
-    await h.emit({ t: 'topic-rows', tv: 2, rows: [row(B, { stage: 'answer' })] });
+    await h.emit({ t: 'topic-rows', tv: 2, rows: [row(B, { stage: 'answer', last: `${B}.run.1` })] });
     await new Promise((r) => setTimeout(r, 600));
-    expect(h.calls.filter((c) => c.path === url(B))).toHaveLength(1);
+    expect(times(h, B)).toBe(1);
+  });
+
+  it('asks once per version of the row, even when the answer is never that version', async () => {
+    // The row and the answer disagree — a row a moment behind, or a daemon counting differently.
+    // Matched by the copy alone, the next pass would read it as stale and fetch for ever.
+    const h = await open({ replies: { [url(B)]: snap(B, [message('w1', '<p>x</p>')], `${B}.run.3`) } });
+    await h.emit(sync(A, [], [A, B], { topics: [row(A), row(B, { stage: 'answer', last: `${B}.run.4` })] }));
+    await withinAsync('the copy', 2000, kept(h, B));
+    await h.emit({ t: 'topic-rows', tv: 2, rows: [row(B, { stage: 'answer', last: `${B}.run.4` })] });
+    await new Promise((r) => setTimeout(r, 600));
+    expect(times(h, B)).toBe(1);
   });
 
   it('keeps every topic it fetched: a full house of long ones does not push the top one out', async () => {
     // What 3.9.0 did with four topics of a thousand messages: fetch the first, the second, the
-    // third — evicting the first to make room — then the first again, for ever. The cache holds a
-    // hundred topics, and nothing it fetched is taken back to make room for the next.
+    // third — evicting the first to make room — then the first again, for ever.
     const ids = ['11111111', '22222222', '33333333', '44444444'];
     const replies: Record<string, unknown> = {};
     const long = (id: string) => Array.from({ length: 1000 }, (_, i) => message(`${id}-${i}`, `<p>${i}</p>`));
     for (const id of ids) replies[url(id)] = snap(id, long(id), `${id}.run.1000`);
     const h = await open({ replies });
-    await h.emit(sync(A, [], [A, ...ids], { topics: [row(A), ...ids.map((id) => row(id, { stage: 'answer', msgCount: 1000 }))] }));
+    await h.emit(
+      sync(A, [], [A, ...ids], { topics: [row(A), ...ids.map((id) => row(id, { stage: 'answer', msgCount: 1000, last: `${id}.run.1000` }))] })
+    );
     await within('all four', 4000, () => asked(h).length === 4);
-    for (const id of ids) await untilAsync(`${id} is cached`, kept(h, id));
+    for (const id of ids) await withinAsync(`${id} is cached`, 2000, kept(h, id));
     await new Promise((r) => setTimeout(r, 600));
     expect(asked(h)).toHaveLength(4);
     expect((await readRecord(h.idb, ids[0]!))?.list).toHaveLength(1000);
@@ -3229,10 +3415,9 @@ describe('webui page: a topic fetched before it is opened', () => {
   it('opens it from the cache after a reload, and does not fetch it again', async () => {
     // The copy outlives the page: a reload, or a PWA the phone closed, finds it where it was.
     const first = await open({ replies: { [url(B)]: snap(B, [message('w9', '<p>from B</p>')], `${B}.run.4`) } });
-    const list = [row(A), row(B, { stage: 'answer' })];
+    const list = [row(A), row(B, { stage: 'answer', last: `${B}.run.4` })];
     await first.emit(sync(A, [], [A, B], { topics: list }));
-    await within('the prefetch', 2000, () => fetched(first, B));
-    await untilAsync('the copy', kept(first, B));
+    await withinAsync('the copy', 2000, kept(first, B));
     first.window.close();
 
     const h = await open({ idb: first.idb });
@@ -3241,7 +3426,8 @@ describe('webui page: a topic fetched before it is opened', () => {
     expect(asked(h)).toEqual([]);
 
     await h.click(`[data-topic="${B}"]`);
-    await until('B is painted from the cache', () => (h.el('log').textContent ?? '').includes('from B'));
+    await until('B is painted from the cache', () => lastSaid(h).includes('from B'));
+    expect(h.waiting()).toBeNull();
     await opens(h, `api/events?t=${B}&last=${encodeURIComponent(`${B}.run.4`)}`);
   });
 
@@ -3249,38 +3435,66 @@ describe('webui page: a topic fetched before it is opened', () => {
     // Its ids name messages of a process that has gone, so its last event is no place to resume
     // from — the copy is history until the sync says otherwise.
     const first = await open({ replies: { [url(B)]: snap(B, [message('w9', '<p>from B</p>')], `${B}.run.4`) } });
-    const list = [row(A), row(B, { stage: 'answer' })];
-    await first.emit(sync(A, [], [A, B], { topics: list }));
-    await within('the prefetch', 2000, () => fetched(first, B));
-    await untilAsync('the copy', kept(first, B));
+    await first.emit(sync(A, [], [A, B], { topics: [row(A), row(B, { stage: 'answer', last: `${B}.run.4` })] }));
+    await withinAsync('the copy', 2000, kept(first, B));
     first.window.close();
 
     const h = await open({ idb: first.idb, status: { [url(B)]: 500 } });
-    await h.emit(sync(A, [], [A, B], { topics: list, epoch: 2 }));
+    await h.emit(sync(A, [], [A, B], { topics: [row(A), row(B, { stage: 'answer', last: `${B}.two.0` })], epoch: 2 }));
     await within('the new run is asked', 2000, () => fetched(h, B));
     await h.click(`[data-topic="${B}"]`);
     await opens(h, `api/events?t=${B}`);
-    await until('B is painted from the cache', () => (h.el('log').textContent ?? '').includes('from B'));
+    await until('B is painted from the cache', () => lastSaid(h).includes('from B'));
   });
 
   it('does not fetch a topic the service worker has just kept', async () => {
-    const h = await open({ push: { permission: 'granted', subscribed: true }, replies: { [url(B)]: snap(B, [], `${B}.run.3`, 900) } });
-    for (const fn of h.push.listeners) fn({ data: { cached: { topic: B, epoch: 1, lastAt: 900, last: `${B}.run.3` } } });
-    await h.emit(sync(A, [], [A, B], { topics: [row(A), row(B, { stage: 'answer', lastAt: 900 })] }));
+    const h = await open({ push: { permission: 'granted', subscribed: true }, replies: { [url(B)]: snap(B, [], `${B}.run.3`) } });
+    for (const fn of h.push.listeners) fn({ data: { cached: { topic: B, epoch: 1, last: `${B}.run.3` } } });
+    await h.emit(sync(A, [], [A, B], { topics: [row(A), row(B, { stage: 'answer', last: `${B}.run.3` })] }));
     await new Promise((r) => setTimeout(r, 600));
     expect(asked(h)).toEqual([]);
   });
 
+  it('puts up what the service worker kept over the older copy this page has in memory', async () => {
+    // B was left at .5; a push then kept it at .8 while the page was in the background. Memory
+    // first would put up the turn as it was left.
+    const h = await open({ push: { permission: 'granted', subscribed: true } });
+    await delivered(h, sync(A, [], [A, B], { topics: [row(A), row(B)] }), `${A}.run.0`);
+    await h.click(`[data-topic="${B}"]`);
+    await delivered(h, sync(B, [message('w1', '<p>as it was left</p>')], [A, B]), `${B}.run.5`);
+    await h.click(`[data-topic="${A}"]`);
+    await withinAsync('the copy put on the way out', 2000, keptAt(h, B, `${B}.run.5`));
+
+    // What the worker writes, the way it writes it (sw.ts keepTopic).
+    await new Promise<void>((resolve) => {
+      const rq = h.idb!.open('aa_cache', 1);
+      rq.onsuccess = () => {
+        const t = rq.result.transaction('topics', 'readwrite');
+        const list = [{ ...message('w1', '<p>as the push found it</p>'), _g: 1 }];
+        t.objectStore('topics').put({ topic: B, at: Date.now(), json: JSON.stringify(list), epoch: 1, last: `${B}.run.8` });
+        t.oncomplete = () => {
+          rq.result.close();
+          resolve();
+        };
+      };
+    });
+    for (const fn of h.push.listeners) fn({ data: { cached: { topic: B, epoch: 1, last: `${B}.run.8` } } });
+
+    await h.click(`[data-topic="${B}"]`);
+    await until('the worker’s copy', () => lastSaid(h).includes('as the push found it'));
+    await opens(h, `api/events?t=${B}&last=${encodeURIComponent(`${B}.run.8`)}`);
+  });
+
   it('asks again after a restart, even for a topic it had just failed on', async () => {
-    // A failure is remembered per row, and a restart moves nothing on the row — so without
-    // clearing that memory with the epoch, the new daemon's answer would not be asked for.
+    // A failure is remembered per row, and a restart may move nothing on the row the page holds —
+    // so without clearing that memory with the epoch, the new daemon's answer would not be asked for.
     const h = await open({ status: { [url(B)]: 500 } });
     const list = [row(A), row(B, { stage: 'answer' })];
     await h.emit(sync(A, [], [A, B], { topics: list }));
     await within('the failed attempt', 2000, () => fetched(h, B));
 
     await h.emit(sync(A, [], [A, B], { topics: list, epoch: 2 }));
-    await within('the retry', 2000, () => h.calls.filter((c) => c.path === url(B)).length === 2);
+    await within('the retry', 2000, () => times(h, B) === 2);
   });
 
   it('starts again after bodies that do not parse', async () => {
@@ -3310,52 +3524,6 @@ describe('webui page: a topic fetched before it is opened', () => {
     await within('the next one', 2000, () => fetched(h, ids[3]!));
   });
 
-  it('leaves a topic it holds in memory alone, and goes back to it from what it held', async () => {
-    const h = await open({ replies: { [url(B)]: snap(B, [message('w1', '<p>from B</p>')], `${B}.run.1`) } });
-    await h.emit(sync(A, [], [A, B], { topics: [row(A), row(B, { stage: 'answer' })] }));
-    await within('the prefetch', 2000, () => fetched(h, B));
-    await untilAsync('the copy', kept(h, B));
-    await h.click(`[data-topic="${B}"]`);
-    await until('B is painted from the cache', () => (h.el('log').textContent ?? '').includes('from B'));
-    h.live().onmessage?.({ data: JSON.stringify({ t: 'typing', on: false }), lastEventId: `${B}.run.1` });
-    await tick();
-    await h.click(`[data-topic="${A}"]`);
-
-    // A new reply moves the row, but B is held whole and its stream can resume: a fetch would be
-    // the whole topic against a few hundred bytes.
-    await h.emit({ t: 'topic-rows', tv: 2, rows: [row(B, { stage: 'answer', lastAt: 1200 })] });
-    await new Promise((r) => setTimeout(r, 600));
-    expect(h.calls.filter((c) => c.path === url(B))).toHaveLength(1);
-    await h.click(`[data-topic="${B}"]`);
-    await opens(h, `api/events?t=${B}&last=${encodeURIComponent(`${B}.run.1`)}&tv=2`);
-  });
-
-  it('prefers what it held over a copy that landed after the person left', async () => {
-    // The fetch was in flight when B was opened and left again, so it lands while B is held: the
-    // held copy is the topic this tab actually saw, resumed from its own id — and the record the
-    // page wrote on the way out is newer than the answer, which is not written over it.
-    let release = (): void => {};
-    const gate = new Promise<void>((r) => (release = r));
-    const h = await open({
-      replies: { [url(B)]: snap(B, [message('w1', '<p>from the fetch</p>')], `${B}.run.1`) },
-      held: { [url(B)]: gate },
-    });
-    await h.emit(sync(A, [], [A, B], { topics: [row(A), row(B, { stage: 'answer' })] }));
-    await within('the prefetch goes out', 2000, () => fetched(h, B));
-
-    await h.click(`[data-topic="${B}"]`);
-    h.live().onmessage?.({ data: JSON.stringify({ t: 'msg', msg: message('b1', '<p>in B</p>') }), lastEventId: `${B}.run.7` });
-    await tick();
-    await h.click(`[data-topic="${A}"]`);
-    release();
-    await new Promise((r) => setTimeout(r, 20));
-
-    await h.click(`[data-topic="${B}"]`);
-    await opens(h, `api/events?t=${B}&last=${encodeURIComponent(`${B}.run.7`)}`);
-    await untilAsync('the record the page wrote', kept(h, B));
-    expect((await readRecord(h.idb, B))?.list.map((m) => m.id)).toEqual(['b1']);
-  });
-
   it('takes the echo in a fetched copy over the bubble still saying it was not confirmed', async () => {
     // A send that was in flight when the last page went away comes back as "Not confirmed". If
     // the daemon did receive it, the fetched copy carries the echo — and the copy is the first
@@ -3376,12 +3544,12 @@ describe('webui page: a topic fetched before it is opened', () => {
       url: `http://localhost:8787/?t=${A}`,
       idb: first.idb,
       storage,
-      replies: { [url(B)]: snap(B, [echo], `${B}.run.1`, 1100) },
+      replies: { [url(B)]: snap(B, [echo], `${B}.run.1`) },
     });
     expect(h.el('log').textContent).not.toContain('on its way');
-    await h.emit(sync(A, [], [A, B], { topics: [row(A), row(B, { stage: 'answer', lastAt: 1100 })] }));
+    await h.emit(sync(A, [], [A, B], { topics: [row(A), row(B, { stage: 'answer', last: `${B}.run.1` })] }));
     await within('the prefetch', 2000, () => fetched(h, B));
-    await untilAsync('the copy', async () => (await readRecord(h.idb, B))?.lastAt === 1100);
+    await withinAsync('the copy', 2000, keptAt(h, B, `${B}.run.1`));
 
     await h.click(`[data-topic="${B}"]`);
     await until('B is painted from the cache', () => h.painted() === 1);
@@ -3394,15 +3562,15 @@ describe('webui page: a topic fetched before it is opened', () => {
     // The copy is older than the send — fetched before it was made — so its silence proves
     // nothing. The copy and the replay after it are the whole room, though: once the replay is
     // over and neither carried the echo, the same daemon never got it.
+    const list = [row(A), row(B, { stage: 'answer', last: `${B}.run.1` })];
     const fetchFirst = await open({ replies: { [url(B)]: snap(B, [message('w1', '<p>before</p>')], `${B}.run.1`) } });
-    await fetchFirst.emit(sync(A, [], [A, B], { topics: [row(A), row(B, { stage: 'answer' })] }));
-    await within('the prefetch', 2000, () => fetched(fetchFirst, B));
-    await untilAsync('the copy', kept(fetchFirst, B));
+    await fetchFirst.emit(sync(A, [], [A, B], { topics: list }));
+    await withinAsync('the copy', 2000, kept(fetchFirst, B));
     const idb = fetchFirst.idb;
     fetchFirst.window.close();
 
     const sender = await open({ url: `http://localhost:8787/?t=${A}`, idb, hang: ['api/send'] });
-    await sender.emit(sync(A, [], [A, B], { topics: [row(A), row(B, { stage: 'answer' })] }));
+    await sender.emit(sync(A, [], [A, B], { topics: list }));
     await sender.click(`[data-topic="${B}"]`);
     await opens(sender, `api/events?t=${B}&last=${encodeURIComponent(`${B}.run.1`)}`);
     await sender.emit({ t: 'resumed' });
@@ -3412,7 +3580,7 @@ describe('webui page: a topic fetched before it is opened', () => {
     sender.window.close();
 
     const h = await open({ url: `http://localhost:8787/?t=${A}`, idb, storage });
-    await h.emit(sync(A, [], [A, B], { topics: [row(A), row(B, { stage: 'answer' })] }));
+    await h.emit(sync(A, [], [A, B], { topics: list }));
     await h.click(`[data-topic="${B}"]`);
     await until('B is painted from the cache', () => (h.el('log').textContent ?? '').includes('before'));
     expect(h.live().url).toContain('&last=');
@@ -3427,6 +3595,14 @@ describe('webui page: a topic fetched before it is opened', () => {
 describe('webui page: coming back to a topic', () => {
   const A = 'a1b2c3d4';
   const B = 'b2c3d4e5';
+  /** Eight other topics: visiting them all takes A out of memory, which keeps the eight most recent. */
+  const OTHERS = ['10000001', '10000002', '10000003', '10000004', '10000005', '10000006', '10000007', '10000008'];
+  const passThrough = async (h: Harness, all: string[]): Promise<void> => {
+    for (const id of OTHERS) {
+      await h.click(`[data-topic="${id}"]`);
+      await h.emit(sync(id, [message(`${id}-1`, '<p>elsewhere</p>')], all));
+    }
+  };
 
   it('puts the reader back on the message they left, not at the bottom', async () => {
     const h = await open();
@@ -3440,9 +3616,9 @@ describe('webui page: coming back to a topic', () => {
     await h.click(`[data-topic="${B}"]`);
     await h.click(`[data-topic="${A}"]`);
 
-    // Put back as soon as the cache has painted — not a moment later, when the sync lands, which
+    // Put back as soon as the copy has painted — not a moment later, when the sync lands, which
     // would be a visible jump from wherever it was painted first.
-    await until('A is painted from cache', () => h.painted() === 20);
+    await until('A is painted from its copy', () => h.painted() === 20);
     expect(onTop(log)).toEqual({ text: 'line 8', hidden: 30 });
 
     await h.emit(sync(A, lines(20), [A, B]));
@@ -3450,24 +3626,26 @@ describe('webui page: coming back to a topic', () => {
   });
 
   it('finds that message again when the sync puts older ones above it', async () => {
-    // The cache keeps a topic's tail within its byte budget, so a topic of long answers comes back
-    // short and the sync then adds the head of it — above the message being read. Restoring a
-    // scrollTop would land rows off; this is the reason the view is a message. Each line here is
-    // 12K characters, so 210 of them are over the 2M budget and the cache keeps the last 157.
+    // The database keeps a topic's tail within its byte budget, so a topic of long answers comes
+    // back from it short and the sync then adds the head of it — above the message being read.
+    // Restoring a scrollTop would land rows off; this is the reason the view is a message. Each
+    // line here is 12K characters, so 210 of them are over the 2M budget and the record keeps the
+    // last 157 — read back once eight other topics have taken A's place in memory.
     const pad = `<!--${'x'.repeat(12_000)}-->`;
     const long = lines(210).map((m) => ({ ...m, html: `${m.html as string}${pad}` }));
+    const all = [A, B, ...OTHERS];
     const h = await open();
     const log = layout(h);
-    await h.emit(sync(A, long, [A, B]));
+    await h.emit(sync(A, long, all));
     log.scrollTop = 100 * ROW + 30;
     expect(onTop(log).text).toBe('line 101');
 
-    await h.click(`[data-topic="${B}"]`);
+    await passThrough(h, all);
     await h.click(`[data-topic="${A}"]`);
-    await until('A is painted from cache', () => h.painted() === 157);
+    await until('A is painted from the database', () => h.painted() === 157);
     expect(onTop(log)).toEqual({ text: 'line 101', hidden: 30 });
 
-    await h.emit(sync(A, long, [A, B]));
+    await h.emit(sync(A, long, all));
     expect(h.painted()).toBe(210);
     expect(onTop(log)).toEqual({ text: 'line 101', hidden: 30 });
   });
@@ -3481,7 +3659,7 @@ describe('webui page: coming back to a topic', () => {
     await h.emit(sync(A, lines(20), [A, B]));
     await h.click(`[data-topic="${B}"]`);
     await h.click(`[data-topic="${A}"]`);
-    await until('A is painted from cache', () => h.painted() === 20);
+    await until('A is painted from its copy', () => h.painted() === 20);
 
     await h.emit(sync(A, lines(22), [A, B]));
     expect(log.scrollTop).toBe(22 * ROW - VIEW);
@@ -3495,29 +3673,31 @@ describe('webui page: coming back to a topic', () => {
     log.scrollTop = 730;
     await h.click(`[data-topic="${B}"]`);
     await h.click(`[data-topic="${A}"]`);
-    await until('A is painted from cache', () => h.painted() === 20);
+    await until('A is painted from its copy', () => h.painted() === 20);
 
-    // Between the cache and the sync: the transcript is on screen and is being read.
+    // Between the copy and the sync: the transcript is on screen and is being read.
     log.scrollTop = 200;
     await h.emit(sync(A, lines(20), [A, B]));
     expect(log.scrollTop).toBe(200);
   });
 
-  it('keeps the place in a topic flicked through before it loaded, with no cache to paint it', async () => {
-    // With no IndexedDB, a topic shows placeholders until its sync — and leaving it then must not
-    // be read as "left at the bottom", or passing through on the way somewhere else forgets it.
+  it('keeps the place in a topic flicked through before it loaded, with no copy to paint it', async () => {
+    // With no IndexedDB and A gone from memory, a topic shows placeholders until its sync — and
+    // leaving it then must not be read as "left at the bottom", or passing through on the way
+    // somewhere else forgets it.
+    const all = [A, B, ...OTHERS];
     const h = await open({ idb: null });
     const log = layout(h);
-    await h.emit(sync(A, lines(20), [A, B]));
+    await h.emit(sync(A, lines(20), all));
     log.scrollTop = 730;
 
-    await h.click(`[data-topic="${B}"]`);
+    await passThrough(h, all);
     await h.click(`[data-topic="${A}"]`);
     expect(h.skeletons()).toBeGreaterThan(0);
     await h.click(`[data-topic="${B}"]`);
     await h.click(`[data-topic="${A}"]`);
 
-    await h.emit(sync(A, lines(20), [A, B]));
+    await h.emit(sync(A, lines(20), all));
     expect(onTop(log)).toEqual({ text: 'line 8', hidden: 30 });
   });
 });
