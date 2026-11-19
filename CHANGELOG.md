@@ -5,6 +5,18 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **The automatic review sees the skill files a conversation wrote, whenever it ran.** It asks git
+  for the conversation's commits "since" the start of the reviewed window, and when the window was
+  empty it passed `--since=@0` — which git does not read as the epoch but as *now*. So it saw only
+  commits made in the same second as its own `git log`, and usually none: the review was handed no
+  record of what the conversation had already written and could write it again. A window that is
+  empty now asks for every commit. The same release-gating test that caught this failed only now
+  and then, which is why it took a loaded machine to see it. Two checks that read "git failed" as
+  "no such ref" — so an empty history or a skipped sync, silently — now say what failed, and the
+  skills repository's log tells a local git error from a remote that does not answer.
+
 ## [3.17.0] - 2026-11-20
 
 ### Fixed
