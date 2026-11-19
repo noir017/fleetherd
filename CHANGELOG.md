@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.14.0] - 2026-11-19
+
 ### Fixed
 
 - **A topic that needs you opens on its latest state, including one you left mid-turn.** The
