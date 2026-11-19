@@ -277,7 +277,7 @@ const isGatewayQuery = (a: IpcAction): a is GatewayQuery => a.kind in GATEWAY_QU
  * caller opened refuses all of them: only the gateway writes there (its 🔔 updates and the answer
  * to what the person typed), never an agent (AGENTS.md security invariant 11).
  */
-const COORDINATION_WRITE_ACTIONS: ReadonlySet<IpcAction['kind']> = new Set([
+export const COORDINATION_WRITE_ACTIONS: ReadonlySet<IpcAction['kind']> = new Set([
   'send-message',
   'reply',
   'edit-message',
@@ -285,6 +285,7 @@ const COORDINATION_WRITE_ACTIONS: ReadonlySet<IpcAction['kind']> = new Set([
   'react',
   'delete',
   'create-thread',
+  'ask',
 ]);
 
 /**
@@ -1200,15 +1201,18 @@ export class Daemon {
   /**
    * The coordination topic an external caller opened, as Delegation reads it. The record is keyed
    * by the topic's own id, so a conversation id computed under the current scope is resolved to
-   * its address first — by its lane, or, for a topic that never ran a turn, by asking each record
-   * what key it has now.
+   * its address first — by its lane when that address is a record, else by asking each record what
+   * key it has now.
    */
   private externalOwner(id: ConversationId): ExternalOwner | undefined {
     const lane = this.registry.laneFor(id);
+    // The lane is the fast path, not the only one: under per_channel every thread of a channel
+    // shares one conversation id, and the lane's address is whichever thread last ran — not
+    // necessarily the coordination topic. A miss must fall back to the records, or the caller's
+    // tasks are refused and `tell` starts a turn in the topic.
     const t =
-      lane !== undefined
-        ? this.externalTopics.get(lane.platformId, lane.address)
-        : this.externalTopics.all().find((topic) => this.registry.conversationAt(topic.platform, topic.address)?.key === id);
+      (lane !== undefined ? this.externalTopics.get(lane.platformId, lane.address) : undefined) ??
+      this.externalTopics.all().find((topic) => this.registry.conversationAt(topic.platform, topic.address)?.key === id);
     return t && { caller: t.caller, platform: t.platform, address: t.address, title: t.title };
   }
 

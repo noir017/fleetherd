@@ -1563,7 +1563,12 @@ export class Delegation {
    */
   private place(key: ConversationId): Place | undefined {
     const ext = this.deps.externalOf?.(key);
-    const lane = this.deps.registry.laneFor(key) ?? (ext ? { platformId: ext.platform, address: ext.address } : undefined);
+    // The record's address wins when there is one: under per_channel every thread of a channel
+    // shares a key, so the lane may be another thread — and treating it as the coordination topic
+    // is the safe side (no turn, no write into the wrong place).
+    const lane = ext
+      ? { platformId: ext.platform, address: ext.address }
+      : this.deps.registry.laneFor(key);
     const adapter = lane ? this.deps.platforms.get(lane.platformId) : undefined;
     return lane && adapter ? { key, platformId: lane.platformId, address: lane.address, adapter } : undefined;
   }
