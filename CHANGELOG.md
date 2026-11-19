@@ -5,6 +5,24 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **A restart waits for an agent still working after its turn.** When a background task an agent
+  started finishes, its harness wakes up and carries on outside any turn, and the gateway shows that
+  as a follow-up message. A SIGTERM counted only turns and scheduled runs, so it found nothing in
+  progress and stopped at once, cutting the agent off mid-command. On 2026-11-18 that command was
+  the agent updating the gateway itself over ssh: the update died with the agent's ssh between
+  creating the new container and starting it, and the gateway stayed down for nine hours. Such work
+  now counts as a turn in progress, so the restart waits for it like any other (at most 30 minutes),
+  and the host's `fleetherd update` lists it as `background work`.
+- **`fleetherd update` cannot be cut short by the session that ran it** (`docker/fleetherd-host`,
+  reinstalled on the host by hand). The switch used to run in the caller's session whenever nothing
+  was in progress, so a caller that ended mid-way — an ssh session dropping, an agent stopped by the
+  very restart it asked for — took compose with it. It now always runs detached, writing to
+  `update.log`, and the command follows that log when it has no reason to return at once. And an
+  update that finds the image already current no longer says "the container is left alone" about a
+  container that is not running: it starts it. `fleetherd status` names that state too.
+
 ## [3.13.1] - 2026-11-18
 
 ### Changed

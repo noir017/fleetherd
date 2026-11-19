@@ -50,7 +50,7 @@ session id, agy's conversation id). One conversation holds one session *per agen
 | `schedule-store.ts` | `<configDir>/schedules.json`: 0600, atomic writes, a bad entry dropped loudly |
 | `schedule-service.ts` | Scheduled tasks wired to the rest: a run as a bash process or a turn, the agent's `schedule` commands, the cards |
 | `schedule-bash.ts` | One `--bash` run: its own process group, a bounded output tail, the full log on disk. Also runs `preLaunch` hooks |
-| `restart-drain.ts` | A SIGTERM with turns or scheduled runs in progress: the bounded wait for them before the daemon stops (`Daemon.beginDrain` refuses new turns and holds the scheduler meanwhile) |
+| `restart-drain.ts` | A SIGTERM with turns (an agent's background output counted as one) or scheduled runs in progress: the bounded wait for them before the daemon stops (`Daemon.beginDrain` refuses new turns and holds the scheduler meanwhile) |
 | `reverse-cli-shim.ts` | Guarantees `fleetherd` is on the agent's PATH; `selfInvocation` — how to re-run this CLI, shared with the tool server entry |
 | `agy-plugin.ts` | Links the bundled agy plugin (`agy-plugin/`: a Stop hook that keeps a turn open while a background command runs) into `~/.gemini/config/plugins` |
 | `skill-link.ts` | Links the bundled skills (`fleetherd`, `super`) into the skill directories the harnesses read (`~/.claude/skills`, `~/.agents/skills`, `~/.gemini/config/skills`) |

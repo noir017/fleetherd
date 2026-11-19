@@ -9,11 +9,13 @@
 #   fleetherd update [--dry-run] [--force]
 #                     pull the image the compose file names; if it changed, recreate the
 #                     container, wait until every host is connected again, report the version,
-#                     and remove the image it replaced. With a turn or a scheduled run in
-#                     progress, the gateway finishes it first (at most 30 min) and the rest goes
-#                     on in the background: `fleetherd status` shows it, update.log in the compose
-#                     directory has it. --force restarts at once, cutting them off; --dry-run
-#                     only reports.
+#                     and remove the image it replaced. A container that is not running is
+#                     started even when the image has not changed. The switch runs detached and
+#                     writes update.log in the compose directory, so it finishes even if this
+#                     command's session ends. With a turn, a scheduled run or an agent's
+#                     background work in progress, the gateway finishes it first (at most
+#                     30 min) and this returns at once: `fleetherd status` shows it. --force
+#                     restarts at once, cutting them off; --dry-run only reports.
 #   fleetherd restart [--force]   the same, without pulling
 #   fleetherd logs [args]         docker logs -t (default: --tail 200)
 #   fleetherd status              the container, its image, the gateway's version, what is in
@@ -71,7 +73,8 @@ STOP_WAIT=1920
 die() { printf '%s\n' "fleetherd: $*" >&2; exit 1; }
 say() { printf '%s\n' "fleetherd: $*" >&2; }
 short() { local id="${1#sha256:}"; printf '%s' "${id:0:12}"; }
-running() { [ "$(docker inspect -f '{{.State.Status}}' "${CONTAINER}" 2>/dev/null)" = running ]; }
+state() { docker inspect -f '{{.State.Status}}' "${CONTAINER}" 2>/dev/null || echo missing; }
+running() { [ "$(state)" = running ]; }
 version() {
     local pkg
     for pkg in fleetherd talkcode; do
@@ -82,8 +85,10 @@ version() {
 
 # What the gateway is doing right now, read from its own log since the container last started:
 # a turn is open from "starting turn" until "turn complete|stopped|failed", a scheduled run from
-# "running" until "finished". The log is the daemon's own account, so no new interface is needed;
-# a run that started before the log rotated away is the one thing this cannot see.
+# "running" until "finished", and an agent's background work — output after its turn ended, when
+# the harness re-invoked itself on a background task finishing — from "output arrived outside a
+# turn" until "follow-up closed". The log is the daemon's own account, so no new interface is
+# needed; a run that started before the log rotated away is the one thing this cannot see.
 in_progress() {
     local since
     since="$(docker inspect -f '{{.State.StartedAt}}' "${CONTAINER}")"
@@ -92,6 +97,8 @@ in_progress() {
         /^\[turn\] [^ ]+ turn (complete|stopped|failed)/ { delete open["turn " $2] }
         /^\[schedule\] #[^ ]+ .* running/          { open["scheduled task " $2] = 1 }
         /^\[schedule\] #[^ ]+ finished:/           { delete open["scheduled task " $2] }
+        /^\[acp\] [^ ]+: output arrived outside a turn/ { k = $2; sub(/:$/, "", k); open["background work " k] = 1 }
+        /^\[acp\] [^ ]+: follow-up closed/         { k = $2; sub(/:$/, "", k); delete open["background work " k] }
         END { for (k in open) print k }'
 }
 
@@ -116,7 +123,7 @@ draining_since() {
 }
 
 # One update or restart at a time: a second one while the first waits would stop the container
-# under it. The lock is fd 9, so the background half (in_background) holds it until it is done.
+# under it. The lock is fd 9, so the detached half (detach) holds it until it is done.
 take_lock() {
     [ -d "${APP_DIR}" ] || die "no ${APP_DIR} (set FLEETHERD_APP_DIR)"
     command -v flock >/dev/null || return 0
@@ -124,13 +131,34 @@ take_lock() {
     flock -n 9 || die "an update or restart is already under way — see ${UPDATE_LOG}"
 }
 
-# Go on in the background: the gateway may wait up to 30 minutes, and the turn it waits for may be
-# the one that ran this — an agent asked to update the gateway has to be able to finish its turn, or
-# each would wait for the other. setsid, so a closed terminal or ssh session does not take it along.
-in_background() {
-    say "the gateway finishes these first (at most 30 min), then restarts; this goes on in the background."
-    say "fleetherd status shows it; the log is ${UPDATE_LOG}"
-    setsid "$(readlink -f "$0")" __switch "$@" >>"${UPDATE_LOG}" 2>&1 </dev/null &
+# Run the switch (__switch) in a session of its own, writing to update.log — always, not only when
+# it will wait. Whoever runs this may not outlive the restart: an agent that runs `fleetherd update`
+# over ssh is stopped with the gateway it works under, and its ssh with it. On 2026-11-18 compose
+# died with that ssh between creating the new container and starting it, and the gateway stayed
+# down for nine hours. setsid, and nothing written to the caller's terminal or pipe, so its end
+# cannot take the switch along.
+#
+# With work in progress ($1 = 1) this returns at once: the gateway may wait up to 30 minutes, and
+# what it waits for may be the agent that ran this, which has to be able to finish or each would
+# wait for the other. Otherwise it follows the log until the switch is done and exits with its
+# status; ending it early (Ctrl-C, a dropped session) stops only the following.
+detach() {
+    local busy="$1" from pid
+    shift
+    # Created first: tail must not race the redirect below to a log that does not exist yet.
+    : >>"${UPDATE_LOG}"
+    from=$(( $(stat -c %s "${UPDATE_LOG}") + 1 ))
+    # -w: should setsid have to fork, $! still ends when the switch does.
+    setsid -w "$(readlink -f "$0")" __switch "$@" >>"${UPDATE_LOG}" 2>&1 </dev/null &
+    pid=$!
+    if [ "${busy}" -eq 1 ]; then
+        say "the gateway finishes these first (at most 30 min), then restarts; this goes on in the background."
+        say "fleetherd status shows it; the log is ${UPDATE_LOG}"
+        return 0
+    fi
+    say "switching over; it carries on if this session ends (log: ${UPDATE_LOG})"
+    tail -c +"${from}" --pid="${pid}" -f "${UPDATE_LOG}" >&2 || true
+    wait "${pid}"
 }
 
 # --force: SIGINT, which the gateway takes as "stop now" — SIGTERM would wait for what is in
@@ -221,9 +249,18 @@ do_update() {
     say "pulling ${ref} …"
     (cd "${APP_DIR}" && docker compose pull -q) >&2 || die "pull failed"
     after="$(docker image inspect "${ref}" -f '{{.Id}}')" || die "pulled, but cannot inspect ${ref}"
-    if [ "${before}" = "${after}" ]; then
+    if [ "${before}" = "${after}" ] && running; then
         say "already up to date ($(short "${after}"), fleetherd $(version)); the container is left alone"
         [ "${dry}" -eq 1 ] || prune_old "${ref}"
+        return 0
+    fi
+    # Up to date but not running: what an `up` cut short leaves — a container created and never
+    # started, which no restart policy starts — or one stopped by hand. "Already up to date" and
+    # leaving it is how such a gateway stayed down through two updates on 2026-11-18.
+    if [ "${before}" = "${after}" ]; then
+        say "already up to date ($(short "${after}")), but the container is $(state)"
+        if [ "${dry}" -eq 1 ]; then say "--dry-run: an update now would start it"; return 0; fi
+        detach 0 up 0 "" "${ref}"
         return 0
     fi
     say "image $(short "${before:-none}") → $(short "${after}")"
@@ -233,30 +270,32 @@ do_update() {
         return 0
     fi
     hosts="$(previous_hosts)"
-    if [ "${force}" -eq 1 ]; then
-        stop_now
-        switch_over up "${hosts}" "${ref}"
-    elif report_busy; then
-        in_background up "${hosts}" "${ref}"
+    if [ "${force}" -eq 0 ] && report_busy; then
+        detach 1 up 0 "${hosts}" "${ref}"
     else
-        switch_over up "${hosts}" "${ref}"
+        detach 0 up "${force}" "${hosts}" "${ref}"
     fi
 }
 
 # Stop the gateway and start it on the current compose file (`up`, recreating it on a new image) or
 # as it is (`restart`), then wait for it and say how it came back. The stop is a SIGTERM with
-# STOP_WAIT to spare, so a gateway with work in progress finishes it first.
+# STOP_WAIT to spare, so a gateway with work in progress finishes it first — unless $2 (--force)
+# stopped it already. Runs detached (detach), as __switch.
 switch_over() {
-    local how="$1" hosts="$2" ref="${3:-}"
+    local how="$1" force="$2" hosts="$3" ref="${4:-}"
+    [ "${force}" -eq 0 ] || stop_now
     if [ "${how}" = up ]; then
         (cd "${APP_DIR}" && docker compose up -d -t "${STOP_WAIT}") >&2 || die "up -d failed: cd ${APP_DIR} && docker compose logs"
         pick_container
+    elif [ "${force}" -eq 1 ] || ! running; then
+        # Nothing left to stop gracefully: stopped just above, or not running at all.
+        docker start "${CONTAINER}" >/dev/null || die "start failed: fleetherd logs"
     else
         (cd "${APP_DIR}" && docker compose restart -t "${STOP_WAIT}") >&2 || die "restart failed"
     fi
     settle "${hosts}"
     if [ -n "${ref}" ]; then prune_old "${ref}"; fi
-    say "$([ "${how}" = up ] && echo done || echo restarted): fleetherd $(version)"
+    say "$([ "${how}" = up ] && echo 'done' || echo restarted): fleetherd $(version)"
 }
 
 do_restart() {
@@ -264,15 +303,10 @@ do_restart() {
     case "${1:-}" in --force) force=1 ;; '') ;; *) die "restart: unknown argument $1 (--force)" ;; esac
     check_compose
     hosts="$(previous_hosts)"
-    if [ "${force}" -eq 1 ] && running; then
-        stop_now
-        docker start "${CONTAINER}" >/dev/null || die "start failed: fleetherd logs"
-        settle "${hosts}"
-        say "restarted: fleetherd $(version)"
-    elif report_busy; then
-        in_background restart "${hosts}"
+    if [ "${force}" -eq 0 ] && report_busy; then
+        detach 1 restart 0 "${hosts}"
     else
-        switch_over restart "${hosts}"
+        detach 0 restart "${force}" "${hosts}"
     fi
 }
 
@@ -281,10 +315,10 @@ pick_container
 case "${1:-}" in
     update)  shift; take_lock; do_update "$@" ;;
     restart) shift; take_lock; do_restart "$@" ;;
-    # The background half of an update or restart (in_background); not for typing.
+    # The detached half of an update or restart (detach); not for typing.
     __switch)
         shift
-        say "$(date '+%F %T') ${1}: waiting for the gateway to finish what is in progress, then restarting it"
+        say "$(date '+%F %T') ${1}$([ "${2}" = 1 ] && echo ' --force'): switching over"
         switch_over "$@"
         say "$(date '+%F %T') finished" ;;
     logs)    shift; if [ "$#" -eq 0 ]; then set -- --tail 200; fi; exec docker logs -t "$@" "${CONTAINER}" ;;
@@ -299,6 +333,10 @@ case "${1:-}" in
             if [ -n "${since}" ]; then
                 printf 'restarting: waiting since %s for what is in progress (at most 30 min; log: %s)\n' "${since}" "${UPDATE_LOG}"
             fi
+        elif [ "$(state)" = missing ]; then
+            printf 'no container named %s: fleetherd update creates it\n' "${CONTAINER}"
+        else
+            printf 'not running (%s): fleetherd restart starts it\n' "$(state)"
         fi ;;
     -h|--help|'') awk 'NR > 1 { if ($0 !~ /^#/) exit; sub(/^# ?/, ""); print }' "$0" ;;
     *)

@@ -90,7 +90,8 @@ docker compose up -d
 docker compose pull && docker compose up -d
 ```
 
-Stopping the container sends the gateway SIGTERM. If a turn or a scheduled run is in progress, the
+Stopping the container sends the gateway SIGTERM. If a turn or a scheduled run is in progress, or
+an agent is still working after its turn ended (reporting on a background task it started), the
 gateway waits for it to finish, for at most 30 minutes, and then stops. Meanwhile:
 
 - each conversation with a turn running is told that the restart is waiting for it;
@@ -116,8 +117,11 @@ fleetherd logs          # docker logs -t --tail 200
 fleetherd doctor        # anything else runs the fleetherd CLI inside the container
 ```
 
-If a turn or a scheduled run is in progress, `update` and `restart` list them and let the gateway
-finish them first. The rest goes on in the background and the command returns at once, so an agent
-asked to update the gateway can end its own turn. The log is `update.log` in the compose directory.
-`--force` stops the gateway at once, cutting off what is in progress. The compose file is read from
-`~/apps/fleetherd` (`FLEETHERD_APP_DIR` changes it).
+`update` and `restart` run the switch detached from the terminal and write it to `update.log` in
+the compose directory, so it finishes even if the command's own session ends — as an agent's does
+when it updates the gateway it runs under, since the restart stops it. If anything is in progress,
+they list it, let the gateway finish it first, and return at once, so an agent asked to update the
+gateway can end its own turn; otherwise they follow the log until the gateway is back. `update` also
+starts a container that is not running even when the image has not changed. `--force` stops the
+gateway at once, cutting off what is in progress. The compose file is read from `~/apps/fleetherd`
+(`FLEETHERD_APP_DIR` changes it).
