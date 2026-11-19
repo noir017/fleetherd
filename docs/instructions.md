@@ -60,10 +60,13 @@ read-only and are rewritten at the next start.
 
 ## Editing them in the web UI
 
-With the instruction editor turned on, the web UI's settings page ends with an **Instructions**
-section for the gateway's files, and a row opens one in the same editor the
+With the instruction editor turned on, each agent's card under **Agents** on the web UI's
+[settings page](settings.md) lists every file that agent reads: the gateway's files it gets, then
+its own on its machine. A row opens the agent's whole list in the same editor the
 [file window](web-ui.md) uses — the same save, and the same check that the file did not change
-since you opened it. Each agent's own files are a field on that agent's row under **Agents**.
+since you opened it. There is no list of the gateway's files apart from the agents: `common.md` is
+on every card, and `claude.md` on every Claude Code agent's, each marked with how many agents read
+it, because that is who an edit reaches.
 
 ```yaml
 platforms:
@@ -79,17 +82,17 @@ web UI's login can change what **every** agent reads, on every platform and ever
 conversations nobody on the page is watching. Turn it on only where the login is as well guarded as
 you would want that to be.
 
-**Your files on the gateway.** `common.md` and the file for each kind of agent you have configured
-(a file that exists is listed too). Saving one creates the directory if it is not there yet — which
+**Your files on the gateway.** `common.md` and the file for that agent's kind, listed first as
+shared. Saving one creates the directory if it is not there yet — which
 turns the feature on — and places the new text **at once** on every machine an agent that reads it
 is configured for; the editor then says where it went. A host that does not answer gets it the next
 time an agent starts there. A save that would put any agent over 32 KiB is refused before anything
 is written. Sessions already running keep what they read when they started.
 
-**Each agent's own files.** On its own row under **Agents**, an agent whose harness reads instruction
-files of its own on its machine — besides the one the gateway places — has an **Instructions** field
-that opens the list. These files belong to that machine: they are read and saved where they are, and
-the gateway keeps no copy.
+**Each agent's own files.** An agent whose harness reads instruction files of its own on its
+machine — besides the one the gateway places — lists them under the shared ones (on the card, as one
+**Its own files** row, since listing them reads that machine). These files belong to that machine:
+they are read and saved where they are, and the gateway keeps no copy.
 
 | agent | what is listed |
 |---|---|
@@ -100,7 +103,7 @@ the gateway keeps no copy.
 | Codex | `~/.codex/AGENTS.override.md`, when there is one — Codex reads it **instead of** `AGENTS.md`, so while it exists the instructions above do not reach Codex |
 
 A reference to a file that is not there yet is listed, and saving it creates the file. The
-gateway's own copy, if a reference points at it, is listed but edited above instead. The editor only
+gateway's own copy, if a reference points at it, is listed but edited in the shared files above it. The editor only
 ever opens what the agent's harness reads at that moment: it works the list out again on that
 machine for every read and save, so taking a reference out closes its file. Every save is logged
 with the machine and the file.

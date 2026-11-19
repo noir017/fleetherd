@@ -206,7 +206,7 @@ files without asking.
   `agent-full-access` or CodeBuddy's `fullAccess` (nothing is asked at all), `auto` otherwise —
   the gateway approves what is asked. Setting `auto` explicitly puts the harness in the mode the
   table gives.
-- `/setting permissions.<agent> <level>` changes it from chat, or the agent's row on the
+- `/setting permissions.<agent> <level>` changes it from chat, or the agent's card on the
   [settings page](settings.md); a pod's agent is written to `podPermissions`. A change applies at
   once: running sessions are switched to the new mode, and the next request is answered the new way.
   The harness can still move its own mode — Claude Code leaves `plan` when you approve its plan —

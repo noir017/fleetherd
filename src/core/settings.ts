@@ -11,7 +11,7 @@ import type {
   SettingsScreenOption,
   SettingsScreenRow,
 } from '../types.js';
-import { agentKindOf } from './agent-menu.js';
+import { agentGroupOf, agentKindOf } from './agent-menu.js';
 import { formatButtonId, parseButtonId } from './button-id.js';
 import { matchModels, type ModelOption } from './model-menu.js';
 import { pageCount, pageOf, pageSlice, truncateLabel, wrapPage } from './paging.js';
@@ -1940,7 +1940,8 @@ function settingsListScreen(
       const merged = byTarget.get(row.target);
       if (merged?.control.kind === 'agent') merged.control.fields.push(field);
       else {
-        const agentRow = agentScreenRow(screen, field);
+        const def = findAgent(input.cfg, row.target);
+        const agentRow = agentScreenRow(screen, field, def, row.target === input.cfg.routing.default);
         byTarget.set(row.target, agentRow);
         agentRows.push(agentRow);
       }
@@ -1997,14 +1998,20 @@ function settingsScreenField(label: SettingsScreenField['label'], screen: Settin
   };
 }
 
-/** One agent's row, from the first of its setting rows and the first field inside it. */
-function agentScreenRow(screen: SettingsScreenRow, field: SettingsScreenField): SettingsScreenRow {
+/**
+ * One agent's row, from the first of its setting rows and the first field inside it. Where it runs
+ * comes along, named as the `/agent` menu names it, so the page can sort a dozen agents by machine
+ * the way a person picking one already does.
+ */
+function agentScreenRow(screen: SettingsScreenRow, field: SettingsScreenField, def: AgentDef | undefined, isDefault: boolean): SettingsScreenRow {
   return {
     buttonId: field.buttonId,
     label: screen.label,
     ...(screen.target ? { target: screen.target } : {}),
     ...(screen.targetKind ? { targetKind: screen.targetKind } : {}),
+    ...(def ? { place: agentGroupOf(def) } : {}),
     ...(screen.here ? { here: true } : {}),
+    ...(isDefault ? { defaultAgent: true } : {}),
     group: 'Agents',
     control: { kind: 'agent', fields: [field] },
   };

@@ -587,8 +587,15 @@ export interface SettingsScreenRow {
   target?: string;
   /** What that agent is — its harness as its project names it, a custom harness's command. */
   targetKind?: string;
+  /**
+   * Where that agent runs, as the `/agent` menu names it (core/agent-menu.ts agentGroupOf): its
+   * group, else its host, else `this machine`. Only on an `agent` row, which the page groups by it.
+   */
+  place?: string;
   /** The target is the agent answering the conversation this screen was opened in. */
   here?: boolean;
+  /** Only on an `agent` row: it is `routing.default`, the agent a new conversation gets. */
+  defaultAgent?: boolean;
   /**
    * The current value, already formatted for display. Absent on a row that opens another menu, and
    * on an `agent` row — the values there are its fields'.

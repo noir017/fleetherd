@@ -1294,44 +1294,67 @@ select.skill-field{appearance:auto}
 .set-seg button[aria-checked="true"]{background:#2b3a4c;color:#fff;font-weight:600}
 .set-select{max-width:260px;min-height:32px;padding:4px 28px 4px 10px;border:1px solid var(--line);border-radius:6px;background:var(--field) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%239a9a9a' stroke-width='1.5'/%3E%3C/svg%3E") no-repeat right 10px center;color:var(--fg);font:inherit;font-size:13px;text-overflow:ellipsis;-webkit-appearance:none;appearance:none;cursor:pointer}
 .set-select:focus-visible,.set-seg button:focus-visible{outline:2px solid var(--own-edge);outline-offset:1px}
-/* The Agents section is a table: one header row, then one row per agent, every row on the same
-   column template, so an agent's Model, Permissions and Instructions sit under their headings.
-   The tracks are minmax(0,…fr) — never sized by their content — so rows that are separate grids
-   still share every column edge. A label per field on every row (the first layout) repeated three
-   words sixteen times on a real gateway, and fixed pixel columns cut model ids and summaries to a
-   few letters; here a value gets its column's whole width and an ellipsis only past it. */
-.ag-head{display:grid;column-gap:16px;padding:8px 14px;border-bottom:1px solid var(--line);background:#151515;font-size:10.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#8a8a8a}
-.set-item.ag-row{column-gap:16px;row-gap:2px;align-items:start;padding:8px 14px}
-.ag-head.c2,.set-item.ag-row.c2{grid-template-columns:minmax(0,1fr) minmax(0,2fr)}
-.ag-head.c3,.set-item.ag-row.c3{grid-template-columns:minmax(0,1fr) minmax(0,1.6fr) minmax(0,1.1fr)}
-.ag-head.c4,.set-item.ag-row.c4{grid-template-columns:minmax(0,.95fr) minmax(0,1.6fr) minmax(0,1fr) minmax(0,.75fr)}
-.ag-who{min-width:0;padding-top:6px}
+/* The Agents section is a stack of cards, one per agent, under a heading per machine when there is
+   more than one. A card is a summary — name, harness, model, permission level — and opens in place
+   on a tap to the agent's settings and the instruction files it reads. One table row per agent
+   (until 3.15.0) put twelve agents' controls on the page at once: on a phone each was a three-line
+   card under the last with only a hairline between them, 3,800px of near-identical rows to scroll
+   past before the next section, and a column of "Edit files" that told one agent from another by
+   nothing. So: a gap between cards, the harness's own colour down each card's edge and on its name
+   (--ag-h, a hue the page picks from the harness's name), and only one card open at a time. */
+.ag-list{display:flex;flex-direction:column;gap:8px;margin-top:8px}
+.ag-place{display:flex;align-items:baseline;gap:6px;margin:6px 2px -2px;font-size:11.5px;font-weight:600;color:#b4b4b4}
+.ag-place:first-child{margin-top:0}
+.ag-count{font-weight:400;color:var(--dim)}
+.ag-card{--ag:hsl(var(--ag-h,0) 55% 58%);border:1px solid var(--line);border-left:3px solid var(--ag);border-radius:8px;background:#181818;overflow:hidden;transition:border-color .12s,background .12s}
+.ag-card.open{background:#1b1b1b;border-color:#3a3a3a;border-left-color:var(--ag)}
+.ag-top{display:flex;align-items:center;gap:10px;width:100%;min-height:52px;padding:8px 12px 8px 12px;border:0;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer;transition:background .12s}
+.ag-top:hover{background:#1f1f1f}
+.ag-top:focus-visible{outline:2px solid var(--own-edge);outline-offset:-2px}
+.ag-who{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:3px}
 .ag-id{display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;font-size:13.5px;line-height:1.35;color:var(--fg);overflow-wrap:anywhere}
-.ag-kind{margin-top:1px;font-size:11.5px;color:var(--dim)}
-.ag-cell{min-width:0}
-.ag-lab{display:none}
-.ag-val{display:flex;flex-direction:column;align-items:stretch;gap:2px;min-width:0}
-.ag-open{display:flex;align-items:center;gap:6px;min-width:0;min-height:32px;margin:0 -8px;padding:3px 8px;border:0;border-radius:6px;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer;transition:background .12s}
-.ag-open:hover{background:#1f1f1f}
-.ag-open:focus-visible{outline:2px solid var(--own-edge);outline-offset:-2px}
+.ag-name{font-weight:600}
+.ag-sum{display:flex;align-items:center;flex-wrap:wrap;gap:2px 6px;min-width:0;font-size:12px;line-height:1.4;color:#a8a8a8}
+.ag-sum>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ag-sum>.ag-sep{color:#4a4a4a}
+.ag-kind{flex:none;padding:0 7px;border-radius:999px;font-size:11px;font-weight:600;line-height:18px;color:hsl(var(--ag-h,0) 70% 74%);background:hsl(var(--ag-h,0) 50% 50% / .15)}
+.ag-mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px;color:#c9d6e2}
+.ag-sum .unset{font-style:italic;font-family:inherit;color:var(--dim)}
+.ag-chev{flex:none;display:inline-flex;color:var(--dim);transition:transform .15s}
+.ag-card.open .ag-chev{transform:rotate(180deg)}
+.set-badge.def{color:#c4b5fd;background:rgba(167,139,250,.14)}
+/* The open card: a label column and a value column, every setting on a line of its own. */
+.ag-body{display:flex;flex-direction:column;gap:12px;padding:12px 14px 14px;border-top:1px solid var(--line)}
+.ag-body[hidden]{display:none}
+.ag-field{display:grid;grid-template-columns:104px minmax(0,1fr);align-items:start;column-gap:14px}
+.ag-lab{padding-top:7px;font-size:12px;color:var(--dim)}
+.ag-val{display:flex;flex-direction:column;align-items:flex-start;gap:4px;min-width:0}
+.ag-val>.set-select{width:100%;max-width:320px}
+.ag-open{display:flex;align-items:center;gap:6px;width:100%;max-width:420px;min-width:0;min-height:32px;padding:3px 8px;border:1px solid var(--line);border-radius:6px;background:var(--field);color:inherit;font:inherit;text-align:left;cursor:pointer;transition:background .12s}
+.ag-open:hover{background:#242424}
+.ag-open:focus-visible{outline:2px solid var(--own-edge);outline-offset:1px}
 .ag-open .set-v{flex:1 1 auto}
-.ag-txt{flex:1 1 auto;min-width:0;font-size:12.5px;color:#c9d6e2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ag-fixed{display:flex;align-items:center;min-height:32px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;color:#c9d6e2}
-.ag-val>.set-select{width:100%;max-width:none}
-.ag-dash{display:flex;align-items:center;min-height:32px;color:#4a4a4a}
-/* Not set reads the way an unset model always has here: the value in italics, which is what
-   applies. A "not set" line under fifteen of sixteen agents was the loudest thing on the page. */
 .ag-fixed.unset{font-family:inherit;font-style:italic;color:var(--dim)}
 .set-select.unset{font-style:italic;color:var(--dim)}
 .set-select.unset option{font-style:normal;color:var(--fg)}
-.ag-legend{padding:8px 14px;border-top:1px solid var(--line);font-size:11.5px;color:var(--dim)}
-/* What a value cannot say by itself — not set, where it comes from, when it lands — on a line of
-   its own under it, the same for a select, a value and a fixed level. */
-.ag-note{display:flex;flex-wrap:wrap;align-items:center;gap:4px;font-size:11px;line-height:1.35;color:var(--dim)}
-/* An agent's own instruction summary is a sentence: the title holds it on a desktop, where the
-   column is narrow; a phone's card has the width, and nothing to hover. */
-.ag-own{display:none}
-.ag-own code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.95em}
+/* What a value cannot say by itself — what the chosen level does, that it is not set, where it comes
+   from, when it lands — on a line under it. */
+.ag-note{display:flex;flex-wrap:wrap;align-items:center;gap:4px;font-size:11.5px;line-height:1.4;color:var(--dim)}
+/* The instruction files the agent reads: the shared ones first, then its machine's own. */
+.ag-files{display:flex;flex-direction:column;width:100%;max-width:520px;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.ag-file{display:grid;grid-template-columns:minmax(0,max-content) minmax(0,1fr) auto;align-items:center;column-gap:10px;min-height:36px;padding:5px 8px 5px 10px;border:0;border-bottom:1px solid var(--line);background:var(--field);color:inherit;font:inherit;text-align:left;cursor:pointer;transition:background .12s}
+.ag-file:last-child{border-bottom:0}
+.ag-file:hover{background:#242424}
+.ag-file:focus-visible{outline:2px solid var(--own-edge);outline-offset:-2px}
+.ag-fname{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;color:#c9d6e2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ag-fname.own{font-family:inherit;font-size:12.5px;color:var(--fg)}
+.ag-fsub{min-width:0;font-size:11.5px;line-height:1.4;color:var(--dim);overflow-wrap:anywhere}
+.ag-fsub code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.95em}
+.ag-fsub .fx-tag{margin-left:6px}
+.ag-file .set-chev{color:var(--dim)}
+.ag-wait,.ag-none{padding-top:7px;font-size:12px;color:var(--dim)}
+.ag-err{padding-top:7px;font-size:12px;color:#fca5a5}
 /* A row with a screen of its own (a model) or a way to another menu: the whole row is the target. */
 .set-open{width:100%;border:0;border-radius:0;background:none;text-align:left;font:inherit;color:inherit;cursor:pointer;transition:background .12s}
 .set-open:hover{background:#1f1f1f}
@@ -1589,8 +1612,14 @@ button:disabled{opacity:.5;cursor:default}
 .fx-sub{margin-left:6px;color:var(--dim);font-size:11.5px;overflow:hidden;text-overflow:ellipsis}
 .fx-tag{margin-left:6px;padding:0 5px;border:1px solid var(--line);border-radius:4px;color:var(--dim);font-size:10.5px}
 .fx-row.fx-off{cursor:default;color:var(--dim)}
-.instr-sec .set-card + .set-group{margin-top:22px}
-.fx-head{padding:8px 10px;font-size:11.5px;color:var(--dim);white-space:normal;line-height:1.4;border-bottom:1px solid var(--line)}
+/* In an agent's instruction list the name is what a row is picked by: it keeps its width, and the
+   line beside it gives way (a shared file's "every Claude Code agent" cut common.md to "comm…"). */
+#files.instr .fx-name{flex:none;max-width:70%}
+#files.instr .fx-sub{min-width:0}
+/* An agent's instruction files in two parts — the gateway's shared files, then its machine's own —
+   each under a heading that says where its files live. */
+.fx-sec{padding:10px 10px 2px;font-size:10.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#9a9a9a}
+.fx-head{padding:2px 10px 8px;font-size:11.5px;color:var(--dim);white-space:normal;line-height:1.4;border-bottom:1px solid var(--line)}
 #files-main{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column}
 #files-crumbs{display:flex;flex-wrap:wrap;align-items:center;gap:2px;padding:5px 12px;border-bottom:1px solid var(--line);font-size:12px;color:var(--dim)}
 #files-crumbs button{background:none;border:0;color:#9ecbff;font:inherit;font-size:12px;padding:2px 3px;cursor:pointer;border-radius:4px}
@@ -1762,18 +1791,16 @@ button:disabled{opacity:.5;cursor:default}
   .set-item.sw{grid-template-columns:minmax(0,1fr) auto}
   .set-item>.set-ctl{justify-self:stretch}
   .set-item.sw>.set-ctl{justify-self:end}
-  /* No table at phone width: each agent is a card, its name on top and one labelled line per
-     setting under it, at the height a thumb needs. A setting the agent does not have is left out
-     rather than drawn as a dash with nothing to line up with. */
-  .ag-head{display:none}
-  .set-item.ag-row,.set-item.ag-row.c2,.set-item.ag-row.c3,.set-item.ag-row.c4{grid-template-columns:minmax(0,1fr);row-gap:6px;padding:12px}
-  .ag-who{display:flex;align-items:baseline;flex-wrap:wrap;gap:2px 8px;padding-top:0}
-  .ag-kind{margin-top:0}
-  .ag-cell{display:grid;grid-template-columns:92px minmax(0,1fr);align-items:start;column-gap:10px}
-  .ag-cell.none{display:none}
-  .ag-lab{display:block;padding-top:13px;font-size:12.5px;color:var(--dim)}
+  /* An open card puts each label above its control, which then has the card's whole width. */
+  .ag-top{min-height:56px;padding:10px 12px}
+  .ag-field{grid-template-columns:minmax(0,1fr);row-gap:6px}
+  .ag-lab{padding-top:0}
+  .ag-val>.set-select,.ag-open,.ag-files{max-width:none}
   .ag-open,.ag-fixed{min-height:44px}
-  .ag-own{display:block}
+  .ag-file{min-height:44px;grid-template-columns:minmax(0,1fr) auto;row-gap:2px}
+  .ag-file>.ag-fname{grid-column:1;grid-row:1}
+  .ag-file>.ag-fsub{grid-column:1;grid-row:2}
+  .ag-file>.set-chev{grid-column:2;grid-row:1/span 2}
   .set-seg{display:flex;width:100%}
   .set-seg button{flex:1;min-height:40px;padding:0 4px}
   .set-select{max-width:none;width:100%;min-height:44px;font-size:16px}
@@ -2063,7 +2090,9 @@ const SCRIPT = `
   // one on screen.
   // settingsNote: the page's own line when a control's request failed (cleared by the next screen);
   // settingsLevel: which level is drawn, so a move between them starts at the top.
+  // settingsListFk: the list's control that last posted, which a move back to the list lands on.
   var settingsMsg=null, settingsTopic=null, settingsClosed={}, settingsNote=null, settingsLevel='', settingsFade=0, settingsQuery='';
+  var settingsListFk=null;
   var SETTINGS_FADE_MS=5000;
   var settingsReq=0, settingsPending=[], settingsClosedUpTo=0, settingsTimer=0;
   // How long the page waits for the screen before saying the daemon did not answer. The send
@@ -5229,6 +5258,12 @@ const SCRIPT = `
     return '<div class="set-notice '+tone+'" role="'+(tone === 'error' ? 'alert' : 'status')+'">'+inl(n.text)+'</div>';
   }
 
+  /**
+   * The list screen. A group's own rows sit in one card, and its agents — the Agents group's rows
+   * whose control is an agent — follow it as cards of their own (settingsAgents). The daemon puts the
+   * default agent first in that group, so drawing a group's plain rows before its agents keeps the
+   * order it sent.
+   */
   function settingsList(s){
     var h = '';
     if(s.about) h += '<p class="set-about">'+inl(s.about)+'</p>';
@@ -5236,23 +5271,24 @@ const SCRIPT = `
     h += settingsNotice(s.notice);
     var notes = {}, groups = s.groups || [];
     for(var g=0;g<groups.length;g++) notes[groups[g].name] = groups[g].note;
-    var rows = s.rows || [], group = null, open = false, headed = false;
-    var cols = settingsAgentCols(rows);
+    var rows = s.rows || [], secs = [];
     for(var i=0;i<rows.length;i++){
-      var r = rows[i], name = String(r.group == null ? '' : r.group);
-      if(name !== group){
-        if(open) h += (headed ? settingsAgentLegend(cols) : '') + '</div></section>';
-        group = name;
-        headed = false;
-        h += '<section class="set-sec">'+(name ? '<h3 class="set-group">'+text(name)+'</h3>' : '')
-          + (notes[name] ? '<p class="set-gnote">'+inl(notes[name])+'</p>' : '')
-          + '<div class="set-card">';
-        open = true;
-      }
-      if(r.control && r.control.kind === 'agent' && !headed){ h += settingsAgentHead(cols); headed = true; }
-      h += settingsItem(r, i, cols);
+      var name = String(rows[i].group == null ? '' : rows[i].group), sec = secs[secs.length-1];
+      if(!sec || sec.name !== name){ sec = { name: name, plain: [], agents: [] }; secs.push(sec); }
+      (rows[i].control && rows[i].control.kind === 'agent' ? sec.agents : sec.plain).push(i);
     }
-    if(open) h += (headed ? settingsAgentLegend(cols) : '') + '</div></section>';
+    for(var k=0;k<secs.length;k++){
+      var x = secs[k];
+      h += '<section class="set-sec">'+(x.name ? '<h3 class="set-group">'+text(x.name)+'</h3>' : '')
+        + (notes[x.name] ? '<p class="set-gnote">'+inl(notes[x.name])+'</p>' : '');
+      if(x.plain.length){
+        h += '<div class="set-card">';
+        for(var p=0;p<x.plain.length;p++) h += settingsItem(rows[x.plain[p]], x.plain[p]);
+        h += '</div>';
+      }
+      if(x.agents.length) h += settingsAgents(rows, x.agents);
+      h += '</section>';
+    }
     return h;
   }
 
@@ -5261,19 +5297,28 @@ const SCRIPT = `
     var badges = '';
     if(r.here) badges += '<span class="set-badge here" title="Answers the topic \\u201c'+text(settingsTopicName(settingsTopic))+'\\u201d">this topic</span>';
     if(r.effectLabel) badges += '<span class="set-badge restart"'+(r.effectDetail ? ' title="'+text(r.effectDetail)+'"' : '')+'>'+text(r.effectLabel)+'</span>';
-    return '<div class="set-tx"><div class="set-label"><span>'+text(r.label)+'</span>'
+    return '<div class="set-tx"><div class="set-label">'+settingsLabel(r.label)
       + (r.targetKind ? '<span class="set-kind">'+text(r.targetKind)+'</span>' : '') + badges + '</div>'
       + (r.hint ? '<div class="set-hint">'+inl(r.hint)+'</div>' : '') + '</div>';
   }
 
-  function settingsItem(r, i, cols){
+  /**
+   * A row's name. The scheduled tasks' row is named the way a chat button is, \\u23f0 first (core
+   * schedule-menu.ts), and a glyph is the reader's font's to draw — an empty box where it has none
+   * (Chromium without an emoji font, 2026-11-19). The page draws its own clock instead.
+   */
+  function settingsLabel(label){
+    var s = String(label == null ? '' : label), m = /^\\u23f0\\uFE0F? */.exec(s);
+    return '<span>'+(m ? IC.icon.clock+' '+text(s.slice(m[0].length)) : text(s))+'</span>';
+  }
+
+  function settingsItem(r, i){
     var c = r.control || { kind: 'list' };
     if(c.kind === 'switch'){
       return '<div class="set-item sw">' + settingsText(r)
         + '<div class="set-ctl"><button type="button" class="set-switch" role="switch" aria-checked="'+(c.on ? 'true' : 'false')+'"'
         + ' aria-label="'+text(r.label)+'" data-fk="r'+i+'" data-btn="'+text(c.set)+'"></button></div></div>';
     }
-    if(c.kind === 'agent') return settingsAgent(r, i, c.fields || [], cols || []);
     if(c.kind === 'choice') return '<div class="set-item">' + settingsText(r) + '<div class="set-ctl">'+settingsChoice(r.label, c.options || [], 'r'+i, r.value)+'</div></div>';
     // A row with a screen of its own, or a way to another menu: the whole row is the button.
     var value = '';
@@ -5286,95 +5331,130 @@ const SCRIPT = `
   }
 
   /**
-   * The columns every agent row shares, in the order the agents' fields name them, with
-   * Instructions last when any agent has files of its own. Decided once for the whole table, so an
-   * agent without a setting gets an empty cell under its heading instead of shifting the rest left.
+   * The agent cards, under a heading per machine (the row's place, which the daemon names as the
+   * /agent menu does) when they run on more than one. Machines in the order their first agent
+   * comes in config.yaml, and agents in config order within each: the order a person already knows
+   * them in from that menu.
    */
-  function settingsAgentCols(rows){
-    var seen = {}, cols = [], instr = false;
-    for(var i=0;i<rows.length;i++){
-      var c = rows[i].control;
-      if(!c || c.kind !== 'agent') continue;
-      var f = c.fields || [];
-      for(var k=0;k<f.length;k++){
-        if(!seen[f[k].label]){ seen[f[k].label] = true; cols.push(f[k].label); }
-        if(f[k].unset) cols.unset = true;
-      }
-      if(instrOwn(rows[i].target || rows[i].label)) instr = true;
+  function settingsAgents(rows, idx){
+    var places = [], by = new Map();
+    for(var k=0;k<idx.length;k++){
+      var p = String(rows[idx[k]].place || '');
+      if(!by.has(p)){ by.set(p, []); places.push(p); }
+      by.get(p).push(idx[k]);
     }
-    if(instr) cols.push('Instructions');
-    return cols;
-  }
-
-  // The one sentence the italics need, said once under the table rather than on every row.
-  function settingsAgentLegend(cols){
-    return cols.unset ? '<div class="ag-legend">Values in italics are not set: what is shown is what applies.</div>' : '';
-  }
-
-  // The table's one header: the headings a row of every agent would otherwise repeat. Hidden from
-  // a screen reader, which gets the agent and the setting in each control's own name instead.
-  function settingsAgentHead(cols){
-    var h = '<div class="ag-head c'+(cols.length+1)+'" aria-hidden="true"><span>Agent</span>';
-    for(var k=0;k<cols.length;k++) h += '<span>'+text(cols[k])+'</span>';
+    var h = '<div class="ag-list">', heads = places.length > 1;
+    for(var j=0;j<places.length;j++){
+      var list = by.get(places[j]);
+      if(heads) h += '<h4 class="ag-place"><span>'+text(places[j] || 'elsewhere')+'</span><span class="ag-count">'+list.length+'</span></h4>';
+      for(var n=0;n<list.length;n++) h += settingsAgent(rows[list[n]], list[n]);
+    }
     return h + '</div>';
   }
 
   /**
-   * One agent's row of the table: who it is, then one cell per column.
-   *
-   * The daemon sends the fields and every button id, so this only lays them out: Model is a value
-   * that opens the agent's own screen, Permissions the closed list its harness can honour.
-   * Instructions is the page's own column — it comes from the instructions panel, not /setting —
-   * filled once that list has arrived, for an agent whose harness reads files of its own. Each
-   * cell carries its heading too, which only a phone's card shows.
+   * Which agent's card is open, by its id: the page's alone, never posted. It survives every redraw
+   * — the daemon's answer to a change in it, the instruction list arriving, a model screen and back —
+   * and goes when the page is closed.
    */
-  function settingsAgent(r, i, fields, cols){
-    var here = r.here ? '<span class="set-badge here" title="Answers the topic \\u201c'+text(settingsTopicName(settingsTopic))+'\\u201d">this topic</span>' : '';
-    var h = '<div class="ag-who"><div class="ag-id"><span class="ag-name">'+text(r.label)+'</span>'+here+'</div>'
-      + (r.targetKind ? '<div class="ag-kind">'+text(r.targetKind)+'</div>' : '')+'</div>';
-    for(var c=0;c<cols.length;c++){
-      var col = cols[c], inner = '';
-      if(col === 'Instructions'){
-        var own = instrOwn(r.target || r.label);
-        if(own) inner = instrField(r.label, own, 'r'+i+'i');
-      } else {
-        for(var k=0;k<fields.length;k++) if(fields[k].label === col){ inner = settingsField(r.label, fields[k], 'r'+i+'f'+k); break; }
-      }
-      h += '<div class="ag-cell'+(inner ? '' : ' none')+'"><span class="ag-lab">'+text(col)+'</span><div class="ag-val">'
-        + (inner || '<span class="ag-dash" aria-hidden="true">\\u2014</span>')+'</div></div>';
-    }
-    return '<div class="set-item ag-row c'+(cols.length+1)+'" role="group" aria-label="'+text(r.label)+'">'+h+'</div>';
+  var agOpen = null;
+
+  /**
+   * The hue a harness is drawn in, from its name: the same harness the same colour on every card
+   * and every page, with nothing to keep in step with the list of harnesses. The palette is ordered
+   * so the names this project's harnesses hash to land far apart — Claude Code orange, Codex green,
+   * OpenCode blue, Antigravity violet, codebuddy yellow — and the six built-in names on six different
+   * hues (page.dom.test.ts pins that).
+   */
+  var AG_HUES = [0, 52, 245, 24, 188, 330, 100, 210, 280, 158];
+  function agHue(kind){
+    var s = String(kind || ''), x = 0;
+    for(var i=0;i<s.length;i++) x = (x * 31 + s.charCodeAt(i)) >>> 0;
+    return AG_HUES[x % AG_HUES.length];
   }
 
-  // agent is the row's name, carried into every control's accessible name: several agents' rows
+  function agentFieldOf(fields, label){
+    for(var k=0;k<fields.length;k++) if(fields[k].label === label) return fields[k];
+    return null;
+  }
+
+  /**
+   * One agent's card. Shut, it is a summary a person reads down a list by: the name and its badges,
+   * the harness in its colour, the model and the level, unset ones in italics. Open, it is every
+   * setting the daemon sent for the agent (settingsField), and then the instruction files it reads
+   * (agentInstr). The fields carry the daemon's button ids; the page decides only layout.
+   */
+  function settingsAgent(r, i){
+    var fields = (r.control && r.control.fields) || [], id = String(r.target || r.label), open = agOpen === id;
+    var badges = (r.here ? '<span class="set-badge here" title="Answers the topic \\u201c'+text(settingsTopicName(settingsTopic))+'\\u201d">this topic</span>' : '')
+      + (r.defaultAgent ? '<span class="set-badge def" title="A new conversation no routing rule claims gets this agent">default</span>' : '');
+    var sum = r.targetKind ? ['<span class="ag-kind">'+text(r.targetKind)+'</span>'] : [];
+    for(var k=0;k<fields.length;k++){
+      var f = fields[k], v = f.value == null ? '' : String(f.value);
+      sum.push('<span class="'+(f.label === 'Model' ? 'ag-mono' : 'ag-lvl')+(f.unset ? ' unset' : '')+'" title="'+text(f.label+': '+v+(f.unset ? ' (not set)' : ''))+'">'+text(v)+'</span>');
+    }
+    var body = '';
+    for(var n=0;n<fields.length;n++){
+      body += '<div class="ag-field"><span class="ag-lab">'+text(fields[n].label)+'</span><div class="ag-val">'
+        + settingsField(r.label, fields[n], 'r'+i+'f'+n) + '</div></div>';
+    }
+    body += agentInstr(r, i);
+    return '<div class="ag-card'+(open ? ' open' : '')+'" style="--ag-h:'+agHue(r.targetKind)+'" role="group" aria-label="'+text(r.label)+'" data-ag="'+text(id)+'">'
+      + '<button type="button" class="ag-top" data-fk="r'+i+'x" aria-expanded="'+(open ? 'true' : 'false')+'" aria-controls="ag-b'+i+'">'
+      + '<span class="ag-who"><span class="ag-id"><span class="ag-name">'+text(r.label)+'</span>'+badges+'</span>'
+      + '<span class="ag-sum">'+sum.join('<span class="ag-sep" aria-hidden="true">\\u00b7</span>')+'</span></span>'
+      + '<span class="ag-chev" aria-hidden="true">'+IC.icon.chevronDown+'</span></button>'
+      + '<div class="ag-body" id="ag-b'+i+'"'+(open ? '' : ' hidden')+'>'+body+'</div></div>';
+  }
+
+  /** Open one agent's card, or shut it; any other open card shuts. Drawn here, never posted. */
+  function toggleAgent(top){
+    var card = top.closest('.ag-card');
+    if(!card) return;
+    var open = top.getAttribute('aria-expanded') !== 'true', cards = settingsBody.querySelectorAll('.ag-card');
+    for(var i=0;i<cards.length;i++){
+      var on = open && cards[i] === card, t = cards[i].querySelector('.ag-top'), b = cards[i].querySelector('.ag-body');
+      cards[i].classList.toggle('open', on);
+      if(t) t.setAttribute('aria-expanded', on ? 'true' : 'false');
+      if(b) b.hidden = !on;
+    }
+    agOpen = open ? card.getAttribute('data-ag') : null;
+  }
+
+  // agent is the row's name, carried into every control's accessible name: several agents' cards
   // sit on one page, so a reader that hears only "Model" cannot tell whose it is.
   function settingsField(agent, f, key){
     var c = f.control || { kind: 'list' }, v = f.value == null ? '' : String(f.value);
-    // What the value cannot say by itself, under it. A selected level cannot say it was never set,
-    // so a choice without the daemon's note still says that much.
-    // The italics say "not set" (settingsAgentLegend); the line under a value says only where it
-    // comes from — a pinned mode, a running session's, a pod's file — which the italics cannot.
-    var note = f.valueNote ? String(f.valueNote).replace(/^not set(?: \\u00b7 )?/, '') : '';
     var unset = f.unset ? ' unset' : '', tip = f.unset ? text(v + ' (not set)') : text(v);
     var badge = f.effectLabel ? '<span class="set-badge restart"'+(f.effectDetail ? ' title="'+text(f.effectDetail)+'"' : '')+'>'+text(f.effectLabel)+'</span>' : '';
-    var foot = note || badge ? '<div class="ag-note">'+(note ? '<span>'+text(note)+'</span>' : '')+badge+'</div>' : '';
+    // Under a value, what it cannot say by itself: where it comes from (a pinned mode, a running
+    // session's, a pod's file), and for a level the chosen level's meaning — the levels are five
+    // short words, and what each one asks is the whole point of picking one. A level that was never
+    // set says so: the control shows what applies, and a selected button cannot say it was a default.
+    var note = f.valueNote ? String(f.valueNote) : (f.unset && c.kind === 'choice' ? 'not set' : '');
+    var foot = function(extra){
+      var parts = [];
+      if(extra) parts.push('<span>'+text(extra)+'</span>');
+      if(note) parts.push('<span>'+text(note)+'</span>');
+      return parts.length || badge ? '<div class="ag-note">'+parts.join('<span aria-hidden="true">\\u00b7</span>')+badge+'</div>' : '';
+    };
     if(c.kind === 'choice'){
-      var opts = c.options || [];
-      // One level on offer (an API agent asks about nothing) is a fact, not a control: a select
+      var opts = c.options || [], now = null;
+      for(var k=0;k<opts.length;k++) if(opts[k].current) now = opts[k];
+      // One level on offer (an API agent asks about nothing) is a fact, not a control: a control
       // with a single option invites a tap that cannot change anything.
       if(opts.length < 2){
         var only = opts[0];
-        return '<span class="ag-fixed'+unset+'" title="'+(only && only.detail ? text(only.detail) : tip)+'">'+text(only ? only.label : v)+'</span>' + foot;
+        return '<span class="ag-fixed'+unset+'" title="'+(only && only.detail ? text(only.detail) : tip)+'">'+text(only ? only.label : v)+'</span>' + foot(only && only.detail);
       }
-      // Always a select here, never the segmented control a global row gets: five levels side by
-      // side do not fit a column, and a table whose rows are a segment bar or a select by turns
-      // has no column left to read down.
-      return settingsChoice(agent + ' \\u00b7 ' + f.label, opts, key, v, true, f.unset ? 'unset' : '') + foot;
+      // The levels side by side where they fit (five short words do), a select where one is long:
+      // an open card has the width a table column did not.
+      return settingsChoice(agent + ' \\u00b7 ' + f.label, opts, key, v, false, f.unset ? 'unset' : '') + foot(now && now.detail);
     }
     return '<button type="button" class="ag-open" data-fk="' + key + '" data-btn="' + text(f.buttonId) + '"'
       + ' aria-label="' + text(agent + ' \\u00b7 ' + f.label + ': ' + v) + '">'
       + '<span class="set-v' + unset + '" title="' + tip + '">' + text(v) + '</span>'
-      + '<span class="set-chev" aria-hidden="true">' + IC.icon.chevronRight + '</span></button>' + foot;
+      + '<span class="set-chev" aria-hidden="true">' + IC.icon.chevronRight + '</span></button>' + foot('');
   }
 
   // key is what its controls' data-fk is built from: a row's ("r3"), or one field of an agent's
@@ -5485,8 +5565,9 @@ const SCRIPT = `
   /**
    * Draw the page from the message it holds. Focus goes back to the control that had it — the
    * daemon's answer to a switch replaces the markup, and a keyboard user would otherwise be sent
-   * back to the top of the page after every toggle. A move between the list and a value screen
-   * starts at the top instead.
+   * back to the top of the page after every toggle. A move to a value screen starts at the top; a
+   * move back to the list lands on the control that left it (settingsListFk), whose card is still
+   * open — the top of the page was three screens of agents away from the one being set.
    */
   function renderSettings(){
     if(!settingsMsg) return;
@@ -5495,8 +5576,11 @@ const SCRIPT = `
     var typed = settingsBody.querySelector('.set-type');
     if(typed) settingsQuery = typed.value;
     settingsBody.innerHTML = settingsScreen(settingsMsg);
-    if(INSTR_OK && level === 'list') instrSection();
-    if(level !== settingsLevel){ settingsBody.scrollTop = 0; fk = null; settingsQuery = ''; }
+    if(INSTR_OK && level === 'list') instrEnsure();
+    if(level !== settingsLevel){
+      var back = level === 'list' && settingsLevel === 'values' ? settingsListFk : null;
+      settingsBody.scrollTop = 0; fk = back; settingsQuery = '';
+    }
     settingsLevel = level;
     // What was typed survives the redraw — the list arriving after "asking" is one — and so does
     // the filter it applies.
@@ -5507,8 +5591,8 @@ const SCRIPT = `
     var note = settingsBody.querySelector('.set-notice.ok, .set-notice.info');
     if(note) settingsFade = setTimeout(function(){ note.classList.add('faded'); }, SETTINGS_FADE_MS);
     if(fk){
-      var back = settingsBody.querySelector('[data-fk="'+fk+'"]');
-      if(back && back.focus) back.focus();
+      var to = settingsBody.querySelector('[data-fk="'+fk+'"]');
+      if(to && to.focus) to.focus();
     }
   }
 
@@ -5611,6 +5695,8 @@ const SCRIPT = `
     settingsMsg = null;
     settingsNote = null;
     settingsTopic = null;
+    settingsListFk = null;
+    agOpen = null;
     settingsBody.textContent = '';
   }
 
@@ -5648,6 +5734,7 @@ const SCRIPT = `
   function postSetting(el, id, value){
     if(!settingsMsg || !settingsTopic || !id) return;
     var msgId = settingsMsg.id;
+    if(settingsLevel === 'list') settingsListFk = el.getAttribute('data-fk');
     if(el.getAttribute('role') === 'switch') el.setAttribute('aria-checked', el.getAttribute('aria-checked') === 'true' ? 'false' : 'true');
     if(el.getAttribute('role') === 'radio'){
       var peers = el.parentNode ? el.parentNode.children : [];
@@ -9011,6 +9098,8 @@ const SCRIPT = `
   settingsBody.addEventListener('click', function(e){
     if(!e.target.closest || !settingsMsg || !settingsTopic) return;
     if(e.target.closest('.set-use')){ useTyped(); return; }
+    var top = e.target.closest('.ag-top');
+    if(top){ toggleAgent(top); return; }
     var b = e.target.closest('button[data-btn]');
     // A switch row is a target as a whole, as a settings row is anywhere: the label is the bigger
     // half of it, and on a phone the one a thumb lands on.
@@ -12027,18 +12116,26 @@ const SCRIPT = `
   }
 
   // ── Instructions ────────────────────────────────────────────────────────────
-  // The settings page's Instructions section, and the file window's second mode: the same editor,
-  // dirty mark, conflict dialog and save, pointed at the operator's instruction files instead of a
-  // topic's workspace (daemon/instructions-panel.ts). Off unless instructions.enabled: INSTR_OK
-  // leaves the section out, and its routes answer 404.
+  // What each agent reads, on its card in Agents, and the file window's second mode: the same
+  // editor, dirty mark, conflict dialog and save, pointed at one agent's instruction files instead
+  // of a topic's workspace (daemon/instructions-panel.ts). Off unless instructions.enabled: INSTR_OK
+  // leaves it out of every card, and its routes answer 404.
   //
-  // In this mode the tree is a fixed list the daemon gave — the gateway's files, or the files one
-  // agent's harness references on its machine — and the window's file "paths" are ids into it
-  // (g:<name>, a:<path>). The page never sends a path of its own: a read or a save names the
-  // target, and the daemon checks it against what that harness reads now.
+  // There is no section of its own any more (3.15.0). The gateway's files — common.md, and one per
+  // harness — sat in one beside the agents, each of which had an Instructions column of its own, and
+  // two lists by one name, one of them a row per harness, read as the same per-agent setting twice.
+  // Every file is now listed under the agents that read it: the shared ones marked as shared and by
+  // how many, then the agent's own on its machine, and the window opens on all of them at once.
+  //
+  // In this mode the tree is a fixed list the daemon gave and the window's file "paths" are ids into
+  // it (g:<name> for a shared file, a:<path> for one on the agent's machine). The page never sends a
+  // path of its own: a read or a save names the target, and the daemon checks it against what that
+  // harness reads now.
   var instrData = null, instrBusy = false, instrFor = null;
-  var INSTR_LAYER = {common:'Every agent', claude:'Claude Code', codex:'Codex', opencode:'OpenCode',
-    agy:'Antigravity', codebuddy:'CodeBuddy', atomcode:'AtomCode', wad:'Web agent (wad)'};
+  // Who reads a harness layer's file, said whole: a card's line under a shared file is this.
+  var INSTR_REACH = {common:'every agent', claude:'every Claude Code agent', codex:'every Codex agent',
+    opencode:'every OpenCode agent', agy:'every Antigravity agent', codebuddy:'every CodeBuddy agent',
+    atomcode:'every AtomCode agent', wad:'every web agent (wad)'};
 
   function instrFetch(url){
     return fetch(url, {credentials:'same-origin'}).then(function(r){
@@ -12046,7 +12143,7 @@ const SCRIPT = `
     });
   }
 
-  /** The list behind the settings section; force asks again (a new settings page, a closed editor). */
+  /** The list behind the cards; force asks again (a new settings page, a closed editor). */
   function instrLoad(force){
     if(!INSTR_OK || instrBusy || (instrData && !force)) return;
     instrBusy = true;
@@ -12061,14 +12158,21 @@ const SCRIPT = `
     });
   }
 
+  /** Ask for the list once per settings page drawn: each card's files come from it. */
+  function instrEnsure(){
+    if(!settingsMsg || instrFor === settingsMsg.id) return;
+    instrFor = settingsMsg.id;
+    instrLoad(true);
+  }
+
   /**
-   * The list arrived (or failed): an agent's row carries an Instructions field built from it, so
-   * the list is drawn again — renderSettings puts focus back on the control that had it.
+   * The list arrived (or failed): every card's files are built from it, so the list is drawn again
+   * — renderSettings puts focus back on the control that had it, and the open card stays open.
    *
    * Not while a control is busy, though: that one was just tapped, its new state and its disabled
    * flag live only in the markup, and a redraw would put it back for a second tap while the first
-   * request is still out. The daemon's answer (or its failure) draws the list next, and the field
-   * is on it then.
+   * request is still out. The daemon's answer (or its failure) draws the list next, and the files
+   * are on it then.
    */
   function instrArrived(){
     if(!INSTR_OK || !settingsMsg || settingsPage.hidden) return;
@@ -12078,72 +12182,68 @@ const SCRIPT = `
     renderSettings();
   }
 
-  /** The instructions one agent reads on its own machine, from the panel's list, or null. */
-  function instrOwn(id){
-    if(!INSTR_OK || !instrData || instrData.error) return null;
-    var a = instrData.agents || [];
+  /** What one agent's harness reads on its own machine, from a list answer, or null. */
+  function instrOwnIn(d, id){
+    var a = (d && d.agents) || [];
     for(var i=0;i<a.length;i++) if(a[i].id === id && a[i].own) return a[i];
     return null;
   }
 
-  /**
-   * An agent's Instructions cell: the way into the file window on what its harness reads on its own
-   * machine besides the gateway's files. The summary of where those come from is a sentence, so a
-   * desktop keeps it in the title — in a table column it was a few letters and an ellipsis — and a
-   * phone's card, which has the width, shows it under the button.
-   */
-  function instrField(agent, a, key){
-    var host = a.host === 'local' ? 'this machine' : a.host;
-    return '<button type="button" class="ag-open" data-fk="' + key + '" data-instr-agent="' + text(a.id) + '"'
-      + ' aria-label="' + text(agent + ' \\u00b7 Instructions') + '" title="' + text(host + ' \\u00b7 ' + String(a.own).replace(/\\x60/g, '')) + '">'
-      + '<span class="ag-txt">Edit files</span>'
-      + '<span class="set-chev" aria-hidden="true">' + IC.icon.chevronRight + '</span></button>'
-      + '<div class="ag-note ag-own">' + inl(a.own) + (a.host === 'local' ? '' : ' \\u00b7 ' + text(host)) + '</div>';
+  /** The gateway's files one agent reads, in the daemon's order: common.md, then its harness's. */
+  function instrSharedIn(d, id){
+    var g = (d && d.global) || [], out = [];
+    for(var i=0;i<g.length;i++) if((g[i].agents || []).indexOf(id) >= 0) out.push(g[i]);
+    return out;
   }
 
   /**
-   * Put the section at the end of the settings list, or replace the one there. Appended rather than
-   * drawn by settingsScreen: the rows above are the daemon's /setting screen, and these are files.
+   * Who else a shared file reaches, which is the one thing about it an edit has to know first: the
+   * kind of agent alone in the window's tree, which has a name to leave room for, and how many read
+   * it as well on a card.
    */
-  function instrSection(){
-    if(!INSTR_OK || !settingsMsg || !settingsMsg.settings || settingsMsg.settings.level !== 'list') return;
-    if(instrFor !== settingsMsg.id){ instrFor = settingsMsg.id; instrLoad(true); }
-    var box = document.createElement('div');
-    box.innerHTML = instrHtml();
-    var sec = box.firstChild, old = settingsBody.querySelector('.instr-sec');
-    if(old) settingsBody.replaceChild(sec, old); else settingsBody.appendChild(sec);
+  function instrReach(f){
+    return INSTR_REACH[f.layer] || 'every ' + f.layer + ' agent';
+  }
+  function instrShared(f){
+    var n = (f.agents || []).length;
+    return instrReach(f) + ' · ' + n + (n === 1 ? ' reads it' : ' read it');
   }
 
-  function instrRow(attr, value, label, kind, hint, v, unset){
-    return '<button type="button" class="set-item set-open" ' + attr + '="' + text(value) + '">'
-      + '<div class="set-tx"><div class="set-label"><span>' + text(label) + '</span>'
-      + (kind ? '<span class="set-kind">' + text(kind) + '</span>' : '') + '</div>'
-      + (hint ? '<div class="set-hint">' + inl(hint) + '</div>' : '') + '</div>'
-      + (v ? '<span class="set-vv"><span class="set-v' + (unset ? ' unset' : '') + '">' + text(v) + '</span></span>' : '')
-      + '<span class="set-chev" aria-hidden="true">' + IC.icon.chevronRight + '</span></button>';
-  }
+  function instrHost(h){ return h === 'local' ? 'this machine' : h; }
 
-  function instrHtml(){
-    var h = '<section class="set-sec instr-sec"><h3 class="set-group">Instructions</h3>', d = instrData;
-    if(!d) return h + '<p class="set-gnote">Loading…</p></section>';
-    if(d.error) return h + settingsNotice({tone:'error', text:d.error}) + '</section>';
-    h += '<p class="set-gnote">' + inl('What agents read before every conversation. These files are kept on the gateway, and a save places them on every machine at once.'
-      + (d.on ? '' : ' None is delivered yet: the first save creates \\x60' + d.dir + '\\x60.')) + '</p><div class="set-card">';
-    var g = d.global || [];
-    for(var i=0;i<g.length;i++){
-      var f = g[i];
-      h += instrRow('data-instr-global', f.name, INSTR_LAYER[f.layer] || f.layer, '',
-        f.agents && f.agents.length ? f.agents.join(', ') : 'No configured agent reads it', f.exists ? f.name : f.name + ' · not written', !f.exists);
+  /**
+   * The Instructions part of an open card: a row per file the agent reads, each opening the window
+   * on that agent's whole list. Its own files are one row, because listing them reads its machine —
+   * the window does that when it is opened, not every card on every draw.
+   */
+  function agentInstr(r, i){
+    if(!INSTR_OK) return '';
+    var id = String(r.target || r.label), d = instrData, h = '<div class="ag-field ag-instr"><span class="ag-lab">Instructions</span><div class="ag-val">';
+    if(!d) return h + '<span class="ag-wait">Loading…</span></div></div>';
+    if(d.error) return h + '<span class="ag-err">' + text(d.error) + '</span></div></div>';
+    var g = instrSharedIn(d, id), own = instrOwnIn(d, id), n = 0;
+    if(!g.length && !own) return h + '<span class="ag-none">Its harness reads no instruction file the gateway knows of.</span></div></div>';
+    h += '<div class="ag-files">';
+    for(var k=0;k<g.length;k++){
+      h += '<button type="button" class="ag-file" data-fk="r' + i + 'i' + (n++) + '" data-instr-agent="' + text(id) + '" data-instr-file="' + text('g:' + g[k].name) + '"'
+        + ' aria-label="' + text(r.label + ' · ' + g[k].name) + '" title="' + text((g[k].agents || []).join(', ')) + '">'
+        + '<span class="ag-fname">' + text(g[k].name) + '</span>'
+        + '<span class="ag-fsub">' + text(instrShared(g[k])) + (g[k].exists ? '' : '<span class="fx-tag">not written</span>') + '</span>'
+        + '<span class="set-chev" aria-hidden="true">' + IC.icon.chevronRight + '</span></button>';
     }
-    h += '</div>';
-    // Each agent's own files are not a list of their own: they are the Instructions field on that
-    // agent's row in Agents, drawn from this same answer (settingsAgent).
-    return h + '</section>';
+    if(own){
+      h += '<button type="button" class="ag-file" data-fk="r' + i + 'i' + (n++) + '" data-instr-agent="' + text(id) + '"'
+        + ' aria-label="' + text(r.label + ' · its own files') + '">'
+        + '<span class="ag-fname own">Its own files</span>'
+        + '<span class="ag-fsub">' + inl(own.own) + ' · ' + text(instrHost(own.host)) + '</span>'
+        + '<span class="set-chev" aria-hidden="true">' + IC.icon.chevronRight + '</span></button>';
+    }
+    return h + '</div></div></div>';
   }
 
-  /** Open the file window on one list of instruction files, and on one of them when id is given. */
-  function instrOpen(src, id){
-    openFilesWindow(settingsTopic || topic, id, src);
+  /** Open the file window on one agent's instruction files, and on one of them when file is given. */
+  function instrOpen(agent, file){
+    openFilesWindow(settingsTopic || topic, file || '', {agent:agent, title:agent + ' · instructions', files:{}, order:[], secs:{}});
   }
 
   /** The window's controls a topic's files have and instructions do not: create, rename, delete, search. */
@@ -12158,41 +12258,54 @@ const SCRIPT = `
     filesTreeToggle.title = on ? 'Instruction files' : 'Files';
   }
 
-  /** The list one mode shows, keyed by the ids the window will name files by. */
-  function instrIndex(src, d){
+  /**
+   * The window's list for one agent, keyed by the ids it names files by: the shared files from the
+   * list answer d, then — when its harness reads files of its own — those from its machine (own, the
+   * refs answer, or {error}). Each section carries the sentence that says where its files live.
+   */
+  function instrIndex(src, d, own){
     src.files = {};
     src.order = [];
+    src.secs = {};
+    src.root = src.agent;
     var add = function(id, f){ src.files[id] = f; src.order.push(id); };
-    if(src.kind === 'global'){
-      src.root = d.dir || 'instructions';
-      src.head = d.on ? 'Saved on the gateway, and placed on every machine an agent that reads it is configured for.'
-        : 'Nothing is delivered yet. The first save creates ' + d.dir + '.';
-      var g = d.global || [];
-      for(var i=0;i<g.length;i++){
-        add('g:' + g[i].name, {q:'scope=global&name=' + encodeURIComponent(g[i].name), name:g[i].name, shown:g[i].name,
-          sub: INSTR_LAYER[g[i].layer] || g[i].layer, exists:g[i].exists, editable:true, depth:1});
-      }
-      return;
+    var g = instrSharedIn(d, src.agent);
+    if(g.length){
+      src.secs.shared = {title:'Shared, kept on the gateway',
+        note: (d.on ? 'A save places it on every machine an agent that reads it is configured for.'
+          : 'Nothing is delivered yet. The first save creates ' + d.dir + '.')};
     }
-    src.root = d.root || src.agent;
-    src.head = 'On ' + (d.host === 'local' ? 'this machine' : d.host) + ': ' + String(d.summary || '').replace(/\\x60/g, '') + '.'
-      + (d.rootState === 'managed' ? ' ' + d.root + ' is the gateway’s copy: a reference in it is added under Instructions.'
-        : d.rootState === 'missing' ? ' ' + d.root + ' does not exist there.' : '');
-    var r = d.refs || [];
+    for(var i=0;i<g.length;i++){
+      add('g:' + g[i].name, {scope:'global', sec:'shared', q:'scope=global&name=' + encodeURIComponent(g[i].name), name:g[i].name, shown:g[i].name,
+        sub: instrReach(g[i]), exists:g[i].exists, editable:true, depth:1});
+    }
+    if(!own) return;
+    var host = instrHost(own.host || (instrOwnIn(d, src.agent) || {}).host);
+    if(own.error){ src.secs.own = {title:'On ' + host, note:own.error}; return; }
+    src.secs.own = {title:'On ' + host, note: String(own.summary || '').replace(/\\x60/g, '') + '.'
+      + (own.rootState === 'managed' ? ' ' + own.root + ' is the gateway’s copy: add a reference to a shared file above.'
+        : own.rootState === 'missing' ? ' ' + own.root + ' does not exist there.' : '')};
+    var r = own.refs || [];
     for(var j=0;j<r.length;j++){
       var kind = r[j].kind;
-      add('a:' + r[j].path, {q:'scope=agent&agent=' + encodeURIComponent(src.agent) + '&path=' + encodeURIComponent(r[j].path),
+      add('a:' + r[j].path, {scope:'agent', sec:'own', q:'scope=agent&agent=' + encodeURIComponent(src.agent) + '&path=' + encodeURIComponent(r[j].path),
         path:r[j].path, name:fxBase(r[j].shown), shown:r[j].shown, exists:r[j].exists, editable:r[j].editable,
         note:r[j].note || '', depth:r[j].depth || 1, via:r[j].via || '',
         sub: r[j].note || (kind === 'rule' ? 'rule' : kind === 'listed' ? 'listed in its config' : '')});
     }
+    if(!r.length) src.secs.own.empty = 'No file is referenced.';
   }
 
   function instrTree(){
-    var src = fileSrc, h = src.head ? '<div class="fx-head">' + text(src.head) + '</div>' : '';
-    if(!src.order.length) h += '<div class="skills-empty">' + (src.kind === 'agent' ? 'No file is referenced.' : 'Nothing to list.') + '</div>';
+    var src = fileSrc, h = '', sec = null;
+    if(!src.order.length && !src.secs.own) return '<div class="skills-empty">Its harness reads no instruction file the gateway knows of.</div>';
+    var head = function(key){
+      var s = src.secs[key];
+      return s ? '<div class="fx-sec">' + text(s.title) + '</div>' + (s.note ? '<div class="fx-head">' + text(s.note) + '</div>' : '') : '';
+    };
     for(var i=0;i<src.order.length;i++){
       var id = src.order[i], f = src.files[id], pad = 6 + (f.depth - 1) * 12;
+      if(f.sec !== sec){ sec = f.sec; h += head(sec); }
       var tail = (f.sub ? '<span class="fx-sub">' + text(f.sub) + '</span>' : '') + (f.exists ? '' : '<span class="fx-tag">not written</span>');
       if(!f.editable){
         h += '<div class="fx-row fx-off" title="' + text(f.note) + '" style="padding-left:' + pad + 'px"><span class="fx-caret blank"></span>'
@@ -12200,20 +12313,32 @@ const SCRIPT = `
         continue;
       }
       h += '<button type="button" class="fx-row' + (filePath === id ? ' on' : '') + '" data-fx-file="' + text(id) + '" title="' + text(f.shown + (f.via ? ' ← ' + f.via : '')) + '" style="padding-left:' + pad + 'px">'
-        + '<span class="fx-caret blank"></span>' + IC.icon.note + '<span class="fx-name">' + text(src.kind === 'agent' ? f.shown : f.name) + '</span>' + tail + '</button>';
+        + '<span class="fx-caret blank"></span>' + IC.icon.note + '<span class="fx-name">' + text(f.shown) + '</span>' + tail + '</button>';
     }
+    // Its own files' heading even with none to show, so an error or an empty list is said there.
+    if(src.secs.own && sec !== 'own') h += head('own') + (src.secs.own.empty ? '<div class="skills-empty">' + text(src.secs.own.empty) + '</div>' : '');
     return h;
   }
 
-  /** The window's reads, in this mode. list builds the tree; read answers for one id of it. */
+  /**
+   * The window's reads, in this mode. list builds the tree — the shared files from the list, and
+   * the agent's own from its machine when its harness has any; read answers for one id of it.
+   */
   function instrGet(route, params){
     var src = fileSrc;
     if(route === 'list'){
-      var url = src.kind === 'global' ? 'api/instructions' : 'api/instructions/refs?agent=' + encodeURIComponent(src.agent);
-      return instrFetch(url).then(function(res){
+      var listed = function(){ return {ok:true, status:200, body:{path:src.root, entries:[]}}; };
+      return instrFetch('api/instructions').then(function(res){
         if(!res.ok) return res;
-        instrIndex(src, res.body);
-        return {ok:true, status:200, body:{path:src.root, entries:[]}};
+        var d = res.body;
+        if(!instrOwnIn(d, src.agent)){ instrIndex(src, d, null); return listed(); }
+        return instrFetch('api/instructions/refs?agent=' + encodeURIComponent(src.agent)).then(function(rr){
+          instrIndex(src, d, rr.ok ? rr.body : {error: (rr.body && rr.body.error) || 'Its own files could not be listed.'});
+          return listed();
+        }, function(){
+          instrIndex(src, d, {error:'Its own files could not be listed: the daemon did not answer.'});
+          return listed();
+        });
       });
     }
     var f = route === 'read' ? src.files[params.path] : null;
@@ -12235,7 +12360,7 @@ const SCRIPT = `
   function instrPost(route, body){
     var src = fileSrc, f = src && route === 'write' ? src.files[body.path] : null;
     if(!f) return Promise.resolve({ok:false, status:400, body:{error:'Not available for instructions.'}});
-    var req = src.kind === 'global' ? {scope:'global', name:f.name} : {scope:'agent', agent:src.agent, path:f.path};
+    var req = f.scope === 'global' ? {scope:'global', name:f.name} : {scope:'agent', agent:src.agent, path:f.path};
     req.text = body.text;
     if(body.force) req.force = true;
     else if(f.missing) req.missing = true;
@@ -12250,7 +12375,7 @@ const SCRIPT = `
         if(r.ok){
           f.missing = false;
           f.exists = true;
-          src.said = instrDelivery(d.delivery, src);
+          src.said = instrDelivery(d.delivery, f, src);
           if(fileSrc === src) paintTree();
         }
         return {ok:r.ok, status:r.status, body:d};
@@ -12263,9 +12388,9 @@ const SCRIPT = `
     return fileSrc && fileSrc.said ? ' ' + fileSrc.said : '';
   }
 
-  /** Where a saved global file landed (InstructionsDelivery), as one or two sentences. */
-  function instrDelivery(list, src){
-    if(src.kind !== 'global') return src.agent + ' reads it when its next session starts.';
+  /** Where a saved shared file landed (InstructionsDelivery), as one or two sentences. */
+  function instrDelivery(list, f, src){
+    if(f.scope !== 'global') return src.agent + ' reads it when its next session starts.';
     list = list || [];
     if(!list.length) return 'No configured agent reads this file.';
     var placed = [], other = [];
@@ -12285,13 +12410,8 @@ const SCRIPT = `
   if(INSTR_OK){
     settingsBody.addEventListener('click', function(e){
       if(!e.target.closest) return;
-      var g = e.target.closest('[data-instr-global]');
-      if(g) return instrOpen({kind:'global', title:'Instructions', files:{}, order:[]}, 'g:' + g.getAttribute('data-instr-global'));
       var a = e.target.closest('[data-instr-agent]');
-      if(a){
-        var id = a.getAttribute('data-instr-agent');
-        instrOpen({kind:'agent', agent:id, title:id + ' · own instructions', files:{}, order:[]}, '');
-      }
+      if(a) instrOpen(a.getAttribute('data-instr-agent'), a.getAttribute('data-instr-file') || '');
     });
   }
 

@@ -23,6 +23,24 @@ All notable changes to this project are documented here. The format is based on
   standing instructions at `~/.wad/AGENTS.md` (`common.md` + `wad.md`), which wad puts before a
   new web conversation's first message — the web page has no file of its own to read.
 
+### Changed
+
+- **The web UI's settings page shows each agent as a card, and lists its instruction files on it.**
+  The agents were a table — a row each, a column per setting — and below the other sections an
+  Instructions section listed the gateway's files, one row per harness, while each agent row had an
+  Instructions column of its own. Two lists by one name, one a row per harness, read as the same
+  per-agent prompt set twice; and on a phone each of a dozen agents was a three-line card under the
+  last with only a hairline between them, 3,800px of near-identical rows to scroll past. Now each
+  agent is a card of its own, grouped by the machine it runs on, with its harness in a colour of
+  its own down the card's edge: shut, it is a one-line summary (harness, model, level, *this
+  topic*, *default*), and a tap opens it in place. Open, the permission levels sit side by side with
+  what the chosen one does under them, the model opens its list and comes back to the same open
+  card, and — with the instruction editor on — every file that agent reads is listed: `common.md`
+  and its harness's file, marked with how many agents read them since that is who an edit reaches,
+  then its own on its machine, all in one editor window. The Instructions section is gone; nothing
+  it could edit was lost. The scheduled tasks row draws a clock instead of the ⏰ a font without
+  emoji showed as a box.
+
 ## [3.14.0] - 2026-11-19
 
 ### Fixed
