@@ -69,6 +69,11 @@ export function writePods(dir: string, state: PodsState): void {
  * `agents[].model`, and two places to set one would disagree.
  *
  * `podPermissions` is folded in the same way, into `permissions`, for the same reasons.
+ *
+ * `instructions.layer` is filled here when the pod left it out: its default is the agent's id, and
+ * the id the gateway names a pod's agent by (`<id>@<host>`) is not the one its layer may use — the
+ * pod.yaml id is, without the host. Setting it now keeps the layer stable if the host id changes
+ * and saves every reader of the merged config from having to strip `@host` itself.
  */
 export function mergePodAgents(raw: Record<string, unknown>, pods: PodsState): { raw: Record<string, unknown>; skipped: string[] } {
   const own = Array.isArray(raw.agents) ? (raw.agents as unknown[]) : [];
@@ -124,7 +129,13 @@ function podAgents(raw: Record<string, unknown>, pods: PodsState, skipped: strin
       const id = podAgentId(parsed.data.id, host);
       if (taken.has(id)) continue;
       taken.add(id);
-      out.push({ agent: { ...parsed.data, id, host }, model: parsed.data.model });
+      const instructions = parsed.data.instructions
+        ? { ...parsed.data.instructions, layer: parsed.data.instructions.layer ?? parsed.data.id }
+        : undefined;
+      out.push({
+        agent: { ...parsed.data, id, host, ...(instructions ? { instructions } : {}) },
+        model: parsed.data.model,
+      });
     }
   }
   return out;

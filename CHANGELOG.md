@@ -5,6 +5,15 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **Any harness can be given its own instruction file.** `agents[].instructions` names the
+  user-level file an agent's harness reads on its host (`~` resolved against the agent's
+  `env.HOME`) and, optionally, the layer the gateway composes beside `common.md` — the agent's id
+  by default, and for a pod's agent the id in its `pod.yaml` without the `@host` the gateway adds.
+  It works in `config.yaml` and in a pod's `pod.yaml`, so a `custom` harness no longer needs a
+  built-in special case to receive the standing instructions.
+
 ## [3.15.0] - 2026-11-19
 
 ### Added
@@ -21,9 +30,6 @@ All notable changes to this project are documented here. The format is based on
   and mail nobody vetted, so it may propose, and only a person starts. A caller sees and stops only
   sub-tasks under topics it opened; removing it (or its variable) and `/reload` revokes it. See
   [Callers from outside](docs/external-mcp.md) and security invariant 11 in AGENTS.md.
-- **Instructions for web-agent-driver.** A `custom` agent whose command is `wad` gets the
-  standing instructions at `~/.wad/AGENTS.md` (`common.md` + `wad.md`), which wad puts before a
-  new web conversation's first message — the web page has no file of its own to read.
 
 ### Changed
 

@@ -3,21 +3,41 @@
 [English](../instructions.md) | 简体中文
 
 把你希望智能体怎么跟你干活写下来一次——「用中文回答，结论先行」「删东西之前先报方案」——每个智能体都会读到：
-Claude Code、Codex、OpenCode、Antigravity、CodeBuddy 和 AtomCode，本机的和每台[远程主机](remote-hosts.md)上的都算。
-内容放在网关的一个目录里，网关搬到哪，它就跟到哪。
+Claude Code、Codex、OpenCode、Antigravity、CodeBuddy 和 AtomCode，本机的和每台[远程主机](remote-hosts.md)上的都算，
+再算上你自己指定了指令文件的其它 harness（见下）。内容放在网关的一个目录里，网关搬到哪，它就跟到哪。
 
 ```text
 <配置目录>/instructions/        （~/.config/fleetherd/instructions/）
   common.md      所有智能体
   claude.md      只给 Claude Code
   codex.md       只给 Codex
-  …              opencode.md、agy.md、codebuddy.md、atomcode.md、wad.md
+  …              opencode.md、agy.md、codebuddy.md、atomcode.md
+  <layer>.md     其它智能体，按它的 instructions.layer（默认用它的 id）
 ```
 
 每个智能体拿到的是 `common.md` 加上它自己那份，前者在前。两份都可以没有。按智能体分的那份，放只对某一种智能体
 才说得通的规矩——比如一条为了它的 prompt 缓存定的规矩，计费方式不同的别的智能体不该照着做。
 
 没有配置项：目录在，就启用；删掉目录，就关闭。
+
+## 网关不认识的智能体
+
+`custom` harness 的用户级指令文件，网关猜不出来。在智能体配置里写明它在哪，顺便可以指定它拿哪一层：
+
+```yaml
+agents:
+  - id: mh
+    harness: custom
+    command: my-harness
+    instructions:
+      file: ~/.my-harness/AGENTS.md
+      layer: my-harness
+```
+
+`file` 在智能体所在的那台机器上；`~` 按这个智能体运行时的 home 解析（`env.HOME` 覆盖也算），目录不存在就什么都不放。
+`layer` 是 `<配置目录>/instructions/` 里 `common.md` 旁边那份的名字；不写就用智能体的 id——pod 里的智能体用
+`pod.yaml` 里的 id，不带网关加的 `@host`。同一段配置在 `~/.fleetherd/pod.yaml` 里也能用。预设（`claude`、`codex` 等）
+也可以写，用来指定被挪过位置的指令文件。
 
 ## 怎么到达智能体
 
@@ -32,7 +52,7 @@ Claude Code、Codex、OpenCode、Antigravity、CodeBuddy 和 AtomCode，本机�
 | Antigravity（agy） | `~/.gemini/config/AGENTS.md` |
 | CodeBuddy Code | `~/.codebuddy/CODEBUDDY.md` |
 | AtomCode | `~/.atomcode/ATOMCODE.md` |
-| web-agent-driver（`wad`，在浏览器里驱动网页智能体） | `~/.wad/AGENTS.md`——wad 把它放在新网页对话的第一条消息前面 |
+| 其它 harness | 它自己的 `instructions.file` 写的文件，`~` 按这个智能体的 home 解析 |
 
 智能体像读自己的设置一样读它——在对话开始之前读，你发的消息里不会多出任何东西；你在那台机器的终端里直接启动的
 智能体也读得到。项目自己的 `AGENTS.md` 照旧叠加在上面。
@@ -45,7 +65,7 @@ Claude Code、Codex、OpenCode、Antigravity、CodeBuddy 和 AtomCode，本机�
   它会原样保留，守护进程日志会说明这个智能体拿不到偏好。把里面的内容挪进 `claude.md` 再删掉它，下次启动就会链接上。
 - **Codex 的 `AGENTS.override.md`**：有它时 Codex 读它而不读 `AGENTS.md`。
 - **从没在那台机器上运行过的智能体**：不会替它创建任何东西。
-- **Gemini CLI、DeepSeek Harness 以及其他 `custom` 命令**：不知道它们读哪个文件，所以什么都不放。
+- **没写 `instructions` 的 `custom` 命令**：不知道它读哪个文件，所以什么都不放。写一个（见上）网关就会去放。
 
 内容上限 32 KiB（`AGENTS.md` 超过这个大小，Codex 会不声不响地截掉）；超出时一个字都不下发，日志里会说明。
 要改就改网关上的文件，别改主机上的副本：副本是只读的，下次启动会被重写。
@@ -55,7 +75,8 @@ Claude Code、Codex、OpenCode、Antigravity、CodeBuddy 和 AtomCode，本机�
 打开约束编辑器后，Web UI [设置页](settings.md) **Agents** 下每张智能体卡片都会列出它读的所有文件：先是它从网关拿到的，
 再是它所在机器上它自己的。点一行就在[文件窗口](web-ui.md)同一个编辑器里打开这个智能体的整份列表——保存方式一样，
 也一样会检查文件在你打开之后有没有被别人改过。网关上的文件不再单独列一节：`common.md` 出现在每张卡片上，
-`claude.md` 出现在每个 Claude Code 智能体的卡片上，都标明有几个智能体在读——改它会影响到的就是这些。
+每个智能体的层文件——`claude.md`，或者它 `instructions` 指定的层（默认是它的 id）——出现在每个读它的卡片上，
+都标明有几个智能体在读——改它会影响到的就是这些。
 
 ```yaml
 platforms:
@@ -69,10 +90,10 @@ platforms:
 默认关闭，理由和文件窗口一样，而且更进一步：打开后，谁拿到 Web UI 的登录，谁就能改**所有**智能体读的内容——
 每个平台、每台主机，包括页面上没人在看的对话。只在登录的防护配得上这件事的地方打开。
 
-**网关上你自己的文件。** `common.md`，加上这个智能体那一种的那份，排在最前面、标为共用。保存时目录
-不存在就先建出来——也就启用了这个功能——然后把新内容**立刻**放到每台配置了读它的智能体的机器上，编辑器会说明
-放到了哪里。连不上的主机，下次那里启动智能体时拿到。会让任何一个智能体超过 32 KiB 的保存，在写之前就被拒绝。
-已经在跑的会话，用的还是它启动时读到的内容。
+**网关上你自己的文件。** `common.md`，加上这个智能体的层文件——`claude.md`，或者它 `instructions` 指定的层
+（默认是它的 id）——排在最前面、标为共用。保存时目录不存在就先建出来——也就启用了这个功能——然后把新内容**立刻**
+放到每台配置了读它的智能体的机器上，编辑器会说明放到了哪里。连不上的主机，下次那里启动智能体时拿到。会让任何一个
+智能体超过 32 KiB 的保存，在写之前就被拒绝。已经在跑的会话，用的还是它启动时读到的内容。
 
 **每个智能体自己的文件。** 自己机器上还会读自己约束文件（网关放的那份之外）的智能体，会把这些文件列在共用文件下面
 （卡片上是一行 **Its own files**，因为列出它们要去读那台机器）。它们属于那台机器：在原地读、原地存，网关不留副本。

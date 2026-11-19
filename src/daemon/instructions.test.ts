@@ -36,44 +36,70 @@ afterEach(() => {
   fs.rmSync(home, { recursive: true, force: true });
 });
 
-const codex = (): InstructionsHome => instructionsHome('codex', home)!;
+const codex = (): InstructionsHome => instructionsHome({ id: 'cx', harness: 'codex' }, home)!;
 
 describe('instructionsHome', () => {
   it('puts each harness at the user-level file it was observed to read', () => {
-    expect(instructionsHome('claude', '/h')).toEqual({ name: 'claude', file: '/h/.claude/CLAUDE.md', requires: '/h/.claude' });
-    expect(instructionsHome('codex', '/h')).toEqual({ name: 'codex', file: '/h/.codex/AGENTS.md', requires: '/h/.codex' });
-    expect(instructionsHome('opencode', '/h')).toEqual({
+    expect(instructionsHome({ id: 'cc', harness: 'claude' }, '/h')).toEqual({
+      name: 'claude',
+      file: '/h/.claude/CLAUDE.md',
+      requires: '/h/.claude',
+    });
+    expect(instructionsHome({ id: 'cx', harness: 'codex' }, '/h')).toEqual({
+      name: 'codex',
+      file: '/h/.codex/AGENTS.md',
+      requires: '/h/.codex',
+    });
+    expect(instructionsHome({ id: 'oc', harness: 'opencode' }, '/h')).toEqual({
       name: 'opencode',
       file: '/h/.config/opencode/AGENTS.md',
       requires: '/h/.config/opencode',
     });
     // The customization root agy reads skills from — not its own antigravity-cli directory.
-    expect(instructionsHome('agy', '/h')).toEqual({
+    expect(instructionsHome({ id: 'ag', harness: 'agy' }, '/h')).toEqual({
       name: 'agy',
       file: '/h/.gemini/config/AGENTS.md',
       requires: '/h/.gemini/antigravity-cli',
     });
   });
 
-  it('knows CodeBuddy, AtomCode and wad by their command, and guesses nothing else', () => {
-    expect(instructionsHome('custom', '/h', '/usr/local/bin/codebuddy')).toEqual({
+  it('knows CodeBuddy and AtomCode by their command, and guesses nothing else', () => {
+    expect(instructionsHome({ id: 'cb', harness: 'custom', command: '/usr/local/bin/codebuddy' }, '/h')).toEqual({
       name: 'codebuddy',
       file: '/h/.codebuddy/CODEBUDDY.md',
       requires: '/h/.codebuddy',
     });
-    expect(instructionsHome('custom', '/h', 'atomcode')).toEqual({
+    expect(instructionsHome({ id: 'ac', harness: 'custom', command: 'atomcode' }, '/h')).toEqual({
       name: 'atomcode',
       file: '/h/.atomcode/ATOMCODE.md',
       requires: '/h/.atomcode',
     });
-    // web-agent-driver: the file it prepends to a new web conversation's first message.
-    expect(instructionsHome('custom', '/h', '/usr/local/bin/wad')).toEqual({
-      name: 'wad',
-      file: '/h/.wad/AGENTS.md',
-      requires: '/h/.wad',
-    });
-    for (const command of ['/opt/other/thing', '', undefined]) expect(instructionsHome('custom', '/h', command)).toBeUndefined();
-    for (const harness of ['gemini', 'dsh'] as const) expect(instructionsHome(harness, '/h')).toBeUndefined();
+    for (const command of ['/opt/other/thing', '', undefined]) {
+      expect(instructionsHome({ id: 'x', harness: 'custom', command }, '/h')).toBeUndefined();
+    }
+    for (const harness of ['gemini', 'dsh'] as const) expect(instructionsHome({ id: 'x', harness }, '/h')).toBeUndefined();
+  });
+
+  it('takes the file and layer an agent names, defaulting the layer to its id', () => {
+    expect(
+      instructionsHome(
+        { id: 'mh', harness: 'custom', command: 'my-harness', instructions: { file: '~/.my-harness/AGENTS.md' } },
+        '/h'
+      )
+    ).toEqual({ name: 'mh', file: '/h/.my-harness/AGENTS.md', requires: '/h/.my-harness' });
+    expect(
+      instructionsHome(
+        { id: 'mh', harness: 'custom', command: 'my-harness', instructions: { file: '/opt/my/AGENTS.md', layer: 'my-harness' } },
+        '/h'
+      )
+    ).toEqual({ name: 'my-harness', file: '/opt/my/AGENTS.md', requires: '/opt/my' });
+    // An `env.HOME` override is the home the caller passes, so `~` follows it.
+    expect(
+      instructionsHome(
+        { id: 'mh', harness: 'custom', command: 'my-harness', instructions: { file: '~/.my-harness/AGENTS.md' } },
+        '/home/other'
+      )
+    ).toMatchObject({ file: '/home/other/.my-harness/AGENTS.md' });
   });
 });
 
@@ -188,6 +214,18 @@ describe('applyInstructions', () => {
     expect(applyInstructions({ kind: 'too-big', bytes: 40_000 }, codex(), home).outcome).toBe('too-big');
     expect(fs.existsSync(codex().file)).toBe(false);
   });
+
+  it("delivers to the file a custom agent names, and only once its directory exists", () => {
+    const where = instructionsHome(
+      { id: 'mh', harness: 'custom', command: 'my-harness', instructions: { file: '~/.my-harness/AGENTS.md' } },
+      home
+    )!;
+    expect(applyInstructions(text('mine\n'), where, home)).toMatchObject({ outcome: 'skipped', detail: `${home}/.my-harness does not exist` });
+    fs.mkdirSync(path.join(home, '.my-harness'));
+    expect(applyInstructions(text('mine\n'), where, home).outcome).toBe('linked');
+    expect(fs.readlinkSync(where.file)).toBe(path.join(ownedDir(home), 'mh.md'));
+    expect(fs.readFileSync(where.file, 'utf8')).toBe('mine\n');
+  });
 });
 
 describe('placeInstructions', () => {
@@ -262,6 +300,35 @@ describe('RemoteHosts.placeInstructions', () => {
     fs.writeFileSync(path.join(dir, 'codex.md'), 'changed\n');
     await hosts.placeInstructions(host as unknown as RemoteHost, def, '/home/u', welcome);
     expect(host.writeFile).toHaveBeenCalledTimes(2);
+  });
+
+  it("composes a custom agent's own layer and links the file it names", async () => {
+    const hosts = new RemoteHosts();
+    const host = fakeHost();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    fs.writeFileSync(path.join(dir, 'common.md'), 'mine\n');
+    fs.writeFileSync(path.join(dir, 'mh.md'), 'mine too\n');
+    const mh = {
+      id: 'mh',
+      harness: 'custom',
+      command: 'my-harness',
+      instructions: { file: '~/.my-harness/AGENTS.md' },
+      env: {},
+    } as unknown as AgentDef;
+
+    await hosts.placeInstructions(host as unknown as RemoteHost, mh, '/home/u', welcome);
+    expect(host.writeFile).toHaveBeenCalledWith(
+      '/home/u/.fleetherd/instructions/mh.md',
+      Buffer.from('mine\n\nmine too\n'),
+      0o444,
+      { atomic: true }
+    );
+    expect(host.ensureLink).toHaveBeenCalledWith(
+      '/home/u/.fleetherd/instructions/mh.md',
+      '/home/u/.my-harness/AGENTS.md',
+      '/home/u/.my-harness',
+      '/home/u/.fleetherd/instructions'
+    );
   });
 
   it('tries again at the next spawn while something is in the way', async () => {

@@ -1,6 +1,5 @@
 import path from 'node:path';
-import type { AgentDef } from '../config/schema.js';
-import { instructionsHome } from './instructions.js';
+import { harnessKind, instructionsHome, type InstructionsAgent } from './instructions.js';
 
 /**
  * Where an agent's OWN instructions are — the files its harness reads at user level besides the one
@@ -97,15 +96,15 @@ export interface HarnessSources {
  * The one dispatch: `def`'s harness's own instruction sources under `home`, or undefined for a
  * harness with none known. Paths are POSIX — every machine an agent runs on here is Linux or macOS.
  */
-export function harnessSources(def: Pick<AgentDef, 'harness' | 'command'>, home: string): HarnessSources | undefined {
-  const where = instructionsHome(def.harness, home, def.command);
+export function harnessSources(def: InstructionsAgent, home: string): HarnessSources | undefined {
+  const where = instructionsHome(def, home);
   if (!where) return undefined;
   const P = path.posix;
   const at = (...p: string[]): string => P.join(home, ...p);
-  switch (where.name) {
+  switch (harnessKind(def.harness, def.command)) {
     case 'claude':
       return {
-        delivered: at('.claude', 'CLAUDE.md'),
+        delivered: where.file,
         summary: '`@` references in `~/.claude/CLAUDE.md`, and `~/.claude/rules`',
         files: [],
         ruleDirs: [at('.claude', 'rules')],
@@ -113,7 +112,7 @@ export function harnessSources(def: Pick<AgentDef, 'harness' | 'command'>, home:
       };
     case 'codebuddy':
       return {
-        delivered: at('.codebuddy', 'CODEBUDDY.md'),
+        delivered: where.file,
         summary: '`@` references in `~/.codebuddy/CODEBUDDY.md`, and `~/.codebuddy/rules`',
         files: [],
         ruleDirs: [at('.codebuddy', 'rules')],
@@ -121,7 +120,7 @@ export function harnessSources(def: Pick<AgentDef, 'harness' | 'command'>, home:
       };
     case 'agy':
       return {
-        delivered: at('.gemini', 'config', 'AGENTS.md'),
+        delivered: where.file,
         summary: '`~/.gemini` instruction files and rules, and their `@[label](path)` includes',
         files: [{ path: at('.gemini', 'AGENTS.md') }, { path: at('.gemini', 'GEMINI.md') }, { path: at('.gemini', 'config', 'GEMINI.md') }],
         ruleDirs: [at('.gemini', 'config', 'rules')],
@@ -130,7 +129,7 @@ export function harnessSources(def: Pick<AgentDef, 'harness' | 'command'>, home:
       };
     case 'opencode':
       return {
-        delivered: at('.config', 'opencode', 'AGENTS.md'),
+        delivered: where.file,
         summary: 'the files `instructions` lists in `~/.config/opencode/opencode.json`',
         files: [],
         ruleDirs: [],
@@ -138,7 +137,7 @@ export function harnessSources(def: Pick<AgentDef, 'harness' | 'command'>, home:
       };
     case 'codex':
       return {
-        delivered: at('.codex', 'AGENTS.md'),
+        delivered: where.file,
         summary: '`~/.codex/AGENTS.override.md`, when there is one',
         files: [
           {
@@ -149,12 +148,8 @@ export function harnessSources(def: Pick<AgentDef, 'harness' | 'command'>, home:
         ruleDirs: [],
       };
     case 'atomcode':
-    case 'wad':
+    case undefined:
       return undefined;
-    default: {
-      const _exhaustive: never = where.name;
-      return _exhaustive;
-    }
   }
 }
 

@@ -131,28 +131,38 @@ describe('opencode instructions', () => {
 
 describe('harnessSources', () => {
   it('dispatches each harness to what it reads, under the home given', () => {
-    const claude = harnessSources({ harness: 'claude' }, '/h')!;
+    const claude = harnessSources({ id: 'cc', harness: 'claude' }, '/h')!;
     expect(claude).toMatchObject({ delivered: '/h/.claude/CLAUDE.md', ruleDirs: ['/h/.claude/rules'], files: [] });
     expect(claude.syntax?.hops).toBe(4);
-    const cb = harnessSources({ harness: 'custom', command: '/usr/bin/codebuddy' }, '/h')!;
+    const cb = harnessSources({ id: 'cb', harness: 'custom', command: '/usr/bin/codebuddy' }, '/h')!;
     expect(cb).toMatchObject({ delivered: '/h/.codebuddy/CODEBUDDY.md', ruleDirs: ['/h/.codebuddy/rules'] });
     expect(cb.syntax?.hops).toBe(4);
-    const agy = harnessSources({ harness: 'agy' }, '/h')!;
+    const agy = harnessSources({ id: 'ag', harness: 'agy' }, '/h')!;
     expect(agy.files.map((f) => f.path)).toEqual(['/h/.gemini/AGENTS.md', '/h/.gemini/GEMINI.md', '/h/.gemini/config/GEMINI.md']);
     expect(agy.ruleDirs).toEqual(['/h/.gemini/config/rules']);
     expect(agy.syntax?.hops).toBe(1);
-    const oc = harnessSources({ harness: 'opencode' }, '/h')!;
+    const oc = harnessSources({ id: 'oc', harness: 'opencode' }, '/h')!;
     expect(oc.syntax).toBeUndefined();
     expect(oc.lists?.configs).toEqual(['/h/.config/opencode/opencode.json', '/h/.config/opencode/opencode.jsonc']);
-    const cx = harnessSources({ harness: 'codex' }, '/h')!;
+    const cx = harnessSources({ id: 'cx', harness: 'codex' }, '/h')!;
     expect(cx.syntax).toBeUndefined();
     expect(cx.files).toEqual([{ path: '/h/.codex/AGENTS.override.md', note: expect.stringContaining('instead of AGENTS.md') }]);
   });
 
-  it('knows nothing for atomcode, wad, gemini, dsh or another command', () => {
-    expect(harnessSources({ harness: 'custom', command: 'atomcode' }, '/h')).toBeUndefined();
-    expect(harnessSources({ harness: 'custom', command: 'wad' }, '/h')).toBeUndefined();
-    expect(harnessSources({ harness: 'custom', command: 'other' }, '/h')).toBeUndefined();
-    for (const harness of ['gemini', 'dsh'] as const) expect(harnessSources({ harness }, '/h')).toBeUndefined();
+  it('knows nothing for atomcode, gemini, dsh or another command', () => {
+    expect(harnessSources({ id: 'ac', harness: 'custom', command: 'atomcode' }, '/h')).toBeUndefined();
+    expect(harnessSources({ id: 'x', harness: 'custom', command: 'other' }, '/h')).toBeUndefined();
+    for (const harness of ['gemini', 'dsh'] as const) expect(harnessSources({ id: 'x', harness }, '/h')).toBeUndefined();
+  });
+
+  it('follows a configured instruction file, and knows no own files for a harness it cannot name', () => {
+    const over = harnessSources({ id: 'cc', harness: 'claude', instructions: { file: '~/.claude/MINE.md' } }, '/h')!;
+    expect(over.delivered).toBe('/h/.claude/MINE.md');
+    expect(
+      harnessSources(
+        { id: 'mh', harness: 'custom', command: 'my-harness', instructions: { file: '~/.my-harness/AGENTS.md' } },
+        '/h'
+      )
+    ).toBeUndefined();
   });
 });
