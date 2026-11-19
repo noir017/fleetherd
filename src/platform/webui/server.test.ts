@@ -3015,7 +3015,7 @@ describe('webui server: the instruction editor', () => {
     const panel: InstructionsPanel = {
       async list() {
         seen.push('list');
-        return { dir: '/c/instructions', on: true, global: [{ name: 'common.md', layer: 'common', exists: true, size: 3, agents: ['cc'] }], agents: [] };
+        return { dir: '/c/instructions', on: true, global: [{ name: 'common.md', layer: 'common', exists: true, size: 3, agents: ['cc'], reach: 'every agent' }], agents: [] };
       },
       async refs(agent) {
         seen.push(`refs ${agent}`);

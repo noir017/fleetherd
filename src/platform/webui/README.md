@@ -1842,8 +1842,12 @@ the operator, the machine and the file.
 Off by default (`platforms.<id>.instructions.enabled`). Turned on, every agent's card lists what that
 agent reads, from one `GET /api/instructions` per settings page drawn (`instrEnsure`): the gateway's
 own files it gets (`common.md` and its harness layer's, `daemon/instructions.ts`), each marked with
-how many agents read it, then — when its harness reads files of its own — one **Its own files** row,
-because listing those reads the agent's machine. Any row opens **the file window** in a second mode
+who reads it and how many — the daemon's `reach`, which names the kind of agent only when no other
+kind shares the layer and the layer's own name otherwise. Then, when its harness reads files of
+its own, one **Its own files** row, because listing those reads the agent's machine. A layer file
+left on disk after its last agent is deleted or renamed is listed too, once under the cards as
+**Instructions no agent reads**: it has no card of its own, and opening it is how it gets cleared
+before a future agent on that layer inherits it. Any row opens **the file window** in a second mode
 on that agent's whole list — the shared files, then its own under a heading naming its machine — with
 the same editor, dirty mark, conflict dialog and save, a fixed list instead of a directory, and what
 makes no sense for one hidden (new, rename, delete, search, breadcrumbs). `fileSrc` is that mode;

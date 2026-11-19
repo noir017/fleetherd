@@ -5271,7 +5271,7 @@ const SCRIPT = `
     h += settingsNotice(s.notice);
     var notes = {}, groups = s.groups || [];
     for(var g=0;g<groups.length;g++) notes[groups[g].name] = groups[g].note;
-    var rows = s.rows || [], secs = [];
+    var rows = s.rows || [], secs = [], agentsShown = false;
     for(var i=0;i<rows.length;i++){
       var name = String(rows[i].group == null ? '' : rows[i].group), sec = secs[secs.length-1];
       if(!sec || sec.name !== name){ sec = { name: name, plain: [], agents: [] }; secs.push(sec); }
@@ -5287,8 +5287,13 @@ const SCRIPT = `
         h += '</div>';
       }
       if(x.agents.length) h += settingsAgents(rows, x.agents);
+      // The gateway's files no agent reads have no card of their own; the Agents section is where
+      // a person looks for them (settingsOrphans). With no Agents section at all, they follow the
+      // last one so they are still reachable.
+      if(x.name === 'Agents'){ h += settingsOrphans(); agentsShown = true; }
       h += '</section>';
     }
+    if(!agentsShown) h += settingsOrphans();
     return h;
   }
 
@@ -12132,10 +12137,6 @@ const SCRIPT = `
   // path of its own: a read or a save names the target, and the daemon checks it against what that
   // harness reads now.
   var instrData = null, instrBusy = false, instrFor = null;
-  // Who reads a harness layer's file, said whole: a card's line under a shared file is this.
-  var INSTR_REACH = {common:'every agent', claude:'every Claude Code agent', codex:'every Codex agent',
-    opencode:'every OpenCode agent', agy:'every Antigravity agent', codebuddy:'every CodeBuddy agent',
-    atomcode:'every AtomCode agent'};
 
   function instrFetch(url){
     return fetch(url, {credentials:'same-origin'}).then(function(r){
@@ -12204,16 +12205,41 @@ const SCRIPT = `
   }
 
   /**
-   * Who else a shared file reaches, which is the one thing about it an edit has to know first: the
-   * kind of agent alone in the window's tree, which has a name to leave room for, and how many read
-   * it as well on a card.
+   * Who else a shared file reaches, which is the one thing about it an edit has to know first. The
+   * words come from the daemon (InstructionsGlobalFile.reach), not from a table here: a layer can
+   * be shared by an agent of another kind, and a file can be left behind by an agent that is gone,
+   * so the layer's name is the only answer that stays right in both cases. A file no agent reads
+   * says so — it is still listed so it can be cleared.
    */
   function instrReach(f){
-    return INSTR_REACH[f.layer] || 'every ' + f.layer + ' agent';
+    return f.reach + (f.layer !== 'common' && !(f.agents || []).length ? ' · no agent reads it' : '');
   }
   function instrShared(f){
     var n = (f.agents || []).length;
-    return instrReach(f) + ' · ' + n + (n === 1 ? ' reads it' : ' read it');
+    return n ? f.reach + ' · ' + n + (n === 1 ? ' reads it' : ' read it') : instrReach(f);
+  }
+
+  /** The gateway's files no configured agent reads: a layer left by an agent that has gone. */
+  function instrOrphans(d){
+    var g = (d && d.global) || [], out = [];
+    for(var i=0;i<g.length;i++) if(g[i].layer !== 'common' && !(g[i].agents || []).length) out.push(g[i]);
+    return out;
+  }
+
+  /**
+   * The files no agent reads, drawn once under the Agents cards. No card is theirs — that is what
+   * being read by nobody means — and without this row they could not be reached at all, so a layer
+   * file left behind would sit there until some future agent took the same layer and inherited it.
+   */
+  function settingsOrphans(){
+    if(!INSTR_OK || !instrData || instrData.error) return '';
+    var o = instrOrphans(instrData);
+    if(!o.length) return '';
+    var names = o.map(function(f){ return f.name; }).join(', ');
+    return '<div class="set-card"><button type="button" class="set-item set-open" data-instr-orphans="1">'
+      + '<span class="set-tx"><span class="set-label">Instructions no agent reads</span>'
+      + '<span class="set-hint">' + text(names) + ' — open to clear a layer a later agent would inherit</span></span>'
+      + '<span class="set-chev" aria-hidden="true">' + IC.icon.chevronRight + '</span></button></div>';
   }
 
   function instrHost(h){ return h === 'local' ? 'this machine' : h; }
@@ -12254,6 +12280,11 @@ const SCRIPT = `
     openFilesWindow(settingsTopic || topic, file || '', {agent:agent, title:agent + ' · instructions', files:{}, order:[], secs:{}});
   }
 
+  /** Open the window on the gateway's files no agent reads, which is how one is cleared. */
+  function instrOpenOrphans(){
+    openFilesWindow(settingsTopic || topic, '', {agent:'', orphans:true, title:'Instructions no agent reads', files:{}, order:[], secs:{}});
+  }
+
   /** The window's controls a topic's files have and instructions do not: create, rename, delete, search. */
   function paintFilesMode(){
     var on = Boolean(fileSrc);
@@ -12277,10 +12308,11 @@ const SCRIPT = `
     src.secs = {};
     src.root = src.agent;
     var add = function(id, f){ src.files[id] = f; src.order.push(id); };
-    var g = instrSharedIn(d, src.agent);
+    var g = src.orphans ? instrOrphans(d) : instrSharedIn(d, src.agent);
     if(g.length){
       src.secs.shared = {title:'Shared, kept on the gateway',
-        note: (d.on ? 'A save places it on every machine an agent that reads it is configured for.'
+        note: src.orphans ? 'No configured agent reads these. Clearing one keeps a later agent on that layer from inheriting it.'
+          : (d.on ? 'A save places it on every machine an agent that reads it is configured for.'
           : 'Nothing is delivered yet. The first save creates ' + d.dir + '.')};
     }
     for(var i=0;i<g.length;i++){
@@ -12339,7 +12371,7 @@ const SCRIPT = `
       return instrFetch('api/instructions').then(function(res){
         if(!res.ok) return res;
         var d = res.body;
-        if(!instrOwnIn(d, src.agent)){ instrIndex(src, d, null); return listed(); }
+        if(src.orphans || !instrOwnIn(d, src.agent)){ instrIndex(src, d, null); return listed(); }
         return instrFetch('api/instructions/refs?agent=' + encodeURIComponent(src.agent)).then(function(rr){
           instrIndex(src, d, rr.ok ? rr.body : {error: (rr.body && rr.body.error) || 'Its own files could not be listed.'});
           return listed();
@@ -12419,6 +12451,7 @@ const SCRIPT = `
   if(INSTR_OK){
     settingsBody.addEventListener('click', function(e){
       if(!e.target.closest) return;
+      if(e.target.closest('[data-instr-orphans]')){ instrOpenOrphans(); return; }
       var a = e.target.closest('[data-instr-agent]');
       if(a) instrOpen(a.getAttribute('data-instr-agent'), a.getAttribute('data-instr-file') || '');
     });

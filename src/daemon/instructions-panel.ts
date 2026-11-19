@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 
-import type { AgentDef } from '../config/schema.js';
+import { isInstructionLayer, type AgentDef } from '../config/schema.js';
 import type {
   FilesPanelExpect,
   InstructionsAgent,
@@ -20,7 +20,7 @@ import type {
 import { buildHarnessEnv, remoteAgentHome } from './agent-common.js';
 import { MAX_EDIT_BYTES, readForEditor } from './file-panel.js';
 import { globBase, globRegex, harnessSources, hasGlob, type HarnessSources } from './instruction-imports.js';
-import { HARNESS_LAYERS, instructionsHome, instructionsOff } from '../config/instructions.js';
+import { HARNESS_LAYERS, harnessKind, instructionsHome, instructionsOff, type HarnessLayer } from '../config/instructions.js';
 import {
   INSTRUCTIONS_MAX_BYTES,
   instructionsDir,
@@ -122,13 +122,67 @@ function layerNames(agents: readonly AgentDef[]): string[] {
   const out = new Set<string>(HARNESS_LAYERS);
   for (const def of agents) {
     const where = instructionsHome(def, '~');
-    if (where) out.add(where.name);
+    // A caller the config schema never saw could hand in any layer. The schema's rule is the one
+    // this file goes by, so a name that could climb out of the instructions directory is not one.
+    if (where && isInstructionLayer(where.name)) out.add(where.name);
   }
   return [...out];
 }
 
-function globalNames(agents: readonly AgentDef[]): string[] {
-  return ['common.md', ...layerNames(agents).map((l) => `${l}.md`)];
+/** The `<layer>.md` names already on the gateway, which stay editable after their agent is gone. */
+function diskLayers(dir: string): string[] {
+  let names: string[];
+  try {
+    names = fs.readdirSync(dir);
+  } catch {
+    return [];
+  }
+  return names
+    .filter((n) => n.endsWith('.md') && n !== 'common.md' && isInstructionLayer(n.slice(0, -'.md'.length)))
+    .filter((n) => statOrUndefined(path.join(dir, n))?.isFile() === true)
+    .map((n) => n.slice(0, -'.md'.length))
+    .sort();
+}
+
+/**
+ * Every name the editor may open: `common.md`, the layers configured agents read, and any layer
+ * file already on the gateway. The last is what keeps a layer left behind by a deleted or renamed
+ * agent editable — otherwise it would be invisible here until some future agent silently inherited
+ * it by taking the same layer.
+ */
+function globalNames(env: Env): string[] {
+  const names = new Set(layerNames(env.agents()));
+  for (const layer of diskLayers(env.dir())) names.add(layer);
+  return ['common.md', ...[...names].map((l) => `${l}.md`)];
+}
+
+/** The kind of agent a preset layer is for, as the settings page names it. */
+const LAYER_KINDS: Record<HarnessLayer, string> = {
+  claude: 'Claude Code',
+  codex: 'Codex',
+  opencode: 'OpenCode',
+  agy: 'Antigravity',
+  codebuddy: 'CodeBuddy',
+  atomcode: 'AtomCode',
+};
+
+/**
+ * Who a gateway file reaches, in the words the settings page shows: `every agent` for `common.md`;
+ * the kind of agent when only that kind reads the layer — no agent of that kind on another layer,
+ * and no other kind sharing this one; the layer's own name otherwise, which is also right for a
+ * file no configured agent reads.
+ */
+function reachOf(layer: string, agents: readonly AgentDef[]): string {
+  if (layer === 'common') return 'every agent';
+  if (!(HARNESS_LAYERS as readonly string[]).includes(layer)) return `the ${layer} layer`;
+  const kind = layer as HarnessLayer;
+  // An agent whose delivery is off (config/pods.ts) is not reached by an edit, so it is neither a
+  // reader nor one of the kind that must all read this layer.
+  const delivered = agents.filter((d) => !instructionsOff(d));
+  const readers = delivered.filter((d) => instructionsHome(d, '~')?.name === layer);
+  const ofKind = delivered.filter((d) => harnessKind(d.harness, d.command) === kind);
+  const onlyThisKind = readers.every((d) => harnessKind(d.harness, d.command) === kind) && ofKind.every((d) => readers.includes(d));
+  return readers.length > 0 && ofKind.length > 0 && onlyThisKind ? `every ${LAYER_KINDS[kind]} agent` : `the ${layer} layer`;
 }
 
 async function listAll(env: Env): Promise<InstructionsPanelList> {
@@ -158,13 +212,14 @@ async function listAll(env: Env): Promise<InstructionsPanelList> {
     };
   });
   const global: InstructionsGlobalFile[] = [];
-  for (const name of globalNames(agents)) {
+  for (const name of globalNames(env)) {
     const layer = name.slice(0, -'.md'.length);
-    const st = statOrUndefined(path.join(dir, name));
+    const found = statOrUndefined(path.join(dir, name));
+    const st = found?.isFile() === true ? found : undefined;
     const agentsOf = layer === 'common' ? everyone : (readers.get(layer) ?? []);
     // A layer no configured agent reads, and nobody has written, is noise in the list.
     if (layer !== 'common' && !st && agentsOf.length === 0) continue;
-    global.push({ name, layer, exists: Boolean(st), ...(st ? { size: st.size } : {}), agents: agentsOf });
+    global.push({ name, layer, exists: Boolean(st), ...(st ? { size: st.size } : {}), agents: agentsOf, reach: reachOf(layer, agents) });
   }
   return { dir, on: statOrUndefined(dir)?.isDirectory() === true, global, agents: rows };
 }
@@ -233,7 +288,7 @@ export async function walkSources(
   ws: Workspace,
   src: HarnessSources,
   home: string,
-  layers: Iterable<string> = HARNESS_LAYERS
+  layers: Iterable<string>
 ): Promise<Walk> {
   const P = path.posix;
   // The gateway's delivered copies — `<layer>.md` in its directory on that machine, under either
@@ -422,7 +477,11 @@ async function referenced(env: Env, agent: string, p: string): Promise<{ m: Agen
 // ── reads and writes ──────────────────────────────────────────────────────────────────────────
 
 function globalFile(env: Env, name: string): string {
-  if (!globalNames(env.agents()).includes(name)) throw new Refusal(`${name} is not one of the instruction files`);
+  // The schema's rule, checked again here: a caller that never went through it could hand in a
+  // layer like `../x`, and this name is a path below the gateway's instructions directory.
+  const layer = name.endsWith('.md') ? name.slice(0, -'.md'.length) : '';
+  if (name !== 'common.md' && !isInstructionLayer(layer)) throw new Refusal(`${name} is not one of the instruction files`);
+  if (!globalNames(env).includes(name)) throw new Refusal(`${name} is not one of the instruction files`);
   return path.join(env.dir(), name);
 }
 

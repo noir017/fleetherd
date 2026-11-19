@@ -8,6 +8,7 @@ import type { AgentDef } from '../config/schema.js';
 import type { InstructionsDelivery, InstructionsRefsResult } from '../platform/adapter.js';
 import { buildInstructionsPanel, deliverInstructions, walkSources } from './instructions-panel.js';
 import { harnessSources } from './instruction-imports.js';
+import { HARNESS_LAYERS } from '../config/instructions.js';
 import { INSTRUCTIONS_MAX_BYTES } from './instructions.js';
 import { localWorkspace } from './workspace.js';
 
@@ -112,6 +113,35 @@ describe('the list', () => {
     expect(list.global.find((g) => g.name === 'common.md')?.agents).toEqual(['cc', 'cx', 'cc-r']);
   });
 
+  it('keeps a layer file on disk after its last agent is gone, and lets it be cleared', async () => {
+    fs.mkdirSync(gateway, { recursive: true });
+    fs.writeFileSync(path.join(gateway, 'mh.md'), 'old\n');
+    // Not layer files: another extension, an illegal name, a directory with the extension.
+    fs.writeFileSync(path.join(gateway, 'mh.md.bak'), 'old\n');
+    fs.writeFileSync(path.join(gateway, 'bad name.md'), 'x\n');
+    fs.mkdirSync(path.join(gateway, 'dir.md'));
+    const p = panel();
+    const list = await p.list();
+    expect(list.global.filter((g) => g.layer !== 'common').map((g) => [g.name, g.exists, g.agents, g.reach])).toEqual([
+      ['claude.md', false, ['cc', 'cc-r'], 'every Claude Code agent'],
+      ['codex.md', false, ['cx'], 'every Codex agent'],
+      ['mh.md', true, [], 'the mh layer'],
+    ]);
+    expect(list.global.map((g) => g.name)).not.toContain('bad name.md');
+    expect(list.global.map((g) => g.name)).not.toContain('dir.md');
+
+    const read = await p.read({ scope: 'global', name: 'mh.md' });
+    expect(read).toMatchObject({ ok: true, text: 'old\n', size: 4 });
+    if (!read.ok) throw new Error(read.error);
+    const cleared = await p.write({ scope: 'global', name: 'mh.md' }, '', { mtimeMs: read.mtimeMs, size: read.size, sha256: read.sha256 });
+    expect(cleared).toMatchObject({ ok: true, size: 0 });
+    expect(fs.readFileSync(path.join(gateway, 'mh.md'), 'utf8')).toBe('');
+    // No configured agent reads it, so nothing was placed.
+    expect(delivered).toEqual([new Set()]);
+    // The fixed set still holds: a name neither configured nor on disk is refused.
+    expect(await p.read({ scope: 'global', name: 'ghost.md' })).toMatchObject({ ok: false, error: expect.stringContaining('not one of') });
+  });
+
   it("lists a custom agent's layer by its id, and a pod agent's by the id in its pod.yaml", async () => {
     const custom = [
       def('mh', 'custom', { command: 'my-harness', instructions: { file: '~/.my-harness/AGENTS.md' } }),
@@ -123,13 +153,55 @@ describe('the list', () => {
     ];
     const list = await panel({ agents: () => custom }).list();
     expect(list.global).toEqual([
-      { name: 'common.md', layer: 'common', exists: false, agents: ['mh', 'mh@box'] },
-      { name: 'mh.md', layer: 'mh', exists: false, agents: ['mh', 'mh@box'] },
+      { name: 'common.md', layer: 'common', exists: false, agents: ['mh', 'mh@box'], reach: 'every agent' },
+      { name: 'mh.md', layer: 'mh', exists: false, agents: ['mh', 'mh@box'], reach: 'the mh layer' },
     ]);
     expect(list.agents).toEqual([
       { id: 'mh', harness: 'mh', host: 'local', file: '~/.my-harness/AGENTS.md' },
       { id: 'mh@box', harness: 'mh', host: 'box', file: '~/.my-harness/AGENTS.md' },
     ]);
+  });
+});
+
+describe('who reads a layer', () => {
+  it('names the kind of agent when only that kind reads it', async () => {
+    const list = await panel().list();
+    expect(list.global.map((g) => [g.layer, g.reach])).toEqual([
+      ['common', 'every agent'],
+      ['claude', 'every Claude Code agent'],
+      ['codex', 'every Codex agent'],
+    ]);
+  });
+
+  it('names the layer when an agent of another kind shares it', async () => {
+    const shared = [def('cc', 'claude'), def('mh', 'custom', { command: 'h', instructions: { file: '~/f.md', layer: 'claude' } })];
+    const list = await panel({ agents: () => shared }).list();
+    expect(list.global.find((g) => g.layer === 'claude')).toMatchObject({ agents: ['cc', 'mh'], reach: 'the claude layer' });
+  });
+
+  it('does not say every Claude Code agent when one of them reads another layer', async () => {
+    const split = [def('cc', 'claude'), def('cc2', 'claude', { instructions: { file: '~/f.md', layer: 'mine' } })];
+    const list = await panel({ agents: () => split }).list();
+    expect(list.global.find((g) => g.layer === 'claude')?.reach).toBe('the claude layer');
+    expect(list.global.find((g) => g.layer === 'mine')?.reach).toBe('the mine layer');
+  });
+
+  it('does not count an agent whose delivery is off as a reader of its kind', async () => {
+    const withOff = [
+      def('cc', 'claude'),
+      def('cc2', 'claude', { instructions: { file: '~/.claude/CLAUDE.md', layer: 'mine', off: true } }),
+    ];
+    const list = await panel({ agents: () => withOff }).list();
+    // cc2 is a Claude Code agent, but nothing reaches it, so claude.md still reaches every one that gets instructions.
+    expect(list.global.find((g) => g.layer === 'claude')?.reach).toBe('every Claude Code agent');
+    expect(list.global.find((g) => g.layer === 'mine')).toMatchObject({ agents: [], reach: 'the mine layer' });
+  });
+
+  it('names the layer for a file no agent reads', async () => {
+    fs.mkdirSync(gateway, { recursive: true });
+    fs.writeFileSync(path.join(gateway, 'mh.md'), 'old\n');
+    const list = await panel().list();
+    expect(list.global.find((g) => g.layer === 'mh')).toMatchObject({ agents: [], reach: 'the mh layer' });
   });
 });
 
@@ -182,6 +254,20 @@ describe('global files', () => {
       expect(await p.write({ scope: 'global', name }, 'x', { missing: true })).toMatchObject({ ok: false });
     }
     expect(fs.existsSync(gateway)).toBe(false);
+  });
+
+  it('refuses a layer that is not a plain file name, even from an agent the schema never checked', async () => {
+    // The config schema refuses this layer; a caller that never went through it must not be able
+    // to turn `../escape` into a write outside the instructions directory.
+    const bad = [def('x', 'custom', { command: 'h', instructions: { file: '~/f.md', layer: '../escape' } })];
+    const p = panel({ agents: () => bad });
+    for (const name of ['../escape.md', 'escape.md']) {
+      expect(await p.read({ scope: 'global', name })).toMatchObject({ ok: false, error: expect.stringContaining('not one of') });
+      expect(await p.write({ scope: 'global', name }, 'x', { missing: true })).toMatchObject({ ok: false });
+    }
+    expect(fs.existsSync(path.join(gateway, '..', 'escape.md'))).toBe(false);
+    expect(fs.existsSync(path.join(gateway, 'escape.md'))).toBe(false);
+    expect((await p.list()).global.map((g) => g.name)).not.toContain('../escape.md');
   });
 
   it('refuses a save that would put a layer over the cap, measured with what is already there', async () => {
@@ -252,10 +338,10 @@ describe("an agent's references", () => {
 
   it('says when the harness file is missing, and when it is the operator’s own', async () => {
     const src = harnessSources({ id: 'cc', harness: 'claude' }, home)!;
-    expect(await walkSources(localWorkspace(home), src, home)).toEqual({ root: '~/.claude/CLAUDE.md', rootState: 'missing', summary: src.summary, refs: [] });
+    expect(await walkSources(localWorkspace(home), src, home, HARNESS_LAYERS)).toEqual({ root: '~/.claude/CLAUDE.md', rootState: 'missing', summary: src.summary, refs: [] });
     fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
     fs.writeFileSync(path.join(home, '.claude', 'CLAUDE.md'), '@a.md\n');
-    const w = await walkSources(localWorkspace(home), src, home);
+    const w = await walkSources(localWorkspace(home), src, home, HARNESS_LAYERS);
     expect(w.rootState).toBe('own');
     expect(w.refs.map((x) => x.shown)).toEqual(['~/.claude/a.md']);
   });
@@ -327,7 +413,7 @@ describe("an agent's references", () => {
 describe('each harness’s own files', () => {
   const walk = async (d: AgentDef) => {
     const src = harnessSources(d, home)!;
-    const w = await walkSources(localWorkspace(home), src, home);
+    const w = await walkSources(localWorkspace(home), src, home, HARNESS_LAYERS);
     return w.refs.map((x) => [x.shown, x.kind, x.depth, x.editable, x.note ?? '']);
   };
   const write = (rel: string, text: string): void => {

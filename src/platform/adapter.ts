@@ -933,6 +933,12 @@ export interface InstructionsGlobalFile {
   size?: number;
   /** The configured agents that read this file. */
   agents: string[];
+  /**
+   * Who reads it, in the words the settings page shows: `every agent`, `every Claude Code agent`
+   * when only that kind reads the layer, or `the <layer> layer` when another kind shares it or no
+   * agent reads it at all (daemon/instructions-panel.ts `reachOf`).
+   */
+  reach: string;
 }
 
 /** One configured agent, as the settings page lists it under "each agent's own". */

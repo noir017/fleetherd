@@ -158,6 +158,13 @@ describe('harnessSources', () => {
   it('follows a configured instruction file, and knows no own files for a harness it cannot name', () => {
     const over = harnessSources({ id: 'cc', harness: 'claude', instructions: { file: '~/.claude/MINE.md' } }, '/h')!;
     expect(over.delivered).toBe('/h/.claude/MINE.md');
+    // The summary names the file this agent really reads, not the harness's default one.
+    expect(over.summary).toBe('`@` references in `~/.claude/MINE.md`, and `~/.claude/rules`');
+    const cb = harnessSources(
+      { id: 'cb', harness: 'custom', command: 'codebuddy', instructions: { file: '~/.codebuddy/MINE.md' } },
+      '/h'
+    )!;
+    expect(cb.summary).toBe('`@` references in `~/.codebuddy/MINE.md`, and `~/.codebuddy/rules`');
     expect(
       harnessSources(
         { id: 'mh', harness: 'custom', command: 'my-harness', instructions: { file: '~/.my-harness/AGENTS.md' } },
