@@ -36,6 +36,8 @@ afterEach(() => {
 });
 
 const codex: LibraryAsker = { conversation: 'web#main#a', generation: 0, agent: 'cx', host: 'uniagent', harness: 'codex' };
+/** A caller outside the gateway (daemon/external-calls.ts): no conversation, no skill list, no files. */
+const outside: LibraryAsker = { agent: 'external:gem', host: 'external', harness: 'external', external: true };
 
 describe('search', () => {
   it('finds a library skill and says where its files are on the agent\'s machine', () => {
@@ -46,11 +48,21 @@ describe('search', () => {
       resident: false,
       path: '~/.fleetherd/skills/deploy-check/SKILL.md',
     });
+    expect(answer.help).toBeUndefined();
   });
 
   it('marks a resident hit as already in the agent\'s list', () => {
     const answer = library.search('fleet server ssh', codex, T0);
     expect(answer.results[0]).toMatchObject({ name: 'server-ops', resident: true, note: expect.stringMatching(/already in your skill list/) });
+  });
+
+  it('gives an external caller neither a path nor the resident note, and says to read a hit with show', () => {
+    const resident = library.search('fleet server ssh', outside, T0);
+    expect(resident.results[0]).toEqual({ name: 'server-ops', description: 'Use when operating a fleet server over SSH', resident: true });
+    expect(resident.help).toMatch(/skills show <name>/);
+    const libraryHit = library.search('检查部署', outside, T0);
+    expect(libraryHit.results[0]).toEqual({ name: 'deploy-check', description: '部署完成后检查服务是否正常时使用', resident: false });
+    expect(libraryHit.help).toMatch(/skills show <name>/);
   });
 
   it('leaves out what does not reach the asking agent', () => {
@@ -99,6 +111,13 @@ describe('show', () => {
     expect(shown).toMatchObject({ name: 'deploy-check', file: 'SKILL.md', path: '~/.fleetherd/skills/deploy-check', files: ['scripts/check.sh'] });
     expect(String(shown.content)).toContain('依次检查健康接口');
     expect(listSkills(dir).find((s) => s.name === 'deploy-check')).toMatchObject({ uses: 1, agents: ['cx'] });
+  });
+
+  it('gives an external caller the file but no path on a machine it cannot read', () => {
+    const shown = library.show('deploy-check', undefined, outside, true, T0) as Record<string, unknown>;
+    expect(shown).toMatchObject({ name: 'deploy-check', file: 'SKILL.md', files: ['scripts/check.sh'] });
+    expect(String(shown.content)).toContain('依次检查健康接口');
+    expect(shown).not.toHaveProperty('path');
   });
 
   it('answers "unchanged" for a version this conversation read, until --again, /new or a change', () => {

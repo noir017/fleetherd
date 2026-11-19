@@ -93,13 +93,15 @@ export class ExternalCalls {
 
   /**
    * `skills search` / `show` for a caller. The library is asked as from no host and no harness, so a
-   * skill limited to some (`fleetherd-hosts`, `fleetherd-harnesses`) does not reach it. No
-   * conversation, so `show` always answers whole: one caller has many conversations of its own, and
-   * the gateway cannot tell which one already read a skill. The search is logged like any other,
-   * under `external:<caller>`, so a miss shows up where the Reviews page counts them.
+   * skill limited to some (`fleetherd-hosts`, `fleetherd-harnesses`) does not reach it, and as an
+   * external caller, so a hit carries no path on a machine it cannot read and no note about a skill
+   * list it does not have. No conversation, so `show` always answers whole: one caller has many
+   * conversations of its own, and the gateway cannot tell which one already read a skill. The search
+   * is logged like any other, under `external:<caller>`, so a miss shows up where the Reviews page
+   * counts them.
    */
   private readSkills(caller: ExternalCaller, a: Extract<IpcAction, { kind: 'skills' }>): unknown {
-    const asker: LibraryAsker = { agent: `external:${caller.name}`, host: EXTERNAL_PLACE, harness: EXTERNAL_PLACE };
+    const asker: LibraryAsker = { agent: `external:${caller.name}`, host: EXTERNAL_PLACE, harness: EXTERNAL_PLACE, external: true };
     if (a.action === 'search') return this.deps.skills.search(a.query ?? '', asker);
     if (a.action === 'show') {
       if (!a.name) throw new Error('skills show needs a <name>');

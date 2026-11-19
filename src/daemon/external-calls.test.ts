@@ -10,6 +10,8 @@ import type { InboundMessage } from '../types.js';
 import { ExternalCalls, MAX_TOPICS_PER_CALLER, type ExternalCallsDeps } from './external-calls.js';
 import type { ExternalCaller } from './external-mcp.js';
 import { ExternalTopics } from './external-topics.js';
+import { SkillLibrary } from './skill-library.js';
+import { createSkill, setResident } from './skills-store.js';
 
 /**
  * What an external caller's calls do (external-calls.ts): its topics opened and recorded, every
@@ -27,7 +29,7 @@ const GEM: ExternalCaller = { name: 'gem', tools: ['skills', 'tasks'] };
 const OTHER: ExternalCaller = { name: 'other', tools: ['tasks'] };
 const keyOf = (a: ConversationAddress): string => `web#${a.channel}#${a.thread ?? ''}`;
 
-function rig() {
+function rig(skills?: ExternalCallsDeps['skills']) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fleetherd-external-'));
   dirs.push(dir);
   const file = path.join(dir, 'external-topics.json');
@@ -77,7 +79,7 @@ function rig() {
         return 2;
       },
     },
-    skills: {
+    skills: skills ?? {
       search: (query, asker) => {
         searched.push({ query, asker });
         return { query, results: [] };
@@ -174,13 +176,28 @@ describe('ExternalCalls: ownership', () => {
 });
 
 describe('ExternalCalls: skills', () => {
-  it('asks the library as from no host and no harness, logged under the caller', async () => {
+  it('asks the library as from no host and no harness, and as a caller outside it', async () => {
     const r = rig();
     await r.calls.call(GEM, { kind: 'skills', action: { kind: 'skills', action: 'search', query: 'deploy' } });
-    expect(r.searched).toEqual([{ query: 'deploy', asker: { agent: 'external:gem', host: 'external', harness: 'external' } }]);
+    expect(r.searched).toEqual([
+      { query: 'deploy', asker: { agent: 'external:gem', host: 'external', harness: 'external', external: true } },
+    ]);
     await expect(r.calls.call(GEM, { kind: 'skills', action: { kind: 'skills', action: 'archive', name: 'x' } })).rejects.toThrow(
       /only search and show/
     );
+  });
+
+  it('answers a search with no path and no resident note, and points at show', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fleetherd-external-skills-'));
+    dirs.push(dir);
+    createSkill({ name: 'server-ops', description: 'Use when operating a fleet server over SSH', body: 'x', now: 0 }, dir);
+    setResident('server-ops', true, dir, 0);
+    const r = rig(new SkillLibrary(() => dir));
+    const out = JSON.parse(
+      await r.calls.call(GEM, { kind: 'skills', action: { kind: 'skills', action: 'search', query: 'fleet server' } })
+    ) as { data: { results: Array<Record<string, unknown>>; help?: string } };
+    expect(out.data.results[0]).toEqual({ name: 'server-ops', description: 'Use when operating a fleet server over SSH', resident: true });
+    expect(out.data.help).toMatch(/skills show <name>/);
   });
 });
 
