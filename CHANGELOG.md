@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.15.0] - 2026-11-19
+
 ### Added
 
 - **Callers from outside: an MCP entrance for web agents.** A web agent — Gemini's, reached
