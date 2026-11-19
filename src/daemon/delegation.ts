@@ -954,7 +954,7 @@ export class Delegation {
     if (!history.sessionOf(c.key)) {
       return { topic: a.topic, messages: [], note: 'nothing has been recorded in this topic yet — no turn has run there' };
     }
-    if (a.reply) return this.replyOfTurn(c, a.topic, history);
+    if (a.reply) return this.replyOfTurn(c, a.topic, history, this.externalOf(here) !== undefined);
     const current = this.deps.currentContext;
     const result = history.read(c.key, taskReadOptions(a, current));
     const { cap, total } = readCuts(a);
@@ -1004,16 +1004,18 @@ export class Delegation {
   private replyOfTurn(
     c: Place,
     topic: string,
-    history: Pick<HistoryStore, 'read' | 'turnRecord' | 'sessionOf'>
+    history: Pick<HistoryStore, 'read' | 'turnRecord' | 'sessionOf'>,
+    external = false
   ): TaskReadResult {
     const record = history.turnRecord(c.key, 'done', this.deps.currentContext);
     if (!record) {
       return {
         topic,
         messages: [],
-        note:
-          'no turn in this topic has ended normally in the current generation yet — nothing to reply with; ' +
-          '--turn last is not scoped to the generation, so after /new it may show the turn before the reset',
+        note: external
+          ? 'no turn in this topic has ended normally yet — nothing to reply with; status shows where it is, and read reply: true again once it has answered'
+          : 'no turn in this topic has ended normally in the current generation yet — nothing to reply with; ' +
+            '--turn last is not scoped to the generation, so after /new it may show the turn before the reset',
       };
     }
     const read = history.read(c.key, { turn: String(record.turn), role: 'agent' });
@@ -1211,7 +1213,11 @@ export class Delegation {
     }
     const parent = address ? here.adapter.parentOf?.(address) : undefined;
     if (!address || !parent || parent.channel !== here.address.channel || parent.thread !== here.address.thread) {
-      throw new Error(`"${topic}" is not a topic this conversation opened; \`fleetherd tasks\` lists the ones it did`);
+      throw new Error(
+        this.externalOf(here)
+          ? `"${topic}" is not a sub-task under a topic you opened; list without a topic shows yours`
+          : `"${topic}" is not a topic this conversation opened; \`fleetherd tasks\` lists the ones it did`
+      );
     }
     const conv = this.deps.registry.conversationAt(here.platformId, address);
     if (!conv?.agent) throw new Error(`nothing has happened in "${topic}" yet`);

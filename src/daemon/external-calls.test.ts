@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { decode } from '@toon-format/toon';
 import { parseConfig } from '../config/schema.js';
 import type { ConversationAddress } from '../core/conversation.js';
+import type { TaskListResult } from '../ipc/protocol.js';
 import type { PlatformAdapter } from '../platform/adapter.js';
 import type { InboundMessage } from '../types.js';
 import { ExternalCalls, MAX_TOPICS_PER_CALLER, type ExternalCallsDeps } from './external-calls.js';
@@ -29,7 +30,7 @@ const GEM: ExternalCaller = { name: 'gem', tools: ['skills', 'tasks'] };
 const OTHER: ExternalCaller = { name: 'other', tools: ['tasks'] };
 const keyOf = (a: ConversationAddress): string => `web#${a.channel}#${a.thread ?? ''}`;
 
-function rig(skills?: ExternalCallsDeps['skills']) {
+function rig(opts: { skills?: ExternalCallsDeps['skills']; taskList?: TaskListResult } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fleetherd-external-'));
   dirs.push(dir);
   const file = path.join(dir, 'external-topics.json');
@@ -71,7 +72,9 @@ function rig(skills?: ExternalCallsDeps['skills']) {
     delegation: {
       handleExternal: async (key, action) => {
         handled.push({ key, kind: action.kind });
-        return action.kind === 'task-list' ? { tasks: [{ stage: 'working' }, { stage: 'review' }], total: 2 } : { ok: true };
+        return action.kind === 'task-list'
+          ? (opts.taskList ?? { tasks: [{ stage: 'working' }, { stage: 'review' }], total: 2 })
+          : { ok: true };
       },
       externalAgents: () => ({ agents: [] }),
       stopOpened: (key) => {
@@ -79,7 +82,7 @@ function rig(skills?: ExternalCallsDeps['skills']) {
         return 2;
       },
     },
-    skills: skills ?? {
+    skills: opts.skills ?? {
       search: (query, asker) => {
         searched.push({ query, asker });
         return { query, results: [] };
@@ -192,12 +195,24 @@ describe('ExternalCalls: skills', () => {
     dirs.push(dir);
     createSkill({ name: 'server-ops', description: 'Use when operating a fleet server over SSH', body: 'x', now: 0 }, dir);
     setResident('server-ops', true, dir, 0);
-    const r = rig(new SkillLibrary(() => dir));
+    const r = rig({ skills: new SkillLibrary(() => dir) });
     const out = JSON.parse(
       await r.calls.call(GEM, { kind: 'skills', action: { kind: 'skills', action: 'search', query: 'fleet server' } })
     ) as { data: { results: Array<Record<string, unknown>>; help?: string } };
     expect(out.data.results[0]).toEqual({ name: 'server-ops', description: 'Use when operating a fleet server over SSH', resident: true });
     expect(out.data.help).toMatch(/skills show <name>/);
+  });
+});
+
+describe('ExternalCalls: tasks list', () => {
+  it('answers an empty list in words a caller has, not a conversation it never had', async () => {
+    const r = rig({ taskList: { tasks: [], total: 0 } });
+    const topic = await open(r);
+    const out = decode(await r.calls.call(GEM, { kind: 'task', in: topic, action: { kind: 'task-list' } })) as {
+      count: number;
+      note: string;
+    };
+    expect(out).toEqual({ count: 0, note: 'this topic has no sub-tasks yet; propose one with action new' });
   });
 });
 

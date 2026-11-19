@@ -69,7 +69,20 @@ export class ExternalCalls {
       case 'task': {
         if (action.action.kind === 'task-agents') return agentsText(this.deps.delegation.externalAgents());
         const key = action.in !== undefined ? this.owned(caller, action.in) : this.parentOwned(caller, subTopicOf(action.action));
-        return this.deps.render(action.action, await this.deps.delegation.handleExternal(key, action.action));
+        const result = await this.deps.delegation.handleExternal(key, action.action);
+        // The CLI's printer says "this conversation has opened no sub-agent topics", and a caller
+        // has no conversation (agentsText is the same split for `task-agents`).
+        if (action.action.kind === 'task-list' && (result as TaskListResult).tasks.length === 0) {
+          const total = (result as TaskListResult).total;
+          return encode({
+            count: 0,
+            note:
+              total > 0
+                ? `${total} sub-task${total === 1 ? '' : 's'} in this topic; raise limit to list them`
+                : 'this topic has no sub-tasks yet; propose one with action new',
+          });
+        }
+        return this.deps.render(action.action, result);
       }
       default: {
         const _exhaustive: never = action;

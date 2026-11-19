@@ -2136,6 +2136,20 @@ describe('Delegation: a coordination topic an external caller opened', () => {
     expect(list.tasks.map((t) => [t.topic, t.stage])).toEqual([['web:main/c1000000', 'review']]);
   });
 
+  it('says in a caller\'s own terms when a sub-task has no reply yet', async () => {
+    const r = external();
+    await r.d.handleExternal(E, task('cc', 'Book the hotel'));
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    await settle();
+    seedTurn(r.history, C, [{ role: 'user', text: 'go' }], 'running');
+    const read = (await r.d.handleExternal(E, { kind: 'task-read', topic: 'c1000000', reply: true })) as TaskReadResult;
+    expect(read.reply).toBeUndefined();
+    expect(read.note).toMatch(/no turn in this topic has ended normally yet/);
+    expect(read.note).toMatch(/status shows where it is/);
+    expect(read.note).not.toMatch(/--turn last|\/new|current generation/);
+  });
+
   it('lists the agents as from no machine of the gateway', async () => {
     const r = external();
     const res = (await r.d.handleExternal(E, { kind: 'task-agents' })) as TaskAgentsResult;
@@ -2150,7 +2164,9 @@ describe('Delegation: a coordination topic an external caller opened', () => {
     await settle();
     await settle();
     r.busy.add(C);
-    await expect(r.d.handleExternal(E, { kind: 'task-status', topic: 'web:main/c9999999' })).rejects.toThrow(/not a topic this conversation opened/);
+    await expect(r.d.handleExternal(E, { kind: 'task-status', topic: 'web:main/c9999999' })).rejects.toThrow(
+      /not a sub-task under a topic you opened/
+    );
     const stopped = (await r.d.handleExternal(E, { kind: 'task-stop', topic: 'c1000000' })) as TaskActionResult;
     expect(stopped.result).toMatch(/^Stopped\./);
     expect(r.posted.find((p) => p.to === C && p.text.startsWith('⏹'))?.text).toBe('⏹ Stopped by gem (external) in [Trip](?t=eeeeeeee).');

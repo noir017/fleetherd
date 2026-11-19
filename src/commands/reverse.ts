@@ -535,10 +535,10 @@ function renderSkills(action: Extract<IpcAction, { kind: 'skills' }>, data: unkn
   return action.action === 'show' ? renderSkillFile(data) : toon(data ?? {});
 }
 
-/** `skills show`: metadata a `patch` needs, then the file itself, verbatim. */
+/** `skills show`: metadata a `patch` needs, the skill's other files, then the file itself, verbatim. */
 function renderSkillFile(data: unknown): string {
   const shown = data as
-    | { name?: string; file?: string; version?: string; status?: string; content?: string }
+    | { name?: string; file?: string; version?: string; status?: string; content?: string; files?: string[] }
     | undefined;
   if (!shown) return toon({ ok: true });
   return [
@@ -546,6 +546,8 @@ function renderSkillFile(data: unknown): string {
     `file: ${shown.file ?? 'SKILL.md'}`,
     `version: ${shown.version ?? ''}`,
     `status: ${shown.status ?? ''}`,
+    // The skill's other files, which `file` reads one of. Absent for a read of one of them.
+    ...(shown.files?.length ? [`files: ${shown.files.join(', ')}`] : []),
     '',
     shown.content ?? '',
   ].join('\n');

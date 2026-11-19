@@ -62,6 +62,29 @@ describe('sessions read output', () => {
   });
 });
 
+describe('skills show output', () => {
+  const show = (data: Record<string, unknown>): string =>
+    renderResult({ kind: 'skills', action: 'show', name: 'deploy-check' }, data).stdout;
+
+  it('prints the skill\'s other files, which show --file reads one of', () => {
+    const out = show({
+      name: 'deploy-check',
+      file: 'SKILL.md',
+      version: 'abc',
+      status: 'active',
+      content: 'body',
+      files: ['scripts/check.sh', 'references/more.md'],
+    });
+    expect(out).toMatch(/^files: scripts\/check\.sh, references\/more\.md$/m);
+    expect(out).toContain('\n\nbody');
+  });
+
+  it('prints no files line when there are none, or when one of them is what was read', () => {
+    expect(show({ name: 'x', file: 'SKILL.md', content: 'b' })).not.toMatch(/^files:/m);
+    expect(show({ name: 'x', file: 'references/a.md', content: 'b' })).not.toMatch(/^files:/m);
+  });
+});
+
 describe('task-read output', () => {
   const at = '2026-11-05T00:00:00.000Z';
   const taskRead = (data: TaskReadResult, action: Record<string, unknown> = {}): string =>
