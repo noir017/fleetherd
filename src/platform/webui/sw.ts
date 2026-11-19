@@ -7,8 +7,9 @@
  * The web UI README's rule against a service worker was about exactly that: a worker that caches
  * the app shell serves last week's page after an upgrade, with no error to say so. This one cannot,
  * because every request the page makes still goes to the network as if it did not exist. What it
- * writes is a transcript, into the store the page itself writes them to, in the record format both
- * take from `cache-script.ts`.
+ * writes is a transcript, into the store the page itself writes them to, in the record format and
+ * under the write rule both take from `cache-script.ts` — so a push that lands after the page kept a
+ * newer copy of the topic cannot put an older one over it.
  *
  * Plain ES5-ish JavaScript like the page's own script, kept as a string so it ships inside the
  * package with no build step and no file to locate at runtime.
@@ -21,7 +22,7 @@ ${CACHE_CORE}
 /**
  * Fetch the topic a push is about into the cache, so the page that opens it — from the
  * notification, or the person coming back to it — paints the reply at once and resumes the stream
- * from there (page.ts enterFromCache).
+ * from there (page.ts enter).
  *
  * This is the case the page cannot cover by itself: it fetches only while it is on screen, and on a
  * phone the page is in the background, or not running at all, exactly when a push arrives. A page
@@ -37,24 +38,23 @@ function keepTopic(topic){
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (d) {
         if (!d || d.topic !== topic || !d.epoch) return null;
-        var rec = cacheRecord(topic, snapshotMsgs(d), { epoch: d.epoch, last: d.last, stale: Boolean(d.stale), lastAt: d.lastAt });
+        var rec = cacheRecord(topic, snapshotMsgs(d), { epoch: d.epoch, last: d.last, stale: Boolean(d.stale) });
         return cacheOpen(self.indexedDB).then(function (o) {
           if (!o.db) return null;
           return new Promise(function (res) {
-            var tx;
+            var tx, put;
             try { tx = o.db.transaction(STORE, 'readwrite'); } catch (x) { o.db.close(); return res(null); }
-            var store = tx.objectStore(STORE);
-            store.put(rec);
-            cacheEvict(store, topic, false);
-            tx.oncomplete = function () { o.db.close(); res(rec); };
+            put = cachePut(tx.objectStore(STORE), rec);
+            tx.oncomplete = function () { o.db.close(); res(put.stood ? null : rec); };
             tx.onabort = tx.onerror = function () { o.db.close(); res(null); };
           });
         });
       })
       .then(function (rec) {
         if (!rec) return;
-        // A page that is open but hidden would otherwise read the record again, or fetch it.
-        var kept = { topic: rec.topic, epoch: rec.epoch, lastAt: rec.lastAt || 0, last: rec.last || '' };
+        // What the store now holds of the topic, for a page that is open but hidden: it would
+        // otherwise go on putting up the older copy it has in memory, or fetch this one again.
+        var kept = { topic: rec.topic, epoch: rec.epoch, last: rec.last || '' };
         for (var j = 0; j < list.length; j++) list[j].postMessage({ cached: kept });
       });
   }).catch(function () {});
