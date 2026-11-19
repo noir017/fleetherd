@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { AgentDefSchema, PodAgentSchema, podAgentId, type PodAgent } from './schema.js';
-import { instructionClashes } from './instructions.js';
+import { instructionClashes, instructionsHome } from './instructions.js';
 
 /**
  * What each host's pod declared, as the gateway last read it — `<config dir>/pods.json`, written by
@@ -77,10 +77,10 @@ export function writePods(dir: string, state: PodsState): void {
  * and saves every reader of the merged config from having to strip `@host` itself.
  *
  * An agent whose file another agent on that machine already delivers keeps its place in the list —
- * routing and conversations treat it like any other — but its `instructions` becomes `false`, the
- * gateway's own marker for "do not deliver" (offInstructionClashes below). A host must not be able
- * to keep the gateway from starting, and an agent it declared must not disappear from under a
- * routing rule.
+ * routing and conversations treat it like any other — and keeps its `file` and `layer`, with
+ * `off: true` added (offInstructionClashes below): the layer stays visible in the web UI and the
+ * agent's own files stay listable, but nothing is delivered. A host must not be able to keep the
+ * gateway from starting, and an agent it declared must not disappear from under a routing rule.
  */
 export function mergePodAgents(raw: Record<string, unknown>, pods: PodsState): { raw: Record<string, unknown>; skipped: string[] } {
   const own = Array.isArray(raw.agents) ? (raw.agents as unknown[]) : [];
@@ -92,9 +92,10 @@ export function mergePodAgents(raw: Record<string, unknown>, pods: PodsState): {
   const added = declared.map(({ agent }) => {
     const model = models[agent.id];
     const level = levels[agent.id];
+    const marked = off.get(agent.id);
     return {
       ...agent,
-      ...(off.has(agent.id) ? { instructions: false as const } : {}),
+      ...(marked ? { instructions: marked } : {}),
       ...(model !== undefined ? { model } : {}),
       ...(level !== undefined ? { permissions: level } : {}),
     };
@@ -125,8 +126,9 @@ type DeclaredAgent = { agent: PodAgent & { id: string; host: string }; model: st
 /**
  * The pod agents whose instruction file another agent on the same machine already delivers, and a
  * line for each. They stay in the config — routing and conversations treat them like any other
- * agent — but `instructions: false` stops the delivery: nothing is written, and the link there is
- * left alone (config/instructions.ts instructionsHome).
+ * agent — with the same `file` and `layer` plus `off: true`, which stops the delivery: nothing is
+ * written, and the link there is left alone (config/instructions.ts instructionsOff). The layer
+ * stays in the web UI's list and the harness's own files stay openable.
  *
  * config.yaml comes first in the merged list, so `instructionClashes` keeps its agent's layer;
  * among a pod's own, the first keeps it. Nothing a pod declares may fail the gateway's config: a
@@ -137,21 +139,30 @@ type DeclaredAgent = { agent: PodAgent & { id: string; host: string }; model: st
  * The pod's own file is checked when it is read (daemon/pods.ts), so this is for what pods.json
  * already holds: an older read, or a hand edit.
  */
-function offInstructionClashes(own: unknown[], declared: DeclaredAgent[], skipped: string[]): Set<string> {
+function offInstructionClashes(
+  own: unknown[],
+  declared: DeclaredAgent[],
+  skipped: string[]
+): Map<string, { file: string; layer: string; off: true }> {
   const parsed = own.flatMap((a) => {
     const r = AgentDefSchema.safeParse(a);
     // A malformed agent fails the schema later, with its own message; it takes no part here.
     return r.success ? [r.data] : [];
   });
-  const podIds = new Set(declared.map(({ agent }) => agent.id));
-  const off = new Set<string>();
+  const byId = new Map(declared.map(({ agent }) => [agent.id, agent]));
+  const off = new Map<string, { file: string; layer: string; off: true }>();
   for (const g of instructionClashes([...parsed, ...declared.map(({ agent }) => agent)])) {
     const keep = g.members[0];
     if (!keep) continue;
     const where = g.machine ? `on host "${g.machine}"` : 'on this machine';
     for (const m of g.members) {
-      if (!podIds.has(m.id) || m.layer === keep.layer) continue;
-      off.add(m.id);
+      const agent = byId.get(m.id);
+      if (!agent || m.layer === keep.layer) continue;
+      // The placement as the agent would write it (`~/…` against its own home), so the marker keeps
+      // meaning the same file if its `env.HOME` is resolved later.
+      const at = instructionsHome(agent, '~');
+      if (!at) continue;
+      off.set(m.id, { file: at.file, layer: at.name, off: true });
       skipped.push(
         `instructions.${m.id}: "${m.id}" (layer "${m.layer}") and "${keep.id}" (layer "${keep.layer}") ` +
           `both deliver ${g.file} ${where}; "${keep.id}" keeps it, so nothing is delivered to "${m.id}"`

@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { AgentDef, Config, HostDef } from '../config/schema.js';
 import { configDir } from '../config/load.js';
-import { instructionsHome } from '../config/instructions.js';
+import { instructionsHome, instructionsOff } from '../config/instructions.js';
 import { commandHint, isBridgedCommand } from '../ipc/commands.js';
 import { packageVersion, remoteBinary, sshTransport } from '../remote/binaries.js';
 import type { Welcome } from '../remote/connection.js';
@@ -294,6 +294,9 @@ export class RemoteHosts {
    */
   async placeInstructions(host: RemoteHost, def: AgentDef, home: string, w: Welcome): Promise<InstructionsResult | undefined> {
     if (envOf('NO_SKILL_LINK')) return undefined;
+    // The merge turned delivery off for this agent (config/pods.ts): its file and any link there
+    // are left exactly as they are.
+    if (instructionsOff(def)) return undefined;
     const where = instructionsHome(def, home);
     if (!where) return undefined;
     const key = `${host.id}@${w.instance}@${where.file}`;

@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mergePodAgents, podAgentModels, readPods, writePods, type PodsState } from './pods.js';
-import { instructionsHome } from './instructions.js';
+import { instructionsHome, instructionsOff } from './instructions.js';
 import { loadConfig, readConfig } from './load.js';
 import { ConfigSchema, PodFileSchema } from './schema.js';
 
@@ -97,7 +97,10 @@ describe('mergePodAgents', () => {
     });
     expect(out.agents).toEqual([
       expect.objectContaining({ id: 'cc' }),
-      expect.objectContaining({ id: 'mh@box', instructions: false }),
+      expect.objectContaining({
+        id: 'mh@box',
+        instructions: { file: '~/.claude/CLAUDE.md', layer: 'mh', off: true },
+      }),
     ]);
     expect(skipped).toEqual([
       'instructions.mh@box: "mh@box" (layer "mh") and "cc" (layer "claude") both deliver ~/.claude/CLAUDE.md on host "box"; "cc" keeps it, so nothing is delivered to "mh@box"',
@@ -149,8 +152,12 @@ describe('agents[].instructions', () => {
     expect(parsed({ file: '~/.my-harness/AGENTS.md' }, 'a/b').success).toBe(false);
   });
 
-  it('keeps instructions: false out of pod.yaml: the gateway sets it, a pod does not', () => {
-    expect(PodFileSchema.safeParse({ agents: [{ id: 'a', harness: 'claude', instructions: false }] }).success).toBe(false);
+  it('keeps the merge’s off marker out of pod.yaml: the gateway sets it, a pod does not', () => {
+    expect(
+      PodFileSchema.safeParse({
+        agents: [{ id: 'a', harness: 'claude', instructions: { file: '~/.claude/CLAUDE.md', layer: 'a', off: true } }],
+      }).success
+    ).toBe(false);
   });
 });
 
@@ -302,8 +309,10 @@ routing:
       const { config } = readConfig();
       expect(config.agents.map((a) => a.id)).toEqual(['a@box', 'b@box']);
       const b = config.agents.find((a) => a.id === 'b@box')!;
-      expect(b.instructions).toBe(false);
-      expect(instructionsHome(b, '~')).toBeUndefined();
+      expect(b.instructions).toEqual({ file: '~/.my-harness/AGENTS.md', layer: 'b', off: true });
+      expect(instructionsOff(b)).toBe(true);
+      // Its placement is still known, so the editor keeps listing the layer.
+      expect(instructionsHome(b, '~')).toMatchObject({ name: 'b', file: '~/.my-harness/AGENTS.md' });
       expect(loadConfig().agents.map((a) => a.id)).toEqual(['a@box', 'b@box']);
       expect(warn).toHaveBeenCalledWith(expect.stringContaining('nothing is delivered to "b@box"'));
     } finally {
@@ -328,7 +337,7 @@ routing:
     expect(readPods(dir)).toEqual({});
   });
 
-  it('refuses instructions: false in config.yaml: the merge sets it, not the file', () => {
+  it('refuses the merge’s off marker in config.yaml: the merge sets it, not the file', () => {
     fs.writeFileSync(
       path.join(dir, 'config.yaml'),
       `platforms:
@@ -336,11 +345,11 @@ routing:
 agents:
   - id: cc
     harness: claude
-    instructions: false
+    instructions: { file: '~/.claude/CLAUDE.md', layer: cc, off: true }
 routing:
   default: cc
 `
     );
-    expect(() => readConfig()).toThrow(/agents\.0\.instructions: false is not a setting/);
+    expect(() => readConfig()).toThrow(/agents\.0\.instructions\.off: this is not a setting/);
   });
 });

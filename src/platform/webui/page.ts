@@ -12228,25 +12228,25 @@ const SCRIPT = `
     var id = String(r.target || r.label), d = instrData, h = '<div class="ag-field ag-instr"><span class="ag-lab">Instructions</span><div class="ag-val">';
     if(!d) return h + '<span class="ag-wait">Loading…</span></div></div>';
     if(d.error) return h + '<span class="ag-err">' + text(d.error) + '</span></div></div>';
-    var row = instrAgentIn(d, id), g = instrSharedIn(d, id), own = instrOwnIn(d, id), n = 0;
-    if(row && row.notDelivered) return h + '<span class="ag-none">Not delivering: its instruction file is already delivered to another agent on the same machine with a different layer.</span></div></div>';
-    if(!g.length && !own) return h + '<span class="ag-none">Its harness reads no instruction file the gateway knows of.</span></div></div>';
-    h += '<div class="ag-files">';
+    var row = instrAgentIn(d, id), g = instrSharedIn(d, id), own = instrOwnIn(d, id), off = Boolean(row && row.notDelivered), n = 0;
+    if(!g.length && !own && !off) return h + '<span class="ag-none">Its harness reads no instruction file the gateway knows of.</span></div></div>';
+    if(off) h += '<span class="ag-none">Not delivering: its instruction file is already delivered to another agent on the same machine with a different layer.</span>';
+    var files = '';
     for(var k=0;k<g.length;k++){
-      h += '<button type="button" class="ag-file" data-fk="r' + i + 'i' + (n++) + '" data-instr-agent="' + text(id) + '" data-instr-file="' + text('g:' + g[k].name) + '"'
+      files += '<button type="button" class="ag-file" data-fk="r' + i + 'i' + (n++) + '" data-instr-agent="' + text(id) + '" data-instr-file="' + text('g:' + g[k].name) + '"'
         + ' aria-label="' + text(r.label + ' · ' + g[k].name) + '" title="' + text((g[k].agents || []).join(', ')) + '">'
         + '<span class="ag-fname">' + text(g[k].name) + '</span>'
         + '<span class="ag-fsub">' + text(instrShared(g[k])) + (g[k].exists ? '' : '<span class="fx-tag">not written</span>') + '</span>'
         + '<span class="set-chev" aria-hidden="true">' + IC.icon.chevronRight + '</span></button>';
     }
     if(own){
-      h += '<button type="button" class="ag-file" data-fk="r' + i + 'i' + (n++) + '" data-instr-agent="' + text(id) + '"'
+      files += '<button type="button" class="ag-file" data-fk="r' + i + 'i' + (n++) + '" data-instr-agent="' + text(id) + '"'
         + ' aria-label="' + text(r.label + ' · its own files') + '">'
         + '<span class="ag-fname own">Its own files</span>'
         + '<span class="ag-fsub">' + inl(own.own) + ' · ' + text(instrHost(own.host)) + '</span>'
         + '<span class="set-chev" aria-hidden="true">' + IC.icon.chevronRight + '</span></button>';
     }
-    return h + '</div></div></div>';
+    return h + (files ? '<div class="ag-files">' + files + '</div>' : '') + '</div></div>';
   }
 
   /** Open the file window on one agent's instruction files, and on one of them when file is given. */
@@ -12409,6 +12409,7 @@ const SCRIPT = `
       else if(d.outcome === 'occupied') other.push(who + ': ' + (d.link || 'its file') + ' is ' + (d.detail || 'its own') + ', left alone, so these do not reach it.');
       else if(d.outcome === 'skipped') other.push(who + ': its harness has not run there yet, so nothing was placed.');
       else if(d.outcome === 'unreachable') other.push(d.host + ' did not answer; it gets this when an agent next starts there.');
+      else if(d.outcome === 'not-delivered') other.push(who + ': its delivery is off — its file is already delivered to another agent there, so nothing was placed.');
       else if(d.outcome === 'off') other.push(who + ': this gateway places no instructions, so nothing was placed now.');
       else other.push(who + ': ' + d.outcome + (d.detail ? ' (' + d.detail + ')' : '') + '.');
     }

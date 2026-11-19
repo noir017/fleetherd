@@ -90,10 +90,24 @@ describe('the list', () => {
     expect(list.global.find((g) => g.name === 'agy.md')).toMatchObject({ exists: true, size: 4, agents: [] });
   });
 
-  it('marks an agent whose delivery the merge turned off, and lists it under no layer', async () => {
-    const withOff = [...agents, def('cx2', 'codex', { instructions: false })];
+  it('keeps the layer of an agent whose delivery is off, without counting it as a reader', async () => {
+    fs.mkdirSync(gateway, { recursive: true });
+    fs.writeFileSync(path.join(gateway, 'cx2.md'), 'mine\n');
+    const withOff = [
+      ...agents,
+      def('cx2', 'codex', { instructions: { file: '~/.codex/AGENTS.md', layer: 'cx2', off: true } }),
+    ];
     const list = await panel({ agents: () => withOff }).list();
-    expect(list.agents.find((a) => a.id === 'cx2')).toEqual({ id: 'cx2', harness: 'codex', host: 'local', notDelivered: true });
+    expect(list.agents.find((a) => a.id === 'cx2')).toEqual({
+      id: 'cx2',
+      harness: 'codex',
+      host: 'local',
+      file: '~/.codex/AGENTS.md',
+      own: expect.stringContaining('AGENTS.override.md'),
+      notDelivered: true,
+    });
+    // The layer stays listed (and editable); the agent is not one of its readers.
+    expect(list.global.find((g) => g.name === 'cx2.md')).toMatchObject({ exists: true, agents: [] });
     expect(list.global.find((g) => g.name === 'codex.md')?.agents).toEqual(['cx']);
     expect(list.global.find((g) => g.name === 'common.md')?.agents).toEqual(['cc', 'cx', 'cc-r']);
   });
@@ -404,5 +418,15 @@ describe('deliverInstructions', () => {
       remote: async () => undefined,
     });
     expect(out).toEqual([{ host: 'local', agents: ['cc'], outcome: 'off' }]);
+  });
+
+  it('reports an agent whose delivery is off as not delivered, and places nothing for it', async () => {
+    const off = def('cc', 'claude', { instructions: { file: '~/.claude/CLAUDE.md', layer: 'cc', off: true } });
+    const local = vi.fn(() => ({ link: '/h/.claude/CLAUDE.md', outcome: 'linked' as const }));
+    const remote = vi.fn(async () => undefined);
+    const out = await deliverInstructions({ agents: [off], layers: new Set(['cc']), local, remote });
+    expect(out).toEqual([{ host: 'local', agents: ['cc'], outcome: 'not-delivered' }]);
+    expect(local).not.toHaveBeenCalled();
+    expect(remote).not.toHaveBeenCalled();
   });
 });

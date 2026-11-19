@@ -209,9 +209,9 @@ happens in. Two constraints from that path land here:
   share a layer (`instructions.ts` `instructionClashes`). Different layers would repoint the same
   link at every start — the later write wins silently, and one agent reads the other's text. The
   preset defaults count too, so a `claude` agent with no `instructions` block is in the check. A
-  pod's agents do not: `pods.ts` turns a conflicting pod agent's delivery off (`instructions: false`;
-  the agent itself stays), and daemon/pods.ts refuses a `pod.yaml` whose own agents clash — a host
-  must never fail this config.
+  pod's agents do not: `pods.ts` turns a conflicting pod agent's delivery off (it keeps its `file`
+  and `layer`, and gains `off: true`; the agent itself stays), and daemon/pods.ts refuses a
+  `pod.yaml` whose own agents clash — a host must never fail this config.
 
 Without these, a typo surfaces much later as an obscure runtime error in whichever code
 path first touches that id. Add new cross-field rules here, in `superRefine` — zod's

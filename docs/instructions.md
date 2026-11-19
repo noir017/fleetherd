@@ -49,6 +49,9 @@ Two agents on one machine may share a file only if they share a layer: the link 
 `<layer>.md`, so with two layers the file would take turns belonging to each of them and one agent
 would read the other's text. Two ordinary `claude` agents are the case this allows — they share
 `claude.md`. `common` is not a layer an agent can name, in any case: every agent already gets it.
+Paths are compared as written, after `~` is resolved and `..` collapsed — not as files: a path that
+reaches the same file through a symbolic link is not recognised as the same one, so keep both
+agents' paths spelled the same way.
 
 A clash between two of config.yaml's own agents is refused when the file is loaded (and by
 `/reload`, which then keeps the old config running), naming both agents, the file and their layers.
@@ -105,6 +108,11 @@ since you opened it. There is no list of the gateway's files apart from the agen
 on every card, and the agent's layer file — `claude.md`, or the layer its `instructions` names (its
 id by default) — on every card that reads it, each marked with how many agents read it, because
 that is who an edit reaches.
+
+An agent whose delivery is off — a pod's agent whose file another agent on that machine already
+delivers with a different layer — says **Not delivering** on its card instead of listing that file
+among the ones it gets. Its layer file stays in the list and editable, and **Its own files** still
+opens, so the clash can be fixed from the page.
 
 ```yaml
 platforms:

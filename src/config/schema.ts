@@ -98,15 +98,28 @@ const InstructionsObjectSchema = z
   .strict();
 
 /**
- * `agents[].instructions`, or the merge's `false`.
+ * The merge's marker: where the file is, which layer it would get, and `off: true` — nothing is
+ * delivered and the link there is left alone. config/pods.ts sets it on a pod agent whose file
+ * another agent on that machine already delivers with a different layer.
  *
- * `false` is not something either file writes: config/pods.ts sets it on a pod agent whose file
- * another agent on that machine already delivers with a different layer, so nothing is placed for
- * it and the link there is left alone. `instructionsHome` reads it as "no delivery". A `pod.yaml`
- * cannot express it (PodAgentSchema keeps the object form), and config.yaml's own agents are
- * refused it at load (config/load.ts) — the marker is the merge's alone.
+ * `file` and `layer` are kept, not dropped: the layer stays visible and editable in the web UI, and
+ * the harness's own files can still be listed for that agent. Delivery (config/instructions.ts
+ * instructionsOff) is the only thing the marker stops.
  */
-const InstructionsSchema = z.union([InstructionsObjectSchema, z.literal(false)]).optional();
+const InstructionsOffSchema = z
+  .object({
+    file: InstructionFileSchema,
+    layer: InstructionLayerSchema,
+    off: z.literal(true),
+  })
+  .strict();
+
+/**
+ * `agents[].instructions`. The `off` form is not something either file writes: a `pod.yaml` cannot
+ * express it (PodAgentSchema keeps the plain object form), and config.yaml's own agents are refused
+ * it at load (config/load.ts) — the marker is the merge's alone.
+ */
+const InstructionsSchema = z.union([InstructionsOffSchema, InstructionsObjectSchema]).optional();
 
 /**
  * A single agent definition. harness is a preset (claude/gemini/codex/opencode/dsh/agy); with custom,
@@ -139,7 +152,7 @@ const AgentDefFields = z
      * without the `@host` the gateway adds). Delivery rules are unchanged: nothing is placed unless
      * the file's directory exists, and a real file there is left alone.
      *
-     * The schema also carries the merge's `false` (InstructionsSchema); no file writes it.
+     * The schema also carries the merge's `off` form (InstructionsSchema); no file writes it.
      */
     instructions: InstructionsSchema,
     /**
@@ -288,7 +301,7 @@ function agentRules<
     command?: string;
     contextBudget?: number;
     gatewayModels?: string[];
-    instructions?: { file: string; layer?: string } | false;
+    instructions?: { file: string; layer?: string; off?: true };
   },
   I
 >(schema: z.ZodType<O, z.ZodTypeDef, I>) {
@@ -330,7 +343,7 @@ export const POD_AGENT_ID = /^[a-z0-9][a-z0-9_-]{0,31}$/i;
 export const PodAgentSchema = agentRules(
   AgentDefFields.omit({ host: true }).extend({
     id: z.string().regex(POD_AGENT_ID, 'id must be 1-32 chars of letters/digits/_/- and start alphanumeric (the gateway adds @<host>)'),
-    // The object form only: `instructions: false` is the gateway's own marker for "this pod agent's
+    // The plain object form only: `off: true` is the gateway's own marker for "this pod agent's
     // file is already delivered to another agent here", and a pod does not get to say it.
     instructions: InstructionsObjectSchema.optional(),
     env: z

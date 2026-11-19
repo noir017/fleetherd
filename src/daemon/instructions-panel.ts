@@ -20,7 +20,7 @@ import type {
 import { buildHarnessEnv, remoteAgentHome } from './agent-common.js';
 import { MAX_EDIT_BYTES, readForEditor } from './file-panel.js';
 import { globBase, globRegex, harnessSources, hasGlob, type HarnessSources } from './instruction-imports.js';
-import { HARNESS_LAYERS, instructionsHome } from '../config/instructions.js';
+import { HARNESS_LAYERS, instructionsHome, instructionsOff } from '../config/instructions.js';
 import {
   INSTRUCTIONS_MAX_BYTES,
   instructionsDir,
@@ -140,7 +140,11 @@ async function listAll(env: Env): Promise<InstructionsPanelList> {
     // `~` as the home: the page shows where the file is on that machine, not this one's path to it.
     const where = instructionsHome(def, '~');
     const own = harnessSources(def, '~')?.summary;
-    if (where) {
+    const off = instructionsOff(def);
+    // An agent whose delivery is off (config/pods.ts) does not read the gateway's file — it must
+    // not be counted under the layer another agent owns — but its layer stays in the list below and
+    // its own files stay openable, so the file can still be edited.
+    if (where && !off) {
       readers.set(where.name, [...(readers.get(where.name) ?? []), def.id]);
       everyone.push(def.id);
     }
@@ -150,9 +154,7 @@ async function listAll(env: Env): Promise<InstructionsPanelList> {
       host: def.host ?? 'local',
       ...(where ? { file: where.file.split(path.sep).join('/') } : {}),
       ...(own ? { own } : {}),
-      // The merge turned its delivery off (config/pods.ts): it reads no file of the gateway's, and
-      // must not be listed under the layer another agent owns.
-      ...(def.instructions === false ? { notDelivered: true as const } : {}),
+      ...(off ? { notDelivered: true as const } : {}),
     };
   });
   const global: InstructionsGlobalFile[] = [];
@@ -525,7 +527,8 @@ function sha(data: Buffer): string {
  * together. The placing is instructions.ts's and remote-hosts.ts's, unchanged: the same rules about
  * what is never overwritten, the same log lines. A remote host that does not answer within
  * `timeoutMs` is reported as not reached; the next agent start there places the text, as it always
- * did.
+ * did. An agent whose delivery the merge turned off (config/pods.ts) is reported as `not-delivered`
+ * — the file is still saved, but nothing is placed for it.
  */
 export async function deliverInstructions(o: {
   agents: readonly AgentDef[];
@@ -547,12 +550,17 @@ export async function deliverInstructions(o: {
   });
   const remote = readers.filter((def) => def.host);
   for (const def of readers.filter((d) => !d.host)) {
-    add('local', def.id, o.local(def) ?? { outcome: 'off' });
+    add('local', def.id, instructionsOff(def) ? { outcome: 'not-delivered' } : (o.local(def) ?? { outcome: 'off' }));
   }
-  const settled = await Promise.allSettled(remote.map((def) => withTimeout(o.remote(def), o.timeoutMs ?? DELIVER_TIMEOUT_MS)));
+  const settled = await Promise.allSettled(
+    remote.map((def) =>
+      instructionsOff(def) ? Promise.resolve(undefined) : withTimeout(o.remote(def), o.timeoutMs ?? DELIVER_TIMEOUT_MS)
+    )
+  );
   settled.forEach((s, i) => {
     const def = remote[i] as AgentDef;
-    if (s.status === 'fulfilled') add(def.host as string, def.id, s.value ?? { outcome: 'off' });
+    if (instructionsOff(def)) add(def.host as string, def.id, { outcome: 'not-delivered' });
+    else if (s.status === 'fulfilled') add(def.host as string, def.id, s.value ?? { outcome: 'off' });
     else add(def.host as string, def.id, { outcome: 'unreachable', detail: s.reason instanceof Error ? s.reason.message : String(s.reason) });
   });
   return [...out.values()];

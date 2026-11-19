@@ -135,7 +135,7 @@ export function readConfig(): ReadConfig {
   for (const key of delta.unset) delete env[key];
   raw = expandEnvVars(raw, env);
 
-  // The agents config.yaml itself defines, before the pods' join it. `instructions: false` is the
+  // The agents config.yaml itself defines, before the pods' join it. `instructions.off` is the
   // merge's marker (config/pods.ts) and not a setting; the merged parse below cannot tell a
   // hand-written one from the merge's, so it is refused here, against the file.
   const ownAgents = Array.isArray((raw as Record<string, unknown>).agents)
@@ -149,13 +149,14 @@ export function readConfig(): ReadConfig {
   raw = pods.raw;
 
   const result = ConfigSchema.safeParse(raw);
-  const off = ownAgents.flatMap((a, i) =>
-    a && typeof a === 'object' && (a as { instructions?: unknown }).instructions === false
+  const off = ownAgents.flatMap((a, i) => {
+    const instructions = a && typeof a === 'object' ? (a as { instructions?: { off?: unknown } }).instructions : undefined;
+    return instructions && typeof instructions === 'object' && instructions.off === true
       ? [
-          `  - agents.${i}.instructions: false is not a setting; the gateway sets it on a pod agent whose file another agent already delivers`,
+          `  - agents.${i}.instructions.off: this is not a setting; the gateway sets it on a pod agent whose file another agent already delivers`,
         ]
-      : []
-  );
+      : [];
+  });
   if (!result.success || off.length > 0) {
     // Aggregate all issues into one message so the user can fix everything at once.
     const lines = result.success

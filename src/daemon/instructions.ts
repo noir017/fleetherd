@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { AgentDef } from '../config/schema.js';
 import { configDir } from '../config/load.js';
-import { instructionsHome, type InstructionsHome } from '../config/instructions.js';
+import { instructionsHome, instructionsOff, type InstructionsHome } from '../config/instructions.js';
 import { selfInvocation } from './reverse-cli-shim.js';
 import { envOf, isUnderEitherName } from '../legacy-name.js';
 
@@ -268,6 +268,9 @@ export function reportInstructions(r: InstructionsResult, where = ''): void {
 export function placeInstructions(def: AgentDef, home: string): InstructionsResult | undefined {
   if (envOf('NO_SKILL_LINK')) return undefined;
   if (!selfInvocation()) return undefined;
+  // The merge turned delivery off for this agent (config/pods.ts): its file and any link there are
+  // left exactly as they are.
+  if (instructionsOff(def)) return undefined;
   const where = instructionsHome(def, home);
   if (!where) return undefined;
   let composed: Composed;

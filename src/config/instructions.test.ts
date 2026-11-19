@@ -2,7 +2,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { instructionClashes, instructionConflictMessage, instructionsHome, type PlacedInstructionsAgent } from './instructions.js';
+import {
+  instructionClashes,
+  instructionConflictMessage,
+  instructionsHome,
+  instructionsOff,
+  type PlacedInstructionsAgent,
+} from './instructions.js';
 import { readConfig } from './load.js';
 import { ConfigSchema } from './schema.js';
 
@@ -74,13 +80,22 @@ describe('instructionsHome', () => {
         '/home/other'
       )
     ).toMatchObject({ file: '/home/other/.my-harness/AGENTS.md' });
+    // `..` in an absolute path is resolved, so two spellings of one file are one path.
+    expect(
+      instructionsHome({ id: 'mh', harness: 'custom', command: 'my-harness', instructions: { file: '/a/x/../y/F' } }, '/h')
+    ).toMatchObject({ file: '/a/y/F' });
   });
 
-  it('reads the merge’s false as "deliver nothing", for a preset file and a named one alike', () => {
-    expect(instructionsHome({ id: 'cc', harness: 'claude', instructions: false }, '/h')).toBeUndefined();
-    expect(
-      instructionsHome({ id: 'mh', harness: 'custom', command: 'my-harness', instructions: false }, '/h')
-    ).toBeUndefined();
+  it('keeps the placement of an agent whose delivery the merge turned off, and says it is off', () => {
+    const off = { file: '~/.claude/CLAUDE.md', layer: 'claude', off: true as const };
+    expect(instructionsHome({ id: 'cc', harness: 'claude', instructions: off }, '/h')).toEqual({
+      name: 'claude',
+      file: '/h/.claude/CLAUDE.md',
+      requires: '/h/.claude',
+    });
+    expect(instructionsOff({ id: 'cc', harness: 'claude', instructions: off })).toBe(true);
+    expect(instructionsOff({ id: 'cc', harness: 'claude' })).toBe(false);
+    expect(instructionsOff({ id: 'mh', harness: 'custom', command: 'my-harness', instructions: { file: '~/x' } })).toBe(false);
   });
 });
 
@@ -157,7 +172,16 @@ describe('instructionClashes', () => {
   });
 
   it('does not count an agent whose delivery was turned off: it takes no file', () => {
-    expect(conflicts([claude('cc'), claude('cc2', { instructions: false })])).toEqual([]);
+    const off = claude('cc2', { instructions: { file: '~/.claude/CLAUDE.md', layer: 'cc2', off: true } });
+    expect(conflicts([claude('cc'), off])).toEqual([]);
+  });
+
+  it('normalises .. in an absolute path, so two spellings of one file clash', () => {
+    const at = (id: string, file: string): PlacedInstructionsAgent =>
+      claude(id, { host: 'box', instructions: { file, layer: id } });
+    const [message] = conflicts([at('a', '/a/x/../y/F'), at('b', '/a/y/F')]);
+    expect(message).toContain('/a/y/F');
+    expect(message).not.toContain('..');
   });
 });
 

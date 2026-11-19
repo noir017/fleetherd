@@ -188,7 +188,12 @@ describe('placeInstructions', () => {
     try {
       fs.writeFileSync(path.join(dir, 'common.md'), 'mine\n');
       fs.mkdirSync(path.join(home, '.codex'));
-      const off = { id: 'cx', harness: 'codex', env: {}, instructions: false } as unknown as AgentDef;
+      const off = {
+        id: 'cx',
+        harness: 'codex',
+        env: {},
+        instructions: { file: '~/.codex/AGENTS.md', layer: 'cx', off: true },
+      } as unknown as AgentDef;
       expect(placeInstructions(off, home)).toBeUndefined();
       expect(fs.existsSync(codex().file)).toBe(false);
       expect(fs.existsSync(ownedDir(home))).toBe(false);
@@ -326,7 +331,12 @@ describe('RemoteHosts.placeInstructions', () => {
     const hosts = new RemoteHosts();
     const host = fakeHost();
     fs.writeFileSync(path.join(dir, 'common.md'), 'mine\n');
-    const off = { id: 'cx', harness: 'codex', env: {}, instructions: false } as unknown as AgentDef;
+    const off = {
+      id: 'cx',
+      harness: 'codex',
+      env: {},
+      instructions: { file: '~/.codex/AGENTS.md', layer: 'cx', off: true },
+    } as unknown as AgentDef;
     expect(await hosts.placeInstructions(host as unknown as RemoteHost, off, '/home/u', welcome)).toBeUndefined();
     expect(host.writeFile).not.toHaveBeenCalled();
     expect(host.ensureLink).not.toHaveBeenCalled();

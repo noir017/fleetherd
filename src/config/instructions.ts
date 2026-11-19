@@ -81,16 +81,22 @@ export interface InstructionsHome {
   requires: string;
 }
 
-/** `~/…` against the agent's home; an absolute path as written (the schema allows nothing else). */
+/** `~/…` against the agent's home; an absolute path as written, normalised (the schema allows nothing else). */
 function expandInstructionFile(file: string, home: string): string {
-  return file.startsWith('~/') ? path.join(home, file.slice(2)) : file;
+  return file.startsWith('~/') ? path.join(home, file.slice(2)) : path.normalize(file);
+}
+
+/**
+ * Whether the merge turned this agent's delivery off: its file is already delivered to another
+ * agent on the same machine with a different layer (config/pods.ts). The placement is still known —
+ * the web UI lists the layer and the harness's own files — so only delivery is skipped.
+ */
+export function instructionsOff(def: InstructionsAgent): boolean {
+  return def.instructions !== undefined && 'off' in def.instructions && def.instructions.off === true;
 }
 
 /** Where `def`'s harness reads its user-level instruction file under `home` (see the header). */
 export function instructionsHome(def: InstructionsAgent, home: string): InstructionsHome | undefined {
-  // The merge's off marker (config/pods.ts): another agent on this machine already delivers this
-  // file with its own layer, so nothing is placed and the link there is left alone.
-  if (def.instructions === false) return undefined;
   if (def.instructions) {
     const file = expandInstructionFile(def.instructions.file, home);
     return { name: def.instructions.layer ?? def.id, file, requires: path.dirname(file) };
@@ -180,6 +186,9 @@ export interface InstructionGroup {
 export function instructionClashes(agents: readonly PlacedInstructionsAgent[]): InstructionGroup[] {
   const groups = new Map<string, InstructionGroup>();
   for (const def of agents) {
+    // An agent whose delivery the merge already turned off takes no file of its own, so it neither
+    // clashes nor makes its winner clash.
+    if (instructionsOff(def)) continue;
     const machine = def.host ?? '';
     const home = instructionHomeOf(def);
     const where = instructionsHome(def, home);
