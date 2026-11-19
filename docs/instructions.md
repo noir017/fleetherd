@@ -13,7 +13,7 @@ gateway moves it.
   common.md      every agent
   claude.md      Claude Code only
   codex.md       Codex only
-  …              opencode.md, agy.md, codebuddy.md, atomcode.md
+  …              opencode.md, agy.md, codebuddy.md, atomcode.md, wad.md
 ```
 
 An agent gets `common.md` followed by its own file. Either may be missing. The per-agent file is
@@ -36,6 +36,7 @@ own user-level instruction file to it:
 | Antigravity (agy) | `~/.gemini/config/AGENTS.md` |
 | CodeBuddy Code | `~/.codebuddy/CODEBUDDY.md` |
 | AtomCode | `~/.atomcode/ATOMCODE.md` |
+| web-agent-driver (`wad`, a web agent driven in a browser) | `~/.wad/AGENTS.md` — wad puts it before a new web conversation's first message |
 
 The harness reads it the way it reads its own settings — before the conversation, with nothing
 added to your messages — and an agent you start from a terminal on that machine reads it too. A

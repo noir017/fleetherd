@@ -101,7 +101,7 @@ describe('global files', () => {
     expect(saved).toMatchObject({ ok: true, size: 19, sha256: sha('Answer in English.\n'), delivery: [{ outcome: 'linked' }] });
     expect(fs.readFileSync(path.join(gateway, 'common.md'), 'utf8')).toBe('Answer in English.\n');
     // common.md reaches every layer.
-    expect([...(delivered[0] ?? [])].sort()).toEqual(['agy', 'atomcode', 'claude', 'codebuddy', 'codex', 'opencode']);
+    expect([...(delivered[0] ?? [])].sort()).toEqual(['agy', 'atomcode', 'claude', 'codebuddy', 'codex', 'opencode', 'wad']);
     expect(lines).toEqual([`[webui] instructions: owner@web wrote gateway:${path.join(gateway, 'common.md')} (19 bytes)`]);
   });
 

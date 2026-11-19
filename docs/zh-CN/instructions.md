@@ -11,7 +11,7 @@ Claude Code、Codex、OpenCode、Antigravity、CodeBuddy 和 AtomCode，本机�
   common.md      所有智能体
   claude.md      只给 Claude Code
   codex.md       只给 Codex
-  …              opencode.md、agy.md、codebuddy.md、atomcode.md
+  …              opencode.md、agy.md、codebuddy.md、atomcode.md、wad.md
 ```
 
 每个智能体拿到的是 `common.md` 加上它自己那份，前者在前。两份都可以没有。按智能体分的那份，放只对某一种智能体
@@ -32,6 +32,7 @@ Claude Code、Codex、OpenCode、Antigravity、CodeBuddy 和 AtomCode，本机�
 | Antigravity（agy） | `~/.gemini/config/AGENTS.md` |
 | CodeBuddy Code | `~/.codebuddy/CODEBUDDY.md` |
 | AtomCode | `~/.atomcode/ATOMCODE.md` |
+| web-agent-driver（`wad`，在浏览器里驱动网页智能体） | `~/.wad/AGENTS.md`——wad 把它放在新网页对话的第一条消息前面 |
 
 智能体像读自己的设置一样读它——在对话开始之前读，你发的消息里不会多出任何东西；你在那台机器的终端里直接启动的
 智能体也读得到。项目自己的 `AGENTS.md` 照旧叠加在上面。

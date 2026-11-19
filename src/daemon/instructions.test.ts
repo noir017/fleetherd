@@ -55,7 +55,7 @@ describe('instructionsHome', () => {
     });
   });
 
-  it('knows CodeBuddy and AtomCode by their command, and guesses nothing else', () => {
+  it('knows CodeBuddy, AtomCode and wad by their command, and guesses nothing else', () => {
     expect(instructionsHome('custom', '/h', '/usr/local/bin/codebuddy')).toEqual({
       name: 'codebuddy',
       file: '/h/.codebuddy/CODEBUDDY.md',
@@ -65,6 +65,12 @@ describe('instructionsHome', () => {
       name: 'atomcode',
       file: '/h/.atomcode/ATOMCODE.md',
       requires: '/h/.atomcode',
+    });
+    // web-agent-driver: the file it prepends to a new web conversation's first message.
+    expect(instructionsHome('custom', '/h', '/usr/local/bin/wad')).toEqual({
+      name: 'wad',
+      file: '/h/.wad/AGENTS.md',
+      requires: '/h/.wad',
     });
     for (const command of ['/opt/other/thing', '', undefined]) expect(instructionsHome('custom', '/h', command)).toBeUndefined();
     for (const harness of ['gemini', 'dsh'] as const) expect(instructionsHome(harness, '/h')).toBeUndefined();

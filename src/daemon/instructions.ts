@@ -21,7 +21,7 @@ import { envOf, isUnderEitherName } from '../legacy-name.js';
  *
  * ── Two layers ────────────────────────────────────────────────────────────────────────────────────
  *   common.md   — for every agent
- *   <name>.md   — for one kind of agent: claude, codex, opencode, agy, codebuddy, atomcode
+ *   <name>.md   — for one kind of agent: claude, codex, opencode, agy, codebuddy, atomcode, wad
  * Joined in that order, the agent's own last so it can narrow what the common one says. The second
  * layer exists because some rules are about one harness's economics and mean nothing, or the wrong
  * thing, to another: the first one written (2026-11-04) tells Claude Code to start fewer sub-agents,
@@ -41,7 +41,11 @@ import { envOf, isUnderEitherName } from '../legacy-name.js';
  *               docs say a root may hold a standalone `GEMINI.md`/`AGENTS.md`, always active.
  *  - custom   — by command, as skill-link.ts reads it: CodeBuddy Code, `~/.codebuddy/CODEBUDDY.md`
  *               (2.179.2, its USER-scope memory file); AtomCode, `~/.atomcode/ATOMCODE.md` (v5.2.5,
- *               named "global … personal defaults" in its own help). Any other command: nothing.
+ *               named "global … personal defaults" in its own help); web-agent-driver (`wad`, which
+ *               drives a web agent such as Gemini's in a browser), `~/.wad/AGENTS.md` — not probed:
+ *               wad's own design puts it there (2026-11-19), and it prepends the file to a new web
+ *               conversation's first message, the web page having no file of its own to read. Any
+ *               other command: nothing.
  *  - gemini, dsh — none known; nothing is placed rather than a guess.
  * A harness's own override of its directory (CODEX_HOME, XDG_CONFIG_HOME) is not followed; an
  * `env.HOME` override is, by the caller, as for the skill.
@@ -78,7 +82,7 @@ export const INSTRUCTIONS_MAX_BYTES = 32 * 1024;
  * files and no other name: a typed `name` below keeps `instructionsHome` from returning one the
  * editor would not know.
  */
-export const HARNESS_LAYERS = ['claude', 'codex', 'opencode', 'agy', 'codebuddy', 'atomcode'] as const;
+export const HARNESS_LAYERS = ['claude', 'codex', 'opencode', 'agy', 'codebuddy', 'atomcode', 'wad'] as const;
 export type HarnessLayer = (typeof HARNESS_LAYERS)[number];
 
 /** Where one harness reads its user-level instructions. */
@@ -120,6 +124,9 @@ export function instructionsHome(harness: AgentDef['harness'], home: string, com
       }
       if (cmd === 'atomcode') {
         return { name: 'atomcode', file: path.join(home, '.atomcode', 'ATOMCODE.md'), requires: path.join(home, '.atomcode') };
+      }
+      if (cmd === 'wad') {
+        return { name: 'wad', file: path.join(home, '.wad', 'AGENTS.md'), requires: path.join(home, '.wad') };
       }
       return undefined;
     }
