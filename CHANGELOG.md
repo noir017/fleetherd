@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.13.2] - 2026-11-19
+
 ### Fixed
 
 - **A restart waits for an agent still working after its turn.** When a background task an agent
