@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { redactProxyUrl } from '../core/proxy.js';
 import {
+  GitError,
   SKILL_AUTHORS,
   commitPaths,
   dirtyPaths,
@@ -156,7 +157,8 @@ export function prepareSkillsRepo(dir: string, log: (message: string) => void = 
   return true;
 }
 
-type Phase = 'ok' | 'failing';
+/** Which side of the cycle last failed: the remote, or a git command in the gateway's own copy. */
+type Phase = 'ok' | 'remote' | 'local';
 
 export interface SkillsRepoOptions {
   dir: string;
@@ -220,8 +222,11 @@ export class SkillsRepo {
 
   /** Sync now and then every `intervalMs`. Returns the stop function; the timer never holds the process. */
   start(intervalMs = SKILLS_SYNC_INTERVAL_MS): () => void {
-    void this.sync();
-    const timer = setInterval(() => void this.sync(), intervalMs);
+    // A failure inside the cycle is logged and `sync()` resolves; one before it (a copy `ready()`
+    // cannot read) rejects. Left unhandled, that rejection would end the process.
+    const cycle = (): void => void this.sync().catch((e: unknown) => this.log(`[skills] the sync cycle failed: ${firstLine(e)}`));
+    cycle();
+    const timer = setInterval(cycle, intervalMs);
     timer.unref?.();
     return () => clearInterval(timer);
   }
@@ -340,16 +345,32 @@ export class SkillsRepo {
     ).catch(() => undefined);
   }
 
+  /**
+   * One line per condition entered, so a cycle every five minutes does not repeat it. Which side
+   * failed matters: a fetch or a push that cannot reach the remote is not the same as a git command
+   * failing in the gateway's own copy, and calling the second "not reachable" sends whoever reads
+   * the log to the wrong machine.
+   */
   private failed(remote: SkillsRemote, e: unknown): void {
-    if (this.phase === 'failing') return;
-    this.phase = 'failing';
-    this.log(`[skills] ${redactRepoUrl(remote.url)} is not reachable (${firstLine(e)}); writes stay local until it is`);
+    // gitSync throws GitError; gitAsync (fetch, push) rejects with a plain Error.
+    const local = e instanceof GitError;
+    const phase: Phase = local ? 'local' : 'remote';
+    if (this.phase === phase) return;
+    this.phase = phase;
+    this.log(
+      local
+        ? `[skills] a git command failed in the gateway's copy of the skills repository (${firstLine(e)}); the next cycle tries again`
+        : `[skills] ${redactRepoUrl(remote.url)} is not reachable (${firstLine(e)}); writes stay local until it is`
+    );
   }
 
   private recovered(remote: SkillsRemote): void {
     if (this.phase === 'ok') return;
+    const local = this.phase === 'local';
     this.phase = 'ok';
-    this.log(`[skills] ${redactRepoUrl(remote.url)} answers again`);
+    this.log(
+      local ? `[skills] the gateway's copy of the skills repository works again` : `[skills] ${redactRepoUrl(remote.url)} answers again`
+    );
   }
 
   private now(): number {

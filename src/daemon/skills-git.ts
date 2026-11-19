@@ -110,7 +110,7 @@ export function gitAsync(cwd: string, args: string[], env: NodeJS.ProcessEnv, ti
 }
 
 /** A git call that ran and exited non-zero. `status` is its exit code; absent when it never ran. */
-class GitError extends Error {
+export class GitError extends Error {
   readonly status?: number;
 
   constructor(message: string, status?: number) {
@@ -121,9 +121,10 @@ class GitError extends Error {
 }
 
 /**
- * Whether git exited 1 refusing a ref it was asked to resolve — `rev-parse --verify -q` does that
- * for a ref that does not exist yet (a fresh repository's HEAD, a branch not fetched). Every other
- * failure is git not answering at all, and must not read as "there is nothing there".
+ * Whether `rev-parse --verify -q` could not resolve the ref: git exits 1 both for a ref that does
+ * not exist (a fresh repository's HEAD, a branch not fetched yet) and for one that points at an
+ * object it cannot read (a damaged repository). Every other failure is git not answering at all,
+ * and must not read as "there is nothing there".
  */
 export function isMissingRef(e: unknown): boolean {
   return e instanceof GitError && e.status === 1;
@@ -168,9 +169,10 @@ export function hasHead(root: string): boolean {
     gitSync(root, ['rev-parse', '--verify', '-q', 'HEAD^{commit}']);
     return true;
   } catch (e) {
-    // Only a ref that does not resolve means "no commit yet". Anything else — git missing, the
-    // spawn refused, the directory not a repository — answered as false would read as an empty
-    // history, and a caller like the review's would silently see nothing was ever written.
+    // A ref that does not resolve means no commit yet: either the repository is fresh or its
+    // objects are damaged, and `git log` cannot tell those apart either. Anything else — git
+    // missing, the spawn refused, the directory not a repository — answered as false would read
+    // as an empty history, and a caller like the review's would silently see nothing was written.
     if (isMissingRef(e)) return false;
     throw e;
   }
