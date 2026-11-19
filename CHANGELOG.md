@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.17.1] - 2026-11-20
+
 ### Fixed
 
 - **The automatic review sees the skill files a conversation wrote, whenever it ran.** It asks git
