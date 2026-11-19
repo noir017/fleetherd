@@ -4948,6 +4948,31 @@ describe('webui page: the settings page', () => {
     await until('its files', () => h.calls.some((c) => c.path === 'api/instructions/refs?agent=cc'));
   });
 
+  it('shows an instruction card as not delivering, and keeps its own files openable', async () => {
+    const off = {
+      ...INSTR,
+      agents: [
+        { id: 'cc', harness: 'claude', host: 'box', own: '`@` references in `~/.claude/CLAUDE.md`' },
+        {
+          id: 'oc@box',
+          harness: 'opencode',
+          host: 'local',
+          file: '~/.config/opencode/AGENTS.md',
+          own: 'the `instructions` list in `~/.config/opencode/opencode.json`',
+          notDelivered: true,
+        },
+      ],
+    };
+    const h = await opened(agentList(), { instructions: true, replies: { 'api/instructions': off } });
+    await until('the files', () => Boolean(h.doc.querySelector('#settings-body .ag-card[data-ag="cc"] [data-instr-agent]')));
+    const oc = await openCard(h, 'oc@box');
+    expect(oc.querySelector('[data-instr-file]')).toBeNull();
+    expect(oc.querySelector('.ag-instr .ag-none')?.textContent).toBe(
+      'Not delivering: its instruction file is already delivered to another agent on the same machine with a different layer.'
+    );
+    expect(oc.querySelector('.ag-file:not([data-instr-file])')?.textContent).toContain('Its own files');
+  });
+
   it('names every control with the agent it belongs to, for a screen reader', async () => {
     const h = await opened(agentList(), { instructions: true, replies: { 'api/instructions': INSTR } });
     await until('the files', () => Boolean(h.doc.querySelector('#settings-body [data-instr-agent]')));

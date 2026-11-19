@@ -90,6 +90,28 @@ describe('the list', () => {
     expect(list.global.find((g) => g.name === 'agy.md')).toMatchObject({ exists: true, size: 4, agents: [] });
   });
 
+  it('keeps the layer of an agent whose delivery is off, without counting it as a reader', async () => {
+    fs.mkdirSync(gateway, { recursive: true });
+    fs.writeFileSync(path.join(gateway, 'cx2.md'), 'mine\n');
+    const withOff = [
+      ...agents,
+      def('cx2', 'codex', { instructions: { file: '~/.codex/AGENTS.md', layer: 'cx2', off: true } }),
+    ];
+    const list = await panel({ agents: () => withOff }).list();
+    expect(list.agents.find((a) => a.id === 'cx2')).toEqual({
+      id: 'cx2',
+      harness: 'codex',
+      host: 'local',
+      file: '~/.codex/AGENTS.md',
+      own: expect.stringContaining('AGENTS.override.md'),
+      notDelivered: true,
+    });
+    // The layer stays listed (and editable); the agent is not one of its readers.
+    expect(list.global.find((g) => g.name === 'cx2.md')).toMatchObject({ exists: true, agents: [] });
+    expect(list.global.find((g) => g.name === 'codex.md')?.agents).toEqual(['cx']);
+    expect(list.global.find((g) => g.name === 'common.md')?.agents).toEqual(['cc', 'cx', 'cc-r']);
+  });
+
   it("lists a custom agent's layer by its id, and a pod agent's by the id in its pod.yaml", async () => {
     const custom = [
       def('mh', 'custom', { command: 'my-harness', instructions: { file: '~/.my-harness/AGENTS.md' } }),
@@ -168,6 +190,26 @@ describe('global files', () => {
     const r = await panel().write({ scope: 'global', name: 'common.md' }, 'x'.repeat(200), { missing: true });
     expect(r).toMatchObject({ ok: false, error: expect.stringMatching(/claude agents would be given \d+ bytes.*Nothing was saved/) });
     expect(fs.existsSync(path.join(gateway, 'common.md'))).toBe(false);
+  });
+
+  it('leaves a layer whose only agent has delivery off out of the cap, and still checks one that is read', async () => {
+    fs.mkdirSync(gateway, { recursive: true });
+    fs.writeFileSync(path.join(gateway, 'cx2.md'), 'c'.repeat(INSTRUCTIONS_MAX_BYTES - 100));
+    const at = (off: boolean): AgentDef =>
+      def('cx2', 'codex', {
+        instructions: off
+          ? { file: '~/.codex/AGENTS.md', layer: 'cx2', off: true }
+          : { file: '~/.codex/AGENTS.md', layer: 'cx2' },
+      });
+    const saved = await panel({ agents: () => [at(true)] }).write({ scope: 'global', name: 'common.md' }, 'x'.repeat(200), {
+      missing: true,
+    });
+    expect(saved.ok).toBe(true);
+    fs.rmSync(path.join(gateway, 'common.md'), { force: true });
+    const refused = await panel({ agents: () => [at(false)] }).write({ scope: 'global', name: 'common.md' }, 'x'.repeat(200), {
+      missing: true,
+    });
+    expect(refused).toMatchObject({ ok: false, error: expect.stringMatching(/cx2 agents would be given \d+ bytes.*Nothing was saved/) });
   });
 });
 
@@ -396,5 +438,15 @@ describe('deliverInstructions', () => {
       remote: async () => undefined,
     });
     expect(out).toEqual([{ host: 'local', agents: ['cc'], outcome: 'off' }]);
+  });
+
+  it('reports an agent whose delivery is off as not delivered, and places nothing for it', async () => {
+    const off = def('cc', 'claude', { instructions: { file: '~/.claude/CLAUDE.md', layer: 'cc', off: true } });
+    const local = vi.fn(() => ({ link: '/h/.claude/CLAUDE.md', outcome: 'linked' as const }));
+    const remote = vi.fn(async () => undefined);
+    const out = await deliverInstructions({ agents: [off], layers: new Set(['cc']), local, remote });
+    expect(out).toEqual([{ host: 'local', agents: ['cc'], outcome: 'not-delivered' }]);
+    expect(local).not.toHaveBeenCalled();
+    expect(remote).not.toHaveBeenCalled();
   });
 });

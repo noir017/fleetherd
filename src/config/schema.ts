@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { ToolMode as ToolModeType, TurnFailureReason } from '../types.js';
 import { PlatformConfigSchema, type PlatformInstance } from '../platform/config-schemas.js';
+import { instructionClashes, instructionConflictMessage } from './instructions.js';
 
 /**
  * Config schema + defaults.
@@ -68,16 +69,57 @@ const InstructionFileSchema = z
     message: "instructions.file is the file on the agent's host: `~/…` or an absolute path",
   });
 
-/** The layer's name becomes `<layer>.md` in the gateway's instructions directory: a plain file name. */
+/**
+ * The layer's name becomes `<layer>.md` in the gateway's instructions directory: a plain file name.
+ * `common` is compared without regard to case: on a case-insensitive filesystem `Common.md` IS
+ * `common.md`, so such a layer would hand its agent the common text twice.
+ */
 const InstructionLayerSchema = z
   .string()
   .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/, 'instructions.layer is a file name: letters, digits, dot, dash and underscore')
-  .refine((l) => l !== 'common', { message: 'instructions.layer cannot be "common": common.md is the layer every agent gets' });
+  .refine((l) => l.toLowerCase() !== 'common', {
+    message: 'instructions.layer cannot be "common": common.md is the layer every agent gets',
+  });
 
 /** Whether `layer` can name a `<layer>.md` beside `common.md`. */
 function instructionLayerOk(layer: string): boolean {
-  return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(layer) && layer !== 'common';
+  return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(layer) && layer.toLowerCase() !== 'common';
 }
+
+/**
+ * Where an agent's harness reads the operator's instructions, when the gateway cannot know it: any
+ * `custom` command, or a preset whose file has been moved.
+ */
+const InstructionsObjectSchema = z
+  .object({
+    file: InstructionFileSchema,
+    layer: InstructionLayerSchema.optional(),
+  })
+  .strict();
+
+/**
+ * The merge's marker: where the file is, which layer it would get, and `off: true` — nothing is
+ * delivered and the link there is left alone. config/pods.ts sets it on a pod agent whose file
+ * another agent on that machine already delivers with a different layer.
+ *
+ * `file` and `layer` are kept, not dropped: the layer stays visible and editable in the web UI, and
+ * the harness's own files can still be listed for that agent. Delivery (config/instructions.ts
+ * instructionsOff) is the only thing the marker stops.
+ */
+const InstructionsOffSchema = z
+  .object({
+    file: InstructionFileSchema,
+    layer: InstructionLayerSchema,
+    off: z.literal(true),
+  })
+  .strict();
+
+/**
+ * `agents[].instructions`. The `off` form is not something either file writes: a `pod.yaml` cannot
+ * express it (PodAgentSchema keeps the plain object form), and config.yaml's own agents are refused
+ * it at load (config/load.ts) — the marker is the merge's alone.
+ */
+const InstructionsSchema = z.union([InstructionsOffSchema, InstructionsObjectSchema]).optional();
 
 /**
  * A single agent definition. harness is a preset (claude/gemini/codex/opencode/dsh/agy); with custom,
@@ -109,14 +151,10 @@ const AgentDefFields = z
      * gateway's instructions directory; unset = the agent's id (a pod's agent: its pod.yaml id,
      * without the `@host` the gateway adds). Delivery rules are unchanged: nothing is placed unless
      * the file's directory exists, and a real file there is left alone.
+     *
+     * The schema also carries the merge's `off` form (InstructionsSchema); no file writes it.
      */
-    instructions: z
-      .object({
-        file: InstructionFileSchema,
-        layer: InstructionLayerSchema.optional(),
-      })
-      .strict()
-      .optional(),
+    instructions: InstructionsSchema,
     /**
      * ACP session config options pinned for this agent, by the harness's own option id: `context`,
      * `fast`, `mode`, … Each is applied once the session's model is settled and before the
@@ -263,7 +301,7 @@ function agentRules<
     command?: string;
     contextBudget?: number;
     gatewayModels?: string[];
-    instructions?: { file: string; layer?: string };
+    instructions?: { file: string; layer?: string; off?: true };
   },
   I
 >(schema: z.ZodType<O, z.ZodTypeDef, I>) {
@@ -305,6 +343,9 @@ export const POD_AGENT_ID = /^[a-z0-9][a-z0-9_-]{0,31}$/i;
 export const PodAgentSchema = agentRules(
   AgentDefFields.omit({ host: true }).extend({
     id: z.string().regex(POD_AGENT_ID, 'id must be 1-32 chars of letters/digits/_/- and start alphanumeric (the gateway adds @<host>)'),
+    // The plain object form only: `off: true` is the gateway's own marker for "this pod agent's
+    // file is already delivered to another agent here", and a pod does not get to say it.
+    instructions: InstructionsObjectSchema.optional(),
     env: z
       .record(
         z.string().refine((v) => !v.includes('${'), {
@@ -1115,6 +1156,13 @@ export const ConfigSchema = z
         });
       }
     });
+    // Two agents on one machine whose instruction files resolve to the same path would take turns
+    // repointing that link — the later write wins silently and the other agent reads the wrong text
+    // (config/instructions.ts instructionClashes). The same layer is sharing, and allowed. A pod's
+    // agents are filtered before this (config/pods.ts): a pod must never fail the gateway's config.
+    for (const g of instructionClashes(cfg.agents)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['agents'], message: instructionConflictMessage(g) });
+    }
     const platformIds = new Set(Object.keys(cfg.platforms));
     if (cfg.review) checkReview(cfg.review, cfg.agents, ctx);
     cfg.routing.pipeline.forEach((rule, i) => {

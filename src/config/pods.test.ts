@@ -1,9 +1,10 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mergePodAgents, podAgentModels, readPods, writePods, type PodsState } from './pods.js';
-import { readConfig } from './load.js';
+import { instructionsHome, instructionsOff } from './instructions.js';
+import { loadConfig, readConfig } from './load.js';
 import { ConfigSchema, PodFileSchema } from './schema.js';
 
 /**
@@ -75,7 +76,7 @@ describe('mergePodAgents', () => {
           id: 'ex',
           harness: 'custom',
           command: 'my-harness',
-          instructions: { file: '~/.my-harness/AGENTS.md', layer: 'mine' },
+          instructions: { file: '~/.my-harness/OTHER.md', layer: 'mine' },
         },
       ]),
     });
@@ -83,8 +84,39 @@ describe('mergePodAgents', () => {
       (out.agents as Array<{ id: string; instructions?: { file: string; layer?: string } }>).map((a) => [a.id, a.instructions])
     );
     expect(byId['mh@a']).toEqual({ file: '~/.my-harness/AGENTS.md', layer: 'mh' });
-    expect(byId['ex@a']).toEqual({ file: '~/.my-harness/AGENTS.md', layer: 'mine' });
+    expect(byId['ex@a']).toEqual({ file: '~/.my-harness/OTHER.md', layer: 'mine' });
     expect(byId['cc']).toBeUndefined();
+  });
+
+  // A host must never be able to keep the gateway's config from loading, so a pod's agent yields to
+  // config.yaml's on the same machine — but it stays an agent, only its delivery is turned off.
+  it('turns delivery off for a pod agent whose file a config.yaml agent already delivers', () => {
+    const cfg = { hosts: { box: { ssh: 'u@box' } }, agents: [{ id: 'cc', harness: 'claude', host: 'box' }] };
+    const { raw: out, skipped } = mergePodAgents(cfg, {
+      box: record([{ id: 'mh', harness: 'custom', command: 'my-harness', instructions: { file: '~/.claude/CLAUDE.md' } }]),
+    });
+    expect(out.agents).toEqual([
+      expect.objectContaining({ id: 'cc' }),
+      expect.objectContaining({
+        id: 'mh@box',
+        instructions: { file: '~/.claude/CLAUDE.md', layer: 'mh', off: true },
+      }),
+    ]);
+    expect(skipped).toEqual([
+      'instructions.mh@box: "mh@box" (layer "mh") and "cc" (layer "claude") both deliver ~/.claude/CLAUDE.md on host "box"; "cc" keeps it, so nothing is delivered to "mh@box"',
+    ]);
+  });
+
+  it('leaves two pod agents with one file and the same layer alone: they share it', () => {
+    const cfg = { hosts: { box: { ssh: 'u@box' } }, agents: [] };
+    const { raw: out, skipped } = mergePodAgents(cfg, {
+      box: record([
+        { id: 'a', harness: 'custom', command: 'my-harness', instructions: { file: '~/.my-harness/AGENTS.md', layer: 'mine' } },
+        { id: 'b', harness: 'custom', command: 'my-harness', instructions: { file: '~/.my-harness/AGENTS.md', layer: 'mine' } },
+      ]),
+    });
+    expect((out.agents as Array<{ id: string }>).map((a) => a.id)).toEqual(['a@box', 'b@box']);
+    expect(skipped).toEqual([]);
   });
 });
 
@@ -102,12 +134,15 @@ describe('agents[].instructions', () => {
     expect(parsed({ file: '/opt/my-harness/AGENTS.md', layer: 'my-harness' }).success).toBe(true);
   });
 
-  it('refuses a relative file, a trailing slash, a layer with a path, and common', () => {
+  it('refuses a relative file, a trailing slash, a layer with a path, and common in any case', () => {
     for (const instructions of [
       { file: 'AGENTS.md' },
       { file: '~/' },
       { file: '~/.my-harness/AGENTS.md', layer: '../mine' },
+      // On a case-insensitive filesystem `Common.md` IS `common.md`, the layer every agent gets.
       { file: '~/.my-harness/AGENTS.md', layer: 'common' },
+      { file: '~/.my-harness/AGENTS.md', layer: 'Common' },
+      { file: '~/.my-harness/AGENTS.md', layer: 'COMMON' },
     ]) {
       expect(parsed(instructions).success, JSON.stringify(instructions)).toBe(false);
     }
@@ -115,6 +150,14 @@ describe('agents[].instructions', () => {
 
   it('refuses an id that cannot be the default layer', () => {
     expect(parsed({ file: '~/.my-harness/AGENTS.md' }, 'a/b').success).toBe(false);
+  });
+
+  it('keeps the merge’s off marker out of pod.yaml: the gateway sets it, a pod does not', () => {
+    expect(
+      PodFileSchema.safeParse({
+        agents: [{ id: 'a', harness: 'claude', instructions: { file: '~/.claude/CLAUDE.md', layer: 'a', off: true } }],
+      }).success
+    ).toBe(false);
   });
 });
 
@@ -234,6 +277,8 @@ hosts:
 routing:
   default: cc@box
 `;
+  /** The same file, routing to a pod agent these tests declare. */
+  const yamlFor = (agent: string): string => yaml.replace('default: cc@box', `default: ${agent}`);
 
   it('accepts routing that names a pod agent, and config.yaml needs no agents of its own', () => {
     fs.writeFileSync(path.join(dir, 'config.yaml'), yaml);
@@ -248,9 +293,63 @@ routing:
     expect(() => readConfig()).toThrow(/agents|routing\.default/);
   });
 
+  // pods.json can hold a clash an older version wrote, or one somebody edited in. Neither may stop
+  // the gateway: the first agent keeps the file, the other keeps running without delivery, and a
+  // routing that names the second still loads.
+  it('loads, and starts, with a pods.json whose agents fight over one file — routing included', () => {
+    fs.writeFileSync(path.join(dir, 'config.yaml'), yamlFor('b@box'));
+    writePods(dir, {
+      box: record([
+        { id: 'a', harness: 'custom', command: 'my-harness', instructions: { file: '~/.my-harness/AGENTS.md' } },
+        { id: 'b', harness: 'custom', command: 'my-harness', instructions: { file: '~/.my-harness/AGENTS.md' } },
+      ]),
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const { config } = readConfig();
+      expect(config.agents.map((a) => a.id)).toEqual(['a@box', 'b@box']);
+      const b = config.agents.find((a) => a.id === 'b@box')!;
+      expect(b.instructions).toEqual({ file: '~/.my-harness/AGENTS.md', layer: 'b', off: true });
+      expect(instructionsOff(b)).toBe(true);
+      // Its placement is still known, so the editor keeps listing the layer.
+      expect(instructionsHome(b, '~')).toMatchObject({ name: 'b', file: '~/.my-harness/AGENTS.md' });
+      expect(loadConfig().agents.map((a) => a.id)).toEqual(['a@box', 'b@box']);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('nothing is delivered to "b@box"'));
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('lets two pod agents share one file when they name the same layer', () => {
+    fs.writeFileSync(path.join(dir, 'config.yaml'), yamlFor('a@box'));
+    writePods(dir, {
+      box: record([
+        { id: 'a', harness: 'custom', command: 'my-harness', instructions: { file: '~/.my-harness/AGENTS.md', layer: 'mine' } },
+        { id: 'b', harness: 'custom', command: 'my-harness', instructions: { file: '~/.my-harness/AGENTS.md', layer: 'mine' } },
+      ]),
+    });
+    expect(readConfig().config.agents.map((a) => a.id)).toEqual(['a@box', 'b@box']);
+  });
+
   it('reads a missing or broken pods.json as no pods', () => {
     expect(readPods(dir)).toEqual({});
     fs.writeFileSync(path.join(dir, 'pods.json'), '{nope');
     expect(readPods(dir)).toEqual({});
+  });
+
+  it('refuses the merge’s off marker in config.yaml: the merge sets it, not the file', () => {
+    fs.writeFileSync(
+      path.join(dir, 'config.yaml'),
+      `platforms:
+  tg: { type: telegram, token: t }
+agents:
+  - id: cc
+    harness: claude
+    instructions: { file: '~/.claude/CLAUDE.md', layer: cc, off: true }
+routing:
+  default: cc
+`
+    );
+    expect(() => readConfig()).toThrow(/agents\.0\.instructions\.off: this is not a setting/);
   });
 });

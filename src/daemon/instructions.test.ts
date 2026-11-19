@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentDef } from '../config/schema.js';
+import { instructionsHome, type InstructionsHome } from '../config/instructions.js';
 import type { Welcome } from '../remote/connection.js';
 import type { RemoteHost } from '../remote/host.js';
 import {
@@ -10,10 +11,8 @@ import {
   applyInstructions,
   standingInstructions,
   composeInstructions,
-  instructionsHome,
   ownedDir,
   placeInstructions,
-  type InstructionsHome,
 } from './instructions.js';
 import { RemoteHosts } from './remote-hosts.js';
 
@@ -37,71 +36,6 @@ afterEach(() => {
 });
 
 const codex = (): InstructionsHome => instructionsHome({ id: 'cx', harness: 'codex' }, home)!;
-
-describe('instructionsHome', () => {
-  it('puts each harness at the user-level file it was observed to read', () => {
-    expect(instructionsHome({ id: 'cc', harness: 'claude' }, '/h')).toEqual({
-      name: 'claude',
-      file: '/h/.claude/CLAUDE.md',
-      requires: '/h/.claude',
-    });
-    expect(instructionsHome({ id: 'cx', harness: 'codex' }, '/h')).toEqual({
-      name: 'codex',
-      file: '/h/.codex/AGENTS.md',
-      requires: '/h/.codex',
-    });
-    expect(instructionsHome({ id: 'oc', harness: 'opencode' }, '/h')).toEqual({
-      name: 'opencode',
-      file: '/h/.config/opencode/AGENTS.md',
-      requires: '/h/.config/opencode',
-    });
-    // The customization root agy reads skills from — not its own antigravity-cli directory.
-    expect(instructionsHome({ id: 'ag', harness: 'agy' }, '/h')).toEqual({
-      name: 'agy',
-      file: '/h/.gemini/config/AGENTS.md',
-      requires: '/h/.gemini/antigravity-cli',
-    });
-  });
-
-  it('knows CodeBuddy and AtomCode by their command, and guesses nothing else', () => {
-    expect(instructionsHome({ id: 'cb', harness: 'custom', command: '/usr/local/bin/codebuddy' }, '/h')).toEqual({
-      name: 'codebuddy',
-      file: '/h/.codebuddy/CODEBUDDY.md',
-      requires: '/h/.codebuddy',
-    });
-    expect(instructionsHome({ id: 'ac', harness: 'custom', command: 'atomcode' }, '/h')).toEqual({
-      name: 'atomcode',
-      file: '/h/.atomcode/ATOMCODE.md',
-      requires: '/h/.atomcode',
-    });
-    for (const command of ['/opt/other/thing', '', undefined]) {
-      expect(instructionsHome({ id: 'x', harness: 'custom', command }, '/h')).toBeUndefined();
-    }
-    for (const harness of ['gemini', 'dsh'] as const) expect(instructionsHome({ id: 'x', harness }, '/h')).toBeUndefined();
-  });
-
-  it('takes the file and layer an agent names, defaulting the layer to its id', () => {
-    expect(
-      instructionsHome(
-        { id: 'mh', harness: 'custom', command: 'my-harness', instructions: { file: '~/.my-harness/AGENTS.md' } },
-        '/h'
-      )
-    ).toEqual({ name: 'mh', file: '/h/.my-harness/AGENTS.md', requires: '/h/.my-harness' });
-    expect(
-      instructionsHome(
-        { id: 'mh', harness: 'custom', command: 'my-harness', instructions: { file: '/opt/my/AGENTS.md', layer: 'my-harness' } },
-        '/h'
-      )
-    ).toEqual({ name: 'my-harness', file: '/opt/my/AGENTS.md', requires: '/opt/my' });
-    // An `env.HOME` override is the home the caller passes, so `~` follows it.
-    expect(
-      instructionsHome(
-        { id: 'mh', harness: 'custom', command: 'my-harness', instructions: { file: '~/.my-harness/AGENTS.md' } },
-        '/home/other'
-      )
-    ).toMatchObject({ file: '/home/other/.my-harness/AGENTS.md' });
-  });
-});
 
 describe('composeInstructions', () => {
   it('has nothing to deliver without the directory or either file', () => {
@@ -243,6 +177,37 @@ describe('placeInstructions', () => {
       else process.env.FLEETHERD_CONFIG_DIR = saved;
     }
   });
+
+  it('places nothing for an agent whose delivery the merge turned off', () => {
+    const savedDir = process.env.FLEETHERD_CONFIG_DIR;
+    const savedArgv = process.argv[1];
+    process.env.FLEETHERD_CONFIG_DIR = path.dirname(dir);
+    // Make selfInvocation() see the CLI, so this exercises delivery rather than the test guard.
+    process.argv[1] = '/usr/bin/fleetherd';
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      fs.writeFileSync(path.join(dir, 'common.md'), 'mine\n');
+      fs.mkdirSync(path.join(home, '.codex'));
+      const off = {
+        id: 'cx',
+        harness: 'codex',
+        env: {},
+        instructions: { file: '~/.codex/AGENTS.md', layer: 'cx', off: true },
+      } as unknown as AgentDef;
+      expect(placeInstructions(off, home)).toBeUndefined();
+      expect(fs.existsSync(codex().file)).toBe(false);
+      expect(fs.existsSync(ownedDir(home))).toBe(false);
+      // Without the marker the same agent is delivered to, so the check above is the marker's doing.
+      const on = { id: 'cx', harness: 'codex', env: {} } as unknown as AgentDef;
+      expect(placeInstructions(on, home)?.outcome).toBe('linked');
+    } finally {
+      log.mockRestore();
+      if (savedArgv === undefined) process.argv.splice(1, 1);
+      else process.argv[1] = savedArgv;
+      if (savedDir === undefined) delete process.env.FLEETHERD_CONFIG_DIR;
+      else process.env.FLEETHERD_CONFIG_DIR = savedDir;
+    }
+  });
 });
 
 describe('RemoteHosts.placeInstructions', () => {
@@ -359,6 +324,22 @@ describe('RemoteHosts.placeInstructions', () => {
     const dsh = { id: 'd', harness: 'dsh', env: {} } as unknown as AgentDef;
     await hosts.placeInstructions(host as unknown as RemoteHost, dsh, '/home/u', welcome);
     expect(host.writeFile).not.toHaveBeenCalled();
+    expect(host.removeLink).not.toHaveBeenCalled();
+  });
+
+  it('places nothing for an agent whose delivery the merge turned off, and leaves its link alone', async () => {
+    const hosts = new RemoteHosts();
+    const host = fakeHost();
+    fs.writeFileSync(path.join(dir, 'common.md'), 'mine\n');
+    const off = {
+      id: 'cx',
+      harness: 'codex',
+      env: {},
+      instructions: { file: '~/.codex/AGENTS.md', layer: 'cx', off: true },
+    } as unknown as AgentDef;
+    expect(await hosts.placeInstructions(host as unknown as RemoteHost, off, '/home/u', welcome)).toBeUndefined();
+    expect(host.writeFile).not.toHaveBeenCalled();
+    expect(host.ensureLink).not.toHaveBeenCalled();
     expect(host.removeLink).not.toHaveBeenCalled();
   });
 });
