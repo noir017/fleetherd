@@ -60,6 +60,8 @@ The topic the caller opens is yours to watch, and nothing in it runs an agent:
   it checks with `list` and `read`.
 - Anything you type there is answered by the gateway, not an agent. `/stop` there stops every
   sub-task under it.
+- No agent can write there: messages, files, questions and scheduled tasks aimed at it are
+  refused. What appears in it comes from the gateway.
 
 A caller sees and stops only sub-tasks under topics it opened itself, and holds at most 10 topics
 at a time — the web UI makes room for a new topic by dropping your oldest unstarred one, and a

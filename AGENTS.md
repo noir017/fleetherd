@@ -459,8 +459,15 @@ Do not weaken these without saying so explicitly in the PR:
      A caller holds at most `MAX_TOPICS_PER_CALLER` topics (`daemon/external-calls.ts`): the web UI
      evicts the oldest unstarred topic to make room, and a caller opening topics in a loop must not
      push out the person's.
-   - **No turn runs in a coordination topic.** Sub-agent updates are shown there and never sent as a
-     prompt (`Delegation.tell`); the caller polls with `list` and `read`.
+   - **No turn runs in a coordination topic, and only the gateway writes there.** Sub-agent updates
+     are shown there and never sent as a prompt (`Delegation.tell`); the caller polls with `list`
+     and `read`. An agent cannot post into one either: the reverse commands that write to a target
+     are refused there (`COORDINATION_WRITE_ACTIONS` in `daemon/daemon.ts`, with a test that fails
+     when a new command taking `--channel` is neither listed nor exempted), and a scheduled task —
+     prompt or bash — cannot be added, moved or run there (`ScheduleService`). The caller's topics
+     are recorded by platform and address (`external-topics.json` v2), never by conversation id,
+     so a `/reload` that changes `session.scope` does not lose them, and an external call carries
+     that address all the way down instead of deriving ownership from a conversation key.
    It reaches no host: the entrance runs in the daemon and touches only the skill library and the
    sub-agent commands. Do not add a tool to it that writes, sends into a running turn, or starts
    anything without the card; do not let it share a credential or a port with the web UI.

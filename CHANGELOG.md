@@ -7,6 +7,22 @@ All notable changes to this project are documented here. The format is based on
 
 ### Fixed
 
+- **An external caller is answered as a caller, not as an agent of this gateway.** The MCP entrance
+  (3.15.0) handed callers the same skill output agents get: resident skills said "already in your
+  skill list", every hit carried a path under `~/.fleetherd/skills/`, and the `skills` tool told the
+  caller most skills were "not in your skill list" — none of which a program outside the gateway
+  has. A caller now gets the hits without paths and is pointed at `show`; empty `list` and `read`
+  answers are worded for it too. `skills show` now prints the skill's other files (`files:`), which
+  the description had always promised, for agents and callers alike.
+- **Nothing but the gateway writes into an external caller's topic.** An agent could still post
+  there — `send-message --channel`, `reply`, `ask`, a file — and a scheduled task, prompt or bash,
+  could target it; a scheduled prompt would even have run a turn there, which the entrance's own
+  rule forbids. All of these are refused now, when added and again when run. A caller's topics are
+  also kept by their address rather than by conversation id, so a `/reload` that changes
+  `session.scope` no longer loses them — before, the gateway stopped recognising them, and a person
+  typing in one could start an agent. Under `per_channel`, callers and ordinary threads in one
+  channel no longer see each other's sub-tasks or share a Start card.
+
 - **The instruction editor shows every layer file and says who really reads it.** Three gaps in
   the settings page's instruction editor (3.15.0): once the last agent using a custom layer was
   removed or renamed, its `<layer>.md` vanished from the page while staying on disk, so it could be
