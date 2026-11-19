@@ -138,10 +138,11 @@ host that does not answer gets it the next time an agent starts there. A save th
 agent over 32 KiB is refused before anything is written. Sessions already running keep what they
 read when they started.
 
-**A layer whose agent is gone.** Deleting or renaming the last agent on a custom layer leaves its
-`<layer>.md` in the directory. It stays listed, once, under the Agents cards as **Instructions no
-agent reads** — open it and save it empty, so a later agent given that layer does not inherit the
-old text. The gateway does not delete the file for you.
+**A layer whose agent is gone.** Deleting or renaming the last agent that read a layer — a custom
+layer, or a preset one like `codex` — leaves its `<layer>.md` in the directory. It stays listed,
+once, as **Instructions no agent reads** — under the Agents cards, or at the foot of the page when
+there are no agent cards. Open it and save it empty, so a later agent given that layer does not
+inherit the old text. The gateway does not delete the file for you.
 
 **Each agent's own files.** An agent whose harness reads instruction files of its own on its
 machine — besides the one the gateway places — lists them under the shared ones (on the card, as one

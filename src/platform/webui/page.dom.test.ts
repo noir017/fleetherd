@@ -16033,6 +16033,8 @@ describe('webui page: the instruction editor', () => {
       [null, 'Its own files', '@ references in ~/.claude/CLAUDE.md, and ~/.claude/rules · box', null],
     ]);
     expect(h.doc.querySelector('.ag-card[data-ag="cc"] .ag-file:not([data-instr-file]) .ag-fsub')?.innerHTML).toContain('<code>~/.claude/rules</code>');
+    // Every shared file has a reader, so there is no layer-no-one-reads row.
+    expect(h.doc.querySelector('[data-instr-orphans]')).toBeNull();
   });
 
   it('says who reads a shared file from the daemon, and names the layer when another kind shares it', async () => {
@@ -16074,8 +16076,11 @@ describe('webui page: the instruction editor', () => {
     const row = h.doc.querySelector('[data-instr-orphans]');
     expect(row?.textContent).toContain('Instructions no agent reads');
     expect(row?.textContent).toContain('mh.md');
+    // common.md is on every agent's card, never a layer no one reads.
+    expect(row?.textContent).not.toContain('common.md');
     await h.click('[data-instr-orphans]');
     await until('the tree', () => tree(h).includes('g:mh.md'));
+    expect(tree(h)).toEqual(['g:mh.md']);
     expect(h.el('files-title').textContent).toBe('Instructions no agent reads');
     expect(h.el('files-tree-list').querySelector('[data-fx-file="g:mh.md"] .fx-sub')?.textContent).toBe('the mh layer · no agent reads it');
     await h.click('[data-fx-file="g:mh.md"]');
@@ -16087,6 +16092,12 @@ describe('webui page: the instruction editor', () => {
     expect(writes(h)[0]!.body).toEqual({ scope: 'global', name: 'mh.md', text: '', mtimeMs: 11, size: 4, sha256: SHA });
     await until('the answer', () => /Saved/.test(h.el('files-note').textContent ?? ''));
     expect(h.el('files-note').textContent).toContain('No configured agent reads this file.');
+  });
+
+  it('never counts common.md as a layer no agent reads, even with no agent configured', async () => {
+    const list = { ...LIST, global: [{ name: 'common.md', layer: 'common', exists: true, size: 5, agents: [], reach: 'every agent' }] };
+    const h = await opened({}, list);
+    expect(h.doc.querySelector('[data-instr-orphans]')).toBeNull();
   });
 
   it('opens a shared file in the file window, on that agent’s whole list, without the controls a fixed list has no use for', async () => {

@@ -142,6 +142,31 @@ describe('the list', () => {
     expect(await p.read({ scope: 'global', name: 'ghost.md' })).toMatchObject({ ok: false, error: expect.stringContaining('not one of') });
   });
 
+  it('does not take a symlink in the directory as a layer of its own', async () => {
+    fs.mkdirSync(gateway, { recursive: true });
+    const outside = path.join(root, 'outside.md');
+    fs.writeFileSync(outside, 'not the gateway’s\n');
+    fs.symlinkSync(outside, path.join(gateway, 'linked.md'));
+    const p = panel();
+    expect((await p.list()).global.map((g) => g.name)).not.toContain('linked.md');
+    expect(await p.read({ scope: 'global', name: 'linked.md' })).toMatchObject({ ok: false, error: expect.stringContaining('not one of') });
+    expect(await p.write({ scope: 'global', name: 'linked.md' }, 'x', { missing: true })).toMatchObject({ ok: false });
+    expect(fs.readFileSync(outside, 'utf8')).toBe('not the gateway’s\n');
+  });
+
+  it('leaves a disk name that only differs in case from a known layer out of the list', async () => {
+    fs.mkdirSync(gateway, { recursive: true });
+    for (const n of ['Common.md', 'Codex.md', 'Mine.md', 'Other.md']) fs.writeFileSync(path.join(gateway, n), 'x\n');
+    const custom = [def('mh', 'custom', { command: 'h', instructions: { file: '~/f.md', layer: 'mine' } })];
+    const p = panel({ agents: () => custom });
+    const names = (await p.list()).global.map((g) => g.name);
+    // The known spelling is what the list has; the differently-cased file is not another layer.
+    expect(names).toEqual(expect.arrayContaining(['common.md', 'mine.md', 'Other.md']));
+    for (const n of ['Common.md', 'Codex.md', 'Mine.md']) expect(names, n).not.toContain(n);
+    // And it is not openable through the global route either.
+    expect(await p.read({ scope: 'global', name: 'Common.md' })).toMatchObject({ ok: false, error: expect.stringContaining('not one of') });
+  });
+
   it("lists a custom agent's layer by its id, and a pod agent's by the id in its pod.yaml", async () => {
     const custom = [
       def('mh', 'custom', { command: 'my-harness', instructions: { file: '~/.my-harness/AGENTS.md' } }),

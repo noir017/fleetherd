@@ -129,18 +129,26 @@ function layerNames(agents: readonly AgentDef[]): string[] {
   return [...out];
 }
 
-/** The `<layer>.md` names already on the gateway, which stay editable after their agent is gone. */
-function diskLayers(dir: string): string[] {
+/**
+ * The `<layer>.md` names already on the gateway that stay editable after their agent is gone. A
+ * symlink is not one: the gateway's files are its own regular files, and a link would put whatever
+ * it points at behind this page's write. Neither is a name that only differs in case from one the
+ * config already knows — on a case-insensitive filesystem it is that same file, and the known
+ * spelling is the one delivery and the size cap go by.
+ */
+function diskLayers(dir: string, known: readonly string[]): string[] {
   let names: string[];
   try {
     names = fs.readdirSync(dir);
   } catch {
     return [];
   }
+  const taken = new Set(known.map((l) => l.toLowerCase()));
   return names
-    .filter((n) => n.endsWith('.md') && n !== 'common.md' && isInstructionLayer(n.slice(0, -'.md'.length)))
-    .filter((n) => statOrUndefined(path.join(dir, n))?.isFile() === true)
+    .filter((n) => n.endsWith('.md') && isInstructionLayer(n.slice(0, -'.md'.length)))
+    .filter((n) => lstatOrUndefined(path.join(dir, n))?.isFile() === true)
     .map((n) => n.slice(0, -'.md'.length))
+    .filter((l) => !taken.has(l.toLowerCase()))
     .sort();
 }
 
@@ -152,7 +160,7 @@ function diskLayers(dir: string): string[] {
  */
 function globalNames(env: Env): string[] {
   const names = new Set(layerNames(env.agents()));
-  for (const layer of diskLayers(env.dir())) names.add(layer);
+  for (const layer of diskLayers(env.dir(), ['common', ...names])) names.add(layer);
   return ['common.md', ...[...names].map((l) => `${l}.md`)];
 }
 
@@ -227,6 +235,15 @@ async function listAll(env: Env): Promise<InstructionsPanelList> {
 function statOrUndefined(p: string): fs.Stats | undefined {
   try {
     return fs.statSync(p);
+  } catch {
+    return undefined;
+  }
+}
+
+/** The entry itself, never what a symlink points at: a link is not one of the gateway's own files. */
+function lstatOrUndefined(p: string): fs.Stats | undefined {
+  try {
+    return fs.lstatSync(p);
   } catch {
     return undefined;
   }
