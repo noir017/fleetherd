@@ -281,6 +281,55 @@ describe('SkillsRepo without a remote', () => {
   });
 });
 
+describe('SkillsRepo when the gateway\'s copy is the broken side', () => {
+  it('fails the cycle instead of skipping it when the copy is not a repository', async () => {
+    // `isRepo` only looks for `.git`; git finds nothing usable behind it. A cycle that returned
+    // quietly would look like a healthy repository with nothing to do.
+    const root = repoRoot(dir);
+    fs.mkdirSync(root, { recursive: true });
+    fs.writeFileSync(path.join(root, '.git'), 'gitdir: /nonexistent\n');
+    await expect(repo().sync()).rejects.toThrow(/not a git repository/);
+  });
+
+  it('says once that a cycle cannot run, however many fail, and once when it runs again', async () => {
+    const root = repoRoot(dir);
+    fs.mkdirSync(root, { recursive: true });
+    fs.writeFileSync(path.join(root, '.git'), 'gitdir: /nonexistent\n');
+    const r = repo();
+    let stop = r.start(10);
+    await until('a cycle to fail', () => logs.some((l) => /the sync cycle could not run/.test(l)));
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(logs.filter((l) => /the sync cycle could not run/.test(l))).toHaveLength(1);
+    stop();
+
+    fs.rmSync(root, { recursive: true, force: true });
+    prepareSkillsRepo(dir);
+    stop = r.start(10);
+    await until('a cycle to run again', () => logs.some((l) => /the sync cycle runs again/.test(l)));
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(logs.filter((l) => /the sync cycle runs again/.test(l))).toHaveLength(1);
+    stop();
+  });
+
+  it('names a local git failure as the gateway\'s copy, not the remote as unreachable', async () => {
+    seedRemote();
+    prepareSkillsRepo(dir);
+    await repo().sync();
+    // Fetch and status still work; `git add` cannot take the index lock, so integrate fails locally.
+    fs.writeFileSync(path.join(repoRoot(dir), 'skills', 'stray.md'), 'x\n');
+    fs.writeFileSync(path.join(repoRoot(dir), '.git', 'index.lock'), '');
+    logs = [];
+    const r = repo();
+    await r.sync();
+    expect(logs.filter((l) => /a git command failed in the gateway's copy/.test(l))).toHaveLength(1);
+    expect(logs.some((l) => /is not reachable/.test(l))).toBe(false);
+
+    fs.rmSync(path.join(repoRoot(dir), '.git', 'index.lock'));
+    await r.sync();
+    expect(logs.some((l) => /the gateway's copy of the skills repository works again/.test(l))).toBe(true);
+  });
+});
+
 describe('the ssh git runs', () => {
   it('pins the key and known_hosts and never learns a host key', () => {
     const cmd = gitSshCommand({ url: 'ssh://git@h:22/r.git', branch: 'main', identityFile: "/k/it's", knownHostsFile: '/k/known_hosts' });

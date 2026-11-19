@@ -456,7 +456,16 @@ describe('the metadata keys under their names before 3.0.0', () => {
       'Talkcode-By: agent cc',
       'Talkcode-Conversation: web:main/c1',
     ].join('\n');
-    gitSync(repoRoot(dir), ['commit', '-q', '-m', message], { GIT_AUTHOR_NAME: 'talkcode', GIT_AUTHOR_EMAIL: 'talkcode@localhost', GIT_COMMITTER_NAME: 'talkcode', GIT_COMMITTER_EMAIL: 'talkcode@localhost' });
+    gitSync(repoRoot(dir), ['commit', '-q', '-m', message], {
+      GIT_AUTHOR_NAME: 'talkcode',
+      GIT_AUTHOR_EMAIL: 'talkcode@localhost',
+      GIT_COMMITTER_NAME: 'talkcode',
+      GIT_COMMITTER_EMAIL: 'talkcode@localhost',
+      // Pinned, like every other commit here: with a date of "now" the assertion below only held
+      // while the log ran in the same second as the commit (skills-git.ts, conversationCommitPaths).
+      GIT_AUTHOR_DATE: new Date(T0 + 1_000).toISOString(),
+      GIT_COMMITTER_DATE: new Date(T0 + 1_000).toISOString(),
+    });
     expect(skillHistory(skill.name, dir)[0]).toMatchObject({ action: 'patch', author: 'talkcode', beforeVersion: 'v1', afterVersion: 'v2' });
     expect(conversationCommitPaths(repoRoot(dir), 'web:main/c1', 0).some((p) => p.endsWith('deploy-check/SKILL.md'))).toBe(true);
   });
