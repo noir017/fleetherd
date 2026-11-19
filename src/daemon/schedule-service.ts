@@ -186,17 +186,15 @@ export class ScheduleService {
   }
 
   /**
-   * Refuse an agent run whose target is a coordination topic an external caller opened. That topic
-   * has no agent, and a scheduled turn there would be one outside the caller's ownership record
-   * (AGENTS.md security invariant 11). A bash task posts text but starts no turn, so it is not
-   * refused here.
+   * Refuse any scheduled task whose target is a coordination topic an external caller opened. That
+   * topic belongs to the caller and runs no turn, so nothing an agent schedules — an agent run or a
+   * bash result — may be written into it (AGENTS.md security invariant 11).
    */
   private assertNotCoordinationTopic(task: ScheduleTask): void {
-    if (task.run.kind !== 'agent') return;
     const key = this.registry.conversationAt(task.target.platform, targetAddress(task))?.key;
     if (key !== undefined && this.coordinationTopic(key)) {
       throw new Error(
-        `"${targetId(task.target)}" is a coordination topic an external caller opened, and it runs no agent turn; a scheduled task cannot run or post there`
+        `"${targetId(task.target)}" is a coordination topic an external caller opened; a scheduled task cannot run or post there`
       );
     }
   }
@@ -660,10 +658,11 @@ export class ScheduleService {
     const platform = this.platforms.get(task.target.platform);
     if (!platform) return { status: 'failed', error: `platform instance "${task.target.platform}" is not configured any more` };
     try {
-      if (task.run.kind === 'bash') return await this.runBash(task, task.run, platform, planned, signal);
       // A task written before its target became a coordination topic, or one whose topic was
-      // opened after it was added: refuse at the run too, never only at add/edit.
+      // opened after it was added: refuse at the run too, never only at add/edit — for a bash task
+      // as well, whose output must not be written into the caller's topic either.
       this.assertNotCoordinationTopic(task);
+      if (task.run.kind === 'bash') return await this.runBash(task, task.run, platform, planned, signal);
       return await this.runAgent(task, task.run, platform, planned);
     } catch (e) {
       return { status: 'failed', error: e instanceof Error ? e.message : String(e) };

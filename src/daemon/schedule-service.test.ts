@@ -445,14 +445,18 @@ describe('ScheduleService: an external caller\'s coordination topic', () => {
       path.join(dir, 'runs'),
       (key) => key === COORD
     );
-    return { service, store, posted, runs };
+    return { service, store, posted, runs, dir };
   }
 
   it('refuses to register an agent run there, storing and posting nothing', async () => {
     const { service, store, posted } = guardFixture();
 
     await expect(service.add({ cron: '0 8 * * *', prompt: 'x', session: 'new' }, 'web#main#t0', target)).rejects.toThrow(
-      /coordination topic an external caller opened, and it runs no agent turn/
+      /coordination topic an external caller opened; a scheduled task cannot run or post there/
+    );
+    // A bash task writes its output into the topic too, so it is refused as well.
+    await expect(service.add({ cron: '0 8 * * *', bash: 'ls' }, 'web#main#t0', target)).rejects.toThrow(
+      /coordination topic an external caller opened/
     );
     expect(store.list()).toEqual([]);
     expect(posted).toEqual([]);
@@ -465,7 +469,18 @@ describe('ScheduleService: an external caller\'s coordination topic', () => {
       { platform: 'web', address: { channel: 'main', thread: 't1' } }
     );
 
-    await expect(service.editFromPanel(task.id, {}, target)).rejects.toThrow(/runs no agent turn/);
+    await expect(service.editFromPanel(task.id, {}, target)).rejects.toThrow(/coordination topic an external caller opened/);
+    expect(store.get(task.id)!.target.thread).toBe('t1');
+  });
+
+  it('refuses an edit that moves a bash task there too', async () => {
+    const { service, store } = guardFixture();
+    const task = await service.addFromPanel(
+      { cron: '0 8 * * *', bash: 'ls' },
+      { platform: 'web', address: { channel: 'main', thread: 't1' } }
+    );
+
+    await expect(service.editFromPanel(task.id, {}, target)).rejects.toThrow(/coordination topic an external caller opened/);
     expect(store.get(task.id)!.target.thread).toBe('t1');
   });
 
@@ -487,8 +502,32 @@ describe('ScheduleService: an external caller\'s coordination topic', () => {
     const { service, posted, runs } = guardFixture(built.task);
 
     const out = await service.runTask('c0ffee', undefined, 5_000);
-    expect(out.run).toMatchObject({ status: 'failed', error: expect.stringMatching(/runs no agent turn/) });
+    expect(out.run).toMatchObject({ status: 'failed', error: expect.stringMatching(/coordination topic an external caller opened/) });
     expect(runs).toEqual([]);
+    expect(posted).toEqual([]);
+  });
+
+  it('refuses a bash run there too, before the command is started', async () => {
+    const marker = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'aa-schedule-ran-')), 'ran');
+    dirs.push(path.dirname(marker));
+    const built = buildTask(
+      { cron: '0 8 * * *', bash: `touch ${marker}` },
+      {
+        now: NOW,
+        id: 'ba5h00',
+        defaultTz: 'Asia/Shanghai',
+        agents: ['cc'],
+        from: { key: 'web#main#t0', platform: 'web', agent: 'cc' },
+        target,
+        canOpenTopic: true,
+      }
+    );
+    if (!built.ok) throw new Error(built.error);
+    const { service, posted } = guardFixture(built.task);
+
+    const out = await service.runTask('ba5h00', undefined, 5_000);
+    expect(out.run).toMatchObject({ status: 'failed', error: expect.stringMatching(/coordination topic an external caller opened/) });
+    expect(fs.existsSync(marker)).toBe(false);
     expect(posted).toEqual([]);
   });
 });
