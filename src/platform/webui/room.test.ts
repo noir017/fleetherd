@@ -540,6 +540,24 @@ describe('WebRoom: the last event id on a row', () => {
     expect(listEvents(seen)).toHaveLength(1);
   });
 
+  it('sends one list for several edits inside the window', () => {
+    vi.useFakeTimers();
+    const { room, topic, seen } = attached();
+    const msg = room.post(topic, { own: false, html: '' }, '');
+    seen.length = 0;
+    // An edit carrying buttons is sent at once rather than held (see `revise`), so these are
+    // three separate events, each moving the row's `last`.
+    room.revise(topic, msg.id, 'one', []);
+    room.revise(topic, msg.id, 'two', []);
+    room.revise(topic, msg.id, 'three', []);
+    expect(seen.filter((s) => s.ev.t === 'msg')).toHaveLength(3);
+    expect(listEvents(seen)).toHaveLength(0);
+    vi.advanceTimersByTime(300);
+    expect(listEvents(seen)).toHaveLength(1);
+    const row = (lastOf(seen, 'topic-rows') as { rows: Topic[] }).rows.find((t) => t.id === topic);
+    expect(row?.last).toBe(room.topicList().find((t) => t.id === topic)?.last);
+  });
+
   it('drops a pending announcement at shutdown', () => {
     vi.useFakeTimers();
     const { room, topic, seen } = attached();
