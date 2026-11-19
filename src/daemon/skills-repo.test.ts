@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { gitSync, initRepo } from './skills-git.js';
+import { GitError, gitSync, initRepo } from './skills-git.js';
 import { SkillsRepo, gitSshCommand, prepareSkillsRepo, redactRepoUrl, type SkillsRemote } from './skills-repo.js';
 import {
   activeSkillFiles,
@@ -288,7 +288,10 @@ describe('SkillsRepo when the gateway\'s copy is the broken side', () => {
     const root = repoRoot(dir);
     fs.mkdirSync(root, { recursive: true });
     fs.writeFileSync(path.join(root, '.git'), 'gitdir: /nonexistent\n');
-    await expect(repo().sync()).rejects.toThrow(/not a git repository/);
+    // Git's own wording for this differs by version — 2.39 says "not a git repository", later ones
+    // "gitfile does not point to a valid repository" — so the test holds to the error's kind, a
+    // failed local git command, rather than to git's sentence.
+    await expect(repo().sync()).rejects.toBeInstanceOf(GitError);
   });
 
   it('says once that a cycle cannot run, however many fail, and once when it runs again', async () => {

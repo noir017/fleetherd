@@ -5,6 +5,13 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **3.17.1 is published as 3.17.2.** The 3.17.1 tag exists, but its release never did: a new test
+  held to git's own wording for a broken repository, which differs between git versions, and the
+  release machine's git put it another way. The test now checks the kind of error instead. The
+  changes are the ones listed under 3.17.1.
+
 ## [3.17.1] - 2026-11-20
 
 ### Fixed
