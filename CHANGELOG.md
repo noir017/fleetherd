@@ -7,6 +7,18 @@ All notable changes to this project are documented here. The format is based on
 
 ### Fixed
 
+- **Two agents on one machine can no longer fight over one instruction file.** `agents[].instructions`
+  (3.16.0) let any agent name the file its harness reads, and its layer. When two agents on the same
+  machine ended up at the same file with different layers — `cc` reading `~/.claude/CLAUDE.md` as
+  the `claude` layer, `cc2` pointed at it as `cc2` — each start relinked the file to its own layer,
+  the other agent read the wrong text until its next start, and the editor showed one row for both.
+  Now `config.yaml` that does this is refused on load and on `/reload`, naming both agents, the file
+  and their layers; sharing one file with the same layer is still fine. A host's `pod.yaml` can never
+  stop the gateway's config from loading: a clash inside one `pod.yaml` keeps what that host
+  declared before, and a pod agent that clashes with a `config.yaml` agent on its host keeps running
+  but gets nothing delivered — the web UI says "Not delivering". Paths are compared as written, after
+  folding `..`; a symbolic link is not followed. A layer named `Common` is refused like `common`.
+
 - **Two topics in one repository no longer lose a turn's change list when they start together.**
   Each turn first prepares the gateway's snapshot repository for the topic's directory, and that
   ran `git init` every time. Two topics starting a turn in the same repository at once ran it
