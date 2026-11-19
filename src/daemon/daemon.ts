@@ -1342,13 +1342,12 @@ export class Daemon {
    * the silencing and the order.
    */
   private killTopicTree(ref: ConversationRef, confirmed: ReadonlySet<string>): TopicKillResult[] {
-    const conversation = this.registry.conversationAt(ref.platform, {
-      channel: ref.channel,
-      ...(ref.thread !== undefined ? { thread: ref.thread } : {}),
-    });
+    const address = { channel: ref.channel, ...(ref.thread !== undefined ? { thread: ref.thread } : {}) };
+    const conversation = this.registry.conversationAt(ref.platform, address);
     if (!conversation) return [];
     console.log(`[reclaim] ${conversation.key}: ending ${confirmed.size} confirmed agent(s) under this topic from the web UI`);
-    return this.delegation.endTopic(conversation.key, confirmed);
+    // The page names the address; a coordination topic has no lane, so it has to be passed in.
+    return this.delegation.endTopic(conversation.key, confirmed, { platform: ref.platform, address });
   }
 
   /**

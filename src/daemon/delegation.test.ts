@@ -125,7 +125,7 @@ function manualClock() {
 
 const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
 
-function rig(opts: { answer?: string | null | 'manual'; failOpen?: string; failModel?: string; noHistory?: boolean } = {}) {
+function rig(opts: { answer?: string | null | 'manual'; failOpen?: string; failModel?: string; noHistory?: boolean; noLane?: string } = {}) {
   const clock = manualClock();
   const posted: Array<{ to: string; text: string; kind?: string }> = [];
   const parents = new Map<string, string>(); // child key → parent key
@@ -200,7 +200,8 @@ function rig(opts: { answer?: string | null | 'manual'; failOpen?: string; failM
       const key = keyOf(a);
       return bound.has(key) ? { key, agent: bound.get(key)! } : { key };
     },
-    laneFor: (k: string) => ({ platformId: k.startsWith('tg#') ? 'tg' : 'web', address: addrOf(k) }),
+    laneFor: (k: string) =>
+      k === opts.noLane ? undefined : { platformId: k.startsWith('tg#') ? 'tg' : 'web', address: addrOf(k) },
     activityOf: (k: string) => activity.get(k),
     replyOf: (k: string) => {
       if (activity.get(k)?.outcome?.kind !== 'done') return undefined;
@@ -2157,6 +2158,19 @@ describe('Delegation: a coordination topic an external caller opened', () => {
     expect(read.note).toMatch(/no turn in this topic has ended normally yet/);
     expect(read.note).toMatch(/status shows where it is/);
     expect(read.note).not.toMatch(/--turn last|\/new|current generation/);
+  });
+
+  it('ends the sub-tasks under a coordination topic when the web UI asks', async () => {
+    // No lane for E: a coordination topic has never run a turn, so `place` must use the given at.
+    const r = external({ noLane: E });
+    await r.d.handleExternal(E, task('cc', 'Book the hotel'), at(E));
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    await settle();
+
+    const ended = r.d.endTopic(E, new Set(['c1000000']), at(E));
+    expect(ended).toEqual([{ topic: 'c1000000', outcome: 'ended' }]);
+    expect(r.calls).toContainEqual(['kill', C]);
   });
 
   it('lists the agents as from no machine of the gateway', async () => {
