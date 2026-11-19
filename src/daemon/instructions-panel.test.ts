@@ -8,7 +8,7 @@ import type { AgentDef } from '../config/schema.js';
 import type { InstructionsDelivery, InstructionsRefsResult } from '../platform/adapter.js';
 import { buildInstructionsPanel, deliverInstructions, walkSources } from './instructions-panel.js';
 import { harnessSources } from './instruction-imports.js';
-import { INSTRUCTIONS_MAX_BYTES, type HarnessLayer } from './instructions.js';
+import { INSTRUCTIONS_MAX_BYTES } from './instructions.js';
 import { localWorkspace } from './workspace.js';
 
 /**
@@ -21,7 +21,7 @@ let root: string;
 let gateway: string;
 let home: string;
 let lines: string[];
-let delivered: Array<Set<HarnessLayer>>;
+let delivered: Array<Set<string>>;
 
 const def = (id: string, harness: AgentDef['harness'], extra: Partial<AgentDef> = {}): AgentDef =>
   ({ id, harness, env: {}, args: [], ...extra }) as unknown as AgentDef;
@@ -89,6 +89,26 @@ describe('the list', () => {
     expect(list.on).toBe(true);
     expect(list.global.find((g) => g.name === 'agy.md')).toMatchObject({ exists: true, size: 4, agents: [] });
   });
+
+  it("lists a custom agent's layer by its id, and a pod agent's by the id in its pod.yaml", async () => {
+    const custom = [
+      def('mh', 'custom', { command: 'my-harness', instructions: { file: '~/.my-harness/AGENTS.md' } }),
+      def('mh@box', 'custom', {
+        command: 'my-harness',
+        host: 'box',
+        instructions: { file: '~/.my-harness/AGENTS.md', layer: 'mh' },
+      }),
+    ];
+    const list = await panel({ agents: () => custom }).list();
+    expect(list.global).toEqual([
+      { name: 'common.md', layer: 'common', exists: false, agents: ['mh', 'mh@box'] },
+      { name: 'mh.md', layer: 'mh', exists: false, agents: ['mh', 'mh@box'] },
+    ]);
+    expect(list.agents).toEqual([
+      { id: 'mh', harness: 'mh', host: 'local', file: '~/.my-harness/AGENTS.md' },
+      { id: 'mh@box', harness: 'mh', host: 'box', file: '~/.my-harness/AGENTS.md' },
+    ]);
+  });
 });
 
 describe('global files', () => {
@@ -101,13 +121,23 @@ describe('global files', () => {
     expect(saved).toMatchObject({ ok: true, size: 19, sha256: sha('Answer in English.\n'), delivery: [{ outcome: 'linked' }] });
     expect(fs.readFileSync(path.join(gateway, 'common.md'), 'utf8')).toBe('Answer in English.\n');
     // common.md reaches every layer.
-    expect([...(delivered[0] ?? [])].sort()).toEqual(['agy', 'atomcode', 'claude', 'codebuddy', 'codex', 'opencode', 'wad']);
+    expect([...(delivered[0] ?? [])].sort()).toEqual(['agy', 'atomcode', 'claude', 'codebuddy', 'codex', 'opencode']);
     expect(lines).toEqual([`[webui] instructions: owner@web wrote gateway:${path.join(gateway, 'common.md')} (19 bytes)`]);
   });
 
   it('places only the layer a per-harness file is for', async () => {
     await panel().write({ scope: 'global', name: 'claude.md' }, 'x\n', { missing: true });
     expect([...(delivered[0] ?? [])]).toEqual(['claude']);
+  });
+
+  it("writes and places a custom agent's layer, and common.md reaches it too", async () => {
+    const custom = [def('mh', 'custom', { command: 'my-harness', instructions: { file: '~/.my-harness/AGENTS.md' } })];
+    const p = panel({ agents: () => custom });
+    expect(await p.read({ scope: 'global', name: 'mh.md' })).toMatchObject({ ok: true, missing: true });
+    await p.write({ scope: 'global', name: 'mh.md' }, 'mine\n', { missing: true });
+    expect([...(delivered[0] ?? [])]).toEqual(['mh']);
+    await p.write({ scope: 'global', name: 'common.md' }, 'all\n', { missing: true });
+    expect([...(delivered[1] ?? [])].sort()).toEqual(['agy', 'atomcode', 'claude', 'codebuddy', 'codex', 'mh', 'opencode']);
   });
 
   it('refuses a stale save as a conflict and writes nothing', async () => {
@@ -179,7 +209,7 @@ describe("an agent's references", () => {
   });
 
   it('says when the harness file is missing, and when it is the operator’s own', async () => {
-    const src = harnessSources({ harness: 'claude' }, home)!;
+    const src = harnessSources({ id: 'cc', harness: 'claude' }, home)!;
     expect(await walkSources(localWorkspace(home), src, home)).toEqual({ root: '~/.claude/CLAUDE.md', rootState: 'missing', summary: src.summary, refs: [] });
     fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
     fs.writeFileSync(path.join(home, '.claude', 'CLAUDE.md'), '@a.md\n');

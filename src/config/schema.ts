@@ -60,6 +60,25 @@ export const PermissionLevelSchema = z.enum(PERMISSION_LEVELS);
 export const SessionScope = z.enum(['per_thread', 'per_channel', 'per_user', 'shared']);
 export type SessionScope = z.infer<typeof SessionScope>;
 
+/** A user-level instruction file on an agent's host: `~/…` under that home, or an absolute path. */
+const InstructionFileSchema = z
+  .string()
+  .min(1)
+  .refine((p) => (p.startsWith('~/') ? p.length > 2 : p.startsWith('/')) && !p.endsWith('/'), {
+    message: "instructions.file is the file on the agent's host: `~/…` or an absolute path",
+  });
+
+/** The layer's name becomes `<layer>.md` in the gateway's instructions directory: a plain file name. */
+const InstructionLayerSchema = z
+  .string()
+  .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/, 'instructions.layer is a file name: letters, digits, dot, dash and underscore')
+  .refine((l) => l !== 'common', { message: 'instructions.layer cannot be "common": common.md is the layer every agent gets' });
+
+/** Whether `layer` can name a `<layer>.md` beside `common.md`. */
+function instructionLayerOk(layer: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(layer) && layer !== 'common';
+}
+
 /**
  * A single agent definition. harness is a preset (claude/gemini/codex/opencode/dsh/agy); with custom,
  * command points at any ACP-speaking executable. harness-specific switches (e.g.
@@ -82,6 +101,22 @@ const AgentDefFields = z
     cwd: z.string().optional(),
     /** Model (best-effort via newSession; whether it takes effect depends on the harness). */
     model: z.string().optional(),
+    /**
+     * Where this agent's harness reads the operator's instructions (docs/instructions.md), when the
+     * gateway cannot know it: any `custom` command, or a preset whose file has been moved. `file` is
+     * on the agent's machine — `~` is resolved against the home it runs as (`env.HOME` included),
+     * exactly as for its skill. `layer` names the `<layer>.md` composed beside `common.md` in the
+     * gateway's instructions directory; unset = the agent's id (a pod's agent: its pod.yaml id,
+     * without the `@host` the gateway adds). Delivery rules are unchanged: nothing is placed unless
+     * the file's directory exists, and a real file there is left alone.
+     */
+    instructions: z
+      .object({
+        file: InstructionFileSchema,
+        layer: InstructionLayerSchema.optional(),
+      })
+      .strict()
+      .optional(),
     /**
      * ACP session config options pinned for this agent, by the harness's own option id: `context`,
      * `fast`, `mode`, … Each is applied once the session's model is settled and before the
@@ -221,9 +256,17 @@ const AgentDefFields = z
   });
 
 /** The cross-field rules every agent definition obeys, wherever it was written. */
-function agentRules<O extends { harness: string; command?: string; contextBudget?: number; gatewayModels?: string[] }, I>(
-  schema: z.ZodType<O, z.ZodTypeDef, I>
-) {
+function agentRules<
+  O extends {
+    id: string;
+    harness: string;
+    command?: string;
+    contextBudget?: number;
+    gatewayModels?: string[];
+    instructions?: { file: string; layer?: string };
+  },
+  I
+>(schema: z.ZodType<O, z.ZodTypeDef, I>) {
   return schema
     .refine((a) => a.harness !== 'custom' || (a.command !== undefined && a.command.length > 0), {
       message: 'command is required when harness=custom',
@@ -236,6 +279,12 @@ function agentRules<O extends { harness: string; command?: string; contextBudget
     .refine((a) => a.gatewayModels === undefined || a.harness === 'agy', {
       message: 'gatewayModels is supported for harness agy only (see docs/agents.md)',
       path: ['gatewayModels'],
+    })
+    // The layer defaults to the id, which is an id rather than a file name: refuse one that could
+    // escape the instructions directory instead of quietly delivering somewhere else.
+    .refine((a) => !a.instructions || instructionLayerOk(a.instructions.layer ?? a.id), {
+      message: 'instructions.layer defaults to the agent id, which is not a file name here; set instructions.layer',
+      path: ['instructions', 'layer'],
     });
 }
 

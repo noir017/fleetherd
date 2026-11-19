@@ -12135,7 +12135,7 @@ const SCRIPT = `
   // Who reads a harness layer's file, said whole: a card's line under a shared file is this.
   var INSTR_REACH = {common:'every agent', claude:'every Claude Code agent', codex:'every Codex agent',
     opencode:'every OpenCode agent', agy:'every Antigravity agent', codebuddy:'every CodeBuddy agent',
-    atomcode:'every AtomCode agent', wad:'every web agent (wad)'};
+    atomcode:'every AtomCode agent'};
 
   function instrFetch(url){
     return fetch(url, {credentials:'same-origin'}).then(function(r){

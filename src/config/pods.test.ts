@@ -66,6 +66,56 @@ describe('mergePodAgents', () => {
     const parsed = PodFileSchema.parse({ agents: [{ id: 'oc', harness: 'opencode', host: 'x' }] });
     expect(parsed.agents[0]).not.toHaveProperty('host');
   });
+
+  it("defaults a pod agent's instruction layer to its pod.yaml id, without the host", () => {
+    const { raw: out } = mergePodAgents(raw, {
+      a: record([
+        { id: 'mh', harness: 'custom', command: 'my-harness', instructions: { file: '~/.my-harness/AGENTS.md' } },
+        {
+          id: 'ex',
+          harness: 'custom',
+          command: 'my-harness',
+          instructions: { file: '~/.my-harness/AGENTS.md', layer: 'mine' },
+        },
+      ]),
+    });
+    const byId = Object.fromEntries(
+      (out.agents as Array<{ id: string; instructions?: { file: string; layer?: string } }>).map((a) => [a.id, a.instructions])
+    );
+    expect(byId['mh@a']).toEqual({ file: '~/.my-harness/AGENTS.md', layer: 'mh' });
+    expect(byId['ex@a']).toEqual({ file: '~/.my-harness/AGENTS.md', layer: 'mine' });
+    expect(byId['cc']).toBeUndefined();
+  });
+});
+
+describe('agents[].instructions', () => {
+  const base = {
+    platforms: { tg: { type: 'telegram', token: 't' } },
+    agents: [{ id: 'mh', harness: 'custom', command: 'my-harness' }],
+    routing: { default: 'mh' },
+  };
+  const parsed = (instructions: unknown, id = 'mh') =>
+    ConfigSchema.safeParse({ ...base, agents: [{ ...base.agents[0], id, instructions }], routing: { default: id } });
+
+  it('takes a ~ or absolute file, with a plain layer', () => {
+    expect(parsed({ file: '~/.my-harness/AGENTS.md' }).success).toBe(true);
+    expect(parsed({ file: '/opt/my-harness/AGENTS.md', layer: 'my-harness' }).success).toBe(true);
+  });
+
+  it('refuses a relative file, a trailing slash, a layer with a path, and common', () => {
+    for (const instructions of [
+      { file: 'AGENTS.md' },
+      { file: '~/' },
+      { file: '~/.my-harness/AGENTS.md', layer: '../mine' },
+      { file: '~/.my-harness/AGENTS.md', layer: 'common' },
+    ]) {
+      expect(parsed(instructions).success, JSON.stringify(instructions)).toBe(false);
+    }
+  });
+
+  it('refuses an id that cannot be the default layer', () => {
+    expect(parsed({ file: '~/.my-harness/AGENTS.md' }, 'a/b').success).toBe(false);
+  });
 });
 
 describe('podModels: the gateway naming a pod agent’s model', () => {

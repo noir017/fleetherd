@@ -29,7 +29,6 @@ import {
   ownedDir,
   placeInstructions,
   readLayer,
-  type HarnessLayer,
   type InstructionsResult,
 } from './instructions.js';
 import { remoteHosts } from './remote-hosts.js';
@@ -87,7 +86,7 @@ export interface InstructionsPanelOptions {
   /** Reach the machine an agent runs on. Throws when it cannot be reached. */
   machine?: (def: AgentDef) => Promise<AgentMachine>;
   /** Place the composed text for `layers` on every machine now — see `deliverInstructions`. */
-  deliver?: (layers: ReadonlySet<HarnessLayer>) => Promise<InstructionsDelivery[]>;
+  deliver?: (layers: ReadonlySet<string>) => Promise<InstructionsDelivery[]>;
   log?: (line: string) => void;
 }
 
@@ -119,8 +118,18 @@ function fail(e: unknown): { ok: false; error: string } {
 
 // ── the list ──────────────────────────────────────────────────────────────────────────────────
 
-function globalNames(): string[] {
-  return ['common.md', ...HARNESS_LAYERS.map((l) => `${l}.md`)];
+/** Every layer name a configured agent reads: the presets' own, and each `instructions.layer` (or id). */
+function layerNames(agents: readonly AgentDef[]): string[] {
+  const out = new Set<string>(HARNESS_LAYERS);
+  for (const def of agents) {
+    const where = instructionsHome(def, '~');
+    if (where) out.add(where.name);
+  }
+  return [...out];
+}
+
+function globalNames(agents: readonly AgentDef[]): string[] {
+  return ['common.md', ...layerNames(agents).map((l) => `${l}.md`)];
 }
 
 async function listAll(env: Env): Promise<InstructionsPanelList> {
@@ -130,7 +139,7 @@ async function listAll(env: Env): Promise<InstructionsPanelList> {
   const everyone: string[] = [];
   const rows: InstructionsAgent[] = agents.map((def) => {
     // `~` as the home: the page shows where the file is on that machine, not this one's path to it.
-    const where = instructionsHome(def.harness, '~', def.command);
+    const where = instructionsHome(def, '~');
     const own = harnessSources(def, '~')?.summary;
     if (where) {
       readers.set(where.name, [...(readers.get(where.name) ?? []), def.id]);
@@ -145,7 +154,7 @@ async function listAll(env: Env): Promise<InstructionsPanelList> {
     };
   });
   const global: InstructionsGlobalFile[] = [];
-  for (const name of globalNames()) {
+  for (const name of globalNames(agents)) {
     const layer = name.slice(0, -'.md'.length);
     const st = statOrUndefined(path.join(dir, name));
     const agentsOf = layer === 'common' ? everyone : (readers.get(layer) ?? []);
@@ -190,7 +199,7 @@ async function refsOf(env: Env, agent: string): Promise<InstructionsRefsResult> 
   try {
     const def = agentOf(env, agent);
     const { m, src } = await reach(env, def);
-    const w = await walkSources(m.ws, src, m.home);
+    const w = await walkSources(m.ws, src, m.home, layerNames(env.agents()));
     return { ok: true, agent, host: m.ws.host, ...w };
   } catch (e) {
     return fail(e);
@@ -216,7 +225,12 @@ interface WalkState {
  * first, in the order the harness reads them, each file once, and no further along a chain of
  * references than the harness goes.
  */
-export async function walkSources(ws: Workspace, src: HarnessSources, home: string): Promise<Walk> {
+export async function walkSources(
+  ws: Workspace,
+  src: HarnessSources,
+  home: string,
+  layers: Iterable<string> = HARNESS_LAYERS
+): Promise<Walk> {
   const P = path.posix;
   // The gateway's delivered copies — `<layer>.md` in its directory on that machine, under either
   // spelling of it — are what it rewrites at every start. Another file a person keeps beside them is
@@ -228,7 +242,7 @@ export async function walkSources(ws: Workspace, src: HarnessSources, home: stri
     src,
     refs: [],
     seen: new Set(),
-    copies: new Set([...dirs].flatMap((d) => HARNESS_LAYERS.map((l) => P.join(d, `${l}.md`)))),
+    copies: new Set([...dirs].flatMap((d) => [...layers].map((l) => P.join(d, `${l}.md`)))),
   };
   const realRoot = await realpathOn(ws, src.delivered);
   if (realRoot) {
@@ -394,7 +408,7 @@ function tilde(p: string, home: string): string {
 async function referenced(env: Env, agent: string, p: string): Promise<{ m: AgentMachine; ref: InstructionsRef }> {
   const def = agentOf(env, agent);
   const { m, src } = await reach(env, def);
-  const w = await walkSources(m.ws, src, m.home);
+  const w = await walkSources(m.ws, src, m.home, layerNames(env.agents()));
   const ref = w.refs.find((r) => r.path === p);
   if (!ref) throw new Refusal(`${tilde(p, m.home)} is not one of ${agent}'s instruction files`);
   if (!ref.editable) throw new Refusal(`${ref.shown} is ${ref.note ?? 'not editable here'}`);
@@ -404,7 +418,7 @@ async function referenced(env: Env, agent: string, p: string): Promise<{ m: Agen
 // ── reads and writes ──────────────────────────────────────────────────────────────────────────
 
 function globalFile(env: Env, name: string): string {
-  if (!globalNames().includes(name)) throw new Refusal(`${name} is not one of the instruction files`);
+  if (!globalNames(env.agents()).includes(name)) throw new Refusal(`${name} is not one of the instruction files`);
   return path.join(env.dir(), name);
 }
 
@@ -449,7 +463,7 @@ async function writeTarget(env: Env, target: InstructionsTarget, text: string, e
 async function writeGlobal(env: Env, name: string, text: string, data: Buffer, expect: FilesPanelExpect): Promise<InstructionsWriteResult> {
   const abs = globalFile(env, name);
   const dir = env.dir();
-  const layers = affectedLayers(name);
+  const layers = affectedLayers(name, env.agents());
   assertFits(dir, name, text, layers);
   // The directory is the feature's switch (instructions.ts): writing the first file into it is the
   // person turning it on, which is what they asked for by saving.
@@ -461,16 +475,16 @@ async function writeGlobal(env: Env, name: string, text: string, data: Buffer, e
 }
 
 /** The layers a change to `name` reaches: every one for `common.md`, its own otherwise. */
-function affectedLayers(name: string): Set<HarnessLayer> {
+function affectedLayers(name: string, agents: readonly AgentDef[]): Set<string> {
   const layer = name.slice(0, -'.md'.length);
-  return new Set(HARNESS_LAYERS.filter((l) => name === 'common.md' || l === layer));
+  return new Set(layerNames(agents).filter((l) => name === 'common.md' || l === layer));
 }
 
 /**
  * Refuse a save that would put any agent over the cap, before it is written. Delivery would refuse
  * it anyway (instructions.ts), but only into a log line; here the person who caused it is looking.
  */
-function assertFits(dir: string, name: string, text: string, layers: ReadonlySet<HarnessLayer>): void {
+function assertFits(dir: string, name: string, text: string, layers: ReadonlySet<string>): void {
   const layerText = (file: string): string | undefined => (file === name ? text : readLayer(dir, file));
   for (const l of layers) {
     const composed = joinLayers([layerText('common.md'), layerText(`${l}.md`)]);
@@ -513,7 +527,7 @@ function sha(data: Buffer): string {
  */
 export async function deliverInstructions(o: {
   agents: readonly AgentDef[];
-  layers: ReadonlySet<HarnessLayer>;
+  layers: ReadonlySet<string>;
   local: (def: AgentDef) => InstructionsResult | undefined;
   remote: (def: AgentDef) => Promise<InstructionsResult | undefined>;
   timeoutMs?: number;
@@ -526,7 +540,7 @@ export async function deliverInstructions(o: {
     else out.set(k, { host, agents: [agent], ...(r.link ? { link: r.link } : {}), outcome: r.outcome, ...(r.detail ? { detail: r.detail } : {}) });
   };
   const readers = o.agents.filter((def) => {
-    const where = instructionsHome(def.harness, '~', def.command);
+    const where = instructionsHome(def, '~');
     return where !== undefined && o.layers.has(where.name);
   });
   const remote = readers.filter((def) => def.host);
@@ -569,7 +583,7 @@ async function liveMachine(def: AgentDef): Promise<AgentMachine> {
   return { ws: remoteWorkspace(host, home), home };
 }
 
-function liveDeliver(agents: readonly AgentDef[], layers: ReadonlySet<HarnessLayer>): Promise<InstructionsDelivery[]> {
+function liveDeliver(agents: readonly AgentDef[], layers: ReadonlySet<string>): Promise<InstructionsDelivery[]> {
   return deliverInstructions({
     agents,
     layers,

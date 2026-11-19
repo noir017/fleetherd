@@ -294,7 +294,7 @@ export class RemoteHosts {
    */
   async placeInstructions(host: RemoteHost, def: AgentDef, home: string, w: Welcome): Promise<InstructionsResult | undefined> {
     if (envOf('NO_SKILL_LINK')) return undefined;
-    const where = instructionsHome(def.harness, home, def.command);
+    const where = instructionsHome(def, home);
     if (!where) return undefined;
     const key = `${host.id}@${w.instance}@${where.file}`;
     try {

@@ -15,7 +15,8 @@ A service that is only an HTTP API needs no harness of its own:
 
 Each agent takes `cwd`, `env`, `args`, a best-effort `model`, pinned
 [session options](#pinned-session-options), a [pre-launch hook](#pre-launch-hook), a
-[permission level](#permission-levels), and a [quota command](#quota-command). With
+[permission level](#permission-levels), a [quota command](#quota-command), and — for a harness the
+gateway does not know — [its own instruction file](#its-own-instruction-file). With
 `host:` it runs on another machine, reached over ssh — see [Remote hosts](remote-hosts.md). Sessions
 persist where the agent supports it; the commands an agent advertises are
 reachable through its own `/<agent>` menu rather than registered globally (see
@@ -48,6 +49,26 @@ model — which is what makes `/effort` work there, and what `options` above is 
 plain list, a combination cursor did not pre-combine (500k / extra high / fast off, say) cannot be
 chosen at all. The binary has to be named `cursor-agent`; a symlink under another name keeps the
 pre-combined list, and the pins above are then skipped with a log line.
+
+## Its own instruction file
+
+`instructions` names the user-level file this agent's harness reads on its machine — the way a
+`custom` harness gets the [standing instructions](instructions.md) — and the layer it gets beside
+`common.md`:
+
+```yaml
+agents:
+  - id: mh
+    harness: custom
+    command: my-harness
+    instructions:
+      file: ~/.my-harness/AGENTS.md
+      layer: my-harness
+```
+
+`~` is resolved against the home the agent runs as (`env.HOME` included); `layer` defaults to the
+agent's id, and a pod's agent uses its `pod.yaml` id without `@host`. Nothing is placed unless the
+file's directory exists. See [Your instructions, for every agent](instructions.md).
 
 ## Pre-launch hook
 

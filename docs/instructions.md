@@ -5,15 +5,16 @@ English | [简体中文](zh-CN/instructions.md)
 Write down once how you want to be worked with — *"answer in Chinese, lead with the conclusion"*,
 *"propose a plan before deleting anything"* — and every agent reads it: Claude Code, Codex,
 OpenCode, Antigravity, CodeBuddy and AtomCode, on this machine and on every
-[remote host](remote-hosts.md). The text lives in one directory on the gateway, so moving the
-gateway moves it.
+[remote host](remote-hosts.md), plus any other harness you point at its own file (below). The text
+lives in one directory on the gateway, so moving the gateway moves it.
 
 ```text
 <config dir>/instructions/        (~/.config/fleetherd/instructions/)
   common.md      every agent
   claude.md      Claude Code only
   codex.md       Codex only
-  …              opencode.md, agy.md, codebuddy.md, atomcode.md, wad.md
+  …              opencode.md, agy.md, codebuddy.md, atomcode.md
+  <layer>.md     any other agent, by its instructions.layer (its id by default)
 ```
 
 An agent gets `common.md` followed by its own file. Either may be missing. The per-agent file is
@@ -21,6 +22,28 @@ for rules that only make sense for one harness — say, one about its prompt cac
 agent, billed differently, should not follow.
 
 There is no setting: the directory existing turns it on, and deleting it turns it off.
+
+## An agent the gateway does not know
+
+A `custom` harness's user-level instruction file is not something the gateway can guess. Name it in
+the agent's config, and optionally the layer it gets:
+
+```yaml
+agents:
+  - id: mh
+    harness: custom
+    command: my-harness
+    instructions:
+      file: ~/.my-harness/AGENTS.md
+      layer: my-harness
+```
+
+`file` is on the agent's machine; `~` is resolved against the home that agent runs as (an
+`env.HOME` override included), and nothing is placed unless its directory exists. `layer` names the
+file beside `common.md` in `<config dir>/instructions/`; unset, it is the agent's id — a pod's agent
+uses the id in its `pod.yaml`, without the `@host` the gateway adds. The same block works in
+`~/.fleetherd/pod.yaml`. A preset (`claude`, `codex`, …) takes it too, for a harness whose file has
+been moved.
 
 ## How it reaches the agent
 
@@ -36,7 +59,7 @@ own user-level instruction file to it:
 | Antigravity (agy) | `~/.gemini/config/AGENTS.md` |
 | CodeBuddy Code | `~/.codebuddy/CODEBUDDY.md` |
 | AtomCode | `~/.atomcode/ATOMCODE.md` |
-| web-agent-driver (`wad`, a web agent driven in a browser) | `~/.wad/AGENTS.md` — wad puts it before a new web conversation's first message |
+| Another harness | the file its agent's `instructions.file` names, with `~` from that agent's home |
 
 The harness reads it the way it reads its own settings — before the conversation, with nothing
 added to your messages — and an agent you start from a terminal on that machine reads it too. A
@@ -52,7 +75,8 @@ running keeps what it read when it started.
   instructions. Move what is in it into `claude.md` and delete it; the next start puts the link in.
 - **Codex's `AGENTS.override.md`**, which Codex reads instead of `AGENTS.md`.
 - **A harness that has never run on that machine** — nothing is created for it.
-- **Gemini CLI, DeepSeek Harness and any other `custom` command** — no known file, so nothing.
+- **A `custom` command with no `instructions`** — no known file, so nothing. Name one (above) to
+  have the gateway place it.
 
 The text is capped at 32 KiB (Codex silently cuts an `AGENTS.md` beyond that); over it, nothing is
 delivered and the log says so. Edit the files on the gateway, not the copies on the hosts: those are
@@ -65,8 +89,9 @@ With the instruction editor turned on, each agent's card under **Agents** on the
 its own on its machine. A row opens the agent's whole list in the same editor the
 [file window](web-ui.md) uses — the same save, and the same check that the file did not change
 since you opened it. There is no list of the gateway's files apart from the agents: `common.md` is
-on every card, and `claude.md` on every Claude Code agent's, each marked with how many agents read
-it, because that is who an edit reaches.
+on every card, and the agent's layer file — `claude.md`, or the layer its `instructions` names (its
+id by default) — on every card that reads it, each marked with how many agents read it, because
+that is who an edit reaches.
 
 ```yaml
 platforms:
@@ -82,12 +107,13 @@ web UI's login can change what **every** agent reads, on every platform and ever
 conversations nobody on the page is watching. Turn it on only where the login is as well guarded as
 you would want that to be.
 
-**Your files on the gateway.** `common.md` and the file for that agent's kind, listed first as
-shared. Saving one creates the directory if it is not there yet — which
-turns the feature on — and places the new text **at once** on every machine an agent that reads it
-is configured for; the editor then says where it went. A host that does not answer gets it the next
-time an agent starts there. A save that would put any agent over 32 KiB is refused before anything
-is written. Sessions already running keep what they read when they started.
+**Your files on the gateway.** `common.md` and the agent's layer file — `claude.md`, or the layer
+its `instructions` names (its id by default) — listed first as shared. Saving one creates the
+directory if it is not there yet — which turns the feature on — and places the new text **at once**
+on every machine an agent that reads it is configured for; the editor then says where it went. A
+host that does not answer gets it the next time an agent starts there. A save that would put any
+agent over 32 KiB is refused before anything is written. Sessions already running keep what they
+read when they started.
 
 **Each agent's own files.** An agent whose harness reads instruction files of its own on its
 machine — besides the one the gateway places — lists them under the shared ones (on the card, as one

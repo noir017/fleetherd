@@ -14,9 +14,9 @@
 ACP 智能体，按 `custom` 启动。
 
 每个智能体可设 `cwd`、`env`、`args`、尽力传递的 `model`、[固定会话选项](#固定会话选项)、
-[启动前钩子](#启动前钩子)、[权限等级](#权限等级)，以及[额度命令](#额度命令)。
-设了 `host:` 就跑在另一台机器上、经 ssh 连接，见[远程主机](remote-hosts.md)。支持会话恢复
-的智能体，上下文可跨重启保留；智能体自己声明的斜杠命令不会全局注册，而是通过
+[启动前钩子](#启动前钩子)、[权限等级](#权限等级)、[额度命令](#额度命令)，以及——网关不认识的 harness 用的——
+[自己的指令文件](#自己的指令文件)。设了 `host:` 就跑在另一台机器上、经 ssh 连接，见[远程主机](remote-hosts.md)。
+支持会话恢复的智能体，上下文可跨重启保留；智能体自己声明的斜杠命令不会全局注册，而是通过
 它的 `/<agent>` 菜单调出（见[聊天命令](chat-commands.md#智能体命令)）。
 `doctor` 会逐一校验已配置的 harness。
 
@@ -44,6 +44,24 @@ Cursor 的 ACP 服务端随后把模型、上下文大小、思考深度和 fast
 只给一个预先组合好的变体——这正是 `/effort` 在它上面可用的原因，也是上面 `options` 能固定的前提。
 在旧的平铺列表里，cursor 没有预先组合过的组合（比如 500k / Extra High / Fast Off）根本选不到。
 可执行文件必须叫 `cursor-agent`；换成别的名字的软链就还是平铺列表，上面的固定项会被跳过并记日志。
+
+## 自己的指令文件
+
+`instructions` 写明这个智能体的 harness 在它所在机器上读哪个用户级文件——`custom` harness 就是靠它拿到
+[写给所有智能体的工作偏好](instructions.md)——以及它拿 `common.md` 旁边的哪一层：
+
+```yaml
+agents:
+  - id: mh
+    harness: custom
+    command: my-harness
+    instructions:
+      file: ~/.my-harness/AGENTS.md
+      layer: my-harness
+```
+
+`~` 按智能体运行时的 home 解析（`env.HOME` 覆盖也算）；`layer` 不写就用智能体的 id，pod 里的智能体用
+`pod.yaml` 里的 id、不带 `@host`。文件所在目录不存在就什么都不放。见[写给所有智能体的工作偏好](instructions.md)。
 
 ## 启动前钩子
 
