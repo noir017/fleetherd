@@ -14,6 +14,11 @@ All notable changes to this project are documented here. The format is based on
   It works in `config.yaml` and in a pod's `pod.yaml`, so a `custom` harness no longer needs a
   built-in special case to receive the standing instructions.
 
+### Removed
+
+- **The command-name special case for one custom harness's instruction file (3.15.0).** Such an
+  agent now declares its file with `instructions`.
+
 ## [3.15.0] - 2026-11-19
 
 ### Added
