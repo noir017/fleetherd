@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.17.0] - 2026-11-20
+
 ### Fixed
 
 - **An external caller is answered as a caller, not as an agent of this gateway.** The MCP entrance
