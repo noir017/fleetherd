@@ -102,12 +102,15 @@ describe('agents[].instructions', () => {
     expect(parsed({ file: '/opt/my-harness/AGENTS.md', layer: 'my-harness' }).success).toBe(true);
   });
 
-  it('refuses a relative file, a trailing slash, a layer with a path, and common', () => {
+  it('refuses a relative file, a trailing slash, a layer with a path, and common in any case', () => {
     for (const instructions of [
       { file: 'AGENTS.md' },
       { file: '~/' },
       { file: '~/.my-harness/AGENTS.md', layer: '../mine' },
+      // On a case-insensitive filesystem `Common.md` IS `common.md`, the layer every agent gets.
       { file: '~/.my-harness/AGENTS.md', layer: 'common' },
+      { file: '~/.my-harness/AGENTS.md', layer: 'Common' },
+      { file: '~/.my-harness/AGENTS.md', layer: 'COMMON' },
     ]) {
       expect(parsed(instructions).success, JSON.stringify(instructions)).toBe(false);
     }
@@ -234,6 +237,8 @@ hosts:
 routing:
   default: cc@box
 `;
+  /** The same file, routing to a pod agent these tests declare. */
+  const yamlFor = (agent: string): string => yaml.replace('default: cc@box', `default: ${agent}`);
 
   it('accepts routing that names a pod agent, and config.yaml needs no agents of its own', () => {
     fs.writeFileSync(path.join(dir, 'config.yaml'), yaml);
@@ -246,6 +251,28 @@ routing:
   it('fails as before when nothing declares the agent routing names', () => {
     fs.writeFileSync(path.join(dir, 'config.yaml'), yaml);
     expect(() => readConfig()).toThrow(/agents|routing\.default/);
+  });
+
+  it('refuses two pod agents that share an instruction file under different layers', () => {
+    fs.writeFileSync(path.join(dir, 'config.yaml'), yamlFor('a@box'));
+    writePods(dir, {
+      box: record([
+        { id: 'a', harness: 'custom', command: 'my-harness', instructions: { file: '~/.my-harness/AGENTS.md' } },
+        { id: 'b', harness: 'custom', command: 'my-harness', instructions: { file: '~/.my-harness/AGENTS.md' } },
+      ]),
+    });
+    expect(() => readConfig()).toThrow(/"a@box" \(layer "a"\) and "b@box" \(layer "b"\).*on host "box"/);
+  });
+
+  it('lets two pod agents share one file when they name the same layer', () => {
+    fs.writeFileSync(path.join(dir, 'config.yaml'), yamlFor('a@box'));
+    writePods(dir, {
+      box: record([
+        { id: 'a', harness: 'custom', command: 'my-harness', instructions: { file: '~/.my-harness/AGENTS.md', layer: 'mine' } },
+        { id: 'b', harness: 'custom', command: 'my-harness', instructions: { file: '~/.my-harness/AGENTS.md', layer: 'mine' } },
+      ]),
+    });
+    expect(readConfig().config.agents.map((a) => a.id)).toEqual(['a@box', 'b@box']);
   });
 
   it('reads a missing or broken pods.json as no pods', () => {

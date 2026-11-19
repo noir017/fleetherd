@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { AgentDef, Config, HostDef } from '../config/schema.js';
 import { configDir } from '../config/load.js';
+import { instructionsHome } from '../config/instructions.js';
 import { commandHint, isBridgedCommand } from '../ipc/commands.js';
 import { packageVersion, remoteBinary, sshTransport } from '../remote/binaries.js';
 import type { Welcome } from '../remote/connection.js';
@@ -14,7 +15,6 @@ import {
   SETTLED,
   composeInstructions,
   instructionsDir,
-  instructionsHome,
   ownedDir,
   reportInstructions,
   type InstructionsResult,

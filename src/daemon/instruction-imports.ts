@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { harnessKind, instructionsHome, type InstructionsAgent } from './instructions.js';
+import { harnessKind, instructionsHome, type InstructionsAgent } from '../config/instructions.js';
 
 /**
  * Where an agent's OWN instructions are — the files its harness reads at user level besides the one

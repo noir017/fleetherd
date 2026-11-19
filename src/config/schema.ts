@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { ToolMode as ToolModeType, TurnFailureReason } from '../types.js';
 import { PlatformConfigSchema, type PlatformInstance } from '../platform/config-schemas.js';
+import { instructionConflicts } from './instructions.js';
 
 /**
  * Config schema + defaults.
@@ -68,15 +69,21 @@ const InstructionFileSchema = z
     message: "instructions.file is the file on the agent's host: `~/…` or an absolute path",
   });
 
-/** The layer's name becomes `<layer>.md` in the gateway's instructions directory: a plain file name. */
+/**
+ * The layer's name becomes `<layer>.md` in the gateway's instructions directory: a plain file name.
+ * `common` is compared without regard to case: on a case-insensitive filesystem `Common.md` IS
+ * `common.md`, so such a layer would hand its agent the common text twice.
+ */
 const InstructionLayerSchema = z
   .string()
   .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/, 'instructions.layer is a file name: letters, digits, dot, dash and underscore')
-  .refine((l) => l !== 'common', { message: 'instructions.layer cannot be "common": common.md is the layer every agent gets' });
+  .refine((l) => l.toLowerCase() !== 'common', {
+    message: 'instructions.layer cannot be "common": common.md is the layer every agent gets',
+  });
 
 /** Whether `layer` can name a `<layer>.md` beside `common.md`. */
 function instructionLayerOk(layer: string): boolean {
-  return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(layer) && layer !== 'common';
+  return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(layer) && layer.toLowerCase() !== 'common';
 }
 
 /**
@@ -1115,6 +1122,12 @@ export const ConfigSchema = z
         });
       }
     });
+    // Two agents on one machine whose instruction files resolve to the same path would take turns
+    // repointing that link — the later write wins silently and the other agent reads the wrong text
+    // (config/instructions.ts instructionConflicts). The same layer is sharing, and allowed.
+    for (const message of instructionConflicts(cfg.agents)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['agents'], message });
+    }
     const platformIds = new Set(Object.keys(cfg.platforms));
     if (cfg.review) checkReview(cfg.review, cfg.agents, ctx);
     cfg.routing.pipeline.forEach((rule, i) => {

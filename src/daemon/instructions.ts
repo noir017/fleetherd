@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { AgentDef } from '../config/schema.js';
 import { configDir } from '../config/load.js';
+import { instructionsHome, type InstructionsHome } from '../config/instructions.js';
 import { selfInvocation } from './reverse-cli-shim.js';
 import { envOf, isUnderEitherName } from '../legacy-name.js';
 
@@ -37,25 +38,10 @@ import { envOf, isUnderEitherName } from '../legacy-name.js';
  * `~/.fleetherd/instructions` is repointed.
  *
  * ── Where, per harness ────────────────────────────────────────────────────────────────────────────
- * Probed 2026-11-04 except where said: a symlink at the path below pointing to a file holding a
- * random word, the harness run in print mode from an empty directory outside any project, asked for
- * the word. The symlink is the probe because it is what ships.
- *  - claude   — `~/.claude/CLAUDE.md`, Claude Code's documented user memory file. Not probed.
- *  - codex    — `~/.codex/AGENTS.md` (codex 0.165.0). Its session file records it as an `agents_md`
- *               item. An `AGENTS.override.md` beside it takes precedence (the lookup order is in the
- *               binary), so an operator who has one keeps it — this never touches that name.
- *  - opencode — `~/.config/opencode/AGENTS.md` (opencode 2.2.5): its global rule file.
- *  - agy      — `~/.gemini/config/AGENTS.md` (agy, 2026-11-04 build). `~/.gemini/config` is agy's
- *               global customization root — where it reads skills (skill-link.ts) — and its built-in
- *               docs say a root may hold a standalone `GEMINI.md`/`AGENTS.md`, always active.
- *  - custom   — by command, as skill-link.ts reads it: CodeBuddy Code, `~/.codebuddy/CODEBUDDY.md`
- *               (2.179.2, its USER-scope memory file); AtomCode, `~/.atomcode/ATOMCODE.md` (v5.2.5,
- *               named "global … personal defaults" in its own help). Any other command: nothing,
- *               unless the agent's `instructions` names its file.
- *  - gemini, dsh — none known; nothing is placed rather than a guess, unless the agent's
- *               `instructions` names a file.
- * A harness's own override of its directory (CODEX_HOME, XDG_CONFIG_HOME) is not followed; an
- * `env.HOME` override is, by the caller, as for the skill.
+ * The table — which file each harness reads, and which layer it gets — is config/instructions.ts.
+ * It lives below the daemon because config loading has to refuse two agents on one machine that
+ * would repoint each other's link (instructionConflicts there), and the check must use the same
+ * table delivery does. This module places by it, unchanged.
  *
  * ── What it will and will not touch ──────────────────────────────────────────────────────────────
  * The text goes to `<home>/.fleetherd/instructions/<name>.md` — a fixed path, never under a version
@@ -82,86 +68,6 @@ export const INSTRUCTIONS_DIR = 'instructions';
  * not one to deliver in part.
  */
 export const INSTRUCTIONS_MAX_BYTES = 32 * 1024;
-
-/**
- * The per-harness layers the gateway knows by itself — the `<name>.md` files beside `common.md`
- * that the web UI's editor always offers. A `custom` harness's layer is added from the config
- * instead: its agent's id, or the `layer` its `instructions` names.
- */
-export const HARNESS_LAYERS = ['claude', 'codex', 'opencode', 'agy', 'codebuddy', 'atomcode'] as const;
-export type HarnessLayer = (typeof HARNESS_LAYERS)[number];
-
-/** The harness a preset or a known `custom` command is, or undefined when nothing is known of it. */
-export function harnessKind(harness: AgentDef['harness'], command?: string): HarnessLayer | undefined {
-  switch (harness) {
-    case 'claude':
-    case 'codex':
-    case 'opencode':
-    case 'agy':
-      return harness;
-    case 'custom': {
-      const cmd = path.basename(command ?? '');
-      return cmd === 'codebuddy' || cmd === 'atomcode' ? cmd : undefined;
-    }
-    case 'gemini':
-    case 'dsh':
-      return undefined;
-    default: {
-      const _exhaustive: never = harness;
-      return _exhaustive;
-    }
-  }
-}
-
-/** The agent fields `instructionsHome` reads. */
-export type InstructionsAgent = Pick<AgentDef, 'id' | 'harness' | 'command' | 'instructions'>;
-
-/** Where one harness reads its user-level instructions. */
-export interface InstructionsHome {
-  /** The layer's name: the `<name>.md` composed on the gateway, and the copy's name on the host. */
-  name: string;
-  /** The harness's own user-level instruction file — where the link goes. */
-  file: string;
-  /** The harness's config directory: nothing is placed unless it exists. */
-  requires: string;
-}
-
-/** `~/…` against the agent's home; an absolute path as written (the schema allows nothing else). */
-function expandInstructionFile(file: string, home: string): string {
-  return file.startsWith('~/') ? path.join(home, file.slice(2)) : file;
-}
-
-/** Where `def`'s harness reads its user-level instruction file under `home` (see the header). */
-export function instructionsHome(def: InstructionsAgent, home: string): InstructionsHome | undefined {
-  if (def.instructions) {
-    const file = expandInstructionFile(def.instructions.file, home);
-    return { name: def.instructions.layer ?? def.id, file, requires: path.dirname(file) };
-  }
-  switch (harnessKind(def.harness, def.command)) {
-    case 'claude':
-      return { name: 'claude', file: path.join(home, '.claude', 'CLAUDE.md'), requires: path.join(home, '.claude') };
-    case 'codex':
-      return { name: 'codex', file: path.join(home, '.codex', 'AGENTS.md'), requires: path.join(home, '.codex') };
-    case 'opencode':
-      return {
-        name: 'opencode',
-        file: path.join(home, '.config', 'opencode', 'AGENTS.md'),
-        requires: path.join(home, '.config', 'opencode'),
-      };
-    case 'agy':
-      return {
-        name: 'agy',
-        file: path.join(home, '.gemini', 'config', 'AGENTS.md'),
-        requires: path.join(home, '.gemini', 'antigravity-cli'),
-      };
-    case 'codebuddy':
-      return { name: 'codebuddy', file: path.join(home, '.codebuddy', 'CODEBUDDY.md'), requires: path.join(home, '.codebuddy') };
-    case 'atomcode':
-      return { name: 'atomcode', file: path.join(home, '.atomcode', 'ATOMCODE.md'), requires: path.join(home, '.atomcode') };
-    case undefined:
-      return undefined;
-  }
-}
 
 /** The gateway's directory of instructions. */
 export function instructionsDir(): string {

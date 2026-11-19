@@ -45,6 +45,13 @@ uses the id in its `pod.yaml`, without the `@host` the gateway adds. The same bl
 `~/.fleetherd/pod.yaml`. A preset (`claude`, `codex`, …) takes it too, for a harness whose file has
 been moved.
 
+Two agents on one machine may share a file only if they share a layer: the link can point at one
+`<layer>.md`, so with two layers the file would take turns belonging to each of them and one agent
+would read the other's text. A config that does this is refused when it is loaded (and by `/reload`,
+which then keeps the old config running), naming both agents, the file and their layers. Two
+ordinary `claude` agents are the case this allows — they share `claude.md`. `common` is not a layer
+an agent can name, in any case: every agent already gets it.
+
 ## How it reaches the agent
 
 Each time an agent starts, the gateway writes the joined text, read-only, to

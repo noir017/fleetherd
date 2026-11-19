@@ -14,6 +14,7 @@ nothing else from the project.
 | `env-expand.ts` | `${VAR}` expansion over the parsed tree + the `.env` sidecar loader |
 | `migrate.ts` | v0 (`platform:` object) → v1 (`platforms:` map). Disposable by design. |
 | `pods.ts` | `pods.json` — the agents each host's pod declared, as the daemon last read them (daemon/pods.ts) — and how they join `agents`: `<id>@<host>`, in the order of `hosts:`, never over an id config.yaml defines, a bad entry left out rather than failing the load, `podModels` folded into their `model` |
+| `instructions.ts` | Where each harness reads its user-level instruction file, and the layer it gets — the table `daemon/instructions.ts` delivers by, kept here so loading can refuse two agents that would overwrite each other's link (`instructionConflicts`) |
 
 ## The central design decision: a small user surface
 
@@ -204,6 +205,11 @@ happens in. Two constraints from that path land here:
 - Cross-field platform rules that a `discriminatedUnion` member cannot express:
   `slack` with `protocol: http` requires `signing`; `lark` with `protocol: http`
   requires `selfUrl`.
+- Two agents on one machine whose instruction files resolve to the same path must share a layer
+  (`instructions.ts` `instructionConflicts`). Different layers would repoint the same link at every
+  start — the later write wins silently, and one agent reads the other's text. This covers
+  config.yaml's agents, a pod's (merged before the parse), and the preset defaults a `claude`,
+  `codex`, … agent gets without an `instructions` block.
 
 Without these, a typo surfaces much later as an obscure runtime error in whichever code
 path first touches that id. Add new cross-field rules here, in `superRefine` — zod's

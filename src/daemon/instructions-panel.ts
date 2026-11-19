@@ -20,11 +20,10 @@ import type {
 import { buildHarnessEnv, remoteAgentHome } from './agent-common.js';
 import { MAX_EDIT_BYTES, readForEditor } from './file-panel.js';
 import { globBase, globRegex, harnessSources, hasGlob, type HarnessSources } from './instruction-imports.js';
+import { HARNESS_LAYERS, instructionsHome } from '../config/instructions.js';
 import {
-  HARNESS_LAYERS,
   INSTRUCTIONS_MAX_BYTES,
   instructionsDir,
-  instructionsHome,
   joinLayers,
   ownedDir,
   placeInstructions,
