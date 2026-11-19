@@ -55,6 +55,10 @@ const RELOAD_KIND = {
   // Live: Delegation.propose reads it per task-new, so a /reload that flips it lands on the next
   // proposal — the same place /setting applies it.
   delegation: 'live',
+  // Live: the external MCP entrance reads its callers on every request, so a caller removed by a
+  // reload is refused on its next call; a moved host or port re-binds the listener
+  // (Daemon.reloadConfig → ExternalMcp.configure).
+  mcp: 'live',
   // Live: rankedWorkdirs reads config.workdir per menu request (/new, /cd, agent switch).
   workdir: 'live',
   workdirSort: 'live',

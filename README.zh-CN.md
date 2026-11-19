@@ -58,6 +58,7 @@ Discord · Telegram · Slack · 飞书 · QQ · LINE · 企业微信 · 钉钉 �
 - **任意 ACP 智能体** —— Claude Code、Codex、OpenCode、Antigravity 或 `custom`；按平台、频道、用户或命令路由。[→](docs/zh-CN/agents.md)
 - **跑在别的机器上的智能体** —— 智能体可以跑在网关经 ssh 能连到的任意 Linux 主机上，主机还能在 `pod.yaml` 里声明自己的智能体；断网时继续干活，`/agent` 按机器选择。[→](docs/zh-CN/remote-hosts.md)
 - **子代理和待办列表** —— `/super <任务>`：智能体把活拆开，经你确认后交给几个智能体在挂在它下面的话题里同时干，再检查结果、汇报给你。网页端列出所有在等你的事，还能推送到手机。[→](docs/zh-CN/sub-agents.md)
+- **外部调用方** —— 经 MCP 代理接入的网页智能体可以搜你的技能、提议子任务，每个都等你点 Start。[→](docs/zh-CN/external-mcp.md)
 
 ### 共享与积累
 
@@ -145,6 +146,7 @@ access:
 | [只能轮询的智能体](docs/zh-CN/mailbox.md) | Muse 这类智能体，经一个两边都轮询的信箱中继接入 |
 | [远程主机](docs/zh-CN/remote-hosts.md) | 经 ssh 跑在别的机器上的智能体、`/agent`、断网时会怎样 |
 | [子代理](docs/zh-CN/sub-agents.md) | `/super`：把一件活拆给几个智能体并行干 |
+| [外部调用方](docs/zh-CN/external-mcp.md) | 给网页智能体用的 MCP 入口：搜技能、提议子任务 |
 | [在容器里运行](docs/zh-CN/docker.md) | 只含网关的镜像，智能体全在主机上 |
 | **共享与积累** | |
 | [网关自己维护的技能](docs/zh-CN/skills.md) | 所有智能体共用的技能：写、版本、归档、恢复 |

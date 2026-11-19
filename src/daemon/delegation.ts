@@ -65,6 +65,13 @@ import { UPDATE_SENDER, type PersonWords } from './turn-runner.js';
  * a turn the person started there was theirs alone, and the parent went on from a picture of its
  * sub-agent that the person had already changed — it would report, review or redo work on the
  * strength of a reply the person had since corrected.
+ *
+ * ── A caller from outside ───────────────────────────────────────────────────────────────────────
+ * The external MCP entrance (daemon/external-calls.ts) runs the same commands from a coordination
+ * topic a caller outside the gateway opened (`externalOf`). That topic has no agent: its proposals
+ * always wait on the card, whatever the tier (`startsAtOnce`), `task-send` is refused
+ * (`handleExternal`), and its updates are shown there and never sent as a turn (`tell`) — the
+ * caller asks for them. AGENTS.md security invariant 11.
  */
 
 /**
@@ -192,6 +199,13 @@ export interface DelegationDeps {
   /** The question waiting on the person in a conversation, when there is one (the daemon's asks). */
   questionOf?(id: ConversationId): string | undefined;
   /**
+   * The coordination topic an external caller opened, when `id` is one (daemon/external-topics.ts):
+   * a topic with no agent, run by a caller outside the gateway through the external MCP entrance.
+   * Its sub-tasks always wait on the card, and their news is shown there rather than sent to an
+   * agent — there is none to send it to (see `tell`).
+   */
+  externalOf?(id: ConversationId): ExternalOwner | undefined;
+  /**
    * Put the card up as a question with buttons, in the conversation that proposed it, and resolve
    * with the label tapped — null when it was called off (`signal`, `/stop`, `/new`) or ran out of time.
    */
@@ -212,6 +226,19 @@ interface Place {
   platformId: string;
   address: ConversationAddress;
   adapter: PlatformAdapter;
+}
+
+/** Who opened a coordination topic from outside, and where it is (DelegationDeps.externalOf). */
+export interface ExternalOwner {
+  caller: string;
+  platform: string;
+  address: ConversationAddress;
+  title: string;
+}
+
+/** How a card or a mark names an external caller: never as an agent of this gateway. */
+function externalName(o: ExternalOwner): string {
+  return `${o.caller} (external)`;
 }
 
 /** The id the platform's topic list knows a place by: its lane, or the channel when it has none. */
@@ -402,23 +429,52 @@ export class Delegation {
   }
 
   /**
+   * A task command from an external caller, acting from coordination topic `key` (which the daemon
+   * has already found to be that caller's). The same commands as a conversation's, through the same
+   * code, minus `task-send`: a caller reading untrusted pages must not be able to reach a sub-agent's
+   * running turn without a tap (AGENTS.md security invariant 11). The tool surface never offers it;
+   * this is the second lock.
+   */
+  async handleExternal(key: ConversationId, action: TaskAction): Promise<unknown> {
+    if (!this.deps.externalOf?.(key)) throw new Error('not a coordination topic an external caller opened');
+    if (action.kind === 'task-send') throw new Error('task-send is not offered to an external caller');
+    return this.handle(key, action);
+  }
+
+  /** The caller that opened this coordination topic, when it is one. */
+  private externalOf(here: Place): ExternalOwner | undefined {
+    return this.deps.externalOf?.(here.key);
+  }
+
+  /**
    * Every agent, the one answering this conversation first, then the ones on its own machine.
    *
    * The order mirrors the default: without --agent, `task-new` uses the agent bound to this
    * conversation, and that agent also leads this list. The first row used to be whatever the config
    * listed first — `cc` here, on 2026-11-03, even in conversations cbc was answering. The current
    * agent is the safest default: already running on this machine, with the same checkouts and tools.
+   *
+   * An external caller runs on no machine of the gateway's, so no row is `here` for it.
    */
   private agents(here: Place): TaskAgentsResult {
-    const mine = this.hostOf(here.key);
-    const current = this.deps.registry.boundAgentOf(here.key);
+    const mine = this.externalOf(here) ? undefined : this.hostOf(here.key);
+    return this.agentRows(mine, this.deps.registry.boundAgentOf(here.key));
+  }
+
+  /** `task-agents` for an external caller, which needs no topic of its own to ask it. */
+  externalAgents(): TaskAgentsResult {
+    return this.agentRows(undefined, undefined);
+  }
+
+  /** The agent rows, `current` first, then the ones on machine `mine` (none when it is undefined). */
+  private agentRows(mine: string | undefined, current: string | undefined): TaskAgentsResult {
     const rows = this.deps.config.agents.map((def) => {
       const choices = this.deps.registry.workdirChoices(def.id);
       return {
         id: def.id,
         harness: def.harness,
         where: def.host ?? 'gateway',
-        here: (def.host ?? '') === mine,
+        here: mine !== undefined && (def.host ?? '') === mine,
         model: def.model ?? '',
         root: choices?.root ?? '',
         // Short names for the column; `task-new --cwd` takes one of these or an absolute path
@@ -463,8 +519,14 @@ export class Delegation {
    */
   private async propose(here: Place, a: Extract<TaskAction, { kind: 'task-new' }>): Promise<TaskNewResult> {
     this.syncConfirmMode();
-    const agent = a.agent ?? this.deps.registry.boundAgentOf(here.key);
-    if (!agent) throw new Error('this conversation has no agent to use by default; give task-new --agent <id>');
+    const ext = this.externalOf(here);
+    // An external topic has no agent of its own to default to; the caller names one.
+    const agent = a.agent ?? (ext ? undefined : this.deps.registry.boundAgentOf(here.key));
+    if (!agent) {
+      throw new Error(
+        ext ? 'name the agent that does the work: an id from the agents action' : 'this conversation has no agent to use by default; give task-new --agent <id>'
+      );
+    }
     const def = findAgent(this.deps.config, agent);
     if (!def) {
       throw new Error(`no agent "${agent}"; task-agents lists them: ${this.deps.config.agents.map((d) => d.id).join(', ')}`);
@@ -499,6 +561,15 @@ export class Delegation {
     } else {
       g.cancel = this.deps.clock.schedule(() => void this.putUp(here.key), PROPOSAL_GATHER_MS);
     }
+    if (ext) {
+      return {
+        item: g.items.length,
+        result:
+          `Sub-task ${g.items.length} is on a card in your topic, waiting for the person to tap Start; more new calls ` +
+          `join the same card while it waits. Nothing starts until they tap it, and nobody tells you when it does or ` +
+          `when it ends: check with list, and read a sub-task once its stage is review.`,
+      };
+    }
     return {
       item: g.items.length,
       result:
@@ -525,9 +596,11 @@ export class Delegation {
    *
    * A sub-agent's own topic never starts at once, whatever the switch says (AGENTS.md invariant 6):
    * it asks every time, so a chain of agents cannot spend the operator's machines without a tap.
+   * Nor does an external caller's topic (invariant 11): the switch is about agents the person
+   * already talks to, and a caller outside the gateway reads pages and mail nobody vetted.
    */
   private startsAtOnce(here: Place, agent: string): boolean {
-    if (this.nested(here)) return false;
+    if (this.nested(here) || this.externalOf(here)) return false;
     const confirm = this.deps.config.delegation.confirm;
     if (confirm === false) return true;
     return confirm === 'first' && this.confirmedOnce.get(here.key)?.has(agent) === true;
@@ -539,7 +612,7 @@ export class Delegation {
    * tap for everything, and the set is consulted only while the tier is `'first'`.
    */
   private rememberConfirmed(key: ConversationId, items: Item[]): void {
-    if (this.deps.config.delegation.confirm !== 'first') return;
+    if (this.deps.config.delegation.confirm !== 'first' || this.deps.externalOf?.(key)) return;
     const known = this.confirmedOnce.get(key) ?? new Set<string>();
     for (const item of items) known.add(item.agent);
     this.confirmedOnce.set(key, known);
@@ -645,7 +718,8 @@ export class Delegation {
    * is the fact that decides what the part costs.
    */
   private cardText(here: Place, items: Item[]): string {
-    const asker = this.deps.registry.boundAgentOf(here.key) ?? 'this agent';
+    const ext = this.externalOf(here);
+    const asker = this.askerOf(here);
     const lines = [`**${asker} wants to start ${items.length === 1 ? 'a sub-agent' : `${items.length} sub-agents`}** — each in a topic of its own under this one:`];
     items.forEach((item, i) => {
       const def = findAgent(this.deps.config, item.agent);
@@ -656,8 +730,20 @@ export class Delegation {
       const text = item.text.length > PROPOSAL_TEXT_CHARS ? `${item.text.slice(0, PROPOSAL_TEXT_CHARS - 1)}…` : item.text;
       lines.push('', `${i + 1}. **${item.agent}**${model}${where}${dir}${title}`, ...text.split('\n').map((l) => `> ${l}`));
     });
-    lines.push('', 'To change them, say what to change instead of tapping.');
+    // Nobody reads a reply typed into an external topic: Cancel is the only way to say no.
+    lines.push(
+      '',
+      ext
+        ? `${ext.caller} is outside this gateway and does not read this topic. Cancel refuses; it may propose again.`
+        : 'To change them, say what to change instead of tapping.'
+    );
     return lines.join('\n');
+  }
+
+  /** Who a card says is asking: the agent answering here, or the external caller. */
+  private askerOf(here: Place): string {
+    const ext = this.externalOf(here);
+    return ext ? externalName(ext) : (this.deps.registry.boundAgentOf(here.key) ?? 'this agent');
   }
 
   /** Open every sub-task, returning what started and what could not; the caller says so. */
@@ -707,7 +793,7 @@ export class Delegation {
     // The same first line and rows as the record card: this is the path the default tier takes on
     // every Start, so a card that read one way here and another way with confirmation off would be
     // two layouts for one fact.
-    const asker = this.deps.registry.boundAgentOf(here.key) ?? 'this agent';
+    const asker = this.askerOf(here);
     const said = [
       ...startedSection(asker, opened),
       ...(failed.length ? [`${opened.length ? '\n' : ''}Could not start ${failed.length}:`, ...failed] : []),
@@ -955,7 +1041,9 @@ export class Delegation {
     const { outcome, kept, dropped } = this.deps.registry.interruptConversation(c.key);
     const note = stopInputNote(kept, dropped);
     if (outcome !== 'idle' || note) {
-      const mark = `⏹ Stopped by the agent in [${subjectOf(this.titleOf(here.key, here))}](?t=${here.address.thread ?? ''}).`;
+      const ext = this.externalOf(here);
+      const by = ext ? externalName(ext) : 'the agent';
+      const mark = `⏹ Stopped by ${by} in [${subjectOf(this.titleOf(here.key, here))}](?t=${here.address.thread ?? ''}).`;
       void c.adapter
         .sendMessage(c.address, note ? `${mark}\n${note}` : mark)
         .catch((e) => console.warn('[delegation] could not mark a stop:', e instanceof Error ? e.message : e));
@@ -1095,9 +1183,15 @@ export class Delegation {
     }
   }
 
-  /** What a sub-agent's topic shows above what it is handed: whose words these are, linked. */
+  /**
+   * What a sub-agent's topic shows above what it is handed: whose words these are, linked. For an
+   * external caller's sub-task, the caller is named before the link — the topic's title alone would
+   * read as one the person opened.
+   */
   private headerOf(here: Place): string {
-    return `**↳ From [${subjectOf(this.titleOf(here.key, here))}](?t=${here.address.thread ?? ''})**`;
+    const ext = this.externalOf(here);
+    const from = ext ? `${externalName(ext)} · ` : '';
+    return `**↳ From ${from}[${subjectOf(this.titleOf(here.key, here))}](?t=${here.address.thread ?? ''})**`;
   }
 
   /**
@@ -1421,8 +1515,24 @@ export class Delegation {
     );
   }
 
-  /** One card to one conversation: shown folded there, then put in front of its agent as a turn. */
+  /**
+   * One card to one conversation: shown folded there, then put in front of its agent as a turn.
+   *
+   * An external caller's topic has no agent, and the caller is not told anything: it asks, with
+   * `tasks list` and `read`. So there the card is only shown — the folded lines the person reads in
+   * every parent topic — and no turn is run. Running one would bind the topic's default agent and
+   * hand it a card about work it never asked for.
+   */
   private tell(here: Place, lines: string[], shown: string[], count = shown.length): void {
+    if (this.externalOf(here)) {
+      if (shown.length) {
+        void here.adapter
+          .sendMessage(here.address, shown.join('\n'), { kind: 'report' })
+          .catch((e) => console.warn('[delegation] could not show a sub-agent update:', e instanceof Error ? e.message : e));
+      }
+      console.log(`[delegation] showed ${here.key} ${count} sub-agent update(s); its external caller reads them itself`);
+      return;
+    }
     const agentId = this.deps.registry.boundAgentOf(here.key);
     if (!agentId || !findAgent(this.deps.config, agentId)) return;
     if (shown.length) {
@@ -1441,8 +1551,13 @@ export class Delegation {
 
   // ── Lookups ───────────────────────────────────────────────────────────────────────────────────
 
+  /**
+   * Where a conversation is. An external caller's coordination topic has never run a turn, so the
+   * registry has no lane for it; its record (DelegationDeps.externalOf) says where it is.
+   */
   private place(key: ConversationId): Place | undefined {
-    const lane = this.deps.registry.laneFor(key);
+    const ext = this.deps.externalOf?.(key);
+    const lane = this.deps.registry.laneFor(key) ?? (ext ? { platformId: ext.platform, address: ext.address } : undefined);
     const adapter = lane ? this.deps.platforms.get(lane.platformId) : undefined;
     return lane && adapter ? { key, platformId: lane.platformId, address: lane.address, adapter } : undefined;
   }
@@ -1459,6 +1574,9 @@ export class Delegation {
   private titleOf(id: ConversationId, place: { platformId: string; address: ConversationAddress }): string {
     const named = this.deps.registry.conversationTitle(id);
     if (named) return named;
+    // A coordination topic runs no turn, so nothing names it in the store: its record does.
+    const external = this.deps.externalOf?.(id)?.title;
+    if (external) return external;
     const want = `${place.platformId}:${place.address.channel}${place.address.thread ? `/${place.address.thread}` : ''}`;
     const ch = this.deps.registry.listChannels({ platform: place.platformId, limit: 200 }).channels.find((c) => c.id === want);
     return ch?.title || id;

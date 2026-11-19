@@ -770,6 +770,48 @@ export const ConfigSchema = z
       .default({}),
 
     /**
+     * The external MCP entrance (daemon/external-mcp.ts, docs/external-mcp.md): an MCP server over
+     * HTTP for callers outside the gateway — a web agent reached through an MCP proxy — to search
+     * the skills and propose sub-tasks. Absent = no listener at all.
+     *
+     * A trust boundary of its own (AGENTS.md security invariant 11), so it borrows nothing from the
+     * web UI: not its port, not its login secret. Each caller has its own token, named here by the
+     * environment variable that holds it, never written into this file; removing a caller (or its
+     * variable from `.env`) and `/reload` revokes it. What a caller can reach is the tools listed for
+     * it, and those are read-only or end on a card a person has to tap.
+     */
+    mcp: z
+      .object({
+        /**
+         * Interface to bind. Loopback by default: a caller is expected on this machine or behind a
+         * proxy on a private network, and there is no TLS here.
+         */
+        host: z.string().min(1).default('127.0.0.1'),
+        port: z.number().int().min(1).max(65535).default(8790),
+        /**
+         * The web UI instance its coordination topics open on (a `platforms:` id of type webui).
+         * Default: the first webui instance.
+         */
+        platform: z.string().min(1).optional(),
+        callers: z
+          .array(
+            z
+              .object({
+                /** Shown in the topic titles and cards it causes, and in the log. */
+                name: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,31}$/i, 'a caller name is 1-32 chars of letters/digits/_/- and starts alphanumeric'),
+                /** The environment variable (process env or the config's `.env`) holding its bearer token. */
+                tokenEnv: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/, 'tokenEnv is the NAME of an environment variable, not the token'),
+                /** What it may call. `skills` is search and show only; `tasks` proposes and follows sub-tasks. */
+                tools: z.array(z.enum(['skills', 'tasks'])).min(1),
+              })
+              .strict()
+          )
+          .default([]),
+      })
+      .strict()
+      .optional(),
+
+    /**
      * Reply delivery. Alongside `display`, the part of outbound rendering an operator legitimately
      * decides; the throttling and chunking guardrails stay in the frozen EXPERIENCE block.
      */
@@ -1078,6 +1120,7 @@ export const ConfigSchema = z
       }
       bound.set(where, id);
     }
+    if (cfg.mcp) checkMcp(cfg.mcp, cfg.platforms, bound, ctx);
   });
 
 /** The slim, file-backed config (what setup writes and saveConfig serializes). */
@@ -1123,6 +1166,35 @@ function checkReview(
       `review.args is for a custom, gemini or dsh reviewer; "${reviewer.id}" is ${reviewer.harness}, whose tools the gateway turns off itself`
     );
   }
+}
+
+/**
+ * `mcp:` against the rest of the file: one entry per caller name, a web UI to open coordination
+ * topics on when any caller may use `tasks`, and a port no platform already binds.
+ */
+function checkMcp(
+  mcp: NonNullable<UserConfig['mcp']>,
+  platforms: UserConfig['platforms'],
+  bound: ReadonlyMap<string, string>,
+  ctx: z.RefinementCtx
+): void {
+  const issue = (path: Array<string | number>, message: string): void =>
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['mcp', ...path], message });
+  const seen = new Set<string>();
+  mcp.callers.forEach((c, i) => {
+    if (seen.has(c.name)) issue(['callers', i, 'name'], `caller "${c.name}" is listed twice`);
+    seen.add(c.name);
+  });
+  if (mcp.platform !== undefined && platforms[mcp.platform]?.type !== 'webui') {
+    issue(['platform'], `mcp.platform must name a webui instance; "${mcp.platform}" is ${platforms[mcp.platform]?.type ?? 'not configured'}`);
+  }
+  const webui = Object.values(platforms).some((p) => p.type === 'webui');
+  if (!webui && mcp.callers.some((c) => c.tools.includes('tasks'))) {
+    issue(['callers'], 'the tasks tool opens topics in the web UI, and no webui platform is configured');
+  }
+  // The same collision the platforms are checked for: whichever binds second fails at startup.
+  const taken = bound.get(`${mcp.host}:${mcp.port}`);
+  if (taken !== undefined) issue(['port'], `mcp and platform instance "${taken}" both bind ${mcp.host}:${mcp.port}; give one of them a different port`);
 }
 
 /** Full runtime config: user fields + the frozen experience defaults. */

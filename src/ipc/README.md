@@ -32,6 +32,8 @@ This module imports nothing from the project except `types.ts`.
 |---|---|
 | `commands.ts` | `REVERSE_COMMANDS` — the single source of truth for the command catalog |
 | `tools.ts` | `NATIVE_TOOLS` — the commands an agent also gets as native tools, as views of their specs |
+| `external-tools.ts` | The external MCP entrance's two tools (`skills` read-only, `tasks`), as views of the same specs |
+| `mcp-rpc.ts` | MCP's JSON-RPC half (initialize, ping, tools/list, tools/call), shared by `fleetherd mcp` on stdio and the external entrance over HTTP |
 | `protocol.ts` | The `IpcAction` union + its zod validation schema |
 | `server.ts` | Daemon-side socket server |
 | `client.ts` | CLI-side client used by short-lived reverse-command processes |
@@ -100,7 +102,7 @@ agent can neither do without nor guess exists:
   every description in every request, which past a few dozen skills costs more than one tool. It
   offers only `search` and `show` — `NativeTool.options: []` keeps the command's write options out
   of the schema — and its description ends with what the library holds for that agent — its
-  library skills' names by category, or counts past 40 names (`commands/mcp.ts` libraryLine) —
+  library skills' names by category, or counts past 40 names (`tools.ts` libraryLine) —
   asked of the daemon at `tools/list`. That line is a fact about the deployment, not instructions:
   the same rule as every other description here.
 
@@ -131,6 +133,22 @@ agent, for the few turns that split a job. They take no `--channel`: each acts f
 conversation, on a topic it opened, named as `topic`. `task-read` reads that topic from the
 conversation library (`history/`), so its `--role`/`--turn`/`--turns`/`--since`/`--grep` are
 `READ_FILTER_OPTIONS`, the same definitions `sessions read` uses.
+
+### The external entrance: the same commands, a third door
+
+`daemon/external-mcp.ts` serves MCP over HTTP to callers outside the gateway (docs/external-mcp.md,
+AGENTS.md security invariant 11). Its tools are `external-tools.ts`: `skills` is the native tool
+unchanged (search and show), and `tasks` is the sub-agent commands as one tool with an `action`
+(`agents` → `task-agents`, `list` → `tasks`, `new` → `task-new`, `read`/`status`/`stop` → their
+commands), each built by the spec's own `build` through a tool view offering only that action's
+options. `open` is the one action with no reverse command: an agent in a conversation already has a
+topic to nest sub-tasks under, and a caller from outside has to be given one. `task-send` is not an
+action, and the daemon refuses it from a caller anyway (`Delegation.handleExternal`): a caller reads
+untrusted pages, and an injected instruction must not reach a running sub-agent without a tap.
+
+The calls do not cross the socket: the entrance is in the daemon, so it calls the handlers directly
+(`daemon/external-calls.ts`). The trust boundary there is the caller's bearer token and the topics
+it opened, not a conversation's turn token.
 
 ### How it got here
 

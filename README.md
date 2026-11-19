@@ -59,6 +59,7 @@ Discord · Telegram · Slack · Lark · QQ · LINE · WeCom · DingTalk · Web U
 - **Any ACP agent** — Claude Code, Codex, OpenCode, Antigravity, or `custom`; routed by platform, channel, user or command. [→](docs/agents.md)
 - **Agents on other machines** — an agent can run on any Linux host the gateway reaches over ssh, and a host can declare its own agents in a `pod.yaml`; it keeps working through a dropped connection, and `/agent` picks one by machine. [→](docs/remote-hosts.md)
 - **Sub-agents, and a list of what needs you** — `/super <job>`: the agent splits a job, hands the parts to other agents that work in parallel in topics nested under it — once you confirm — then checks and reports. The web UI lists what is waiting on you and can notify your phone. [→](docs/sub-agents.md)
+- **Callers from outside** — a web agent behind an MCP proxy can search your skills and propose sub-tasks, each waiting for your Start. [→](docs/external-mcp.md)
 
 ### Shared and accumulated
 
@@ -149,6 +150,7 @@ is in [Configuration](docs/configuration.md).
 | [Agents that only poll](docs/mailbox.md) | Muse and the like, through a mailbox relay both sides poll |
 | [Remote hosts](docs/remote-hosts.md) | agents on other machines over ssh, `/agent`, what happens when the network drops |
 | [Sub-agents](docs/sub-agents.md) | `/super`: split a job across agents working in parallel |
+| [Callers from outside](docs/external-mcp.md) | an MCP entrance for a web agent to search skills and propose sub-tasks |
 | [Running in a container](docs/docker.md) | the gateway-only image, with every agent on a host |
 | **Shared and accumulated** | |
 | [Skills the gateway keeps](docs/skills.md) | skills every agent shares: write, version, archive, restore |
