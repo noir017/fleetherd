@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.16.0] - 2026-11-19
+
 ### Added
 
 - **Any harness can be given its own instruction file.** `agents[].instructions` names the
