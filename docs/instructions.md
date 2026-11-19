@@ -143,7 +143,9 @@ read when they started.
 layer, or a preset one like `codex` — leaves its `<layer>.md` in the directory. It stays listed,
 once, as **Instructions no agent reads** — under the Agents cards, or at the foot of the page when
 there are no agent cards. Open it and save it empty, so a later agent given that layer does not
-inherit the old text. The gateway does not delete the file for you.
+inherit the old text. The gateway does not delete the file for you. On a case-sensitive filesystem,
+a file that differs from a known layer only in case — `Codex.md` beside `codex.md` — is not listed
+as an orphan layer either; delete it by hand.
 
 **Each agent's own files.** An agent whose harness reads instruction files of its own on its
 machine — besides the one the gateway places — lists them under the shared ones (on the card, as one
