@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.17.2] - 2026-11-20
+
 ### Fixed
 
 - **3.17.1 is published as 3.17.2.** The 3.17.1 tag exists, but its release never did: a new test
