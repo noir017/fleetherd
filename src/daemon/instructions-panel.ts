@@ -138,10 +138,11 @@ function layerNames(agents: readonly AgentDef[]): string[] {
 
 /**
  * The `<layer>.md` names already on the gateway that stay editable after their agent is gone. A
- * symlink is not one: the gateway's files are its own regular files, and a link would put whatever
- * it points at behind this page's write. Neither is a name that only differs in case from one the
- * config already knows — on a case-insensitive filesystem it is that same file, and the known
- * spelling is the one delivery and the size cap go by.
+ * symlink is not taken for one: a known layer's link is followed on purpose, for reading and for
+ * writing (AGENTS.md, invariant 10), but an orphan is a file the gateway itself left behind, not a
+ * link the operator put there to point somewhere else. Neither is a name that only differs in case
+ * from one the config already knows — on a case-insensitive filesystem it is that same file, and
+ * the known spelling is the one delivery and the size cap go by.
  */
 function diskLayers(dir: string, known: readonly string[]): string[] {
   let names: string[];
