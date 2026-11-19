@@ -40,7 +40,7 @@ import { envOf, isUnderEitherName } from '../legacy-name.js';
  * ── Where, per harness ────────────────────────────────────────────────────────────────────────────
  * The table — which file each harness reads, and which layer it gets — is config/instructions.ts.
  * It lives below the daemon because config loading has to refuse two agents on one machine that
- * would repoint each other's link (instructionConflicts there), and the check must use the same
+ * would repoint each other's link (instructionClashes there), and the check must use the same
  * table delivery does. This module places by it, unchanged.
  *
  * ── What it will and will not touch ──────────────────────────────────────────────────────────────

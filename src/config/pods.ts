@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { PodAgentSchema, podAgentId } from './schema.js';
+import { AgentDefSchema, PodAgentSchema, podAgentId, type PodAgent } from './schema.js';
+import { instructionClashes } from './instructions.js';
 
 /**
  * What each host's pod declared, as the gateway last read it — `<config dir>/pods.json`, written by
@@ -80,15 +81,19 @@ export function mergePodAgents(raw: Record<string, unknown>, pods: PodsState): {
   const models = podStringsOf(raw, 'podModels');
   const levels = podStringsOf(raw, 'podPermissions');
   const skipped: string[] = [];
-  const added = podAgents(raw, pods, skipped).map(({ agent }) => {
-    const model = models[agent.id];
-    const level = levels[agent.id];
-    return {
-      ...agent,
-      ...(model !== undefined ? { model } : {}),
-      ...(level !== undefined ? { permissions: level } : {}),
-    };
-  });
+  const declared = podAgents(raw, pods, skipped);
+  const dropped = dropInstructionClashes(own, declared, skipped);
+  const added = declared
+    .filter(({ agent }) => !dropped.has(agent.id))
+    .map(({ agent }) => {
+      const model = models[agent.id];
+      const level = levels[agent.id];
+      return {
+        ...agent,
+        ...(model !== undefined ? { model } : {}),
+        ...(level !== undefined ? { permissions: level } : {}),
+      };
+    });
   const ownIds = new Set(own.map(idOf));
   for (const key of Object.keys(models)) {
     if (ownIds.has(key)) skipped.push(`podModels.${key}: ${key} is defined in config.yaml, so its model is agents[].model there`);
@@ -110,7 +115,44 @@ export function podAgentModels(raw: Record<string, unknown>, pods: PodsState): M
   return new Map(podAgents(raw, pods, []).map(({ agent, model }) => [agent.id, model]));
 }
 
-type DeclaredAgent = { agent: Record<string, unknown> & { id: string }; model: string | undefined };
+type DeclaredAgent = { agent: PodAgent & { id: string; host: string }; model: string | undefined };
+
+/**
+ * The pod agents whose instruction file another agent on the same machine already delivers, and a
+ * line for each. config.yaml comes first in the merged list, so `instructionClashes` keeps its
+ * agent's layer; among a pod's own, the first keeps it.
+ *
+ * Left out here rather than refused by ConfigSchema, because nothing a pod declares may fail the
+ * gateway's config: a host that cannot keep the daemon from starting is worse than one of its agents
+ * missing (the rule that already leaves a bad pod entry out, above). A clash entirely inside
+ * config.yaml is not touched — the schema refuses that file.
+ *
+ * The pod's own file is checked when it is read (daemon/pods.ts), so this is for what pods.json
+ * already holds: an older read, or a hand edit.
+ */
+function dropInstructionClashes(own: unknown[], declared: DeclaredAgent[], skipped: string[]): Set<string> {
+  const parsed = own.flatMap((a) => {
+    const r = AgentDefSchema.safeParse(a);
+    // A malformed agent fails the schema later, with its own message; it takes no part here.
+    return r.success ? [r.data] : [];
+  });
+  const podIds = new Set(declared.map(({ agent }) => agent.id));
+  const drop = new Set<string>();
+  for (const g of instructionClashes([...parsed, ...declared.map(({ agent }) => agent)])) {
+    const keep = g.members[0];
+    if (!keep) continue;
+    const where = g.machine ? `on host "${g.machine}"` : 'on this machine';
+    for (const m of g.members) {
+      if (!podIds.has(m.id) || m.layer === keep.layer) continue;
+      drop.add(m.id);
+      skipped.push(
+        `instructions.${m.id}: "${m.id}" (layer "${m.layer}") and "${keep.id}" (layer "${keep.layer}") ` +
+          `both deliver ${g.file} ${where}; kept "${keep.id}"`
+      );
+    }
+  }
+  return drop;
+}
 
 /** The pods' agents in merge order, validated and renamed, each with the model the pod gave it. */
 function podAgents(raw: Record<string, unknown>, pods: PodsState, skipped: string[]): DeclaredAgent[] {

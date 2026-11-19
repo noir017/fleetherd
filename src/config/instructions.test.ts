@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { instructionConflicts, instructionsHome, type PlacedInstructionsAgent } from './instructions.js';
+import { instructionClashes, instructionConflictMessage, instructionsHome, type PlacedInstructionsAgent } from './instructions.js';
 import { readConfig } from './load.js';
 import { ConfigSchema } from './schema.js';
 
@@ -83,16 +83,17 @@ const claude = (id: string, extra: Partial<PlacedInstructionsAgent> = {}): Place
   ...extra,
 });
 
-describe('instructionConflicts', () => {
+/** The clashes as the sentences a refused config would carry. */
+const conflicts = (agents: readonly PlacedInstructionsAgent[]): string[] =>
+  instructionClashes(agents).map(instructionConflictMessage);
+
+describe('instructionClashes', () => {
   it('lets two agents of one harness share its layer and file, which is the ordinary case', () => {
-    expect(instructionConflicts([claude('cc'), claude('cc2')])).toEqual([]);
+    expect(conflicts([claude('cc'), claude('cc2')])).toEqual([]);
   });
 
   it('names both agents, the file and each layer when one file would get two layers', () => {
-    const [message, ...rest] = instructionConflicts([
-      claude('cc'),
-      claude('cc2', { instructions: { file: '~/.claude/CLAUDE.md' } }),
-    ]);
+    const [message, ...rest] = conflicts([claude('cc'), claude('cc2', { instructions: { file: '~/.claude/CLAUDE.md' } })]);
     expect(rest).toEqual([]);
     expect(message).toBe(
       'agents "cc" (layer "claude") and "cc2" (layer "cc2") deliver the same file ~/.claude/CLAUDE.md ' +
@@ -109,7 +110,7 @@ describe('instructionConflicts', () => {
       host: 'box',
       instructions: { file: '~/.my-harness/AGENTS.md', ...(layer ? { layer } : {}) },
     });
-    const [message] = instructionConflicts([custom('a'), custom('b', 'b'), custom('c', 'c')]);
+    const [message] = conflicts([custom('a'), custom('b', 'b'), custom('c', 'c')]);
     expect(message).toContain('agents "a" (layer "a"), "b" (layer "b") and "c" (layer "c")');
     expect(message).toContain('~/.my-harness/AGENTS.md on host "box"');
   });
@@ -122,26 +123,26 @@ describe('instructionConflicts', () => {
       host,
       instructions: { file: '~/.my-harness/AGENTS.md', layer: id },
     });
-    expect(instructionConflicts([on('a', 'one'), on('b', 'two')])).toEqual([]);
+    expect(conflicts([on('a', 'one'), on('b', 'two')])).toEqual([]);
   });
 
   it("follows an env.HOME override, so two homes are two files", () => {
     const at = (id: string, home: string): PlacedInstructionsAgent =>
       claude(id, { host: 'box', env: { HOME: home }, instructions: { file: '~/.claude/CLAUDE.md', layer: id } });
-    expect(instructionConflicts([at('a', '/srv/a'), at('b', '/srv/b')])).toEqual([]);
-    expect(instructionConflicts([at('a', '/srv/a'), at('b', '/srv/a')])).toHaveLength(1);
+    expect(conflicts([at('a', '/srv/a'), at('b', '/srv/b')])).toEqual([]);
+    expect(conflicts([at('a', '/srv/a'), at('b', '/srv/a')])).toHaveLength(1);
   });
 
   // Two different homes can still name one absolute file, and the link collides just the same.
   it('groups by the resolved file, not by the home it was resolved against', () => {
     const at = (id: string, home: string): PlacedInstructionsAgent =>
       claude(id, { host: 'box', env: { HOME: home }, instructions: { file: '/opt/shared/AGENTS.md', layer: id } });
-    expect(instructionConflicts([at('a', '/srv/a'), at('b', '/srv/b')])).toHaveLength(1);
+    expect(conflicts([at('a', '/srv/a'), at('b', '/srv/b')])).toHaveLength(1);
   });
 
   it('ignores an agent whose harness has no file it knows', () => {
     expect(
-      instructionConflicts([
+      conflicts([
         { id: 'gm', harness: 'gemini' },
         { id: 'mh', harness: 'custom', command: 'my-harness' },
       ])

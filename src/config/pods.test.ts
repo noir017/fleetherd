@@ -1,9 +1,9 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mergePodAgents, podAgentModels, readPods, writePods, type PodsState } from './pods.js';
-import { readConfig } from './load.js';
+import { loadConfig, readConfig } from './load.js';
 import { ConfigSchema, PodFileSchema } from './schema.js';
 
 /**
@@ -75,7 +75,7 @@ describe('mergePodAgents', () => {
           id: 'ex',
           harness: 'custom',
           command: 'my-harness',
-          instructions: { file: '~/.my-harness/AGENTS.md', layer: 'mine' },
+          instructions: { file: '~/.my-harness/OTHER.md', layer: 'mine' },
         },
       ]),
     });
@@ -83,8 +83,33 @@ describe('mergePodAgents', () => {
       (out.agents as Array<{ id: string; instructions?: { file: string; layer?: string } }>).map((a) => [a.id, a.instructions])
     );
     expect(byId['mh@a']).toEqual({ file: '~/.my-harness/AGENTS.md', layer: 'mh' });
-    expect(byId['ex@a']).toEqual({ file: '~/.my-harness/AGENTS.md', layer: 'mine' });
+    expect(byId['ex@a']).toEqual({ file: '~/.my-harness/OTHER.md', layer: 'mine' });
     expect(byId['cc']).toBeUndefined();
+  });
+
+  // A host must never be able to keep the gateway's config from loading, so a pod's agent yields to
+  // config.yaml's on the same machine (the schema refuses a clash between config.yaml's own).
+  it('leaves out a pod agent that would take a config.yaml agent’s instruction file, and says which', () => {
+    const cfg = { hosts: { box: { ssh: 'u@box' } }, agents: [{ id: 'cc', harness: 'claude', host: 'box' }] };
+    const { raw: out, skipped } = mergePodAgents(cfg, {
+      box: record([{ id: 'mh', harness: 'custom', command: 'my-harness', instructions: { file: '~/.claude/CLAUDE.md' } }]),
+    });
+    expect((out.agents as Array<{ id: string }>).map((a) => a.id)).toEqual(['cc']);
+    expect(skipped).toEqual([
+      'instructions.mh@box: "mh@box" (layer "mh") and "cc" (layer "claude") both deliver ~/.claude/CLAUDE.md on host "box"; kept "cc"',
+    ]);
+  });
+
+  it('leaves two pod agents with one file and the same layer alone: they share it', () => {
+    const cfg = { hosts: { box: { ssh: 'u@box' } }, agents: [] };
+    const { raw: out, skipped } = mergePodAgents(cfg, {
+      box: record([
+        { id: 'a', harness: 'custom', command: 'my-harness', instructions: { file: '~/.my-harness/AGENTS.md', layer: 'mine' } },
+        { id: 'b', harness: 'custom', command: 'my-harness', instructions: { file: '~/.my-harness/AGENTS.md', layer: 'mine' } },
+      ]),
+    });
+    expect((out.agents as Array<{ id: string }>).map((a) => a.id)).toEqual(['a@box', 'b@box']);
+    expect(skipped).toEqual([]);
   });
 });
 
@@ -253,7 +278,9 @@ routing:
     expect(() => readConfig()).toThrow(/agents|routing\.default/);
   });
 
-  it('refuses two pod agents that share an instruction file under different layers', () => {
+  // pods.json can hold a clash an older version wrote, or one somebody edited in. Neither may stop
+  // the gateway: the first agent keeps the file, the other is left out, and loading goes on.
+  it('loads — and starts — with a pods.json that already holds two agents fighting over one file', () => {
     fs.writeFileSync(path.join(dir, 'config.yaml'), yamlFor('a@box'));
     writePods(dir, {
       box: record([
@@ -261,7 +288,14 @@ routing:
         { id: 'b', harness: 'custom', command: 'my-harness', instructions: { file: '~/.my-harness/AGENTS.md' } },
       ]),
     });
-    expect(() => readConfig()).toThrow(/"a@box" \(layer "a"\) and "b@box" \(layer "b"\).*on host "box"/);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      expect(readConfig().config.agents.map((a) => a.id)).toEqual(['a@box']);
+      expect(loadConfig().agents.map((a) => a.id)).toEqual(['a@box']);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('left out instructions.b@box'));
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it('lets two pod agents share one file when they name the same layer', () => {

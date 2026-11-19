@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { ToolMode as ToolModeType, TurnFailureReason } from '../types.js';
 import { PlatformConfigSchema, type PlatformInstance } from '../platform/config-schemas.js';
-import { instructionConflicts } from './instructions.js';
+import { instructionClashes, instructionConflictMessage } from './instructions.js';
 
 /**
  * Config schema + defaults.
@@ -1124,9 +1124,10 @@ export const ConfigSchema = z
     });
     // Two agents on one machine whose instruction files resolve to the same path would take turns
     // repointing that link — the later write wins silently and the other agent reads the wrong text
-    // (config/instructions.ts instructionConflicts). The same layer is sharing, and allowed.
-    for (const message of instructionConflicts(cfg.agents)) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['agents'], message });
+    // (config/instructions.ts instructionClashes). The same layer is sharing, and allowed. A pod's
+    // agents are filtered before this (config/pods.ts): a pod must never fail the gateway's config.
+    for (const g of instructionClashes(cfg.agents)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['agents'], message: instructionConflictMessage(g) });
     }
     const platformIds = new Set(Object.keys(cfg.platforms));
     if (cfg.review) checkReview(cfg.review, cfg.agents, ctx);

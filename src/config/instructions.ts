@@ -9,9 +9,11 @@ import type { AgentDef } from './schema.js';
  * It lives here, below the daemon, because config loading has to refuse a configuration two agents
  * would fight over: on one machine, two agents whose instruction files resolve to the same path but
  * whose layers differ repoint that link at each other on every start, so one of them silently reads
- * the other's text. The check runs in ConfigSchema (instructionConflicts), which may not reach up
+ * the other's text. The check runs in ConfigSchema (instructionClashes), which may not reach up
  * into `daemon/` (AGENTS.md, Layering), and it must use the same table delivery does — a second copy
- * here would let a load accept what the daemon then overwrites.
+ * here would let a load accept what the daemon then overwrites. Only config.yaml's own agents are
+ * refused there: a pod's are filtered by config/pods.ts and daemon/pods.ts, because a host must
+ * never be able to keep the gateway from loading.
  *
  * ── Where, per harness ────────────────────────────────────────────────────────────────────────────
  * Probed 2026-11-04 except where said: a symlink at the path below pointing to a file holding a
@@ -152,20 +154,27 @@ function listed(items: readonly string[]): string {
   return items.length < 2 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
 }
 
+/** One file, on one machine, that several agents' instructions resolve to. */
+export interface InstructionGroup {
+  /** The `hosts:` id, or '' for the gateway's own machine. */
+  machine: string;
+  /** The file as the operator would write it (`~/…`). */
+  file: string;
+  /** Every agent resolving to it, in the order the check was given them. */
+  members: Array<{ id: string; layer: string }>;
+}
+
 /**
- * The configurations this refuses: on one machine, agents whose `instructionsHome` resolves to the
- * same file but to different layers. The link can only point at one `<layer>.md`, so the last write
- * wins silently — the other agent reads the wrong text, and every start flips the link back.
+ * The files that would take more than one layer. The link can only point at one `<layer>.md`, so
+ * the last write wins silently — the other agent reads the wrong text, and every start flips the
+ * link back.
  *
  * Same layer is sharing, and allowed: two `claude` agents on one machine are the ordinary case.
  * Two agents with different homes still collide on one absolute file, which is why the group key is
  * the machine and the RESOLVED file — the home is already folded into that resolution.
- *
- * One message per group, naming every agent in it with its layer, so the operator can see both
- * sides of the choice at once.
  */
-export function instructionConflicts(agents: readonly PlacedInstructionsAgent[]): string[] {
-  const groups = new Map<string, { machine: string; file: string; members: string[]; layers: Set<string> }>();
+export function instructionClashes(agents: readonly PlacedInstructionsAgent[]): InstructionGroup[] {
+  const groups = new Map<string, InstructionGroup>();
   for (const def of agents) {
     const machine = def.host ?? '';
     const home = instructionHomeOf(def);
@@ -173,21 +182,18 @@ export function instructionConflicts(agents: readonly PlacedInstructionsAgent[])
     if (!where) continue;
     const key = `${machine}\u0000${where.file}`;
     const g = groups.get(key);
-    const member = `"${def.id}" (layer "${where.name}")`;
-    if (g) {
-      g.members.push(member);
-      g.layers.add(where.name);
-    } else {
-      groups.set(key, { machine, file: displayFile(where.file, home), members: [member], layers: new Set([where.name]) });
-    }
+    if (g) g.members.push({ id: def.id, layer: where.name });
+    else groups.set(key, { machine, file: displayFile(where.file, home), members: [{ id: def.id, layer: where.name }] });
   }
-  return [...groups.values()]
-    .filter((g) => g.layers.size > 1)
-    .map((g) => {
-      const where = g.machine ? `on host "${g.machine}"` : 'on this machine';
-      return (
-        `agents ${listed(g.members)} deliver the same file ${g.file} ${where}, but their layers differ; ` +
-        'one file can only hold one layer — give them the same instructions.layer, or different files'
-      );
-    });
+  return [...groups.values()].filter((g) => new Set(g.members.map((m) => m.layer)).size > 1);
+}
+
+/** A clash as one sentence, naming every agent in it with its layer. */
+export function instructionConflictMessage(g: InstructionGroup): string {
+  const where = g.machine ? `on host "${g.machine}"` : 'on this machine';
+  const members = g.members.map((m) => `"${m.id}" (layer "${m.layer}")`);
+  return (
+    `agents ${listed(members)} deliver the same file ${g.file} ${where}, but their layers differ; ` +
+    'one file can only hold one layer — give them the same instructions.layer, or different files'
+  );
 }

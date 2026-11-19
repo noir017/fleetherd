@@ -47,10 +47,15 @@ been moved.
 
 Two agents on one machine may share a file only if they share a layer: the link can point at one
 `<layer>.md`, so with two layers the file would take turns belonging to each of them and one agent
-would read the other's text. A config that does this is refused when it is loaded (and by `/reload`,
-which then keeps the old config running), naming both agents, the file and their layers. Two
-ordinary `claude` agents are the case this allows — they share `claude.md`. `common` is not a layer
-an agent can name, in any case: every agent already gets it.
+would read the other's text. Two ordinary `claude` agents are the case this allows — they share
+`claude.md`. `common` is not a layer an agent can name, in any case: every agent already gets it.
+
+A clash between two of config.yaml's own agents is refused when the file is loaded (and by
+`/reload`, which then keeps the old config running), naming both agents, the file and their layers.
+A pod's agents can never stop the gateway: two of one `pod.yaml`'s agents that clash make that file
+not apply — the host keeps what was read before, like any other bad line — and a pod agent that
+clashes with a config.yaml agent on the same machine is left out, config.yaml's winning, with a line
+in the daemon log.
 
 ## How it reaches the agent
 

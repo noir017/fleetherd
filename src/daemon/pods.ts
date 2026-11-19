@@ -3,6 +3,7 @@ import type { Welcome } from '../remote/connection.js';
 import type { RunOptions, RunResult } from '../remote/host.js';
 import { PodFileSchema, type PodAgent } from '../config/schema.js';
 import { readPods, writePods, type PodRecord, type PodsState } from '../config/pods.js';
+import { instructionClashes, instructionConflictMessage } from '../config/instructions.js';
 import { hostProbeScript, readHostProbe } from './host-probe.js';
 
 /**
@@ -94,6 +95,14 @@ async function readPodUnbounded(host: PodHost, configured: boolean, signal: Abor
     const ids = parsed.data.agents.map((a) => a.id);
     const twice = ids.find((id, i) => ids.indexOf(id) !== i);
     if (twice) return { kind: 'kept', note: `${host.id}: ~/${POD_FILE} names agent "${twice}" twice; kept what was read before` };
+    // Two of its agents whose instruction files resolve to one path under different layers would
+    // take turns owning that link (config/instructions.ts). Refused like a bad line, not passed on
+    // to the config: a pod must never keep the gateway from loading or starting.
+    const clash = instructionClashes(parsed.data.agents.map((a) => ({ ...a, host: host.id })));
+    if (clash.length > 0) {
+      const why = clash.map(instructionConflictMessage).join('; ');
+      return { kind: 'kept', note: `${host.id}: ~/${POD_FILE}: ${why}; kept what was read before` };
+    }
     const record: PodRecord = { source: 'file', agents: parsed.data.agents, at: now.toISOString() };
     if (parsed.data.peer !== undefined) {
       const key = await peerKey(host, signal);

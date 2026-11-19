@@ -124,6 +124,26 @@ describe('readPod', () => {
     if (r.kind === 'kept') expect(r.note).toMatch(why);
   });
 
+  it('keeps what it had when two of its agents would give one instruction file two layers', async () => {
+    podFile(`agents:
+  - id: a
+    harness: custom
+    command: my-harness
+    instructions: { file: '~/.my-harness/AGENTS.md' }
+  - id: b
+    harness: custom
+    command: my-harness
+    instructions: { file: '~/.my-harness/AGENTS.md' }
+`);
+    const r = await readPod(host(), false, 5_000);
+    expect(r.kind).toBe('kept');
+    if (r.kind !== 'kept') return;
+    expect(r.note).toContain('"a" (layer "a")');
+    expect(r.note).toContain('"b" (layer "b")');
+    expect(r.note).toContain('~/.my-harness/AGENTS.md');
+    expect(r.note).toMatch(/kept what was read before$/);
+  });
+
   it('gives up on a host that does not answer in time', async () => {
     const r = await readPod(host('box', { down: true }), false, 50);
     expect(r).toEqual({ kind: 'kept', note: expect.stringMatching(/^box: not read \(no answer/) });
