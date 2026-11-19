@@ -137,8 +137,9 @@ conversation library (`history/`), so its `--role`/`--turn`/`--turns`/`--since`/
 ### The external entrance: the same commands, a third door
 
 `daemon/external-mcp.ts` serves MCP over HTTP to callers outside the gateway (docs/external-mcp.md,
-AGENTS.md security invariant 11). Its tools are `external-tools.ts`: `skills` is the native tool
-unchanged (search and show), and `tasks` is the sub-agent commands as one tool with an `action`
+AGENTS.md security invariant 11). Its tools are `external-tools.ts`: `skills` is the native tool's
+schema and actions (search and show), its description alone written for a caller that has no skill
+list of its own, and `tasks` is the sub-agent commands as one tool with an `action`
 (`agents` → `task-agents`, `list` → `tasks`, `new` → `task-new`, `read`/`status`/`stop` → their
 commands), each built by the spec's own `build` through a tool view offering only that action's
 options. `open` is the one action with no reverse command: an agent in a conversation already has a

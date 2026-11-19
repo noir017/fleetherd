@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { externalAction, externalToolDefinition } from './external-tools.js';
+import { findNativeTool, SKILLS_TOOL_ACTIONS } from './tools.js';
 
 /**
  * The external entrance's two tools (external-tools.ts): every call becomes the action the same
@@ -91,6 +92,25 @@ describe('externalAction: tasks', () => {
 });
 
 describe('externalToolDefinition', () => {
+  it('describes skills for a caller with no skill list, and leaves the native description word for word', () => {
+    const def = externalToolDefinition('skills') as { description: string };
+    expect(def.description).not.toMatch(/skill list/i);
+    expect(def.description).toMatch(/^The skill library\. Search it when/);
+    // The half both audiences share is the native tool's own text, not a second copy.
+    expect(def.description.endsWith(SKILLS_TOOL_ACTIONS)).toBe(true);
+    expect(findNativeTool('skills')!.description).toBe(
+      'The skill library. Most skills are not in your skill list: before work your listed skills do not cover, search here. ' +
+        'search: name is what you need, in a few words; up to 5 skills come back. ' +
+        "show: name is a skill; its SKILL.md comes back whole with the list of its other files, which file reads one of."
+    );
+  });
+
+  it('describes tasks only in terms a caller has', () => {
+    const def = externalToolDefinition('tasks') as { description: string };
+    expect(def.description).not.toMatch(/skill list|this conversation|your listed/i);
+    expect(def.description).toMatch(/topics you opened/);
+  });
+
   it('offers skills with the native tool\'s schema: search and show only', () => {
     const def = externalToolDefinition('skills') as { inputSchema: { properties: Record<string, { enum?: string[] }> } };
     expect(def.inputSchema.properties.action?.enum).toEqual(['search', 'show']);
