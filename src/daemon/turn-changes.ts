@@ -28,15 +28,15 @@ import { DEFAULT_RUN_TIMEOUT_MS, type Workspace, type WorkspaceRunResult, type W
  * ancestor of that store (`$HOME` itself, say), the store's own path is written into its
  * `info/exclude` first: otherwise `git add` refuses the nested repository.
  *
- * ── `sh -c`, for three fixed scripts ────────────────────────────────────────
+ * ── `sh -c`, for two fixed scripts ─────────────────────────────────────────
  * `Workspace.run` takes argv and never a shell, which is what keeps a path with a space or a `;`
  * in it from becoming a command. The cost is that `~` is not expanded: argv is handed to exec as
  * written. So the home directory of the machine the agent runs on is read with a FIXED script —
- * `printf %s "${HOME:-}"` — and a file is removed, or the exclude line written, with a fixed
- * script whose dynamic parts are positional arguments, never spliced into the text. The
- * alternative, one interpolated command string per call, is the thing that rule exists to
- * prevent. A machine with no `sh` (Windows) simply gets no turn changes: the snapshot is skipped
- * and the turn goes on.
+ * `printf %s "${HOME:-}"` — and a file is removed with a fixed script whose dynamic parts are
+ * positional arguments, never spliced into the text. The exclude line is not a script at all: it
+ * goes through `writeFile`, a temporary beside it and a rename. The alternative, one interpolated
+ * command string per call, is the thing that rule exists to prevent. A machine with no `sh`
+ * (Windows) simply gets no turn changes: the snapshot is skipped and the turn goes on.
  *
  * ── Bounded, always ─────────────────────────────────────────────────────────
  * The start snapshot sits between the person's message and the agent reading it. Its git commands
@@ -557,6 +557,10 @@ export class TurnChanges {
    * Through `writeFile`'s temporary-beside-it and rename, never a shell redirect: a redirect
    * truncates the file in place, and a `git add` from the other start of the same repository
    * could read it empty and sweep the store into the tree (2026-11-19 review).
+   *
+   * No deadline of its own: the write is idempotent, `start` races the whole snapshot against
+   * `SNAPSHOT_START_TIMEOUT_MS`, and a write that race leaves behind is bounded by the
+   * workspace's 30 s remote cap.
    */
   private async excludeSnapDir(ws: Workspace, gitDir: string, rel: string): Promise<boolean> {
     try {
