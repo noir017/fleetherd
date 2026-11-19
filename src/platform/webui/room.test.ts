@@ -558,6 +558,48 @@ describe('WebRoom: the last event id on a row', () => {
     expect(row?.last).toBe(room.topicList().find((t) => t.id === topic)?.last);
   });
 
+  it('cancels the pending announcement when a synchronous one covers it', () => {
+    vi.useFakeTimers();
+    const { room, topic } = attached();
+    // `post` emits (which arms the throttle) and then announces. Counted through `topicList`,
+    // which only an announcement calls: a timer left armed would rebuild the list once more at
+    // 300 ms — invisibly, because `sendTopics` would find nothing to send.
+    const builds = vi.spyOn(room, 'topicList');
+    room.post(topic, { own: false, html: '' }, '');
+    expect(builds).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(300);
+    expect(builds).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps announcing across windows while events keep coming', () => {
+    vi.useFakeTimers();
+    const { room, topic, seen } = attached();
+    const msg = room.post(topic, { own: false, html: '' }, '');
+    seen.length = 0;
+    room.react(topic, msg.id, '👀', true); // 0 ms: opens the first window
+    vi.advanceTimersByTime(250);
+    room.react(topic, msg.id, '👀', false); // 250 ms: rides along
+    vi.advanceTimersByTime(300); // the first window fired at 300
+    expect(listEvents(seen)).toHaveLength(1);
+    room.react(topic, msg.id, '👀', true); // 550 ms: opens the second
+    vi.advanceTimersByTime(300);
+    expect(listEvents(seen)).toHaveLength(2);
+  });
+
+  it('never writes last to the topic file', () => {
+    vi.useFakeTimers({ now: 1_000_000 });
+    const file = path.join(dir, 'rows.json');
+    const store = new TopicStore(file);
+    const room = new WebRoom(instance(), store);
+    const topic = store.current().id;
+    room.post(topic, { own: false, html: '' }, '');
+    // `touch` gathers its write for TOUCH_WRITE_MS; wait it out and read what a restart would.
+    vi.advanceTimersByTime(1_000);
+    const saved = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, Record<string, unknown>>;
+    expect(saved[topic]?.lastAt).toBe(1_000_000);
+    expect(saved[topic]).not.toHaveProperty('last');
+  });
+
   it('drops a pending announcement at shutdown', () => {
     vi.useFakeTimers();
     const { room, topic, seen } = attached();
@@ -822,6 +864,42 @@ describe('WebRoom: resuming a dropped stream', () => {
     expect(replay[1]?.ev).toMatchObject({ t: 'del', id: b.id });
     expect(replay[2]?.ev).toMatchObject({ t: 'react', id: a.id, on: true });
   });
+
+  it('replays a deletion that names the message whose edits it folded', () => {
+    vi.useFakeTimers();
+    const { room, topic, seen, off } = attached();
+    const doomed = room.post(topic, { own: false, html: '<p>v0</p>' }, 'v0');
+    const lastId = seen.filter((s) => s.id).at(-1)?.id ?? '';
+    off();
+    for (let i = 1; i <= 3; i += 1) {
+      room.revise(topic, doomed.id, `v${i}`);
+      vi.advanceTimersByTime(1_500);
+    }
+    room.remove(topic, doomed.id);
+
+    const resumed: Seen[] = [];
+    room.subscribe(topic, (id, ev) => resumed.push({ id, ev }), lastId);
+    const replay = resumed.filter((s) => s.id);
+    // The folded message stays where it first appeared and the deletion follows it, so applying
+    // the replay in order ends where the room is: the message gone.
+    expect(replay.map((s) => s.ev.t)).toEqual(['msg', 'del']);
+    expect(replay[0]?.ev).toMatchObject({ msg: { id: doomed.id, html: '<p>v3</p>' } });
+    expect(replay[1]?.ev).toMatchObject({ t: 'del', id: doomed.id });
+  });
+
+  it('resumes with nothing to replay when the client is already at the room’s position', () => {
+    const { room, topic, seen, off } = attached();
+    room.post(topic, { own: false, html: '<p>one</p>' }, 'one');
+    const lastId = seen.filter((s) => s.id).at(-1)?.id ?? '';
+    off();
+    const resumed: Seen[] = [];
+    room.subscribe(topic, (id, ev) => resumed.push({ id, ev }), lastId);
+    // Nothing to fold and nothing missed: no sync, no message, just the state a backlog cannot
+    // hold and the marker that says the resume is over.
+    expect(kinds(resumed)).not.toContain('sync');
+    expect(resumed.filter((s) => s.ev.t === 'msg')).toHaveLength(0);
+    expect(kinds(resumed).at(-1)).toBe('resumed');
+  });
 });
 
 describe('mergeReplay', () => {
@@ -845,6 +923,37 @@ describe('mergeReplay', () => {
     // nothing moves backwards.
     expect(merged.at(-1)?.seq).toBe(5);
     expect(merged.map((e) => e.seq)).toEqual([1, 2, 5]);
+  });
+
+  it('keeps a reaction that landed between two copies of one message', () => {
+    const merged = mergeReplay([
+      at(1, message('w1', 'v1')),
+      at(2, { t: 'react', id: 'w1', emoji: '👀', on: true }),
+      at(3, message('w1', 'v2')),
+    ]);
+    // The message keeps its first place with its last body; the reaction stays where it was, and
+    // being last it carries the newest number. The body already includes the reaction, so
+    // applying it again is idempotent.
+    expect(merged.map((e) => [e.seq, e.ev.t])).toEqual([[1, 'msg'], [3, 'react']]);
+    expect(merged[0]?.ev).toMatchObject({ msg: { id: 'w1', html: 'v2' } });
+    expect(merged[1]?.ev).toMatchObject({ t: 'react', id: 'w1', on: true });
+  });
+
+  it('keeps a deletion that names the folded message, after it', () => {
+    const merged = mergeReplay([
+      at(1, message('w1', 'v1')),
+      at(2, message('w1', 'v2')),
+      at(3, { t: 'del', id: 'w1' }),
+    ]);
+    // The page applies these in order and ends where the room is: the message gone.
+    expect(merged.map((e) => [e.seq, e.ev.t])).toEqual([[1, 'msg'], [3, 'del']]);
+    expect(merged[0]?.ev).toMatchObject({ msg: { id: 'w1', html: 'v2' } });
+    expect(merged[1]?.ev).toMatchObject({ t: 'del', id: 'w1' });
+  });
+
+  it('leaves a replay of one event alone', () => {
+    const entries = [at(4, message('w1', 'only'))];
+    expect(mergeReplay(entries)).toEqual(entries);
   });
 
   it('leaves a replay with nothing to fold exactly as it was', () => {

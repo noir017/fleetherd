@@ -168,8 +168,10 @@ const MAX_BACKLOG = 300;
  * A throttle, not a debounce, and that distinction is the point: the clock starts at the FIRST
  * change of a burst and changes during the window ride along, so a topic that keeps emitting
  * still reports where it stands instead of waiting for a silence a long stream never gives.
- * `topicList()` is not free (a workdir and a liveness lookup per topic), so 300 ms is also what
- * keeps a turn's lifecycle events — typing, edits, a reaction — from rebuilding it each time.
+ * `topicList()` is not free (a workdir and a liveness lookup per topic), and `sendTopics` still
+ * rebuilds and serialises every row — attached clients or not, to keep `sent` and `tv` current.
+ * This does not make that cheaper, only rarer: three rebuilds a second instead of one per event.
+ * Measured, the cost is negligible; what matters is not paying it per flush.
  * Short enough that a page opening a topic cannot routinely beat the row it is checking against.
  */
 const TOPIC_LIST_MS = 300;
@@ -1554,9 +1556,11 @@ export class WebRoom {
         this.deliver(client, { t: 'machines', offline: [...this.offline] }) &&
         // And the topic list, which is in no backlog either. A blip's gap is short, but a page put
         // in the background closes its stream and resumes it minutes later (`?last=`), and a
-        // sidebar from before that would be wrong until something else was posted. Not when the
-        // client says it holds this very version: that is most resumes, and the list is the
-        // largest thing a resume would otherwise carry.
+        // sidebar from before that would be wrong until something else was posted. A client that
+        // says it holds this very version is not sent it. Rows carrying `last` cost this: `tv` now
+        // moves on every event, so resuming any topic that saw one since the client's list was
+        // sent carries the whole list again — about 2.5 KB gzipped at 200 topics. Accepted as the
+        // price of a row being a version; changed rows on a resume would be a second protocol.
         (topicsVersion === this.topicsVer || this.deliver(client, { t: 'topics', topics, tv: this.topicsVer })) &&
         // Last, so the page knows the replay is over: a page that entered the topic from what it
         // kept in memory has no sync coming to say it is caught up.
