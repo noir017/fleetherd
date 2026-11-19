@@ -7,6 +7,17 @@ All notable changes to this project are documented here. The format is based on
 
 ### Fixed
 
+- **The instruction editor shows every layer file and says who really reads it.** Three gaps in
+  the settings page's instruction editor (3.15.0): once the last agent using a custom layer was
+  removed or renamed, its `<layer>.md` vanished from the page while staying on disk, so it could be
+  neither seen nor cleared, and a later agent reusing the name inherited it silently — such files now
+  appear under "Instructions no agent reads", where they can be opened and emptied (`common.md`
+  never does). A shared file's reach was a fixed phrase per preset layer, wrong once a custom layer
+  shared a preset's name; it is now worked out from the agents that receive it ("every Claude Code
+  agent", "the claude layer"). And a preset harness pointed at a different file with
+  `instructions.file` was still described as reading its default one. The editor and the delivery
+  path also check a layer name themselves now, rather than trusting that the config was validated.
+
 - **Two agents on one machine can no longer fight over one instruction file.** `agents[].instructions`
   (3.16.0) let any agent name the file its harness reads, and its layer. When two agents on the same
   machine ended up at the same file with different layers — `cc` reading `~/.claude/CLAUDE.md` as
