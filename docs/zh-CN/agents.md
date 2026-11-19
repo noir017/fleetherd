@@ -179,7 +179,7 @@ harness 也有（见脚注 2）。2026-11-18 实测：
   报的模式，没有就用 `options.mode` 钉的值。这一行会显示这个状态相当于哪个等级，并标为未设置（什么都没存）：
   模式是 `bypassPermissions`、`agent-full-access` 或 CodeBuddy 的 `fullAccess` 时显示 `full`（什么都不问），
   其余显示 `auto`（问什么批什么）。明确设成 `auto` 时，会把 harness 放进上表里的模式。
-- 在聊天里用 `/setting permissions.<智能体> <等级>` 修改，或在[设置页](settings.md)该智能体那一行改；pod 声明的
+- 在聊天里用 `/setting permissions.<智能体> <等级>` 修改，或在[设置页](settings.md)该智能体的卡片上改；pod 声明的
   智能体写进 `podPermissions`。改动立即生效：正在运行的会话马上切到新模式，下一个请求按新等级处理。harness
   仍可能自己切模式——比如你批准了 Claude Code 的计划，它就会离开 `plan`——而会话重新开始时（`/new`、重启、
   空闲回收）会回到等级对应的模式。

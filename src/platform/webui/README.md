@@ -1093,21 +1093,27 @@ blue text and ›. Now:
 
 - **One column of sections**, each a card of rows: the group names come from `core/settings.ts`
   `settingGroup`, and a group may carry one note (`SettingsScreenGroup.note`) — the model group's
-  says "next session" once instead of on every row. An agent is one row: its id, what the agent is
-  (`targetKind`) and a *this topic* badge on the one answering the topic the page opened in.
+  says "next session" once instead of on every row. An agent is one card (below).
 - **A control per kind** (`SettingsScreenRow.control`, decided by `settingControl` in core, so a new
   setting cannot compile without one): `switch` for on/off, `choice` for a short closed list — the
   page draws up to five short values as a segmented control and anything longer as a `<select>` —
   `list` for a row that opens its own value screen (a model), and `agent` for the per-agent row,
-  whose `fields` (`SettingsScreenField`) are each a `choice` or a `list`. The agent rows are a
-  table: `settingsAgentCols` decides the columns once for the whole list (the fields' labels, then
-  `Instructions` when the instruction editor is on and any agent has files of its own), one
-  header row names them, and every row is a grid on the same `minmax(0,…fr)` template so its cells
-  sit under their headings. A `choice` field is always a `<select>` there — a segment bar does not
-  fit a column — and plain text when it offers one value; a value that is not set is in italics,
-  with one legend under the table, and the line under a value says only where it comes from.
-  Every control's accessible name carries the agent id, since the header is hidden from a reader.
-  `link` is the scheduled tasks.
+  whose `fields` (`SettingsScreenField`) are each a `choice` or a `list`. `link` is the scheduled
+  tasks, whose chat label starts with ⏰ — drawn as the clock icon here, like every glyph the page
+  shows.
+- **The agents are cards, one per agent** (`settingsAgents`), after the group's own rows (the default
+  agent), under a heading per machine when there is more than one — `SettingsScreenRow.place`, the
+  `/agent` menu's name for it (`agentGroupOf`). A card shut is a summary: the id, *this topic* and
+  *default* (`defaultAgent`) badges, the harness (`targetKind`) in a colour hashed from its name
+  (`agHue`, `--ag-h`, the same harness the same colour everywhere), and each field's value, unset ones
+  in italics. A tap on the summary opens it and shuts any other; which one is open (`agOpen`) is the
+  page's alone — never posted — survives every redraw, and goes when the page closes. Open, a field
+  per line: a `list` field is its value and a chevron, a `choice` field is a segmented control where
+  its options are five or fewer short words (a level's are) and a `<select>` otherwise, with the
+  chosen option's `detail` and the field's `valueNote` (or `not set`) under it, and a single option
+  is plain text. Every control's accessible name carries the agent id. This replaced a table
+  (3.15.0): twelve agents' controls at once, a three-line card per agent on a phone with a hairline
+  between them, and an Instructions column that said "Edit files" on every row.
 - **A switch and a choice write from the row.** Their ids are `sts:<reqId>:<n>`, an index into the
   `choices` the daemon froze when it drew the list (`PendingSettingsMenu.choices`), the same rule
   `stv:` follows. A switch carries one id, the one that writes the *other* side, so a retried request
@@ -1123,11 +1129,12 @@ blue text and ›. Now:
   reason (the buttons carry its message id), not because the settings are its own.
 - **Every row**, not the chat menu's first 20: that cap is Discord's 25 components per message.
 
-Focus is put back on the control that was used when the answer redraws the page (`data-fk`), and a
-move between the list and a value screen starts at the top. On a phone each row's control goes
-under its text at full width — except a switch, which stays on the right — and the agents table
-becomes a card per agent, its settings one labelled line each under its name; touch targets are
-44px, and a select is 16px so Safari does not zoom.
+Focus is put back on the control that was used when the answer redraws the page (`data-fk`). A move
+to a value screen starts at the top; a move back to the list lands on the list control that posted
+last (`settingsListFk`), whose card is still open — a model picked or Back pressed used to leave the
+reader at the top of a page with the agent three screens down. On a phone each row's control goes
+under its text at full width — except a switch, which stays on the right — and an open card puts
+each label above its control; touch targets are 44px, and a select is 16px so Safari does not zoom.
 
 The page opens from **All settings** in the ⚙ menu, or when the daemon answers a typed
 `/setting`. The menu's request is sent with `quiet: true` (`SendRequestSchema`, `WebRoom.record`),
@@ -1832,16 +1839,24 @@ the operator, the machine and the file.
 
 ## The instruction editor
 
-Off by default (`platforms.<id>.instructions.enabled`). Turned on, the settings page ends with an
-**Instructions** section for the gateway's own files (`common.md` and one per harness layer that a
-configured agent reads, `daemon/instructions.ts`), and an agent whose harness reads files of its own
-gets an **Instructions** field on its row under Agents, from the same answer. Either opens **the
-file window** in a second mode — the same editor, dirty mark, conflict dialog and save — whose tree
-is a fixed list instead of a directory, and which hides what makes no sense for one (new, rename,
-delete, search, breadcrumbs). `fileSrc` is that mode; `filesGet` and `filesPost` hand its requests
-to `instrGet`/`instrPost`, which is the whole of its reach into the window's code. Escape closes the
-editor alone, over the settings page it came from, and closing it asks the list again so a saved
-file shows as written.
+Off by default (`platforms.<id>.instructions.enabled`). Turned on, every agent's card lists what that
+agent reads, from one `GET /api/instructions` per settings page drawn (`instrEnsure`): the gateway's
+own files it gets (`common.md` and its harness layer's, `daemon/instructions.ts`), each marked with
+how many agents read it, then — when its harness reads files of its own — one **Its own files** row,
+because listing those reads the agent's machine. Any row opens **the file window** in a second mode
+on that agent's whole list — the shared files, then its own under a heading naming its machine — with
+the same editor, dirty mark, conflict dialog and save, a fixed list instead of a directory, and what
+makes no sense for one hidden (new, rename, delete, search, breadcrumbs). `fileSrc` is that mode;
+`filesGet` and `filesPost` hand its requests to `instrGet`/`instrPost`, which is the whole of its
+reach into the window's code, and each file carries its own scope (`global` or `agent`) for the
+save. Its own files failing to list leaves the shared ones and says why under its machine's heading.
+Escape closes the editor alone, over the settings page it came from, and closing it asks the list
+again so a saved file shows as written.
+
+There was a section of the gateway's files at the foot of the settings page until 3.15.0. With an
+Instructions column on the agents beside it, that was two lists by one name, one of them a row per
+harness, and it read as the same per-agent setting twice; listing each file under the agents that
+read it says who an edit reaches, which is the one thing a shared file's row has to say.
 
 The page never sends a path of its own. It names a target: a global file by name, or an agent and
 a path it got from that agent's list — and the daemon (`daemon/instructions-panel.ts`) walks the

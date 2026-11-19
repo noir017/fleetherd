@@ -323,7 +323,7 @@ function push(
   e: { path: string; real?: string; exists: boolean; depth: number; kind: InstructionsRef['kind']; note?: string; dir?: boolean; via?: string; fixed?: string }
 ): void {
   const ours = st.copies.has(e.real ?? e.path);
-  const why = e.fixed ?? (ours ? "the gateway's delivered copy: edit it under Every agent" : e.dir ? 'a directory, not a file' : undefined);
+  const why = e.fixed ?? (ours ? "the gateway's delivered copy: edit the shared files above it" : e.dir ? 'a directory, not a file' : undefined);
   const note = why ?? e.note;
   st.refs.push({
     path: e.path,

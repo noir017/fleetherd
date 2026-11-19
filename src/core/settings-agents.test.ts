@@ -88,6 +88,29 @@ describe('the Agents group', () => {
     expect(cc).toMatchObject({ targetKind: 'Claude Code', here: true });
   });
 
+  it('says where each agent runs, as the /agent menu names it, and which one is the default', () => {
+    const grouped: Config = parseConfig({
+      platforms: { tg: { type: 'telegram', token: 't' } },
+      hosts: { uniagent: { ssh: 'u@uniagent' }, box: { ssh: 'u@box' } },
+      agents: [
+        { id: 'cc', harness: 'claude' },
+        { id: 'oc', harness: 'opencode', host: 'box', group: 'lab' },
+        { id: 'cbc@uniagent', harness: 'opencode', host: 'uniagent' },
+      ],
+      routing: { default: 'oc' },
+    });
+    const { screen } = screenOf(settingsRows(grouped), grouped);
+    const agents = screen.rows.filter((r) => r.control.kind === 'agent');
+    // Its group, else its host, else this machine: the /agent menu's headings, word for word.
+    expect(agents.map((r) => [r.target, r.place, r.defaultAgent])).toEqual([
+      ['cc', 'this machine', undefined],
+      ['oc', 'lab', true],
+      ['cbc@uniagent', 'uniagent', undefined],
+    ]);
+    // Only an agent's row has a place: a global setting runs nowhere.
+    expect(screen.rows.filter((r) => r.place !== undefined)).toEqual(agents);
+  });
+
   it('keeps each field’s stg: id the one its own row had', () => {
     const { screen, rows } = screenOf();
     for (const target of ['cc', 'oc', 'cbc@uniagent']) {

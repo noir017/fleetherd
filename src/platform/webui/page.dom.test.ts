@@ -4511,13 +4511,25 @@ describe('webui page: the settings page', () => {
    * The default agent stays a plain row above them, and there is no `Default model` or
    * `Permissions` section any more.
    */
+  const LEVEL_DETAIL: Record<string, string> = {
+    plan: 'plans first',
+    ask: 'asks before each step',
+    edits: 'edits go through',
+    auto: 'approves everything',
+    full: 'no prompts at all',
+  };
   const permissions = (prefix: string, current: number, labels = ['plan', 'ask', 'edits', 'auto', 'full'], extra: Record<string, unknown> = {}) => ({
     label: 'Permissions',
     buttonId: 'stg:p:' + prefix,
     value: labels[current],
     control: {
       kind: 'choice',
-      options: labels.map((label, i) => ({ buttonId: 'sts:p:' + prefix + ':' + i, label, current: i === current })),
+      options: labels.map((label, i) => ({
+        buttonId: 'sts:p:' + prefix + ':' + i,
+        label,
+        current: i === current,
+        ...(LEVEL_DETAIL[label] ? { detail: LEVEL_DETAIL[label] } : {}),
+      })),
     },
     ...extra,
   });
@@ -4665,6 +4677,11 @@ describe('webui page: the settings page', () => {
     // The scheduled tasks are a way elsewhere: a row and a chevron, no value.
     const link = body.querySelector('button.set-open[data-btn="sco:r:0"]');
     expect(link?.querySelector('.set-v')).toBeNull();
+    // Its name comes with the chat button's ⏰, which a font without emoji draws as a box: the
+    // page draws its own clock instead, and the words after it are kept.
+    const name = link?.querySelector('.set-label > span');
+    expect(face(name)).toBe('[clock] Scheduled tasks · 1 active');
+    expect(name?.textContent).not.toContain('⏰');
     expect(face(link?.querySelector('.set-chev'))).toBe('[chevronRight]');
     // One column of sections: no grid of rows left over from the two-column layout.
     expect(body.querySelector('.set-rows')).toBeNull();
@@ -4679,24 +4696,78 @@ describe('webui page: the settings page', () => {
     return el;
   };
 
-  it('draws the agents as a table: one header, one row per agent, a cell per setting', async () => {
-    const h = await opened(agentList());
-    // The headings once, above the rows, instead of three labels repeated on every agent.
-    expect(h.doc.querySelectorAll('#settings-body .ag-head')).toHaveLength(1);
-    expect(text(h, '#settings-body .ag-head span')).toEqual(['Agent', 'Model', 'Permissions']);
-    const rows = Array.from(h.doc.querySelectorAll('#settings-body .ag-row'));
-    expect(rows.map((r) => r.getAttribute('aria-label'))).toEqual(['cc', 'oc@box']);
-    // Every row on the header's template, so the cells line up under their headings.
-    for (const r of rows) expect(r.classList.contains('c3')).toBe(true);
-    expect(h.doc.querySelector('#settings-body .ag-head')?.classList.contains('c3')).toBe(true);
+  /** Open one agent's card the way a person does: a tap on its summary. */
+  const openCard = async (h: Harness, id: string): Promise<Element> => {
+    await h.click(`#settings-body .ag-card[data-ag="${id}"] .ag-top`);
+    return h.doc.querySelector(`#settings-body .ag-card[data-ag="${id}"]`)!;
+  };
+  const body = (card: Element): HTMLElement => card.querySelector('.ag-body') as HTMLElement;
 
-    // Who it is, what it is, and whether it answers this topic.
-    const cc = rows[0]!;
+  it('draws each agent as a card of its own: a summary, shut until it is tapped', async () => {
+    const h = await opened(agentList());
+    // No table: no header row, no column of cells.
+    expect(h.doc.querySelector('#settings-body .ag-head, #settings-body .ag-cell')).toBeNull();
+    const cards = Array.from(h.doc.querySelectorAll('#settings-body .ag-list > .ag-card'));
+    expect(cards.map((c) => c.getAttribute('aria-label'))).toEqual(['cc', 'oc@box']);
+    // The default agent's own row stays above them, in a card of its own.
+    expect(text(h, '#settings-body .set-sec > .set-card > .set-item .set-label > span')).toEqual(['Default agent']);
+    expect(h.doc.querySelector('#settings-body .set-card .ag-card')).toBeNull();
+
+    // Who it is and whether it answers this topic; what it is, its model and its level, in one line.
+    const cc = cards[0]!;
     expect(cc.querySelector('.ag-name')?.textContent).toBe('cc');
-    expect(cc.querySelector('.ag-kind')?.textContent).toBe('Claude Code');
     expect(cc.querySelector('.set-badge.here')?.textContent).toBe('this topic');
-    // Each cell carries its heading for the phone's card, where there is no header row.
-    expect(Array.from(cc.querySelectorAll('.ag-cell .ag-lab')).map((l) => l.textContent)).toEqual(['Model', 'Permissions']);
+    expect(text(h, '#settings-body .ag-card[data-ag="cc"] .ag-sum > span:not(.ag-sep)')).toEqual(['Claude Code', 'harness default', 'ask']);
+    // Not set is in italics, in the summary as on the controls, and the title says so.
+    const sum = Array.from(cc.querySelectorAll('.ag-sum .unset'));
+    expect(sum.map((s) => s.getAttribute('title'))).toEqual(['Model: harness default (not set)', 'Permissions: ask (not set)']);
+    expect(cc.querySelector('.ag-kind')?.textContent).toBe('Claude Code');
+
+    // Shut: the summary is a button that says so, and the settings are not shown.
+    const top = cc.querySelector('.ag-top')!;
+    expect(top.getAttribute('aria-expanded')).toBe('false');
+    expect(top.getAttribute('aria-controls')).toBe(body(cc).id);
+    expect(body(cc).hidden).toBe(true);
+    expect(face(top.querySelector('.ag-chev'))).toBe('[chevronDown]');
+    // Every control on a card is a redraw-surviving focus target.
+    for (const el of Array.from(cc.querySelectorAll('button, select'))) expect(el.getAttribute('data-fk'), el.outerHTML).toBeTruthy();
+    expect(text(h, '#settings-body .set-group')).toEqual(['Agents']);
+    // Nothing was posted by drawing it.
+    expect(clicks(h)).toEqual([]);
+  });
+
+  it('opens one card at a time, and posts nothing for it', async () => {
+    const h = await opened(agentList());
+    const cc = await openCard(h, 'cc');
+    expect(cc.classList.contains('open')).toBe(true);
+    expect(cc.querySelector('.ag-top')?.getAttribute('aria-expanded')).toBe('true');
+    expect(body(cc).hidden).toBe(false);
+    // Another card shuts the first.
+    const oc = await openCard(h, 'oc@box');
+    expect(body(oc).hidden).toBe(false);
+    expect(body(h.doc.querySelector('.ag-card[data-ag="cc"]')!).hidden).toBe(true);
+    expect(h.doc.querySelector('.ag-card[data-ag="cc"] .ag-top')?.getAttribute('aria-expanded')).toBe('false');
+    // And a second tap shuts it.
+    await openCard(h, 'oc@box');
+    expect(h.doc.querySelectorAll('#settings-body .ag-card.open')).toHaveLength(0);
+    expect(clicks(h)).toEqual([]);
+  });
+
+  it('keeps the open card open through the daemon’s answer, and forgets it when the page closes', async () => {
+    const h = await opened(agentList());
+    await openCard(h, 'oc@box');
+    await h.emit({ t: 'msg', msg: agentList() });
+    expect(h.doc.querySelector('#settings-body .ag-card.open')?.getAttribute('data-ag')).toBe('oc@box');
+    await h.click('#settings-close');
+    await h.emit({ t: 'msg', msg: agentList('m2') });
+    expect(h.el('settings-page').hidden).toBe(false);
+    expect(h.doc.querySelectorAll('#settings-body .ag-card.open')).toHaveLength(0);
+  });
+
+  it('lays an open card out as a label and a control per setting', async () => {
+    const h = await opened(agentList());
+    const cc = await openCard(h, 'cc');
+    expect(Array.from(body(cc).querySelectorAll('.ag-field > .ag-lab')).map((l) => l.textContent)).toEqual(['Model', 'Permissions']);
 
     // Model is a value that opens its own screen, with a placeholder when nothing is set.
     const model = cc.querySelector('button.ag-open');
@@ -4705,41 +4776,44 @@ describe('webui page: the settings page', () => {
     expect(model?.querySelector('.set-v')?.classList.contains('unset')).toBe(true);
     expect(face(model?.querySelector('.set-chev'))).toBe('[chevronRight]');
 
-    // Permissions is a select on every row, five levels or six: a column cannot hold a segment bar,
-    // and rows that alternate between the two have no column to read down.
-    expect(cc.querySelector('.set-seg')).toBeNull();
-    const ccSel = cc.querySelector('select.set-select') as HTMLSelectElement;
-    expect(ccSel.value).toBe('sts:p:0:1');
-    expect(Array.from(ccSel.options).map((o) => o.textContent)).toEqual(['plan', 'ask', 'edits', 'auto', 'full']);
+    // Five short levels side by side — the card has the width a table column did not — the current
+    // one checked, and what it does said under them, with "not set" where it was never set.
+    const seg = Array.from(cc.querySelectorAll('.set-seg button'));
+    expect(seg.map((b) => [b.textContent, b.getAttribute('aria-checked')])).toEqual([
+      ['plan', 'false'],
+      ['ask', 'true'],
+      ['edits', 'false'],
+      ['auto', 'false'],
+      ['full', 'false'],
+    ]);
+    expect(cc.querySelector('.set-seg')?.getAttribute('aria-label')).toBe('cc · Permissions');
+    expect(Array.from(cc.querySelectorAll('.ag-field')[1]!.querySelectorAll('.ag-note > span:not([aria-hidden])')).map((s) => s.textContent)).toEqual([
+      'asks before each step',
+      'not set',
+    ]);
 
+    // A level that does not fit beside the others turns the control into a select.
+    const oc = await openCard(h, 'oc@box');
+    expect(oc.querySelector('.set-seg')).toBeNull();
+    const sel = oc.querySelector('select.set-select') as HTMLSelectElement;
+    expect(sel.value).toBe('sts:p:1:0');
+    expect(Array.from(sel.options).map((o) => o.textContent)).toEqual(['plan', 'ask', 'edits', 'auto', 'full', 'bypass permissions']);
     // A pod's model says where it comes from, on a line under it; the value is whole.
-    const oc = rows[1]!;
     expect(oc.querySelector('button.ag-open .set-v')?.textContent).toBe(LONG_MODEL);
-    expect(oc.querySelector('.ag-cell .ag-note')?.textContent).toBe('pod.yaml');
-    expect((oc.querySelector('select.set-select') as HTMLSelectElement).value).toBe('sts:p:1:0');
-
-    // Every control on a row is a redraw-surviving focus target.
-    for (const el of Array.from(cc.querySelectorAll('button, select'))) expect(el.getAttribute('data-fk'), el.outerHTML).toBeTruthy();
-    expect(text(h, '#settings-body .set-group')).toEqual(['Agents']);
+    expect(oc.querySelector('.ag-field .ag-note')?.textContent).toBe('pod.yaml');
   });
 
-  it('marks a value that is not set with italics, and says only where it comes from under it', async () => {
-    const h = await opened(agentList());
-    const [cc, oc] = Array.from(h.doc.querySelectorAll('#settings-body .ag-row'));
-    // Italics, as an unset model always was; a bare "not set" under every row is not repeated.
-    expect(cc!.querySelector('select.set-select')?.classList.contains('unset')).toBe(true);
-    expect(cc!.querySelectorAll('.ag-cell')[1]!.querySelector('.ag-note')).toBeNull();
-    expect(oc!.querySelector('select.set-select')?.classList.contains('unset')).toBe(false);
-    // Said once, under the table.
-    expect(text(h, '#settings-body .ag-legend')).toEqual(['Values in italics are not set: what is shown is what applies.']);
-
-    // Where a level that is not set comes from is the part italics cannot say.
-    const pinned = agentList('m2');
+  it('says where a level that is not set comes from', async () => {
+    const pinned = agentList();
     const field = (pinned.settings as { rows: Array<Record<string, any>> }).rows[1]!.control.fields[1];
     field.valueNote = 'not set · from its pinned mode';
-    await h.emit({ t: 'msg', msg: pinned });
-    const note = h.doc.querySelectorAll('#settings-body .ag-row')[0]!.querySelectorAll('.ag-cell')[1]!.querySelector('.ag-note');
-    expect(note?.textContent).toBe('from its pinned mode');
+    const h = await opened(pinned);
+    const cc = await openCard(h, 'cc');
+    const note = cc.querySelectorAll('.ag-field')[1]!.querySelector('.ag-note');
+    expect(Array.from(note!.querySelectorAll('span:not([aria-hidden])')).map((s) => s.textContent)).toEqual([
+      'asks before each step',
+      'not set · from its pinned mode',
+    ]);
   });
 
   it('shows the only level an agent is offered as text, not as a control', async () => {
@@ -4747,80 +4821,141 @@ describe('webui page: the settings page', () => {
     const rows = (one.settings as { rows: Array<Record<string, any>> }).rows;
     rows.push(agentRow('ag-api', 'fleetherd', { buttonId: 'stg:m:2', value: 'gemini' }, permissions('2', 0, ['auto'], { unset: true })));
     const h = await opened(one);
-    const api = h.doc.querySelector('#settings-body .ag-row[aria-label="ag-api"]')!;
-    expect(api.querySelector('select')).toBeNull();
+    const api = await openCard(h, 'ag-api');
+    expect(api.querySelector('select, .set-seg')).toBeNull();
     expect(api.querySelector('.ag-fixed')?.textContent).toBe('auto');
     expect(api.querySelector('.ag-fixed')?.classList.contains('unset')).toBe(true);
   });
 
-  it('opens an agent’s model from its row, by the field’s own button id', async () => {
+  it('opens an agent’s model from its card, by the field’s own button id', async () => {
     const h = await opened(agentList());
-    await h.click('#settings-body .ag-row button.ag-open[data-btn="stg:m:0"]');
+    await openCard(h, 'cc');
+    await h.click('#settings-body .ag-card[data-ag="cc"] button.ag-open[data-btn="stg:m:0"]');
     expect(clicks(h)).toEqual([{ topic: A, messageId: 'm1', buttonId: 'stg:m:0' }]);
     expect(h.doc.querySelector('#settings-body button.ag-open[data-btn="stg:m:0"]')?.classList.contains('busy')).toBe(true);
   });
 
-  it('writes a permission level from the agent’s row, by the option’s button id', async () => {
+  it('comes back from a model’s screen to the card it left, open, on the control that left it', async () => {
     const h = await opened(agentList());
-    await choose(h, '#settings-body .ag-row[aria-label="cc"] select.set-select', 'sts:p:0:3');
-    expect(clicks(h)).toEqual([{ topic: A, messageId: 'm1', buttonId: 'sts:p:0:3' }]);
+    await openCard(h, 'oc@box');
+    await h.click('#settings-body .ag-card[data-ag="oc@box"] button.ag-open');
+    await h.emit({ t: 'msg', msg: values() });
+    expect(h.doc.querySelector('#settings-body .ag-card')).toBeNull();
+    // The daemon sends the list again, as the back button or a picked model does.
+    await h.emit({ t: 'msg', msg: agentList() });
+    const oc = h.doc.querySelector('#settings-body .ag-card[data-ag="oc@box"]')!;
+    expect(oc.classList.contains('open')).toBe(true);
+    expect(h.doc.activeElement).toBe(oc.querySelector('button.ag-open'));
+  });
 
-    // The daemon's answer redraws the row with the level it wrote, no longer marked as unset.
+  it('writes a permission level from the agent’s card, by the option’s button id', async () => {
+    const h = await opened(agentList());
+    await openCard(h, 'cc');
+    await h.click('#settings-body .ag-card[data-ag="cc"] .set-seg button[data-btn="sts:p:0:3"]');
+    expect(clicks(h)).toEqual([{ topic: A, messageId: 'm1', buttonId: 'sts:p:0:3' }]);
+    // The level moves at once; the daemon's answer redraws it from what was written.
+    expect(h.doc.querySelector('.ag-card[data-ag="cc"] .set-seg button[aria-checked="true"]')?.textContent).toBe('auto');
     const answered = agentList();
     const field = (answered.settings as { rows: Array<Record<string, any>> }).rows[1]!.control.fields[1];
     field.control.options.forEach((o: { current: boolean }, i: number) => (o.current = i === 3));
+    field.value = 'auto';
     delete field.unset;
     delete field.valueNote;
     await h.emit({ t: 'msg', msg: answered });
-    const sel = h.doc.querySelector('#settings-body .ag-row[aria-label="cc"] select.set-select') as HTMLSelectElement;
-    expect(sel.value).toBe('sts:p:0:3');
-    expect(sel.classList.contains('unset')).toBe(false);
+    const cc = h.doc.querySelector('#settings-body .ag-card[data-ag="cc"]')!;
+    expect(cc.querySelector('.set-seg button[aria-checked="true"]')?.textContent).toBe('auto');
+    expect(cc.querySelector('.ag-sum .unset')?.textContent).toBe('harness default');
+    // From the select too, where the levels do not fit side by side.
+    await openCard(h, 'oc@box');
+    await choose(h, '#settings-body .ag-card[data-ag="oc@box"] select.set-select', 'sts:p:1:5');
+    expect(clicks(h).at(-1)).toEqual({ topic: A, messageId: 'm1', buttonId: 'sts:p:1:5' });
   });
 
-  it('puts an agent’s own instruction files in its row, and no longer lists them in a section', async () => {
+  it('groups the cards by the machine they run on, and marks the default agent', async () => {
+    const m = agentList();
+    const rows = (m.settings as { rows: Array<Record<string, any>> }).rows;
+    rows[1]!.place = 'this machine';
+    rows[1]!.defaultAgent = true;
+    rows[2]!.place = 'box';
+    rows.push({ ...agentRow('cx@box', 'Codex', { buttonId: 'stg:m:2', value: 'gpt' }, permissions('2', 3)), place: 'box' });
+    const h = await opened(m);
+    expect(text(h, '#settings-body .ag-place > span:first-child')).toEqual(['this machine', 'box']);
+    expect(text(h, '#settings-body .ag-place .ag-count')).toEqual(['1', '2']);
+    expect(Array.from(h.doc.querySelectorAll('#settings-body .ag-list > *')).map((e) => e.getAttribute('data-ag') ?? e.textContent)).toEqual([
+      'this machine1',
+      'cc',
+      'box2',
+      'oc@box',
+      'cx@box',
+    ]);
+    expect(h.doc.querySelector('.ag-card[data-ag="cc"] .set-badge.def')?.textContent).toBe('default');
+    expect(h.doc.querySelectorAll('#settings-body .set-badge.def')).toHaveLength(1);
+    // One machine needs no heading.
+    const one = await opened(agentList());
+    expect(one.doc.querySelector('#settings-body .ag-place')).toBeNull();
+  });
+
+  it('colours each card by its harness, the same harness the same colour', async () => {
+    const m = agentList();
+    const rows = (m.settings as { rows: Array<Record<string, any>> }).rows;
+    rows.push(agentRow('cc2', 'Claude Code', { buttonId: 'stg:m:2', value: 'x' }, permissions('2', 3)));
+    const h = await opened(m);
+    const hue = (id: string) => (h.doc.querySelector(`.ag-card[data-ag="${id}"]`) as HTMLElement).style.getPropertyValue('--ag-h');
+    expect(hue('cc')).toBe(hue('cc2'));
+    expect(hue('cc')).not.toBe(hue('oc@box'));
+    // The built-in harnesses' names land on hues of their own.
+    const hues = ['Claude Code', 'Codex', 'OpenCode', 'Antigravity', 'Gemini CLI', 'DeepSeek Harness'].map((kind) => {
+      const one = agentList();
+      (one.settings as { rows: Array<Record<string, any>> }).rows[1]!.targetKind = kind;
+      return one;
+    });
+    const seen = new Set<string>();
+    for (const msg of hues) {
+      await h.emit({ t: 'msg', msg });
+      seen.add(hue('cc'));
+    }
+    expect(seen.size).toBe(6);
+  });
+
+  it('lists the files an agent reads on its card: the shared ones, then its own', async () => {
     const h = await opened(agentList(), {
       instructions: true,
       replies: { 'api/instructions': INSTR, 'api/instructions/refs?agent=cc': INSTR_REFS },
     });
+    // The list answers after the screen is drawn: the files join the card without a reopen.
+    await until('the files', () => Boolean(h.doc.querySelector('#settings-body .ag-card[data-ag="cc"] [data-instr-agent]')));
+    const cc = await openCard(h, 'cc');
+    const files = Array.from(cc.querySelectorAll('.ag-instr .ag-file'));
+    expect(files.map((f) => [f.getAttribute('data-instr-file'), f.querySelector('.ag-fname')?.textContent, f.querySelector('.ag-fsub')?.textContent])).toEqual([
+      ['g:common.md', 'common.md', 'every agent · 1 reads it'],
+      [null, 'Its own files', '@ references in ~/.claude/CLAUDE.md · box'],
+    ]);
+    expect(Array.from(files[1]!.querySelectorAll('code')).map((c) => c.textContent)).toEqual(['@', '~/.claude/CLAUDE.md']);
+    for (const f of files) expect(f.getAttribute('data-fk')).toBeTruthy();
+    expect(files[0]!.getAttribute('aria-label')).toBe('cc · common.md');
+    // An agent whose harness reads nothing the gateway knows of is told so, with nothing to tap.
+    const oc = await openCard(h, 'oc@box');
+    expect(oc.querySelector('[data-instr-agent]')).toBeNull();
+    expect(oc.querySelector('.ag-instr .ag-none')?.textContent).toBe('Its harness reads no instruction file the gateway knows of.');
+    // No section of its own any more.
+    expect(h.doc.querySelector('.instr-sec')).toBeNull();
+    expect(text(h, '#settings-body .set-group')).toEqual(['Agents']);
 
-    // The panel answers after the screen is drawn: the column joins the table without a reopen.
-    await until('the instructions cell', () => Boolean(h.doc.querySelector('#settings-body .ag-row [data-instr-agent]')));
-    expect(text(h, '#settings-body .ag-head span')).toEqual(['Agent', 'Model', 'Permissions', 'Instructions']);
-    for (const r of Array.from(h.doc.querySelectorAll('#settings-body .ag-row'))) expect(r.classList.contains('c4')).toBe(true);
-    const field = h.doc.querySelector('#settings-body .ag-row [data-instr-agent]')!;
-    expect(field.getAttribute('data-instr-agent')).toBe('cc');
-    expect(field.closest('.ag-cell')?.querySelector('.ag-lab')?.textContent).toBe('Instructions');
-    expect(field.querySelector('.ag-txt')?.textContent).toBe('Edit files');
-    // The summary is a sentence: the title on a desktop, a line a phone's card shows.
-    expect(field.getAttribute('title')).toBe('box · @ references in ~/.claude/CLAUDE.md');
-    const own = field.parentElement!.querySelector('.ag-own')!;
-    expect(Array.from(own.querySelectorAll('code')).map((c) => c.textContent)).toEqual(['@', '~/.claude/CLAUDE.md']);
-    expect(own.textContent).toContain(' · box');
-    expect(field.getAttribute('data-fk')).toBeTruthy();
-    // An agent whose harness reads nothing of its own has an empty cell, not a control.
-    const oc = h.doc.querySelector('#settings-body .ag-row[aria-label="oc@box"]')!;
-    expect(oc.querySelectorAll('.ag-cell')[2]!.classList.contains('none')).toBe(true);
-    expect(h.doc.querySelectorAll('#settings-body [data-instr-agent]')).toHaveLength(1);
-    // The section keeps the gateway's files; the agents are no longer repeated under it.
-    expect(text(h, '.instr-sec .set-group')).toEqual(['Instructions']);
-    expect(h.doc.querySelector('.instr-sec [data-instr-agent]')).toBeNull();
-
-    // And it opens what the old row opened: the file window on that agent's files.
-    await h.click('#settings-body .ag-row [data-instr-agent="cc"]');
+    // Its own files open the window on that agent, with no file picked.
+    await h.click('#settings-body .ag-card[data-ag="cc"] .ag-file:not([data-instr-file])');
     await until('the editor', () => h.el('files').hidden === false);
-    expect(h.el('files-title').textContent).toBe('cc · own instructions');
-    expect(h.calls.some((c) => c.path === 'api/instructions/refs?agent=cc')).toBe(true);
+    expect(h.el('files-title').textContent).toBe('cc · instructions');
+    await until('its files', () => h.calls.some((c) => c.path === 'api/instructions/refs?agent=cc'));
   });
 
   it('names every control with the agent it belongs to, for a screen reader', async () => {
     const h = await opened(agentList(), { instructions: true, replies: { 'api/instructions': INSTR } });
-    await until('the instructions cell', () => Boolean(h.doc.querySelector('#settings-body [data-instr-agent]')));
-    // Several agents' rows are on one page, and the header is hidden from a reader.
-    expect(h.doc.querySelector('#settings-body .ag-head')?.getAttribute('aria-hidden')).toBe('true');
+    await until('the files', () => Boolean(h.doc.querySelector('#settings-body [data-instr-agent]')));
+    expect(h.doc.querySelector('.ag-card[data-ag="cc"]')?.getAttribute('role')).toBe('group');
     expect(h.doc.querySelector('button.ag-open[data-fk="r1f0"]')?.getAttribute('aria-label')).toBe('cc · Model: harness default');
-    expect(h.doc.querySelector('.ag-row[aria-label="cc"] select')?.getAttribute('aria-label')).toBe('cc · Permissions');
-    expect(h.doc.querySelector('.ag-row[aria-label="oc@box"] select')?.getAttribute('aria-label')).toBe('oc@box · Permissions');
-    expect(h.doc.querySelector('[data-instr-agent="cc"]')?.getAttribute('aria-label')).toBe('cc · Instructions');
+    expect(h.doc.querySelector('.ag-card[data-ag="cc"] .set-seg')?.getAttribute('aria-label')).toBe('cc · Permissions');
+    expect(h.doc.querySelector('.ag-card[data-ag="oc@box"] select')?.getAttribute('aria-label')).toBe('oc@box · Permissions');
+    expect(h.doc.querySelector('.ag-card[data-ag="cc"] .ag-file:not([data-instr-file])')?.getAttribute('aria-label')).toBe('cc · its own files');
   });
 
   it('does not redraw under a control still waiting on the daemon', async () => {
@@ -4831,22 +4966,23 @@ describe('webui page: the settings page', () => {
       replies: { 'api/instructions': INSTR },
       held: { 'api/instructions': held },
     });
-    const tapped = await choose(h, '#settings-body .ag-row[aria-label="cc"] select.set-select', 'sts:p:0:3');
+    await openCard(h, 'oc@box');
+    const tapped = await choose(h, '#settings-body .ag-card[data-ag="oc@box"] select.set-select', 'sts:p:1:3');
     expect(tapped.classList.contains('busy')).toBe(true);
 
     // The list arrives while that change is still out: the control keeps its state, and the
-    // column waits for the answer that redraws the list anyway.
+    // files wait for the answer that redraws the list anyway.
     release();
     await tick();
     await tick();
-    expect(h.doc.querySelector('#settings-body .ag-row[aria-label="cc"] select.set-select')).toBe(tapped);
+    expect(h.doc.querySelector('#settings-body .ag-card[data-ag="oc@box"] select.set-select')).toBe(tapped);
     expect(tapped.classList.contains('busy')).toBe(true);
     expect(tapped.disabled).toBe(true);
-    expect(tapped.value).toBe('sts:p:0:3');
+    expect(tapped.value).toBe('sts:p:1:3');
     expect(h.doc.querySelector('#settings-body [data-instr-agent]')).toBeNull();
 
     await h.emit({ t: 'msg', msg: agentList() });
-    expect(h.doc.querySelector('#settings-body .ag-row [data-instr-agent="cc"]')).not.toBeNull();
+    expect(h.doc.querySelector('#settings-body .ag-card[data-ag="cc"] [data-instr-agent="cc"]')).not.toBeNull();
   });
 
   it('keeps focus where it was when the instruction list arrives late', async () => {
@@ -4857,13 +4993,15 @@ describe('webui page: the settings page', () => {
       replies: { 'api/instructions': INSTR },
       held: { 'api/instructions': held },
     });
+    await openCard(h, 'cc');
     const model = h.doc.querySelector('#settings-body button.ag-open[data-fk="r1f0"]') as HTMLButtonElement;
     model.focus();
     expect(h.doc.activeElement).toBe(model);
 
     release();
-    await until('the instructions cell', () => Boolean(h.doc.querySelector('#settings-body [data-instr-agent]')));
-    // The row is new markup; focus is back on the same control, by its key.
+    await until('the files', () => Boolean(h.doc.querySelector('#settings-body [data-instr-agent]')));
+    // The card is new markup; it is still open, and focus is back on the same control, by its key.
+    expect(h.doc.querySelector('.ag-card[data-ag="cc"]')?.classList.contains('open')).toBe(true);
     expect(h.doc.activeElement?.getAttribute('data-fk')).toBe('r1f0');
     expect(h.doc.activeElement).not.toBe(model);
   });
@@ -5371,24 +5509,21 @@ describe('webui page: the settings page', () => {
       expect(html).toMatch(/\.set-nav button\{[^}]*min-height:44px/);
     });
 
-    it('turns the agents table into a card per agent, at the height a thumb needs', () => {
+    it('stacks an open card’s labels over their controls, at the height a thumb needs', () => {
       const css = narrow();
-      // No header row and one column: the name on top, a labelled line per setting under it.
-      expect(css).toContain('.ag-head{display:none}');
-      expect(css).toContain('.set-item.ag-row,.set-item.ag-row.c2,.set-item.ag-row.c3,.set-item.ag-row.c4{grid-template-columns:minmax(0,1fr)');
-      expect(css).toContain('.ag-cell{display:grid;grid-template-columns:92px minmax(0,1fr)');
-      expect(css).toMatch(/\.ag-lab\{display:block/);
+      // One column inside an open card: the label on top, the control the card's whole width.
+      expect(css).toContain('.ag-field{grid-template-columns:minmax(0,1fr);row-gap:6px}');
+      expect(css).toContain('.ag-val>.set-select,.ag-open,.ag-files{max-width:none}');
       expect(css).toMatch(/\.ag-open,\.ag-fixed\{min-height:44px\}/);
-      // A setting the agent does not have is left out of its card.
-      expect(css).toContain('.ag-cell.none{display:none}');
-      // None of that leaks onto the desktop, which keeps the table.
+      expect(css).toMatch(/\.ag-file\{min-height:44px/);
+      expect(css).toMatch(/\.ag-top\{min-height:56px/);
+      // None of that leaks onto the desktop, which keeps a label column beside the controls.
       const desktop = renderPage('Chat', false).replace(css, '');
-      expect(desktop).not.toContain('.ag-head{display:none}');
-      expect(desktop).toMatch(/\.ag-lab\{display:none\}/);
-      // Tracks that never size by content: separate row grids still share every column edge.
-      const templates = desktop.match(/\.ag-head\.c\d,\.set-item\.ag-row\.c\d\{grid-template-columns:[^}]*\}/g) ?? [];
-      expect(templates).toHaveLength(3);
-      for (const t of templates) expect(t.replace(/minmax\(0,[\d.]+fr\)/g, '')).toMatch(/grid-template-columns:\s*\}$/);
+      expect(desktop).toContain('.ag-field{display:grid;grid-template-columns:104px minmax(0,1fr)');
+      expect(desktop).not.toContain('.ag-field{grid-template-columns:minmax(0,1fr)');
+      // The cards stand apart at every width: a gap between them, each with an edge of its own.
+      expect(desktop).toMatch(/\.ag-list\{[^}]*gap:8px/);
+      expect(desktop).toMatch(/\.ag-card\{[^}]*border-left:3px solid var\(--ag\)/);
     });
 
     it('works the same controls at phone width', async () => {
@@ -15818,19 +15953,21 @@ describe('webui page: the instruction editor', () => {
         depth: 1,
         kind: 'reference',
         editable: false,
-        note: "the gateway's delivered copy: edit it under Every agent",
+        note: "the gateway's delivered copy: edit the shared files above it",
       },
     ],
   };
 
-  async function opened(over: Record<string, unknown> = {}): Promise<Harness> {
+  async function opened(over: Record<string, unknown> = {}, list: Record<string, unknown> = LIST, status?: Record<string, number>): Promise<Harness> {
     const h = await open({
       instructions: true,
-      replies: { 'api/instructions': LIST, [COMMON]: commonFile, [CLAUDE]: claudeFile, [REFS]: refs, [RULE]: ruleFile, ...over },
+      replies: { 'api/instructions': list, [COMMON]: commonFile, [CLAUDE]: claudeFile, [REFS]: refs, [RULE]: ruleFile, ...over },
+      ...(status ? { status } : {}),
     });
     await h.emit(sync(A, [], [A]));
     await h.emit({ t: 'msg', msg: settingsList });
-    await until('the section', () => Boolean(h.doc.querySelector('.instr-sec [data-instr-global]')));
+    await until('the files', () => Boolean(h.doc.querySelector('.ag-card[data-ag="cc"] [data-instr-agent]')));
+    await h.click('.ag-card[data-ag="cc"] .ag-top');
     return h;
   }
 
@@ -15841,47 +15978,41 @@ describe('webui page: the instruction editor', () => {
     ta.dispatchEvent(new h.window.Event('input', { bubbles: true }));
   };
   const writes = (h: Harness) => h.calls.filter((c) => c.path === 'api/instructions/write');
+  const tree = (h: Harness) => Array.from(h.el('files-tree-list').querySelectorAll('[data-fx-file]')).map((b) => b.getAttribute('data-fx-file'));
 
-  it('leaves the section out, and asks for nothing, when the daemon has it off', async () => {
+  it('leaves the files out of every card, and asks for nothing, when the daemon has it off', async () => {
     const h = await open({ replies: { 'api/instructions': LIST } });
     await h.emit(sync(A, [], [A]));
     await h.emit({ t: 'msg', msg: settingsList });
     await tick();
     expect(h.el('settings-page').hidden).toBe(false);
-    expect(h.doc.querySelector('.instr-sec')).toBeNull();
+    expect(h.doc.querySelector('.ag-instr, .instr-sec, [data-instr-agent]')).toBeNull();
     expect(h.calls.some((c) => c.path.startsWith('api/instructions'))).toBe(false);
   });
 
-  it('lists the gateway’s files under the daemon’s rows, and each agent’s own files on its agent row', async () => {
+  it('lists what an agent reads on its card — the shared files, then its own — and has no section of its own', async () => {
     const h = await opened();
-    const sec = h.doc.querySelector('.instr-sec') as HTMLElement;
-    // After the /setting rows, not in place of them.
-    expect(h.el('settings-body').lastElementChild).toBe(sec);
-    expect(h.doc.querySelector('#settings-body .set-item.set-open .set-label')?.textContent).toBe('Idle reclaim');
-    const globals = Array.from(sec.querySelectorAll('[data-instr-global]')).map((b) => [
-      b.getAttribute('data-instr-global'),
-      b.querySelector('.set-label')?.textContent,
-      b.querySelector('.set-hint')?.textContent,
-      b.querySelector('.set-v')?.textContent,
+    // The daemon's rows are the whole page: nothing is appended after them.
+    expect(h.doc.querySelector('.instr-sec')).toBeNull();
+    expect(Array.from(h.doc.querySelectorAll('#settings-body .set-group')).map((e) => e.textContent)).toEqual(['Agents', 'Conversations']);
+    const files = Array.from(h.doc.querySelectorAll('.ag-card[data-ag="cc"] .ag-file')).map((b) => [
+      b.getAttribute('data-instr-file'),
+      b.querySelector('.ag-fname')?.textContent,
+      b.querySelector('.ag-fsub')?.textContent,
+      b.getAttribute('title'),
     ]);
-    expect(globals).toEqual([
-      ['common.md', 'Every agent', 'cc, cx', 'common.md'],
-      ['claude.md', 'Claude Code', 'cc', 'claude.md · not written'],
+    // Shared ones say who else an edit reaches; one not written yet says so.
+    expect(files).toEqual([
+      ['g:common.md', 'common.md', 'every agent · 2 read it', 'cc, cx'],
+      ['g:claude.md', 'claude.md', 'every Claude Code agent · 1 reads itnot written', 'cc'],
+      [null, 'Its own files', '@ references in ~/.claude/CLAUDE.md, and ~/.claude/rules · box', null],
     ]);
-    // The section is the gateway's files only: an agent's own files are a field on its own row.
-    expect(Array.from(sec.querySelectorAll('.set-group')).map((e) => e.textContent)).toEqual(['Instructions']);
-    expect(sec.querySelectorAll('[data-instr-agent]')).toHaveLength(0);
-    const own = h.doc.querySelector('#settings-body .ag-row [data-instr-agent="cc"]');
-    expect(own?.closest('.ag-cell')?.querySelector('.ag-lab')?.textContent).toBe('Instructions');
-    expect(own?.getAttribute('title')).toContain('box · ');
-    expect(own?.parentElement?.querySelector('.ag-own')?.innerHTML).toContain('<code>~/.claude/rules</code>');
-    // An agent whose harness has nothing of its own is not offered.
-    expect(h.doc.querySelectorAll('#settings-body [data-instr-agent]')).toHaveLength(1);
+    expect(h.doc.querySelector('.ag-card[data-ag="cc"] .ag-file:not([data-instr-file]) .ag-fsub')?.innerHTML).toContain('<code>~/.claude/rules</code>');
   });
 
-  it('opens a global file in the file window, without the controls a fixed list has no use for', async () => {
+  it('opens a shared file in the file window, on that agent’s whole list, without the controls a fixed list has no use for', async () => {
     const h = await opened();
-    await h.click('[data-instr-global="common.md"]');
+    await h.click('.ag-card[data-ag="cc"] [data-instr-file="g:common.md"]');
     await until('the editor', () => Boolean(editor(h)));
     expect(h.el('files').hidden).toBe(false);
     expect(h.el('files-title').textContent).toBe('common.md');
@@ -15890,13 +16021,19 @@ describe('webui page: the instruction editor', () => {
     for (const id of ['files-tree-head', 'files-search-row', 'files-rename-open', 'files-delete', 'files-crumbs']) {
       expect(h.el(id).hidden, id).toBe(true);
     }
-    const rows = Array.from(h.el('files-tree-list').querySelectorAll('[data-fx-file]')).map((b) => b.getAttribute('data-fx-file'));
-    expect(rows).toEqual(['g:common.md', 'g:claude.md']);
+    // Everything it reads, in two parts, each saying where its files live.
+    expect(tree(h)).toEqual(['g:common.md', 'g:claude.md', 'a:/h/.claude/rules/a.md', 'a:/h/new.md']);
+    expect(Array.from(h.el('files-tree-list').querySelectorAll('.fx-sec')).map((e) => e.textContent)).toEqual([
+      'Shared, kept on the gateway',
+      'On box',
+    ]);
+    expect(h.el('files-tree-list').querySelector('[data-fx-file="g:common.md"] .fx-sub')?.textContent).toBe('every agent');
+    expect(h.el('files-tree-list').querySelector('[data-fx-file="g:claude.md"] .fx-sub')?.textContent).toBe('every Claude Code agent');
     // The page never asked the file window's routes for anything.
     expect(h.calls.some((c) => c.path.startsWith('api/files/'))).toBe(false);
   });
 
-  it('saves a global file with the version it read, and says where the text was placed', async () => {
+  it('saves a shared file with the version it read, and says where the text was placed', async () => {
     const h = await opened({
       'api/instructions/write': {
         ok: true,
@@ -15909,7 +16046,7 @@ describe('webui page: the instruction editor', () => {
         ],
       },
     });
-    await h.click('[data-instr-global="common.md"]');
+    await h.click('.ag-card[data-ag="cc"] [data-instr-file="g:common.md"]');
     await until('the editor', () => Boolean(editor(h)));
     type(h, 'hello!');
     await h.click('#files-save');
@@ -15924,7 +16061,7 @@ describe('webui page: the instruction editor', () => {
 
   it('creates a file not written yet instead of sending a version it never had', async () => {
     const h = await opened({ 'api/instructions/write': { ok: true, mtimeMs: 3, size: 2, sha256: 'e'.repeat(64), delivery: [] } });
-    await h.click('[data-instr-global="claude.md"]');
+    await h.click('.ag-card[data-ag="cc"] [data-instr-file="g:claude.md"]');
     await until('the editor', () => Boolean(editor(h)));
     expect(h.el('files-note').textContent).toBe('Not written yet. Saving creates it.');
     expect(h.el('files-tree-list').querySelector('[data-fx-file="g:claude.md"] .fx-tag')?.textContent).toBe('not written');
@@ -15935,21 +16072,23 @@ describe('webui page: the instruction editor', () => {
     await until('the tree', () => !h.el('files-tree-list').querySelector('[data-fx-file="g:claude.md"] .fx-tag'));
   });
 
-  it('lists an agent’s own files from its machine and saves one where it is', async () => {
+  it('lists an agent’s own files from its machine under the shared ones, and saves one where it is', async () => {
     const h = await opened({ 'api/instructions/write': { ok: true, mtimeMs: 10, size: 5, sha256: 'f'.repeat(64) } });
-    await h.click('[data-instr-agent="cc"]');
-    await until('the tree', () => h.el('files-tree-list').querySelectorAll('[data-fx-file]').length === 2);
+    await h.click('.ag-card[data-ag="cc"] .ag-file:not([data-instr-file])');
+    await until('the tree', () => tree(h).length === 4);
     expect(h.calls.some((c) => c.path === REFS)).toBe(true);
-    expect(h.el('files-title').textContent).toBe('cc · own instructions');
-    const tree = h.el('files-tree-list');
-    expect(tree.querySelector('.fx-head')?.textContent).toBe(
-      "On box: @ references in ~/.claude/CLAUDE.md, and ~/.claude/rules. ~/.claude/CLAUDE.md is the gateway’s copy: a reference in it is added under Instructions."
-    );
+    expect(h.el('files-title').textContent).toBe('cc · instructions');
+    const list = h.el('files-tree-list');
+    expect(Array.from(list.querySelectorAll('.fx-head')).map((e) => e.textContent)).toEqual([
+      'A save places it on every machine an agent that reads it is configured for.',
+      '@ references in ~/.claude/CLAUDE.md, and ~/.claude/rules. ~/.claude/CLAUDE.md is the gateway’s copy: add a reference to a shared file above.',
+    ]);
     // The gateway's own copy is listed and cannot be opened here.
-    const off = tree.querySelector('.fx-off') as HTMLElement;
+    const off = list.querySelector('.fx-off') as HTMLElement;
     expect(off.textContent).toContain('~/.fleetherd/instructions/codex.md');
+    expect(off.textContent).toContain('edit the shared files above it');
     expect(off.querySelector('button')).toBeNull();
-    expect(tree.querySelector('[data-fx-file="a:/h/new.md"]')?.getAttribute('title')).toBe('~/new.md ← ~/.claude/rules/a.md');
+    expect(list.querySelector('[data-fx-file="a:/h/new.md"]')?.getAttribute('title')).toBe('~/new.md ← ~/.claude/rules/a.md');
 
     await h.click('[data-fx-file="a:/h/.claude/rules/a.md"]');
     await until('the editor', () => Boolean(editor(h)));
@@ -15962,16 +16101,40 @@ describe('webui page: the instruction editor', () => {
     expect(h.el('files-note').textContent).toBe('Saved ~/.claude/rules/a.md. cc reads it when its next session starts.');
   });
 
+  it('keeps the shared files when its machine cannot list its own, and says why there', async () => {
+    const h = await opened({ [REFS]: { ok: false, error: 'box did not answer.' } }, LIST, { [REFS]: 502 });
+    await h.click('.ag-card[data-ag="cc"] .ag-file:not([data-instr-file])');
+    await until('the tree', () => tree(h).length === 2);
+    expect(tree(h)).toEqual(['g:common.md', 'g:claude.md']);
+    expect(Array.from(h.el('files-tree-list').querySelectorAll('.fx-sec')).map((e) => e.textContent)).toEqual([
+      'Shared, kept on the gateway',
+      'On box',
+    ]);
+    expect(Array.from(h.el('files-tree-list').querySelectorAll('.fx-head')).at(-1)?.textContent).toBe('box did not answer.');
+  });
+
+  it('does not ask an agent’s machine for files its harness does not have', async () => {
+    const h = await opened({}, { ...LIST, agents: [{ id: 'cc', harness: 'claude', host: 'box' }] });
+    expect(h.doc.querySelector('.ag-card[data-ag="cc"] .ag-file:not([data-instr-file])')).toBeNull();
+    await h.click('.ag-card[data-ag="cc"] [data-instr-file="g:common.md"]');
+    await until('the editor', () => Boolean(editor(h)));
+    expect(tree(h)).toEqual(['g:common.md', 'g:claude.md']);
+    expect(h.el('files-tree-list').querySelectorAll('.fx-sec')).toHaveLength(1);
+    expect(h.calls.some((c) => c.path === REFS)).toBe(false);
+  });
+
   it('puts the editor away alone on Escape, and asks for the list again for the page it came from', async () => {
     const h = await opened();
     const before = h.calls.filter((c) => c.path === 'api/instructions').length;
-    await h.click('[data-instr-global="common.md"]');
+    await h.click('.ag-card[data-ag="cc"] [data-instr-file="g:common.md"]');
     await until('the editor', () => Boolean(editor(h)));
     h.doc.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     expect(h.el('files').hidden).toBe(true);
     expect(h.el('settings-page').hidden).toBe(false);
     // The tree's own "list" plus the refresh the close asks for.
     await until('the refresh', () => h.calls.filter((c) => c.path === 'api/instructions').length >= before + 2);
+    // The card it was opened from is still open once the list is drawn again.
+    await until('the redraw', () => Boolean(h.doc.querySelector('.ag-card[data-ag="cc"].open [data-instr-file]')));
     // The window is the file window again for whoever opens it next: nothing of this mode is left.
     expect(h.el('files-tree-head').hidden).toBe(false);
     expect(h.el('files-search-row').hidden).toBe(false);
