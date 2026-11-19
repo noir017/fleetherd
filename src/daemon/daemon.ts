@@ -131,6 +131,7 @@ import {
   addressOf,
   conversationKey,
   formatAddress,
+  formatTarget,
   parseTarget,
   type ConversationAddress,
   type ConversationRef,
@@ -270,6 +271,22 @@ const GATEWAY_QUERY_KINDS = {
 } as const satisfies Partial<Record<IpcAction['kind'], true>>;
 type GatewayQuery = Extract<IpcAction, { kind: keyof typeof GATEWAY_QUERY_KINDS }>;
 const isGatewayQuery = (a: IpcAction): a is GatewayQuery => a.kind in GATEWAY_QUERY_KINDS;
+
+/**
+ * Chat actions that write into the conversation they name. A coordination topic an external
+ * caller opened refuses all of them: only the gateway writes there (its 🔔 updates and the answer
+ * to what the person typed), never an agent (AGENTS.md security invariant 11).
+ */
+export const COORDINATION_WRITE_ACTIONS: ReadonlySet<IpcAction['kind']> = new Set([
+  'send-message',
+  'reply',
+  'edit-message',
+  'send-file',
+  'react',
+  'delete',
+  'create-thread',
+  'ask',
+]);
 
 /**
  * The conversation library's three questions (history/store.ts). Split from GATEWAY_QUERY_KINDS
@@ -1087,7 +1104,7 @@ export class Daemon {
       },
       questionOf: (id) => this.questionOf(id),
       // A coordination topic an external caller opened: no agent, and its updates are only shown.
-      externalOf: (id) => this.externalOwner(id),
+      externalOf: (platform, address) => this.externalOwner(platform, address),
       // Buttons only, like a permission request: a sentence typed instead ("use cx for the second")
       // is the person's next message to the agent, which proposes again — not a guess at a button.
       confirm: async ({ adapter, address, conversation, text, labels, timeoutMs, signal }) => {
@@ -1104,7 +1121,16 @@ export class Daemon {
     if (schedules) {
       // On the PACED adapters, like everything else: a scheduled run's notice and output wait their
       // turn on the chat's write budget.
-      this.schedules = new ScheduleService(config, this.platforms, this.registry, clock, schedules.store, schedules.runsDir);
+      this.schedules = new ScheduleService(
+        config,
+        this.platforms,
+        this.registry,
+        clock,
+        schedules.store,
+        schedules.runsDir,
+        // A coordination topic an external caller opened: no scheduled run, card or notice.
+        (platform, address) => this.externalTopics.get(platform, address) !== undefined
+      );
     }
     if (history) {
       // Constructed even when `review:` is absent: the sweep is what checks that, so a `/reload`
@@ -1172,9 +1198,13 @@ export class Daemon {
     return { calls, mcp };
   }
 
-  /** The coordination topic an external caller opened, as Delegation reads it. */
-  private externalOwner(id: ConversationId): ExternalOwner | undefined {
-    const t = this.externalTopics.get(id);
+  /**
+   * The coordination topic an external caller opened, as Delegation reads it. Asked by the address
+   * the entrance validated, never by conversation id: under per_channel an id names a whole channel
+   * and cannot say which thread is the caller's.
+   */
+  private externalOwner(platform: string, address: ConversationAddress): ExternalOwner | undefined {
+    const t = this.externalTopics.get(platform, address);
     return t && { caller: t.caller, platform: t.platform, address: t.address, title: t.title };
   }
 
@@ -1312,13 +1342,12 @@ export class Daemon {
    * the silencing and the order.
    */
   private killTopicTree(ref: ConversationRef, confirmed: ReadonlySet<string>): TopicKillResult[] {
-    const conversation = this.registry.conversationAt(ref.platform, {
-      channel: ref.channel,
-      ...(ref.thread !== undefined ? { thread: ref.thread } : {}),
-    });
+    const address = { channel: ref.channel, ...(ref.thread !== undefined ? { thread: ref.thread } : {}) };
+    const conversation = this.registry.conversationAt(ref.platform, address);
     if (!conversation) return [];
     console.log(`[reclaim] ${conversation.key}: ending ${confirmed.size} confirmed agent(s) under this topic from the web UI`);
-    return this.delegation.endTopic(conversation.key, confirmed);
+    // The page names the address; a coordination topic has no lane, so it has to be passed in.
+    return this.delegation.endTopic(conversation.key, confirmed, { platform: ref.platform, address });
   }
 
   /**
@@ -1455,9 +1484,10 @@ export class Daemon {
   }
 
   /**
-   * Adapter for the current reverse command: the instance a qualified `--channel` named, else the
-   * one the calling conversation is on. Reads the scratch slots (see lastResolvedConversationId:
-   * valid because this runs synchronously after resolveAddress within one dispatch).
+   * The adapter, and the instance id, for the current reverse command: the instance a qualified
+   * `--channel` named, else the one the calling conversation is on. Reads the scratch slots (see
+   * lastResolvedConversationId: valid because this runs synchronously after resolveAddress within
+   * one dispatch).
    *
    * An unqualified override still goes to the conversation's own instance, as it always has — an
    * address alone can't identify a platform. The qualified form (`tg:5865716608/8068`, what
@@ -1465,7 +1495,7 @@ export class Daemon {
    * The instance was already checked against config when IPC parsed the value, so a miss here means
    * the conversation expired, not that the agent named a platform that does not exist.
    */
-  private reverseAdapter(): PlatformAdapter {
+  private reverseAdapter(): { id: string; adapter: PlatformAdapter } {
     const id = this.lastResolvedConversationId;
     const pid = this.lastResolvedPlatform ?? (id ? this.registry.platformFor(id) : undefined);
     if (!pid) throw new Error('cannot resolve the platform instance for this reverse command (conversation expired?)');
@@ -1475,7 +1505,21 @@ export class Daemon {
     // resolve" reads as an expired conversation, and "cannot open a topic" would send the agent
     // looking for a `--session` workaround for what is really an outage.
     if (!adapter) throw new Error(`platform instance "${pid}" is not running`);
-    return adapter;
+    return { id: pid, adapter };
+  }
+
+  /**
+   * An agent may not write into a coordination topic an external caller opened: only the gateway
+   * posts there (its 🔔 updates and the answer to what the person typed). `--channel` is the
+   * agent's own declaration, so it is refused here rather than trusted (security invariant 11).
+   */
+  private assertAgentMayWrite(platformId: string | undefined, address: ConversationAddress, action: IpcAction): void {
+    if (!platformId || !COORDINATION_WRITE_ACTIONS.has(action.kind)) return;
+    if (this.externalTopics.get(platformId, address)) {
+      throw new Error(
+        `"${formatTarget(platformId, address)}" is a coordination topic an external caller opened; an agent cannot write there — only the gateway posts its updates and answers there`
+      );
+    }
   }
 
   /**
@@ -1508,7 +1552,7 @@ export class Daemon {
   /** Execute one reverse command (address already resolved and validated by IPC). */
   private async handleReverse(action: IpcAction, address: ConversationAddress): Promise<unknown> {
     // Resolve BEFORE any await: the conversation scratch slot is only synchronously valid.
-    const platform = this.reverseAdapter();
+    const { id: platformId, adapter: platform } = this.reverseAdapter();
     const conversation = this.lastResolvedConversationId;
     // A reverse command means the agent is still working for this conversation — even between turns,
     // which is the case idle reclaim would otherwise get wrong: a turn that ended after starting a
@@ -1521,6 +1565,7 @@ export class Daemon {
     if (isSessionsQuery(action)) return this.handleSessionsQuery(action);
     // Questions for the gateway itself, not actions on a chat — answered before the chat switch.
     if (isGatewayQuery(action)) return this.handleGatewayQuery(action, address);
+    this.assertAgentMayWrite(platformId, address, action);
     switch (action.kind) {
       case 'send-message':
         return platform.sendMessage(address, action.text);

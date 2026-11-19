@@ -74,7 +74,13 @@ export class ScheduleService {
     private readonly clock: { now(): number; schedule(fn: () => void, ms: number): () => void },
     private readonly store: ScheduleStore,
     /** `<configDir>/schedule-runs` — one directory of bash logs per task. */
-    private readonly runsDir: string
+    private readonly runsDir: string,
+    /**
+     * Whether a target is a coordination topic an external caller opened (daemon.ts
+     * externalOwner). Such a topic belongs to the caller and runs no turn (AGENTS.md security
+     * invariant 11), so nothing a schedule does — a run or a notice — may be written into it.
+     */
+    private readonly coordinationTopic: (platform: string, address: ConversationAddress) => boolean = () => false
   ) {
     // The daemon's own zone (TZ, else the host's) is what "8 o'clock" means to whoever set it up.
     this.defaultTz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
@@ -179,8 +185,22 @@ export class ScheduleService {
     return platform;
   }
 
+  /**
+   * Refuse any scheduled task whose target is a coordination topic an external caller opened. That
+   * topic belongs to the caller and runs no turn, so nothing an agent schedules — an agent run or a
+   * bash result — may be written into it (AGENTS.md security invariant 11).
+   */
+  private assertNotCoordinationTopic(task: ScheduleTask): void {
+    if (this.coordinationTopic(task.target.platform, targetAddress(task))) {
+      throw new Error(
+        `"${targetId(task.target)}" is a coordination topic an external caller opened; a scheduled task cannot run or post there`
+      );
+    }
+  }
+
   /** The model check, then the write and the card — the end of both adds. */
   private async commitAdd(task: ScheduleTask, caller: ConversationId | undefined): Promise<void> {
+    this.assertNotCoordinationTopic(task);
     if (task.run.kind === 'agent' && task.run.model !== undefined) {
       // The list is the agent's own (`/model` shows the same one), so a typo is refused HERE,
       // while the registering agent can still retry in this turn with a name that exists.
@@ -274,6 +294,7 @@ export class ScheduleService {
     input: Pick<EditTaskInput, 'model' | 'agent'>,
     caller: ConversationId | undefined
   ): Promise<void> {
+    this.assertNotCoordinationTopic(next);
     const named = input.model !== undefined || input.agent !== undefined;
     if (named && next.run.kind === 'agent' && next.run.model !== undefined) {
       const why = await this.registry.scheduledModelProblem(next.run.agent, next.run.model, caller);
@@ -529,6 +550,8 @@ export class ScheduleService {
       return taskView(removed, now, { here: caller });
     }
     if (op === 'run') {
+      const task = this.scheduler.get(id);
+      if (task) this.assertNotCoordinationTopic(task);
       const started = this.scheduler.runNow(id);
       if (typeof started === 'string') throw new Error(started);
       return taskView(started.task, now, { here: caller });
@@ -550,6 +573,8 @@ export class ScheduleService {
    * arrives in the conversation, and the record is in the task's history either way.
    */
   async runTask(id: string, caller: ConversationId | undefined, waitMs: number | undefined): Promise<ScheduleOpResult> {
+    const before = this.scheduler.get(id);
+    if (before) this.assertNotCoordinationTopic(before);
     const started = this.scheduler.runNow(id);
     if (typeof started === 'string') throw new Error(started);
     if (waitMs === undefined) return { task: taskView(started.task, this.clock.now(), { here: caller }) };
@@ -636,6 +661,10 @@ export class ScheduleService {
     const platform = this.platforms.get(task.target.platform);
     if (!platform) return { status: 'failed', error: `platform instance "${task.target.platform}" is not configured any more` };
     try {
+      // A task written before its target became a coordination topic, or one whose topic was
+      // opened after it was added: refuse at the run too, never only at add/edit — for a bash task
+      // as well, whose output must not be written into the caller's topic either.
+      this.assertNotCoordinationTopic(task);
       if (task.run.kind === 'bash') return await this.runBash(task, task.run, platform, planned, signal);
       return await this.runAgent(task, task.run, platform, planned);
     } catch (e) {
@@ -868,6 +897,14 @@ export class ScheduleService {
     why: string,
     at: number
   ): Promise<void> {
+    // The run is already recorded in the task's history; the topic itself is the caller's, and
+    // nothing an agent's task says may be written into it.
+    if (this.coordinationTopic(task.target.platform, address)) {
+      console.warn(
+        `[schedule] #${task.id}: not posting its ${verb} notice into ${formatTarget(task.target.platform, address)} — a coordination topic an external caller opened`
+      );
+      return;
+    }
     const previous = task.lastRun;
     if (previous?.error !== undefined && previous.error === capError(why)) return;
     await platform
@@ -971,6 +1008,15 @@ export class ScheduleService {
   private post(platformId: string, address: ConversationAddress, text: string, what: string): void {
     const platform = this.platforms.get(platformId);
     if (!platform) return;
+    // A coordination topic belongs to the external caller; its own messages and the gateway's
+    // 🔔 updates are the only things that appear there. A task's card or expiry notice stays in
+    // its history and the log.
+    if (this.coordinationTopic(platformId, address)) {
+      console.warn(
+        `[schedule] not posting ${what} into ${formatTarget(platformId, address)} — a coordination topic an external caller opened`
+      );
+      return;
+    }
     const limit = platform.capabilities.maxMessageLength;
     const parts = limit > 0 ? splitByMeasure(text, limit, (part) => platform.measureRendered(part)) : [text];
     void (async () => {

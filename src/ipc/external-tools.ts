@@ -1,5 +1,5 @@
 import type { IpcAction } from './protocol.js';
-import { findNativeTool, toolAction, toolInputSchema, type NativeTool } from './tools.js';
+import { findNativeTool, SKILLS_TOOL_ACTIONS, toolAction, toolInputSchema, type NativeTool } from './tools.js';
 
 /**
  * The tools the external MCP entrance offers (daemon/external-mcp.ts): what a caller outside the
@@ -7,8 +7,9 @@ import { findNativeTool, toolAction, toolInputSchema, type NativeTool } from './
  * commands an agent in a conversation already has, so a call is validated exactly as the same
  * command typed into a shell would be (tools.ts "One source"):
  *
- *  - `skills` — the native tool of that name, unchanged: `search` and `show`, nothing that writes.
- *    A caller reads the library; it never adds to what every agent reads (invariant 8).
+ *  - `skills` — the native tool's schema and actions, `search` and `show`, nothing that writes; its
+ *    description alone is written for a caller, which has no skill list of its own. A caller reads
+ *    the library; it never adds to what every agent reads (invariant 8).
  *  - `tasks` — the sub-agent commands (`task-agents`, `tasks`, `task-new`, `task-read`,
  *    `task-status`, `task-stop`) as one tool with an `action`, plus `open`, which a conversation never
  *    needs: an agent in one already has a topic to nest sub-tasks under, and a caller from outside
@@ -109,19 +110,28 @@ function tasksInputSchema(): Record<string, unknown> {
   return { type: 'object', properties, required: ['action'], additionalProperties: false };
 }
 
-/** The native `skills` tool, which the entrance offers as it is. */
+/** The native `skills` tool, whose schema and actions the entrance offers as they are. */
 function skillsTool(): NativeTool {
   const tool = findNativeTool('skills');
   if (!tool) throw new Error('internal: no native skills tool');
   return tool;
 }
 
+/**
+ * The `skills` description a caller outside the gateway is given. The native text opens with the
+ * agent's own skill list, which a caller has none of, so that opening is replaced; the rest — what
+ * search and show return — is `SKILLS_TOOL_ACTIONS`, the native tool's own text rather than a
+ * second copy, so a change there still reaches a caller.
+ */
+const SKILLS_DESCRIPTION_FOR_CALLERS =
+  'The skill library. Search it when the task needs a procedure or setup you do not have. ' + SKILLS_TOOL_ACTIONS;
+
 /** One tool as `tools/list` carries it; the `skills` description is extended by the caller. */
 export function externalToolDefinition(name: ExternalToolName): { name: string; description: string; inputSchema: unknown } {
   switch (name) {
     case 'skills': {
       const tool = skillsTool();
-      return { name, description: tool.description, inputSchema: toolInputSchema(tool) };
+      return { name, description: SKILLS_DESCRIPTION_FOR_CALLERS, inputSchema: toolInputSchema(tool) };
     }
     case 'tasks':
       return { name, description: TASKS_DESCRIPTION, inputSchema: tasksInputSchema() };

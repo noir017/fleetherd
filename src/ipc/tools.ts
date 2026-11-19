@@ -55,6 +55,15 @@ export interface NativeTool {
   options?: readonly string[];
 }
 
+/**
+ * What the `skills` tool's search and show return — the half of its description that holds for any
+ * model. The half before it is about the agent's own skill list, which a caller outside the gateway
+ * does not have (ipc/external-tools.ts writes its own opening).
+ */
+export const SKILLS_TOOL_ACTIONS =
+  'search: name is what you need, in a few words; up to 5 skills come back. ' +
+  "show: name is a skill; its SKILL.md comes back whole with the list of its other files, which file reads one of.";
+
 export const NATIVE_TOOLS: readonly NativeTool[] = [
   {
     name: 'send_file',
@@ -92,8 +101,7 @@ export const NATIVE_TOOLS: readonly NativeTool[] = [
     command: 'skills',
     description:
       'The skill library. Most skills are not in your skill list: before work your listed skills do not ' +
-      'cover, search here. search: name is what you need, in a few words; up to 5 skills come back. ' +
-      "show: name is a skill; its SKILL.md comes back whole with the list of its other files, which file reads one of.",
+      `cover, search here. ${SKILLS_TOOL_ACTIONS}`,
     positionals: {
       action: 'search or show',
       name: 'search: what you need, in a few words. show: the skill',

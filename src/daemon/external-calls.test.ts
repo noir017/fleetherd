@@ -5,11 +5,14 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { decode } from '@toon-format/toon';
 import { parseConfig } from '../config/schema.js';
 import type { ConversationAddress } from '../core/conversation.js';
+import type { TaskListResult } from '../ipc/protocol.js';
 import type { PlatformAdapter } from '../platform/adapter.js';
 import type { InboundMessage } from '../types.js';
 import { ExternalCalls, MAX_TOPICS_PER_CALLER, type ExternalCallsDeps } from './external-calls.js';
 import type { ExternalCaller } from './external-mcp.js';
 import { ExternalTopics } from './external-topics.js';
+import { SkillLibrary } from './skill-library.js';
+import { createSkill, setResident } from './skills-store.js';
 
 /**
  * What an external caller's calls do (external-calls.ts): its topics opened and recorded, every
@@ -27,7 +30,7 @@ const GEM: ExternalCaller = { name: 'gem', tools: ['skills', 'tasks'] };
 const OTHER: ExternalCaller = { name: 'other', tools: ['tasks'] };
 const keyOf = (a: ConversationAddress): string => `web#${a.channel}#${a.thread ?? ''}`;
 
-function rig() {
+function rig(opts: { skills?: ExternalCallsDeps['skills']; taskList?: TaskListResult; sharedKey?: boolean } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fleetherd-external-'));
   dirs.push(dir);
   const file = path.join(dir, 'external-topics.json');
@@ -38,6 +41,7 @@ function rig() {
   const handled: Array<{ key: string; kind: string }> = [];
   const searched: unknown[] = [];
   let next = 0;
+  let scope = '';
   const adapter = {
     capabilities: { thread: true },
     parentOf: (a: ConversationAddress) => (a.thread && parents.has(a.thread) ? { channel: 'main', thread: parents.get(a.thread)! } : undefined),
@@ -65,11 +69,13 @@ function rig() {
     }),
     platforms: new Map([['web', adapter]]),
     topics,
-    conversationAt: (_p, a) => ({ key: keyOf(a) }),
+    conversationAt: (_p, a) => ({ key: opts.sharedKey ? 'web#main' : `${keyOf(a)}${scope}` }),
     delegation: {
       handleExternal: async (key, action) => {
         handled.push({ key, kind: action.kind });
-        return action.kind === 'task-list' ? { tasks: [{ stage: 'working' }, { stage: 'review' }], total: 2 } : { ok: true };
+        return action.kind === 'task-list'
+          ? (opts.taskList ?? { tasks: [{ stage: 'working' }, { stage: 'review' }], total: 2 })
+          : { ok: true };
       },
       externalAgents: () => ({ agents: [] }),
       stopOpened: (key) => {
@@ -77,7 +83,7 @@ function rig() {
         return 2;
       },
     },
-    skills: {
+    skills: opts.skills ?? {
       search: (query, asker) => {
         searched.push({ query, asker });
         return { query, results: [] };
@@ -88,7 +94,7 @@ function rig() {
     render: (action, data) => JSON.stringify({ kind: action.kind, data }),
     now: () => Date.UTC(2026, 10, 19),
   };
-  return { calls: new ExternalCalls(deps), topics, file, threads, parents, posted, handled, stopped, searched };
+  return { calls: new ExternalCalls(deps), topics, file, threads, parents, posted, handled, stopped, searched, setScope: (s: string) => (scope = s) };
 }
 
 const open = async (r: ReturnType<typeof rig>, caller = GEM, title?: string): Promise<string> => {
@@ -103,9 +109,9 @@ describe('ExternalCalls: open', () => {
     expect(topic).toBe('web:main/e1000000');
     expect(r.posted[0]).toEqual({ to: 'e1000000', text: '(created [gem] Trip plan)' });
     expect(r.posted[1]!.text).toMatch(/^Opened by \*\*gem\*\*, outside this gateway/);
-    expect(r.topics.get('web#main#e1000000')).toMatchObject({ caller: 'gem', platform: 'web', title: '[gem] Trip plan' });
+    expect(r.topics.get('web', { channel: 'main', thread: 'e1000000' })).toMatchObject({ caller: 'gem', platform: 'web', title: '[gem] Trip plan' });
     // Survives a restart: the record is the file.
-    expect(new ExternalTopics(r.file).of('gem').map((t) => t.key)).toEqual(['web#main#e1000000']);
+    expect(new ExternalTopics(r.file).of('gem').map((t) => t.key)).toEqual(['web:main/e1000000']);
     expect(fs.statSync(r.file).mode & 0o777).toBe(0o600);
   });
 
@@ -142,6 +148,20 @@ describe('ExternalCalls: ownership', () => {
     expect(r.handled).toEqual([]);
   });
 
+  it('keeps two callers apart when per_channel gives their topics one shared key', async () => {
+    const r = rig({ sharedKey: true });
+    const a = await open(r, GEM, 'a');
+    const b = await open(r, OTHER, 'b');
+
+    // Ownership is by address and caller, not by the conversation id they now share.
+    await expect(r.calls.call(OTHER, { kind: 'task', in: a, action: { kind: 'task-list' } })).rejects.toThrow(
+      /is not a topic you opened, or a sub-task under one/
+    );
+    const listed = decode(await r.calls.call(GEM, { kind: 'topics' })) as { topics: Array<{ topic: string }> };
+    expect(listed.topics.map((t) => t.topic)).toEqual([a]);
+    expect(b).not.toBe(a);
+  });
+
   it('reaches a sub-task only through its parent, which has to be the caller\'s', async () => {
     const r = rig();
     const topic = await open(r);
@@ -168,19 +188,61 @@ describe('ExternalCalls: ownership', () => {
     expect(listed.topics).toEqual([
       { topic: 'web:main/e2000000', title: '[gem] two', opened: '2026-11-19T00:00:00.000Z', subtasks: 2, working: 1 },
     ]);
-    expect(r.topics.get('web#main#e1000000')).toBeUndefined();
+    expect(r.topics.get('web', { channel: 'main', thread: 'e1000000' })).toBeUndefined();
     expect(decode(await r.calls.call(OTHER, { kind: 'topics' }))).toMatchObject({ count: 0 });
   });
 });
 
 describe('ExternalCalls: skills', () => {
-  it('asks the library as from no host and no harness, logged under the caller', async () => {
+  it('asks the library as from no host and no harness, and as a caller outside it', async () => {
     const r = rig();
     await r.calls.call(GEM, { kind: 'skills', action: { kind: 'skills', action: 'search', query: 'deploy' } });
-    expect(r.searched).toEqual([{ query: 'deploy', asker: { agent: 'external:gem', host: 'external', harness: 'external' } }]);
+    expect(r.searched).toEqual([
+      { query: 'deploy', asker: { agent: 'external:gem', host: 'external', harness: 'external', external: true } },
+    ]);
     await expect(r.calls.call(GEM, { kind: 'skills', action: { kind: 'skills', action: 'archive', name: 'x' } })).rejects.toThrow(
       /only search and show/
     );
+  });
+
+  it('answers a search with no path and no resident note, and points at show', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fleetherd-external-skills-'));
+    dirs.push(dir);
+    createSkill({ name: 'server-ops', description: 'Use when operating a fleet server over SSH', body: 'x', now: 0 }, dir);
+    setResident('server-ops', true, dir, 0);
+    const r = rig({ skills: new SkillLibrary(() => dir) });
+    const out = JSON.parse(
+      await r.calls.call(GEM, { kind: 'skills', action: { kind: 'skills', action: 'search', query: 'fleet server' } })
+    ) as { data: { results: Array<Record<string, unknown>>; help?: string } };
+    expect(out.data.results[0]).toEqual({ name: 'server-ops', description: 'Use when operating a fleet server over SSH', resident: true });
+    expect(out.data.help).toMatch(/skills show <name>/);
+  });
+});
+
+describe('ExternalCalls: tasks list', () => {
+  it('answers an empty list in words a caller has, not a conversation it never had', async () => {
+    const r = rig({ taskList: { tasks: [], total: 0 } });
+    const topic = await open(r);
+    const out = decode(await r.calls.call(GEM, { kind: 'task', in: topic, action: { kind: 'task-list' } })) as {
+      count: number;
+      note: string;
+    };
+    expect(out).toEqual({ count: 0, note: 'this topic has no sub-tasks yet; propose one with action new' });
+  });
+
+  it('says how many a limit hid, in the caller\'s words and with the right singular', async () => {
+    const cases: Array<[number, string]> = [
+      [3, '3 sub-tasks in this topic; raise limit to list them'],
+      [1, '1 sub-task in this topic; raise limit to list it'],
+    ];
+    for (const [total, note] of cases) {
+      const r = rig({ taskList: { tasks: [], total } });
+      const topic = await open(r);
+      const out = decode(
+        await r.calls.call(GEM, { kind: 'task', in: topic, action: { kind: 'task-list', limit: 0 } })
+      ) as { count: number; note: string };
+      expect(out).toEqual({ count: 0, note });
+    }
   });
 });
 
@@ -203,5 +265,22 @@ describe('ExternalCalls: what the person types in a coordination topic', () => {
     expect(r.posted.at(-1)!.text).toBe('⏹ Stopped 2 sub-agents under this topic.');
     // Any other topic goes on to routing.
     expect(r.calls.intercept(msg('aaaaaaaa', 'hello'))).toBe(false);
+  });
+
+  it('keeps answering and owning the topic after a scope change', async () => {
+    const r = rig();
+    const topic = await open(r, GEM, 'one');
+    // `/reload` with another session.scope: the same address now maps to a different conversation.
+    r.setScope('@scope2');
+
+    // The person typing is still answered, never routed to an agent.
+    expect(r.calls.intercept(msg('e1000000', 'hello'))).toBe(true);
+    expect(r.posted.at(-1)!.text).toMatch(/has no agent: nothing typed here reaches one/);
+    // Ownership is still found by the topic's own id, and delegation gets the key the new scope gives it.
+    await r.calls.call(GEM, { kind: 'task', in: topic, action: { kind: 'task-list' } });
+    expect(r.handled).toEqual([{ key: 'web#main#e1000000@scope2', kind: 'task-list' }]);
+    const listed = decode(await r.calls.call(GEM, { kind: 'topics' })) as { topics: unknown[] };
+    expect(listed.topics).toHaveLength(1);
+    expect(r.handled.at(-1)).toEqual({ key: 'web#main#e1000000@scope2', kind: 'task-list' });
   });
 });

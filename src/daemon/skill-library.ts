@@ -23,6 +23,10 @@ import {
  * Agent's skill_view does the same, for the same reason (a skill re-read every few turns is context
  * spent twice). `again` is the way past that, for an agent whose context was compacted since.
  *
+ * A caller outside the gateway (`external-calls.ts`) is asked for too, and gets neither: it has no
+ * skill list and no files of the gateway's on a machine it can read, so `search` answers without a
+ * path or a resident note and says to read a hit with `show` instead.
+ *
  * Every search and every read goes into the query log (skill-queries.ts), which is where a search
  * that found nothing, or hits nobody opened, are read from.
  */
@@ -37,6 +41,11 @@ export interface LibraryAsker {
   host: string;
   /** As `fleetherd-harnesses` names it (managed-skills.ts skillHarnessOf). */
   harness: string;
+  /**
+   * A caller outside the gateway rather than an agent it started: no conversation, no skill list,
+   * and no files of ours to open — so no `path` and no resident note in what it reads.
+   */
+  external?: boolean;
 }
 
 export interface SearchResult {
@@ -44,8 +53,9 @@ export interface SearchResult {
   description: string;
   category?: string;
   resident: boolean;
-  /** Where the skill's files are on the asking agent's machine, from its last start. */
-  path: string;
+  /** Where the skill's files are on the asking agent's machine, from its last start. Not for an
+   * external caller, which cannot read that path. */
+  path?: string;
   /** Said for a resident hit: it is in the agent's own skill list already. */
   note?: string;
 }
@@ -55,6 +65,8 @@ export interface SearchAnswer {
   results: SearchResult[];
   /** When nothing matched: what the library has, so the agent can rephrase or stop looking. */
   note?: string;
+  /** For an external caller, whose hits carry no path: how to read one whole. */
+  help?: string;
 }
 
 /** The maximum a search returns. Each result is a description the agent reads, so a few. */
@@ -103,11 +115,17 @@ export class SkillLibrary {
     const results = hits.map((h): SearchResult => {
       const s = skills.get(h.name)!;
       const md = s.files.get(SKILL_FILE)?.toString('utf8') ?? '';
-      return {
+      const row: SearchResult = {
         name: h.name,
         description: descriptionOf(md),
         ...(s.meta.category ? { category: s.meta.category } : {}),
         resident: s.meta.resident,
+      };
+      // An external caller can open neither the path nor the agent's own skill list: both lines
+      // would be dead ends for it, and `help` below names the way it actually reads a hit.
+      if (asker.external) return row;
+      return {
+        ...row,
         path: `${SKILLS_HOME}/${h.name}/${SKILL_FILE}`,
         ...(s.meta.resident ? { note: 'already in your skill list: use it from there' } : {}),
       };
@@ -120,7 +138,9 @@ export class SkillLibrary {
       ...(asker.conversation ? { conversation: asker.conversation } : {}),
       ...(asker.agent ? { agent: asker.agent } : {}),
     });
-    if (results.length > 0) return { query, results };
+    if (results.length > 0) {
+      return asker.external ? { query, results, help: 'read one whole with skills show <name>' } : { query, results };
+    }
     const cats = this.categories().categories.map((c) => `${c.name} ${c.count}`).join(', ');
     return { query, results, note: `no skill matched${cats ? `; the library has: ${cats}` : ''}` };
   }
@@ -190,7 +210,12 @@ export class SkillLibrary {
     const files = listSkillFiles(shown.name, dir)
       .map((f) => f.path)
       .filter((p) => p !== SKILL_FILE);
-    return { ...shown, path: `${SKILLS_HOME}/${shown.name}`, ...(files.length > 0 ? { files } : {}) };
+    return {
+      ...shown,
+      // The directory on the agent's machine; an external caller reads every file through `show`.
+      ...(asker.external ? {} : { path: `${SKILLS_HOME}/${shown.name}` }),
+      ...(files.length > 0 ? { files } : {}),
+    };
   }
 
   /** The misses of one conversation since a time — what the review is shown as a hint. */

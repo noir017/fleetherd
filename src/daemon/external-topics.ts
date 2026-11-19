@@ -1,7 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { ConversationAddress } from '../core/conversation.js';
-import type { ConversationId } from '../types.js';
+import { formatTarget, type ConversationAddress } from '../core/conversation.js';
 
 /**
  * Which coordination topics an external caller opened (`<configDir>/external-topics.json`): the
@@ -10,6 +9,12 @@ import type { ConversationId } from '../types.js';
  * It is the one record of ownership, and ownership is the whole of what a caller may act on — it
  * sees and stops only sub-tasks under topics listed here under its own name. The title is not that
  * record: a person can rename a topic, and a name can be written by anyone who can open a topic.
+ *
+ * The key is the topic's own id — `<platform>:<channel>[/<thread>]` — not the conversation id it
+ * happens to have now: that one is derived from `session.scope`, and a `/reload` that changes the
+ * scope would otherwise lose every record (and with it `intercept`, ownership and the schedule
+ * guard). Version-1 files, keyed by conversation id, are read by their platform and address and
+ * rewritten in the stable form.
  *
  * Nothing else is kept. A coordination topic has no agent, no session and no turns of its own, so
  * the conversation store has no entry for it, and this file is how the gateway still knows where
@@ -22,7 +27,8 @@ import type { ConversationId } from '../types.js';
  */
 
 export interface ExternalTopic {
-  key: ConversationId;
+  /** The topic's own id, `formatTarget(platform, address)`; independent of the session scope. */
+  key: string;
   caller: string;
   platform: string;
   address: ConversationAddress;
@@ -31,23 +37,30 @@ export interface ExternalTopic {
   openedAt: string;
 }
 
+/** What `add` takes: the key is derived from the platform and address, never passed in. */
+export type NewExternalTopic = Omit<ExternalTopic, 'key'>;
+
 interface ExternalTopicsFile {
-  version: 1;
+  version: 2;
   topics: ExternalTopic[];
 }
 
+const VERSION = 2;
+
 export class ExternalTopics {
-  private readonly topics = new Map<ConversationId, ExternalTopic>();
+  private readonly topics = new Map<string, ExternalTopic>();
 
   constructor(
     private readonly file: string,
     private readonly log: (line: string) => void = (l) => console.warn(l)
   ) {
-    for (const t of this.read()) this.topics.set(t.key, t);
+    const { topics, migrated } = this.read();
+    for (const t of topics) this.topics.set(t.key, t);
+    if (migrated) this.write();
   }
 
-  get(key: ConversationId): ExternalTopic | undefined {
-    return this.topics.get(key);
+  get(platform: string, address: ConversationAddress): ExternalTopic | undefined {
+    return this.topics.get(formatTarget(platform, address));
   }
 
   /** A caller's topics, newest first. */
@@ -55,34 +68,53 @@ export class ExternalTopics {
     return [...this.topics.values()].filter((t) => t.caller === caller).sort((a, b) => b.openedAt.localeCompare(a.openedAt));
   }
 
-  add(topic: ExternalTopic): void {
-    this.topics.set(topic.key, topic);
+  /** Every record, for a lookup that has only a conversation id to go on. */
+  all(): ExternalTopic[] {
+    return [...this.topics.values()];
+  }
+
+  add(topic: NewExternalTopic): void {
+    const key = formatTarget(topic.platform, topic.address);
+    this.topics.set(key, { ...topic, key });
     this.write();
   }
 
   /** Forget a topic that is gone from its platform. */
-  remove(key: ConversationId): void {
-    if (this.topics.delete(key)) this.write();
+  remove(platform: string, address: ConversationAddress): void {
+    if (this.topics.delete(formatTarget(platform, address))) this.write();
   }
 
-  private read(): ExternalTopic[] {
+  /**
+   * The records, with their keys recomputed from platform and address. A version-1 file keyed by
+   * conversation id is migrated here: the old key is ignored, and the file is written back in the
+   * stable form (`migrated`).
+   */
+  private read(): { topics: ExternalTopic[]; migrated: boolean } {
     try {
-      const parsed = JSON.parse(fs.readFileSync(this.file, 'utf8')) as Partial<ExternalTopicsFile>;
-      if (parsed.version !== 1 || !Array.isArray(parsed.topics)) {
-        this.log(`[external-mcp] ${this.file} is not a version-1 topics file; starting it over`);
-        return [];
+      const parsed = JSON.parse(fs.readFileSync(this.file, 'utf8')) as { version?: unknown; topics?: unknown };
+      if (!Array.isArray(parsed.topics)) {
+        this.log(`[external-mcp] ${this.file} has no topics list; starting it over`);
+        return { topics: [], migrated: false };
       }
-      return parsed.topics.filter(isTopic);
+      const topics: ExternalTopic[] = [];
+      let migrated = parsed.version !== VERSION;
+      for (const raw of parsed.topics) {
+        if (!isTopic(raw)) continue;
+        const key = formatTarget(raw.platform, raw.address);
+        if (raw.key !== key) migrated = true;
+        topics.push({ ...raw, key });
+      }
+      return { topics, migrated };
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
         this.log(`[external-mcp] could not read ${this.file}: ${e instanceof Error ? e.message : e}`);
       }
-      return [];
+      return { topics: [], migrated: false };
     }
   }
 
   private write(): void {
-    const data: ExternalTopicsFile = { version: 1, topics: [...this.topics.values()] };
+    const data: ExternalTopicsFile = { version: VERSION, topics: [...this.topics.values()] };
     try {
       fs.mkdirSync(path.dirname(this.file), { recursive: true, mode: 0o700 });
       const tmp = `${this.file}.tmp-${process.pid}`;

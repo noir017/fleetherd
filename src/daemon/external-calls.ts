@@ -7,7 +7,7 @@ import { libraryLine } from '../ipc/tools.js';
 import type { PlatformAdapter } from '../platform/adapter.js';
 import type { ConversationId, InboundMessage } from '../types.js';
 import { formatLaneTitle } from './conversation.js';
-import type { Delegation } from './delegation.js';
+import type { Delegation, TopicAt } from './delegation.js';
 import type { ExternalCaller } from './external-mcp.js';
 import type { ExternalTopic, ExternalTopics } from './external-topics.js';
 import type { LibraryAsker, SkillLibrary } from './skill-library.js';
@@ -68,8 +68,21 @@ export class ExternalCalls {
         return this.topicsOf(caller);
       case 'task': {
         if (action.action.kind === 'task-agents') return agentsText(this.deps.delegation.externalAgents());
-        const key = action.in !== undefined ? this.owned(caller, action.in) : this.parentOwned(caller, subTopicOf(action.action));
-        return this.deps.render(action.action, await this.deps.delegation.handleExternal(key, action.action));
+        const place = action.in !== undefined ? this.owned(caller, action.in) : this.parentOwned(caller, subTopicOf(action.action));
+        const result = await this.deps.delegation.handleExternal(place.key, action.action, place.at);
+        // The CLI's printer says "this conversation has opened no sub-agent topics", and a caller
+        // has no conversation (agentsText is the same split for `task-agents`).
+        if (action.action.kind === 'task-list' && (result as TaskListResult).tasks.length === 0) {
+          const total = (result as TaskListResult).total;
+          return encode({
+            count: 0,
+            note:
+              total > 0
+                ? `${total} sub-task${total === 1 ? '' : 's'} in this topic; raise limit to list ${total === 1 ? 'it' : 'them'}`
+                : 'this topic has no sub-tasks yet; propose one with action new',
+          });
+        }
+        return this.deps.render(action.action, result);
       }
       default: {
         const _exhaustive: never = action;
@@ -93,13 +106,15 @@ export class ExternalCalls {
 
   /**
    * `skills search` / `show` for a caller. The library is asked as from no host and no harness, so a
-   * skill limited to some (`fleetherd-hosts`, `fleetherd-harnesses`) does not reach it. No
-   * conversation, so `show` always answers whole: one caller has many conversations of its own, and
-   * the gateway cannot tell which one already read a skill. The search is logged like any other,
-   * under `external:<caller>`, so a miss shows up where the Reviews page counts them.
+   * skill limited to some (`fleetherd-hosts`, `fleetherd-harnesses`) does not reach it, and as an
+   * external caller, so a hit carries no path on a machine it cannot read and no note about a skill
+   * list it does not have. No conversation, so `show` always answers whole: one caller has many
+   * conversations of its own, and the gateway cannot tell which one already read a skill. The search
+   * is logged like any other, under `external:<caller>`, so a miss shows up where the Reviews page
+   * counts them.
    */
   private readSkills(caller: ExternalCaller, a: Extract<IpcAction, { kind: 'skills' }>): unknown {
-    const asker: LibraryAsker = { agent: `external:${caller.name}`, host: EXTERNAL_PLACE, harness: EXTERNAL_PLACE };
+    const asker: LibraryAsker = { agent: `external:${caller.name}`, host: EXTERNAL_PLACE, harness: EXTERNAL_PLACE, external: true };
     if (a.action === 'search') return this.deps.skills.search(a.query ?? '', asker);
     if (a.action === 'show') {
       if (!a.name) throw new Error('skills show needs a <name>');
@@ -140,7 +155,7 @@ export class ExternalCalls {
     if (!address.thread) throw new Error(`platform instance "${id}" opened no topic`);
     const key = this.deps.conversationAt(id, address)?.key;
     if (!key) throw new Error("this deployment's session scope gives a topic no conversation of its own");
-    this.deps.topics.add({ key, caller: caller.name, platform: id, address, title: name, openedAt: new Date(this.deps.now()).toISOString() });
+    this.deps.topics.add({ caller: caller.name, platform: id, address, title: name, openedAt: new Date(this.deps.now()).toISOString() });
     void adapter
       .sendMessage(
         address,
@@ -163,7 +178,14 @@ export class ExternalCalls {
     const rows: Array<Record<string, unknown>> = [];
     for (const t of this.deps.topics.of(caller.name)) {
       if (!this.present(t)) continue;
-      const list = (await this.deps.delegation.handleExternal(t.key, { kind: 'task-list', limit: 200 })) as TaskListResult;
+      // The record is keyed by the topic, not the conversation id, which moves with the scope.
+      const key = this.deps.conversationAt(t.platform, t.address)?.key;
+      if (!key) continue;
+      const list = (await this.deps.delegation.handleExternal(
+        key,
+        { kind: 'task-list', limit: 200 },
+        { platform: t.platform, address: t.address }
+      )) as TaskListResult;
       const busy = list.tasks.filter((r) => r.stage === 'working' || r.stage === 'retrying').length;
       rows.push({ topic: `${t.platform}:${formatAddress(t.address)}`, title: t.title, opened: t.openedAt, subtasks: list.total, working: busy });
     }
@@ -175,23 +197,24 @@ export class ExternalCalls {
   private present(t: ExternalTopic): boolean {
     const adapter = this.deps.platforms.get(t.platform);
     if (adapter?.hasThread?.(t.address) !== false) return adapter !== undefined;
-    this.deps.topics.remove(t.key);
+    this.deps.topics.remove(t.platform, t.address);
     console.log(`[external-mcp] forgot ${t.key}: the topic was deleted`);
     return false;
   }
 
-  /** The caller's coordination topic named `topic`, or the refusal. */
-  private owned(caller: ExternalCaller, topic: string): ConversationId {
+  /** The caller's coordination topic named `topic`, or the refusal. The address goes with it. */
+  private owned(caller: ExternalCaller, topic: string): { key: ConversationId; at: TopicAt } {
     const { id } = this.platform();
     const address = this.addressOf(caller, topic, id);
-    const key = address ? this.deps.conversationAt(id, address)?.key : undefined;
-    const t = key ? this.deps.topics.get(key) : undefined;
+    if (!address) throw notYours(topic);
+    const key = this.deps.conversationAt(id, address)?.key;
+    const t = this.deps.topics.get(id, address);
     if (!key || !t || t.caller !== caller.name || t.platform !== id || !this.present(t)) throw notYours(topic);
-    return key;
+    return { key, at: { platform: id, address } };
   }
 
   /** The caller's coordination topic a sub-task `topic` is nested under, or the refusal. */
-  private parentOwned(caller: ExternalCaller, topic: string): ConversationId {
+  private parentOwned(caller: ExternalCaller, topic: string): { key: ConversationId; at: TopicAt } {
     const { id, adapter } = this.platform();
     const address = this.addressOf(caller, topic, id);
     const parent = address ? adapter.parentOf?.(address) : undefined;
@@ -225,14 +248,17 @@ export class ExternalCalls {
    * True when it was one; false hands the message on to routing as usual.
    */
   intercept(msg: InboundMessage): boolean {
+    const platform = msg.conversation.platform;
     const address = addressOf(msg.conversation);
-    const key = this.deps.conversationAt(msg.conversation.platform, address)?.key;
-    const t = key ? this.deps.topics.get(key) : undefined;
-    if (!key || !t || t.platform !== msg.conversation.platform) return false;
+    // By the topic's own id: the conversation id moves with the session scope, and this answer
+    // must not stop working when `/reload` changes it.
+    const t = this.deps.topics.get(platform, address);
+    if (!t || t.platform !== platform) return false;
+    const key = this.deps.conversationAt(platform, address)?.key;
     const adapter = this.deps.platforms.get(t.platform);
     let say: string;
     if (/^\/stop(\s|$)/i.test(msg.content.trim())) {
-      const n = this.deps.delegation.stopOpened(key);
+      const n = key ? this.deps.delegation.stopOpened(key, new Set(), { platform, address }) : 0;
       say = n ? `⏹ Stopped ${n} sub-agent${n === 1 ? '' : 's'} under this topic.` : 'Nothing under this topic was running.';
     } else {
       say =

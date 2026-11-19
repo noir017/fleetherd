@@ -2,11 +2,13 @@ import { afterEach, describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { Daemon } from './daemon.js';
+import { Daemon, COORDINATION_WRITE_ACTIONS } from './daemon.js';
 import { ConversationStore } from './conversation-store.js';
 import { parseConfig } from '../config/schema.js';
+import { configDir } from '../config/load.js';
 import { callDaemon } from '../ipc/client.js';
-import type { ListChannelsResult } from '../ipc/protocol.js';
+import { REVERSE_COMMANDS } from '../ipc/commands.js';
+import type { IpcAction, ListChannelsResult } from '../ipc/protocol.js';
 import type { PlatformAdapter } from '../platform/adapter.js';
 import type { AgentFactory, AgentSession } from './agent.js';
 import type { InboundMessage } from '../types.js';
@@ -135,6 +137,72 @@ describe('--channel <instance>:<address>', () => {
     r.sent.length = 0;
     await callDaemon(r.socket, { kind: 'send-message', text: 'here' }, r.tokens[0]!);
     expect(r.sent).toEqual([{ platform: 'tg', address: { channel: '586', thread: '8068' }, text: 'here' }]);
+  });
+});
+
+describe('a coordination topic an external caller opened', () => {
+  const channelId = 'web:main/e1000000';
+
+  function writeRecord(version: 1 | 2): void {
+    const dir = configDir();
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, 'external-topics.json'),
+      JSON.stringify({
+        version,
+        topics: [
+          {
+            key: version === 1 ? 'web#main#e1000000' : 'web:main/e1000000',
+            caller: 'gem',
+            platform: 'web',
+            address: { channel: 'main', thread: 'e1000000' },
+            title: '[gem] tasks',
+            openedAt: '2026-11-19T00:00:00.000Z',
+          },
+        ],
+      })
+    );
+  }
+
+  it('refuses every agent write in the set, not only send-message and reply', async () => {
+    // A v1 record on purpose: the daemon migrates it and the guard still finds it.
+    writeRecord(1);
+    const r = await rig();
+    await r.inbound(TG_TOPIC, 'hello');
+    const token = r.tokens[0]!;
+    r.sent.length = 0;
+
+    const actions: Record<string, IpcAction> = {
+      'send-message': { kind: 'send-message', text: 'x', channelId },
+      reply: { kind: 'reply', messageId: 'm1', text: 'x', channelId },
+      'edit-message': { kind: 'edit-message', messageId: 'm1', text: 'x', channelId },
+      'send-file': { kind: 'send-file', path: '/tmp/x', channelId },
+      react: { kind: 'react', messageId: 'm1', emoji: '👍', channelId },
+      delete: { kind: 'delete', messageId: 'm1', channelId },
+      'create-thread': { kind: 'create-thread', messageId: 'm1', name: 'n', channelId },
+      ask: { kind: 'ask', prompt: 'p', options: [], channelId },
+    };
+    for (const kind of COORDINATION_WRITE_ACTIONS) {
+      const action = actions[kind];
+      expect(action, `no test action for ${kind}`).toBeDefined();
+      const resp = await callDaemon(r.socket, action!, token);
+      expect(resp, kind).toMatchObject({ ok: false });
+      expect((resp as { error: string }).error, kind).toMatch(/coordination topic an external caller opened/);
+    }
+    expect(r.sent).toEqual([]);
+  });
+
+  it('keeps every command that can name a channel guarded or explicitly exempt', () => {
+    const exempt: Record<string, string> = {
+      'fetch-messages': 'reads the conversation; it writes nothing',
+      schedule: 'ScheduleService refuses a coordination topic before any run, card or notice',
+    };
+    for (const spec of REVERSE_COMMANDS) {
+      if (spec.channel === false) continue;
+      const name = spec.usage.split(' ')[0]!;
+      const guarded = COORDINATION_WRITE_ACTIONS.has(name as IpcAction['kind']);
+      expect(guarded || name in exempt, `${name} accepts --channel but is neither guarded nor exempt`).toBe(true);
+    }
   });
 });
 

@@ -1,7 +1,7 @@
 import type { Config } from '../config/schema.js';
 import { findAgent } from '../config/schema.js';
 import { formatCost, formatElapsed } from '../core/busy-snapshot.js';
-import { parseTarget, type ConversationAddress } from '../core/conversation.js';
+import { formatTarget, parseTarget, type ConversationAddress } from '../core/conversation.js';
 import { stopInputNote } from '../core/inbound-merger.js';
 import { formatRuntimeFooter } from '../core/runtime-footer.js';
 import type { CommandSurface } from '../core/command-translate.js';
@@ -199,12 +199,13 @@ export interface DelegationDeps {
   /** The question waiting on the person in a conversation, when there is one (the daemon's asks). */
   questionOf?(id: ConversationId): string | undefined;
   /**
-   * The coordination topic an external caller opened, when `id` is one (daemon/external-topics.ts):
+   * The coordination topic an external caller opened, at this address (daemon/external-topics.ts):
    * a topic with no agent, run by a caller outside the gateway through the external MCP entrance.
    * Its sub-tasks always wait on the card, and their news is shown there rather than sent to an
-   * agent — there is none to send it to (see `tell`).
+   * agent — there is none to send it to (see `tell`). Asked by address, never by conversation id:
+   * under per_channel the id is shared with ordinary threads.
    */
-  externalOf?(id: ConversationId): ExternalOwner | undefined;
+  externalOf?(platform: string, address: ConversationAddress): ExternalOwner | undefined;
   /**
    * Put the card up as a question with buttons, in the conversation that proposed it, and resolve
    * with the label tapped — null when it was called off (`signal`, `/stop`, `/new`) or ran out of time.
@@ -226,6 +227,16 @@ interface Place {
   platformId: string;
   address: ConversationAddress;
   adapter: PlatformAdapter;
+}
+
+/**
+ * Where an external caller's coordination topic is. Carried explicitly from the entrance (which
+ * knows the address it validated) rather than derived from the conversation id, which under
+ * per_channel names the whole channel.
+ */
+export interface TopicAt {
+  platform: string;
+  address: ConversationAddress;
 }
 
 /** Who opened a coordination topic from outside, and where it is (DelegationDeps.externalOf). */
@@ -321,7 +332,7 @@ export class Delegation {
    * answers: a `task-new` arriving while the card is up joins this list and re-renders the card,
    * rather than starting a second one that would replace the first.
    */
-  private readonly gathering = new Map<ConversationId, { items: Item[]; cancel: () => void; card?: AbortController }>();
+  private readonly gathering = new Map<ConversationId, { items: Item[]; cancel: () => void; card?: AbortController; at: TopicAt }>();
   /** The card on screen per proposing conversation: a newer one replaces it. */
   private readonly onScreen = new Map<ConversationId, AbortController>();
   /**
@@ -330,7 +341,7 @@ export class Delegation {
    * burst is one card. Nothing waits on it — the work is already running — so unlike `gathering` it
    * is never dropped by the person writing.
    */
-  private readonly started = new Map<ConversationId, { opened: OpenedTask[]; failed: string[]; cancel: () => void }>();
+  private readonly started = new Map<ConversationId, { opened: OpenedTask[]; failed: string[]; cancel: () => void; at: TopicAt }>();
   /**
    * Agents this conversation has confirmed at least once, for `delegation.confirm: 'first'`. In
    * memory only, and per proposing conversation: a restart asks again, and another conversation
@@ -341,7 +352,7 @@ export class Delegation {
   /** The tier `confirmedOnce` was gathered under. Kept so a change made behind our back — /reload — is noticed. */
   private confirmMode: Config['delegation']['confirm'] | undefined;
   /** Sub-agent topics with news, per conversation to tell, gathered for CARD_DELAY_MS. */
-  private readonly updates = new Map<ConversationId, { children: Set<ConversationId>; cancel: () => void }>();
+  private readonly updates = new Map<ConversationId, { children: Set<ConversationId>; cancel: () => void; at: TopicAt }>();
   /**
    * Updates held back because the agent that would read them is over its usage limit (TurnOutcomes'
    * cooldown), per conversation to tell, with that agent. A card is a turn on the same account: sent
@@ -349,7 +360,7 @@ export class Delegation {
    * out. On 2026-11-07 that is how two parents were dragged into their sub-agents' rate limit. Sent
    * when the cooldown ends (cooldownOver).
    */
-  private readonly held = new Map<ConversationId, { agent: string; children: Set<ConversationId> }>();
+  private readonly held = new Map<ConversationId, { agent: string; children: Set<ConversationId>; at: TopicAt }>();
   /**
    * Sub-agent topics whose turn the parent is told about when it ends: one the parent handed them
    * (task-new, task-send), or one the person started or joined by writing there (personWrote). Kept
@@ -396,9 +407,13 @@ export class Delegation {
 
   // ── The task commands ─────────────────────────────────────────────────────────────────────────
 
-  /** One task command from conversation `from`. */
-  async handle(from: ConversationId | undefined, action: TaskAction): Promise<unknown> {
-    const here = from ? this.place(from) : undefined;
+  /**
+   * One task command from conversation `from`. `at` is where that conversation is when the caller
+   * is outside the gateway (a coordination topic the entrance opened): it is passed in because the
+   * conversation id alone cannot name the topic under every session scope.
+   */
+  async handle(from: ConversationId | undefined, action: TaskAction, at?: TopicAt): Promise<unknown> {
+    const here = from ? this.place(from, at) : undefined;
     if (!here) throw new Error(`${action.kind} runs from a conversation's own turn, and this call came from none`);
     if (!commandSurface(here.adapter).nested) {
       throw new Error(
@@ -435,15 +450,15 @@ export class Delegation {
    * running turn without a tap (AGENTS.md security invariant 11). The tool surface never offers it;
    * this is the second lock.
    */
-  async handleExternal(key: ConversationId, action: TaskAction): Promise<unknown> {
-    if (!this.deps.externalOf?.(key)) throw new Error('not a coordination topic an external caller opened');
+  async handleExternal(key: ConversationId, action: TaskAction, at: TopicAt): Promise<unknown> {
+    if (!this.deps.externalOf?.(at.platform, at.address)) throw new Error('not a coordination topic an external caller opened');
     if (action.kind === 'task-send') throw new Error('task-send is not offered to an external caller');
-    return this.handle(key, action);
+    return this.handle(key, action, at);
   }
 
-  /** The caller that opened this coordination topic, when it is one. */
-  private externalOf(here: Place): ExternalOwner | undefined {
-    return this.deps.externalOf?.(here.key);
+  /** The caller that opened this coordination topic, at the place it is. */
+  private externalOf(here: Pick<Place, 'platformId' | 'address'>): ExternalOwner | undefined {
+    return this.deps.externalOf?.(here.platformId, here.address);
   }
 
   /**
@@ -544,22 +559,28 @@ export class Delegation {
       ...(a.title ? { title: a.title } : {}),
       ...(a.model ? { model: a.model } : {}),
     };
+    const key = this.cardKey(here);
     if (this.startsAtOnce(here, item.agent)) {
       const { opened, failed } = await this.start(here, [item]);
-      this.queueStartedCard(here.key, opened, failed);
+      this.queueStartedCard(key, opened, failed, { platform: here.platformId, address: here.address });
       // The card's position, the same fact `item` carries when a confirmation card is gathering.
-      const card = this.started.get(here.key);
+      const card = this.started.get(key);
       return { item: card ? card.opened.length + card.failed.length : 1, result: startedResult(opened, failed) };
     }
-    const g = this.gathering.get(here.key) ?? { items: [], cancel: () => undefined };
+    const g = this.gathering.get(key) ?? {
+      items: [],
+      cancel: () => undefined,
+      at: { platform: here.platformId, address: here.address },
+    };
     g.cancel();
     g.items.push(item);
-    this.gathering.set(here.key, g);
-    if (this.onScreen.has(here.key)) {
+    g.at = { platform: here.platformId, address: here.address };
+    this.gathering.set(key, g);
+    if (this.onScreen.has(key)) {
       // A card is up and unanswered: re-render it now, so it shows every item proposed so far.
-      void this.putUp(here.key);
+      void this.putUp(key);
     } else {
-      g.cancel = this.deps.clock.schedule(() => void this.putUp(here.key), PROPOSAL_GATHER_MS);
+      g.cancel = this.deps.clock.schedule(() => void this.putUp(key), PROPOSAL_GATHER_MS);
     }
     if (ext) {
       return {
@@ -611,11 +632,11 @@ export class Delegation {
    * will not ask about them again. Recorded only in this tier — switching back to `on` restores the
    * tap for everything, and the set is consulted only while the tier is `'first'`.
    */
-  private rememberConfirmed(key: ConversationId, items: Item[]): void {
-    if (this.deps.config.delegation.confirm !== 'first' || this.deps.externalOf?.(key)) return;
-    const known = this.confirmedOnce.get(key) ?? new Set<string>();
+  private rememberConfirmed(here: Place, items: Item[]): void {
+    if (this.deps.config.delegation.confirm !== 'first' || this.externalOf(here)) return;
+    const known = this.confirmedOnce.get(here.key) ?? new Set<string>();
     for (const item of items) known.add(item.agent);
-    this.confirmedOnce.set(key, known);
+    this.confirmedOnce.set(here.key, known);
   }
 
   /**
@@ -649,7 +670,7 @@ export class Delegation {
     // is recorded.
     this.syncConfirmMode();
     const g = this.gathering.get(key);
-    const here = this.place(key);
+    const here = this.place(key, g?.at);
     if (!g?.items.length || !here) return;
     const items = g.items.slice();
     g.cancel();
@@ -683,7 +704,7 @@ export class Delegation {
       return;
     }
     // Confirmed. Anything proposed while this card was up was not on it, so it gets its own card.
-    this.rememberConfirmed(key, items);
+    this.rememberConfirmed(here, items);
     g.items = g.items.filter((item) => !items.includes(item));
     if (g.items.length) void this.putUp(key);
     else this.gathering.delete(key);
@@ -812,12 +833,13 @@ export class Delegation {
    * does not drop it (`personSpoke` only touches `gathering`): the record of what started still
    * belongs in the chat.
    */
-  private queueStartedCard(key: ConversationId, opened: OpenedTask[], failed: string[]): void {
+  private queueStartedCard(key: ConversationId, opened: OpenedTask[], failed: string[], at: TopicAt): void {
     if (!opened.length && !failed.length) return;
-    const s = this.started.get(key) ?? { opened: [], failed: [], cancel: () => undefined };
+    const s = this.started.get(key) ?? { opened: [], failed: [], cancel: () => undefined, at };
     s.cancel();
     s.opened.push(...opened);
     s.failed.push(...failed);
+    s.at = at;
     s.cancel = this.deps.clock.schedule(() => this.postStartedCard(key), PROPOSAL_GATHER_MS);
     this.started.set(key, s);
   }
@@ -825,7 +847,7 @@ export class Delegation {
   private postStartedCard(key: ConversationId): void {
     const s = this.started.get(key);
     this.started.delete(key);
-    const here = this.place(key);
+    const here = this.place(key, s?.at);
     if (!s || !here) return;
     void here.adapter
       .sendMessage(here.address, this.startedCardText(here, s.opened, s.failed), { kind: 'dispatch' })
@@ -954,7 +976,7 @@ export class Delegation {
     if (!history.sessionOf(c.key)) {
       return { topic: a.topic, messages: [], note: 'nothing has been recorded in this topic yet — no turn has run there' };
     }
-    if (a.reply) return this.replyOfTurn(c, a.topic, history);
+    if (a.reply) return this.replyOfTurn(c, a.topic, history, this.externalOf(here) !== undefined);
     const current = this.deps.currentContext;
     const result = history.read(c.key, taskReadOptions(a, current));
     const { cap, total } = readCuts(a);
@@ -1004,16 +1026,18 @@ export class Delegation {
   private replyOfTurn(
     c: Place,
     topic: string,
-    history: Pick<HistoryStore, 'read' | 'turnRecord' | 'sessionOf'>
+    history: Pick<HistoryStore, 'read' | 'turnRecord' | 'sessionOf'>,
+    external = false
   ): TaskReadResult {
     const record = history.turnRecord(c.key, 'done', this.deps.currentContext);
     if (!record) {
       return {
         topic,
         messages: [],
-        note:
-          'no turn in this topic has ended normally in the current generation yet — nothing to reply with; ' +
-          '--turn last is not scoped to the generation, so after /new it may show the turn before the reset',
+        note: external
+          ? 'no turn in this topic has ended normally yet — nothing to reply with; status shows where it is, and read reply: true again once it has answered'
+          : 'no turn in this topic has ended normally in the current generation yet — nothing to reply with; ' +
+            '--turn last is not scoped to the generation, so after /new it may show the turn before the reset',
       };
     }
     const read = history.read(c.key, { turn: String(record.turn), role: 'agent' });
@@ -1066,8 +1090,8 @@ export class Delegation {
    * on — and the only way to stop them was to open each one. Each is stopped as its own `/stop`
    * would (questions called off too); its conversation is kept.
    */
-  stopOpened(key: ConversationId, seen: Set<ConversationId> = new Set()): number {
-    const here = this.place(key);
+  stopOpened(key: ConversationId, seen: Set<ConversationId> = new Set(), at?: TopicAt): number {
+    const here = this.place(key, at);
     if (!here || seen.has(key) || !commandSurface(here.adapter).nested) return 0;
     seen.add(key);
     let stopped = 0;
@@ -1081,7 +1105,7 @@ export class Delegation {
           .sendMessage(c.address, note ? `${mark}\n${note}` : mark)
           .catch((e) => console.warn('[delegation] could not mark a stop:', e instanceof Error ? e.message : e));
       }
-      stopped += this.stopOpened(c.key, seen);
+      stopped += this.stopOpened(c.key, seen, { platform: c.platformId, address: c.address });
     }
     return stopped;
   }
@@ -1110,8 +1134,8 @@ export class Delegation {
    * Answers root first, one row per topic actually ended or refused. An address this process knows
    * nothing about answers no rows, which the page reads as "nothing was done".
    */
-  endTopic(key: ConversationId, only?: ReadonlySet<string>): TopicKillResult[] {
-    const here = this.place(key);
+  endTopic(key: ConversationId, only?: ReadonlySet<string>, at?: TopicAt): TopicKillResult[] {
+    const here = this.place(key, at);
     if (!here) return [];
     const tree = this.treeOf(here);
     const targets = only ? tree.places.filter((p) => only.has(topicIdOf(p))) : tree.places;
@@ -1211,7 +1235,11 @@ export class Delegation {
     }
     const parent = address ? here.adapter.parentOf?.(address) : undefined;
     if (!address || !parent || parent.channel !== here.address.channel || parent.thread !== here.address.thread) {
-      throw new Error(`"${topic}" is not a topic this conversation opened; \`fleetherd tasks\` lists the ones it did`);
+      throw new Error(
+        this.externalOf(here)
+          ? `"${topic}" is not a sub-task under a topic you opened; list without a topic shows yours`
+          : `"${topic}" is not a topic this conversation opened; \`fleetherd tasks\` lists the ones it did`
+      );
     }
     const conv = this.deps.registry.conversationAt(here.platformId, address);
     if (!conv?.agent) throw new Error(`nothing has happened in "${topic}" yet`);
@@ -1293,16 +1321,18 @@ export class Delegation {
     if (!this.owed.has(id)) return;
     const parent = this.parentOf(id);
     if (!parent) return;
-    this.queueUpdates(parent.key, [id]);
+    this.queueUpdates(this.cardKey(parent), [id], { platform: parent.platformId, address: parent.address });
   }
 
   /** Gather news from `children` for one card to `key`, CARD_DELAY_MS from the first. */
-  private queueUpdates(key: ConversationId, children: Iterable<ConversationId>): void {
+  private queueUpdates(key: ConversationId, children: Iterable<ConversationId>, at: TopicAt): void {
     const u = this.updates.get(key) ?? {
       children: new Set<ConversationId>(),
       cancel: this.deps.clock.schedule(() => this.sendUpdates(key), CARD_DELAY_MS),
+      at,
     };
     for (const c of children) u.children.add(c);
+    u.at = at;
     this.updates.set(key, u);
   }
 
@@ -1316,7 +1346,7 @@ export class Delegation {
       if (h.agent !== agentId) continue;
       this.held.delete(key);
       console.log(`[delegation] ${agentId} is past its usage limit; sending ${key} the ${h.children.size} update(s) held for it`);
-      this.queueUpdates(key, h.children);
+      this.queueUpdates(key, h.children, h.at);
     }
   }
 
@@ -1325,12 +1355,15 @@ export class Delegation {
    * is the whole point.
    */
   private holdUpdates(here: Place, agentId: string, children: Set<ConversationId>): void {
-    const h = this.held.get(here.key);
+    const key = this.cardKey(here);
+    const at = { platform: here.platformId, address: here.address };
+    const h = this.held.get(key);
     if (h) {
       for (const c of children) h.children.add(c);
+      h.at = at;
       return;
     }
-    this.held.set(here.key, { agent: agentId, children: new Set(children) });
+    this.held.set(key, { agent: agentId, children: new Set(children), at });
     const n = children.size;
     console.log(`[delegation] ${agentId} is over its usage limit; holding ${n} update(s) for ${here.key}`);
     void here.adapter
@@ -1385,7 +1418,7 @@ export class Delegation {
   private sendUpdates(key: ConversationId): void {
     const u = this.updates.get(key);
     this.updates.delete(key);
-    const here = this.place(key);
+    const here = this.place(key, u?.at);
     if (!u || !here) return;
     const reader = this.deps.registry.boundAgentOf(key);
     if (reader && this.deps.registry.coolingDown(reader)) {
@@ -1552,14 +1585,24 @@ export class Delegation {
   // ── Lookups ───────────────────────────────────────────────────────────────────────────────────
 
   /**
-   * Where a conversation is. An external caller's coordination topic has never run a turn, so the
-   * registry has no lane for it; its record (DelegationDeps.externalOf) says where it is.
+   * Where a conversation is. `at` is the address the caller gave when it is one outside the
+   * gateway; otherwise the registry's lane for the id. Nothing here asks whether the address is a
+   * coordination topic: an ordinary thread's commands must never be judged by that record.
    */
-  private place(key: ConversationId): Place | undefined {
-    const ext = this.deps.externalOf?.(key);
-    const lane = this.deps.registry.laneFor(key) ?? (ext ? { platformId: ext.platform, address: ext.address } : undefined);
+  private place(key: ConversationId, at?: TopicAt): Place | undefined {
+    const lane = at !== undefined ? { platformId: at.platform, address: at.address } : this.deps.registry.laneFor(key);
     const adapter = lane ? this.deps.platforms.get(lane.platformId) : undefined;
     return lane && adapter ? { key, platformId: lane.platformId, address: lane.address, adapter } : undefined;
+  }
+
+  /**
+   * The key the per-topic bookkeeping uses (`gathering`, `started`, `updates`, `held`). An
+   * external caller's topic is keyed by its own id, because under per_channel its conversation id
+   * is shared with the whole channel — two callers would otherwise merge their cards. An ordinary
+   * conversation keeps its id.
+   */
+  private cardKey(here: Place): ConversationId {
+    return this.externalOf(here) ? formatTarget(here.platformId, here.address) : here.key;
   }
 
   /**
@@ -1575,7 +1618,7 @@ export class Delegation {
     const named = this.deps.registry.conversationTitle(id);
     if (named) return named;
     // A coordination topic runs no turn, so nothing names it in the store: its record does.
-    const external = this.deps.externalOf?.(id)?.title;
+    const external = this.externalOf(place)?.title;
     if (external) return external;
     const want = `${place.platformId}:${place.address.channel}${place.address.thread ? `/${place.address.thread}` : ''}`;
     const ch = this.deps.registry.listChannels({ platform: place.platformId, limit: 200 }).channels.find((c) => c.id === want);
