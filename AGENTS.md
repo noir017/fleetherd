@@ -512,7 +512,10 @@ beside it as a [remote host](docs/remote-hosts.md). The operator's notes for tha
 conversation that asked for the change, and a restarting gateway stops the agents it started on
 its hosts. It waits for the turns in progress first, so an update lands only once the turn that
 asked for it is over: the session issuing the update never sees it happen. You cannot verify your
-own deploy; you can only report that it is ready.
+own deploy; you can only report that it is ready. The operator may hand you a run of it explicitly;
+that covers that run only. A go-ahead for one update is not one for the next — on 2026-11-18 an agent
+took it so, ran the next update itself from a session the restart then stopped, and the gateway was
+down for nine hours.
 
 Notes that decide whether steps 1–2 are even correct:
 
