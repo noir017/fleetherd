@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.18.1] - 2026-11-20
+
 ### Fixed
 
 - **Status line shows the default model and setting values before the first message.** Previously,
