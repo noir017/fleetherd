@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.20.0] - 2026-11-20
+
 ### Changed
 
 - **The web UI's topic rows name their agent on the row's frame, and the title line is the subject
