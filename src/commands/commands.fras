@@ -1,11 +1,11 @@
 # src/commands FRAS Map
-src/commands/api-agent.ts [Edge]: F:CLI subcommand for HTTP API backend agent | R:src/api-agent/server.ts
-src/commands/doctor.ts [Edge]: F:Environment self-check and diagnostic command (default CLI command)
-src/commands/log-file.ts [Infra]: F:Rotating file log installer for daemon stdout/stderr | A:installDaemonLog [T:installDaemonLog]
-src/commands/mcp.ts [Edge]: F:Stdio MCP server entrypoint serving native reverse tools | A:serveMcp
-src/commands/program.ts [Edge]: F:Top-level commander program and global options setup
-src/commands/remote-cli.ts [Edge]: F:Host-side reverse CLI interceptor and command hand-off | A:handOffRemoteCli,planRemoteCli [T:planRemoteCli]
-src/commands/reverse-cli.ts [Edge]: F:Commander options binder for REVERSE_COMMANDS
-src/commands/reverse.ts [Edge]: F:Reverse CLI action executor and output renderer | R:src/ipc/client.ts | A:executeReverseCommand
-src/commands/setup.ts [Edge]: F:Interactive schema-driven configuration wizard | S:见 Security invariants 第 4 条
-src/commands/start.ts [Edge]: F:Daemon startup command and unhandled error boundary
+src/commands/api-agent.ts [Edge]: F:CLI subcommand for HTTP API backend agent | R:src/api-agent/server.ts | A:runApiAgent
+src/commands/doctor.ts [Edge]: F:Environment self-check and diagnostic command (default CLI command) | A:runDoctor
+src/commands/log-file.ts [Infra]: F:Rotating file log installer for daemon stdout/stderr | A:installDaemonLog | S:Tees process output into rotating log files with size capping [T:installDaemonLog]
+src/commands/mcp.ts [Edge]: F:Stdio MCP server entrypoint serving native reverse tools | A:runMcp,serveMcp
+src/commands/program.ts [Edge]: F:Top-level commander program and global options setup | A:newProgram
+src/commands/remote-cli.ts [Edge]: F:Host-side reverse CLI interceptor and command hand-off | A:handOffRemoteCli,planRemoteCli | S:Determines whether reverse CLI runs locally or forwards over SSH [T:planRemoteCli]
+src/commands/reverse-cli.ts [Edge]: F:Commander options binder for REVERSE_COMMANDS | A:registerReverseCommand
+src/commands/reverse.ts [Edge]: F:Reverse CLI action executor and output renderer | R:src/ipc/client.ts | A:renderResult,runReverse
+src/commands/setup.ts [Edge]: F:Interactive schema-driven configuration wizard | A:runSetup | S:See Security invariants item 4
+src/commands/start.ts [Edge]: F:Daemon startup command and unhandled error boundary | A:runStart

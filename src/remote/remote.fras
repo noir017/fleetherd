@@ -1,7 +1,7 @@
 # src/remote FRAS Map
-src/remote/binaries.ts [Infra]: F:Remote binary path resolution and pinned SSH arguments | A:findRemoteBinary,sshArgs | S:见 Security invariants 第 5 条
+src/remote/binaries.ts [Infra]: F:Remote binary path resolution and pinned SSH arguments | A:remoteBinary,sshArgs | S:See Security invariants item 5
 src/remote/connection.ts [Core]: F:Host SSH connection manager, bootstrap, and heartbeats | R:src/remote/binaries.ts,src/remote/link.ts | A:HostConnection
-src/remote/frame.ts [Infra]: F:Binary frame encoding and incremental stream decoder | A:decodeFrames,encodeFrame
-src/remote/host.ts [Core]: F:RemoteHost and RemoteChild lifecycle coordinator | R:src/remote/connection.ts | A:RemoteChild,RemoteHost | S:见 Security invariants 第 5 条
-src/remote/link.ts [Core]: F:Reliable sequential frame link with replay window | A:ReliableLink [T:ReliableLink]
-src/remote/reachable.ts [Infra]: F:TCP port reachability probe for remote hosts | A:canReach [T:canReach]
+src/remote/frame.ts [Infra]: F:Binary frame encoding and incremental stream decoder | A:encodeFrame,FrameDecoder
+src/remote/host.ts [Core]: F:RemoteHost and RemoteChild lifecycle coordinator | R:src/remote/connection.ts | A:RemoteChild,RemoteHost | S:See Security invariants item 5
+src/remote/link.ts [Core]: F:Reliable sequential frame link with replay window | A:ReliableLink | S:Sequential frame delivery with replay on reconnect [T:ReliableLink]
+src/remote/reachable.ts [Infra]: F:TCP port reachability probe for remote hosts | A:canReach
