@@ -1556,21 +1556,21 @@ button:disabled{opacity:.5;cursor:default}
 #input:focus,#login input:focus{outline:none;border-color:#3d3d3d}
 #note{color:var(--dim);font-size:12px;padding:0 16px 8px;max-width:860px;width:100%;margin:0 auto}
 /* The agent's live status, above the composer: what the footer says once per reply, kept current
-   between replies. One line until tapped; the global [hidden] rule at the top is what lets this
-   set display and still be hidden while there is nothing to show. */
-#status{display:flex;align-items:center;margin:-3px 0 7px;font-size:11.5px;line-height:1.5;color:var(--dim);white-space:nowrap;overflow:hidden;font-variant-numeric:tabular-nums;cursor:pointer;user-select:none;-webkit-user-select:none}
-#status.open{flex-wrap:wrap;white-space:normal;row-gap:1px;column-gap:14px}
+   between replies. Wraps by default so trailing segments (5h/wk quota, cache, cost) are never
+   clipped behind long agent/model/account labels on narrow screens; tapping still toggles .open
+   for inactive quota pools and narrow-screen token counts. The global [hidden] rule at the top
+   keeps it hidden while there is nothing to show. */
+#status{display:flex;flex-wrap:wrap;align-items:center;row-gap:2px;column-gap:14px;margin:-3px 0 7px;font-size:11.5px;line-height:1.5;color:var(--dim);font-variant-numeric:tabular-nums;cursor:pointer;user-select:none;-webkit-user-select:none}
 #machine-note{display:flex;align-items:center;gap:6px;margin:-3px 0 7px;font-size:11.5px;line-height:1.5;color:#c98a7d}
 #machine-note .ic{width:12px;height:12px}
 #update{display:flex;align-items:center;gap:8px;margin:-3px 0 7px;font-size:12px;line-height:1.5;color:var(--dim)}
 #update[hidden]{display:none}
 #update button{font:inherit;color:inherit;background:none;border:1px solid currentColor;border-radius:6px;padding:1px 9px;cursor:pointer}
 .st{flex:0 0 auto;display:inline-flex;align-items:center;gap:5px}
-.st+.st::before{content:'\\00b7';margin:0 7px;color:#4a4a4a}
-/* Open, the line wraps, and a separator belonging to the first segment of a wrapped line would
-   lead it with a stray dot (seen in Chromium at 390px). Spacing does the separating instead. */
-#status.open .st+.st::before{content:none}
-.st-who{color:#a8a8a8}
+/* Spacing separates segments because the strip wraps by default (a middle-dot ::before would lead
+   a wrapped line with a stray dot). .st-who wraps internally too so a long agent+model+account
+   never overflows a narrow viewport. */
+.st-who{color:#a8a8a8;flex-wrap:wrap;row-gap:1px;max-width:100%}
 /* The model in the status line is a switch: /model without typing it (openModelPop). Drawn as the
    text it was with a caret and a background on hover, so the line still reads as a status line;
    the caret is what says it opens. A pseudo-element, so the line's text is still the model's. */

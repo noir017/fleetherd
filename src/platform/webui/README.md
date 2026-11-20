@@ -334,9 +334,11 @@ things about how it travels are deliberate:
   status, and the strip is hidden rather than drawn with zeros. Switching topics clears it until
   the incoming sync says what the new one's is.
 
-Closed, the strip is one line, shows only the quota pools the serving model spends from, and on a
-narrow screen drops the token counts beside the meter (the percentage says the same). A tap opens
-it: it wraps, and the other pools appear, dimmed.
+By default the strip wraps so active quota pools (5h/wk), cost and cache countdown are never
+clipped behind long agent, model or account labels on narrow screens; it shows only the quota
+pools the serving model spends from, and on a narrow screen drops the token counts beside the
+meter (the percentage says the same). A tap toggles `.open`, revealing the other pools dimmed
+and the narrow-screen token counts.
 
 **The model in the strip is a switch** (since 2026-11-05): `/model` as a control. It opens a list
 above the composer (`#model-pop`) of what the topic's agent offers, the one in use ticked and the

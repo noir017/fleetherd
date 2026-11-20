@@ -8597,6 +8597,13 @@ describe('webui page: the agent status strip', () => {
     expect(strip(h).querySelector('.st.off')?.textContent).toBe('Gemini wk 100%');
   });
 
+  it('wraps the status strip by default so trailing quota pools are never clipped on narrow screens', () => {
+    const html = renderPage('Chat', false);
+    expect(html).toContain('#status{display:flex;flex-wrap:wrap;');
+    expect(html).not.toContain('#status{display:flex;align-items:center;margin:-3px 0 7px;font-size:11.5px;line-height:1.5;color:var(--dim);white-space:nowrap;overflow:hidden;');
+    expect(html).toContain('.st-who{color:#a8a8a8;flex-wrap:wrap;row-gap:1px;max-width:100%}');
+  });
+
   it('escapes what it is sent — a model name is the agent’s to choose', async () => {
     const h = await open();
     await h.emit(sync(T, [], [T], { status: { agent: 'cc', model: '<img src=x onerror=alert(1)>' } }));
