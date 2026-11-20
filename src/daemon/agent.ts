@@ -290,6 +290,26 @@ export interface AgentSession {
   /** Cancel every side question still being answered (`/stop`), returning how many there were. */
   stopSideQuestions?(): number;
   /**
+   * Begin this conversation as a copy of another one's session (`/fork`): the child is started, and
+   * instead of `session/new` it asks `session/fork` of `sessionId` — the other conversation's stored
+   * session — and keeps the copy as its own, recorded like any session so a reclaim or restart
+   * reloads it. It must be the first thing this conversation's session does; a session already up
+   * is refused rather than replaced.
+   *
+   * The copy is made in THIS conversation's child, not in the source's, because that is the only
+   * arrangement every probed harness takes (acp-fork.ts): codex will not load a fork while the
+   * process that made it is alive, and every one of them forks a session another process holds.
+   *
+   * Rejects with ForkRefused when the agent declares no fork, and with an ordinary error when the
+   * fork could not be made. Optional: a runtime with no notion of it omits it, and `/fork` says so.
+   */
+  forkFrom?(input: { sessionId: string; sessionToken: string }): Promise<void>;
+  /**
+   * Whether this session's agent declares `session/fork` — undefined until a child of it has answered
+   * `initialize`, since that answer is the only place it is said. Non-spawning, like modelSelector.
+   */
+  canFork?(): boolean | undefined;
+  /**
    * The live session's model selector, or undefined when the harness exposes none.
    *
    * Non-spawning: reports what is already known and never starts a child. A caller that wants an
@@ -465,6 +485,18 @@ export class SideQuestionRefused extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'SideQuestionRefused';
+  }
+}
+
+/**
+ * A `/fork` the agent cannot make, with the reason in words for the user — its agent declares no
+ * `session/fork`. Like SideQuestionRefused, told apart from a failure so the sentence is sent as it
+ * stands, and so a startup that ends in one is not reported as an agent that could not start.
+ */
+export class ForkRefused extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ForkRefused';
   }
 }
 

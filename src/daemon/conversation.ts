@@ -16,7 +16,7 @@ import {
   unconfiguredHarnessCommand,
   type CommandTranslation,
 } from '../core/command-translate.js';
-import { commandSurface } from './delegation.js';
+import { commandSurface, subjectOf } from './delegation.js';
 import { kindForTrigger } from '../history/record.js';
 import type { HistoryEvent } from '../history/record.js';
 import type {
@@ -65,7 +65,9 @@ import type {
   TurnChangeFileResult,
   TurnChangeStatusResult,
 } from '../platform/adapter.js';
-import { SideQuestionRefused, type AgentFactory, type AgentSession, type AgentUsage } from './agent.js';
+import { forkRefusal } from './acp-fork.js';
+import { NO_FORK } from './acp-side-question.js';
+import { ForkRefused, SideQuestionRefused, type AgentFactory, type AgentSession, type AgentUsage } from './agent.js';
 import type { EffortSelector, ModelSelector, SessionOption, StatusOption, ToolEvent, TopicActivity } from '../types.js';
 import {
   effortAmbiguousText,
@@ -169,6 +171,13 @@ const KILL_RE = /^\/kill(@\S+)?$/;
 
 /** `/reload` — apply an edited config.yaml without a restart (see daemon/config-reload.ts). */
 const RELOAD_RE = /^\/reload(@\S+)?$/;
+
+/** `/fork` — copy this conversation into a new topic beside it (forkAndReport). */
+const FORK_RE = /^\/fork(@\S+)?$/;
+
+/** What `/fork` says on a platform that has no topic list to put a fork beside its source in. */
+const FORK_WEB_ONLY =
+  '/fork works in the web UI only: the copy opens as a topic beside this one, and only the web UI has a topic list to put it in.';
 
 /**
  * Spellings of the settings command the gateway answers.
@@ -2027,6 +2036,15 @@ export class ConversationRegistry {
       return true;
     }
 
+    // /fork copies this conversation into a topic beside it. Here, before the merger, because the
+    // answer is the gateway's whichever harness is bound — no harness has a command that opens a
+    // topic — and because a /fork queued behind a running turn would be made of whatever that turn
+    // left, at a moment nobody chose. It refuses while a turn runs instead (forkAndReport).
+    if (FORK_RE.test(text)) {
+      void this.forkAndReport(key, msg, address, fallbackAgent).then((body) => ack('/fork', body));
+      return true;
+    }
+
     // `/help` and `/reload`: about the gateway, not this conversation's agent.
     if (this.answerGatewayCommand(key, text, fallbackAgent, conv, address, ack)) return true;
 
@@ -2146,6 +2164,174 @@ export class ConversationRegistry {
     const { outcome, kept, dropped } = this.killWithInput(key);
     console.log(`[conversation] ${key} /kill by ${conv.platform}:${conv.user} → ${outcome}`);
     return withInputNote(KILL_ACK[outcome], kept, dropped);
+  }
+
+  /**
+   * `/fork`: copy this conversation into a new web UI topic beside it, and say where it went.
+   *
+   * The new topic is a conversation like any other — same agent, directory, model and effort, its
+   * own sub-agents — whose session starts as a copy of this one's (AgentSession.forkFrom, made in
+   * the new topic's own child: acp-fork.ts says why there). Nothing here is ever sent to an agent:
+   * no history is replayed into the new topic and no line is added to either context, so the copy
+   * is exactly what the harness copied.
+   *
+   * Only a person can get here (a daemon command, read off a person's own message): a parallel
+   * conversation an agent could open for itself would be a sub-agent without the card that
+   * Security invariant 6 puts in front of every one — so there is no reverse command or tool for it.
+   *
+   * Refused, with the reason: off the web UI; with nothing to copy; while a turn or background work
+   * runs; on an agent that declares no fork. The topic is opened only once all of that has been
+   * asked, and taken away again if the copy still cannot be made.
+   */
+  private async forkAndReport(
+    key: ConversationId,
+    msg: InboundMessage,
+    address: ConversationAddress,
+    fallbackAgent: string
+  ): Promise<string> {
+    const platformId = msg.conversation.platform;
+    const adapter = this.platforms.get(platformId);
+    const forkThread = adapter?.forkThread?.bind(adapter);
+    if (!forkThread) return FORK_WEB_ONLY;
+    const agentId = this.boundAgentFor(key, fallbackAgent);
+    const label = agentDisplayName(findAgent(this.config, agentId), agentId);
+    if (!this.store?.agentSession(key, agentId)) {
+      return `Nothing to fork yet: ${label} has no conversation here. Send it a message first.`;
+    }
+    const session = this.agents.getOrCreate(key, agentId);
+    if (!session.forkFrom) return `${label} does not support /fork.`;
+    const asked = await this.forkReady(key, session, label, agentId);
+    if (asked) return asked;
+    // Read again: a source whose stored session could not be reloaded just now has a fresh one.
+    const sourceId = this.store?.agentSession(key, agentId);
+    if (!sourceId) return `Nothing to fork yet: ${label} has no conversation here. Send it a message first.`;
+    return this.makeFork({ key, address, platformId, forkThread, agentId, label, sourceId });
+  }
+
+  /**
+   * forkAndReport once every question has been asked: open the topic, set it up, and start its session
+   * as the copy — taking the topic away again when the copy cannot be made.
+   */
+  private async makeFork(f: {
+    key: ConversationId;
+    address: ConversationAddress;
+    platformId: string;
+    forkThread: NonNullable<PlatformAdapter['forkThread']>;
+    agentId: string;
+    label: string;
+    sourceId: string;
+  }): Promise<string> {
+    const { key, address, platformId, forkThread, agentId, label, sourceId } = f;
+    const turn = this.lastTurnOf(key);
+    let opened: Awaited<ReturnType<typeof forkThread>>;
+    try {
+      opened = await forkThread(address, turn !== undefined ? { turn } : {});
+    } catch (e) {
+      return `Could not fork: ${e instanceof Error ? e.message : String(e)}`;
+    }
+    const conv = this.conversationAt(platformId, opened.address);
+    if (!conv) {
+      opened.discard();
+      return "Could not fork: the new topic does not map to a conversation of its own under this deployment's scope.";
+    }
+    this.seedFork(key, conv.key, platformId, agentId);
+    try {
+      const fork = this.agents.getOrCreate(conv.key, agentId);
+      if (!fork.forkFrom) throw new Error(`${label} cannot start a session as a copy`);
+      await fork.forkFrom({ sessionId: sourceId, sessionToken: this.tokens.tokenFor(conv.key) });
+    } catch (e) {
+      // Nothing of the copy exists, so neither should a topic that says it is one.
+      this.agents.dispose(conv.key);
+      this.releaseState(conv.key);
+      this.store?.clear(conv.key);
+      opened.discard();
+      console.warn(`[fork] ${key} (${agentId}): ${e instanceof Error ? e.message : e}`);
+      return e instanceof ForkRefused ? e.message : `Could not fork: ${e instanceof Error ? e.message : String(e)}`;
+    }
+    console.log(`[fork] ${key} (${agentId}) → ${conv.key} at turn ${turn ?? '?'}`);
+    this.warnIfForkRaced(key, turn, platformId, opened.address, label);
+    const link = opened.address.thread ? `[${subjectOf(opened.title)}](?t=${opened.address.thread})` : `"${opened.title}"`;
+    const at = turn !== undefined ? ` at turn ${turn}` : '';
+    return `Forked into ${link}${at}: it carries on from everything said here so far, as a conversation of its own. This topic is unchanged.`;
+  }
+
+  /**
+   * Whether `/fork` can go ahead now, and the person's sentence when it cannot: a turn or background
+   * work running (a copy taken then would hold half of it), or an agent that declares no fork.
+   *
+   * Whether the agent can fork is only said in its `initialize`, so a conversation with no child yet
+   * has one started first — the same start its next message would make, as `/btw` does — rather than
+   * opening a topic on a guess and taking it away again. Asked again after that start, which can take
+   * seconds, in case a turn began meanwhile.
+   */
+  private async forkReady(key: ConversationId, session: AgentSession, label: string, agentId: string): Promise<string | undefined> {
+    const busy = (): string | undefined => {
+      if (this.isBusy(key)) return `${label} is in the middle of a turn here. /fork once it ends: a copy taken now would hold half of that turn.`;
+      if (session.backgroundActive?.()) return `${label} is still reporting on background work here. /fork once it has finished.`;
+      return undefined;
+    };
+    const now = busy();
+    if (now) return now;
+    try {
+      if (session.canFork?.() === undefined) await session.ensureSession?.(this.tokens.tokenFor(key));
+    } catch (e) {
+      return `Could not fork: ${e instanceof Error ? e.message : String(e)}`;
+    }
+    // The runtime's own sentence (acp-fork.ts), so the refusal reads the same whichever side said it.
+    if (session.canFork?.() === false) return forkRefusal(agentId, NO_FORK);
+    return busy();
+  }
+
+  /**
+   * Set the fork's conversation up as its source is — before its session object exists, because the
+   * runtime reads the directory, model and effort off the record when it builds one. The binding is
+   * the source's agent; what was SAID is not copied, the harness copies that.
+   */
+  private seedFork(sourceKey: ConversationId, forkKey: ConversationId, platformId: string, agentId: string): void {
+    this.ensureState(forkKey, platformId, agentId, { fresh: true, opener: `/fork of ${sourceKey}` });
+    const store = this.store;
+    if (!store) return;
+    const cwd = store.conversationCwd(sourceKey);
+    if (cwd) store.setConversationCwd(forkKey, agentId, cwd);
+    for (const which of ['model', 'effort'] as const) {
+      const value = store.conversationChoice?.(sourceKey, agentId, which);
+      if (value) store.setConversationChoice?.(forkKey, agentId, which, value);
+    }
+    // ensureState read the record before the choice was copied into it.
+    const model = store.conversationChoice?.(forkKey, agentId, 'model');
+    if (model) this.setModelOverride(forkKey, model);
+  }
+
+  /**
+   * Say so in the fork when its source started a turn while the copy was being made: the copy may
+   * then hold part of that turn, which is what `/fork` refuses to take. Not undone — the copy is the
+   * person's to keep or delete, and they are the one who can tell whether that turn matters.
+   */
+  private warnIfForkRaced(
+    sourceKey: ConversationId,
+    turn: number | undefined,
+    platformId: string,
+    forkAddress: ConversationAddress,
+    label: string
+  ): void {
+    if (!this.isBusy(sourceKey) && this.lastTurnOf(sourceKey) === turn) return;
+    console.warn(`[fork] ${sourceKey}: a turn started while the copy was being made`);
+    void this.platforms
+      .get(platformId)
+      ?.sendMessage(
+        forkAddress,
+        `⚠ ${label} started a turn in the original topic while this copy was being made, so the copy may end part-way through that turn. If that matters, delete this topic and /fork again once the turn ends.`
+      )
+      .catch((e) => console.warn('[fork] could not say the copy raced a turn:', e instanceof Error ? e.message : e));
+  }
+
+  /** The number of the last turn the library has for a conversation; undefined when it cannot say. */
+  private lastTurnOf(key: ConversationId): number | undefined {
+    try {
+      return this.history?.turnRecord(key, 'last')?.turn;
+    } catch {
+      return undefined; // no library, or nothing recorded for this conversation yet
+    }
   }
 
   /**

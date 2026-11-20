@@ -46,7 +46,8 @@ import type {
   RunTurnInput,
   SessionModeSelector,
 } from './agent.js';
-import { asUndelivered, SideQuestionRefused, TurnFailure } from './agent.js';
+import { asUndelivered, ForkRefused, SideQuestionRefused, TurnFailure } from './agent.js';
+import { forkInto, forkRefusal } from './acp-fork.js';
 import {
   askOnFork,
   forkSupportOf,
@@ -1435,6 +1436,14 @@ function createAcpSession(
    * `sessionCapabilities`; see acp-side-question.ts). A property of the binary like the three above.
    */
   let forkSupport: ForkSupport = NO_FORK;
+  /** Whether forkSupport has been read off an `initialize` yet — `canFork` answers undefined until then. */
+  let forkKnown = false;
+  /**
+   * The session this conversation is to start as a copy of (`/fork`), set by forkFrom for exactly the
+   * one startup it asks for. Read by startSession in place of session/new; never persisted — once the
+   * copy exists it is this conversation's own session, stored and reloaded like any other.
+   */
+  let forkSeed: string | undefined;
   /**
    * The side questions (`/btw`) being answered right now, by the id of the fork each one asks. Read
    * to send a fork's permission requests and questions to the lane its answer is in, rather than to
@@ -1816,6 +1825,42 @@ function createAcpSession(
   }
 
   /** Lazily start the ACP child and complete initialize + session/new. sessionToken is injected into its env here. */
+  /**
+   * The startup's last step for a `/fork`: the copy made in this child in place of session/new
+   * (acp-fork.ts), then set up the way session/new sets one up — the person's model, else the
+   * configured one the source was created on; the pinned options, the permission level and the
+   * effort — and recorded, so the copy is what a reclaim or a restart reloads. An agent that declares
+   * no fork is refused before anything is asked of it.
+   */
+  async function startAsFork(
+    ctx: ClientContext,
+    sourceId: string,
+    mcpServers: () => McpServer[],
+    progress: StartupProgress
+  ): Promise<void> {
+    const refusal = forkRefusal(def.id, forkSupport);
+    if (refusal) throw new ForkRefused(refusal);
+    const forked = await forkInto(ctx, {
+      sourceId,
+      cwd,
+      mcpServers: mcpServers(),
+      support: forkSupport,
+      onStep: (step) => {
+        progress.step = step;
+      },
+    });
+    active = forked.session;
+    liveConfigOptions = forked.configOptions;
+    liveModes = forked.modes;
+    liveModel = liveModelName(liveConfigOptions);
+    // Whatever resume replayed is history the new topic does not show (see armReplayFence).
+    armReplayFence();
+    console.log(`[acp] ${conversationId}: started as a fork of ${sourceId} (${forked.session.sessionId})`);
+    progress.step = 'session/set_config_option';
+    await reapplyPreferences(ctx, forked.session.sessionId, modelPreference ?? def.model);
+    store?.setAgentSession(conversationId, def.id, forked.session.sessionId);
+  }
+
   async function startSession(sessionToken: string): Promise<void> {
     if (active) return;
 
@@ -1914,7 +1959,10 @@ function createAcpSession(
       // agy takes a second prompt into a running turn without advertising it (agy-acp.ts).
       steeringMode = steeringModeOf(initResult, takesPromptMidTurn(def));
       imagePrompts = initResult.agentCapabilities?.promptCapabilities?.image === true;
-      forkSupport = forkSupportOf(initResult);
+      [forkSupport, forkKnown] = [forkSupportOf(initResult), true];
+
+      // `/fork`: this conversation begins as a copy of another's session, made here (acp-fork.ts).
+      if (forkSeed !== undefined) return startAsFork(ctx, forkSeed, mcpServers, progress);
 
       // Resume persisted context first: the harness keeps conversation history on its own disk, so a
       // daemon restart only loses the process — session/load replays the stored ACP session into the
@@ -2028,8 +2076,9 @@ function createAcpSession(
         const where = place ? ` on host "${place.host.id}"` : '';
         throw new TurnFailure(`agent "${def.id}" could not start${where}: ${failed.message}`, 'startup');
       }
-      // A login the harness asks for is its own sentence (above), and an `access` failure.
-      if (err instanceof TurnFailure) throw err;
+      // A login the harness asks for is its own sentence (above), and an `access` failure. A fork the
+      // agent cannot make is a sentence too, and not a failure to start.
+      if (err instanceof TurnFailure || err instanceof ForkRefused) throw err;
       // Refused or unanswered: classified, so hooks.turnFailed can tell it from a provider failure.
       const launch = `${command} ${args.join(' ')}`.trim();
       throw startupFailure(def, err, { host: place?.host.id, launch, progress, stderr: stderrTail(), timeoutMs: START_TIMEOUT_MS });
@@ -3093,6 +3142,22 @@ function createAcpSession(
       return sideAsks.size;
     },
 
+    async forkFrom(input: { sessionId: string; sessionToken: string }): Promise<void> {
+      // First or not at all: a session already up (or coming up) would be the one the copy replaced,
+      // and nothing about a conversation that has started is the person's to throw away by forking.
+      if (active || starting || proc) throw new Error(`agent "${def.id}" already has a session here; a fork must be its first`);
+      forkSeed = input.sessionId;
+      try {
+        await ensureStarted(input.sessionToken);
+      } finally {
+        forkSeed = undefined;
+      }
+    },
+
+    canFork(): boolean | undefined {
+      return forkKnown ? forkSupport.fork : undefined;
+    },
+
     async ensureSession(sessionToken: string): Promise<void> {
       // Exactly what the first turn does, minus the prompt: the child, initialize, and session/new
       // (or session/load), which is where liveConfigOptions — and therefore the model list — comes
@@ -3274,7 +3339,7 @@ export interface StartupProgress {
   /** Whether the process has answered anything at all — a result or an error, to any request. */
   answered: boolean;
   /** The request the startup was waiting on, or the last one it sent. */
-  step: 'initialize' | 'session/load' | 'session/new' | 'session/set_config_option';
+  step: 'initialize' | 'session/load' | 'session/new' | 'session/set_config_option' | 'session/fork' | 'session/resume';
 }
 
 /** The startup's own deadline, told apart from an error the agent sent. */

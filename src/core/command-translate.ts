@@ -95,6 +95,10 @@ export const DAEMON_COMMANDS: SlashCommandSpec[] = [
   { name: 'setting', description: 'Change a saved setting (default agent, model, session)' },
   { name: 'reload', description: 'Apply an edited config.yaml without restarting the daemon' },
   { name: 'title', description: 'Name this topic (it is named automatically otherwise)' },
+  // Answered by the gateway rather than forwarded, and only ever typed by a person: it opens a
+  // parallel conversation, which an agent must not be able to do without the sub-agent card
+  // (AGENTS.md, Security invariant 6) — so there is no reverse command or native tool for it.
+  { name: 'fork', description: 'Copy this conversation into a new topic beside it (web UI)' },
   { name: 'skills', description: "List the current agent's own commands" },
   { name: 'help', description: 'List the commands this gateway understands' },
 ];

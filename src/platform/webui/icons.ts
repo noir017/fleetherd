@@ -86,6 +86,10 @@ const PATHS = {
     '<circle cx="12" cy="12" r="9"/><path d="M3 12h18"/>' +
     '<path d="M12 3c2.4 2.5 3.6 5.5 3.6 9s-1.2 6.5-3.6 9c-2.4-2.5-3.6-5.5-3.6-9S9.6 5.5 12 3z"/>',
   subagent: '<path d="M6 4v8a3 3 0 0 0 3 3h10.5"/><path d="m15.5 11 4 4-4 4"/>',
+  // A topic forked from another (`/fork`): one line from the source, splitting in two.
+  fork:
+    '<circle cx="6" cy="5" r="2.2"/><circle cx="18" cy="5" r="2.2"/><circle cx="12" cy="19" r="2.2"/>' +
+    '<path d="M6 7.2V9a3 3 0 0 0 3 3h6a3 3 0 0 0 3-3V7.2M12 12v4.8"/>',
   // A turn's changes (the entry under a reply): two panes, one gaining lines and one losing them.
   diff:
     '<rect x="3" y="4" width="8" height="16" rx="1.5"/><rect x="13" y="4" width="8" height="16" rx="1.5"/>' +

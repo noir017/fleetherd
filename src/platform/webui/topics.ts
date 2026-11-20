@@ -121,6 +121,17 @@ export interface Topic {
    */
   parent?: string;
   /**
+   * The topic this one was forked from (`/fork`): its agent session began as a copy of that topic's,
+   * taken at the end of turn `forkTurn`. The switcher draws it right after its source with a fork
+   * mark, and the topic's own page says where it came from. NOT `parent`: a fork is the person's own
+   * conversation, so it is never nested under, reported to or stopped from its source, even when the
+   * source is a sub-agent's topic. Persisted, and dropped with `forkTurn` when the source goes, as
+   * `parent` is — the line would otherwise point at a topic that is not there.
+   */
+  forkOf?: string;
+  /** The source's last turn when it was forked (`forkOf`); absent when the library could not say. */
+  forkTurn?: number;
+  /**
    * Opened by a scheduled task's new-session run, not by the person (`createThread`'s `scheduled`
    * option). Persisted, because it is what keeps such a topic out of the switcher on every later
    * reload — the title is not a record: it is editable, and a run can be renamed.
@@ -270,7 +281,11 @@ export class TopicStore {
     return oldest;
   }
 
-  create(title = '', parent?: string, opts: { scheduled?: boolean; task?: string } = {}): Topic {
+  create(
+    title = '',
+    parent?: string,
+    opts: { scheduled?: boolean; task?: string; forkOf?: string; forkTurn?: number } = {}
+  ): Topic {
     if (this.full()) {
       throw new Error(`[webui] this instance already has ${MAX_TOPICS} topics; close one before opening another`);
     }
@@ -283,6 +298,7 @@ export class TopicStore {
       ...(parent !== undefined && this.topics.has(parent) ? { parent } : {}),
       ...(opts.scheduled ? { scheduled: true } : {}),
       ...(opts.scheduled && opts.task !== undefined && TASK_ID.test(opts.task) ? { task: opts.task } : {}),
+      ...forkFields(opts.forkOf !== undefined && this.topics.has(opts.forkOf) ? opts.forkOf : undefined, opts.forkTurn),
     };
     this.topics.set(topic.id, topic);
     this.flush();
@@ -350,10 +366,17 @@ export class TopicStore {
     return true;
   }
 
-  /** Drop every `parent` that names a topic no longer here. Does not persist; its callers do. */
+  /**
+   * Drop every `parent` and `forkOf` that names a topic no longer here — a fork's turn goes with its
+   * source, since it numbers a turn of that topic. Does not persist; its callers do.
+   */
   private orphan(): void {
     for (const t of this.topics.values()) {
       if (t.parent !== undefined && !this.topics.has(t.parent)) delete t.parent;
+      if (t.forkOf !== undefined && !this.topics.has(t.forkOf)) {
+        delete t.forkOf;
+        delete t.forkTurn;
+      }
     }
   }
 
@@ -444,6 +467,7 @@ export class TopicStore {
         ...(t.scheduled ? { scheduled: true } : {}),
         ...(t.task !== undefined ? { task: t.task } : {}),
         ...(t.parent !== undefined ? { parent: t.parent } : {}),
+        ...forkFields(t.forkOf, t.forkTurn),
         ...(t.seenAt !== undefined ? { seenAt: t.seenAt } : {}),
         ...(t.outcome ? { outcome: t.outcome } : {}),
       };
@@ -466,6 +490,9 @@ export class TopicStore {
  */
 const TASK_ID = /^[a-z0-9]{4,16}$/;
 
+/** A topic id as `create` makes them; a `parent` or `forkOf` in a hand-edited file holding anything else is dropped. */
+const TOPIC_ID = /^[0-9a-f]{8}$/;
+
 function dirOf(file: string): string {
   const at = file.lastIndexOf('/');
   return at <= 0 ? '.' : file.slice(0, at);
@@ -473,7 +500,7 @@ function dirOf(file: string): string {
 
 /** Validate one persisted entry; anything malformed is dropped rather than trusted. */
 function toTopic(id: string, value: unknown): Topic | undefined {
-  if (!/^[0-9a-f]{8}$/.test(id) || typeof value !== 'object' || value === null) return undefined;
+  if (!TOPIC_ID.test(id) || typeof value !== 'object' || value === null) return undefined;
   const rec = value as {
     title?: unknown;
     lastAt?: unknown;
@@ -481,6 +508,8 @@ function toTopic(id: string, value: unknown): Topic | undefined {
     scheduled?: unknown;
     task?: unknown;
     parent?: unknown;
+    forkOf?: unknown;
+    forkTurn?: unknown;
     seenAt?: unknown;
     outcome?: unknown;
   };
@@ -496,10 +525,26 @@ function toTopic(id: string, value: unknown): Topic | undefined {
     ...(rec.starred === true ? { starred: true } : {}),
     ...(rec.scheduled === true ? { scheduled: true } : {}),
     ...(rec.scheduled === true && typeof rec.task === 'string' && TASK_ID.test(rec.task) ? { task: rec.task } : {}),
-    ...(typeof rec.parent === 'string' && /^[0-9a-f]{8}$/.test(rec.parent) && rec.parent !== id ? { parent: rec.parent } : {}),
+    ...(typeof rec.parent === 'string' && TOPIC_ID.test(rec.parent) && rec.parent !== id ? { parent: rec.parent } : {}),
+    ...forkFields(toTopicRef(rec.forkOf, id), rec.forkTurn),
     ...(typeof rec.seenAt === 'number' && Number.isFinite(rec.seenAt) ? { seenAt: rec.seenAt } : {}),
     ...(outcome ? { outcome } : {}),
   };
+}
+
+/** A persisted reference to another topic (`forkOf`), when it is one: a topic id, and not this topic's own. */
+function toTopicRef(v: unknown, own: string): string | undefined {
+  return typeof v === 'string' && TOPIC_ID.test(v) && v !== own ? v : undefined;
+}
+
+/**
+ * A fork's two fields, together or not at all: a turn number means nothing without the topic it
+ * numbers a turn of. Only a whole, positive turn is kept — the page prints it.
+ */
+function forkFields(forkOf: string | undefined, turn: unknown): Pick<Topic, 'forkOf' | 'forkTurn'> {
+  if (forkOf === undefined) return {};
+  const whole = typeof turn === 'number' && Number.isInteger(turn) && turn > 0;
+  return { forkOf, ...(whole ? { forkTurn: turn } : {}) };
 }
 
 /** A persisted outcome, field by field; anything malformed is dropped (the next turn writes one afresh). */

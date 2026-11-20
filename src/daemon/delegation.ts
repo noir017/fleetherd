@@ -2403,7 +2403,7 @@ function describeStage(stage: TopicStage): string {
  * square brackets left: it is handed to an agent that writes it as link text, `[title](?t=…)`, and
  * the web UI's markdown does not take brackets inside link text. The agent is a column of its own.
  */
-function subjectOf(title: string): string {
+export function subjectOf(title: string): string {
   return title.replace(/^\[[^\]]*\]\s*/, '').replace(/[[\]]/g, '');
 }
 

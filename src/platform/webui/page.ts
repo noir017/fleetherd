@@ -358,6 +358,11 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 .topic-more:hover,.topic-more[aria-expanded="true"]{color:var(--fg);background:var(--field)}
 .topic-star-mark{display:inline-flex;align-items:center;justify-content:center;color:#fbbf24;flex-shrink:0;padding:0 2px}
 .topic-star-mark .ic{width:13px;height:13px;fill:currentColor}
+/* A topic forked from another (/fork): its mark leads the title, in the title's own colour and a
+   step dimmer, like the agent tag beside it — it says what the row is, and the source is the row
+   right above it. Inside the one ellipsised line, so it never pushes the title out of the column. */
+.topic-fork-mark{display:inline-flex;vertical-align:-1px;margin-right:3px;opacity:.85}
+.topic-fork-mark .ic{width:12px;height:12px}
 @media(hover:none){.topic-more{opacity:.55}}
 /* The ⋯ in a box, so it can leave the row's layout exactly as the two buttons did.
    On a pointer device it is invisible until hovered — but opacity:0 hides a box without removing
@@ -496,6 +501,14 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 
 #chat{flex:1;display:flex;flex-direction:column;height:100%;min-width:0;position:relative}
 #chat-header{display:flex;align-items:center;gap:10px;padding:9px 16px;border-bottom:1px solid var(--line);min-height:var(--headh);font-size:13px}
+/* Where a fork came from (paintForkNote): one line under the header, a button that goes back to the
+   source. Quiet, because it is read once — and because the transcript under it starts empty on
+   purpose (a fork copies the agent's context, not the messages). */
+#fork-note{display:flex;align-items:center;gap:6px;width:100%;padding:6px 16px;border:0;border-bottom:1px solid var(--line);
+  background:none;color:var(--dim);font:inherit;font-size:12px;text-align:left;cursor:pointer}
+#fork-note:hover{color:var(--fg)}
+#fork-note .ic{width:13px;height:13px;flex-shrink:0}
+#fork-note .fork-src{color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
 .chat-title{font-weight:600;color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:50ch}
 .chat-status{font-size:11.5px;color:var(--dim);text-transform:uppercase;letter-spacing:.04em}
 .chat-status.running{color:#38bdf8}
@@ -915,7 +928,8 @@ select.skill-field{appearance:auto}
 #chat.lib #lib-title{display:block}
 #chat.lib #lib-tag{display:inline-flex;align-items:center;gap:5px;flex:none}
 #chat.lib #log,#chat.lib #typing,#chat.lib #note,#chat.lib #bar,#chat.lib #term-grip,
-#chat.lib #topic-title,#chat.lib #topic-status,#chat.lib #kill-agent,#chat.lib #term-toggle,#chat.lib #files-toggle{display:none}
+#chat.lib #topic-title,#chat.lib #topic-status,#chat.lib #kill-agent,#chat.lib #term-toggle,#chat.lib #files-toggle,
+#chat.lib #fork-note{display:none}
 /* The terminal is parked under the record rather than unmounted: display:none would take the
    iframe's box away, and a record is not a reason to hang up on a shell. */
 #chat.lib #term{position:absolute;left:0;right:0;bottom:0;visibility:hidden;pointer-events:none}
@@ -1926,7 +1940,7 @@ const SCRIPT = `
       rowMenu=$('row-menu'),
       optsBtn=$('opts-toggle'), optsMenu=$('opts-menu'), manageBtn=$('manage-toggle'), manageMenu=$('manage-menu'),
       calmBtn=$('calm-toggle'), calmState=$('calm-state'),
-      idleWhy=$('idle-why'), idleList=$('idle-list'), idleGo=$('idle-go'), idleCancel=$('idle-cancel'), chatTitle=$('topic-title'), chatStatus=$('topic-status'),
+      idleWhy=$('idle-why'), idleList=$('idle-list'), idleGo=$('idle-go'), idleCancel=$('idle-cancel'), chatTitle=$('topic-title'), chatStatus=$('topic-status'), forkNote=$('fork-note'),
       chat=$('chat'), chatHead=$('chat-header'), composer=$('bar'),
       termBtn=$('term-toggle'), termHost=$('term-frames'), termEl=$('term'), termGrip=$('term-grip'),
       termName=$('term-name'), termMinBtn=$('term-min'), termEndBtn=$('term-end'),
@@ -2918,6 +2932,7 @@ const SCRIPT = `
     var line=o.sub!==undefined ? o.sub : topicDirHtml(t);
     var named=splitTitle(t.title || 'Untitled', t.dir&&t.dir.host);
     var title='<span class="topic-title">'
+       + forkMarkHtml(t)
        + (named.tag?'<span class="topic-tag"'+(named.full?' title="'+text(named.full)+'"':'')+'>'+text(named.tag)+'</span> ':'')
        + text(named.rest)+'</span>';
     // A lit star on a starred row is a marker, not a button: Star/Unstar lives in the menu now.
@@ -2941,6 +2956,21 @@ const SCRIPT = `
       mark:starMark,
       moreTitle:o.moreTitle
     });
+  }
+
+  /**
+   * The mark a forked topic's row leads with (Topic.forkOf), saying where it came from on hover; empty
+   * for every other row. The source is named as the list shows it, so the hover and the row above
+   * read the same.
+   */
+  function forkMarkHtml(t){
+    if(!t.forkOf) return '';
+    return '<span class="topic-fork-mark" title="'+text(forkFromText(t))+'">'+IC.icon.fork+'</span>';
+  }
+  /** "Forked from <source> · turn N", for a fork's mark and the line at the top of its page. */
+  function forkFromText(t){
+    var src=topicById(t.forkOf);
+    return 'Forked from '+(src ? (src.title || 'Untitled') : 'another topic')+(t.forkTurn ? ' · turn '+t.forkTurn : '');
   }
 
   /**
@@ -6195,6 +6225,32 @@ const SCRIPT = `
   }
 
   /**
+   * The line at the top of a forked topic (Topic.forkOf): where it came from, at which turn, and a tap
+   * back there. Hidden on every other topic, and once the source is gone — the daemon drops forkOf
+   * with it, so the line never points at nothing. Rewritten only when what it says changes: this runs
+   * on every topic list, and a list arrives with every message.
+   */
+  var forkNoteKey='';
+  function paintForkNote(cur){
+    var src=cur && cur.forkOf ? topicById(cur.forkOf) : null;
+    var key=src ? src.id+'|'+(cur.forkTurn||'')+'|'+(src.title||'') : '';
+    if(key===forkNoteKey) return;
+    forkNoteKey=key;
+    forkNote.hidden=!src;
+    if(!src){ forkNote.innerHTML=''; forkNote.removeAttribute('data-src'); return; }
+    forkNote.innerHTML=IC.icon.fork+'<span>Forked from</span><span class="fork-src">'+text(src.title||'Untitled')+'</span>'
+      +(cur.forkTurn?'<span>· turn '+cur.forkTurn+'</span>':'');
+    forkNote.setAttribute('data-src', src.id);
+    forkNote.title='Back to '+(src.title||'Untitled');
+  }
+  forkNote.addEventListener('click', function(){
+    var id=forkNote.getAttribute('data-src');
+    if(!id || !topicById(id)) return;
+    switchTopic(id);
+    if(narrow()) setSidebar(false);
+  });
+
+  /**
    * The line between what was said before the daemon restarted and what it is serving now.
    *
    * A restart does not take the conversation, which the agent still has, and it no longer takes
@@ -6343,13 +6399,25 @@ const SCRIPT = `
    * recently active first — and so does each topic's kids.
    */
   function topicTree(list){
-    var byId={}, kids={}, roots=[], i;
+    var byId={}, kids={}, forks={}, roots=[], i;
     for(i=0;i<list.length;i++) byId[list[i].id]=list[i];
     for(i=0;i<list.length;i++){
-      var p=list[i].parent;
-      if(p && p!==list[i].id && byId[p]) (kids[p]=kids[p]||[]).push(list[i]); else roots.push(list[i]);
+      var p=list[i].parent, f=list[i].forkOf;
+      if(p && p!==list[i].id && byId[p]) (kids[p]=kids[p]||[]).push(list[i]);
+      // A fork (Topic.forkOf) is drawn right after its source, at its depth — beside it, not under
+      // it: it is the person's own conversation, which no agent opened. A root when its source is
+      // not in this list (a scheduled run's, or one the filter left out).
+      else if(f && f!==list[i].id && byId[f]) (forks[f]=forks[f]||[]).push(list[i]);
+      else roots.push(list[i]);
     }
-    return {visible:list, byId:byId, kids:kids, roots:roots};
+    return {visible:list, byId:byId, kids:kids, forks:forks, roots:roots};
+  }
+
+  /** Who a row hangs off in the drawn list: its parent, else the source it was forked from. */
+  function hangsOff(t, byId){
+    if(t.parent && byId[t.parent]) return t.parent;
+    if(t.forkOf && byId[t.forkOf]) return t.forkOf;
+    return null;
   }
 
   /**
@@ -6369,9 +6437,11 @@ const SCRIPT = `
    * it to those ids.
    */
   function treeWalker(tree){
-    var byId=tree.byId, kids=tree.kids;
-    var open={}, up=byId[topic], hops=0;
-    while(up && up.parent && byId[up.parent] && hops++<32){ open[up.parent]=true; up=byId[up.parent]; }
+    var byId=tree.byId, kids=tree.kids, forks=tree.forks||{};
+    // Up through sources as well as parents: a fork is drawn where its source is, so the topic on
+    // screen being a fork of a sub-agent's topic still opens the parent that topic is under.
+    var open={}, up=byId[topic], hops=0, next;
+    while(up && (next=hangsOff(up, byId)) && hops++<32){ if(up.parent===next) open[next]=true; up=byId[next]; }
     var rows=[], seen={};
     function state(t, depth){
       var ch=kids[t.id]||[], s='';
@@ -6390,16 +6460,22 @@ const SCRIPT = `
       var ch=kids[t.id]||[];
       var shut=ch.length>0 && folded[t.id]!==false && !open[t.id];
       rows.push({t:t, depth:depth, kids:ch.length, shut:shut, under:shut?state(t, 0):''});
-      if(shut) return;
-      for(var k=0;k<ch.length;k++) walk(ch[k], depth+1);
+      if(!shut) for(var k=0;k<ch.length;k++) walk(ch[k], depth+1);
+      // Its forks after it and everything under it, at its own depth, whether or not it is folded:
+      // folding hides what its agent opened, and a fork is not that.
+      var fk=forks[t.id]||[];
+      for(var j=0;j<fk.length;j++) walk(fk[j], depth);
     }
     function rest(keep){
       var list=tree.visible;
       for(var i=0;i<list.length;i++){
         if(keep && !keep[list[i].id]) continue;
         // Hidden under a folded parent is seen-by-design; only a loop leaves one unseen.
-        var hidden=false, a=list[i], n=0;
-        while(a && a.parent && byId[a.parent] && n++<32){ if(seen[a.parent] && folded[a.parent]!==false && !open[a.parent]){ hidden=true; break; } a=byId[a.parent]; }
+        var hidden=false, a=list[i], n=0, by;
+        while(a && (by=hangsOff(a, byId)) && n++<32){
+          if(a.parent===by && seen[by] && folded[by]!==false && !open[by]){ hidden=true; break; }
+          a=byId[by];
+        }
         if(!seen[list[i].id] && !hidden) walk(list[i], 0);
       }
     }
@@ -6438,7 +6514,9 @@ const SCRIPT = `
       var named=splitTitle(t.title || 'Untitled', t.dir && t.dir.host);
       if(named.tag) c.agents[named.tag.slice(1, -1)]=true;
       c.hosts[t.dir && t.dir.host ? t.dir.host : '__local']=true;
-      var ch=kids[t.id]||[];
+      // A fork belongs to its source's conversation here, as it is drawn beside it: a filter that
+      // keeps the source keeps the forks next to it.
+      var ch=(kids[t.id]||[]).concat(tree.forks[t.id]||[]);
       for(var k=0;k<ch.length;k++) mark(ch[k], id);
     }
     function start(t){
@@ -7165,6 +7243,7 @@ const SCRIPT = `
     idleBtn.textContent = 'Close idle ('+idle+')';
     idleCount.textContent = idle ? '('+idle+')' : '';
     var below = cur ? busyBelow(cur.id) : false;
+    paintForkNote(cur);
     if(cur){
       chatTitle.textContent=cur.title || 'Untitled';
       // Same order as the dot, and the same reason: during an ask the turn is still open, so
@@ -8717,9 +8796,16 @@ const SCRIPT = `
     var alive=0;
     for(var i=0;i<under.length;i++) if(under[i].live) alive++;
     var able=Boolean(t.live) || alive>0;
+    // Fork is offered while nothing is running here, which is the only time the daemon makes one
+    // (a copy taken mid-turn would hold half of that turn); greyed with that reason otherwise.
+    var busy=Boolean(t.running || t.asking);
     var items=[
       {key:'star', icon:IC.icon.star, label:t.starred?'Unstar':'Star',
        title:t.starred?'Stop keeping this topic through Clear and eviction':'Keep this topic through Clear and eviction'},
+      {key:'fork', icon:IC.icon.fork, label:'Fork', disabled:busy,
+       title:busy
+         ? 'A turn is running here — fork it once the turn ends'
+         : 'Copy this conversation into a new topic beside it: it carries on from here, and this one is unchanged (/fork)'},
       {key:'end', icon:IC.icon.power,
        label:'End agent'+(alive?' + '+alive+' sub-agent'+(alive===1?'':'s'):''),
        disabled:!able,
@@ -8733,6 +8819,7 @@ const SCRIPT = `
     ];
     openRowMenu(btn, btn.getAttribute('data-rm')||('topic:'+id), items, function(what){
       if(what==='star') starTopic(id);
+      else if(what==='fork') forkTopic(id);
       else if(what==='delete') deleteTopic(id);
       else if(what==='end') endTopic(id);
     });
@@ -8892,6 +8979,21 @@ const SCRIPT = `
   function topicById(id){
     for(var i=0;i<topics.length;i++){ if(topics[i].id===id) return topics[i]; }
     return null;
+  }
+
+  /**
+   * The menu's Fork: /fork, typed into that topic, so the daemon has one way to be told and the
+   * topic's transcript records it like any command. Into the topic on screen it goes through
+   * command(), bubble and all; into another it is posted with no bubble here — there is no transcript
+   * of that topic on screen to put one in — and its answer is in that topic, while the fork itself
+   * appears beside it in the list.
+   */
+  function forkTopic(id){
+    if(id===topic){ command('/fork'); return; }
+    var nonce=Math.random().toString(36).slice(2)+Date.now().toString(36);
+    post('api/send',{topic:id, text:'/fork', nonce:nonce},1).then(function(r){
+      if(!r.ok) alert('Could not fork that topic: the daemon refused the request.');
+    }, function(){ alert('Could not reach the server to fork that topic.'); });
   }
 
   // Not createTopic itself: a listener is handed the MouseEvent, which would arrive as a seed.
@@ -14072,6 +14174,9 @@ __GATE__
            only — committing stays in the conversation, where the agent can be asked what it meant. -->
       <button type="button" class="btn-icon" id="git-toggle" title="Changes in this directory" aria-label="Changes">${icon('git')}</button>
     </div>
+    <!-- A fork's source (Topic.forkOf), and the way back to it. Above the transcript, which is empty
+         at first: the fork holds the agent's context, not the messages. -->
+    <button type="button" id="fork-note" hidden></button>
     <div id="log"></div>
     <!-- A conversation from the History tab, in the transcript's place (openLib). Its own element
          rather than #log: the topic underneath keeps its stream, its messages and its place, and is

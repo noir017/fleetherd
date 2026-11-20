@@ -48,6 +48,8 @@ const PACING = {
   // keeps renameThread off the render chain precisely so a slow rename never delays a character
   // of the answer (see TurnRunner.buildStreamHandlers onTitle).
   createThread: 'unpaced',
+  // Opens a topic in the web UI's own list, like createThread above; nothing is posted to a chat.
+  forkThread: 'unpaced',
   renameThread: 'unpaced',
   // startTyping is paced but as its own class: it is dropped rather than queued (see laneOf).
   startTyping: 'write',
