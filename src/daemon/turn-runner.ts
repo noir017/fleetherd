@@ -22,6 +22,7 @@ import { promptUndelivered } from './agent.js';
 import { retryButtons } from '../core/turn-retry.js';
 import { undeliveredLine } from '../core/topic-stage.js';
 import { StreamBuffer } from '../core/stream-buffer.js';
+import type { OpenFence } from '../core/code-fence.js';
 import { ToolRenderer } from '../core/tool-renderer.js';
 import { describeOutboundError, MessageNotEditableError } from '../core/outbound-errors.js';
 import { outboundLane } from './paced-adapter.js';
@@ -1140,7 +1141,7 @@ export class TurnRunner {
   private buildStreamHandlers(
     conversationId: ConversationId,
     ref: TurnRef,
-    makeStream: () => StreamBuffer,
+    makeStream: (carry?: OpenFence) => StreamBuffer,
     tools: ToolRenderer,
     enqueue: (fn: () => Promise<void> | void) => void,
     /** Where a question to the user is posted — the lane this render is already writing to. */
@@ -1209,10 +1210,12 @@ export class TurnRunner {
         rollSegment(ref);
         // Tool→text boundary: finish the current (pre-tool) buffer, reset the tool segment, then start a
         // fresh buffer so trailing text goes to a new message (intermediate segments carry no footer).
+        // The fresh buffer carries on inside a code block the last one ended in: a harness may call
+        // a tool mid-block, and the new message must not open with that block's closing fence.
         enqueue(async () => {
           await ref.stream.complete();
           tools.resetSegment();
-          ref.stream = makeStream();
+          ref.stream = makeStream(ref.stream.openFence());
         });
       },
       // Agent reported available commands: forward to the daemon hook (feeds the harness pickers).
@@ -1307,7 +1310,7 @@ export class TurnRunner {
     seq: number,
     r: {
       ref: TurnRef;
-      makeStream: () => StreamBuffer;
+      makeStream: (carry?: OpenFence) => StreamBuffer;
       tools: ToolRenderer;
       enqueue: (fn: () => Promise<void> | void) => void;
       platform: PlatformAdapter;
@@ -1331,7 +1334,7 @@ export class TurnRunner {
       } catch (e) {
         console.warn(`[turn] ${conversationId}: could not send picture ${picture.name} from the agent:`, describeOutboundError(e));
       }
-      r.ref.stream = r.makeStream();
+      r.ref.stream = r.makeStream(r.ref.stream.openFence());
     });
   }
 
@@ -1356,10 +1359,17 @@ export class TurnRunner {
     // fresh buffer per segment — trailing text below a tool bubble goes to a new message, not editing the prior one.
     // Every message this render posts is remembered on `ref.lastRef`, so the turn's change entry
     // can hang off the reply it ended with instead of "whatever is newest in the topic" later.
-    const makeStream = (): StreamBuffer =>
-      this.makeStreamBuffer(platform, address, undefined, (r) => {
-        ref.lastRef = r;
-      });
+    // `carry` is the code fence the previous segment ended inside (StreamBuffer.openFence).
+    const makeStream = (carry?: OpenFence): StreamBuffer =>
+      this.makeStreamBuffer(
+        platform,
+        address,
+        undefined,
+        (r) => {
+          ref.lastRef = r;
+        },
+        carry
+      );
     // Tool bubbles are billed to the same per-chat budget as everything else, but in the lane that
     // may be dropped under congestion — see OutboundClass.
     const progressLane = outboundLane(platform, 'progress');
@@ -1855,7 +1865,9 @@ export class TurnRunner {
      */
     post?: (text: string) => Promise<MessageRef>,
     /** Told about every message this buffer posts, in order — the turn's reply-entry bookkeeping. */
-    onSent?: (ref: MessageRef) => void
+    onSent?: (ref: MessageRef) => void,
+    /** The code fence the previous message of this reply ended inside (StreamBuffer.openFence). */
+    carry?: OpenFence
   ): StreamBuffer {
     return new StreamBuffer(
       {
@@ -1906,7 +1918,8 @@ export class TurnRunner {
             throw e;
           }
         },
-      }
+      },
+      carry
     );
   }
 

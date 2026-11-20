@@ -45,6 +45,7 @@ conversation, not part of its name — see [`daemon/README.md`](../daemon/README
 | `inbound-gate.ts` | "Should we respond to this message?" — a pure decision tree |
 | `inbound-merger.ts` | Per-conversation state machine: coalesce bursts, hand mid-turn messages to the turn or queue them, `/stop` |
 | `stream-buffer.ts` | Outbound text: throttled in-place editing, chunking, backoff, degradation |
+| `code-fence.ts` | A fenced code block across a message boundary: which fence a text leaves open, closing it, carrying it into the next message |
 | `tool-renderer.ts` | Tool-call bubbles: 4 modes × 2 grouping strategies |
 | `outbound-pacer.ts` | One write budget per chat: token buckets, one FIFO, in-place edit coalescing |
 | `outbound-errors.ts` | The four failure classes the delivery layer needs from the platforms |
@@ -280,6 +281,14 @@ saw a reply truncated mid-sentence with a ✅ on it.
   are consumed, not sent, so no continuation opens with a blank line — in both modes and
   whatever sealed the previous message.
 - **`[SILENT]`** as the entire reply suppresses all output.
+- **A code block across buffers.** One buffer is one stretch of a reply between tool calls, and a
+  harness may call a tool in the middle of a code block — a browser-driven one reports a page's
+  steps wherever they fall. The final render closes a fence the text left open (so a footer after it
+  is not taken for code), and `TurnRunner` makes the next buffer with the previous one's
+  `openFence()`. That buffer drops the closing line its text starts with, or else reopens the block
+  with the same fence and info string (`code-fence.ts`). Until its first non-blank line is whole it
+  shows nothing, because a closer arrives one backtick at a time, and once it has decided its body
+  only grows. The sealed-prefix rule depends on that.
 
 ## `outbound-errors.ts`
 

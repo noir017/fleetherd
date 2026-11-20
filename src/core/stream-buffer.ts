@@ -1,4 +1,5 @@
 import type { MessageRef } from '../types.js';
+import { closeFence, continueFence, fenceAfter, type OpenFence } from './code-fence.js';
 import { MessageNotEditableError, retryAfterMsOf } from './outbound-errors.js';
 
 /**
@@ -53,6 +54,13 @@ import { MessageNotEditableError, retryAfterMsOf } from './outbound-errors.js';
  * refuses to leave text undelivered behind a failure it can route around — it seals and sends the
  * remainder instead. Overflow is split without breaking code fences.
  * `[SILENT]` as the whole reply suppresses all output.
+ *
+ * ── Code fences across buffers ──────────────────────────────────────────────────────────────────
+ *
+ * One buffer is one stretch of a reply between tool calls, and the stretch can end inside a code
+ * block. So the final render closes a fence the text left open, and a buffer made to continue that
+ * reply (`carry`, from the previous buffer's `openFence()`) starts inside the block again — see
+ * `code-fence.ts` for why and how.
  */
 
 /**
@@ -152,9 +160,22 @@ export class StreamBuffer {
 
   constructor(
     private readonly opts: StreamBufferOptions,
-    private readonly sink: StreamSink
+    private readonly sink: StreamSink,
+    /**
+     * The code fence the previous message of this reply ended inside (its buffer's `openFence()`),
+     * so this message carries on inside that block instead of opening one with its closing fence.
+     */
+    private readonly carry?: OpenFence
   ) {
     this.currentBackoff = opts.flushIntervalMs;
+  }
+
+  /**
+   * The code fence this buffer's text leaves open, if any — closed in its own final message, and
+   * what the buffer that continues the reply must be made with.
+   */
+  openFence(): OpenFence | undefined {
+    return fenceAfter(this.acc, this.carry);
   }
 
   /** Receive a text delta. */
@@ -177,7 +198,9 @@ export class StreamBuffer {
     if (this.aborted) return;
     if (this.isSilent()) return;
     const footer = opts?.footer;
-    if (footer && footer.length > 0 && this.acc.trim().length > 0) {
+    // Judged on what the message shows, not on what was pushed: a buffer that only closed the block
+    // the previous message left open shows nothing, and must not become a footer-only message.
+    if (footer && footer.length > 0 && this.body(true).trim().length > 0) {
       this.footer = footer;
     }
     await this.flush(/* final */ true);
@@ -194,6 +217,16 @@ export class StreamBuffer {
 
   private isSilent(): boolean {
     return this.acc.trim() === this.opts.silentToken;
+  }
+
+  /**
+   * The text this buffer's messages show: what was pushed, continuing a carried fence, and — on the
+   * final render — with a fence it leaves open closed, so the footer after it is not taken for code.
+   * Only grows from one call to the next while `acc` does, which the sealed-prefix rule relies on.
+   */
+  private body(final: boolean): string {
+    const body = continueFence(this.acc, this.carry, final);
+    return final ? closeFence(body) : body;
   }
 
   /** Dual-trigger check: char threshold OR time interval. `'once'` never flushes mid-turn. */
@@ -262,11 +295,13 @@ export class StreamBuffer {
     // 'once': nothing is written until the buffer completes (see the header comment).
     if (this.opts.mode === 'once' && !final) return;
 
-    // The footer joins only the final render; mid-stream is the raw accumulation.
-    const rendered = final && this.footer ? this.acc + '\n\n' + this.footer : this.acc;
+    // The footer joins only the final render; mid-stream is the body as it stands.
+    const body = this.body(final);
+    const rendered = final && this.footer ? body + '\n\n' + this.footer : body;
     if (rendered === '') return; // never pushed / empty body → don't send an empty message
 
-    // `acc` only grows and the footer is a suffix, so the sealed text stays a prefix of `rendered`.
+    // The body only grows, and the closing fence and the footer are suffixes, so the sealed text stays
+    // a prefix of `rendered`.
     // If a caller ever breaks that, re-deliver from scratch: a duplicated message beats a silently
     // dropped reply. Unreachable through push()/complete().
     if (!rendered.startsWith(this.sealedText)) {

@@ -1045,3 +1045,73 @@ describe('a backoff holds back the char threshold too, not just the timer', () =
     expect(sink.editAttempts).toBe(1);
   });
 });
+
+describe('StreamBuffer: a code block across buffers', () => {
+  const settle = async (): Promise<void> => {
+    for (let i = 0; i < 6; i++) await Promise.resolve();
+  };
+
+  it('the final message closes a block the text left open, before the footer', async () => {
+    for (const mode of ['once', 'live'] as const) {
+      const sink = makeSink();
+      const buf = new StreamBuffer(makeOpts({ mode, charThreshold: 1 }), sink);
+      await pushAndSettle(buf, sink, 'Roll back:\n```sh\nmv a b\n');
+      await buf.complete({ footer: 'cc · opus' });
+      await settle();
+      // Without the closer the footer rendered as the block's last line.
+      expect(visibleMessages(sink)).toEqual(['Roll back:\n```sh\nmv a b\n```\n\ncc · opus']);
+    }
+  });
+
+  it('reports the fence it leaves open, counting the one it was given', () => {
+    const sink = makeSink();
+    const first = new StreamBuffer(makeOpts(), sink);
+    first.push('text\n~~~~md\nsome');
+    expect(first.openFence()).toEqual({ marker: '~~~~', info: 'md' });
+    const next = new StreamBuffer(makeOpts(), sink, first.openFence());
+    expect(next.openFence()).toEqual({ marker: '~~~~', info: 'md' });
+    next.push('\n~~~~\nafter');
+    expect(next.openFence()).toBeUndefined();
+  });
+
+  it('a buffer that continues the block drops the closer it starts with', async () => {
+    const sink = makeSink();
+    const buf = new StreamBuffer(makeOpts({ mode: 'once' }), sink, { marker: '```', info: '' });
+    buf.push('```\n\nThe build passed.');
+    await buf.complete({ footer: 'gemini · Neon' });
+    await settle();
+    expect(visibleMessages(sink)).toEqual(['The build passed.\n\ngemini · Neon']);
+  });
+
+  it('a buffer that continues inside the block reopens it with its info string, and closes it at the end', async () => {
+    const sink = makeSink();
+    const buf = new StreamBuffer(makeOpts({ mode: 'once' }), sink, { marker: '```', info: 'yaml' });
+    buf.push('  - b\n  - c\n');
+    await buf.complete();
+    await settle();
+    expect(visibleMessages(sink)).toEqual(['```yaml\n  - b\n  - c\n```']);
+  });
+
+  it('live: holds the message back until its first line shows whether it closes the block', async () => {
+    const sink = makeSink();
+    const buf = new StreamBuffer(makeOpts({ charThreshold: 1 }), sink, { marker: '```', info: '' });
+    await pushAndSettle(buf, sink, '``');
+    await pushAndSettle(buf, sink, '`\n');
+    expect(sink.sends).toEqual([]);
+    await pushAndSettle(buf, sink, '\nDone');
+    await pushAndSettle(buf, sink, '.');
+    await buf.complete();
+    await settle();
+    expect(sink.sends).toEqual(['Done']);
+    expect(visibleMessages(sink)).toEqual(['Done.']);
+  });
+
+  it('a buffer that only closed the block sends nothing — not even its footer', async () => {
+    const sink = makeSink();
+    const buf = new StreamBuffer(makeOpts({ mode: 'once' }), sink, { marker: '```', info: '' });
+    buf.push('```\n');
+    await buf.complete({ footer: 'cc · opus' });
+    await settle();
+    expect(sink.sends).toEqual([]);
+  });
+});
