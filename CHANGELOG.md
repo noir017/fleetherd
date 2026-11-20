@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.22.0] - 2026-11-21
+
 ### Added
 
 - **Pictures in an agent's reply reach the chat.** An ACP agent can answer with an `image` block in
