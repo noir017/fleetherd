@@ -87,6 +87,53 @@ export interface QuotaMeter {
 }
 
 /**
+ * Parse stdout of `quotaCommand` (or `agy -p=/usage`) into QuotaPool[].
+ *
+ * Accepts either:
+ *   1. Standard JSON — `QuotaPool[]` or `{ pools: QuotaPool[] }` (remaining in [0, 1], resetsAt as
+ *      epoch ms or ISO-8601 string), so future agents are not tied to agy's table column names.
+ *   2. The 4-column TSV table printed by `agy -p=/usage` (via `parseAgyUsagePools`).
+ */
+export function parseQuotaOutput(output: string): QuotaPool[] | undefined {
+  const trimmed = output.trim();
+  if (!trimmed) return undefined;
+  if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
+    const json = parseJsonQuotaPools(trimmed);
+    if (json) return json;
+  }
+  return parseAgyUsagePools(trimmed);
+}
+
+function parseJsonQuotaPools(raw: string): QuotaPool[] | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
+  const list = Array.isArray(parsed)
+    ? parsed
+    : parsed && typeof parsed === 'object' && Array.isArray((parsed as { pools?: unknown }).pools)
+      ? (parsed as { pools: unknown[] }).pools
+      : undefined;
+  if (!list) return undefined;
+  const pools: QuotaPool[] = [];
+  for (const item of list) {
+    if (!item || typeof item !== 'object') continue;
+    const { id, remaining, resetsAt } = item as Record<string, unknown>;
+    if (typeof id !== 'string' || !id.trim() || typeof remaining !== 'number' || !Number.isFinite(remaining)) continue;
+    const pool: QuotaPool = { id: id.trim(), remaining: Math.min(1, Math.max(0, remaining)) };
+    if (typeof resetsAt === 'number' && Number.isFinite(resetsAt)) pool.resetsAt = resetsAt;
+    else if (typeof resetsAt === 'string') {
+      const at = Date.parse(resetsAt);
+      if (Number.isFinite(at)) pool.resetsAt = at;
+    }
+    pools.push(pool);
+  }
+  pools.sort((a, b) => a.id.localeCompare(b.id));
+  return pools.length ? pools : undefined;
+}
+/**
  * The quota pools, per source. Keyed by where the reading comes from: agy's quota belongs to whoever
  * agy is signed in as, so every conversation on a home shares one reading and the same HOME on two
  * hosts is two; a command is keyed by itself on top of that, since two agents on one home may ask
@@ -115,7 +162,7 @@ export function createQuotaMeter(runners: { agy?: AgyCliRunner; command?: QuotaC
             console.debug(`[acp] could not read the quota (${def.id}):`, r.error);
             return;
           }
-          const pools = parseAgyUsagePools(r.output);
+          const pools = parseQuotaOutput(r.output);
           if (pools) e.pools = pools;
           else if (def.quotaCommand && !e.warned) {
             // Once per source: a command printing the wrong shape would otherwise say so every minute.

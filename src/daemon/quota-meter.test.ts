@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { AgentDef } from '../config/schema.js';
 import type { AgyCliRunner } from './agy-cli.js';
 import { createQuotaMeter, hasQuotaSource, runQuotaCommand, runQuotaCommandFor, type QuotaCommandRunner } from './quota-meter.js';
+import { parseQuotaOutput } from './quota-meter.js';
 
 const def = (over: Partial<AgentDef> = {}) => ({ id: 'agy', harness: 'agy', env: { HOME: '/h' }, ...over }) as unknown as AgentDef;
 const OUT = 'Gemini Models\tWeekly Limit Remaining\t74%\t2026-11-07T04:24:11Z';
@@ -97,5 +98,24 @@ describe('runQuotaCommandFor', () => {
 
   it('refuses an agent that has none', async () => {
     expect((await runQuotaCommandFor(def(), '/w')).ok).toBe(false);
+  });
+});
+
+describe('parseQuotaOutput', () => {
+  it('parses generic JSON pool arrays with ISO or epoch reset times', () => {
+    const json = JSON.stringify([
+      { id: 'gemini-weekly', remaining: 0.98, resetsAt: '2026-11-24T10:55:01Z' },
+      { id: 'custom-1h', remaining: 0.5, resetsAt: 1795172100000 },
+    ]);
+    expect(parseQuotaOutput(json)).toEqual([
+      { id: 'custom-1h', remaining: 0.5, resetsAt: 1795172100000 },
+      { id: 'gemini-weekly', remaining: 0.98, resetsAt: Date.parse('2026-11-24T10:55:01Z') },
+    ]);
+  });
+
+  it('falls back to TSV parsing for agy-shaped tables including 1h windows', () => {
+    expect(parseQuotaOutput('Gemini Models\tOne Hour Limit Remaining\t80%\t2026-11-20T11:00:00Z')).toEqual([
+      { id: 'gemini-1h', remaining: 0.8, resetsAt: Date.parse('2026-11-20T11:00:00Z') },
+    ]);
   });
 });
