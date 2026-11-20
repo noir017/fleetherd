@@ -39,11 +39,10 @@ beforeEach(() => {
   logs = [];
 });
 
-afterEach(() => {
-  // Retried: a push the repository leaves running in the background (the kept branch's, in
-  // integrate) can still be writing into .git when a test ends, and rmdir then meets a file that
-  // arrived after the directory was listed — ENOTEMPTY, seen once in CI on 2026-11-06.
-  fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+afterEach(async () => {
+  // Async + retried: a push or queued sync cycle can still be writing into .git when a test ends;
+  // synchronous rmSync blocks the event loop so child exit callbacks cannot drain during retries.
+  await fs.promises.rm(tmp, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
 });
 
 /** Poll until `fn` holds, or fail naming what never happened. */
@@ -304,14 +303,16 @@ describe('SkillsRepo when the gateway\'s copy is the broken side', () => {
     await new Promise((resolve) => setTimeout(resolve, 150));
     expect(logs.filter((l) => /the sync cycle could not run/.test(l))).toHaveLength(1);
     stop();
+    await r.sync().catch(() => {});
 
-    fs.rmSync(root, { recursive: true, force: true });
+    await fs.promises.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
     prepareSkillsRepo(dir);
     stop = r.start(10);
     await until('a cycle to run again', () => logs.some((l) => /the sync cycle runs again/.test(l)));
     await new Promise((resolve) => setTimeout(resolve, 150));
     expect(logs.filter((l) => /the sync cycle runs again/.test(l))).toHaveLength(1);
     stop();
+    await r.sync().catch(() => {});
   });
 
   it('names a local git failure as the gateway\'s copy, not the remote as unreachable', async () => {
