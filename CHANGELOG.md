@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.18.0] - 2026-11-20
+
 ### Added
 
 - **The web UI's status line shows an agent's own settings beside the model.** An agent can offer
