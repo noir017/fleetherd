@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.17.4] - 2026-11-20
+
 ### Fixed
 
 - **Eliminate flaky `ENOTEMPTY` cleanup race in `skills-repo.test.ts`.** Drain queued sync cycles after stopping the timer and use async retries in `afterEach` so child git processes finish before the temp repo is removed.
