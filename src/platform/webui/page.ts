@@ -829,9 +829,11 @@ select.skill-field{appearance:auto}
 #git-sel button:hover{border-color:#3a3a3a;background:#2a2a2a}
 #git-diff{flex:1;min-height:0;overflow:auto;padding:8px}
 .git-patch{margin:0;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;line-height:1.5;white-space:pre;color:#c9c9c9}
-.git-patch .pa{color:#4ade80;background:rgba(74,222,128,.08)}
-.git-patch .pd{color:#f87171;background:rgba(248,113,113,.08)}
-.git-patch .ph{color:#7dd3fc}
+/* A patch's lines, as text: the panel's fallback and a diff fence in a reply alike, in the code
+   view's own added and removed colours (codeview/app.ts), so the three read as one thing. */
+.git-patch .pa,.cb .pa{color:#4ade80;background:rgba(74,222,128,.08)}
+.git-patch .pd,.cb .pd{color:#f87171;background:rgba(248,113,113,.08)}
+.git-patch .ph,.cb .ph{color:#7dd3fc}
 #git-comment{flex:none;border-top:1px solid var(--line);padding:8px 10px calc(8px + env(safe-area-inset-bottom,0px));display:flex;flex-direction:column;gap:6px}
 #git-comment[hidden]{display:none}
 #git-comment-what{font-size:11.5px;color:var(--dim);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;overflow-wrap:anywhere}
@@ -1197,8 +1199,38 @@ select.skill-field{appearance:auto}
 .b h1,.b h2,.b h3,.b h4,.b h5,.b h6{font-size:1em;font-weight:600;margin:.9em 0 .4em}
 .b blockquote{margin:.6em 0;padding-left:10px;border-left:2px solid var(--line);color:var(--dim)}
 .b ul,.b ol{margin:.4em 0;padding-left:1.4em}
+/* A task item (web-markdown.ts itemOpen): its box stands where the bullet was, so the text lines up
+   with the items around it. Ticked is the green a finished thing has everywhere else here. */
+.b li.task{list-style:none}
+.b .task-box{display:inline-block;width:1.4em;margin-left:-1.4em;color:var(--dim)}
+.b li.task.done>.task-box{color:#4ade80}
+/* A table scrolls sideways inside its frame (web-markdown.ts renderTable) rather than widening the
+   bubble on a phone. Its cells wrap at spaces only: a bubble breaks anywhere (.m), which in a
+   390px-wide table split "Before" and every path a letter at a time to make it fit, and the frame
+   is there so that it need not fit. A bare table is what a reply rendered before the frame existed
+   still carries, from the transcript on disk and the browser's cache: it keeps the block display
+   that made it scroll then. */
+.b .tbl{overflow-x:auto;margin:.6em 0;max-width:100%;overflow-wrap:normal}
 .b table{border-collapse:collapse;margin:.6em 0;font-size:13.5px;display:block;overflow-x:auto}
+.b .tbl>table{display:table;margin:0}
 .b th,.b td{border:1px solid var(--line);padding:4px 8px;text-align:left}
+/* A code block's frame (web-markdown.ts codeBlock): the bar and the pre share one border, and the
+   pre inside drops its own. The pre takes the code's own size: left at the bubble's 15px, its line
+   box is 24px around 12.5px text, which spread every block out and left a gap between the bands
+   of a patch's lines. The bar's buttons are dim until pointed at, like the rest of a reply's
+   chrome; 26px is a mouse target, and a phone gets more below. */
+.b .cb{margin:.6em 0;background:var(--field);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.b .cb pre{margin:0;border:0;border-radius:0;background:none;font-size:12.5px}
+.cb-h{display:flex;align-items:center;gap:2px;min-height:26px;padding:0 3px 0 10px;border-bottom:1px solid var(--line);color:var(--dim);font-size:11.5px}
+.cb-lang{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.cb-b{flex:none;display:inline-flex;align-items:center;justify-content:center;width:26px;height:24px;padding:0;border:0;border-radius:3px;background:none;color:var(--dim);font-size:14px;cursor:pointer}
+.cb-b:hover{color:var(--fg);background:rgba(255,255,255,.06)}
+.cb-b[aria-pressed="true"]{color:var(--fg);background:rgba(255,255,255,.08)}
+/* Wrap: long lines break inside the frame, anywhere, since a path or a minified line has no spaces. */
+.b .cb.wrap pre{white-space:pre-wrap;overflow-wrap:anywhere}
+/* A patch's lines (web-markdown.ts diffLines) take the whole width of the block, so an added or a
+   removed line reads as a band like the git panel's rather than as tinted words. */
+.cb .pa,.cb .pd{display:inline-block;min-width:100%;vertical-align:top}
 .b hr{border:0;border-top:1px solid var(--line);margin:1em 0}
 .b a{color:#8fa6c0}
 .q{margin:0 0 6px;padding-left:10px;border-left:2px solid var(--line);color:var(--dim);font-size:13px;max-height:4.8em;overflow:hidden}
@@ -1681,6 +1713,9 @@ button:disabled{opacity:.5;cursor:default}
      so the composer sits below the fold until the page is scrolled. dvh is the height actually
      on screen; the plain vh declaration above it stays as the fallback for older engines. */
   html,body{height:100vh;height:100dvh}
+  /* A code block's Wrap and Copy are tapped, not clicked: a finger needs more than the 26px a
+     pointer does, and the bar grows to hold them. */
+  .cb-b{width:36px;height:32px;font-size:16px}
   /* A column 240px wide leaves nothing of the chat on a 360px screen, so it becomes a drawer
      over it, dismissed by tapping the backdrop. Fixed rather than absolute so it tracks the
      visible viewport as the URL bar collapses instead of the taller page box behind it. The
@@ -4916,7 +4951,215 @@ const SCRIPT = `
     el.className = out.cls;
     el.innerHTML = out.h;
     sig[key] = out.h;
+    codeBlocks(el);
   }
+
+  // ── Code blocks (web-markdown.ts codeBlock) ────────────────────────────────
+  // A fence arrives as a frame: a bar with its language, Wrap and Copy, over the plain pre. The two
+  // buttons are answered here, and the colours are put on here, after the HTML has landed — the
+  // server sends no colours, because it has no grammar and the code view's are in the bundle.
+
+  /** Colouring a block longer than this would hold the page up for one block nobody reads whole. */
+  var HL_MAX = 20000;
+  /** How long after the last write the blocks still waiting are looked at again (hlSweep). */
+  var HL_IDLE_MS = 250;
+  /**
+   * Coloured code, by language and text, so the same fence drawn again — a reply re-rendered around a
+   * block that did not change, a topic opened again, the History tab — is coloured in the same task
+   * as its HTML is written, before the browser paints, instead of flashing plain while the grammar is
+   * asked again. Bounded, the least recently used out first (a Map keeps insertion order).
+   */
+  var hlCache = new Map(), HL_CACHE_MAX = 300;
+  /** Per language: the highlight function, null while its grammar loads, false for none. */
+  var hlFns = Object.create(null), hlWarned = false, hlTimer = 0;
+  /** Which code blocks have Wrap on, by message key and position, so a re-render keeps the choice. */
+  var cbWrapped = Object.create(null);
+
+  /** The language a code element was fenced as, from the class web-markdown.ts gives it; '' for none. */
+  function codeLang(code){
+    var m = /(?:^|\\s)language-(\\S+)/.exec(code.className || '');
+    return m ? m[1].toLowerCase() : '';
+  }
+
+  /**
+   * The message a running turn may still be writing: the newest in the transcript, while the topic's
+   * turn is running. Read off the topic's row (kept by the list and by typing events alike) rather
+   * than the typing line, which nothing resets when another topic is opened.
+   */
+  function liveEl(){
+    var running = false;
+    for(var i=0;i<topics.length;i++) if(topics[i].id===topic){ running = Boolean(topics[i].running); break; }
+    if(!running) return null;
+    for(var n = log.lastElementChild; n; n = n.previousElementSibling) if(n.hasAttribute('data-k')) return n;
+    return null;
+  }
+
+  /**
+   * Restore Wrap and colour the code blocks under root, right after its HTML was written.
+   *
+   * What can be done now is done now, in the same task as the write, so nothing flashes: a block
+   * coloured before (hlCache), and — once its grammar has loaded — any block in a message that has
+   * stopped changing. The rest waits for hlSweep: a grammar still loading, and the message a running
+   * turn is still writing. That one stays plain until the turn ends or a newer message takes its
+   * place, so a block being streamed is not re-coloured under the reader at every edit; the edits
+   * themselves already arrive settled (room.ts SETTLE_MS), never per token.
+   */
+  function codeBlocks(root){
+    if(!root || !root.querySelectorAll) return;
+    // Every write, code or not: a message arriving under the live one is what ends that one's turn
+    // to stay plain, and the sweep is what notices.
+    hlLater();
+    var frames = root.querySelectorAll('.cb'), i;
+    for(i=0;i<frames.length;i++){
+      var k = cbKey(frames[i]);
+      if(k && cbWrapped[k]) cbWrapSet(frames[i], true);
+    }
+    var codes = root.querySelectorAll('.cb pre>code[class*="language-"]');
+    if(!codes.length) return;
+    var live = liveEl();
+    for(i=0;i<codes.length;i++){
+      var host = codes[i].closest('[data-k]');
+      hlApply(codes[i], Boolean(live) && host === live);
+    }
+  }
+
+  /** Colour one code element if that can be done now. */
+  function hlApply(code, live){
+    if(code.hasAttribute('data-hl') || code.firstElementChild) return;
+    var lang = codeLang(code), src = code.textContent;
+    if(!lang || !src || src.length > HL_MAX) return;
+    var key = lang + '\\n' + src, spans = hlCache.get(key);
+    if(spans){
+      hlCache.delete(key);
+      hlCache.set(key, spans);
+      return hlPaint(code, src, spans);
+    }
+    if(live) return;
+    var fn = hlFns[lang];
+    if(fn === false) return;
+    if(!fn) return hlLoad(lang);
+    try { spans = fn(src); }
+    catch(e){ hlFns[lang] = false; return hlWarn(e); }
+    hlCache.set(key, spans);
+    if(hlCache.size > HL_CACHE_MAX) hlCache.delete(hlCache.keys().next().value);
+    hlPaint(code, src, spans);
+  }
+
+  /**
+   * The coloured text, built as text nodes and spans — never through innerHTML. The spans are offsets
+   * into the code's own text, so the element's text, and what Copy takes, is unchanged.
+   */
+  function hlPaint(code, src, spans){
+    var frag = document.createDocumentFragment(), at = 0;
+    for(var i=0;i<spans.length;i++){
+      var from = spans[i][0], to = spans[i][1];
+      if(!(from >= at && to > from && to <= src.length)) continue;
+      if(from > at) frag.appendChild(document.createTextNode(src.slice(at, from)));
+      var span = document.createElement('span');
+      span.className = String(spans[i][2]);
+      span.textContent = src.slice(from, to);
+      frag.appendChild(span);
+      at = to;
+    }
+    if(at < src.length) frag.appendChild(document.createTextNode(src.slice(at)));
+    code.textContent = '';
+    code.appendChild(frag);
+    code.setAttribute('data-hl', '');
+  }
+
+  /**
+   * Ask the code view for a language's grammar, once. No bundle, no grammar by that name, or a chunk
+   * that would not load all leave the block as it already is — plain, which is a complete answer —
+   * and only the last says so in the console, once per page.
+   */
+  function hlLoad(lang){
+    if(lang in hlFns) return;
+    hlFns[lang] = null;
+    codeView().then(function(cv){
+      return cv && typeof cv.highlighter === 'function' ? cv.highlighter(lang) : null;
+    }).then(function(fn){
+      hlFns[lang] = typeof fn === 'function' ? fn : false;
+      if(fn) hlSweep();
+    }, function(e){
+      hlFns[lang] = false;
+      hlWarn(e);
+    });
+  }
+  function hlWarn(e){
+    if(hlWarned) return;
+    hlWarned = true;
+    console.warn('a code language failed to load, showing plain text:', e);
+  }
+
+  /** Look at every waiting block again once the writes have stopped for a moment. */
+  function hlLater(){
+    clearTimeout(hlTimer);
+    hlTimer = setTimeout(hlSweep, HL_IDLE_MS);
+  }
+
+  /**
+   * Every place a reply's HTML is shown, looked at again: after a grammar has loaded, after a turn
+   * has ended, and a moment after the last write — which is when the message a newer one has just
+   * followed stops being the live one.
+   */
+  function hlSweep(){
+    clearTimeout(hlTimer);
+    var live = liveEl(), roots = [log, libLog, btwBody, readerBody, filesPreview];
+    for(var r=0;r<roots.length;r++){
+      if(!roots[r]) continue;
+      var codes = roots[r].querySelectorAll('.cb pre>code[class*="language-"]:not([data-hl])');
+      for(var i=0;i<codes.length;i++){
+        var host = codes[i].closest('[data-k]');
+        hlApply(codes[i], Boolean(live) && host === live);
+      }
+    }
+  }
+
+  /** Where a code block's Wrap is remembered: its message's key and its place in that message. */
+  function cbKey(frame){
+    var host = frame.closest('[data-k]');
+    if(!host) return null;
+    var all = host.querySelectorAll('.cb');
+    for(var i=0;i<all.length;i++) if(all[i] === frame) return host.getAttribute('data-k') + '#' + i;
+    return null;
+  }
+  function cbWrapSet(frame, on){
+    frame.classList.toggle('wrap', on);
+    var b = frame.querySelector('.cb-b[data-cb="wrap"]');
+    if(b) b.setAttribute('aria-pressed', on ? 'true' : 'false');
+  }
+
+  /**
+   * Copy the code — the code element's text, which the colouring never changes — and say so on the
+   * button for a moment: a copy that only changed the clipboard looks like a tap that did nothing.
+   */
+  function cbCopy(btn, s){
+    copyText(s, function(ok){
+      var say = ok ? 'Copied' : 'Could not copy \\u2014 select the code instead';
+      btn.innerHTML = ok ? IC.icon.check : IC.icon.cross;
+      btn.title = say;
+      btn.setAttribute('aria-label', say);
+      clearTimeout(btn._copyTimer);
+      btn._copyTimer = setTimeout(function(){
+        btn.innerHTML = IC.icon.copy;
+        btn.title = 'Copy';
+        btn.setAttribute('aria-label', 'Copy code');
+      }, 1500);
+    });
+  }
+
+  // Delegated on the document: a code block can be in the transcript, the History tab, a side
+  // answer's card, the file reader or the file window's preview, and its markup is the same in all.
+  document.addEventListener('click', function(e){
+    var b = e.target && e.target.closest ? e.target.closest('.cb-b[data-cb]') : null;
+    var frame = b ? b.closest('.cb') : null;
+    var code = frame ? frame.querySelector('pre>code') : null;
+    if(!code) return;
+    if(b.getAttribute('data-cb') === 'copy') return cbCopy(b, code.textContent);
+    var on = !frame.classList.contains('wrap'), k = cbKey(frame);
+    cbWrapSet(frame, on);
+    if(k){ if(on) cbWrapped[k] = 1; else delete cbWrapped[k]; }
+  });
 
   /**
    * The kinds drawn as a marked bubble — a rail, and this tag — rather than as the agent talking:
@@ -5074,7 +5317,7 @@ const SCRIPT = `
         : '<span class="set-spin" aria-hidden="true"></span>Asking a copy of this conversation\\u2026') + '</div>';
     }
     var stick = btwBody.scrollHeight - btwBody.scrollTop - btwBody.clientHeight < 40;
-    if(h !== btwSig){ btwBody.innerHTML = h; btwSig = h; }
+    if(h !== btwSig){ btwBody.innerHTML = h; btwSig = h; codeBlocks(btwBody); }
     if(top) btwBody.scrollTop = 0;
     else if(stick) btwBody.scrollTop = btwBody.scrollHeight;
   }
@@ -8307,6 +8550,8 @@ const SCRIPT = `
         }
       }
       paintTopics();
+      // The turn's last message is no longer being written: its code blocks are coloured now.
+      if(!ev.on) hlSweep();
       // A turn just ended — the moment its changes are all on disk. The git window, if it is
       // open on this topic, re-reads the list; an open diff is left where the reader put it. In
       // Commits it re-reads the history, which a turn that committed something has changed.
@@ -9571,6 +9816,7 @@ const SCRIPT = `
     // One write for the whole conversation: it arrives whole, and up to 500 nodes appended one at a
     // time would lay the page out 500 times.
     libLog.innerHTML = h;
+    codeBlocks(libLog);
     var nodes = libLog.querySelectorAll('[data-k]');
     for(i=0;i<nodes.length;i++) libEls[nodes[i].getAttribute('data-k')] = nodes[i];
     // A read the store cut short says so, beside where the reader lands: the bottom of what was
@@ -9590,6 +9836,7 @@ const SCRIPT = `
     var out = msgMarkup(key, m, false);
     el.className = out.cls;
     el.innerHTML = out.h;
+    codeBlocks(el);
   }
 
   /**
@@ -9737,6 +9984,7 @@ const SCRIPT = `
    *     → {getDoc(), setDoc(doc), focus(), destroy()}
    *   diff(parent, {name, original, modified, layout: 'unified'|'split', onSelect?(sel|null)})
    *     → {setLayout(layout), destroy()}     sel = {side: 'old'|'new', from, to, text}, lines from 1
+   *   highlighter(lang) → Promise<null | (code) → [[from, to, classes], ...]>   (a fence's colours)
    *
    * window.__fhCodeView is the seam, and it is checked first: page.dom.test.ts puts a fake there.
    *
@@ -9779,6 +10027,7 @@ const SCRIPT = `
   var readSeq = 0, readerEditor = null;
   function readerDoc(note, html){
     readerBody.innerHTML = note + '<div class="b">' + html + '</div>';
+    codeBlocks(readerBody);
     readerBody.scrollTop = 0;
   }
   function readerDropEditor(){
@@ -12097,6 +12346,7 @@ const SCRIPT = `
       filesPreview.innerHTML = res.body.html
         ? '<div class="b">' + res.body.html + '</div>'
         : '<div class="skills-empty">Nothing to render.</div>';
+      codeBlocks(filesPreview);
       filesPreview.hidden = false;
       filesEditor.hidden = true;
       filePreviewing = true;

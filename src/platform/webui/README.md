@@ -1009,6 +1009,66 @@ matters here is the page's half:
   contains the other's edits. Splitting them would need a barrier across agents; the honest answer
   is the one in [docs/web-ui.md](../../../docs/web-ui.md).
 
+## Code blocks in a reply
+
+A fence reaches the page from `web-markdown.ts` `codeBlock` already framed: a bar with the language,
+**Wrap** and **Copy** (`data-cb`), over the `<pre><code class="language-…">`. The buttons are
+markup from the server, icons and all, for the reason a tool bubble's icons are: a reply's HTML
+lands in the transcript, the History tab, a side answer's card, the file reader and the file
+window's preview, and markup written once is right in all five. The page answers them in one
+click handler on the document. Copy takes the `<code>` element's `textContent` — exactly the
+fence's text, whatever has been drawn over it since — through `copyText`, with the check mark the
+skills page uses. Wrap is a class on the frame, remembered by message key and block position
+(`cbWrapped`) so an edit rewriting the message does not undo it.
+
+A ```` ```diff ```` / ```` ```patch ```` fence is coloured on the server, line by line by its first
+character (`diffLines`, the git panel fallback's rule and classes): it needs no grammar, so it is
+coloured while it streams and on a page with no bundle.
+
+Every other language is coloured on the page by the code view's own grammars and palette —
+`highlighter(lang)` in `codeview/app.ts`, reached through `codeView()` like the editor. It returns
+spans (`[from, to, classes]`) from a static parse; the page builds the coloured text itself as text
+nodes and spans (`hlPaint`), never through innerHTML, so the agent's text cannot become markup on
+this side of the boundary either. Six decisions:
+
+- **It is not gated on the file window.** `/assets/` and `CODEVIEW` depend only on the asset build
+  (`server.ts` `servedPage`), not on `files.enabled`, so the default configuration colours code.
+  A source checkout without `npm run build:assets` has no bundle, and code stays plain.
+- **The message a running turn is writing stays plain** (`liveEl`: the newest message of the
+  topic, while its row says `running`). It is coloured when the turn ends (the `typing` event) or
+  when a newer message follows it (the sweep below). Edits arrive settled anyway (`room.ts`
+  `SETTLE_MS`, never per token), so this is not about cost: re-colouring the block a person is
+  reading at every edit is what it avoids. The row rather than `#typing`, which nothing resets when
+  another topic is opened.
+- **Nothing flashes on a re-render.** `paint` writes a message's HTML only when it changed, and every
+  write runs `codeBlocks` in the same task, before the browser paints: a block coloured before is
+  coloured again from `hlCache` (by language and text, 300 entries, least recently used out), and a
+  changed block in a settled message is coloured at once when its grammar is already loaded.
+- **What has to wait is swept.** A grammar still loading, a message that has just stopped being the
+  live one: `hlSweep` looks at every uncoloured block in the five places above, after a grammar
+  loads, when a turn ends, and 250ms after the last write (`HL_IDLE_MS`).
+- **Each grammar is asked for once** (`hlFns`); no grammar by that name, or a chunk that would not
+  load, leaves the block plain — a complete answer — and the second says so in the console once
+  per page. A block over 20 000 characters (`HL_MAX`) is left plain rather than held up for.
+- **The palette is mounted by the bundle.** `HighlightStyle` keeps its colours in a style module an
+  editor mounts when it is created; with no editor open its classes would style nothing, so
+  `highlighter` puts the module's rules in a `<style>` once (the CSP admits inline style).
+
+The first coloured block downloads the shared CodeMirror chunks and the grammar (about 130 KB
+gzipped for a `.ts` fence, measured on the 2026-11-20 build), once per page: the names are content
+hashes served `immutable`.
+
+A table comes in a `.tbl` frame that scrolls sideways, and its cells wrap at spaces only — the
+bubble's `overflow-wrap:anywhere` broke "Before" and every path a letter at a time to fit a phone.
+A task item (`- [ ]` / `- [x]`) is drawn with the `boxOff` / `boxOn` icons where the bullet was, and
+is not clickable: ticking it would change nothing the agent can see.
+
+Checked in Chromium on 2026-11-20 at 1280 and 390 px against the real `WebRoom` and server with the
+built bundle (`project-scripts/fleetherd-webui-md/`): blocks coloured, Copy putting the exact text
+on the clipboard with its check mark, Wrap, the patch bands, the table frame scrolling with nothing
+else overflowing, a running topic's newest block plain until a newer message and then the turn's
+end coloured it, and no console errors.
+
 ## Tool bubbles
 
 A tool bubble (`core/tool-renderer.ts`) reaches every adapter as plain text, one
@@ -2116,9 +2176,10 @@ there is no bundle or the bundle would not load; the reader then keeps the `<pre
 already sent, which is a complete answer rather than an error state.
 
 ```js
-codeView(): Promise<{ editor, diff } | null>
+codeView(): Promise<{ editor, diff, highlighter } | null>
 editor(parent, { doc, name, readOnly?, onChange?, onSave? }) → { getDoc, setDoc, focus, destroy }
 diff(parent, { name, original, modified, layout, onSelect? }) → { setLayout, destroy }
+highlighter(lang) → Promise<null | (code) → [[from, to, classes], …]>   // a reply's fence, see "Code blocks in a reply"
 ```
 
 Five things about it are decisions, not detail:
@@ -2423,6 +2484,14 @@ decision above, each fail a test there (`project-scripts/talkcode-history-tab/mu
 The terminal panel is driven there too: it docks under the composer with the transcript still
 painted, a drag on its divider is the height it writes to `aa_term_h` and reads back on the next
 page, the arrow keys and a double-click move it, and a topic switch leaves the frame mounted.
+
+So are [code blocks](#code-blocks-in-a-reply), through a fake `highlighter` on `__fhCodeView`: Copy
+and its check, Wrap surviving an edit, a finished reply coloured with its text unchanged, markup in
+the code staying text, one request per language, a language with no grammar and a patch left as
+they came, a running turn's newest message held plain until the turn ends or a newer one follows,
+a re-render coloured again in the same task without a second parse, a failed grammar warned about
+once, a page with no bundle, and the file reader. Ten mutations of page.ts, one per decision in that
+section, each fail one of them.
 
 Four things about it that are not obvious:
 
