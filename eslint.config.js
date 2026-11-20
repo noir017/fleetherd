@@ -24,7 +24,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ['src/**/*.test.ts'],
+    files: ['src/**/*.test.ts', 'src/**/*.test-helpers.ts'],
     rules: {
       '@typescript-eslint/no-explicit-any': 'off',
       'max-lines-per-function': 'off',

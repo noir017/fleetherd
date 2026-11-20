@@ -27,7 +27,7 @@
     "stop": "node scripts/stop.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p src/platform/webui/codeview/tsconfig.json",
     "test": "vitest run",
-    "test:coverage": "vitest run --coverage --exclude src/platform/webui/page.dom.test.ts && vitest run src/platform/webui/page.dom.test.ts",
+    "test:coverage": "vitest run --coverage --exclude 'src/platform/webui/page.dom.*.test.ts' && vitest run src/platform/webui/page.dom.*.test.ts",
     "lint": "eslint .",
     "start": "node dist/cli.js start",
     "release": "node scripts/release.mjs",
