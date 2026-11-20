@@ -221,7 +221,7 @@ else to say it), and the row used to draw that tag inside the one ellipsised tit
 frame's top-left edge, its background split at the border line — `--behind`, the colour behind the
 row, above it, `--row-bg` below — so the line reads as broken by the name and follows hover, the
 selected row and the green needs-you rows by itself. The lists of topic rows (`#topics`, the
-Sessions tab's `.sess-group-rows`, a task page's `.tp-topics`) are 11px apart to make room; a task
+Sessions tab's `.sess-group-rows`, a task page's `.tp-topics`) are 6px apart to clear the legend; a task
 row has no agent and keeps the plain shape. Which agent comes from the same lookup as the directory
 (`ConversationWorkdir.agent` → `Topic.agent`, memoised and polled with it): the binding and its
 harness, absent while nothing is bound, where the directory falls back to the default agent's —

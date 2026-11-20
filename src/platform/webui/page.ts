@@ -270,9 +270,9 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 .topics-empty .fb-clear{margin-left:auto;background:none;border:0;color:#38bdf8;font:inherit;font-size:12px;cursor:pointer;padding:2px 4px;border-radius:3px}
 .topics-empty .fb-clear:hover{text-decoration:underline}
 
-/* 11px between rows, and 12px above the first, because a topic row's agent legend (.agent-tag) stands
-   6px proud of the row's top edge: at the 3px this list had, it sat on the row above. */
-#topics{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:11px;padding:12px 8px 8px}
+/* 6px between rows, and 10px above the first, because a topic row's agent legend (.agent-tag) stands
+   6px proud of the row's top edge: 6px clears the row above without overlapping it. */
+#topics{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:6px;padding:10px 8px 8px}
 /* One row shape for every list on the page: the topic list, a scheduled task and a scheduled run
    are all "a dot, a name, a line under it, and a ⋯". Only #topics' own decorations (the needs
    block, the sub-agent staircase, the star) stay scoped to it below.
@@ -451,9 +451,10 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 #app.calm .topic-dot.running{animation:none}
 #app.calm .topic-badge{background:#2a2a2a;color:#8a8a8a;font-weight:500}
 /* The rule midway between the last row that needs you and the agent legend standing above the next
-   row: the gap is 11px plus this margin, and the legend's top is 6px above the row's edge. */
+   row: the gap is 6px plus this margin (13px total), and the legend's top is 6px above the row's
+   edge, leaving 3px on each side of the 1px rule. */
 #topics .topic-item.after-needs{margin-top:7px}
-#topics .topic-item.after-needs::before{content:'';position:absolute;left:9px;right:9px;top:-13px;border-top:1px solid var(--line)}
+#topics .topic-item.after-needs::before{content:'';position:absolute;left:9px;right:9px;top:-11px;border-top:1px solid var(--line)}
 /* The last row of a panel: the topic sidebar's two menus, the scheduled panel's two tabs.
    Same border, padding, type size and height on both sides, so the two columns end on the
    same line. A size container so the words can give way to their glyphs when the sidebar
@@ -632,7 +633,7 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 .sess-group-flag.asking{color:#fbbf24}
 .sess-group-flag.running{color:#38bdf8}
 /* Topic rows, so the same room for their agent legends as #topics, under the header too. */
-.sess-group-rows{display:flex;flex-direction:column;gap:11px;padding:9px 0 4px}
+.sess-group-rows{display:flex;flex-direction:column;gap:6px;padding:8px 0 4px}
 /* A task, as the Tasks tab draws it: the same row every list uses, with the schedule on its hover
    card and on the task's page rather than on the row, because a cron expression is the one thing
    on a task nobody reads at a glance. A tap opens that page (#task-page). */
@@ -740,7 +741,7 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 .tp-locked{margin-top:10px;font-size:12px;color:#fbbf24;overflow-wrap:anywhere}
 .tp-list{margin-top:6px;display:flex;flex-direction:column;gap:2px}
 /* The task's sessions are topic rows, legends and all, on the window's own background. */
-.tp-list.tp-topics{margin-top:12px;gap:11px;--behind:var(--bg)}
+.tp-list.tp-topics{margin-top:10px;gap:6px;--behind:var(--bg)}
 .tp-run{display:flex;align-items:flex-start;gap:8px;padding:6px 9px;border-radius:5px;font-size:12px;line-height:1.45}
 .tp-run:hover{background:#1e1e1e}
 .tp-run>.topic-dot{margin-top:5px}

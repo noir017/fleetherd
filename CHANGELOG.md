@@ -5,6 +5,13 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **Tightened topic row spacing in the web UI from 11px to 6px.** The 11px gap introduced with
+  the framed agent legend left 5px of extra whitespace above each 6px-tall protruding legend; 6px
+  clears the row above without overlap while keeping the list compact, with the top padding and
+  the needs-you divider adjusted to match.
+
 ## [3.21.0] - 2026-11-21
 
 ### Added
