@@ -108,13 +108,20 @@ describe('webui page', () => {
     expect(html).toContain('.topic-item.running');
   });
 
-  it('fades the agent tag with its row instead of pinning it to one grey', () => {
-    // A fixed #6b7683 was tuned against an idle title and read as disabled beside the
-    // #dcdcdc/#fff of a running or selected one. Inheriting the title's colour keeps the tag
-    // one step below whichever state the row is in. Asserted as text: jsdom resolves neither
-    // opacity blending nor an inherited colour from a class rule.
-    expect(html).toContain('.topic-tag{color:inherit;opacity:');
-    expect(html).not.toMatch(/\.topic-tag\{color:#/);
+  it('draws the agent legend on the frame line, in its harness colour, with no grey of its own per state', () => {
+    // The legend sits on the row's top border. Its background is split at that line — what is
+    // behind the row above, the row's own colour below — so the border reads as broken by the name,
+    // and it follows hover, the selected row and the green needs-you rows through --row-bg.
+    // Asserted as text: jsdom computes no gradient, no custom property and no color-mix.
+    expect(html).toContain('background:linear-gradient(to bottom,var(--behind,#171717) 50%,var(--row-bg) 50%)');
+    expect(html).toContain('.agent-tag{position:absolute;top:-7px;left:7px;');
+    // One palette for the agent cards' dots and the legend: a harness colour is written once.
+    expect(html).toContain('.ac-dot.h-claude,.agent-tag.h-claude{--hc:#d97757}');
+    expect(html).toContain('.ac-dot{flex:none;width:7px;height:7px;border-radius:50%;background:var(--hc,#6b6b6b)}');
+    expect(html).not.toMatch(/\.ac-dot\.h-[a-z]+\{background:/);
+    // The selected row's legend is a step brighter, mixed from the same colour rather than a second palette.
+    expect(html).toContain('.topic-item.on .agent-tag{color:color-mix(in srgb,var(--hc,#8d8d8d) 72%,#fff)}');
+    expect(html).not.toContain('.topic-tag');
   });
 
   it('has a scheduled-task panel of its own, opened from the chat header', () => {

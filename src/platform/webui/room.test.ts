@@ -1854,6 +1854,36 @@ describe('WebRoom: which directory a topic is working in', () => {
     expect(room.topicList().find((t) => t.id === topic)?.dir).toEqual({ name: 'workspace', path: '/home/user/workspace' });
   });
 
+  it('carries the bound agent beside the directory, and none when the daemon names none', () => {
+    // The row's legend and its colour come from here, not from the title's "[agent]".
+    const { room, topic } = attached();
+    room.useWorkdirLookup(() => ({ path: '/home/user/workspace', host: 'devbox', agent: { id: 'cbc@devbox', harness: 'custom' } }));
+    const row = room.topicList().find((t) => t.id === topic);
+    expect(row?.agent).toEqual({ id: 'cbc@devbox', harness: 'custom' });
+    expect(row?.dir).toEqual({ name: 'workspace', path: '/home/user/workspace', host: 'devbox' });
+
+    // Nothing bound yet: absent, not a guess.
+    room.useWorkdirLookup(() => ({ path: '/home/user/workspace' }));
+    expect(room.topicList().find((t) => t.id === topic)).not.toHaveProperty('agent');
+  });
+
+  it('announces an agent moving under the same directory, through the liveness poll', () => {
+    // `/agent cx` in a topic whose directory stays put: the flags the poll compares must include the
+    // agent, or the legend would name the old one until something else announced the list.
+    vi.useFakeTimers();
+    const { room, topic, seen, list } = attached();
+    let agent = { id: 'cc', harness: 'claude' };
+    room.useWorkdirLookup(() => ({ path: '/srv/a', agent }));
+    room.useLivenessLookup(() => false);
+    vi.advanceTimersByTime(60_000);
+    seen.length = 0;
+
+    agent = { id: 'cx', harness: 'codex' };
+    vi.advanceTimersByTime(60_000);
+    expect(listEvents(seen).length).toBeGreaterThan(0);
+    expect(list().find((t) => t.id === topic)?.agent).toEqual({ id: 'cx', harness: 'codex' });
+  });
+
   it('asks the daemon at the address of the topic, not of the channel', () => {
     // The lookup crosses back into the conversation store, which separates lanes — handing it
     // the channel would give every topic the directory of whichever one happened to be first.

@@ -5,6 +5,23 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **The web UI's topic rows name their agent on the row's frame, and the title line is the subject
+  alone.** The agent used to open every title as `[cc] ` or `[gemini-task] `, which took its width
+  out of the one line a 240px column gives a title — a long agent id left a few characters of the
+  subject. Each topic row now has a faint frame, with the agent id sitting on its top-left edge like
+  a legend, in the colour of its harness (the agent cards' palette: Claude Code orange, Codex green,
+  Antigravity blue, and so on; a custom agent is grey), a step brighter on the topic on screen. The
+  id loses `@host` when the line below already names that machine, as the title's tag did, and the
+  whole id is on its tooltip. The label shows the agent the topic is bound to now — the daemon says
+  so with each topic — rather than the one it was named under, so a topic handed to another agent
+  with `/agent` stops naming the old one; the Agent filter and the search follow it. Stored topic
+  names are unchanged (the chat platforms' topic names still carry the tag), and the conversation
+  header still shows the full name. The same rows appear in the side panel's Sessions tab and on a
+  task's page, which now shows each run's agent too. Rows are 11px apart instead of 3px to make room
+  for the legend.
+
 ## [3.19.0] - 2026-11-20
 
 ### Added

@@ -65,8 +65,9 @@ command for them.
 **Topics.** The sidebar on the left lists parallel conversations and switches between them,
 the same way a Telegram forum topic or a Feishu 话题 does: each has its own agent
 session and its own context, and each gets named automatically from what it turned
-out to be about. A title opens with the agent that answers it in brackets — just the id, since
-the machine is named on the line below — and hovering the title shows the whole name. `+` opens
+out to be about. The agent that answers a topic sits on the top-left edge of its row, in the colour
+of its harness — just the id, since the machine is named on the line below — and hovering it shows
+the whole id; the title line is the subject alone. `+` opens
 one; the agent can open one itself with
 `fleetherd create-thread`, and write into one with `--channel main/<topic id>`. Under each
 title is the directory the topic works in, led by the machine when its agent runs on a
@@ -86,7 +87,7 @@ running turn is interrupted on purpose. Every conversation is kept, and the next
 lit star at its end even when you are not hovering: a marker, not a button. Drag its right
 edge to make it wider or narrower — the width is kept in this browser — and double-click the edge
 for the default. On a narrow screen it becomes a drawer. Above the list, a search field and
-**Filter** narrow it: the search matches the title, the agent tag, the directory name, its full
+**Filter** narrow it: the search matches the title, the agent, the directory name, its full
 path and the machine, word by word, and a row of four state chips under the search — **Needs
 you**, **Running**, **Idle**, **No agent** — is always on screen. **Filter** holds the rest: star,
 agent and host. Several values in one group widen the result, values in different groups narrow

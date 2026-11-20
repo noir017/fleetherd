@@ -1888,33 +1888,120 @@ describe('webui page: topics', () => {
     ]);
   });
 
-  it('shortens a host-qualified agent tag once the row already names the machine', async () => {
-    // A remote agent's id is `<id>@<host>`, and `formatLaneTitle` puts that id in front of every
-    // topic name. Left whole it is 15 characters of a 240px column spent on a machine the
-    // directory line repeats, which left rows reading "[cbc@uniagent] Deploy A…" (reported
-    // 2026-11-03). The part before the `@` is what the operator types to bind the agent.
+  it('names the agent on the row frame, in its harness colour, and leaves the title line to the subject', async () => {
+    // "[gemini-task] " in front of every title took the one ellipsised line a 240px column has, and
+    // left a subject of a few characters. The stored name keeps its tag (the chat platforms' topic
+    // names need it); the row draws the agent as a legend on its frame instead.
     const h = await open({ url: 'http://localhost:8787/?t=a1b2c3d4' });
     await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4']));
 
     await h.emit({
       t: 'topics',
       topics: [
-        { id: 'a1b2c3d4', title: '[cbc@uniagent] Deploy A…', lastAt: 1000, msgCount: 0, dir: { name: 'workspace', path: '/home/user/workspace', host: 'uniagent' } },
-        // No directory known, so the second line cannot say which machine this is: the tag keeps
-        // its host, because it is the only place on the row that names it.
-        { id: 'b2c3d4e5', title: '[ag@devbox] 你好', lastAt: 999, msgCount: 0 },
+        { id: 'a1b2c3d4', title: '[cc] parse the config', lastAt: 1000, msgCount: 0, agent: { id: 'cc', harness: 'claude' } },
+        { id: 'b2c3d4e5', title: '[gemini-task] 工具访问权限限制排查', lastAt: 999, msgCount: 0, agent: { id: 'gemini-task', harness: 'custom' } },
+        { id: 'c3d4e5f6', title: '[ag] 调研', lastAt: 998, msgCount: 0, agent: { id: 'ag', harness: 'agy' } },
       ],
     });
 
-    const titles = Array.from(h.doc.querySelectorAll('.topic-title'));
-    expect(titles.map((t) => t.textContent)).toEqual(['[cbc] Deploy A…', '[ag@devbox] 你好']);
-    // Nothing is lost: the name the tag was cut from is on the tag itself, where the abbreviation
-    // is, so the row's own tooltip (what a needs-you row says) still covers the rest of the row.
-    expect(titles[0]!.querySelector('.topic-tag')?.getAttribute('title')).toBe('[cbc@uniagent] Deploy A…');
-    expect(titles[1]!.querySelector('.topic-tag')?.getAttribute('title')).toBeNull();
+    const rows = Array.from(h.doc.querySelectorAll('#topics .topic-item'));
+    expect(rows.map((r) => r.querySelector('.topic-title')?.textContent)).toEqual(['parse the config', '工具访问权限限制排查', '调研']);
+    const tags = rows.map((r) => r.querySelector('.agent-tag'));
+    expect(tags.map((t) => t?.textContent)).toEqual(['cc', 'gemini-task', 'ag']);
+    // The class is the configured harness, which the stylesheet's palette keys on; a custom harness
+    // gets its class too and simply has no colour there, so it stays grey.
+    expect(tags.map((t) => t?.className)).toEqual(['agent-tag h-claude', 'agent-tag h-custom', 'agent-tag h-agy']);
+    expect(tags.map((t) => t?.getAttribute('title'))).toEqual(['Agent: cc', 'Agent: gemini-task', 'Agent: ag']);
+    // Outside the title, so it takes none of the line it used to.
+    expect(rows[0]!.querySelector('.topic-title .agent-tag')).toBeNull();
+    expect(rows.every((r) => r.classList.contains('framed'))).toBe(true);
   });
 
-  it('leaves the needs-you tooltip alone on a row whose tag was shortened', async () => {
+  it('labels the agent the daemon says is bound, not the one the title was named under', async () => {
+    // The tag is written when the topic is named and a later /agent does not rewrite it, so a topic
+    // named under cc and handed to cx would go on saying cc.
+    const h = await open({ url: 'http://localhost:8787/?t=a1b2c3d4' });
+    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4']));
+    await h.emit({
+      t: 'topics',
+      topics: [{ id: 'a1b2c3d4', title: '[cc] 修 history 搜索', lastAt: 1000, msgCount: 0, agent: { id: 'cx', harness: 'codex' } }],
+    });
+
+    const tag = h.doc.querySelector('#topics .agent-tag');
+    expect(tag?.textContent).toBe('cx');
+    expect(tag?.className).toBe('agent-tag h-codex');
+    expect(h.doc.querySelector('#topics .topic-title')?.textContent).toBe('修 history 搜索');
+  });
+
+  it('falls back to the title tag, uncoloured, when the daemon names no agent, and draws none when nothing does', async () => {
+    // A topic whose agent left config, or a page served by a daemon without the lookup: the tag the
+    // topic was named under is still the best answer, but it carries no harness.
+    const h = await open({ url: 'http://localhost:8787/?t=a1b2c3d4' });
+    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4']));
+    await h.emit({
+      t: 'topics',
+      topics: [
+        { id: 'a1b2c3d4', title: '[ag] 开工', lastAt: 1000, msgCount: 0 },
+        { id: 'b2c3d4e5', title: '', lastAt: 999, msgCount: 0 },
+        { id: 'c3d4e5f6', title: 'seeded from the first message', lastAt: 998, msgCount: 0 },
+      ],
+    });
+
+    const rows = Array.from(h.doc.querySelectorAll('#topics .topic-item'));
+    const byId = (id: string): Element => rows.find((r) => r.getAttribute('data-topic') === id)!;
+    const tag = byId('a1b2c3d4').querySelector('.agent-tag');
+    expect(tag?.textContent).toBe('ag');
+    expect(tag?.className).toBe('agent-tag');
+    expect(tag?.getAttribute('title')).toBe('Agent: ag');
+    expect(byId('a1b2c3d4').querySelector('.topic-title')?.textContent).toBe('开工');
+    // No agent named anywhere: no legend, and the row keeps its frame like every other.
+    expect(byId('b2c3d4e5').querySelector('.agent-tag')).toBeNull();
+    expect(byId('b2c3d4e5').querySelector('.topic-title')?.textContent).toBe('Untitled');
+    expect(byId('c3d4e5f6').querySelector('.agent-tag')).toBeNull();
+    expect(byId('c3d4e5f6').classList.contains('framed')).toBe(true);
+  });
+
+  it('shortens a host-qualified agent id once the row already names the machine, keeping it whole on the tooltip', async () => {
+    // A remote agent's id is `<id>@<host>`. Left whole it is 15 characters spent on a machine the
+    // directory line repeats (reported 2026-11-03, against the title's tag). The part before the
+    // `@` is what the operator types to bind the agent.
+    const h = await open({ url: 'http://localhost:8787/?t=a1b2c3d4' });
+    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4']));
+
+    await h.emit({
+      t: 'topics',
+      topics: [
+        {
+          id: 'a1b2c3d4',
+          title: '[cbc@uniagent] Deploy A…',
+          lastAt: 1000,
+          msgCount: 0,
+          agent: { id: 'cbc@uniagent', harness: 'custom' },
+          dir: { name: 'workspace', path: '/home/user/workspace', host: 'uniagent' },
+        },
+        // No directory known, so the second line cannot say which machine this is: the label keeps
+        // its host, because it is the only place on the row that names it. From the title's tag
+        // alone, the rule is the same.
+        { id: 'b2c3d4e5', title: '[ag@devbox] 你好', lastAt: 999, msgCount: 0 },
+        // A group standing in for the host names a different machine: left whole.
+        {
+          id: 'c3d4e5f6',
+          title: '[oc@aws] 你好',
+          lastAt: 998,
+          msgCount: 0,
+          agent: { id: 'oc@aws', harness: 'opencode' },
+          dir: { name: 'workspace', path: '/home/user/workspace', host: 'sydney' },
+        },
+      ],
+    });
+
+    const tags = Array.from(h.doc.querySelectorAll('#topics .agent-tag'));
+    expect(tags.map((t) => t.textContent)).toEqual(['cbc', 'ag@devbox', 'oc@aws']);
+    expect(tags.map((t) => t.getAttribute('title'))).toEqual(['Agent: cbc@uniagent', 'Agent: ag@devbox', 'Agent: oc@aws']);
+    expect(Array.from(h.doc.querySelectorAll('#topics .topic-title')).map((t) => t.textContent)).toEqual(['Deploy A…', '你好', '你好']);
+  });
+
+  it('leaves the needs-you tooltip to the row, the agent id to its legend', async () => {
     const h = await open({ url: 'http://localhost:8787/?t=a1b2c3d4' });
     await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4']));
 
@@ -1929,6 +2016,7 @@ describe('webui page: topics', () => {
           msgCount: 0,
           stage: 'answer',
           line: 'Ship 2.23.0?',
+          agent: { id: 'cbc@uniagent', harness: 'custom' },
           dir: { name: 'workspace', path: '/home/user/workspace', host: 'uniagent' },
         },
       ],
@@ -1937,6 +2025,8 @@ describe('webui page: topics', () => {
     const row = h.doc.querySelector('.topic-item.needs');
     expect(row?.getAttribute('title')).toBe('Waiting on your answer: Ship 2.23.0?');
     expect(row?.querySelector('.topic-title')?.hasAttribute('title')).toBe(false);
+    // The legend's tooltip covers the legend alone: hovering the rest of the row still says what it needs.
+    expect(row?.querySelector('.agent-tag')?.getAttribute('title')).toBe('Agent: cbc@uniagent');
   });
 
   it('leaves the row alone for a daemon that offered no directory', async () => {
@@ -2042,10 +2132,10 @@ describe('webui page: topics', () => {
     // The row a reclaimed topic gets is the one that says so, and it is not the one a topic with
     // its context still in memory gets.
     expect(Array.from(h.doc.querySelectorAll('.topic-item')).map((el) => el.className)).toEqual([
-      'topic-item on running live',
-      'topic-item running live',
-      'topic-item idle live',
-      'topic-item idle',
+      'topic-item on running live framed',
+      'topic-item running live framed',
+      'topic-item idle live framed',
+      'topic-item idle framed',
     ]);
     // And the header says the useful half of "running AND waiting on you".
     expect(h.el('topic-status').textContent).toBe('awaiting you');
@@ -2247,6 +2337,43 @@ describe('webui page: the topic filter bar', () => {
     await type(h, 'parser');
     // The survivors keep the places they hold in the whole list.
     expect(ids(h)).toEqual([B, P]);
+  });
+
+  it('searches and filters by the agent the daemon says is bound, named as the row legend names it', async () => {
+    // The legend, the Agent chips and the search read one answer (agentOf): a topic named under cc
+    // and handed to cx is a cx topic in all three, and a host-qualified id is the short label the
+    // row shows — while the whole id and the title's old tag still find it.
+    const h = await open();
+    await h.emit(sync(A, [], [A]));
+    await h.emit({
+      t: 'topics',
+      topics: [
+        { id: A, title: '[cc] handed over', lastAt: 1000, msgCount: 0, agent: { id: 'cx', harness: 'codex' } },
+        {
+          id: B,
+          title: '[cbc@uniagent] remote work',
+          lastAt: 999,
+          msgCount: 0,
+          agent: { id: 'cbc@uniagent', harness: 'custom' },
+          dir: { name: 'workspace', path: '/home/user/workspace', host: 'uniagent' },
+        },
+        { id: C, title: '[cc] still cc', lastAt: 998, msgCount: 0, agent: { id: 'cc', harness: 'claude' } },
+      ],
+    });
+    await openPanel(h);
+    const values = Array.from(h.doc.querySelectorAll('.fb-chip[data-fb-group="agent"]')).map((c) => c.getAttribute('data-fb-value'));
+    expect(values).toEqual(['cbc', 'cc', 'cx']);
+    await toggle(h, 'agent', 'cx');
+    expect(ids(h)).toEqual([A]);
+    await toggle(h, 'agent', 'cx');
+
+    await type(h, 'cx');
+    expect(ids(h)).toEqual([A]);
+    await type(h, 'cbc@uniagent');
+    expect(ids(h)).toEqual([B]);
+    // The stored name is still searched, tag and all.
+    await type(h, 'cc');
+    expect(new Set(ids(h))).toEqual(new Set([A, C]));
   });
 
   it('unions the values of one group and intersects across groups', async () => {
@@ -9919,6 +10046,24 @@ describe('webui page: how long a topic has been running, or since it stopped', (
     expect(h.doc.querySelector('.sess-item .topic-age')).toBe(node);
     expect(node.textContent).toBe('1d11h ago');
   });
+
+  it('draws a scheduled run’s agent as the legend on its frame, as the switcher does', async () => {
+    const h = await open({ replies: { 'api/schedules': { enabled: true, tasks: [] } } });
+    await h.emit(sync(A, [], [A]));
+    await h.emit({
+      t: 'topics',
+      topics: [
+        { id: A, title: '[cc] ⏰ Morning CI', lastAt: NOW - HOUR, msgCount: 4, scheduled: true, stage: 'idle', agent: { id: 'cc', harness: 'claude' } },
+      ],
+    });
+    await h.click('#schedules-toggle');
+    await h.click('#sched-tab-sessions');
+    const row = h.doc.querySelector('.sess-item')!;
+    expect(row.querySelector('.topic-title')?.textContent).toBe('⏰ Morning CI');
+    expect(row.querySelector('.agent-tag')?.className).toBe('agent-tag h-claude');
+    expect(row.querySelector('.agent-tag')?.getAttribute('title')).toBe('Agent: cc');
+    expect(row.classList.contains('framed')).toBe(true);
+  });
 });
 
 describe('webui page: the sidebar footer, and low attention', () => {
@@ -10997,7 +11142,7 @@ describe('webui page: the scheduled-task panel', () => {
     await openTaskPage(h, [
       { id: A, title: 'an ordinary topic', lastAt: 1000, msgCount: 1, stage: 'idle' },
       // Marked with the task: listed even though no recorded run names it.
-      { id: R2, title: '[cc] ⏰ Morning CI · 2026-11-01 08:00', lastAt: 500, msgCount: 2, stage: 'idle', scheduled: true, task: 'a1b2c3' },
+      { id: R2, title: '[cc] ⏰ Morning CI · 2026-11-01 08:00', lastAt: 500, msgCount: 2, stage: 'idle', scheduled: true, task: 'a1b2c3', agent: { id: 'cc', harness: 'claude' } },
       { id: R1, title: '[cc] ⏰ Morning CI · 2026-11-16 08:00', lastAt: 900, msgCount: 4, stage: 'review', scheduled: true, task: 'a1b2c3' },
       // Opened before topics were marked: found through the run that names it.
       { id: OLD, title: '[cc] ⏰ Morning CI · 2026-11-15 08:00', lastAt: 800, msgCount: 1, stage: 'failed', scheduled: true },
@@ -11008,6 +11153,15 @@ describe('webui page: the scheduled-task panel', () => {
     const sessions = Array.from(h.doc.querySelectorAll('#task-view .tp-sess')).map((n) => n.getAttribute('data-tp-topic'));
     expect(sessions).toEqual([R1, OLD, R2]);
     expect(h.doc.querySelector('#tp-sessions .tp-label')!.textContent).toBe('Sessions3');
+    // The rows the switcher draws: the subject on the title line, the agent on the frame — so the
+    // agent this list used to leave out altogether (it already cut the tag) is on screen here too.
+    const session = (id: string): Element => h.doc.querySelector(`#task-view .tp-sess[data-tp-topic="${id}"]`)!;
+    expect(session(R2).querySelector('.topic-title')?.textContent).toBe('⏰ Morning CI · 2026-11-01 08:00');
+    expect(session(R2).querySelector('.agent-tag')?.className).toBe('agent-tag h-claude');
+    expect(session(R2).querySelector('.agent-tag')?.textContent).toBe('cc');
+    expect(session(R1).querySelector('.agent-tag')?.textContent).toBe('cc');
+    expect(session(R1).classList.contains('framed')).toBe(true);
+    expect(h.doc.querySelector('#tp-sessions .tp-list')?.classList.contains('tp-topics')).toBe(true);
     const rows = Array.from(h.doc.querySelectorAll('#task-view .tp-run')).map((n) => n.textContent);
     expect(rows[0]).toContain('ok · 2026-11-16 08:00 · 42.0s');
     expect(rows[1]).toContain('the harness exited mid-turn');

@@ -213,6 +213,27 @@ and the `/agent` menu call a machine the same thing; an agent on the gateway's o
 It is read off the agent's definition on every lookup rather than stored with the topic, for the
 directory's reason: a `/reload` that moves an agent moves where the topic's next turn runs.
 
+**The agent is a legend on the row's frame, not a prefix on its title** (2026-11-20). The stored
+name still opens with `[agent] ` (`formatLaneTitle`: a Telegram or Feishu topic name has nowhere
+else to say it), and the row used to draw that tag inside the one ellipsised title line, where
+`[gemini-task] ` left a few characters of subject in a 240px column. Now every topic row is framed
+(`.framed`: a faint border, brighter on the topic on screen) and `agentTagHtml` puts the id on the
+frame's top-left edge, its background split at the border line — `--behind`, the colour behind the
+row, above it, `--row-bg` below — so the line reads as broken by the name and follows hover, the
+selected row and the green needs-you rows by itself. The lists of topic rows (`#topics`, the
+Sessions tab's `.sess-group-rows`, a task page's `.tp-topics`) are 11px apart to make room; a task
+row has no agent and keeps the plain shape. Which agent comes from the same lookup as the directory
+(`ConversationWorkdir.agent` → `Topic.agent`, memoised and polled with it): the binding and its
+harness, absent while nothing is bound, where the directory falls back to the default agent's —
+fine for a directory, a guess on a label naming who answers. It is the binding rather than the
+title's tag because a later `/agent` never rewrites the tag. The harness picks the colour from the
+palette the agent cards use (`--hc` on `.h-*`, written once for both). With no `agent` — an agent
+gone from config, a daemon without the lookup — the page reads the title's tag instead, uncoloured
+(`agentOf`, which the Agent filter and the search use too, so a chip names an agent the way the
+legend does). `@host` is dropped when the line below names that machine, the rule the tag had.
+The conversation header, the terminal's title and the fork note keep the stored name, tag and all:
+they are where the whole name is still read.
+
 **A row's ⋯ takes no room until it shows.** On a pointer device it appears only under the
 pointer, and until 2.11.1 the row's buttons were merely `opacity:0` — still in the flex row, so
 every title in a 240px column got 129px and stopped in front of a 59px strip of nothing (measured
@@ -2500,6 +2521,15 @@ decision above, each fail a test there (`project-scripts/talkcode-history-tab/mu
 The terminal panel is driven there too: it docks under the composer with the transcript still
 painted, a drag on its divider is the height it writes to `aa_term_h` and reads back on the next
 page, the arrow keys and a double-click move it, and a topic switch leaves the frame mounted.
+
+So is a topic row's agent legend: the title line without the tag, the legend's text, harness class
+and full-id tooltip, the daemon's binding winning over the title's tag, the uncoloured fallback to
+the tag and no legend without either, `@host` dropped only when the line below names that host, and
+the same legend on the Sessions tab and a task's page — with the Agent chips and the search reading
+the same answer. Its stylesheet (the split background, the shared palette) is pinned as text in
+`page.test.ts`. Where it sits — on the frame line, clear of the dot, title, badge, fold, star and a
+hovered ⋯, and of the row above — was measured in Chromium on 2026-11-20 at 1280 and 390 px
+against the real `WebRoom` (`project-scripts/fleetherd-topic-row/`).
 
 So are [code blocks](#code-blocks-in-a-reply), through a fake `highlighter` on `__fhCodeView`: Copy
 and its check, Wrap surviving an edit, a finished reply coloured with its text unchanged, markup in

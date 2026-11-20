@@ -36,10 +36,22 @@ export interface ButtonSpec {
  * the agent id in the title was the only thing telling them apart (2026-10-30). `host` is
  * `core/agent-menu.ts` agentPlaceOf — the agent's group, else its host — and is absent for an agent
  * on the gateway's own machine.
+ *
+ * `agent` is who works there, answered by the same lookup because it is the same resolution: the
+ * machine above is read off this agent's definition. The web UI labels each topic with it (its
+ * harness picks the label's colour), where it used to read the `[agent]` the title opens with — a
+ * tag written when the topic was named, which a later `/agent` does not rewrite.
  */
 export interface ConversationWorkdir {
   path: string;
   host?: string;
+  /**
+   * The agent bound to the conversation — the one its next message reaches — with its configured
+   * harness. Absent while nothing has bound one (no message yet, no `/agent`): the path and host
+   * then fall back to the default agent's, which is a fair guess for a directory but would read as
+   * a fact on a label naming who answers.
+   */
+  agent?: { id: string; harness: string };
 }
 
 /**
