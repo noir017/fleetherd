@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.21.0] - 2026-11-21
+
 ### Added
 
 - **An agent that is already running is connected to instead of started: `connect` on a `custom`
