@@ -572,6 +572,7 @@ const DATA_PRINTERS: Partial<Record<IpcAction['kind'], (data: unknown, action: I
   'task-send': renderTaskAction,
   'task-status': renderTaskStatus,
   'task-stop': renderTaskAction,
+  'task-verdict': renderTaskAction,
   // Both need the action: the empty note depends on which agent was asked for, and the cut note on
   // the limit that was applied.
   'sessions-search': (data, action) =>
@@ -604,6 +605,9 @@ function renderTaskList(data: unknown): string {
     'While a sub-agent works, line is the tool it is running now, step counts this turn\'s tool calls, elapsed is this turn, and context/cost are what its harness last reported (empty when it reports none).',
   ];
   if (result.total > result.tasks.length) help.push(`Showing the ${result.tasks.length} most recent of ${result.total}; raise --limit for more.`);
+  if (result.tasks.some((t) => t.review)) {
+    help.push('The review column is a topic\'s part in an automatic review (task-new --review-by): who reviews it and where that stands, or which work it reviews.');
+  }
   return toon({ tasks: result.tasks, help });
 }
 

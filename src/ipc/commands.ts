@@ -216,6 +216,7 @@ export const HELP_TOPICS: HelpTopic[] = [
       '`task-read <topic> --reply` is the last turn that ended normally, its reply whole — what a finished sub-agent concluded. `--turn <n>` is one turn\'s record, including the whole error when it failed. A cut update card names the turn it quoted (`--turn <n>`): read that one, not `--turn last` — the topic may have run again since.',
       'task-send only reaches a turn that is still running when the harness accepts input mid-turn (claude and codex do; agy does not). The answer says which happened: joined, queued behind the turn, or started. To redirect a harness that is not listening, `--interrupt` stops the turn and sends the message as the next one — its context is kept.',
       '`task-send <topic> --forward <other>` sends <text> with <other>\'s last normally-ended reply attached whole, under a heading naming the topic and its turn: a review verdict reaches the agent that must act on it without being retyped. Both topics must be ones this conversation opened; a topic with no normally-ended reply yet is refused.',
+      '`task-new --review-by <agent> --review "<what to check>"` gives a part that changes code a review that runs without you: whenever one of its turns ends with new commits in its directory, the reviewer gets your --review text (the first time), the author\'s reply and the commit range, in a topic of its own beside it. The reviewer ends its turn with `fleetherd task-verdict pass|nits|changes`: pass ends the loop; nits sends its reply to the author to fix, with no further review; changes sends it back, and the author\'s fix returns to the same reviewer — at most --rounds times (default 3). You are told once, when it passes or when the loop stops: a turn that ends with no new commits, a review with no verdict, the rounds used up, a failure or question, the person writing in either topic, task-stop. Leave --review-by out for parts that change nothing or need no review. The reviewer must be on the author\'s machine; the person confirms both on one card.',
       'A reply that says it will carry on, or is only waiting for a command in the background, is not a finished job: the update card says `turn ended`, not done.',
     ],
   },
@@ -1232,9 +1233,30 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
       },
       { flags: '--title <title>', description: 'the topic’s name (default: named from <text>)' },
       { flags: '--model <id>', description: "the model it runs on, from that agent's /model list (default: the agent's configured model)" },
+      {
+        flags: '--review-by <id>',
+        description:
+          'an agent on the same machine that reviews the work on its own, in the same directory, whenever one of its turns ends with new commits (see `fleetherd help tasks`)',
+      },
+      {
+        flags: '--review <text>',
+        description: 'with --review-by: the reviewer\'s whole task — what to check; it must ask for `fleetherd task-verdict pass|nits|changes` at the end',
+      },
+      {
+        flags: '--rounds <n>',
+        description: 'with --review-by: how many times the review may send the work back on its own (default 3)',
+        parse: intArg('--rounds'),
+      },
     ],
     build: (positionals, opts) => {
       refuseChannel('task-new', opts);
+      const reviewBy = str(opts.reviewBy);
+      const review = str(opts.review);
+      // Caught here as well as in the daemon, so the agent learns it before a card goes up.
+      if ((reviewBy === undefined) !== (review === undefined)) {
+        throw new Error('--review-by and --review go together: who reviews, and the whole of what it checks');
+      }
+      if (opts.rounds !== undefined && reviewBy === undefined) throw new Error('--rounds applies only with --review-by');
       return {
         kind: 'task-new',
         agent: str(opts.agent),
@@ -1242,7 +1264,26 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
         cwd: str(opts.cwd),
         title: str(opts.title),
         model: str(opts.model),
+        reviewBy,
+        review,
+        rounds: typeof opts.rounds === 'number' ? opts.rounds : undefined,
       };
+    },
+  },
+  {
+    usage: 'task-verdict <verdict>',
+    topic: 'tasks',
+    channel: false,
+    description:
+      'For a reviewer the gateway started (task-new --review-by): pass | nits | changes — what is done with the reply this turn ends on',
+    options: [],
+    build: (positionals, opts) => {
+      refuseChannel('task-verdict', opts);
+      const verdict = pos(positionals, 0, 'verdict');
+      if (verdict !== 'pass' && verdict !== 'nits' && verdict !== 'changes') {
+        throw new Error(`task-verdict takes pass, nits or changes, not "${verdict}"`);
+      }
+      return { kind: 'task-verdict', verdict };
     },
   },
   {

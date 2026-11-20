@@ -347,6 +347,30 @@ describe('a sub-agent’s topic (openTask, handTo)', () => {
     // The agent gets it whole, under the same heading, in the one message it reads.
     expect(r.prompts.at(-1)!.prompt).toBe(`fix it\n\n${heading}\n\nVerdict: one fix.`);
   });
+
+  it('a forward with no words of its own — the review loop’s — gives the agent the heading and the reply alone', async () => {
+    const r = rig();
+    live = r.registry;
+    const loopHeader = '**↳ Automatic review, set up in [Release](?t=aaaaaaaa)**';
+    const heading = '↳ Forwarded from "Review: part" · web:main/new2 · turn 1 · verdict: changes';
+    // The first review is opened with its task and the work's reply together.
+    const opened = await r.registry.openTask({
+      platform: 'web',
+      parent,
+      agentId: 'oc',
+      text: 'Review it.',
+      header: loopHeader,
+      forward: { heading, text: 'Built.' },
+    });
+    await wait();
+    expect(r.prompts.at(-1)!.prompt).toBe(`Review it.\n\n${heading}\n\nBuilt.`);
+    await r.registry.handTo(opened.key, 'web', opened.address, '', loopHeader, { forward: { heading, text: 'Rename the flag.' } });
+    await wait();
+    // The topic shows the header alone above nothing; the agent reads the heading and the reply.
+    expect(r.sent.filter((m) => m.kind === 'dispatch').at(-1)).toEqual({ to: 'main/new1', text: loopHeader, kind: 'dispatch' });
+    expect(r.prompts.at(-1)!.prompt).toBe(`${heading}\n\nRename the flag.`);
+    await expect(r.registry.handTo(opened.key, 'web', opened.address, '', loopHeader)).rejects.toThrow(/nothing to send/);
+  });
 });
 
 describe('what a person writes reaches delegation (recordPersonWords)', () => {

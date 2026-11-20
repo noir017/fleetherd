@@ -70,7 +70,8 @@ session id, agy's conversation id). One conversation holds one session *per agen
 | `harness-log.ts` | Reading a harness's own log for the reason a silent turn failed (opencode's rate-limit retries), during the turn and on timeout — see [TurnRunner](#turnrunner) |
 | `turn-outcomes.ts` | What each turn left for the person (pushed to a platform that lists conversations), `hooks.turnFailed` (automatic continue, the alert command), the per-agent usage-limit cooldown, and turns a restart cut off — see [What needs the person](#what-needs-the-person-outcomes-and-sub-agents) |
 | `failed-input.ts` | A failed turn's input: held for the next turn when the agent never received it, and kept for the ❌ notice's Retry buttons — see [Failed turns: held input and Retry](#failed-turns-held-input-and-retry) |
-| `delegation.ts` | Sub-agents: the six task commands (acting only on the topics the asking conversation opened), the confirmation card every start waits on by default (or once per agent in the `first` tier, or the record card when it is off), and the `[sub-agent updates]` card. An external caller's coordination topic (`externalOf`) always gets the card, and its updates are shown, never sent to an agent |
+| `delegation.ts` | Sub-agents: the task commands (acting only on the topics the asking conversation opened), the confirmation card every start waits on by default (or once per agent in the `first` tier, or the record card when it is off), the `[sub-agent updates]` card, and the review loop (`task-new --review-by`, `task-verdict`). An external caller's coordination topic (`externalOf`) always gets the card, and its updates are shown, never sent to an agent |
+| `git-head.ts` | The commit a working directory is on (`readHead`, one `git rev-parse` through a `Workspace`) — what the review loop compares to tell whether a turn committed anything |
 | `external-mcp.ts` | The external MCP entrance: MCP over HTTP (POST `/mcp`, JSON only), a bearer token per caller compared in constant time, each caller's tool list — security invariant 11 |
 | `external-calls.ts` | What an external caller's calls do: skills search/show as from no host and outside the gateway (no path, no resident note), `tasks open`, ownership of coordination topics (a sub-task reached only through its parent), and the answer to the person typing in such a topic |
 | `external-topics.ts` | `<configDir>/external-topics.json`: which coordination topics each caller opened — the one record of ownership, keyed by the topic's own id rather than the scope-dependent conversation id |
@@ -949,6 +950,16 @@ of it: the daemon keeps none, so deleting a topic on the page is what ends it. T
   normally-ended reply (the turn `task-read --reply` answers with), posts it first as a `report`
   bubble — line-based, so the page folds it — and appends it, under a heading naming the topic and
   turn, to what the agent reads. Both topics must be ones this conversation opened.
+- The review loop (`task-new --review-by`, `ReviewLoop` in delegation.ts) takes over the ends of
+  turns it is waiting for in `sendUpdates` (`takenByLoop`) before they become update cards — not in
+  `childChanged`, which runs before the turn has unwound and before the library has closed it: a turn
+  of the work that ended normally — compared by `headOf` (git-head.ts, through the topic's
+  `Workspace`) with the commit last reviewed — or a turn of its reviewer, whose `task-verdict` was
+  recorded during it. New commits open the reviewer (`openTask` with `forward`) or hand it the
+  increment (`handTo` with no text, only the forward); the verdict goes back the same way. The parent
+  is told through the ordinary `queueUpdates` — once at the end, about both topics, or with a `note`
+  when the loop holds (no commit, no reply). `personWrote`, `task-stop`, `/stop` and "End agent"
+  disarm it. In memory only, like `owed`.
 - A conversation acts only on topics it opened (`Delegation.child` checks `parentOf`).
 - Updates come back through `childChanged` — TurnOutcomes' `onNeedsPerson`, and a sub-agent's ask —
   for turns the parent is owed (`owed`, in memory): one it handed out (task-new, task-send), or one

@@ -25,10 +25,9 @@ in parallel, and come back with one report — so you follow one topic instead o
    start at once. Both relaxed tiers apply only where you talk to the agent directly:
    in a sub-agent's own topic, `task-new` still puts up the card, so agents cannot open more agents
    without you. With confirmation on, to change something, write what instead of tapping, and it
-   proposes again; the new card replaces the old one. A part that changes code is reviewed before
-   it counts as done: once its change is in, the agent proposes a review part — another agent,
-   started where that part ran (its worktree, or the same checkout when the parts did not need
-   one), told to read the diff and run the tests that cover it. The whole suite runs once, before
+   proposes again; the new card replaces the old one. A part that changes code carries its review
+   on the same card: the reviewing agent and the whole of what it will be told, run without the
+   agent in between (see [Automatic review](#automatic-review)). The whole suite runs once, before
    merging, not in every part and every review.
 3. Each part gets a topic of its own, nested under this one, and they run at once — up to four
    cold starts per machine, the rest waiting their turn. Starting a harness process costs several
@@ -46,7 +45,7 @@ in parallel, and come back with one report — so you follow one topic instead o
    as the turn's record — because the ❌ notice in the topic carries only its opening. Reading by
    turn number, not "the last one", is what keeps a later background burst from taking its place. A
    burst longer than 20 sub-agents is one card with the rest folded into a line pointing at
-   `fleetherd tasks`. The agent reads each reply's conclusion and the review part's verdict, and
+   `fleetherd tasks`. The agent reads each reply's conclusion and each review's verdict, and
    sends fixes where needed; it does not read the diff itself. When every part is done, it writes
    one summary with a link to each topic.
 
@@ -91,6 +90,35 @@ whole, under a heading that names the topic and its turn. Both topics must be on
 conversation opened. In the target topic the reply is shown as a folded **Sub-agent report** bubble
 (one row per line, tap to open); the agent receives it whole. Like the other `task-*` commands,
 this is web UI only.
+
+## Automatic review
+
+A part that changes code can be proposed with its review attached: `task-new --review-by <agent>
+--review "<what to check>"`. The reviewer and its text are on the card with the part, and your Start
+covers both. From then on the review runs without the agent that set it up:
+
+1. Whenever a turn of the part ends normally with **new commits** in its directory, the reviewer gets
+   the part's reply under a heading naming the commit range (`commits 3f2a…..9c1d… on feat/x`) — the
+   first time in a topic of its own beside the part, opened in the same directory with the review
+   text. A turn that commits nothing starts no review: a research part, or one that stopped to ask,
+   is reported as usual.
+2. The reviewer ends its turn with `fleetherd task-verdict pass | nits | changes`.
+   - `pass` ends it.
+   - `nits` sends its reply to the part to fix, with no further review.
+   - `changes` sends it back; the part's next commits go to the **same** reviewer, as the new range
+     only — at most `--rounds` times (3 by default).
+3. The agent that set it up is told once, about both topics together: when the review passes, or as
+   soon as the loop cannot go on by itself — a turn with no new commit or no reply, a review with no
+   verdict, the rounds used up. A failure or a question reaches it as it always did. Writing in
+   either topic yourself, or the agent's `task-stop`, ends the loop: the part is yours (or the
+   agent's) again.
+
+What the gateway sends in the loop is the other side's reply under a heading — the topic, its
+turn, and the commit range or the verdict — and nothing of its own. Each step is shown in the topic
+that set it up as a folded 🔁 line, without running a turn there; `tasks` has a `review` column
+saying where each loop stands. The reviewer must run on the part's machine. Loops live in the
+gateway's process: after a restart the parts and reviewers carry on as ordinary sub-agents, and
+`task-verdict` is refused.
 
 ## In the sidebar
 

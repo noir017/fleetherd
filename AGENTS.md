@@ -152,7 +152,7 @@ gateway puts in front of the work tells the model what kind of job this is befor
 job, and no wording avoids that. A change that adds text to what an agent receives needs to say
 why the harness could not carry it.
 
-Three things reach an agent that the person did not type in that conversation. Two were decided on
+Four things reach an agent that the person did not type in that conversation. Two were decided on
 2026-11-02, each kept to the one place it is for. An agent that started **sub-agents**
 (`daemon/delegation.ts`) is told what they did in a `[sub-agent updates]` card, because no harness
 can carry another conversation's state; it goes only to the conversation that opened those topics,
@@ -165,8 +165,15 @@ there. And
 announced in the chat first, off unless configured. The third is `task-send --forward`'s: the reply
 it carries into a topic arrives under a `↳ Forwarded from … · turn N` heading, a source label,
 because those words are another agent's verdict and without it the agent would take them for the
-person's instruction. A sub-agent gets the task text it was handed — and, when one is forwarded,
-that heading and the reply under it — and nothing else; how to split a job and use the updates is
+person's instruction. The fourth, decided with the operator on 2026-11-20, is the review loop's
+(`task-new --review-by`, delegation.ts): the same forward, sent by the gateway instead of a
+coordinator — a part's reply to its reviewer, the reviewer's reply back to the part — under that
+heading with the commit range or the verdict added to it, and no words of the gateway's around it.
+It replaced the hops coordinators only relayed (126 of the 218 turns update cards woke them into, in
+a week); the
+reviewer and its text are on the card the person confirms. A sub-agent gets the task text it was
+handed — and, when one is forwarded, that heading and the reply under it — and nothing else; how to
+split a job and use the updates is
 the `super` skill's
 (`skill-super/`), read through the harness's own skill mechanism. (A standing dispatcher topic with
 an `AGENTS.md` of its own shipped in 2.18.0 and was removed the same day: see delegation.ts for why.)

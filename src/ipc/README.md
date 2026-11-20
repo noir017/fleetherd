@@ -124,7 +124,7 @@ The rest stay CLI commands behind the skill:
 
 ### The task commands are commands, not tools
 
-`task-agents`, `tasks`, `task-new`, `task-send`, `task-read` and `task-stop` (sub-agents —
+`task-agents`, `tasks`, `task-new`, `task-send`, `task-read`, `task-stop` and `task-verdict` (sub-agents —
 daemon/delegation.ts) are reverse commands on the `tasks` help page, found through the skills: the
 `fleetherd` skill's table, and the `super` skill (`skill-super/`), which is what `/super` loads.
 2.18.0 served them as native tools to one dispatcher session (`mcp --dispatch`); with any agent able
@@ -132,7 +132,9 @@ to start sub-agents, the same reasoning as above applies — six schemas on ever
 agent, for the few turns that split a job. They take no `--channel`: each acts from the asking
 conversation, on a topic it opened, named as `topic`. `task-read` reads that topic from the
 conversation library (`history/`), so its `--role`/`--turn`/`--turns`/`--since`/`--grep` are
-`READ_FILTER_OPTIONS`, the same definitions `sessions read` uses.
+`READ_FILTER_OPTIONS`, the same definitions `sessions read` uses. `task-verdict` is the one run from
+the other side: a reviewer the review loop started (`task-new --review-by`) answers with it from its
+own topic, and the daemon refuses it anywhere else.
 
 ### The external entrance: the same commands, a third door
 
@@ -145,7 +147,9 @@ commands), each built by the spec's own `build` through a tool view offering onl
 options. `open` is the one action with no reverse command: an agent in a conversation already has a
 topic to nest sub-tasks under, and a caller from outside has to be given one. `task-send` is not an
 action, and the daemon refuses it from a caller anyway (`Delegation.handleExternal`): a caller reads
-untrusted pages, and an injected instruction must not reach a running sub-agent without a tap.
+untrusted pages, and an injected instruction must not reach a running sub-agent without a tap. For
+the same reason `new` offers no `--review-by` (the loop sends one sub-agent's words into another's
+session) and `task-verdict` is no action; `handleExternal` refuses both too.
 
 The calls do not cross the socket: the entrance is in the daemon, so it calls the handlers directly
 (`daemon/external-calls.ts`). The trust boundary there is the caller's bearer token and the topics

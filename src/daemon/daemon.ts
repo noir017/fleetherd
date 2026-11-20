@@ -178,6 +178,7 @@ import { ScheduleService } from './schedule-service.js';
 import { panelEditInput, panelForm, panelNewInput, panelTarget, panelTaskDetail, panelTasks } from './schedule-panel.js';
 import { buildSkillsPanel } from './skills-panel.js';
 import { buildGitPanel } from './git-panel.js';
+import { readHead } from './git-head.js';
 import { SkillsRepo, prepareSkillsRepo, skillsRemoteOf } from './skills-repo.js';
 import { SkillLibrary, type LibraryAsker } from './skill-library.js';
 import { skillHarnessOf } from './managed-skills.js';
@@ -1105,6 +1106,11 @@ export class Daemon {
       questionOf: (id) => this.questionOf(id),
       // A coordination topic an external caller opened: no agent, and its updates are only shown.
       externalOf: (platform, address) => this.externalOwner(platform, address),
+      // The review loop's commit reads, on whichever machine the topic's agent runs.
+      headOf: async (id) => {
+        const ws = this.registry.workspaceOf(id);
+        return ws ? readHead(ws) : undefined;
+      },
       // Buttons only, like a permission request: a sentence typed instead ("use cx for the second")
       // is the person's next message to the agent, which proposes again — not a guess at a button.
       confirm: async ({ adapter, address, conversation, text, labels, timeoutMs, signal }) => {

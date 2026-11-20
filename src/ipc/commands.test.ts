@@ -114,6 +114,22 @@ describe('task commands', () => {
     expect(spec('task-status').build(['web:main/t1'], {})).toEqual({ kind: 'task-status', topic: 'web:main/t1' });
   });
 
+  it('builds task-new’s review loop and task-verdict, refusing the halves that cannot run alone', () => {
+    expect(spec('task-new').build(['go'], { agent: 'cc', reviewBy: 'cx', review: 'check it', rounds: 2 })).toEqual({
+      kind: 'task-new',
+      agent: 'cc',
+      text: 'go',
+      reviewBy: 'cx',
+      review: 'check it',
+      rounds: 2,
+    });
+    expect(() => spec('task-new').build(['go'], { reviewBy: 'cx' })).toThrow(/--review-by and --review go together/);
+    expect(() => spec('task-new').build(['go'], { review: 'check it' })).toThrow(/--review-by and --review go together/);
+    expect(() => spec('task-new').build(['go'], { rounds: 2 })).toThrow(/--rounds applies only with --review-by/);
+    expect(spec('task-verdict').build(['changes'], {})).toEqual({ kind: 'task-verdict', verdict: 'changes' });
+    expect(() => spec('task-verdict').build(['maybe'], {})).toThrow(/pass, nits or changes/);
+  });
+
   it('task-read reuses the sessions-read filters, and its own --tail stays out of them', () => {
     const action = spec('task-read').build(['t'], {
       role: 'tool',

@@ -17,6 +17,22 @@ All notable changes to this project are documented here. The format is based on
   reason. The button is there in a new topic before the first message, which for an account is the
   only time it can change. Nothing is kept on the gateway's side — the agent keeps its setting across
   a reload — and no other platform or command is involved.
+- **A sub-task can carry its own review, run without the agent that asked** (`task-new --review-by
+  <agent> --review "<what to check>"`, `task-verdict`). In the week to 2026-11-20, of the 218 turns
+  an update card woke a `/super` coordinator into, 126 did nothing but pass a review verdict to its
+  author or a fix back to its reviewer — a third of everything those coordinators read — and each
+  re-review began with the coordinator looking up commit ids to write "only the increment a..b".
+  Now, whenever a turn of the part ends with new commits in its directory, the gateway hands its
+  reply to the reviewer under a heading naming the commit range, in a topic opened beside it the
+  first time; the reviewer answers `task-verdict pass | nits | changes`, and `changes` goes back to
+  the author and its next commits back to the same reviewer, at most `--rounds` times (3). The
+  coordinator is told once, about both topics, when the review passes or the loop cannot go on by
+  itself — a turn with no new commit or no reply, no verdict, the rounds used up, the person writing
+  in either topic, `task-stop`. A turn that commits nothing starts no review, so a part that only
+  investigates can carry the flag without effect. The reviewer and its text are on the card the
+  person confirms with the part; what the gateway adds to the forwarded replies is the source
+  heading and nothing else. `tasks` gains a `review` column, and the `super` skill attaches the
+  review at dispatch instead of proposing it later.
 
 ## [3.17.4] - 2026-11-20
 
