@@ -33,6 +33,8 @@ export interface FrameHeader {
   // processes
   id?: string;
   cmd?: string;
+  /** On a `spawn`: `host:port` of an agent that is already running, reached in place of a command (remote/proc.go connect). */
+  connect?: string;
   args?: string[];
   cwd?: string;
   env?: Record<string, string>;

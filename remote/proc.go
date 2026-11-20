@@ -1,6 +1,8 @@
 package main
 
 import (
+	"io"
+	"net"
 	"os"
 	"os/exec"
 	"runtime"
@@ -20,6 +22,8 @@ const (
 	// inherited them (a background job) would otherwise hold them open, and the exit would never
 	// be reported.
 	drainAfterExit = 2 * time.Second
+	// How long dialling a `connect` agent may take before the start fails.
+	connectTimeout = 10 * time.Second
 )
 
 // ── one OS thread for every fork ──────────────────────────────────────────────────────────────
@@ -58,6 +62,7 @@ type proc struct {
 
 	mu       sync.Mutex
 	process  *os.Process
+	conn     net.Conn         // a `connect` agent's connection, in place of process
 	pending  []syscall.Signal // signals that arrived before the start completed
 	finished bool
 	exited   chan struct{}
@@ -101,6 +106,10 @@ func (p *proc) send(h *Header, body []byte, throttle bool) {
 }
 
 func (p *proc) start(h *Header) {
+	if h.Connect != "" {
+		p.connect(h.Connect)
+		return
+	}
 	env := p.d.agentEnv(h.Env, h.Unset)
 	cwd := expandHome(h.Cwd)
 	if cwd == "" {
@@ -219,6 +228,76 @@ func (p *proc) wait(pr *os.Process, readers *sync.WaitGroup, files []*os.File) {
 	p.finish(exit)
 }
 
+// connect starts a `connect` agent: one that is already running and is reached over TCP at addr
+// instead of being started. The connection stands in for the process, so the gateway's runtime
+// cannot tell them apart: what it sends is stdout, stdin is written to it, and its closing is the
+// exit. The address is the agent definition's — the gateway's config, or this host's own pod.yaml —
+// and dialling it from here is what lets an agent reach a service only this host can (a container
+// on its private network). It opens nothing that listens.
+//
+// SIGTERM half-closes it once everything queued for it has been written, so the last message the
+// gateway sent (a `session/cancel`) still arrives; the agent then closes its side. Any other signal
+// drops it at once.
+func (p *proc) connect(addr string) {
+	conn, err := net.DialTimeout("tcp", addr, connectTimeout)
+	if err != nil {
+		p.fail("connect " + addr + ": " + err.Error())
+		return
+	}
+	p.mu.Lock()
+	p.conn = conn
+	pending := p.pending
+	p.pending = nil
+	p.mu.Unlock()
+	p.send(&Header{T: "spawned"}, nil, false)
+	p.stdin.attach(halfCloser{conn})
+	for _, s := range pending {
+		p.signalConn(s)
+	}
+	go func() {
+		buf := make([]byte, pipeChunk)
+		code := 0
+		for {
+			n, rerr := conn.Read(buf)
+			if n > 0 {
+				p.send(&Header{T: "out", Fd: 1}, buf[:n], true)
+			}
+			if rerr != nil {
+				if rerr != io.EOF {
+					logf("proc %s: connection to %s: %v", p.id, addr, rerr)
+					code = 1
+				}
+				break
+			}
+		}
+		conn.Close()
+		p.stdin.end()
+		p.finish(&Header{T: "exit", Code: intPtr(code)})
+	}()
+}
+
+// signalConn is a signal to a `connect` agent; see connect.
+func (p *proc) signalConn(s syscall.Signal) {
+	if s == syscall.SIGTERM {
+		p.stdin.end()
+		return
+	}
+	_ = p.conn.Close()
+}
+
+// halfCloser is a connection as a stdin: closing it is closing our half, which is how the agent
+// learns there is nothing more to read while what it still sends comes back.
+type halfCloser struct{ c net.Conn }
+
+func (h halfCloser) Write(b []byte) (int, error) { return h.c.Write(b) }
+
+func (h halfCloser) Close() error {
+	if tc, ok := h.c.(*net.TCPConn); ok {
+		return tc.CloseWrite()
+	}
+	return h.c.Close()
+}
+
 // fail reports a process that never started: an `exit` carrying the reason, as the gateway's local
 // spawn would report ENOENT.
 func (p *proc) fail(reason string) {
@@ -245,6 +324,10 @@ func (p *proc) signal(name string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.finished {
+		return
+	}
+	if p.conn != nil {
+		p.signalConn(s)
 		return
 	}
 	if p.process == nil {
@@ -278,7 +361,7 @@ type pipeWriter struct {
 	cond  *sync.Cond
 	q     [][]byte
 	ended bool
-	f     *os.File
+	f     io.WriteCloser
 }
 
 func newPipeWriter() *pipeWriter {
@@ -307,7 +390,7 @@ func (w *pipeWriter) end() {
 	w.cond.Signal()
 }
 
-func (w *pipeWriter) attach(f *os.File) {
+func (w *pipeWriter) attach(f io.WriteCloser) {
 	w.mu.Lock()
 	w.f = f
 	w.mu.Unlock()

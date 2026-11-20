@@ -268,3 +268,5 @@ way you already must. The helper opens no network port: it talks over ssh and an
 under `~/.fleetherd/remote/run/`. The one exception is an agy agent's relay, when it has a
 [`contextBudget`](agents.md#antigravity-agy) or [`gatewayModels`](agents.md#through-a-model-gateway):
 a listener on 127.0.0.1 that forwards that agent's API calls to where they were going anyway.
+It dials out only for a [`connect`](agents.md#an-agent-that-is-already-running-connect) agent, to the
+address that agent's definition names — the host's own `pod.yaml`, or the gateway's config.

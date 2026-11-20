@@ -293,7 +293,9 @@ Do not weaken these without saying so explicitly in the PR:
    it opens is a relay the gateway asked for (`remote/relay.go`, since 2.48.0, for an agy agent with
    `contextBudget`, or since 3.7.0 with `gatewayModels`): on 127.0.0.1 only, forwarding only to the
    upstream the gateway named — https, or http to loopback — and carrying the agent's own requests
-   as they are, adding no credential of its own. Which responses a relay changes, and how, is
+   as they are, adding no credential of its own. The one connection it makes is a `connect` agent's
+   (`remote/proc.go`, since 3.21.0): outbound, to the address that agent's definition names — the
+   host's own `pod.yaml` or the gateway's config — carrying only that session's ACP. Which responses a relay changes, and how, is
    decided in the gateway (`daemon/relay.ts`); the host side never learns what any harness is. An
    agent on a host can run back
    here only the reverse commands, `mcp` and `help` (`ipc/commands.ts` isBridgedCommand),

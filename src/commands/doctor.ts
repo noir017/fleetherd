@@ -427,6 +427,11 @@ export async function runDoctor(opts: { migrateConfig?: boolean } = {}): Promise
         for (const def of cfg.agents) {
           // An agent on another machine needs its command THERE (the remote-hosts check below).
           if (def.host) continue;
+          // A connect agent has no command: it is a service already running, dialled per session.
+          if (def.connect) {
+            lines.push(`${def.id} (connect) → ${def.connect.url}, dialled when a session starts`);
+            continue;
+          }
           const cmd = harnessCommand(def);
           const auth = authNote(def);
           // claude runs a locally installed adapter dependency (claude-agent-acp), so its check is
@@ -474,7 +479,7 @@ export async function runDoctor(opts: { migrateConfig?: boolean } = {}): Promise
         let failed = false;
         for (const [id, def] of hosts) {
           const probes = new Map<string, HostProbe>();
-          for (const a of cfg.agents.filter((x) => x.host === id)) {
+          for (const a of cfg.agents.filter((x) => x.host === id && !x.connect)) {
             const p: HostProbe = { command: harnessCommand(a), path: remoteAgentEnv(a).PATH };
             probes.set(`${p.command}\0${p.path ?? ''}`, p);
           }

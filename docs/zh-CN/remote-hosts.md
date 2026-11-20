@@ -232,4 +232,5 @@ agents:
 `access.allowFrom` 里任何人做的事是一回事，所以按你本来就必须做的那样保护好网关即可。小服务不开任何网络端口：
 它只走 ssh，以及 `~/.fleetherd/remote/run/` 下一个仅属主可访问的 socket。唯一的例外是配了
 [`contextBudget`](agents.md#antigravityagy) 或 [`gatewayModels`](agents.md#经模型网关) 的 agy 智能体的中继：127.0.0.1 上的一个监听端口，把这个智能体的
-API 调用转发到它本来就要去的地方。
+API 调用转发到它本来就要去的地方。它只为 [`connect`](agents.md#已经在运行的智能体connect) 智能体向外拨号，拨的是该智能体定义里写的
+地址——来自那台主机自己的 `pod.yaml`，或网关的配置。

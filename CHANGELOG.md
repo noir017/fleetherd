@@ -5,6 +5,28 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **An agent that is already running is connected to instead of started: `connect` on a `custom`
+  agent.** A service that speaks ACP over TCP — web-agent-driver's daemon, which drives web AI
+  agents in a browser — used to need a relay process per session to reach it: `wad acp`, a Node
+  process that did nothing but copy bytes and cost 15–60 MB each. `connect: { url: tcp://host:port }`
+  takes the place of `command`: each session dials the address — from the agent's host when it has
+  one, through fleetherd-remote, so an address only that machine reaches (a container on its private
+  network) works — and the connection is the session's stdin and stdout. What a process would have
+  been given by its files and arguments goes in `initialize`'s `_meta` instead: the agent's own
+  `meta` as written, the contents of `tokenFile` (read on the agent's machine), the machine's name
+  and the operator's instructions for it. See docs/agents.md.
+
+### Fixed
+
+- **Ending a session sends the running turn's `session/cancel` before it hangs up, for a connect
+  agent.** `/kill` and End agent interrupt the turn and then close the connection at once, and the
+  SDK drops a message still in its write queue when the connection closes — so the cancel never
+  left. A harness process does not need it (it is ended), but a connect agent keeps running when its
+  connection goes, and a web task it was driving went on in the browser. Its teardown now waits up to
+  a second for the cancel to be written, and the connection is half-closed after it.
+
 ## [3.20.0] - 2026-11-20
 
 ### Changed

@@ -38,6 +38,7 @@ session id, agy's conversation id). One conversation holds one session *per agen
 | `status-board.ts` | Each conversation's live agent status, pushed (deduped, throttled) to a platform that can show one — the web UI's strip |
 | `claude-transcript.ts` | claude's prompt-cache expiry, read off Claude Code's own transcript (headless Claude Code runs no status line) |
 | `agent-common.ts` | Protocol-agnostic helpers shared by the ACP runtime and the one-shot CLI paths |
+| `connect-agent.ts` | `connect` agents: an ACP service that is already running, dialled per session instead of started — the connection as an `AgentChild` here (on a host, fleetherd-remote's), and the `_meta` its `initialize` carries (token, machine, instructions) |
 | `agent-hooks.ts` | The operator's `agents[].hooks`: `preLaunch`, run to completion before every spawn of an agent's child |
 | `conversation-store.ts` | Persisted per conversation: the bound agent, each agent's own session id, and the directory it works in. Written atomically (temp file + rename, `0600`); only a turn's lane and `lastAt` wait up to 1 s to ride on the next write, everything restart needs is written at once |
 | `workdir-scan.ts` | The `/cd` option list: an agent's configured root plus the projects one level inside it |

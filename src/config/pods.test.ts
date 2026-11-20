@@ -30,6 +30,13 @@ describe('mergePodAgents', () => {
     expect(ids).toEqual(['cc:', 'oc@a:a', 'oc@b:b', 'ag@a:a']);
   });
 
+  it("keeps a connect agent's address, token file and meta as the pod wrote them", () => {
+    const connect = { url: 'tcp://wad:7790', tokenFile: '~/.wad/token', meta: { wad: { site: 'gemini-task', profile: 'a,b' } } };
+    const { raw: out, skipped } = mergePodAgents(raw, { a: record([{ id: 'web', harness: 'custom', connect, permissions: 'ask' }]) });
+    expect(skipped).toEqual([]);
+    expect((out.agents as Array<Record<string, unknown>>).find((a) => a.id === 'web@a')).toMatchObject({ host: 'a', connect });
+  });
+
   it('leaves an id config.yaml already defines to config.yaml', () => {
     const { raw: out } = mergePodAgents(raw, { a: record([{ id: 'oc', harness: 'opencode', model: 'theirs' }]) });
     const oc = (out.agents as Array<{ id: string; model?: string }>).filter((a) => a.id === 'oc@a');

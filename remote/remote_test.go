@@ -372,6 +372,49 @@ func TestSignalsReachTheProcess(t *testing.T) {
 	}
 }
 
+func TestConnectStandsInForAProcess(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	got := make(chan string, 1)
+	go func() {
+		c, aerr := ln.Accept()
+		if aerr != nil {
+			return
+		}
+		defer c.Close()
+		_, _ = c.Write([]byte("hi from the agent\n"))
+		// Everything the gateway queued before its SIGTERM arrives, then EOF: a half-close.
+		b, _ := io.ReadAll(c)
+		got <- string(b)
+	}()
+
+	d := testDaemon(t, "connect")
+	g := dialGateway(t, d.sockPath, "E1", 0, 0)
+	g.send(&Header{T: "spawn", ID: "p1", Connect: ln.Addr().String()}, nil)
+	g.send(&Header{T: "stdin", ID: "p1"}, []byte("session/cancel\n"))
+	g.send(&Header{T: "signal", ID: "p1", Sig: "SIGTERM"}, nil)
+	h, _, out := g.until("exit", "p1", 5*time.Second)
+	if out != "hi from the agent\n" || h.Code == nil || *h.Code != 0 || h.Error != "" {
+		t.Fatalf("exit %+v, out %q", h, out)
+	}
+	if b := <-got; b != "session/cancel\n" {
+		t.Fatalf("the agent read %q", b)
+	}
+
+	// Nothing there: the start fails with the reason, the way a command not on PATH does.
+	free, _ := net.Listen("tcp", "127.0.0.1:0")
+	addr := free.Addr().String()
+	free.Close()
+	g.send(&Header{T: "spawn", ID: "p2", Connect: addr}, nil)
+	h, _, _ = g.until("exit", "p2", 15*time.Second)
+	if !strings.Contains(h.Error, "connect "+addr) {
+		t.Fatalf("exit: %+v", h)
+	}
+}
+
 func TestReverseCommandRoundTrip(t *testing.T) {
 	d := testDaemon(t, "cli")
 	g := dialGateway(t, d.sockPath, "E1", 0, 0)
