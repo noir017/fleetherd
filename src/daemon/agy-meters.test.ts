@@ -75,6 +75,27 @@ describe('parseAgyUsagePools', () => {
     ]);
   });
 
+  it('extracts per-account tags without mistaking aggregated summaries for accounts, and deduplicates rows', () => {
+    const multi = [
+      'Gemini Models (alice@example.com)\tFive Hour Limit Remaining\t88%\t2026-11-20T15:55:01Z',
+      'Gemini Models (alice@example.com)\tWeekly Limit Remaining\t94%\t2026-11-24T10:55:01Z',
+      'Gemini Models (bob@example.com)\tFive Hour Limit Remaining\t99%\t2026-11-20T16:30:26Z',
+      'Gemini Models (bob@example.com)\tWeekly Limit Remaining\t96%\t2026-11-26T03:30:26Z',
+      // Duplicate row for the same account+pool replaces rather than multiplying.
+      'Gemini Models (alice@example.com)\tFive Hour Limit Remaining\t85%\t2026-11-20T15:55:01Z',
+    ].join('\n');
+    expect(parseAgyUsagePools(multi)).toEqual([
+      { id: 'gemini-5h', remaining: 0.85, resetsAt: Date.parse('2026-11-20T15:55:01Z'), account: 'alice@example.com' },
+      { id: 'gemini-weekly', remaining: 0.94, resetsAt: Date.parse('2026-11-24T10:55:01Z'), account: 'alice@example.com' },
+      { id: 'gemini-5h', remaining: 0.99, resetsAt: Date.parse('2026-11-20T16:30:26Z'), account: 'bob@example.com' },
+      { id: 'gemini-weekly', remaining: 0.96, resetsAt: Date.parse('2026-11-26T03:30:26Z'), account: 'bob@example.com' },
+    ]);
+    // Aggregated CPA summary keeps no account field.
+    expect(
+      parseAgyUsagePools('Gemini Models (alice 100%, bob 62%, carol 0%)\tFive Hour Limit Remaining\t54%\t2026-11-14T08:13:48Z'),
+    ).toEqual([{ id: 'gemini-5h', remaining: 0.54, resetsAt: Date.parse('2026-11-14T08:13:48Z') }]);
+  });
+
   it('has no pools for output that is not the table', () => {
     vi.spyOn(console, 'debug').mockImplementation(() => {});
     expect(parseAgyUsagePools('')).toBeUndefined();

@@ -1,7 +1,7 @@
 import { promisify } from 'node:util';
 import { execFile as execFileCb } from 'node:child_process';
 import type { AgentDef } from '../config/schema.js';
-import type { QuotaPool } from '../types.js';
+import type { QuotaPool, SessionOption } from '../types.js';
 import { buildHarnessEnv, remoteAgentEnv } from './agent-common.js';
 import { runAgyCliCommand, runAgyCliFor, type AgyCliResult, type AgyCliRunner } from './agy-cli.js';
 import { parseAgyUsagePools } from './agy-meters.js';
@@ -111,27 +111,82 @@ function parseJsonQuotaPools(raw: string): QuotaPool[] | undefined {
   } catch {
     return undefined;
   }
-  const list = Array.isArray(parsed)
-    ? parsed
-    : parsed && typeof parsed === 'object' && Array.isArray((parsed as { pools?: unknown }).pools)
-      ? (parsed as { pools: unknown[] }).pools
-      : undefined;
+  const list = extractJsonPoolList(parsed);
   if (!list) return undefined;
-  const pools: QuotaPool[] = [];
+  const byKey = new Map<string, QuotaPool>();
   for (const item of list) {
-    if (!item || typeof item !== 'object') continue;
-    const { id, remaining, resetsAt } = item as Record<string, unknown>;
-    if (typeof id !== 'string' || !id.trim() || typeof remaining !== 'number' || !Number.isFinite(remaining)) continue;
-    const pool: QuotaPool = { id: id.trim(), remaining: Math.min(1, Math.max(0, remaining)) };
-    if (typeof resetsAt === 'number' && Number.isFinite(resetsAt)) pool.resetsAt = resetsAt;
-    else if (typeof resetsAt === 'string') {
-      const at = Date.parse(resetsAt);
-      if (Number.isFinite(at)) pool.resetsAt = at;
-    }
-    pools.push(pool);
+    const pool = parseJsonQuotaItem(item);
+    if (pool) byKey.set(`${pool.account ?? ''}\0${pool.id}`, pool);
   }
-  pools.sort((a, b) => a.id.localeCompare(b.id));
+  const pools = [...byKey.values()];
+  pools.sort((a, b) => (a.account ?? '').localeCompare(b.account ?? '') || a.id.localeCompare(b.id));
   return pools.length ? pools : undefined;
+}
+
+function extractJsonPoolList(parsed: unknown): unknown[] | undefined {
+  if (Array.isArray(parsed)) return parsed;
+  if (parsed && typeof parsed === 'object' && Array.isArray((parsed as { pools?: unknown }).pools)) {
+    return (parsed as { pools: unknown[] }).pools;
+  }
+  return undefined;
+}
+
+function parseJsonQuotaItem(item: unknown): QuotaPool | undefined {
+  if (!item || typeof item !== 'object') return undefined;
+  const { id, remaining, resetsAt, account, profile } = item as Record<string, unknown>;
+  if (typeof id !== 'string' || !id.trim() || typeof remaining !== 'number' || !Number.isFinite(remaining)) return undefined;
+  const rawAcct = typeof account === 'string' ? account : typeof profile === 'string' ? profile : undefined;
+  const acct = rawAcct?.trim() || undefined;
+  const resetMs = parseResetTimestamp(resetsAt);
+  return {
+    id: id.trim(),
+    remaining: Math.min(1, Math.max(0, remaining)),
+    ...(resetMs !== undefined ? { resetsAt: resetMs } : {}),
+    ...(acct ? { account: acct } : {}),
+  };
+}
+
+function parseResetTimestamp(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string') {
+    const at = Date.parse(value);
+    if (Number.isFinite(at)) return at;
+  }
+  return undefined;
+}
+
+/**
+ * Narrow a multi-account quota reading to the account this session is actually running on.
+ *
+ * `QuotaMeter` caches one `quotaCommand` reading per agent across conversations. When that reading
+ * lists pools per account (e.g. `wad quota` for several running profiles) and the session exposes
+ * an `account` option (or any custom option whose value matches the pool accounts), each
+ * conversation sees only its own account's pools — never another conversation's — and gets `[]`
+ * rather than a wrong account's numbers if its own account has not reported yet. Single-account
+ * or already-aggregated readings pass through untouched.
+ */
+export function scopeQuotaPools(pools: readonly QuotaPool[], options?: readonly SessionOption[]): QuotaPool[] {
+  const accounts = new Set<string>();
+  for (const p of pools) {
+    if (p.account) accounts.add(p.account);
+  }
+  if (accounts.size === 0) return [...pools];
+  const selected = selectedAccountOf(options, accounts);
+  if (!selected) return [...pools];
+  return pools.filter((p) => !p.account || p.account === selected);
+}
+
+function selectedAccountOf(options: readonly SessionOption[] | undefined, accounts: ReadonlySet<string>): string | undefined {
+  if (!options?.length) return undefined;
+  const byId = options.find((o) => o.id === 'account' && typeof o.current === 'string' && o.current.trim());
+  if (byId?.current) return byId.current.trim();
+  const byMatch = options.find(
+    (o) =>
+      typeof o.current === 'string' &&
+      o.current.trim() &&
+      (accounts.has(o.current.trim()) || o.options.some((c) => accounts.has(c.value))),
+  );
+  return byMatch?.current?.trim();
 }
 /**
  * The quota pools, per source. Keyed by where the reading comes from: agy's quota belongs to whoever

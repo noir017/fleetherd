@@ -51,6 +51,10 @@ export const PROBE_TIMEOUT_MS = 60_000;
 export interface OptionKind {
   id: string;
   name: string;
+  /** Default display value reported by a fresh session of this agent, when known. */
+  defaultValue?: string;
+  /** Default description for that value, when the agent gave one. */
+  defaultNote?: string;
 }
 
 export interface ModelCatalogDeps {
@@ -73,6 +77,8 @@ export class ModelCatalog {
   private readonly known = new WeakMap<AgentDef, AgentModelList>();
   private readonly knownModes = new WeakMap<AgentDef, AgentModes>();
   private readonly knownOptions = new WeakMap<AgentDef, OptionKind[]>();
+  private readonly knownDefaultModel = new WeakMap<AgentDef, string>();
+  private readonly probed = new WeakSet<AgentDef>();
   private readonly asking = new WeakMap<AgentDef, Promise<AgentModelList>>();
 
   constructor(private readonly deps: ModelCatalogDeps) {}
@@ -133,13 +139,24 @@ export class ModelCatalog {
     return known === undefined || known.kind === 'error';
   }
 
+  /** The agent's default model display name as far as known now, without asking. */
+  defaultModel(agentId: string): string | undefined {
+    const def = this.deps.defOf(agentId);
+    if (!def) return undefined;
+    const known = this.knownDefaultModel.get(def);
+    if (known) return known;
+    const live = this.deps.liveSelector(agentId);
+    return live ? currentModelLabel(live) : undefined;
+  }
+
   /** The agent's own settings as far as known now, without asking: undefined when nothing is. */
   options(agentId: string): OptionKind[] | undefined {
     const def = this.deps.defOf(agentId);
     if (!def) return undefined;
+    if (this.probed.has(def)) return this.knownOptions.get(def);
     const live = this.deps.liveOptions?.(agentId);
     if (live) {
-      const kinds = optionKinds(live);
+      const kinds = optionKinds(live, false);
       this.knownOptions.set(def, kinds);
       return kinds;
     }
@@ -151,11 +168,15 @@ export class ModelCatalog {
    * running for the models). Never rejects; empty when the agent has none or could not be asked.
    */
   async learnOptions(agentId: string): Promise<OptionKind[]> {
-    const known = this.options(agentId);
-    if (known) return known;
-    await this.ask(agentId);
     const def = this.deps.defOf(agentId);
-    return (def && this.knownOptions.get(def)) ?? [];
+    if (!def) return [];
+    if (this.probed.has(def)) return this.knownOptions.get(def) ?? [];
+    const known = this.options(agentId);
+    // A live session from another conversation may have locked its own setting (single choice) and
+    // therefore carries no fresh-session default; probe once so a new topic sees the real defaults.
+    if (known && (known.length === 0 || known.every((k) => k.defaultValue !== undefined))) return known;
+    await this.ask(agentId);
+    return this.knownOptions.get(def) ?? [];
   }
 
   /** Ask for the list, once at a time per agent; resolves to the answer, never rejects. */
@@ -164,10 +185,13 @@ export class ModelCatalog {
     if (!def) return Promise.resolve({ kind: 'error', reason: `no agent named ${agentId}` });
     const running = this.asking.get(def);
     if (running) return running;
-    const p = this.probe(def).then(({ models, modes, options }) => {
+    const p = this.probe(def).then(({ models, modes, options, defaultModel }) => {
       this.known.set(def, models);
       this.knownModes.set(def, modes);
-      this.knownOptions.set(def, options);
+      // Keep live-learned options if a probe failed or returned nothing.
+      if (options.length > 0 || !this.knownOptions.has(def)) this.knownOptions.set(def, options);
+      if (defaultModel) this.knownDefaultModel.set(def, defaultModel);
+      this.probed.add(def);
       this.asking.delete(def);
       return models;
     });
@@ -176,7 +200,9 @@ export class ModelCatalog {
   }
 
   /** Start a session of the agent under an id no conversation has, read its selectors, dispose it. */
-  private async probe(def: AgentDef): Promise<{ models: AgentModelList; modes: AgentModes; options: OptionKind[] }> {
+  private async probe(
+    def: AgentDef,
+  ): Promise<{ models: AgentModelList; modes: AgentModes; options: OptionKind[]; defaultModel?: string }> {
     const sid = `models:${def.id}`;
     const started = Date.now();
     let session;
@@ -189,14 +215,15 @@ export class ModelCatalog {
       }
       const models: AgentModelList =
         selector && selector.options.length > 0 ? { kind: 'list', options: selector.options } : { kind: 'none' };
+      const defaultModel = selector ? currentModelLabel(selector) : undefined;
       const offered = session.permissionModes?.();
       const modes: AgentModes =
         offered && offered.options.length > 0
           ? { kind: 'list', options: offered.options, ...(offered.current ? { current: offered.current } : {}) }
           : { kind: 'none' };
-      const options = optionKinds(session.sessionOptions?.());
+      const options = optionKinds(session.sessionOptions?.(), true);
       console.log(`[models] asked ${def.id} ${answerLine(models, modes, options)} (${Date.now() - started}ms)`);
-      return { models, modes, options };
+      return { models, modes, options, ...(defaultModel ? { defaultModel } : {}) };
     } catch (e) {
       const reason = (e instanceof Error ? e.message : String(e)).split('\n')[0] ?? 'unknown';
       console.warn(`[models] could not ask ${def.id} for its models: ${reason}`);
@@ -208,8 +235,25 @@ export class ModelCatalog {
   }
 }
 
-function optionKinds(options: SessionOption[] | undefined): OptionKind[] {
-  return (options ?? []).map((o) => ({ id: o.id, name: o.name }));
+function currentModelLabel(selector: ModelSelector): string | undefined {
+  if (!selector.current) return undefined;
+  return selector.options.find((o) => o.value === selector.current)?.name ?? selector.current;
+}
+
+function optionKinds(options: SessionOption[] | undefined, fresh: boolean): OptionKind[] {
+  return (options ?? []).map((o) => {
+    // A locked setting (single option) on another conversation's live session reflects that
+    // conversation's bound choice, not a new conversation's default.
+    const includeDefault = fresh || o.options.length > 1;
+    const cur = includeDefault && o.current !== undefined ? o.options.find((c) => c.value === o.current) : undefined;
+    const defaultValue = includeDefault && o.current !== undefined ? (cur?.name ?? o.current) : undefined;
+    return {
+      id: o.id,
+      name: o.name,
+      ...(defaultValue !== undefined ? { defaultValue } : {}),
+      ...(cur?.description ? { defaultNote: cur.description } : {}),
+    };
+  });
 }
 
 /** What one ask learned, for its log line. */

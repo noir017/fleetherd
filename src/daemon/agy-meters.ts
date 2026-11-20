@@ -90,7 +90,7 @@ export function agyCompactionPoint(model: string | undefined): number | undefine
  * all this command prints.
  */
 export function parseAgyUsagePools(output: string): QuotaPool[] | undefined {
-  const pools: QuotaPool[] = [];
+  const byKey = new Map<string, QuotaPool>();
   for (const line of output.split('\n')) {
     if (!line.trim()) continue;
     const [family = '', metric = '', remaining = '', reset = ''] = line.split('\t').map((c) => c.trim());
@@ -101,13 +101,29 @@ export function parseAgyUsagePools(output: string): QuotaPool[] | undefined {
       console.debug('[agy] /usage row not understood, left out of the quota:', line.slice(0, 120));
       continue;
     }
-    const pool: QuotaPool = { id: `${fam}-${win}`, remaining: Math.min(1, Math.max(0, pct / 100)) };
+    const account = poolAccount(family);
+    const pool: QuotaPool = {
+      id: `${fam}-${win}`,
+      remaining: Math.min(1, Math.max(0, pct / 100)),
+      ...(account ? { account } : {}),
+    };
     const at = Date.parse(reset);
     if (Number.isFinite(at)) pool.resetsAt = at;
-    pools.push(pool);
+    byKey.set(`${account ?? ''}\0${pool.id}`, pool);
   }
-  pools.sort((a, b) => a.id.localeCompare(b.id));
+  const pools = [...byKey.values()];
+  pools.sort((a, b) => (a.account ?? '').localeCompare(b.account ?? '') || a.id.localeCompare(b.id));
   return pools.length ? pools : undefined;
+}
+
+/**
+ * A single-token account tag appended to a family name, e.g. `Gemini Models (alice@example.com)`
+ * or `Gemini Models (main)`. Multi-account aggregate summaries like `(alice 100%, bob 62%)`
+ * contain spaces, commas, or `%` and return undefined so they stay aggregated.
+ */
+function poolAccount(name: string): string | undefined {
+  const match = /\(([^()\s,%]+)\)\s*$/.exec(name);
+  return match?.[1];
 }
 
 /** `Gemini Models` → gemini, `Claude and GPT models` → 3p: the status line's family names. */

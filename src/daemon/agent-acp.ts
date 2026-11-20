@@ -100,7 +100,7 @@ import {
 } from './agy-acp.js';
 import { markActivePools } from './agy-meters.js';
 import { AGY_CONTEXT_REFRESH_MS, readAgyContext } from './agy-transcript.js';
-import { createQuotaMeter, hasQuotaSource, type QuotaMeter } from './quota-meter.js';
+import { createQuotaMeter, hasQuotaSource, scopeQuotaPools, type QuotaMeter } from './quota-meter.js';
 import { relayEnv } from './relay.js';
 
 /**
@@ -2063,6 +2063,7 @@ function createAcpSession(
         if (!options) return;
         liveConfigOptions = options;
         liveModel = liveModelName(options) ?? liveModel;
+        reportScopedQuota(handlers);
       },
       // claude moves its own mode when the person approves leaving plan; keep `modes` saying so.
       onModeChanged: (modeId) => {
@@ -2458,13 +2459,18 @@ function createAcpSession(
    * The run that lost the race showed no quota until the next turn, and every turn whose reading
    * was slow ended up to 5 s late for nothing.
    */
+  function reportScopedQuota(handlers: AgentStreamHandlers): void {
+    const pools = quota?.read(def);
+    if (!disposed && pools) {
+      const scoped = scopeQuotaPools(pools, customOptionsOf(liveConfigOptions));
+      handlers.onQuota?.(markActivePools(scoped, liveModel));
+    }
+  }
+
   function quotaForTurn(handlers: AgentStreamHandlers): void {
     const meter = quota;
     if (!meter) return;
-    const report = (): void => {
-      const pools = meter.read(def);
-      if (!disposed && pools) handlers.onQuota?.(markActivePools(pools, liveModel));
-    };
+    const report = (): void => reportScopedQuota(handlers);
     report();
     void meter.refresh(def, cwd).then(report, () => {});
   }

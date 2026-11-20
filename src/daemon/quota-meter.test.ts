@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { AgentDef } from '../config/schema.js';
 import type { AgyCliRunner } from './agy-cli.js';
 import { createQuotaMeter, hasQuotaSource, runQuotaCommand, runQuotaCommandFor, type QuotaCommandRunner } from './quota-meter.js';
-import { parseQuotaOutput } from './quota-meter.js';
+import { parseQuotaOutput, scopeQuotaPools } from './quota-meter.js';
 
 const def = (over: Partial<AgentDef> = {}) => ({ id: 'agy', harness: 'agy', env: { HOME: '/h' }, ...over }) as unknown as AgentDef;
 const OUT = 'Gemini Models\tWeekly Limit Remaining\t74%\t2026-11-07T04:24:11Z';
@@ -117,5 +117,45 @@ describe('parseQuotaOutput', () => {
     expect(parseQuotaOutput('Gemini Models\tOne Hour Limit Remaining\t80%\t2026-11-20T11:00:00Z')).toEqual([
       { id: 'gemini-1h', remaining: 0.8, resetsAt: Date.parse('2026-11-20T11:00:00Z') },
     ]);
+  });
+
+  it('preserves account/profile in JSON output and deduplicates per account', () => {
+    const json = JSON.stringify([
+      { id: 'gemini-5h', remaining: 0.88, profile: 'alice@example.com' },
+      { id: 'gemini-5h', remaining: 0.99, account: 'bob@example.com' },
+      { id: 'gemini-5h', remaining: 0.8, profile: 'alice@example.com' },
+    ]);
+    expect(parseQuotaOutput(json)).toEqual([
+      { id: 'gemini-5h', remaining: 0.8, account: 'alice@example.com' },
+      { id: 'gemini-5h', remaining: 0.99, account: 'bob@example.com' },
+    ]);
+  });
+});
+
+describe('scopeQuotaPools', () => {
+  const POOLS = [
+    { id: 'gemini-5h', remaining: 0.88, account: 'alice@example.com' },
+    { id: 'gemini-weekly', remaining: 0.94, account: 'alice@example.com' },
+    { id: 'gemini-5h', remaining: 0.99, account: 'bob@example.com' },
+    { id: 'gemini-weekly', remaining: 0.96, account: 'bob@example.com' },
+  ];
+
+  it('filters multi-account pools to the session’s active account', () => {
+    const opts = [{ id: 'account', name: 'Account', current: 'bob@example.com', options: [{ value: 'bob@example.com', name: 'bob@example.com' }] }];
+    expect(scopeQuotaPools(POOLS, opts)).toEqual([
+      { id: 'gemini-5h', remaining: 0.99, account: 'bob@example.com' },
+      { id: 'gemini-weekly', remaining: 0.96, account: 'bob@example.com' },
+    ]);
+  });
+
+  it('returns empty when the session’s active account has not reported yet, instead of another account’s quota', () => {
+    const opts = [{ id: 'account', name: 'Account', current: 'carol@example.com', options: [{ value: 'carol@example.com', name: 'carol@example.com' }] }];
+    expect(scopeQuotaPools(POOLS, opts)).toEqual([]);
+  });
+
+  it('passes through pools with no account tags or when no account option exists', () => {
+    const plain = [{ id: 'gemini-5h', remaining: 0.5 }];
+    expect(scopeQuotaPools(plain, [])).toEqual(plain);
+    expect(scopeQuotaPools(POOLS, [])).toEqual(POOLS);
   });
 });

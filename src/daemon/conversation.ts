@@ -1,5 +1,6 @@
 import type { AgentDef, Config } from '../config/schema.js';
 import { agentDisplayName, findAgent } from '../config/schema.js';
+import { shortModelName } from '../core/runtime-footer.js';
 import { SessionTokenRegistry } from './conversation-token-registry.js';
 import { beginSkillTurn, recordToolUse } from './skill-usage.js';
 import {
@@ -3469,6 +3470,10 @@ ${formatTokens(left)} left before compaction — ${name}`;
     if (!warm.selector || warm.selector.options.length === 0) {
       return { ok: false, agent: state.agentId, reason: 'none', text: modelNoSelectorText() };
     }
+    const liveModel = selectorModelLabel(warm.selector);
+    if (liveModel) this.status.model(id, liveModel);
+    const liveOpts = warm.session.sessionOptions?.();
+    if (liveOpts?.length) this.status.options(id, liveOpts);
     const configured = findAgent(this.config, state.agentId)?.model;
     return {
       ok: true,
@@ -3509,14 +3514,32 @@ ${formatTokens(left)} left before compaction — ${name}`;
    * can still be changed, and nothing else would put its switch on screen until it no longer can.
    * A conversation that has had a session is not asked about — its next turn reports its settings.
    */
-  async optionStatusForRef(ref: ConversationRef): Promise<{ agent: string; options: StatusOption[] }> {
+  async optionStatusForRef(ref: ConversationRef): Promise<{ agent: string; model?: string; options: StatusOption[] }> {
     const id = this.idForRef(ref);
     const agent = this.agentForRef(id, ref);
-    const own = this.agents.peek(id)?.sessionOptions?.();
-    if (own) return { agent, options: statusOptions(own) };
+    const live = this.agents.peek(id);
+    const own = live?.sessionOptions?.();
+    if (own) {
+      const model = this.peekModelFor(id, agent, live, false);
+      return { agent, ...(model ? { model } : {}), options: statusOptions(own) };
+    }
     const fresh = this.store?.agentSession(id, agent) === undefined;
-    const kinds = this.modelCatalog.options(agent) ?? (fresh ? await this.modelCatalog.learnOptions(agent) : []);
-    return { agent, options: kinds.map((k) => ({ id: k.id, name: k.name })) };
+    const kinds = fresh ? await this.modelCatalog.learnOptions(agent) : (this.modelCatalog.options(agent) ?? []);
+    const model = this.peekModelFor(id, agent, live, fresh);
+    return {
+      agent,
+      ...(model ? { model } : {}),
+      options: kinds.map((k) => peekOptionStatus(k, fresh)),
+    };
+  }
+
+  private peekModelFor(id: ConversationId, agent: string, live: AgentSession | undefined, fresh: boolean): string | undefined {
+    const raw =
+      selectorModelLabel(live?.modelSelector?.()) ??
+      this.conversations.get(id)?.modelOverride ??
+      findAgent(this.config, agent)?.model ??
+      (fresh ? this.modelCatalog.defaultModel(agent) : undefined);
+    return raw ? shortModelName(raw) : undefined;
   }
 
   /**
@@ -3532,6 +3555,8 @@ ${formatTokens(left)} left before compaction — ${name}`;
     const warm = await this.warmSelector(id, agent, (s) => nonEmpty(s.sessionOptions?.()));
     if (warm.error) return { ok: false, agent, reason: 'error', text: `Could not start ${agent} to ask for its settings:\n${warm.error}` };
     if (!warm.selector) return { ok: false, agent, reason: 'none', text: `${agent} has no settings of its own to change.` };
+    const liveModel = selectorModelLabel(warm.session.modelSelector?.());
+    if (liveModel) this.status.model(id, liveModel);
     this.status.options(id, warm.selector);
     return { ok: true, agent, options: warm.selector };
   }
@@ -5092,4 +5117,21 @@ function historyRow(event: HistoryEvent): HistoryMessage | undefined {
  */
 function nonEmpty(options: SessionOption[] | undefined): SessionOption[] | undefined {
   return options && options.length > 0 ? options : undefined;
+}
+
+function selectorModelLabel(selector: { current?: string; options: Array<{ value: string; name: string }> } | undefined): string | undefined {
+  if (!selector?.current) return undefined;
+  return selector.options.find((o) => o.value === selector.current)?.name ?? selector.current;
+}
+
+function peekOptionStatus(
+  kind: { id: string; name: string; defaultValue?: string; defaultNote?: string },
+  fresh: boolean,
+): StatusOption {
+  return {
+    id: kind.id,
+    name: kind.name,
+    ...(fresh && kind.defaultValue !== undefined ? { value: kind.defaultValue } : {}),
+    ...(fresh && kind.defaultNote ? { note: kind.defaultNote } : {}),
+  };
 }
