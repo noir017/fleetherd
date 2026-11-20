@@ -208,6 +208,17 @@ top in green, so they are the only things that stand out. The setting is kept in
 only. **All settings** (the page above), Notifications and **Skills** are in the same menu;
 **Close idle** is in **Manage** beside it, and **Clear all topics** is an icon button beside Topics in the sidebar header.
 
+**Code in a reply.** Every code block has a bar naming its language, with **Wrap** (long lines
+break inside the block instead of scrolling sideways) and **Copy** (the code exactly as written,
+with a check mark for a moment). Once a message has stopped changing its code is coloured with the
+same grammars as the file viewer; the message a running turn is still writing stays plain until a
+newer message follows it or the turn ends. A `diff` or `patch` block shows added lines green,
+removed lines red and hunk headers blue as it streams in. A block indented under a list item is a
+block there, not a line of code text. A table scrolls sideways inside its own frame on a narrow
+screen, a `|` inside a cell's `` `code` `` (or written `\|`) no longer splits the cell, and
+`- [ ]` / `- [x]` items show as boxes, unticked and ticked — read-only, since ticking one would
+tell the agent nothing.
+
 **Tool calls, in full.** Each tool the agent runs is one row in its tool bubble, and here
 a row carries the whole command — up to 2000 characters — where a chat app gets the
 first 40 (`tools.previewLimit`). The row is cut at the edge of the bubble, so a wide

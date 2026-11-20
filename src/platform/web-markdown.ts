@@ -38,6 +38,8 @@
  * alternative makes every streamed code block flicker through a paragraph first.
  */
 
+import { icon } from './webui/icons.js';
+
 const HTML_ESCAPES: Readonly<Record<string, string>> = {
   '&': '&amp;',
   '<': '&lt;',
@@ -196,11 +198,61 @@ function takeFence(lines: readonly string[], i: number, out: string[]): number |
     body.push(line);
     n += 1;
   }
-  // The language is a class rather than text so a highlighter could be added later without
-  // touching this file; nothing reads it today.
-  const cls = info ? ` class="language-${escapeHtml(info)}"` : '';
-  out.push(`<pre><code${cls}>${escapeHtml(body.join('\n'))}</code></pre>`);
+  out.push(codeBlock(info, body.join('\n')));
   return n - i;
+}
+
+/** Fence languages whose lines are coloured here, by their first character (see `diffLines`). */
+const DIFF_LANGS: ReadonlySet<string> = new Set(['diff', 'patch']);
+
+/**
+ * A code block in its frame: a bar naming the language, with two controls the page wires up by
+ * `data-cb` (page.ts, delegated, so every place this HTML lands gets them) — copy the code, and
+ * wrap its long lines — over the `<pre>`.
+ *
+ * The controls are markup here rather than added by the page, the way a tool bubble's icons are:
+ * a fence reaches the page through the transcript, a reply streaming in, the History tab, a side
+ * answer's card and the file reader, and markup written once here is right in all of them without
+ * each having to remember a step. Copy reads the `<code>` element's text, so it gets exactly the
+ * characters inside the fence whatever the page has since drawn over them.
+ *
+ * The language stays a class on `<code>` as well as the label: it is what the page's highlighter
+ * (codeview `highlighter`) is asked for, after the message has stopped changing.
+ */
+function codeBlock(info: string, body: string): string {
+  const lang = escapeHtml(info);
+  const cls = info ? ` class="language-${lang}"` : '';
+  const code = DIFF_LANGS.has(info.toLowerCase()) ? diffLines(body) : escapeHtml(body);
+  return (
+    `<div class="cb"><div class="cb-h"><span class="cb-lang">${lang}</span>` +
+    `<button type="button" class="cb-b" data-cb="wrap" title="Wrap long lines" aria-label="Wrap long lines" aria-pressed="false">${icon('wrap')}</button>` +
+    `<button type="button" class="cb-b" data-cb="copy" title="Copy" aria-label="Copy code">${icon('copy')}</button>` +
+    `</div><pre><code${cls}>${code}</code></pre></div>`
+  );
+}
+
+/**
+ * A patch, one line at a time: added green, removed red, a hunk header in the header colour — the
+ * same rule and classes as the git panel's plain-text fallback (page.ts gitPaintPatch), so a diff
+ * in a reply reads like the diff in the panel. `+++` / `---` are the file names, not changes.
+ *
+ * Done here rather than by the page's highlighter because it needs no grammar: the first character
+ * is the whole rule, so a patch is coloured while it is still streaming in and on a page that has
+ * no code view at all. Each line is escaped on its own, inside a span this file wrote; the newlines
+ * stay between the spans, so the code element's text is the fence's text exactly.
+ */
+function diffLines(body: string): string {
+  return body
+    .split('\n')
+    .map((line) => {
+      const cls =
+        line.startsWith('+') && !line.startsWith('+++') ? 'pa'
+        : line.startsWith('-') && !line.startsWith('---') ? 'pd'
+        : line.startsWith('@@') ? 'ph'
+        : '';
+      return cls ? `<span class="${cls}">${escapeHtml(line)}</span>` : escapeHtml(line);
+    })
+    .join('\n');
 }
 
 function takeHeading(lines: readonly string[], i: number, out: string[]): number | null {
@@ -261,9 +313,50 @@ function takeTable(lines: readonly string[], i: number, out: string[]): number |
   return n - i;
 }
 
-/** Split one table row into cells, dropping the leading/trailing pipes GFM allows. */
+/**
+ * Split one table row into cells, dropping the leading/trailing pipes GFM allows.
+ *
+ * Scanned rather than `split('|')`, because a pipe is not always a column. `\|` is a literal pipe
+ * (GFM), and a pipe inside a code span is read as part of the code: agents write `a | b` in a
+ * cell to show a shell pipeline or a union type, and splitting there cut the cell in two and
+ * pushed the last column off the row. A backtick run with no closer is literal, as it is in
+ * `inline`, so a row still streaming in splits the way it will once the closer arrives.
+ */
 function splitRow(line: string): string[] {
-  return line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((c) => c.trim());
+  const s = line.trim().replace(/^\|/, '');
+  const cells: string[] = [];
+  let cell = '';
+  // Whether nothing has been written since the last separator: a row that ends on its pipe has
+  // no empty last cell (`| a | b |` is two cells, `| a | |` still two).
+  let fresh = false;
+  let i = 0;
+  while (i < s.length) {
+    const c = s[i] ?? '';
+    if (c === '|') {
+      cells.push(cell.trim());
+      cell = '';
+      fresh = true;
+      i += 1;
+      continue;
+    }
+    fresh = false;
+    if (c === '\\' && s[i + 1] === '|') {
+      cell += '|';
+      i += 2;
+    } else if (c === '`') {
+      const len = backtickRun(s, i);
+      const close = codeSpanClose(s, i + len, len);
+      const end = close < 0 ? i + len : close + len;
+      // A code span keeps its pipes, and its `\|` reads as `|` there too, as GFM has it.
+      cell += s.slice(i, end).replace(/\\\|/g, '|');
+      i = end;
+    } else {
+      cell += c;
+      i += 1;
+    }
+  }
+  if (!fresh || cell.trim() !== '') cells.push(cell.trim());
+  return cells;
 }
 
 function renderTable(heads: readonly string[], rows: readonly string[][]): string {
@@ -275,7 +368,11 @@ function renderTable(heads: readonly string[], rows: readonly string[][]): strin
     .map((r) => heads.map((_, c) => r[c] ?? '').map(cell('td')).join(''))
     .map((tds) => `<tr>${tds}</tr>`)
     .join('');
-  return `<table><thead>${head}</thead><tbody>${body}</tbody></table>`;
+  // The frame scrolls sideways, not the table: a table wider than a phone is otherwise either
+  // squeezed a word to a line or wider than the bubble it is in. A `display:block` table scrolled
+  // too, but it is then no longer a table to the browser's layout, and its cells stop sharing one
+  // width with the header row the moment a row is short.
+  return `<div class="tbl"><table><thead>${head}</thead><tbody>${body}</tbody></table></div>`;
 }
 
 const ITEM_RE = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/;
@@ -285,7 +382,11 @@ interface Item {
   ordered: boolean;
   /** The number the author wrote, for an ordered item. Used only to start the list at it. */
   num: number;
-  text: string;
+  /**
+   * What the item holds, in order: runs of text (its first line and the continuation lines under
+   * it, joined by newlines) and blocks already rendered — a code fence indented under the item.
+   */
+  parts: Array<string | { html: string }>;
 }
 
 /**
@@ -307,22 +408,50 @@ function takeList(lines: readonly string[], i: number, out: string[]): number | 
         indent: (m[1] ?? '').length,
         ordered: /\d/.test(m[2] ?? ''),
         num: parseInt(m[2] ?? '', 10) || 1,
-        text: m[3] ?? '',
+        parts: [m[3] ?? ''],
       });
       n += 1;
       continue;
     }
     // A non-item, non-blank line indented under the last item is that item's continuation.
-    const cont = /^\s+\S/.test(lines[n] ?? '') ? (lines[n] ?? '').trim() : null;
+    const line = lines[n] ?? '';
     const last = items[items.length - 1];
-    if (cont === null || !last) break;
-    last.text += `\n${cont}`;
+    if (!/^\s+\S/.test(line) || !last) break;
+    const fence = takeItemFence(lines, n);
+    if (fence) {
+      last.parts.push({ html: fence.html });
+      n += fence.consumed;
+      continue;
+    }
+    const tail = last.parts[last.parts.length - 1];
+    if (typeof tail === 'string') last.parts[last.parts.length - 1] = `${tail}\n${line.trim()}`;
+    else last.parts.push(line.trim());
     n += 1;
   }
   out.push(renderList(items));
   return n - i;
 }
 
+/**
+ * A code fence indented under a list item — how a model writes the command that goes with step 2.
+ *
+ * Taken as a block, by the same fence taker as everywhere else, with the fence line's own indent
+ * stripped from every line of it (CommonMark's rule for an indented fence's content). Before, it
+ * went down the continuation path: trimmed, joined into the item's text, and the backticks turned
+ * the whole block into one inline code span with `<br>` for its newlines.
+ *
+ * Like a fence anywhere, it runs to its closer or to the end of the input — the streaming case —
+ * and the lines inside it are never read as list items, so a YAML list in the code stays code.
+ */
+function takeItemFence(lines: readonly string[], n: number): { html: string; consumed: number } | null {
+  const line = lines[n] ?? '';
+  const pad = /^[ \t]*/.exec(line)?.[0].length ?? 0;
+  if (!FENCE_RE.test(line.slice(pad))) return null;
+  const dedent = new RegExp(`^[ \\t]{0,${pad}}`);
+  const out: string[] = [];
+  const consumed = takeFence(lines.slice(n).map((l) => l.replace(dedent, '')), 0, out) ?? 1;
+  return { html: out.join(''), consumed };
+}
 
 /** One open list in `renderList`'s stack: what it is, and how far its items are indented. */
 interface OpenList {
@@ -367,12 +496,37 @@ function renderList(items: readonly Item[]): string {
         stack[stack.length - 1] = { indent: item.indent, tag };
       }
     }
-    out.push(`<li>${inlineText(item.text)}`);
+    out.push(itemOpen(item));
   }
   while (stack.length > 0) {
     out.push(`</li></${stack.pop()?.tag ?? 'ul'}>`);
   }
   return out.join('');
+}
+
+/**
+ * A GFM task item's box: `[ ]` or `[x]`, then a space or the end of the line. `[x](url)` is a link,
+ * not a box, and neither is a `[` still waiting for its `]` while the line streams in.
+ */
+const TASK_RE = /^\[([ xX])\](?:\s+|$)/;
+
+/**
+ * An item's opening `<li>` and everything it holds but its nested lists.
+ *
+ * A task item shows its box as the page's own box icons, drawn not clickable: ticking it here would
+ * change nothing the agent can see, and a box that looks like it records a choice and does not is
+ * worse than one that plainly reports. The label is for a screen reader, which has no other way to
+ * tell the two icons apart.
+ */
+function itemOpen(item: Item): string {
+  const [first, ...rest] = item.parts;
+  const task = typeof first === 'string' ? TASK_RE.exec(first) : null;
+  const parts = task && typeof first === 'string' ? [first.slice(task[0].length), ...rest] : item.parts;
+  const body = parts.map((p) => (typeof p === 'string' ? inlineText(p) : p.html)).join('');
+  if (!task) return `<li>${body}`;
+  const done = task[1] !== ' ';
+  const box = `<span class="task-box" role="img" aria-label="${done ? 'done' : 'not done'}">${icon(done ? 'boxOn' : 'boxOff')}</span>`;
+  return `<li class="task${done ? ' done' : ''}">${box}${body}`;
 }
 
 /**
@@ -494,17 +648,33 @@ export function inline(s: string): string {
 /** A code span: a run of N backticks closed by the next run of exactly N. */
 function scanCode(s: string, i: number): Match | null {
   if (s[i] !== '`') return null;
+  const len = backtickRun(s, i);
+  const from = i + len;
+  const at = codeSpanClose(s, from, len);
+  if (at < 0) return null; // unclosed → the backticks stay literal (stream safety)
+  return { html: `<code>${s.slice(from, at)}</code>`, next: at + len };
+}
+
+/** How many backticks in a row start at `i`. */
+function backtickRun(s: string, i: number): number {
   let len = 0;
   while (s[i + len] === '`') len += 1;
+  return len;
+}
+
+/**
+ * Where the run of exactly `len` backticks that closes a code span starts, searching from `from`;
+ * -1 when there is none. Shared by `scanCode` and the table splitter, so a cell is cut around the
+ * same code spans the cell's own text is then rendered with.
+ */
+function codeSpanClose(s: string, from: number, len: number): number {
   const fence = '`'.repeat(len);
-  const from = i + len;
   let at = s.indexOf(fence, from);
   // Skip a longer run: it is not this span's closer.
   while (at >= 0 && s[at + len] === '`') {
     at = s.indexOf(fence, at + len + 1);
   }
-  if (at < 0) return null; // unclosed → the backticks stay literal (stream safety)
-  return { html: `<code>${s.slice(from, at)}</code>`, next: at + len };
+  return at;
 }
 
 /**

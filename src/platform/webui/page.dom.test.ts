@@ -32,7 +32,7 @@ import { JSDOM, type DOMWindow } from 'jsdom';
 import { IDBFactory } from 'fake-indexeddb';
 
 import { renderPage, servePage } from './page.js';
-import { renderWebToolLines } from '../web-markdown.js';
+import { renderWebMarkdown, renderWebToolLines } from '../web-markdown.js';
 import { webMessageHtml } from './room.js';
 
 /** One `fetch` the page made, in the shape the assertions care about. */
@@ -7240,6 +7240,14 @@ describe('webui page: the narrow-screen stylesheet', () => {
   };
   const narrowBlock = (): string => blockAt('@media(max-width:640px){');
 
+  it('gives a code block\'s Wrap and Copy a finger-sized target on a phone, and only there', () => {
+    expect(narrowBlock()).toContain('.cb-b{width:36px;height:32px;font-size:16px}');
+    // The desktop rule is the pointer's 26px; the phone's must not leak out of the block.
+    const outside = renderPage('Chat', false).replace(narrowBlock(), '');
+    expect(outside).not.toContain('.cb-b{width:36px');
+    expect(outside).toContain('width:26px;height:24px');
+  });
+
   it('turns the sidebar into a drawer that clears the screen when shut', () => {
     const css = narrowBlock();
     expect(css).toContain('#sidebar{position:fixed');
@@ -8747,6 +8755,237 @@ describe('webui page: tool bubbles fold and open', () => {
     expect(html).toContain('.tl-c{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}');
     expect(html).toContain('.tl-s{flex:none;white-space:pre}');
     expect(html).toContain('.tl.open{display:block;white-space:pre-wrap;overflow-wrap:anywhere}');
+  });
+});
+
+/**
+ * A reply's code blocks (web-markdown.ts codeBlock, page.ts "Code blocks"): the bar's Copy and Wrap,
+ * and the colours the code view's grammars put on once a message has stopped changing.
+ *
+ * The highlighter is a fake behind `window.__fhCodeView` — jsdom cannot import the real bundle — that
+ * colours `const`, `return` and double-quoted strings, and writes down every language it was asked
+ * for and every text it coloured, which is how "asked once" and "not parsed again" are seen.
+ */
+describe('webui page: code blocks in a reply', () => {
+  const T = 'c0de0b1c';
+  const FENCE = '```ts\nconst a = "x";\nreturn a;\n```';
+  const CODE = 'const a = "x";\nreturn a;';
+  /** A reply as the daemon posts one: the server's own markup. */
+  const reply = (id: string, md: string): Record<string, unknown> => message(id, webMessageHtml(undefined, md));
+  /** A sync of T whose turn is still running, so its newest message is the one being written. */
+  const running = (messages: Array<Record<string, unknown>>): Record<string, unknown> =>
+    sync(T, messages, [T], { topics: [{ id: T, title: 'Topic', lastAt: 1000, running: true, msgCount: messages.length }] });
+
+  interface HlLog {
+    asked: string[];
+    ran: string[];
+  }
+  function fakeCodeView(log: HlLog, fail = false) {
+    return {
+      editor() {
+        throw new Error('a reply never asks for an editor');
+      },
+      diff() {
+        throw new Error('a reply never asks for a diff');
+      },
+      highlighter(lang: string) {
+        log.asked.push(lang);
+        if (fail) return Promise.reject(new Error('the chunk is gone'));
+        if (lang !== 'ts') return Promise.resolve(null);
+        return Promise.resolve((code: string) => {
+          log.ran.push(code);
+          return Array.from(code.matchAll(/\b(?:const|return)\b|"[^"]*"/g), (m) => [
+            m.index ?? 0,
+            (m.index ?? 0) + m[0].length,
+            m[0].startsWith('"') ? 'tok-str' : 'tok-kw',
+          ]);
+        });
+      },
+    };
+  }
+  const codes = (h: Harness, root = '#log'): HTMLElement[] => Array.from(h.doc.querySelectorAll<HTMLElement>(`${root} .cb pre>code`));
+  /** A code element's coloured runs, as `class:text`. */
+  const runs = (el: Element | undefined): string[] =>
+    Array.from(el?.querySelectorAll('span') ?? [], (s) => `${s.className}:${s.textContent ?? ''}`);
+  const TS_RUNS = ['tok-kw:const', 'tok-str:"x"', 'tok-kw:return'];
+  /** Longer than the page waits after a write (HL_IDLE_MS) before it looks at waiting blocks again. */
+  const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 400));
+
+  it('frames a fence with its language, and Copy takes the code with a check for a moment', async () => {
+    const h = await open();
+    await h.emit(sync(T, [reply('m1', `Here:\n\n${FENCE}`)], [T]));
+
+    expect(h.doc.querySelector('#log .cb-lang')?.textContent).toBe('ts');
+    await h.click('#log .cb-b[data-cb="copy"]');
+    expect(h.clipboard).toEqual([CODE]);
+    const btn = h.doc.querySelector<HTMLElement>('#log .cb-b[data-cb="copy"]');
+    expect(face(btn)).toBe('[check]');
+    expect(btn?.title).toBe('Copied');
+    // Answered in the page: nothing about a copy is the daemon's business.
+    expect(h.calls.filter((c) => c.path === 'api/click')).toEqual([]);
+    await within('the copy icon back', 2500, () => face(btn) === '[copy]');
+    expect(btn?.getAttribute('aria-label')).toBe('Copy code');
+  });
+
+  it('wraps on a tap, keeps it through the message being written again, and unwraps on the next', async () => {
+    const h = await open();
+    await h.emit(sync(T, [reply('m1', `${FENCE}\n\nmore`)], [T]));
+
+    await h.click('#log .cb-b[data-cb="wrap"]');
+    const frame = (): Element | null => h.doc.querySelector('#log .cb');
+    expect(frame()?.classList.contains('wrap')).toBe(true);
+    expect(h.doc.querySelector('#log .cb-b[data-cb="wrap"]')?.getAttribute('aria-pressed')).toBe('true');
+
+    // An edit of the same message rewrites its HTML: a new frame, and still wrapped.
+    const before = frame();
+    await h.emit({ t: 'msg', msg: reply('m1', `${FENCE}\n\nmore, and more`) });
+    expect(frame()).not.toBe(before);
+    expect(frame()?.classList.contains('wrap')).toBe(true);
+    expect(h.doc.querySelector('#log .cb-b[data-cb="wrap"]')?.getAttribute('aria-pressed')).toBe('true');
+
+    await h.click('#log .cb-b[data-cb="wrap"]');
+    expect(frame()?.classList.contains('wrap')).toBe(false);
+    expect(renderPage('Chat', false)).toContain('.b .cb.wrap pre{white-space:pre-wrap;overflow-wrap:anywhere}');
+  });
+
+  it('colours a finished reply with the code view, keeping its text — and Copy still takes that text', async () => {
+    const log: HlLog = { asked: [], ran: [] };
+    const h = await open({ codeView: fakeCodeView(log) });
+    await h.emit(sync(T, [reply('m1', FENCE)], [T]));
+
+    await within('the code coloured', 1000, () => runs(codes(h)[0]).length > 0);
+    expect(runs(codes(h)[0])).toEqual(TS_RUNS);
+    expect(codes(h)[0]?.textContent).toBe(CODE);
+    expect(log.asked).toEqual(['ts']);
+    await h.click('#log .cb-b[data-cb="copy"]');
+    expect(h.clipboard).toEqual([CODE]);
+  });
+
+  it('builds the colours as text, so markup in the code stays text', async () => {
+    const log: HlLog = { asked: [], ran: [] };
+    const h = await open({ codeView: fakeCodeView(log) });
+    await h.emit(sync(T, [reply('m1', '```ts\nconst s = "<img src=x onerror=alert(1)>";\n```')], [T]));
+
+    await within('the code coloured', 1000, () => runs(codes(h)[0]).length > 0);
+    expect(h.doc.querySelector('#log img')).toBeNull();
+    expect(runs(codes(h)[0])).toContain('tok-str:"<img src=x onerror=alert(1)>"');
+  });
+
+  it('asks for each language once, and leaves one with no grammar — or a patch — as it came', async () => {
+    const log: HlLog = { asked: [], ran: [] };
+    const h = await open({ codeView: fakeCodeView(log) });
+    await h.emit(
+      sync(T, [reply('m1', `${FENCE}\n\n\`\`\`zig\nconst x = 1;\n\`\`\``), reply('m2', `${FENCE}\n\n\`\`\`diff\n+const b\n\`\`\``)], [T])
+    );
+
+    await within('both ts blocks coloured', 1000, () => runs(codes(h)[0]).length > 0 && runs(codes(h)[2]).length > 0);
+    await settle();
+    expect([...log.asked].sort()).toEqual(['ts', 'zig']);
+    expect(runs(codes(h)[1])).toEqual([]);
+    // The patch keeps the line colours the server gave it, and no grammar is asked about it.
+    expect(runs(codes(h)[3])).toEqual(['pa:+const b']);
+  });
+
+  it('keeps the reply a running turn is still writing plain, and colours it when the turn ends', async () => {
+    const log: HlLog = { asked: [], ran: [] };
+    const h = await open({ codeView: fakeCodeView(log) });
+    await h.emit(running([reply('m1', FENCE)]));
+
+    await settle();
+    expect(runs(codes(h)[0])).toEqual([]);
+    expect(log.ran).toEqual([]);
+
+    await h.emit({ t: 'typing', on: false });
+    await within('the code coloured', 1000, () => runs(codes(h)[0]).length > 0);
+    expect(runs(codes(h)[0])).toEqual(TS_RUNS);
+  });
+
+  it('colours the reply a newer message has followed, while the turn goes on writing the newer one', async () => {
+    const log: HlLog = { asked: [], ran: [] };
+    const h = await open({ codeView: fakeCodeView(log) });
+    await h.emit(running([reply('m1', FENCE)]));
+    await settle();
+    expect(runs(codes(h)[0])).toEqual([]);
+
+    await h.emit({ t: 'msg', msg: reply('m2', FENCE.replace('"x"', '"y"')) });
+    await within('the first reply coloured', 1000, () => runs(codes(h)[0]).length > 0);
+    await settle();
+    // The newest is the one still being written.
+    expect(runs(codes(h)[1])).toEqual([]);
+  });
+
+  it('puts the colours back in the same task when a re-render leaves a block as it was — no flash, no second parse', async () => {
+    const log: HlLog = { asked: [], ran: [] };
+    const h = await open({ codeView: fakeCodeView(log) });
+    await h.emit(sync(T, [reply('m1', FENCE)], [T]));
+    await within('the code coloured', 1000, () => runs(codes(h)[0]).length > 0);
+    const first = codes(h)[0];
+
+    // Delivered and read back with no await in between: whatever is on screen after the handler
+    // returns is what the browser would paint next.
+    h.live().onmessage?.({ data: JSON.stringify({ t: 'msg', msg: reply('m1', `${FENCE}\n\nand a note under it`) }) });
+    expect(codes(h)[0]).not.toBe(first);
+    expect(runs(codes(h)[0])).toEqual(TS_RUNS);
+    expect(log.ran).toEqual([CODE]);
+
+    // A block that did change, in a message no turn is writing, is coloured in the same task too:
+    // the grammar is loaded, so there is nothing to wait for.
+    h.live().onmessage?.({ data: JSON.stringify({ t: 'msg', msg: reply('m1', FENCE.replace('a;', 'b;')) }) });
+    expect(runs(codes(h)[0])).toEqual(TS_RUNS);
+    expect(log.ran).toHaveLength(2);
+  });
+
+  it('leaves code plain when a grammar will not load, and says so once however many fail', async () => {
+    const log: HlLog = { asked: [], ran: [] };
+    const h = await open({ codeView: fakeCodeView(log, true) });
+    await h.emit(sync(T, [reply('m1', FENCE), reply('m2', '```py\nreturn "z"\n```')], [T]));
+
+    await within('both grammars asked for', 1000, () => log.asked.length === 2);
+    await settle();
+    expect(codes(h).map((c) => runs(c))).toEqual([[], []]);
+    expect(codes(h)[0]?.textContent).toBe(CODE);
+    expect([...log.asked].sort()).toEqual(['py', 'ts']);
+    expect(h.warnings.filter((w) => w.includes('a code language failed to load'))).toHaveLength(1);
+  });
+
+  it('leaves code plain, and says nothing, on a page with no code view at all', async () => {
+    const h = await open();
+    await h.emit(sync(T, [reply('m1', FENCE)], [T]));
+    await settle();
+    expect(runs(codes(h)[0])).toEqual([]);
+    expect(h.warnings).toEqual([]);
+  });
+
+  it('colours, copies and wraps a code block in the file reader the same way', async () => {
+    const log: HlLog = { asked: [], ran: [] };
+    const h = await open({
+      codeView: fakeCodeView(log),
+      replies: { 'view/aa': { name: 'plan.md', size: 40, shown: 40, html: renderWebMarkdown(`# Plan\n\n${FENCE.replace('a;', 'b;')}`) } },
+    });
+    await h.emit(sync(T, [reply('m0', FENCE), { ...message('m1', ''), file: { name: 'plan.md', url: 'f/aa', view: 'view/aa' } }], [T]));
+    // The grammar is in by now, so the reader's block is coloured as its HTML is written — well
+    // before the sweep that runs a quarter of a second after the last write would get to it.
+    await within('the transcript coloured', 1000, () => runs(codes(h)[0]).length > 0);
+    await settle();
+    await h.click('#log a[data-view]');
+
+    await until('the reader coloured as it was written', () => runs(codes(h, '#reader-body')[0]).length > 0);
+    expect(runs(codes(h, '#reader-body')[0])).toEqual(TS_RUNS);
+    await h.click('#reader-body .cb-b[data-cb="copy"]');
+    expect(h.clipboard).toEqual([CODE.replace('a;', 'b;')]);
+    await h.click('#reader-body .cb-b[data-cb="wrap"]');
+    expect(h.doc.querySelector('#reader-body .cb')?.classList.contains('wrap')).toBe(true);
+  });
+
+  it('frames a table to scroll on its own, and draws a task box where the bullet was', async () => {
+    const h = await open();
+    await h.emit(sync(T, [reply('m1', '| a | b |\n|---|---|\n| 1 | 2 |\n\n- [x] done\n- [ ] open')], [T]));
+    expect(h.doc.querySelector('#log .b .tbl>table')).not.toBeNull();
+    expect(Array.from(h.doc.querySelectorAll('#log li.task'), (li) => face(li))).toEqual(['[boxOn]done', '[boxOff]open']);
+    const css = renderPage('Chat', false);
+    expect(css).toContain('.b .tbl{overflow-x:auto;margin:.6em 0;max-width:100%;overflow-wrap:normal}');
+    expect(css).toContain('.b .tbl>table{display:table');
+    expect(css).toContain('.b li.task{list-style:none}');
   });
 });
 
