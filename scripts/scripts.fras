@@ -1,0 +1,9 @@
+# scripts FRAS Map
+scripts/build-remote.mjs [Infra]: F:Go cross-compilation script building fleetherd-remote binaries for amd64 and arm64
+scripts/build-webui-assets.mjs [Infra]: F:Web UI assets bundle generator
+scripts/changelog.mjs [Infra]: F:CHANGELOG parser and release notes generator | A:mergeSubsections [T:mergeSubsections]
+scripts/probe.mjs [Edge]: F:Discord gateway connectivity diagnostic probe
+scripts/release.mjs [Infra]: F:Interactive and automated release script with pre-flight checks
+scripts/stop.mjs [Infra]: F:Process cleanup utility targeting stray daemon and ACP child processes
+scripts/third-party-licenses.mjs [Infra]: F:Third-party license aggregator and validator
+scripts/verify-sso.mts [Edge]: F:End-to-end SSO JWT authentication flow verifier

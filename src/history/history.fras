@@ -1,0 +1,5 @@
+# src/history FRAS Map
+src/history/import-webui.ts [Infra]: F:Idempotent import of web UI transcripts into SQLite history | A:importWebuiTranscripts [T:importWebuiTranscripts]
+src/history/record.ts [Core]: F:History event types and tool text formatting | A:HistoryRecorder,toolText [T:toolText]
+src/history/store.ts [Core]: F:SQLite conversation history store and FTS5 search engine | R:src/history/tokenize.ts | A:HistoryStore [T:HistoryStore]
+src/history/tokenize.ts [Infra]: F:Han bigram tokenization and BM25 FTS5 query builder | A:ftsQuery,indexText,queryTerms [T:indexText]

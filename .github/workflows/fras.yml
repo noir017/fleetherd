@@ -1,0 +1,20 @@
+name: FRAS Map Check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  fras-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate FRAS Map
+        uses: noir017/fras-map@v1
+        with:
+          base: ${{ github.event.before || github.event.pull_request.base.sha }}
+          stale: 'false'
