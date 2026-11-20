@@ -1,6 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import type { AgentDef, Config, HostDef } from '../config/schema.js';
 import { accessUnrestricted, agentDisplayName, findAgent } from '../config/schema.js';
@@ -137,6 +135,7 @@ import {
   type ConversationRef,
 } from '../core/conversation.js';
 import type { AgentFactory } from './agent.js';
+import { sendBytesAsFile } from './agent-files.js';
 import { ConversationRegistry } from './conversation.js';
 import type { ConversationStore } from './conversation-store.js';
 import type { WorkdirUsageStore } from './workdir-usage.js';
@@ -1545,14 +1544,7 @@ export class Daemon {
     const base = path.posix.basename(action.path) || 'file';
     const data = await host.readFile(action.path, this.config.attachments.maxDownloadBytes);
     console.log(`[remote] ${host.id}: fetched ${action.path} (${data.length} bytes) to send`);
-    const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'fleetherd-file-'));
-    try {
-      const local = path.join(dir, base);
-      await fs.promises.writeFile(local, data, { mode: 0o600 });
-      return await platform.sendFile(address, { path: local, name: action.name ?? base, caption: action.caption });
-    } finally {
-      await fs.promises.rm(dir, { recursive: true, force: true });
-    }
+    return sendBytesAsFile(platform, address, data, { fileName: base, name: action.name, caption: action.caption });
   }
 
   /** Execute one reverse command (address already resolved and validated by IPC). */

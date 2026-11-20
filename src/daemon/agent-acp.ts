@@ -115,7 +115,7 @@ import { connectAddress, connectHere, connectMeta } from './connect-agent.js';
  * Mapping:
  *   session/new                ↔ an AgentSession (one ACP session per session key, context across turns)
  *   session/prompt             ↔ runTurn (via ActiveSession.prompt + nextUpdate iteration)
- *   agent_message_chunk        ↔ onText
+ *   agent_message_chunk        ↔ onText (an `image` block ↔ onImage)
  *   tool_call                  ↔ onToolStart
  *   tool_call_update (terminal)↔ onToolFinish
  *   text↔tool block boundary   ↔ onSegmentBreak
@@ -1133,6 +1133,14 @@ function trackVisibleOutput(handlers: AgentStreamHandlers): {
         seen = true;
         handlers.onToolStart(evt);
       },
+      ...(handlers.onImage
+        ? {
+            onImage: (image) => {
+              seen = true;
+              handlers.onImage?.(image);
+            },
+          }
+        : {}),
     },
   };
 }
@@ -3938,7 +3946,8 @@ function reportConfigOptions(u: Extract<SessionUpdate, { sessionUpdate: 'config_
 export function translateUpdate(u: SessionUpdate, st: TurnState): void {
   switch (u.sessionUpdate) {
     case 'agent_message_chunk':
-      ingestText(u, st);
+      if (u.content.type === 'image') ingestImage(u, st);
+      else ingestText(u, st);
       break;
 
     // A message the person sent mid-turn, as the harness takes it in (agy echoes each one; so does the
@@ -4045,6 +4054,43 @@ function ingestText(u: Extract<SessionUpdate, { sessionUpdate: 'agent_message_ch
   if (st.lastSegment === 'tool') st.handlers.onSegmentBreak(); // tool → text boundary
   st.lastSegment = 'text';
   st.handlers.onText(text);
+}
+
+/**
+ * Forward a picture in the reply (an ACP `image` block) to be shown in the chat. Nothing is checked
+ * here but that there is data: the bytes are decoded and sniffed where they are sent (agent-files.ts),
+ * which is the one place that has to trust them.
+ *
+ * A subagent's picture is kept out for the reason its text is (see ingestText): the reply is the main
+ * agent's.
+ */
+function ingestImage(u: Extract<SessionUpdate, { sessionUpdate: 'agent_message_chunk' }>, st: TurnState): void {
+  if (u.content.type !== 'image') return;
+  const { data, mimeType, uri } = u.content;
+  if (typeof data !== 'string' || data.length === 0) return;
+  if (claudeAttribution(u._meta).parent) {
+    console.debug('[acp] not rendering a subagent picture into the reply');
+    return;
+  }
+  const name = typeof uri === 'string' ? lastPathSegment(uri) : undefined;
+  st.handlers.onImage?.({ data, mimeType: typeof mimeType === 'string' ? mimeType : '', ...(name ? { name } : {}) });
+}
+
+/** The file name at the end of a URI (`file:///tmp/chart.png` → `chart.png`), if it ends in one. */
+function lastPathSegment(uri: string): string | undefined {
+  let pathname = uri;
+  try {
+    pathname = new URL(uri).pathname;
+  } catch {
+    // Not a URL: a bare path, taken as it is.
+  }
+  const last = pathname.split('/').pop();
+  if (!last) return undefined;
+  try {
+    return decodeURIComponent(last);
+  } catch {
+    return last;
+  }
 }
 
 /**

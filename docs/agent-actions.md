@@ -61,4 +61,11 @@ another format (HEIC, say) goes by path only, as every picture did before 2.4.0.
 sent the picture too, though a model that cannot see (GPT-OSS) answers that it cannot and is left
 with the path.
 
+**And the agent's pictures come back as pictures.** An image the agent puts in its reply (an ACP
+`image` block) is sent into the chat as a file of its own, where it falls between the text around
+it — the web UI and the chat apps show it inline. PNG, JPEG, GIF and WebP, read off the bytes rather
+than taken from what the agent called it, up to 15 MB; anything else is left out and logged. The
+turn is marked done only once its pictures have been sent. A sub-agent's pictures stay out of the
+reply, like its text.
+
 What the `schedule` tool registers is described in [Scheduled tasks](scheduled-tasks.md).

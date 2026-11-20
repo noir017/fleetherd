@@ -5,6 +5,18 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **Pictures in an agent's reply reach the chat.** An ACP agent can answer with an `image` block in
+  `agent_message_chunk` — a chart it drew, a screenshot it took — and the gateway used to drop it,
+  because only text blocks were read. It is now sent as a file of its own, between the text before
+  it and the text after it, on every platform that can send files; the web UI and the chat apps show
+  it inline. The type is read off the bytes, not taken from the block's `mimeType`, and only PNG,
+  JPEG, GIF and WebP up to 15 MB go out — anything else is logged and left out, and a picture the
+  platform refuses is logged without failing the turn. The pictures of one reply go out one at a
+  time, in order, and the turn is marked done only once they have. A sub-agent's pictures are kept
+  out of the reply, as its text already was. See docs/agent-actions.md.
+
 ### Changed
 
 - **Tightened topic row spacing in the web UI from 11px to 6px.** The 11px gap introduced with

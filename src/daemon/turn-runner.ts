@@ -17,7 +17,7 @@ import type {
   ToolEvent,
 } from '../types.js';
 import type { PlatformAdapter } from '../platform/adapter.js';
-import type { AgentFactory, AgentSession, AgentStreamHandlers, AgentUsage, FollowUpSink, TurnImage } from './agent.js';
+import type { AgentFactory, AgentImage, AgentSession, AgentStreamHandlers, AgentUsage, FollowUpSink, TurnImage } from './agent.js';
 import { promptUndelivered } from './agent.js';
 import { retryButtons } from '../core/turn-retry.js';
 import { undeliveredLine } from '../core/topic-stage.js';
@@ -33,6 +33,7 @@ import type { HistoryEvent } from '../history/record.js';
 import { kindForTrigger, toolText } from '../history/record.js';
 import type { HistoryKind, HistoryTurnEnd, HistoryTurnRef, HistoryTurnStart, HistoryTrigger } from '../history/store.js';
 import type { TurnChangesHandle } from './turn-changes.js';
+import { decodeAgentImage, sendBytesAsFile } from './agent-files.js';
 
 /**
  * The sender a scheduled run's message carries (ConversationRegistry.runScheduledPrompt). Exported
@@ -1152,6 +1153,8 @@ export class TurnRunner {
   ): AgentStreamHandlers {
     /** The latest start of each call by id, so its finish can rewrite the row with the same line. */
     const toolStarts = new Map<string, ToolEvent>();
+    /** Pictures this render was sent, numbering the ones the agent did not name (image-1.png, …). */
+    let pictures = 0;
     const recordTool = (evt: ToolEvent, input: unknown): void => {
       this.recordHistory(conversationId, {
         type: 'tool',
@@ -1280,7 +1283,56 @@ export class TurnRunner {
       },
       // Off the effects chain for the reason onElicit is: the wait can be an hour.
       onPermission: (request) => this.askPermission(conversationId, platform, address, request),
+      onImage: (image) => this.sendImage(conversationId, image, ++pictures, { ref, makeStream, tools, enqueue, platform, address }),
     };
+  }
+
+  /**
+   * A picture in the agent's reply: sent as a file of its own, where it falls in the reply.
+   *
+   * ON the effects chain, unlike the other side channels, and for two reasons. Order: the picture
+   * belongs between the sentence that introduces it and the one that discusses it, so it is a segment
+   * boundary on both sides — the text before it is completed first, as before a tool bubble, and what
+   * follows starts a new message. And completeness: `finalize` drains the chain, so a turn is not
+   * reported done while one of its pictures is still uploading, and the pictures of one reply go out
+   * one at a time in the order they came.
+   *
+   * Checked and decoded at once, off the chain, so a refused picture is logged where it arrived and
+   * breaks no segment. A failed send is logged and the reply carries on: a picture the platform would
+   * not take is not a reason to lose the words around it.
+   */
+  private sendImage(
+    conversationId: ConversationId,
+    image: AgentImage,
+    seq: number,
+    r: {
+      ref: TurnRef;
+      makeStream: () => StreamBuffer;
+      tools: ToolRenderer;
+      enqueue: (fn: () => Promise<void> | void) => void;
+      platform: PlatformAdapter;
+      address: ConversationAddress;
+    }
+  ): void {
+    const picture = decodeAgentImage(image, seq);
+    if ('refused' in picture) {
+      console.warn(`[turn] ${conversationId}: not sending picture ${seq} from the agent: ${picture.refused}`);
+      return;
+    }
+    r.ref.producedOutput = true;
+    rollSegment(r.ref);
+    r.enqueue(async () => {
+      await r.ref.stream.complete();
+      r.tools.resetSegment();
+      await r.tools.placed(BUBBLE_PLACEMENT_WAIT_MS);
+      try {
+        r.ref.lastRef = await sendBytesAsFile(r.platform, r.address, picture.bytes, { fileName: picture.name });
+        console.log(`[turn] ${conversationId}: sent picture ${picture.name} (${picture.bytes.length} bytes) from the agent`);
+      } catch (e) {
+        console.warn(`[turn] ${conversationId}: could not send picture ${picture.name} from the agent:`, describeOutboundError(e));
+      }
+      r.ref.stream = r.makeStream();
+    });
   }
 
   /**
@@ -1607,6 +1659,8 @@ export class TurnRunner {
           console.warn('[btw] failed to send a notice:', e instanceof Error ? e.message : e)
         );
       },
+      // Text only, like its tools: a file posted in the lane would read as the running turn's.
+      onImage: () => console.log(`[btw] ${conversationId}: not showing a picture in a side answer`),
     };
     return {
       handlers,
@@ -1653,6 +1707,10 @@ export class TurnRunner {
       onToolFinish: (evt) => {
         touch();
         open()?.handlers.onToolFinish(evt);
+      },
+      onImage: (image) => {
+        touch();
+        open()?.handlers.onImage?.(image);
       },
       // Via peek, not open: a segment boundary before anything was rendered has no buffer to
       // rotate, and opening a message for one would defeat the laziness.
