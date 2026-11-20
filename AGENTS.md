@@ -37,30 +37,26 @@ projects already went by names like it; that rename kept what was already runnin
 entries before 3.0.0, and the history of `noir017/agent-anywhere` and of this repository before
 then, use the old names; read them as this project.
 
-## Module map
+## Codebase Map (FRAS)
 
 Each module owns a `README.md` describing its contract, invariants, and how to extend
 it. Do not duplicate that content here.
+Module documentation links: [config](src/config/README.md), [core](src/core/README.md), [platform](src/platform/README.md), [daemon](src/daemon/README.md), [api-agent](src/api-agent/README.md), [ipc](src/ipc/README.md), [history](src/history/README.md), [remote](src/remote/README.md), [remote-go](remote/README.md), [commands](src/commands/README.md), [scripts](scripts/README.md).
+Components without directory READMEs: `src/types.ts` (domain data shapes), `src/legacy-name.ts` (compatibility, see [below](#compatibility-with-the-name-talkcode)), `src/cli.ts` (commander wiring), `skill/` ([SKILL.md](skill/SKILL.md)), `skill-super/` ([SKILL.md](skill-super/SKILL.md)), and `agy-plugin/` ([agy-plugin.ts](src/daemon/agy-plugin.ts)).
 
-| Module | Responsibility | Doc |
-|---|---|---|
-| `src/config/` | Config schema, loading, `${VAR}` expansion, v0→v1 migration | [README](src/config/README.md) |
-| `src/core/` | Platform-agnostic pure logic: conversation identity, gating, merging, streaming, tool bubbles, footer, attachments, command vocabulary | [README](src/core/README.md) |
-| `src/platform/` | IM adapters: the profile seam, 8 Satori platform profiles, per-dialect markdown renderers, and `webui/` — a browser page the daemon serves, implementing `PlatformAdapter` directly | [README](src/platform/README.md) |
-| `src/daemon/` | The running system: routing, conversations, turn orchestration, the agent runtimes (all ACP) | [README](src/daemon/README.md) |
-| `src/api-agent/` | `fleetherd api-agent <backend>`: an ACP agent over an HTTP API, spawned by the daemon for `harness: custom`. Backends: Antigravity, an agent-mailbox relay | [README](src/api-agent/README.md) |
-| `src/ipc/` | Reverse-command protocol over a unix socket (agent → daemon → chat) | [README](src/ipc/README.md) |
-| `src/history/` | The conversation library: every turn in `<configDir>/history.db`, searchable by keyword (Han bigrams in JS, BM25), plus the web UI transcript import | [README](src/history/README.md) |
-| `src/remote/` | The gateway's side of agents on other machines: one reliable link per host over ssh | [README](src/remote/README.md) |
-| `remote/` | fleetherd-remote, the host side of that link — **Go**, a static binary per architecture, built by `npm run build` into `dist/remote-bin/` | [README](remote/README.md) |
-| `src/commands/` | CLI entry points: `setup`, `doctor`, `start`, reverse commands | [README](src/commands/README.md) |
-| `src/types.ts` | Domain data shapes shared across modules. Types only, no behavior. | — |
-| `src/legacy-name.ts` | Everything 3.0.0 still reads or writes under the name `talkcode`; `remote/legacy.go` is its Go twin | [below](#compatibility-with-the-name-talkcode) |
-| `src/cli.ts` | Commander wiring. `start`, `setup` and `doctor` are lazy-imported: a remote agent's every command runs this binary on the gateway, and they would double what it loads. | — |
-| `scripts/` | Dev utilities (`stop.mjs` kills stray daemons, `probe.mjs` Discord gateway probe) | [README](scripts/README.md) |
-| `skill/` | The bundled agent skill: how an agent finds the reverse CLI. The daemon links it into each harness's skill directory (`daemon/skill-link.ts`) | [SKILL.md](skill/SKILL.md) |
-| `skill-super/` | The second bundled skill, `super`: how an agent splits a job across sub-agents (`/super`, `daemon/delegation.ts`). Linked the same way | [SKILL.md](skill-super/SKILL.md) |
-| `agy-plugin/` | The bundled agy plugin: a Stop hook that keeps an agy turn open while a command it put in the background runs, so the result reaches the chat. Linked into `~/.gemini/config/plugins` like the skills (`daemon/agy-plugin.ts`) | [agy-plugin.ts](src/daemon/agy-plugin.ts) |
+```fras
+[config] -> src/config/config.fras | F:Config schema, loading, env expansion, and v0 to v1 migration | R:platform | A:configDir,loadConfig,readConfig,saveConfigPatch | S:见 Security invariants 第 1, 4 条
+[core] -> src/core/core.fras | F:Platform-agnostic pure logic, gating, merging, streaming, and tool bubbles | R:config | A:InboundMerger,StreamBuffer,conversationKey,shouldRespond | S:Pure layer with zero IO and no global dependencies
+[platform] -> src/platform/platform.fras | F:IM adapters, profile seam, per-dialect markdown, and web UI | R:core | A:createPlatform,createWebUiAdapter | S:见 Security invariants 第 7 条
+[daemon] -> src/daemon/daemon.fras | F:Daemon coordinator, routing, turn runner, and agent runtimes | R:api-agent,config,core,history,ipc,platform,remote | A:Daemon,TurnRunner | S:见 Security invariants 第 1, 2, 3, 5, 6, 8, 11 条
+[api-agent] -> src/api-agent/api-agent.fras | F:ACP agent bridge over HTTP APIs for custom harnesses | A:createApiAgentApp
+[ipc] -> src/ipc/ipc.fras | F:Reverse command Unix socket server and protocol | A:REVERSE_COMMANDS,parseIpcRequest | S:见 Security invariants 第 2 条
+[history] -> src/history/history.fras | F:SQLite conversation turn library and FTS5 search | A:HistoryStore
+[remote] -> src/remote/remote.fras | F:Gateway-side SSH link and remote host process coordinator | A:HostConnection,RemoteHost | S:见 Security invariants 第 5 条
+[remote-go] -> remote/remote.fras | F:Host-side static binary managing agents, shims, and relays | A:ProcManager,Relay | S:见 Security invariants 第 5 条
+[commands] -> src/commands/commands.fras | F:CLI entrypoints for setup, doctor, start, and reverse commands | R:daemon,ipc | A:doctor,start
+[scripts] -> scripts/scripts.fras | F:Development utilities for builds, release, stop, and SSO verification
+```
 
 ## Layering
 
