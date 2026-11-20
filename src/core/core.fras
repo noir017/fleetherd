@@ -1,6 +1,7 @@
 # src/core FRAS Map
 src/core/*-menu.ts [Edge]: F:Interactive menus for agent, effort, model, schedule, and workdir
 src/core/attachment-ingest.ts [Infra]: F:Attachment download orchestration and validation | A:isReadableText,sniffImageType | S:See Security invariants item 3
+src/core/code-fence.ts [Core]: F:Fenced code blocks across a message boundary | A:closeFence,continueFence,fenceAfter
 src/core/command-translate.ts [Core]: F:Cross-harness slash command mapping | A:translateCommand
 src/core/conversation.ts [Core]: F:Conversation reference and platform address identity | A:addressOf,addressSelects,conversationKey | S:Key contains no agent ID to allow in-thread agent switching
 src/core/frecency.ts [Infra]: F:Frecency ranking by usage frequency with exponential time decay | A:decayedScore,rankByFrecency

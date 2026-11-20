@@ -24,6 +24,17 @@ All notable changes to this project are documented here. The format is based on
   clears the row above without overlap while keeping the list compact, with the top padding and
   the needs-you divider adjusted to match.
 
+### Fixed
+
+- **A tool call inside a code block no longer turns the rest of the reply into code.** The gateway
+  starts a new message at every tool call, and each message is rendered on its own. A harness that
+  reports a web page's steps as tool calls can report one at any point in the answer. On 2026-11-20,
+  web-agent-driver's Gemini site reported one just before a reply's closing fence: the next
+  message opened with that fence, and its paragraph and footer showed as one code block. A message
+  that ends inside a block now closes it, and the next one carries on inside it — reopened with the
+  same fence and language, or without the closing line when that is how it starts. A reply that ends
+  with a block left open has it closed before the footer, which used to be swallowed by it.
+
 ## [3.21.0] - 2026-11-21
 
 ### Added
