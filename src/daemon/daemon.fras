@@ -1,19 +1,19 @@
 # src/daemon FRAS Map
-src/daemon/agent-acp.ts [Core]: F:ACP protocol runtime implementation and permission handling | R:src/daemon/agent.ts | A:AgentAcp | S:见 Security invariants 第 1 条
-src/daemon/attachment-io.ts [Infra]: F:Attachment fetch and storage with SSRF guards | A:assertSafeAttachmentUrl,createAttachmentIngestDeps | S:见 Security invariants 第 3 条 [T:assertSafeAttachmentUrl]
-src/daemon/config-reload.ts [Core]: F:Live configuration diffing and reload | A:reloadConfig
+src/daemon/agent-acp.ts [Core]: F:ACP protocol runtime implementation and permission handling | R:src/daemon/agent.ts | A:createAcpAgentFactory,resolveHarness | S:See Security invariants item 1
+src/daemon/attachment-io.ts [Infra]: F:Attachment fetch and storage with SSRF guards | A:assertSafeAttachmentUrl,createAttachmentIngestDeps | S:See Security invariants item 3 [T:assertSafeAttachmentUrl]
+src/daemon/config-reload.ts [Core]: F:Live configuration diffing and reload | A:applyConfig,diffConfig
 src/daemon/conversation-store.ts [Infra]: F:Atomic persistence for conversation bindings and sessions | A:ConversationStore
-src/daemon/conversation-token-registry.ts [Infra]: F:Token to conversation ID mapping for reverse commands | A:ConversationTokenRegistry | S:见 Security invariants 第 2 条
+src/daemon/conversation-token-registry.ts [Infra]: F:Token to conversation ID mapping for reverse commands | A:SessionTokenRegistry | S:See Security invariants item 2
 src/daemon/conversation.ts [Core]: F:Per-conversation runtime state registry and turn orchestration | R:src/daemon/routing.ts | A:ConversationRegistry
 src/daemon/daemon.ts [Core]: F:Top-level daemon coordinator and reverse request dispatch | R:src/daemon/conversation.ts,src/ipc/server.ts | A:Daemon
-src/daemon/delegation.ts [Core]: F:Sub-agent task delegation and confirmation card workflows | R:src/daemon/conversation.ts | A:Delegation | S:见 Security invariants 第 6 条
-src/daemon/external-mcp.ts [Edge]: F:External HTTP MCP entrance endpoint | A:createExternalMcpServer | S:见 Security invariants 第 11 条
-src/daemon/pod-admin.ts [Edge]: F:Host entry and SSH key management | A:addPodHost,removePodHost | S:见 Security invariants 第 5 条
-src/daemon/pod-peers.ts [Infra]: F:Pod-to-pod SSH mesh configuration generator | A:syncPodPeers | S:见 Security invariants 第 5 条
-src/daemon/pods.ts [Infra]: F:Remote host pod declarations scanner | A:loadHostPods | S:见 Security invariants 第 5 条
-src/daemon/remote-hosts.ts [Infra]: F:Remote host manager and reverse CLI shim | R:src/remote/host.ts | A:RemoteHostRegistry | S:见 Security invariants 第 5 条
-src/daemon/review.ts [Core]: F:Automated conversation review runner | A:runReview
-src/daemon/routing.ts [Core]: F:Inbound message to agent and scope resolution | A:resolveAgent,resolveScope | S:Pure resolution logic [T:resolveAgent]
+src/daemon/delegation.ts [Core]: F:Sub-agent task delegation and confirmation card workflows | R:src/daemon/conversation.ts | A:Delegation | S:See Security invariants item 6
+src/daemon/external-mcp.ts [Edge]: F:External HTTP MCP entrance endpoint | A:ExternalMcp | S:See Security invariants item 11
+src/daemon/pod-admin.ts [Edge]: F:Host entry and SSH key management | A:addPod,removePod | S:See Security invariants item 5
+src/daemon/pod-peers.ts [Infra]: F:Pod-to-pod SSH mesh configuration generator | A:peerFiles,readKnownHosts | S:See Security invariants item 5
+src/daemon/pods.ts [Infra]: F:Remote host pod declarations scanner | A:hostsWithConfiguredAgents | S:See Security invariants item 5
+src/daemon/remote-hosts.ts [Infra]: F:Remote host manager and reverse CLI shim | R:src/remote/host.ts | A:RemoteHosts,gatewayNamespace | S:See Security invariants item 5
+src/daemon/review.ts [Core]: F:Automated conversation review runner | A:ReviewService
+src/daemon/routing.ts [Core]: F:Inbound message to agent and scope resolution | A:resolveAgent,resolveScope | S:Deterministic pipeline and harness matching [T:resolveAgent]
 src/daemon/schedule-service.ts [Core]: F:Scheduled task execution engine | A:ScheduleService
-src/daemon/skills-store.ts [Infra]: F:Managed skill repository storage and git tracking | A:SkillsStore | S:见 Security invariants 第 8 条
+src/daemon/skills-store.ts [Infra]: F:Managed skill repository storage and git tracking | A:createSkill,listSkills,showSkill | S:See Security invariants item 8
 src/daemon/turn-runner.ts [Core]: F:Turn execution loop with streaming and tool bubble sinks | R:src/daemon/agent-acp.ts | A:TurnRunner

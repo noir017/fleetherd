@@ -1,13 +1,13 @@
 # src/platform FRAS Map
 src/platform/*-markdown.ts [Infra]: F:Platform-specific outbound markdown renderers and degraders | A:flattenMarkdown,renderDingtalkMarkdown,renderDiscordMarkdown,renderLarkMarkdown,renderSlackMarkdown,renderTelegramMarkdown,renderWebMarkdown | S:Streaming safe and escapes unsupported markdown constructs
 src/platform/adapter.ts [Core]: F:PlatformAdapter interface and PlatformCapabilities matrix | A:PlatformAdapter,PlatformCapabilities
-src/platform/config-schemas.ts [Infra]: F:Credential schemas for supported chat platforms | A:PlatformConfigSchemas | S:Free of Satori imports so config loading avoids heavy dependency chain
-src/platform/markdown-tables.ts [Infra]: F:ASCII table formatting for platforms lacking native markdown table support | A:formatAsciiTable
-src/platform/platform-factory.ts [Core]: F:Platform adapter dispatch and instantiation | R:src/platform/adapter.ts,src/platform/satori-core.ts | A:createPlatform
-src/platform/profile-helpers.ts [Infra]: F:Common normalization helpers for platform profiles | A:extractChannelAndLane
+src/platform/config-schemas.ts [Infra]: F:Credential schemas for supported chat platforms | A:ChatGateSchema,PLATFORM_SCHEMAS | S:Free of Satori imports so config loading avoids heavy dependency chain
+src/platform/markdown-tables.ts [Infra]: F:ASCII table formatting for platforms lacking native markdown table support | A:renderTableBlock,splitTableRow
+src/platform/platform-factory.ts [Core]: F:Platform adapter dispatch and instantiation | R:src/platform/adapter.ts,src/platform/satori-core.ts | A:createPlatformAdapter
+src/platform/profile-helpers.ts [Infra]: F:Common normalization helpers for platform profiles | A:findAtMention,installHttpService,plainConversation
 src/platform/profile.ts [Core]: F:PlatformProfile seam interface specification | A:PlatformProfile
 src/platform/profiles/*.ts [Edge]: F:Concrete platform profiles for Discord, Telegram, Slack, Lark, QQ, LINE, WeCom, and DingTalk
 src/platform/satori-core.ts [Core]: F:Generic Satori adapter lifecycle and message normalization | R:src/platform/profile.ts | A:createSatoriAdapter | S:Generic bot methods called directly, only platform differences go through profile
-src/platform/satori-file-url.ts [Infra]: F:Upstream file URL resolution fix for Satori | A:patchFileUrl
-src/platform/telegram-start-retry.ts [Infra]: F:Retry logic for transient Telegram bot startup failures | A:isTransientTelegramStartError,withTelegramStartRetry | S:Retries startup requests upstream only attempts once [T:isTransientTelegramStartError]
-src/platform/webui/*.ts [Edge]: F:Built-in browser UI implementation of PlatformAdapter | A:createWebUiAdapter | S:见 Security invariants 第 7 条
+src/platform/satori-file-url.ts [Infra]: F:Upstream file URL resolution fix for Satori | A:installRelativeFileUrlFix
+src/platform/telegram-start-retry.ts [Infra]: F:Retry logic for transient Telegram bot startup failures | A:describeTelegramStartError,isTransientTelegramStartError | S:Retries transient 5xx/429/network startup failures with exponential backoff while failing fast on 4xx [T:isTransientTelegramStartError]
+src/platform/webui/*.ts [Edge]: F:Built-in browser UI implementation of PlatformAdapter | A:createWebuiAdapter | S:See Security invariants item 7

@@ -42,21 +42,31 @@ then, use the old names; read them as this project.
 Each module owns a `README.md` describing its contract, invariants, and how to extend
 it. Do not duplicate that content here.
 Module documentation links: [config](src/config/README.md), [core](src/core/README.md), [platform](src/platform/README.md), [daemon](src/daemon/README.md), [api-agent](src/api-agent/README.md), [ipc](src/ipc/README.md), [history](src/history/README.md), [remote](src/remote/README.md), [remote-go](remote/README.md), [commands](src/commands/README.md), [scripts](scripts/README.md).
-Components without directory READMEs: `src/types.ts` (domain data shapes), `src/legacy-name.ts` (compatibility, see [below](#compatibility-with-the-name-talkcode)), `src/cli.ts` (commander wiring), `skill/` ([SKILL.md](skill/SKILL.md)), `skill-super/` ([SKILL.md](skill-super/SKILL.md)), and `agy-plugin/` ([agy-plugin.ts](src/daemon/agy-plugin.ts)).
 
 ```fras
-[config] -> src/config/config.fras | F:Config schema, loading, env expansion, and v0 to v1 migration | R:platform | A:configDir,loadConfig,readConfig,saveConfigPatch | S:见 Security invariants 第 1, 4 条
+[config] -> src/config/config.fras | F:Config schema, loading, env expansion, and v0 to v1 migration | R:platform | A:configDir,loadConfig,readConfig,saveConfigPatch | S:See Security invariants items 1, 4
 [core] -> src/core/core.fras | F:Platform-agnostic pure logic, gating, merging, streaming, and tool bubbles | R:config | A:InboundMerger,StreamBuffer,conversationKey,shouldRespond | S:Pure layer with zero IO and no global dependencies
-[platform] -> src/platform/platform.fras | F:IM adapters, profile seam, per-dialect markdown, and web UI | R:core | A:createPlatform,createWebUiAdapter | S:见 Security invariants 第 7 条
-[daemon] -> src/daemon/daemon.fras | F:Daemon coordinator, routing, turn runner, and agent runtimes | R:api-agent,config,core,history,ipc,platform,remote | A:Daemon,TurnRunner | S:见 Security invariants 第 1, 2, 3, 5, 6, 8, 11 条
-[api-agent] -> src/api-agent/api-agent.fras | F:ACP agent bridge over HTTP APIs for custom harnesses | A:createApiAgentApp
-[ipc] -> src/ipc/ipc.fras | F:Reverse command Unix socket server and protocol | A:REVERSE_COMMANDS,parseIpcRequest | S:见 Security invariants 第 2 条
-[history] -> src/history/history.fras | F:SQLite conversation turn library and FTS5 search | A:HistoryStore
-[remote] -> src/remote/remote.fras | F:Gateway-side SSH link and remote host process coordinator | A:HostConnection,RemoteHost | S:见 Security invariants 第 5 条
-[remote-go] -> remote/remote.fras | F:Host-side static binary managing agents, shims, and relays | A:ProcManager,Relay | S:见 Security invariants 第 5 条
-[commands] -> src/commands/commands.fras | F:CLI entrypoints for setup, doctor, start, and reverse commands | R:daemon,ipc | A:doctor,start
+[platform] -> src/platform/platform.fras | F:IM adapters, profile seam, per-dialect markdown, and web UI | R:config,core | A:createPlatformAdapter,createWebuiAdapter | S:See Security invariants item 7
+[daemon] -> src/daemon/daemon.fras | F:Daemon coordinator, routing, turn runner, and agent runtimes | R:api-agent,config,core,history,ipc,platform,remote | A:Daemon,TurnRunner | S:See Security invariants items 1, 2, 3, 5, 6, 8, 11
+[api-agent] -> src/api-agent/api-agent.fras | F:ACP agent bridge over HTTP APIs (Antigravity, agent-mailbox relay) | A:createApiAgentApp
+[ipc] -> src/ipc/ipc.fras | F:Reverse command Unix socket server and protocol | A:REVERSE_COMMANDS,parseIpcRequest | S:See Security invariants item 2
+[history] -> src/history/history.fras | F:SQLite conversation library (<configDir>/history.db) and FTS5 search | A:HistoryStore
+[remote] -> src/remote/remote.fras | F:Gateway-side SSH link and remote host process coordinator | A:HostConnection,RemoteHost | S:See Security invariants item 5
+[remote-go] -> remote/remote.fras | F:Host-side static Go binary managing agents, shims, and relays | A:main,startDaemon | S:See Security invariants item 5
+[commands] -> src/commands/commands.fras | F:CLI entrypoints for setup, doctor, start, and reverse commands | R:api-agent,config,core,daemon,history,ipc,platform,remote | A:runDoctor,runStart
 [scripts] -> scripts/scripts.fras | F:Development utilities for builds, release, stop, and SSO verification
 ```
+
+### Additional components and notes
+
+- `src/types.ts`: Domain data shapes shared across modules. Types only, no behavior.
+- `src/legacy-name.ts`: Everything 3.0.0 still reads or writes under the name `talkcode`; `remote/legacy.go` is its Go twin ([below](#compatibility-with-the-name-talkcode)).
+- `src/cli.ts`: Commander wiring. `start`, `setup` and `doctor` are lazy-imported: a remote agent's every command runs this binary on the gateway, and they would double what it loads.
+- `src/api-agent/`: Backends include Antigravity and an agent-mailbox relay for custom harnesses.
+- `src/history/`: Persists every conversation turn in `<configDir>/history.db`.
+- `remote/`: Static Go binary per architecture built into `dist/remote-bin/`.
+- `skill/` & `skill-super/`: Bundled agent skills for finding reverse CLI and sub-agent task splitting (`/super`), linked into harness skill directories by `daemon/skill-link.ts`.
+- `agy-plugin/`: Bundled plugin keeping agy turns open while background commands run, linked into `~/.gemini/config/plugins` by `daemon/agy-plugin.ts`.
 
 ## Layering
 

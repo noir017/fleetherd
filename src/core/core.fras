@@ -1,18 +1,18 @@
 # src/core FRAS Map
 src/core/*-menu.ts [Edge]: F:Interactive menus for agent, effort, model, schedule, and workdir
-src/core/attachment-ingest.ts [Infra]: F:Attachment download orchestration and validation | A:ingestAttachments | S:见 Security invariants 第 3 条
+src/core/attachment-ingest.ts [Infra]: F:Attachment download orchestration and validation | A:isReadableText,sniffImageType | S:See Security invariants item 3
 src/core/command-translate.ts [Core]: F:Cross-harness slash command mapping | A:translateCommand
-src/core/conversation.ts [Core]: F:Conversation reference and platform address identity | A:conversationKey,parseAddress,toAddress | S:Key contains no agent ID to allow in-thread agent switching
-src/core/frecency.ts [Infra]: F:Frecency calculation for LRU item ordering | A:calculateFrecency
-src/core/inbound-gate.ts [Core]: F:Inbound message gating decision tree | A:shouldRespond | S:Pure decision logic split between user chat config and frozen experience [T:shouldRespond]
-src/core/inbound-merger.ts [Core]: F:Per-conversation inbound message coalescing and steering | A:InboundMerger | S:Never aborts running turn on new message [T:InboundMerger]
-src/core/outbound-errors.ts [Infra]: F:Outbound delivery error categorization | A:classifyOutboundError
+src/core/conversation.ts [Core]: F:Conversation reference and platform address identity | A:addressOf,addressSelects,conversationKey | S:Key contains no agent ID to allow in-thread agent switching
+src/core/frecency.ts [Infra]: F:Frecency calculation for LRU item ordering | A:decayedScore,rankByFrecency
+src/core/inbound-gate.ts [Core]: F:Inbound message gating decision tree | A:shouldRespond | S:Deterministic decision tree returning stable reason strings in strict precedence order [T:shouldRespond]
+src/core/inbound-merger.ts [Core]: F:Per-conversation inbound message coalescing and steering | A:InboundMerger | S:Per-conversation message coalescing that never aborts running turns [T:InboundMerger]
+src/core/outbound-errors.ts [Infra]: F:Outbound delivery error categorization | A:describeOutboundError,retryAfterMsOf
 src/core/outbound-pacer.ts [Infra]: F:Per-chat write token bucket rate limiting and coalescing | A:OutboundPacer
-src/core/permission-levels.ts [Core]: F:Agent permission tiers definitions | A:resolvePermissionLevel | S:见 Security invariants 第 1 条
-src/core/proxy.ts [Infra]: F:Global proxy dispatcher patch and URL credential redaction | A:redactProxyUrl,setupProxy | S:见 Security invariants 第 4 条
-src/core/runtime-footer.ts [Edge]: F:Token usage and model tagline formatting | A:formatFooter
-src/core/schedule.ts [Core]: F:Scheduled task data modeling and recurrence computation | A:computeNextRun
-src/core/settings.ts [Core]: F:Runtime configuration settings schema and modifiers | A:SETTINGS_REGISTRY | S:见 Security invariants 第 1 条
-src/core/stream-buffer.ts [Core]: F:Streaming output throttle and backoff state machine | A:StreamBuffer | S:Dual-trigger time and character flush [T:StreamBuffer]
+src/core/permission-levels.ts [Core]: F:Agent permission tiers definitions | A:asksPerson,offeredLevels,parseLevel | S:See Security invariants item 1
+src/core/proxy.ts [Infra]: F:Global proxy dispatcher patch and URL credential redaction | A:installProxy,redactProxyUrl | S:See Security invariants item 4
+src/core/runtime-footer.ts [Edge]: F:Token usage and model tagline formatting | A:formatRuntimeFooter
+src/core/schedule.ts [Core]: F:Scheduled task data modeling and recurrence computation | A:buildTask,decide,nextRunOf
+src/core/settings.ts [Core]: F:Runtime configuration settings schema and modifiers | A:resolveSettingKey,settingsRows | S:See Security invariants item 1
+src/core/stream-buffer.ts [Core]: F:Streaming output throttle and backoff state machine | A:StreamBuffer | S:Dual-trigger output throttling by time interval and character threshold [T:StreamBuffer]
 src/core/tool-renderer.ts [Edge]: F:Tool-call rendering bubble formatter | A:ToolRenderer
-src/core/voice.ts [Infra]: F:Voice message payload detection and transcription orchestration | A:detectVoicePayload
+src/core/voice.ts [Infra]: F:Voice message payload detection and transcription orchestration | A:isAudioAttachment,sniffAudio
