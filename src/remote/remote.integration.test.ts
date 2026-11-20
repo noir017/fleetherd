@@ -153,6 +153,30 @@ describe.skipIf(!hasGo)('fleetherd-remote, end to end', () => {
     expect(sock).toBe(host.paths(w).socket);
   }, 30_000);
 
+  it('reaches an agent that is already running over TCP from the host, the connection standing in for a process', async () => {
+    const net = await import('node:net');
+    let heard = '';
+    const srv = net.createServer((s) => {
+      s.write('ready\n');
+      s.on('data', (d: Buffer) => (heard += d.toString()));
+      s.on('end', () => s.end('bye\n'));
+    });
+    await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
+    try {
+      const host = makeHost(newHome());
+      const child = host.connect(`127.0.0.1:${(srv.address() as AddressInfo).port}`);
+      const done = collect(child);
+      child.stdin.write('session/cancel\n');
+      // What was written before the SIGTERM arrives, then the half-close; the agent answers it.
+      await waitFor(() => heard.length > 0);
+      child.kill('SIGTERM');
+      expect(await done).toEqual({ out: 'ready\nbye\n', code: 0, signal: null });
+      expect(heard).toBe('session/cancel\n');
+    } finally {
+      srv.close();
+    }
+  }, 30_000);
+
   it('reports a command that does not exist as error + exit, like a local ENOENT', async () => {
     const host = makeHost(newHome());
     const child = host.spawn('no-such-command-xyz', []);
