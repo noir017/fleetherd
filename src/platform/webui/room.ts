@@ -563,7 +563,7 @@ export class WebRoom {
   private topicsVer = 0;
   /** A topic-list announcement waiting out `TOPIC_LIST_MS`; see `scheduleTopics`. */
   private topicTimer: NodeJS.Timeout | null = null;
-  private readonly dirCache = new Map<string, { at: number; dir?: Topic['dir'] }>();
+  private readonly dirCache = new Map<string, { at: number; work: Pick<Topic, 'dir' | 'agent'> }>();
   /**
    * Who has a terminal pane attached. Absent when the feature is off, and in every test that
    * does not care — which is why `topicList` reads it through `?.` rather than requiring one.
@@ -1389,17 +1389,19 @@ export class WebRoom {
   }
 
   /**
-   * The directory label for one topic, memoised for `DIR_TTL_MS`.
+   * The directory label and the bound agent for one topic, memoised together for `DIR_TTL_MS`:
+   * one lookup answers both (`ConversationWorkdir`), and what moves one — `/agent`, a menu pick —
+   * is what lets the memo go.
    *
    * Swallows a failing lookup rather than letting it out: this runs inside the path that
    * announces a topic list, which runs inside the path that posts a message, and a sidebar
    * label is not worth losing an answer over.
    */
-  private dirOf(topicId: string): Topic['dir'] {
-    if (!this.workdir) return undefined;
+  private workOf(topicId: string): Pick<Topic, 'dir' | 'agent'> {
+    if (!this.workdir) return {};
     const now = Date.now();
     const hit = this.dirCache.get(topicId);
-    if (hit && now - hit.at < DIR_TTL_MS) return hit.dir;
+    if (hit && now - hit.at < DIR_TTL_MS) return hit.work;
     let found: ConversationWorkdir | undefined;
     try {
       found = this.workdir(this.conversation(topicId));
@@ -1409,11 +1411,12 @@ export class WebRoom {
     // basename('/') is '', and a directory with no last segment has no short name to show — the
     // full path is then both the label and the tooltip, which is honest and still fits.
     const full = found?.path;
-    const dir = full
-      ? { name: basename(full) || full, path: full, ...(found?.host ? { host: found.host } : {}) }
-      : undefined;
-    this.dirCache.set(topicId, { at: now, dir });
-    return dir;
+    const work: Pick<Topic, 'dir' | 'agent'> = {
+      ...(full ? { dir: { name: basename(full) || full, path: full, ...(found?.host ? { host: found.host } : {}) } } : {}),
+      ...(found?.agent ? { agent: { id: found.agent.id, harness: found.agent.harness } } : {}),
+    };
+    this.dirCache.set(topicId, { at: now, work });
+    return work;
   }
 
   /**
@@ -1435,7 +1438,7 @@ export class WebRoom {
   topicList(): Topic[] {
     return this.topics.list().map((t) => {
       const room = this.rooms.get(t.id);
-      const dir = this.dirOf(t.id);
+      const work = this.workOf(t.id);
       const running = Boolean(room?.typing);
       const asking = this.awaitingQuestion(room);
       const stage = topicStage({
@@ -1461,7 +1464,7 @@ export class WebRoom {
         msgCount: room?.msgCount ?? 0,
         stage,
         ...(line ? { line } : {}),
-        ...(dir ? { dir } : {}),
+        ...work,
       };
     });
   }
@@ -2507,11 +2510,14 @@ export function derivedOrder(held: readonly string[], topics: readonly Topic[]):
 }
 
 function flagsOf(topics: Topic[]): string {
-  // The directory too, so the poll is also what corrects a row whose move landed after the
-  // announcement that followed it (a `/cd` on a host lists the directory over the link first):
-  // the label is memoised for DIR_TTL_MS, shorter than the poll, so each poll reads it fresh.
+  // The directory and the agent too, so the poll is also what corrects a row whose move landed after
+  // the announcement that followed it (a `/cd` on a host lists the directory over the link first):
+  // both are memoised for DIR_TTL_MS, shorter than the poll, so each poll reads them fresh.
   return topics
-    .map((t) => `${t.id}${t.live ? 'L' : ''}${t.asking ? 'A' : ''}${t.running ? 'R' : ''}${t.dir ? `@${t.dir.host ?? ''}:${t.dir.path}` : ''}`)
+    .map(
+      (t) =>
+        `${t.id}${t.live ? 'L' : ''}${t.asking ? 'A' : ''}${t.running ? 'R' : ''}${t.dir ? `@${t.dir.host ?? ''}:${t.dir.path}` : ''}${t.agent ? `=${t.agent.id}` : ''}`
+    )
     .join(',');
 }
 

@@ -113,6 +113,13 @@ export interface Topic {
    */
   dir?: { name: string; path: string; host?: string };
   /**
+   * The agent bound to this topic's conversation and its harness (`ConversationWorkdir.agent`),
+   * from the same lookup and on the same terms as `dir`: derived, never persisted, absent while no
+   * agent is bound. The row's label is drawn from it rather than from the `[agent]` the title opens
+   * with, which records who answered when the topic was named and is not rewritten by `/agent`.
+   */
+  agent?: { id: string; harness: string };
+  /**
    * The topic whose agent opened this one (`fleetherd task-new`, started once the operator confirmed
    * it — daemon/delegation.ts). The switcher nests it there, and the daemon reads it back to know
    * whom to tell when this topic's agent finishes (`PlatformAdapter.parentOf`), so this field is the

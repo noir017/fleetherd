@@ -270,7 +270,9 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 .topics-empty .fb-clear{margin-left:auto;background:none;border:0;color:#38bdf8;font:inherit;font-size:12px;cursor:pointer;padding:2px 4px;border-radius:3px}
 .topics-empty .fb-clear:hover{text-decoration:underline}
 
-#topics{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:3px;padding:8px}
+/* 11px between rows, and 12px above the first, because a topic row's agent legend (.agent-tag) stands
+   6px proud of the row's top edge: at the 3px this list had, it sat on the row above. */
+#topics{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:11px;padding:12px 8px 8px}
 /* One row shape for every list on the page: the topic list, a scheduled task and a scheduled run
    are all "a dot, a name, a line under it, and a ⋯". Only #topics' own decorations (the needs
    block, the sub-agent staircase, the star) stay scoped to it below.
@@ -300,16 +302,26 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
    long title pushes the delete button out of the column instead of being cut. */
 .topic-main{flex:1;min-width:0;display:flex;flex-direction:column}
 .topic-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-/* Which agent answers here, as formatLaneTitle puts it in front of the name. Dimmer than the
-   title it opens: the subject is what you scan for, and the tag is metadata the row already half
-   says one line down (the machine, when the agent is on a host). Dimmer by a step, not by a fixed
-   grey: #6b7683 was tuned against an idle row and read as disabled next to the #dcdcdc/#fff of a
-   running or selected title — the two states whose row is most worth reading. Inheriting the
-   title's colour and fading it keeps the tag one step below whichever title it sits in, in every
-   state the title rules below paint, and in the sessions panel, whose title has its own colour
-   rule. It still takes its width — it is inside the one ellipsised line — so the page shortens it
-   to the agent id where it can (splitTitle), rather than letting it eat the subject. */
-.topic-tag{color:inherit;opacity:.85}
+/* A topic's row is framed, and the agent answering in it sits on the frame's top-left edge like a
+   fieldset's legend. It used to open the title as "[cc] ", which took its width out of the one
+   ellipsised line: "[gemini-task] " left a subject of a few characters in a 240px column. On the
+   edge it takes none of either line.
+   The frame is what the legend sits on, so it is drawn on every topic row — faint at rest, a step
+   up on the row on screen — and the lists of topic rows open their gaps to make room for the legend
+   above each (#topics, .sess-group-rows, .tp-topics). A task's row has no agent to name and keeps
+   the plain shape.
+   The legend's background is split at the frame's line: what is behind the row above it (--behind,
+   the panel's #171717 unless the list says otherwise) and the row's own colour below it. That is
+   what makes the line look broken by the name rather than covered by a box, and why it follows
+   --row-bg through hover, the selected row and the green needs-you rows without rules of its own.
+   The colour is the agent's harness, the palette the agent cards use (.h-* below); a custom harness
+   has none of its own and stays grey. max-width keeps a long id clear of the row's right end. */
+.topic-item.framed{border-color:rgba(255,255,255,.07);border-radius:6px;padding-top:9px}
+.topic-item.framed.on{border-color:rgba(255,255,255,.16)}
+.agent-tag{position:absolute;top:-7px;left:7px;max-width:calc(100% - 50px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0 4px;font-size:10px;line-height:13px;letter-spacing:.02em;color:var(--hc,#8d8d8d);background:linear-gradient(to bottom,var(--behind,#171717) 50%,var(--row-bg) 50%);border-radius:3px}
+/* A step brighter on the row on screen, as its title and frame are. Mixed toward white rather than a
+   second palette, so a harness added to the palette needs one colour, not two. */
+.topic-item.on .agent-tag{color:color-mix(in srgb,var(--hc,#8d8d8d) 72%,#fff)}
 /* Which project this topic is in. Dimmer than an idle title on purpose: it is what you scan
    for when several topics are open, not what you read. */
 .topic-dir{font-size:11px;line-height:1.35;color:#6b7683;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -359,8 +371,8 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 .topic-star-mark{display:inline-flex;align-items:center;justify-content:center;color:#fbbf24;flex-shrink:0;padding:0 2px}
 .topic-star-mark .ic{width:13px;height:13px;fill:currentColor}
 /* A topic forked from another (/fork): its mark leads the title, in the title's own colour and a
-   step dimmer, like the agent tag beside it — it says what the row is, and the source is the row
-   right above it. Inside the one ellipsised line, so it never pushes the title out of the column. */
+   step dimmer — it says what the row is, and the source is the row right above it. Inside the one
+   ellipsised line, so it never pushes the title out of the column. */
 .topic-fork-mark{display:inline-flex;vertical-align:-1px;margin-right:3px;opacity:.85}
 .topic-fork-mark .ic{width:12px;height:12px}
 @media(hover:none){.topic-more{opacity:.55}}
@@ -438,8 +450,10 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
    is the only thing on the list that moves or stands out. */
 #app.calm .topic-dot.running{animation:none}
 #app.calm .topic-badge{background:#2a2a2a;color:#8a8a8a;font-weight:500}
-#topics .topic-item.after-needs{margin-top:5px}
-#topics .topic-item.after-needs::before{content:'';position:absolute;left:9px;right:9px;top:-5px;border-top:1px solid var(--line)}
+/* The rule midway between the last row that needs you and the agent legend standing above the next
+   row: the gap is 11px plus this margin, and the legend's top is 6px above the row's edge. */
+#topics .topic-item.after-needs{margin-top:7px}
+#topics .topic-item.after-needs::before{content:'';position:absolute;left:9px;right:9px;top:-13px;border-top:1px solid var(--line)}
 /* The last row of a panel: the topic sidebar's two menus, the scheduled panel's two tabs.
    Same border, padding, type size and height on both sides, so the two columns end on the
    same line. A size container so the words can give way to their glyphs when the sidebar
@@ -617,7 +631,8 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 .sess-group-flag.unread{color:#60a5fa}
 .sess-group-flag.asking{color:#fbbf24}
 .sess-group-flag.running{color:#38bdf8}
-.sess-group-rows{display:flex;flex-direction:column;gap:2px}
+/* Topic rows, so the same room for their agent legends as #topics, under the header too. */
+.sess-group-rows{display:flex;flex-direction:column;gap:11px;padding:9px 0 4px}
 /* A task, as the Tasks tab draws it: the same row every list uses, with the schedule on its hover
    card and on the task's page rather than on the row, because a cron expression is the one thing
    on a task nobody reads at a glance. A tap opens that page (#task-page). */
@@ -724,6 +739,8 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 .tp-meta{margin-top:12px;font-size:11.5px;color:var(--dim);overflow-wrap:anywhere}
 .tp-locked{margin-top:10px;font-size:12px;color:#fbbf24;overflow-wrap:anywhere}
 .tp-list{margin-top:6px;display:flex;flex-direction:column;gap:2px}
+/* The task's sessions are topic rows, legends and all, on the window's own background. */
+.tp-list.tp-topics{margin-top:12px;gap:11px;--behind:var(--bg)}
 .tp-run{display:flex;align-items:flex-start;gap:8px;padding:6px 9px;border-radius:5px;font-size:12px;line-height:1.45}
 .tp-run:hover{background:#1e1e1e}
 .tp-run>.topic-dot{margin-top:5px}
@@ -1121,14 +1138,18 @@ select.skill-field{appearance:auto}
 .ac-kind{display:flex;align-items:center;gap:6px;font-size:12.5px;color:#a3a3a3;overflow:hidden;white-space:nowrap}
 .ac-kind span{overflow:hidden;text-overflow:ellipsis}
 /* Which harness, at a glance, in a colour of its own: the eye finds "the Codex one" by colour
-   before it has read a word. Keyed on the configured harness, not the label, which is prose. */
-.ac-dot{flex:none;width:7px;height:7px;border-radius:50%;background:#6b6b6b}
-.ac-dot.h-claude{background:#d97757}
-.ac-dot.h-codex{background:#10a37f}
-.ac-dot.h-opencode{background:#e2e2e2}
-.ac-dot.h-agy{background:#4f8ff7}
-.ac-dot.h-gemini{background:#a78bfa}
-.ac-dot.h-dsh{background:#5b7cfa}
+   before it has read a word. Keyed on the configured harness, not the label, which is prose.
+   One palette for the two places that draw it — the dot on an agent card here and a topic row's
+   agent legend (.agent-tag) — set as --hc so a colour is written once; each falls back to its own
+   grey for a harness with none (custom). Set on the element carrying the class and never on a
+   container: a custom property inherits, and a custom agent is grey only while nothing above sets one. */
+.ac-dot{flex:none;width:7px;height:7px;border-radius:50%;background:var(--hc,#6b6b6b)}
+.ac-dot.h-claude,.agent-tag.h-claude{--hc:#d97757}
+.ac-dot.h-codex,.agent-tag.h-codex{--hc:#10a37f}
+.ac-dot.h-opencode,.agent-tag.h-opencode{--hc:#e2e2e2}
+.ac-dot.h-agy,.agent-tag.h-agy{--hc:#4f8ff7}
+.ac-dot.h-gemini,.agent-tag.h-gemini{--hc:#a78bfa}
+.ac-dot.h-dsh,.agent-tag.h-dsh{--hc:#5b7cfa}
 /* The UI face rather than monospace, and 720px for the launcher rather than less: measured in
    Chromium, "deepseek-v4.1-flash-free" is 159px in 11px monospace and 143px here, and a desktop card
    at four to a row leaves 148px for it. A longer name still ends in an ellipsis, whole on hover. */
@@ -1743,7 +1764,7 @@ button:disabled{opacity:.5;cursor:default}
   #sidebar.collapsed{margin:0;transform:translateX(-100%)}
   #app.sb-open #backdrop{display:block}
   #sidebar>.panel-resize{display:none}
-  .topic-item{padding:10px 9px}
+  .topic-item,.topic-item.framed{padding:10px 9px}
   /* The filter bar in the drawer: the same finger-sized field as the composer, and a
      16px search box — the rule is the zoom, not the look. */
   .filterbar{padding:8px 10px}
@@ -2914,6 +2935,8 @@ const SCRIPT = `
    *
    * The "time" slot is the right end of that second line, for the one row that carries a clock.
    * It is a slot of its own rather than part of "sub" because it must not be ellipsised with it.
+   * The "legend" slot is a topic row's agent name on its frame (agentTagHtml); it is positioned
+   * out of the flex row, so it is first only to be painted under the row's controls, never over.
    */
   function rowHtml(o){
     var key=o.key||'';
@@ -2922,6 +2945,7 @@ const SCRIPT = `
       + ' title="'+text(o.moreTitle||'Row actions')+'" aria-label="'+text(o.moreTitle||'Row actions')+'">'+IC.icon.more+'</button>';
     var sub=(o.sub||o.time)?'<span class="topic-sub">'+(o.sub||'')+(o.time||'')+'</span>':'';
     return '<div class="topic-item'+(o.cls?' '+o.cls:'')+'"'+o.attrs+'>'
+      + (o.legend||'')
       + '<span class="'+(o.dot||'topic-dot')+'"></span>'
       + '<span class="topic-main">'+(o.title||'')+sub+'</span>'
       + (o.badge||'')
@@ -2939,8 +2963,8 @@ const SCRIPT = `
    *   attrs    more attributes for the row
    *   sub/time in place of the directory line and the age: a run's own row says when it ran, how
    *            many messages and in what state instead
-   * Everything else — the dot, the title, the badge, the terminal and star marks — is one answer
-   * for every list, so a topic looks the same wherever it is found.
+   * Everything else — the agent legend, the dot, the title, the badge, the terminal and star marks —
+   * is one answer for every list, so a topic looks the same wherever it is found.
    */
   function treeRowHtml(row, o){
     var t=row.t;
@@ -2953,7 +2977,7 @@ const SCRIPT = `
     var isLive=Boolean(t.live);
     var unread=unreadOf(t);
     var cls=(isCur?'on ':'')+(isRunning?'running':'idle')+(isLive?' live':'')
-      +(t.starred?' starred':'')+(o.cls||'')
+      +(t.starred?' starred':'')+' framed'+(o.cls||'')
       +(row.depth?' sub d'+Math.min(row.depth,3):'')
       +(o.tail||'');
     var isFailed=t.stage==='failed';
@@ -2968,11 +2992,11 @@ const SCRIPT = `
     // page has that topic's terminal open (shown or minimized). See terminal-sessions.ts.
     var term=t.term?'<span class="topic-term" title="A terminal is attached to this topic">&gt;_</span>':'';
     var line=o.sub!==undefined ? o.sub : topicDirHtml(t);
-    var named=splitTitle(t.title || 'Untitled', t.dir&&t.dir.host);
+    // The subject alone: who answers is the legend on the row's frame, not the "[cc] " the stored
+    // name opens with (which the chat platforms still need, and which a later /agent leaves stale).
     var title='<span class="topic-title">'
        + forkMarkHtml(t)
-       + (named.tag?'<span class="topic-tag"'+(named.full?' title="'+text(named.full)+'"':'')+'>'+text(named.tag)+'</span> ':'')
-       + text(named.rest)+'</span>';
+       + text(splitTitle(t.title || 'Untitled').rest)+'</span>';
     // A lit star on a starred row is a marker, not a button: Star/Unstar lives in the menu now.
     var starMark=t.starred
       ? '<span class="topic-star-mark" title="Starred: never removed to make room, and kept by Clear" aria-hidden="true">'+IC.icon.star+'</span>'
@@ -2986,6 +3010,7 @@ const SCRIPT = `
       cls:cls,
       attrs:' '+o.attr+'="'+text(t.id)+'" role="button" tabindex="0"'+(o.attrs||''),
       key:o.menu+':'+t.id,
+      legend:agentTagHtml(t),
       dot:dotCls,
       title:title,
       sub:fold ? '<span class="topic-line">'+fold+line+'</span>' : line,
@@ -4258,7 +4283,7 @@ const SCRIPT = `
   }
 
   function taskSessionsHtml(d){
-    var list = taskSessions(d), h = '<div class="tp-label">Sessions<span class="tp-n">' + list.length + '</span></div><div class="tp-list">';
+    var list = taskSessions(d), h = '<div class="tp-label">Sessions<span class="tp-n">' + list.length + '</span></div><div class="tp-list tp-topics">';
     if(!list.length){
       h += '<div class="tp-empty">' + (d.task.kind === 'bash'
         ? 'A bash task runs without a conversation; its output is posted where it posts.'
@@ -4269,9 +4294,9 @@ const SCRIPT = `
   }
 
   /**
-   * One topic a run opened: the dot, the title and the unread count the switcher would show for it,
-   * and its last activity, messages and state as the Sessions tab writes them. No ⋯: what to do
-   * with the topic is decided in the topic, which the row opens.
+   * One topic a run opened: the dot, the agent legend, the title and the unread count the switcher
+   * would show for it, and its last activity, messages and state as the Sessions tab writes them. No
+   * ⋯: what to do with the topic is decided in the topic, which the row opens.
    */
   function taskSessionRow(t){
     var running = rowRunning(t), asking = Boolean(t.asking), unread = unreadOf(t), count = t.msgCount || 0;
@@ -4280,10 +4305,10 @@ const SCRIPT = `
     var when = t.lastAt
       ? '<span class="topic-age" data-age="' + text(t.lastAt) + '" data-age-run="0" title="' + text(ageClock(t.lastAt)) + '">' + text(ageText(Date.now() - t.lastAt, true)) + '</span>'
       : '';
-    var named = splitTitle(t.title || 'Untitled', t.dir && t.dir.host);
-    return '<div class="topic-item tp-sess' + (t.id === topic ? ' on' : '') + (running ? ' running' : ' idle') + '" data-tp-topic="' + text(t.id) + '" role="button" tabindex="0">'
+    return '<div class="topic-item tp-sess framed' + (t.id === topic ? ' on' : '') + (running ? ' running' : ' idle') + '" data-tp-topic="' + text(t.id) + '" role="button" tabindex="0">'
+      + agentTagHtml(t)
       + '<span class="' + dot + '"></span>'
-      + '<span class="topic-main"><span class="topic-title">' + text(named.rest) + '</span>'
+      + '<span class="topic-main"><span class="topic-title">' + text(splitTitle(t.title || 'Untitled').rest) + '</span>'
       + '<span class="topic-sub"><span class="topic-dir">' + when + (count ? ' · ' + count + ' message' + (count === 1 ? '' : 's') : '') + (state ? ' · ' + state : '') + '</span></span></span>'
       + (unread > 0 ? '<span class="topic-badge">' + (unread > 99 ? '99+' : unread) + '</span>' : '')
       + '</div>';
@@ -4400,7 +4425,7 @@ const SCRIPT = `
     for(var i=0;i<topics.length;i++){
       var t = topics[i];
       if((t.scheduled || t.parent) && t.id !== own) continue;
-      h += '<option value="topic:' + text(t.id) + '">' + text(splitTitle(t.title || 'Untitled', t.dir && t.dir.host).rest) + '</option>';
+      h += '<option value="topic:' + text(t.id) + '">' + text(splitTitle(t.title || 'Untitled').rest) + '</option>';
     }
     return h + '<option value="other">Another chat…</option>';
   }
@@ -6757,8 +6782,9 @@ const SCRIPT = `
       c.members.push(t);
       if(rank<c.rank) c.rank=rank;
       if(t.starred) c.starred=true;
-      var named=splitTitle(t.title || 'Untitled', t.dir && t.dir.host);
-      if(named.tag) c.agents[named.tag.slice(1, -1)]=true;
+      // By the legend's own words, so a chip names an agent the way the rows do.
+      var agent=agentOf(t);
+      if(agent) c.agents[agent.label]=true;
       c.hosts[t.dir && t.dir.host ? t.dir.host : '__local']=true;
       // A fork belongs to its source's conversation here, as it is drawn beside it: a filter that
       // keeps the source keeps the forks next to it.
@@ -6918,29 +6944,51 @@ const SCRIPT = `
   }
 
   /**
-   * Split a topic's "[agent] subject" name into its tag and its subject, shortening the tag to the
-   * agent id alone when the row's second line already names the same machine.
-   *
-   * The tag is the agent id, and for an agent on a host that id is "cbc@uniagent" — 15 characters
-   * of a 240px column spent naming a machine the directory line repeats one line down, which left
-   * a whole row reading "[cbc@uniagent] Deploy A…" (reported 2026-11-03). What the operator types
-   * to bind an agent is the part before the @, so that is what the row keeps, and the name it was
-   * cut from goes on the tag's tooltip. A tag whose host the second line does not name — no
-   * directory known yet, or a group standing in for the host — is left whole: dropping the host
-   * there would take the only place on the row that says which machine the agent is on.
+   * Split a topic's "[agent] subject" name into the agent id it opens with and its subject.
    *
    * Only ever reads a leading bracketed group, which formatLaneTitle guarantees: an untagged
    * name (a topic seeded from its first message before any turn) has no tag and is shown as it is.
-   * full is set only when the tag was shortened, so an untouched row gets no tooltip to explain
-   * an abbreviation it does not have — and the row's own tooltip (what a needs-you row says) is
-   * left to the rest of the row rather than covered by this one.
+   * The rows draw only the subject (the agent is their legend, agentTagHtml); the tag is read only
+   * where the daemon did not say which agent is bound (agentOf).
    */
-  function splitTitle(title, host){
+  function splitTitle(title){
     var m=/^\\[([^\\]]+)\\]\\s*([\\s\\S]*)$/.exec(title);
     if(!m) return {tag:'', rest:title};
-    var tag=m[1], rest=m[2], at=tag.indexOf('@');
-    if(at>0 && host && tag.slice(at+1)===host) return {tag:'['+tag.slice(0, at)+']', rest:rest, full:title};
-    return {tag:'['+tag+']', rest:rest};
+    return {tag:m[1], rest:m[2]};
+  }
+
+  /**
+   * Which agent answers in a topic, for its row's legend, the Agent filter and the search:
+   *   id       the whole agent id, as config names it (cbc@uniagent)
+   *   label    what the legend says
+   *   harness  the configured harness, which picks the legend's colour; '' when not known
+   *
+   * The daemon's answer first (Topic.agent: the binding, with its harness). Failing that the title's
+   * own "[agent]" — a topic whose agent is gone from config, a daemon that offered no lookup — which
+   * says who answered when the topic was named and carries no harness, so its legend is grey.
+   *
+   * The label drops "@host" when the line under it already names that machine: an agent on a host is
+   * "cbc@uniagent", 15 characters spent on a machine the directory line repeats, and the part before
+   * the @ is what the operator types to bind it (reported 2026-11-03, against the title's tag). A host
+   * the line does not name — no directory known yet, or a group standing in for the host — keeps it,
+   * since dropping it would take the only place on the row that says which machine the agent is on.
+   * The whole id is on the legend's tooltip either way. null when nothing names an agent.
+   */
+  function agentOf(t){
+    var id='', harness='';
+    if(t.agent && t.agent.id){ id=t.agent.id; harness=t.agent.harness || ''; }
+    else id=splitTitle(t.title || '').tag;
+    if(!id) return null;
+    var host=t.dir && t.dir.host, at=id.indexOf('@');
+    var label=(at>0 && host && id.slice(at+1)===host) ? id.slice(0, at) : id;
+    return {id:id, label:label, harness:harness};
+  }
+
+  /** A topic row's agent legend, on its frame's top-left edge; empty for a row with no agent. */
+  function agentTagHtml(t){
+    var a=agentOf(t);
+    if(!a) return '';
+    return '<span class="agent-tag'+(a.harness?' h-'+text(a.harness):'')+'" title="'+text('Agent: '+a.id)+'">'+text(a.label)+'</span>';
   }
 
   // The topic list's bar, built with the rest of the page. paintTopics keeps its option lists and
@@ -7337,9 +7385,9 @@ const SCRIPT = `
     var agents = {}, agentOrder = [], hosts = {}, hostOrder = [], i;
     for(i=0;i<forest.visible.length;i++){
       var t = forest.visible[i];
-      var named = splitTitle(t.title || 'Untitled', t.dir && t.dir.host);
-      if(named.tag){
-        var agent = named.tag.slice(1, -1);
+      var who = agentOf(t);
+      if(who){
+        var agent = who.label;
         if(agents[agent] === undefined){ agents[agent] = 0; agentOrder.push(agent); }
       }
       var host = t.dir && t.dir.host ? t.dir.host : '__local';
@@ -7374,11 +7422,12 @@ const SCRIPT = `
     return {groups:groups, total:forest.convOrder.length};
   }
 
-  /** Everything a keyword is matched against on one topic: its title, its agent tag, and the
-      second line — directory name, full path and host. */
+  /** Everything a keyword is matched against on one topic: its title (with the "[agent]" it was
+      named under), the agent answering it now, and the second line — directory name, full path and
+      host. */
   function topicHay(t){
-    var named = splitTitle(t.title || 'Untitled', t.dir && t.dir.host);
-    var hay = (t.title || '') + ' ' + named.tag;
+    var agent = agentOf(t);
+    var hay = (t.title || '') + ' ' + (agent ? agent.id : '');
     if(t.dir) hay += ' ' + (t.dir.name || '') + ' ' + (t.dir.path || '') + ' ' + (t.dir.host || '');
     return hay.toLowerCase();
   }

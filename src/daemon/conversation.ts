@@ -3571,13 +3571,21 @@ ${formatTokens(left)} left before compaction — ${name}`;
    * The machine is read off the agent's definition as it stands now, not recorded with the
    * conversation: moving an agent to another host (`/reload`) moves where its next turn runs, so
    * a label that remembered the old one would be naming a machine the topic no longer reaches.
+   *
+   * The agent is named only when one is bound. The directory falls back to the default agent's,
+   * since an unbound topic will most likely start there; a label saying who answers must not guess.
    */
   workdirForRef(ref: ConversationRef): ConversationWorkdir | undefined {
     const id = this.idForRef(ref);
-    const def = findAgent(this.config, this.boundAgentFor(id, this.config.routing.default));
+    const bound = this.boundAgentFor(id, '');
+    const def = findAgent(this.config, bound || this.config.routing.default);
     if (!def) return undefined;
     const host = agentPlaceOf(def);
-    return { path: resolveConversationCwd(def, id, this.store), ...(host ? { host } : {}) };
+    return {
+      path: resolveConversationCwd(def, id, this.store),
+      ...(host ? { host } : {}),
+      ...(bound ? { agent: { id: def.id, harness: def.harness } } : {}),
+    };
   }
 
   /**

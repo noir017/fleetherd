@@ -518,11 +518,22 @@ describe('workdirForRef (what a platform is told to display)', () => {
     expect(reg.workdirForRef(ref())).toEqual({ path: '/home/u/workspace', host: 'box' });
     // `group` wins, because it is the name the `/agent` menu already shows for that machine.
     return send('/ag2').then(async () => {
-      expect(reg.workdirForRef(ref())).toEqual({ path: '/home/u/workspace', host: 'sydney' });
+      expect(reg.workdirForRef(ref())).toEqual({ path: '/home/u/workspace', host: 'sydney', agent: { id: 'ag2', harness: 'agy' } });
       // And an agent on the gateway's own machine has no machine to name.
       await send('/cc');
-      expect(reg.workdirForRef(ref())).toEqual({ path: root });
+      expect(reg.workdirForRef(ref())).toEqual({ path: root, agent: { id: 'cc', harness: 'claude' } });
     });
+  });
+
+  it('names the bound agent and its harness, and no agent while none is bound', async () => {
+    // The web UI labels each topic with this. Unbound, the path and host fall back to the default
+    // agent's — a fair guess for a directory — but a label saying who answers must not guess.
+    const { reg, send } = rig();
+    expect(reg.workdirForRef(ref())).not.toHaveProperty('agent');
+    await send('/agent oc');
+    expect(reg.workdirForRef(ref())?.agent).toEqual({ id: 'oc', harness: 'opencode' });
+    // A lane nothing has bound stays unlabelled beside it.
+    expect(reg.workdirForRef(ref({ thread: 't7' }))).not.toHaveProperty('agent');
   });
 });
 
