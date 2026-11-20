@@ -5,6 +5,10 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **Generic `quotaCommand` and `/usage` support across agents.** `quotaCommand` now accepts standard JSON (`QuotaPool[]` or `{ pools }`) in addition to the 4-column TSV table, recognizes `1h` windows, and answers `/usage` for any agent with a configured `quotaCommand` (not only `agy`).
+
 ## [3.17.2] - 2026-11-20
 
 ### Fixed
