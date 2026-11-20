@@ -121,6 +121,7 @@ function poolFamily(name: string): string | undefined {
 function poolWindow(metric: string): string | undefined {
   if (/week/i.test(metric)) return 'weekly';
   if (/five hour|\b5 ?h/i.test(metric)) return '5h';
+  if (/one hour|\b1 ?h/i.test(metric)) return '1h';
   if (/day/i.test(metric)) return 'daily';
   return undefined;
 }

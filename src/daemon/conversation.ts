@@ -2582,6 +2582,10 @@ export class ConversationRegistry {
     }
 
     if (result.kind === 'unsupported') {
+      if (parsed.name === 'usage' && def?.quotaCommand) {
+        void this.answerHarnessCliCommand(key, state, parsed.name, msg);
+        return undefined;
+      }
       // Point at the agent command rather than the harness name: the menu registers `/oc`, not
       // `/opencode`, and a harness that reports no list (agy) has nothing to point at at all.
       const own = harnessCommandName(def?.harness);
@@ -2893,9 +2897,8 @@ export class ConversationRegistry {
           console.warn('[command] failed to deliver a harness CLI answer:', e instanceof Error ? e.message : e)
         );
     };
-    if (!def || def.harness !== 'agy') {
-      // Unreachable: agy is the only harness in HARNESS_CLI_ANSWERED, and the only one whose
-      // /usage is local. Answered rather than thrown so a future entry fails visibly, not silently.
+    const own = name === 'usage' && def?.quotaCommand !== undefined;
+    if (!def || (!own && def.harness !== 'agy')) {
       reply(`${label} has no way to answer /${name} outside a turn.`);
       return;
     }
@@ -2903,7 +2906,6 @@ export class ConversationRegistry {
     // An agent with its own quotaCommand gets its /usage from there: through a model gateway agy's
     // own answer is empty (quota-meter.ts), and the command prints the same table, so it renders
     // the same way.
-    const own = name === 'usage' && def.quotaCommand !== undefined;
     console.log(`[command] /${name} run as ${own ? 'the agent\'s quotaCommand' : 'a one-shot agy process'} for ${key} (${state.agentId})`);
     const result = own ? await runQuotaCommandFor(def, cwd) : await runAgyCliFor(def, name, cwd, this.runHarnessCli);
     if (!result.ok) {
