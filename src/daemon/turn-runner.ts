@@ -12,6 +12,7 @@ import type {
   InboundMessage,
   MessageRef,
   QuotaPool,
+  SessionOption,
   SteerOutcome,
   ToolEvent,
 } from '../types.js';
@@ -295,6 +296,7 @@ export interface TurnRunnerDeps {
    */
   recordModel?(id: ConversationId, model: string): void;
   recordEffort?(id: ConversationId, effort: string | undefined): void;
+  recordOptions?(id: ConversationId, options: SessionOption[]): void;
   recordQuota?(id: ConversationId, pools: QuotaPool[]): void;
   /**
    * Record that a turn ran to completion here.
@@ -1234,6 +1236,8 @@ export class TurnRunner {
         ref.effort = effort;
         this.deps.recordEffort?.(conversationId, effort);
       },
+      // The footer has no field for these either; they are the status strip's alone.
+      onOptions: (options) => this.deps.recordOptions?.(conversationId, options),
       // Nothing per-turn reads quota — the footer has no field for it — so it goes straight through.
       onQuota: (pools) => this.deps.recordQuota?.(conversationId, pools),
       /**
@@ -1680,6 +1684,7 @@ export class TurnRunner {
         const live = peek();
         if (live) live.ref.effort = effort;
       },
+      onOptions: (options) => this.deps.recordOptions?.(conversationId, options),
       onQuota: (pools) => this.deps.recordQuota?.(conversationId, pools),
       // A background cycle's own failure, or a retry inside one (see session-failure.ts). Sent
       // straight to the lane rather than through open(): a notice is not output, and opening the

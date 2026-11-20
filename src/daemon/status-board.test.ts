@@ -170,6 +170,30 @@ describe('StatusBoard', () => {
     ]);
   });
 
+  it('carries the agent’s own settings as the strip shows them, and drops them when the agent does', async () => {
+    const { board, clock, shown } = rig({ agent: 'browser' });
+    board.options('c1', [
+      {
+        id: 'account',
+        name: 'Account',
+        current: 'home',
+        options: [
+          { value: 'work', name: 'Work' },
+          { value: 'home', name: 'Home', description: '5-hour limit used up' },
+        ],
+      },
+    ]);
+    // The current choice by its name, its note, and no list: the choices are fetched on opening.
+    expect(shown.at(-1)?.options).toEqual([{ id: 'account', name: 'Account', value: 'Home', note: '5-hour limit used up' }]);
+    await clock.advance(MIN_INTERVAL_MS);
+    // Locked: one choice left.
+    board.options('c1', [{ id: 'account', name: 'Account', current: 'home', options: [{ value: 'home', name: 'Home' }] }]);
+    expect(shown.at(-1)?.options).toEqual([{ id: 'account', name: 'Account', value: 'Home', fixed: true }]);
+    await clock.advance(MIN_INTERVAL_MS);
+    board.options('c1', []);
+    expect(shown.at(-1)).not.toHaveProperty('options');
+  });
+
   it('swallows a platform that throws — a status is never worth a turn', () => {
     const { board } = rig();
     const deps = (board as unknown as { deps: StatusBoardDeps }).deps;

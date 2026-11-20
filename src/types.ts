@@ -448,6 +448,50 @@ export interface AgentStatus {
   cacheExpiresAt?: number;
   /** Usage-quota pools, in the order the harness listed them. */
   quota?: QuotaPool[];
+  /** The agent's own session settings (SessionOption), as the strip shows them. Absent when it has none. */
+  options?: StatusOption[];
+}
+
+/**
+ * A session setting the agent defines itself, beyond the model, effort and mode the gateway knows by
+ * name: an ACP `select` config option whose category starts with `_`, which the spec leaves to the
+ * agent ("Category names beginning with `_` are free for custom use", SessionConfigOptionCategory,
+ * @agentclientprotocol/sdk 0.29.0). A web agent driver uses one for the account a session runs on.
+ *
+ * The gateway knows nothing of what any of them means. It shows them, offers their choices and sends
+ * a pick back; whether a value can be changed, and when, is the agent's to say — by what it lists.
+ * Nothing is remembered here: the agent keeps its own setting across a reload, so a rebuilt child
+ * reports it again rather than being told it.
+ */
+export interface SessionOption {
+  /** The config option's id, which `session/set_config_option` takes. */
+  id: string;
+  /** Its label, as the agent named it ("Account"). */
+  name: string;
+  /** The value the session is on now. */
+  current?: string;
+  /**
+   * What it can be set to now. One entry means it cannot be changed at this point — ACP has no
+   * "disabled" flag, so an agent that locks a setting lists only the value it is locked on.
+   */
+  options: Array<{ value: string; name: string; description?: string }>;
+}
+
+/**
+ * One SessionOption as a status bar shows it: its label, the current choice's name, whether there is
+ * anything else to pick, and the current choice's description (the agent's own note on it, e.g. that
+ * an account's quota is used up). Only `id` and `name` when the setting is known to exist but its
+ * state is not — a conversation whose session has not started.
+ */
+export interface StatusOption {
+  id: string;
+  name: string;
+  /** The current choice's display name. */
+  value?: string;
+  /** Only one choice is offered: the setting cannot be changed now. */
+  fixed?: boolean;
+  /** The current choice's description, when the agent gave one. */
+  note?: string;
 }
 
 /**

@@ -74,6 +74,7 @@ import {
   ScheduleOpRequestSchema,
   ScheduleTaskId,
   ModelChooseRequestSchema,
+  OptionChooseRequestSchema,
   SeenRequestSchema,
   SkillOpRequestSchema,
   ReviewOpRequestSchema,
@@ -431,6 +432,11 @@ const GUARDED: Route[] = [
   // takes — the same warm-up /model does), and the switch, which is /model's.
   { method: 'GET', path: '/api/models', run: modelList },
   { method: 'POST', path: '/api/models', run: modelChoose },
+  // Beside it, the agent's own settings (an account, say): which ones to draw for a topic with no
+  // status yet (`peek=1`, never starting its agent), the choices for one (starting it, as above),
+  // and a pick, which the agent may refuse in its own words.
+  { method: 'GET', path: '/api/options', run: optionList },
+  { method: 'POST', path: '/api/options', run: optionChoose },
   // What one turn changed in its workspace, and one of those files read out of the turn's two
   // snapshots. Both are read-only and both take a topic id, a turn number and (for the file) a
   // path relative to the repository root; the daemon refuses a path that turn did not change.
@@ -1115,6 +1121,25 @@ async function modelChoose({ req, res }: Req, ctx: Ctx): Promise<void> {
   const parsed = await readBody(req, res, ModelChooseRequestSchema);
   if (!parsed) return;
   const result = await ctx.room.chooseModel(parsed.topic, parsed.value);
+  send(req, res, result.ok ? 200 : 409, result);
+}
+
+/**
+ * The agent's own settings for the topic named by `?t=`. With `peek=1`, only which to draw and what
+ * is known of them, without starting the agent; otherwise their choices, starting a cold agent the
+ * way the model list does. 200 either way, as for the model list.
+ */
+async function optionList({ req, res, url }: Req, ctx: Ctx): Promise<void> {
+  const topic = url.searchParams.get('t') ?? '';
+  if (!/^[0-9a-f]{8}$/.test(topic)) return send(req, res, 400, { error: 'not a topic id' });
+  send(req, res, 200, url.searchParams.get('peek') === '1' ? await ctx.room.optionStatus(topic) : await ctx.room.options(topic));
+}
+
+/** Set one of a topic's settings. A refusal is the agent's (or the daemon's) sentence, handed back to be shown. */
+async function optionChoose({ req, res }: Req, ctx: Ctx): Promise<void> {
+  const parsed = await readBody(req, res, OptionChooseRequestSchema);
+  if (!parsed) return;
+  const result = await ctx.room.chooseOption(parsed.topic, parsed.id, parsed.value);
   send(req, res, result.ok ? 200 : 409, result);
 }
 

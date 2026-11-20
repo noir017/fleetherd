@@ -3257,3 +3257,97 @@ describe('WebServer: a turn’s changes', () => {
     }
   });
 });
+
+describe('WebServer: the agent’s own settings', () => {
+  const ACCOUNT = {
+    id: 'account',
+    name: 'Account',
+    current: 'work',
+    options: [
+      { value: 'work', name: 'Work' },
+      { value: 'home', name: 'Home', description: '5-hour limit used up' },
+    ],
+  };
+
+  it('peeks, lists and chooses through the room, for the topic named', async () => {
+    const { base, room, topic } = await boot();
+    const cookie = await signIn(base);
+    const asked: string[] = [];
+    room.useOptionPicker({
+      peek: async (ref) => {
+        asked.push(`peek ${ref.thread}`);
+        return { agent: 'browser', options: [{ id: 'account', name: 'Account' }] };
+      },
+      list: async (ref) => {
+        asked.push(`list ${ref.thread}`);
+        return { ok: true, agent: 'browser', options: [ACCOUNT] };
+      },
+      choose: async (ref, id, value) => {
+        asked.push(`choose ${ref.thread} ${id}=${value}`);
+        return { ok: true, options: [{ ...ACCOUNT, current: value }], text: 'Account set to Home for this conversation.' };
+      },
+    });
+
+    const peek = await fetch(`${base}/api/options?peek=1&t=${topic}`, { headers: { cookie } });
+    expect(peek.status).toBe(200);
+    expect(await peek.json()).toEqual({ agent: 'browser', options: [{ id: 'account', name: 'Account' }] });
+
+    const list = await fetch(`${base}/api/options?t=${topic}`, { headers: { cookie } });
+    expect(list.status).toBe(200);
+    expect(await list.json()).toEqual({ ok: true, agent: 'browser', options: [ACCOUNT] });
+
+    const pick = await fetch(`${base}/api/options`, {
+      method: 'POST',
+      headers: { ...JSON_HEADERS, cookie },
+      body: JSON.stringify({ topic, id: 'account', value: 'home' }),
+    });
+    expect(pick.status).toBe(200);
+    expect(await pick.json()).toMatchObject({ ok: true, text: 'Account set to Home for this conversation.' });
+    expect(asked).toEqual([`peek ${topic}`, `list ${topic}`, `choose ${topic} account=home`]);
+  });
+
+  it('hands an agent’s refusal back as a 409 with its sentence', async () => {
+    const { base, room, topic } = await boot();
+    const cookie = await signIn(base);
+    room.useOptionPicker({
+      peek: async () => ({ agent: 'browser', options: [] }),
+      list: async () => ({ ok: false, agent: 'browser', reason: 'none', text: 'browser has no settings of its own to change.' }),
+      choose: async () => ({ ok: false, text: 'This conversation already started on work; its account cannot change.' }),
+    });
+    const pick = await fetch(`${base}/api/options`, {
+      method: 'POST',
+      headers: { ...JSON_HEADERS, cookie },
+      body: JSON.stringify({ topic, id: 'account', value: 'home' }),
+    });
+    expect(pick.status).toBe(409);
+    expect(await pick.json()).toEqual({ ok: false, text: 'This conversation already started on work; its account cannot change.' });
+  });
+
+  it('answers an unknown topic and a daemon without the switch in words, and refuses a malformed request', async () => {
+    const { base, room, topic } = await boot();
+    const cookie = await signIn(base);
+    // No picker handed over yet: nothing to draw, and words for the list.
+    expect(await (await fetch(`${base}/api/options?peek=1&t=${topic}`, { headers: { cookie } })).json()).toEqual({ options: [] });
+    expect(await (await fetch(`${base}/api/options?t=${topic}`, { headers: { cookie } })).json()).toMatchObject({ ok: false, reason: 'off' });
+    room.useOptionPicker({
+      peek: async () => ({ agent: 'browser', options: [{ id: 'account', name: 'Account' }] }),
+      list: async () => ({ ok: true, agent: 'browser', options: [ACCOUNT] }),
+      choose: async () => ({ ok: true, options: [ACCOUNT], text: '' }),
+    });
+    expect(await (await fetch(`${base}/api/options?peek=1&t=0badc0de`, { headers: { cookie } })).json()).toEqual({ options: [] });
+    expect((await fetch(`${base}/api/options?t=zzzz`, { headers: { cookie } })).status).toBe(400);
+    const bad = await fetch(`${base}/api/options`, {
+      method: 'POST',
+      headers: { ...JSON_HEADERS, cookie },
+      body: JSON.stringify({ topic, id: 'account' }),
+    });
+    expect(bad.status).toBe(400);
+  });
+
+  it('is behind the session like every other route', async () => {
+    const { base, topic } = await boot();
+    expect((await fetch(`${base}/api/options?t=${topic}`)).status).toBe(401);
+    const pick = await fetch(`${base}/api/options`, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ topic, id: 'a', value: 'b' }) });
+    expect(pick.status).toBe(401);
+  });
+});

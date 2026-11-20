@@ -8,6 +8,7 @@ import type {
   PermissionAnswer,
   QuotaPool,
   SessionModeSelector,
+  SessionOption,
   SteerOutcome,
   ToolEvent,
   ToolFinishEvent,
@@ -64,6 +65,12 @@ export interface AgentStreamHandlers {
    * undefined when the update no longer carries a level, so a stale one is cleared, not kept.
    */
   onEffort?(effort: string | undefined): void;
+  /**
+   * The agent's own session settings (SessionOption — ACP select options in a `_` category), for
+   * the status strip. Fired when onModel is, and on every `config_option_update` with the whole set,
+   * empty included, so a setting the agent stopped offering is cleared rather than kept.
+   */
+  onOptions?(options: SessionOption[]): void;
   /**
    * The harness's usage-quota pools (agy, through its one-shot `agy -p=/usage` — see
    * daemon/agy-acp.ts). A full snapshot each time, like onUsage. Optional: no ACP harness reports
@@ -339,6 +346,22 @@ export interface AgentSession {
    * Rejects when the live session offers no levels or the harness refuses the value.
    */
   setEffort?(value: string): Promise<string>;
+  /**
+   * The session's own settings (SessionOption) as the agent last reported them, or undefined when no
+   * session has reported any config yet. Non-spawning, like modelSelector.
+   */
+  sessionOptions?(): SessionOption[] | undefined;
+  /**
+   * Set one of those settings on the live session, returning the whole set as the agent reports it
+   * afterwards. Rejects when there is no live session, the option is not one of them, or the agent
+   * refuses — its error message is the sentence to show, since only the agent knows why (a setting
+   * it has locked, a value it no longer has).
+   *
+   * Unlike setModel and setEffort, nothing is remembered or re-applied: the agent keeps these across
+   * a reload itself, and a gateway that put back what it last saw would overrule the agent's own
+   * later changes to it.
+   */
+  setOption?(id: string, value: string): Promise<SessionOption[]>;
   /**
    * The live session's modes, or undefined when there is no session or its harness reports none.
    * Non-spawning, like modelSelector; the settings screen reads it to offer the permission levels

@@ -80,6 +80,7 @@ const PACING = {
   // Registers a callback, read while drawing an empty topic; writes nothing to the chat.
   useAgentCatalog: 'unpaced',
   useModelPicker: 'unpaced',
+  useOptionPicker: 'unpaced',
   // Registers the turn-change reads; the page asks over its own HTTP routes, not chat traffic.
   useTurnChanges: 'unpaced',
   // Hangs a finished turn's summary off a message the turn has already written. Not chat traffic

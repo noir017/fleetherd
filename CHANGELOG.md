@@ -5,6 +5,19 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **The web UI's status line shows an agent's own settings beside the model.** An agent can offer
+  settings the gateway does not know by name — a web agent driver offers the account a session
+  runs on — as ACP `select` config options in a `_` category, which the spec leaves to the agent.
+  Each gets a button next to the model switch: named for the setting, showing its current value,
+  opening its choices with the agent's note on each (an account whose quota is used up says so),
+  and setting one through `session/set_config_option`. The agent decides what can change and when:
+  a setting it lists one value for is drawn dim and inert, and a change it refuses shows its own
+  reason. The button is there in a new topic before the first message, which for an account is the
+  only time it can change. Nothing is kept on the gateway's side — the agent keeps its setting across
+  a reload — and no other platform or command is involved.
+
 ## [3.17.4] - 2026-11-20
 
 ### Fixed
