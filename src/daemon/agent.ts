@@ -112,6 +112,25 @@ export interface AgentStreamHandlers {
    * not a reason to fail the turn.
    */
   onNotice?(text: string): void;
+  /**
+   * A picture in the agent's reply (an ACP `image` block in `agent_message_chunk`), to be shown in
+   * the chat between the text around it. As the wire carries it: `mimeType` is the agent's claim,
+   * not yet checked against the bytes — the consumer sniffs them (see agent-image.ts).
+   *
+   * Optional, and absent means the picture is not shown: a render with nowhere to put one (a `/btw`
+   * answer) says so in the log rather than failing the turn.
+   */
+  onImage?(image: AgentImage): void;
+}
+
+/** One picture an agent sent back (AgentStreamHandlers.onImage). */
+export interface AgentImage {
+  /** base64, no `data:` prefix — ACP `ImageContent.data`. */
+  data: string;
+  /** What the agent says it is. Never trusted: the bytes are sniffed before anything is sent. */
+  mimeType: string;
+  /** A file name the agent gave it (the last segment of ACP `ImageContent.uri`), when it gave one. */
+  name?: string;
 }
 
 /**

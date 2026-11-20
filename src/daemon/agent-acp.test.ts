@@ -16,7 +16,7 @@ import {
   type TurnState,
 } from './agent-acp.js';
 import type { AgentDef } from '../config/schema.js';
-import type { AgentUsage } from './agent.js';
+import type { AgentImage, AgentUsage } from './agent.js';
 
 /** Recording TurnState: capture handler calls as an event string for order assertions. */
 function recorder(): {
@@ -340,6 +340,61 @@ describe('translateUpdate subagent attribution (claude adapter _meta)', () => {
       feed(st, { _meta, sessionUpdate: 'tool_call', toolCallId: `t-${started.length}`, kind: 'execute', rawInput: { command: 'ls' }, status: 'completed' });
     }
     expect(started.map((s) => s.agent)).toEqual([undefined, undefined, undefined, undefined]);
+  });
+});
+
+/**
+ * An `image` block in `agent_message_chunk` → onImage, for the gateway to send as a picture. Only the
+ * shape is the runtime's to forward; the bytes are checked where they are sent (agent-files.ts).
+ */
+describe('translateUpdate image blocks in the reply', () => {
+  function imageRecorder() {
+    const r = recorder();
+    const images: AgentImage[] = [];
+    r.st.handlers.onImage = (image) => {
+      images.push(image);
+      r.events.push('image');
+    };
+    return { ...r, images };
+  }
+
+  it('forwards the picture in place between the text around it', () => {
+    const { st, events, images } = imageRecorder();
+    feed(st, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Here is the chart:' } });
+    feed(st, { sessionUpdate: 'agent_message_chunk', content: { type: 'image', data: 'iVBORw0K', mimeType: 'image/png' } });
+    feed(st, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Revenue doubled.' } });
+    expect(events).toEqual(['text:Here is the chart:', 'image', 'text:Revenue doubled.']);
+    expect(images).toEqual([{ data: 'iVBORw0K', mimeType: 'image/png' }]);
+  });
+
+  it("names it after its uri's last segment when it has one", () => {
+    const { st, images } = imageRecorder();
+    feed(st, { sessionUpdate: 'agent_message_chunk', content: { type: 'image', data: 'AA', mimeType: 'image/png', uri: 'file:///tmp/out/sales%20chart.png' } });
+    feed(st, { sessionUpdate: 'agent_message_chunk', content: { type: 'image', data: 'AA', mimeType: 'image/png', uri: 'plots/q3.webp' } });
+    feed(st, { sessionUpdate: 'agent_message_chunk', content: { type: 'image', data: 'AA', mimeType: 'image/png', uri: 'https://example.com/' } });
+    expect(images.map((i) => i.name)).toEqual(['sales chart.png', 'q3.webp', undefined]);
+  });
+
+  it('drops a block with no data', () => {
+    const { st, events } = imageRecorder();
+    feed(st, { sessionUpdate: 'agent_message_chunk', content: { type: 'image', data: '', mimeType: 'image/png' } });
+    expect(events).toEqual([]);
+  });
+
+  it("keeps a subagent's picture out of the reply, as it does its text", () => {
+    const { st, events } = imageRecorder();
+    feed(st, {
+      sessionUpdate: 'agent_message_chunk',
+      content: { type: 'image', data: 'iVBORw0K', mimeType: 'image/png' },
+      _meta: { claudeCode: { parentToolUseId: 'toolu_01MddhweBrYt8mzCoULZaen4' } },
+    });
+    expect(events).toEqual([]);
+  });
+
+  it('is dropped by a render that takes no pictures', () => {
+    const { st, events } = recorder();
+    feed(st, { sessionUpdate: 'agent_message_chunk', content: { type: 'image', data: 'iVBORw0K', mimeType: 'image/png' } });
+    expect(events).toEqual([]);
   });
 });
 

@@ -1065,13 +1065,23 @@ back into `AgentStreamHandlers`:
 |---|---|
 | `session/new` / `session/load` | an `AgentSession` (context across turns) |
 | `session/prompt` | `runTurn` |
-| `agent_message_chunk` | `onText` |
+| `agent_message_chunk` | `onText`; an `image` block → `onImage` (sent as a file in place — see below) |
 | `tool_call` / `tool_call_update` | `onToolStart` / `onToolFinish` |
 | `available_commands_update` | `onAvailableCommands` |
 | `usage_update` | `onUsage` (feeds the footer's context segment; its `cost`, when present, feeds a busy `/usage`) |
 | `config_option_update` | `onModel`, `onEffort` |
 | `session_info_update` | `onTitle` (renames the chat lane — see below) |
 | `session/request_permission` | **auto-approved** — see below |
+
+**Pictures in the reply.** An `image` block in `agent_message_chunk` goes to `onImage` with its
+base64 and claimed `mimeType` (and, when the block has a `uri`, its last segment as the name), and
+nothing is checked in the runtime. `TurnRunner.sendImage` decodes it and sniffs the bytes
+(`agent-files.ts` `decodeAgentImage`: PNG/JPEG/GIF/WebP, ≤ 15 MB, refused ones logged) and queues
+the send on the render's effects chain: the text before it is completed first, the picture goes out
+through `sendBytesAsFile` (a private temporary file, removed once `sendFile` returns), and the text
+after it starts a new message. Being on the chain is what sends a reply's pictures one at a time and
+in order, and what holds `finalize` — so the turn's ✅ — until the last one is out. A subagent's
+picture is kept out like its text, and counts as visible output for an unnamed refusal like text.
 
 A `tool_call_update` can also reach `onToolStart`: a call is drawn as soon as its status
 advances, so a harness that announces the call before its parameters (CodeBuddy Code sends

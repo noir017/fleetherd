@@ -334,6 +334,13 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
       });
       return;
     }
+    if (asked.includes('PICTURE_THEN_STOP')) {
+      // An answer that is a picture alone, then a refusal stop with no cause: the person has the
+      // picture, so it counts as an answer the way explaining text does.
+      notify(sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'image', data: 'iVBORw0KGgo=', mimeType: 'image/png' } });
+      reply(msg.id, { stopReason: 'refusal' });
+      return;
+    }
     if (asked.includes('REFUSE_PLAIN')) {
       // A model's own refusal: finish_reason content_filter/refusal maps to the same stopReason,
       // with no provider error to attach.
@@ -985,6 +992,17 @@ describe('a prompt the agent refused', () => {
     const turn = collector();
     await session.runTurn({ prompt: 'REFUSE_EXPLAINED', sessionToken: 'tok' }, turn.handlers);
     expect(turn.turn.join('')).toBe('I can’t help with that request.');
+  });
+
+  it('keeps a refusal after a picture a normal end, and hands the picture on', async () => {
+    const { session } = rig();
+    const turn = collector();
+    const pictures: string[] = [];
+    await session.runTurn(
+      { prompt: 'PICTURE_THEN_STOP', sessionToken: 'tok' },
+      { ...turn.handlers, onImage: (image) => void pictures.push(`${image.mimeType}:${image.data}`) }
+    );
+    expect(pictures).toEqual(['image/png:iVBORw0KGgo=']);
   });
 
   it('still ends an ordinary turn normally', async () => {
