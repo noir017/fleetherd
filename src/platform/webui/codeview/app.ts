@@ -16,15 +16,17 @@
  * downloads only the grammar the file it is showing needs. The base editor is one shared chunk.
  *
  * ── The surface other branches build on ─────────────────────────────────────
- * `editor` and `diff` are the whole API; the names and shapes are fixed by
- * `CodeViewApi` and reached only through `page.ts` `codeView()`. A git diff panel or a file
- * editor is a caller, never a second implementation — so everything they share (language
- * lookup, the palette, read-only, Mac/PC save) is decided once, here.
+ * `editor`, `diff` and `highlighter` are the whole API; the names and shapes are fixed by
+ * `CodeViewApi` and reached only through `page.ts` `codeView()`. A git diff panel, a file editor or
+ * a reply's code block is a caller, never a second implementation — so everything they share
+ * (language lookup, the palette, read-only, Mac/PC save) is decided once, here.
  */
 
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
 import {
   HighlightStyle,
+  Language,
+  LanguageSupport,
   StreamLanguage,
   bracketMatching,
   indentOnInput,
@@ -41,7 +43,7 @@ import {
   keymap,
   lineNumbers,
 } from '@codemirror/view';
-import { tags } from '@lezer/highlight';
+import { highlightTree, tags } from '@lezer/highlight';
 
 export interface EditorOptions {
   doc: string;
@@ -82,9 +84,24 @@ export interface DiffHandle {
   destroy(): void;
 }
 
+/**
+ * One coloured run of a highlighted text: `[from, to, classes]`, offsets into the text, in order
+ * and never overlapping. Text between runs is plain. The classes are the palette's (`highlight`),
+ * whose rules `highlighter` puts on the page.
+ */
+export type HighlightSpan = [number, number, string];
+
+/** Highlight one text, synchronously, with a grammar already loaded. */
+export type Highlight = (code: string) => HighlightSpan[];
+
 export interface CodeViewApi {
   editor(parent: HTMLElement, options: EditorOptions): EditorHandle;
   diff(parent: HTMLElement, options: DiffOptions): DiffHandle;
+  /**
+   * The colouring for a code fence's language, once its grammar has loaded: null when no grammar
+   * here is that language, a rejection when the grammar's chunk would not load.
+   */
+  highlighter(lang: string): Promise<Highlight | null>;
 }
 
 /**
@@ -140,10 +157,49 @@ const LANG: Record<string, () => Promise<Extension>> = {
   patch: () => import('@codemirror/legacy-modes/mode/diff').then((m) => StreamLanguage.define(m.diff)),
 };
 
+/**
+ * A grammar by its `LANG` key. Own keys only: the table is an object literal, and an extension or
+ * fence name of `constructor` would otherwise find Object's constructor and call it as a loader.
+ */
+function grammar(key: string): (() => Promise<Extension>) | undefined {
+  return Object.prototype.hasOwnProperty.call(LANG, key) ? LANG[key] : undefined;
+}
+
 /** The grammar for a file name, from its extension alone — the same rule `reading.ts` uses. */
 function langFor(name: string): (() => Promise<Extension>) | undefined {
   const ext = /\.([a-z0-9]+)$/i.exec(name)?.[1]?.toLowerCase();
-  return ext === undefined ? undefined : LANG[ext];
+  return ext === undefined ? undefined : grammar(ext);
+}
+
+/**
+ * The names a code fence uses that are not already a `LANG` key: fences name a language
+ * (```typescript, ```python, ```shell), files an extension.
+ */
+const FENCE_NAMES: Readonly<Record<string, string>> = {
+  javascript: 'js',
+  node: 'js',
+  typescript: 'ts',
+  python: 'py',
+  python3: 'py',
+  golang: 'go',
+  rust: 'rs',
+  shell: 'sh',
+  shellscript: 'sh',
+  'c++': 'cpp',
+  jsonc: 'json',
+  json5: 'json',
+  xhtml: 'html',
+};
+
+/**
+ * The grammar for a fence's info string. Never a patch's: web-markdown.ts colours a diff fence by
+ * its lines' first characters before it reaches the page, and a grammar re-colouring it here
+ * would throw that away for less.
+ */
+function fenceGrammar(lang: string): (() => Promise<Extension>) | undefined {
+  const name = lang.toLowerCase();
+  const key = Object.prototype.hasOwnProperty.call(FENCE_NAMES, name) ? (FENCE_NAMES[name] ?? name) : name;
+  return key === 'diff' || key === 'patch' ? undefined : grammar(key);
 }
 
 /**
@@ -223,6 +279,56 @@ const highlight = HighlightStyle.define([
   { tag: tags.invalid, color: '#f87171' },
   { tag: tags.inserted, color: '#4ade80' },
 ]);
+
+/**
+ * Put the palette's rules on the page, once, for colouring done outside an editor.
+ *
+ * `HighlightStyle` keeps its colours in a style module whose class names it generated, and an
+ * editor mounts that module when it is created — so with no editor open (a reply's code block is
+ * not one) the classes `highlightTree` hands out would style nothing. A plain `<style>` with the
+ * module's own rules is the same thing the editor does, without importing `style-mod` for it: the
+ * CSP admits inline style, and an editor mounting the module later only repeats identical rules.
+ */
+let paletteMounted = false;
+function mountPalette(): void {
+  if (paletteMounted) return;
+  paletteMounted = true;
+  const rules = highlight.module?.getRules();
+  if (!rules) return;
+  const el = document.createElement('style');
+  el.textContent = rules;
+  document.head.appendChild(el);
+}
+
+/** The language a grammar's extension carries: a `LanguageSupport`, or a stream language itself. */
+function languageOf(ext: Extension): Language | null {
+  if (ext instanceof LanguageSupport) return ext.language;
+  return ext instanceof Language ? ext : null;
+}
+
+/**
+ * Colour a code fence the way the editor colours a file: the same grammars, the same palette.
+ *
+ * Static — one parse and a walk of the tree, no editor, no DOM. The page asks for this only once a
+ * message has stopped changing, and builds the coloured text itself from the spans, as text nodes:
+ * nothing here produces markup, so nothing the agent printed can become any.
+ */
+export function highlighter(lang: string): Promise<Highlight | null> {
+  const load = fenceGrammar(lang);
+  if (!load) return Promise.resolve(null);
+  return load().then((ext) => {
+    const language = languageOf(ext);
+    if (!language) return null;
+    mountPalette();
+    return (code: string): HighlightSpan[] => {
+      const spans: HighlightSpan[] = [];
+      highlightTree(language.parser.parse(code), highlight, (from, to, classes) => {
+        spans.push([from, to, classes]);
+      });
+      return spans;
+    };
+  });
+}
 
 /** What every editor here has, read-only or not. */
 function base(): Extension[] {
@@ -390,6 +496,6 @@ export function diff(parent: HTMLElement, o: DiffOptions): DiffHandle {
   };
 }
 
-const api: CodeViewApi = { editor, diff };
+const api: CodeViewApi = { editor, diff, highlighter };
 
 export default api;

@@ -5,6 +5,33 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **Code blocks in the web UI have a bar with the language, Wrap and Copy, and are coloured.**
+  A reply's code used to be a bare grey block: copying it meant selecting it by hand, and a long
+  line could only be read by scrolling it sideways. Each block now names its language and offers
+  Copy (the code exactly as written, confirmed with a check mark) and Wrap. Code is coloured with
+  the grammars and palette the file viewer already bundles, loaded per language on first use — no
+  new dependency, and it works without the file window turned on. The message a running turn is
+  still writing stays plain, so a block is not re-coloured under the reader at every edit; it is
+  coloured when a newer message follows it or the turn ends, and a block that was coloured once is
+  coloured again in the same moment it is redrawn, without a flash. Colours are built as text on
+  the page, never as markup. A `diff` / `patch` block is coloured by line on the server instead —
+  added green, removed red, hunk headers blue — so it reads like the git panel even while it
+  streams.
+- **Task lists and wide tables in web UI replies.** `- [ ]` / `- [x]` items show as unticked and
+  ticked boxes (read-only), and a table sits in a frame that scrolls sideways on a phone, its cells
+  wrapping at spaces rather than breaking every word to fit.
+
+### Fixed
+
+- **A code block indented under a list item renders as a block in the web UI.** It was folded into
+  the item's text, and its backticks made the whole block one inline code span with its newlines
+  turned into line breaks — which is how a model writes the command that goes with step 2.
+- **A `|` inside a table cell's code, or written `\|`, no longer splits the cell.** The row was cut
+  at every pipe, so `` `a | b` `` broke into two cells with stray backticks and the row's last
+  column was lost.
+
 ## [3.18.1] - 2026-11-20
 
 ### Fixed

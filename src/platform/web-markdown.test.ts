@@ -2,6 +2,14 @@ import { describe, it, expect } from 'vitest';
 
 import { renderWebMarkdown, renderWebToolLines, escapeHtml, inline } from './web-markdown.js';
 import { formatDuration } from '../core/tool-renderer.js';
+import { icon } from './webui/icons.js';
+
+/** A fenced block as codeBlock frames it: the bar (language, Wrap, Copy) over the pre. */
+const cb = (lang: string, code: string): string =>
+  `<div class="cb"><div class="cb-h"><span class="cb-lang">${lang}</span>` +
+  `<button type="button" class="cb-b" data-cb="wrap" title="Wrap long lines" aria-label="Wrap long lines" aria-pressed="false">${icon('wrap')}</button>` +
+  `<button type="button" class="cb-b" data-cb="copy" title="Copy" aria-label="Copy code">${icon('copy')}</button>` +
+  `</div><pre><code${lang ? ` class="language-${lang}"` : ''}>${code}</code></pre></div>`;
 
 /**
  * The security half of these tests is not about markdown at all.
@@ -184,6 +192,199 @@ describe('web-markdown: lists', () => {
   });
 });
 
+/**
+ * Whether every tag opened is closed, in order. Stronger than counting: `<li><div></li></div>` has
+ * as many closers as openers and still takes the rest of the message into the wrong element.
+ * Self-closing SVG shapes (`<path …/>`) and `<br>` / `<hr>` close themselves.
+ */
+function balanced(html: string): boolean {
+  const stack: string[] = [];
+  for (const m of html.matchAll(/<(\/?)([a-z][a-z0-9]*)\b[^>]*?(\/?)>/g)) {
+    const [, close, name, self] = m;
+    if (self || name === 'br' || name === 'hr') continue;
+    if (!close) stack.push(name ?? '');
+    else if (stack.pop() !== name) return false;
+  }
+  return stack.length === 0;
+}
+
+/** Every tag name in a piece of HTML, so a test can say which ones this file may write. */
+const tagNames = (html: string): string[] => [...new Set([...html.matchAll(/<\/?([a-zA-Z][\w-]*)/g)].map((m) => m[1] ?? ''))];
+
+describe('web-markdown: code blocks', () => {
+  it('frames a fence with its language, Wrap and Copy', () => {
+    expect(renderWebMarkdown('```ts\nconst a = 1;\n```')).toBe(cb('ts', 'const a = 1;'));
+  });
+
+  it('frames a fence with no language too, with no label and no language class', () => {
+    expect(renderWebMarkdown('```\nplain\n```')).toBe(cb('', 'plain'));
+  });
+
+  it('escapes the language wherever it is written, label and class alike', () => {
+    const html = renderWebMarkdown('```a"onclick=x<img>\nx\n```');
+    expect(html).not.toContain('<img');
+    expect(html).not.toMatch(/"onclick/);
+    expect(html).toContain('<span class="cb-lang">a&quot;onclick=x&lt;img&gt;</span>');
+    expect(html).toContain('<code class="language-a&quot;onclick=x&lt;img&gt;">');
+  });
+
+  it('colours a patch line by line, leaving the file names and the context plain', () => {
+    const src = '--- a/x.ts\n+++ b/x.ts\n@@ -1,2 +1,2 @@\n-const a = 1;\n+const a = 2;\n same';
+    expect(renderWebMarkdown(`\`\`\`diff\n${src}\n\`\`\``)).toBe(
+      cb(
+        'diff',
+        '--- a/x.ts\n+++ b/x.ts\n<span class="ph">@@ -1,2 +1,2 @@</span>\n' +
+          '<span class="pd">-const a = 1;</span>\n<span class="pa">+const a = 2;</span>\n same'
+      )
+    );
+  });
+
+  it('colours `patch` and any case of the name, and nothing else by its first character', () => {
+    expect(renderWebMarkdown('```patch\n+a\n```')).toContain('<span class="pa">+a</span>');
+    expect(renderWebMarkdown('```DIFF\n-a\n```')).toContain('<span class="pd">-a</span>');
+    expect(renderWebMarkdown('```md\n- a\n```')).not.toContain('class="pd"');
+  });
+
+  it('escapes each line of a patch inside the span it is given', () => {
+    const html = renderWebMarkdown('```diff\n+<img src=x onerror=alert(1)>\n-"></span><script>\n```');
+    expect(html).not.toMatch(/<(img|script)/);
+    expect(html).toContain('<span class="pa">+&lt;img src=x onerror=alert(1)&gt;</span>');
+    expect(html).toContain('<span class="pd">-&quot;&gt;&lt;/span&gt;&lt;script&gt;</span>');
+  });
+
+  it('keeps the code element\'s text the fence\'s text exactly, coloured or not, so Copy takes what was written', () => {
+    const src = '@@ -1 +1 @@\n-a & b\n+a < b\n ctx\n';
+    const html = renderWebMarkdown(`\`\`\`diff\n${src}\`\`\``);
+    const code = /<code[^>]*>([\s\S]*)<\/code>/.exec(html)?.[1] ?? '';
+    const text = code.replace(/<[^>]+>/g, '').replace(/&lt;/g, '<').replace(/&amp;/g, '&');
+    expect(text).toBe(src.slice(0, -1));
+  });
+
+  it('colours a patch still streaming in, line by line as it arrives', () => {
+    expect(renderWebMarkdown('```diff\n+one\n-tw')).toBe(cb('diff', '<span class="pa">+one</span>\n<span class="pd">-tw</span>'));
+  });
+});
+
+describe('web-markdown: a fence inside a list item', () => {
+  it('renders the fence as a block in its item rather than as one inline code span', () => {
+    // The case from the report: the continuation path trimmed the lines, joined them with <br>, and
+    // the backticks made the whole block a single <code>.
+    expect(renderWebMarkdown('- item 1\n  ```js\n  const a = 1;\n  ```\n- item 2')).toBe(
+      `<ul><li>item 1${cb('js', 'const a = 1;')}</li><li>item 2</li></ul>`
+    );
+  });
+
+  it('strips the fence\'s own indent from its lines and keeps deeper indentation', () => {
+    expect(renderWebMarkdown('1. step\n   ```py\n   def f():\n       return 1\n   ```\n   then this\n2. next')).toBe(
+      `<ol><li>step${cb('py', 'def f():\n    return 1')}then this</li><li>next</li></ol>`
+    );
+  });
+
+  it('keeps an unclosed fence open to the end of the input, as a fence anywhere does while streaming', () => {
+    expect(renderWebMarkdown('- a\n  ```sh\n  echo hi')).toBe(`<ul><li>a${cb('sh', 'echo hi')}</li></ul>`);
+  });
+
+  it('does not read the code\'s own lines as list items or end the list at a blank line inside it', () => {
+    expect(renderWebMarkdown('- a\n  ```yaml\n  - b: 1\n\n  - c: 2\n  ```\n- d')).toBe(
+      `<ul><li>a${cb('yaml', '- b: 1\n\n- c: 2')}</li><li>d</li></ul>`
+    );
+  });
+
+  it('still nests an item that follows the fence under the same parent', () => {
+    expect(renderWebMarkdown('- a\n  ```\n  x\n  ```\n  - b\n- c')).toBe(
+      `<ul><li>a${cb('', 'x')}<ul><li>b</li></ul></li><li>c</li></ul>`
+    );
+  });
+});
+
+describe('web-markdown: table cells', () => {
+  /** The cells of a table's first row, as rendered: th for the header. */
+  const heads = (src: string): string[] => [...renderWebMarkdown(src).matchAll(/<th>(.*?)<\/th>/g)].map((m) => m[1] ?? '');
+
+  it('does not split a cell at an escaped pipe in a code span, and keeps the last column', () => {
+    // The case from the report: three cells came out as `test`, `` `a \ `` and `` b` ``, and desc was lost.
+    expect(heads('| test | `a \\| b` | desc |\n| --- | --- | --- |')).toEqual(['test', '<code>a | b</code>', 'desc']);
+  });
+
+  it('does not split a cell at a bare pipe inside a code span either', () => {
+    const html = renderWebMarkdown('| cmd | note |\n|---|---|\n| `ls | wc -l` | count |');
+    expect(html).toContain('<tr><td><code>ls | wc -l</code></td><td>count</td></tr>');
+  });
+
+  it('reads `\\|` outside code as a pipe in the cell', () => {
+    expect(heads('| a \\| b | c |\n|---|---|')).toEqual(['a | b', 'c']);
+  });
+
+  it('splits at a pipe after a backtick that is never closed, as it will once the row is complete', () => {
+    expect(heads('| `a | b |\n|---|---|')).toEqual(['`a', 'b']);
+  });
+
+  it('keeps an empty last cell but drops the one the closing pipe would make', () => {
+    expect(heads('| a | |\n|---|---|')).toEqual(['a', '']);
+    expect(heads('a | b\n---|---')).toEqual(['a', 'b']);
+  });
+
+  it('puts the table in a frame of its own, which is what scrolls on a phone', () => {
+    expect(renderWebMarkdown('| a |\n|---|\n| 1 |')).toBe(
+      '<div class="tbl"><table><thead><tr><th>a</th></tr></thead><tbody><tr><td>1</td></tr></tbody></table></div>'
+    );
+  });
+});
+
+describe('web-markdown: task lists', () => {
+  const box = (done: boolean): string =>
+    `<span class="task-box" role="img" aria-label="${done ? 'done' : 'not done'}">${icon(done ? 'boxOn' : 'boxOff')}</span>`;
+
+  it('draws [ ] and [x] as the page\'s box icons in place of the bullet', () => {
+    expect(renderWebMarkdown('- [ ] todo\n- [x] done\n- [X] also')).toBe(
+      `<ul><li class="task">${box(false)}todo</li><li class="task done">${box(true)}done</li>` +
+        `<li class="task done">${box(true)}also</li></ul>`
+    );
+  });
+
+  it('reads [x](…) as a link, not a ticked box', () => {
+    expect(renderWebMarkdown('- [x](https://e.com) link')).toBe(
+      '<ul><li><a href="https://e.com" target="_blank" rel="noopener noreferrer">x</a> link</li></ul>'
+    );
+  });
+
+  it('leaves a box still streaming in as the characters it is', () => {
+    expect(renderWebMarkdown('- [')).toBe('<ul><li>[</li></ul>');
+    expect(renderWebMarkdown('- [x')).toBe('<ul><li>[x</li></ul>');
+    expect(renderWebMarkdown('- [x]')).toBe(`<ul><li class="task done">${box(true)}</li></ul>`);
+  });
+
+  it('nests and keeps inline markup in the item', () => {
+    expect(renderWebMarkdown('- [ ] a\n  - [x] **b**')).toBe(
+      `<ul><li class="task">${box(false)}a<ul><li class="task done">${box(true)}<strong>b</strong></li></ul></li></ul>`
+    );
+  });
+});
+
+describe('web-markdown: the new blocks under stream and attack', () => {
+  const long =
+    '1. step\n   ```sh\n   npm i | tee log\n   ```\n2. [x] done **ok**\n\n' +
+    '| cmd | out |\n|---|---|\n| `a \\| b` | `x | y` |\n\n' +
+    '```diff\n@@ -1 +1 @@\n-old\n+new\n```\n';
+
+  it('keeps every tag balanced at every truncation of a reply that uses them all', () => {
+    for (let n = 1; n <= long.length; n += 1) {
+      const html = renderWebMarkdown(long.slice(0, n));
+      expect(balanced(html), `cut at ${n}: ${html}`).toBe(true);
+    }
+  });
+
+  it('writes no tag of the input\'s into a list fence, a table cell, a task or a patch', () => {
+    const hostile = '<img src=x onerror=alert(1)>';
+    const html = renderWebMarkdown(
+      `- [x] ${hostile}\n  \`\`\`html\n  ${hostile}\n  \`\`\`\n\n| \`${hostile} | y\` | ${hostile} |\n|---|---|\n\n\`\`\`diff\n+${hostile}\n\`\`\``
+    );
+    expect(html).not.toContain('<img');
+    const allowed = ['div', 'span', 'button', 'svg', 'path', 'rect', 'pre', 'code', 'ul', 'li', 'table', 'thead', 'tbody', 'tr', 'th', 'td'];
+    expect(tagNames(html).filter((t) => !allowed.includes(t))).toEqual([]);
+  });
+});
+
 describe('web-markdown: inline', () => {
   it('suppresses markup inside a code span', () => {
     expect(renderWebMarkdown('`**not bold**`')).toContain('<code>**not bold**</code>');
@@ -262,7 +463,7 @@ describe('web-markdown: a tool bubble', () => {
     expect(html).toBe(
       '<div class="tools">' +
         tl('💻 Bash: &quot;ls&quot;') +
-        '<pre><code class="language-json">{\n  &quot;command&quot;: &quot;ls&quot;\n}</code></pre>' +
+        cb('json', '{\n  &quot;command&quot;: &quot;ls&quot;\n}') +
         tl('📖 Read: &quot;a.md&quot;') +
         '</div>'
     );
@@ -355,7 +556,7 @@ describe('inline output is unchanged by the fast paths', () => {
   const BLOCKS: Array<[string, string]> = [
     ["line one [x\nline two](https://a) and *em\nacross* lines, see http://h.example/x_y\nhttps://next.line", "<p>line one <a href=\"https://a\" target=\"_blank\" rel=\"noopener noreferrer\">x<br>line two</a> and <em>em<br>across</em> lines, see <a href=\"http://h.example/x_y\" target=\"_blank\" rel=\"noopener noreferrer\">http://h.example/x_y</a><br><a href=\"https://next.line\" target=\"_blank\" rel=\"noopener noreferrer\">https://next.line</a></p>"],
     ["[open\n[no close here\n\nnew para [a](https://b) [c]\n(d) [e](https://f)", "<p>[open<br>[no close here</p><p>new para <a href=\"https://b\" target=\"_blank\" rel=\"noopener noreferrer\">a</a> [c]<br>(d) <a href=\"https://f\" target=\"_blank\" rel=\"noopener noreferrer\">e</a></p>"],
-    ["# head *i* [l](https://l)\n\n| a | *b* |\n|---|---|\n| [x](https://x) | `y` |\n\n- item **b** [\n- item ]( no", "<h1>head <em>i</em> <a href=\"https://l\" target=\"_blank\" rel=\"noopener noreferrer\">l</a></h1><table><thead><tr><th>a</th><th><em>b</em></th></tr></thead><tbody><tr><td><a href=\"https://x\" target=\"_blank\" rel=\"noopener noreferrer\">x</a></td><td><code>y</code></td></tr></tbody></table><ul><li>item <strong>b</strong> [</li><li>item ]( no</li></ul>"],
+    ["# head *i* [l](https://l)\n\n| a | *b* |\n|---|---|\n| [x](https://x) | `y` |\n\n- item **b** [\n- item ]( no", "<h1>head <em>i</em> <a href=\"https://l\" target=\"_blank\" rel=\"noopener noreferrer\">l</a></h1><div class=\"tbl\"><table><thead><tr><th>a</th><th><em>b</em></th></tr></thead><tbody><tr><td><a href=\"https://x\" target=\"_blank\" rel=\"noopener noreferrer\">x</a></td><td><code>y</code></td></tr></tbody></table></div><ul><li>item <strong>b</strong> [</li><li>item ]( no</li></ul>"],
   ];
 
   it.each(BLOCKS)('block %#', (input, expected) => {
