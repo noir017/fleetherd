@@ -114,7 +114,7 @@ Gateway → daemon:
 
 | frame | fields | |
 |---|---|---|
-| `spawn` | `id cmd args cwd env unset` | start a process; `env` is an overlay on the login environment |
+| `spawn` | `id cmd args cwd env unset` or `id connect` | start a process; `env` is an overlay on the login environment. With `connect` (`host:port`), dial an agent that is already running instead: the TCP connection stands in for the process — its bytes are `out` fd 1, `stdin` is written to it, SIGTERM half-closes it after what was queued (any other signal closes it), and its closing is the `exit` (`code` 0, or 1 on a read error; `error` when the dial fails) |
 | `stdin` | `id` + body | bytes for its stdin (queued until it exists) |
 | `stdin-end` | `id` | close its stdin |
 | `signal` | `id sig` | `SIGINT`/`SIGTERM`/`SIGKILL`/…; held until the start completes |

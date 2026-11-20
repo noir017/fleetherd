@@ -8,10 +8,11 @@
 | `codex` | `codex-acp` | [@agentclientprotocol/codex-acp](https://www.npmjs.com/package/@agentclientprotocol/codex-acp)（`npm i -g`） | Codex CLI 登录态 |
 | `opencode` | `opencode acp` | OpenCode CLI | OpenCode 登录态 |
 | `agy` | `agy acp` | Antigravity CLI 1.5+ | `agy` 的 Google 登录态（系统钥匙串），或[模型网关](#经模型网关) |
-| `custom` | 你的 `command` + `args` | 任意 ACP 可执行文件 | 由智能体自身决定 |
+| `custom` | 你的 `command` + `args`，或一个 [`connect`](#已经在运行的智能体connect) 地址 | 任意 ACP 可执行文件或服务 | 由智能体自身决定 |
 
 只有 HTTP API 的服务不需要单独的 harness：[`fleetherd api-agent`](#http-apiapi-agent) 把它包成
-ACP 智能体，按 `custom` 启动。
+ACP 智能体，按 `custom` 启动。本身已经在 TCP 上讲 ACP 的服务，用 [`connect`](#已经在运行的智能体connect)
+直接连过去，不用启动。
 
 每个智能体可设 `cwd`、`env`、`args`、尽力传递的 `model`、[固定会话选项](#固定会话选项)、
 [启动前钩子](#启动前钩子)、[权限等级](#权限等级)、[额度命令](#额度命令)，以及——网关不认识的 harness 用的——
@@ -62,6 +63,34 @@ agents:
 
 `~` 按智能体运行时的 home 解析（`env.HOME` 覆盖也算）；`layer` 不写就用智能体的 id，pod 里的智能体用
 `pod.yaml` 里的 id、不带 `@host`。文件所在目录不存在就什么都不放。见[写给所有智能体的工作偏好](instructions.md)。
+
+## 已经在运行的智能体（`connect`）
+
+已经在运行、在 TCP 上讲 ACP 的服务（比如 web-agent-driver 的守护进程）是连过去而不是启动：`custom`
+智能体用 `connect` 代替 `command`。
+
+```yaml
+agents:
+  - id: gemini-task
+    harness: custom
+    connect:
+      url: tcp://wad:7790          # 从智能体所在机器拨号：本机，或它的 host
+      tokenFile: ~/.wad/token      # 可选；在那台机器上读，放进 initialize 的 _meta
+      meta:                        # 可选；原样放进 initialize 的 _meta
+        wad: { site: gemini-task, profile: main }
+    permissions: ask
+```
+
+每个会话开一条自己的连接，这条连接就是该会话的 stdin 和 stdout：结束会话（`/kill`、End agent、空闲回收）
+时，正在跑的一轮先收到 `session/cancel`，然后半关闭连接。设了 `host:`（或写在 pod 的 `pod.yaml` 里）时由
+那台机器的 fleetherd-remote 拨号，所以只有那台机器能到的地址（它私有网络里的容器）也能用，而且每个会话
+在那边不再起任何进程。
+
+智能体在 `initialize` 的 `_meta` 里得知自己的身份：`meta` 原样，再加
+`fleetherd: { token, host, instructions }`——`tokenFile` 的内容、智能体所在机器的名字，以及给它的
+[常驻指令](instructions.md)（common.md + `<id>.md`，id 不带 pod 的 `@host`），也就是 harness 本来会从
+自己的文件里读到的内容。所以 `command`、`args`、`env` 和 `instructions` 不适用；`cwd`、`permissions`、
+`quotaCommand` 等照常。connect 智能体不能做[评审](sub-agents.md)，评审需要一个属于它自己的进程。
 
 ## 启动前钩子
 

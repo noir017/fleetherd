@@ -8,10 +8,12 @@ English | [简体中文](zh-CN/agents.md)
 | `codex` | `codex-acp` | [@agentclientprotocol/codex-acp](https://www.npmjs.com/package/@agentclientprotocol/codex-acp) (`npm i -g`) | Codex CLI's login |
 | `opencode` | `opencode acp` | OpenCode CLI | OpenCode's login |
 | `agy` | `agy acp` | Antigravity CLI 1.5+ | `agy` Google sign-in (OS keyring), or a [model gateway](#through-a-model-gateway) |
-| `custom` | your `command` + `args` | any ACP executable | your agent's |
+| `custom` | your `command` + `args`, or a [`connect`](#an-agent-that-is-already-running-connect) address | any ACP executable or service | your agent's |
 
 A service that is only an HTTP API needs no harness of its own:
-[`fleetherd api-agent`](#http-apis-api-agent) wraps it as an ACP agent you start as `custom`.
+[`fleetherd api-agent`](#http-apis-api-agent) wraps it as an ACP agent you start as `custom`. One
+that already speaks ACP over TCP is [connected to](#an-agent-that-is-already-running-connect)
+instead of started.
 
 Each agent takes `cwd`, `env`, `args`, a best-effort `model`, pinned
 [session options](#pinned-session-options), a [pre-launch hook](#pre-launch-hook), a
@@ -69,6 +71,36 @@ agents:
 `~` is resolved against the home the agent runs as (`env.HOME` included); `layer` defaults to the
 agent's id, and a pod's agent uses its `pod.yaml` id without `@host`. Nothing is placed unless the
 file's directory exists. See [Your instructions, for every agent](instructions.md).
+
+## An agent that is already running (`connect`)
+
+A service that is already running and speaks ACP over TCP — such as web-agent-driver's daemon — is
+reached rather than started: `connect` takes the place of `command` on a `custom` agent.
+
+```yaml
+agents:
+  - id: gemini-task
+    harness: custom
+    connect:
+      url: tcp://wad:7790          # dialled from the agent's machine: this one, or its host
+      tokenFile: ~/.wad/token      # optional; read there, sent in initialize _meta
+      meta:                        # optional; sent in initialize _meta as written
+        wad: { site: gemini-task, profile: main }
+    permissions: ask
+```
+
+Each session opens its own connection, and it is that session's stdin and stdout: ending the
+session (`/kill`, End agent, an idle reclaim) sends the `session/cancel` for a running turn first,
+then half-closes the connection. With `host:` (or in a pod's `pod.yaml`) the host's fleetherd-remote
+does the dialling, so an address only that machine reaches — a container on its private network —
+works, and nothing runs there per session.
+
+The agent is told who it is in `initialize`'s `_meta`: `meta` as written, plus
+`fleetherd: { token, host, instructions }` — the contents of `tokenFile`, the name of the agent's
+machine, and the [standing instructions](instructions.md) for it (common.md + `<id>.md`, the id
+without a pod's `@host`), which a harness would have read from a file of its own. So `command`,
+`args`, `env` and `instructions` do not apply; `cwd`, `permissions`, `quotaCommand` and the rest do.
+A connect agent cannot run [reviews](sub-agents.md), which need a process of their own.
 
 ## Pre-launch hook
 

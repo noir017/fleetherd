@@ -103,6 +103,7 @@ import { markActivePools } from './agy-meters.js';
 import { AGY_CONTEXT_REFRESH_MS, readAgyContext } from './agy-transcript.js';
 import { createQuotaMeter, hasQuotaSource, scopeQuotaPools, type QuotaMeter } from './quota-meter.js';
 import { relayEnv } from './relay.js';
+import { connectAddress, connectHere, connectMeta } from './connect-agent.js';
 
 /**
  * AgentFactory's ACP (Agent Client Protocol) implementation on the official @agentclientprotocol/sdk.
@@ -279,8 +280,11 @@ export function resolveHarness(def: AgentDef, remote = false): { command: string
       // from dsh's own profile, not from args.
       return { command: 'dsh', args: ['--profile', 'acp', ...def.args] };
     case 'custom':
-      // refine already guarantees command exists.
-      return { command: def.command!, args: [...def.args] };
+      // The schema guarantees a command unless the agent is a connect one, which is dialled, never
+      // started (connect-agent.ts): what could still ask for its command is a review run, which
+      // needs a process of its own it can take the tools from.
+      if (!def.command) throw new Error(`agent "${def.id}" is reached at ${def.connect?.url ?? '?'} (connect), not started`);
+      return { command: def.command, args: [...def.args] };
     case 'agy':
       // agy's own ACP server, since 1.5 (`agy acp --help`). None of the flags the old print-mode
       // launch needed carries over, each re-measured on 1.5.1 (2026-11-06):
@@ -1169,6 +1173,8 @@ function createAcpSession(
   let proc: AgentChild | undefined;
   let conn: ClientConnection | undefined;
   let active: ActiveSession | undefined;
+  /** The last `session/cancel` sent, until it is written: a connect agent's teardown waits for it. */
+  let cancelSent: Promise<void> | undefined;
   /**
    * The single reader of `active`'s update queue, for as long as the child lives (see pumpUpdates).
    * Held only so `resetHandles` can forget it; nothing ever awaits it.
@@ -1609,6 +1615,8 @@ function createAcpSession(
 
   /** Max wait for initialize + session/new after spawn; on timeout, treat spawn as failed (ENOENT etc.) instead of hanging. */
   const START_TIMEOUT_MS = 30_000;
+  /** How long a connect agent's teardown waits for the `session/cancel` before it to be written. */
+  const CANCEL_FLUSH_MS = 1_000;
 
   /**
    * Close the connection + terminate the child and reset handles. Shared by explicit dispose and
@@ -1638,13 +1646,24 @@ function createAcpSession(
   function teardown(): void {
     launchHook?.abort();
     const child = proc; // capture the process to kill (the 'exit' callback compares by reference)
-    try {
-      active?.dispose();
-      conn?.close();
-    } catch (e) {
-      console.debug('[acp] teardown: ignoring error while closing connection:', e instanceof Error ? e.message : e);
-    }
-    if (child) killChildProcess(child);
+    const [session, connection, cancel] = [active, conn, cancelSent];
+    cancelSent = undefined;
+    const close = (): void => {
+      try {
+        session?.dispose();
+        connection?.close();
+      } catch (e) {
+        console.debug('[acp] teardown: ignoring error while closing connection:', e instanceof Error ? e.message : e);
+      }
+      if (child) killChildProcess(child);
+    };
+    // A connect agent goes on running when its connection goes, so a turn it is in the middle of
+    // stops only if the `session/cancel` sent just before (`/kill`, End agent: interruptConversation)
+    // reaches it. Closing the connection at once would drop that message — the SDK writes through a
+    // queue and refuses to write on a closed connection — so wait for it, briefly. A process
+    // harness needs no such wait: ending the process ends its turn.
+    if (def.connect && cancel) void Promise.race([cancel, new Promise<void>((r) => setTimeout(r, CANCEL_FLUSH_MS).unref())]).then(close);
+    else close();
     resetHandles();
   }
 
@@ -1765,6 +1784,20 @@ function createAcpSession(
   }
 
   /**
+   * Start the agent: what was run, the child, and what its `initialize` carries besides the
+   * capabilities. A connect agent is dialled, not started (connect-agent.ts): its address stands
+   * where the command would in a failure's message, and what it is told goes in `_meta`.
+   */
+  async function launch(
+    sessionToken: string,
+    place: { host: RemoteHost; welcome: Welcome } | undefined
+  ): Promise<{ command: string; args: string[]; initExtra: { _meta?: Record<string, unknown> }; child: AgentChild; mcpServers: () => McpServer[] }> {
+    const initExtra = def.connect ? { _meta: await connectMeta(def, def.connect, place) } : {};
+    const { command, args } = def.connect ? { command: def.connect.url, args: [] } : resolveHarness(def, place !== undefined);
+    return { command, args, initExtra, ...spawnChild(command, args, sessionToken, place, await relayEnv(def, place?.host)) };
+  }
+
+  /**
    * The child, here or on its host, and the native-tools server its sessions are given. That server
    * is started BY the harness, so on a remote host it is the host's `fleetherd` shim, which hands the
    * session back to this gateway (remote/shim.go).
@@ -1777,6 +1810,11 @@ function createAcpSession(
     /** Points the harness at its relay, when it has one (relay.ts) — over its own env, which it chains to. */
     relay: Record<string, string>
   ): { child: AgentChild; mcpServers: () => McpServer[] } {
+    if (def.connect) {
+      return place
+        ? { child: place.host.connect(connectAddress(def.connect)), mcpServers: () => remoteMcpServers(sessionToken, place.host.paths(place.welcome), cwd) }
+        : { child: connectHere(def.connect), mcpServers: () => acpMcpServers(sessionToken, socketPath, cwd) };
+    }
     if (!place) {
       return {
         child: spawn(command, args, { cwd, env: { ...buildAgentEnv(def, sessionToken, socketPath), ...relay } }),
@@ -1882,8 +1920,7 @@ function createAcpSession(
       }
     }
 
-    const { command, args } = resolveHarness(def, place !== undefined);
-    const { child, mcpServers } = spawnChild(command, args, sessionToken, place, await relayEnv(def, place?.host));
+    const { command, args, initExtra, child, mcpServers } = await launch(sessionToken, place);
     const { spawnError, stderrTail } = adoptChild(child);
 
     const stream = ndJsonStream(
@@ -1953,6 +1990,7 @@ function createAcpSession(
           elicitation: { form: {} },
           ...(Object.keys(capabilityMeta).length > 0 ? { _meta: capabilityMeta } : {}),
         },
+        ...initExtra,
       });
       progress.answered = true;
       loadSessionSupported = initResult.agentCapabilities?.loadSession === true;
@@ -3077,7 +3115,7 @@ function createAcpSession(
       // why that is a session-level variable. Empty when the cancel beats the harness's first
       // tool_call — the `aborting` half of isWreckage covers that window.
       cancelledTools = new Set(turnState?.toolLedger.keys() ?? []);
-      if (conn && active) void conn.agent.notify('session/cancel', { sessionId: active.sessionId });
+      if (conn && active) cancelSent = conn.agent.notify('session/cancel', { sessionId: active.sessionId }).catch(() => {});
       if (turnStopped) turnStopped();
       else stoppedWhileStarting = true;
     },

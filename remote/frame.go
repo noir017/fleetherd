@@ -51,6 +51,9 @@ type Header struct {
 	// processes
 	ID     string            `json:"id,omitempty"`
 	Cmd    string            `json:"cmd,omitempty"`
+	// Connect, on a `spawn`, is `host:port` of an agent that is already running: a TCP connection
+	// to it stands in for the process (proc.go connect).
+	Connect string `json:"connect,omitempty"`
 	Args   []string          `json:"args,omitempty"`
 	Cwd    string            `json:"cwd,omitempty"`
 	Env    map[string]string `json:"env,omitempty"`

@@ -112,6 +112,36 @@ const InstructionsOffSchema = z
 const InstructionsSchema = z.union([InstructionsOffSchema, InstructionsObjectSchema]).optional();
 
 /**
+ * `agents[].connect`: an agent that is already running and is reached instead of started — a
+ * service that speaks ACP over TCP, such as web-agent-driver's daemon. Each session dials `url`
+ * from the agent's machine (this one, or its `host`, whose fleetherd-remote does the dialling, so
+ * an address only that machine can reach works) and the connection stands in for the process:
+ * stdin and stdout, ended by half-closing it once what was queued is written. Nothing is started,
+ * so `command`, `args`, `env` and the harness's files (skill, instructions) do not apply.
+ *
+ * What the agent is told comes in `initialize`'s `_meta`: `meta` as written, plus
+ * `fleetherd: { token, host, instructions }` — the contents of `tokenFile` (read on the agent's
+ * machine, so the secret stays where it is), the machine's name, and the operator's instructions
+ * for this agent (common.md + `<id>.md`), which a harness would have read from its own file.
+ */
+const ConnectSchema = z
+  .object({
+    url: z
+      .string()
+      .regex(/^tcp:\/\/(\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9._-]+):\d{1,5}$/, 'connect.url is tcp://host:port'),
+    tokenFile: z
+      .string()
+      .min(1)
+      .refine((p) => (p.startsWith('~/') ? p.length > 2 : p.startsWith('/')) && !p.endsWith('/'), {
+        message: "connect.tokenFile is a file on the agent's machine: `~/…` or an absolute path",
+      })
+      .optional(),
+    meta: z.record(z.unknown()).optional(),
+  })
+  .strict();
+export type AgentConnect = z.infer<typeof ConnectSchema>;
+
+/**
  * A single agent definition. harness is a preset (claude/gemini/codex/opencode/dsh/agy); with custom,
  * command points at any ACP-speaking executable. harness-specific switches (e.g.
  * claude's --setting-sources) go through args, not the generic schema.
@@ -127,6 +157,8 @@ const AgentDefFields = z
     harness: z.enum(['claude', 'gemini', 'codex', 'opencode', 'dsh', 'agy', 'custom']),
     /** Executable to launch the ACP agent when harness=custom; empty for presets (resolveHarness provides a default). */
     command: z.string().optional(),
+    /** harness=custom only, in place of `command`: an ACP agent that is already running (ConnectSchema). */
+    connect: ConnectSchema.optional(),
     /** Extra args appended to the harness command (harness-specific switches go here). */
     args: z.array(z.string()).default([]),
     /** Working dir (passed as ACP session/new cwd); empty = an auto-created per-agent workspace at ~/.fleetherd/agents/<id>. */
@@ -289,6 +321,7 @@ function agentRules<
     id: string;
     harness: string;
     command?: string;
+    connect?: AgentConnect;
     contextBudget?: number;
     gatewayModels?: string[];
     instructions?: { file: string; layer?: string; off?: true };
@@ -296,9 +329,19 @@ function agentRules<
   I
 >(schema: z.ZodType<O, z.ZodTypeDef, I>) {
   return schema
-    .refine((a) => a.harness !== 'custom' || (a.command !== undefined && a.command.length > 0), {
-      message: 'command is required when harness=custom',
+    .refine((a) => a.harness !== 'custom' || a.connect !== undefined || (a.command !== undefined && a.command.length > 0), {
+      message: 'command (or connect) is required when harness=custom',
       path: ['command'],
+    })
+    .refine((a) => a.connect === undefined || (a.harness === 'custom' && !a.command), {
+      message: 'connect is for harness custom, in place of command',
+      path: ['connect'],
+    })
+    // Its instructions go in initialize's _meta, under the layer its id names: there is no file of
+    // its harness's for `instructions` to point at.
+    .refine((a) => a.connect === undefined || a.instructions === undefined, {
+      message: 'a connect agent is given its instructions in initialize _meta (layer: its id); remove instructions',
+      path: ['instructions'],
     })
     .refine((a) => a.contextBudget === undefined || a.harness === 'agy', {
       message: 'contextBudget is supported for harness agy only (see docs/agents.md)',

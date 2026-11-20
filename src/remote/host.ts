@@ -195,6 +195,23 @@ export class RemoteHost extends EventEmitter {
     return child;
   }
 
+  /**
+   * Reach an agent that is already running at `address` (`host:port`) from the host, over TCP:
+   * the connection stands in for a process (remote/proc.go connect) — its bytes are stdout, stdin
+   * is written to it, SIGTERM half-closes it after what was queued, and its closing is the exit.
+   */
+  connect(address: string): RemoteChild {
+    this.seq += 1;
+    const id = `p${this.seq}`;
+    const child = new RemoteChild(this, id);
+    this.children.set(id, child);
+    this.conn.hold();
+    const open = (): void => this.whenUp(() => child.open({ t: 'spawn', id, connect: address }));
+    if (this.conn.welcome) open();
+    else this.conn.ready().then(open, (e: Error) => this.finishChild(id, null, null, e.message));
+    return child;
+  }
+
   /** @internal — RemoteChild's way onto the link. */
   sendFrame(h: FrameHeader, body?: Uint8Array): void {
     this.conn.send(h, body);
