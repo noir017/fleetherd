@@ -200,7 +200,7 @@ export function createWebuiAdapter(instance: WebuiInstance): PlatformAdapter {
     instance.sso ? new WebSso(instance.sso) : undefined,
     push
   );
-  return { ...describe(instance), ...outbound(room, instance), ...lifecycle(room, server) };
+  return { ...describe(instance), ...outbound(room, instance), forkThread: forkTopicThread(room), ...lifecycle(room, server) };
 }
 
 function describe(instance: WebuiInstance): Pick<PlatformAdapter, 'platform' | 'platformType' | 'capabilities'> {
@@ -529,6 +529,23 @@ type Outbound = Pick<
  */
 export function hasTopic(topics: { has(id: string): boolean }, address: ConversationAddress): boolean {
   return address.channel === CHANNEL && address.thread !== undefined && topics.has(address.thread);
+}
+
+/**
+ * The adapter's `forkThread`: a topic forked from another (`/fork`), drawn beside its source, marked,
+ * never nested. The daemon starts its session as a copy of the source's; `discard` is for when that
+ * copy cannot be made, so no topic is left behind claiming to be a fork of something it holds none of.
+ */
+function forkTopicThread(room: WebRoom): NonNullable<PlatformAdapter['forkThread']> {
+  return async (source, opts) => {
+    const topic = source.channel === CHANNEL && source.thread ? room.forkTopic(source.thread, opts.turn) : undefined;
+    if (!topic) throw new Error('the topic to fork is gone');
+    return {
+      address: { channel: CHANNEL, thread: topic.id },
+      title: topic.title,
+      discard: () => void room.deleteTopic(topic.id),
+    };
+  };
 }
 
 function outbound(room: WebRoom, instance: WebuiInstance): Outbound {

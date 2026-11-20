@@ -588,11 +588,31 @@ export class WebRoom {
    * `parent` nests it under the topic whose agent opened it (Topic.parent), and `scheduled` marks
    * a lane a scheduled run opened for itself (Topic.scheduled), `task` the task it ran (Topic.task).
    */
-  createTopic(title = '', parent?: string, opts: { scheduled?: boolean; task?: string } = {}): Topic {
+  createTopic(
+    title = '',
+    parent?: string,
+    opts: { scheduled?: boolean; task?: string; forkOf?: string; forkTurn?: number } = {}
+  ): Topic {
     if (this.topics.full()) this.makeRoom();
     const topic = this.topics.create(title, parent, opts);
     this.announceTopics();
     return topic;
+  }
+
+  /**
+   * Open a topic forked from `sourceId` (`/fork`, PlatformAdapter.forkThread), named after it, and
+   * announce it. Undefined when there is no such source: a topic deleted while the daemon was deciding
+   * has nothing left to put a fork beside.
+   *
+   * Named here rather than by the daemon because this is where the name the person knows the source
+   * by lives — a topic the harness has not named yet has only the seed this module gave it. A fork of
+   * a fork is not "(fork) (fork)": the mark on the row already says how many hops it is not.
+   */
+  forkTopic(sourceId: string, turn?: number): Topic | undefined {
+    const source = this.topics.get(sourceId);
+    if (!source) return undefined;
+    const title = `${(source.title || 'Untitled').replace(/ \(fork\)$/, '')} (fork)`;
+    return this.createTopic(title, undefined, { forkOf: sourceId, ...(turn !== undefined ? { forkTurn: turn } : {}) });
   }
 
   /**

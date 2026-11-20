@@ -20,6 +20,7 @@ Discord, Slack), and equally usable as plain text everywhere else.
 | `/compact`, `/context`, `/model`, `/effort`, `/usage`, `/doctor`, `/mcp`, `/init`, `/review` | a generic vocabulary, translated to each harness's own spelling — see [below](#generic-commands) |
 | `/super <job>` | split a job across agents working in parallel — web UI only, see [Sub-agents](sub-agents.md) |
 | `/btw <question>` | ask something on the side, even mid-turn — answered apart and kept out of the conversation, see [below](#side-questions-btw) |
+| `/fork` | copy this conversation into a new topic beside it, to carry on two ways from here — web UI only, see [below](#forking-a-topic-fork) |
 
 `/usage` and `/context` sent while the agent is in the middle of a turn are answered by the
 gateway itself — context, cost so far, how long the turn has run — instead of being passed to the
@@ -102,6 +103,42 @@ send pictures as an ordinary message.
 | `custom` | if the agent declares `session/fork` (CodeBuddy does not); otherwise it says so |
 
 A conversation that has not started yet has nothing to ask about, and says so.
+
+## Forking a topic (`/fork`)
+
+`/fork` copies the conversation into a **new topic beside this one**, so you can try something
+else from here without losing the way you were going. The new topic is an ordinary conversation:
+the same agent, directory, model and effort, the same permission level, and everything said so
+far — the agent's own copy of its session, not a summary. Carry on in either; neither sees the
+other's turns. It is also in each topic's ⋯ menu as **Fork**.
+
+```
+you    /fork
+agent  Forked into fix login (fork) at turn 6: it carries on from everything said here so far,
+       as a conversation of its own. This topic is unchanged.
+```
+
+In the list the fork sits right after the topic it came from, with a fork mark, and its page opens
+with a line saying where it came from and at which turn — tap it to go back. The messages are not
+copied onto the new page; the agent has them. A fork is yours, not a sub-agent: forking an agent's
+sub-agent topic does not put the copy under that agent, and the copy has its own sub-agents —
+it cannot reach the ones the original started, even though its context mentions them, so asking it
+to message one of those is refused. Deleting the original keeps the fork, which then no longer
+says where it came from.
+
+It is refused, with the reason, while a turn or background work is running (a copy taken then
+would hold half of it — fork once it ends), in a topic that has not started yet, and on agents
+that cannot copy a session:
+
+| Harness | `/fork` |
+|---|---|
+| `claude`, `codex`, `opencode` | yes |
+| `agy`, `gemini`, `dsh` | not supported |
+| `custom` | if the agent declares `session/fork` (CodeBuddy does not); otherwise it says so |
+
+Only the web UI has a topic list to put the copy in; anywhere else `/fork` says so. Only you can
+fork a topic — no agent can, so an agent cannot open conversations of its own without the
+[sub-agent](sub-agents.md) card.
 
 ## Agent commands
 

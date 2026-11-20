@@ -225,7 +225,8 @@ room. `page.dom.test.ts` pins the rules as text, since jsdom has no layout; the 
 the title's 188px after, were measured in real Chromium on 2026-10-30, along with where a click
 on the button lands once the row is hovered.
 
-**The ⋯ opens one menu for the row: Star/Unstar, End agent, Delete topic** (2026-11-07). The two
+**The ⋯ opens one menu for the row: Star/Unstar, Fork, End agent, Delete topic** (2026-11-07; Fork
+2026-11-20, below). The two
 buttons it replaces could not grow a third, and Delete is too easy to hit at a row's tail. The menu
 is one element at the body, `position:fixed` from the button's rect — not inside `#topics`, because
 a running agent rebuilds that list with `innerHTML` on every message and a menu in it would vanish
@@ -241,6 +242,21 @@ page held at the click — the daemon walks the subtree from its own parent reco
 the intersection, so a sub-agent opened since is left alone. A running turn is interrupted on
 purpose; a runtime that cannot resume leaves its process up, and the page says so in one alert.
 The header's power button is unchanged: it ends this topic only.
+
+**A fork sits beside its source, not under it** (`Topic.forkOf`, `/fork`, 2026-11-20). The daemon
+opens it through `PlatformAdapter.forkThread` — `WebRoom.forkTopic` names it after the source, with
+` (fork)` — and starts its session as a copy of the source's (daemon/README.md). `topicTree` keeps it
+out of the roots while its source is in the same list, and `treeWalker` draws it right after the
+source and everything under it, at the source's depth, whether or not the source is folded: folding
+hides what an agent opened, and a fork is the person's own. It goes where its source goes — under
+a folded parent when the source is a sub-agent's topic, opened like an ancestor when it is the
+topic on screen — and is a root when its source is not in the list (a scheduled run's, a filter).
+The row leads with a fork mark (`icons.ts` `fork`) whose title names the source and turn; the
+topic's page opens with `#fork-note`, the same line, a button back to the source. It is never
+`parent`: nothing nests it, reports to it or stops it from the source, and `topics.ts` drops
+`forkOf` and `forkTurn` with the source as it drops `parent`. The menu's **Fork** types `/fork` —
+through `command()` into the topic on screen, posted without a bubble into another — and is greyed
+while that topic runs, which is when the daemon would refuse.
 
 **The dot on each row is about the agent, not about the turn.** Four states, and two of them
 exist because "a turn is running" turned out to be a bad proxy for both of the things a person

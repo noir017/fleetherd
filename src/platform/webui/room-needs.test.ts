@@ -180,6 +180,57 @@ describe('WebRoom: sub-agent topics (Topic.parent)', () => {
   });
 });
 
+describe('WebRoom: forked topics (Topic.forkOf)', () => {
+  it('opens a fork named after its source, beside it rather than under it', () => {
+    const { room, store, topic, row } = rig();
+    store.rename(topic, '[cc] fix the login bug');
+    const fork = room.forkTopic(topic, 4)!;
+    expect(fork.title).toBe('[cc] fix the login bug (fork)');
+    expect(row(fork.id)).toMatchObject({ forkOf: topic, forkTurn: 4 });
+    // The person's own conversation: nothing nests it, so no agent is told about it or stops it.
+    expect(row(fork.id)?.parent).toBeUndefined();
+    expect(room.parentOf(fork.id)).toBeUndefined();
+    expect(room.childrenOf(topic)).toEqual([]);
+    // A fork of a fork is not "(fork) (fork)".
+    expect(room.forkTopic(fork.id)?.title).toBe('[cc] fix the login bug (fork)');
+  });
+
+  it('opens nothing for a source that is gone, and names an unnamed one Untitled', () => {
+    const { room, topic } = rig();
+    expect(room.forkTopic('deadbeef')).toBeUndefined();
+    expect(room.forkTopic(topic)?.title).toBe('Untitled (fork)');
+  });
+
+  it('forgets where it came from when the source goes, turn and all, and keeps its work', () => {
+    const { room, store, topic } = rig();
+    const fork = room.forkTopic(topic, 2)!;
+    room.deleteTopic(topic);
+    expect(store.get(fork.id)).toBeDefined();
+    expect(store.get(fork.id)?.forkOf).toBeUndefined();
+    expect(store.get(fork.id)?.forkTurn).toBeUndefined();
+  });
+
+  it('persists the relation, and drops one that names a topic no longer there, or itself', () => {
+    const { room, topic, file } = rig();
+    const fork = room.forkTopic(topic, 3)!;
+    expect(new TopicStore(file).get(fork.id)).toMatchObject({ forkOf: topic, forkTurn: 3 });
+    const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, { forkOf?: string; forkTurn?: unknown }>;
+    raw[fork.id]!.forkTurn = 'three';
+    fs.writeFileSync(file, JSON.stringify(raw));
+    // A turn that is not a whole number is dropped; the relation is kept.
+    expect(new TopicStore(file).get(fork.id)).toMatchObject({ forkOf: topic });
+    expect(new TopicStore(file).get(fork.id)?.forkTurn).toBeUndefined();
+    raw[fork.id]!.forkOf = 'deadbeef';
+    raw[fork.id]!.forkTurn = 3;
+    fs.writeFileSync(file, JSON.stringify(raw));
+    expect(new TopicStore(file).get(fork.id)?.forkOf).toBeUndefined();
+    expect(new TopicStore(file).get(fork.id)?.forkTurn).toBeUndefined();
+    raw[fork.id]!.forkOf = fork.id;
+    fs.writeFileSync(file, JSON.stringify(raw));
+    expect(new TopicStore(file).get(fork.id)?.forkOf).toBeUndefined();
+  });
+});
+
 describe('WebRoom: push notifications', () => {
   it('notify for a topic that starts needing the operator and still does after the grace', () => {
     vi.useFakeTimers();

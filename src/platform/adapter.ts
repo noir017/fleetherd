@@ -1172,6 +1172,28 @@ export interface PlatformAdapter {
   ): Promise<{ address: ConversationAddress }>;
 
   /**
+   * Open a lane that is a FORK of the conversation at `source` (`/fork`): its own conversation, which
+   * the daemon starts as a copy of the source's agent session. The platform records the relation and
+   * shows it — the web UI draws the fork beside its source with a mark of its own, and says at the top
+   * of the new topic which topic and turn it was forked from — and names the lane itself, from the
+   * title it shows for the source, which is the name the person knows it by. `turn` is the source's
+   * last turn number, for that line; absent when the library could not say.
+   *
+   * Not `createThread`'s `under`: a fork is the person's own conversation, not one an agent opened, so
+   * nothing about it is nested, notified or stoppable from the source.
+   *
+   * Answers `discard` as well, for the daemon to call when the copy cannot be made after all: the lane
+   * goes again, rather than staying as a topic that says "forked from" and holds none of it.
+   *
+   * Optional, and its presence is what `/fork` is answered on: a chat app has no topic list to put a
+   * fork beside its source in, so every other platform omits it and `/fork` is refused there by name.
+   */
+  forkThread?(
+    source: ConversationAddress,
+    opts: { turn?: number }
+  ): Promise<{ address: ConversationAddress; title: string; discard(): void }>;
+
+  /**
    * Rename the lane an address points at — a Telegram forum topic's title.
    *
    * Distinct from createThread's `name`, which only ever applies at creation: a conversation's

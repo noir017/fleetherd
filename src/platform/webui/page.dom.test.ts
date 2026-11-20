@@ -7526,7 +7526,7 @@ describe('webui page: a topic row' + "'s ⋯ menu", () => {
       { id: D, title: 'other', lastAt: 997, live: false, msgCount: 0 },
     ].map((t) => ({ ...t, ...(over[t.id as string] ?? {}) }));
 
-  it('opens from a row without switching topic, with the three actions in it', async () => {
+  it('opens from a row without switching topic, with its actions in it', async () => {
     const h = await open({ url: `http://localhost:8787/?t=${A}` });
     await h.emit(sync(A, [], [A]));
     await h.emit({ t: 'topics', topics: fleet() });
@@ -7540,11 +7540,13 @@ describe('webui page: a topic row' + "'s ⋯ menu", () => {
     expect(h.doc.querySelector(`[data-rm="topic:${D}"]`)?.getAttribute('aria-expanded')).toBe('true');
     expect(Array.from(menu.querySelectorAll('[role="menuitem"]')).map((b) => b.textContent)).toEqual([
       'Star',
+      'Fork',
       'End agent',
       'Delete topic',
     ]);
-    // An icon from IC, never an emoji: the same three the page draws elsewhere.
+    // An icon from IC, never an emoji.
     expect(menu.querySelector('[data-rmk="star"] .ic-star')).not.toBeNull();
+    expect(menu.querySelector('[data-rmk="fork"] .ic-fork')).not.toBeNull();
     expect(menu.querySelector('[data-rmk="end"] .ic-power')).not.toBeNull();
     expect(menu.querySelector('[data-rmk="delete"] .ic-trash')).not.toBeNull();
     expect(menu.querySelector('[role="separator"]')).not.toBeNull();
@@ -7649,17 +7651,20 @@ describe('webui page: a topic row' + "'s ⋯ menu", () => {
     const press = (key: string): void => {
       h.doc.activeElement?.dispatchEvent(new h.window.KeyboardEvent('keydown', { key, bubbles: true }));
     };
+    // Star, Fork, End agent (disabled), Delete topic.
     items[0]!.focus();
     press('ArrowDown');
-    expect(h.doc.activeElement).toBe(items[2]);
+    expect(h.doc.activeElement).toBe(items[1]);
+    press('ArrowDown');
+    expect(h.doc.activeElement).toBe(items[3]);
     press('ArrowDown');
     expect(h.doc.activeElement).toBe(items[0]);
     press('ArrowUp');
-    expect(h.doc.activeElement).toBe(items[2]);
+    expect(h.doc.activeElement).toBe(items[3]);
     press('Home');
     expect(h.doc.activeElement).toBe(items[0]);
     press('End');
-    expect(h.doc.activeElement).toBe(items[2]);
+    expect(h.doc.activeElement).toBe(items[3]);
   });
 
   it('greys End agent, and says why, when nothing in the subtree has a process', async () => {
@@ -11663,6 +11668,7 @@ describe('webui page: the scheduled-task panel', () => {
     await h.click(`[data-rm="sess:${C}"]`);
     expect(Array.from(h.el('row-menu').querySelectorAll('[role="menuitem"]')).map((b) => b.textContent)).toEqual([
       'Star',
+      'Fork',
       'End agent',
       'Delete topic',
     ]);
@@ -14394,7 +14400,8 @@ describe('webui page: the History tab', () => {
     // on a shell, so its frame keeps its box under the record.
     expect(renderPage('Chat', false)).toContain(
       '#chat.lib #log,#chat.lib #typing,#chat.lib #note,#chat.lib #bar,#chat.lib #term-grip,\n' +
-        '#chat.lib #topic-title,#chat.lib #topic-status,#chat.lib #kill-agent,#chat.lib #term-toggle,#chat.lib #files-toggle{display:none}'
+        '#chat.lib #topic-title,#chat.lib #topic-status,#chat.lib #kill-agent,#chat.lib #term-toggle,#chat.lib #files-toggle,\n' +
+        '#chat.lib #fork-note{display:none}'
     );
     expect(renderPage('Chat', false)).toContain(
       '#chat.lib #term{position:absolute;left:0;right:0;bottom:0;visibility:hidden;pointer-events:none}'
@@ -16600,5 +16607,138 @@ describe('webui page: the instruction editor', () => {
     // The window is the file window again for whoever opens it next: nothing of this mode is left.
     expect(h.el('files-tree-head').hidden).toBe(false);
     expect(h.el('files-search-row').hidden).toBe(false);
+  });
+});
+
+describe('webui page: forked topics (Topic.forkOf)', () => {
+  const A = 'a1b2c3d4';
+  const B = 'b2c3d4e5';
+  const D = 'd15a7c40';
+  const F = 'f0f0f0f0';
+  const rows = (h: Harness): Array<string | null> =>
+    Array.from(h.el('topics').querySelectorAll('[data-topic]')).map((r) => r.getAttribute('data-topic'));
+  const row = (h: Harness, id: string): Element => h.doc.querySelector(`#topics [data-topic="${id}"]`)!;
+  /** A topic, a sub-agent's topic under it, an unrelated topic, and a fork; each flag set by the test. */
+  const fleet = (over: Record<string, Record<string, unknown>> = {}): Array<Record<string, unknown>> =>
+    [
+      // The daemon's order: most recently active first.
+      { id: F, title: 'fix login (fork)', lastAt: 2000, msgCount: 0, stage: 'idle', forkOf: A, forkTurn: 3 },
+      { id: A, title: 'fix login', lastAt: 1000, msgCount: 0, stage: 'idle' },
+      { id: B, title: 'part', lastAt: 999, msgCount: 0, stage: 'idle', parent: A },
+      { id: D, title: 'other', lastAt: 500, msgCount: 0, stage: 'idle' },
+    ].map((t) => ({ ...t, ...(over[t.id] ?? {}) }));
+
+  it('draws a fork right after its source and what is under it, marked, whatever state it is in', async () => {
+    const h = await open({ url: `http://localhost:8787/?t=${D}` });
+    await h.emit(sync(D, [], [D]));
+    // The fork is the most recent topic and working, which on its own would put it first.
+    await h.emit({ t: 'topics', topics: fleet({ [F]: { running: true, stage: 'working' } }) });
+    expect(rows(h)).toEqual([A, F, D]);
+    await h.click(`#topics [data-fold="${A}"]`);
+    expect(rows(h)).toEqual([A, B, F, D]);
+    // Beside its source, not under it: the depth is the source's, and no fold counts it.
+    expect(row(h, F).className).not.toMatch(/\bsub\b/);
+    expect(face(h.doc.querySelector(`#topics [data-fold="${A}"]`))).toBe('[chevronDown] 1');
+    const mark = row(h, F).querySelector('.topic-fork-mark')!;
+    expect(face(mark)).toBe('[fork]');
+    expect(mark.getAttribute('title')).toBe('Forked from fix login · turn 3');
+    expect(row(h, A).querySelector('.topic-fork-mark')).toBeNull();
+  });
+
+  it("goes where its source goes: beside a sub-agent's topic, and folded away with it", async () => {
+    const h = await open({ url: `http://localhost:8787/?t=${D}` });
+    await h.emit(sync(D, [], [D]));
+    await h.emit({ t: 'topics', topics: fleet({ [F]: { forkOf: B } }) });
+    // Under a folded parent, as its source is.
+    expect(rows(h)).toEqual([A, D]);
+    await h.click(`#topics [data-fold="${A}"]`);
+    expect(rows(h)).toEqual([A, B, F, D]);
+    expect(row(h, F).className).toMatch(/\bsub d1\b/);
+    // It is not what A's agent opened: the fold still counts one.
+    expect(face(h.doc.querySelector(`#topics [data-fold="${A}"]`))).toBe('[chevronDown] 1');
+  });
+
+  it("keeps the topic on screen visible when it is a fork of a folded-away sub-agent's topic", async () => {
+    const h = await open({ url: `http://localhost:8787/?t=${F}` });
+    await h.emit(sync(F, [], [F]));
+    await h.emit({ t: 'topics', topics: fleet({ [F]: { forkOf: B } }) });
+    expect(rows(h)).toEqual([A, B, F, D]);
+  });
+
+  it('is a root of its own when its source is not in the list', async () => {
+    const h = await open({ url: `http://localhost:8787/?t=${D}` });
+    await h.emit(sync(D, [], [D]));
+    await h.emit({ t: 'topics', topics: fleet({ [F]: { forkOf: 'e0e0e0e0' } }).filter((t) => t.id !== A && t.id !== B) });
+    expect(rows(h)).toEqual([F, D]);
+    expect(row(h, F).querySelector('.topic-fork-mark')?.getAttribute('title')).toBe('Forked from another topic · turn 3');
+  });
+
+  it('says at the top of the fork where it came from, and goes back there on a tap', async () => {
+    const h = await open({ url: `http://localhost:8787/?t=${F}` });
+    await h.emit(sync(F, [], [F]));
+    await h.emit({ t: 'topics', topics: fleet() });
+    const note = h.el('fork-note');
+    expect(note.hidden).toBe(false);
+    expect(face(note)).toBe('[fork]Forked fromfix login· turn 3');
+    expect(note.getAttribute('title')).toBe('Back to fix login');
+    await h.click('#fork-note');
+    await opens(h, `api/events?t=${A}`);
+    await h.emit(sync(A, [], [A]));
+    await h.emit({ t: 'topics', topics: fleet() });
+    // The source is not a fork: no line there.
+    expect(note.hidden).toBe(true);
+  });
+
+  it('says nothing about a source that is gone, and leaves out a turn it was not told', async () => {
+    const h = await open({ url: `http://localhost:8787/?t=${F}` });
+    await h.emit(sync(F, [], [F]));
+    await h.emit({ t: 'topics', topics: fleet({ [F]: { forkTurn: undefined } }) });
+    expect(face(h.el('fork-note'))).toBe('[fork]Forked fromfix login');
+    // The daemon drops forkOf with its source, and the line goes with it.
+    await h.emit({ t: 'topics', topics: fleet({ [F]: { forkOf: undefined, forkTurn: undefined } }).filter((t) => t.id !== A) });
+    expect(h.el('fork-note').hidden).toBe(true);
+  });
+
+  it("types /fork from the menu: into the topic on screen with its bubble, into another without one", async () => {
+    const h = await open({ url: `http://localhost:8787/?t=${A}` });
+    await h.emit(sync(A, [], [A]));
+    await h.emit({ t: 'topics', topics: fleet() });
+    await rowMenu(h, A);
+    await h.click('[data-rmk="fork"]');
+    await until('the send', () => h.calls.some((c) => c.path === 'api/send'));
+    expect(h.calls.filter((c) => c.path === 'api/send').map((c) => [c.body.topic, c.body.text])).toEqual([[A, '/fork']]);
+    expect(h.el('log').textContent).toContain('/fork');
+    expect(h.el('row-menu').hidden).toBe(true);
+
+    await rowMenu(h, D);
+    await h.click('[data-rmk="fork"]');
+    await until('the second send', () => h.calls.filter((c) => c.path === 'api/send').length === 2);
+    const second = h.calls.filter((c) => c.path === 'api/send')[1]!;
+    expect([second.body.topic, second.body.text]).toEqual([D, '/fork']);
+    expect(typeof second.body.nonce).toBe('string');
+    // Still on A: the answer is in D, and the fork appears beside D in the list.
+    expect(h.window.location.search).toBe(`?t=${A}`);
+  });
+
+  it('greys Fork, and says why, while a turn runs there', async () => {
+    const h = await open({ url: `http://localhost:8787/?t=${A}` });
+    await h.emit(sync(A, [], [A]));
+    await h.emit({ t: 'topics', topics: fleet({ [D]: { running: true } }) });
+    await rowMenu(h, D);
+    const fork = h.doc.querySelector<HTMLButtonElement>('[data-rmk="fork"]')!;
+    expect(fork.disabled).toBe(true);
+    expect(fork.title).toMatch(/fork it once the turn ends/);
+  });
+
+  it('hides the line while a conversation from History is open in its place', () => {
+    const css = renderPage('Chat', false).match(/#chat\.lib #log,[^{]*\{display:none\}/)?.[0] ?? '';
+    expect(css).toContain('#chat.lib #fork-note');
+  });
+
+  it("lets only the source's title give way on a narrow screen", () => {
+    // Pinned as text: jsdom has no layout. Without it the words around the title wrapped at 390px.
+    const html = renderPage('Chat', false);
+    expect(html).toContain('#fork-note span{white-space:nowrap;flex-shrink:0}');
+    expect(html).toContain('#fork-note .fork-src{color:var(--fg);overflow:hidden;text-overflow:ellipsis;min-width:0;flex-shrink:1}');
   });
 });
