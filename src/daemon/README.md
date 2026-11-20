@@ -1359,6 +1359,30 @@ taken mid-turn, asked about the conversation, then the conversation asked to lis
 | opencode 2.2.5 | between turns only | a fork taken mid-turn carries on with the running turn too and repeats its commands, so it is refused while a turn runs |
 | agy 1.5.7, CodeBuddy 2.181.0 | no | no `fork` declared |
 
+#### Forking a topic (`/fork`)
+
+`/fork` keeps the copy `/btw` throws away and gives it a web UI topic of its own. It is a
+DAEMON_COMMAND, answered in `answerDaemonCommand` before the merger (`forkAndReport`), and only a
+person can reach it: there is no reverse command or tool, because a conversation an agent could
+open for itself would be a sub-agent without the card (Security invariant 6).
+
+The order is: refuse off a platform without `PlatformAdapter.forkThread` (every one but the web
+UI), with no stored session, while a turn or a background burst runs, and when the agent declares
+no fork — `AgentSession.canFork`, which needs an `initialize`, so a conversation with no child is
+started first, as `/btw` does. Only then is the topic opened (`forkThread`, named and drawn by the
+web UI), its record written as the source's — binding, cwd, model, effort; the runtime reads those
+when its session object is built — and its session started with `forkFrom`, which makes that
+child's startup send `session/fork` of the source's stored id, then `session/resume` when declared,
+instead of `session/new`. A copy that cannot be made takes the topic away again (`discard`). The
+ack names the source's last turn (`HistoryStore.turnRecord`); a turn that started in the source
+while the copy was being made is said in the fork, not undone.
+
+The copy is made in the NEW topic's child, never the source's, because of what the harnesses do
+across processes — probed 2026-11-20 in `project-scripts/fleetherd-fork/`, details in
+`acp-fork.ts`: codex will not load a fork while the process that made it lives (`session/close`
+does not release it), and claude, codex and opencode all fork a session another process holds.
+Nothing is sent to either agent, and no history is replayed into the new topic.
+
 > **The daemon auto-approves every tool permission request.** Agents run with full tool
 > access. There is no per-call policy in the config schema by design — tightening tool
 > permissions is delegated to the harness itself via that agent's `args`/`env`. The

@@ -7,6 +7,21 @@ All notable changes to this project are documented here. The format is based on
 
 ### Added
 
+- **`/fork` copies a topic into a new one beside it, to carry on two ways from the same point.**
+  Trying another approach used to mean either abandoning the conversation that got you here or
+  re-explaining it to a fresh one. `/fork` (or **Fork** in a topic's ⋯ menu) opens a new web UI
+  topic whose agent session starts as the agent's own copy of this one's — same agent, directory,
+  model, effort and permission level — and both carry on independently. The fork is drawn right
+  after its source with a fork mark, its page says which topic and turn it came from (tap to go
+  back), and no message is replayed into it: the agent has them. It is the person's own topic, not
+  a sub-agent's, so forking a sub-agent's topic does not put the copy under that agent, and the copy
+  has sub-agents of its own; only a person can fork, so no agent can open a parallel conversation
+  without the sub-agent card. Refused, with the reason, mid-turn (a copy then would hold half of
+  it), before a topic has started, off the web UI, and on agents that declare no `session/fork`
+  (agy, gemini, dsh, CodeBuddy). The copy is made by the new topic's own agent process: probed on
+  claude-agent-acp 0.81.0, codex-acp 2.5.0 and opencode 2.2.5, codex cannot load a fork while the
+  process that made it is alive, and all three fork a session another process is still holding.
+
 - **Code blocks in the web UI have a bar with the language, Wrap and Copy, and are coloured.**
   A reply's code used to be a bare grey block: copying it meant selecting it by hand, and a long
   line could only be read by scrolling it sideways. Each block now names its language and offers

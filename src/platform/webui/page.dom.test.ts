@@ -11668,6 +11668,7 @@ describe('webui page: the scheduled-task panel', () => {
     await h.click(`[data-rm="sess:${C}"]`);
     expect(Array.from(h.el('row-menu').querySelectorAll('[role="menuitem"]')).map((b) => b.textContent)).toEqual([
       'Star',
+      'Fork',
       'End agent',
       'Delete topic',
     ]);
@@ -14399,7 +14400,8 @@ describe('webui page: the History tab', () => {
     // on a shell, so its frame keeps its box under the record.
     expect(renderPage('Chat', false)).toContain(
       '#chat.lib #log,#chat.lib #typing,#chat.lib #note,#chat.lib #bar,#chat.lib #term-grip,\n' +
-        '#chat.lib #topic-title,#chat.lib #topic-status,#chat.lib #kill-agent,#chat.lib #term-toggle,#chat.lib #files-toggle{display:none}'
+        '#chat.lib #topic-title,#chat.lib #topic-status,#chat.lib #kill-agent,#chat.lib #term-toggle,#chat.lib #files-toggle,\n' +
+        '#chat.lib #fork-note{display:none}'
     );
     expect(renderPage('Chat', false)).toContain(
       '#chat.lib #term{position:absolute;left:0;right:0;bottom:0;visibility:hidden;pointer-events:none}'
