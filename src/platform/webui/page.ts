@@ -508,7 +508,10 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
   background:none;color:var(--dim);font:inherit;font-size:12px;text-align:left;cursor:pointer}
 #fork-note:hover{color:var(--fg)}
 #fork-note .ic{width:13px;height:13px;flex-shrink:0}
-#fork-note .fork-src{color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+/* Only the source's title gives way on a narrow screen: "Forked from" and the turn broke onto two
+   lines each at 390px (measured in Chromium, 2026-11-20) while the title still had room to cut. */
+#fork-note span{white-space:nowrap;flex-shrink:0}
+#fork-note .fork-src{color:var(--fg);overflow:hidden;text-overflow:ellipsis;min-width:0;flex-shrink:1}
 .chat-title{font-weight:600;color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:50ch}
 .chat-status{font-size:11.5px;color:var(--dim);text-transform:uppercase;letter-spacing:.04em}
 .chat-status.running{color:#38bdf8}

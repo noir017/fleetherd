@@ -16734,4 +16734,11 @@ describe('webui page: forked topics (Topic.forkOf)', () => {
     const css = renderPage('Chat', false).match(/#chat\.lib #log,[^{]*\{display:none\}/)?.[0] ?? '';
     expect(css).toContain('#chat.lib #fork-note');
   });
+
+  it("lets only the source's title give way on a narrow screen", () => {
+    // Pinned as text: jsdom has no layout. Without it the words around the title wrapped at 390px.
+    const html = renderPage('Chat', false);
+    expect(html).toContain('#fork-note span{white-space:nowrap;flex-shrink:0}');
+    expect(html).toContain('#fork-note .fork-src{color:var(--fg);overflow:hidden;text-overflow:ellipsis;min-width:0;flex-shrink:1}');
+  });
 });
