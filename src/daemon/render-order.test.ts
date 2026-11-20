@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ConversationRegistry } from './conversation.js';
 import { withOutboundPacing } from './paced-adapter.js';
 import { OutboundPacer } from '../core/outbound-pacer.js';
@@ -33,7 +33,9 @@ import type { InboundMessage } from '../types.js';
 
 const PLATFORM_LATENCY_MS = 12;
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
-const drain = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+const drain = async (ms: number): Promise<void> => {
+  await vi.advanceTimersByTimeAsync(ms);
+};
 
 function inbound(content: string): InboundMessage {
   return {
@@ -138,6 +140,13 @@ function rig(opts: { ratePerSec?: number } = {}) {
 }
 
 describe('a turn reads in the order it happened', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('puts each tool bubble between the text that announced it and the text that followed', async () => {
     const h = rig();
     h.reg.route(inbound('do the thing'));

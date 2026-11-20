@@ -44,7 +44,7 @@ function makeClock(start = NOW) {
         t = Math.max(t, due.at);
         timers = timers.filter((e) => e !== due);
         due.fn();
-        await new Promise((r) => setTimeout(r, 0));
+        await new Promise((r) => setImmediate(r));
       }
       t = end;
     },

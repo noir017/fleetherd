@@ -2,6 +2,9 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
+    // Most tests use dependency injection rather than `vi.mock()`; isolate only the few that need it
+    // (see vitest.workspace.ts) to avoid rebuilding module graphs 240+ times.
+    isolate: false,
     // Run only colocated unit tests: src/**, plus the release scripts' pure helpers.
     include: ['src/**/*.test.ts', 'scripts/**/*.test.mjs'],
     // A throwaway HOME per test file: see the file for what reached the real one.
@@ -19,7 +22,7 @@ export default defineConfig({
       reporter: ['text', 'html', 'lcov'],
       include: ['src/**/*.ts'],
       // Exclude tests, type-only and pure-wiring entrypoints that carry no testable branches.
-      exclude: ['src/**/*.test.ts', 'src/types.ts', 'src/cli.ts'],
+      exclude: ['src/**/*.test.ts', 'src/**/*.test-helpers.ts', 'src/types.ts', 'src/cli.ts'],
       // Thresholds focus on the platform-agnostic core + security-critical guards. Raise over time.
       thresholds: {
         'src/core/**': { statements: 70, branches: 70, functions: 70, lines: 70 },

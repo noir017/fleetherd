@@ -200,8 +200,10 @@ text-only affordances like the terminal's `>_` stay text.
 
 ## Testing
 
-Vitest, colocated: `foo.ts` is tested by `foo.test.ts` in the same directory. ~3730
-tests across 174 files. The Go half (`remote/`) has its own `go test`, colocated the same way.
+Vitest, colocated: `foo.ts` is tested by `foo.test.ts` in the same directory. ~5540
+tests across ~242 files. Most tests run with `isolate: false` (`vitest.workspace.ts`); add any new
+test that uses `vi.mock()` to `ISOLATED_TESTS` there. The Go half (`remote/`) has its own `go test`,
+colocated the same way.
 
 ```bash
 npm test              # vitest run
@@ -236,7 +238,8 @@ What is worth testing here: pure functions in `core/`, the parsers and renderers
 decisions. What is not: Satori adapter plumbing and live network paths — there is no
 integration harness, so those are verified by hand.
 
-The one exception to "no browser, no DOM" is `platform/webui/page.dom.test.ts`, which runs the
+The one exception to "no browser, no DOM" is `platform/webui/page.dom.*.test.ts` (sharing
+`page.dom.test-helpers.ts`), which runs the
 web UI's inline client script in jsdom. That script is a TypeScript string, so typecheck, lint
 and every other gate are blind to it — and a page that renders nothing has already shipped
 green once. Behaviour changes to `webui/page.ts` are expected to arrive with a test there; read
