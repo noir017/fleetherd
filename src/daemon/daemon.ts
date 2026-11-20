@@ -2260,6 +2260,13 @@ export class Daemon {
       list: (ref) => this.registry.modelPickerForRef(ref),
       choose: (ref, value) => this.registry.chooseModelForRef(ref, value),
     });
+    // The agent's own settings beside it (an account a web agent runs on): the agent's state, read
+    // and set through its session, with nothing kept here.
+    adapter.useOptionPicker?.({
+      peek: (ref) => this.registry.optionStatusForRef(ref),
+      list: (ref) => this.registry.optionsForRef(ref),
+      choose: (ref, id, value) => this.registry.chooseOptionForRef(ref, id, value),
+    });
     /**
      * A turn's changed files: the list the change entry opens, one file out of the two trees, and
      * the forget that follows a deleted topic. The records are the turn's own — see TurnChanges.

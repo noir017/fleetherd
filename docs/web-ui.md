@@ -50,6 +50,18 @@ switch is there as soon as a topic has an agent — right after you pick one fro
 list, so the first message can already go to the model you want; until that first reply the line
 reads just *Model*. The choice stays with the topic across `/new`, `/cd` and restarts.
 
+**The agent's own settings.** An agent can offer settings of its own beside the model — a web
+agent's account, say — and each gets a button of the same kind next to the model, named for the
+setting and showing its current value. It opens that setting's choices, each with the agent's note
+on it as a second line (an account whose quota is used up says so), and a tap sets it for this
+topic. What can be changed, and when, is the agent's call: a setting it offers only one value for
+is drawn dim and cannot be tapped (hover it for why), and a change it refuses stays open in the
+list with its reason. In a new topic the button appears once you pick the agent, before the first
+message — for a setting like an account, that is the moment it can still be changed. The gateway
+keeps nothing of these: the agent remembers its own setting, and `/new` or `/cd` start a session
+on the agent's default again, so pick the directory first. Only the web UI shows them; there is no
+command for them.
+
 **Topics.** The sidebar on the left lists parallel conversations and switches between them,
 the same way a Telegram forum topic or a Feishu 话题 does: each has its own agent
 session and its own context, and each gets named automatically from what it turned

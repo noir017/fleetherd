@@ -28,6 +28,7 @@ import type {
   ElicitOption,
   ElicitQuestion,
   PermissionAnswer,
+  SessionOption,
   SteerOutcome,
   ToolEvent,
 } from '../types.js';
@@ -696,6 +697,34 @@ export function effortSelectorOf(options: SessionConfigOption[] | null | undefin
     .map((o) => ({ value: o.value, name: o.name || o.value }));
   if (levels.length === 0) return undefined;
   return { current: opt.currentValue || undefined, options: levels };
+}
+
+/**
+ * The prefix ACP keeps for categories it does not define: "Category names beginning with `_` are
+ * free for custom use … names that do not begin with `_` are reserved for the ACP spec"
+ * (SessionConfigOptionCategory, @agentclientprotocol/sdk 0.29.0).
+ */
+const CUSTOM_CATEGORY_PREFIX = '_';
+
+/**
+ * The session's own settings — every `select` config option in a custom (`_`) category — for the
+ * status strip and the generic switch (SessionOption).
+ *
+ * Only the custom categories, and only by category: the model, effort and mode selectors each have
+ * a path of their own that remembers the person's choice, and a reserved category the gateway does
+ * not handle (`model_config`, which claude-agent-acp reports) or an option with no category at all
+ * must not grow a button nobody designed for it. A boolean option is skipped: there is no switch
+ * for one, and an option with no choices is no setting to show.
+ */
+export function customOptionsOf(options: SessionConfigOption[] | null | undefined): SessionOption[] {
+  return (options ?? []).flatMap((opt) => {
+    if (opt.type !== 'select' || !opt.category?.startsWith(CUSTOM_CATEGORY_PREFIX)) return [];
+    const choices = opt.options
+      .flatMap((entry) => ('group' in entry ? entry.options : [entry]))
+      .map((o) => ({ value: o.value, name: o.name || o.value, ...(o.description ? { description: o.description } : {}) }));
+    if (choices.length === 0) return [];
+    return [{ id: opt.id, name: opt.name || opt.id, ...(opt.currentValue ? { current: opt.currentValue } : {}), options: choices }];
+  });
 }
 
 /**
@@ -2054,6 +2083,23 @@ function createAcpSession(
   }
 
   /**
+   * What the session already knows about itself, told to a new set of handlers: the live model, the
+   * effort and the agent's own settings, all from the option list session/new or session/load
+   * reported. A harness re-sends none of them unless they change, so handlers not told them up
+   * front — a turn's, or a follow-up burst's — would never learn them.
+   *
+   * The effort is read fresh rather than cached: it has no preference to fall back on, so the list
+   * is the whole of what is known about it. The settings go only once a list has been reported,
+   * since an empty set would claim the agent has none before it has said.
+   */
+  function reportSessionFacts(handlers: AgentStreamHandlers): void {
+    if (liveModel) handlers.onModel?.(liveModel);
+    const effort = liveEffortName(liveConfigOptions);
+    if (effort) handlers.onEffort?.(effort);
+    if (liveConfigOptions) handlers.onOptions?.(customOptionsOf(liveConfigOptions));
+  }
+
+  /**
    * Turn a failure record from a `session_info_update` into a notice: a retry in progress, an
    * advisory, or a failure that has no turn to fail (see session-failure.ts).
    *
@@ -2100,9 +2146,7 @@ function createAcpSession(
       // told them has no way to learn them. Its footer then fell back to config, which for the
       // `claude` harness names no model at all — the background report read `cc · 429k / 1M`
       // directly under a reply that said `cc · 429k / 1M · opus-5-5 · high`.
-      if (liveModel) handlers.onModel?.(liveModel);
-      const effort = liveEffortName(liveConfigOptions);
-      if (effort) handlers.onEffort?.(effort);
+      reportSessionFacts(handlers);
     }
     // Only OUTPUT starts a burst. Metadata gets the same translation state (it has to go
     // somewhere) but neither announces itself nor arms a timer, because claude-agent-acp sends a
@@ -2698,11 +2742,7 @@ function createAcpSession(
       // here rather than inside ensureStarted keeps it per-turn: handlers belong to this turn, and a
       // session started on an earlier turn would otherwise never report its model to a later one.
       // config_option_update supersedes this if the model changes mid-session.
-      if (liveModel) handlers.onModel?.(liveModel);
-      // Effort rides along from the same option list, read fresh rather than cached: it has no
-      // preference to fall back on, so the list is the whole of what is known about it.
-      const effort = liveEffortName(liveConfigOptions);
-      if (effort) handlers.onEffort?.(effort);
+      reportSessionFacts(handlers);
       // The quota, which no ACP message carries: the last reading now, a fresh one beside the turn.
       quotaForTurn(handlers);
 
@@ -3133,6 +3173,27 @@ function createAcpSession(
       liveConfigOptions = res?.configOptions ?? liveConfigOptions;
       console.log(`[acp] agent "${def.id}": effort switched to "${value}" at runtime`);
       return effortOption(liveConfigOptions)?.currentValue || value;
+    },
+
+    sessionOptions(): SessionOption[] | undefined {
+      return liveConfigOptions ? customOptionsOf(liveConfigOptions) : undefined;
+    },
+
+    async setOption(id: string, value: string): Promise<SessionOption[]> {
+      // No deferral, unlike setModel: nothing here is remembered for a later child (see
+      // AgentSession.setOption), so a pick with no session to take it would simply be lost.
+      if (!conn || !active) throw new Error('the agent has no live session to change');
+      // Only the agent's own settings: the model and the effort have paths of their own that keep
+      // the person's choice, and going around them would leave that choice saying something else.
+      if (!customOptionsOf(liveConfigOptions).some((o) => o.id === id)) {
+        throw new Error(`the agent offers no setting "${id}"`);
+      }
+      const res = await conn.agent.request('session/set_config_option', { sessionId: active.sessionId, configId: id, value });
+      liveConfigOptions = res?.configOptions ?? liveConfigOptions;
+      // The answer is the whole list, so whatever else the agent moved with it is current too.
+      liveModel = liveModelName(liveConfigOptions) ?? liveModel;
+      console.log(`[acp] agent "${def.id}": setting "${id}" set to "${value}"`);
+      return customOptionsOf(liveConfigOptions);
     },
 
     permissionModes(): SessionModeSelector | undefined {
@@ -3760,6 +3821,9 @@ function reportConfigOptions(u: Extract<SessionUpdate, { sessionUpdate: 'config_
   // missing from it is news — `/effort default`, or an opencode switch to a model without variants —
   // and a footer still showing the old level would be stating something no longer true.
   st.handlers.onEffort?.(liveEffortName(u.configOptions));
+  // The agent's own settings, likewise reported empty too. This is how a setting the agent locks
+  // mid-conversation (it starts listing only the current value) reaches the strip.
+  st.handlers.onOptions?.(customOptionsOf(u.configOptions));
 }
 
 export function translateUpdate(u: SessionUpdate, st: TurnState): void {
@@ -3809,8 +3873,9 @@ export function translateUpdate(u: SessionUpdate, st: TurnState): void {
       break;
     }
 
-    // The agent's session config changed (model / mode / effort picker). The model and the effort
-    // interest us: re-read both so a mid-session switch of either is reflected in the footer.
+    // The agent's session config changed (model / mode / effort picker, or a setting of its own).
+    // The model, the effort and the agent's own settings interest us: re-read all three so a
+    // mid-session change to any of them is reflected in the footer and the status strip.
     case 'config_option_update':
       reportConfigOptions(u, st);
       break;

@@ -268,6 +268,20 @@ export const ModelChooseRequestSchema = z
   .strict();
 
 /**
+ * The status line's switch for one of the agent's own settings: this topic, this setting, this
+ * value. Checked by the daemon against what the agent lists now, and then by the agent itself,
+ * which may refuse a value it lists (a setting it has just locked) — so the bounds here are only
+ * sizes.
+ */
+export const OptionChooseRequestSchema = z
+  .object({
+    topic: TopicId,
+    id: z.string().min(1).max(200),
+    value: z.string().min(1).max(200),
+  })
+  .strict();
+
+/**
  * The git window's query string (`GET api/git/status`, `api/git/file`).
  *
  * The query is checked by hand rather than by a schema because these are GETs, but the three
@@ -406,6 +420,7 @@ export type KillTopicRequest = z.infer<typeof KillTopicRequestSchema>;
 export type ScheduleOpRequest = z.infer<typeof ScheduleOpRequestSchema>;
 export type ScheduleEditRequest = z.infer<typeof ScheduleEditRequestSchema>;
 export type ModelChooseRequest = z.infer<typeof ModelChooseRequestSchema>;
+export type OptionChooseRequest = z.infer<typeof OptionChooseRequestSchema>;
 export type SkillOpRequest = z.infer<typeof SkillOpRequestSchema>;
 
 /**

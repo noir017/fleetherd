@@ -59,11 +59,13 @@ import type {
   ModelPickerList,
   ModelPickerResult,
   PlatformAdapter,
+  SessionOptionList,
+  SessionOptionResult,
   TurnChangeFileResult,
   TurnChangeStatusResult,
 } from '../platform/adapter.js';
 import { SideQuestionRefused, type AgentFactory, type AgentSession, type AgentUsage } from './agent.js';
-import type { EffortSelector, ModelSelector, ToolEvent, TopicActivity } from '../types.js';
+import type { EffortSelector, ModelSelector, SessionOption, StatusOption, ToolEvent, TopicActivity } from '../types.js';
 import {
   effortAmbiguousText,
   effortChoiceText,
@@ -132,7 +134,7 @@ import { InboundMerger, stopInputNote, type SoloOutcome } from '../core/inbound-
 import { fallbackTitle, generateTitle } from '../core/title-namer.js';
 import { shouldRespond, type GateConfig } from '../core/inbound-gate.js';
 import { CONTINUE_SENDER, DELEGATE_SENDER, SCHEDULED_SENDER, TurnRunner, sendAside, type PersonWords, type TurnEnd, type TurnRunnerDeps } from './turn-runner.js';
-import { StatusBoard } from './status-board.js';
+import { StatusBoard, statusOptions } from './status-board.js';
 import { TurnOutcomes, type KeptText } from './turn-outcomes.js';
 import { FailedInputs } from './failed-input.js';
 import { TurnProgressBoard } from './turn-progress.js';
@@ -848,6 +850,7 @@ export class ConversationRegistry {
         },
         recordModel: (id, model) => this.status.model(id, model),
         recordEffort: (id, effort) => this.status.effort(id, effort),
+        recordOptions: (id, options) => this.status.options(id, options),
         recordQuota: (id, pools) => this.status.quota(id, pools),
         recordTool: (id, evt) => this.recordTool(id, evt),
         recordTurnComplete: (id) => {
@@ -2371,6 +2374,14 @@ export class ConversationRegistry {
         }
         return undefined;
       },
+      liveOptions: (agentId) => {
+        for (const [id, state] of this.conversations) {
+          if (state.agentId !== agentId) continue;
+          const options = this.agents.peek(id)?.sessionOptions?.();
+          if (options) return options;
+        }
+        return undefined;
+      },
       tokenFor: (sid) => this.tokens.tokenFor(sid as ConversationId),
       forget: (sid) => {
         this.store?.clear(sid);
@@ -3483,6 +3494,85 @@ ${formatTokens(left)} left before compaction — ${name}`;
     this.status.model(id, result.model);
     console.log(`[model] ${id}: switched to ${result.model} from the model switch`);
     return { ok: true, model: result.model, text };
+  }
+
+  /**
+   * The agent's own settings (SessionOption) for the conversation at an ADDRESS, the way a status
+   * line draws them while nothing has reported a status (`SessionOptionPicker.peek`) — never
+   * starting this conversation's agent.
+   *
+   * Its own session's settings when it has reported any: values and all, kept across an idle
+   * reclaim, since the agent keeps the setting and a reload reports it again. Otherwise only which
+   * settings its agent has, by name (ModelCatalog.options). For a conversation with no session yet
+   * the catalog may ASK, starting a throwaway session of that agent once per daemon run. That case
+   * is the one the answer exists for: before the first message is when a setting like an account
+   * can still be changed, and nothing else would put its switch on screen until it no longer can.
+   * A conversation that has had a session is not asked about — its next turn reports its settings.
+   */
+  async optionStatusForRef(ref: ConversationRef): Promise<{ agent: string; options: StatusOption[] }> {
+    const id = this.idForRef(ref);
+    const agent = this.agentForRef(id, ref);
+    const own = this.agents.peek(id)?.sessionOptions?.();
+    if (own) return { agent, options: statusOptions(own) };
+    const fresh = this.store?.agentSession(id, agent) === undefined;
+    const kinds = this.modelCatalog.options(agent) ?? (fresh ? await this.modelCatalog.learnOptions(agent) : []);
+    return { agent, options: kinds.map((k) => ({ id: k.id, name: k.name })) };
+  }
+
+  /**
+   * The agent's own settings for the conversation at an ADDRESS with their choices — what opening
+   * one shows. The same warm-up as the model list (warmSelector): a conversation with no session yet
+   * gets the one its first message would have started, because these settings exist only on a
+   * session, and the moment before the first message is when they matter most.
+   */
+  async optionsForRef(ref: ConversationRef): Promise<SessionOptionList> {
+    const id = this.idForRef(ref);
+    const state = this.ensureState(id, ref.platform, this.agentForRef(id, ref), { opener: 'a setting switch' });
+    const agent = state.agentId;
+    const warm = await this.warmSelector(id, agent, (s) => nonEmpty(s.sessionOptions?.()));
+    if (warm.error) return { ok: false, agent, reason: 'error', text: `Could not start ${agent} to ask for its settings:\n${warm.error}` };
+    if (!warm.selector) return { ok: false, agent, reason: 'none', text: `${agent} has no settings of its own to change.` };
+    this.status.options(id, warm.selector);
+    return { ok: true, agent, options: warm.selector };
+  }
+
+  /**
+   * Set one of the agent's own settings on the conversation at an ADDRESS (`session/set_config_option`
+   * through its live session), checked first against what the agent lists now. Nothing is recorded:
+   * the agent's answer is the state, and the status line hears it at once.
+   *
+   * The agent decides whether the change is allowed. A value it lists is still refused when the
+   * agent says so — a setting it has just locked — and that refusal's message is the agent's own
+   * sentence, handed back as it stands.
+   */
+  async chooseOptionForRef(ref: ConversationRef, optionId: string, value: string): Promise<SessionOptionResult> {
+    const id = this.idForRef(ref);
+    const state = this.conversations.get(id);
+    if (!state) return { ok: false, text: 'That conversation is gone — send a message first.' };
+    const warm = await this.warmSelector(id, state.agentId, (s) => nonEmpty(s.sessionOptions?.()));
+    if (warm.error) return { ok: false, text: `Could not start ${state.agentId}:\n${warm.error}` };
+    const option = warm.selector?.find((o) => o.id === optionId);
+    if (!option) return { ok: false, text: `${state.agentId} no longer offers that setting.` };
+    const choice = option.options.find((c) => c.value === value);
+    if (!choice) return { ok: false, text: `${option.name}: "${value}" is no longer offered.` };
+    const session = warm.session;
+    if (!session.setOption) return { ok: false, text: `${state.agentId} cannot change its settings at runtime.` };
+    try {
+      // The list can be read off a session whose child was reclaimed (it is kept for that); the
+      // change itself needs the child, which a reload brings back on the setting it was left on.
+      await session.ensureSession?.(this.tokens.tokenFor(id));
+      const options = await session.setOption(optionId, value);
+      this.status.options(id, options);
+      console.log(`[option] ${id}: ${optionId} set to ${value} from the setting switch`);
+      return { ok: true, options, text: `${option.name} set to ${choice.name} for this conversation.` };
+    } catch (e) {
+      return { ok: false, text: e instanceof Error ? e.message : String(e) };
+    }
+  }
+
+  /** The agent a conversation is bound to, else the one its first message from `ref` would reach. */
+  private agentForRef(id: ConversationId, ref: ConversationRef): string {
+    return this.conversations.get(id)?.agentId ?? this.boundAgentFor(id, resolveAgent(this.config, routeInputFromRef(ref)).agentId);
   }
 
   /**
@@ -4978,4 +5068,12 @@ function historyRow(event: HistoryEvent): HistoryMessage | undefined {
   return event.text.trim()
     ? { ts: event.at, role: 'agent', kind: event.kind, text: event.text, turn: event.turn }
     : undefined;
+}
+
+/**
+ * A session's own settings, or undefined when it has none to offer — the shape warmSelector reads as
+ * "nothing known yet", since an empty list is no answer to "what can this be set to".
+ */
+function nonEmpty(options: SessionOption[] | undefined): SessionOption[] | undefined {
+  return options && options.length > 0 ? options : undefined;
 }

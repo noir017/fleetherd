@@ -7,8 +7,10 @@ import type {
   InboundMessage,
   MessageRef,
   OfflineMachine,
+  SessionOption,
   SettingsScreen,
   SlashCommandSpec,
+  StatusOption,
   TopicActivity,
   TopicKillResult,
 } from '../types.js';
@@ -139,6 +141,33 @@ export type ModelPickerResult = { ok: true; model: string; text: string } | { ok
 export interface ModelPicker {
   list(ref: ConversationRef): Promise<ModelPickerList>;
   choose(ref: ConversationRef, value: string): Promise<ModelPickerResult>;
+}
+
+/**
+ * One of the agent's own settings for a conversation (`useOptionPicker`): its choices now, from the
+ * live session — started first if need be, as the model list is. `ok: false` says why not, in words.
+ */
+export type SessionOptionList =
+  | { ok: true; agent: string; options: SessionOption[] }
+  | { ok: false; agent: string; reason: 'none' | 'error'; text: string };
+
+/** The outcome of a pick: the whole set as the agent reports it afterwards, or its refusal in its words. */
+export type SessionOptionResult = { ok: true; options: SessionOption[]; text: string } | { ok: false; text: string };
+
+/**
+ * What `useOptionPicker` hands a platform: the agent's own settings (SessionOption) for one of its
+ * conversations, and the switch. Nothing here is a gateway setting — no override is recorded and
+ * nothing is re-applied — so the agent's answer is the only state there is.
+ *
+ * `peek` answers without starting this conversation's agent: the settings its live session reports,
+ * else which settings its agent has (names only, no values). It is what a status line draws before
+ * the conversation's first turn, when a setting may still be changeable and no session reports it.
+ * `list` is what opening one shows, and does start the session.
+ */
+export interface SessionOptionPicker {
+  peek(ref: ConversationRef): Promise<{ agent: string; options: StatusOption[] }>;
+  list(ref: ConversationRef): Promise<SessionOptionList>;
+  choose(ref: ConversationRef, id: string, value: string): Promise<SessionOptionResult>;
 }
 
 /**
@@ -1354,6 +1383,13 @@ export interface PlatformAdapter {
    * are: a chat app has `/model` and its menu, and nowhere persistent to put a control.
    */
   useModelPicker?(picker: ModelPicker): void;
+
+  /**
+   * Hand the platform a switch for the agent's own settings (SessionOptionPicker) — an account a web
+   * agent runs on, say. Web-UI-only for the model switch's reason, and with no command behind it:
+   * these are the agent's to define, so no chat vocabulary names them.
+   */
+  useOptionPicker?(picker: SessionOptionPicker): void;
 
   /**
    * Hand the platform one turn's change list and one changed file — what the page's change entry

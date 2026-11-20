@@ -1,6 +1,6 @@
 import type { AgentDef } from '../config/schema.js';
 import type { AgentModelList, AgentModes } from '../core/settings.js';
-import type { ModelSelector, SessionModeSelector } from '../types.js';
+import type { ModelSelector, SessionModeSelector, SessionOption } from '../types.js';
 import type { AgentFactory } from './agent.js';
 
 /**
@@ -26,17 +26,32 @@ import type { AgentFactory } from './agent.js';
  * again rather than serving a list from before. A failure is kept too, but asked again the next time
  * the row is opened: an agent that did not start may start now.
  *
- * Never on a turn's path: only a settings screen asks, and it shows "asking…" while it does.
+ * Never on a turn's path: only a settings screen asks, showing "asking…" while it does, and a new
+ * topic's status line (see below), which shows nothing until the answer is in.
  *
  * ── Modes too ─────────────────────────────────────────────────────────────────
  * The same session reports the harness's modes (the config option of category `mode`), which is
  * what the permission rows offer levels from (core/permission-levels.ts). One ask answers both, and
  * both are kept against the same definition; a list learned elsewhere (`note`) carries no modes, so
  * a permission row opened after it asks once more.
+ *
+ * ── And the agent's own settings ──────────────────────────────────────────────
+ * Which settings of its own (SessionOption) the agent has — names only, never their state, which
+ * belongs to each session. The web UI's status line asks for these before a new topic's first
+ * message, because that is the one time a setting like an account can still be changed, and there is
+ * no session yet to read it from (ConversationRegistry.optionStatusForRef). Learned from any live
+ * session of the agent, else from the same ask; a failed ask counts as "none", since the status line
+ * asks unprompted and must not start a failing agent again every time a topic is drawn.
  */
 
 /** How long an agent may take to come up before the answer is "it did not". */
 export const PROBE_TIMEOUT_MS = 60_000;
+
+/** A setting an agent has, by id and label: what a status line can draw before any session exists. */
+export interface OptionKind {
+  id: string;
+  name: string;
+}
 
 export interface ModelCatalogDeps {
   agents: AgentFactory;
@@ -46,6 +61,8 @@ export interface ModelCatalogDeps {
   liveSelector(agentId: string): ModelSelector | undefined;
   /** The modes a live session of this agent reports, in some conversation, if any does. */
   liveModes(agentId: string): SessionModeSelector | undefined;
+  /** The settings a live session of this agent reports (empty: it has none), if any session has reported. */
+  liveOptions?(agentId: string): SessionOption[] | undefined;
   /** A token for the session the catalog starts itself (its MCP bridge needs one). */
   tokenFor(sessionId: string): string;
   /** Forget what that session left behind: its store entry, its token. */
@@ -55,6 +72,7 @@ export interface ModelCatalogDeps {
 export class ModelCatalog {
   private readonly known = new WeakMap<AgentDef, AgentModelList>();
   private readonly knownModes = new WeakMap<AgentDef, AgentModes>();
+  private readonly knownOptions = new WeakMap<AgentDef, OptionKind[]>();
   private readonly asking = new WeakMap<AgentDef, Promise<AgentModelList>>();
 
   constructor(private readonly deps: ModelCatalogDeps) {}
@@ -115,15 +133,41 @@ export class ModelCatalog {
     return known === undefined || known.kind === 'error';
   }
 
+  /** The agent's own settings as far as known now, without asking: undefined when nothing is. */
+  options(agentId: string): OptionKind[] | undefined {
+    const def = this.deps.defOf(agentId);
+    if (!def) return undefined;
+    const live = this.deps.liveOptions?.(agentId);
+    if (live) {
+      const kinds = optionKinds(live);
+      this.knownOptions.set(def, kinds);
+      return kinds;
+    }
+    return this.knownOptions.get(def);
+  }
+
+  /**
+   * The agent's own settings, asking when nothing is known (once at a time, sharing an ask already
+   * running for the models). Never rejects; empty when the agent has none or could not be asked.
+   */
+  async learnOptions(agentId: string): Promise<OptionKind[]> {
+    const known = this.options(agentId);
+    if (known) return known;
+    await this.ask(agentId);
+    const def = this.deps.defOf(agentId);
+    return (def && this.knownOptions.get(def)) ?? [];
+  }
+
   /** Ask for the list, once at a time per agent; resolves to the answer, never rejects. */
   ask(agentId: string): Promise<AgentModelList> {
     const def = this.deps.defOf(agentId);
     if (!def) return Promise.resolve({ kind: 'error', reason: `no agent named ${agentId}` });
     const running = this.asking.get(def);
     if (running) return running;
-    const p = this.probe(def).then(({ models, modes }) => {
+    const p = this.probe(def).then(({ models, modes, options }) => {
       this.known.set(def, models);
       this.knownModes.set(def, modes);
+      this.knownOptions.set(def, options);
       this.asking.delete(def);
       return models;
     });
@@ -132,7 +176,7 @@ export class ModelCatalog {
   }
 
   /** Start a session of the agent under an id no conversation has, read its selectors, dispose it. */
-  private async probe(def: AgentDef): Promise<{ models: AgentModelList; modes: AgentModes }> {
+  private async probe(def: AgentDef): Promise<{ models: AgentModelList; modes: AgentModes; options: OptionKind[] }> {
     const sid = `models:${def.id}`;
     const started = Date.now();
     let session;
@@ -150,20 +194,32 @@ export class ModelCatalog {
         offered && offered.options.length > 0
           ? { kind: 'list', options: offered.options, ...(offered.current ? { current: offered.current } : {}) }
           : { kind: 'none' };
-      console.log(
-        `[models] asked ${def.id} for its models: ${models.kind === 'list' ? `${models.options.length}` : 'none offered'}, ` +
-          `modes: ${modes.kind === 'list' ? modes.options.map((m) => m.value).join(' ') : 'none'} (${Date.now() - started}ms)`
-      );
-      return { models, modes };
+      const options = optionKinds(session.sessionOptions?.());
+      console.log(`[models] asked ${def.id} ${answerLine(models, modes, options)} (${Date.now() - started}ms)`);
+      return { models, modes, options };
     } catch (e) {
       const reason = (e instanceof Error ? e.message : String(e)).split('\n')[0] ?? 'unknown';
       console.warn(`[models] could not ask ${def.id} for its models: ${reason}`);
-      return { models: { kind: 'error', reason }, modes: { kind: 'error', reason } };
+      return { models: { kind: 'error', reason }, modes: { kind: 'error', reason }, options: [] };
     } finally {
       if (session) this.deps.agents.dispose(sid);
       this.deps.forget(sid);
     }
   }
+}
+
+function optionKinds(options: SessionOption[] | undefined): OptionKind[] {
+  return (options ?? []).map((o) => ({ id: o.id, name: o.name }));
+}
+
+/** What one ask learned, for its log line. */
+function answerLine(models: AgentModelList, modes: AgentModes, options: OptionKind[]): string {
+  const list = (xs: string[]): string => (xs.length > 0 ? xs.join(' ') : 'none');
+  return (
+    `for its models: ${models.kind === 'list' ? `${models.options.length}` : 'none offered'}, ` +
+    `modes: ${list(modes.kind === 'list' ? modes.options.map((m) => m.value) : [])}, ` +
+    `settings: ${list(options.map((o) => o.id))}`
+  );
 }
 
 function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {

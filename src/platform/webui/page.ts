@@ -1530,6 +1530,13 @@ button:disabled{opacity:.5;cursor:default}
 .st-model:focus-visible{outline:2px solid var(--own-edge);outline-offset:0}
 .st-model .st-mtext{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .st-model::after{content:'\\25be';flex:none;font-size:9px;opacity:.8}
+/* The agent's own settings beside it (optChip, an account say): the same switch, with the
+   setting's name dimmed in front so the value reads as a value. One the agent will not change now
+   is drawn dim and inert, with no caret — it states the value and the title says why. */
+.st-opt .st-olabel{flex:none;color:var(--dim)}
+.st-opt.fixed{cursor:default;opacity:.6}
+.st-opt.fixed::after{content:none}
+.st-opt.fixed:hover{background:none;color:#cfd8e2}
 /* The list it opens: above the composer, inside #bar so it moves with it, and closed by Escape, a
    click outside, a pick, or a topic switch. A filter field first — opencode offers ~90 models. */
 #model-pop{position:absolute;left:16px;bottom:calc(100% - 6px);z-index:15;display:flex;flex-direction:column;width:min(440px,calc(100% - 32px));max-height:min(60vh,480px);background:#181818;border:1px solid #333;border-radius:8px;box-shadow:0 10px 30px rgba(0,0,0,.55);overflow:hidden}
@@ -1549,6 +1556,8 @@ button:disabled{opacity:.5;cursor:default}
 .mp-main{flex:1;min-width:0;display:flex;flex-direction:column}
 .mp-v{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;overflow-wrap:anywhere}
 .mp-n{font-size:11.5px;color:var(--dim)}
+.mp-o{font-size:13px;overflow-wrap:anywhere}
+.mp-opt:disabled{cursor:default}
 .mp-tag{flex:none;font-size:10.5px;color:var(--dim);border:1px solid #333;border-radius:999px;padding:0 6px;line-height:16px}
 .mp-opt.busy{background:var(--own);box-shadow:inset 2px 0 0 var(--own-edge)}
 .mp-msg{padding:12px;font-size:12.5px;line-height:1.5;color:#a8a8a8;white-space:pre-line}
@@ -1950,7 +1959,8 @@ const SCRIPT = `
       settingsClose=$('settings-close'), settingsOpenBtn=$('settings-open'),
       killBtn=$('kill-agent'), stopBtn=$('stop-turn'), statusEl=$('status'), machineNoteEl=$('machine-note'),
       updateEl=$('update'),
-      modelPop=$('model-pop'), mpList=$('mp-list'), mpFilter=$('mp-filter'), mpAgent=$('mp-agent');
+      modelPop=$('model-pop'), mpList=$('mp-list'), mpFilter=$('mp-filter'), mpAgent=$('mp-agent'),
+      mpHeading=$('mp-heading'), mpFoot=$('mp-foot');
   // The 30-second tick that keeps the ages current (see paintAges). Declared here, not beside
   // its functions, because paintSessions can arm it while the script is still setting up — and a
   // var initialised after that would overwrite the timer's handle with null and leak the timer.
@@ -1973,6 +1983,10 @@ const SCRIPT = `
   // The agents the last sync said this topic could still be given to (null once it cannot, or
   // when the daemon offered none), the element laying them out, and what it was drawn from.
   var launch=null, launchEl=null, launchSig='';
+  // Which of the agent's own settings to draw for a topic with no status yet (see "The agent's own
+  // settings"). Up here because paintStatus reads it, and the launcher repaints the status line
+  // while the script is still setting up.
+  var opk={ topic: null, options: [], seq: 0, timer: null };
   // The machines the daemon cannot reach, by the name the topic list and the agent cards use →
   // since when (OfflineMachine), and what the list was drawn from. Replaced whole on every push.
   var offlineMachines={}, offlineSig='[]';
@@ -7849,7 +7863,8 @@ const SCRIPT = `
 
   function statusSegments(s, now, open){
     var out = [];
-    out.push(seg('st-who', '', text(s.agent)+' \\u00b7 '+modelChip(s.model || 'Model')+(s.effort ? ' \\u00b7 '+text(s.effort) : '')));
+    out.push(seg('st-who', '', text(s.agent)+' \\u00b7 '+modelChip(s.model || 'Model')+(s.effort ? ' \\u00b7 '+text(s.effort) : '')
+      +optChips(s.options || opkFor(topic))));
     if(s.context && s.context.size > 0){
       var pct = Math.min(100, Math.max(0, Math.round(s.context.used / s.context.size * 100)));
       out.push(seg(pct >= 80 ? 'bad' : (pct >= 50 ? 'warn' : ''),
@@ -7892,8 +7907,11 @@ const SCRIPT = `
     // is the last sync's snapshot of the empty room and stays set until the next sync, so testing it
     // hid the switch from the moment an agent was chosen until the first reply reported a status —
     // exactly when someone wants to pick the model the first message goes to.
+    var bare = !s && topic && synced && !launchEl && log.querySelector('.m');
     var html = s ? statusSegments(s, Date.now(), statusEl.classList.contains('open'))
-      : (topic && synced && !launchEl && log.querySelector('.m') ? seg('st-who', '', modelChip('Model')) : '');
+      : (bare ? seg('st-who', '', modelChip('Model')+optChips(opkFor(topic))) : '');
+    // The agent's own settings have no status to come from yet either, so ask which to draw.
+    if(bare && opk.topic !== topic) schedulePeek();
     // Compared before writing: the tick redraws twice a minute, and most of those change nothing.
     if(html === statusHtml) return;
     statusHtml = html;
@@ -7902,8 +7920,16 @@ const SCRIPT = `
   }
 
   statusEl.addEventListener('click', function(e){
+    // A setting first: its switch is an .st-model too, for the look.
+    var ob = e.target.closest ? e.target.closest('.st-opt') : null;
+    if(ob){
+      if(ob.disabled) return;
+      var oid = ob.getAttribute('data-opt');
+      if(!modelPop.hidden && mp.opt === oid) closeModelPop(); else openOptPop(oid);
+      return;
+    }
     if(e.target.closest && e.target.closest('.st-model')){
-      if(modelPop.hidden) openModelPop(); else closeModelPop();
+      if(!modelPop.hidden && !mp.opt) closeModelPop(); else openModelPop();
       return;
     }
     statusEl.classList.toggle('open');
@@ -7915,19 +7941,87 @@ const SCRIPT = `
   // agent the way /model does — hence "Asking…"), and the switch (POST api/models), which is
   // /model's own: a runtime override for this topic, config untouched. mp.seq drops an answer that
   // belongs to a list closed or reopened since.
-  var mp = { topic: null, data: null, err: '', loading: false, busy: false, seq: 0 };
+  // The same list serves one of the agent's own settings (openOptPop): mp.opt is that setting's id,
+  // null for the model.
+  var mp = { topic: null, opt: null, data: null, err: '', loading: false, busy: false, seq: 0 };
   var MODEL_WAIT_MS = 45000;
 
   function modelChip(label){
-    return '<button type="button" class="st-model" aria-haspopup="dialog" aria-expanded="'+(modelPop.hidden ? 'false' : 'true')+'"'
+    return '<button type="button" class="st-model" aria-haspopup="dialog" aria-expanded="'+(modelPop.hidden || (mp && mp.opt) ? 'false' : 'true')+'"'
       + ' title="Switch the model for this topic (/model)"><span class="st-mtext">'+text(label)+'</span></button>';
   }
 
-  function openModelPop(){
+  // ── The agent's own settings ─────────────────────────────────────────────────
+  // Settings an agent defines itself (an ACP select option in an underscore category — an account a web
+  // agent runs on, say), each drawn beside the model as a switch of the same kind. Their state is
+  // the agent's: the status carries it once a turn has reported, and before that — a new topic,
+  // the one time a setting like an account may still be changed — GET api/options?peek=1 says which
+  // to draw without starting the agent, and what it knows of them. opk is that answer for the topic
+  // on screen, asked again when a message arrives there (a /cd or /new ends the session it
+  // described) and after a pick. One with a single choice is one the agent will not change now.
+  // (opk is declared with the page's early state, for the reason given there.)
+
+  function opkFor(t){ return opk.topic === t ? opk.options : []; }
+
+  function optChips(list){
+    var h = '';
+    for(var i=0;i<(list||[]).length;i++) h += ' \\u00b7 '+optChip(list[i]);
+    return h;
+  }
+
+  function optChip(o){
+    var val = o.value !== undefined && o.value !== null ? String(o.value) : '';
+    var body = '<span class="st-olabel">'+text(o.name)+'</span>'+(val ? ' <span class="st-mtext">'+text(val)+'</span>' : '');
+    var note = o.note ? '\\n'+o.note : '';
+    if(o.fixed){
+      return '<button type="button" class="st-model st-opt fixed" disabled data-opt="'+text(o.id)+'"'
+        + ' title="'+text(o.name+': '+val+' \\u2014 fixed for this conversation'+note)+'">'+body+'</button>';
+    }
+    var open = !modelPop.hidden && mp.opt === o.id;
+    return '<button type="button" class="st-model st-opt" data-opt="'+text(o.id)+'" aria-haspopup="dialog" aria-expanded="'+(open ? 'true' : 'false')+'"'
+      + ' title="'+text('Switch '+o.name+' for this topic'+note)+'">'+body+'</button>';
+  }
+
+  /** Ask which settings to draw, a moment from now: a burst of messages, or an agent being chosen, is one ask. */
+  function schedulePeek(){
+    if(opk.timer) clearTimeout(opk.timer);
+    opk.timer = setTimeout(function(){ opk.timer = null; peekOptions(); }, 400);
+  }
+
+  function peekOptions(){
+    // A status that has arrived since says it all, and is kept current by the daemon.
+    if(!topic || agentStatus) return;
+    var n = ++opk.seq, t = topic;
+    // Claimed now, so the repaints while it is asked do not ask again.
+    if(opk.topic !== t){ opk.topic = t; opk.options = []; }
+    fetch('api/options?peek=1&t='+encodeURIComponent(t), {credentials:'same-origin'})
+      .then(function(r){ return r.ok ? r.json() : null; })
+      .then(function(j){
+        if(n !== opk.seq || t !== opk.topic || !j) return;
+        opk.options = j.options || [];
+        paintStatus();
+      }, function(){});
+  }
+
+  /** The setting's name, from what the line is drawn from — for the list's heading. */
+  function optName(id){
+    var list = (agentStatus && agentStatus.options) || opkFor(topic);
+    for(var i=0;i<list.length;i++) if(list[i].id === id) return list[i].name;
+    return 'Setting';
+  }
+
+  function openModelPop(){ openPop(null); }
+  function openOptPop(id){ openPop(id); }
+
+  function openPop(opt){
     if(!topic) return;
     var n = ++mp.seq, t = topic;
-    mp.topic = t; mp.data = null; mp.err = ''; mp.loading = true; mp.busy = false;
+    mp.topic = t; mp.opt = opt; mp.data = null; mp.err = ''; mp.loading = true; mp.busy = false;
     mpFilter.value = '';
+    mpHeading.textContent = opt ? optName(opt)+' for this topic' : 'Model for this topic';
+    mpFilter.placeholder = opt ? 'Filter' : 'Filter models';
+    mpFoot.innerHTML = opt ? 'This topic only. The agent decides what can be changed, and when.'
+      : 'This topic only, like <code>/model</code>. The default for each agent is in Settings.';
     modelPop.hidden = false;
     paintStatus();
     renderModelPop();
@@ -7935,7 +8029,7 @@ const SCRIPT = `
     if(!narrow()) mpFilter.focus();
     var ctl = typeof AbortController === 'function' ? new AbortController() : null;
     var timer = setTimeout(function(){ if(ctl) ctl.abort(); }, MODEL_WAIT_MS);
-    fetch('api/models?t='+encodeURIComponent(t), ctl ? {credentials:'same-origin', signal: ctl.signal} : {credentials:'same-origin'})
+    fetch((opt ? 'api/options?t=' : 'api/models?t=')+encodeURIComponent(t), ctl ? {credentials:'same-origin', signal: ctl.signal} : {credentials:'same-origin'})
       .then(function(r){ return r.json().then(function(j){ return { r: r, j: j }; }); })
       .then(function(x){
         clearTimeout(timer);
@@ -7944,6 +8038,8 @@ const SCRIPT = `
         if(!x.r.ok) mp.err = 'The daemon did not give a list (HTTP '+x.r.status+').';
         else mp.data = x.j;
         renderModelPop();
+        // Either list started the agent if it had to, so its settings are known now: draw them.
+        if(x.r.ok && x.j && x.j.ok && t === topic && !agentStatus) peekOptions();
       }, function(){
         clearTimeout(timer);
         if(n !== mp.seq) return;
@@ -7965,10 +8061,11 @@ const SCRIPT = `
   function renderModelPop(){
     var d = mp.data;
     mpAgent.textContent = d && d.agent ? d.agent : '';
-    mpFilter.hidden = !(d && d.ok && d.options.length > 8);
-    if(mp.loading){ mpList.innerHTML = '<div class="mp-msg mp-wait"><span class="set-spin" aria-hidden="true"></span>Asking the agent for its models\u2026 a cold one takes a second or two to start.</div>'; return; }
+    mpFilter.hidden = !(d && d.ok && (mp.opt ? optChoices(d).length : d.options.length) > 8);
+    if(mp.loading){ mpList.innerHTML = '<div class="mp-msg mp-wait"><span class="set-spin" aria-hidden="true"></span>Asking the agent for its '+(mp.opt ? 'settings' : 'models')+'\u2026 a cold one takes a second or two to start.</div>'; return; }
     if(mp.err){ mpList.innerHTML = '<div class="mp-msg err">'+inl(mp.err)+'</div>'; return; }
     if(!d || !d.ok){ mpList.innerHTML = '<div class="mp-msg">'+inl(d ? d.text : '')+'</div>'; return; }
+    if(mp.opt){ renderOptList(d); return; }
     var h = '';
     for(var i=0;i<d.options.length;i++){
       var o = d.options[i], on = o.value === d.current, def = d.configured && o.value === d.configured;
@@ -7984,27 +8081,61 @@ const SCRIPT = `
     filterModels();
   }
 
+  /** The setting the list is open on, out of the agent's answer. */
+  function optOf(d){
+    var list = (d && d.options) || [];
+    for(var i=0;i<list.length;i++) if(list[i].id === mp.opt) return list[i];
+    return null;
+  }
+  function optChoices(d){ var o = optOf(d); return o ? o.options : []; }
+
+  /**
+   * One setting's choices, each with the agent's description of it as a second line (an account's
+   * used-up quota). A single choice is listed and not offered: the agent will not change it now.
+   */
+  function renderOptList(d){
+    var o = optOf(d);
+    if(!o){ mpList.innerHTML = '<div class="mp-msg">The agent no longer offers this setting.</div>'; return; }
+    var fixed = o.options.length <= 1, h = '';
+    if(fixed) h += '<div class="mp-msg">Fixed for this conversation: the agent offers no other '+text(o.name)+' now.</div>';
+    for(var i=0;i<o.options.length;i++){
+      var c = o.options[i], on = c.value === o.current;
+      h += '<button type="button" class="mp-opt'+(on ? ' on' : '')+'" role="option" aria-selected="'+(on ? 'true' : 'false')+'" data-v="'+text(c.value)+'"'
+        + ' data-q="'+text((c.name+' '+c.value+' '+(c.description || '')).toLowerCase())+'"'+(fixed ? ' disabled' : '')+'>'
+        + '<span class="mp-check" aria-hidden="true">'+(on ? IC.icon.check : '')+'</span>'
+        + '<span class="mp-main"><span class="mp-o">'+text(c.name)+'</span>'+(c.description ? '<span class="mp-n">'+text(c.description)+'</span>' : '')+'</span>'
+        + '</button>';
+    }
+    mpList.innerHTML = h;
+    filterModels();
+  }
+
   function filterModels(){
     var q = mpFilter.value.trim().toLowerCase();
     var opts = mpList.querySelectorAll('.mp-opt');
     for(var i=0;i<opts.length;i++) opts[i].hidden = !!q && (opts[i].getAttribute('data-q') || '').indexOf(q) < 0;
   }
 
-  /** Switch to one, as /model would. A refusal is /model's own sentence, shown in the list. */
+  /**
+   * Switch to one, as /model would — or set the agent's setting, which the agent may refuse. Either
+   * refusal is shown in the list in its own words.
+   */
   function chooseModel(b){
-    if(mp.busy || !mp.topic) return;
-    var n = mp.seq, t = mp.topic, v = b.getAttribute('data-v');
+    if(mp.busy || !mp.topic || b.disabled) return;
+    var n = mp.seq, t = mp.topic, v = b.getAttribute('data-v'), opt = mp.opt;
     mp.busy = true;
     b.classList.add('busy');
-    post('api/models', {topic: t, value: v}, 1, MODEL_WAIT_MS)
+    post(opt ? 'api/options' : 'api/models', opt ? {topic: t, id: opt, value: v} : {topic: t, value: v}, 1, MODEL_WAIT_MS)
       .then(function(r){ return r.json().then(function(j){ return { r: r, j: j }; }); })
       .then(function(x){
         mp.busy = false;
         if(n !== mp.seq) return;
         if(x.r.ok && x.j.ok){
-          if(t === topic && agentStatus) agentStatus = Object.assign({}, agentStatus, { model: x.j.model });
+          if(!opt && t === topic && agentStatus) agentStatus = Object.assign({}, agentStatus, { model: x.j.model });
           closeModelPop();
           note.textContent = String(x.j.text || '').replace(/\\x60/g, '');
+          // A status the daemon pushes says it too once there is one; until then this is how.
+          if(opt && t === topic) peekOptions();
           return;
         }
         mp.err = x.j && x.j.text ? x.j.text : 'The daemon refused that (HTTP '+x.r.status+').';
@@ -8012,7 +8143,7 @@ const SCRIPT = `
       }, function(){
         mp.busy = false;
         if(n !== mp.seq) return;
-        mp.err = 'Could not reach the daemon, so the model was not changed. Try again.';
+        mp.err = 'Could not reach the daemon, so '+(opt ? 'nothing' : 'the model')+' was changed. Try again.';
         renderModelPop();
       });
   }
@@ -8130,7 +8261,9 @@ const SCRIPT = `
       upsert(ev.msg);
       btwArrived(ev.msg);
       cacheSave();
-      if(!agentStatus) paintStatus();
+      // Without a status, the settings drawn came from a peek, and what just happened may have
+      // ended the session it described (a /cd, a /new): ask again.
+      if(!agentStatus){ paintStatus(); schedulePeek(); }
       readCounts[topic] = (readCounts[topic] || 0) + 1;
       saveReads();
       for(var i=0;i<topics.length;i++){
@@ -13966,7 +14099,8 @@ __GATE__
         </div>
         <div id="btw-body"></div>
       </div>
-      <!-- The model switch's list, opened from the model in the status line (openModelPop). -->
+      <!-- The model switch's list, opened from the model in the status line (openModelPop), and the
+           same list for one of the agent's own settings (openOptPop). -->
       <div id="model-pop" hidden role="dialog" aria-labelledby="mp-heading">
         <div class="mp-head">
           <div class="mp-title"><b id="mp-heading">Model for this topic</b><span id="mp-agent"></span></div>
@@ -13974,7 +14108,7 @@ __GATE__
         </div>
         <input id="mp-filter" type="text" placeholder="Filter models" aria-label="Filter models" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
         <div id="mp-list" role="listbox" aria-labelledby="mp-heading"></div>
-        <p class="mp-foot">This topic only, like <code>/model</code>. Each agent's default is in Settings.</p>
+        <p class="mp-foot" id="mp-foot"></p>
       </div>
       <div id="hints" hidden></div>
       <div id="chips"></div>

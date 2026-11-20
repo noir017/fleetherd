@@ -1,7 +1,7 @@
 import { shortModelName } from '../core/runtime-footer.js';
 import type { ConversationAddress } from '../core/conversation.js';
 import type { PlatformAdapter } from '../platform/adapter.js';
-import type { AgentStatus, ConversationId, QuotaPool } from '../types.js';
+import type { AgentStatus, ConversationId, QuotaPool, SessionOption, StatusOption } from '../types.js';
 import type { AgentUsage } from './agent.js';
 import type { CacheReading } from './claude-transcript.js';
 
@@ -70,6 +70,7 @@ interface Entry {
   /** The TTL the last transcript read found, for projecting a live request (see `usage`). */
   cacheTtlMs?: number;
   quota?: QuotaPool[];
+  options?: StatusOption[];
   /** The last status actually handed to the platform, serialized — the dedupe key. */
   sent?: string;
   /** Cancels the open throttle window; set while one is. */
@@ -123,6 +124,13 @@ export class StatusBoard {
   quota(id: ConversationId, pools: QuotaPool[]): void {
     const e = this.entryOf(id);
     e.quota = pools;
+    this.publish(id, e);
+  }
+
+  /** The agent's own settings, the whole set each time (AgentStreamHandlers.onOptions). */
+  options(id: ConversationId, options: SessionOption[]): void {
+    const e = this.entryOf(id);
+    e.options = statusOptions(options);
     this.publish(id, e);
   }
 
@@ -243,6 +251,7 @@ export class StatusBoard {
       ...(e.cost ? { cost: e.cost } : {}),
       ...(e.cacheExpiresAt !== undefined ? { cacheExpiresAt: e.cacheExpiresAt } : {}),
       ...(e.quota?.length ? { quota: e.quota } : {}),
+      ...(e.options?.length ? { options: e.options } : {}),
     };
   }
 
@@ -266,4 +275,22 @@ export class StatusBoard {
       return false;
     }
   }
+}
+
+/**
+ * The agent's settings as a strip shows them (StatusOption): the current choice by its name, not
+ * its id, and only that — the choices themselves are fetched when someone opens one, so a list of
+ * accounts is not re-sent with every context snapshot.
+ */
+export function statusOptions(options: SessionOption[]): StatusOption[] {
+  return options.map((o) => {
+    const current = o.options.find((c) => c.value === o.current);
+    return {
+      id: o.id,
+      name: o.name,
+      ...(o.current !== undefined ? { value: current?.name ?? o.current } : {}),
+      ...(o.options.length <= 1 ? { fixed: true } : {}),
+      ...(current?.description ? { note: current.description } : {}),
+    };
+  });
 }

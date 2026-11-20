@@ -8370,6 +8370,125 @@ describe('webui page: the model switch in the status line', () => {
   });
 });
 
+describe('webui page: the agent’s own settings in the status line', () => {
+  // A setting the agent defines itself (an ACP select option in a `_` category) — here an account,
+  // the way a web agent driver reports one: every account while the conversation can still move,
+  // only the current one once it cannot.
+  const T = 'a1b2c3d4';
+  const ACCOUNTS = [
+    { value: 'work', name: 'work' },
+    { value: 'home', name: 'home', description: '5-hour limit used up; resets 18:55 GMT+8' },
+  ];
+  const OPEN = { id: 'account', name: 'Account', current: 'work', options: ACCOUNTS };
+  const LIST = { ok: true, agent: 'browser', options: [OPEN] };
+  const STATUS = { agent: 'browser', model: 'm1', options: [{ id: 'account', name: 'Account', value: 'work' }] };
+  const LOCKED = { agent: 'browser', model: 'm1', options: [{ id: 'account', name: 'Account', value: 'work', fixed: true }] };
+  const URL_O = `api/options?t=${T}`;
+  const PEEK = `api/options?peek=1&t=${T}`;
+  const opt = (h: Harness) => h.doc.querySelector('#status .st-opt') as HTMLButtonElement | null;
+  const rows = (h: Harness) => Array.from(h.doc.querySelectorAll('#mp-list .mp-opt')) as HTMLButtonElement[];
+  const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 450));
+
+  async function ready(status: Record<string, unknown>, o: Parameters<typeof open>[0] = {}): Promise<Harness> {
+    const h = await open({ ...o, replies: { [URL_O]: LIST, ...(o.replies ?? {}) } });
+    await h.emit(sync(T, [message('m1', '<p>hi</p>')], [T]));
+    await h.emit({ t: 'status', status });
+    return h;
+  }
+
+  it('draws each setting beside the model, named, with its current value', async () => {
+    const h = await ready(STATUS);
+    expect(h.el('status').textContent).toContain('browser · m1 · Account work');
+    expect(opt(h)?.disabled).toBe(false);
+    expect(opt(h)?.getAttribute('aria-haspopup')).toBe('dialog');
+  });
+
+  it('opens the choices, each with its description as a second line, and sets one with a tap', async () => {
+    const h = await ready(STATUS, {
+      replies: { 'api/options': { ok: true, options: [{ ...OPEN, current: 'home' }], text: 'Account set to home for this conversation.' } },
+    });
+    await h.click('#status .st-opt');
+    expect(h.calls.find((c) => c.path === URL_O)).toBeTruthy();
+    await tick();
+    expect(h.el('model-pop').hidden).toBe(false);
+    expect(h.el('mp-heading').textContent).toBe('Account for this topic');
+    expect(rows(h).map((r) => r.getAttribute('data-v'))).toEqual(['work', 'home']);
+    expect(rows(h).find((r) => r.classList.contains('on'))?.getAttribute('data-v')).toBe('work');
+    expect(rows(h)[1]!.querySelector('.mp-n')?.textContent).toBe('5-hour limit used up; resets 18:55 GMT+8');
+    // The model switch's own marks are not here: no models were asked for.
+    expect(h.calls.some((c) => c.path.startsWith('api/models'))).toBe(false);
+
+    await h.click('#mp-list .mp-opt[data-v="home"]');
+    await tick();
+    expect(h.calls.find((c) => c.path === 'api/options')?.body).toEqual({ topic: T, id: 'account', value: 'home' });
+    expect(h.el('model-pop').hidden).toBe(true);
+    expect(h.el('note').textContent).toBe('Account set to home for this conversation.');
+  });
+
+  it('keeps the list open with the agent’s own sentence when it refuses', async () => {
+    const h = await ready(STATUS, {
+      status: { 'api/options': 409 },
+      replies: { 'api/options': { ok: false, text: 'This conversation already started on work; its account cannot change.' } },
+    });
+    await h.click('#status .st-opt');
+    await tick();
+    await h.click('#mp-list .mp-opt[data-v="home"]');
+    await tick();
+    expect(h.el('model-pop').hidden).toBe(false);
+    expect(h.el('mp-list').querySelector('.mp-msg.err')?.textContent).toBe('This conversation already started on work; its account cannot change.');
+  });
+
+  it('draws a setting with a single choice dim and inert, showing only its value', async () => {
+    const h = await ready(LOCKED);
+    expect(opt(h)?.disabled).toBe(true);
+    expect(opt(h)?.classList.contains('fixed')).toBe(true);
+    expect(opt(h)?.querySelector('.st-mtext')?.textContent).toBe('work');
+    expect(opt(h)?.getAttribute('title')).toBe('Account: work — fixed for this conversation');
+    expect(opt(h)?.hasAttribute('aria-haspopup')).toBe(false);
+    await h.click('#status .st-opt');
+    expect(h.el('model-pop').hidden).toBe(true);
+    expect(h.calls.some((c) => c.path.startsWith('api/options'))).toBe(false);
+  });
+
+  it('puts the agent’s note on the current value in the title', async () => {
+    const h = await ready({ ...LOCKED, options: [{ ...LOCKED.options[0], note: 'Quota used up' }] });
+    expect(opt(h)?.getAttribute('title')).toBe('Account: work — fixed for this conversation\nQuota used up');
+  });
+
+  it('asks which settings to draw in a topic with no status yet, and opening one starts its agent', async () => {
+    const h = await open({ replies: { [URL_O]: LIST, [PEEK]: { agent: 'browser', options: [{ id: 'account', name: 'Account' }] } } });
+    await h.emit(sync(T, [message('m1', '<p>/agent browser</p>')], [T]));
+    await settle();
+    expect(h.calls.filter((c) => c.path === PEEK)).toHaveLength(1);
+    // Named, with no value: nothing has reported one, and the line does not guess.
+    expect(opt(h)?.textContent).toBe('Account');
+    expect(opt(h)?.disabled).toBe(false);
+    await h.click('#status .st-opt');
+    await tick();
+    expect(h.calls.find((c) => c.path === URL_O)).toBeTruthy();
+    expect(rows(h)).toHaveLength(2);
+    // The list started the session, so the line asks again and can now say what it is set to.
+    expect(h.calls.filter((c) => c.path === PEEK)).toHaveLength(2);
+  });
+
+  it('asks again when a message arrives, since a /cd or /new ends the session it described', async () => {
+    const h = await open({ replies: { [PEEK]: { agent: 'browser', options: [{ id: 'account', name: 'Account', value: 'home' }] } } });
+    await h.emit(sync(T, [message('m1', '<p>/agent browser</p>')], [T]));
+    await settle();
+    expect(opt(h)?.textContent).toBe('Account home');
+    await h.emit({ t: 'msg', msg: message('m2', '<p>Working in ~/src</p>') });
+    await settle();
+    expect(h.calls.filter((c) => c.path === PEEK)).toHaveLength(2);
+  });
+
+  it('does not ask while a status is up, nor draw anything for an agent with no settings', async () => {
+    const h = await ready({ agent: 'cc', model: 'opus' });
+    await settle();
+    expect(h.calls.some((c) => c.path.startsWith('api/options'))).toBe(false);
+    expect(opt(h)).toBeNull();
+  });
+});
+
 describe('webui page: the agent status strip', () => {
   const T = 'a1b2c3d4';
   const OTHER = 'b2c3d4e5';

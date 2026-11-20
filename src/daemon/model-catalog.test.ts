@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { parseConfig, type AgentDef } from '../config/schema.js';
 import type { AgentFactory, AgentSession } from './agent.js';
-import type { ModelSelector, SessionModeSelector } from '../types.js';
+import type { ModelSelector, SessionModeSelector, SessionOption } from '../types.js';
 import { ModelCatalog } from './model-catalog.js';
 
 /**
@@ -14,7 +14,9 @@ const SELECTOR: ModelSelector = { current: 'a', options: [{ value: 'a', name: 'A
 /** opencode 2.2.5's, as session/new reported it (2026-11-18). */
 const MODES: SessionModeSelector = { current: 'build', options: [{ value: 'build', name: 'Build' }, { value: 'plan', name: 'Plan' }] };
 
-function setup(opts: { selector?: ModelSelector; modes?: SessionModeSelector; ensure?: () => Promise<void> } = {}) {
+function setup(
+  opts: { selector?: ModelSelector; modes?: SessionModeSelector; options?: SessionOption[]; ensure?: () => Promise<void> } = {}
+) {
   const cfg = parseConfig({
     platforms: { tg: { type: 'telegram', token: 't' } },
     agents: [{ id: 'oc', harness: 'opencode' }],
@@ -25,6 +27,7 @@ function setup(opts: { selector?: ModelSelector; modes?: SessionModeSelector; en
   const forgotten: string[] = [];
   let live: ModelSelector | undefined;
   let liveModes: SessionModeSelector | undefined;
+  let liveOptions: SessionOption[] | undefined;
   let warmed = false;
   const agents: AgentFactory = {
     getOrCreate(id, agentId) {
@@ -36,6 +39,7 @@ function setup(opts: { selector?: ModelSelector; modes?: SessionModeSelector; en
         dispose: () => {},
         modelSelector: () => (warmed || !opts.ensure ? opts.selector : undefined),
         permissionModes: () => (warmed || !opts.ensure ? opts.modes : undefined),
+        sessionOptions: () => (warmed || !opts.ensure ? opts.options : undefined),
         ...(opts.ensure
           ? {
               ensureSession: async () => {
@@ -56,6 +60,7 @@ function setup(opts: { selector?: ModelSelector; modes?: SessionModeSelector; en
     defOf: (id) => cfg.agents.find((a) => a.id === id),
     liveSelector: () => live,
     liveModes: () => liveModes,
+    liveOptions: () => liveOptions,
     tokenFor: (sid) => `tok-${sid}`,
     forget: (sid) => forgotten.push(sid),
   });
@@ -67,6 +72,7 @@ function setup(opts: { selector?: ModelSelector; modes?: SessionModeSelector; en
     forgotten,
     setLive: (s?: ModelSelector) => (live = s),
     setLiveModes: (m?: SessionModeSelector) => (liveModes = m),
+    setLiveOptions: (o?: SessionOption[]) => (liveOptions = o),
   };
 }
 
@@ -158,5 +164,38 @@ describe('ModelCatalog', () => {
     const t = setup();
     expect(t.catalog.get('nope')).toBeUndefined();
     expect(await t.catalog.ask('nope')).toEqual({ kind: 'error', reason: 'no agent named nope' });
+  });
+});
+
+/**
+ * Which settings of its own an agent has (SessionOption), by name — what a new topic's status line
+ * draws before any session of it reports. The same ask answers it, and a failed ask is not repeated:
+ * the status line asks unprompted, every time such a topic is drawn.
+ */
+describe('ModelCatalog: the agent’s own settings', () => {
+  const ACCOUNT: SessionOption = { id: 'account', name: 'Account', current: 'work', options: [{ value: 'work', name: 'Work' }] };
+
+  it('answers from a live session first, names only, without starting anything', async () => {
+    const t = setup();
+    t.setLiveOptions([ACCOUNT]);
+    expect(t.catalog.options('oc')).toEqual([{ id: 'account', name: 'Account' }]);
+    expect(await t.catalog.learnOptions('oc')).toEqual([{ id: 'account', name: 'Account' }]);
+    expect(t.created).toEqual([]);
+  });
+
+  it('asks once when nothing is known, and the same ask answers the models', async () => {
+    const t = setup({ options: [ACCOUNT], selector: SELECTOR, ensure: async () => {} });
+    expect(t.catalog.options('oc')).toBeUndefined();
+    expect(await t.catalog.learnOptions('oc')).toEqual([{ id: 'account', name: 'Account' }]);
+    expect(await t.catalog.learnOptions('oc')).toEqual([{ id: 'account', name: 'Account' }]);
+    expect(t.created).toEqual(['models:oc→oc']);
+    expect(t.catalog.get('oc')).toEqual({ kind: 'list', options: SELECTOR.options });
+  });
+
+  it('counts an agent that could not be asked as having none, and does not ask again', async () => {
+    const t = setup({ ensure: async () => Promise.reject(new Error('host offline')) });
+    expect(await t.catalog.learnOptions('oc')).toEqual([]);
+    expect(await t.catalog.learnOptions('oc')).toEqual([]);
+    expect(t.created).toEqual(['models:oc→oc']);
   });
 });

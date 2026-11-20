@@ -58,6 +58,7 @@ import type {
   OfflineMachine,
   SettingsScreen,
   SlashCommandSpec,
+  StatusOption,
   TopicActivity,
   TopicKillResult,
   TopicStage,
@@ -92,6 +93,9 @@ import type {
   ModelPickerList,
   ModelPickerResult,
   ReviewPanel,
+  SessionOptionList,
+  SessionOptionPicker,
+  SessionOptionResult,
   ReviewPanelList,
   SchedulePanelAction,
   SchedulePanelDetailResult,
@@ -509,6 +513,8 @@ export class WebRoom {
   private schedulePanel: SchedulePanel | null = null;
   /** The model switch for a topic's conversation — see `useModelPicker`. */
   private modelPicker: ModelPicker | null = null;
+  /** The agent's own settings for a topic's conversation — see `useOptionPicker`. */
+  private optionPicker: SessionOptionPicker | null = null;
   /** A turn's changed files, for the transcript's change entry — see `useTurnChanges`. */
   private turnChangesPanel: TurnChangesPanel | null = null;
   /** The daemon's managed skills and every operation on them — see `useSkillsPanel`. */
@@ -870,6 +876,34 @@ export class WebRoom {
     if (!this.modelPicker) return { ok: false, text: 'This daemon offers no model switch.' };
     if (!this.topics.has(topic)) return { ok: false, text: 'No such topic.' };
     return this.modelPicker.choose(this.conversation(topic), value);
+  }
+
+  /** Accept the daemon's switch for the agent's own settings (ConversationRegistry.optionsForRef …). */
+  useOptionPicker(picker: SessionOptionPicker): void {
+    this.optionPicker = picker;
+  }
+
+  /**
+   * Which of the agent's own settings to draw for a topic that has no status yet, without starting
+   * its agent. Empty, never an error: a status line that has nothing extra to show shows nothing.
+   */
+  async optionStatus(topic: string): Promise<{ agent?: string; options: StatusOption[] }> {
+    if (!this.optionPicker || !this.topics.has(topic)) return { options: [] };
+    return this.optionPicker.peek(this.conversation(topic));
+  }
+
+  /** A topic's settings with their choices, or why not. Starts a cold agent, as the model list does. */
+  async options(topic: string): Promise<SessionOptionList | { ok: false; reason: 'off'; text: string }> {
+    if (!this.optionPicker) return { ok: false, reason: 'off', text: 'This daemon offers no setting switch.' };
+    if (!this.topics.has(topic)) return { ok: false, reason: 'off', text: 'No such topic.' };
+    return this.optionPicker.list(this.conversation(topic));
+  }
+
+  /** Set one of a topic's settings. A refusal is the agent's own sentence. */
+  async chooseOption(topic: string, id: string, value: string): Promise<SessionOptionResult> {
+    if (!this.optionPicker) return { ok: false, text: 'This daemon offers no setting switch.' };
+    if (!this.topics.has(topic)) return { ok: false, text: 'No such topic.' };
+    return this.optionPicker.choose(this.conversation(topic), id, value);
   }
 
   /**

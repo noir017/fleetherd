@@ -345,6 +345,31 @@ agent's configured default marked, filtered as it is typed into. Decisions in it
 - **Present without a status.** A topic that has a conversation but no status yet (after a restart)
   shows the switch alone, named "Model", rather than no way to switch at all.
 - **The caret is CSS** (`.st-model::after`), so the strip's text is still the model's name.
+
+**The agent's own settings sit beside it** (`optChip`, `openOptPop`): every ACP `select` config option
+in a `_` category — the spec leaves those to the agent — gets a switch of the same kind, sharing
+`#model-pop` (`mp.opt` is the setting's id, null for the model). A web agent driver uses one for
+the account a session runs on. Decisions in it:
+
+- **Generic, and only the custom categories** (`agent-acp.ts` customOptionsOf). The model, effort
+  and mode have paths of their own; a reserved category nothing here handles (`model_config`, which
+  claude-agent-acp reports) or an option with no category must not grow a button.
+- **The agent's state, never the gateway's.** No override is recorded and nothing is re-applied on
+  a rebuilt child: the agent keeps its setting across a reload and reports it again. The status
+  (`AgentStatus.options`) carries each setting's current value, `fixed` when the agent lists only
+  one value (ACP has no "disabled", so that is how a locked setting is said), and the current
+  value's description; `POST api/options` is `session/set_config_option`, and a refusal is the
+  agent's own sentence, shown in the open list.
+- **Present before the first message.** A new topic is when a setting like an account can still
+  change, and nothing has reported a status yet. So a line with no status asks
+  `GET api/options?peek=1` (`optionStatusForRef`), which never starts this topic's agent — that
+  would bind the topic before its first message — and answers from its session if it has one, else
+  with the setting names its agent has (`ModelCatalog.options`). For a topic with no session yet the
+  catalog may ask on a throwaway session, once per agent per daemon run, as the settings page
+  does. Opening a setting (`GET api/options`) is the model list's warm-up. The peek is asked again
+  when a message arrives in a topic with no status: `/cd` and `/new` end the session it described.
+- **A fixed setting is a disabled button**, dim, no caret, with its reason in the title; the
+  setting's name stays in front of the value, so a bare account name is not read as something else.
 - **A finger target on a phone**: 44px, which makes the strip that tall there; the list spans the
   composer, and the filter is not focused on open, for the reason the composer is not.
 
