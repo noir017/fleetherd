@@ -214,10 +214,11 @@ npm run lint          # eslint (flat config)
 npm run build         # tsc → dist/, then fleetherd-remote for amd64 + arm64 → dist/remote-bin/
 ```
 
-While a branch is being worked on or reviewed, run typecheck, lint and the tests that cover the
-change — `npx vitest run <files>`, or `npx vitest related <changed files> --run` — not `npm test`.
-The whole suite takes minutes on a busy machine and `npm run release` runs it on the merged result
-anyway; run by every sub-agent and every review, it was half of an hour's wait (2026-11-06).
+**Never run the full test suite (`npm test` or `npm run test:coverage`) locally.** Locally, run only
+`typecheck`, `lint`, and the tests that cover your change — `npx vitest run <files>`, or
+`npx vitest related <changed files> --run`. The full suite is heavy on shared containers and is run
+exclusively by GitHub Actions (`ci.yml`) on push/PR. Testing and releasing are decoupled: neither
+`npm run release` nor `release.yml` blocks on the full Vitest suite (2026-11-20).
 
 Every test file runs with a HOME of its own (`vitest.setup.ts`): code under test makes directories
 under the home it finds, and the suite runs on machines whose home is live. A test gateway or CLI
@@ -589,9 +590,10 @@ down for nine hours.
 Notes that decide whether steps 1–2 are even correct:
 
 - **`npm run release` is the whole of "commit + compile".** It stamps the CHANGELOG, bumps
-  `package.json`, runs typecheck/lint/test/build as local gates, commits, and tags — and
-  deliberately does **not** push. Do not hand-roll those edits: four things have to agree
-  and every way they can disagree fails *after* the tag is public.
+  `package.json`, runs typecheck/lint/test:remote/build as local gates (without the full Vitest
+  suite, which runs asynchronously in `ci.yml`), commits, and tags — and deliberately does **not**
+  push. Do not hand-roll those edits: four things have to agree and every way they can disagree
+  fails *after* the tag is public.
 - **A code change must take a new version number.** The image pins the tarball's SHA256, so
   re-cutting an existing version produces different bytes under the same tag and simply
   fails to bake in.
