@@ -5,6 +5,22 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **Status line shows the default model and setting values before the first message.** Previously,
+  peeking a fresh topic (`GET /api/options?peek=1`) returned only option names without values or a
+  model, so picking a multi-account agent drew a bare `Model · Account` until the person clicked
+  the setting button to warm the session. `ModelCatalog` now retains the fresh session's default
+  model and setting defaults (probing once if the only live session has locked its setting), and
+  warming via either the model or setting picker syncs both to the status board.
+- **Multi-account quota readings are scoped to each conversation's active account.** When a shared
+  `quotaCommand` reports per-account rows (TSV `Family (account)` or JSON `account`/`profile`),
+  `parseAgyUsagePools` previously collapsed every account onto the same pool id, rendering repeated
+  `5h` / `wk` chips in the status line. Pools now carry an optional `account` (deduplicated per
+  account+pool, leaving aggregated summaries untouched), sessions filter quota readings to their
+  active account (and re-scope on `config_option_update`), and the web UI prefixes account tags
+  if multiple accounts remain unscoped.
+
 ## [3.18.0] - 2026-11-20
 
 ### Added

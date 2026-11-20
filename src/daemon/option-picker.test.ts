@@ -172,10 +172,10 @@ describe('choosing one', () => {
 });
 
 describe('what a status line draws before anything has reported', () => {
-  it('asks the agent once, on a throwaway session, for a new conversation — names only', async () => {
+  it('asks the agent once, on a throwaway session, for a new conversation — including default value', async () => {
     const r = rig();
     const peek = await r.registry.optionStatusForRef(REF);
-    expect(peek).toEqual({ agent: 'browser', options: [{ id: 'account', name: 'Account' }] });
+    expect(peek).toEqual({ agent: 'browser', options: [{ id: 'account', name: 'Account', value: 'Work' }] });
     // Not this conversation's session: that would bind the topic before its first message.
     expect(r.created).toEqual(['models:browser']);
     expect(r.own()).toBeUndefined();

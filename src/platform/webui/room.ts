@@ -887,7 +887,7 @@ export class WebRoom {
    * Which of the agent's own settings to draw for a topic that has no status yet, without starting
    * its agent. Empty, never an error: a status line that has nothing extra to show shows nothing.
    */
-  async optionStatus(topic: string): Promise<{ agent?: string; options: StatusOption[] }> {
+  async optionStatus(topic: string): Promise<{ agent?: string; model?: string; options: StatusOption[] }> {
     if (!this.optionPicker || !this.topics.has(topic)) return { options: [] };
     return this.optionPicker.peek(this.conversation(topic));
   }

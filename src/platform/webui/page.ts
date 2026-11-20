@@ -1986,7 +1986,7 @@ const SCRIPT = `
   // Which of the agent's own settings to draw for a topic with no status yet (see "The agent's own
   // settings"). Up here because paintStatus reads it, and the launcher repaints the status line
   // while the script is still setting up.
-  var opk={ topic: null, options: [], seq: 0, timer: null };
+  var opk={ topic: null, agent: '', model: '', options: [], seq: 0, timer: null };
   // The machines the daemon cannot reach, by the name the topic list and the agent cards use →
   // since when (OfflineMachine), and what the list was drawn from. Replaced whole on every push.
   var offlineMachines={}, offlineSig='[]';
@@ -7885,6 +7885,9 @@ const SCRIPT = `
     }
     var pools = s.quota || [], anyActive = false;
     for(var i=0;i<pools.length;i++) if(pools[i].active) anyActive = true;
+    var qAccts = {};
+    for(var a=0;a<pools.length;a++) if(pools[a].account) qAccts[pools[a].account] = 1;
+    var multiAcct = Object.keys(qAccts).length > 1;
     for(var j=0;j<pools.length;j++){
       var p = pools[j], off = anyActive && !p.active;
       // Closed, only the pools being spent from: the others are context, and the line is short.
@@ -7892,9 +7895,12 @@ const SCRIPT = `
       var rp = Math.round(p.remaining * 100);
       // A reset time is only worth the room while something has been spent.
       var reset = p.resetsAt && rp < 100 ? ' ('+stLeft(p.resetsAt - now)+')' : '';
+      var acctTag = multiAcct && p.account ? p.account.split('@')[0]+' ' : '';
+      var tip = (p.account ? p.account+(p.resetsAt ? ' \\u00b7 ' : '') : '')
+        + (p.resetsAt ? 'Refills '+new Date(p.resetsAt).toLocaleString() : '');
       out.push(seg((rp <= 15 ? 'bad' : (rp <= 40 ? 'warn' : ''))+(off ? ' off' : ''),
-        p.resetsAt ? 'Refills '+new Date(p.resetsAt).toLocaleString() : '',
-        text(poolLabel(p.id)+' '+rp+'%'+reset)));
+        tip,
+        text(acctTag+poolLabel(p.id)+' '+rp+'%'+reset)));
     }
     return out.join('');
   }
@@ -7908,8 +7914,12 @@ const SCRIPT = `
     // hid the switch from the moment an agent was chosen until the first reply reported a status —
     // exactly when someone wants to pick the model the first message goes to.
     var bare = !s && topic && synced && !launchEl && log.querySelector('.m');
+    var opkSame = opk.topic === topic;
+    var bareWho = (opkSame && opk.agent ? text(opk.agent)+' \\u00b7 ' : '')
+      + modelChip((opkSame && opk.model) || 'Model')
+      + optChips(opkFor(topic));
     var html = s ? statusSegments(s, Date.now(), statusEl.classList.contains('open'))
-      : (bare ? seg('st-who', '', modelChip('Model')+optChips(opkFor(topic))) : '');
+      : (bare ? seg('st-who', '', bareWho) : '');
     // The agent's own settings have no status to come from yet either, so ask which to draw.
     if(bare && opk.topic !== topic) schedulePeek();
     // Compared before writing: the tick redraws twice a minute, and most of those change nothing.
@@ -7993,11 +8003,13 @@ const SCRIPT = `
     if(!topic || agentStatus) return;
     var n = ++opk.seq, t = topic;
     // Claimed now, so the repaints while it is asked do not ask again.
-    if(opk.topic !== t){ opk.topic = t; opk.options = []; }
+    if(opk.topic !== t){ opk.topic = t; opk.agent = ''; opk.model = ''; opk.options = []; }
     fetch('api/options?peek=1&t='+encodeURIComponent(t), {credentials:'same-origin'})
       .then(function(r){ return r.ok ? r.json() : null; })
       .then(function(j){
         if(n !== opk.seq || t !== opk.topic || !j) return;
+        opk.agent = j.agent || '';
+        opk.model = j.model || '';
         opk.options = j.options || [];
         paintStatus();
       }, function(){});

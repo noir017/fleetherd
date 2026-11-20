@@ -173,23 +173,42 @@ describe('ModelCatalog', () => {
  * the status line asks unprompted, every time such a topic is drawn.
  */
 describe('ModelCatalog: the agent’s own settings', () => {
-  const ACCOUNT: SessionOption = { id: 'account', name: 'Account', current: 'work', options: [{ value: 'work', name: 'Work' }] };
+  const ACCOUNT: SessionOption = {
+    id: 'account',
+    name: 'Account',
+    current: 'work',
+    options: [
+      { value: 'work', name: 'Work' },
+      { value: 'home', name: 'Home' },
+    ],
+  };
+  const LOCKED_ACCOUNT: SessionOption = { id: 'account', name: 'Account', current: 'home', options: [{ value: 'home', name: 'Home' }] };
 
-  it('answers from a live session first, names only, without starting anything', async () => {
+  it('answers from an unlocked live session first, without starting anything', async () => {
     const t = setup();
     t.setLiveOptions([ACCOUNT]);
-    expect(t.catalog.options('oc')).toEqual([{ id: 'account', name: 'Account' }]);
-    expect(await t.catalog.learnOptions('oc')).toEqual([{ id: 'account', name: 'Account' }]);
+    expect(t.catalog.options('oc')).toEqual([{ id: 'account', name: 'Account', defaultValue: 'Work' }]);
+    expect(await t.catalog.learnOptions('oc')).toEqual([{ id: 'account', name: 'Account', defaultValue: 'Work' }]);
     expect(t.created).toEqual([]);
   });
 
-  it('asks once when nothing is known, and the same ask answers the models', async () => {
+  it('probes once when a live session has locked its setting, so a new topic learns the fresh defaults', async () => {
+    const t = setup({ options: [ACCOUNT], selector: SELECTOR, ensure: async () => {} });
+    t.setLiveOptions([LOCKED_ACCOUNT]);
+    expect(t.catalog.options('oc')).toEqual([{ id: 'account', name: 'Account' }]);
+    expect(await t.catalog.learnOptions('oc')).toEqual([{ id: 'account', name: 'Account', defaultValue: 'Work' }]);
+    expect(t.catalog.defaultModel('oc')).toBe('A');
+    expect(t.created).toEqual(['models:oc→oc']);
+  });
+
+  it('asks once when nothing is known, and the same ask answers the models and defaults', async () => {
     const t = setup({ options: [ACCOUNT], selector: SELECTOR, ensure: async () => {} });
     expect(t.catalog.options('oc')).toBeUndefined();
-    expect(await t.catalog.learnOptions('oc')).toEqual([{ id: 'account', name: 'Account' }]);
-    expect(await t.catalog.learnOptions('oc')).toEqual([{ id: 'account', name: 'Account' }]);
+    expect(await t.catalog.learnOptions('oc')).toEqual([{ id: 'account', name: 'Account', defaultValue: 'Work' }]);
+    expect(await t.catalog.learnOptions('oc')).toEqual([{ id: 'account', name: 'Account', defaultValue: 'Work' }]);
     expect(t.created).toEqual(['models:oc→oc']);
     expect(t.catalog.get('oc')).toEqual({ kind: 'list', options: SELECTOR.options });
+    expect(t.catalog.defaultModel('oc')).toBe('A');
   });
 
   it('counts an agent that could not be asked as having none, and does not ask again', async () => {

@@ -165,7 +165,7 @@ export type SessionOptionResult = { ok: true; options: SessionOption[]; text: st
  * `list` is what opening one shows, and does start the session.
  */
 export interface SessionOptionPicker {
-  peek(ref: ConversationRef): Promise<{ agent: string; options: StatusOption[] }>;
+  peek(ref: ConversationRef): Promise<{ agent: string; model?: string; options: StatusOption[] }>;
   list(ref: ConversationRef): Promise<SessionOptionList>;
   choose(ref: ConversationRef, id: string, value: string): Promise<SessionOptionResult>;
 }

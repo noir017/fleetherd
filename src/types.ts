@@ -418,6 +418,11 @@ export interface QuotaPool {
    * Gemini and for third-party models, and only one of them moves on any given turn.
    */
   active?: boolean;
+  /**
+   * Which account this pool belongs to, when one `quotaCommand` reports pools for several accounts
+   * (e.g. a multi-account driver). Absent for single-account or already-aggregated readings.
+   */
+  account?: string;
 }
 
 /**

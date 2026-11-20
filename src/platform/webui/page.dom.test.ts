@@ -8456,12 +8456,13 @@ describe('webui page: the agent’s own settings in the status line', () => {
   });
 
   it('asks which settings to draw in a topic with no status yet, and opening one starts its agent', async () => {
-    const h = await open({ replies: { [URL_O]: LIST, [PEEK]: { agent: 'browser', options: [{ id: 'account', name: 'Account' }] } } });
+    const h = await open({
+      replies: { [URL_O]: LIST, [PEEK]: { agent: 'browser', model: 'Thinking', options: [{ id: 'account', name: 'Account', value: 'work' }] } },
+    });
     await h.emit(sync(T, [message('m1', '<p>/agent browser</p>')], [T]));
     await settle();
     expect(h.calls.filter((c) => c.path === PEEK)).toHaveLength(1);
-    // Named, with no value: nothing has reported one, and the line does not guess.
-    expect(opt(h)?.textContent).toBe('Account');
+    expect(h.el('status').textContent).toContain('browser · Thinking · Account work');
     expect(opt(h)?.disabled).toBe(false);
     await h.click('#status .st-opt');
     await tick();
@@ -8469,6 +8470,19 @@ describe('webui page: the agent’s own settings in the status line', () => {
     expect(rows(h)).toHaveLength(2);
     // The list started the session, so the line asks again and can now say what it is set to.
     expect(h.calls.filter((c) => c.path === PEEK)).toHaveLength(2);
+  });
+
+  it('disambiguates multi-account quota chips when more than one account is present', async () => {
+    const h = await ready({
+      agent: 'browser',
+      model: 'Thinking',
+      quota: [
+        { id: 'gemini-5h', remaining: 0.88, account: 'alice@example.com' },
+        { id: 'gemini-5h', remaining: 0.99, account: 'bob@example.com' },
+      ],
+    });
+    expect(h.el('status').textContent).toContain('alice Gemini 5h 88%');
+    expect(h.el('status').textContent).toContain('bob Gemini 5h 99%');
   });
 
   it('asks again when a message arrives, since a /cd or /new ends the session it described', async () => {
