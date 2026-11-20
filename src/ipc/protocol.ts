@@ -247,8 +247,18 @@ const IpcActionSchema = z.discriminatedUnion('kind', [
       cwd: z.string().min(1).max(4_096).optional(),
       title: z.string().min(1).max(200).optional(),
       model: z.string().min(1).max(200).optional(),
+      /**
+       * `--review-by`: the agent that reviews the work on its own whenever one of its turns ends
+       * with new commits (delegation.ts, the review loop). Comes with `review`, its whole task.
+       */
+      reviewBy: z.string().min(1).max(100).optional(),
+      review: z.string().min(1).max(20_000).optional(),
+      /** How many times the review may send the work back on its own before the asking agent is told. */
+      rounds: z.number().int().min(1).max(10).optional(),
     })
     .strict(),
+  // A reviewer the review loop started answers with this, from its own topic, before its turn ends.
+  z.object({ kind: z.literal('task-verdict'), verdict: z.enum(['pass', 'nits', 'changes']) }).strict(),
   z
     .object({
       kind: z.literal('task-send'),
@@ -436,7 +446,18 @@ export type IpcAction =
   | { kind: 'schedule-op'; id: string; op: 'remove' | 'pause' | 'resume' | 'run'; waitMs?: number }
   | { kind: 'task-agents' }
   | { kind: 'task-list'; limit?: number }
-  | { kind: 'task-new'; agent?: string; text: string; cwd?: string; title?: string; model?: string }
+  | {
+      kind: 'task-new';
+      agent?: string;
+      text: string;
+      cwd?: string;
+      title?: string;
+      model?: string;
+      reviewBy?: string;
+      review?: string;
+      rounds?: number;
+    }
+  | { kind: 'task-verdict'; verdict: TaskVerdict }
   | { kind: 'task-send'; topic: string; text: string; interrupt?: boolean; forward?: string }
   | { kind: 'task-read'; topic: string; limit?: number; full?: boolean; tail?: number; role?: 'user' | 'agent' | 'tool'; turn?: string; turns?: number; since?: number; grep?: string; reply?: boolean }
   | { kind: 'task-status'; topic: string }
@@ -620,9 +641,21 @@ export interface TaskRow {
   cost: string;
   /** When it last did anything, ISO. */
   lastAt: string;
+  /**
+   * Its part in an automatic review (`task-new --review-by`): who reviews it and where the loop
+   * stands, or which work it reviews. Empty for a topic in no review — always present, because a
+   * TOON table needs every row to carry the same columns and a missing one turns it into a list.
+   */
+  review: string;
   /** A link that opens it on the platform it is on, where there is one (the web UI's `?t=<topic>`). */
   link?: string;
 }
+
+/**
+ * A reviewer's answer in the review loop (`task-verdict`): `pass` ends it, `nits` sends the reply to
+ * the author with no further review, `changes` sends it back and the fix returns to the reviewer.
+ */
+export type TaskVerdict = 'pass' | 'nits' | 'changes';
 
 /** Response body for task-list. */
 export interface TaskListResult {

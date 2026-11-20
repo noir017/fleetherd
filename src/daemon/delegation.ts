@@ -1,4 +1,4 @@
-import type { Config } from '../config/schema.js';
+import type { AgentDef, Config } from '../config/schema.js';
 import { findAgent } from '../config/schema.js';
 import { formatCost, formatElapsed } from '../core/busy-snapshot.js';
 import { formatTarget, parseTarget, type ConversationAddress } from '../core/conversation.js';
@@ -16,9 +16,11 @@ import type {
   TaskReadResult,
   TaskRow,
   TaskStatusResult,
+  TaskVerdict,
 } from '../ipc/protocol.js';
 import type { PlatformAdapter } from '../platform/adapter.js';
 import type { AgentStatus, ConversationId, TopicActivity, TopicKillResult, TopicStage } from '../types.js';
+import type { GitHead } from './git-head.js';
 import type { LiveTurn } from './turn-progress.js';
 import type { ConversationRegistry } from './conversation.js';
 import { UPDATE_SENDER, type PersonWords } from './turn-runner.js';
@@ -72,6 +74,32 @@ import { UPDATE_SENDER, type PersonWords } from './turn-runner.js';
  * always wait on the card, whatever the tier (`startsAtOnce`), `task-send` is refused
  * (`handleExternal`), and its updates are shown there and never sent as a turn (`tell`) — the
  * caller asks for them. AGENTS.md security invariant 11.
+ *
+ * ── The review loop ─────────────────────────────────────────────────────────────────────────────
+ * `task-new --review-by <agent> --review "<what to check>"` attaches a review that runs without the
+ * agent that asked. In the week to 2026-11-20, of the 218 turns an update card woke a coordinator
+ * into, 126 did nothing but pass a review to its author or a fix back to its reviewer — a third of
+ * the context those coordinators read, counted from their own transcripts — and every re-review
+ * began with the coordinator looking up commit ids to write "only the increment a..b".
+ *
+ * So the hops a coordinator only relayed are the gateway's now. When a turn of the work ends
+ * normally with new commits in its directory, the reviewer gets the work's reply under a heading
+ * naming the commit range — in a topic of its own beside the work, opened with the --review text the
+ * first time. The reviewer answers with `task-verdict`: `pass` ends the loop, `nits` sends its reply
+ * to the author with no further review, `changes` sends it back and the next commits return to the
+ * same reviewer, at most `rounds` times. The asking agent is told once, when the loop ends — or
+ * earlier, whenever it cannot go on by itself: a turn with no new commits or no reply, a review with
+ * no verdict, a failure or a question (those reach it as they always did), the person writing in
+ * either topic, a stop.
+ *
+ * What the gateway adds to those messages is a source label and nothing else — the heading
+ * `task-send --forward` already uses, plus the commit range or the verdict (AGENTS.md, "Nothing of
+ * the gateway's in the agent's prompt", decided with the operator 2026-11-20). The person confirms
+ * the reviewer and its text on the same card as the work (invariant 6), so a reviewer the loop opens
+ * later was already started by that tap. Nothing of this is offered to an external caller: sending a
+ * verdict into a running author is `task-send`, which invariant 11 keeps from it. The loops live in
+ * memory: after a restart, a reviewer's `task-verdict` is refused and the ends reach the asking agent
+ * as ordinary updates again.
  */
 
 /**
@@ -123,6 +151,14 @@ export const CARD_MAX_ENTRIES = 20;
 
 /** How much of each sub-task's text the confirmation card shows. */
 const PROPOSAL_TEXT_CHARS = 1_500;
+
+/**
+ * How many times a review may send the work back on its own (`task-new --rounds`). Of the 32
+ * author/reviewer pairs coordinators relayed in the week to 2026-11-20, 18 went back and forth more
+ * than once and one six times; three settles most, and a loop still asking for changes after that is
+ * worth the asking agent's look.
+ */
+export const REVIEW_ROUNDS = 3;
 
 /** How much of each message `task-read` returns. */
 const READ_CHARS = 1_500;
@@ -207,6 +243,12 @@ export interface DelegationDeps {
    */
   externalOf?(platform: string, address: ConversationAddress): ExternalOwner | undefined;
   /**
+   * The commit a conversation's working directory is on, on the machine its agent runs on — what the
+   * review loop compares to tell whether a turn committed anything. Undefined when it cannot say (no
+   * repository there, the machine did not answer), and the loop then starts no review and says why.
+   */
+  headOf?(key: ConversationId): Promise<GitHead | undefined>;
+  /**
    * Put the card up as a question with buttons, in the conversation that proposed it, and resolve
    * with the label tapped — null when it was called off (`signal`, `/stop`, `/new`) or ran out of time.
    */
@@ -264,6 +306,55 @@ interface Item {
   cwd?: string;
   title?: string;
   model?: string;
+  review?: ReviewPlan;
+}
+
+/** `task-new --review-by`: who reviews the work, what it is told, and how often it may send it back. */
+interface ReviewPlan {
+  agent: string;
+  text: string;
+  rounds: number;
+}
+
+/**
+ * One review loop (see "The review loop" above), keyed by the work's topic. Kept after it ends, so
+ * `tasks` and the card can still say how it ended.
+ */
+interface ReviewLoop {
+  work: ConversationId;
+  /** The work's topic id, as `tasks` prints it. */
+  workTopic: string;
+  plan: ReviewPlan;
+  /** Times the review has sent the work back so far. */
+  sentBack: number;
+  /**
+   * The commit already reviewed — at first the one the work started from. Undefined until it is
+   * read, and for good when it cannot be: the first commit range is then just the commit reviewed.
+   */
+  reviewed?: string;
+  /** The commit handed to the review now running. */
+  pending?: string;
+  /** The reviewer's topic, once the first review opened it. */
+  review?: { key: ConversationId; address: ConversationAddress; topic: string };
+  /**
+   * Whose turn end the loop is waiting for: the work's (`work`; `finish` after a `nits`, which ends
+   * the loop whatever it committed) or the reviewer's (`review`). Any other end is ordinary news.
+   */
+  phase: 'work' | 'review' | 'finish';
+  /** What the reviewer answered with `task-verdict` in the turn now running; read once, at its end. */
+  verdict?: TaskVerdict;
+  /** How it ended, once it has — the line `tasks` and the card show. */
+  outcome?: { passed: boolean; line: string };
+  /** Why the last end did not move it on (no commit, no reply): said on the next card, then dropped. */
+  note?: string;
+}
+
+/** What `task-send --forward` (and the review loop) attaches: a reply under the heading naming it. */
+interface Forward {
+  heading: string;
+  text: string;
+  /** What the answer to `task-send` says about it. */
+  note: string;
 }
 
 /** One sub-task that has started, as the card that stands in for a confirmation lists it. */
@@ -278,6 +369,8 @@ interface OpenedTask {
   host?: string;
   cwd?: string;
   model?: string;
+  /** The agent reviewing it, when it has a review loop. */
+  review?: string;
 }
 
 /** What one sub-agent said — or the person said to it — as the card quotes it. */
@@ -352,7 +445,16 @@ export class Delegation {
   /** The tier `confirmedOnce` was gathered under. Kept so a change made behind our back — /reload — is noticed. */
   private confirmMode: Config['delegation']['confirm'] | undefined;
   /** Sub-agent topics with news, per conversation to tell, gathered for CARD_DELAY_MS. */
-  private readonly updates = new Map<ConversationId, { children: Set<ConversationId>; cancel: () => void; at: TopicAt }>();
+  private readonly updates = new Map<
+    ConversationId,
+    {
+      children: Set<ConversationId>;
+      cancel: () => void;
+      at: TopicAt;
+      /** Children the review loop itself is reporting: never taken back by it (see `sendUpdates`). */
+      fromLoop: Set<ConversationId>;
+    }
+  >();
   /**
    * Updates held back because the agent that would read them is over its usage limit (TurnOutcomes'
    * cooldown), per conversation to tell, with that agent. A card is a turn on the same account: sent
@@ -386,6 +488,10 @@ export class Delegation {
    * still holds it, and so whatever it does next was asked for partly in those words.
    */
   private readonly said = new Map<ConversationId, Said>();
+  /** Review loops by the work's topic (`task-new --review-by`). */
+  private readonly loops = new Map<ConversationId, ReviewLoop>();
+  /** A reviewer's topic → the work it reviews, the key `loops` is under. */
+  private readonly reviewerOf = new Map<ConversationId, ConversationId>();
 
   constructor(private readonly deps: DelegationDeps) {}
 
@@ -403,6 +509,8 @@ export class Delegation {
     this.onScreen.clear();
     this.owed.clear();
     this.said.clear();
+    this.loops.clear();
+    this.reviewerOf.clear();
   }
 
   // ── The task commands ─────────────────────────────────────────────────────────────────────────
@@ -436,6 +544,8 @@ export class Delegation {
         return this.status(here, action.topic);
       case 'task-stop':
         return this.stop(here, action.topic);
+      case 'task-verdict':
+        return this.verdict(here, action.verdict);
       default: {
         const _exhaustive: never = action;
         throw new Error(`unknown task command: ${JSON.stringify(_exhaustive)}`);
@@ -448,11 +558,17 @@ export class Delegation {
    * has already found to be that caller's). The same commands as a conversation's, through the same
    * code, minus `task-send`: a caller reading untrusted pages must not be able to reach a sub-agent's
    * running turn without a tap (AGENTS.md security invariant 11). The tool surface never offers it;
-   * this is the second lock.
+   * this is the second lock. A review loop is refused for the same reason: it sends a reviewer's words
+   * into the author's session, which is `task-send` by the gateway's hand — and `task-verdict`
+   * belongs to a reviewer's own topic, never a coordination topic.
    */
   async handleExternal(key: ConversationId, action: TaskAction, at: TopicAt): Promise<unknown> {
     if (!this.deps.externalOf?.(at.platform, at.address)) throw new Error('not a coordination topic an external caller opened');
     if (action.kind === 'task-send') throw new Error('task-send is not offered to an external caller');
+    if (action.kind === 'task-verdict') throw new Error('task-verdict is not offered to an external caller');
+    if (action.kind === 'task-new' && (action.reviewBy !== undefined || action.review !== undefined)) {
+      throw new Error('an automatic review is not offered to an external caller');
+    }
     return this.handle(key, action, at);
   }
 
@@ -535,37 +651,21 @@ export class Delegation {
   private async propose(here: Place, a: Extract<TaskAction, { kind: 'task-new' }>): Promise<TaskNewResult> {
     this.syncConfirmMode();
     const ext = this.externalOf(here);
-    // An external topic has no agent of its own to default to; the caller names one.
-    const agent = a.agent ?? (ext ? undefined : this.deps.registry.boundAgentOf(here.key));
-    if (!agent) {
-      throw new Error(
-        ext ? 'name the agent that does the work: an id from the agents action' : 'this conversation has no agent to use by default; give task-new --agent <id>'
-      );
-    }
-    const def = findAgent(this.deps.config, agent);
-    if (!def) {
-      throw new Error(`no agent "${agent}"; task-agents lists them: ${this.deps.config.agents.map((d) => d.id).join(', ')}`);
-    }
-    if (a.model) {
-      // Refuse a typo while the asking agent can still retry in this turn, using the same list
-      // /model and schedule add --model use. Applying it later is strict too (openTask).
-      const why = await this.deps.registry.scheduledModelProblem(agent, a.model, here.key);
-      if (why) throw new Error(why);
-    }
-    const item: Item = {
-      agent,
-      text: a.text,
-      ...(a.cwd ? { cwd: a.cwd } : {}),
-      ...(a.title ? { title: a.title } : {}),
-      ...(a.model ? { model: a.model } : {}),
-    };
+    const item = await this.itemOf(here, a, ext !== undefined);
     const key = this.cardKey(here);
-    if (this.startsAtOnce(here, item.agent)) {
+    const review = item.review;
+    const reviewed = review
+      ? ` Its review by ${review.agent} starts on its own whenever one of its turns ends with new commits; you are told once it passes, or when the loop stops and needs you.`
+      : '';
+    if (this.startsAtOnce(here, item.agent) && (!review || this.startsAtOnce(here, review.agent))) {
       const { opened, failed } = await this.start(here, [item]);
       this.queueStartedCard(key, opened, failed, { platform: here.platformId, address: here.address });
       // The card's position, the same fact `item` carries when a confirmation card is gathering.
       const card = this.started.get(key);
-      return { item: card ? card.opened.length + card.failed.length : 1, result: startedResult(opened, failed) };
+      return {
+        item: card ? card.opened.length + card.failed.length : 1,
+        result: startedResult(opened, failed) + (opened.length ? reviewed : ''),
+      };
     }
     const g = this.gathering.get(key) ?? {
       items: [],
@@ -596,8 +696,73 @@ export class Delegation {
       result:
         `Sub-task ${g.items.length} is on the card the person is about to be asked to confirm; more task-new calls ` +
         `join the same card while it waits. Nothing starts until they confirm. Then each gets a topic nested under ` +
-        `this one, all start at once, and you are told here as each finishes, fails or asks something.`,
+        `this one, all start at once, and you are told here as each finishes, fails or asks something.` +
+        reviewed,
     };
+  }
+
+  /** One `task-new` as the sub-task it proposes, refused while the asking agent can still fix it. */
+  private async itemOf(here: Place, a: Extract<TaskAction, { kind: 'task-new' }>, ext: boolean): Promise<Item> {
+    // An external topic has no agent of its own to default to; the caller names one.
+    const agent = a.agent ?? (ext ? undefined : this.deps.registry.boundAgentOf(here.key));
+    if (!agent) {
+      throw new Error(
+        ext ? 'name the agent that does the work: an id from the agents action' : 'this conversation has no agent to use by default; give task-new --agent <id>'
+      );
+    }
+    const def = findAgent(this.deps.config, agent);
+    if (!def) {
+      throw new Error(`no agent "${agent}"; task-agents lists them: ${this.deps.config.agents.map((d) => d.id).join(', ')}`);
+    }
+    if (a.model) {
+      // Refuse a typo while the asking agent can still retry in this turn, using the same list
+      // /model and schedule add --model use. Applying it later is strict too (openTask).
+      const why = await this.deps.registry.scheduledModelProblem(agent, a.model, here.key);
+      if (why) throw new Error(why);
+    }
+    const review = ext ? undefined : this.reviewPlanOf(a, def);
+    return {
+      agent,
+      text: a.text,
+      ...(a.cwd ? { cwd: a.cwd } : {}),
+      ...(a.title ? { title: a.title } : {}),
+      ...(a.model ? { model: a.model } : {}),
+      ...(review ? { review } : {}),
+    };
+  }
+
+  /**
+   * `--review-by` / `--review` / `--rounds`, checked while the asking agent can still fix them.
+   *
+   * The reviewer must be on the work's machine: it is started in the work's own directory, which on
+   * any other machine is a different checkout or none. And the review text must ask for
+   * `task-verdict` — the loop's only way to learn the outcome; a reviewer that never sends one stops
+   * the loop at its first review, which is a card the agent could have avoided here.
+   */
+  private reviewPlanOf(a: Extract<TaskAction, { kind: 'task-new' }>, worker: AgentDef): ReviewPlan | undefined {
+    if (a.reviewBy === undefined && a.review === undefined) {
+      if (a.rounds !== undefined) throw new Error('--rounds applies only with --review-by');
+      return undefined;
+    }
+    if (!a.reviewBy || !a.review) throw new Error('--review-by and --review go together: who reviews, and the whole of what it checks');
+    const reviewer = findAgent(this.deps.config, a.reviewBy);
+    if (!reviewer) {
+      throw new Error(`no agent "${a.reviewBy}" to review; task-agents lists them: ${this.deps.config.agents.map((d) => d.id).join(', ')}`);
+    }
+    const machine = (d: AgentDef): string => d.host ?? 'the gateway';
+    if ((reviewer.host ?? '') !== (worker.host ?? '')) {
+      throw new Error(
+        `the review runs in the work's own directory, so --review-by must be an agent on ${machine(worker)} (where ${worker.id} runs); ` +
+          `${reviewer.id} runs on ${machine(reviewer)}`
+      );
+    }
+    if (!a.review.includes('task-verdict')) {
+      throw new Error(
+        '--review must ask the reviewer to end with `fleetherd task-verdict pass|nits|changes`: that is how the loop learns the outcome, ' +
+          'and a review without one stops it at the first round'
+      );
+    }
+    return { agent: reviewer.id, text: a.review, rounds: a.rounds ?? REVIEW_ROUNDS };
   }
 
   /**
@@ -635,7 +800,11 @@ export class Delegation {
   private rememberConfirmed(here: Place, items: Item[]): void {
     if (this.deps.config.delegation.confirm !== 'first' || this.externalOf(here)) return;
     const known = this.confirmedOnce.get(here.key) ?? new Set<string>();
-    for (const item of items) known.add(item.agent);
+    // The reviewer was on the card too, text and all: the tap started it as much as the work.
+    for (const item of items) {
+      known.add(item.agent);
+      if (item.review) known.add(item.review.agent);
+    }
     this.confirmedOnce.set(here.key, known);
   }
 
@@ -748,8 +917,15 @@ export class Delegation {
       const model = item.model ? ` · model \`${item.model}\`` : '';
       const dir = item.cwd ? ` · \`${item.cwd}\`` : '';
       const title = item.title ? ` — ${item.title}` : '';
-      const text = item.text.length > PROPOSAL_TEXT_CHARS ? `${item.text.slice(0, PROPOSAL_TEXT_CHARS - 1)}…` : item.text;
-      lines.push('', `${i + 1}. **${item.agent}**${model}${where}${dir}${title}`, ...text.split('\n').map((l) => `> ${l}`));
+      lines.push('', `${i + 1}. **${item.agent}**${model}${where}${dir}${title}`, ...quoteLines(item.text));
+      if (item.review) {
+        // In full, like the task: the reviewer starts later without another card, on this tap.
+        const r = item.review;
+        lines.push(
+          `   Reviewed by **${r.agent}** in the same directory, on its own, whenever a turn ends with new commits — sent back at most ${r.rounds} time${r.rounds === 1 ? '' : 's'}:`,
+          ...quoteLines(r.text)
+        );
+      }
     });
     // Nobody reads a reply typed into an external topic: Cancel is the only way to say no.
     lines.push(
@@ -790,14 +966,17 @@ export class Delegation {
         this.owed.add(key);
         const title = subjectOf(named);
         const host = findAgent(this.deps.config, item.agent)?.host;
+        const topic = topicOf(here.platformId, address);
+        if (item.review) this.arm(key, topic, item.review);
         opened.push({
           title,
-          topic: `${here.platformId}:${address.channel}${address.thread ? `/${address.thread}` : ''}`,
+          topic,
           ...(address.thread ? { link: `?t=${address.thread}` } : {}),
           agent: item.agent,
           ...(host ? { host } : {}),
           ...(item.cwd ? { cwd: item.cwd } : {}),
           ...(item.model ? { model: item.model } : {}),
+          ...(item.review ? { review: item.review.agent } : {}),
         });
         console.log(`[delegation] ${here.key} opened ${key} for "${item.agent}"`);
       } catch (e) {
@@ -914,23 +1093,33 @@ export class Delegation {
    * Both topics go through `child()`, so a source this conversation did not open is refused with
    * the same sentence as a target it did not open (security invariant 6).
    */
-  private forwardOf(here: Place, topic: string): { heading: string; text: string; note: string } {
-    const c = this.child(here, topic);
+  private forwardOf(here: Place, topic: string): Forward {
+    const got = this.forwardable(this.child(here, topic), topic);
+    if ('problem' in got) throw new Error(got.problem);
+    return got;
+  }
+
+  /**
+   * The forward for one topic, or why there is none — `forwardOf`'s, and the review loop's, which
+   * passes the commit range or the verdict as `label`: a source label like the rest of the heading,
+   * not words of the gateway's about the work (see "The review loop").
+   */
+  private forwardable(c: Place, topic: string, label?: string): Forward | { problem: string } {
     const history = this.deps.history;
     if (!history) {
-      throw new Error('the conversation library is unavailable, and --forward reads it; `task-status` shows the live turn');
+      return { problem: 'the conversation library is unavailable, and --forward reads it; `task-status` shows the live turn' };
     }
     // A topic with no session row yet would otherwise throw the library's own "no conversation",
     // which reads like a wrong topic id rather than a topic that has not run (as `read` guards).
-    if (!history.sessionOf(c.key)) throw new Error(`nothing to forward from "${topic}": no turn has run there yet`);
+    if (!history.sessionOf(c.key)) return { problem: `nothing to forward from "${topic}": no turn has run there yet` };
     const got = this.replyOfTurn(c, topic, history);
     if (!got.reply) {
-      throw new Error(
-        `nothing to forward from "${topic}": no turn there has ended normally in the current generation yet — \`task-read ${topic} --reply\` says why`
-      );
+      return {
+        problem: `nothing to forward from "${topic}": no turn there has ended normally in the current generation yet — \`task-read ${topic} --reply\` says why`,
+      };
     }
     const title = subjectOf(this.titleOf(c.key, c));
-    const id = `${c.platformId}:${c.address.channel}${c.address.thread ? `/${c.address.thread}` : ''}`;
+    const id = topicOf(c.platformId, c.address);
     // A topic that is still working, retrying, or holding a question will report again; the reply
     // forwarded here is its last one that finished, and saying so keeps the parent from treating
     // it as that topic's latest word.
@@ -946,7 +1135,7 @@ export class Delegation {
     // Plain text, not markdown: the topic shows this as a report bubble, which is rendered one
     // escaped line per row so it can fold — asterisks and links would arrive as themselves.
     return {
-      heading: `↳ Forwarded from "${title}" · ${id} · turn ${got.reply.turn}`,
+      heading: `↳ Forwarded from "${title}" · ${id} · turn ${got.reply.turn}${label ? ` · ${label}` : ''}`,
       text: got.reply.text,
       note:
         `Forwarded "${title}" (turn ${got.reply.turn}) with it.` +
@@ -1060,6 +1249,8 @@ export class Delegation {
 
   private stop(here: Place, topic: string): TaskActionResult {
     const c = this.child(here, topic);
+    // A stop is the asking agent taking the work back: the loop must not hand it on behind it.
+    this.disarm(c.key, 'stopped with task-stop');
     // What the stop kept or dropped goes under the mark, in the topic, where the person who may have
     // typed it reads (see InboundMerger.interrupt) — and is counted for the agent that asked.
     const { outcome, kept, dropped } = this.deps.registry.interruptConversation(c.key);
@@ -1096,6 +1287,7 @@ export class Delegation {
     seen.add(key);
     let stopped = 0;
     for (const c of this.childrenOf(here)) {
+      this.disarm(c.key, 'stopped with /stop');
       const { outcome, calledOff, transcripts, kept, dropped } = this.deps.registry.stopWithPending(c.key, 'stopped from the topic that opened it');
       const note = stopInputNote(kept, dropped);
       if (outcome !== 'idle' || calledOff + transcripts > 0 || note) {
@@ -1149,6 +1341,7 @@ export class Delegation {
       return parent !== undefined && ending.has(parent);
     });
     this.ended(ending, silenced.map((p) => p.key));
+    for (const key of ending) this.disarm(key, 'its agent was ended');
     const results: TopicKillResult[] = [];
     // Children before the parent: an interrupt of the parent's own turn cannot then race the
     // children it was waiting on. The answer is put back in root-first order below.
@@ -1279,6 +1472,7 @@ export class Delegation {
       context: contextOf(status),
       cost: status?.cost ? formatCost(status.cost) : '',
       lastAt: lastAtOf(activity, live),
+      review: this.reviewLine(c.key),
       ...(c.address.thread ? { link: `?t=${c.address.thread}` } : {}),
     };
   }
@@ -1325,13 +1519,17 @@ export class Delegation {
   }
 
   /** Gather news from `children` for one card to `key`, CARD_DELAY_MS from the first. */
-  private queueUpdates(key: ConversationId, children: Iterable<ConversationId>, at: TopicAt): void {
+  private queueUpdates(key: ConversationId, children: Iterable<ConversationId>, at: TopicAt, fromLoop = false): void {
     const u = this.updates.get(key) ?? {
       children: new Set<ConversationId>(),
       cancel: this.deps.clock.schedule(() => this.sendUpdates(key), CARD_DELAY_MS),
       at,
+      fromLoop: new Set<ConversationId>(),
     };
-    for (const c of children) u.children.add(c);
+    for (const c of children) {
+      u.children.add(c);
+      if (fromLoop) u.fromLoop.add(c);
+    }
     u.at = at;
     this.updates.set(key, u);
   }
@@ -1387,6 +1585,9 @@ export class Delegation {
     if (!words.text.trim() && words.attachments.length === 0) return;
     const parent = this.parentOf(id);
     if (!parent) return;
+    // The person took this part over: what they asked for is not what the loop was set up to check.
+    const at = this.place(id);
+    this.disarm(id, `the person wrote in ${at ? topicOf(at.platformId, at.address) : id}`);
     const s = this.said.get(id) ?? { text: '', total: 0, attachments: [], moreAttachments: 0, turns: [], unnumbered: false };
     if (words.text) {
       const sep = s.total > 0 ? '\n' : '';
@@ -1420,6 +1621,8 @@ export class Delegation {
     this.updates.delete(key);
     const here = this.place(key, u?.at);
     if (!u || !here) return;
+    this.takeLoopEnds(u.children, u.fromLoop, here);
+    if (u.children.size === 0) return;
     const reader = this.deps.registry.boundAgentOf(key);
     if (reader && this.deps.registry.coolingDown(reader)) {
       this.holdUpdates(here, reader, u.children);
@@ -1451,6 +1654,25 @@ export class Delegation {
   }
 
   /**
+   * Take out of a gathered card the ends the review loop is waiting for, and act on them.
+   *
+   * Here rather than in `childChanged`: TurnRunner reports a turn's end before it unwinds and before
+   * the library has closed the turn, so at that moment the topic still reads as working and its reply
+   * is not there to forward (measured against a real gateway, 2026-11-20). After CARD_DELAY_MS both
+   * are settled — the reason the card re-reads every stage anyway. Ahead of the cooldown hold, too:
+   * the loop does not wake the reader, so a reader over its limit is no reason to keep the work
+   * waiting. What the loop itself queued (`fromLoop`) is never taken back.
+   */
+  private takeLoopEnds(children: Set<ConversationId>, fromLoop: Set<ConversationId>, here: Place): void {
+    for (const id of children) {
+      const loop = fromLoop.has(id) ? undefined : this.takenByLoop(id);
+      if (!loop) continue;
+      children.delete(id);
+      void this.advance(loop, id, here);
+    }
+  }
+
+  /**
    * One sub-agent on the card: where it is, how it stands, and what it said — after what the person
    * wrote to it directly, when they did.
    *
@@ -1461,9 +1683,14 @@ export class Delegation {
    */
   private entry(c: Place, row: TaskRow, stage: TopicStage, said: Said | undefined): CardEntry {
     const quote = this.quoteOf(c, row, stage);
+    // `row.review` already carries the one-off note (no commit, no reply); this card is where it is said.
+    const loop = this.loopOf(c.key);
+    if (loop) loop.note = undefined;
     return {
       topic: row.topic,
-      head: `- topic ${row.topic} · "${row.title}" · ${row.agent}${row.cwd ? ` in ${row.cwd}` : ''} · ${describeStage(stage)}`,
+      head: `- topic ${row.topic} · "${row.title}" · ${row.agent}${row.cwd ? ` in ${row.cwd}` : ''} · ${describeStage(stage)}${
+        row.review ? ` · ${row.review}` : ''
+      }`,
       ...(said ? { said: saidQuote(said) } : {}),
       ...(quote ? { quote } : {}),
       ...(row.link ? { link: row.link } : {}),
@@ -1580,6 +1807,250 @@ export class Delegation {
       })
       .catch((e) => console.warn('[delegation] sub-agent updates failed:', e instanceof Error ? e.message : e));
     console.log(`[delegation] told ${here.key} about ${count} sub-agent(s)`);
+  }
+
+  // ── The review loop ───────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Set up the loop for a work topic that has just opened, and read the commit it starts from.
+   *
+   * Read after `openTask` has handed the task over, not before: the directory is the topic's only
+   * once openTask has set it. No harness here commits within the seconds its session takes to come
+   * up (a cbc child needs about 4.5 s, agent-acp.ts), so the read lands before the work's first
+   * commit; if it fails, the first review is of the commit the work ends on, without a range.
+   */
+  private arm(work: ConversationId, workTopic: string, plan: ReviewPlan): void {
+    const loop: ReviewLoop = { work, workTopic, plan, sentBack: 0, phase: 'work' };
+    this.loops.set(work, loop);
+    void this.deps
+      .headOf?.(work)
+      .then((head) => {
+        if (head && loop.reviewed === undefined) loop.reviewed = head.sha;
+      })
+      .catch(() => undefined);
+  }
+
+  /** The loop a topic is part of — as the work or as its reviewer. */
+  private loopOf(id: ConversationId): ReviewLoop | undefined {
+    return this.loops.get(id) ?? this.loops.get(this.reviewerOf.get(id) ?? '');
+  }
+
+  /**
+   * The loop this end of a turn belongs to, when it is one the loop is waiting for: a turn of the
+   * work or of its reviewer that ended normally, at the step it expects. Anything else — a question,
+   * a failure, the work ending while its review runs (the asking agent sent it something) — is news
+   * for the asking agent as it always was, and the loop stays where it is.
+   */
+  private takenByLoop(id: ConversationId): ReviewLoop | undefined {
+    const loop = this.loopOf(id);
+    if (!loop || loop.outcome) return undefined;
+    const at = this.place(id);
+    const stage = at ? this.stageOf(at) : undefined;
+    // A verdict belongs to the turn that gave it; one that failed takes it along.
+    if (stage === 'failed' && id !== loop.work) loop.verdict = undefined;
+    if (stage !== 'review') return undefined;
+    if (id === loop.work ? loop.phase === 'review' : loop.phase !== 'review') return undefined;
+    return loop;
+  }
+
+  /** Act on an end the loop was waiting for; a failure to act stops it and tells the asking agent. */
+  private async advance(loop: ReviewLoop, id: ConversationId, parent: Place): Promise<void> {
+    try {
+      if (id !== loop.work) await this.reviewEnded(loop, parent);
+      else if (loop.phase === 'finish') this.finish(loop, parent, true, 'passed, with the small fixes it asked for made');
+      else await this.workEnded(loop, parent);
+    } catch (e) {
+      const why = e instanceof Error ? e.message : String(e);
+      console.warn(`[delegation] ${loop.work}: the review loop stopped: ${why}`);
+      this.finish(loop, parent, false, `stopped: ${why}`);
+    }
+  }
+
+  /**
+   * The work's turn ended normally. New commits since the last review go to the reviewer — opened
+   * now if this is the first — under a heading naming the range. No new commit, no commit that can
+   * be read, or no reply to send: the asking agent is told why, and the loop waits for the next end,
+   * so a `task-send` that gets the work to commit picks it up again.
+   */
+  private async workEnded(loop: ReviewLoop, parent: Place): Promise<void> {
+    const work = this.place(loop.work);
+    if (!work) throw new Error('the work\'s topic is gone');
+    const head = await this.deps.headOf?.(loop.work);
+    if (loop.outcome) return this.report(parent, [loop.work]);
+    if (!head) return this.hold(loop, parent, 'no review started — no git commit could be read in its directory');
+    if (head.sha === loop.reviewed) return this.hold(loop, parent, `no review started — no new commit since ${short(head.sha)}`);
+    const range = loop.reviewed ? `${short(loop.reviewed)}..${short(head.sha)}` : short(head.sha);
+    const forward = this.forwardable(work, loop.workTopic, `commits ${range}${head.branch ? ` on ${head.branch}` : ''}`);
+    if ('problem' in forward) return this.hold(loop, parent, `no review started — ${forward.problem}`);
+    loop.pending = head.sha;
+    loop.phase = 'review';
+    const header = this.loopHeaderOf(parent);
+    const round = loop.sentBack + 1;
+    const worked = subjectOf(this.titleOf(work.key, work));
+    if (!loop.review) {
+      // Where the work is now, as its next session would start: the reviewer reads the same tree.
+      const cwd = this.deps.registry.workdirOf(loop.work);
+      const opened = await this.deps.registry.openTask({
+        platform: parent.platformId,
+        parent: parent.address,
+        agentId: loop.plan.agent,
+        text: loop.plan.text,
+        header,
+        forward,
+        title: `Review: ${worked}`,
+        ...(cwd ? { cwd } : {}),
+      });
+      loop.review = { key: opened.key, address: opened.address, topic: topicOf(parent.platformId, opened.address) };
+      this.reviewerOf.set(opened.key, loop.work);
+    } else {
+      await this.deps.registry.handTo(loop.review.key, parent.platformId, loop.review.address, '', header, { forward });
+    }
+    this.owed.add(loop.review.key);
+    this.showLoop(parent, `🔁 "${worked}" committed ${range} — review round ${round} by ${loop.plan.agent} started`);
+  }
+
+  /**
+   * The reviewer's turn ended normally: act on its verdict. `pass` ends the loop; `nits` sends its
+   * reply to the work, whose next end ends the loop; `changes` sends it back while rounds are left.
+   * No verdict, or the rounds used up, ends the loop with the asking agent told. A reply that cannot
+   * be forwarded holds the loop instead, so a continue in the reviewer's topic picks it up again.
+   */
+  private async reviewEnded(loop: ReviewLoop, parent: Place): Promise<void> {
+    const review = loop.review ? this.place(loop.review.key) : undefined;
+    if (!review || !loop.review) throw new Error('the reviewer\'s topic is gone');
+    const verdict = loop.verdict;
+    // The reply first: a turn cut off before it said anything (an upstream stream that broke — the
+    // cbc "no reply" ends of 2026-11-14..20) is held for a continue, not judged as a missing verdict.
+    const reply = this.forwardable(review, loop.review.topic, verdict ? `verdict: ${verdict}` : undefined);
+    if ('problem' in reply) return this.hold(loop, parent, `its verdict was not acted on — ${reply.problem}`, loop.review.key);
+    if (!verdict) return this.finish(loop, parent, false, 'stopped: the review ended without `fleetherd task-verdict`');
+    loop.verdict = undefined;
+    const round = loop.sentBack + 1;
+    if (loop.pending) loop.reviewed = loop.pending;
+    if (verdict === 'pass') return this.finish(loop, parent, true, round === 1 ? 'passed' : `passed in round ${round}`);
+    if (verdict === 'changes' && loop.sentBack >= loop.plan.rounds) {
+      return this.finish(loop, parent, false, `stopped: the review still asks for changes after ${loop.plan.rounds} round${loop.plan.rounds === 1 ? '' : 's'} sent back`);
+    }
+    const work = this.place(loop.work);
+    if (!work) throw new Error('the work\'s topic is gone');
+    if (verdict === 'changes') loop.sentBack++;
+    loop.phase = verdict === 'nits' ? 'finish' : 'work';
+    await this.deps.registry.handTo(loop.work, work.platformId, work.address, '', this.loopHeaderOf(parent), { forward: reply });
+    this.owed.add(loop.work);
+    const names = `"${subjectOf(this.titleOf(review.key, review))}"`;
+    const worked = `"${subjectOf(this.titleOf(work.key, work))}"`;
+    this.showLoop(
+      parent,
+      verdict === 'nits'
+        ? `🔁 ${names} passed it with small fixes — sent to ${worked} to make, with no further review`
+        : `🔁 ${names} asked for changes — sent back to ${worked} (${loop.sentBack} of ${loop.plan.rounds})`
+    );
+  }
+
+  /** The loop is over: say how, and tell the asking agent about the work and its review together. */
+  private finish(loop: ReviewLoop, parent: Place, passed: boolean, line: string): void {
+    loop.outcome = { passed, line };
+    console.log(`[delegation] ${loop.work}: the review loop ended — ${line}`);
+    this.report(parent, loop.review ? [loop.work, loop.review.key] : [loop.work]);
+  }
+
+  /** The loop cannot move on by itself this time: the asking agent is told why, and it stays armed. */
+  private hold(loop: ReviewLoop, parent: Place, note: string, about: ConversationId = loop.work): void {
+    loop.note = note;
+    this.report(parent, [about]);
+  }
+
+  /** The asking agent is told about these topics, as it is about any end of a turn. */
+  private report(parent: Place, ids: ConversationId[]): void {
+    this.queueUpdates(this.cardKey(parent), ids, { platform: parent.platformId, address: parent.address }, true);
+  }
+
+  /**
+   * Stop a topic's loop, when it is part of one still running. Says nothing by itself: the turn that
+   * is running or comes next is reported the ordinary way, and its card names the reason.
+   */
+  private disarm(id: ConversationId, why: string): void {
+    const loop = this.loopOf(id);
+    if (!loop || loop.outcome) return;
+    loop.outcome = { passed: false, line: `stopped: ${why}` };
+    console.log(`[delegation] ${loop.work}: the review loop stopped — ${why}`);
+  }
+
+  /**
+   * `task-verdict`, from a reviewer's own topic: recorded for the turn now running, and acted on
+   * when it ends — so the verdict and the reply it is about leave together.
+   */
+  private verdict(here: Place, verdict: TaskVerdict): TaskActionResult {
+    const loop = this.loopOf(here.key);
+    if (!loop || loop.work === here.key) {
+      throw new Error('task-verdict is for a reviewer the gateway started (task-new --review-by), and this topic is not one');
+    }
+    if (loop.outcome) {
+      throw new Error(`the review this topic was part of has ended (${loop.outcome.line}); say your verdict in your reply instead`);
+    }
+    if (loop.phase !== 'review') {
+      throw new Error('no review of yours is waiting on a verdict: the work has not come back to you since your last one');
+    }
+    loop.verdict = verdict;
+    const topic = topicOf(here.platformId, here.address);
+    const last = loop.sentBack >= loop.plan.rounds;
+    const result =
+      verdict === 'pass'
+        ? 'Recorded: pass. When this turn ends, the agent that set up the review is told the work passed, with your reply.'
+        : verdict === 'nits'
+          ? 'Recorded: nits. When this turn ends, your reply goes to the author to fix, with no further review — put every fix it needs in it.'
+          : last
+            ? `Recorded: changes. The work has been sent back ${loop.plan.rounds} time${loop.plan.rounds === 1 ? '' : 's'} already, so when this turn ends the agent that set up the review is told instead.`
+            : 'Recorded: changes. When this turn ends, your reply goes to the author, and the commits it makes next come back to you — put every fix it needs in it.';
+    return { topic, result };
+  }
+
+  /** A topic's part in a review loop, for `tasks` and the card; empty when it has none. */
+  private reviewLine(id: ConversationId): string {
+    const loop = this.loopOf(id);
+    if (!loop) return '';
+    const state = loop.outcome?.line ?? this.loopState(loop);
+    const note = loop.note ? ` (${loop.note})` : '';
+    return id === loop.work
+      ? `review by ${loop.plan.agent}${loop.review ? ` in ${loop.review.topic}` : ''}: ${state}${note}`
+      : `reviews ${loop.workTopic}: ${state}${note}`;
+  }
+
+  /** Where a running loop is waiting. */
+  private loopState(loop: ReviewLoop): string {
+    switch (loop.phase) {
+      case 'review':
+        return `round ${loop.sentBack + 1} under review`;
+      case 'finish':
+        return 'passed with small fixes, being made; no further review';
+      case 'work':
+        return loop.sentBack
+          ? `sent back ${loop.sentBack} of ${loop.plan.rounds}; the fix is reviewed once it is committed`
+          : 'reviewed once a turn ends with new commits';
+      default: {
+        const _exhaustive: never = loop.phase;
+        return String(_exhaustive);
+      }
+    }
+  }
+
+  /**
+   * What the loop's messages show above what they carry in the topic: that the gateway sent them,
+   * for the review set up in the asking conversation. Shown to the person only — the agent gets the
+   * forwarded reply under its heading (handTo).
+   */
+  private loopHeaderOf(parent: Place): string {
+    return `**↳ Automatic review, set up in [${subjectOf(this.titleOf(parent.key, parent))}](?t=${parent.address.thread ?? ''})**`;
+  }
+
+  /**
+   * A step of the loop, shown in the asking conversation's topic for the person, as a report: no
+   * turn runs for it — the asking agent hears of the loop only when it needs to.
+   */
+  private showLoop(parent: Place, line: string): void {
+    void parent.adapter
+      .sendMessage(parent.address, line, { kind: 'report' })
+      .catch((e) => console.warn('[delegation] could not show a review step:', e instanceof Error ? e.message : e));
   }
 
   // ── Lookups ───────────────────────────────────────────────────────────────────────────────────
@@ -1967,14 +2438,31 @@ function startedRow(t: OpenedTask, lead: boolean): string {
   const machine = t.host && !t.agent.endsWith(`@${t.host}`) ? ` @ ${t.host}` : '';
   const dir = t.cwd ? `\`${t.cwd}\`` : '';
   const name = t.link ? `[${t.title}](${t.link})` : t.title;
+  const review = t.review ? `reviewed by ${t.review}` : '';
   // The machine hangs off whichever of name/model comes first, so no row ever starts with "@ host".
   const fields = lead
-    ? [`**${t.agent}**${model ? '' : machine}`, model ? `${model}${machine}` : '', name, dir, t.topic]
-    : [`${name}${model ? '' : machine}`, model ? `${model}${machine}` : '', dir, t.topic];
+    ? [`**${t.agent}**${model ? '' : machine}`, model ? `${model}${machine}` : '', name, dir, review, t.topic]
+    : [`${name}${model ? '' : machine}`, model ? `${model}${machine}` : '', dir, review, t.topic];
   return `- ${fields.filter(Boolean).join(' · ')}`;
 }
 
 /** `/home/user/workspace/x` → `~/workspace/x`, for a column that is read, not used. */
 function shortenHome(p: string): string {
   return p.replace(/^\/(home\/[^/]+|root)(?=\/|$)/, '~');
+}
+
+/** The id every task command takes for a topic (`web:main/3a9f0c12`). */
+function topicOf(platformId: string, address: ConversationAddress): string {
+  return `${platformId}:${address.channel}${address.thread ? `/${address.thread}` : ''}`;
+}
+
+/** A commit as the review loop names it: the 12 characters `git diff a..b` takes as well as the whole. */
+function short(sha: string): string {
+  return sha.slice(0, 12);
+}
+
+/** A text quoted on the confirmation card, cut to what the card shows of one. */
+function quoteLines(text: string): string[] {
+  const shown = text.length > PROPOSAL_TEXT_CHARS ? `${text.slice(0, PROPOSAL_TEXT_CHARS - 1)}…` : text;
+  return shown.split('\n').map((l) => `> ${l}`);
 }

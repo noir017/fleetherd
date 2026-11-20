@@ -6,7 +6,7 @@ src/daemon/conversation-store.ts [Infra]: F:Atomic persistence for conversation 
 src/daemon/conversation-token-registry.ts [Infra]: F:Token to conversation ID mapping for reverse commands | A:ConversationTokenRegistry | S:见 Security invariants 第 2 条
 src/daemon/conversation.ts [Core]: F:Per-conversation runtime state registry and turn orchestration | R:src/daemon/routing.ts | A:ConversationRegistry
 src/daemon/daemon.ts [Core]: F:Top-level daemon coordinator and reverse request dispatch | R:src/daemon/conversation.ts,src/ipc/server.ts | A:Daemon
-src/daemon/delegation.ts [Core]: F:Sub-agent task delegation and confirmation card workflows | R:src/daemon/conversation.ts | A:Delegation | S:见 Security invariants 第 6 条
+src/daemon/delegation.ts [Core]: F:Sub-agent task delegation, confirmation card workflows, and the automatic review loop | R:src/daemon/conversation.ts | A:Delegation | S:见 Security invariants 第 6 条
 src/daemon/external-mcp.ts [Edge]: F:External HTTP MCP entrance endpoint | A:createExternalMcpServer | S:见 Security invariants 第 11 条
 src/daemon/pod-admin.ts [Edge]: F:Host entry and SSH key management | A:addPodHost,removePodHost | S:见 Security invariants 第 5 条
 src/daemon/pod-peers.ts [Infra]: F:Pod-to-pod SSH mesh configuration generator | A:syncPodPeers | S:见 Security invariants 第 5 条

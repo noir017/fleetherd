@@ -23,10 +23,13 @@ directly.
 - Two sub-agents in the same checkout edit the same working tree. Give parts in one repository
   disjoint files, or make each its own `git worktree` on the machine that will run it and start the
   part there with `task-new --cwd <absolute path>` (an agent with here=true is on your machine).
-- A part that changes code needs a review before you call it done. Propose it once the change is
-  in: a sub-agent of its own, started where that part ran — its worktree, or the same checkout when
-  the parts did not need one (`--cwd`) — told to read the diff and run the tests that cover it. You
-  read the verdict, not the diff.
+- A part that changes code needs a review before you call it done. Attach it when you propose the
+  part: `task-new ... --review-by <agent> --review "<what to check>"`. The gateway runs it — each
+  time a turn of the part ends with new commits, the reviewer (an agent on the same machine, in the
+  same directory) gets the part's reply and the commit range, and its verdict goes back to the part
+  without you — and tells you once it passes or needs you. Leave it off parts that change nothing
+  (research, a question to answer) and parts the person said need no review. You read the verdict,
+  not the diff.
 
 ## 2. Propose
 
@@ -54,8 +57,13 @@ directly.
 - Ask for the tests that cover the change, not the whole suite: that runs once, before merging.
   Run by every part and every review, it is most of the wait.
 - Ask for the reply you will read: the conclusion first, then the evidence, under 2,000 characters.
-  Say it in the text — the sub-agent gets nothing else. A review part also gets what to check and
-  that its verdict comes first.
+  Say it in the text — the sub-agent gets nothing else. Ask a part with a review to commit its work
+  before it replies: the review starts from new commits, and a turn that commits nothing is sent
+  back to you instead.
+- The `--review` text is the reviewer's whole task: what to check, the tests to run, that it changes
+  nothing, and that it ends its turn with `fleetherd task-verdict pass|nits|changes` — `nits` for
+  small fixes that need no second look. Its reply is what the part receives, so ask for every fix in
+  it, each with its file and line. `--rounds` caps how often it may send the part back (default 3).
 - End your turn with one line saying what you proposed. With confirmation on, nothing starts until
   the person taps Start; if they write instead, they want changes — propose again and the new card
   replaces the old. With it off (in a conversation the person talks to directly), each `task-new`
@@ -74,17 +82,22 @@ are delivered as your next turn: end this turn once the parts are handed out. Do
   `--tail 20` the newest lines, `--full` raises the per-message cut.
 - **Finished**: read its reply — the conclusion and the evidence it names. A reply that says it
   will carry on, or is waiting for a command in the background, is not finished: wait for its next
-  card, or `task-send` it a continue. If it changed code, propose its review now, with `task-new`;
-  do not read the diff or run the tests yourself. If it is wrong or incomplete, send it the fix
-  with `task-send <topic> "<what to fix>"`.
-- **Passing a review on**: `task-send <topic> --forward <review topic> "<what to fix>"` attaches
-  that topic's last normally-ended reply whole, under a heading naming it — send the verdict, do
-  not retype it. Both topics must be ones you opened.
+  card, or `task-send` it a continue. Do not read the diff or run the tests yourself. If it is
+  wrong or incomplete, send it the fix with `task-send <topic> "<what to fix>"`.
+- **A part with a review** (its card line ends `review by …`): you hear of it when the review
+  passed — both topics on one card — or when the loop needs you, and the line says why: no new
+  commit (it asked something, or forgot to commit: answer it or tell it to commit, and the review
+  starts on its next commit), no reply (a turn cut off: `task-send` it `continue`), no verdict, or
+  the rounds used up (read both and decide). `tasks` shows where each loop stands. Writing to either
+  topic yourself does not stop the loop; `task-stop` does.
+- **Passing a review on by hand** (a part with no review loop): `task-send <topic> --forward <review
+  topic> "<what to fix>"` attaches that topic's last normally-ended reply whole, under a heading
+  naming it — send the verdict, do not retype it. Both topics must be ones you opened.
 - **A question a part was sent to investigate**: do not answer it from your own impression, while
   it runs or after it reports — `task-send` it the question and use its answer. Only when no part
   covers the question do you investigate yourself.
-- **A fix after a review** goes back to the same reviewer, for the fix alone. Skip that second
-  look when the fix is small and comes with a test that fails without it.
+- **A fix after a review you passed on by hand** goes back to the same reviewer, for the fix alone.
+  Skip that second look when the fix is small and comes with a test that fails without it.
 - **A question about what your task meant**: answer it with `task-send`.
 - **The person wrote to it directly** (the entry quotes them first): that part now goes their way.
   Do not undo it or answer its questions for them; if it changes the rest of the job, say so in one

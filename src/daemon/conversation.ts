@@ -3576,6 +3576,16 @@ ${formatTokens(left)} left before compaction — ${name}`;
   }
 
   /**
+   * Where a conversation that already has an agent keeps its files: `workspaceForRef` by id, for the
+   * review loop's commit reads (delegation.ts headOf). Undefined for one with no agent bound.
+   */
+  workspaceOf(id: ConversationId): Workspace | undefined {
+    const agent = this.boundAgentOf(id);
+    const def = agent ? findAgent(this.config, agent) : undefined;
+    return def ? workspaceFor(def, resolveConversationCwd(def, id, this.store)) : undefined;
+  }
+
+  /**
    * Where the conversation at an ADDRESS keeps its files: its agent's machine, and the directory its
    * next session would start in (its `/cd`, else the agent's own). The web UI's workspace windows —
    * git, files — read and run through this (workspace.ts).
@@ -4276,6 +4286,8 @@ ${formatTokens(left)} left before compaction — ${name}`;
     cwd?: string;
     title?: string;
     model?: string;
+    /** A reply handed over with the task, as `task-send --forward` attaches one (the review loop's first review). */
+    forward?: { heading: string; text: string };
   }): Promise<{ key: ConversationId; address: ConversationAddress; title: string }> {
     const adapter = this.platforms.get(opts.platform);
     if (!adapter?.capabilities.thread) {
@@ -4318,7 +4330,7 @@ ${formatTokens(left)} left before compaction — ${name}`;
       // message after a restart or `/new` would otherwise run on the configured model.
       this.store?.setConversationChoice?.(conv.key, opts.agentId, 'model', opts.model);
     }
-    await this.handTo(conv.key, opts.platform, opened, opts.text, opts.header);
+    await this.handTo(conv.key, opts.platform, opened, opts.text, opts.header, opts.forward ? { forward: opts.forward } : {});
     // `name`, not the bare title: formatLaneTitle collapses whitespace and drops leading bracketed
     // groups, so a `--title` with a newline or `[a][b] x` would otherwise put a different string on
     // the card than on the topic.
@@ -4360,6 +4372,9 @@ ${formatTokens(left)} left before compaction — ${name}`;
    * folds it instead of letting a long review fill the topic — and goes into the agent's message
    * whole, under its heading. A failure to post it throws before anything is handed over: the
    * person must see the material the task is about, not a task that refers to nothing.
+   *
+   * `text` may be empty when a forward is attached: the review loop sends a reply and its heading
+   * and nothing of its own (delegation.ts). The agent then gets the heading and the reply alone.
    */
   async handTo(
     key: ConversationId,
@@ -4381,7 +4396,8 @@ ${formatTokens(left)} left before compaction — ${name}`;
     // Marked a dispatch: this is the `↳ From …` line (or a later task-send) a sub-agent's topic
     // receives, and the web UI draws it apart from the agent's own replies. Every chat platform
     // ignores the kind.
-    const posted = await adapter.sendMessage(address, `${header}\n\n${text}`, { kind: 'dispatch' });
+    if (!text && !opts.forward) throw new Error('nothing to send');
+    const posted = await adapter.sendMessage(address, text ? `${header}\n\n${text}` : header, { kind: 'dispatch' });
     const busy = !state.merger.isIdle();
     const joins = !opts.queue && busy && this.turnRunner.canSteer(key);
     this.outcomes.personActed(key);
@@ -4396,7 +4412,7 @@ ${formatTokens(left)} left before compaction — ${name}`;
         user: DELEGATE_SENDER,
       },
       messageId: posted.messageId,
-      content: opts.forward ? `${text}\n\n${opts.forward.heading}\n\n${opts.forward.text}` : text,
+      content: [text, opts.forward ? `${opts.forward.heading}\n\n${opts.forward.text}` : ''].filter(Boolean).join('\n\n'),
       timestamp: this.clock.now(),
     };
     // `queue` is --interrupt's: never offer it to the turn that is being stopped (see

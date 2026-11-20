@@ -2312,3 +2312,296 @@ describe('Delegation: a shared channel key under per_channel', () => {
     expect(b.tasks.map((t) => t.topic)).toEqual(['web:main/c2000000']);
   });
 });
+
+describe('Delegation: the review loop (task-new --review-by)', () => {
+  const W = 'web#main#c1000000';
+  const R = 'web#main#c2000000';
+  const REVIEW = 'Check the diff against the task; run the tests it touches. End with `fleetherd task-verdict pass|nits|changes`.';
+  const sha = (c: string): string => c.repeat(40);
+
+  /** A rig whose topics' commits are `heads`, with one work topic opened and its review attached. */
+  const loopRig = async (opts: { rounds?: number } = {}) => {
+    const r = rig();
+    const heads = new Map<string, string | undefined>();
+    r.deps.headOf = async (k) => {
+      const h = heads.get(k);
+      return h ? { sha: h, branch: 'feat/x' } : undefined;
+    };
+    heads.set(W, sha('a'));
+    await r.d.handle(P, { ...task('cc', 'Build it', { reviewBy: 'cx', review: REVIEW }), ...(opts.rounds ? { rounds: opts.rounds } : {}) });
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    for (let i = 0; i < 4; i++) await settle();
+    return { r, heads };
+  };
+
+  /** A turn of `key` ending normally with `reply`, filed where `--forward` reads it. */
+  let at = 10;
+  const ends = async (r: ReturnType<typeof rig>, key: string, reply: string): Promise<void> => {
+    seedTurn(r.history, key, [
+      { role: 'user', text: 'go' },
+      { role: 'agent', text: reply },
+    ]);
+    r.replies.set(key, reply);
+    r.activity.set(key, { outcome: { kind: 'done', at: ++at, line: reply.split('\n')[0]! } });
+    await fire(r, key);
+  };
+  /** A turn end as TurnOutcomes reports it; the loop acts once the card's gathering delay is over. */
+  const fire = async (r: ReturnType<typeof rig>, key: string): Promise<void> => {
+    r.d.childChanged(key);
+    r.clock.advance(CARD_DELAY_MS);
+    for (let i = 0; i < 4; i++) await settle();
+  };
+
+  const handTos = (r: ReturnType<typeof rig>) =>
+    r.calls.filter(([c]) => c === 'handTo').map(([, v]) => v as { key: string; text: string; header: string; forward?: { heading: string; text: string } });
+  const prompts = (r: ReturnType<typeof rig>) => r.calls.filter(([c]) => c === 'prompt').map(([, v]) => (v as { prompt: string }).prompt);
+
+  it('puts the reviewer and its whole task on the card the person confirms', async () => {
+    const r = rig({ answer: null });
+    const res = (await r.d.handle(P, task('cc', 'Build it', { reviewBy: 'cx', review: REVIEW }))) as TaskNewResult;
+    expect(res.result).toContain('Its review by cx starts on its own whenever one of its turns ends with new commits');
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    expect(r.cards[0]!.text).toContain('Reviewed by **cx** in the same directory, on its own, whenever a turn ends with new commits — sent back at most 3 times:');
+    expect(r.cards[0]!.text).toContain(`> ${REVIEW}`);
+  });
+
+  it('refuses what would leave a loop unable to run, while the agent can still fix it', async () => {
+    const r = rig();
+    const bad = (extra: Record<string, unknown>) => r.d.handle(P, { ...task('cc', 'x'), ...extra } as never);
+    await expect(bad({ reviewBy: 'cx' })).rejects.toThrow(/--review-by and --review go together/);
+    await expect(bad({ review: REVIEW })).rejects.toThrow(/--review-by and --review go together/);
+    await expect(bad({ rounds: 2 })).rejects.toThrow(/--rounds applies only with --review-by/);
+    await expect(bad({ reviewBy: 'nobody', review: REVIEW })).rejects.toThrow(/no agent "nobody" to review/);
+    // The review runs in the work's directory, which on another machine is another checkout.
+    await expect(bad({ reviewBy: 'oc2', review: REVIEW })).rejects.toThrow(/must be an agent on near \(where cc runs\); oc2 runs on far/);
+    await expect(bad({ reviewBy: 'cx', review: 'Look it over.' })).rejects.toThrow(/must ask the reviewer to end with `fleetherd task-verdict/);
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    expect(r.cards).toEqual([]);
+  });
+
+  it('runs review, changes, fix, re-review and pass without waking the agent that asked, and tells it once', async () => {
+    const { r, heads } = await loopRig();
+    expect(r.calls.filter(([c]) => c === 'openTask')).toHaveLength(1);
+
+    // The work commits and ends: the reviewer is opened beside it, in its directory, handed the
+    // --review text with the work's reply under a heading naming the range.
+    heads.set(W, sha('b'));
+    await ends(r, W, 'Built it in two commits.');
+    const opened = r.calls.filter(([c]) => c === 'openTask').map(([, v]) => v as Record<string, unknown>);
+    expect(opened).toHaveLength(2);
+    expect(opened[1]).toMatchObject({
+      agentId: 'cx',
+      text: REVIEW,
+      cwd: '/home/u/workspace/fleetherd',
+      title: 'Review: part',
+      header: '**↳ Automatic review, set up in [Release](?t=aaaaaaaa)**',
+      forward: {
+        heading: `↳ Forwarded from "part" · web:main/c1000000 · turn 1 · commits ${sha('a').slice(0, 12)}..${sha('b').slice(0, 12)} on feat/x`,
+        text: 'Built it in two commits.',
+      },
+    });
+    expect(prompts(r)).toEqual([]);
+    expect(r.posted.some((p) => p.to === P && p.kind === 'report' && p.text.includes('review round 1 by cx started'))).toBe(true);
+    const listed = (await r.d.handle(P, { kind: 'task-list' })) as TaskListResult;
+    expect(listed.tasks.find((t) => t.topic === 'web:main/c1000000')!.review).toBe('review by cx in web:main/c2000000: round 1 under review');
+    expect(listed.tasks.find((t) => t.topic === 'web:main/c2000000')!.review).toBe('reviews web:main/c1000000: round 1 under review');
+
+    // Changes: the review goes back to the work, with nothing of the gateway's but the heading.
+    const said = (await r.d.handle(R, { kind: 'task-verdict', verdict: 'changes' })) as TaskActionResult;
+    expect(said.result).toMatch(/^Recorded: changes\. When this turn ends, your reply goes to the author/);
+    await ends(r, R, 'Changes: rename the flag.');
+    const back = handTos(r).at(-1)!;
+    expect(back).toMatchObject({ key: W, text: '', header: '**↳ Automatic review, set up in [Release](?t=aaaaaaaa)**' });
+    expect(back.forward).toMatchObject({ heading: '↳ Forwarded from "part" · web:main/c2000000 · turn 1 · verdict: changes', text: 'Changes: rename the flag.' });
+    expect(prompts(r)).toEqual([]);
+
+    // The fix: only the increment goes to the same reviewer.
+    heads.set(W, sha('c'));
+    await ends(r, W, 'Renamed it.');
+    const again = handTos(r).at(-1)!;
+    expect(again).toMatchObject({ key: R, text: '' });
+    expect(again.forward!.heading).toBe(`↳ Forwarded from "part" · web:main/c1000000 · turn 2 · commits ${sha('b').slice(0, 12)}..${sha('c').slice(0, 12)} on feat/x`);
+    expect(r.calls.filter(([c]) => c === 'openTask')).toHaveLength(2);
+
+    // Pass: one card, about both topics, saying how it ended.
+    await r.d.handle(R, { kind: 'task-verdict', verdict: 'pass' });
+    await ends(r, R, 'Pass.');
+    r.clock.advance(CARD_DELAY_MS);
+    expect(prompts(r)).toHaveLength(1);
+    const card = prompts(r)[0]!;
+    expect(card).toContain('- topic web:main/c1000000 · "part" · cc @ near in ~/workspace/fleetherd · turn ended · review by cx in web:main/c2000000: passed in round 2');
+    expect(card).toContain('reply: Renamed it.');
+    expect(card).toContain('- topic web:main/c2000000 · "part" · cx @ near in ~/workspace/fleetherd · turn ended · reviews web:main/c1000000: passed in round 2');
+    expect(card).toContain('reply: Pass.');
+    // Over: the reviewer's verdict has nothing left to answer.
+    await expect(r.d.handle(R, { kind: 'task-verdict', verdict: 'pass' })).rejects.toThrow(/has ended \(passed in round 2\)/);
+  });
+
+  it('acts on an end TurnRunner reports while the turn is still unwinding', async () => {
+    // TurnRunner reports a turn's end before it unwinds and before the library closes the turn: at
+    // that moment the topic is still busy. Acting then sent the end to the coordinator as an
+    // ordinary card (found against a real gateway, 2026-11-20); the loop acts after the gather delay.
+    const { r, heads } = await loopRig();
+    heads.set(W, sha('b'));
+    r.busy.add(W);
+    r.d.childChanged(W);
+    seedTurn(r.history, W, [
+      { role: 'user', text: 'go' },
+      { role: 'agent', text: 'Built.' },
+    ]);
+    r.activity.set(W, { outcome: { kind: 'done', at: 50, line: 'Built.' } });
+    r.busy.delete(W);
+    r.clock.advance(CARD_DELAY_MS);
+    for (let i = 0; i < 4; i++) await settle();
+    expect(r.calls.filter(([c]) => c === 'openTask')).toHaveLength(2);
+    r.clock.advance(CARD_DELAY_MS);
+    expect(prompts(r)).toEqual([]);
+  });
+
+  it('says when a turn ends with no new commit, and reviews once one comes', async () => {
+    const { r, heads } = await loopRig();
+    await ends(r, W, 'Which of the two flags did you mean?');
+    r.clock.advance(CARD_DELAY_MS);
+    expect(r.calls.filter(([c]) => c === 'openTask')).toHaveLength(1);
+    expect(prompts(r)[0]).toContain(`review by cx: reviewed once a turn ends with new commits (no review started — no new commit since ${sha('a').slice(0, 12)})`);
+    // The note was said; the loop is still armed, and a commit after the answer starts the review.
+    await r.d.handle(P, { kind: 'task-send', topic: 'c1000000', text: 'The second.' });
+    heads.set(W, sha('b'));
+    await ends(r, W, 'Done.');
+    expect(r.calls.filter(([c]) => c === 'openTask')).toHaveLength(2);
+    r.clock.advance(CARD_DELAY_MS);
+    expect(prompts(r)).toHaveLength(1);
+  });
+
+  it('says when no commit can be read at all, rather than reviewing on a guess', async () => {
+    const { r, heads } = await loopRig();
+    heads.delete(W);
+    await ends(r, W, 'Done.');
+    r.clock.advance(CARD_DELAY_MS);
+    expect(r.calls.filter(([c]) => c === 'openTask')).toHaveLength(1);
+    expect(prompts(r)[0]).toContain('no review started — no git commit could be read in its directory');
+  });
+
+  it('stops at a review with no verdict, and when the rounds are used up', async () => {
+    const one = await loopRig();
+    one.heads.set(W, sha('b'));
+    await ends(one.r, W, 'Built.');
+    await ends(one.r, R, 'Looks fine I think.');
+    one.r.clock.advance(CARD_DELAY_MS);
+    expect(prompts(one.r)[0]).toContain('reviews web:main/c1000000: stopped: the review ended without `fleetherd task-verdict`');
+
+    const two = await loopRig({ rounds: 1 });
+    two.heads.set(W, sha('b'));
+    await ends(two.r, W, 'Built.');
+    await two.r.d.handle(R, { kind: 'task-verdict', verdict: 'changes' });
+    await ends(two.r, R, 'Changes: one.');
+    two.heads.set(W, sha('c'));
+    await ends(two.r, W, 'Fixed one.');
+    const last = (await two.r.d.handle(R, { kind: 'task-verdict', verdict: 'changes' })) as TaskActionResult;
+    expect(last.result).toContain('sent back 1 time already, so when this turn ends the agent that set up the review is told instead');
+    await ends(two.r, R, 'Changes: still one.');
+    two.r.clock.advance(CARD_DELAY_MS);
+    expect(prompts(two.r)).toHaveLength(1);
+    expect(prompts(two.r)[0]).toContain('stopped: the review still asks for changes after 1 round sent back');
+    // Not sent back a second time.
+    expect(handTos(two.r).filter((h) => h.key === W && h.forward)).toHaveLength(1);
+  });
+
+  it('sends nits to the work with no further review, and reports once the fix ends', async () => {
+    const { r, heads } = await loopRig();
+    heads.set(W, sha('b'));
+    await ends(r, W, 'Built.');
+    await r.d.handle(R, { kind: 'task-verdict', verdict: 'nits' });
+    await ends(r, R, 'Pass, but fix the typo.');
+    expect(handTos(r).at(-1)!.forward!.heading).toContain('· verdict: nits');
+    await ends(r, W, 'Typo fixed.');
+    expect(handTos(r).filter((h) => h.key === R)).toHaveLength(0);
+    r.clock.advance(CARD_DELAY_MS);
+    expect(prompts(r)).toHaveLength(1);
+    expect(prompts(r)[0]).toContain('review by cx in web:main/c2000000: passed, with the small fixes it asked for made');
+  });
+
+  it('holds a review whose turn ended without a reply, so a continue picks the loop up again', async () => {
+    const { r, heads } = await loopRig();
+    heads.set(W, sha('b'));
+    await ends(r, W, 'Built.');
+    // An upstream stream that broke mid-turn: the turn ended normally with nothing said.
+    r.activity.set(R, { outcome: { kind: 'done', at: 99 } });
+    await fire(r, R);
+    r.clock.advance(CARD_DELAY_MS);
+    expect(prompts(r)).toHaveLength(1);
+    expect(prompts(r)[0]).toContain("reviews web:main/c1000000: round 1 under review (its verdict was not acted on — nothing to forward from");
+    await r.d.handle(P, { kind: 'task-send', topic: 'c2000000', text: 'continue' });
+    await r.d.handle(R, { kind: 'task-verdict', verdict: 'pass' });
+    await ends(r, R, 'Pass.');
+    r.clock.advance(CARD_DELAY_MS);
+    expect(prompts(r)).toHaveLength(2);
+    expect(prompts(r)[1]).toContain('reviews web:main/c1000000: passed');
+  });
+
+  it('stops when the person writes in either topic, or the agent stops one', async () => {
+    const { r, heads } = await loopRig();
+    r.d.personWrote(W, { text: 'Use the other approach.', attachments: [] });
+    heads.set(W, sha('b'));
+    await ends(r, W, 'Switched approach.');
+    expect(r.calls.filter(([c]) => c === 'openTask')).toHaveLength(1);
+    r.clock.advance(CARD_DELAY_MS);
+    expect(prompts(r)[0]).toContain('review by cx: stopped: the person wrote in web:main/c1000000');
+
+    const two = await loopRig();
+    await two.r.d.handle(P, { kind: 'task-stop', topic: 'c1000000' });
+    two.heads.set(W, sha('b'));
+    await ends(two.r, W, 'Done anyway.');
+    expect(two.r.calls.filter(([c]) => c === 'openTask')).toHaveLength(1);
+    two.r.clock.advance(CARD_DELAY_MS);
+    expect(prompts(two.r)[0]).toContain('review by cx: stopped: stopped with task-stop');
+  });
+
+  it('takes a verdict only from a reviewer the loop started, while its review is open', async () => {
+    const { r, heads } = await loopRig();
+    await expect(r.d.handle(P, { kind: 'task-verdict', verdict: 'pass' })).rejects.toThrow(/this topic is not one/);
+    await expect(r.d.handle(W, { kind: 'task-verdict', verdict: 'pass' })).rejects.toThrow(/this topic is not one/);
+    heads.set(W, sha('b'));
+    await ends(r, W, 'Built.');
+    await r.d.handle(R, { kind: 'task-verdict', verdict: 'changes' });
+    await ends(r, R, 'Changes.');
+    // The work has the review and has not come back yet.
+    await expect(r.d.handle(R, { kind: 'task-verdict', verdict: 'pass' })).rejects.toThrow(/has not come back to you since your last one/);
+  });
+
+  it('confirms the reviewer with the work under confirm: first', async () => {
+    const r = rig();
+    r.deps.config.delegation.confirm = 'first';
+    r.deps.headOf = async () => ({ sha: sha('a') });
+    await r.d.handle(P, task('cc', 'one'));
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    await settle();
+    expect(r.cards).toHaveLength(1);
+    // cc is confirmed here, cx is not: a part reviewed by cx still waits on a card.
+    await r.d.handle(P, task('cc', 'two', { reviewBy: 'cx', review: REVIEW }));
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    await settle();
+    expect(r.cards).toHaveLength(2);
+    // Both confirmed now: the next one starts at once.
+    const res = (await r.d.handle(P, task('cc', 'three', { reviewBy: 'cx', review: REVIEW }))) as TaskNewResult;
+    expect(r.cards).toHaveLength(2);
+    expect(res.result).toContain('running now');
+    expect(res.result).toContain('Its review by cx starts on its own');
+  });
+
+  it('is not offered to an external caller', async () => {
+    const r = rig();
+    const E = 'web#main#eeeeeeee';
+    const at = { platform: 'web', address: addrOf(E) };
+    r.deps.externalOf = (platform, address) =>
+      platform === 'web' && address.thread === 'eeeeeeee' ? { caller: 'gem', platform: 'web', address: addrOf(E), title: '[gem] Trip' } : undefined;
+    await expect(r.d.handleExternal(E, task('cc', 'x', { reviewBy: 'cx', review: REVIEW }), at)).rejects.toThrow(
+      /an automatic review is not offered to an external caller/
+    );
+    await expect(r.d.handleExternal(E, { kind: 'task-verdict', verdict: 'pass' }, at)).rejects.toThrow(/task-verdict is not offered/);
+  });
+});
