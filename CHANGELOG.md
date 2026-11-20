@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.19.0] - 2026-11-20
+
 ### Added
 
 - **`/fork` copies a topic into a new one beside it, to carry on two ways from the same point.**
