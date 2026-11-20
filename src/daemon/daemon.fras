@@ -1,7 +1,7 @@
 # src/daemon FRAS Map
 src/daemon/agent-acp.ts [Core]: F:ACP protocol runtime implementation and permission handling | R:src/daemon/agent.ts | A:createAcpAgentFactory,resolveHarness | S:See Security invariants item 1
 src/daemon/attachment-io.ts [Infra]: F:Attachment fetch and storage with SSRF guards | A:assertSafeAttachmentUrl,createAttachmentIngestDeps | S:See Security invariants item 3 [T:assertSafeAttachmentUrl]
-src/daemon/config-reload.ts [Core]: F:Live configuration diffing and reload | A:applyConfig,diffConfig
+src/daemon/config-reload.ts [Core]: F:Pure configuration diffing and reload plan computation | A:applyConfig,diffConfig
 src/daemon/conversation-store.ts [Infra]: F:Atomic persistence for conversation bindings and sessions | A:ConversationStore
 src/daemon/conversation-token-registry.ts [Infra]: F:Token to conversation ID mapping for reverse commands | A:SessionTokenRegistry | S:See Security invariants item 2
 src/daemon/conversation.ts [Core]: F:Per-conversation runtime state registry and turn orchestration | R:src/daemon/routing.ts | A:ConversationRegistry
@@ -12,7 +12,7 @@ src/daemon/pod-admin.ts [Edge]: F:Host entry and SSH key management | A:addPod,r
 src/daemon/pod-peers.ts [Infra]: F:Pod-to-pod SSH mesh configuration generator | A:peerFiles,readKnownHosts | S:See Security invariants item 5
 src/daemon/pods.ts [Infra]: F:Remote host pod declarations scanner | A:hostsWithConfiguredAgents | S:See Security invariants item 5
 src/daemon/remote-hosts.ts [Infra]: F:Remote host manager and reverse CLI shim | R:src/remote/host.ts | A:RemoteHosts,gatewayNamespace | S:See Security invariants item 5
-src/daemon/review.ts [Core]: F:Automated conversation review runner | A:ReviewService
+src/daemon/review.ts [Core]: F:Automated review of idle conversations distilling skills and learned preferences | A:ReviewService
 src/daemon/routing.ts [Core]: F:Inbound message to agent and scope resolution | A:resolveAgent,resolveScope | S:Deterministic pipeline and harness matching [T:resolveAgent]
 src/daemon/schedule-service.ts [Core]: F:Scheduled task execution engine | A:ScheduleService
 src/daemon/skills-store.ts [Infra]: F:Managed skill repository storage and git tracking | A:createSkill,listSkills,showSkill | S:See Security invariants item 8
