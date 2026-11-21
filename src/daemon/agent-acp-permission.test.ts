@@ -1,6 +1,5 @@
-import { mkdtempSync, readFileSync, existsSync, writeFileSync } from 'node:fs';
+import { readFileSync, existsSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { RequestError, type RequestPermissionRequest } from '@agentclientprotocol/sdk';
@@ -8,6 +7,9 @@ import { createAcpAgentFactory, decidePermission, PERMISSION_DECLINED_CODE, perm
 import { parseConfig, type Config } from '../config/schema.js';
 import type { AgentSession, AgentStreamHandlers } from './agent.js';
 import type { AgentPermissionRequest, PermissionAnswer } from '../types.js';
+import { useTempDirs } from '../test-utils/temp-dir.test-helpers.js';
+
+const makeTempDir = useTempDirs();
 
 /**
  * `permissions: ask` on the ACP side: what each PermissionAnswer becomes on the wire, and that the
@@ -368,7 +370,7 @@ afterEach(() => {
 });
 
 function rig(permissions: 'auto' | 'ask', turnTimeoutMs?: number) {
-  const dir = mkdtempSync(join(tmpdir(), 'aa-acp-perm-'));
+  const dir = makeTempDir('aa-acp-perm-');
   const script = join(dir, 'fake.cjs');
   const log = join(dir, 'answers');
   writeFileSync(script, FAKE_AGENT);

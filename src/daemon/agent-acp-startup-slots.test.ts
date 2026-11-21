@@ -1,10 +1,12 @@
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createAcpAgentFactory } from './agent-acp.js';
 import { parseConfig } from '../config/schema.js';
 import type { AgentSession, AgentStreamHandlers } from './agent.js';
+import { useTempDirs } from '../test-utils/temp-dir.test-helpers.js';
+
+const makeTempDir = useTempDirs();
 
 /**
  * The per-machine cold-start cap (agent-acp.ts START_CONCURRENCY).
@@ -52,7 +54,7 @@ afterEach(() => {
 
 describe('cold-start concurrency', () => {
   it('starts at most four agents at once on one machine, and every queued one still starts', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'tc-acp-slots-'));
+    const dir = makeTempDir('tc-acp-slots-');
     const script = join(dir, 'fake-acp-agent.cjs');
     const log = join(dir, 'starts.log');
     writeFileSync(script, FAKE_AGENT);

@@ -1,12 +1,15 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import net from 'node:net';
-import { hostname, tmpdir } from 'node:os';
+import { hostname } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { parseConfig, type Config } from '../config/schema.js';
 import type { AgentSession, AgentStreamHandlers } from './agent.js';
 import { createAcpAgentFactory } from './agent-acp.js';
 import { connectHere, connectMeta } from './connect-agent.js';
+import { useTempDirs } from '../test-utils/temp-dir.test-helpers.js';
+
+const makeTempDir = useTempDirs();
 
 const cleanup: Array<() => void> = [];
 afterEach(() => {
@@ -56,7 +59,7 @@ describe('a connection as an agent process', () => {
 
 describe('what a connect agent is told in initialize', () => {
   it('its meta as written, and the token, machine and instructions under fleetherd', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'fh-connect-'));
+    const dir = makeTempDir('fh-connect-');
     const token = join(dir, 'token');
     writeFileSync(token, '  s3cret-token\n');
     const configDir = join(dir, 'config');
@@ -83,7 +86,7 @@ describe('what a connect agent is told in initialize', () => {
   });
 
   it('includes resident skills reaching the agent in initialize _meta.fleetherd.skills', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'fh-connect-skills-'));
+    const dir = makeTempDir('fh-connect-skills-');
     const configDir = join(dir, 'config');
     mkdirSync(join(configDir, 'skills', 'skills', 'server-ops'), { recursive: true });
     writeFileSync(
@@ -179,7 +182,7 @@ describe('a connect agent as a conversation', () => {
 
   it('dials per session, says who it is in _meta, and on End agent sends the cancel before it hangs up', async () => {
     const agent = await fakeAgent();
-    const dir = mkdtempSync(join(tmpdir(), 'fh-connect-'));
+    const dir = makeTempDir('fh-connect-');
     const cfg: Config = parseConfig({
       platforms: { discord: { type: 'discord', token: 't' } },
       agents: [{ id: 'web', harness: 'custom', cwd: dir, connect: { url: `tcp://127.0.0.1:${agent.port}`, meta: { wad: { site: 'x', profile: 'p' } } } }],

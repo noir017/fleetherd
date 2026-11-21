@@ -1,5 +1,4 @@
-import { mkdtempSync, readFileSync, statSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { parseConfig } from '../config/schema.js';
@@ -8,6 +7,9 @@ import { VOICE_NO_SPEECH_TEXT, VOICE_PENDING_TTL_MS, VOICE_STALE_CLICK_TEXT } fr
 import type { PlatformAdapter } from '../platform/adapter.js';
 import type { ButtonInteraction, InboundMessage, MessageRef } from '../types.js';
 import { transcribe, VoiceIntake } from './voice.js';
+import { useTempDirs } from '../test-utils/temp-dir.test-helpers.js';
+
+const makeTempDir = useTempDirs();
 
 /**
  * The voice path end to end, minus the network: a stub adapter, a stub transcriber and a fake
@@ -55,7 +57,7 @@ interface RigOpts {
 }
 
 function rig(opts: RigOpts = {}) {
-  const dir = mkdtempSync(path.join(tmpdir(), 'aa-voice-'));
+  const dir = makeTempDir('aa-voice-');
   const logFile = path.join(dir, 'voice-log.jsonl');
   const config = parseConfig({
     platforms: { tg: { type: 'telegram', token: 't' } },
@@ -478,7 +480,7 @@ describe('what is not taken', () => {
       platforms: new Map(),
       deliver: () => {},
       clock: { now: () => 0, schedule: () => () => {} },
-      logFile: path.join(mkdtempSync(path.join(tmpdir(), 'aa-voice-')), 'x.jsonl'),
+      logFile: path.join(makeTempDir('aa-voice-'), 'x.jsonl'),
     });
     expect(
       intake.take(KEY, { conversation: CONV, messageId: 'v', content: '', timestamp: 1, attachments: [{ type: 'audio', url: 'data:audio/ogg;base64,AA==' }] })

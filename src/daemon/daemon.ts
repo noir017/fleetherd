@@ -805,7 +805,7 @@ function isSkillRead(action: Extract<IpcAction, { kind: 'skills' }>['action']): 
 /** Main daemon: wires platform, session registry, and IPC server together. `fleetherd start` constructs and run()s it. */
 export class Daemon {
   private registry: ConversationRegistry;
-  private ipc: IpcServer;
+  private ipc: IpcServer<ConversationAddress>;
   /** Which hosts can be reached now (host-availability.ts): the web UI's offline marks, `/agent`'s. */
   private readonly availability = new HostAvailability({
     probe: (ssh) => canReach(ssh),
@@ -1157,22 +1157,21 @@ export class Daemon {
     this.socketPath = socketPath;
     remoteHosts.configure(config, socketPath);
     this.watchHosts();
-    this.ipc = new IpcServer(
-      socketPath,
-      {
-        // resolveAddress is also the sole capture point for the conversation owning this reverse
-        // command: IPC only forwards the address to handle. So reverse-lookup by token and stash it
-        // for the synchronously-following handleReverse (see lastResolvedConversationId). The
-        // platform a qualified `--channel` named rides in the same kind of slot, for the same reason.
-        resolveAddress: (token, override) => {
-          this.lastResolvedConversationId = this.registry.conversationForToken(token);
-          this.lastResolvedPlatform = override?.platform;
-          return this.registry.resolveAddress(token, override?.address);
-        },
-        handle: (action, address) => this.handleReverse(action, address),
+    const instances = new Set(Object.keys(config.platforms));
+    this.ipc = new IpcServer<ConversationAddress>(socketPath, {
+      // resolveAddress is also the sole capture point for the conversation owning this reverse
+      // command: IPC only forwards the address to handle. So reverse-lookup by token and stash it
+      // for the synchronously-following handleReverse (see lastResolvedConversationId). The
+      // platform a qualified `--channel` named rides in the same kind of slot, for the same reason.
+      resolveAddress: (token, rawOverride) => {
+        // Parse `--channel` here (not in `ipc/`) so `ipc/` stays free of `core/` imports.
+        const override = rawOverride == null ? undefined : parseTarget(rawOverride, instances);
+        this.lastResolvedConversationId = this.registry.conversationForToken(token);
+        this.lastResolvedPlatform = override?.platform;
+        return this.registry.resolveAddress(token, override?.address);
       },
-      new Set(Object.keys(config.platforms))
-    );
+      handle: (action, address) => this.handleReverse(action, address),
+    });
   }
 
   /**

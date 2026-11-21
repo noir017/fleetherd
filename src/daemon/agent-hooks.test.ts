@@ -1,11 +1,13 @@
-import { existsSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { AgentDefSchema, parseConfig } from '../config/schema.js';
 import { createAcpAgentFactory } from './agent-acp.js';
 import type { AgentSession, AgentStreamHandlers } from './agent.js';
 import { PreLaunchCancelled, runPreLaunchHook, tailReason } from './agent-hooks.js';
+import { useTempDirs } from '../test-utils/temp-dir.test-helpers.js';
+
+const makeTempDir = useTempDirs();
 
 /**
  * The preLaunch hook, run for real: `bash -lc` in its own process group, against the clock. The
@@ -13,7 +15,7 @@ import { PreLaunchCancelled, runPreLaunchHook, tailReason } from './agent-hooks.
  * what "before the child exists" and "never spawned" are read off.
  */
 
-const scratch = (): string => mkdtempSync(join(tmpdir(), 'tc-hook-'));
+const scratch = (): string => makeTempDir('tc-hook-');
 const never = (): AbortSignal => new AbortController().signal;
 const alive = (pid: number): boolean => {
   try {

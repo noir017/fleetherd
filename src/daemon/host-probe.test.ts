@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { chmodSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { hostProbeScript, readHostProbe, type HostProbe } from './host-probe.js';
+import { useSuiteTempDirs } from '../test-utils/temp-dir.test-helpers.js';
+
+const makeTempDir = useSuiteTempDirs();
 
 /** Run the probe the way a host would (a shell -c), with `pathEnv` as the login PATH. */
 function runProbe(probes: HostProbe[], pathEnv: string): string {
@@ -11,7 +13,7 @@ function runProbe(probes: HostProbe[], pathEnv: string): string {
 }
 
 describe('doctor host probe', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'tc-doctor-hosts-'));
+  const dir = makeTempDir('tc-doctor-hosts-');
   writeFileSync(join(dir, 'tc-fake-acp'), '#!/bin/sh\n');
   chmodSync(join(dir, 'tc-fake-acp'), 0o755);
 

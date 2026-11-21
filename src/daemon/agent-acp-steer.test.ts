@@ -1,11 +1,13 @@
-import { mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createAcpAgentFactory } from './agent-acp.js';
 import { parseConfig } from '../config/schema.js';
 import type { AgentSession, AgentStreamHandlers } from './agent.js';
 import type { SteeringMode } from './acp-steering.js';
+import { useTempDirs } from '../test-utils/temp-dir.test-helpers.js';
+
+const makeTempDir = useTempDirs();
 
 /**
  * A message handed to a running turn (AgentSession.steer), against a real child process speaking
@@ -172,7 +174,7 @@ afterEach(() => {
 });
 
 function rig(mode: SteeringMode, opts: { slowStart?: boolean } = {}): AgentSession {
-  const dir = mkdtempSync(join(tmpdir(), 'aa-acp-steer-'));
+  const dir = makeTempDir('aa-acp-steer-');
   const script = join(dir, 'fake-acp-agent.cjs');
   writeFileSync(script, FAKE_AGENT);
   const cfg = parseConfig({

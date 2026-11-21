@@ -1,5 +1,3 @@
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { parseConfig } from '../config/schema.js';
@@ -7,6 +5,9 @@ import type { PlatformAdapter } from '../platform/adapter.js';
 import type { ButtonInteraction, InboundMessage, MessageRef } from '../types.js';
 import type { AgentFactory, AgentSession } from './agent.js';
 import { Daemon } from './daemon.js';
+import { useTempDirs } from '../test-utils/temp-dir.test-helpers.js';
+
+const makeTempDir = useTempDirs();
 
 /**
  * The voice path through the REAL inbound path — Daemon.onInbound → ConversationRegistry.route →
@@ -41,7 +42,7 @@ async function until(what: string, ok: () => boolean): Promise<void> {
 
 let dir: string;
 beforeEach(() => {
-  dir = mkdtempSync(path.join(tmpdir(), 'aa-voice-route-'));
+  dir = makeTempDir('aa-voice-route-');
   // The transcript log is written under configDir(); never let a test reach the operator's real one.
   vi.stubEnv('FLEETHERD_CONFIG_DIR', dir);
 });

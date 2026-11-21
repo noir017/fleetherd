@@ -1,11 +1,13 @@
-import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
 import { agentHome, opencodeSkillDirs, scanSkillDirs, skillDirsFor } from './skills-scan.js';
 import type { AgentDef } from '../config/schema.js';
+import { useTempDirs } from '../test-utils/temp-dir.test-helpers.js';
+
+const makeTempDir = useTempDirs();
 
 /**
  * Reading skills off disk.
@@ -111,7 +113,7 @@ describe('scanSkillDirs', () => {
   it('finds a skill reached through a symlink', async () => {
     // THE case this has to get right: on the machine this was written for, 25 of 26 entries under
     // ~/.claude/skills are symlinks into a shared tree. stat, not lstat.
-    const root = mkdtempSync(join(tmpdir(), 'skills-'));
+    const root = makeTempDir('skills-');
     const real = join(root, 'real');
     const linked = join(root, 'linked');
     mkdirSync(linked);
@@ -123,7 +125,7 @@ describe('scanSkillDirs', () => {
   });
 
   it('ignores a directory with no SKILL.md', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'skills-'));
+    const root = makeTempDir('skills-');
     makeSkill(root, 'real-skill');
     mkdirSync(join(root, 'references'));
     const found = await scanSkillDirs([root]);
@@ -133,8 +135,8 @@ describe('scanSkillDirs', () => {
   it('keeps the first copy of a shadowed name', async () => {
     // Both harnesses resolve a shadowed skill to the earlier directory in their search order, and
     // skillDirsFor returns them in that order. Listing both would claim two commands for one skill.
-    const a = mkdtempSync(join(tmpdir(), 'skills-a-'));
-    const b = mkdtempSync(join(tmpdir(), 'skills-b-'));
+    const a = makeTempDir('skills-a-');
+    const b = makeTempDir('skills-b-');
     makeSkill(a, 'shared');
     makeSkill(b, 'shared');
     const found = await scanSkillDirs([a, b]);
@@ -144,14 +146,14 @@ describe('scanSkillDirs', () => {
 
   it('treats a missing directory as empty rather than failing the command', async () => {
     // A project with no .claude/skills is the common case, not an error.
-    const root = mkdtempSync(join(tmpdir(), 'skills-'));
+    const root = makeTempDir('skills-');
     makeSkill(root, 'present');
     const found = await scanSkillDirs([join(root, 'nope'), root]);
     expect(found.map((s) => s.name)).toEqual(['present']);
   });
 
   it('sorts within a directory so the list does not reshuffle between calls', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'skills-'));
+    const root = makeTempDir('skills-');
     makeSkill(root, 'zebra');
     makeSkill(root, 'alpha');
     const found = await scanSkillDirs([root]);
@@ -161,7 +163,7 @@ describe('scanSkillDirs', () => {
 
 describe('opencodeSkillDirs', () => {
   it('reads the skills array from opencode.json', async () => {
-    const home = mkdtempSync(join(tmpdir(), 'oc-home-'));
+    const home = makeTempDir('oc-home-');
     const dir = join(home, '.config', 'opencode');
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'opencode.json'), JSON.stringify({ skills: ['/shared/skills'] }));
@@ -169,7 +171,7 @@ describe('opencodeSkillDirs', () => {
   });
 
   it('honours XDG_CONFIG_HOME', async () => {
-    const base = mkdtempSync(join(tmpdir(), 'oc-xdg-'));
+    const base = makeTempDir('oc-xdg-');
     const dir = join(base, 'opencode');
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'opencode.json'), JSON.stringify({ skills: ['/x'] }));
@@ -179,7 +181,7 @@ describe('opencodeSkillDirs', () => {
   it('degrades to nothing on malformed JSON', async () => {
     // This runs inside a chat command: a broken config elsewhere must cost the catalogue, not the
     // gateway.
-    const home = mkdtempSync(join(tmpdir(), 'oc-bad-'));
+    const home = makeTempDir('oc-bad-');
     const dir = join(home, '.config', 'opencode');
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'opencode.json'), '{ not json');
@@ -187,7 +189,7 @@ describe('opencodeSkillDirs', () => {
   });
 
   it('degrades to nothing when skills is not an array of strings', async () => {
-    const home = mkdtempSync(join(tmpdir(), 'oc-shape-'));
+    const home = makeTempDir('oc-shape-');
     const dir = join(home, '.config', 'opencode');
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'opencode.json'), JSON.stringify({ skills: { a: 1 } }));
@@ -195,6 +197,6 @@ describe('opencodeSkillDirs', () => {
   });
 
   it('is silent and empty when opencode is not configured at all', async () => {
-    expect(await opencodeSkillDirs(mkdtempSync(join(tmpdir(), 'oc-none-')), {})).toEqual([]);
+    expect(await opencodeSkillDirs(makeTempDir('oc-none-'), {})).toEqual([]);
   });
 });

@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 
@@ -10,6 +9,9 @@ import type { PlatformAdapter, TurnChangeEntry } from '../platform/adapter.js';
 import type { AgentFactory, AgentSession, AgentStreamHandlers } from './agent.js';
 import type { ConversationAddress } from '../core/conversation.js';
 import type { InboundMessage } from '../types.js';
+import { useTempDirs } from '../test-utils/temp-dir.test-helpers.js';
+
+const makeTempDir = useTempDirs();
 
 /**
  * The turn flow around the snapshots: a turn's answer must be unaffected by them.
@@ -40,7 +42,7 @@ async function within(ok: () => boolean): Promise<void> {
 }
 
 function repo(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'turn-changes-turn-'));
+  const dir = makeTempDir('turn-changes-turn-');
   execFileSync('git', ['init', '-q'], { cwd: dir });
   fs.writeFileSync(path.join(dir, 'a.txt'), 'one\n');
   return dir;
@@ -141,7 +143,7 @@ describe('a turn’s snapshots and the turn', () => {
   });
 
   it('runs the turn untouched in a directory that is not a git work tree', async () => {
-    const plain = fs.mkdtempSync(path.join(os.tmpdir(), 'turn-changes-plain-'));
+    const plain = makeTempDir('turn-changes-plain-');
     const h = rig(plain, async (t) => {
       t.onText('Fine.');
     });

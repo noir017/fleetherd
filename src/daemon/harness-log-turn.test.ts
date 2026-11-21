@@ -1,5 +1,4 @@
-import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
@@ -7,6 +6,9 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createAcpAgentFactory } from './agent-acp.js';
 import { parseConfig, type Config } from '../config/schema.js';
 import type { AgentSession, AgentStreamHandlers } from './agent.js';
+import { useTempDirs } from '../test-utils/temp-dir.test-helpers.js';
+
+const makeTempDir = useTempDirs();
 
 /**
  * A turn that times out because the harness went quiet, and what the user is told about it.
@@ -60,7 +62,7 @@ afterEach(() => {
 
 /** A conversation bound to an `opencode` agent whose binary and log are both ours. */
 function rig(log: string[]): { session: AgentSession } {
-  const dir = mkdtempSync(join(tmpdir(), 'aa-harness-log-'));
+  const dir = makeTempDir('aa-harness-log-');
   const bin = join(dir, 'bin');
   mkdirSync(bin, { recursive: true });
   const script = join(bin, 'opencode');

@@ -1,11 +1,13 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
 import { harnessLogProbe, parseOpencodeLog, readHarnessErrors } from './harness-log.js';
 import type { AgentDef } from '../config/schema.js';
+import { useTempDirs } from '../test-utils/temp-dir.test-helpers.js';
+
+const makeTempDir = useTempDirs();
 
 /**
  * Reading a harness's own log to explain a turn the gateway went blind on.
@@ -130,7 +132,7 @@ describe('harnessLogProbe', () => {
 
 describe('readHarnessErrors', () => {
   it('reads the reason out of a real log layout', async () => {
-    const home = mkdtempSync(join(tmpdir(), 'harness-log-'));
+    const home = makeTempDir('harness-log-');
     const dir = join(home, '.local', 'share', 'opencode', 'log');
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'opencode.log'), tail(RATE_LIMIT));
@@ -148,7 +150,7 @@ describe('readHarnessErrors', () => {
 
   it('says nothing when the log file is absent', async () => {
     // opencode installed but never run, or a moved log: the turn reports its timeout unchanged.
-    const home = mkdtempSync(join(tmpdir(), 'harness-log-'));
+    const home = makeTempDir('harness-log-');
     expect(await readHarnessErrors(def({ env: { HOME: home } }), SESSION, BEFORE, {})).toEqual([]);
   });
 });

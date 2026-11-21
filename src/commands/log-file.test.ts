@@ -1,10 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { RotatingLog, teeStream, installDaemonLog, type WritableLike } from './log-file.js';
+import { useTempDirs } from '../test-utils/temp-dir.test-helpers.js';
 
-const tmp = (): string => fs.mkdtempSync(path.join(os.tmpdir(), 'fleetherd-log-'));
+const makeTempDir = useTempDirs();
+
+const tmp = (): string => makeTempDir('fleetherd-log-');
 const at = new Date('2026-11-13T09:00:00.000Z');
 const fakeStream = (): WritableLike & { seen: string[] } => {
   const seen: string[] = [];

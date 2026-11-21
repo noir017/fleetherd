@@ -1,5 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { SessionConfigOption, SessionModeState } from '@agentclientprotocol/sdk';
@@ -7,6 +6,9 @@ import { applyPermissionLevel, createAcpAgentFactory, modeControlOf, permissionM
 import { parseConfig, type AgentDef, type Config, type PermissionLevel } from '../config/schema.js';
 import type { AgentSession, AgentStreamHandlers } from './agent.js';
 import type { AgentPermissionRequest, PermissionAnswer } from '../types.js';
+import { useTempDirs } from '../test-utils/temp-dir.test-helpers.js';
+
+const makeTempDir = useTempDirs();
 
 /**
  * `agents[].permissions` on the ACP side: which mode a session is put in, by which route, and how
@@ -258,7 +260,7 @@ afterEach(() => {
 });
 
 function rig(permissions?: PermissionLevel, resume?: string, script = FAKE_AGENT) {
-  const dir = mkdtempSync(join(tmpdir(), 'fh-acp-level-'));
+  const dir = makeTempDir('fh-acp-level-');
   const file = join(dir, 'fake.cjs');
   const log = join(dir, 'log');
   writeFileSync(file, script);

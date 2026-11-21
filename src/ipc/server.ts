@@ -2,36 +2,29 @@ import fs from 'node:fs';
 import net from 'node:net';
 import { StringDecoder } from 'node:string_decoder';
 import { parseIpcRequest, type IpcAction, type IpcResponse } from './protocol.js';
-import { parseTarget, type ChannelTarget, type ConversationAddress } from '../core/conversation.js';
 
 /**
  * Daemon-side IPC server over a unix socket. Token validation and address
  * resolution are delegated to the handler (daemon).
  */
-export interface IpcServerHandler {
+export interface IpcServerHandler<TAddress = unknown> {
   /**
-   * Validate token, return the address this command writes to (throws if invalid). `override` is
-   * the parsed `--channel`, whose `platform` is set only when the value named an instance.
+   * Validate token, parse any raw `--channel` override, and return the address this command writes
+   * to (throws if invalid or malformed). Kept opaque to `ipc/` so this layer never imports `core/`.
    */
-  resolveAddress(token: string, override?: ChannelTarget): ConversationAddress;
-  handle(action: IpcAction, address: ConversationAddress): Promise<unknown>;
+  resolveAddress(token: string, rawOverride?: string): TAddress;
+  handle(action: IpcAction, address: TAddress): Promise<unknown>;
 }
 
 const IDLE_TIMEOUT_MS = 30_000;
 const MAX_LINE_BYTES = 1 << 20; // 1 MiB
 
-export class IpcServer {
+export class IpcServer<TAddress = unknown> {
   private server: net.Server | null = null;
 
   constructor(
     private readonly socketPath: string,
-    private readonly handler: IpcServerHandler,
-    /**
-     * Configured platform instance ids — what tells `tg:123/4` (a platform-qualified target) apart
-     * from a channel id that merely contains a colon. Empty means no value is ever read as
-     * qualified, which is exactly the behaviour before qualified targets existed.
-     */
-    private readonly instances: ReadonlySet<string> = new Set()
+    private readonly handler: IpcServerHandler<TAddress>
   ) {}
 
   async start(): Promise<void> {
@@ -186,7 +179,8 @@ export class IpcServer {
         resp = { ok: false, error: parsed.error };
       } else {
         const req = parsed.req;
-        const address = this.handler.resolveAddress(req.token, overrideTarget(req.action, this.instances));
+        const rawOverride = 'channelId' in req.action ? req.action.channelId : undefined;
+        const address = this.handler.resolveAddress(req.token, rawOverride);
         const data = await this.handler.handle(req.action, address);
         resp = { ok: true, data };
       }
@@ -221,17 +215,4 @@ export class IpcServer {
       console.error(`[ipc] failed to clean up socket file: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
-}
-
-/**
- * The `--channel` override, parsed and validated.
- *
- * Accepts `<channel>` or `<channel>/<thread>` so an agent can target a specific topic/thread, not
- * just a channel root — and either of those behind `<instance>:` to target another platform (the
- * ids `fleetherd channels` prints). Malformed input throws here (the message reaches the
- * agent as `ok:false, error`) rather than reaching a platform API as a garbled id.
- */
-function overrideTarget(action: IpcAction, instances: ReadonlySet<string>): ChannelTarget | undefined {
-  const raw = 'channelId' in action ? action.channelId : undefined;
-  return raw == null ? undefined : parseTarget(raw, instances);
 }
