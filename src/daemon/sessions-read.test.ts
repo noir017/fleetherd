@@ -100,6 +100,9 @@ describe('sessions read over the daemon', () => {
       const read = query({ kind: 'sessions-read', session: ref }) as { messages: Array<{ text: string }> };
       expect(read.messages.map((m) => m.text), ref).toEqual(['在吗']);
     }
+    // 8-char short topic id works through the daemon too, matching task-read's ergonomics.
+    const shortRead = query({ kind: 'sessions-read', session: 'c962cd3f' }) as { messages: Array<{ text: string }> };
+    expect(shortRead.messages.map((m) => m.text)).toEqual(['在吗']);
     history.close();
   });
 });

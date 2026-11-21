@@ -1182,10 +1182,6 @@ export class HistoryStore {
     turnIds: number[] | undefined
   ): { where: string[]; params: Array<string | number> } {
     const db = this.requireDb();
-    // The CLI refuses this too; the store is the second wall for a hand-written IPC request.
-    if (opts.tail !== undefined && opts.role !== 'tool') {
-      throw new Error('--tail reads tool lines; use it with --role tool');
-    }
     const where = ['m.session_id = ?'];
     const params: Array<string | number> = [session.id];
     if (opts.role) {
@@ -1621,12 +1617,34 @@ export class HistoryStore {
   /** One conversation by its id (`42`, `#42`) or its key; `counted` adds its row count (see `messages`). */
   private findSession(ref: string, counted = false): HistorySessionRow | undefined {
     const db = this.requireDb();
-    const id = Number(ref.replace(/^#/, ''));
+    const trimmed = ref.trim();
+    if (!trimmed) return undefined;
     const count = counted ? ', (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id) AS messages' : '';
-    const row = db
-      .prepare(`SELECT s.*${count} FROM sessions s WHERE ${Number.isInteger(id) ? 's.id' : 's.key'} = ?`)
-      .get(Number.isInteger(id) ? id : ref) as Record<string, unknown> | undefined;
-    return row ? sessionRow(row) : undefined;
+    const isNumeric = /^#?\d+$/.test(trimmed);
+    if (isNumeric) {
+      const id = Number(trimmed.replace(/^#/, ''));
+      const row = db
+        .prepare(`SELECT s.*${count} FROM sessions s WHERE s.id = ?`)
+        .get(id) as Record<string, unknown> | undefined;
+      if (row) return sessionRow(row);
+    } else {
+      const row = db
+        .prepare(`SELECT s.*${count} FROM sessions s WHERE s.key = ?`)
+        .get(trimmed) as Record<string, unknown> | undefined;
+      if (row) return sessionRow(row);
+    }
+    if (/^[0-9a-f]{8}$/i.test(trimmed)) {
+      const suffix = trimmed.toLowerCase();
+      const rows = db
+        .prepare(`SELECT s.*${count} FROM sessions s WHERE lower(s.key) LIKE ? OR lower(s.key) LIKE ? ORDER BY s.last_at DESC, s.id DESC`)
+        .all(`%#${suffix}`, `%/${suffix}`) as Array<Record<string, unknown>>;
+      if (rows.length === 1) return sessionRow(rows[0]!);
+      if (rows.length > 1) {
+        const matches = rows.map((r) => `#${Number(r.id)} (${String(r.key)})`).join(', ');
+        throw new Error(`ambiguous conversation "${ref}" matches ${rows.length} sessions: ${matches}; pass the full key or #id`);
+      }
+    }
+    return undefined;
   }
 }
 

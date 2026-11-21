@@ -95,7 +95,7 @@ const TASKS_PARAMS: Record<string, { description: string; type?: 'boolean' }> = 
   reply: { description: 'read: the last turn that ended normally, its reply whole — what a finished sub-task concluded.', type: 'boolean' },
   turn: { description: 'read: one turn, by number (or last, done).' },
   full: { description: 'read: raise the per-message cut from 1500 to 20000 characters.', type: 'boolean' },
-  tail: { description: 'read: the last n lines of each message.' },
+  tail: { description: 'read: the last n lines of each returned message (use limit to pick how many newest messages).' },
 };
 
 const TASKS_DESCRIPTION =

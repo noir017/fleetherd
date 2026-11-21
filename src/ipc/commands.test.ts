@@ -61,6 +61,15 @@ describe('help topics', () => {
     const skill = readFileSync(fileURLToPath(new URL('../../skill/SKILL.md', import.meta.url)), 'utf8');
     for (const t of HELP_TOPICS) expect(skill, t.name).toContain(`| \`${t.name}\` |`);
     expect(skill).not.toMatch(/streams back|reach the user automatically|you are running inside/i);
+    // High-frequency command quick reference avoids a second `fleetherd help <topic>` hop.
+    for (const cmd of ['task-new', 'task-send', 'task-read', 'task-agents', 'sessions search', 'sessions list', 'sessions read', 'skills search', 'skills show', 'skills patch']) {
+      expect(skill, cmd).toContain(cmd);
+    }
+    // super skill no longer forces an upfront `fleetherd help tasks` hop and documents batching + stdin `-`.
+    const superSkill = readFileSync(fileURLToPath(new URL('../../skill-super/SKILL.md', import.meta.url)), 'utf8');
+    expect(superSkill).not.toMatch(/run\s+`fleetherd help tasks`\s+once before the first one/i);
+    expect(superSkill).toContain("<<'EOF'");
+    expect(superSkill).toContain('last 20 lines of each message');
   });
 
   it('a topic page carries its commands, their flags and its rules', () => {
@@ -177,6 +186,9 @@ describe('task commands', () => {
     expect(() => spec('task-read').build(['t'], { turn: 'soon' })).toThrow(/--turn takes last, done/);
     expect(() => spec('task-read').build(['t'], { turn: 'last', turns: 2 })).toThrow(/use one/);
     expect(() => spec('task-read').build(['t'], { since: 3, limit: 5 })).toThrow(/--since reads forward/);
+    expect(() => spec('task-read').build(['t'], { tail: 0 })).toThrow(/--tail must be between 1 and 500/);
+    expect(() => spec('task-read').build(['t'], { tail: 501 })).toThrow(/--tail must be between 1 and 500/);
+    expect(spec('task-read').options.find((o) => o.flags.includes('--tail'))?.parse?.('20')).toBe(20);
   });
 
   it('task-read --reply stands alone: it selects the turn itself', () => {
@@ -448,6 +460,14 @@ describe('sessions <action> [arg]', () => {
       grep: '查询',
       tail: 20,
     });
+    // --tail works with any role or without --role to select the newest n matching messages.
+    expect(sessions(['read', '#12'], { tail: 10 })).toMatchObject({ kind: 'sessions-read', session: '#12', tail: 10 });
+    expect(sessions(['read', '#12'], { role: 'agent', tail: 8 })).toMatchObject({
+      kind: 'sessions-read',
+      session: '#12',
+      role: 'agent',
+      tail: 8,
+    });
     // `--since` reads forward from an id, so it goes with the row filters, not the tail ones.
     expect(sessions(['read', '#12'], { since: 40, grep: '查询' })).toMatchObject({
       kind: 'sessions-read',
@@ -542,7 +562,9 @@ describe('sessions <action> [arg]', () => {
     [['read', '1'], { role: 'robot' }, /--role must be user, agent or tool/],
     [['read', '1'], { turn: 'soon' }, /--turn takes last, done/],
     [['read', '1'], { turn: 'last', turns: 2 }, /use one/],
-    [['read', '1'], { tail: 5 }, /--tail reads tool lines/],
+    [['read', '1'], { tail: 0 }, /--tail must be between 1 and 500/],
+    [['read', '1'], { tail: 501 }, /--tail must be between 1 and 500/],
+    [['read', '1'], { tail: 5, limit: 10 }, /--tail and --limit both select/],
     [['read', '1'], { around: 3, role: 'tool' }, /--around reads a window of its own/],
   ])('refuses %j %j', (positionals, opts, why) => {
     expect(() => sessions(positionals, opts)).toThrow(why);

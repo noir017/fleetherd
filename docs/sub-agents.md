@@ -76,7 +76,7 @@ the tool it is running, how many steps into the turn it is, how long that turn h
 context it has used; `task-status` gives one topic's last three tool calls. `task-read <topic>` reads
 the topic from the conversation library — the same rows `sessions read` reads, with the same
 `--role`/`--turn`/`--turns`/`--since`/`--grep` filters. `--reply` gives the last turn that ended
-normally, its reply whole; `--full` raises the per-message cut and `--tail` keeps the newest lines,
+normally, its reply whole; `--full` raises the per-message cut and `--tail <n>` keeps the last `n` lines of each message,
 so an hour-long turn is not a black box.
 
 When a sub-agent is going the wrong way, `task-send --interrupt` stops the turn it is running and

@@ -81,7 +81,7 @@ fleetherd sessions read '#12' --reply
   该用的 id。它不能和 `--turn`、`--turns`、`--tail` 一起用：那些从最新一端读，一个游标没法同时
   服务两个方向。
 - `--grep <文字>`：只在这个会话里找包含这段文字的行。
-- `--tail <n>`：配合 `--role tool`，取最近 `n` 行工具调用。
+- `--tail <n>`：取最近 `n` 条匹配消息，按从旧到新排列（语义同 `--limit`；配合 `--role tool` 时取最近 `n` 行工具调用），不能与 `--since` 或 `--limit` 同时使用。
 - `--limit <n>`：取最近 `n` 条消息。它从最新一端读，不能和 `--since` 一起用。
 - `--reply`：最近一个正常结束的轮及其回复，等同于 `--turn done --role agent`——同一个词在
   `task-read` 里也是这个意思。
@@ -119,7 +119,7 @@ fleetherd sessions list --days 7
 `search` 返回会话 id、消息 id、日期、标题、agent、平台和命中的片段。它搜的是人和 agent 说的话；
 加 `--tools` 连工具调用（含参数）一起搜。`--agent` 是精确匹配——用短名 `ag` 去找 `ag@laptop`
 什么也找不到，这时 note 会列出库里有的 agent id。`read` 接会话 id（`#12` 或 `12`），
-或别的命令打印的话题 id（`web:main/c962cd3f`），从最早一条往后打印；`--around <消息>` 以某条为中心，
+或别的命令打印的话题 id（`web:main/c962cd3f`），或无歧义的 8 位短话题 id（`c962cd3f`），从最早一条往后打印；`--around <消息>` 以某条为中心，
 前后各显示 `--window` 条（默认 10）。`list` 是最近活跃的会话，每行带上 id 和 key；一页满了会说明后面
 可能还有，并给出接着读的 `--days … --before <id>`。
 

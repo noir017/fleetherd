@@ -2,7 +2,10 @@
 
 package main
 
-import "syscall"
+import (
+	"syscall"
+	"unsafe"
+)
 
 // Pdeathsig ties an agent's life to the daemon's: if the daemon dies (a crash, an OOM kill), the
 // kernel sends the agent SIGTERM instead of leaving it running unowned with nobody to read its
@@ -22,4 +25,10 @@ func groupAttr() *syscall.SysProcAttr {
 // session of a closing connection does not reach it.
 func detachAttr() *syscall.SysProcAttr {
 	return &syscall.SysProcAttr{Setsid: true}
+}
+
+func isTerminal(fd uintptr) bool {
+	var termios syscall.Termios
+	_, _, err := syscall.Syscall(syscall.SYS_IOCTL, fd, syscall.TCGETS, uintptr(unsafe.Pointer(&termios)))
+	return err == 0
 }

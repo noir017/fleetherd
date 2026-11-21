@@ -42,8 +42,8 @@ harness 自带的定时工具做不到的。
 
 用 `fleetherd schedule edit <id>` 就地修改任务，`add` 能用的参数都能用：`--agent`、`--cwd`、
 `--host`、`--model`、`--cron` / `--at` / `--tz`、`--name`、`--tag`、`--prompt` 或 `--bash`、
-`--timeout`、`--session` 和 `--channel`。长提示词最好让调用方自己的 shell 去读文件——
-`--prompt "$(cat prompt.md)"`——文件在你敲命令的机器上展开，不由网关去读。任务「是什么」也能改：
+`--timeout`、`--session` 和 `--channel`。长提示词可直接传 `--prompt -` 从 stdin 读入
+（如 `fleetherd schedule add ... --prompt - <<'EOF'` 或 `< prompt.md`），本机与远程主机均适用。任务「是什么」也能改：
 `--prompt` 把 bash 任务改成提示词任务（不给 `--session` 时和 `add` 一样是固定会话），`--bash` 把
 提示词任务改成命令，`--session` 改会话方式，`--channel` 改投递位置。不论改了什么，任务 id、标签、
 运行次数、运行历史和上次结果都保留——历史仍然如实记录之前每次运行做了什么、投递到哪——下次运行
@@ -85,4 +85,3 @@ agent）时，命令会被拒绝，而不是存下一个在那里指别处的目
 面板的另一个外层标签页 **Reviews** 是闲下来的对话的自动复盘（见[技能](skills.md#自动复盘)），不是定时任务；它和任务共用一个面板，只因为两者都是没有自己对话的后台工作。
 `/setting` 里的 **⏰ Scheduled tasks** 按钮在所有平台都有：列出每个任务的下次和上次运行，可以暂停、恢复、
 删除（删除要点两次）。没有按钮的平台，用 `/setting schedule [pause|resume|delete|run <id>]` 打字完成同样的操作。
-
