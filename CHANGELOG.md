@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.28.0] - 2026-11-22
+
 ### Added
 
 - **Web UI conversation reference copy.** Every topic row's `⋯` menu (in both the Topics sidebar and the Sessions tab), every History row, and the chat header now offer a one-click copy of `<title> (<instance>:main/<id>)` (or `<title> (#<id>)` for History entries), matching the IDs `fleetherd sessions read` accepts so an operator can point another agent at a prior conversation without looking up its ID.
