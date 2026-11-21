@@ -200,7 +200,7 @@ edits are `void`-and-`catch`: a failure is logged and the turn continues.
 **Icons are inline SVG from `platform/webui/icons.ts`, never emoji.** An emoji is a font glyph:
 it renders differently on every platform, cannot take `currentColor` or the text size, and where
 the font lacks it the button is an empty box. `icons.ts` holds every icon the page shows — 24×24,
-stroked in `currentColor` — and a new one goes into its `PATHS` rather than inline in `page.ts`;
+stroked in `currentColor` — and a new one goes into its `PATHS` rather than inline in the page;
 text-only affordances like the terminal's `>_` stay text.
 
 ## Testing
@@ -246,9 +246,11 @@ integration harness, so those are verified by hand.
 
 The one exception to "no browser, no DOM" is `platform/webui/page.dom.*.test.ts` (sharing
 `page.dom.test-helpers.ts`), which runs the
-web UI's inline client script in jsdom. That script is a TypeScript string, so typecheck, lint
-and every other gate are blind to it — and a page that renders nothing has already shipped
-green once. Behaviour changes to `webui/page.ts` are expected to arrive with a test there; read
+web UI's client script in jsdom — `webui/client/legacy-app.ts`, bundled the way the asset build
+bundles it (`page.test-helpers.ts`). Typecheck and lint still leave that file out until the
+refactor plan's later steps split it into typed modules, so those tests are all that sees it — and
+a page that renders nothing has already shipped green once. Behaviour changes to the client script
+are expected to arrive with a test there; read
 [its README](src/platform/webui/README.md#testing) first, because jsdom's handling of `@media`
 and of duplicate declarations will otherwise mislead you.
 
@@ -543,7 +545,7 @@ touches one of these places keeps both names working.
 | Config directory | `~/.config/talkcode` used as it is when `~/.config/fleetherd` does not exist, logged once; never moved (a bind mount, absolute paths in config.yaml) | `defaultConfigDir`, `config/load.ts` |
 | Host directory | `~/.talkcode` moved to `~/.fleetherd` with a link left at the old name: on every host by the bootstrap, on the gateway's own machine at start; links that name the old path count as the gateway's own | `remote/connection.ts`, `migrateHostDir`, `isUnderEitherName`, `remote/ops.go` `under` |
 | Skill metadata | `talkcode-resident` / `-category` / `-hosts` / `-harnesses` read; the resident guard (invariant 8) treats both spellings as one key, either `"true"` meaning resident | `skills-store.ts` `metaValue` / `residentOf` |
-| Skills repository | commits authored `talkcode*` are the gateway's; `Talkcode-` trailers read like `Fleetherd-` ones | `skills-git.ts`, `webui/page.ts` skillHistRow |
+| Skills repository | commits authored `talkcode*` are the gateway's; `Talkcode-` trailers read like `Fleetherd-` ones | `skills-git.ts`, `webui/client/legacy-app.ts` skillHistRow |
 | Skill links | the bundled skill's old `talkcode` link is taken back where `fleetherd` is linked; `talkcode` stays a reserved skill name | `skill-link.ts`, `remote-hosts.ts`, `skills-store.ts` |
 | Transcripts | `talkcode skills …` and `~/.talkcode/skills/…` count as skill use and administration | `skill-usage.ts`, `review-prompt.ts` |
 | Remote host | a `talkcode-remote` daemon or version directory is retired like a `fleetherd-remote` one | `remote/attach.go` |

@@ -1,9 +1,10 @@
 # scripts FRAS Map
 scripts/build-remote.mjs [Infra]: F:Go cross-compilation script building fleetherd-remote binaries for amd64 and arm64
-scripts/build-webui-assets.mjs [Infra]: F:Web UI assets bundle generator
+scripts/build-webui-assets.mjs [Infra]: F:Web UI assets bundle generator: app, style and codeview into dist/webui-assets with manifest.json | R:scripts/webui-client.mjs,scripts/third-party-licenses.mjs
 scripts/changelog.mjs [Infra]: F:CHANGELOG parser and release notes generator | A:mergeSubsections | S:Merges identical subsection headings across release notes [T:mergeSubsections]
 scripts/probe.mjs [Edge]: F:Discord gateway connectivity diagnostic probe
 scripts/release.mjs [Infra]: F:Release script stamping CHANGELOG, bumping version, running pre-flight gates, and tagging
 scripts/stop.mjs [Infra]: F:Process cleanup utility targeting stray daemon and ACP child processes
 scripts/third-party-licenses.mjs [Infra]: F:Third-party license aggregator and validator
+scripts/webui-client.mjs [Infra]: F:Web UI client script and stylesheet bundler shared by the asset build and the DOM test harness | A:buildClient,appSource | S:Fails the build on a missing or doubled build-time marker
 scripts/verify-sso.mts [Edge]: F:End-to-end SSO JWT authentication flow verifier

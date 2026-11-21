@@ -1,23 +1,27 @@
-// Build the web UI's code view into dist/webui-assets/ — part of `npm run build`, so the files
+// Build the web UI's assets into dist/webui-assets/ — part of `npm run build`, so the files
 // reach `dist` and therefore the npm tarball (which ships `dist` only).
 //
-// The page's own script is one inline string with no module system, and the page's CSP allows no
-// origin but its own. So CodeMirror is bundled here as ES modules, served by `GET /assets/<file>`
-// (src/platform/webui/server.ts) and loaded by `page.ts` `codeView()` — on demand, never with the
-// page. Every language is a dynamic import in src/platform/webui/codeview/index.ts, which esbuild
-// turns into its own chunk: a browser reading a `.go` file downloads the editor and the Go
-// grammar, not the other sixteen.
+// Three entries, all served by `GET /assets/<file>` (src/platform/webui/server.ts):
+//
+//   - `app` and `style`: the page's own script and stylesheet (src/platform/webui/client/),
+//     bundled by `webui-client.mjs` — the same function the test harness runs, so the tests and
+//     the build cannot disagree about what the page is. They are linked from the page itself,
+//     which is how its CSP can refuse every inline script.
+//   - `codeview`: CodeMirror, bundled here as ES modules and loaded by the script's `codeView()` —
+//     on demand, never with the page. Every language is a dynamic import in
+//     src/platform/webui/codeview/index.ts, which esbuild turns into its own chunk: a browser
+//     reading a `.go` file downloads the editor and the Go grammar, not the other sixteen.
 //
 // Names carry a content hash, so the route can answer `immutable` and a rebuilt asset is a new
-// URL rather than a stale cache. The page finds the entry through manifest.json, which is read by
+// URL rather than a stale cache. The page finds all three through manifest.json, which is read by
 // src/platform/webui/assets.ts at startup.
 //
 //   node scripts/build-webui-assets.mjs           build into dist/webui-assets/
 //   npm run build                                 tsc, the Go binary, then this
 //
 // A source checkout started with `node --import tsx src/cli.ts start` needs one
-// `npm run build:assets` first;
-// without it the page simply shows code files in a <pre>, and the README says so.
+// `npm run build:assets` first, and another after editing anything under client/: without one the
+// page has no script and says so in place of the login form (page.ts), and the README says so.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -26,6 +30,7 @@ import { gzipSync } from 'node:zlib';
 import { build } from 'esbuild';
 
 import { collectLicenses, licenseFailure, renderLicenses } from './third-party-licenses.mjs';
+import { buildClient } from './webui-client.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const out = path.join(root, 'dist', 'webui-assets');
@@ -66,9 +71,13 @@ if (!codeview) {
 }
 const entryName = path.basename(codeview);
 
+// The page's own two files, into the same directory. They share nothing with the code view's
+// chunks — a classic script and a stylesheet, not ES modules — so they are a separate esbuild run.
+const client = await buildClient({ outdir: out });
+
 fs.writeFileSync(
   path.join(out, 'manifest.json'),
-  `${JSON.stringify({ codeview: entryName }, null, 2)}\n`,
+  `${JSON.stringify({ app: client.app.file, style: client.style.file, codeview: entryName }, null, 2)}\n`,
   'utf8'
 );
 
@@ -97,14 +106,19 @@ if (!written.includes('@codemirror/state') || !/MIT/.test(written)) {
 const kib = (n) => `${(n / 1024).toFixed(1)} KiB`;
 let raw = 0;
 let packed = 0;
-for (const [file] of outputs.sort(([, a], [, b]) => b.bytes - a.bytes)) {
-  const bytes = fs.readFileSync(path.resolve(root, file));
+const files = [
+  ...outputs.sort(([, a], [, b]) => b.bytes - a.bytes).map(([file]) => path.resolve(root, file)),
+  path.join(out, client.app.file),
+  path.join(out, client.style.file),
+];
+for (const file of files) {
+  const bytes = fs.readFileSync(file);
   const packedBytes = gzipSync(bytes, { level: 9 }).length;
   raw += bytes.length;
   packed += packedBytes;
   console.log(`build-webui-assets: ${path.basename(file)} ${kib(bytes.length)} (gzip ${kib(packedBytes)})`);
 }
 console.log(
-  `build-webui-assets: ${outputs.length} files, ${kib(raw)} (gzip ${kib(packed)}); the page loads ${entryName} only when it shows code`
+  `build-webui-assets: ${files.length} files, ${kib(raw)} (gzip ${kib(packed)}); the page loads ${client.app.file} and ${client.style.file}, and ${entryName} only when it shows code`
 );
 console.log(`build-webui-assets: ${licenses.length} third-party licences in licenses.txt (${kib(fs.statSync(licensesFile).size)})`);

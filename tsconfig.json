@@ -16,5 +16,5 @@
     "forceConsistentCasingInFileNames": true
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "src/platform/webui/codeview"]
+  "exclude": ["node_modules", "dist", "src/platform/webui/codeview", "src/platform/webui/client"]
 }

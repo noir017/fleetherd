@@ -10,6 +10,13 @@ export default tseslint.config(
     // walking into one turns another session's work in progress into this one's errors.
     ignores: ['dist/**', 'node_modules/**', 'coverage/**', '*.config.js', '*.config.ts', '.claude/worktrees/**', '.codebuddy/worktrees/**', '.worktrees/**'],
   },
+  {
+    // The web UI's client script as it was moved out of page.ts (refactor Phase 1 Step 1A):
+    // twelve thousand lines of ES5-style browser code that no lint ever saw while it was a string.
+    // Its later steps split it into typed modules and lint those; until then it is out, by name,
+    // so a new file beside it is linted from the start. tsconfig.json leaves client/ out too.
+    ignores: ['src/platform/webui/client/legacy-app.ts'],
+  },
   ...tseslint.configs.recommended,
   {
     files: ['src/**/*.ts'],

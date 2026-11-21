@@ -53,17 +53,31 @@ naming it, and they are all of them:
 | `protocol.ts` | `.strict()` zod schemas for every inbound body; the outbound event union |
 | `reading.ts` | Which files the page can read in place, and the HTML it is given for one. Pure. |
 | `codeview/` | The CodeMirror bundle the page loads on demand: the editor and the diff — see [The code view](#the-code-view) |
-| `assets.ts` | Where that bundle was built to, and the entry the page is told to import |
-| `page.ts` | The whole page (HTML + CSS + JS) as a module-level string |
-| `manifest.ts` | The web app manifest and the icon, as strings, for the same reason `page.ts` is one |
+| `assets.ts` | Where the built assets are, and the three names the page links: its script, its stylesheet, the code view's entry |
+| `page.ts` | The page's HTML shell: head, gate, the `boot-config` JSON, and the links to its script and stylesheet |
+| `page-body.ts` | The page's markup — every element the script finds by id — as a template |
+| `client/legacy-app.ts` | The client script, bundled into `dist/webui-assets/app-<hash>.js` — see below |
+| `client/styles/main.css` | The stylesheet, bundled into `dist/webui-assets/style-<hash>.css` |
+| `manifest.ts` | The web app manifest and the icon, as strings, for the same reason `page.ts` is a module |
 | `icons.ts` | The page's icons, hand-drawn inline SVG, and which emoji each one replaces — see [Icons](#icons) |
 | `webpush.ts` | Web Push, server half: the VAPID key, the subscribed devices, RFC 8291 encryption, the endpoint allowlist |
 | `sw.ts` | The service worker (`sw.js`) as a string: shows a push, keeps the push's topic in the transcript cache, opens the topic when it is tapped — and nothing else |
-| `cache-script.ts` | The transcript cache's database, record and rotation, as script both `page.ts` and `sw.ts` include, so its two writers cannot disagree on the format |
+| `cache-script.ts` | The transcript cache's database, record and rotation, as script both the client script and `sw.ts` include, so its two writers cannot disagree on the format |
 | [`../web-markdown.ts`](../web-markdown.ts) | Markdown → escaped HTML; lives with the other converters |
 
 `room.ts` is deliberately free of HTTP so the adapter's behaviour is testable without opening
 a port — which is what `room.test.ts` and `index.test.ts` do.
+
+**The client script and stylesheet were inline in `page.ts` until Phase 1 Step 1A of
+[the refactor plan](../../../docs/refactor-plan.md)**, and were moved to `client/` as they were.
+So wherever this README names a script function or a CSS rule as `page.ts`'s — `codeView()`,
+`menu()`, `.b .raw` — read `client/legacy-app.ts` or `client/styles/main.css`. Both are bundled by
+`scripts/webui-client.mjs` (called by `scripts/build-webui-assets.mjs`, and by the tests), linked
+from the page by content-hashed name, and served by `GET /assets/<file>`. What the server decides
+per deployment reaches the script as `<script type="application/json" id="boot-config">` — read
+once into `BOOT` — instead of being spliced into its text, which is what let the CSP drop
+`script-src 'unsafe-inline'`. Two build-time markers remain in the script (`clientIcons()` and
+`CACHE_CORE`, filled by `webui-client.mjs`); the build fails if either is missing.
 
 ## Topics
 
@@ -2040,13 +2054,24 @@ is behind it is an agent with full tool access.
    installable, which happens before anyone signs in, and a 401 there is indistinguishable
    from "not installable". They carry the configured title and a drawing; the title is already
    in the `<title>` of the equally-open page, so this widens nothing.
+
+   **So are the page's own script and stylesheet** — `assets/app-<hash>.js` and
+   `assets/style-<hash>.css`, by those two names only (`OPEN`'s `only` predicate in `server.ts`):
+   the page is a shell without them, and the gate it shows before sign-in is drawn and submitted
+   by that script. They are the bytes the open page carried inline until Step 1A, so this widens
+   nothing either. Everything else under `/assets/` — the code view and its chunks — stays behind
+   the session.
 8. **An upgrade is gated separately, because it has to be** — it never reaches `route()`, so
    nothing above applies to it automatically. See [the terminal pane](#the-terminal-pane).
-9. **`script-src 'self'` is the code view: the only file it reaches is one this build wrote.**
-   The page still has no external script; the policy admits one more *same-origin* URL, which is
-   the entry `GET /assets/<file>` serves (see [The code view](#the-code-view)). The asset route
-   reads only `dist/webui-assets/`: one path segment, no leading dot, a `.js` extension, and the
-   resolved parent must still be that directory.
+9. **`script-src 'self'`, with no `'unsafe-inline'`: the only scripts are files this build
+   wrote.** The page carries no inline script (its one `<script>` without `src` is the JSON boot
+   config, which no browser executes) and no inline handler, so a script that got past
+   `web-markdown.ts`'s escaping would not run. What `'self'` admits is what `GET /assets/<file>`
+   serves — the page's own script and the code view (see [The code view](#the-code-view)). The
+   asset route reads only `dist/webui-assets/`: one path segment, no leading dot, a `.js` or `.css`
+   extension (each served under its own declared type), and the resolved parent must still be that
+   directory. `style-src` is `'self' 'unsafe-inline'`: the stylesheet is one of those files, and
+   the script and CodeMirror both still set styles inline.
 
    What keeps a file the agent sent from being that URL is point 5 — with its exception stated
    too: a download is `attachment` + `nosniff`, and its type is `application/octet-stream` unless
@@ -2205,7 +2230,8 @@ violation, the close button 44px on a phone — was checked in Chromium on 2026-
 ### The code view
 
 A text file is shown in CodeMirror 6 with its grammar's colours, and the same bundle is what the
-git diff panel and the file editor are built on (`codeview/`). It is the page's one built asset:
+git diff panel and the file editor are built on (`codeview/`). It is the one built asset the page
+loads on demand rather than with itself:
 `src/platform/webui/codeview/` is bundled by `scripts/build-webui-assets.mjs` into
 `dist/webui-assets/`, given a content-hashed name, and served by `GET /assets/<file>` behind the
 session. Markdown keeps the rendered HTML — the code view is for what is read as source.
@@ -2231,7 +2257,7 @@ Five things about it are decisions, not detail:
   anywhere (measured in Chromium, 2026-11-18). With the entry importing one dynamic chunk, the app
   and the grammars are siblings and share one copy.
 - **The specifier is made absolute before `import()`.** `import('assets/x.js')` in an inline
-  classic script fails with "Failed to resolve module specifier" in Chromium (same date), so the
+  classic script (as the page's was until Step 1A — it is a linked classic script now) fails with "Failed to resolve module specifier" in Chromium (same date), so the
   page resolves `CODEVIEW` against `document.baseURI` first. That is still relative to the page's
   own URL, so a reverse proxy sub-path mounts the bundle under its prefix like every other URL here.
 - **Each language is its own chunk.** Every extension in `codeview/app.ts` `LANG` is a dynamic
@@ -2247,8 +2273,10 @@ Five things about it are decisions, not detail:
   the package's own `reconfigure` does not change the layout.
 
 A source checkout started with `node --import tsx src/cli.ts start` needs one
-`npm run build:assets` first (it is part of `npm run build` for a release). Until that has run,
-`CODEVIEW` is null and code files stay in the `<pre>` — the same page, without the editor.
+`npm run build:assets` first (it is part of `npm run build` for a release), and another after any
+change under `client/`. Until that has run there is no script for the page to link, and the page
+says so above its login form (`page.ts` `UNBUILT`) rather than offering one that does nothing; with
+a build that has no code view, `CODEVIEW` is null and code files stay in the `<pre>`.
 
 **The build writes `licenses.txt` beside the chunks.** CodeMirror and the lezer grammars keep
 their licence in a LICENSE file rather than in header comments, so minification would otherwise
@@ -2257,7 +2285,7 @@ notice to travel with the copy. `scripts/third-party-licenses.mjs` reduces esbui
 input list to the packages that actually contributed a module, reads each one's licence verbatim,
 and the build stops if any of them ships no licence file at all — the names are printed — or if the
 file it wrote does not name them. It is not served by
-`/assets/` (that route is `.js` only); it ships in `dist`, which `package.json` `files` carries.
+`/assets/` (that route is `.js` and `.css` only); it ships in `dist`, which `package.json` `files` carries.
 
 The reader's half was checked in Chromium on 2026-11-18: a `.ts` file highlighted with its gutter,
 at 1280 and at 390 px (where it wraps and nothing overflows), no CSP violation in the console, and
@@ -2387,12 +2415,16 @@ without it. `page.test.ts` pins the viewport tag so this does not get added by r
   that promise's `finally`.
 - **A reverse proxy must not buffer**, and must not strip `Content-Encoding` without
   re-adding it. `proxy_buffering off;` in nginx.
-- **`page.ts` is invisible to the toolchain.** Not typechecked, not linted — to TypeScript it is
-  a string. So the script is kept stupid, uses string concatenation rather than template literals
-  (a literal `` ` `` or `${` would be eaten by the surrounding template and become a module-load
-  error), and any change that needs a new *decision* belongs on the other side of the wire. It
-  is no longer untested, though: `page.dom.test.ts` runs it in jsdom, and a behavioural change
-  in there should arrive with a test, because nothing else in the repo can see it.
+- **The client script is invisible to the toolchain.** `client/legacy-app.ts` is left out of
+  `tsconfig.json` and `eslint.config.js` until the refactor plan's later steps split it into typed
+  modules. So the script is kept stupid, and any change that needs a new *decision* belongs on the
+  other side of the wire. It still uses string concatenation rather than template literals, a
+  habit from when it was itself a template — the trap now applies only to `page.ts` and
+  `page-body.ts`, where a literal `` ` `` or `${` is eaten by the surrounding template and becomes
+  a module-load error. It is not untested: `page.dom.*.test.ts` runs it in jsdom, and a behavioural
+  change in there should arrive with a test, because nothing else in the repo can see it. And after
+  editing it, `npm run build:assets` before trying a source checkout: the daemon serves the bundle,
+  not the file.
 - **The page can render nothing while the event stream is perfectly healthy**, and this has
   already shipped once. A client that names no topic sends `GET /api/events` with no `?t=`,
   and `stream()` answers for `topics.current()` — so the sync that comes back carries a topic
@@ -2457,11 +2489,13 @@ so it is tested rather than verified by hand: `web-markdown.test.ts` (escaping a
 safety), `auth.test.ts` (constant-time compare, throttle, expiry), `protocol.test.ts` (strict
 rejection), `room.test.ts` and `index.test.ts` (the adapter contract), `server.test.ts` (real
 sockets: the auth gate, the CSRF locks, the download headers, and that `stop()` terminates
-with a stream open), `page.test.ts` (the script parses and nothing was eaten).
+with a stream open), `page.test.ts` (the script parses with every build marker filled, the shell
+carries no inline script for the CSP to refuse, the boot config holds what the server decided, and
+nothing was eaten).
 
-`server.test.ts` also holds the asset route: the immutable JavaScript headers, the guarded
-session, every spelling of a traversal that must 404, and the pin that only `/assets/` and `sw.js`
-handle a JavaScript content type — with a fake ttyd serving one through `/term/` beside it, which
+`server.test.ts` also holds the asset route: the immutable JavaScript and CSS headers, the page's
+two files open before sign-in while the code view stays guarded, every spelling of a traversal that
+must 404, and the pin that only `/assets/` and `sw.js` handle a JavaScript content type — with a fake ttyd serving one through `/term/` beside it, which
 is what keeps that pin honest about its own scope. `page.dom.test.ts` drives the reader through a
 fake `window.__fhCodeView` — an editor for a text file, destroyed when another file replaces it
 and when the window closes — through a bundle that will not load (the `<pre>` returns, and the
@@ -2473,9 +2507,20 @@ runs). Every test compiles the whole page script again in a fresh jsdom realm, a
 coverage keeps counters for every script it ever compiled, whatever `coverage.include` later
 reports — so under `--coverage` the file's heap grew with its test count and the worker died at
 the 258th of 623 (2026-11-18, after the git and file windows). Those counters measured nothing
-anyway: the client script is a string in `page.ts`, not a file `src/**/*.ts` matches. The file
+anyway: what each test evaluates is the bundle, inlined into the page as a string, not the module
+`src/**/*.ts` matches. The file
 also closes each test's windows after it (`liveWindows`), which is what keeps the plain run near
 800 MB; a test that opens a window outside `open()` should close it itself.
+
+**What the tests load (`page.test-helpers.ts`).** The served page links its script and
+stylesheet, CI runs without `npm run build:assets`, and jsdom fetches no subresource; so the helper
+builds both with the same `buildClient()` the asset build calls — once per worker, the suite being
+`isolate: false` — and puts them back inline where the shell links them. It offers the page in two
+forms sharing one shell (and so one build hash): **built**, the bundle and stylesheet exactly as
+shipped, which `open()` loads and the DOM tests run; and **source**, the files as written in
+`client/`, which `renderPage()` returns for assertions about text — esbuild reprints both, so a
+CSS rule or a line of script pinned as text must be read from the source. The helper's `renderPage`
+and `servePage` keep the old positional signature (the code view's URL fifth).
 
 `page.dom.test.ts` is the one that covers the client script's *behaviour*. It loads what the
 daemon serves into jsdom, stubs `EventSource` and `fetch`, and drives the page through the
@@ -2543,7 +2588,7 @@ section, each fail one of them.
 
 Four things about it that are not obvious:
 
-- **The stubs are installed in `beforeParse`**, before the inline script runs. Evaluating the
+- **The stubs are installed in `beforeParse`**, before the inlined script runs. Evaluating the
   script a second time to hand it a global would register every listener twice. `indexedDB` is
   one of them — jsdom does not implement it at all, so the harness installs a `fake-indexeddb`
   factory. It can hand the SAME factory to a second page, which is how a reload, and a daemon

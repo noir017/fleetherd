@@ -114,6 +114,13 @@ async function boot(
 
 const JSON_HEADERS = { 'content-type': 'application/json' };
 
+/** What the page hands its script: the `boot-config` JSON page.ts writes in place of an inline script. */
+function bootOf(html: string): Record<string, unknown> {
+  const json = /<script type="application\/json" id="boot-config">([^<]*)<\/script>/.exec(html)?.[1];
+  if (json === undefined) throw new Error('the page has no boot-config');
+  return JSON.parse(json) as Record<string, unknown>;
+}
+
 /**
  * Spin until something becomes true, or give up loudly.
  *
@@ -300,7 +307,7 @@ describe('webui server: the page', () => {
 
   it('names its build in a HEAD, and the page it serves carries the same one', async () => {
     // How a page left open through a restart learns whether the daemon now serves another page:
-    // one round trip, no body, compared with the BUILD in its own script.
+    // one round trip, no body, compared with the BUILD its script reads from the boot config.
     const { port } = await boot();
     const head = await rawGet(port, '/', {}, 'HEAD');
     expect(head.status).toBe(200);
@@ -309,7 +316,7 @@ describe('webui server: the page', () => {
     expect(head.headers.etag).toBe(page.headers.etag);
     const build = /^W\/"(.+)"$/.exec(String(page.headers.etag))?.[1] ?? '';
     expect(build).not.toBe('');
-    expect(page.body.toString('utf8')).toContain(`var BUILD = '${build}';`);
+    expect(bootOf(page.body.toString('utf8')).build).toBe(build);
   });
 });
 
@@ -394,16 +401,63 @@ describe('webui server: installing it as an app', () => {
 });
 
 /**
- * A built asset directory as `scripts/build-webui-assets.mjs` leaves one: hashed module names, all
- * `.js`, with a manifest naming the entry. Written per test under the file's own temp directory.
+ * A built asset directory as `scripts/build-webui-assets.mjs` leaves one: hashed names, with a
+ * manifest naming the page's script and stylesheet and the code view's entry. Written per test
+ * under the file's own temp directory.
  */
 function buildAssets(files: Record<string, string>): WebAssets {
   const at = fs.mkdtempSync(path.join(dir, 'assets-'));
   for (const [name, body] of Object.entries(files)) fs.writeFileSync(path.join(at, name), body);
-  const codeview = Object.keys(files).find((n) => n.startsWith('codeview-')) ?? null;
-  fs.writeFileSync(path.join(at, 'manifest.json'), JSON.stringify({ codeview }));
+  const named = (prefix: string): string | null => Object.keys(files).find((n) => n.startsWith(prefix)) ?? null;
+  fs.writeFileSync(path.join(at, 'manifest.json'), JSON.stringify({ app: named('app-'), style: named('style-'), codeview: named('codeview-') }));
   return loadAssets(at);
 }
+
+describe('webui server: the page’s own script and stylesheet', () => {
+  const app = 'app-abc123.js';
+  const style = 'style-def456.css';
+  const codeview = 'codeview-0a1b2c.js';
+  const files = { [app]: '(function(){})();', [style]: 'body{color:red}', [codeview]: 'export default 1;' };
+
+  it('links both from the page, relatively', async () => {
+    const { base } = await boot({}, undefined, undefined, undefined, buildAssets(files));
+    const html = await (await fetch(`${base}/`)).text();
+    expect(html).toContain(`<link rel="stylesheet" href="assets/${style}">`);
+    expect(html).toContain(`<script src="assets/${app}"></script>`);
+    expect(html).not.toContain('id="unbuilt"');
+  });
+
+  it('serves both before sign-in, since the gate is drawn by them — and nothing else under /assets/', async () => {
+    const { base, port } = await boot({}, undefined, undefined, undefined, buildAssets(files));
+    const js = await rawGet(port, `/assets/${app}`);
+    expect(js.status).toBe(200);
+    expect(js.headers['content-type']).toBe('text/javascript; charset=utf-8');
+    expect(js.headers['cache-control']).toBe('public, max-age=31536000, immutable');
+    expect(js.headers['x-content-type-options']).toBe('nosniff');
+    const css = await rawGet(port, `/assets/${style}`);
+    expect(css.status).toBe(200);
+    // Declared, never sniffed: with nosniff a browser applies a stylesheet only under this type.
+    expect(css.headers['content-type']).toBe('text/css; charset=utf-8');
+    expect(css.headers['cache-control']).toBe('public, max-age=31536000, immutable');
+    expect(css.body.toString('utf8')).toBe('body{color:red}');
+    // The code view is not needed to sign in, so it stays behind the session…
+    expect((await fetch(`${base}/assets/${codeview}`)).status).toBe(401);
+    // …and so does any other name, built or not.
+    expect((await fetch(`${base}/assets/app-nope.js`)).status).toBe(401);
+    const cookie = await signIn(base);
+    expect((await rawGet(port, `/assets/${codeview}`, { cookie })).status).toBe(200);
+    expect((await rawGet(port, `/assets/${style}`, { cookie })).status).toBe(200);
+  });
+
+  it('says the page was not built when there is no script to link', async () => {
+    const { base, port } = await boot();
+    const html = await (await fetch(`${base}/`)).text();
+    expect(html).toContain('id="unbuilt"');
+    expect(html).not.toContain('<script src=');
+    // Nothing is open under /assets/ when nothing was built.
+    expect((await rawGet(port, '/assets/app-abc123.js')).status).toBe(401);
+  });
+});
 
 describe('webui server: the code view’s bundle', () => {
   const entry = 'codeview-abc123.js';
@@ -431,7 +485,7 @@ describe('webui server: the code view’s bundle', () => {
     expect((await fetch(`${base}/assets/${entry}`)).status).toBe(401);
     const cookie = await signIn(base);
     expect((await rawGet(port, '/assets/codeview-nope.js', { cookie })).status).toBe(404);
-    // The manifest is a build artefact too, and not a module: the route's one type would be a lie.
+    // The manifest is a build artefact too, but neither script nor stylesheet: either type would be a lie.
     expect((await rawGet(port, '/assets/manifest.json', { cookie })).status).toBe(404);
     // A directory that was never built answers 404 rather than throwing.
     const bare = await boot({}, undefined, undefined, undefined, loadAssets(path.join(dir, 'not-built')));
@@ -461,18 +515,23 @@ describe('webui server: the code view’s bundle', () => {
 
   it('names the entry in the page it serves, relatively, and only when a build exists', async () => {
     const bare = await boot();
-    expect(await (await fetch(`${bare.base}/`)).text()).toContain('var CODEVIEW = null;');
+    expect(bootOf(await (await fetch(`${bare.base}/`)).text()).codeview).toBeNull();
 
     const built = await boot({}, undefined, undefined, undefined, buildAssets({ [entry]: 'export default 1;' }));
     const html = await (await fetch(`${built.base}/`)).text();
     // Relative, so a gateway behind a reverse proxy under a sub-path loads its own bundle.
-    expect(html).toContain(`var CODEVIEW = 'assets/${entry}';`);
+    expect(bootOf(html).codeview).toBe(`assets/${entry}`);
   });
 
-  it('lets the page import that bundle through the CSP, and still nothing from another origin', async () => {
+  it('lets the page load its files through the CSP, refuses every inline script, and nothing from another origin', async () => {
     const { base } = await boot();
     const csp = (await fetch(`${base}/`)).headers.get('content-security-policy') ?? '';
-    expect(csp).toContain("script-src 'unsafe-inline' 'self'");
+    // 'self' alone: since the script moved to client/ the page carries none inline, so an inline
+    // script that got past web-markdown's escaping would not run.
+    expect(csp).toContain("script-src 'self';");
+    expect(csp).not.toMatch(/script-src[^;]*'unsafe-inline'/);
+    // The stylesheet is a file too; the inline style attributes the script sets still need the rest.
+    expect(csp).toContain("style-src 'self' 'unsafe-inline';");
     expect(csp).toContain("default-src 'none'");
     expect(csp).not.toContain('script-src http');
   });
@@ -2998,10 +3057,10 @@ describe('webui server: the file window', () => {
   it('serves the page with the button revealed only when the feature is on', async () => {
     const off = await boot();
     const offPage = await fetch(`${off.base}/`).then((r) => r.text());
-    expect(offPage).toContain('var FILES_OK = false;');
+    expect(bootOf(offPage).files).toBe(false);
     const on = await boot({ files: { enabled: true, roots: [] } });
     const onPage = await fetch(`${on.base}/`).then((r) => r.text());
-    expect(onPage).toContain('var FILES_OK = true;');
+    expect(bootOf(onPage).files).toBe(true);
   });
 });
 
@@ -3047,7 +3106,7 @@ describe('webui server: the instruction editor', () => {
     }
     expect((await post(base, cookie, '/api/instructions/write', { scope: 'global', name: 'common.md', text: 'x' })).status).toBe(404);
     const page = await fetch(`${base}/`).then((r) => r.text());
-    expect(page).toContain('var INSTR_OK = false;');
+    expect(bootOf(page).instructions).toBe(false);
   });
 
   it('answers 404 when it is on but the daemon handed over no panel', async () => {
@@ -3062,7 +3121,7 @@ describe('webui server: the instruction editor', () => {
     room.useInstructionsPanel(p.panel);
     expect((await fetch(`${base}/api/instructions`)).status).toBe(401);
     const cookie = await signIn(base);
-    expect(await fetch(`${base}/`, { headers: { cookie } }).then((r) => r.text())).toContain('var INSTR_OK = true;');
+    expect(bootOf(await fetch(`${base}/`, { headers: { cookie } }).then((r) => r.text())).instructions).toBe(true);
 
     expect(await (await fetch(`${base}/api/instructions`, { headers: { cookie } })).json()).toMatchObject({ on: true, global: [{ name: 'common.md' }] });
     const refs = await fetch(`${base}/api/instructions/refs?agent=nope`, { headers: { cookie } });
@@ -3123,7 +3182,7 @@ describe('webui server: notifications and what the operator has seen', () => {
     expect(body).not.toContain("'fetch'");
     const page = await fetch(`${base}/`);
     expect(page.headers.get('content-security-policy')).toContain("worker-src 'self'");
-    expect(page.headers.get('content-security-policy')).toContain("script-src 'unsafe-inline' 'self';");
+    expect(page.headers.get('content-security-policy')).toContain("script-src 'self';");
   });
 
   it('hands out the push key only behind the session, and keeps a subscription to a real push service', async () => {

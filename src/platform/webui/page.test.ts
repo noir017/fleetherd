@@ -1,52 +1,113 @@
 import { describe, it, expect } from 'vitest';
 
-import { renderPage } from './page.js';
+import { NO_ASSETS, servePage as serveShell } from './page.js';
+import { APP_SOURCE, CLIENT, renderPage, testAssets } from './page.test-helpers.js';
 
 /**
- * The inline script is the one artifact in this repo the toolchain cannot see: it is not
- * typechecked, not linted and not unit-tested, because to TypeScript it is a string. These
- * assertions are the substitute — they will not catch a logic error, but they catch the two
- * failures that would otherwise reach a browser: a syntax error, and a character the
- * surrounding template literal swallowed.
+ * The client script is the one artifact in this repo the toolchain cannot see: it is not
+ * typechecked and not linted (client/legacy-app.ts is left out of both until the refactor plan's
+ * later steps). These assertions are the substitute — they will not catch a logic error, but they
+ * catch what would otherwise reach a browser: a syntax error, a build marker left unfilled, and a
+ * page that can no longer run under its own CSP.
+ *
+ * `html` is the page with its script and stylesheet inline as they are written (page.test-helpers.ts),
+ * which is what the text assertions below read; `shell` is the document the server actually sends.
  */
-function scriptOf(html: string): string {
-  return html.slice(html.indexOf('<script>') + '<script>'.length, html.lastIndexOf('</script>'));
-}
+const bootOf = (doc: string): Record<string, unknown> => {
+  const json = /<script type="application\/json" id="boot-config">([^<]*)<\/script>/.exec(doc)?.[1];
+  if (json === undefined) throw new Error('no boot-config element');
+  return JSON.parse(json) as Record<string, unknown>;
+};
 
 describe('webui page', () => {
   const html = renderPage('Chat', false);
+  const shell = serveShell('Chat', false, true, false, testAssets()).html;
 
-  it('emits a client script that actually parses', () => {
+  it('emits a client script that actually parses, with every build marker filled', () => {
     // `new Function` compiles the body without running it, which is exactly the check wanted:
     // a stray brace or a broken string literal throws here instead of producing a page that
-    // renders and then does nothing at all.
-    expect(() => new Function(scriptOf(html))).not.toThrow();
+    // renders and then does nothing at all. Both forms: the source, and the bundle the build ships.
+    expect(() => new Function(APP_SOURCE)).not.toThrow();
+    expect(() => new Function(CLIENT.app.text)).not.toThrow();
+    // An unfilled marker is a ReferenceError the moment the script starts.
+    expect(CLIENT.app.text).not.toMatch(/__FH_[A-Z_]+__/);
+    expect(APP_SOURCE).not.toMatch(/__FH_[A-Z_]+__/);
   });
 
-  it('contains no backtick and no ${, which the template literal would have eaten', () => {
-    // Not style: a literal `${` in the client code is read by TypeScript as part of THIS
-    // file's template, so it becomes a module-load-time ReferenceError — the daemon fails to
-    // start, pointing at a string. The script therefore concatenates rather than interpolates.
-    expect(html).not.toContain('`');
-    expect(html).not.toContain('${');
+  it('carries no inline script, so the CSP can refuse every one', () => {
+    // server.ts serves the page with `script-src 'self'` and no 'unsafe-inline': an inline script
+    // or handler here would simply not run. The one inline <script> is data, which no browser
+    // executes.
+    const scripts = [...shell.matchAll(/<script\b([^>]*)>/g)].map((m) => m[1] ?? '');
+    expect(scripts).toEqual([' type="application/json" id="boot-config"', ` src="assets/${CLIENT.app.file}"`]);
+    expect(shell).not.toMatch(/<[a-z][^>]*\son[a-z]+=/i);
+    expect(shell).not.toContain('javascript:');
+  });
+
+  it('links its script and stylesheet by a path a sub-path mount still resolves', () => {
+    expect(shell).toContain(`<link rel="stylesheet" href="assets/${CLIENT.style.file}">`);
+    expect(shell).toContain(`<script src="assets/${CLIENT.app.file}"></script>`);
+    // Relative, like api/events and manifest.webmanifest: an absolute /assets/ would leave a proxy
+    // prefix behind and 404 the whole page.
+    expect(shell).not.toMatch(/(?:src|href)="\/assets\//);
+    // The data comes before the script that reads it.
+    expect(shell.indexOf('id="boot-config"')).toBeLessThan(shell.indexOf('<script src='));
+  });
+
+  it('contains no backtick and no ${ in the markup, which the template literal would have eaten', () => {
+    // Not style: the shell and the body are still TypeScript templates (page.ts, page-body.ts), and
+    // a literal `${` in them is read as part of the template — a module-load-time ReferenceError,
+    // the daemon failing to start while pointing at a string.
+    expect(shell).not.toContain('`');
+    expect(shell).not.toContain('${');
+  });
+
+  it('hands the script what the server decided as JSON, and the page its build', () => {
+    const { html: page, build } = serveShell('Chat', true, false, true, testAssets(), true, true);
+    expect(bootOf(page)).toEqual({
+      terminal: true,
+      terminalEnd: true,
+      files: true,
+      instructions: true,
+      password: false,
+      codeview: null,
+      build,
+    });
+    expect(bootOf(shell)).toMatchObject({ terminal: false, terminalEnd: false, files: false, instructions: false, password: true });
+    expect(APP_SOURCE).toContain('var BOOT = JSON.parse($(\'boot-config\').textContent);');
+  });
+
+  it('cannot be broken out of through the boot config', () => {
+    // Nothing in it is free text today; this pins that if one ever is, `</script>` stays inside.
+    const hostile = 'assets/</script><script>alert(1)</script>';
+    const page = serveShell('Chat', false, true, false, { ...testAssets(), codeview: hostile }).html;
+    expect(page).not.toContain('<script>alert(1)</script>');
+    expect(bootOf(page).codeview).toBe(hostile);
   });
 
   it('loads its code view on demand, not with the page', () => {
-    // The bundle is an ES module under assets/, imported the first time a file needs it. Nothing
-    // here is a script element, so a page that never shows code never downloads the editor — and
-    // a build with no assets (the placeholder is null) still has a complete page.
-    expect(scriptOf(html)).toContain('window.__fhCodeView');
-    expect(scriptOf(html)).toContain('import(new URL(CODEVIEW, document.baseURI).href)');
-    expect(html).toMatch(/var CODEVIEW = null;/);
-    expect(html).not.toMatch(/<script[^>]+src=/);
+    // The bundle is an ES module under assets/, imported the first time a file needs it — never a
+    // script element of the page's, so a page that never shows code never downloads the editor, and
+    // a build with no code view (null) still has a complete page.
+    expect(APP_SOURCE).toContain('window.__fhCodeView');
+    expect(APP_SOURCE).toContain('import(new URL(CODEVIEW, document.baseURI).href)');
+    expect(APP_SOURCE).toContain('var CODEVIEW = BOOT.codeview;');
+    expect(shell).not.toContain('codeview-');
   });
 
   it('carries the built bundle when it is handed one, by a path a sub-path mount still resolves', () => {
-    const built = renderPage('Chat', false, true, false, 'assets/codeview-abc123.js');
-    expect(scriptOf(built)).toContain("var CODEVIEW = 'assets/codeview-abc123.js';");
-    // Relative, like api/events and manifest.webmanifest: an absolute /assets/ would leave a proxy
-    // prefix behind and 404 the editor.
-    expect(scriptOf(built)).not.toContain("'/assets/");
+    const built = serveShell('Chat', false, true, false, testAssets('assets/codeview-abc123.js')).html;
+    expect(bootOf(built).codeview).toBe('assets/codeview-abc123.js');
+  });
+
+  it('says it was not built, instead of serving a login form that does nothing', () => {
+    // A source checkout without `npm run build:assets`: no script, so nothing on the page works.
+    const bare = serveShell('Chat', false, true, false, NO_ASSETS).html;
+    expect(bare).toContain('id="unbuilt"');
+    expect(bare).toContain('npm run build:assets');
+    expect(bare).not.toContain('<script src=');
+    expect(bare).not.toContain('rel="stylesheet"');
+    expect(shell).not.toContain('id="unbuilt"');
   });
 
   it('loads nothing from anywhere', () => {
@@ -88,9 +149,11 @@ describe('webui page', () => {
   });
 
   it('escapes the configured title', () => {
-    const evil = renderPage('</title><script>alert(1)</script>', false);
+    const evil = serveShell('</title><script>alert(1)</script>', false, true, false, testAssets()).html;
     expect(evil).not.toContain('<script>alert(1)</script>');
-    expect(scriptOf(evil)).not.toContain('alert(1)');
+    expect(evil).toContain('<title>&lt;/title&gt;&lt;script&gt;alert(1)&lt;/script&gt;</title>');
+    // The script is a file every deployment shares; the title never reaches it.
+    expect(JSON.stringify(bootOf(evil))).not.toContain('alert(1)');
   });
 
   it('has a collapsible topic sidebar with running indicators and unread badges', () => {
@@ -223,7 +286,7 @@ describe('webui page', () => {
   });
 
   it('shows a message the moment it is typed, and keeps one that failed to send', () => {
-    // The local bubble and its three ways out. `page.dom.test.ts` is what proves they work;
+    // The local bubble and its three ways out. `page.dom.*.test.ts` is what proves they work;
     // this only proves the markup that carries them survived the template.
     expect(html).toContain('data-retry=');
     expect(html).toContain('data-copy=');

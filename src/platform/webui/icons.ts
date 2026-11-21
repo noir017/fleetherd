@@ -142,11 +142,13 @@ export function toolGlyph(glyph: string): string | undefined {
 }
 
 /**
- * What the page's inline script uses, as a JavaScript object literal: every icon by name, the menu
+ * What the page's client script uses, as a JavaScript object literal: every icon by name, the menu
  * marks and lifecycle reactions it swaps, keyed by the glyph core and config write.
  *
- * Inlined into a `<script>`, so a `<` is written as `<`: JSON alone would let a `</script>`
- * in a string end the element. None of the paths has one; this keeps it that way by construction.
+ * Filled into the script's `__FH_ICONS__` marker by the asset build (`scripts/webui-client.mjs`).
+ * A `<` is written as the escape `\u003c`, from when the script was inline and JSON alone would have
+ * let a `</script>` in a string end the element; harmless in a file, and it keeps the literal safe
+ * to inline again (the test harness does). None of the paths has one either.
  */
 export function clientIcons(): string {
   const all = Object.fromEntries((Object.keys(PATHS) as IconName[]).map((n) => [n, icon(n)]));

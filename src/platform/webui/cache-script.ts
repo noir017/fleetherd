@@ -1,13 +1,15 @@
 /**
  * The browser's transcript cache — its database, its record, its rotation, and the one rule for
  * which of two copies of a topic is newer — as one piece of script that both of its writers
- * include: the page (`page.ts`), and the service worker (`sw.ts`), which keeps the topic a push is
- * about so the page that opens it finds it already there.
+ * include: the page's client script (`client/legacy-app.ts`), and the service worker (`sw.ts`),
+ * which keeps the topic a push is about so the page that opens it finds it already there.
  *
  * Two writers of one IndexedDB store must agree on its name, its version, the shape of a record,
  * how many records there may be and which copy wins; written out twice, a change to one is a page
  * that reads the other's records wrong, or lets an older copy over a newer one. So it is written
- * once, here, and interpolated into both scripts. Plain ES5-ish JavaScript like the rest of them,
+ * once, here, and put into both scripts: interpolated into sw.ts's string, and filled into the
+ * client script's `__FH_CACHE_CORE__` marker by the asset build (`scripts/webui-client.mjs`) — text
+ * rather than an import, because sw.ts is a string. Plain ES5-ish JavaScript like the rest of them,
  * with nothing in it that needs a `window`: the factory to open is passed in.
  *
  * One record per topic, holding the message list as a STRING rather than an object graph. The
