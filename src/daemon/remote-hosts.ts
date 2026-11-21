@@ -488,6 +488,7 @@ export class RemoteHosts {
     const cwd = envOf('CWD', req.env) || req.cwd;
     const home = (): string => req.host.conn.welcome?.home || '/';
     const timeout = envOf('IPC_TIMEOUT_MS', req.env);
+    const stdinTty = envOf('STDIN_TTY', req.env);
     // Bare `mcp` only: anything after it (`mcp --help`) is the CLI's to answer.
     if (this.mcp && req.argv.length === 1 && req.argv[0] === 'mcp') {
       return this.mcp(
@@ -506,6 +507,7 @@ export class RemoteHosts {
       FLEETHERD_REMOTE_HOST: req.host.id,
     };
     if (timeout) env.FLEETHERD_IPC_TIMEOUT_MS = timeout;
+    if (stdinTty) env.FLEETHERD_STDIN_TTY = stdinTty;
     const child = spawn(self.command, [...self.args, ...req.argv], { env, cwd: os.tmpdir(), stdio: ['pipe', 'pipe', 'pipe'] });
     child.stdout.on('data', (d: Buffer) => io.out(1, d));
     child.stderr.on('data', (d: Buffer) => io.out(2, d));

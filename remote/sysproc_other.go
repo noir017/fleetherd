@@ -10,3 +10,4 @@ import "syscall"
 func agentAttr() *syscall.SysProcAttr  { return &syscall.SysProcAttr{} }
 func groupAttr() *syscall.SysProcAttr  { return &syscall.SysProcAttr{Setpgid: true} }
 func detachAttr() *syscall.SysProcAttr { return &syscall.SysProcAttr{Setsid: true} }
+func isTerminal(_ uintptr) bool        { return false }

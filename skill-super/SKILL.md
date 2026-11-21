@@ -9,10 +9,10 @@ description: >-
 
 # /super — hand the parts of a job to sub-agents
 
-You coordinate; the sub-agents do the work. Their commands are `fleetherd task-*` — run
-`fleetherd help tasks` once before the first one. Sub-agents open as topics nested under this
-one in the web UI; by default the person confirms every start, and can talk to any of them
-directly.
+You coordinate; the sub-agents do the work. Their commands are `fleetherd task-*` (all common
+commands and flags are covered below; run `fleetherd help tasks` only when you need an uncommon
+option). Sub-agents open as topics nested under this one in the web UI; by default the person
+confirms every start, and can talk to any of them directly.
 
 ## 1. Split
 
@@ -44,7 +44,11 @@ directly.
   so run it for the agent you mean to use when a part needs `--model` or `--option`, or when you
   want to know whether it is free — not for every row of the list.
 - One `fleetherd task-new [--agent <id>] [--cwd <dir>] --title "<short name>" "<text>"` per part.
-  `--cwd` is a path on the machine that runs the part: a directory name from `task-agents`, or an
+  Pass `-` for `<text>` (or `--review -`) to read long prompts from stdin via heredoc
+  (`fleetherd task-new --title "<short name>" - <<'EOF'`), avoiding temp files and shell quoting.
+  When proposing multiple independent parts, dispatch them in parallel in the same turn (or chain
+  multiple `task-new` commands in one shell call) instead of spending a separate model turn per
+  `task-new`. `--cwd` is a path on the machine that runs the part: a directory name from `task-agents`, or an
   absolute path such as a worktree you made there, so the part starts in it instead of the main
   checkout. With confirmation on, they all land on the card waiting for the person, however far
   apart you send them; only the first waits a few seconds for the rest. With it off where the
@@ -87,8 +91,9 @@ are delivered as your next turn: end this turn once the parts are handed out. Do
 - **While it works**, `fleetherd tasks` shows what each one is running now: the tool, the step it is
   on, how long the turn has gone and its context. `fleetherd task-status <topic>` is one topic in
   detail, with its last three tool calls. `task-read <topic>` reads its messages from the
-  conversation library, cut at 1500 characters each; `--reply` the last finished reply whole,
-  `--tail 20` the newest lines, `--full` raises the per-message cut.
+  conversation library (newest 10 by default, `--limit <n>` for more), cut at 1500 characters each;
+  `--reply` the last finished reply whole, `--tail 20` the last 20 lines of each message, `--full`
+  raises the per-message cut.
 - **Finished**: read its reply — the conclusion and the evidence it names. A reply that says it
   will carry on, or is waiting for a command in the background, is not finished: wait for its next
   card, or `task-send` it a continue. Do not read the diff or run the tests yourself. If it is

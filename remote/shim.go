@@ -36,6 +36,11 @@ func runShim(argv []string) int {
 			env["FLEETHERD_"+k] = v
 		}
 	}
+	// The gateway CLI always receives a piped stdin over the bridge, so tell it when the
+	// caller's stdin here is a TTY — `-` fails closed instead of hanging on terminal input.
+	if isTerminal(os.Stdin.Fd()) {
+		env["FLEETHERD_STDIN_TTY"] = "1"
+	}
 	if argv == nil {
 		argv = []string{}
 	}

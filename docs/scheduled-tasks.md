@@ -56,9 +56,9 @@ stops applying its own model.
 
 Change a task in place with `fleetherd schedule edit <id>` and any option `add` takes: `--agent`,
 `--cwd`, `--host`, `--model`, `--cron` / `--at` / `--tz`, `--name`, `--tag`, `--prompt` or `--bash`,
-`--timeout`, `--session` and `--channel`. A long prompt is best passed through your own shell —
-`--prompt "$(cat prompt.md)"` — so the file is read on the machine you type the command on, not by
-the gateway. What a task *is* can change too: `--prompt` turns a bash task into a prompt task (a
+`--timeout`, `--session` and `--channel`. For a long prompt, pass `--prompt -` and pipe it or use
+a heredoc (`fleetherd schedule add ... --prompt - <<'EOF'` or `< prompt.md`), which works on both
+local and remote hosts. What a task *is* can change too: `--prompt` turns a bash task into a prompt task (a
 fixed session unless `--session` says otherwise, as with `add`), `--bash` turns a prompt task into a
 command, `--session` changes the mode, and `--channel` moves where it posts. The id, the tags, the
 run count, the run history and the last result stay whatever changed — the history still says what
@@ -147,4 +147,3 @@ because both are background jobs with no conversation of their own.
 `/setting` has a **⏰ Scheduled tasks** button everywhere: every task with its
 next and last run, and pause, resume and delete (delete asks twice). Where there are no buttons,
 `/setting schedule [pause|resume|delete|run <id>]` does the same by typing.
-

@@ -99,7 +99,7 @@ an upgraded file opens without a rewrite and its old rows stay unknown.
 window), and the filters — `role`, `turn` (`last`/`done`/`<seq>`), `turns` (last n,
 capped at 100 with a note only when the cap really dropped turns), `since` (message id,
 exclusive), `grep` (text, this conversation only), `tail` (newest n tool lines, only with
-`role: 'tool'`) and `limit` (the newest n rows, any role — `task-read`'s default 10). They combine
+`role: 'tool'`, or newest n matching rows for any role / unfiltered) and `limit` (the newest n rows, any role — `task-read`'s default 10). They combine
 with AND, except `since` with `turn`/`turns`/`tail`/`limit`: those read from the newest end and
 `since` resumes forward from an id, so the combination is refused rather than given one of the two
 meanings. `done`

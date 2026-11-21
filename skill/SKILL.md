@@ -20,9 +20,10 @@ If you have `send_file`, `schedule` and `skills` tools, they are the `send-file`
 
 ## Commands, by topic
 
-Before using a topic, run `fleetherd help <topic>`: it prints that topic's commands, their
-options and the rules that go with them, generated from the command itself, so it is always
-current. `fleetherd help` lists the topics.
+Common commands for `tasks`, `sessions`, and `skills` are summarized right below — use them
+directly without running `fleetherd help` first. For other topics or full rules, run
+`fleetherd help <topic>` (generated from the commands, always current). `fleetherd help` lists
+the topics.
 
 | topic | for |
 |---|---|
@@ -39,6 +40,14 @@ current. `fleetherd help` lists the topics.
 | `pods` | the machines agents run on: adding or removing one, the agents it declares, ssh between them |
 | `skills` | the skills the gateway keeps for every agent: reading one, writing or changing one, archiving |
 | `tasks` | handing parts of a job to other agents (sub-agents) that run in parallel — the person confirms starts according to `delegation.confirm` (every time, once per agent per conversation, or never); web UI only |
+
+### Common commands
+
+- **`tasks`**: `task-new [--agent <id>] [--cwd <dir>] [--title <t>] [--model <m>] [--option k=v] [--review-by <id> --review <text|->] <text|->` · `task-send <topic> [--interrupt] [--forward <other>] <text|->` · `task-read <topic> [--reply | --limit <n> --tail <n> --full --role <r> --turn <w> --turns <n> --since <id> --grep <t>]` · `tasks [-l <n>]` · `task-agents [id]`
+- **`sessions`**: `sessions search "<words>" [-a <agent>] [-d <days>] [-l <n>] [--tools]` · `sessions list [-d <days>] [-l <n>] [--before <id>]` · `sessions read <id|key|8hex> [--reply | --tail <n> --limit <n> --role <r> --turn <w> --turns <n> --since <id> --grep <t> | --around <msg> --window <n>]`
+- **`skills`**: `skills search <words>` · `skills show <name> [file] [--again]` · `skills patch <name> --version <v> --content <text|->`
+
+Commands accepting long text (`task-new`, `task-send`, `schedule add/edit --prompt`, `skills create --body` / `patch --content` / `write-file --content`, `send-message`, `reply`, `edit-message`) accept `-` to read from stdin (e.g. `fleetherd task-new --title "x" - <<'EOF'`).
 
 ## Output and errors
 

@@ -97,7 +97,7 @@ fleetherd sessions read '#12' --reply
   id to pass back as the next `--since`. It cannot be combined with `--turn`, `--turns` or
   `--tail`: those read from the newest end, and one cursor cannot serve both directions.
 - `--grep <text>` — rows containing this text, in this conversation only.
-- `--tail <n>` — with `--role tool`, the newest `n` tool lines.
+- `--tail <n>` — the newest `n` matching messages, oldest first (same as `--limit`; with `--role tool`, the newest `n` tool lines). Cannot be combined with `--since` or `--limit`.
 - `--limit <n>` — the newest `n` messages. It reads from the newest end, so it cannot be combined
   with `--since`.
 - `--reply` — the last turn that ended normally and its reply: the same selection as
@@ -141,7 +141,7 @@ platform and a matching excerpt. It searches what the person and the agents said
 searches the tool calls too, arguments included. `--agent` is an exact match — a short name such as
 `ag` for `ag@laptop` finds nothing, and the note then lists the agent ids the library holds.
 `read` takes a session id (`#12` or `12`) or the topic id other commands print
-(`web:main/c962cd3f`), and prints it oldest first; `--around <message>` shows a window of `--window`
+(`web:main/c962cd3f`), or an unambiguous 8-character short topic id (`c962cd3f`), and prints it oldest first; `--around <message>` shows a window of `--window`
 messages on each side (10 by default). `list` is the recently active conversations, each with its
 id and key; a full page says there may be more and gives the `--days … --before <id>` that
 continues after its last row.

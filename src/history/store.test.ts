@@ -141,6 +141,28 @@ describe('HistoryStore', () => {
     store.close();
   });
 
+  it('resolves an unambiguous 8-char short topic id and rejects ambiguous matches', () => {
+    const { store } = tempStore();
+    const at = Date.UTC(2026, 10, 5, 9, 0);
+    const s1 = store.session({ key: 'web#main#aa1b2724', platform: 'web', agent: 'cc', at })!;
+    store.message(s1, { ts: at, role: 'user', kind: 'normal', text: 'hello short' });
+    const s2 = store.session({ key: 'web:main/bb2c3835', platform: 'web', agent: 'cc', at: at + 10 })!;
+    store.message(s2, { ts: at + 10, role: 'user', kind: 'normal', text: 'hello slash' });
+    const s3 = store.session({ key: 'web#main#12345678', platform: 'web', agent: 'cc', at: at + 20 })!;
+    store.message(s3, { ts: at + 20, role: 'user', kind: 'normal', text: 'all digits' });
+
+    expect(store.read('aa1b2724').messages[0]!.text).toBe('hello short');
+    expect(store.read('AA1B2724').messages[0]!.text).toBe('hello short');
+    expect(store.read('bb2c3835').messages[0]!.text).toBe('hello slash');
+    expect(store.read('12345678').messages[0]!.text).toBe('all digits');
+    expect(() => store.read('deadbeef')).toThrow(/no conversation/);
+
+    // Ambiguous suffix must fail loudly listing every matching full id.
+    store.session({ key: 'web2#main#aa1b2724', platform: 'web2', agent: 'cc', at: at + 30 });
+    expect(() => store.read('aa1b2724')).toThrow(/ambiguous conversation "aa1b2724".*web#main#aa1b2724.*web2#main#aa1b2724|ambiguous conversation "aa1b2724".*web2#main#aa1b2724.*web#main#aa1b2724/);
+    store.close();
+  });
+
   it('says in data why a read is not the whole conversation, and keeps the CLI note as it was', () => {
     const { store } = tempStore();
     const at = Date.now();
@@ -671,6 +693,18 @@ describe('HistoryStore turns', () => {
     expect(store.read(String(session), { role: 'tool', tail: 1 }).messages.map((m) => m.text)).toEqual([
       'Bash: npm test',
     ]);
+    // --tail also works without --role or with --role agent/user (newest n matching rows, oldest first).
+    expect(store.read(String(session), { role: 'agent', tail: 2 }).messages.map((m) => m.text)).toEqual([
+      '第二轮回答',
+      '第三轮回答',
+    ]);
+    expect(store.read(String(session), { role: 'user', tail: 1 }).messages.map((m) => m.text)).toEqual([
+      '第三轮问题',
+    ]);
+    expect(store.read(String(session), { tail: 2 }).messages.map((m) => m.text)).toEqual([
+      '第三轮问题',
+      '第三轮回答',
+    ]);
     expect(store.read(String(session), { grep: '查询' }).messages.map((m) => m.text)).toEqual([
       '第一轮回答：查询做完了',
       '第二轮问题：继续查询',
@@ -745,11 +779,11 @@ describe('HistoryStore turns', () => {
     expect(() => store.read(String(session), { turn: '9' })).toThrow(/has 3 turn\(s\); there is no turn 9/);
     expect(() => store.read(String(session), { turn: 'soon' })).toThrow(/--turn takes last, done/);
     expect(() => store.read(String(session), { turn: 'last', turns: 2 })).toThrow(/use one/);
-    expect(() => store.read(String(session), { tail: 5 })).toThrow(/--tail reads tool lines/);
     // Two directions cannot share one cursor.
     expect(() => store.read(String(session), { since: 1, turn: 'last' })).toThrow(/cannot be combined/);
     expect(() => store.read(String(session), { since: 1, turns: 2 })).toThrow(/cannot be combined/);
     expect(() => store.read(String(session), { since: 1, role: 'tool', tail: 2 })).toThrow(/cannot be combined/);
+    expect(() => store.read(String(session), { since: 1, tail: 2 })).toThrow(/cannot be combined/);
     expect(() => store.read(String(session), { since: 1, limit: 2 })).toThrow(/cannot be combined/);
     const old = store.session({ key: 'tg#pre#', platform: 'tg', at: 5 })!;
     expect(() => store.read(String(old), { turn: 'last' })).toThrow(/no recorded turns/);

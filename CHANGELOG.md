@@ -5,6 +5,32 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **Stdin (`-`) support for long-text CLI commands.** `task-new` (`<text>` and `--review`),
+  `task-send`, `schedule add`/`edit --prompt`, `skills create --body`, `skills patch`/`write-file
+  --content`, `send-message`, `reply`, and `edit-message` now accept `-` to read their text from
+  stdin (e.g. `fleetherd task-new --title "x" - <<'EOF'` or `< file.md`), eliminating temporary
+  files and shell-quoting errors on both local and remote hosts. The CLI fails closed if stdin is
+  a terminal (including remote TTYs forwarded via `FLEETHERD_STDIN_TTY=1`), empty, or requested by
+  more than one argument in the same command; MCP tools remain unaffected.
+- **8-character short topic IDs in `sessions read`.** `HistoryStore.findSession()` now resolves
+  unambiguous 8-hex-character topic suffixes (e.g. `aa1b2724` matching `web#main#aa1b2724` or
+  `web:main/aa1b2724`), matching `task-read` ergonomics; ambiguous suffixes fail loudly with all
+  matching `#id (key)` candidates.
+
+### Changed
+
+- **Eliminated two-hop `Skill -> help` discovery for common commands.** `skill/SKILL.md` now
+  includes a compact one-line command signature reference for `tasks`, `sessions`, and `skills`
+  (plus stdin `-` usage), and `skill-super/SKILL.md` no longer requires an upfront
+  `fleetherd help tasks` call, adds guidance to batch independent `task-new` calls in parallel,
+  and clarifies `task-read --tail` semantics.
+- **Aligned `--tail` across `sessions read` and `task-read`.** `sessions read --tail <n>` now
+  works with any `--role` or without `--role` to return the newest `n` matching messages (oldest
+  first, matching `--limit`, while keeping `--role tool --tail <n>` unchanged). Fixed `task-read
+  --tail <n>` missing its integer parser on the CLI so `--tail 20` is no longer silently dropped.
+
 ## [3.28.1] - 2026-11-22
 
 ### Fixed

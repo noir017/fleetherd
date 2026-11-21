@@ -23,6 +23,11 @@ export interface ReverseOption {
   parse?: (value: string) => unknown;
 }
 
+/** A positional or option slot whose CLI value `-` reads long text from stdin. */
+export type StdinTarget =
+  | { kind: 'positional'; index: number; label: string }
+  | { kind: 'option'; key: string; flag: string; actions?: readonly string[] };
+
 export interface ReverseCommandSpec {
   /** Commander command signature, e.g. 'send-file <path>'. */
   usage: string;
@@ -44,6 +49,8 @@ export interface ReverseCommandSpec {
    * flag the command refuses teaches an agent to distrust the page.
    */
   channel?: false;
+  /** Positional/option slots that accept `-` on the CLI to read text from stdin (MCP tools ignore this). */
+  stdin?: readonly StdinTarget[];
 }
 
 /**
@@ -108,7 +115,7 @@ export const HELP_TOPICS: HelpTopic[] = [
       '--model names the model a --session new or daily task\'s conversations use. A fixed-session task runs in this conversation and keeps the model /model set here, so --model there is refused. The id must be in the agent\'s own /model list: a name it does not offer is refused when the task is added, with the list, and a run that cannot apply the model fails with the reason instead of quietly using another.',
       '--bash: the gateway runs the command with `bash -lc` in --cwd (default: your working directory) and posts the exit code, duration and the end of the output; long output is attached as a file. --timeout defaults to 10m, at most 6h.',
       '--at takes +30m / +2h / 08:00 (the next time the clock reads that) / "2026-10-01 08:00" / an ISO time with a zone. --cron takes 5 fields (minute hour day month weekday); several 5-field expressions separated by `;` are one schedule that runs at whichever comes next (`0 9 * * *; 0 15 * * *` is twice a day). Both are read in --tz, default the gateway\'s own zone.',
-      'For a long prompt, let your own shell read the file: --prompt "$(cat prompt.md)". The file is expanded where you run the command, so it is your machine\'s file — the gateway has no flag that reads one of its own.',
+      'For a long prompt, pass `--prompt -` and pipe it or use a heredoc (`fleetherd schedule add ... --prompt - <<\'EOF\'` or `< prompt.md`). Works on both local and remote hosts.',
       '--channel is where output goes (ids from `fleetherd channels`); default this conversation. On edit it moves the task there.',
       'A run missed while the gateway was down is made once if it is less than an hour late, otherwise recorded as missed. A run that comes due while the previous one is still going is skipped. A run that is missed, skipped or fails says so in the conversation it posts to, once per reason — silence now means it ran.',
       '`add` and `show` print the task id; `list` shows every task with its next run and last result; `show` also prints the last 20 runs with their time, result, duration and the topic each output went to; pause / resume / run / rm take the id.',
@@ -142,8 +149,8 @@ export const HELP_TOPICS: HelpTopic[] = [
       'When the person says "yesterday", "last time" or asks you to look something up, search here first: your harness\'s own transcripts cover one agent on one machine, and may be a stale copy.',
       'This is the gateway\'s own library, not the chat you are in: it holds every prompt, reply and tool call that went through fleetherd, including topics you cannot see from here. Terminal sessions started directly in a harness are not in it.',
       'search "<words>" returns the conversation id, the message id, the title, the agent and a matching excerpt. Quote a multi-word query — it is one argument. Two-character Chinese words work; a single character falls back to a substring match. Scheduled-task output sorts after ordinary conversations. Tool calls are left out; --tools searches them too, arguments included.',
-      'read <session> prints the whole conversation (up to 500 messages), each run of tool calls folded into one line; --around <message> --window <n> shows n messages on each side of a hit, calls included. Adding --role, --turn (last | done | n), --turns (at most 100), --since (in write order; its note names the id to continue from; not with --turn/--turns/--tail/--limit), --grep, --tail or --limit selects rows instead, and each row then prints its turn number, that turn\'s outcome (done | stopped | failed | restart | running) and the agent. --role tool lists the calls with their arguments. --full is accepted for task-read\'s sake and changes nothing. list [--days <n>] [--limit <n>] is the recent conversations; a full page says how to continue with --before <id>.',
-      'read takes a session id (#12 or 12) or the topic id other commands print (web:main/c962cd3f). `sessions list` prints both, as id and key.',
+      'read <session> prints the whole conversation (up to 500 messages), each run of tool calls folded into one line; --around <message> --window <n> shows n messages on each side of a hit, calls included. Adding --role, --turn (last | done | n), --turns (at most 100), --since (in write order; its note names the id to continue from; not with --turn/--turns/--tail/--limit), --grep, --tail or --limit selects rows instead, and each row then prints its turn number, that turn\'s outcome (done | stopped | failed | restart | running) and the agent. --tail <n> (like --limit <n>) keeps the newest n matching messages, oldest first (with --role tool, the newest n tool calls). --role tool lists the calls with their arguments. --full is accepted for task-read\'s sake and changes nothing. list [--days <n>] [--limit <n>] is the recent conversations; a full page says how to continue with --before <id>.',
+      'read takes a session id (#12 or 12), the topic id other commands print (web:main/c962cd3f), or an unambiguous 8-char short topic id (c962cd3f). `sessions list` prints both id and key.',
     ],
   },
   {
@@ -152,6 +159,7 @@ export const HELP_TOPICS: HelpTopic[] = [
     notes: [
       'A normal reply already appears in the conversation, so re-sending it with send-message shows it twice. These are for something in addition to it: a completion notice from a background job, a status message you keep editing.',
       'send-message, reply and send-file print the messageId; keep it if you will edit, react to or delete that message.',
+      'send-message, reply and edit-message accept `-` for <text> to read from stdin (e.g. `<<\'EOF\'`).',
     ],
   },
   {
@@ -196,7 +204,7 @@ export const HELP_TOPICS: HelpTopic[] = [
       'Most skills are in the library, not in your skill list: `search <what you need>` finds them (up to 5), and `show <name>` reads one — SKILL.md whole, with the list of its other files. A skill already in your list says so; use it from there. `show` of a version this conversation already read answers "unchanged"; add --again if it is no longer in your context. Resident skills — the ones in every agent\'s list — are chosen by a person; a patch that changes `fleetherd-resident` in the frontmatter is refused.',
       'Names are lowercase words joined by hyphens (a-z, 0-9). `fleetherd` and `super` are the bundled skills and cannot be reused. `SKILL.md` is at most 64 KB and must begin with frontmatter naming the skill and a one-line description of when to use it; files beyond it go only in references/, templates/ or scripts/.',
       'Read before you write: `show <name>` prints the content and a version. `patch <name> --version <that version> --content <full SKILL.md>` is refused if the skill has changed since — run show again, re-apply your edit, and patch with the new version.',
-      '`create <name> --description "<when to use it>" [--body <markdown>]` starts a skill; `write-file` and `remove-file` add or remove a reference, template or script. Every change is a commit in the skills repository, a person\'s included; `history <name>` lists them and `revert <name> <id>` puts back the files as they were before that one.',
+      '`create <name> --description "<when to use it>" [--body <markdown>]` starts a skill; `write-file` and `remove-file` add or remove a reference, template or script. Pass `-` to `--body` (create) or `--content` (patch / write-file) to read from stdin (`<<\'EOF\'` or `< file`). Every change is a commit in the skills repository, a person\'s included; `history <name>` lists them and `revert <name> <id>` puts back the files as they were before that one.',
       '14 days without a use marks a skill an agent created expired; 30 days moves it to the archive and takes it off every agent at its next start. A skill a person wrote is never expired. `pin` keeps a skill out of that check; `restore` brings an archived one back. Nothing is deleted.',
       'A skill counts as used when an agent calls it as a Skill tool, when a message starts with /<name>, or when a tool call touches a file under ~/.fleetherd/skills/<name>/. Running `fleetherd skills` itself does not count.',
     ],
@@ -210,11 +218,12 @@ export const HELP_TOPICS: HelpTopic[] = [
       'Without --agent, task-new gives the sub-task to the agent answering this conversation. --model names the model it runs on, and must be in that agent\'s own /model list (`task-agents <agent>` prints it): a name it does not offer is refused at once, with the list. The card shows the model, and a sub-task that cannot switch to it when it starts fails with the reason instead of quietly using another. Without --model it runs on the agent\'s configured model.',
       '--option key=value[,key=value] sets the agent\'s own settings for the sub-task — the account it works under, say — and is refused at once unless the agent offers that setting with that value. `task-agents <agent>` lists its models, its settings and every value with the agent\'s note on it (an account\'s quota, say), so read that first instead of guessing. The card shows them, and a sub-task that cannot apply one when it starts fails with the reason instead of running on the agent\'s default. The model is --model\'s, never --option\'s.',
       'A sub-agent sees nothing of this conversation: <text> is all it gets. Make it whole — the goal, the constraints, how to tell it is done, and what you already know: the files involved, the cause you found, what you ruled out, the approach already settled. Leave only the steps nobody has worked out to the agent.',
+      'For long prompts, pass `-` for <text> (or `--review -`) on `task-new` and `task-send` to read from stdin (`fleetherd task-new --title "x" - <<\'EOF\'` or `< task.md`) instead of shell-quoting or temp files.',
       'The first row of task-agents is the agent answering this conversation; the next ones with here=true are on the same machine. Those are the ones to prefer — they have the same checkouts and tools. Agents on other machines work in their own checkouts.',
       '`task-agents <agent>` is one agent in full: its models (default marks the one used without --model), every setting with its values and the agent\'s note on each, its permission level (plan, ask and edits put its requests to the person, so it may stop and wait), how many turns are running on it now across the gateway, and whether it is cooling down from a usage limit. It starts a session of that agent to ask, so call it for the agent you mean to use, not for every row.',
       'When a sub-agent finishes, fails or asks something, you are told here in a message beginning `[sub-agent updates]`, which says how many are still working. Its questions are the person\'s to answer in its topic unless they are only about what your task meant.',
       'A topic is the id `tasks` and the updates print. task-send, task-read, task-status and task-stop act only on topics this conversation opened.',
-      '`tasks` shows what a working sub-agent is doing now: the tool it is running, its step count, how long the turn has gone and its context. `task-status` is one topic in detail, with its last three tool calls. `task-read <topic>` reads its messages from the conversation library, cut at 1500 characters each; `--tail 20` shows the newest lines, `--full` raises the cut, `--role`/`--turn`/`--turns`/`--since`/`--grep` select rows as they do for `sessions read`.',
+      '`tasks` shows what a working sub-agent is doing now: the tool it is running, its step count, how long the turn has gone and its context. `task-status` is one topic in detail, with its last three tool calls. `task-read <topic>` reads its messages from the conversation library (newest 10 by default; `--limit <n>` for more), cut at 1500 characters each; `--tail 20` keeps the last 20 lines of each message, `--full` raises the cut, `--role`/`--turn`/`--turns`/`--since`/`--grep` select rows as they do for `sessions read`.',
       '`task-read <topic> --reply` is the last turn that ended normally, its reply whole — what a finished sub-agent concluded. `--turn <n>` is one turn\'s record, including the whole error when it failed. A cut update card names the turn it quoted (`--turn <n>`): read that one, not `--turn last` — the topic may have run again since.',
       'task-send only reaches a turn that is still running when the harness accepts input mid-turn (claude and codex do; agy does not). The answer says which happened: joined, queued behind the turn, or started. To redirect a harness that is not listening, `--interrupt` stops the turn and sends the message as the next one — its context is kept.',
       '`task-send <topic> --forward <other>` sends <text> with <other>\'s last normally-ended reply attached whole, under a heading naming the topic and its turn: a review verdict reaches the agent that must act on it without being retyped. Both topics must be ones this conversation opened; a topic with no normally-ended reply yet is refused.',
@@ -437,7 +446,7 @@ export const READ_FILTER_OPTIONS: ReverseOption[] = [
 /** `sessions read --tail`, which `task-read`'s differently-meant `--tail` keeps out of the list above. */
 const SESSIONS_READ_TAIL: ReverseOption = {
   flags: '--tail <n>',
-  description: 'with --role tool, the newest n tool lines (what it is doing, not the whole log)',
+  description: 'the newest n matching messages, oldest first (same as --limit; with --role tool, the newest n tool lines)',
   parse: intArg('--tail'),
 };
 
@@ -461,8 +470,8 @@ export function readFilters(opts: Record<string, unknown>): ReadFilterFields {
     throw new Error('--turn and --turns select turns in different ways; use one');
   }
   const tail = typeof opts.tail === 'number' ? opts.tail : undefined;
-  if (tail !== undefined && role !== 'tool') {
-    throw new Error('--tail reads tool lines; use it with --role tool');
+  if (tail !== undefined && (tail < 1 || tail > 500)) {
+    throw new Error(`--tail must be between 1 and 500, got ${tail}`);
   }
   const since = typeof opts.since === 'number' ? opts.since : undefined;
   assertSinceAlone(since, turn, turns, tail);
@@ -775,6 +784,37 @@ function flagName(key: string): string {
 }
 
 /** `sessions <action> [arg]` → one IpcAction, refusing flags that do not belong to the action. */
+function buildSessionsRead(args: string[], opts: Record<string, unknown>, num: (key: string) => number | undefined): IpcAction {
+  if (args.length > 2) throw new Error('sessions read takes one conversation id');
+  const session = pos(args, 1, 'session');
+  const reply = sessionsReply(session, opts);
+  if (reply) return reply;
+  const filters = readFilters(opts);
+  const around = num('around');
+  const limit = num('limit');
+  assertLimit(limit, 500, 'sessions read');
+  if (filters.tail !== undefined && limit !== undefined) {
+    throw new Error('--tail and --limit both select the newest messages; use one');
+  }
+  if (filters.since !== undefined && limit !== undefined) {
+    throw new Error('--since reads forward from a message id; --limit reads the newest messages — use one');
+  }
+  if (around !== undefined && (anyReadFilter(filters) || limit !== undefined)) {
+    throw new Error('--around reads a window of its own; drop it to use --role/--turn/--turns/--since/--grep/--tail/--limit');
+  }
+  // `--full` is accepted and does nothing: a read is already whole (its only cut is the
+  // library's 200k answer budget). It exists here because it exists on task-read, and the two
+  // commands are typed from the same memory.
+  return {
+    kind: 'sessions-read',
+    session,
+    around,
+    window: num('window'),
+    ...(limit !== undefined ? { limit } : {}),
+    ...filters,
+  };
+}
+
 function buildSessions(p: string[], opts: Record<string, unknown>): IpcAction {
   // An omitted optional positional reaches this from commander as `undefined` — `sessions list`
   // is `['list', undefined]`. Every check below is about values the caller gave, not about the
@@ -811,31 +851,7 @@ function buildSessions(p: string[], opts: Record<string, unknown>): IpcAction {
     }
     case 'read': {
       refuse(['around', 'window', 'role', 'turn', 'turns', 'since', 'grep', 'tail', 'limit', 'full', 'reply']);
-      if (args.length > 2) throw new Error('sessions read takes one conversation id');
-      const session = pos(args, 1, 'session');
-      const reply = sessionsReply(session, opts);
-      if (reply) return reply;
-      const filters = readFilters(opts);
-      const around = num('around');
-      const limit = num('limit');
-      assertLimit(limit, 500, 'sessions read');
-      if (filters.since !== undefined && limit !== undefined) {
-        throw new Error('--since reads forward from a message id; --limit reads the newest messages — use one');
-      }
-      if (around !== undefined && (anyReadFilter(filters) || limit !== undefined)) {
-        throw new Error('--around reads a window of its own; drop it to use --role/--turn/--turns/--since/--grep/--tail/--limit');
-      }
-      // `--full` is accepted and does nothing: a read is already whole (its only cut is the
-      // library's 200k answer budget). It exists here because it exists on task-read, and the two
-      // commands are typed from the same memory.
-      return {
-        kind: 'sessions-read',
-        session,
-        around,
-        window: num('window'),
-        ...(limit !== undefined ? { limit } : {}),
-        ...filters,
-      };
+      return buildSessionsRead(args, opts, num);
     }
     case 'list':
     case 'ls': {
@@ -902,12 +918,16 @@ function buildTaskRead(positionals: string[], opts: Record<string, unknown>): Ip
   if (filters.since !== undefined && limit !== undefined) {
     throw new Error('--since reads forward from a message id; --limit reads the newest messages — use one');
   }
+  const tail = typeof opts.tail === 'number' ? opts.tail : undefined;
+  if (tail !== undefined && (tail < 1 || tail > 500)) {
+    throw new Error(`--tail must be between 1 and 500, got ${tail}`);
+  }
   return {
     kind: 'task-read',
     topic,
     limit,
     full: opts.full === true ? true : undefined,
-    tail: typeof opts.tail === 'number' ? opts.tail : undefined,
+    tail,
     ...(filters.role !== undefined ? { role: filters.role } : {}),
     ...(filters.turn !== undefined ? { turn: filters.turn } : {}),
     ...(filters.turns !== undefined ? { turns: filters.turns } : {}),
@@ -997,6 +1017,7 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
     topic: 'messages',
     description: 'Send a message to the current session',
     options: [],
+    stdin: [{ kind: 'positional', index: 0, label: '<text>' }],
     build: (p, opts) => ({ kind: 'send-message', text: pos(p, 0, 'text'), channelId: str(opts.channel) }),
   },
   {
@@ -1004,6 +1025,7 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
     topic: 'messages',
     description: 'Reply to a specific message',
     options: [],
+    stdin: [{ kind: 'positional', index: 1, label: '<text>' }],
     build: (p, opts) => ({
       kind: 'reply',
       messageId: pos(p, 0, 'messageId'),
@@ -1016,6 +1038,7 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
     topic: 'messages',
     description: 'Edit the text of a message you sent earlier (e.g. update a progress/status message)',
     options: [],
+    stdin: [{ kind: 'positional', index: 1, label: '<text>' }],
     build: (p, opts) => ({
       kind: 'edit-message',
       messageId: pos(p, 0, 'messageId'),
@@ -1186,6 +1209,7 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
     topic: 'schedule',
     description:
       'Scheduled tasks kept by the gateway (they survive restarts): add | list | show <id> | edit <id> [options] | pause <id> | resume <id> | run <id> [--wait] | rm <id>',
+    stdin: [{ kind: 'option', key: 'prompt', flag: '--prompt', actions: ['add', 'edit'] }],
     options: [
       {
         flags: '--cron <expr>',
@@ -1244,6 +1268,10 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
     topic: 'tasks',
     channel: false,
     description: 'Propose a sub-task: <text> for one agent, in a topic of its own — started once the person confirms, or at once when confirmation is off',
+    stdin: [
+      { kind: 'positional', index: 0, label: '<text>' },
+      { kind: 'option', key: 'review', flag: '--review' },
+    ],
     options: [
       { flags: '--agent <id>', description: "who does the work: an id from task-agents (default: this conversation's agent)" },
       {
@@ -1318,6 +1346,7 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
     channel: false,
     description:
       "Send <text> to one of this conversation's sub-agents: into its turn when the harness takes input mid-turn, else as its next turn",
+    stdin: [{ kind: 'positional', index: 1, label: '<text>' }],
     options: [
       {
         flags: '--interrupt',
@@ -1349,7 +1378,7 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
     options: [
       { flags: '-l, --limit <n>', description: 'how many messages (default 10)', parse: intArg('--limit') },
       { flags: '--full', description: 'up to 20000 characters per message, 80000 in all (the whole command list, not just its start); with --turn, that turn whole — up to the library\'s 200000' },
-      { flags: '--tail <n>', description: 'the last n lines of each message — what it is doing now, without the earlier ones' },
+      { flags: '--tail <n>', description: 'the last n lines of each message — what it is doing now, without the earlier ones', parse: intArg('--tail') },
       {
         flags: '--reply',
         description: 'the last turn that ended normally, and its reply whole (stands alone: it selects the turn itself)',
@@ -1422,6 +1451,10 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
     channel: false,
     description:
       'The skills the gateway keeps for every agent: search <what you need> | show <name> [file] | list | categories | create <name> --description … | patch <name> --version … --content … | write-file | remove-file | archive | restore | pin | unpin | history | revert <name> <id>',
+    stdin: [
+      { kind: 'option', key: 'body', flag: '--body', actions: ['create'] },
+      { kind: 'option', key: 'content', flag: '--content', actions: ['patch', 'write-file'] },
+    ],
     options: [
       { flags: '--again', description: 'show: read it whole even if this conversation already read this version' },
       { flags: '--description <text>', description: 'create: one line on when to use the skill (required)' },
