@@ -12,7 +12,10 @@ session id, agy's conversation id). One conversation holds one session *per agen
 
 | File | Role |
 |---|---|
-| `daemon.ts` | Top-level wiring: platforms + conversation registry + IPC. Slash registration, `ask` buttons, harness pickers, the `/model`, `/cd` and `/setting` menus. |
+| `daemon.ts` | Top-level wiring: platforms + conversation registry + IPC, startup/shutdown drain, config reload, web UI panels, slash registration, and platform event routing. Re-exports helper functions and `COORDINATION_WRITE_ACTIONS` from its collaborators below. |
+| `daemon-context.ts` | Types only: `AskOutcome`, `AskButtonsOptions`, and `DaemonContext` — the shared view handed to `DaemonMenus` and `DaemonReverse` so neither imports `daemon.ts` |
+| `daemon-menus.ts` | `DaemonMenus` — all eight pending interactive states (`PendingAsk` + elicitation/permission prompts, `PendingPick`, `PendingModelMenu`, `PendingEffortMenu`, `PendingSettingsMenu`, `PendingScheduleMenu`, `PendingWorkdirMenu`, `PendingAgentMenu`), their retirement/expiry, and button click handling |
+| `daemon-reverse.ts` | `DaemonReverse` — `handleReverse` and its grouped IPC handlers (chat actions, gateway queries, schedules, sessions, skills) with exhaustive `never` guards and the `COORDINATION_WRITE_ACTIONS` guard (invariant 11) |
 | `routing.ts` | Pure: inbound → which agent (and whether the user *asked* for it) + which scope |
 | `conversation.ts` | `ConversationRegistry` — the per-conversation state table, access + gating, `route()`, agent binding, and the facade the daemon calls. The work is done by the collaborators below |
 | `conversation-context.ts` | Types only: `ConversationState`, `ConversationHooks`, and `ConversationContext` — the view of the registry (dependencies, state table, lookups) each collaborator is given |
@@ -1978,7 +1981,8 @@ away, switch back, and the first agent's own session id is still there. A third,
 button, a silent `return` is indistinguishable from a dead button, so every way a click can
 fail has a test asserting it produces words.
 
-`daemon.ts` and `turn-runner.ts` have no direct test file — their pure helpers are
-exported and tested from the files above (`parseAskButtonId`, `parsePickButtonId`,
-`agentCommandToSpec`, `buildRegisteredSpecs`). When adding logic to either, extract the
-decision as a pure exported function and test it there; that is the established pattern.
+`daemon.ts` (with `daemon-menus.ts` and `daemon-reverse.ts`) and `turn-runner.ts` have no direct
+test file — their pure helpers are exported (and re-exported from `daemon.ts`) and tested from the
+files above (`parseAskButtonId`, `parsePickButtonId`, `agentCommandToSpec`,
+`buildRegisteredSpecs`). When adding logic to either, extract the decision as a pure exported
+function and test it there; that is the established pattern.
