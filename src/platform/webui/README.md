@@ -62,6 +62,8 @@ naming it, and they are all of them:
 | `client/panels/git.ts` | Typed Git and Commits diff window (`createGitPanel`), bundled into `app-<hash>.js` and checked by `client/tsconfig.json` and eslint |
 | `client/panels/files.ts` | Typed File browser and editor window (`createFilesPanel`), bundled into `app-<hash>.js` and checked by `client/tsconfig.json` and eslint |
 | `client/panels/instructions.ts` | Typed Instructions settings cards and editor source (`createInstructionsPanel`), bundled into `app-<hash>.js` and checked by `client/tsconfig.json` and eslint |
+| `client/panels/schedules.ts` | Typed Scheduled side panel (Tasks, Sessions, and task detail/edit/add page; `createSchedulesPanel`), bundled into `app-<hash>.js` and checked by `client/tsconfig.json` and eslint |
+| `client/panels/skills.ts` | Typed Skills management window (`createSkillsPanel`), bundled into `app-<hash>.js` and checked by `client/tsconfig.json` and eslint |
 | `client/styles/main.css` | The stylesheet, bundled into `dist/webui-assets/style-<hash>.css` |
 | `manifest.ts` | The web app manifest and the icon, as strings, for the same reason `page.ts` is a module |
 | `icons.ts` | The page's icons, hand-drawn inline SVG, and which emoji each one replaces — see [Icons](#icons) |

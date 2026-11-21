@@ -190,8 +190,8 @@ describe('webui page', () => {
     // the conversation switcher. Opening it is remembered; a first visit starts closed.
     expect(html).toContain('id="schedules"');
     expect(html).toContain('id="schedules-toggle"');
-    expect(html).toContain('api/schedules');
-    expect(html).toContain('api/schedules/op');
+    expect(CLIENT.app.text).toContain('api/schedules');
+    expect(CLIENT.app.text).toContain('api/schedules/op');
     expect(html).toContain('aa_sched_open');
     expect(html).not.toContain('aa_sched_pin');
     expect(html).not.toContain('schedules-pin');
