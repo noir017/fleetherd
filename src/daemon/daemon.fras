@@ -1,6 +1,9 @@
 # src/daemon FRAS Map
 src/daemon/acp-fork.ts [Core]: F:ACP session/fork and session/resume copy flow for /fork topics | A:forkInto,forkRefusal
-src/daemon/agent-acp.ts [Core]: F:ACP protocol runtime implementation and permission handling | R:src/daemon/agent.ts | A:createAcpAgentFactory,resolveHarness | S:See Security invariants item 1
+src/daemon/agent-acp-harness.ts [Core]: F:ACP harness launch resolution, MCP server wiring, startup diagnostics, and harness quirk adapters | R:src/daemon/agent-acp-options.ts,src/daemon/agent-acp-translate.ts | A:resolveHarness,resolveClaudeAdapterEntry,promptBlocks,acpMcpServers
+src/daemon/agent-acp-options.ts [Core]: F:ACP model, effort, mode, and custom config option parsing, normalization, and permission level mapping | R:src/daemon/agent.ts | A:liveModelName,liveEffortName,applyModelPreference,applyEffortPreference,applyPermissionLevel,AcpOptionState
+src/daemon/agent-acp-translate.ts [Core]: F:Pure ACP session/update, permission, and elicitation translation to AgentStreamHandlers | R:src/daemon/agent-acp-options.ts | A:translateUpdate,decidePermission,permissionRequestOf,permissionResponse,parseFormElicitation,toolLabel
+src/daemon/agent-acp.ts [Core]: F:ACP protocol runtime factory, session lifecycle, timeout watchdogs, and permission answering | R:src/daemon/agent.ts,src/daemon/agent-acp-harness.ts,src/daemon/agent-acp-options.ts,src/daemon/agent-acp-translate.ts | A:createAcpAgentFactory,resolveHarness | S:See Security invariants item 1
 src/daemon/agent-files.ts [Infra]: F:Pictures from an agent's reply checked by their bytes, and bytes sent as a file through a private temporary one | A:decodeAgentImage,sendBytesAsFile
 src/daemon/attachment-io.ts [Infra]: F:Attachment fetch and storage with SSRF guards | A:assertSafeAttachmentUrl,createAttachmentIngestDeps | S:See Security invariants item 3 [T:assertSafeAttachmentUrl]
 src/daemon/config-reload.ts [Core]: F:Pure configuration diffing and reload plan computation | A:applyConfig,diffConfig

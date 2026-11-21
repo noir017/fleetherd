@@ -1,40 +1,23 @@
-import { spawn } from 'node:child_process';
-import { createRequire } from 'node:module';
-import path from 'node:path';
 import { Readable, Writable } from 'node:stream';
-import { client, ndJsonStream, PROTOCOL_VERSION, RequestError } from '@agentclientprotocol/sdk';
+import { client, ndJsonStream, PROTOCOL_VERSION } from '@agentclientprotocol/sdk';
 import type {
   ActiveSession,
   ClientConnection,
   ClientContext,
-} from '@agentclientprotocol/sdk';
-import type {
   ContentBlock,
   CreateElicitationRequest,
   CreateElicitationResponse,
+  InitializeResponse,
   McpServer,
-  PermissionOption,
   PromptResponse,
   RequestPermissionRequest,
   RequestPermissionResponse,
-  SessionConfigOption,
-  SessionModeState,
   SessionUpdate,
-  ToolCallUpdate,
 } from '@agentclientprotocol/sdk';
-import type {
-  AgentElicitation,
-  AgentPermissionRequest,
-  ElicitOption,
-  ElicitQuestion,
-  PermissionAnswer,
-  SessionOption,
-  SteerOutcome,
-  ToolEvent,
-} from '../types.js';
+import type { PermissionAnswer, SessionOption, SteerOutcome } from '../types.js';
 import type { AgentDef, Config } from '../config/schema.js';
 import { findAgent } from '../config/schema.js';
-import { asksPerson, levelMode } from '../core/permission-levels.js';
+import { asksPerson } from '../core/permission-levels.js';
 import type {
   AgentFactory,
   AgentSession,
@@ -56,292 +39,142 @@ import {
   type ForkSupport,
   type SideAskHandle,
 } from './acp-side-question.js';
-import { harnessLogProbe, readHarnessErrors } from './harness-log.js';
-import { readSteerOutcome, STEER_METHOD, steeringModeOf, steerParams, type SteeringMode } from './acp-steering.js';
+import { steeringModeOf, type SteeringMode } from './acp-steering.js';
 import {
   describeSessionFailure,
-  failureNoticeKey,
   failureReasonOf,
-  readPromptRefusal,
   readSessionFailure,
-  SESSION_FAILURE_CAPABILITY_META,
-  type SessionFailure,
 } from './session-failure.js';
 import type { ConversationStore } from './conversation-store.js';
 import {
-  buildAgentEnv,
-  buildInputPreview,
-  isNonEmptyObject,
   killChildProcess,
-  prepareRemoteSpawn,
-  remoteAgentEnv,
   resolveConversationCwd,
-  stripCode,
   trimReason,
-  truncateToolName,
   watchRemoteLink,
   type AgentChild,
 } from './agent-common.js';
 import { PreLaunchCancelled, runPreLaunchHook } from './agent-hooks.js';
 import { remoteHosts } from './remote-hosts.js';
-import { selfInvocation } from './reverse-cli-shim.js';
-import type { Welcome } from '../remote/connection.js';
-import type { RemoteHost } from '../remote/host.js';
-import { AGY_COMMAND, type AgyCliRunner } from './agy-cli.js';
+import type { AgyCliRunner } from './agy-cli.js';
+import { agyTurnWatch, agyWindow, takesPromptMidTurn } from './agy-acp.js';
+import { createQuotaMeter, hasQuotaSource, type QuotaMeter } from './quota-meter.js';
 import {
-  agyAcpToolLabel,
-  agyMcpCall,
-  agyMcpLabel,
-  agySplitModel,
-  agyTurnWatch,
-  agyWindow,
-  forgetsModelOnLoad,
-  takesPromptMidTurn,
-  type AgyTurnWatch,
-} from './agy-acp.js';
-import { markActivePools } from './agy-meters.js';
-import { AGY_CONTEXT_REFRESH_MS, readAgyContext } from './agy-transcript.js';
-import { createQuotaMeter, hasQuotaSource, scopeQuotaPools, type QuotaMeter } from './quota-meter.js';
-import { relayEnv } from './relay.js';
-import { connectAddress, connectHere, connectMeta } from './connect-agent.js';
+  adoptAcpChild,
+  AgyMeterHelper,
+  announceSessionFailure,
+  authRequiredFailure,
+  buildTurnPromptInput,
+  clientCapabilitiesFor,
+  createSteerHandler,
+  createTurnPromptDriver,
+  isAuthRequired,
+  isNotSentRpcError,
+  launchAcpChild,
+  placeOnHost,
+  promptBlocks,
+  readReconnectSupport,
+  startupFailure,
+  startupSlot,
+  StartupTimeout,
+  watchForFoldedPrompt,
+  watchHarnessLog,
+  type StartupProgress,
+} from './agent-acp-harness.js';
+import {
+  AcpOptionState,
+  dshModelSelectorValue,
+  reportedModes,
+} from './agent-acp-options.js';
+import {
+  decidePermission,
+  failIfRefused,
+  flushPendingTools,
+  hasOpenToolCall,
+  isRenderableUpdate,
+  isResultUsage,
+  parseFormElicitation,
+  permissionRequestOf,
+  permissionResponse,
+  trackVisibleOutput,
+  translateUpdate,
+  type TurnState,
+} from './agent-acp-translate.js';
+
+// Re-export split submodules so every existing caller and test import path stays unchanged.
+export {
+  acpMcpServers, FOLDED_PROMPT_GRACE_MS, isCursorAgent, NATIVE_TOOLS_SERVER, promptBlocks,
+  remoteMcpServers, resolveClaudeAdapterEntry, resolveHarness, startupFailureMessage, type StartupProgress,
+} from './agent-acp-harness.js';
+export {
+  applyEffortPreference, applyModelPreference, applyPermissionLevel, applyPinnedOptions,
+  customOptionsOf, dshModelDisplayValue, dshModelSelectorValue, effortSelectorOf, liveEffortName,
+  liveModelName, modeControlOf, permissionModesOf, type ModeControl, type ModeState,
+} from './agent-acp-options.js';
+export {
+  autonomousResultOrigin, decidePermission, isResultUsage, parseFormElicitation, PERMISSION_DECLINED_CODE,
+  permissionRequestOf, permissionResponse, toolLabel, translateUpdate, type TurnState,
+} from './agent-acp-translate.js';
 
 /**
  * AgentFactory's ACP (Agent Client Protocol) implementation on the official @agentclientprotocol/sdk.
  *
- * fleetherd daemon = ACP "client/host". Each (conversationId, agentId) spawns a resident ACP agent child
- * (claude-agent-acp / codex-acp / opencode acp / agy acp / any custom), translating ACP session/update stream
- * notifications back to the existing AgentStreamHandlers, reusing all outbound rendering (StreamBuffer / ToolRenderer).
+ * fleetherd daemon = ACP "client/host". Each (conversationId, agentId) spawns a resident ACP agent
+ * child, translating ACP `session/update` notifications back to `AgentStreamHandlers`.
  *
- * Mapping:
- *   session/new                ↔ an AgentSession (one ACP session per session key, context across turns)
- *   session/prompt             ↔ runTurn (via ActiveSession.prompt + nextUpdate iteration)
- *   agent_message_chunk        ↔ onText (an `image` block ↔ onImage)
- *   tool_call                  ↔ onToolStart
- *   tool_call_update (terminal)↔ onToolFinish
- *   text↔tool block boundary   ↔ onSegmentBreak
- *   session/cancel             ↔ abort
- *   session/request_permission ↔ permission policy (bypass/deny implemented; ask/acceptEdits see seam)
- *
- * TOKEN model (per-session): ACP is a resident process, env fixed at spawn. So the daemon gives each
- * session a stable token (RunTurnInput.sessionToken, same every turn), injected as FLEETHERD_TURN_TOKEN.
- * Reverse commands use it to connect back; the daemon resolves "token → session → current turn channel" (see session.ts).
+ * Responsibility split:
+ * - `agent-acp-harness.ts`: launch resolution, MCP wiring, startup diagnostics, and harness quirks.
+ * - `agent-acp-options.ts`: model / effort / mode / custom options state & normalization.
+ * - `agent-acp-translate.ts`: pure `session/update`, permission, and elicitation translation.
+ * - `agent-acp.ts` (this file): factory, session lifecycle, pump, watchdogs, and permission answering.
  */
 
-/** ACP protocol version: taken from the installed SDK's PROTOCOL_VERSION, auto-aligning on upgrade (no hardcoded drift). */
+/** ACP protocol version: taken from the installed SDK's PROTOCOL_VERSION, auto-aligning on upgrade. */
 const ACP_PROTOCOL_VERSION = PROTOCOL_VERSION;
 
-// ───────────────────────── What the agent is given: tools, not text ─────────────────────────
+/** Max wait for initialize + session/new after spawn; on timeout, treat spawn as failed instead of hanging. */
+const START_TIMEOUT_MS = 30_000;
+
+/** How long a connect agent's teardown waits for the `session/cancel` before it to be written. */
+const CANCEL_FLUSH_MS = 1_000;
 
 /**
- * The prompt of a turn: what the user sent, as the only text block. The gateway adds nothing of its
- * own — no preamble, no reminder — so that what the agent reads is what it was asked (see
- * ipc/commands.ts HELP_TOPICS for what replaced the `<system-reminder>` that used to go first).
- *
- * The user's pictures go in as pictures when the harness said it takes them (`takesImages`, its
- * `initialize` → `promptCapabilities.image`). Before this every picture was a path, and an agent
- * given a path to a screenshot decides for itself whether to open it — which is a tool call
- * when it does, and an answer about a picture it never saw when it does not. Probed 2026-10-09
- * (project-reports/2026-10-09-agent-anywhere-image-prompt-blocks.md): claude-agent-acp, codex-acp
- * and `opencode acp` all claim it, and each read text off a screenshot with zero tool calls.
- * Asked per harness rather than assumed, because a harness that does not claim it is one that
- * may reject the block. The pictures go first, the order Anthropic's vision docs recommend; the
- * text still names each by path, in the same order.
+ * How long a burst of out-of-turn output may stay silent before it is sealed and decorated.
+ * A generous backstop behind `FOLLOW_UP_SEAL_GRACE_MS` so long background tool calls aren't split.
  */
-export function promptBlocks(turn: Pick<RunTurnInput, 'prompt' | 'images'>, takesImages: boolean): ContentBlock[] {
-  const text: ContentBlock = { type: 'text', text: turn.prompt };
-  if (!takesImages || !turn.images?.length) return [text];
-  return [...turn.images.map((img): ContentBlock => ({ type: 'image', data: img.data, mimeType: img.mimeType })), text];
-}
+const FOLLOW_UP_QUIET_MS = 180_000;
 
 /**
- * The name the agent's tools are filed under — Claude Code shows `mcp__chat__send_file`. Neutral on
- * purpose: the name is part of what the model reads, and "this is how you send the user a file"
- * says everything it needs, where the gateway's own name would only say where it is running.
+ * Grace period after the harness reports a completed result before a burst of out-of-turn output
+ * is sealed and decorated (shortens `FOLLOW_UP_QUIET_MS` without fragmenting per-snapshot cost).
  */
-export const NATIVE_TOOLS_SERVER = 'chat';
+const FOLLOW_UP_SEAL_GRACE_MS = 1_500;
 
 /**
- * MCP servers handed to the agent in `session/new` and `session/load`: `fleetherd mcp`, which
- * serves `send_file` and `schedule` as native tools (commands/mcp.ts, ipc/tools.ts).
- *
- * Stdio, because it is the one transport every ACP agent MUST support — probed 2026-10-09, the
- * agents here additionally advertise http (claude-agent-acp 0.81.2, codex-acp 2.1.1, opencode
- * 2.0.26), but serving HTTP would mean a listening port where today there is only a 0600 socket.
- * The harness starts the server as its own child, once per session.
- *
- * Its environment is spelled out rather than inherited, because inheritance is the harness's call
- * and codex, for one, passes its MCP servers an allowlist: the session's token (the server is a
- * reverse-command client like any other, with the same rights), the socket, and the session's
- * working directory, which relative paths are resolved against — ACP gives a stdio server no `cwd`,
- * so where it starts is up to the harness.
- *
- * Empty when this process is not the CLI (a test worker): the server is re-invoked through the
- * daemon's own entry, and there is no entry to re-invoke. The agent then simply has no tools, which
- * is the pre-1.40 state, and the CLI behind the skill still works.
+ * Consecutive queue rejections the reader tolerates before tearing down the connection.
+ * A failed prompt rejects once; a closed connection rejects forever (~1s bound before teardown).
  */
-export function acpMcpServers(
-  sessionToken: string,
-  socketPath: string,
-  cwd: string,
-  self = selfInvocation()
-): McpServer[] {
-  if (!self) return [];
-  return [
-    {
-      name: NATIVE_TOOLS_SERVER,
-      command: self.command,
-      args: [...self.args, 'mcp'],
-      env: [
-        { name: 'FLEETHERD_TURN_TOKEN', value: sessionToken },
-        { name: 'FLEETHERD_SOCKET', value: socketPath },
-        { name: 'FLEETHERD_CWD', value: cwd },
-      ],
-    },
-  ];
-}
+const MAX_QUEUE_REJECTIONS = 20;
+const QUEUE_REJECT_BACKOFF_MS = 50;
 
 /**
- * The same server for an agent on a remote host: the host's `fleetherd` shim (on PATH there, but
- * named absolutely — a harness may start MCP servers with a stripped environment), which carries
- * the session back to this gateway's own `fleetherd mcp` (remote-hosts.ts runCli). The socket it
- * dials is passed explicitly for the same reason.
+ * Extra silence a turn is allowed, as a multiple of `turnTimeoutMs`, while the harness has an
+ * unfinished tool call open (Claude Code's Bash tool allows up to 600s, matching the default
+ * watchdog; granted once per silence stretch so the ceiling stays finite at 30 minutes).
  */
-export function remoteMcpServers(sessionToken: string, paths: { shim: string; socket: string }, cwd: string): McpServer[] {
-  return [
-    {
-      name: NATIVE_TOOLS_SERVER,
-      command: paths.shim,
-      args: ['mcp'],
-      env: [
-        { name: 'FLEETHERD_TURN_TOKEN', value: sessionToken },
-        { name: 'FLEETHERD_REMOTE_SOCK', value: paths.socket },
-        { name: 'FLEETHERD_CWD', value: cwd },
-      ],
-    },
-  ];
-}
-
-// ───────────────────────── harness preset → launch command ─────────────────────────
+export const TOOL_SILENCE_FACTOR = 2;
 
 /**
- * Entry of the locally installed claude-agent-acp adapter (a declared dependency, so the version
- * is locked by package-lock and `npm install` surfaces network problems at install time instead
- * of at first message). Exported for the doctor check. Throws if node_modules is incomplete.
+ * How long a turn may run on after `/stop`'s `session/cancel` before its child is ended for it.
+ * `session/cancel` is a cooperative notification; past this deadline a resumable child is ended
+ * (`/kill`'s remedy) so the next message resumes via `session/load`.
  */
-export function resolveClaudeAdapterEntry(): string {
-  // Its bin ("claude-agent-acp": dist/index.js) is reachable via the package's "./*" export.
-  return createRequire(import.meta.url).resolve('@agentclientprotocol/claude-agent-acp/dist/index.js');
-}
+export const STOP_GRACE_MS = 20_000;
 
-/** Resolve an agent def into the actual spawn command + args (presets default; custom self-configures; then append def.args). Exported for the doctor check and the harness unit tests. */
-export function resolveHarness(def: AgentDef, remote = false): { command: string; args: string[] } {
-  switch (def.harness) {
-    case 'claude':
-      // On a remote host the adapter is that host's own install (`npm i -g
-      // @agentclientprotocol/claude-agent-acp`): the bundled one carries a native Claude Code build
-      // for THIS machine (223 MB for linux-arm64 alone), not something to ship to every host.
-      if (remote) return { command: 'claude-agent-acp', args: [...def.args] };
-      // Claude via the official claude-agent-acp adapter (replacing Zed's claude-code-acp): its
-      // @agentclientprotocol/sdk matches ours (protocol aligned), it forwards /usage /status /model
-      // built-in echoes, and is more actively maintained. Login still reuses `claude /login` (no API
-      // key). Spawned with the current node binary — no PATH or shebang dependence.
-      return { command: process.execPath, args: [resolveClaudeAdapterEntry(), ...def.args] };
-    case 'gemini':
-      // Gemini CLI native ACP (exact flag per `gemini --help`; override/extend via def.args).
-      return { command: 'gemini', args: ['--experimental-acp', ...def.args] };
-    case 'codex':
-      // Codex via @agentclientprotocol/codex-acp (the codex CLI itself has no ACP mode — a bare
-      // `codex acp` falls into the TUI and dies with "stdin is not a terminal" when headless).
-      // Auth reuses the codex CLI's own login state (~/.codex), including a custom
-      // `model_providers` gateway, which the adapter reports back as authStatus kind "gateway".
-      //
-      // A PATH command, NOT a bundled dependency, which is the opposite of the claude arm above
-      // and deliberate: the adapter declares `@openai/codex` as a regular dependency, whose
-      // platform binary is ~284 MB unpacked. Bundling that taxes every `npm i -g
-      // fleetherd` for a harness most operators never configure, and the operator who
-      // does configure it already had to install and log into the codex CLI by hand. So codex
-      // follows the same contract as gemini/opencode/dsh — the image (or the operator) installs
-      // `@agentclientprotocol/codex-acp` globally, and doctor reports a missing one.
-      //
-      // The predecessor here was Zed's `@zed-industries/codex-acp`, a declared dependency shipping
-      // a Rust binary. It is deprecated upstream in favour of this package, and was worth leaving
-      // behind on its own merits: probed side by side on 2026-09-20 against the same newapi
-      // gateway, it advertised 6 commands to 1.12.0's 42, reported no model list (so `/model` had
-      // only a stale gpt-5.2-era selector), had no `status`/`skills`/`mcp`, and prefixed its first
-      // answer with "Model metadata for <model> not found. Defaulting to fallback metadata" —
-      // inside the agent's message text, i.e. straight into the user's chat bubble.
-      return { command: 'codex-acp', args: [...def.args] };
-    case 'opencode':
-      // OpenCode native ACP mode (per the ACP registry's official launch spec: `opencode acp`).
-      return { command: 'opencode', args: ['acp', ...def.args] };
-    case 'dsh':
-      // DeepSeek Harness ACP profile (per the ACP registry's official launch spec: `dsh --profile acp`,
-      // the dsh equivalent of opencode's `opencode acp`). Config (provider/model, credentials) comes
-      // from dsh's own profile, not from args.
-      return { command: 'dsh', args: ['--profile', 'acp', ...def.args] };
-    case 'custom':
-      // The schema guarantees a command unless the agent is a connect one, which is dialled, never
-      // started (connect-agent.ts): what could still ask for its command is a review run, which
-      // needs a process of its own it can take the tools from.
-      if (!def.command) throw new Error(`agent "${def.id}" is reached at ${def.connect?.url ?? '?'} (connect), not started`);
-      return { command: def.command, args: [...def.args] };
-    case 'agy':
-      // agy's own ACP server, since 1.5 (`agy acp --help`). None of the flags the old print-mode
-      // launch needed carries over, each re-measured on 1.5.1 (2026-11-06):
-      // there is no print-mode timeout to lift; permissions arrive as `session/request_permission`
-      // and are answered like any harness's (approved or put to the user, as its permission level
-      // says — `--dangerously-skip-permissions` would take that choice away); and a file the
-      // agent writes in an untrusted cwd lands in the cwd, so `--add-dir` has nothing to fix. The
-      // same command on a remote host: agy is a single binary on PATH there too.
-      return { command: AGY_COMMAND, args: ['acp', ...def.args] };
+/** Thrown by the per-turn silence watchdog so runTurn can reap the hung subprocess before rethrowing. */
+class TurnTimeoutError extends TurnFailure {
+  constructor(message: string) {
+    super(message, 'hung');
   }
-}
-
-// ───────────────────────────────── factory / session ─────────────────────────────────
-
-/**
- * How many agent processes may be cold-starting at once on one machine.
- *
- * Starting one is the most expensive thing this runtime does: a cbc child needs about 4.5
- * CPU-seconds and 500MB of RSS before it answers `initialize` (measured 2026-11-07 on a 2-core
- * host). Thirteen sub-agents confirmed together therefore put that machine into swap, took 60–90s
- * each, and every one missed START_TIMEOUT_MS — the card reported 13 startup timeouts and none of
- * the work ran. The limit is per machine (`local`, or a remote host's id) because that is where
- * the cost is paid. A queued start waits here, before startSession's timeout timer begins, so the
- * queue is not charged to it.
- */
-const START_CONCURRENCY = 4;
-
-/** A plain counting semaphore — twelve lines, so no dependency. */
-class StartupSlots {
-  private free: number;
-  private readonly waiting: Array<() => void> = [];
-  constructor(count: number) {
-    this.free = count;
-  }
-  async acquire(): Promise<void> {
-    if (this.free > 0) {
-      this.free -= 1;
-      return;
-    }
-    await new Promise<void>((resolve) => this.waiting.push(resolve));
-  }
-  release(): void {
-    const next = this.waiting.shift();
-    if (next) next();
-    else this.free += 1;
-  }
-}
-
-/** The slot set for one machine: `local`, or a remote host's id. */
-const startupSlots = new Map<string, StartupSlots>();
-function startupSlot(host: string): StartupSlots {
-  let slots = startupSlots.get(host);
-  if (!slots) {
-    slots = new StartupSlots(START_CONCURRENCY);
-    startupSlots.set(host, slots);
-  }
-  return slots;
 }
 
 export function createAcpAgentFactory(
@@ -362,7 +195,7 @@ export function createAcpAgentFactory(
       if (!s) {
         const def = findAgent(cfg, agentId);
         if (!def) throw new Error(`unknown agent id: ${agentId} (check the routing and agents config)`);
-        s = createAcpSession(def, socketPath, sessionId, turnTimeoutMs, store, hasQuotaSource(def) ? quota : undefined);
+        s = new AcpSession(def, socketPath, sessionId, turnTimeoutMs, store, hasQuotaSource(def) ? quota : undefined);
         sessions.set(sessionId, s);
       }
       return s;
@@ -379,1284 +212,212 @@ export function createAcpAgentFactory(
   };
 }
 
-/** Thrown by the per-turn silence watchdog so runTurn can reap the hung subprocess before rethrowing. */
-class TurnTimeoutError extends TurnFailure {
-  constructor(message: string) {
-    super(message, 'hung');
-  }
-}
-
-/**
- * How long a burst of out-of-turn output may stay silent before it is sealed and decorated.
- *
- * A backstop, not the primary signal: a burst normally closes the moment the harness reports its
- * terminal result (see isResultUsage), and this only covers a harness that stops carrying that
- * marker. Generous on purpose — a background followup can sit inside one tool call for minutes, and
- * cutting it early costs an extra message bubble, so the timer errs toward waiting.
- */
-const FOLLOW_UP_QUIET_MS = 180_000;
-
-/**
- * Consecutive queue rejections the reader tolerates before standing down, and how long it waits
- * between them. See the comment in pumpUpdates: a failed prompt rejects once and pumping must go
- * on, while a closed connection rejects forever — this bounds the spin to ~1s in the second case
- * without giving up on a session that is merely reporting a per-turn error.
- */
-const MAX_QUEUE_REJECTIONS = 20;
-const QUEUE_REJECT_BACKOFF_MS = 50;
-
-/**
- * Extra silence a turn is allowed, as a multiple of `turnTimeoutMs`, while the harness has an
- * unfinished tool call open.
- *
- * Not a fudge factor — it closes a guaranteed collision. The watchdog exists to catch an agent that
- * is "alive but never sending `stop` nor any update", and a tool call is silent for exactly as long
- * as it runs, so from outside the two are indistinguishable. Claude Code's own Bash tool allows up
- * to 600000ms (its documented maximum), which is *precisely* the default `turnTimeoutMs` — so a
- * tool call at the limit the harness itself permits was certain to trip a watchdog aimed at hangs,
- * and the turn failed with "sent no update for 600000ms" while the script was still running fine.
- * `turnTimeoutMs` is frozen in EXPERIENCE and not reachable from config.yaml, so an operator could
- * not raise it out of the way either.
- *
- * Granted ONCE per stretch of silence, so the ceiling stays finite: 30 minutes at the default. Long
- * enough for anything the harness will run in the foreground, short enough that a genuinely wedged
- * tool still fails rather than pinning the conversation in `running` forever. Work that outlives
- * even that belongs in the background, which is now forwarded properly (see FollowUpSink).
- */
-export const TOOL_SILENCE_FACTOR = 2;
-
-/**
- * How long a turn waits, after an AUTONOMOUS cycle of the harness ends inside it with no reply of
- * the turn's own, before concluding that its prompt was answered inside that cycle.
- *
- * ── The upstream bug this works around ─────────────────────────────────────────────────────────
- * claude-agent-acp issue #1145 (open as of 2026-09-29; the fix, PR #1185, unmerged; still present
- * in 0.84.0). A background task finishes, and Claude Code starts a cycle of its own to report it
- * (`origin: {kind: "task-notification"}`). A prompt sent while that cycle runs is FOLDED into it:
- * Claude Code's transcript records `queue-operation remove, reason: "absorbed_mid_turn"`. The model
- * answers both and the cycle ends with one `result`, which names the prompt in
- * `user_message_uuid(s)` — but the adapter classifies results by origin alone, files it as
- * autonomous, and never settles the prompt. `session/prompt` does not return until something else
- * releases it: the next prompt, or a cancel.
- *
- * Seen live 2026-09-29 (web topic, shop-api): the answer streamed in full, then nothing, and the
- * silence watchdog failed the turn ten minutes later as "hung". Most occurrences never got that
- * far — `inbound.interruptOnNewMessage` (removed after 2.0.0) cancelled the stuck turn as soon as the
- * user said anything — which is why thirty-odd folds in a week surfaced as one failure. Without it,
- * this grace is what ends such a turn.
- *
- * ── What the gateway can see, and why this waits instead of acting at once ────────────────────
- * The adapter still reports the cycle's end: the result-tied `usage_update` carries the result's
- * origin in `_meta["_claude/origin"]` (see autonomousResultOrigin). What it cannot say is whether
- * THIS prompt was folded into that cycle or merely queued behind it; a queued prompt starts its
- * own cycle right after, and output resumes. So the turn waits for silence: renderable output
- * cancels the wait, and nothing arriving means there is nothing left to wait for.
- *
- * Getting it wrong costs little either way. Too early — a queued prompt whose first output is
- * slower than this — and the turn ends with what it has, while the real reply still arrives and
- * is rendered as a background update (see FollowUpSink); nothing is lost. The stale prompt is left
- * for the adapter to settle at the next prompt, and runTurn only ends on a `stop` that is its own,
- * so that late settlement cannot end the next turn. Too late costs the same wait as today, bounded
- * by the watchdog. Thirty seconds sits well past a cached cycle's time to first output, and far
- * short of the ten minutes it replaces — and in `once` delivery mode the answer's last segment is
- * not sent until the turn ends, so this IS how late the answer arrives.
- *
- * Capped at half the silence budget when that is smaller, because the point is to decide before
- * the watchdog does: a fold declared after the turn already failed as hung is no help.
- */
-export const FOLDED_PROMPT_GRACE_MS = 30_000;
-
-/**
- * How long a turn may run on after `/stop`'s `session/cancel` before its child is ended for it.
- *
- * `session/cancel` is a notification: the harness is asked, and nothing makes it comply or says how
- * long it may take. On 2026-11-13 (#214115) two `/stop`s on a cbc turn changed nothing that the
- * person could see, and they ended it with "End agent" ten seconds later; the next turn there, 88
- * minutes long, went the same way. CodeBuddy Code 2.181.0 does act on the cancel — measured the same
- * day, a `/stop` between two commands ended its turn 12.2 s later and one five seconds into
- * `sleep 40` 10.5 s later, interrupting it — but slowly enough to look like it does not, and nothing
- * on screen said otherwise. A harness that never acts on it would run until its turn ended. Past
- * this deadline neither is waited on. claude-agent-acp and codex-acp settled their cancelled turns
- * within the command they were running in the 2026-10-10 steer probe (see endChildAfterStop), so for
- * them the deadline goes with the turn long before it is reached.
- *
- * Ending the child is `/kill`'s remedy, applied for the person: the next message resumes the
- * conversation through `session/load`. A harness that cannot reload a stored session keeps its
- * child — ending it would start the conversation over, which is `/new`, and the person is told so
- * instead. Capped at half the silence budget when that is smaller, like FOLDED_PROMPT_GRACE_MS, so
- * that tests can drive it with a short watchdog. 20 s rather than 15: CodeBuddy took 10–12 s to act
- * on a cancel on a loaded machine (2026-11-13), and ending a harness that was about to stop costs a
- * restart for nothing.
- */
-export const STOP_GRACE_MS = 20_000;
-
-/**
- * Result origins claude-agent-acp files as AUTONOMOUS — work the model did on its own rather than
- * for the prompt. A copy of the adapter's own AUTONOMOUS_RESULT_ORIGINS (0.81.2 dist/acp-agent.js),
- * kept in step with it deliberately: an origin the adapter treats as the user's own settles the
- * prompt normally, so listing more here would only arm a wait that the prompt's `stop` cancels.
- */
-const AUTONOMOUS_RESULT_ORIGINS: ReadonlySet<string> = new Set([
-  'task-notification',
-  'peer',
-  'coordinator',
-  'observer',
-  'observer-activity',
-]);
-
-/**
- * The origin of the cycle a result-tied `usage_update` reports, when that cycle was autonomous —
- * i.e. "Claude Code just finished something nobody's prompt asked for". Undefined for everything
- * else, including the ordinary end of a prompt's own cycle.
- *
- * ⚠️ HYRUM'S LAW: `_claude/origin` is claude-agent-acp's private extension, not ACP. Verified in
- * 0.81.2 (2026-09-29), where the result handler sends `usage_update` with
- * `_meta: {"_claude/origin": message.origin}` whenever the SDK result carries an origin. If a
- * release stops sending it, this returns undefined and folded prompts fall back to the silence
- * watchdog — the behaviour before this existed, not a new failure.
- */
-export function autonomousResultOrigin(update: SessionUpdate): string | undefined {
-  if (!isResultUsage(update)) return undefined;
-  const origin = update._meta?.['_claude/origin'];
-  const kind = typeof origin === 'object' && origin !== null && 'kind' in origin ? origin.kind : undefined;
-  return typeof kind === 'string' && AUTONOMOUS_RESULT_ORIGINS.has(kind) ? kind : undefined;
-}
-
-/**
- * How often a turn asks the harness's own log what went wrong (see harness-log.ts).
- *
- * A minute is chosen against the thing being waited on, not the thing being read: the failure it
- * surfaces is a retry loop that lasts until the watchdog fires ten minutes later, so a minute turns
- * a silent ten-minute wait into one that explains itself early and repeats nothing. Only harnesses
- * with a probe start the timer at all, and each tick is one bounded tail read.
- */
-const HARNESS_LOG_POLL_MS = 60_000;
-
-/**
- * Grace period after the harness reports a completed result before a burst of out-of-turn output
- * is sealed and decorated.
- *
- * Not zero, because the "a result finished" marker is weaker than it looks — see the note at its
- * use in pumpUpdates. Short enough that a background report is not visibly late (in the default
- * `once` delivery mode nothing is sent until the buffer completes, so this IS the latency), long
- * enough that a harness reporting cost on every snapshot does not fragment one report into many.
- */
-const FOLLOW_UP_SEAL_GRACE_MS = 1_500;
-
-/**
- * Whether a `usage_update` is the one the harness emits with a completed result, as opposed to a
- * mid-stream snapshot — i.e. "a piece of work just finished here".
- *
- * Read off `cost`, which is part of the ACP UsageUpdate schema rather than a private extension.
- * Verified against claude-agent-acp 0.58.1 (2026-09): the mid-stream send passes `{used, size}`
- * only, while the send tied to the SDK's `result` message always adds
- * `cost: {amount: total_cost_usd, currency: 'USD'}`. Hyrum's Law applies — a harness that started
- * reporting cumulative cost mid-stream would end follow-up bursts early, which costs an extra
- * message bubble and loses nothing (the quiet backstop and the next burst both still work).
- */
-export function isResultUsage(update: SessionUpdate): boolean {
-  return update.sessionUpdate === 'usage_update' && update.cost != null;
-}
-
-/**
- * Pull the live model's display name out of an ACP `configOptions` list (as returned by session/new
- * and refreshed by `config_option_update`).
- *
- * Why bother, when the config already names a model: for some agents it doesn't. The `claude` harness
- * takes its model from the ANTHROPIC_MODEL env var (the only source that survives Claude Code
- * rewriting settings.model), so `agents[].model` is empty and the config knows only an alias like
- * `opus[1m]` — never the concrete model actually serving the turn. The harness resolves that alias
- * itself and reports the result here, so this is the only accurate source.
- *
- * Shape (SessionConfigOption): the model selector is `{id:'model', type:'select', currentValue,
- * options}` where options are either flat SessionConfigSelectOption[] or grouped
- * SessionConfigSelectGroup[] ({group, options}). Returns undefined when the agent exposes no model
- * selector; falls back to the raw `currentValue` when the option isn't listed at all (an
- * allowlisted-but-unlisted model still reports a currentValue).
- *
- * Label choice, in order:
- *
- * 1. **The concrete model out of the option's `description`.** Neither the id nor the display name
- *    carries a version on the claude harness — it offers `opus[1m]` / "Opus", which says which
- *    family is running but not which release, so a footer reading `opus[1m]` never changed when the
- *    model behind that alias did. The description is where the harness states it, verbatim:
- *    "Opus 4.8 with 1M context · Best for everyday, complex tasks" (probed live against
- *    claude-agent-acp 0.58.1). Parsed to `opus-4-8`, which is the model, spelled the way it is
- *    everywhere else. `[1m]` drops out with it, and nothing is lost: the footer's own context
- *    segment already reads `/ 1M` beside it, so the qualifier was saying twice what one number says.
- * 2. The option's human-readable `name`, when it doesn't LOSE a qualifier the id carries — the
- *    fallback for a harness whose descriptions carry no version (see nameKeepsQualifiers).
- * 3. The raw `currentValue`, when the option isn't listed at all.
- */
-export function liveModelName(options: SessionConfigOption[] | null | undefined): string | undefined {
-  const opt = options?.find((o) => o.id === MODEL_CONFIG_ID);
-  if (!opt || opt.type !== 'select') return undefined;
-  const current = opt.currentValue;
-  if (typeof current !== 'string' || current.length === 0) return undefined;
-  // Flatten grouped options so both shapes are searched the same way.
-  const flat = opt.options.flatMap((entry) =>
-    'group' in entry ? entry.options : [entry]
-  );
-  const selected = flat.find((o) => o.value === current);
-  const concrete = concreteModelName(selected?.description);
-  if (concrete) return concrete;
-  const name = selected?.name;
-  if (!name) return current;
-  return nameKeepsQualifiers(name, current) ? name : current;
-}
-
-/**
- * `<family>-<version>` pulled out of an option description, or undefined when it doesn't state one.
- *
- * The shape being read is the headline before the `·` separator — "Opus 4.8 with 1M context",
- * "Sonnet 5", "Haiku 4.5", "Fable 5.1" — of which only the leading family and version are the
- * model's identity; the rest is either a qualifier the footer already shows or marketing.
- *
- * Deliberately strict, and undefined on anything that doesn't match: this runs for every harness,
- * and a description that is a sentence rather than a model name (opencode writes none at all) must
- * fall through to the name/id path rather than yield a plausible-looking wrong answer.
- */
-function concreteModelName(description: string | null | undefined): string | undefined {
-  if (!description) return undefined;
-  const headline = description.split('·')[0]!.trim();
-  const m = /^([A-Za-z][A-Za-z0-9]*)\s+(\d+(?:\.\d+)*)(?:\s|$)/.exec(headline);
-  if (!m) return undefined;
-  return `${m[1]!.toLowerCase()}-${m[2]!.replace(/\./g, '-')}`;
-}
-
-/**
- * Whether `name` still conveys every bracketed qualifier present in the option `id` (e.g. `[1m]`).
- * Compared loosely — bracket-free and case-insensitive — so "Sonnet 5 (1M context)" counts as
- * carrying `[1m]`, while a bare "Opus" does not carry it for id `opus[1m]`.
- *
- * Only reached when the description states no version. Where one is stated it wins outright, and
- * the qualifier is dropped on purpose — see liveModelName.
- */
-function nameKeepsQualifiers(name: string, id: string): boolean {
-  const haystack = name.toLowerCase().replace(/[[\]()\s]/g, '');
-  return [...id.matchAll(/\[([^\]]+)\]/g)].every((m) =>
-    haystack.includes(m[1]!.toLowerCase().replace(/\s/g, ''))
-  );
-}
-
-/**
- * The session's reasoning effort, read out of its ACP `configOptions` for the footer.
- *
- * Found by `category`, not by `id`, because the harnesses disagree on the id and agree on the
- * category — probed 2026-09-23: claude-agent-acp 0.81.0 and opencode 2.0.14 both call it `effort`,
- * codex-acp (codex-cli 0.155.1) calls it `reasoning_effort`, and all three tag it
- * `category: "thought_level"`, which is the ACP spec's own name for this selector. The spec calls
- * category "UX only", and UX is exactly what this is: nothing but the footer reads the answer.
- *
- * Returns undefined — segment omitted — in three situations, each of them deliberate:
- * - no such option. opencode offers one only while the current model has reasoning variants (none
- *   on `opencode/mimo-v2.6-flash-free`; switching to `anthropic/claude-opus-4-8` adds it), and dsh
- *   and gemini have none at all;
- * - `default`, which is where claude and opencode start. It means "whatever the model defaults to"
- *   and names no level, so printing it would look like a level while telling the reader nothing;
- * - a non-string currentValue (a boolean option filed under the category by some future harness).
- *
- * The raw value is returned rather than the option's display name: the values are already the
- * words (`high`, `xhigh`, `max`), and on codex the name is a sentence.
- */
-export function liveEffortName(options: SessionConfigOption[] | null | undefined): string | undefined {
-  const opt = options?.find((o) => o.category === THOUGHT_LEVEL_CATEGORY);
-  if (!opt) return undefined;
-  const current = opt.currentValue;
-  if (typeof current !== 'string' || current.length === 0 || current === 'default') return undefined;
-  return current;
-}
-
-/** ACP's spec-reserved category for the reasoning-effort selector (SessionConfigOptionCategory). */
-const THOUGHT_LEVEL_CATEGORY = 'thought_level';
-
-/** A config option of the `select` kind — the only kind a level can be chosen from. */
-type SelectConfigOption = Extract<SessionConfigOption, { type: 'select' }>;
-
-/**
- * The effort option itself, found the way liveEffortName finds it — by category, because the id is
- * the one thing the three harnesses disagree on. Its `id` is what `session/set_config_option` must
- * be sent, so the caller never spells `effort` or `reasoning_effort` itself.
- */
-function effortOption(options: SessionConfigOption[] | null | undefined): SelectConfigOption | undefined {
-  const opt = options?.find((o) => o.category === THOUGHT_LEVEL_CATEGORY);
-  return opt?.type === 'select' ? opt : undefined;
-}
-
-/**
- * The session's effort levels as a selector for `/effort`, or undefined when the current model
- * offers none.
- *
- * Differs from liveEffortName in the one place the two readers want different things: `default`
- * is KEPT as `current`. The footer drops it because it names no level; a menu must show it,
- * because on claude and opencode it is one of the choices, and a menu with no ● anywhere would
- * leave the user unable to tell where they are.
- *
- * An option with no choices is reported as no selector: a menu of nothing is not a menu.
- */
-export function effortSelectorOf(options: SessionConfigOption[] | null | undefined): EffortSelector | undefined {
-  const opt = effortOption(options);
-  if (!opt) return undefined;
-  const levels = opt.options
-    .flatMap((entry) => ('group' in entry ? entry.options : [entry]))
-    .map((o) => ({ value: o.value, name: o.name || o.value }));
-  if (levels.length === 0) return undefined;
-  return { current: opt.currentValue || undefined, options: levels };
-}
-
-/**
- * The prefix ACP keeps for categories it does not define: "Category names beginning with `_` are
- * free for custom use … names that do not begin with `_` are reserved for the ACP spec"
- * (SessionConfigOptionCategory, @agentclientprotocol/sdk 0.29.0).
- */
-const CUSTOM_CATEGORY_PREFIX = '_';
-
-/**
- * The session's own settings — every `select` config option in a custom (`_`) category — for the
- * status strip and the generic switch (SessionOption).
- *
- * Only the custom categories, and only by category: the model, effort and mode selectors each have
- * a path of their own that remembers the person's choice, and a reserved category the gateway does
- * not handle (`model_config`, which claude-agent-acp reports) or an option with no category at all
- * must not grow a button nobody designed for it. A boolean option is skipped: there is no switch
- * for one, and an option with no choices is no setting to show.
- */
-export function customOptionsOf(options: SessionConfigOption[] | null | undefined): SessionOption[] {
-  return (options ?? []).flatMap((opt) => {
-    if (opt.type !== 'select' || !opt.category?.startsWith(CUSTOM_CATEGORY_PREFIX)) return [];
-    const choices = opt.options
-      .flatMap((entry) => ('group' in entry ? entry.options : [entry]))
-      .map((o) => ({ value: o.value, name: o.name || o.value, ...(o.description ? { description: o.description } : {}) }));
-    if (choices.length === 0) return [];
-    return [{ id: opt.id, name: opt.name || opt.id, ...(opt.currentValue ? { current: opt.currentValue } : {}), options: choices }];
-  });
-}
-
-/**
- * Re-apply a conversation's `/effort` choice to a freshly started or reloaded session, returning
- * the option list the harness reports afterwards (undefined when nothing was sent).
- *
- * This is not the model's belt-and-braces: without it the choice is lost on the very first idle
- * reclaim. Probed 2026-09-23 by setting `low`, killing the child and `session/load`ing the same
- * session into a new one — claude-agent-acp 0.81.0 and codex-acp 1.13.0 both came back at `high`
- * (their defaults for the model), opencode 2.0.14 came back at `low`. So two of three harnesses
- * treat the level as process state, not session state.
- *
- * Also run after a runtime `/model`, because the effort list belongs to the model: opencode's
- * variants differ per model, and codex falls back to the new model's default when the old level is
- * not among its levels.
- *
- * Best-effort, like applyModelPreference and for its reasons — never fails the turn. A level the
- * current model does not offer is skipped with a log line rather than forced: the preference stays
- * recorded, so a later switch back to a model that has it picks it up again, and the footer shows
- * the level that is really in force meanwhile.
- */
-export async function applyEffortPreference(
-  ctx: Pick<ClientContext, 'request'>,
-  sessionId: string,
-  def: AgentDef,
-  options: SessionConfigOption[] | undefined,
-  want: string | undefined
-): Promise<SessionConfigOption[] | undefined> {
-  if (!want) return undefined;
-  const opt = effortOption(options);
-  if (!opt) {
-    console.log(`[acp] agent "${def.id}": effort "${want}" not applied — the current model offers no effort levels`);
-    return undefined;
-  }
-  if (opt.currentValue === want) return undefined; // already there — don't spend a round trip
-  const offered = opt.options.flatMap((entry) => ('group' in entry ? entry.options : [entry]));
-  if (!offered.some((o) => o.value === want)) {
-    console.warn(
-      `[acp] agent "${def.id}": effort "${want}" is not offered by the current model; ` +
-        `staying at "${opt.currentValue}". Offered: ${offered.map((o) => o.value).join(', ')}`
-    );
-    return undefined;
-  }
-  try {
-    const res = await ctx.request('session/set_config_option', {
-      sessionId,
-      configId: opt.id,
-      value: want,
-    });
-    console.log(`[acp] agent "${def.id}": effort re-applied as "${want}"`);
-    return res?.configOptions ?? undefined;
-  } catch (err) {
-    console.warn(
-      `[acp] agent "${def.id}": could not re-apply effort "${want}" (${err instanceof Error ? err.message : err}); ` +
-        `staying at "${opt.currentValue}"`
-    );
-    return undefined;
-  }
-}
-
-/** ACP's well-known id for the model selector among a session's config options. */
-const MODEL_CONFIG_ID = 'model';
-
-/**
- * DSH's model selector value: JSON.stringify([provider, model]) — see `modelValue` in
- * @deepseek-ai/dsh-acp (lib/types/model-control.js), where the option's `currentValue` and every
- * choice value carry that exact string and `set` looks the incoming value up in a map keyed by it.
- * fleetherd spells models "provider/model" (the opencode convention), so the pair must be
- * JSON-encoded to cross the wire — a bare "provider/model" is rejected as "unknown model option" —
- * and decoded again to present a readable /model menu (see dshModelDisplayValue).
- */
-export function dshModelSelectorValue(model: string): string {
-  // No provider half (a bare model id): encode with an empty provider. That cannot match DSH's list,
-  // so applyModelPreference's offer check rejects it explicitly with the real choices — a clearer
-  // failure than DSH's opaque "unknown model option".
-  const slash = model.indexOf('/');
-  const provider = slash === -1 ? '' : model.slice(0, slash);
-  const name = slash === -1 ? model : model.slice(slash + 1);
-  return JSON.stringify([provider, name]);
-}
-
-/**
- * Inverse of dshModelSelectorValue: decode DSH's JSON-array selector value back to the
- * "provider/model" spelling config and /model queries use. Anything that isn't a 2-element string
- * array (a non-dsh harness's plain model id) passes through unchanged.
- */
-export function dshModelDisplayValue(value: string): string {
-  try {
-    const parsed: unknown = JSON.parse(value);
-    if (
-      Array.isArray(parsed) &&
-      parsed.length === 2 &&
-      typeof parsed[0] === 'string' &&
-      typeof parsed[1] === 'string'
-    ) {
-      return `${parsed[0]}/${parsed[1]}`;
-    }
-  } catch {
-    // Not JSON (a bare model id from a non-dsh harness) — pass through.
-  }
-  return value;
-}
-
-/**
- * Enforce a model on a started session — `agents[].model` or the conversation's `/model` choice on
- * session/new, the choice alone on session/load — returning the option list the harness reports
- * afterwards (undefined when nothing was applied, so the caller keeps what the session reported).
- *
- * The whole list rather than just the resulting model name, because the model is not the only
- * thing a model switch changes: the effort levels belong to the model too, and the caller re-applies
- * `/effort` against the list this returns — reading it off session/new instead would validate the
- * level against the model the session was just switched AWAY from.
- *
- * Why this exists: session/new carries the model only as a `_meta.model` hint, which the spec lets
- * an agent ignore — and opencode does. Verified against the deployed harness: with
- * `_meta.model: 'anthropic/claude-opus-5'` it still reported `opencode/big-pickle` (its own
- * default), while `session/set_config_option` set it correctly. So a configured model was silently
- * not taking effect, and the only visible symptom was the footer naming a model nobody asked for.
- *
- * Best-effort by design — a harness with no model selector, an unknown model id, or an agent that
- * rejects the request must not fail the turn. Anything unexpected is logged once and the session
- * proceeds on whatever the harness chose, which is strictly better than refusing to answer. The
- * mismatch stays visible in the footer either way.
- */
-export async function applyModelPreference(
-  ctx: Pick<ClientContext, 'request'>,
-  sessionId: string,
-  def: AgentDef,
-  /** The session's option list as it just reported it (session/new or session/load). */
-  options: SessionConfigOption[] | undefined,
-  /** The model to enforce — a `/model` choice, or the configured one; undefined enforces nothing. */
-  want: string | undefined
-): Promise<SessionConfigOption[] | undefined> {
-  if (!want) return undefined;
-  // DSH's selector values are JSON.stringify([provider, model]) (see dshModelSelectorValue), so
-  // translate the "provider/model" config spelling before comparing against currentValue, checking
-  // the offered list, and setting. Logging keeps the readable spelling throughout.
-  const wireWant = def.harness === 'dsh' ? dshModelSelectorValue(want) : want;
-  const display = (v: string): string => (def.harness === 'dsh' ? dshModelDisplayValue(v) : v);
-
-  const opt = (options ?? []).find((o) => o.id === MODEL_CONFIG_ID);
-  // No model selector at all (the claude harness pins its model via ANTHROPIC_MODEL instead):
-  // nothing to set, and saying so at debug avoids a scary warning for a supported setup.
-  if (!opt || opt.type !== 'select') {
-    console.debug(`[acp] agent "${def.id}" exposes no model selector; leaving model.${want ? ` (configured "${want}" applies only if the harness reads it elsewhere)` : ''}`);
-    return undefined;
-  }
-  if (opt.currentValue === wireWant) return undefined; // already correct — don't spend a round trip
-
-  // Only offer ids the agent actually lists; a typo would otherwise surface as an opaque rejection.
-  const offered = opt.options.flatMap((entry) => ('group' in entry ? entry.options : [entry]));
-  if (offered.length > 0 && !offered.some((o) => o.value === wireWant)) {
-    console.warn(
-      `[acp] agent "${def.id}": model "${want}" is not among the models it offers; ` +
-        `continuing with "${display(opt.currentValue)}". Available: ${offered.map((o) => display(o.value)).join(', ')}`
-    );
-    return undefined;
-  }
-
-  try {
-    const res = await ctx.request('session/set_config_option', {
-      sessionId,
-      configId: MODEL_CONFIG_ID,
-      value: wireWant,
-    });
-    console.log(`[acp] agent "${def.id}": model set to "${want}"`);
-    return res?.configOptions ?? undefined;
-  } catch (err) {
-    console.warn(
-      `[acp] agent "${def.id}": could not set model "${want}" (${err instanceof Error ? err.message : err}); ` +
-        `continuing with "${opt.currentValue}"`
-    );
-    return undefined;
-  }
-}
-
-/**
- * Pin `agents[].options` on a started session — the harness's own config options that fleetherd has
- * no menu for, e.g. cursor's `context` (`256k` / `500k`) and `fast`.
- *
- * Why this exists: an option the client cannot render is one the person cannot choose, and a
- * harness that offers it only when the client advertises a picker (cursor does — see
- * isCursorAgent) would otherwise leave it at whatever its own config last said. Pinning it here
- * makes the value a property of the agent definition, on the agent's own host, instead of a file
- * the CLI rewrites behind the gateway's back.
- *
- * Order matters and is enforced by the caller: after the model, because the option set belongs to
- * the model, and before the conversation's `/effort`, so a level chosen in chat still wins over a
- * pinned `reasoning_effort`.
- *
- * Best-effort like its siblings — never fails a turn. An id the current model does not offer, or a
- * value it does not list, is skipped with a log line rather than forced: a model switch reshapes
- * the set (cursor's `effort` becomes `reasoning_effort`, `thinking` appears or goes), and a pin
- * meant for one model must not take the next one's session down.
- */
-export async function applyPinnedOptions(
-  ctx: Pick<ClientContext, 'request'>,
-  sessionId: string,
-  def: AgentDef,
-  options: SessionConfigOption[] | undefined,
-  pinned: AgentDef['options']
-): Promise<SessionConfigOption[] | undefined> {
-  const entries = Object.entries(pinned ?? {});
-  if (entries.length === 0) return undefined;
-  let current = options;
-  let changed = false;
-  for (const [id, raw] of entries) {
-    const want = String(raw);
-    const opt = current?.find((o) => o.id === id);
-    if (!opt || opt.type !== 'select') {
-      console.debug(`[acp] agent "${def.id}": pinned option "${id}" is not offered by this session; leaving it`);
-      continue;
-    }
-    if (opt.currentValue === want) continue; // already there — don't spend a round trip
-    const offered = opt.options.flatMap((entry) => ('group' in entry ? entry.options : [entry]));
-    if (offered.length > 0 && !offered.some((o) => o.value === want)) {
-      console.warn(
-        `[acp] agent "${def.id}": pinned option "${id}" does not offer "${want}" here; ` +
-          `staying at "${opt.currentValue}". Offered: ${offered.map((o) => o.value).join(', ')}`
-      );
-      continue;
-    }
-    try {
-      const res = await ctx.request('session/set_config_option', { sessionId, configId: id, value: want });
-      current = res?.configOptions ?? current;
-      changed = true;
-      console.log(`[acp] agent "${def.id}": option "${id}" pinned to "${want}"`);
-    } catch (err) {
-      console.warn(
-        `[acp] agent "${def.id}": could not pin option "${id}" to "${want}" ` +
-          `(${err instanceof Error ? err.message : err}); staying at "${opt.currentValue}"`
-      );
-    }
-  }
-  return changed ? current : undefined;
-}
-
-/** ACP's spec-reserved category for the session-mode selector (SessionConfigOptionCategory). */
-const MODE_CATEGORY = 'mode';
-
-/**
- * How a session's mode is read and set, by the route its harness offers. Measured 2026-11-18
- * (project-reports/acp-permission-modes-20261118.md): claude-agent-acp, codex-acp and CodeBuddy
- * report the `modes` field on session/new and take `session/set_mode`; opencode reports no `modes`,
- * only a config option of category `mode`, set with `session/set_config_option`. `modes` is used
- * where it exists, since it is the protocol's mode surface proper; the config option otherwise —
- * found by its category, the protocol's, not by its id, the harness's.
- */
-export type ModeControl = SessionModeSelector &
-  ({ via: 'set_mode' } | { via: 'config_option'; configId: string });
-
-/** The session's mode control, or undefined when it reports neither route (or no modes on it). */
-export function modeControlOf(
-  modes: SessionModeState | null | undefined,
-  options: SessionConfigOption[] | null | undefined
-): ModeControl | undefined {
-  if (modes && modes.availableModes.length > 0) {
-    return {
-      via: 'set_mode',
-      current: modes.currentModeId || undefined,
-      options: modes.availableModes.map((m) => ({ value: m.id, name: m.name || m.id })),
-    };
-  }
-  const opt = options?.find((o) => o.category === MODE_CATEGORY);
-  if (opt?.type !== 'select') return undefined;
-  const choices = opt.options
-    .flatMap((entry) => ('group' in entry ? entry.options : [entry]))
-    .map((o) => ({ value: o.value, name: o.name || o.value }));
-  if (choices.length === 0) return undefined;
-  return { via: 'config_option', configId: opt.id, current: opt.currentValue || undefined, options: choices };
-}
-
-/**
- * Whether this agent's modes are left out of its permission levels — read for the settings
- * screen, and never set — so that it is offered `ask` and `auto` alone.
- *
- * agy, for two reasons. Its modes could not be measured on 2026-11-18 (the probing machine's login
- * had expired, and `session/new` answers `Authentication required` before it reports any), so
- * nothing says what they do now. And what was measured before says its names do not mean what the
- * levels' do: on 1.5.1 (2026-11-06) its `default` — "Ask before edits and commands" — asked before
- * a command but wrote into its working directory without asking, so `ask` there would be a level
- * that lets edits through unseen. The gateway's half still holds for agy: `ask` puts whatever it
- * does ask to the person, and its own mode stays as it is (applyPermissionLevel).
- */
-function modesLeftOut(def: AgentDef): boolean {
-  return def.harness === 'agy';
-}
-
-/** The `modes` a session/new or session/load answer carried, if any. */
-function reportedModes(res: { modes?: SessionModeState | null } | null | undefined): SessionModeState | undefined {
-  return res?.modes ?? undefined;
-}
-
-/** What a session reports about its mode, as the two places ACP carries it. */
-export interface ModeState {
-  modes: SessionModeState | undefined;
-  options: SessionConfigOption[] | undefined;
-}
-
-/**
- * Put a session in the mode its agent's permission level means (`agents[].permissions`,
- * core/permission-levels.ts), returning what the harness reports afterwards (undefined when nothing
- * was sent).
- *
- * Run when a session starts or reloads — after the model and the pinned options, since both can
- * reshape the option set — and when the level is changed from chat (applyPermissions). Not after
- * every turn or model switch: the harness moves its own mode when the person approves leaving
- * `plan` ("Yes, and auto-accept edits"), and putting it back behind them would undo the answer they
- * just gave. A reload does put the level back, because claude and CodeBuddy reload at their
- * default mode and opencode at the last one (measured 2026-11-18): the level is where a session
- * starts.
- *
- * Best-effort like its siblings — never fails a turn. A level with no mode on offer leaves the
- * mode alone with a log line: the gateway's half of the level still holds, since answerPermission
- * reads the level per request.
- */
-export async function applyPermissionLevel(
-  ctx: Pick<ClientContext, 'request'>,
-  sessionId: string,
-  def: AgentDef,
-  state: ModeState
-): Promise<Partial<ModeState> | undefined> {
-  if (def.permissions === undefined || modesLeftOut(def)) return undefined;
-  const control = modeControlOf(state.modes, state.options);
-  const offered = (control?.options ?? []).map((m) => m.value);
-  const pinned = def.options['mode'];
-  const want = levelMode(def.permissions, offered, pinned === undefined ? undefined : String(pinned));
-  if (!control || !want) {
-    console.log(
-      `[acp] agent "${def.id}": permissions "${def.permissions}" has no session mode here` +
-        (control ? ` (offered: ${offered.join(', ')}); staying at "${control.current}"` : ' (it reports no modes)')
-    );
-    return undefined;
-  }
-  if (control.current === want) return undefined; // already there — don't spend a round trip
-  try {
-    let after: Partial<ModeState>;
-    if (control.via === 'set_mode') {
-      await ctx.request('session/set_mode', { sessionId, modeId: want });
-      // set_mode answers with nothing to read back; the harness's own current_mode_update (or
-      // config_option_update) follows, and is folded in the same way when it does.
-      after = { modes: { availableModes: state.modes?.availableModes ?? [], currentModeId: want } };
-    } else {
-      const res = await ctx.request('session/set_config_option', { sessionId, configId: control.configId, value: want });
-      after = res?.configOptions ? { options: res.configOptions } : {};
-    }
-    console.log(`[acp] agent "${def.id}": mode set to "${want}" for permissions "${def.permissions}"`);
-    return after;
-  } catch (err) {
-    console.warn(
-      `[acp] agent "${def.id}": could not set mode "${want}" for permissions "${def.permissions}" ` +
-        `(${err instanceof Error ? err.message : err}); staying at "${control.current}"`
-    );
-    return undefined;
-  }
-}
-
-/** The session's modes for the settings screen — undefined where they are left out (modesLeftOut). */
-export function permissionModesOf(def: AgentDef, state: ModeState): SessionModeSelector | undefined {
-  if (modesLeftOut(def)) return undefined;
-  const control = modeControlOf(state.modes, state.options);
-  return control ? { ...(control.current ? { current: control.current } : {}), options: control.options } : undefined;
-}
-
-/**
- * Whether this agent is Cursor's CLI (`cursor-agent acp`) — the one harness known to read
- * `clientCapabilities._meta.parameterizedModelPicker` (cursor-agent 2026.11.05, its ACP agent's
- * clientSupportsParameterizedModelPicker). Read off the command's last segment, the way
- * skillHomes reads CodeBuddy out of a `custom` agent; a preset harness never matches.
- *
- * The binary has to be named `cursor-agent`, which is what its installer and `npm i -g` both
- * provide. A symlink under another name would not be recognised, and the agent would keep the
- * pre-combined model list — visible, but not silent: `options:` pins would then be skipped with
- * "not offered by this session" in the log.
- */
-export function isCursorAgent(def: Pick<AgentDef, 'harness' | 'command'>): boolean {
-  return def.harness === 'custom' && path.basename(def.command ?? '') === 'cursor-agent';
-}
-
-/**
- * Watch whether a turn shows the person anything. It only decides the fate of an UNNAMED refusal
- * (see failIfRefused): claude-agent-acp sends `lastRefusalExplanation` as an ordinary
- * `agent_message_chunk` before reporting `stopReason: "refusal"`, and that explanation is a
- * perfectly good answer. Text counts only when it is not blank; a tool bubble counts as soon as it
- * opens.
- */
-function trackVisibleOutput(handlers: AgentStreamHandlers): {
-  handlers: AgentStreamHandlers;
-  sawOutput: () => boolean;
-} {
-  let seen = false;
-  return {
-    sawOutput: () => seen,
-    handlers: {
-      ...handlers,
-      onText: (delta) => {
-        if (delta.trim() !== '') seen = true;
-        handlers.onText(delta);
-      },
-      onToolStart: (evt) => {
-        seen = true;
-        handlers.onToolStart(evt);
-      },
-      ...(handlers.onImage
-        ? {
-            onImage: (image) => {
-              seen = true;
-              handlers.onImage?.(image);
-            },
-          }
-        : {}),
-    },
-  };
-}
-
-/**
- * Fail a turn whose prompt ended in `stopReason: "refusal"`. A cause CodeBuddy attached always
- * fails, however much the turn had already streamed — a 429 after a tool call is still a rejected
- * turn. Only an unnamed refusal is spared when something was already visible: that is the model
- * declining, and Claude sends its explanation as ordinary text first. Kept out of `runTurn` so its
- * own branch count stays where lint wants it.
- */
-function failIfRefused(response: PromptResponse, visibleOutput: boolean): void {
-  const refusal = readPromptRefusal(response);
-  if (!refusal) return;
-  if (!refusal.named && visibleOutput) return;
-  throw new TurnFailure(refusal.message, refusal.reason);
-}
-
-function createAcpSession(
-  def: AgentDef,
-  socketPath: string,
-  /** The conversation this agent instance serves (store key half; the other half is def.id). */
-  conversationId: string,
-  turnTimeoutMs: number,
-  store?: ConversationStore,
-  /** The quota pools, which no ACP message carries (quota-meter.ts): agy's, or the agent's quotaCommand. */
-  quota?: QuotaMeter
-): AgentSession {
-  /**
-   * The directory this session's child runs in. Resolved per SPAWN, not once per session, so a
-   * `/cd` that disposed the child takes effect on the next turn (see resolveConversationCwd).
-   * Held here because three call sites below — spawn, session/load and session/new — must all
-   * agree on one answer within a single startup.
-   */
-  let cwd = resolveConversationCwd(def, conversationId, store);
+class AcpSession implements AgentSession {
+  readonly conversationId: string;
+  private cwd: string;
 
   /** Lazily-started connection handles; established on first turn, closed on dispose. */
-  let proc: AgentChild | undefined;
-  let conn: ClientConnection | undefined;
-  let active: ActiveSession | undefined;
+  private proc: AgentChild | undefined;
+  private conn: ClientConnection | undefined;
+  private active: ActiveSession | undefined;
   /** The last `session/cancel` sent, until it is written: a connect agent's teardown waits for it. */
-  let cancelSent: Promise<void> | undefined;
-  /**
-   * The single reader of `active`'s update queue, for as long as the child lives (see pumpUpdates).
-   * Held only so `resetHandles` can forget it; nothing ever awaits it.
-   */
-  let pump: Promise<void> | undefined;
-  /**
-   * The running turn's translation state, or undefined between turns. The pump routes each update
-   * here while a turn is in flight and to the follow-up sink otherwise — that switch IS the fix for
-   * dropped background output (see FollowUpSink).
-   */
-  let turnState: TurnState | undefined;
-  /**
-   * Called by the pump with every update it hands to the running turn — to re-arm the silence
-   * watchdog, and to notice the end of an autonomous cycle (see FOLDED_PROMPT_GRACE_MS). Undefined
-   * between turns (nothing is being timed).
-   */
-  let onTurnUpdate: ((update: SessionUpdate) => void) | undefined;
-  /**
-   * Ends the running turn's wait, because a prompt settled (queue `stop`, passed its response) or
-   * the queue rejected (passed nothing). Undefined between turns.
-   *
-   * The turn decides whether a `stop` is ITS OWN — it is not always: a prompt the turn gave up on
-   * (see FOLDED_PROMPT_GRACE_MS) settles later, typically at the next prompt, and its `stop` lands
-   * in that next turn's wait.
-   */
-  let endTurnWait: ((response?: PromptResponse) => void) | undefined;
-  /** Where out-of-turn output goes; installed by TurnRunner at the top of every turn. */
-  let followUpSink: FollowUpSink | undefined;
-  /**
-   * The burst of out-of-turn output currently being rendered, together with the sink that opened
-   * it. Paired deliberately: TurnRunner installs a FRESH sink at the top of every turn, so closing
-   * through `followUpSink` could hand the close to a sink that knows nothing about this burst,
-   * leaving the previous one's text unflushed — which in the default `once` delivery mode means
-   * never sent at all.
-   */
-  let followUpState: { state: TurnState; sink: FollowUpSink } | undefined;
-  /** Cancels the follow-up quiet backstop (see FOLLOW_UP_QUIET_MS). */
-  let cancelFollowUpQuiet: (() => void) | undefined;
-  /**
-   * Whether the current burst has put output on screen — the difference between a burst that is
-   * background work reporting in and one that only ever carried metadata (see followUp). Read for
-   * two decisions: whether to say so in the log, and whether `/stop` has anything to stop
-   * (see stopBackground). `followUpState` alone cannot answer either, because the post-turn
-   * `session_info_update` opens one on every conversation after every turn.
-   */
-  let burstRendering = false;
-  /**
-   * Startup currently in flight, shared by concurrent callers so only one child is ever spawned
-   * per session (see ensureStarted). Undefined whenever no startup is running.
-   */
-  let starting: Promise<void> | undefined;
-  /**
-   * Cancels the preLaunch hook while one is running ahead of a spawn (see agent-hooks.ts), on dispose
-   * and on `/stop`. The hook is the one stretch of a startup with no child yet, so killing `proc`
-   * cannot stop it: without this, a session disposed mid-hook would go on to spawn a child nobody
-   * holds any more, and a stopped turn would sit out the hook and then run anyway.
-   */
-  let launchHook: AbortController | undefined;
-  /** Intentional-abort flag: set by abort(); used to return silently when prompt ends as cancelled. */
-  let aborting = false;
-  /**
-   * The registry let go of this session (`/new`, `/cd`, a rebind, a reload): nothing it reports may
-   * reach the conversation any more. Only the session's own dispose() sets it — the internal
-   * teardown also runs for a crashed or hung child, after which the session lives on.
-   */
-  let disposed = false;
-  /**
-   * How many elicitations are currently in front of the user, waiting to be answered.
-   *
-   * Read by the turn's silence watchdog: an agent blocked on `elicitation/create` is silent BY
-   * DESIGN, and the person it is waiting for is reading three options on a phone. Without this the
-   * watchdog would reach its deadline mid-decision and abort the turn as hung — killing the very
-   * question it was asked to relay, and doing it more reliably the more carefully the user thought.
-   * A counter rather than a flag because a multi-question form is asked one round at a time.
-   */
-  let awaitingUser = 0;
+  private cancelSent: Promise<void> | undefined;
+  private pump: Promise<void> | undefined;
+
+  /** Active turn state and pump callbacks; undefined between turns. */
+  private turnState: TurnState | undefined;
+  private onTurnUpdate: ((update: SessionUpdate) => void) | undefined;
+  private endTurnWait: ((response?: PromptResponse) => void) | undefined;
+
+  /** Out-of-turn follow-up rendering state. */
+  private followUpSink: FollowUpSink | undefined;
+  private followUpState: { state: TurnState; sink: FollowUpSink } | undefined;
+  private cancelFollowUpQuiet: (() => void) | undefined;
+  private burstRendering = false;
+
+  /** Shared in-flight startup promise and preLaunch hook abort controller. */
+  private starting: Promise<void> | undefined;
+  private launchHook: AbortController | undefined;
+
+  /** Lifecycle / abort / user-wait flags. */
+  private aborting = false;
+  private disposed = false;
+  private awaitingUser = 0;
+
+  /** Cancel wreckage & session/load replay gate. */
+  private cancelledTools = new Set<string>();
+  private promptedYet = false;
+  private replayFence: Promise<void> | undefined;
+  private releaseReplayFence: (() => void) | undefined;
+  private replayPending = false;
+
+  /** Binary-level capabilities learned from `initialize` (kept across child rebuilds). */
+  private loadSessionSupported = false;
+  private reconnectSupported = false;
+  private steeringMode: SteeringMode = 'none';
+  private imagePrompts = false;
+  private forkSupport: ForkSupport = NO_FORK;
+  private forkKnown = false;
+  private forkSeed: string | undefined;
+
+  /** Active `/btw` side questions, keyed by fork session id. */
+  private readonly sideAsks = new Map<string, SideAskHandle>();
+  /** Session-scoped subagent names (background subagents outlive the turn that spawned them). */
+  private readonly subagentNames = new Map<string, string>();
+
+  /** Mid-turn steering & stop coordination. */
+  private joinTurn: ((blocks: ContentBlock[]) => Promise<SteerOutcome>) | undefined;
+  private promptSent: Promise<void> | undefined;
+  private joinedStillQueued: (() => boolean) | undefined;
+  private endChildAfterStop = false;
+  private turnStopped: (() => void) | undefined;
+  private stoppedWhileStarting = false;
+  private readonly stopGraceMs: number;
+
+  /** Composed collaborators for options/modes and agy/quota metering. */
+  private readonly options: AcpOptionState;
+  private readonly agyMeter: AgyMeterHelper;
+
+  constructor(
+    private readonly def: AgentDef,
+    private readonly socketPath: string,
+    conversationId: string,
+    private readonly turnTimeoutMs: number,
+    private readonly store?: ConversationStore,
+    quota?: QuotaMeter
+  ) {
+    this.conversationId = conversationId;
+    this.cwd = resolveConversationCwd(def, conversationId, store);
+    this.stopGraceMs = turnTimeoutMs > 0 ? Math.min(STOP_GRACE_MS, turnTimeoutMs / 2) : STOP_GRACE_MS;
+    this.options = new AcpOptionState(def, conversationId, store);
+    this.agyMeter = new AgyMeterHelper(
+      def,
+      conversationId,
+      this.options,
+      quota,
+      () => this.disposed,
+      () => this.active?.sessionId
+    );
+  }
+
+  // ───────────────────────── Elicitation & permission answering ─────────────────────────
 
   /**
    * Answer an ACP `elicitation/create`: put the agent's question to the user and block until they
-   * pick (see AgentStreamHandlers.onElicit).
-   *
-   * Routed through the RUNNING TURN's handlers, because the question needs a lane to be asked in
-   * and only the turn knows which platform and address this conversation is currently answering
-   * on. Anything that leaves no such lane — no turn open, a url-mode request, a form with nothing
-   * tappable in it — is `cancel`led rather than answered. Cancelling is the honest outcome: it
-   * tells the harness the question went unanswered, which the model then has to deal with, whereas
-   * inventing an accept would hand it a decision the user never made and let it act on it.
+   * pick. Anything unrenderable (no turn open, url mode, no options) is cancelled honestly.
    */
-  async function answerElicitation(params: CreateElicitationRequest): Promise<CreateElicitationResponse> {
-    // A fork's question goes where its side answer is, which has nowhere to ask: cancelled.
-    const side = sideAsks.get((params as { sessionId?: string }).sessionId ?? '');
-    const ask = side ? side.state.handlers.onElicit : turnState?.handlers.onElicit;
+  private async answerElicitation(params: CreateElicitationRequest): Promise<CreateElicitationResponse> {
+    const side = this.sideAsks.get((params as { sessionId?: string }).sessionId ?? '');
+    const ask = side ? side.state.handlers.onElicit : this.turnState?.handlers.onElicit;
     if (!ask) {
-      console.warn(`[acp] ${conversationId}: elicitation arrived with no turn to ask in; cancelling`);
+      console.warn(`[acp] ${this.conversationId}: elicitation arrived with no turn to ask in; cancelling`);
       return { action: 'cancel' };
     }
     const parsed = parseFormElicitation(params);
     if (!parsed) {
-      console.warn(`[acp] ${conversationId}: cannot render this elicitation (mode=${params.mode}); cancelling`);
+      console.warn(`[acp] ${this.conversationId}: cannot render this elicitation (mode=${params.mode}); cancelling`);
       return { action: 'cancel' };
     }
-    awaitingUser++;
+    this.awaitingUser++;
     try {
       const answer = await ask(parsed);
       return answer.action === 'accept'
         ? { action: 'accept', content: answer.content }
         : { action: answer.action };
     } catch (e) {
-      // A renderer failure must not leave the agent blocked forever on a reply that will never come.
-      console.error(`[acp] ${conversationId}: failed to put an elicitation to the user:`, e instanceof Error ? e.message : e);
+      console.error(`[acp] ${this.conversationId}: failed to put an elicitation to the user:`, e instanceof Error ? e.message : e);
       return { action: 'cancel' };
     } finally {
-      awaitingUser--;
+      this.awaitingUser--;
     }
   }
 
   /**
-   * Answer an ACP `session/request_permission`: approve under a level that does not ask (`auto`,
-   * `full`, or none set — see decidePermission), or put it to the user under one that does
-   * (`plan`, `ask`, `edits`; core/permission-levels.ts asksPerson).
-   *
-   * The level is read per request off `def`, which `/setting` mutates in place, so a change reaches
-   * a turn already running at its next request.
-   *
-   * Asked through the running turn's handlers, so it lands in the lane the turn is answering in;
-   * with no turn open (background work the agent left running), through a follow-up burst's, which
-   * ask in the conversation's own lane. Counted in `awaitingUser` like an elicitation, so the
-   * silence watchdog does not fail a turn whose user is reading the request. What comes back is
-   * translated by permissionResponse, which is where "nobody answered" becomes something the agent
-   * can tell apart from a refusal.
+   * Answer an ACP `session/request_permission` (Security invariant #1): approve under a level that
+   * does not ask, or put it to the user under `plan` / `ask` / `edits`. A failure to ask or an
+   * unanswered request is always declined, never approved.
    */
-  async function answerPermission(params: RequestPermissionRequest): Promise<RequestPermissionResponse> {
-    if (!asksPerson(def.permissions)) return decidePermission(params);
-    // A fork answering a side question asks in that answer's lane, never the running turn's.
-    const ask = (sideAsks.get(params.sessionId)?.state ?? turnState ?? followUp(false))?.handlers.onPermission;
-    // Built once: a write's preview can be a page of text, and the log below names the same request.
+  private async answerPermission(params: RequestPermissionRequest): Promise<RequestPermissionResponse> {
+    if (!asksPerson(this.def.permissions)) return decidePermission(params);
+    const ask = (this.sideAsks.get(params.sessionId)?.state ?? this.turnState ?? this.followUp(false))?.handlers.onPermission;
     const request = permissionRequestOf(params);
     let answer: PermissionAnswer;
     if (!ask) {
       answer = { kind: 'unavailable', why: 'no chat to ask in' };
     } else {
-      awaitingUser++;
+      this.awaitingUser++;
       try {
         answer = await ask(request);
       } finally {
-        awaitingUser--;
+        this.awaitingUser--;
       }
     }
-    console.log(`[acp] ${conversationId}: permission for ${JSON.stringify(request.title)} → ${answer.kind}`);
+    console.log(`[acp] ${this.conversationId}: permission for ${JSON.stringify(request.title)} → ${answer.kind}`);
     return permissionResponse(params, answer);
   }
-  /**
-   * Tool ids that were still open when the last cancel landed.
-   *
-   * A cancelled tool call still emits its `tool_call_update`, and it arrives AFTER the prompt has
-   * settled — so it would either open a "background update" bubble for the tool the user just
-   * stopped, or (when a message right after `/stop` starts a turn within milliseconds) be rendered
-   * into the NEXT turn's reply. The deleted pre-prompt drain
-   * described exactly this and cleared the queue to prevent it.
-   *
-   * Answered by identity rather than by a time window, which is what makes it exact: no wreckage
-   * escapes by arriving late, and genuine background work reporting in seconds after a `/stop` is
-   * not collateral damage. Replaced (not accumulated) at each cancel, and deliberately NOT cleared
-   * when a turn starts — that is the moment the wreckage is most likely still in flight, and a tool
-   * id is never reused, so a stale entry can only ever match the update it was recorded for.
-   */
-  let cancelledTools = new Set<string>();
-  /**
-   * Whether this child has yet been asked to do anything.
-   *
-   * `session/load` replays the stored session's history as ordinary `session/update` notifications
-   * (the resumed session is attached BEFORE the request precisely so they land in this queue), and
-   * the pre-prompt drain used to discard them — "history must not re-render to the IM". With a
-   * permanent reader and a follow-up sink installed, that replay would instead be posted to the
-   * chat as a background update: every daemon restart would re-narrate the previous conversation.
-   *
-   * Nothing legitimate can render before the first prompt on a fresh or resumed child, so the flag
-   * is a sound gate: until one is sent, renderable updates are dropped and only reported facts
-   * (the command list, the model, the title) are kept.
-   */
-  let promptedYet = false;
-  /**
-   * Resolves once the pump has consumed every notification `session/load` replayed — i.e. once
-   * `promptedYet` is safe to set. Undefined when this child did not resume anything.
-   *
-   * ── The bug this exists to kill ───────────────────────────────────────────────────────────────
-   * `promptedYet` alone is a RACE, and losing it re-narrates the entire conversation into the chat.
-   * The flag is written by the sender (runTurn, just before `prompt()`) but read by the pump at
-   * dequeue time, and between `beginPump()` and that write there are only a handful of microtask
-   * ticks. A resumed session replays its whole history into the queue first, so the pump drops
-   * however many it manages to reach in that window and renders the rest as if they were this
-   * turn's output. Observed 2026-09-11 on a long conversation: exactly five updates were dropped
-   * and the remainder — hours of history — was re-sent to Telegram as one turn's reply.
-   *
-   * The window is proportional to the history, so it is not a rare race; it is one that a
-   * conversation is guaranteed to lose once it gets long enough.
-   *
-   * ── Why the fence is exact ────────────────────────────────────────────────────────────────────
-   * By the time `session/load` returns, every replayed notification is already in the queue: the
-   * agent emits them before answering, and a single JSON-RPC stream preserves that order. So the
-   * replay is a finite, fully-buffered prefix, and "the pump has caught up" is decidable — see
-   * `replayDrained` in pumpUpdates for how, and for the one SDK internal it leans on.
-   */
-  let replayFence: Promise<void> | undefined;
-  /** Settles `replayFence`; held by the pump, which is the only thing that can know. */
-  let releaseReplayFence: (() => void) | undefined;
-  /** Whether the pump is still working through a `session/load` replay. */
-  let replayPending = false;
 
-  /** Arm the replay fence for a child that just resumed a stored session. */
-  function armReplayFence(): void {
-    replayPending = true;
-    replayFence = new Promise<void>((resolve) => {
-      releaseReplayFence = resolve;
+  // ───────────────────────── Replay fence, handles & teardown ─────────────────────────
+
+  private armReplayFence(): void {
+    this.replayPending = true;
+    this.replayFence = new Promise<void>((resolve) => {
+      this.releaseReplayFence = resolve;
     });
   }
 
-  /** Disarm it, releasing anything waiting (child died, or the pump finished the replay). */
-  function clearReplayFence(): void {
-    replayPending = false;
-    releaseReplayFence?.();
-    releaseReplayFence = undefined;
-    replayFence = undefined;
+  private clearReplayFence(): void {
+    this.replayPending = false;
+    this.releaseReplayFence?.();
+    this.releaseReplayFence = undefined;
+    this.replayFence = undefined;
   }
 
-  /**
-   * Open the stretch during which a message sent mid-turn waits for the turn's prompt instead of
-   * being refused (see promptSent). Returns the close, which is idempotent and only clears the
-   * window it opened — so a turn can never close its successor's.
-   */
-  function openPromptWindow(): () => void {
+  private openPromptWindow(): () => void {
     let release: () => void = () => {};
     const sent = new Promise<void>((resolve) => {
       release = resolve;
     });
-    promptSent = sent;
+    this.promptSent = sent;
     return () => {
       release();
-      if (promptSent === sent) promptSent = undefined;
+      if (this.promptSent === sent) this.promptSent = undefined;
     };
   }
 
-  /**
-   * Whether the harness said it can reload a stored session (initialize → `agentCapabilities.
-   * loadSession`). Read once per child and NOT cleared by resetHandles: it describes the harness
-   * binary, not the process, and a rebuilt child re-reports the same answer.
-   *
-   * Only the idle sweeper consumes it (reclaimState below). Verified true on the two harnesses this
-   * deployment runs — claude-agent-acp 0.58.1 and opencode 1.18.18 — but asked rather than assumed,
-   * because a harness that cannot reload is exactly the one whose child must stay resident.
-   */
-  let loadSessionSupported = false;
-  let reconnectSupported = false;
-  /**
-   * How this harness takes a message into a running turn (see SteeringMode), from its `initialize`.
-   * Like loadSessionSupported, a property of the binary: kept across a rebuilt child.
-   */
-  let steeringMode: SteeringMode = 'none';
-  /**
-   * Whether this harness takes a picture as a prompt block (initialize → `promptCapabilities.image`;
-   * see promptBlocks). A property of the binary like the two above, kept across a rebuilt child.
-   */
-  let imagePrompts = false;
-  /**
-   * Which of the session methods a side question uses this harness declares (initialize →
-   * `sessionCapabilities`; see acp-side-question.ts). A property of the binary like the three above.
-   */
-  let forkSupport: ForkSupport = NO_FORK;
-  /** Whether forkSupport has been read off an `initialize` yet — `canFork` answers undefined until then. */
-  let forkKnown = false;
-  /**
-   * The session this conversation is to start as a copy of (`/fork`), set by forkFrom for exactly the
-   * one startup it asks for. Read by startSession in place of session/new; never persisted — once the
-   * copy exists it is this conversation's own session, stored and reloaded like any other.
-   */
-  let forkSeed: string | undefined;
-  /**
-   * The side questions (`/btw`) being answered right now, by the id of the fork each one asks. Read
-   * to send a fork's permission requests and questions to the lane its answer is in, rather than to
-   * whatever turn happens to be running, and by `/stop`.
-   */
-  const sideAsks = new Map<string, SideAskHandle>();
-  /**
-   * A turn's or a joined message's blocks, saying in the log when its pictures had to stay paths —
-   * which is otherwise invisible: the agent still gets the path line and the turn looks normal.
-   */
-  const blocksOf = (input: Pick<RunTurnInput, 'prompt' | 'images'>): ContentBlock[] => {
-    if (input.images?.length && !imagePrompts) {
+  private blocksOf(input: Pick<RunTurnInput, 'prompt' | 'images'>): ContentBlock[] {
+    if (input.images?.length && !this.imagePrompts) {
       console.log(
-        `[acp] ${conversationId}: "${def.id}" does not take pictures in a prompt (initialize: promptCapabilities.image is not true); ${input.images.length} go by path only`
+        `[acp] ${this.conversationId}: "${this.def.id}" does not take pictures in a prompt (initialize: promptCapabilities.image is not true); ${input.images.length} go by path only`
       );
     }
-    return promptBlocks(input, imagePrompts);
-  };
-  /**
-   * Hands a message to the running turn, set by runTurn once its prompt is out and cleared when it
-   * ends — so its presence is what "a turn is open to messages" means (see steer).
-   */
-  let joinTurn: ((blocks: ContentBlock[]) => Promise<SteerOutcome>) | undefined;
-  /**
-   * Resolves when the running turn's prompt has been sent (or the turn ended without sending one).
-   * A message sent during a slow start — a child spawning, a long `session/load` — waits for this
-   * rather than being refused, which would hold it back for the whole turn.
-   */
-  let promptSent: Promise<void> | undefined;
-  /**
-   * Whether the running turn has a message joined into it that the harness has not taken up yet —
-   * set by runTurn while one does, cleared when it ends. Read by abort() (see `endChildAfterStop`).
-   */
-  let joinedStillQueued: (() => boolean) | undefined;
-  /**
-   * Set by abort() when a stop lands while a joined message is still queued inside the harness:
-   * the turn then ends by ending the child, because a cancel alone does not reach that message.
-   *
-   * Observed 2026-10-10 against claude-agent-acp 0.81 + Claude Code 2.1.296 (the steer probe's `stop`
-   * scenario): a message joined six seconds into a thirty-second command, then `/stop`. The cancel
-   * killed the command and settled both prompts — and five seconds later Claude Code answered the
-   * joined message anyway, as background output. The adapter says as much: on cancel it settles
-   * queued turns, but "each removed queued turn's user message was already pushed to the SDK, which
-   * processes input FIFO and will still emit a result for it" (dist/acp-agent.js `cancel`). A stop
-   * that lets "also deploy it" run afterwards is not a stop. Ending the child takes the queued input
-   * with it, and the next message resumes the conversation through `session/load` — the same path
-   * `/kill` and an idle reclaim take. codex needs none of this: its steered input died with the
-   * interrupted turn in the same probe.
-   */
-  let endChildAfterStop = false;
-  /**
-   * Set by runTurn once its prompt is out, cleared when it ends: what abort() calls to tell that turn
-   * it was stopped — which marks what it does from then on (TurnState.stopped) and starts the
-   * deadline after which its child is ended for it (STOP_GRACE_MS).
-   */
-  let turnStopped: (() => void) | undefined;
-  /**
-   * abort() landed while a turn was still on its way to its prompt — starting its child, mostly.
-   * Until the prompt is out there is nothing for `session/cancel` to cancel (and during a cold start
-   * no session to send it to), so a prompt sent afterwards would run the whole turn the person had
-   * just stopped — and, with the stop standing, every tool it called would be dropped as the cancel's
-   * wreckage. A cold start (spawn, initialize, `session/load`) takes seconds, and #214115's first
-   * `/stop` came one second in: that turn then ran for eleven minutes with nothing on screen.
-   * Reproduced against a real cbc on 2026-11-13: a `/stop` three seconds into a fresh topic, and the
-   * turn still ran both of its commands and answered "done", its ten tool updates dropped. Its own
-   * flag rather than `aborting`, which teardowns that are not a stop raise too (see agent-hooks.ts
-   * PreLaunchCancelled). Reset by every turn.
-   */
-  let stoppedWhileStarting = false;
-  /** See STOP_GRACE_MS; capped like the fold grace so a short watchdog shortens it too. */
-  const stopGraceMs = turnTimeoutMs > 0 ? Math.min(STOP_GRACE_MS, turnTimeoutMs / 2) : STOP_GRACE_MS;
-  /**
-   * Model the harness reports as actually serving this session (from the session/new or session/load
-   * config options). Undefined when the agent exposes no model selector; the footer then falls back
-   * to the configured value. Cleared on dispose so a rebuilt child re-reports.
-   */
-  let liveModel: string | undefined;
-  /**
-   * The session's config options as the harness last reported them (session/new, session/load,
-   * set_config_option, config_option_update). Kept whole rather than distilled to `liveModel`
-   * because `/model` needs the option's full choice list, and a resumed session (session/load)
-   * never populates `newSessionResponse` — reading the selector off that would make every
-   * post-restart conversation look like a harness with no model selector.
-   */
-  let liveConfigOptions: SessionConfigOption[] | undefined;
-  /**
-   * The session's `modes` as the harness last reported them (session/new, session/load, a mode it
-   * was set to, current_mode_update) — the first of the two places a mode is carried
-   * (modeControlOf). Kept across a reclaim for the reason liveConfigOptions is.
-   */
-  let liveModes: SessionModeState | undefined;
-  /**
-   * Names of the subagents this session has spawned (see TurnState.subagents). Held by the session
-   * rather than by a turn because a background subagent outlives the turn that launched it.
-   */
-  const subagentNames = new Map<string, string>();
-  /**
-   * Model chosen at runtime for THIS conversation (`/model`), outranking `agents[].model`.
-   *
-   * Held here so a child that crashes or is evicted rebuilds with the person's choice re-applied
-   * (resetHandles deliberately leaves this untouched). Seeded from the conversation's record because
-   * this closure does not outlive everything the choice must: `/new` and `/cd` replace the session
-   * object, and a daemon restart replaces all of them — each of which used to put the conversation
-   * back on the configured model while the status line still named the chosen one. The registry
-   * writes the record (a person's choice, or a sub-agent topic's `task-new --model`); this side only
-   * reads it.
-   */
-  let modelPreference: string | undefined = store?.conversationChoice?.(conversationId, def.id, 'model');
-  /**
-   * Reasoning effort chosen at runtime for THIS conversation (`/effort`). Same lifetime and seeding
-   * as modelPreference, and re-applied on every rebuilt child for the reason it is not optional: two
-   * of three harnesses reload at their default level (see applyEffortPreference).
-   */
-  let effortPreference: string | undefined = store?.conversationChoice?.(conversationId, def.id, 'effort');
-
-  /**
-   * Reset the three connection handles to undefined (without killing the process). Shared by the child
-   * 'exit' callback and dispose: once the process has exited, proc.kill() is meaningless (and may kill a
-   * PID-reused new process), so reset and kill are separated. After reset, the next ensureStarted rebuilds
-   * the connection (active===undefined), achieving crash self-healing.
-   */
-  function resetHandles(): void {
-    proc = undefined;
-    conn = undefined;
-    active = undefined;
-    // The pump belongs to the queue of the session that just went away; the next spawn starts its
-    // own. Its loop notices `active` changed under it and returns.
-    pump = undefined;
-    // Whatever background output was mid-render died with the child, so finalize it rather than
-    // leaving a half-streamed message open forever. Not awaited here — resetHandles is called from
-    // synchronous teardown paths (the child's 'exit' callback), and the flush targets the chat
-    // platform, which does not care that the child is gone. Stopped, not done: it never finished.
-    void closeFollowUp('stopped');
-    // A rebuilt child starts from nothing again: its `session/load` replay must not be rendered
-    // (see promptedYet).
-    promptedYet = false;
-    // The pump that would have released this fence is gone with the child, so release it here or a
-    // turn already parked on it would wait forever — and the next child arms a fresh one anyway.
-    clearReplayFence();
-    // The next child re-reports its own model; keeping a stale name would misattribute the footer
-    // if the rebuilt session resolves a different one.
-    liveModel = undefined;
-    // liveConfigOptions is deliberately KEPT: after an idle reclaim the child is gone but the
-    // conversation lives on, and `/model` reads its choice list from here — clearing it would make
-    // a reclaimed conversation look like a harness with no model selector until the next turn (the
-    // "No model selector on this session yet" false negative). The next spawn refreshes it via
-    // session/new; a choice made while the child is down defers through modelPreference.
-    // `starting` is deliberately NOT cleared here: the in-flight startup promise owns its own slot
-    // and clears it on settle. Clearing it from a reset that happens DURING startup (dispose's
-    // rollback, or a `/cd` landing mid-spawn) would let the next caller begin a second child while
-    // the first is still running — the exact race ensureStarted exists to prevent.
+    return promptBlocks(input, this.imagePrompts);
   }
 
-  /**
-   * Whether ending this child would keep the conversation. Only when BOTH halves of the restart path
-   * are in place: the harness can reload a session, and we know which session is this conversation's.
-   * Killing the child then costs a respawn — precisely what a daemon restart already does to every
-   * conversation at once.
-   */
-  function canResume(): boolean {
-    return loadSessionSupported && !!store?.agentSession(conversationId, def.id);
+  private resetHandles(): void {
+    this.proc = undefined;
+    this.conn = undefined;
+    this.active = undefined;
+    this.pump = undefined;
+    void this.closeFollowUp('stopped');
+    this.promptedYet = false;
+    this.clearReplayFence();
+    this.options.resetChild();
   }
 
-  /** Max wait for initialize + session/new after spawn; on timeout, treat spawn as failed (ENOENT etc.) instead of hanging. */
-  const START_TIMEOUT_MS = 30_000;
-  /** How long a connect agent's teardown waits for the `session/cancel` before it to be written. */
-  const CANCEL_FLUSH_MS = 1_000;
-
-  /**
-   * Close the connection + terminate the child and reset handles. Shared by explicit dispose and
-   * start-failure rollback. A short delayed SIGKILL backs up SIGTERM (best-effort, non-blocking); if the
-   * process already exited, handles were reset by 'exit', and resetting again here is idempotent.
-   */
-  function dispose(): void {
-    // Only the EXPLICIT path claims the abort: it means "this teardown was asked for, so a turn
-    // ending because of it is not an error". teardown() deliberately does not, so a session
-    // dropped because its queue died still reports the real reason to the user.
-    aborting = true;
-    teardown();
+  private canResume(): boolean {
+    return this.loadSessionSupported && !!this.store?.agentSession(this.conversationId, this.def.id);
   }
 
-  /**
-   * Drop the connection and the child, leaving the session rebuildable.
-   *
-   * Split out of `dispose` for the pump's stand-down: when the update queue has failed there is
-   * nothing left to read, and leaving `active` set would present a session that looks ready but
-   * can never deliver a `stop` — every later turn would wait out the full silence watchdog, or
-   * hang forever with `turnTimeoutMs: 0`. Dropping the handles instead sends the next turn down
-   * the crash-self-healing path, which is the honest outcome.
-   *
-   * A short delayed SIGKILL backs up SIGTERM (best-effort, non-blocking); if the process already
-   * exited, handles were reset by 'exit', and resetting again here is idempotent.
-   */
-  function teardown(): void {
-    launchHook?.abort();
-    const child = proc; // capture the process to kill (the 'exit' callback compares by reference)
-    const [session, connection, cancel] = [active, conn, cancelSent];
-    cancelSent = undefined;
+  private disposeChild(): void {
+    this.aborting = true;
+    this.teardown();
+  }
+
+  private teardown(): void {
+    this.launchHook?.abort();
+    const child = this.proc;
+    const [session, connection, cancel] = [this.active, this.conn, this.cancelSent];
+    this.cancelSent = undefined;
     const close = (): void => {
       try {
         session?.dispose();
@@ -1666,685 +427,306 @@ function createAcpSession(
       }
       if (child) killChildProcess(child);
     };
-    // A connect agent goes on running when its connection goes, so a turn it is in the middle of
-    // stops only if the `session/cancel` sent just before (`/kill`, End agent: interruptConversation)
-    // reaches it. Closing the connection at once would drop that message — the SDK writes through a
-    // queue and refuses to write on a closed connection — so wait for it, briefly. A process
-    // harness needs no such wait: ending the process ends its turn.
-    if (def.connect && cancel) void Promise.race([cancel, new Promise<void>((r) => setTimeout(r, CANCEL_FLUSH_MS).unref())]).then(close);
-    else close();
-    resetHandles();
-  }
-
-  /**
-   * Put the conversation's `/effort` choice back on a session, folding the harness's answer into
-   * liveConfigOptions. The one call behind all three places that need it — session/load, session/new
-   * and a runtime `/model` — so none of them can forget the write-back.
-   */
-  async function reapplyEffort(
-    ctx: Pick<ClientContext, 'request'>,
-    sessionId: string,
-    /** A level to apply when the conversation chose none — agy's, out of a model id (agySplitModel). */
-    fallback?: string
-  ): Promise<void> {
-    const after = await applyEffortPreference(ctx, sessionId, def, liveConfigOptions, effortPreference ?? fallback);
-    if (after) liveConfigOptions = after;
-  }
-
-  /**
-   * Put the agent's pinned session options (`agents[].options`) back on a session, folding the
-   * harness's answer into liveConfigOptions. Called wherever the option set can have been reshaped —
-   * a fresh session, a reload, a model switch — and always BEFORE reapplyEffort, so a level chosen
-   * in chat outranks a pinned `reasoning_effort`.
-   */
-  async function reapplyPinned(ctx: Pick<ClientContext, 'request'>, sessionId: string): Promise<void> {
-    const after = await applyPinnedOptions(ctx, sessionId, def, liveConfigOptions, def.options);
-    if (after) liveConfigOptions = after;
-  }
-
-  /** Put the agent's permission level's mode on a session (applyPermissionLevel), keeping the answer. */
-  async function reapplyPermissionLevel(ctx: Pick<ClientContext, 'request'>, sessionId: string): Promise<void> {
-    const after = await applyPermissionLevel(ctx, sessionId, def, { modes: liveModes, options: liveConfigOptions });
-    if (after?.modes) liveModes = after.modes;
-    if (after?.options) liveConfigOptions = after.options;
-  }
-
-  /**
-   * A started session's runtime choices, in the only order that works: the model first, then the
-   * pinned options, the permission level's mode and the effort, because the levels and the option
-   * set on offer are the model's (see applyEffortPreference, applyPinnedOptions) and must be checked
-   * against the list the model switch produced, not the one it replaced. A pinned
-   * `reasoning_effort` goes before the conversation's own choice so the person's `/effort` wins,
-   * and the level goes after a pinned `mode` for the same reason — it is the person's setting.
-   *
-   * `model` is what to enforce: on session/new the person's choice or else the configured model; on
-   * session/load only the person's choice. A reloaded session is left on whatever it was on unless
-   * someone chose otherwise here — the configured model was enforced when it was created — but a
-   * choice IS put back, because a harness that reloads at its default would otherwise drop it on the
-   * first idle reclaim or restart, exactly as it does the effort. A session already on it costs no
-   * round trip (applyModelPreference compares first).
-   */
-  async function reapplyPreferences(
-    ctx: Pick<ClientContext, 'request'>,
-    sessionId: string,
-    model: string | undefined
-  ): Promise<void> {
-    // An agy model named the way `agy models` spells it (`gemini-3.8-flash-high`) is two choices
-    // under `agy acp`: the model, and its thinking level (agySplitModel).
-    const split = def.harness === 'agy' && model ? agySplitModel(model, liveConfigOptions) : undefined;
-    // _meta.model is a hint some harnesses ignore (verified: opencode reports its own default
-    // regardless), so enforce the choice through the protocol's own setter.
-    const afterModel = await applyModelPreference(ctx, sessionId, def, liveConfigOptions, split?.model ?? model);
-    if (afterModel) {
-      liveConfigOptions = afterModel;
-      liveModel = liveModelName(afterModel) ?? liveModel;
+    if (this.def.connect && cancel) {
+      void Promise.race([cancel, new Promise<void>((r) => setTimeout(r, CANCEL_FLUSH_MS).unref())]).then(close);
+    } else {
+      close();
     }
-    await reapplyPinned(ctx, sessionId);
-    await reapplyPermissionLevel(ctx, sessionId);
-    await reapplyEffort(ctx, sessionId, split?.effort);
+    this.resetHandles();
   }
 
-  /** The model to enforce on a reloaded session: the person's choice, or — where the harness forgets
-   * it on a reload (agy) — the configured one too. */
-  function modelAfterLoad(): string | undefined {
-    return modelPreference ?? (forgetsModelOnLoad(def) ? def.model : undefined);
-  }
+  // ───────────────────────── Startup & session opening ─────────────────────────
 
-  /**
-   * Bring the session up, sharing one startup between concurrent callers.
-   *
-   * There are two of those now — a turn beginning, and a `/model` warm-up (ensureSession) — and
-   * `active` is assigned only at the END of startup, so a second entrant arriving mid-spawn would
-   * see `active === undefined`, spawn its own child, and overwrite `proc`. The first child is then
-   * an orphan that no dispose can reach while still holding the harness's session. Sharing the
-   * in-flight promise makes the second caller wait for the first result instead.
-   *
-   * The slot clears on settle either way, so a failed startup does not poison later attempts —
-   * the next caller retries for real, which is what the crash-self-healing path expects.
-   */
-  async function ensureStarted(sessionToken: string, topic?: string): Promise<void> {
-    if (active) return;
-    starting ??= (async () => {
-      // One cold start per machine slot; the wait happens before startSession's 30s timer starts
-      // (see START_CONCURRENCY), so queueing cannot eat a start's own budget.
-      const slot = startupSlot(remoteHosts.hostFor(def)?.id ?? 'local');
+  private async ensureStarted(sessionToken: string, topic?: string): Promise<void> {
+    if (this.active) return;
+    this.starting ??= (async () => {
+      const slot = startupSlot(remoteHosts.hostFor(this.def)?.id ?? 'local');
       await slot.acquire();
       try {
-        await startSession(sessionToken, topic);
+        await this.startSession(sessionToken, topic);
       } finally {
         slot.release();
       }
     })().finally(() => {
-      starting = undefined;
+      this.starting = undefined;
     });
-    await starting;
+    await this.starting;
   }
 
-  /**
-   * For an agent on another machine: reach it (a first contact that fails ends the startup here,
-   * with the reason), and settle the directory there before anything is started in it.
-   */
-  async function placeOnHost(): Promise<{ host: RemoteHost; welcome: Welcome } | undefined> {
-    const host = remoteHosts.hostFor(def);
-    if (!host) return undefined;
-    const prepared = await prepareRemoteSpawn(def, host, cwd);
-    cwd = prepared.cwd;
-    return { host, welcome: prepared.welcome };
-  }
-
-  /**
-   * Start the agent: what was run, the child, and what its `initialize` carries besides the
-   * capabilities. A connect agent is dialled, not started (connect-agent.ts): its address stands
-   * where the command would in a failure's message, and what it is told goes in `_meta`.
-   */
-  async function launch(
-    sessionToken: string,
-    place: { host: RemoteHost; welcome: Welcome } | undefined,
-    topic?: string
-  ): Promise<{ command: string; args: string[]; initExtra: { _meta?: Record<string, unknown> }; child: AgentChild; mcpServers: () => McpServer[] }> {
-    const initExtra = def.connect ? { _meta: await connectMeta(def, def.connect, place, topic) } : {};
-    const { command, args } = def.connect ? { command: def.connect.url, args: [] } : resolveHarness(def, place !== undefined);
-    return { command, args, initExtra, ...spawnChild(command, args, sessionToken, place, await relayEnv(def, place?.host)) };
-  }
-
-  /**
-   * The child, here or on its host, and the native-tools server its sessions are given. That server
-   * is started BY the harness, so on a remote host it is the host's `fleetherd` shim, which hands the
-   * session back to this gateway (remote/shim.go).
-   */
-  function spawnChild(
-    command: string,
-    args: string[],
-    sessionToken: string,
-    place: { host: RemoteHost; welcome: Welcome } | undefined,
-    /** Points the harness at its relay, when it has one (relay.ts) — over its own env, which it chains to. */
-    relay: Record<string, string>
-  ): { child: AgentChild; mcpServers: () => McpServer[] } {
-    if (def.connect) {
-      return place
-        ? { child: place.host.connect(connectAddress(def.connect)), mcpServers: () => remoteMcpServers(sessionToken, place.host.paths(place.welcome), cwd) }
-        : { child: connectHere(def.connect), mcpServers: () => acpMcpServers(sessionToken, socketPath, cwd) };
+  private async runPreLaunchIfConfigured(): Promise<void> {
+    if (!this.def.hooks?.preLaunch) return;
+    const hook = new AbortController();
+    this.launchHook = hook;
+    try {
+      await runPreLaunchHook(this.def, { cwd: this.cwd, signal: hook.signal });
+    } finally {
+      if (this.launchHook === hook) this.launchHook = undefined;
     }
-    if (!place) {
-      return {
-        child: spawn(command, args, { cwd, env: { ...buildAgentEnv(def, sessionToken, socketPath), ...relay } }),
-        mcpServers: () => acpMcpServers(sessionToken, socketPath, cwd),
-      };
-    }
-    return {
-      child: place.host.spawn(command, args, { cwd, env: { ...remoteAgentEnv(def, sessionToken), ...relay } }),
-      mcpServers: () => remoteMcpServers(sessionToken, place.host.paths(place.welcome), cwd),
-    };
   }
 
-  /**
-   * Make `child` this session's process: record it, forward its stderr, and reset the handles when it
-   * exits. Returns how to ask whether it failed to start at all — kept, so a startup that fails
-   * because the process never started says THAT (a command not on PATH, here or on the agent's host)
-   * rather than the "ACP connection closed" it surfaces as.
-   */
-  function adoptChild(child: AgentChild): { spawnError: () => Error | undefined; stderrTail: () => string } {
-    // Record proc immediately so the 'exit' callback and start-failure dispose can match by reference and
-    // terminate this process (conn/active assigned only after start() succeeds; active stays the sole readiness signal).
-    proc = child;
-    // The last of what it wrote, for a startup that fails: an agent that cannot reach its backend
-    // often says so here and nowhere else over ACP (see startupFailureMessage).
-    let tail = '';
-    child.stderr.on('data', (d: Buffer) => {
-      process.stderr.write(d);
-      tail = (tail + d.toString('utf8')).slice(-STDERR_TAIL_KEEP);
-    });
-    let spawnError: Error | undefined;
-    child.on('error', (e) => {
-      spawnError = e;
-      console.error(`[acp] child process error (${def.id}):`, e.message);
-    });
-    // On child crash/kill: reset handles so the next ensureStarted rebuilds the connection (otherwise
-    // active stays set and reusing the dead connection makes prompt hit a closed stream with "ACP
-    // connection closed" — that session fails every turn, never self-heals). Reset only when the exiting
-    // child is the current one (avoid a stale 'exit' resetting a post-dispose new child). Don't kill here
-    // — it already exited. 'exit' once suffices; 'close' (all stdio shut) is later but not needed here.
-    child.on('exit', (code, signal) => {
-      if (proc !== child) return; // already replaced/cleared by dispose; stale callback no-ops
-      console.debug(`[acp] child process exited (${def.id}): code=${code} signal=${signal}; resetting connection handles to rebuild next turn`);
-      resetHandles();
-    });
-    return { spawnError: () => spawnError, stderrTail: () => tail };
-  }
-
-  /** Lazily start the ACP child and complete initialize + session/new. sessionToken is injected into its env here. */
-  /**
-   * The startup's last step for a `/fork`: the copy made in this child in place of session/new
-   * (acp-fork.ts), then set up the way session/new sets one up — the person's model, else the
-   * configured one the source was created on; the pinned options, the permission level and the
-   * effort — and recorded, so the copy is what a reclaim or a restart reloads. An agent that declares
-   * no fork is refused before anything is asked of it.
-   */
-  async function startAsFork(
+  private async startAsFork(
     ctx: ClientContext,
     sourceId: string,
     mcpServers: () => McpServer[],
     progress: StartupProgress
   ): Promise<void> {
-    const refusal = forkRefusal(def.id, forkSupport);
+    const refusal = forkRefusal(this.def.id, this.forkSupport);
     if (refusal) throw new ForkRefused(refusal);
     const forked = await forkInto(ctx, {
       sourceId,
-      cwd,
+      cwd: this.cwd,
       mcpServers: mcpServers(),
-      support: forkSupport,
+      support: this.forkSupport,
       onStep: (step) => {
         progress.step = step;
       },
     });
-    active = forked.session;
-    liveConfigOptions = forked.configOptions;
-    liveModes = forked.modes;
-    liveModel = liveModelName(liveConfigOptions);
-    // Whatever resume replayed is history the new topic does not show (see armReplayFence).
-    armReplayFence();
-    console.log(`[acp] ${conversationId}: started as a fork of ${sourceId} (${forked.session.sessionId})`);
+    this.active = forked.session;
+    this.options.captureOpened(forked.configOptions, forked.modes);
+    this.armReplayFence();
+    console.log(`[acp] ${this.conversationId}: started as a fork of ${sourceId} (${forked.session.sessionId})`);
     progress.step = 'session/set_config_option';
-    await reapplyPreferences(ctx, forked.session.sessionId, modelPreference ?? def.model);
-    store?.setAgentSession(conversationId, def.id, forked.session.sessionId);
+    await this.options.reapplyPreferences(ctx, forked.session.sessionId, this.options.initialModelHint());
+    this.store?.setAgentSession(this.conversationId, this.def.id, forked.session.sessionId);
   }
 
-  async function startSession(sessionToken: string, topic?: string): Promise<void> {
-    if (active) return;
-
-    // Re-read the conversation's directory: between the last child and this one the user may have
-    // moved the conversation with `/cd`, and this is the only point at which that can be honored.
-    cwd = resolveConversationCwd(def, conversationId, store);
-
-    const place = await placeOnHost();
-
-    // The operator's preLaunch hook, inside the shared startup so concurrent callers run it once. A
-    // failure throws from here, before there is a child or a connection to roll back.
-    if (def.hooks?.preLaunch) {
-      const hook = new AbortController();
-      launchHook = hook;
-      try {
-        await runPreLaunchHook(def, { cwd, signal: hook.signal });
-      } finally {
-        if (launchHook === hook) launchHook = undefined;
-      }
+  private async resumeStoredSession(
+    ctx: ClientContext,
+    persistedId: string,
+    mcpServers: () => McpServer[],
+    progress: StartupProgress
+  ): Promise<boolean> {
+    const attach = (
+      ctx as unknown as { attachSession(r: { sessionId: string }): ActiveSession }
+    ).attachSession.bind(ctx);
+    const resumed = attach({ sessionId: persistedId });
+    try {
+      progress.step = 'session/load';
+      const loaded = await ctx.request('session/load', {
+        sessionId: persistedId,
+        cwd: this.cwd,
+        mcpServers: mcpServers(),
+      });
+      this.active = resumed;
+      this.options.captureOpened(loaded?.configOptions, reportedModes(loaded));
+      this.armReplayFence();
+      console.log(`[acp] resumed persisted session for "${this.def.id}" (${persistedId})`);
+      await this.options.reapplyPreferences(ctx, persistedId, this.options.modelAfterLoad());
+      return true;
+    } catch (err) {
+      resumed.dispose();
+      console.warn(
+        `[acp] session/load failed for "${this.def.id}" (${persistedId}); starting a fresh session:`,
+        err instanceof Error ? err.message : err
+      );
+      return false;
     }
+  }
 
-    const { command, args, initExtra, child, mcpServers } = await launch(sessionToken, place, topic);
-    const { spawnError, stderrTail } = adoptChild(child);
+  private async createNewSession(
+    ctx: ClientContext,
+    initResult: InitializeResponse,
+    mcpServers: () => McpServer[],
+    progress: StartupProgress
+  ): Promise<void> {
+    const hint = this.options.initialModelHint();
+    try {
+      progress.step = 'session/new';
+      const session = await ctx
+        .buildSession({
+          cwd: this.cwd,
+          mcpServers: mcpServers(),
+          ...(hint
+            ? {
+                _meta: {
+                  model: this.def.harness === 'dsh' ? dshModelSelectorValue(hint) : hint,
+                },
+              }
+            : {}),
+        })
+        .start();
+      this.active = session;
+      this.options.captureOpened(session.newSessionResponse?.configOptions, reportedModes(session.newSessionResponse));
+      progress.step = 'session/set_config_option';
+      await this.options.reapplyPreferences(ctx, session.sessionId, hint);
+      this.store?.setAgentSession(this.conversationId, this.def.id, session.sessionId);
+    } catch (err) {
+      if (isAuthRequired(err)) {
+        throw authRequiredFailure(this.def, initResult);
+      }
+      throw err;
+    }
+  }
+
+  private async initializeAndOpen(
+    ctx: ClientContext,
+    initExtra: { _meta?: Record<string, unknown> },
+    mcpServers: () => McpServer[],
+    progress: StartupProgress
+  ): Promise<void> {
+    const initResult = await ctx.request('initialize', {
+      protocolVersion: ACP_PROTOCOL_VERSION,
+      clientCapabilities: clientCapabilitiesFor(this.def),
+      ...initExtra,
+    });
+    progress.answered = true;
+    this.loadSessionSupported = initResult.agentCapabilities?.loadSession === true;
+    this.reconnectSupported = readReconnectSupport(initResult.agentCapabilities);
+    this.steeringMode = steeringModeOf(initResult, takesPromptMidTurn(this.def));
+    this.imagePrompts = initResult.agentCapabilities?.promptCapabilities?.image === true;
+    [this.forkSupport, this.forkKnown] = [forkSupportOf(initResult), true];
+
+    if (this.forkSeed !== undefined) {
+      return this.startAsFork(ctx, this.forkSeed, mcpServers, progress);
+    }
+    const persistedId = this.store?.agentSession(this.conversationId, this.def.id);
+    if (persistedId && this.loadSessionSupported) {
+      const resumed = await this.resumeStoredSession(ctx, persistedId, mcpServers, progress);
+      if (resumed) return;
+    }
+    await this.createNewSession(ctx, initResult, mcpServers, progress);
+  }
+
+  private async startSession(sessionToken: string, topic?: string): Promise<void> {
+    if (this.active) return;
+
+    this.cwd = resolveConversationCwd(this.def, this.conversationId, this.store);
+    const placed = await placeOnHost(this.def, this.cwd);
+    if (placed) this.cwd = placed.cwd;
+    const place = placed?.place;
+
+    await this.runPreLaunchIfConfigured();
+
+    const { command, args, initExtra, child, mcpServers } = await launchAcpChild({
+      def: this.def,
+      cwd: this.cwd,
+      socketPath: this.socketPath,
+      sessionToken,
+      place,
+      topic,
+    });
+    this.proc = child;
+    const { spawnError, stderrTail } = adoptAcpChild(
+      this.def,
+      child,
+      () => this.proc === child,
+      () => this.resetHandles()
+    );
 
     const stream = ndJsonStream(
       Writable.toWeb(child.stdin) as unknown as WritableStream<Uint8Array>,
       Readable.toWeb(child.stdout) as unknown as ReadableStream<Uint8Array>
     );
-
     const app = client()
-      .onRequest(
-        'session/request_permission',
-        ({ params }): Promise<RequestPermissionResponse> => answerPermission(params)
-      )
-      .onRequest(
-        'elicitation/create',
-        ({ params }): Promise<CreateElicitationResponse> => answerElicitation(params)
-      );
+      .onRequest('session/request_permission', ({ params }): Promise<RequestPermissionResponse> => this.answerPermission(params))
+      .onRequest('elicitation/create', ({ params }): Promise<CreateElicitationResponse> => this.answerElicitation(params));
     const connection = app.connect(stream);
-    conn = connection; // assign early so start-failure dispose can close the connection (active stays the sole readiness signal)
-    const ctx = connection.agent;
+    this.conn = connection;
 
-    // On spawn failure (ENOENT: gemini/codex/custom command not on PATH) the child asynchronously emits error and
-    // stdout EOF, but the initialize / session/new request promise may never settle (the SDK's
-    // cancellationSignal is cooperative — it waits for a peer reply that a dead peer won't send) →
-    // the session hangs in running. So race a real timer: on timeout, dispose the child + throw a
-    // readable error so turn-runner sees a failure instead of a silent hang.
     let timer: ReturnType<typeof setTimeout> | undefined;
-    // Asks claude-agent-acp for typed failure records, through `_meta` in the capabilities below.
-    // Without them, an API retry loop reads as a hung agent (see session-failure.ts). Only the
-    // claude harness is asked: no other adapter is known to read the key, and opencode validates
-    // the capability object strictly (see `form: true` below), so sending it a key it never needed
-    // is all risk and no gain.
-    //
-    // The second key is cursor-agent's, and it is the opposite trade: the server reads it to decide
-    // whether to split a model's context / reasoning effort / fast into separate config options.
-    // Without it the model list is one pre-combined variant per model, and a combination it did not
-    // pre-combine cannot be chosen at all — `grok-4.7[context=500k,reasoning_effort=xhigh,fast=false]`
-    // is rejected as an invalid model value, while the four options set one by one are accepted
-    // (probed against cursor-agent 2026.11.05-86047df, 2026-11-10). Only cursor is told: it is the
-    // one adapter known to read the key, and no other needs its model list reshaped.
-    const capabilityMeta = {
-      ...(def.harness === 'claude' ? SESSION_FAILURE_CAPABILITY_META : {}),
-      ...(isCursorAgent(def) ? { parameterizedModelPicker: true } : {}),
-    };
-    // How far it got, for the message a failure is reported with (see startupFailureMessage).
     const progress: StartupProgress = { answered: false, step: 'initialize' };
-    const startup = (async () => {
-      const initResult = await ctx.request('initialize', {
-        protocolVersion: ACP_PROTOCOL_VERSION,
-        // Don't advertise fs/terminal: let the agent use its own tools (Bash → fleetherd); the client only receives the stream + answers permission.
-        //
-        // `elicitation.form` IS advertised, and it is load-bearing rather than decorative: the
-        // claude adapter gates the model's own AskUserQuestion tool on it
-        // (`disallowedTools = elicitationSupport.form ? [] : ["AskUserQuestion"]`), so without this
-        // the model cannot ask the user anything — it guesses, or asks in prose and ends the turn.
-        // Verified live 2026-09-11: with this set, a "which database?" prompt produced a real
-        // `elicitation/create` carrying three options and their rationales.
-        //
-        // The value MUST be an object, not `true`. ACP types this as `ElicitationFormCapabilities`
-        // (see the SDK's schema.json), claude reads it as a truthy check so `{}` satisfies it, and
-        // opencode validates it strictly — `form: true` is rejected with `-32602 Invalid params`
-        // ("expected object, received boolean"), which fails initialize and takes down EVERY
-        // opencode session, not just its elicitations. `url` is deliberately left out: a browser
-        // hand-off has no sensible rendering in a chat message (see parseFormElicitation).
-        clientCapabilities: {
-          fs: { readTextFile: false, writeTextFile: false },
-          terminal: false,
-          elicitation: { form: {} },
-          ...(Object.keys(capabilityMeta).length > 0 ? { _meta: capabilityMeta } : {}),
-        },
-        ...initExtra,
-      });
-      progress.answered = true;
-      loadSessionSupported = initResult.agentCapabilities?.loadSession === true;
-      reconnectSupported = readReconnectSupport(initResult.agentCapabilities);
-      // agy takes a second prompt into a running turn without advertising it (agy-acp.ts).
-      steeringMode = steeringModeOf(initResult, takesPromptMidTurn(def));
-      imagePrompts = initResult.agentCapabilities?.promptCapabilities?.image === true;
-      [forkSupport, forkKnown] = [forkSupportOf(initResult), true];
-
-      // `/fork`: this conversation begins as a copy of another's session, made here (acp-fork.ts).
-      if (forkSeed !== undefined) return startAsFork(ctx, forkSeed, mcpServers, progress);
-
-      // Resume persisted context first: the harness keeps conversation history on its own disk, so a
-      // daemon restart only loses the process — session/load replays the stored ACP session into the
-      // fresh child. Attach BEFORE the request so the replayed session/update notifications route into
-      // this session's queue (the pre-prompt drain then discards them; history must not re-render to
-      // the IM). attachSession is TS-private on ClientContext but stable at runtime — the SDK offers
-      // no public "ActiveSession from an existing sessionId" path.
-      // Keyed by (conversation, agent): this agent's OWN prior session here, never another
-      // agent's. Switching /oc -> /cc -> /oc must resume opencode's thread rather than restart the
-      // user's task -- the agent owns its context and the gateway must not disturb it.
-      const persistedId = store?.agentSession(conversationId, def.id);
-      if (persistedId && initResult.agentCapabilities?.loadSession) {
-        const attach = (
-          ctx as unknown as { attachSession(r: { sessionId: string }): ActiveSession }
-        ).attachSession.bind(ctx);
-        const resumed = attach({ sessionId: persistedId });
-        try {
-          progress.step = 'session/load';
-          const loaded = await ctx.request('session/load', {
-            sessionId: persistedId,
-            cwd,
-            mcpServers: mcpServers(),
-          });
-          active = resumed;
-          // session/load reports the resumed session's config the same way session/new does.
-          liveConfigOptions = loaded?.configOptions ?? undefined;
-          liveModes = reportedModes(loaded);
-          liveModel = liveModelName(liveConfigOptions);
-          // Every replayed notification is in the queue by now (see armReplayFence): the agent
-          // sends them before it answers `session/load`, and one JSON-RPC stream is ordered.
-          armReplayFence();
-          console.log(`[acp] resumed persisted session for "${def.id}" (${persistedId})`);
-          // claude-agent-acp and codex-acp reload at their DEFAULT level, not the one this session
-          // was left on — so a `/effort` choice made before an idle reclaim is put back here or lost.
-          // The model chosen here goes back first, for the same reason (see reapplyPreferences); and
-          // where the harness reloads on its default MODEL too (agy), so does the configured one.
-          // Cannot throw (best-effort by design), so it cannot send a good load down the catch below.
-          await reapplyPreferences(ctx, persistedId, modelAfterLoad());
-        } catch (err) {
-          // Stored id no longer loadable (history pruned, cwd moved, harness downgraded): start fresh.
-          resumed.dispose();
-          console.warn(
-            `[acp] session/load failed for "${def.id}" (${persistedId}); starting a fresh session:`,
-            err instanceof Error ? err.message : err
-          );
-        }
-      }
-      if (active) return;
-
-      // The person's choice when there is one, else the configured model — the same order
-      // reapplyPreferences enforces below.
-      const hint = modelPreference ?? def.model;
-      try {
-        progress.step = 'session/new';
-        const session = await ctx
-          .buildSession({
-            cwd,
-            mcpServers: mcpServers(),
-            // model passed best-effort via _meta; whether it takes effect depends on the harness
-            // (claude/gemini differ). dsh's bridge ignores _meta entirely — it reads provider/model
-            // only from its own profile config (verified in @deepseek-ai/dsh-acp newSession, which
-            // uses initialSelection(config)) — so the hint is kept well-formed (JSON-encoded like
-            // set_config_option expects) in case a future version reads it; the real enforcement is
-            // applyModelPreference below.
-            ...(hint
-              ? {
-                  _meta: {
-                    model: def.harness === 'dsh' ? dshModelSelectorValue(hint) : hint,
-                  },
-                }
-              : {}),
-          })
-          .start();
-        active = session; // active set = "ready": assigned last so a half-ready session isn't reused
-        liveConfigOptions = session.newSessionResponse?.configOptions ?? undefined;
-        liveModes = reportedModes(session.newSessionResponse);
-        liveModel = liveModelName(liveConfigOptions);
-        // _meta.model above is a hint some harnesses ignore; reapplyPreferences enforces it, and
-        // puts back a `/effort` choice after it.
-        progress.step = 'session/set_config_option';
-        await reapplyPreferences(ctx, session.sessionId, hint);
-        store?.setAgentSession(conversationId, def.id, session.sessionId); // for post-restart session/load resume
-      } catch (err) {
-        // session/new returning auth_required (un-logged-in harness) surfaces as an opaque reject. Build
-        // a readable hint from the authMethods the agent advertised in the initialize response (no interactive auth).
-        if (isAuthRequired(err)) {
-          const methods = (initResult?.authMethods ?? [])
-            .map((m) => m.name || m.id)
-            .filter(Boolean)
-            .join(' / ');
-          const how = methods ? `(available login methods: ${methods})` : '(e.g. run `claude /login` to complete subscription login)';
-          throw new TurnFailure(`agent "${def.id}" must be logged in before use ${how}, then retry this turn.`, 'access');
-        }
-        throw err;
-      }
-    })();
-
     try {
       await Promise.race([
-        startup,
+        this.initializeAndOpen(connection.agent, initExtra, mcpServers, progress),
         new Promise<never>((_, reject) => {
           timer = setTimeout(() => reject(new StartupTimeout()), START_TIMEOUT_MS);
         }),
       ]);
     } catch (err) {
-      // Start failure (timeout / initialize / session/new throw): clear child and handles so the next
-      // turn can retry, and rethrow a readable error to turn-runner (logged + ❌) rather than hang silently.
-      dispose();
+      this.disposeChild();
       const failed = spawnError();
       if (failed) {
         const where = place ? ` on host "${place.host.id}"` : '';
-        throw new TurnFailure(`agent "${def.id}" could not start${where}: ${failed.message}`, 'startup');
+        throw new TurnFailure(`agent "${this.def.id}" could not start${where}: ${failed.message}`, 'startup');
       }
-      // A login the harness asks for is its own sentence (above), and an `access` failure. A fork the
-      // agent cannot make is a sentence too, and not a failure to start.
       if (err instanceof TurnFailure || err instanceof ForkRefused) throw err;
-      // Refused or unanswered: classified, so hooks.turnFailed can tell it from a provider failure.
       const launch = `${command} ${args.join(' ')}`.trim();
-      throw startupFailure(def, err, { host: place?.host.id, launch, progress, stderr: stderrTail(), timeoutMs: START_TIMEOUT_MS });
+      throw startupFailure(this.def, err, { host: place?.host.id, launch, progress, stderr: stderrTail(), timeoutMs: START_TIMEOUT_MS });
     } finally {
       if (timer) clearTimeout(timer);
     }
 
-    // The session is up: start reading its updates NOW rather than when the first turn does, so
-    // nothing that arrives before or between turns is missed (see pumpUpdates).
-    beginPump();
+    this.beginPump();
   }
 
-  /**
-   * Build the translation state one stream of updates renders through.
-   *
-   * Shared by the running turn and the follow-up burst so both get the same tool ledger, the same
-   * `configOptions` write-back and the same context-window override — an out-of-turn reply that
-   * rendered tools differently from an in-turn one would be a bug nobody would think to look for.
-   */
-  function newTranslationState(handlers: AgentStreamHandlers, inTurn: boolean): TurnState {
-    /** Notice keys already sent from this turn or burst (see failureNoticeKey). */
+  // ───────────────────────── Translation state, follow-up & update pump ─────────────────────────
+
+  private newTranslationState(handlers: AgentStreamHandlers, inTurn: boolean): TurnState {
     const announced = new Set<string>();
     return {
       handlers,
       lastSegment: 'none',
       toolLedger: new Map(),
       toolIndexSeq: 0,
-      // Keep the session's own view of the selector current when the harness changes it, so a
-      // later /model reflects reality rather than what session/new happened to report.
       onConfigOptions: (options) => {
         if (!options) return;
-        liveConfigOptions = options;
-        liveModel = liveModelName(options) ?? liveModel;
-        reportScopedQuota(handlers);
+        this.options.onConfigOptions(options);
+        this.agyMeter.reportScopedQuota(handlers);
       },
-      // claude moves its own mode when the person approves leaving plan; keep `modes` saying so.
-      onModeChanged: (modeId) => {
-        if (liveModes) liveModes = { ...liveModes, currentModeId: modeId };
-      },
-      onSessionFailure: (failure) => announceSessionFailure(failure, handlers, announced),
-      // Local override for a harness that under-reports the window (e.g. claude-opus-5 → 200k fallback).
-      contextWindow: def.contextWindow,
-      subagents: subagentNames,
+      onModeChanged: (modeId) => this.options.onModeChanged(modeId),
+      onSessionFailure: (failure) =>
+        announceSessionFailure({
+          def: this.def,
+          conversationId: this.conversationId,
+          promptedYet: this.promptedYet,
+          failure,
+          handlers,
+          announced,
+        }),
+      contextWindow: this.def.contextWindow,
+      subagents: this.subagentNames,
       agy:
-        def.harness === 'agy'
-          ? agyTurnWatch(def.id, (text) => handlers.onNotice?.(text), inTurn, {
-              onModelCall: () => refreshAgyContext(handlers),
-              window: (reported) => agyWindow(def, currentModelValue(), reported),
+        this.def.harness === 'agy'
+          ? agyTurnWatch(this.def.id, (text) => handlers.onNotice?.(text), inTurn, {
+              onModelCall: () => this.agyMeter.refreshAgyContext(handlers),
+              window: (reported) => agyWindow(this.def, this.options.currentModelValue(), reported),
             })
           : undefined,
     };
   }
 
-  /**
-   * What the session already knows about itself, told to a new set of handlers: the live model, the
-   * effort and the agent's own settings, all from the option list session/new or session/load
-   * reported. A harness re-sends none of them unless they change, so handlers not told them up
-   * front — a turn's, or a follow-up burst's — would never learn them.
-   *
-   * The effort is read fresh rather than cached: it has no preference to fall back on, so the list
-   * is the whole of what is known about it. The settings go only once a list has been reported,
-   * since an empty set would claim the agent has none before it has said.
-   */
-  function reportSessionFacts(handlers: AgentStreamHandlers): void {
-    if (liveModel) handlers.onModel?.(liveModel);
-    const effort = liveEffortName(liveConfigOptions);
-    if (effort) handlers.onEffort?.(effort);
-    if (liveConfigOptions) handlers.onOptions?.(customOptionsOf(liveConfigOptions));
+  private followUp(renderable: boolean): TurnState | undefined {
+    if (!this.followUpSink) return undefined;
+    if (!this.followUpState) {
+      const handlers = this.followUpSink.handlers();
+      this.followUpState = { state: this.newTranslationState(handlers, false), sink: this.followUpSink };
+      this.options.reportSessionFacts(handlers);
+    }
+    if (!renderable) return this.followUpState.state;
+    if (!this.burstRendering) {
+      this.burstRendering = true;
+      console.log(`[acp] ${this.conversationId}: output arrived outside a turn; rendering it as a follow-up`);
+    }
+    this.armFollowUpQuiet(FOLLOW_UP_QUIET_MS);
+    return this.followUpState.state;
   }
 
-  /**
-   * Turn a failure record from a `session_info_update` into a notice: a retry in progress, an
-   * advisory, or a failure that has no turn to fail (see session-failure.ts).
-   *
-   * Every record is logged, and each piece of news is sent once per turn or burst. The adapter
-   * sends one warning per retry attempt, and that series is exactly the case that produces ten
-   * minutes of them.
-   *
-   * Nothing is sent before the session's first prompt. `session/load` re-publishes old usage-limit
-   * failures from the stored history at that point, and posting them would report an outage the
-   * user lived through days ago as if it were happening now. The replay fence makes this a sound
-   * test (see promptedYet).
-   */
-  function announceSessionFailure(
-    failure: SessionFailure,
-    handlers: AgentStreamHandlers,
-    announced: Set<string>
-  ): void {
-    const line = describeSessionFailure(failure);
-    if (!promptedYet) {
-      console.debug(`[acp] ${conversationId}: not announcing a failure record from before the first prompt: ${line}`);
-      return;
-    }
-    console.log(`[acp] ${conversationId}: ${def.harness} reported a ${failure.severity} (${failure.category}): ${line}`);
-    const key = failureNoticeKey(failure);
-    if (announced.has(key)) return;
-    announced.add(key);
-    handlers.onNotice?.(`${failure.severity === 'error' ? '❌' : '⚠️'} ${def.id}: ${trimReason(line)}`);
-  }
-
-  /**
-   * The translation state for out-of-turn output, opening a burst if one isn't already running.
-   *
-   * Returns undefined only when no sink is installed — a session driven by something other than
-   * TurnRunner (the doctor check, a test) has nowhere to put background output, and dropping it is
-   * then the honest outcome.
-   */
-  function followUp(renderable: boolean): TurnState | undefined {
-    if (!followUpSink) return undefined;
-    if (!followUpState) {
-      const handlers = followUpSink.handlers();
-      followUpState = { state: newTranslationState(handlers, false), sink: followUpSink };
-      // The same up-front report runTurn makes, for the same reason: the model and effort are
-      // known from session/new and are never re-sent unless they change, so a burst that is not
-      // told them has no way to learn them. Its footer then fell back to config, which for the
-      // `claude` harness names no model at all — the background report read `cc · 429k / 1M`
-      // directly under a reply that said `cc · 429k / 1M · opus-5-5 · high`.
-      reportSessionFacts(handlers);
-    }
-    // Only OUTPUT starts a burst. Metadata gets the same translation state (it has to go
-    // somewhere) but neither announces itself nor arms a timer, because claude-agent-acp sends a
-    // `session_info_update` after every single turn: logging "rendering a follow-up" there would
-    // make the one line that tells an operator background work is happening indistinguishable
-    // from per-turn noise, and would leave every idle conversation holding a 3-minute timer.
-    if (!renderable) return followUpState.state;
-    if (!burstRendering) {
-      burstRendering = true;
-      console.log(`[acp] ${conversationId}: output arrived outside a turn; rendering it as a follow-up`);
-    }
-    // Re-armed on every update, so the backstop measures SILENCE rather than burst length: a
-    // background followup can spend minutes inside one tool call and must not be cut short for it.
-    armFollowUpQuiet(FOLLOW_UP_QUIET_MS);
-    return followUpState.state;
-  }
-
-  /**
-   * Whether an update can put something on screen, as opposed to reporting a fact the gateway
-   * records and displays elsewhere (the topic name, `/context`, the footer, the slash menu).
-   *
-   * The distinction carries three separate rules — the replay gate, the cancel-wreckage filter and
-   * whether a burst has begun — so it is named once rather than spelled out three times.
-   */
-  function isRenderableUpdate(update: SessionUpdate): boolean {
-    switch (update.sessionUpdate) {
-      case 'agent_message_chunk':
-      case 'tool_call':
-      case 'tool_call_update':
-        return true;
-      default:
-        return false;
-    }
-  }
-
-  /** (Re)arm the timer that seals the current burst after `ms` of silence. */
-  function armFollowUpQuiet(ms: number): void {
-    cancelFollowUpQuiet?.();
+  private armFollowUpQuiet(ms: number): void {
+    this.cancelFollowUpQuiet?.();
     const timer = setTimeout(() => {
-      console.log(`[acp] ${conversationId}: follow-up output went quiet; closing it`);
-      void closeFollowUp();
+      console.log(`[acp] ${this.conversationId}: follow-up output went quiet; closing it`);
+      void this.closeFollowUp();
     }, ms);
-    cancelFollowUpQuiet = () => clearTimeout(timer);
+    this.cancelFollowUpQuiet = () => clearTimeout(timer);
   }
 
-  /**
-   * Whether a renderable update is a cancelled turn's trailing write rather than real output.
-   *
-   * A cancelled tool call still emits its `tool_call_update`, and it lands AFTER the prompt has
-   * settled — so it would either open a "background update" message containing a bubble for the
-   * very tool the user just stopped, or (when the user's next message follows a `/stop` within
-   * milliseconds and starts a turn) be rendered into the NEXT turn's reply. The deleted
-   * pre-prompt drain named exactly this case and cleared the queue to prevent it.
-   *
-   * Only once the stopped turn has ENDED. Until then (TurnState.stopped) the harness is still
-   * working on it, and what it does is shown — a new call marked as started after the stop. That
-   * used to be dropped too, on the assumption that a harness told to stop starts nothing new, which
-   * holds only when the cancel reached it. On 2026-11-13 (#214115) it had not — the `/stop` landed
-   * while the child was starting (see stoppedWhileStarting) — and a cbc turn worked for eleven
-   * minutes with every call dropped here (1085 drops in that conversation's log) and nothing on
-   * screen. A harness that ignores the cancel, or is slow to act on it, starts new calls the same way
-   * until STOP_GRACE_MS ends it.
-   *
-   * After that, two tests, because the cancel and the next turn race:
-   *
-   * - while `aborting` still stands — i.e. between the stopped turn's end and the next turn —
-   *   anything tool-shaped is the cancelled turn's tail; this is the old drain's rule, stated
-   *   positively.
-   * - once a new turn has cleared `aborting`, the ids the cancel snapshotted still identify the
-   *   wreckage. Ids are never reused, so a stale entry can only match the update it was recorded
-   *   for — which is why the set is not cleared at turn start, the very moment the trailing write
-   *   is most likely still in flight.
-   */
-  function isWreckage(update: SessionUpdate): boolean {
+  private isWreckage(update: SessionUpdate): boolean {
     if (update.sessionUpdate !== 'tool_call' && update.sessionUpdate !== 'tool_call_update') return false;
-    if (turnState?.stopped) return false;
-    if (aborting) return true;
-    return typeof update.toolCallId === 'string' && cancelledTools.has(update.toolCallId);
+    if (this.turnState?.stopped) return false;
+    if (this.aborting) return true;
+    return typeof update.toolCallId === 'string' && this.cancelledTools.has(update.toolCallId);
   }
 
-  /**
-   * Finish the current burst of out-of-turn output: close any tool bubbles it left open and let the
-   * sink flush and decorate the message. Idempotent — every path that could end a burst calls it.
-   */
-  async function closeFollowUp(reason: 'done' | 'stopped' = 'done'): Promise<void> {
-    cancelFollowUpQuiet?.();
-    cancelFollowUpQuiet = undefined;
-    const burst = followUpState;
-    followUpState = undefined;
-    // Logged on every way a burst ends — quiet, /stop, a new turn, the child gone — because the
-    // host's `fleetherd update` reads "in progress" off this log (docker/fleetherd-host in_progress)
-    // and pairs this line with "output arrived outside a turn".
-    if (burstRendering) console.log(`[acp] ${conversationId}: follow-up closed (${reason})`);
-    burstRendering = false;
+  private async closeFollowUp(reason: 'done' | 'stopped' = 'done'): Promise<void> {
+    this.cancelFollowUpQuiet?.();
+    this.cancelFollowUpQuiet = undefined;
+    const burst = this.followUpState;
+    this.followUpState = undefined;
+    if (this.burstRendering) console.log(`[acp] ${this.conversationId}: follow-up closed (${reason})`);
+    this.burstRendering = false;
     if (!burst) return;
     flushPendingTools(burst.state);
     try {
-      // Awaited so a caller that is about to write to the same lane can order itself behind the
-      // flush; the pump's own closes have nothing to race and simply `void` it.
       await burst.sink.close(reason);
     } catch (e) {
       console.error('[acp] follow-up sink failed to close:', e instanceof Error ? e.message : e);
@@ -2352,398 +734,134 @@ function createAcpSession(
   }
 
   /**
-   * One read from the session queue, which also decides when a `session/load` replay has been
-   * fully consumed and releases the fence runTurn waits on (see replayFence).
-   *
-   * ── How "the queue is empty" is decided, and why it is exact ──────────────────────────────────
-   * By racing the read against a MACROTASK. The SDK's AsyncQueue answers a read that has a value
-   * buffered with `Promise.resolve(value)` — settled on a microtask — and only parks a waiter when
-   * it has none (verified in `@agentclientprotocol/sdk` 0.29.0 `AsyncQueue.next`). The event loop
-   * drains microtasks to exhaustion before running the next macrotask, so a `setImmediate` can win
-   * this race only when nothing is buffered. That makes "the tick won" mean exactly "the replay
-   * prefix is consumed", with no assumption about how fast anything runs.
-   *
-   * ⚠️ HYRUM'S LAW: `AsyncQueue.next()` returning an already-settled promise for buffered values is
-   * an implementation detail, not a documented contract. If a future SDK defers buffered reads by a
-   * macrotask, the tick could win with items still queued and the replay would render again. The
-   * contract test in agent-acp-pump.test.ts pins the behaviour so an upgrade fails there first.
-   * A regression is not catastrophic in any case: the fence can only release EARLY, which degrades
-   * to the pre-existing race rather than to a hang.
-   *
-   * The raced read is retained and returned rather than abandoned. Starting a second `nextUpdate()`
-   * would leave two waiters on one queue, and the FIRST one — the abandoned promise — is the one
-   * the queue hands the next message to, which would then be dropped on the floor.
+   * One read from the session queue; also detects when a `session/load` replay prefix has been
+   * drained by racing against `setImmediate` (AsyncQueue resolves buffered items on microtasks).
    */
-  async function readNext(
+  private async readNext(
     session: ActiveSession
   ): Promise<Awaited<ReturnType<ActiveSession['nextUpdate']>>> {
     const read = session.nextUpdate();
-    if (!replayPending) return read;
+    if (!this.replayPending) return read;
 
     const IDLE = Symbol('idle');
     const idle = new Promise<typeof IDLE>((resolve) => setImmediate(() => resolve(IDLE)));
     const first = await Promise.race([read, idle]);
     if (first !== IDLE) return first;
 
-    console.log(`[acp] ${conversationId}: session/load replay consumed; rendering resumes`);
-    clearReplayFence();
-    return read; // the SAME outstanding read — never start a second waiter (see above)
+    console.log(`[acp] ${this.conversationId}: session/load replay consumed; rendering resumes`);
+    this.clearReplayFence();
+    return read;
   }
 
-  /**
-   * The one and only reader of a session's update queue, running from the moment the session is up
-   * until its child goes away.
-   *
-   * ── Why a pump rather than a read loop inside runTurn ──────────────────────────────────────────
-   * Two reasons, and the second is what forced it.
-   *
-   * 1. Updates that arrive with no prompt in flight have to be read, or they are lost.
-   *    claude-agent-acp settles the prompt at its terminal `result` and keeps emitting notifications
-   *    for background work afterwards (see FollowUpSink) — a loop that returns at `stop` reads none
-   *    of them, which is the reported bug: the chat went silent after "I've started it in the
-   *    background".
-   * 2. There can only be ONE reader, ever. The SDK's AsyncQueue.next() pushes a waiter when the
-   *    queue is empty (0.29.0 dist/acp.js AsyncQueue.next), and an abandoned waiter still consumes
-   *    the next value that arrives. So "drain between turns, then hand the queue back" cannot be
-   *    written safely: whichever reader was waiting when the next turn began would swallow that
-   *    turn's first update. Making the reader permanent and switching its DESTINATION instead
-   *    removes the handover entirely.
-   *
-   * This also retires the old pre-prompt residue drain: nothing accumulates in the queue any more,
-   * and a `session_info_update` that used to be salvaged a whole turn late (it lands behind the
-   * `stop` that ended the loop) now reaches the gateway when it arrives.
-   */
-  async function pumpUpdates(session: ActiveSession): Promise<void> {
-    // Consecutive rejections with no value in between. The queue rejects for two very different
-    // reasons and only this tells them apart: a prompt that failed rejects ONCE (the turn learns
-    // the reason from its own promptDone, and pumping must continue for the session to survive),
-    // while a closed connection FAILS the queue permanently, so every later read rejects with the
-    // same error and an unguarded loop would spin the event loop on it.
+  private dispatchPumpUpdate(update: SessionUpdate): void {
+    const renderable = isRenderableUpdate(update);
+    if (renderable && this.isWreckage(update)) {
+      console.debug(`[acp] ${this.conversationId}: dropping a trailing update for a tool the cancel killed`);
+      return;
+    }
+    if (renderable && !this.promptedYet) {
+      console.debug(`[acp] ${this.conversationId}: not rendering a ${update.sessionUpdate} from before the first prompt`);
+      return;
+    }
+    const dest = this.turnState ?? this.followUp(renderable);
+    if (!dest) {
+      console.debug(
+        `[acp] ${this.conversationId}: dropping a ${update.sessionUpdate} — no turn is running and no follow-up sink is installed`
+      );
+      return;
+    }
+    try {
+      translateUpdate(update, dest);
+    } catch (err) {
+      console.error(
+        `[acp] ${this.conversationId}: failed to render a ${update.sessionUpdate}:`,
+        err instanceof Error ? err.stack ?? err.message : err
+      );
+      return;
+    }
+    if (this.turnState) {
+      this.onTurnUpdate?.(update);
+      return;
+    }
+    if (isResultUsage(update)) this.armFollowUpQuiet(FOLLOW_UP_SEAL_GRACE_MS);
+  }
+
+  private async pumpUpdates(session: ActiveSession): Promise<void> {
     let rejections = 0;
     for (;;) {
-      // Checked before AND after the await, because the await is unbounded: `resetHandles` can
-      // swap `active` while this read is parked, and `turnState` / `endTurnWait` are session-wide,
-      // so a value from a replaced child would otherwise end (or be rendered into) the turn of a
-      // freshly spawned one. The old per-turn waiter could not do this — it died with its turn.
-      if (active !== session) return;
+      if (this.active !== session) return;
       let msg: Awaited<ReturnType<ActiveSession['nextUpdate']>>;
       try {
-        msg = await readNext(session);
+        msg = await this.readNext(session);
         rejections = 0;
       } catch (e) {
-        if (active !== session) return;
-        // Wake the turn — it rethrows through promptDone, which carries the real reason.
-        endTurnWait?.();
+        if (this.active !== session) return;
+        this.endTurnWait?.();
         if (++rejections > MAX_QUEUE_REJECTIONS) {
-          // Standing down would leave the session with no reader while still looking ready
-          // (`active` set, `pump` settled), so every later turn would wait on a `stop` that can
-          // never come. Drop the handles instead: the next turn rebuilds the child, which is the
-          // same self-healing path a crash takes.
           console.warn(
-            `[acp] update queue for "${def.id}" keeps rejecting (${e instanceof Error ? e.message : e}); dropping the connection so the next turn rebuilds it`
+            `[acp] update queue for "${this.def.id}" keeps rejecting (${e instanceof Error ? e.message : e}); dropping the connection so the next turn rebuilds it`
           );
-          teardown();
+          this.teardown();
           return;
         }
         await new Promise((r) => setTimeout(r, QUEUE_REJECT_BACKOFF_MS));
         continue;
       }
-      if (active !== session) return;
-
+      if (this.active !== session) return;
       if (msg.kind === 'stop') {
-        // The response travels with it so the turn can tell its own `stop` from a stale one.
-        endTurnWait?.(msg.response);
+        this.endTurnWait?.(msg.response);
         continue;
       }
-
-      const update = msg.update;
-      const renderable = isRenderableUpdate(update);
-
-      // A cancelled tool's trailing update is wreckage, not output. Checked whether or not a turn
-      // is running: a message sent right after `/stop` can have the next turn under way by the
-      // time it arrives (see isWreckage).
-      if (renderable && isWreckage(update)) {
-        console.debug(`[acp] ${conversationId}: dropping a trailing update for a tool the cancel killed`);
-        continue;
-      }
-
-      // `session/load`'s replayed history, or anything else a child emits before it is asked to do
-      // something. Reported facts still pass — only rendering is suppressed (see promptedYet).
-      if (renderable && !promptedYet) {
-        console.debug(`[acp] ${conversationId}: not rendering a ${update.sessionUpdate} from before the first prompt`);
-        continue;
-      }
-
-      const dest = turnState ?? followUp(renderable);
-      if (!dest) {
-        // Only reachable for a session nothing is driving: `ensureSession` (the `/model` warm-up)
-        // and the doctor check both start a child with no turn and no sink. Logged because a
-        // dropped update is exactly the class of thing that must never be silent.
-        console.debug(
-          `[acp] ${conversationId}: dropping a ${update.sessionUpdate} — no turn is running and no follow-up sink is installed`
-        );
-        continue;
-      }
-
-      try {
-        translateUpdate(update, dest);
-      } catch (err) {
-        // Never let one malformed notification kill the reader. This is the session's ONLY reader,
-        // so an escaping throw would leave the child permanently deaf: the in-flight turn would
-        // wait for a `stop` nobody will deliver, and every later update would go unread. Under the
-        // old per-turn loop the same throw merely failed that turn.
-        console.error(
-          `[acp] ${conversationId}: failed to render a ${update.sessionUpdate}:`,
-          err instanceof Error ? err.stack ?? err.message : err
-        );
-        continue;
-      }
-
-      if (turnState) {
-        onTurnUpdate?.(update); // the turn is alive: re-arm its silence watchdog
-        continue;
-      }
-      // A result-tied `usage_update` says a piece of work finished, so it is the cue to seal the
-      // burst — which matters because in the default `once` delivery mode NOTHING is sent until
-      // the buffer completes, and the alternative cue is minutes of quiet.
-      //
-      // It SHORTENS the timer rather than closing outright, because the marker is weaker than it
-      // looks: the ACP schema documents `cost` as "Cumulative session cost (optional)", so a
-      // harness is entitled to report it on every snapshot, and closing synchronously would then
-      // cut one background report into a message per snapshot — each with its own marker bubble
-      // and footer. A grace window degrades to the right answer either way: more output re-arms
-      // the full quiet window, silence seals.
-      if (isResultUsage(update)) armFollowUpQuiet(FOLLOW_UP_SEAL_GRACE_MS);
+      this.dispatchPumpUpdate(msg.update);
     }
   }
 
-  /** Start the queue reader once the session is up. Idempotent (one pump per child). */
-  function beginPump(): void {
-    if (!active || pump) return;
-    const session = active;
-    pump = pumpUpdates(session).catch((e) => {
-      // pumpUpdates absorbs its own errors; this is the last resort, so a bug in it can never
-      // surface as an unhandled rejection that takes the daemon down.
+  private beginPump(): void {
+    if (!this.active || this.pump) return;
+    const session = this.active;
+    this.pump = this.pumpUpdates(session).catch((e) => {
       console.error('[acp] update reader stopped unexpectedly:', e instanceof Error ? e.stack ?? e.message : e);
     });
   }
 
-  /** Log lines this session has already written once (see settleAgyTurn). */
-  const loggedOnce = new Set<string>();
-  function logOnce(key: string, line: string): void {
-    if (loggedOnce.has(key)) return;
-    loggedOnce.add(key);
-    console.log(line);
-  }
+  // ───────────────────────── Turn execution helpers ─────────────────────────
 
-  /** The model the session's selector is on, by id — what agy's window table is keyed on. */
-  function currentModelValue(): string | undefined {
-    const opt = liveConfigOptions?.find((o) => o.id === MODEL_CONFIG_ID);
-    return opt?.type === 'select' && typeof opt.currentValue === 'string' ? opt.currentValue : liveModel;
-  }
-
-  /**
-   * The quota for one turn (quota-meter.ts): the last reading reported at once,
-   * and a refresh started beside the turn, reported whenever it lands — for as long as this session
-   * is the conversation's, not only while the turn runs.
-   *
-   * Not waited for, and not cut off at the turn's end, because `onQuota` writes the conversation's
-   * status strip (TurnRunner → recordQuota), not the turn's footer, which has no quota segment.
-   * The first version held each turn's end up to 5 s for the reading and dropped one that came
-   * later — copied from the stream-json runtime, whose footer once needed it. On a remote host the
-   * one-shot runs over the link beside a reloading `agy acp`: 3.3-4.0 s on its own, but on the first
-   * turn after a gateway restart it landed 2 s, and in another run more than 6 s, after that turn's
-   * reply (measured 2026-11-06 through a test gateway, project-scripts/talkcode-agy-acp-remote).
-   * The run that lost the race showed no quota until the next turn, and every turn whose reading
-   * was slow ended up to 5 s late for nothing.
-   */
-  function reportScopedQuota(handlers: AgentStreamHandlers): void {
-    const pools = quota?.read(def);
-    if (!disposed && pools) {
-      const scoped = scopeQuotaPools(pools, customOptionsOf(liveConfigOptions));
-      handlers.onQuota?.(markActivePools(scoped, liveModel));
-    }
-  }
-
-  function quotaForTurn(handlers: AgentStreamHandlers): void {
-    const meter = quota;
-    if (!meter) return;
-    const report = (): void => reportScopedQuota(handlers);
-    report();
-    void meter.refresh(def, cwd).then(report, () => {});
-  }
-
-  /**
-   * The end of an agy turn that came back `end_turn`: fail it on agy's own word, or report its
-   * context — from the prompt's usage when that can vouch for it, else from agy's transcript
-   * (agy-acp.ts AgyTurnWatch, agy-transcript.ts). Nothing when agy already reported the context
-   * itself during the turn, and nothing for any other harness.
-   *
-   * Waits for the transcript read, because the footer is drawn from the turn's last usage once this
-   * returns: a local read is a file tail, a remote one a single filtered request with a short cap.
-   */
-  async function settleAgyTurn(state: TurnState, response: PromptResponse): Promise<void> {
-    const watch = state.agy;
-    // A stopped turn has nothing to settle.
-    if (!watch || aborting || response.stopReason === 'cancelled') return;
-    const handlers = state.handlers;
-    const outcome = watch.settle(response.usage);
-    if (outcome.failure) throw outcome.failure;
-    if (outcome.contextTokens !== undefined) {
-      agyContextShown = ++agyContextSeq;
-      reportAgyContext(handlers, outcome.contextTokens);
-    } else if (outcome.noContext === 'tools' && !(await readAgyContextInto(handlers))) {
-      logOnce('tools', `[acp] ${conversationId}: agy reports usage once per turn, summed over its model calls, and its transcript could not be read, so a turn that ran tools gets no context numbers (see daemon/agy-transcript.ts)`);
-    }
-  }
-
-  /** Report agy's context against the window known for the session's model, or say once why not. */
-  function reportAgyContext(handlers: AgentStreamHandlers, used: number): void {
-    const model = currentModelValue();
-    const size = agyWindow(def, model);
-    if (size) handlers.onUsage?.({ used, size });
-    else logOnce(`window:${model}`, `[acp] ${conversationId}: no known context window for agy's ${model}, so its footer shows no context numbers (see daemon/agy-meters.ts)`);
-  }
-
-  /**
-   * Readings of agy's transcript are numbered, so a slow mid-turn one that lands after the turn's
-   * last cannot put an older number back on the strip.
-   */
-  let agyContextSeq = 0;
-  let agyContextShown = 0;
-  let agyContextReadAt = 0;
-
-  /** Read agy's context off its transcript and report it; false when there was nothing to report. */
-  async function readAgyContextInto(handlers: AgentStreamHandlers): Promise<boolean> {
-    const sessionId = active?.sessionId;
-    if (!sessionId) return false;
-    const seq = ++agyContextSeq;
-    agyContextReadAt = Date.now();
-    const used = await readAgyContext(def, sessionId);
-    if (used === undefined || disposed) return false;
-    if (seq < agyContextShown) return true;
-    agyContextShown = seq;
-    reportAgyContext(handlers, used);
-    return true;
-  }
-
-  /**
-   * Mid-turn, after a model call that asked for a tool: the strip and `fleetherd tasks` follow a long
-   * agy turn the way they follow one that sends `usage_update`. Not waited for, and at most one read
-   * per AGY_CONTEXT_REFRESH_MS — a burst of tools is a burst of calls to this.
-   */
-  function refreshAgyContext(handlers: AgentStreamHandlers): void {
-    if (Date.now() - agyContextReadAt < AGY_CONTEXT_REFRESH_MS) return;
-    void readAgyContextInto(handlers);
-  }
-
-  /**
-   * Watch one turn for the sign that its prompt was folded into an autonomous cycle and answered
-   * there — the claude-agent-acp bug described at FOLDED_PROMPT_GRACE_MS, where the prompt's own
-   * `stop` never comes.
-   *
-   * The evidence is an autonomous cycle ending (autonomousResultOrigin) followed by silence. Any
-   * renderable output in between cancels it: a prompt that was only queued behind that cycle is now
-   * running as its own, and will end with its own `stop`.
-   *
-   * Two states decline rather than decide, leaving the turn to the watchdog exactly as before: a
-   * question put to the user (the agent is waiting on a person, not finished), and a tool call
-   * still open (something is visibly running, whatever the cycle's result said).
-   */
-  function watchForFoldedPrompt(state: TurnState): {
-    /** Feed every update the turn receives once its prompt is out. */
-    observe: (update: SessionUpdate) => void;
-    /** Resolves when the turn should stop waiting for a `stop` that is not coming. */
-    folded: Promise<'folded'>;
-    stop: () => void;
-  } {
-    const graceMs =
-      turnTimeoutMs > 0 ? Math.min(FOLDED_PROMPT_GRACE_MS, turnTimeoutMs / 2) : FOLDED_PROMPT_GRACE_MS;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let declare: () => void = () => {};
-    const folded = new Promise<'folded'>((resolve) => {
-      declare = () => resolve('folded');
-    });
-    const disarm = (): void => {
-      if (timer) clearTimeout(timer);
-      timer = undefined;
-    };
-    const decide = (origin: string): void => {
-      timer = undefined;
-      if (awaitingUser > 0) return;
-      if (hasOpenToolCall(state)) {
-        console.log(
-          `[acp] ${conversationId}: a ${origin} cycle ended with a tool call still open; leaving this turn to the watchdog`
-        );
-        return;
-      }
-      console.log(
-        `[acp] ${conversationId}: a ${origin} cycle ended ${graceMs}ms ago and this prompt has had no reply of its own; ` +
-          'treating it as answered inside that cycle (claude-agent-acp #1145) and ending the turn'
-      );
-      declare();
-    };
-    return {
-      folded,
-      observe: (update) => {
-        const origin = autonomousResultOrigin(update);
-        if (origin) {
-          disarm();
-          timer = setTimeout(() => decide(origin), graceMs);
-          return;
-        }
-        if (isRenderableUpdate(update)) disarm();
-      },
-      stop: disarm,
-    };
-  }
-
-  /**
-   * End a turn that was stopped before its prompt went out (stoppedWhileStarting): the prompt is not
-   * sent. abort() has set `aborting`, so runTurn ends it quietly, as a stop.
-   */
-  function endIfStoppedWhileStarting(): void {
-    if (!stoppedWhileStarting) return;
-    console.log(`[acp] ${conversationId}: stopped while the agent was starting; not sending the prompt`);
+  private endIfStoppedWhileStarting(): void {
+    if (!this.stoppedWhileStarting) return;
+    console.log(`[acp] ${this.conversationId}: stopped while the agent was starting; not sending the prompt`);
     throw new Error('stopped before the prompt was sent');
   }
 
-  /**
-   * What abort() does to a turn whose prompt is out (turnStopped): mark it stopped, and start the
-   * deadline after which its child is ended for the person (STOP_GRACE_MS). `endTurn` wakes the turn;
-   * dispose() has set `aborting` by then, so it ends as a stop rather than a failure.
-   */
-  function watchStop(
+  private watchStop(
     state: TurnState,
     handlers: AgentStreamHandlers,
     endTurn: (err: Error) => void
   ): { stopped: () => void; clear: () => void } {
     let deadline: ReturnType<typeof setTimeout> | undefined;
     const onIgnored = (): void => {
-      const secs = Math.max(1, Math.round(stopGraceMs / 1000));
-      if (!canResume()) {
+      const secs = Math.max(1, Math.round(this.stopGraceMs / 1000));
+      if (!this.canResume()) {
         console.warn(
-          `[acp] ${conversationId}: "${def.id}" is still running ${stopGraceMs}ms after the cancel and cannot resume a stored session; leaving its process up`
+          `[acp] ${this.conversationId}: "${this.def.id}" is still running ${this.stopGraceMs}ms after the cancel and cannot resume a stored session; leaving its process up`
         );
         handlers.onNotice?.(
-          `⚠️ ${def.id} is still running ${secs}s after /stop. It cannot resume a stored session, so ending its process would lose this conversation — \`/new\` ends it and starts over.`
+          `⚠️ ${this.def.id} is still running ${secs}s after /stop. It cannot resume a stored session, so ending its process would lose this conversation — \`/new\` ends it and starts over.`
         );
         return;
       }
       console.warn(
-        `[acp] ${conversationId}: "${def.id}" is still running ${stopGraceMs}ms after the cancel; ending its process (the next message resumes the session)`
+        `[acp] ${this.conversationId}: "${this.def.id}" is still running ${this.stopGraceMs}ms after the cancel; ending its process (the next message resumes the session)`
       );
       handlers.onNotice?.(
-        `⏹ ${def.id} was still running ${secs}s after /stop, so its process was ended. The conversation is kept — the next message resumes it.`
+        `⏹ ${this.def.id} was still running ${secs}s after /stop, so its process was ended. The conversation is kept — the next message resumes it.`
       );
-      dispose();
-      endTurn(new Error(`"${def.id}" did not stop in time`));
+      this.disposeChild();
+      endTurn(new Error(`"${this.def.id}" did not stop in time`));
     };
     return {
       stopped: () => {
         state.stopped = true;
-        // A second `/stop` does not restart the clock: the harness has had since the first one.
-        deadline ??= setTimeout(onIgnored, stopGraceMs);
+        deadline ??= setTimeout(onIgnored, this.stopGraceMs);
       },
       clear: () => {
         if (deadline) clearTimeout(deadline);
@@ -2751,1675 +869,317 @@ function createAcpSession(
     };
   }
 
-  /**
-   * Watch the harness's own log for the duration of one turn.
-   *
-   * ── Why a turn needs this at all ──────────────────────────────────────────────────────────────
-   * Because the silence watchdog can only report silence, and silence has more than one cause.
-   * Reported 2026-09-17: opencode's model pool started rate-limiting, opencode retried internally
-   * without saying so over ACP or on stderr, and every `oc` turn sat at "typing" for ten minutes
-   * before failing with "sent no update … treating it as hung". The agent was never hung, and the
-   * one place the reason existed was opencode's own log file (see harness-log.ts).
-   *
-   * Deliberately does NOT end the turn. A logged error is evidence that something went wrong, not
-   * that the turn is lost — opencode retries and often wins — so acting on it would trade a
-   * misleading message for a killed turn that would have succeeded. It only says so out loud, and
-   * leaves the verdict to the watchdog that already owns it.
-   *
-   * Each distinct reason is announced once: a retry loop writes the same line every few seconds,
-   * and the point is to end the silence, not to replace it with a stream of duplicates.
-   */
-  function watchHarnessLog(handlers: AgentStreamHandlers): {
-    /** The harness's last word on this turn, re-read at the moment it is asked for. */
-    lastReason: () => Promise<string | undefined>;
-    stop: () => void;
+  private createSilenceWatchdog(state: TurnState, host: ReturnType<typeof remoteHosts.hostFor>): {
+    timedOut: Promise<never>;
+    rearm: () => void;
+    trigger: (err: Error) => void;
+    clear: () => void;
   } {
-    const startedAt = new Date();
-    const announced = new Set<string>();
-    let latest: string | undefined;
-    /**
-     * `announce` is false for the final read the timeout makes: by then the turn is over, so
-     * "is retrying" would be a false statement, and the reason is about to be delivered anyway as
-     * part of the failure message.
-     */
-    const poll = async (announce: boolean): Promise<void> => {
-      // `active` is read at call time, not captured: a turn can outlive the child it started on.
-      const events = await readHarnessErrors(def, active?.sessionId, startedAt);
-      for (const e of events) {
-        latest = e.reason;
-        if (!announce || announced.has(e.reason)) continue;
-        announced.add(e.reason);
-        console.log(`[acp] ${conversationId}: ${def.harness} logged an error mid-turn: ${e.reason}`);
-        handlers.onNotice?.(`⚠️ ${def.id} hit an error and is retrying: ${trimReason(e.reason)}`);
-      }
+    let hung: ((err: Error) => void) | undefined;
+    let watchdog: ReturnType<typeof setTimeout> | undefined;
+    let toolGraceUsed = false;
+    const arm = (ms: number): void => {
+      if (watchdog) clearTimeout(watchdog);
+      watchdog = setTimeout(() => onSilence(ms), ms);
     };
-    const timer = harnessLogProbe(def.harness)
-      ? setInterval(() => void poll(true), HARNESS_LOG_POLL_MS)
-      : undefined;
-    // Never hold the process open for a diagnostic.
-    timer?.unref();
+    const onSilence = (waited: number): void => {
+      if (host && !host.isUp) {
+        arm(waited);
+        return;
+      }
+      if (this.awaitingUser > 0) {
+        arm(waited);
+        return;
+      }
+      if (!toolGraceUsed && hasOpenToolCall(state)) {
+        toolGraceUsed = true;
+        const extra = this.turnTimeoutMs * TOOL_SILENCE_FACTOR;
+        console.log(
+          `[acp] ${this.conversationId}: quiet for ${waited}ms but a tool call is still open; allowing it ${extra}ms more`
+        );
+        arm(extra);
+        return;
+      }
+      hung?.(
+        new TurnTimeoutError(
+          `agent "${this.def.id}" sent no update for ${waited}ms${
+            toolGraceUsed ? ' with a tool call still open' : ''
+          }; treating it as hung and aborting this turn`
+        )
+      );
+    };
+    const timedOut = new Promise<never>((_, reject) => {
+      hung = reject;
+    });
     return {
-      lastReason: async () => {
-        await poll(false);
-        return latest;
+      timedOut,
+      rearm: () => {
+        if (this.turnTimeoutMs <= 0) return;
+        toolGraceUsed = false;
+        arm(this.turnTimeoutMs);
       },
-      stop: () => {
-        if (timer) clearInterval(timer);
+      trigger: (err: Error) => hung?.(err),
+      clear: () => {
+        if (watchdog) clearTimeout(watchdog);
       },
     };
   }
 
-  return {
-    conversationId,
+  private async settleTurnResponse(
+    state: TurnState,
+    response: PromptResponse,
+    sawOutput: boolean
+  ): Promise<void> {
+    const failure = readSessionFailure(response._meta);
+    if (failure?.severity === 'error') {
+      throw new TurnFailure(describeSessionFailure(failure), failureReasonOf(failure));
+    }
+    await this.agyMeter.settleAgyTurn(state, response, this.aborting);
+    failIfRefused(response, sawOutput);
+    flushPendingTools(state);
+  }
 
-    async runTurn(input: RunTurnInput, incomingHandlers: AgentStreamHandlers): Promise<void> {
-      aborting = false;
-      stoppedWhileStarting = false;
-      // Everything this turn renders goes through the probe, so a refusal can tell an empty turn
-      // from one whose explanation already reached the chat (see trackVisibleOutput).
-      const output = trackVisibleOutput(incomingHandlers);
-      const handlers = output.handlers;
-      // From here until the prompt is out, a message sent mid-turn waits for it (see promptSent).
-      // Closed on every way out: the prompt sent, the start failing below, or the turn's `finally`.
-      // What runs between this try and that one is synchronous bookkeeping that cannot throw.
-      const closePromptWindow = openPromptWindow();
-      try {
-        await ensureStarted(input.sessionToken, input.topic);
-
-        // Whatever background output was still rendering belongs to the previous exchange. AWAITED,
-        // not fired and forgotten: in the default `once` delivery mode the burst's whole body is
-        // sent by this call, and the new turn is about to start sending through a different buffer —
-        // unordered, they would interleave and the background report would appear underneath an
-        // answer it has nothing to do with. Stopped: this turn cut it off.
-        await closeFollowUp('stopped');
-      } catch (err) {
-        closePromptWindow();
-        // Stopped (or disposed) while the preLaunch hook ran: nothing failed, so nothing to report.
-        if (err instanceof PreLaunchCancelled) return;
-        // Nothing was sent: whatever stopped the start, the agent never saw this turn's prompt.
-        throw asUndelivered(err);
-      }
-
-      const state = newTranslationState(handlers, true);
-
-      // Report the live model up front, from the session/new response captured at startup. Doing it
-      // here rather than inside ensureStarted keeps it per-turn: handlers belong to this turn, and a
-      // session started on an earlier turn would otherwise never report its model to a later one.
-      // config_option_update supersedes this if the model changes mid-session.
-      reportSessionFacts(handlers);
-      // The quota, which no ACP message carries: the last reading now, a fresh one beside the turn.
-      quotaForTurn(handlers);
-
-      // Silence watchdog: one timer, re-armed by the pump on every update it hands to this turn, so
-      // it bounds SILENCE rather than turn length. A hung agent — alive but never sending `stop` nor
-      // any update — would otherwise leave this turn waiting forever, pinning the conversation in
-      // `running` and unreclaimable.
-      let hung: ((err: Error) => void) | undefined;
-      let watchdog: ReturnType<typeof setTimeout> | undefined;
-      /** Whether this stretch of silence has already been forgiven for a running tool. */
-      let toolGraceUsed = false;
-      const arm = (ms: number): void => {
-        if (watchdog) clearTimeout(watchdog);
-        watchdog = setTimeout(() => onSilence(ms), ms);
-      };
-      // Read at call time: a remote agent's link state is what decides whether silence means anything.
-      const host = remoteHosts.hostFor(def);
-      const onSilence = (waited: number): void => {
-        // Cut off, not hung: while the link to the agent's host is down nothing CAN arrive, and the
-        // agent is still working over there (remote/README.md). The full timeout starts again when
-        // the link is back (watchRemoteLink below), so an outage never counts against the agent.
-        if (host && !host.isUp) {
-          arm(waited);
-          return;
-        }
-        // Blocked on a person, not hung: an elicitation stops the agent by design and the answer
-        // arrives at human speed. Re-arm indefinitely rather than spend the one-shot tool grace —
-        // the wait is already bounded by the ask's own timeout, which resolves to `cancel` and
-        // lets the turn continue, so nothing here can hang forever.
-        if (awaitingUser > 0) {
-          arm(waited);
-          return;
-        }
-        // Silence with a tool call still open is not a hung agent, it is a script running — and
-        // the harness's own tool limit reaches exactly this deadline, so the collision was
-        // guaranteed rather than unlucky (see TOOL_SILENCE_FACTOR).
-        if (!toolGraceUsed && hasOpenToolCall(state)) {
-          toolGraceUsed = true;
-          const extra = turnTimeoutMs * TOOL_SILENCE_FACTOR;
-          console.log(
-            `[acp] ${conversationId}: quiet for ${waited}ms but a tool call is still open; allowing it ${extra}ms more`
-          );
-          arm(extra);
-          return;
-        }
-        hung?.(
-          new TurnTimeoutError(
-            `agent "${def.id}" sent no update for ${waited}ms${
-              toolGraceUsed ? ' with a tool call still open' : ''
-            }; treating it as hung and aborting this turn`
-          )
-        );
-      };
-      const rearmWatchdog = (): void => {
-        if (turnTimeoutMs <= 0) return; // 0 disables the watchdog entirely
-        toolGraceUsed = false; // the agent spoke: this is a fresh stretch of silence
-        arm(turnTimeoutMs);
-      };
-
-      // The pump routes updates here for as long as this is set, and calls the two callbacks to
-      // re-arm the watchdog and to end the wait below. All three are cleared in `finally`, so a late
-      // `stop` or a stray update can never bleed into the next turn.
-      turnState = state;
-      // Runs alongside the watchdog for harnesses that admit their failures only to their own log;
-      // for every other harness this allocates a Set and starts no timer.
-      const logWatch = watchHarnessLog(handlers);
-      const unwatchLink = watchRemoteLink(host, handlers, rearmWatchdog);
-      const fold = watchForFoldedPrompt(state);
-      /**
-       * The LAST prompt this turn sent, and its response once settled — the response being what a
-       * `stop` has to carry to end THIS turn (see endTurnWait: a prompt an earlier turn gave up on
-       * settles later, into this wait). Usually the turn's only prompt; on a `prompt`-mode harness a
-       * message sent mid-turn adds another (see joinTurn), and the turn then ends on that one.
-       */
-      let promptDone: Promise<PromptResponse> | undefined;
-      let ownResponse: PromptResponse | undefined;
-      /** Whether that last prompt has settled, either way: past this point the turn is ending. */
-      let lastSettled = false;
-      onTurnUpdate = (update) => {
-        rearmWatchdog();
-        // Only once this prompt is out: a cycle that ended before it was sent cannot have absorbed it.
-        if (promptDone) fold.observe(update);
-      };
-      const settled = new Promise<void>((resolve) => {
-        endTurnWait = (response) => {
-          // A rejected read carries nothing: wake, and let promptFailed say what went wrong.
-          if (response === undefined || response === ownResponse) return resolve();
-          const ignore = (): void =>
-            console.log(`[acp] ${conversationId}: ignoring a stop that belongs to an earlier prompt`);
-          if (!promptDone) return ignore();
-          // Not yet known to be ours. Normally ownResponse is already set by now (its callback was
-          // attached before the pump could read this stop), but the question is settled on the
-          // prompt itself rather than on which of two callbacks ran first.
-          void promptDone.then((own) => (own === response ? resolve() : ignore()), () => {});
-        };
-      });
-      const timedOut = new Promise<never>((_, reject) => {
-        hung = reject;
-      });
-      // Success is waited on via the QUEUE's `stop`, not via the prompt: the harness emits its last
-      // updates (the final usage snapshot among them) before the prompt settles, and the pump
-      // delivers them in order, so `stop` is the only signal meaning "this turn's output has all been
-      // rendered". The prompt alone would finish the turn with renders still queued.
-      //
-      // FAILURE, though, has to be waited on directly, because a failed prompt produces no `stop` —
-      // and `AsyncQueue.reject` is a no-op once the queue has terminally failed, so on a dead
-      // connection nothing would ever wake this turn. It then hung out the full silence watchdog and
-      // blamed the agent for "sending no update", or with `turnTimeoutMs: 0` hung forever, pinning
-      // the conversation in `running`. So: a promise that rejects with the error of ANY prompt this
-      // turn sent and never resolves (success is `settled`'s job). The no-op handler keeps a rejection
-      // arriving after the race is decided from surfacing as unhandled.
-      let failTurn: (err: unknown) => void = () => {};
-      const promptFailed = new Promise<never>((_, reject) => {
-        failTurn = reject;
-      });
-      void promptFailed.catch(() => {});
-      /** Send a prompt as part of this turn, and make it the one the turn ends on. */
-      let unsettled = 0; // this turn's prompts still open: more than one means one is queued behind
-      const send = (session: ActiveSession, blocks: ContentBlock[]): void => {
-        const p = session.prompt(blocks);
-        promptDone = p;
-        ownResponse = undefined;
-        lastSettled = false;
-        unsettled++;
-        // Attached straight after the SDK's own callback (which enqueues the `stop`), so this runs
-        // before the pump can read that `stop` — see endTurnWait above.
-        void p.then(
-          (r) => {
-            unsettled--;
-            if (promptDone !== p) return;
-            ownResponse = r;
-            lastSettled = true;
-          },
-          (err) => {
-            unsettled--;
-            if (promptDone === p) lastSettled = true;
-            failTurn(err);
-          }
-        );
-      };
-      joinedStillQueued = () => unsettled > 1;
-      rearmWatchdog();
-
-      // `/stop` reaches a turn as `session/cancel`, which the harness may simply not act on (see
-      // STOP_GRACE_MS). Woken through the same channel as the watchdog, so it ends the same way.
-      const stopWatch = watchStop(state, handlers, (err) => hung?.(err));
-
-      try {
-        // ActiveSession.prompt resolves at turn end and enqueues 'stop'; the pump reads the stream.
-        // Inside the try so a synchronous throw (a closed stream) still runs the cleanup below.
-        //
-        // Waited on FIRST, because this flag is what stops a resumed session's replayed history
-        // from being rendered as this turn's reply, and it is only sound once the pump has actually
-        // reached the end of that replay (see replayFence — without this the gate is a race that a
-        // long conversation is guaranteed to lose).
-        if (replayFence) await replayFence;
-        promptedYet = true; // from here on, renderable output is this session's own (see promptedYet)
-        // The last moment a stop can keep the prompt from going out (see stoppedWhileStarting); from
-        // the send on, abort() reaches this turn through turnStopped instead. No await between them.
-        endIfStoppedWhileStarting();
-        const session = active!;
-        const agentCtx = conn!.agent;
-        const promptInput = (): ContentBlock[] => {
-          if (input.reconnect) return [{ type: 'text', text: '', _meta: { fleetherd: { reconnect: true } } }] as ContentBlock[];
-          const blocks = blocksOf(input);
-          // Carry the topic on the prompt too for connect agents: a session warmed up by `/model`
-          // before the first turn initialized without one.
-          if (def.connect && input.topic) {
-            const last = blocks[blocks.length - 1];
-            if (last?.type === 'text') {
-              blocks[blocks.length - 1] = { ...last, _meta: { fleetherd: { topic: input.topic } } } as ContentBlock;
-            }
-          }
-          return blocks;
-        };
-        send(
-          session,
-          promptInput()
-        );
-        turnStopped = stopWatch.stopped;
-        joinTurn = steeringMode === 'none' ? undefined : (blocks) => {
-          // The turn's last prompt has settled, so its `stop` is on the way: a message taken now
-          // would be answered by the harness after this turn stopped listening.
-          if (lastSettled || aborting || active !== session) return Promise.resolve('refused');
-          if (steeringMode === 'prompt') {
-            send(session, blocks);
-            return Promise.resolve('joined');
-          }
-          return agentCtx.request(STEER_METHOD, steerParams(session.sessionId, blocks)).then(
-            (res) => {
-              const outcome = readSteerOutcome(res);
-              if (outcome === 'detached') {
-                console.warn(`[acp] ${conversationId}: the turn had ended inside the harness; it answers the message as background output`);
-              }
-              return outcome;
-            },
-            (err: unknown) => {
-              console.warn(`[acp] ${conversationId}: ${STEER_METHOD} failed (${err instanceof Error ? err.message : err}); the message waits for the turn`);
-              return 'refused' as const;
-            }
-          );
-        };
-        closePromptWindow();
-        const outcome = await Promise.race([settled, timedOut, promptFailed, fold.folded]);
-        if (outcome === 'folded') {
-          // Answered inside an autonomous cycle, and the harness will not say so. End the turn with
-          // what it rendered and leave the prompt pending: the adapter settles it at the next
-          // prompt, whose turn ignores that stale `stop` (see endTurnWait). No `session/cancel` —
-          // if this was a misjudged queued prompt rather than a folded one, a cancel would kill
-          // the very reply that is about to start; left alone, it arrives as a background update.
-          flushPendingTools(state);
-          return;
-        }
-        // Already resolved at stop; here only settles / rethrows an in-turn error. The LAST prompt:
-        // the turn ended on its `stop`, and an earlier one's failure already lost the race above.
-        const response = await promptDone!;
-        // A failed turn, as an adapter that negotiated failure records reports one: `end_turn`
-        // with the failure in `_meta`, where an older contract rejected the prompt. Thrown before
-        // the tools are flushed, exactly as a rejection was, so the two read the same downstream.
-        const failure = readSessionFailure(response._meta);
-        if (failure?.severity === 'error') throw new TurnFailure(describeSessionFailure(failure), failureReasonOf(failure));
-        // agy first: its warning is the harness's own account of a turn that got no answer, so a
-        // refusal that ended on one must report `agy: <warning>` (provider) rather than the generic
-        // refusal. settleAgyTurn returns at once for every other harness.
-        await settleAgyTurn(state, response);
-        // A refusal is a failed turn when it names a cause, or when an unnamed one showed nothing
-        // (see failIfRefused).
-        failIfRefused(response, output.sawOutput());
-        flushPendingTools(state);
-      } catch (err) {
-        if (aborting) return; // intentional abort is not an error
-        // A hung-agent timeout: reap the subprocess so the next turn rebuilds a fresh connection
-        // (and so the pump, which is waiting on this queue, lands on a dead one and stands down).
-        if (err instanceof TurnTimeoutError) {
-          // Asked BEFORE dispose(), which clears `active` via resetHandles and with it the session
-          // id this lookup is keyed on. "Hung" is the gateway's guess; the harness may have written
-          // down what actually happened, and if it did, that is what the user should be told.
-          const reason = await logWatch.lastReason();
-          dispose();
-          if (reason) {
-            throw new TurnTimeoutError(`${err.message}. ${def.harness} last logged: ${trimReason(reason)}`);
-          }
-        }
-        if (isNotSentRpcError(err)) throw asUndelivered(err);
-        throw err;
-      } finally {
-        if (watchdog) clearTimeout(watchdog);
-        stopWatch.clear();
-        turnStopped = undefined;
-        logWatch.stop();
-        unwatchLink();
-        fold.stop();
-        turnState = undefined;
-        onTurnUpdate = undefined;
-        endTurnWait = undefined;
-        joinTurn = undefined;
-        joinedStillQueued = undefined;
-        closePromptWindow();
-        if (endChildAfterStop) {
-          // Before this turn counts as over, so the next one cannot start on the child about to go.
-          endChildAfterStop = false;
-          console.log(
-            `[acp] ${conversationId}: stopped with a joined message still queued in the harness; ending the child so it cannot run it (the next message resumes the session)`
-          );
-          dispose();
-        }
-      }
-    },
-
-    async steer(input: Pick<RunTurnInput, 'prompt' | 'images'>): Promise<SteerOutcome> {
-      // A turn still starting has not sent its prompt: wait for it rather than refuse, or the message
-      // would sit out the whole turn (see promptSent).
-      if (promptSent) await promptSent;
-      if (!joinTurn || aborting) return 'refused';
-      return joinTurn(blocksOf(input));
-    },
-
-    setFollowUpSink(sink: FollowUpSink): void {
-      // Deliberately does NOT close a burst still rendering through the outgoing sink. Two
-      // reasons: the close has to be AWAITED to stay ordered against the reply that is about to be
-      // written into the same lane (runTurn does that), and a burst carries the sink that opened
-      // it (see followUpState), so swapping cannot orphan one.
-      followUpSink = sink;
-    },
-
-    abort(): void {
-      aborting = true;
-      launchHook?.abort();
-      // A joined message the harness has not taken up yet would outlive the cancel (see
-      // endChildAfterStop); the turn ends the child on its way out.
-      if (joinedStillQueued?.()) endChildAfterStop = true;
-      // The tools this turn had open are the ones whose trailing updates are wreckage once a NEW
-      // turn has cleared `aborting` (see isWreckage). Read off the live turn's ledger, which is
-      // why that is a session-level variable. Empty when the cancel beats the harness's first
-      // tool_call — the `aborting` half of isWreckage covers that window.
-      cancelledTools = new Set(turnState?.toolLedger.keys() ?? []);
-      if (conn && active) cancelSent = conn.agent.notify('session/cancel', { sessionId: active.sessionId }).catch(() => {});
-      if (turnStopped) turnStopped();
-      else stoppedWhileStarting = true;
-    },
-
-    backgroundActive(): boolean {
-      return !turnState && burstRendering;
-    },
-
-    supportsReconnect(): boolean {
-      return reconnectSupported;
-    },
-
-    stopBackground(): boolean {
-      if (turnState || !burstRendering || !followUpState || !conn || !active) return false;
-      // The burst's open tools are this cancel's wreckage, exactly as a turn's are abort()'s. NOT
-      // `aborting`: that flag stands until the next turn clears it, and a conversation stopped
-      // out of turn may not see another turn for hours — every tool bubble of every later
-      // background report would be dropped as wreckage in the meantime.
-      cancelledTools = new Set(followUpState.state.toolLedger.keys());
-      console.log(`[acp] ${conversationId}: stopping background output on request`);
-      void conn.agent.notify('session/cancel', { sessionId: active.sessionId });
-      // Marked failed before the seal would mark them done: a deploy the user just stopped must
-      // not be left on screen with a ✓ — observed live against claude-agent-acp 0.81.0, where the
-      // harness's own "failed" update arrives after this and is (rightly) dropped as wreckage.
-      flushPendingTools(followUpState.state, false);
-      // Sealed now rather than left to the quiet timer: the user has just been told it stopped,
-      // and a message still streaming (or, in `once` mode, not yet sent at all) says otherwise.
-      void closeFollowUp('stopped');
+  private async prepareTurnStart(input: RunTurnInput, closePromptWindow: () => void): Promise<boolean> {
+    try {
+      await this.ensureStarted(input.sessionToken, input.topic);
+      await this.closeFollowUp('stopped');
       return true;
-    },
-
-    async sideQuestion(input: { prompt: string; sessionToken: string }, handlers: AgentStreamHandlers): Promise<'done' | 'stopped'> {
-      // Nothing to copy, and starting a child to fork an empty session would answer from nothing.
-      if (!active && !store?.agentSession(conversationId, def.id)) {
-        throw new SideQuestionRefused(`Nothing to ask ${def.id} about yet: it has no conversation here. Send it a message first.`);
-      }
-      // A stored session the child no longer holds (idle reclaim, restart) is loaded first: the
-      // same start the next message would make.
-      await ensureStarted(input.sessionToken);
-      const refusal = sideQuestionRefusal(def.id, def.harness, forkSupport, turnState !== undefined);
-      if (refusal) throw new SideQuestionRefused(refusal);
-      // Read once: the child can go away while this was waiting on its start.
-      const [connection, parent] = [conn, active];
-      if (!connection || !parent) throw new Error(`agent "${def.id}" went away before the question could be asked`);
-      return askOnFork({
-        ctx: connection.agent,
-        parentId: parent.sessionId,
-        cwd,
-        support: forkSupport,
-        prompt: blocksOf({ prompt: input.prompt }),
-        // A state of its own: no config write-back and no failure notices into the conversation —
-        // what the copy reports about itself is not news about this session.
-        state: { handlers, lastSegment: 'none', toolLedger: new Map(), toolIndexSeq: 0, subagents: new Map() },
-        translate: translateUpdate,
-        silenceMs: turnTimeoutMs,
-        label: conversationId,
-        track: (forkId, handle) => {
-          if (handle) sideAsks.set(forkId, handle);
-          else sideAsks.delete(forkId);
-        },
-      });
-    },
-
-    stopSideQuestions(): number {
-      for (const handle of sideAsks.values()) handle.cancel();
-      return sideAsks.size;
-    },
-
-    async forkFrom(input: { sessionId: string; sessionToken: string }): Promise<void> {
-      // First or not at all: a session already up (or coming up) would be the one the copy replaced,
-      // and nothing about a conversation that has started is the person's to throw away by forking.
-      if (active || starting || proc) throw new Error(`agent "${def.id}" already has a session here; a fork must be its first`);
-      forkSeed = input.sessionId;
-      try {
-        await ensureStarted(input.sessionToken);
-      } finally {
-        forkSeed = undefined;
-      }
-    },
-
-    canFork(): boolean | undefined {
-      return forkKnown ? forkSupport.fork : undefined;
-    },
-
-    async ensureSession(sessionToken: string): Promise<void> {
-      // Exactly what the first turn does, minus the prompt: the child, initialize, and session/new
-      // (or session/load), which is where liveConfigOptions — and therefore the model list — comes
-      // from. Idempotent via `active`, so a second /model while one warm-up is in flight is free.
-      await ensureStarted(sessionToken);
-    },
-
-    modelSelector(): ModelSelector | undefined {
-      const opt = liveConfigOptions?.find((o) => o.id === MODEL_CONFIG_ID);
-      if (!opt || opt.type !== 'select') return undefined;
-      // dsh encodes every value as JSON.stringify([provider, model]); /model matches user-typed text
-      // against these values and feeds them back to setModel, so decode them to the same
-      // "provider/model" spelling config and queries use.
-      const display = (v: string): string => (def.harness === 'dsh' ? dshModelDisplayValue(v) : v);
-      // Options come flat or grouped by provider; flatten so the caller sees one list.
-      const options = opt.options
-        .flatMap((entry) => ('group' in entry ? entry.options : [entry]))
-        .map((o) => ({ value: display(o.value), name: o.name || display(o.value) }));
-      return {
-        current: typeof opt.currentValue === 'string' ? display(opt.currentValue) : undefined,
-        options,
-      };
-    },
-
-    async setModel(value: string): Promise<string> {
-      // dsh's selector values are JSON.stringify([provider, model]) (see dshModelSelectorValue); the
-      // /model menu hands us decoded "provider/model" values, so re-encode before the wire.
-      const wire = def.harness === 'dsh' ? dshModelSelectorValue(value) : value;
-      // No live session = no selector to set right now: the option list arrives with session/new.
-      // Rather than fail, record the choice as this conversation's preference. modelPreference
-      // outlives dispose (resetHandles does not clear it), so applyModelPreference re-applies it when
-      // the next turn spawns a child — the same self-healing path a crashed child takes. Returning
-      // the requested value lets the footer name it immediately; if the harness resolves it to a
-      // concrete id, the next config_option_update corrects the display.
-      if (!conn || !active) {
-        modelPreference = value;
-        console.log(`[acp] agent "${def.id}": model "${value}" deferred — no live child, applies on next turn`);
-        return value;
-      }
-      // Captured before the await: `conn` and `active` are reassigned by a child dying under us, and
-      // the effort re-apply below must address the session this switch was made on.
-      const agentCtx = conn.agent;
-      const sessionId = active.sessionId;
-      const res = await agentCtx.request('session/set_config_option', {
-        sessionId,
-        configId: MODEL_CONFIG_ID,
-        value: wire,
-      });
-      // Remember BEFORE trusting the echo: the choice must outlive this child either way.
-      modelPreference = value;
-      liveConfigOptions = res?.configOptions ?? liveConfigOptions;
-      // The new model brings its own option set and effort levels, and may have reset both to its
-      // defaults. Pinned options first (agents[].options), then the conversation's `/effort` choice,
-      // which outranks a pinned level.
-      await reapplyPinned(agentCtx, sessionId);
-      await reapplyEffort(agentCtx, sessionId);
-      liveModel = liveModelName(liveConfigOptions) ?? value;
-      console.log(`[acp] agent "${def.id}": model switched to "${value}" at runtime`);
-      return liveModel;
-    },
-
-    effortSelector(): EffortSelector | undefined {
-      return effortSelectorOf(liveConfigOptions);
-    },
-
-    async setEffort(value: string): Promise<string> {
-      // No live child: record it, exactly as setModel does. Both startup paths re-apply it — the
-      // session/load one being the one that matters, since that is how a reclaimed conversation
-      // comes back. The caller has already checked the value against the (kept) option list.
-      if (!conn || !active) {
-        effortPreference = value;
-        console.log(`[acp] agent "${def.id}": effort "${value}" deferred — no live child, applies on next turn`);
-        return value;
-      }
-      const opt = effortOption(liveConfigOptions);
-      if (!opt) throw new Error('the current model offers no effort levels');
-      const res = await conn.agent.request('session/set_config_option', {
-        sessionId: active.sessionId,
-        // The harness's own id for it (`effort` / `reasoning_effort`), never spelled here.
-        configId: opt.id,
-        value,
-      });
-      effortPreference = value;
-      liveConfigOptions = res?.configOptions ?? liveConfigOptions;
-      console.log(`[acp] agent "${def.id}": effort switched to "${value}" at runtime`);
-      return effortOption(liveConfigOptions)?.currentValue || value;
-    },
-
-    sessionOptions(): SessionOption[] | undefined {
-      return liveConfigOptions ? customOptionsOf(liveConfigOptions) : undefined;
-    },
-
-    async setOption(id: string, value: string): Promise<SessionOption[]> {
-      // No deferral, unlike setModel: nothing here is remembered for a later child (see
-      // AgentSession.setOption), so a pick with no session to take it would simply be lost.
-      if (!conn || !active) throw new Error('the agent has no live session to change');
-      // Only the agent's own settings: the model and the effort have paths of their own that keep
-      // the person's choice, and going around them would leave that choice saying something else.
-      if (!customOptionsOf(liveConfigOptions).some((o) => o.id === id)) {
-        throw new Error(`the agent offers no setting "${id}"`);
-      }
-      const res = await conn.agent.request('session/set_config_option', { sessionId: active.sessionId, configId: id, value });
-      liveConfigOptions = res?.configOptions ?? liveConfigOptions;
-      // The answer is the whole list, so whatever else the agent moved with it is current too.
-      liveModel = liveModelName(liveConfigOptions) ?? liveModel;
-      console.log(`[acp] agent "${def.id}": setting "${id}" set to "${value}"`);
-      return customOptionsOf(liveConfigOptions);
-    },
-
-    permissionModes(): SessionModeSelector | undefined {
-      return permissionModesOf(def, { modes: liveModes, options: liveConfigOptions });
-    },
-
-    async applyPermissions(): Promise<void> {
-      // No live child: nothing to move. The next start applies the level (reapplyPreferences), and
-      // the gateway's half — whether a request is put to the person — is read per request anyway.
-      if (!conn || !active) return;
-      await reapplyPermissionLevel(conn.agent, active.sessionId);
-    },
-
-    reclaimState(): ReclaimState {
-      // `active` is this runtime's readiness signal everywhere else, so it is the honest test for
-      // "there is something here to reclaim" too.
-      if (!proc || !active) return 'no-child';
-      return canResume() ? 'resumable' : 'unresumable';
-    },
-
-    dispose(): void {
-      disposed = true;
-      dispose();
-    },
-  };
-}
-
-/**
- * What to add to a startup failure the harness gave no reason for. An agy older than 1.5 has no
- * `acp` subcommand — it takes the word as a stray prompt argument and exits — which reaches here as
- * a closed connection, so the version to check is named.
- */
-function startupHint(def: AgentDef): string {
-  return def.harness === 'agy'
-    ? ' (`agy acp` needs agy 1.5 or later — check `agy --version` on that machine and upgrade it)'
-    : '';
-}
-
-/**
- * The TurnFailure a startup that did not happen is reported with (startupFailureMessage). `err` is
- * what ended it: the startup's own deadline, an error the agent answered with, or the connection
- * closing under it.
- */
-function startupFailure(
-  def: AgentDef,
-  err: unknown,
-  p: { host: string | undefined; launch: string; progress: StartupProgress; stderr: string; timeoutMs: number }
-): TurnFailure {
-  const timedOut = err instanceof StartupTimeout;
-  const message = startupFailureMessage({
-    agent: def.id,
-    ...(p.host ? { host: p.host } : {}),
-    launch: p.launch,
-    // An error answer is the process speaking, whichever request it answered.
-    progress: isRpcError(err) ? { ...p.progress, answered: true } : p.progress,
-    ...(timedOut ? { timeoutMs: p.timeoutMs } : { error: err }),
-    stderr: p.stderr,
-    hint: startupHint(def),
-  });
-  return new TurnFailure(message, 'startup');
-}
-
-/** How much of a child's stderr is kept for a startup failure to quote (see adoptChild). */
-const STDERR_TAIL_KEEP = 4_000;
-/** How much of it the failure message carries: the last lines, which is where an error ends up. */
-const STDERR_QUOTE_CHARS = 600;
-/** How much of an error the agent answered with the failure message carries. */
-const STARTUP_ERROR_CHARS = 600;
-
-/** How far an agent's startup got (startSession), for the message its failure is reported with. */
-export interface StartupProgress {
-  /** Whether the process has answered anything at all — a result or an error, to any request. */
-  answered: boolean;
-  /** The request the startup was waiting on, or the last one it sent. */
-  step: 'initialize' | 'session/load' | 'session/new' | 'session/set_config_option' | 'session/fork' | 'session/resume';
-}
-
-/** The startup's own deadline, told apart from an error the agent sent. */
-class StartupTimeout extends Error {
-  constructor() {
-    super('startup timed out');
-    this.name = 'StartupTimeout';
-  }
-}
-
-/**
- * Whether an error is a JSON-RPC error answer (the SDK's RequestError carries the numeric `code`).
- * A closed connection rejects with a plain Error instead, which is the process going away without a
- * word — the one way an `initialize` failure says nothing about whether it ever came up.
- */
-function isRpcError(err: unknown): boolean {
-  return typeof err === 'object' && err !== null && typeof (err as { code?: unknown }).code === 'number';
-}
-
-/**
- * An error the agent answered with, as one line: its message and, when it sent any, its `data` —
- * where an ACP agent puts the detail (`Internal error` alone names nothing).
- */
-function rpcErrorText(err: unknown): string {
-  const message = err instanceof Error ? err.message : String(err);
-  const data = (err as { data?: unknown } | null)?.data;
-  let detail = '';
-  if (typeof data === 'string') detail = data;
-  else if (data !== undefined && data !== null) {
-    const inner = (data as { details?: unknown; message?: unknown }).details ?? (data as { message?: unknown }).message;
-    detail = typeof inner === 'string' ? inner : JSON.stringify(data);
-  }
-  const text = (detail && !message.includes(detail) ? `${message}: ${detail}` : message).replace(/\s+/g, ' ').trim();
-  return text.length > STARTUP_ERROR_CHARS ? `${text.slice(0, STARTUP_ERROR_CHARS - 1)}…` : text;
-}
-
-/** The last lines of what a child wrote to stderr, on one line, or '' when it wrote nothing. */
-function stderrQuote(tail: string): string {
-  // Terminal colour codes, which some agents put in their logs whether or not stderr is a terminal.
-  const lines = tail.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '').split('\n').map((l) => l.trim()).filter(Boolean);
-  let out = '';
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const next = out ? `${lines[i]} | ${out}` : lines[i]!;
-    if (next.length > STDERR_QUOTE_CHARS) {
-      if (!out) out = `…${next.slice(-(STDERR_QUOTE_CHARS - 1))}`;
-      break;
-    }
-    out = next;
-  }
-  return out;
-}
-
-/**
- * What a failed startup says. Two different failures with two different fixes, and the message
- * has to send the person to the right one:
- *
- *  - **the process did not come up** — it never answered `initialize`. The launch command, or the
- *    machine it runs on, is what to look at.
- *  - **the process came up and opening a session failed** — it answered `initialize`, then
- *    `session/new` (or `session/load`) failed or went unanswered. The command is fine; what the
- *    agent needs behind it — its model backend, a relay, the network — is not. The agent's own error
- *    is quoted when it sent one.
- *
- * Until 2026-11-13 every timeout said "Make sure the launch command is executable on PATH", which was
- * wrong for the second kind: the four agy timeouts of 2026-11-11 had answered `initialize` in 11ms
- * and hung on `session/new` behind a relay answering 502 and a DNS timeout.
- *
- * Whatever the child last wrote to stderr is added to either: it is often the only place an agent
- * says why. Exported for its test.
- */
-export function startupFailureMessage(p: {
-  agent: string;
-  host?: string;
-  launch: string;
-  progress: StartupProgress;
-  /** Set when the startup's deadline passed; the error then is the deadline, not the agent's. */
-  timeoutMs?: number;
-  error?: unknown;
-  stderr: string;
-  /** What to add when the process never answered (startupHint). */
-  hint: string;
-}): string {
-  const where = p.host ? ` on host "${p.host}"` : '';
-  const said = stderrQuote(p.stderr);
-  const stderr = said ? ` Its last output on stderr: ${said}` : '';
-  const within = p.timeoutMs !== undefined ? ` within ${Math.round(p.timeoutMs / 1000)}s` : '';
-  if (!p.progress.answered) {
-    const why =
-      p.timeoutMs !== undefined
-        ? `its process gave no answer to initialize${within}`
-        : `its process went away before answering initialize (${p.error instanceof Error ? p.error.message : String(p.error)})`;
-    return (
-      `agent "${p.agent}" did not start${where}: ${why}. ` +
-      `Check that \`${p.launch}\` runs there and speaks ACP, and how loaded that machine is.${stderr}${p.hint}`
-    );
-  }
-  if (p.timeoutMs !== undefined) {
-    return (
-      `agent "${p.agent}" started${where}, but ${p.progress.step} got no answer${within}. The process is up; ` +
-      `what it needs to open a session (its model backend, a relay, the network) is not responding.${stderr}`
-    );
-  }
-  return `agent "${p.agent}" started${where}, but ${p.progress.step} failed: ${rpcErrorText(p.error)}.${stderr}`;
-}
-
-/**
- * Whether a buildSession().start() (session/new) failure means "must log in first" (auth_required).
- * ACP expresses un-auth as session/new returning an `authRequired` stop reason or an auth-flavored error;
- * wording varies per harness, so match message/code loosely. Used only for a readable hint, not interactive auth.
- */
-function isAuthRequired(err: unknown): boolean {
-  if (!err) return false;
-  const msg = err instanceof Error ? err.message : typeof err === 'string' ? err : JSON.stringify(err);
-  const code = (err as { code?: unknown })?.code;
-  return /auth[_-]?required|authentication|not\s+logged\s*in|unauthor/i.test(msg) || code === 'auth_required';
-}
-
-/**
- * The answer to session/request_permission under a level that does not ask (`auto`, `full`, or
- * none set) — what every agent got before `ask` existed: approve, so agents run with full tool
- * access and the only gate is access.allowFrom (who may trigger the agent at all). Picks
- * allow_once when offered, else any allow_*; if the agent somehow offers no allow option, falls
- * back to cancelled (can't fabricate an id).
- */
-export function decidePermission(req: RequestPermissionRequest): RequestPermissionResponse {
-  const opts = req.options;
-  const pick = (pred: (o: PermissionOption) => boolean): string | undefined =>
-    opts.find(pred)?.optionId;
-  const allow = pick((o) => o.kind === 'allow_once') ?? pick((o) => o.kind.startsWith('allow'));
-  return allow ? { outcome: { outcome: 'selected', optionId: allow } } : { outcome: { outcome: 'cancelled' } };
-}
-
-/**
- * The JSON-RPC error code a declined-without-an-answer permission request is returned with. In the
- * range JSON-RPC leaves to implementations, and not one ACP itself uses (-32000 is auth_required,
- * -32002 resource_not_found).
- */
-export const PERMISSION_DECLINED_CODE = -32001;
-
-/** How much of a permission request's change preview reaches the chat. */
-const PERMISSION_DETAIL_MAX = 1200;
-
-/** How much of a vendor-supplied tool name a title falls back to. */
-const PERMISSION_TOOL_NAME_MAX = 40;
-
-/** A string a harness put in `_meta` under a key whose tail is `suffix` (`…/toolName`, `…/plan`). */
-function metaString(meta: unknown, suffix: RegExp): string | undefined {
-  if (!meta || typeof meta !== 'object') return undefined;
-  for (const [key, value] of Object.entries(meta as Record<string, unknown>)) {
-    if (typeof value !== 'string' || !suffix.test(key)) continue;
-    if (value.trim()) return value;
-  }
-  return undefined;
-}
-
-/**
- * The tool's own name, for a request whose tool call carries no title.
- *
- * CodeBuddy Code 2.181.0 sends every `session/request_permission` with nothing but `rawInput` and
- * `_meta["codebuddy.ai/toolName"]` — measured 2026-11-18 — so a Write arrived as a bare file path
- * with no word saying it was a write. ACP reserves `_meta` for exactly this kind of extension, and
- * the key's `…/toolName` tail is read rather than the vendor prefix, so another adapter naming its
- * tool the same way is covered without a second arm.
- */
-function metaToolName(meta: unknown): string | undefined {
-  const name = metaString(meta, /(^|\/)toolName$/)?.trim();
-  if (!name) return undefined;
-  return name.length > PERMISSION_TOOL_NAME_MAX ? `${name.slice(0, PERMISSION_TOOL_NAME_MAX - 1)}…` : name;
-}
-
-/**
- * The verb for a request that names no tool and has no `_meta` to name it, read off the tool's own
- * arguments: `file_path` beside the text it will put there is a write, beside `old_string`/
- * `new_string` an edit. A `command` needs no verb — the command IS what the user is deciding on —
- * and a file call with neither (a read, a delete) is left as the bare preview rather than guessed
- * at: calling a read an edit is worse than saying nothing about it.
- */
-function inferToolName(rawInput: unknown): string | undefined {
-  if (!rawInput || typeof rawInput !== 'object') return undefined;
-  const raw = rawInput as Record<string, unknown>;
-  if (typeof raw.file_path !== 'string') return undefined;
-  if (typeof raw.content === 'string') return 'Write';
-  if (typeof raw.old_string === 'string' || typeof raw.new_string === 'string') return 'Edit';
-  return undefined;
-}
-
-/** Text split into lines, dropping only the empty line a trailing newline leaves behind. */
-function linesOf(text: string): string[] {
-  const lines = text.split('\n');
-  if (lines.at(-1) === '') lines.pop();
-  return lines;
-}
-
-/** One `diff` content item as lines a chat bubble can show; empty when it carries no lines. */
-function diffPreview(path: string, oldText: string | null | undefined, newText: string): string {
-  const body: string[] = [];
-  for (const line of linesOf(oldText ?? '')) body.push(`-${line}`);
-  for (const line of linesOf(newText)) body.push(`+${line}`);
-  return body.length ? [`--- ${path}`, `+++ ${path}`, ...body].join('\n') : '';
-}
-
-/** A detail bounded to a preview, saying how much it left out rather than dropping it silently. */
-function boundedDetail(text: string): string | undefined {
-  const trimmed = text.trim();
-  if (!trimmed) return undefined;
-  if (trimmed.length <= PERMISSION_DETAIL_MAX) return trimmed;
-  return `${trimmed.slice(0, PERMISSION_DETAIL_MAX)}\n… (${trimmed.length - PERMISSION_DETAIL_MAX} more characters)`;
-}
-
-/**
- * The kinds whose `content` is the tool's OUTPUT (what a file holds, what a command printed), not
- * something the user is approving. A read that asks for permission must not offer the file it is
- * about to read as "the change".
- */
-const OUTPUT_KINDS = new Set(['read', 'fetch', 'search', 'execute']);
-
-/** The change a harness carries in the tool's own arguments rather than in ACP `content`. */
-function rawInputDetail(rawInput: unknown): string | undefined {
-  if (!rawInput || typeof rawInput !== 'object') return undefined;
-  const raw = rawInput as Record<string, unknown>;
-  const file = typeof raw.file_path === 'string' ? raw.file_path : undefined;
-  if (!file) return undefined;
-  const oldText = typeof raw.old_string === 'string' ? raw.old_string : undefined;
-  const newText = typeof raw.new_string === 'string' ? raw.new_string : undefined;
-  if (oldText !== undefined || newText !== undefined) return diffPreview(file, oldText, newText ?? '');
-  return typeof raw.content === 'string' && raw.content.trim() ? raw.content.replace(/\n+$/, '') : undefined;
-}
-
-/**
- * What the tool will change, for the card's second block: ACP's `content` (a diff for an edit, the
- * text a write will put in the file), or — for a harness that carries the change in the tool's own
- * arguments instead — `rawInput`'s `old_string`/`new_string` or `content` beside a `file_path`
- * (CodeBuddy Code's Edit and Write, 2026-11-18).
- *
- * A shell call's text content is its `description` ("Clean and rebuild"), not a change, and the
- * command is already the title — so it contributes nothing here. Bounded, because a Write of a
- * whole file is pages long and this is a preview, not the editor.
- */
-function permissionDetailOf(toolCall: ToolCallUpdate): string | undefined {
-  const parts: string[] = [];
-  for (const c of toolCall.content ?? []) {
-    if (c.type === 'diff') parts.push(diffPreview(c.path, c.oldText, c.newText));
-    else if (c.type === 'content' && c.content.type === 'text' && !OUTPUT_KINDS.has(toolCall.kind ?? '')) {
-      parts.push(c.content.text);
+    } catch (err) {
+      closePromptWindow();
+      if (err instanceof PreLaunchCancelled) return false;
+      throw asUndelivered(err);
     }
   }
-  if (parts.length === 0) parts.push(rawInputDetail(toolCall.rawInput) ?? '');
-  return boundedDetail(parts.filter(Boolean).join('\n\n'));
-}
 
-/**
- * An `ExitPlanMode` request in words: the plan the user is being asked to approve, and the actions
- * the agent wants pre-approved to carry it out.
- *
- * Claude's adapter titles this request "Ready to code?" itself. CodeBuddy Code sends no title and
- * no kind, names the tool in `_meta`, and — measured 2026-11-18 in plan mode — carries the plan
- * under `…/plan`; without this the card read `ExitPlanMode`, or the raw
- * `{"allowedPrompts":…}` JSON, for the one request whose whole subject is a document the user has
- * to read. The shape is what is matched (the tool name, or `allowedPrompts`), not a vendor prefix.
- */
-function planExitOf(toolCall: ToolCallUpdate, named: string | undefined): { title: string; detail?: string } | undefined {
-  const raw = toolCall.rawInput && typeof toolCall.rawInput === 'object' ? (toolCall.rawInput as Record<string, unknown>) : undefined;
-  const prompts = Array.isArray(raw?.allowedPrompts) ? raw.allowedPrompts : [];
-  if (named?.toLowerCase() !== 'exitplanmode' && prompts.length === 0) return undefined;
-  const asked = prompts
-    .map((p) => {
-      if (!p || typeof p !== 'object') return '';
-      const { tool, prompt } = p as { tool?: unknown; prompt?: unknown };
-      const what = typeof prompt === 'string' ? prompt.trim() : '';
-      const by = typeof tool === 'string' ? tool.trim() : '';
-      return what ? (by ? `${by}: ${what}` : what) : '';
-    })
-    .filter(Boolean)
-    .join('\n');
-  const detail = boundedDetail([metaString(toolCall._meta, /(^|\/)plan$/)?.trim(), asked].filter(Boolean).join('\n\n'));
-  return { title: 'Exit plan mode', ...(detail ? { detail } : {}) };
-}
+  // ───────────────────────── Public AgentSession methods ─────────────────────────
 
-/**
- * A permission request as the user is shown it: what the tool is, what it will change, and the
- * agent's own options.
- *
- * The change matters more than the name: "Edit src/app.ts" alone asks the user to approve an edit
- * they cannot see, which is not a decision. So a diff (or the text a write will put in the file)
- * rides along in `detail`, and the title falls back to the tool's name plus its argument when the
- * harness sends no title at all.
- */
-export function permissionRequestOf(req: RequestPermissionRequest): AgentPermissionRequest {
-  // agy's generic MCP call is titled `Bash` too, and this card has no preview line for the server,
-  // so it is named the way the tool row names it and the server rides in the title.
-  const mcp = agyMcpCall(req.toolCall.rawInput);
-  const preview = buildInputPreview(req.toolCall.rawInput);
-  const named = metaToolName(req.toolCall._meta) ?? inferToolName(req.toolCall.rawInput);
-  const plan = planExitOf(req.toolCall, named);
-  const title =
-    (mcp && `${agyMcpLabel(mcp)} — ${mcp.server}`) ||
-    stripCode(req.toolCall.title ?? '') ||
-    plan?.title ||
-    (named ? (preview ? `${named}: ${preview}` : named) : preview) ||
-    'a tool call';
-  const detail = plan?.detail ?? permissionDetailOf(req.toolCall);
-  return {
-    title,
-    ...(detail ? { detail } : {}),
-    options: req.options.map((o) => ({ optionId: o.optionId, label: o.name || o.optionId })),
-  };
-}
+  async runTurn(input: RunTurnInput, incomingHandlers: AgentStreamHandlers): Promise<void> {
+    this.aborting = false;
+    this.stoppedWhileStarting = false;
+    const output = trackVisibleOutput(incomingHandlers);
+    const handlers = output.handlers;
+    const closePromptWindow = this.openPromptWindow();
+    if (!(await this.prepareTurnStart(input, closePromptWindow))) return;
 
-/**
- * Turn what became of a permission request into the ACP response.
- *
- * ── Why "declined" is an ERROR here, not the agent's reject option ───────────────────────────
- * A request nobody answered has to reach the agent as exactly that — never as the user refusing
- * (asked for in so many words, 2026-10-28). ACP's response carries no reason: it is an option id or
- * `cancelled`, and the harness turns each into fixed words. Measured against claude-agent-acp
- * 0.81.2 the same day: the reject option becomes "User refused permission to run tool", which here
- * would be a lie, and `cancelled` becomes "Tool use aborted", which says nothing. A JSON-RPC error
- * is the one channel that carries text — the adapter rethrows it (requestPermissionFromClient) and
- * the model read ours: "nobody answered the request within 10 minutes, so it was declined
- * automatically (not refused)". The tool does not run, and the turn goes on.
- *
- * Hyrum's Law: rethrowing the error is the adapter's internal behaviour, not the protocol's.
- * agent-acp-permission.test.ts pins it against the installed adapter. And the error must be a
- * RequestError: the SDK replaces any other exception's message with "Internal error".
- */
-export function permissionResponse(
-  req: RequestPermissionRequest,
-  answer: PermissionAnswer
-): RequestPermissionResponse {
-  switch (answer.kind) {
-    case 'selected':
-      return { outcome: { outcome: 'selected', optionId: answer.optionId } };
-    case 'cancelled':
-      // ACP's own meaning: the turn was cancelled before anyone answered.
-      return { outcome: { outcome: 'cancelled' } };
-    case 'unanswered': {
-      const minutes = Math.round(answer.waitedMs / 60_000);
-      throw new RequestError(
-        PERMISSION_DECLINED_CODE,
-        `No one answered this permission request within ${minutes} minutes, so it was declined automatically. ` +
-          'This is not a refusal: the user did not respond to the request.',
-        { reason: 'unanswered' }
+    const state = this.newTranslationState(handlers, true);
+    this.options.reportSessionFacts(handlers);
+    this.agyMeter.quotaForTurn(handlers, this.cwd);
+
+    const host = remoteHosts.hostFor(this.def);
+    const watchdog = this.createSilenceWatchdog(state, host);
+    const driver = createTurnPromptDriver(this.conversationId);
+    const logWatch = watchHarnessLog(this.def, this.conversationId, () => this.active?.sessionId, handlers);
+    const unwatchLink = watchRemoteLink(host, handlers, watchdog.rearm);
+    const fold = watchForFoldedPrompt(this.conversationId, this.turnTimeoutMs, state, () => this.awaitingUser > 0);
+    const stopWatch = this.watchStop(state, handlers, watchdog.trigger);
+
+    this.turnState = state;
+    this.onTurnUpdate = (update) => {
+      watchdog.rearm();
+      if (driver.promptDone()) fold.observe(update);
+    };
+    this.endTurnWait = driver.onStop;
+    this.joinedStillQueued = driver.hasQueuedPrompt;
+    watchdog.rearm();
+
+    try {
+      if (this.replayFence) await this.replayFence;
+      this.promptedYet = true;
+      this.endIfStoppedWhileStarting();
+      const session = this.active!;
+      driver.send(session, buildTurnPromptInput(this.def, input, (i) => this.blocksOf(i)));
+      this.turnStopped = stopWatch.stopped;
+      this.joinTurn = createSteerHandler({
+        conversationId: this.conversationId,
+        steeringMode: this.steeringMode,
+        session,
+        agentCtx: this.conn!.agent,
+        driver,
+        canSteer: () => !this.aborting && this.active === session,
+      });
+      closePromptWindow();
+
+      const outcome = await Promise.race([driver.settled, watchdog.timedOut, driver.promptFailed, fold.folded]);
+      if (outcome === 'folded') {
+        flushPendingTools(state);
+        return;
+      }
+      const response = await driver.promptDone()!;
+      await this.settleTurnResponse(state, response, output.sawOutput());
+    } catch (err) {
+      if (this.aborting) return;
+      if (err instanceof TurnTimeoutError) {
+        const reason = await logWatch.lastReason();
+        this.disposeChild();
+        if (reason) {
+          throw new TurnTimeoutError(`${err.message}. ${this.def.harness} last logged: ${trimReason(reason)}`);
+        }
+      }
+      if (isNotSentRpcError(err)) throw asUndelivered(err);
+      throw err;
+    } finally {
+      watchdog.clear();
+      stopWatch.clear();
+      logWatch.stop();
+      unwatchLink();
+      fold.stop();
+      this.cleanupTurnState(closePromptWindow);
+    }
+  }
+
+  private cleanupTurnState(closePromptWindow: () => void): void {
+    this.turnStopped = undefined;
+    this.turnState = undefined;
+    this.onTurnUpdate = undefined;
+    this.endTurnWait = undefined;
+    this.joinTurn = undefined;
+    this.joinedStillQueued = undefined;
+    closePromptWindow();
+    if (this.endChildAfterStop) {
+      this.endChildAfterStop = false;
+      console.log(
+        `[acp] ${this.conversationId}: stopped with a joined message still queued in the harness; ending the child so it cannot run it (the next message resumes the session)`
       );
-    }
-    case 'unavailable':
-      throw new RequestError(
-        PERMISSION_DECLINED_CODE,
-        `This permission request could not be shown to the user (${answer.why}), so it was declined automatically. ` +
-          'This is not a refusal by the user.',
-        { reason: 'unavailable' }
-      );
-    default: {
-      const _exhaustive: never = answer;
-      throw new Error(`unknown permission answer: ${JSON.stringify(_exhaustive)}`);
+      this.disposeChild();
     }
   }
-}
 
-// ───────────────────────── session/update → handlers translation (core) ─────────────────────────
-
-/**
- * The choosable options of one elicitation form field.
- *
- * Single-select fields carry them under `oneOf`, multi-select under `items.anyOf`; both hold
- * ACP `EnumOption`s. An option with no usable `const` is dropped rather than guessed at: the
- * answer has to carry that exact value, and sending one the agent never listed is worse than
- * offering one button fewer.
- *
- * Takes `unknown` because `ElicitationPropertySchema` is a union over every primitive type, and
- * the number/boolean arms carry no enum at all — narrowing here rather than at the call site
- * keeps the "no options, skip this question" answer in one place.
- */
-function parseElicitOptions(prop: unknown): ElicitOption[] {
-  const p = prop as { oneOf?: unknown; items?: { anyOf?: unknown } };
-  const raw = Array.isArray(p.oneOf) ? p.oneOf : Array.isArray(p.items?.anyOf) ? p.items.anyOf : [];
-  const options: ElicitOption[] = [];
-  for (const o of raw) {
-    const opt = o as { const?: unknown; title?: unknown; description?: unknown };
-    // `const` is the answer, `title` is display only; either may stand in for a missing other,
-    // but with neither there is nothing to send back and nothing to print on a button.
-    const value = typeof opt.const === 'string' ? opt.const : undefined;
-    const label = typeof opt.title === 'string' && opt.title.length > 0 ? opt.title : value;
-    if (value === undefined || label === undefined) continue;
-    const description = typeof opt.description === 'string' ? opt.description.trim() : '';
-    options.push(description ? { label, value, description } : { label, value });
+  async steer(input: Pick<RunTurnInput, 'prompt' | 'images'>): Promise<SteerOutcome> {
+    if (this.promptSent) await this.promptSent;
+    if (!this.joinTurn || this.aborting) return 'refused';
+    return this.joinTurn(this.blocksOf(input));
   }
-  return options;
-}
 
-/**
- * Translate an ACP `elicitation/create` into the platform-agnostic question rounds the daemon
- * renders as buttons. Returns null for anything this client cannot put in front of a user, in
- * which case the caller declines rather than guessing an answer.
- *
- * ── What the wire shape actually is ───────────────────────────────────────────────────────────
- * A form elicitation carries a JSON Schema, not a question list, so the questions have to be read
- * back out of it. The layout is claude-agent-acp's `askUserQuestionsToCreateRequest` (verified
- * against a live payload, see the fixture in agent-acp.test.ts): one `question_<n>` property per
- * question — `oneOf` of `{const, title, description}` for single-select, `items.anyOf` for
- * multi-select — each followed by a `question_<n>_custom` free-text "Other" field. The question
- * text lives in `message` when there is exactly one question, and in each property's
- * `description` when there are several.
- *
- * `_custom` fields are not rounds of their own: they are the CLI's "type your own answer instead"
- * box, and a button row cannot collect free text. They are not dropped either, though — the key is
- * recorded on the question it belongs to (ElicitQuestion.customKey), because that is the field a
- * typed reply in the chat is sent back under. Skipping them as rounds is safe because the adapter
- * marks them optional: an accept that omits them is a complete answer, not a partial one.
- *
- * A question left with no usable options is dropped, and a form where every question drops
- * yields null.
- */
-export function parseFormElicitation(params: CreateElicitationRequest): AgentElicitation | null {
-  // `url` mode points the user at a browser to finish something out of band. There is no useful
-  // rendering of that in a chat message the daemon can then correlate an answer to, so it is
-  // declined rather than half-supported (the client advertises only `form` for the same reason).
-  if (params.mode !== 'form') return null;
+  setFollowUpSink(sink: FollowUpSink): void {
+    this.followUpSink = sink;
+  }
 
-  const message = typeof params.message === 'string' ? params.message.trim() : '';
-  const properties = params.requestedSchema?.properties ?? {};
+  abort(): void {
+    this.aborting = true;
+    this.launchHook?.abort();
+    if (this.joinedStillQueued?.()) this.endChildAfterStop = true;
+    this.cancelledTools = new Set(this.turnState?.toolLedger.keys() ?? []);
+    if (this.conn && this.active) {
+      this.cancelSent = this.conn.agent.notify('session/cancel', { sessionId: this.active.sessionId }).catch(() => {});
+    }
+    if (this.turnStopped) this.turnStopped();
+    else this.stoppedWhileStarting = true;
+  }
 
-  const questions: ElicitQuestion[] = [];
-  for (const [key, prop] of Object.entries(properties)) {
-    if (key.endsWith('_custom')) continue;
-    const p = prop as { type?: string; title?: string | null; description?: string | null };
-    const options = parseElicitOptions(prop);
-    if (options.length === 0) continue;
-    // Single-question forms carry the question in `message` and leave `description` unset; the
-    // title is a short header, so it is the last resort rather than the first.
-    const prompt = p.description?.trim() || message || p.title?.trim() || key;
-    // Only claim a free-text field the form actually declared, and only when it takes a string:
-    // every other elicitation source (an MCP server's own form) is free to offer none, and
-    // inventing the key would send the agent a field its schema never mentioned.
-    const customKey = `${key}_custom`;
-    const custom = (properties as Record<string, { type?: string } | undefined>)[customKey];
-    questions.push({
-      key,
-      prompt,
-      options,
-      multi: p.type === 'array',
-      ...(custom?.type === 'string' ? { customKey } : {}),
+  backgroundActive(): boolean {
+    return !this.turnState && this.burstRendering;
+  }
+
+  supportsReconnect(): boolean {
+    return this.reconnectSupported;
+  }
+
+  stopBackground(): boolean {
+    if (this.turnState || !this.burstRendering || !this.followUpState || !this.conn || !this.active) return false;
+    this.cancelledTools = new Set(this.followUpState.state.toolLedger.keys());
+    console.log(`[acp] ${this.conversationId}: stopping background output on request`);
+    void this.conn.agent.notify('session/cancel', { sessionId: this.active.sessionId });
+    flushPendingTools(this.followUpState.state, false);
+    void this.closeFollowUp('stopped');
+    return true;
+  }
+
+  async sideQuestion(input: { prompt: string; sessionToken: string }, handlers: AgentStreamHandlers): Promise<'done' | 'stopped'> {
+    if (!this.active && !this.store?.agentSession(this.conversationId, this.def.id)) {
+      throw new SideQuestionRefused(`Nothing to ask ${this.def.id} about yet: it has no conversation here. Send it a message first.`);
+    }
+    await this.ensureStarted(input.sessionToken);
+    const refusal = sideQuestionRefusal(this.def.id, this.def.harness, this.forkSupport, this.turnState !== undefined);
+    if (refusal) throw new SideQuestionRefused(refusal);
+    const [connection, parent] = [this.conn, this.active];
+    if (!connection || !parent) throw new Error(`agent "${this.def.id}" went away before the question could be asked`);
+    return askOnFork({
+      ctx: connection.agent,
+      parentId: parent.sessionId,
+      cwd: this.cwd,
+      support: this.forkSupport,
+      prompt: this.blocksOf({ prompt: input.prompt }),
+      state: { handlers, lastSegment: 'none', toolLedger: new Map(), toolIndexSeq: 0, subagents: new Map() },
+      translate: translateUpdate,
+      silenceMs: this.turnTimeoutMs,
+      label: this.conversationId,
+      track: (forkId, handle) => {
+        if (handle) this.sideAsks.set(forkId, handle);
+        else this.sideAsks.delete(forkId);
+      },
     });
   }
 
-  if (questions.length === 0) return null;
-  return { message: message || questions[0]!.prompt, questions };
-}
+  stopSideQuestions(): number {
+    for (const handle of this.sideAsks.values()) handle.cancel();
+    return this.sideAsks.size;
+  }
 
-export interface TurnState {
-  handlers: AgentStreamHandlers;
-  /** 'none' start / 'text' streaming body / 'tool' just had a tool. Used for onSegmentBreak. */
-  lastSegment: 'none' | 'text' | 'tool';
-  /** toolCallId → evolving tool state (accumulated across tool_call ↔ tool_call_update). */
-  toolLedger: Map<string, ToolRec>;
-  toolIndexSeq: number;
-  /**
-   * Hand a fresh `configOptions` list back to the session that owns it (`config_option_update`).
-   *
-   * Exists because translateUpdate is a module-level function and the option list lives in the
-   * session closure: without this the footer learned about a mid-session model switch (onModel
-   * fires) while `modelSelector()` kept reporting the old `currentValue` — so a `/model` menu
-   * opened afterwards marked the wrong model as current and opened on the wrong page.
-   *
-   * Optional so the pure translation tests can omit it.
-   */
-  onConfigOptions?(options: SessionConfigOption[] | null | undefined): void;
-  /** Hand a `current_mode_update` back to the session, for the same reason as onConfigOptions. */
-  onModeChanged?(modeId: string): void;
-  /**
-   * Hand a failure record from a `session_info_update` to the session to announce (see
-   * session-failure.ts). A callback for the same reason as onConfigOptions: the notice needs the
-   * agent's id and the session's replay state, and translateUpdate sees neither. Optional, so the
-   * pure translation tests can omit it.
-   */
-  onSessionFailure?(failure: SessionFailure): void;
-  /**
-   * Override for the context-window size (tokens) reported over `usage_update`. When set, ingestUsage
-   * replaces the harness's `size` with this before forwarding — the local-config fix for a harness that
-   * under-reports the window (see AgentDef.contextWindow). Absent = trust the harness's number.
-   */
-  contextWindow?: number;
-  /**
-   * The subagents this session has spawned: the id of the Agent/Task call that started each one →
-   * the name to show on its tools' bubbles (see claudeAttribution).
-   *
-   * Session-scoped, and the same Map in every TurnState the session builds, because a background
-   * subagent outlives the turn that launched it: the spawning call completes the moment the
-   * subagent starts, the turn's toolLedger is cleared when the turn ends, and the subagent's tools
-   * keep arriving in later turns and follow-up bursts. Probed 2026-10-10: the call reported
-   * `completed` at 9.3s, its subagent's first tool arrived at 20.1s.
-   *
-   * Optional so the pure translation tests can omit it; without it every subagent is unnamed.
-   */
-  subagents?: Map<string, string>;
-  /**
-   * agy only: what its text, tools and usage come to, for a harness that writes its own diagnostics
-   * into the message stream and measures its context its own way (agy-acp.ts AgyTurnWatch). Its
-   * presence also means a `Run <tool>` title names agy's own tool, which labels the bubble
-   * (agyAcpToolLabel).
-   */
-  agy?: AgyTurnWatch;
-  /**
-   * The turn was stopped (`/stop`) and has not ended: the harness is still producing output for it.
-   * While this stands, its tool calls are shown rather than dropped as the cancel's wreckage (see
-   * isWreckage), and a call that STARTS now is marked as running after the stop (ToolEvent.afterStop).
-   */
-  stopped?: boolean;
-}
-
-/**
- * One tool's evolving state. In ACP the first tool_call is often pending with title/rawInput not fully
- * streamed, completed by later tool_call_update (the protocol allows update to replace title/kind/
- * rawInput/status). So accumulate the latest known values and defer onToolStart until ready.
- */
-interface ToolRec {
-  index: number;
-  /** The harness's `toolCallId`, carried on both events so the library keeps one row per call. */
-  id: string;
-  title?: string;
-  kind?: string;
-  rawInput?: unknown;
-  startAt: number;
-  /** Whether onToolStart (bubble rendered) was already sent. */
-  started: boolean;
-  /** What that bubble currently says, so a later frame that says something else can correct it. */
-  rendered?: { name: string; preview: string };
-  /** Whether onToolFinish was already sent. */
-  finished: boolean;
-  /** Id of the Agent/Task call whose subagent ran this tool; undefined for the main agent's own. */
-  parent?: string;
-  /** This call is an Agent/Task call: it starts a subagent, whose tools will name it as `parent`. */
-  spawns?: boolean;
-  /** The bubble's name when the harness's own tool name says more than `kind` (agy's; see TurnState.agy). */
-  label?: string;
-  /** First seen after the turn was stopped (TurnState.stopped): the harness started it anyway. */
-  afterStop?: boolean;
-}
-
-/**
- * Hand a `config_option_update` back to the session and re-report the live model.
- *
- * The whole option list goes back, not just the model name: `/model` needs the choices to build a
- * menu, and this notification is the only place a mid-session change to them shows up.
- */
-function reportConfigOptions(u: Extract<SessionUpdate, { sessionUpdate: 'config_option_update' }>, st: TurnState): void {
-  st.onConfigOptions?.(u.configOptions);
-  const model = liveModelName(u.configOptions);
-  if (model) st.handlers.onModel?.(model);
-  // Reported even when undefined, unlike the model: the update is the full option list, so an effort
-  // missing from it is news — `/effort default`, or an opencode switch to a model without variants —
-  // and a footer still showing the old level would be stating something no longer true.
-  st.handlers.onEffort?.(liveEffortName(u.configOptions));
-  // The agent's own settings, likewise reported empty too. This is how a setting the agent locks
-  // mid-conversation (it starts listing only the current value) reaches the strip.
-  st.handlers.onOptions?.(customOptionsOf(u.configOptions));
-}
-
-export function translateUpdate(u: SessionUpdate, st: TurnState): void {
-  switch (u.sessionUpdate) {
-    case 'agent_message_chunk':
-      if (u.content.type === 'image') ingestImage(u, st);
-      else ingestText(u, st);
-      break;
-
-    // A message the person sent mid-turn, as the harness takes it in (agy echoes each one; so does the
-    // opening of every turn, before anything is said). What the agent says next answers it, so it
-    // starts a segment of its own — run on, agy's "…provide its output.6 × 7 = 42" was one paragraph.
-    case 'user_message_chunk':
-      breakBeforeNextText(st);
-      break;
-
-    // tool_call and tool_call_update are handled identically: merge this tool's latest fields into the
-    // ledger, then render based on status / rawInput readiness. Generic across all ACP agents.
-    case 'tool_call':
-    case 'tool_call_update':
-      if (u.toolCallId) ingestTool(st, u.toolCallId, toolFields(u), u._meta);
-      break;
-
-    // Agent reports its available-commands list: normalize to AgentCommand[] for the upper layer,
-    // which feeds the harness PICKERS only — native slash registration is fixed at startup from
-    // config and does not read this (see daemon.ts buildRegisteredSpecs / onAgentCommands).
-    // Sent once per session build (session/new, /load, /resume, /fork) and again on a mid-session
-    // `commands_changed` — e.g. skills discovered as the agent moves into a subdirectory. Never on
-    // prompt(). Each is a full list, so the upper layer just overwrites.
-    // Verified against @agentclientprotocol/claude-agent-acp dist/acp-agent.js, 2026-09-11.
-    case 'available_commands_update': {
-      const cmds = (u.availableCommands ?? []).map((c) => ({
-        name: c.name,
-        description: c.description,
-        hint: c.input?.hint,
-      }));
-      st.handlers.onAvailableCommands?.(cmds);
-      break;
+  async forkFrom(input: { sessionId: string; sessionToken: string }): Promise<void> {
+    if (this.active || this.starting || this.proc) {
+      throw new Error(`agent "${this.def.id}" already has a session here; a fork must be its first`);
     }
-
-    // Live context usage: tokens in context + window size. Both are the harness's own numbers
-    // (claude-agent-acp reads them from the SDK's context tally and learns the real window from the
-    // model's reported capabilities), so the footer never has to guess a limit. Emitted several
-    // times per turn as full snapshots — the consumer keeps the latest. agy's `size` is the model's
-    // window, not where it compacts, so its watch picks the window instead (AgyTurnWatch.usage).
-    case 'usage_update': {
-      ingestUsage(st, u.used, st.agy ? st.agy.usage(u.size) : u.size, u.cost);
-      break;
+    this.forkSeed = input.sessionId;
+    try {
+      await this.ensureStarted(input.sessionToken);
+    } finally {
+      this.forkSeed = undefined;
     }
-
-    // The agent's session config changed (model / mode / effort picker, or a setting of its own).
-    // The model, the effort and the agent's own settings interest us: re-read all three so a
-    // mid-session change to any of them is reflected in the footer and the status strip.
-    case 'config_option_update':
-      reportConfigOptions(u, st);
-      break;
-
-    // The harness moved its own mode (claude, when the person approves leaving plan). Kept by the
-    // session for the permission level's next re-apply; nothing is rendered.
-    case 'current_mode_update':
-      st.onModeChanged?.(u.currentModeId);
-      break;
-
-    // A failure record (retry, advisory, or a failure with no turn), when the session asked for them
-    // (see session-failure.ts). Its re-arming of the silence watchdog is the pump's doing, like any
-    // other update's. This case only decides what to say.
-    //
-    // A `session_info_update` with no record carries the harness's own name for the conversation,
-    // and is ignored on purpose: the gateway names a conversation once from its opening message
-    // (see ConversationRegistry.nameConversation) rather than following a title that keeps moving.
-    case 'session_info_update': {
-      const failure = readSessionFailure(u._meta);
-      if (failure) st.onSessionFailure?.(failure);
-      break;
-    }
-
-    // agent_thought_chunk / plan* / *_update etc.: not rendered.
-    default:
-      break;
-  }
-}
-
-/** The fields of a tool call (or of an update to one) the ledger keeps. */
-function toolFields(u: Extract<SessionUpdate, { sessionUpdate: 'tool_call' | 'tool_call_update' }>): ToolFields {
-  return { title: u.title, kind: u.kind, rawInput: u.rawInput, status: u.status };
-}
-
-interface ToolFields {
-  title?: string | null;
-  kind?: string | null;
-  rawInput?: unknown;
-  status?: string | null;
-}
-
-/**
- * Forward a text chunk into the reply body. Extracted from translateUpdate to keep that switch's
- * complexity within the lint budget.
- */
-function ingestText(u: Extract<SessionUpdate, { sessionUpdate: 'agent_message_chunk' }>, st: TurnState): void {
-  const text = u.content.type === 'text' ? u.content.text : undefined;
-  if (typeof text !== 'string' || text.length === 0) return;
-  // agy's own diagnostic ("⚠ API error (attempt 1) …"), said as a notice rather than as the agent.
-  if (st.agy?.text(text)) return;
-  // The body is the main agent's words. A subagent's text does not reach a client like this one
-  // (see claudeAttribution), but the adapter's streaming path stamps it rather than filtering it, so
-  // should it ever arrive it is kept out of the reply instead of being read as the answer.
-  if (claudeAttribution(u._meta).parent) {
-    console.debug(`[acp] not rendering ${text.length} chars of subagent text into the reply`);
-    return;
-  }
-  if (st.lastSegment === 'tool') st.handlers.onSegmentBreak(); // tool → text boundary
-  st.lastSegment = 'text';
-  st.handlers.onText(text);
-}
-
-/**
- * Forward a picture in the reply (an ACP `image` block) to be shown in the chat. Nothing is checked
- * here but that there is data: the bytes are decoded and sniffed where they are sent (agent-files.ts),
- * which is the one place that has to trust them.
- *
- * A subagent's picture is kept out for the reason its text is (see ingestText): the reply is the main
- * agent's.
- */
-function ingestImage(u: Extract<SessionUpdate, { sessionUpdate: 'agent_message_chunk' }>, st: TurnState): void {
-  if (u.content.type !== 'image') return;
-  const { data, mimeType, uri } = u.content;
-  if (typeof data !== 'string' || data.length === 0) return;
-  if (claudeAttribution(u._meta).parent) {
-    console.debug('[acp] not rendering a subagent picture into the reply');
-    return;
-  }
-  const name = typeof uri === 'string' ? lastPathSegment(uri) : undefined;
-  st.handlers.onImage?.({ data, mimeType: typeof mimeType === 'string' ? mimeType : '', ...(name ? { name } : {}) });
-}
-
-/** The file name at the end of a URI (`file:///tmp/chart.png` → `chart.png`), if it ends in one. */
-function lastPathSegment(uri: string): string | undefined {
-  let pathname = uri;
-  try {
-    pathname = new URL(uri).pathname;
-  } catch {
-    // Not a URL: a bare path, taken as it is.
-  }
-  const last = pathname.split('/').pop();
-  if (!last) return undefined;
-  try {
-    return decodeURIComponent(last);
-  } catch {
-    return last;
-  }
-}
-
-/**
- * Forward a context snapshot, ignoring unusable ones. A zero/absent window would render as a
- * divide-by-zero percentage, so the snapshot is dropped and the footer degrades to "no context
- * segment" rather than a bogus "0%". Extracted from translateUpdate to keep that switch's
- * complexity within the lint budget.
- */
-function ingestUsage(st: TurnState, used: unknown, size: unknown, cost: unknown): void {
-  if (typeof used !== 'number') return;
-  // A local override wins over the harness's window (see AgentDef.contextWindow): the harness
-  // under-reports for models missing from its hardcoded table, so a configured window is the more
-  // accurate number. Fall back to the reported size when no override is set.
-  const window = st.contextWindow ?? size;
-  if (typeof window !== 'number' || window <= 0) return;
-  // Cost rides along only when it is a real number: it is the one field a busy `/usage` quotes
-  // verbatim, so a malformed one is dropped rather than printed as "$NaN".
-  const c = cost as { amount?: unknown; currency?: unknown } | null | undefined;
-  const reported =
-    typeof c?.amount === 'number' && Number.isFinite(c.amount) && typeof c.currency === 'string'
-      ? { cost: { amount: c.amount, currency: c.currency } }
-      : {};
-  st.handlers.onUsage?.({ used, size: window, ...reported });
-}
-
-/** Merge a tool's latest fields, then trigger start / finish per readiness. */
-function ingestTool(st: TurnState, id: string, f: ToolFields, meta?: unknown): void {
-  let rec = st.toolLedger.get(id);
-  if (!rec) {
-    rec = { index: st.toolIndexSeq++, id, startAt: nowMs(), started: false, finished: false };
-    if (st.stopped) rec.afterStop = true;
-    st.toolLedger.set(id, rec);
-    st.agy?.tool();
-  }
-  // Overwrite only with real values (update's title/kind may be null = unchanged).
-  if (typeof f.title === 'string') rec.title = f.title;
-  if (typeof f.kind === 'string') rec.kind = f.kind;
-  if (f.rawInput !== undefined) rec.rawInput = f.rawInput;
-  if (st.agy) {
-    rec.label = agyAcpToolLabel(rec.title, rec.kind) ?? rec.label;
-    // agy's generic MCP call is kind `execute` / title `Bash`; only its input names the server and
-    // the tool (agy-acp.ts agyMcpCall). Named here, once, so finishTool draws the same row.
-    const mcp = agyMcpCall(rec.rawInput);
-    if (mcp) rec.label = agyMcpLabel(mcp);
   }
 
-  // Read before maybeStartTool below, which is where the bubble is drawn: it has to know whose it is.
-  const { parent, spawnsSubagent } = claudeAttribution(meta);
-  if (parent) rec.parent = parent;
-  // Sticky: only the call's early updates carry the flag (the adapter drops it from the result's).
-  if (spawnsSubagent) rec.spawns = true;
-  if (rec.spawns) nameSubagent(st, id, rec);
-
-  const terminal = f.status === 'completed' || f.status === 'failed';
-  // Readiness signal: status reaches in_progress/terminal, or rawInput is non-empty (params streamed).
-  maybeStartTool(st, id, f.status === 'in_progress' || terminal);
-  if (terminal) finishTool(st, id, f.status === 'completed');
-}
-
-/**
- * Who made a session/update, as the `claude` adapter records it in `_meta.claudeCode`:
- *
- * - `parentToolUseId` — on everything a SUBAGENT produces: the id of the Agent/Task call that
- *   spawned it. Without reading it, a subagent's tool calls render exactly like the main agent's,
- *   and a half-hour background run reads as the main agent doing eighty things it never did.
- * - `subagent: true` — on that Agent/Task call itself.
- *
- * Only tools are affected in practice. The adapter keeps a subagent's own text internal unless the
- * client declares ACP `subagents` or `_meta["subagent-transcript"]` (claude-agent-acp 0.81.2
- * dist/acp-agent.js:4549, the `forwardSubagentText` filter), and this client declares neither — so
- * the main agent's relay of what the subagent found is what the user reads, which is the point.
- * Probed 2026-10-10 with a foreground and a background subagent: tools arrived attributed, no
- * subagent text arrived at all. `project-scripts/subagent-output/probe.mjs` reruns it.
- *
- * ⚠️ HYRUM'S LAW: neither field is in the ACP schema. claude-agent-acp 0.81.2 stamps
- * `parentToolUseId` from the SDK's `parent_tool_use_id` in toAcpNotifications (dist/acp-agent.js
- * :7641 for text, :7981 for tools) and sets `subagent` on Agent/Task calls. The contract test in
- * agent-acp.test.ts replays those shapes, so a rename fails there. A regression degrades to bubbles
- * that name no owner — unattributed, never lost. Other harnesses send neither, and are unaffected.
- *
- * Wire data, so every field is checked rather than cast.
- */
-function claudeAttribution(meta: unknown): { parent?: string; spawnsSubagent: boolean } {
-  const cc = isRecord(meta) && isRecord(meta.claudeCode) ? meta.claudeCode : undefined;
-  if (!cc) return { spawnsSubagent: false };
-  const parent = typeof cc.parentToolUseId === 'string' && cc.parentToolUseId ? cc.parentToolUseId : undefined;
-  return { parent, spawnsSubagent: cc.subagent === true };
-}
-
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return !!v && typeof v === 'object' && !Array.isArray(v);
-}
-
-/**
- * Bound on the names a session remembers. One per Agent/Task call, and an id is never reused, so
- * the oldest are the ones whose subagents finished longest ago; a session that spawns more than
- * this many and still hears from the first gets that one's tools marked as an unnamed subagent.
- */
-const MAX_SUBAGENT_NAMES = 64;
-
-/** What a subagent's bubbles say when the call that spawned it was never seen (or forgotten). */
-const UNNAMED_SUBAGENT = 'subagent';
-
-/**
- * Remember the name of the subagent an Agent/Task call starts: its `description`, else the call's
- * title (the adapter mirrors the description there once it has streamed in). Re-run on every
- * update of the call, because the first one arrives before its input has streamed and carries only
- * the placeholder title `Task`.
- */
-function nameSubagent(st: TurnState, id: string, rec: ToolRec): void {
-  if (!st.subagents) return;
-  const name = subagentDescription(rec) || stripCode(rec.title);
-  if (!name) return;
-  if (!st.subagents.has(id) && st.subagents.size >= MAX_SUBAGENT_NAMES) {
-    const oldest = st.subagents.keys().next().value;
-    if (oldest !== undefined) st.subagents.delete(oldest);
+  canFork(): boolean | undefined {
+    return this.forkKnown ? this.forkSupport.fork : undefined;
   }
-  st.subagents.set(id, name);
-}
 
-/** The `description` an Agent/Task call was given: the model's own short label for the job. */
-function subagentDescription(rec: ToolRec): string {
-  const input = isRecord(rec.rawInput) ? rec.rawInput : undefined;
-  return typeof input?.description === 'string' ? input.description.trim() : '';
-}
-
-/** Render the bubble once the tool is ready (see upgradeToolRow for the later frames). force = status advanced, render even if rawInput is still empty. */
-function maybeStartTool(st: TurnState, id: string, force: boolean): void {
-  const rec = st.toolLedger.get(id);
-  if (!rec) return;
-  if (rec.started) {
-    upgradeToolRow(st, rec);
-    return;
+  async ensureSession(sessionToken: string): Promise<void> {
+    await this.ensureStarted(sessionToken);
   }
-  if (!force && !isNonEmptyObject(rec.rawInput)) return; // params not streamed yet, keep waiting for update
-  // An Agent/Task call also waits for its description, the name its subagent's bubbles will carry.
-  // Drawn on the first streamed field instead, it read `{"subagent_type":"general-purpose"}`, and
-  // nothing on screen said which subagent the `↳` lines below it belonged to.
-  if (!force && rec.spawns && !subagentDescription(rec)) return;
-  rec.started = true;
-  if (st.lastSegment === 'text') st.handlers.onSegmentBreak(); // text → tool boundary
-  const evt = toolStartEvent(st, rec);
-  rec.rendered = { name: evt.name, preview: evt.inputPreview };
-  st.handlers.onToolStart(evt);
-  st.lastSegment = 'tool';
-}
 
-/** The row a call would draw now, from everything known about it. */
-function toolStartEvent(st: TurnState, rec: ToolRec): ToolEvent {
-  // agy's `call_mcp_tool` carries the server in its input, not its title; the label names the tool,
-  // so the server and the arguments are the preview (see agyMcpCall).
-  const mcp = st.agy ? agyMcpCall(rec.rawInput) : undefined;
-  return {
-    // name uses the short ACP kind (aligns with emojiMap); command/path detail only in the truncated preview.
-    name: rec.label ?? toolLabel(rec.kind, rec.title),
-    inputPreview:
-      (rec.spawns && subagentDescription(rec)) ||
-      (mcp && [mcp.server, buildInputPreview(mcp.args)].filter(Boolean).join(' ')) ||
-      buildInputPreview(rec.rawInput) ||
-      stripCode(rec.title),
-    input: rec.rawInput,
-    index: rec.index,
-    id: rec.id,
-    // The spawning call always precedes its subagent's first tool, so its name is known by now.
-    agent: rec.parent ? (st.subagents?.get(rec.parent) ?? UNNAMED_SUBAGENT) : undefined,
-    ...(rec.afterStop ? { afterStop: true } : {}),
-  };
-}
-
-/**
- * A call already on screen, whose later frame says something new about it: draw the row again.
- *
- * ── Why a drawn row is not final ────────────────────────────────────────────────────────────────
- *
- * `maybeStartTool` renders as soon as the status advances, which for a harness that announces the
- * call before its parameters is the right trade — a row appears while the tool runs. But "status
- * advanced" can mean only that: CodeBuddy Code opens EVERY call with `{title: "Bash", kind:
- * "other", rawInput: {}}`, so the row is drawn as `⚙️ Tool: "Bash"` — no command, no per-tool
- * emoji — and the parameters stream in on the frames after it, which the old code merged into a
- * record it had already stopped drawing from. Every cbc tool read `Tool: "Bash"` (or
- * `Tool: "ToolSearch"`) for its whole life; the command never appeared. Frames captured on the
- * wire 2026-11-02 by project-scripts/cbc-acp-probe/probe.mjs.
- *
- * So the row is re-emitted whenever its identity changes, and the renderer rewrites that line in
- * place (ToolRenderer.onToolStart, same index). Only the identity: a re-emit for an unchanged row
- * would push an edit through the turn's side-effect chain for nothing.
- */
-function upgradeToolRow(st: TurnState, rec: ToolRec): void {
-  if (rec.finished) return; // its ✓ is the last word; a redraw would race the finish line
-  const evt = toolStartEvent(st, rec);
-  if (rec.rendered?.name === evt.name && rec.rendered.preview === evt.inputPreview) return;
-  rec.rendered = { name: evt.name, preview: evt.inputPreview };
-  st.handlers.onToolStart(evt);
-}
-
-function finishTool(st: TurnState, id: string, ok: boolean): void {
-  const rec = st.toolLedger.get(id);
-  if (!rec || rec.finished) return;
-  // Terminal arrived before any bubble was rendered → force a start so the bubble appears.
-  if (!rec.started) maybeStartTool(st, id, true);
-  rec.finished = true;
-  st.handlers.onToolFinish({
-    name: rec.label ?? toolLabel(rec.kind, rec.title), // same name as onToolStart, so findLine's index fallback stays consistent
-    index: rec.index,
-    id: rec.id,
-    input: rec.rawInput,
-    ok,
-    durationMs: nowMs() - rec.startAt,
-  });
-  // A call that ends after the agent has spoken — a command agy put in the background, finishing
-  // while the turn waits for it (agy-plugin.ts) — puts what comes next in a segment of its own: that
-  // text answers the result. Run on after the words before it, it read "…report its
-  // output.**Background task completed**".
-  breakBeforeNextText(st);
-}
-
-/**
- * Something happened after the agent spoke that its next words answer: start them in a new segment.
- * Only the next text breaks, so nothing said afterwards means nothing split.
- */
-function breakBeforeNextText(st: TurnState): void {
-  if (st.lastSegment === 'text') st.lastSegment = 'tool';
-}
-
-/**
- * Whether the harness has a tool call open — rendered as started, not yet reported terminal.
- *
- * The silence watchdog's one piece of evidence that a quiet turn is working rather than wedged.
- * Reads the same ledger flushPendingTools closes out, so "open" means exactly what the tool bubbles
- * on screen mean.
- */
-function hasOpenToolCall(st: TurnState): boolean {
-  for (const rec of st.toolLedger.values()) {
-    if (rec.started && !rec.finished) return true;
+  private liveTarget(): { ctx: ClientContext; sessionId: string } | undefined {
+    return this.conn && this.active ? { ctx: this.conn.agent, sessionId: this.active.sessionId } : undefined;
   }
-  return false;
-}
 
-/**
- * Turn end: started-but-unfinished close as success; has-params-but-not-started get start+finish;
- * pure pending shells (never ran) skipped.
- *
- * `ok` is false only when the tools were STOPPED rather than left open by a harness that did not
- * report their end — see stopBackground, where the harness's own "failed" update is about to be
- * dropped as wreckage, so this is the only word the bubble will ever get.
- */
-function flushPendingTools(st: TurnState, ok = true): void {
-  for (const [id, rec] of st.toolLedger) {
-    if (rec.finished) continue;
-    if (rec.started || isNonEmptyObject(rec.rawInput)) finishTool(st, id, ok);
+  modelSelector(): ModelSelector | undefined {
+    return this.options.modelSelector();
   }
-  st.toolLedger.clear();
-}
 
-/**
- * ACP `kind` → short display name (short, and aligned with default emojiMap keys to reuse emoji).
- * Falls back to the truncated title when kind is absent. This keeps long content (commands/paths) only
- * in the truncated preview, leaving the bubble in the hermes `emoji shortname: "truncated args"` style.
- */
-export function toolLabel(kind?: string, title?: string): string {
-  // An MCP tool (`mcp__<server>__<tool>`, kind `other`) by its own name — `send_file`, `schedule` —
-  // rather than the bare "Tool" every one of them would otherwise share: a column of identical "Tool"
-  // rows says nothing about what a turn did.
-  const mcp = title ? /^mcp__[^_]+(?:_[^_]+)*?__([A-Za-z0-9_-]+)$/.exec(title.trim()) : null;
-  if (mcp?.[1] && (!kind || kind === 'other')) return mcp[1];
-  const byKind: Record<string, string> = {
-    read: 'Read',
-    edit: 'Edit',
-    delete: 'Delete',
-    move: 'Move',
-    search: 'Grep',
-    execute: 'Bash',
-    fetch: 'WebFetch',
-    think: 'Task',
-    switch_mode: 'Mode',
-    other: 'Tool',
-  };
-  // `other` is the kind every adapter falls back to, so on its own it names nothing. CodeBuddy Code
-  // puts the tool's own name in the title instead — `ToolSearch`, `DeferExecuteTool` — and a bare
-  // identifier there is a name, not a sentence, so it beats the generic "Tool". A descriptive title
-  // ("Update todos") still reads as `Tool: "…"`, which is what it is.
-  const named = stripCode(title);
-  if (kind === 'other' && /^[A-Za-z][A-Za-z0-9_.-]*$/.test(named)) return truncateToolName(named);
-  if (kind && byKind[kind]) return byKind[kind];
-  if (title) return truncateToolName(named);
-  return 'tool';
-}
+  setModel(value: string): Promise<string> {
+    return this.options.setModel(value, this.liveTarget());
+  }
 
-// ───────────────────────── utilities ─────────────────────────
+  effortSelector(): EffortSelector | undefined {
+    return this.options.effortSelector();
+  }
 
-/** Runtime side-effect boundary that may read the clock directly. */
-function nowMs(): number {
-  return Date.now();
-}
+  setEffort(value: string): Promise<string> {
+    return this.options.setEffort(value, this.liveTarget());
+  }
 
-function readReconnectSupport(capabilities: unknown): boolean {
-  if (!capabilities || typeof capabilities !== 'object') return false;
-  const meta = (capabilities as { _meta?: unknown })._meta;
-  if (!meta || typeof meta !== 'object') return false;
-  const fleetherd = (meta as Record<string, unknown>)['fleetherd'];
-  return !!fleetherd && typeof fleetherd === 'object' && (fleetherd as Record<string, unknown>)['reconnectTurn'] === true;
-}
+  sessionOptions(): SessionOption[] | undefined {
+    return this.options.sessionOptions();
+  }
 
-function isNotSentRpcError(err: unknown): boolean {
-  if (!err || typeof err !== 'object') return false;
-  const data = (err as { data?: unknown }).data;
-  return !!data && typeof data === 'object' && (data as Record<string, unknown>)['notSent'] === true;
+  setOption(id: string, value: string): Promise<SessionOption[]> {
+    return this.options.setOption(id, value, this.liveTarget());
+  }
+
+  permissionModes(): SessionModeSelector | undefined {
+    return this.options.permissionModes();
+  }
+
+  async applyPermissions(): Promise<void> {
+    const live = this.liveTarget();
+    if (!live) return;
+    await this.options.reapplyPermissionLevel(live.ctx, live.sessionId);
+  }
+
+  reclaimState(): ReclaimState {
+    if (!this.proc || !this.active) return 'no-child';
+    return this.canResume() ? 'resumable' : 'unresumable';
+  }
+
+  dispose(): void {
+    this.disposed = true;
+    this.disposeChild();
+  }
 }
