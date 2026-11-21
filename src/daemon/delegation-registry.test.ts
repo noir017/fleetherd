@@ -40,6 +40,8 @@ function rig(
     /** The agent's own settings, reported once its session has started; a value in `optionFailure` is refused when set. */
     settings?: SessionOption[];
     optionFailure?: string;
+    /** A session start that never answers: an agent on a host that is down. */
+    hangStart?: boolean;
     store?: ConversationStore;
     onPersonWords?: (id: string, words: PersonWords) => void;
   } = {}
@@ -130,6 +132,7 @@ function rig(
         dispose: () => {},
         ensureSession: async () => {
           ensured.push(conversationId);
+          if (opts.hangStart) await new Promise<void>(() => {});
           started = true;
         },
         modelSelector: () =>
@@ -490,8 +493,9 @@ describe('scheduledChoicesProblem: a sub-task’s model and settings checked bef
   it('names what the agent does offer: its settings, or a setting’s choices with their notes', async () => {
     const r = rig({ settings: ACCOUNT });
     live = r.registry;
+    // Every setting with its values, so one refusal is enough to propose again.
     expect(await r.registry.scheduledChoicesProblem('oc', { options: { acct: 'x' } }, undefined)).toBe(
-      'agent "oc" has no setting "acct"; it has: account (Account), region (Region)'
+      'agent "oc" has no setting "acct"; its settings: account (Account): alice@example.com, bob@example.com (quota used up); region (Region): us, eu'
     );
     expect(await r.registry.scheduledChoicesProblem('oc', { options: { account: 'carol@example.com' } }, undefined)).toBe(
       '"carol@example.com" is not a choice for account on agent "oc"; choose one of: alice@example.com, bob@example.com (quota used up)'
@@ -508,5 +512,40 @@ describe('scheduledChoicesProblem: a sub-task’s model and settings checked bef
     expect(await r.registry.scheduledChoicesProblem('oc', { options: { account: 'a' } }, undefined)).toBe(
       'agent "oc" has no settings of its own, so --option cannot be used with it; drop --option to use the agent\'s defaults'
     );
+  });
+});
+
+describe('agentLists and runningOn: one agent in full (task-agents <id>)', () => {
+  it('reads a fresh session, never the conversation bound to that agent, and callers asking at once share it', async () => {
+    const r = rig({ settings: ACCOUNT });
+    live = r.registry;
+    r.registry.route(inbound('hello', 'own'));
+    await wait();
+    r.ensured.length = 0;
+    const [a, b] = await Promise.all([r.registry.agentLists('cc'), r.registry.agentLists('cc')]);
+    expect(a).toBe(b);
+    expect(r.ensured).toHaveLength(1);
+    expect(r.ensured[0]).toMatch(/^__schedule-model__#cc#/);
+    expect(a.models?.current).toBe('base-model');
+    expect(a.settings?.map((o) => o.id)).toEqual(['account', 'region']);
+    // Done is done: the next call asks again rather than answering from a stale probe.
+    await r.registry.agentLists('cc');
+    expect(r.ensured).toHaveLength(2);
+  });
+
+  it('gives up on a session that never starts, and says so instead of hanging the command', async () => {
+    const r = rig({ hangStart: true });
+    live = r.registry;
+    expect(await r.registry.agentLists('oc')).toEqual({ error: 'no answer in 45s' });
+  });
+
+  it('counts the turns in progress on an agent across conversations', async () => {
+    const r = rig({ hold: true });
+    live = r.registry;
+    r.registry.route(inbound('one', 't1'));
+    r.registry.route(inbound('two', 't2'));
+    await wait();
+    expect(r.registry.runningOn('cc')).toBe(2);
+    expect(r.registry.runningOn('oc')).toBe(0);
   });
 });

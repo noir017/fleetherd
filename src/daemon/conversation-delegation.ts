@@ -5,10 +5,10 @@ import type { ConversationAddress } from '../core/conversation.js';
 import type { SoloOutcome } from '../core/inbound-merger.js';
 import { fallbackTitle } from '../core/title-namer.js';
 import type { PlatformAdapter } from '../platform/adapter.js';
-import type { ConversationId, InboundMessage, SessionOption } from '../types.js';
+import type { ConversationId, InboundMessage, ModelSelector, SessionOption } from '../types.js';
 import type { AgentSession } from './agent.js';
 import { expandHome, resolveAgentCwd } from './agent-common.js';
-import type { ConversationContext } from './conversation-context.js';
+import type { ConversationClock, ConversationContext } from './conversation-context.js';
 import { formatLaneTitle, type ConversationControls } from './conversation-controls.js';
 import type { ConversationTurns } from './conversation-turns.js';
 import { DELEGATE_SENDER, SCHEDULED_SENDER } from './turn-runner.js';
@@ -47,14 +47,26 @@ export interface OpenTaskOptions {
   forward?: { heading: string; text: string };
 }
 
+/** What a session of an agent offers — its models and its own settings — or why it could not be asked. */
+export interface AgentLists {
+  models?: ModelSelector;
+  settings?: SessionOption[];
+  error?: string;
+}
+
+/** How long `agentLists` waits for a session to start: inside the CLI's own 60s (ipc/client.ts). */
+const LISTS_TIMEOUT_MS = 45_000;
+
 /**
  * Work that reaches a conversation from outside it: scheduled runs (daemon/scheduler.ts) and the
- * sub-agents' topics (daemon/delegation.ts) — opening the topic, applying a task's model, handing
- * the text in.
+ * sub-agents' topics (daemon/delegation.ts) — opening the topic, applying a task's model and
+ * settings, handing the text in, and reading what an agent offers.
  */
 export class ConversationDelegation {
   /** Unique per call, so two overlapping model probes for one agent cannot dispose each other's session. */
   private modelProbeSeq = 0;
+  /** `agentLists` calls in flight, by agent: callers asking at once share one session. */
+  private readonly listing = new Map<string, Promise<AgentLists>>();
 
   constructor(
     private readonly ctx: ConversationContext,
@@ -112,20 +124,52 @@ export class ConversationDelegation {
     // `from` is undefined for the web UI's task page, which has no conversation to borrow a session from.
     // Settings are read off a fresh session: one that has run may list only the value it locked (SessionOption).
     const same = from !== undefined && !choice.options && this.ctx.boundAgentOf(from) === agentId;
-    const key = same ? from : `__schedule-model__#${agentId}#${++this.modelProbeSeq}`;
+    const lists = await this.readLists(agentId, same ? from : undefined, (s) => hasListsFor(s, choice));
+    if (lists.error !== undefined) {
+      const what = [choice.model !== undefined && 'models', choice.options && 'settings'].filter(Boolean).join(' and ');
+      return `could not ask agent "${agentId}" for its ${what}: ${lists.error}`;
+    }
+    return choicesProblem(agentId, choice, lists);
+  }
+
+  /**
+   * What a fresh session of `agentId` offers (`task-agents <id>`) — never the caller's, for the
+   * reason scheduledChoicesProblem gives. Callers asking at once share one session; never rejects.
+   */
+  agentLists(agentId: string): Promise<AgentLists> {
+    const asking = this.listing.get(agentId);
+    if (asking) return asking;
+    const p = this.readLists(agentId, undefined, () => false, LISTS_TIMEOUT_MS).finally(() => this.listing.delete(agentId));
+    this.listing.set(agentId, p);
+    return p;
+  }
+
+  /**
+   * `agentId`'s lists off `borrow`'s session, or off a throwaway one disposed afterwards, started
+   * only when `ready` says the session does not hold them yet.
+   */
+  private async readLists(
+    agentId: string,
+    borrow: ConversationId | undefined,
+    ready: (s: AgentSession) => boolean,
+    timeoutMs?: number
+  ): Promise<AgentLists> {
+    const key = borrow ?? `__schedule-model__#${agentId}#${++this.modelProbeSeq}`;
     const session = this.ctx.agents.getOrCreate(key, agentId);
     try {
-      if (session.ensureSession && !hasListsFor(session, choice)) {
+      if (session.ensureSession && !ready(session)) {
         try {
-          await session.ensureSession(this.ctx.tokens.tokenFor(key));
+          const started = session.ensureSession(this.ctx.tokens.tokenFor(key));
+          await (timeoutMs === undefined ? started : within(started, timeoutMs, this.ctx.clock));
         } catch (e) {
-          const what = [choice.model !== undefined && 'models', choice.options && 'settings'].filter(Boolean).join(' and ');
-          return `could not ask agent "${agentId}" for its ${what}: ${e instanceof Error ? e.message : String(e)}`;
+          return { error: e instanceof Error ? e.message : String(e) };
         }
       }
-      return choicesProblem(agentId, choice, session);
+      const models = session.modelSelector?.();
+      const settings = session.sessionOptions?.();
+      return { ...(models ? { models } : {}), ...(settings ? { settings } : {}) };
     } finally {
-      if (!same) {
+      if (!borrow) {
         this.ctx.agents.dispose(key);
         this.ctx.tokens.release(key);
       }
@@ -363,10 +407,10 @@ function hasListsFor(session: AgentSession, choice: TaskChoice): boolean {
   return (choice.model === undefined || Boolean(session.modelSelector?.())) && (!choice.options || Boolean(session.sessionOptions?.()));
 }
 
-function choicesProblem(agentId: string, choice: TaskChoice, session: AgentSession): string | undefined {
+function choicesProblem(agentId: string, choice: TaskChoice, lists: AgentLists): string | undefined {
   return (
-    (choice.model !== undefined ? modelProblem(agentId, choice.model, session.modelSelector?.()?.options) : undefined) ??
-    (choice.options ? optionsProblem(agentId, choice.options, session.sessionOptions?.()) : undefined)
+    (choice.model !== undefined ? modelProblem(agentId, choice.model, lists.models?.options) : undefined) ??
+    (choice.options ? optionsProblem(agentId, choice.options, lists.settings) : undefined)
   );
 }
 
@@ -387,12 +431,32 @@ function optionsProblem(agentId: string, options: Record<string, string>, offere
   for (const [id, value] of Object.entries(options)) {
     const setting = settings.find((o) => o.id === id);
     if (!setting) {
-      return `agent "${agentId}" has no setting "${id}"; it has: ${settings.map((o) => `${o.id} (${o.name})`).join(', ')}`;
+      return `agent "${agentId}" has no setting "${id}"; its settings: ${settings.map((o) => `${o.id} (${o.name}): ${choicesOf(o)}`).join('; ')}`;
     }
     if (!setting.options.some((c) => c.value === value)) {
-      const choices = setting.options.map((c) => (c.description ? `${c.value} (${c.description})` : c.value));
-      return `"${value}" is not a choice for ${id} on agent "${agentId}"; choose one of: ${choices.join(', ')}`;
+      return `"${value}" is not a choice for ${id} on agent "${agentId}"; choose one of: ${choicesOf(setting)}`;
     }
   }
   return undefined;
+}
+
+function choicesOf(setting: SessionOption): string {
+  return setting.options.map((c) => (c.description ? `${c.value} (${c.description})` : c.value)).join(', ');
+}
+
+/** `p`, or a rejection after `ms`. */
+function within<T>(p: Promise<T>, ms: number, clock: ConversationClock): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const cancel = clock.schedule(() => reject(new Error(`no answer in ${Math.round(ms / 1000)}s`)), ms);
+    p.then(
+      (v) => {
+        cancel();
+        resolve(v);
+      },
+      (e: unknown) => {
+        cancel();
+        reject(e);
+      }
+    );
+  });
 }

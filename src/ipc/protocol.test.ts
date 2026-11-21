@@ -42,6 +42,7 @@ describe('parseIpcRequest — valid requests round-trip', () => {
     { kind: 'schedule-list', id: 'a1b2c3' },
     { kind: 'schedule-op', id: 'a1b2c3', op: 'remove' },
     { kind: 'schedule-op', id: 'a1b2c3', op: 'run', waitMs: MAX_RUN_WAIT_MS },
+    { kind: 'task-agents', agent: 'gt' },
     { kind: 'task-new', text: 'go' },
     { kind: 'task-new', agent: 'cc', text: 'go', model: 'fast-model', cwd: '/tmp', title: 'part' },
     { kind: 'task-new', agent: 'gt', text: 'go', model: 'fast-model', options: { account: 'alice@example.com', region: 'eu' } },
@@ -121,6 +122,7 @@ describe('parseIpcRequest — rejects malformed / hostile input', () => {
     ['schedule-edit empty prompt', { token: TOKEN, action: { kind: 'schedule-edit', id: 'a', prompt: '' } }],
     // Task commands are strict too, and their bounds are real.
     ['task-new empty agent', { token: TOKEN, action: { kind: 'task-new', agent: '', text: 'x' } }],
+    ['task-agents empty agent', { token: TOKEN, action: { kind: 'task-agents', agent: '' } }],
     ['task-new empty model', { token: TOKEN, action: { kind: 'task-new', text: 'x', model: '' } }],
     ['task-new empty options', { token: TOKEN, action: { kind: 'task-new', text: 'x', options: {} } }],
     ['task-new option with an empty key', { token: TOKEN, action: { kind: 'task-new', text: 'x', options: { '': 'a' } } }],

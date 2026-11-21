@@ -245,7 +245,8 @@ const IpcActionSchema = z.discriminatedUnion('kind', [
   // Sub-agents (daemon/delegation.ts). None takes a channelId: they act from the asking conversation
   // on the topics it opened, each named as `topic`, and the daemon refuses any other. Bounds are
   // generous but present — `text` is a whole task, written for an agent that has seen nothing else.
-  z.object({ kind: z.literal('task-agents') }).strict(),
+  /** With `agent`, that one agent in full, read off a session started to ask it (TaskAgentDetail). */
+  z.object({ kind: z.literal('task-agents'), agent: z.string().min(1).max(100).optional() }).strict(),
   z.object({ kind: z.literal('task-list'), limit: z.number().int().positive().max(200).optional() }).strict(),
   z
     .object({
@@ -454,7 +455,7 @@ export type IpcAction =
       again?: boolean;
     }
   | { kind: 'schedule-op'; id: string; op: 'remove' | 'pause' | 'resume' | 'run'; waitMs?: number }
-  | { kind: 'task-agents' }
+  | { kind: 'task-agents'; agent?: string }
   | { kind: 'task-list'; limit?: number }
   | {
       kind: 'task-new';
@@ -696,6 +697,28 @@ export interface TaskAgentRow {
 /** Response body for task-agents. */
 export interface TaskAgentsResult {
   agents: TaskAgentRow[];
+}
+
+/**
+ * Response body for `task-agents <id>`: the row, what decides whether to hand it work now, and what
+ * `task-new --model` / `--option` can name — read off a fresh session, since one that has run may
+ * list only the setting value it locked. Flat rows, so each list prints as one table.
+ */
+export interface TaskAgentDetail {
+  agent: TaskAgentRow & {
+    /** Its `permissions` level; '' when unset. `plan`, `ask` and `edits` put its requests to the person. */
+    permissions: string;
+    /** Turns in progress on this agent now, across the gateway. */
+    running: number;
+    /** It hit a usage limit and is waiting it out. */
+    cooling: boolean;
+  };
+  /** `default` marks the one a sub-task runs on without `--model`. */
+  models: Array<{ value: string; name: string; default: boolean }>;
+  /** One row per value of each setting (`id`, labelled `label`); `note` is the agent's own word on it. */
+  settings: Array<{ id: string; label: string; value: string; name: string; note: string; default: boolean }>;
+  /** Why the lists are empty: the session to read them from did not start. */
+  error?: string;
 }
 
 /**

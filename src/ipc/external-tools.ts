@@ -53,7 +53,7 @@ interface TasksAction {
 
 const TASKS_ACTIONS = {
   open: { params: ['title'] },
-  agents: { command: 'task-agents', params: [] },
+  agents: { command: 'task-agents', params: ['agent'] },
   new: { command: 'task-new', params: ['topic', 'text', 'agent', 'cwd', 'title', 'model', 'option'] },
   list: { command: 'tasks', params: ['topic', 'limit'] },
   status: { command: 'task-status', params: ['topic'] },
@@ -71,7 +71,7 @@ const TASKS_ACTION_NAMES = Object.keys(TASKS_ACTIONS) as TasksActionName[];
 const TASKS_PARAMS: Record<string, { description: string; type?: 'boolean' }> = {
   action: {
     description:
-      'open: a topic of your own in the web UI to propose sub-tasks in (returns its topic id). agents: who can take a sub-task. ' +
+      'open: a topic of your own in the web UI to propose sub-tasks in (returns its topic id). agents: who can take a sub-task; with agent, that one in full. ' +
       'new: propose one sub-task under your topic. list: with topic, its sub-tasks; without, your topics. ' +
       "status / read / stop: one sub-task, by the topic id list printed.",
   },
@@ -80,7 +80,10 @@ const TASKS_PARAMS: Record<string, { description: string; type?: 'boolean' }> = 
       'new, list: the topic id open returned. status, read, stop: a sub-task\'s topic id, as list prints it (web:main/3a9f0c12).',
   },
   text: { description: 'new: the whole task. The agent sees nothing else — say the goal, the constraints and how to tell it is done.' },
-  agent: { description: 'new: who does the work, an id from agents (required).' },
+  agent: {
+    description:
+      'agents: one agent in full — its models, every setting with its values and notes, how busy it is (it is started to ask). new: who does the work, an id from agents (required).',
+  },
   cwd: { description: 'new: where it starts on that agent\'s machine: a directory name from agents, or an absolute path.' },
   title: { description: 'open: the topic\'s name. new: the sub-task topic\'s name (default: named from text).' },
   model: { description: 'new: the model it runs on, from that agent\'s model list (default: its configured model).' },

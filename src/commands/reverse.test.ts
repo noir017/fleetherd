@@ -152,6 +152,37 @@ describe('task-read output', () => {
   });
 });
 
+describe('task-agents output', () => {
+  const detail = {
+    agent: { id: 'gt', harness: 'custom', where: 'far', here: false, model: '', root: '/w', dirs: ['a', 'b'], permissions: 'ask', running: 2, cooling: true },
+    models: [
+      { value: 'base', name: 'Base', default: true },
+      { value: 'fast', name: 'Fast', default: false },
+    ],
+    settings: [
+      { id: 'account', label: 'Account', value: 'alice@example.com', name: 'Alice', note: '', default: true },
+      { id: 'account', label: 'Account', value: 'bob@example.com', name: 'Bob', note: 'quota used up', default: false },
+    ],
+  };
+
+  it('prints one agent in full as tables a model reads at a glance, and the list as before', () => {
+    const out = renderResult({ kind: 'task-agents', agent: 'gt' }, detail).stdout;
+    expect(out).toContain('dirs: "a, b"');
+    expect(out).toContain('models[2]{value,name,default}:');
+    expect(out).toContain('settings[2]{id,label,value,name,note,default}:');
+    expect(out).toContain('account,Account,bob@example.com,Bob,quota used up,false');
+    expect(out).toContain('task-new --agent <id> [--model <value>] [--option <id>=<value>');
+    expect(out).not.toContain('error');
+    const list = renderResult({ kind: 'task-agents' }, { agents: [detail.agent] }).stdout;
+    expect(list).toContain('here=true: on the same machine as you');
+  });
+
+  it('says why the lists are empty when the agent could not be asked', () => {
+    const out = renderResult({ kind: 'task-agents', agent: 'gt' }, { ...detail, models: [], settings: [], error: 'no answer in 45s' }).stdout;
+    expect(out).toContain('error: no answer in 45s');
+  });
+});
+
 describe('sessions list output', () => {
   const row = (id: number, key: string, lastAt = '2026-11-05T00:00:00.000Z'): SessionListResult['sessions'][number] => ({
     id,

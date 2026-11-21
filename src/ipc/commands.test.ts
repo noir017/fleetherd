@@ -130,6 +130,13 @@ describe('task commands', () => {
     expect(() => spec('task-verdict').build(['maybe'], {})).toThrow(/pass, nits or changes/);
   });
 
+  it('task-agents lists every agent, or one in full when it names one', () => {
+    expect(spec('task-agents').usage).toBe('task-agents [agent]');
+    expect(spec('task-agents').build([], {})).toEqual({ kind: 'task-agents' });
+    expect(spec('task-agents').build(['gt'], {})).toEqual({ kind: 'task-agents', agent: 'gt' });
+    expect(() => spec('task-agents').build([], { channel: 'web:main' })).toThrow(/--channel does not apply/);
+  });
+
   it('parses task-new --option as key=value pairs, comma-separated and repeatable', () => {
     const flag = spec('task-new').options.find((o) => o.flags.startsWith('--option'))!;
     const parse = flag.parse as (v: string, prev?: Record<string, string>) => Record<string, string>;

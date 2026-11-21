@@ -498,9 +498,13 @@ Do not weaken these without saying so explicitly in the PR:
      are recorded by platform and address (`external-topics.json` v2), never by conversation id,
      so a `/reload` that changes `session.scope` does not lose them, and an external call carries
      that address all the way down instead of deriving ownership from a conversation key.
-   It reaches no host: the entrance runs in the daemon and touches only the skill library and the
-   sub-agent commands. Do not add a tool to it that writes, sends into a running turn, or starts
-   anything without the card; do not let it share a credential or a port with the web UI.
+   It runs no turn and writes nothing on a host: the entrance runs in the daemon and touches only the
+   skill library and the sub-agent commands. The one way it reaches an agent's machine is a read —
+   `agents` with an agent, and `new` with a model or settings, start a throwaway session of that agent
+   to read its lists, run no prompt in it, and dispose of it (`ConversationDelegation.readLists`;
+   for `agents`, one at a time per agent however often it is asked). Do not add a tool to it that
+   writes, sends into a running turn, or starts anything without the card; do not let it share a
+   credential or a port with the web UI.
 
 ## Adding things
 

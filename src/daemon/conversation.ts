@@ -44,6 +44,7 @@ import type {
 } from './conversation-context.js';
 import { ConversationControls } from './conversation-controls.js';
 import {
+  type AgentLists,
   ConversationDelegation,
   type OpenTaskOptions,
   type ScheduledConversationOptions,
@@ -849,6 +850,17 @@ export class ConversationRegistry {
 
   scheduledChoicesProblem(agentId: string, choice: TaskChoice, from: ConversationId | undefined): Promise<string | undefined> {
     return this.delegation.scheduledChoicesProblem(agentId, choice, from);
+  }
+
+  agentLists(agentId: string): Promise<AgentLists> {
+    return this.delegation.agentLists(agentId);
+  }
+
+  /** Turns in progress on `agentId` now, across every conversation. */
+  runningOn(agentId: string): number {
+    let n = 0;
+    for (const state of this.conversations.values()) if (state.agentId === agentId && !state.merger.isIdle()) n++;
+    return n;
   }
 
   applyScheduledModel(key: ConversationId, platform: string, agentId: string, model: string): Promise<string | undefined> {

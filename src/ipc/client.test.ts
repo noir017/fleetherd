@@ -19,6 +19,11 @@ describe('clientTimeoutFor', () => {
     expect(clientTimeoutFor({ kind: 'pod-add', name: 'laptop', ssh: 'user@192.0.2.9:10022', hostKey: 'ssh-ed25519 AAAA' })).toBe(60_000);
   });
 
+  it('gives task-agents <id> the same, since it starts that agent to ask; the list stays on the default', () => {
+    expect(clientTimeoutFor({ kind: 'task-agents', agent: 'gt' })).toBe(60_000);
+    expect(clientTimeoutFor({ kind: 'task-agents' })).toBeUndefined();
+  });
+
   it('gives a skills write the repository round trip, and leaves its reads on the default', () => {
     // The write answers only after the skills repository has been pulled and the commit pushed;
     // 19 of 55 writes in a week timed out at 10 s after the write had already landed.
