@@ -1,10 +1,22 @@
 import { defineConfig } from 'vitest/config';
 
+// Vitest 2.1.9 reads `poolOptions.forks.isolate` from the root config when creating Tinypool.
+// Keep `isolate: false` for fast normal runs, but switch to `isolate: true` under `--coverage`
+// because calling `Profiler.stopPreciseCoverage()` between files on a reused worker strips V8
+// block coverage for cached modules (see vitest.workspace.ts for repro).
+const withCoverage = process.argv.some(
+  (arg) =>
+    arg === '--coverage' ||
+    arg === '--coverage.enabled' ||
+    /^--coverage(?:\.enabled)?=(?:true|1)$/i.test(arg)
+);
+
 export default defineConfig({
   test: {
     // Most tests use dependency injection rather than `vi.mock()`; isolate only the few that need it
     // (see vitest.workspace.ts) to avoid rebuilding module graphs 240+ times.
-    isolate: false,
+    isolate: withCoverage,
+    poolOptions: { forks: { isolate: withCoverage } },
     // Run only colocated unit tests: src/**, plus the release scripts' pure helpers.
     include: ['src/**/*.test.ts', 'scripts/**/*.test.mjs'],
     // A throwaway HOME per test file: see the file for what reached the real one.

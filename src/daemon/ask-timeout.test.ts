@@ -41,6 +41,8 @@ const ONE_QUESTION: AgentElicitation = {
   ],
 };
 
+const daemons: Daemon[] = [];
+
 function rig() {
   const sent: string[] = [];
   const buttonSends: Array<{ text: string; buttons: Array<{ id: string; label: string }>; opts?: { kind?: string } }> = [];
@@ -84,7 +86,7 @@ function rig() {
       reaction: true,
       reply: true,
       slashCommands: true,
-      typing: true,
+      typing: false,
       maxMessageLength: 4096,
     },
     sendMessage: async (address: { channel: string }, text: string) => {
@@ -112,6 +114,7 @@ function rig() {
     addReaction: async () => {},
     startTyping: async () => {},
     stopTyping: async () => {},
+    stop: async () => {},
     measureRendered: (t: string) => t.length,
     // Both present, so `commandSurface(adapter).nested` is true and task-new can reach putUp —
     // which is where the confirmation card's kind is decided.
@@ -125,6 +128,7 @@ function rig() {
     agents,
     '/tmp/aa-ask-timeout-test.sock'
   );
+  daemons.push(daemon);
 
   let n = 0;
   return {
@@ -164,7 +168,8 @@ describe('ask question reminders, timeouts, and session reclaim', () => {
     vi.useFakeTimers();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    for (const d of daemons.splice(0)) await d.stop();
     vi.useRealTimers();
   });
 

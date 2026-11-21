@@ -46,7 +46,10 @@ beforeEach(() => {
   // The transcript log is written under configDir(); never let a test reach the operator's real one.
   vi.stubEnv('FLEETHERD_CONFIG_DIR', dir);
 });
-afterEach(() => {
+const daemons: Daemon[] = [];
+
+afterEach(async () => {
+  for (const d of daemons.splice(0)) await d.stop();
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
 });
@@ -122,10 +125,12 @@ function rig(opts: { voice?: boolean } = {}) {
     removeReaction: async () => {},
     startTyping: async () => {},
     stopTyping: async () => {},
+    stop: async () => {},
     measureRendered: (t: string) => t.length,
   } as unknown as PlatformAdapter;
 
   const daemon = new Daemon(cfg, new Map([['tg', platform]]), agents, path.join(dir, 'd.sock'));
+  daemons.push(daemon);
   const d = daemon as unknown as { onInbound(m: InboundMessage): void; onButton(ev: ButtonInteraction): void };
   let n = 0;
   const voice = async (): Promise<void> => {

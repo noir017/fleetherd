@@ -210,7 +210,9 @@ text-only affordances like the terminal's `>_` stay text.
 
 Vitest, colocated: `foo.ts` is tested by `foo.test.ts` in the same directory. ~5540
 tests across ~242 files. Most tests run with `isolate: false` (`vitest.workspace.ts`); add any new
-test that uses `vi.mock()` to `ISOLATED_TESTS` there. The Go half (`remote/`) has its own `go test`,
+test that uses `vi.mock()` to `ISOLATED_TESTS` there. Coverage runs (`--coverage`) switch `unit`
+back to `isolate: true` because Vitest 2.1.9 strips V8 block coverage on reused workers. The Go
+half (`remote/`) has its own `go test`,
 colocated the same way.
 
 ```bash

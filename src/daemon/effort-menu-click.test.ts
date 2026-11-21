@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { Daemon } from './daemon.js';
 import { parseConfig, type Config } from '../config/schema.js';
 import type { PlatformAdapter } from '../platform/adapter.js';
@@ -18,6 +18,11 @@ const CONVERSATION = { platform: 'tg', channel: 'c1', kind: 'direct' as const, u
 /** What Telegram actually reports on a click: the callback_query id, not a message id. */
 const CALLBACK_QUERY_ID = '4242424242424242';
 const MENU_MSG = 'menu-msg-id';
+const daemons: Daemon[] = [];
+
+afterEach(async () => {
+  for (const d of daemons.splice(0)) await d.stop();
+});
 
 function config(access?: string[]): Config {
   const parsed = parseConfig({
@@ -117,10 +122,12 @@ function rig(opts: RigOptions = {}) {
     addReaction: async () => {},
     startTyping: async () => {},
     stopTyping: async () => {},
+    stop: async () => {},
     measureRendered: (t: string) => t.length,
   } as unknown as PlatformAdapter;
 
   const daemon = new Daemon(config(opts.access), new Map([['tg', platform]]), agents, '/tmp/aa-effort-menu-test.sock');
+  daemons.push(daemon);
   const d = daemon as unknown as {
     onInbound(m: InboundMessage): void;
     onButton(ev: ButtonInteraction): void;

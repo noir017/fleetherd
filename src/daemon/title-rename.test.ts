@@ -41,7 +41,9 @@ const CONVERSATION = {
 const LLM = { baseUrl: 'http://namer.test/v1', apiKey: 'k', model: 'flash' };
 
 const tmpDirs: string[] = [];
-afterEach(() => {
+const daemons: Daemon[] = [];
+afterEach(async () => {
+  for (const d of daemons.splice(0)) await d.stop();
   for (const d of tmpDirs.splice(0)) rmSync(d, { recursive: true, force: true });
   vi.unstubAllGlobals();
 });
@@ -171,6 +173,7 @@ function rig(
     addReaction: async () => {},
     startTyping: async () => {},
     stopTyping: async () => {},
+    stop: async () => {},
     measureRendered: (t: string) => t.length,
   } as unknown as PlatformAdapter;
 
@@ -191,6 +194,7 @@ function rig(
     '/tmp/aa-title-rename-test.sock',
     store
   );
+  daemons.push(daemon);
   const d = daemon as unknown as { onInbound(m: InboundMessage): void };
 
   let n = 0;

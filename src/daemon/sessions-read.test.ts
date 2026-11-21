@@ -19,8 +19,10 @@ import type { IpcAction } from '../ipc/protocol.js';
  */
 
 const dirs: string[] = [];
+const daemons: Daemon[] = [];
 
-afterEach(() => {
+afterEach(async () => {
+  for (const d of daemons.splice(0)) await d.stop();
   for (const dir of dirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
 });
 
@@ -50,6 +52,7 @@ describe('sessions read over the daemon', () => {
       routing: { default: 'cc' },
     });
     const daemon = new Daemon(cfg, new Map(), factory, path.join(dir, 'd.sock'), store, undefined, undefined, history);
+    daemons.push(daemon);
     const query = (
       daemon as unknown as { handleSessionsQuery(action: IpcAction): unknown }
     ).handleSessionsQuery.bind(daemon);
@@ -88,6 +91,7 @@ describe('sessions read over the daemon', () => {
       routing: { default: 'cc' },
     });
     const daemon = new Daemon(cfg, new Map(), factory, path.join(dir, 'd.sock'), store, undefined, undefined, history);
+    daemons.push(daemon);
     const query = (
       daemon as unknown as { handleSessionsQuery(action: IpcAction): unknown }
     ).handleSessionsQuery.bind(daemon);
