@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { BUNDLED_SKILLS, allSkillDirs, bundledSkillDir, ensureSkillLink, linkSkill, removeLegacySkillLink, removeSkillLink, skillHomes } from './skill-link.js';
+import { BUNDLED_SKILLS, allSkillDirs, bundledSkillDir, ensureSkillLink, linkSkill, removeLegacySkillLink, removeSkillLink, skillHomes, skillReaders } from './skill-link.js';
 
 /**
  * The skill link writes into SHARED directories (the operator's own `~/.claude/skills`), so these
@@ -50,6 +50,14 @@ describe('skillHomes', () => {
     expect(allSkillDirs('/h').sort()).toEqual(
       ['/h/.agents/skills', '/h/.claude/skills', '/h/.codebuddy/skills', '/h/.gemini/config/skills'].sort()
     );
+  });
+
+  it('names who reads each directory, one link serving them all', () => {
+    expect(skillReaders('/h/.claude/skills', '/h')).toEqual(['claude']);
+    expect(skillReaders('/h/.agents/skills', '/h')).toEqual(['codex', 'opencode']);
+    expect(skillReaders('/h/.gemini/config/skills', '/h')).toEqual(['agy']);
+    expect(skillReaders('/h/.codebuddy/skills', '/h')).toEqual(['codebuddy']);
+    expect(skillReaders('/elsewhere', '/h')).toEqual([]);
   });
 });
 

@@ -72,6 +72,15 @@ describe('tools/list', () => {
     for (const t of tools) expect(t.inputSchema.type).toBe('object');
   });
 
+  it('marks every native tool to load up front, not behind Claude Code\'s ToolSearch', async () => {
+    const r = await result(req('tools/list'));
+    const tools = r.tools as { name: string; _meta?: Record<string, unknown> }[];
+    for (const t of tools) expect(t._meta, t.name).toEqual({ 'anthropic/alwaysLoad': true });
+    // Survives the wire as JSON, where a harness reads it.
+    const wire = JSON.parse(JSON.stringify(await handleMcpMessage(req('tools/list'), deps()))) as JsonRpcResponse;
+    expect((wire.result as { tools: { _meta: unknown }[] }).tools[2]!._meta).toEqual({ 'anthropic/alwaysLoad': true });
+  });
+
   it('ends the skills tool\'s description with what the library holds, asked of the daemon', async () => {
     const d = deps({ ok: true, data: { total: 9, library: 7, categories: [{ name: '运维', count: 6 }, { name: 'other', count: 3 }] } });
     const r = await result(req('tools/list'), d);
@@ -183,6 +192,12 @@ describe('libraryLine', () => {
 
   it('says nothing when no library skill reaches this agent', () => {
     expect(libraryLine({ total: 2, library: 1, categories: [{ name: '运维', count: 2, library: [] }] })).toBe('');
+  });
+
+  it('takes a lower name limit from a caller with less room, and 0 for counts alone', () => {
+    expect(libraryLine(named(3), 2)).toBe('In the library: other 3.');
+    expect(libraryLine(named(3), 0)).toBe('In the library: other 3.');
+    expect(libraryLine(named(0), 0)).toBe('');
   });
 });
 

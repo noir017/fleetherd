@@ -18,6 +18,19 @@ All notable changes to this project are documented here. The format is based on
   unambiguous 8-hex-character topic suffixes (e.g. `aa1b2724` matching `web#main#aa1b2724` or
   `web:main/aa1b2724`), matching `task-read` ergonomics; ambiguous suffixes fail loudly with all
   matching `#id (key)` candidates.
+- **Every agent can see the skill library's names on its first turn.** The names were only at the end
+  of the `skills` tool's description, and most agents never read that before starting: Claude Code
+  defers MCP tools behind its ToolSearch, and Codex, OpenCode, Antigravity and CodeBuddy do not show
+  a deferred tool's description at all. Two changes, one line: the three native tools now carry
+  `_meta["anthropic/alwaysLoad"]: true`, which Claude Code (2.1.330, measured) honours by loading
+  them up front, and the bundled `fleetherd` skill — which every harness lists before the first turn —
+  ends its description with the same `In the library: …` line, rendered per skill directory from
+  the library skills that reach every harness reading it on that machine. The package's
+  `skill/SKILL.md` is never edited: the copy lives in `~/.fleetherd/bundled/` (on a host, in that
+  version's own directory), is rewritten only when the line changes, and stays as shipped when the
+  library has nothing for that machine. The rewrite is checked by parsing it back as YAML, and steps
+  down to counts, then to no line, rather than pass the Agent Skills spec's 1,024-character
+  description.
 
 ### Changed
 
@@ -30,6 +43,10 @@ All notable changes to this project are documented here. The format is based on
   works with any `--role` or without `--role` to return the newest `n` matching messages (oldest
   first, matching `--limit`, while keeping `--role tool --tail <n>` unchanged). Fixed `task-read
   --tail <n>` missing its integer parser on the CLI so `--tail 20` is no longer silently dropped.
+- **A skill search that finds nothing names what there is.** It answered with category counts
+  (`the library has: 运维 6, 开发 2`), which told an agent there was something but not what to ask
+  for. It now answers with the same line as the tool's description — the library skills that reach
+  the asking agent, or the external caller, by name, and counts only past 40 names.
 
 ## [3.28.1] - 2026-11-22
 

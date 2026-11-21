@@ -115,8 +115,16 @@ async function listTools(deps: McpDeps): Promise<McpTool[]> {
     name: t.name,
     description: t.name === 'skills' && library ? `${t.description} ${library}` : t.description,
     inputSchema: toolInputSchema(t),
+    _meta: ALWAYS_LOAD,
   }));
 }
+
+/**
+ * Claude Code defers MCP tools behind ToolSearch, so the first turn would see neither these tools nor
+ * the library line; it loads a tool up front when `_meta["anthropic/alwaysLoad"] === true` (2.1.330,
+ * measured). Every native tool is one an agent must know of before it starts (ipc/tools.ts).
+ */
+const ALWAYS_LOAD: Readonly<Record<string, unknown>> = { 'anthropic/alwaysLoad': true };
 
 /**
  * tools/call. An unknown tool is a protocol error (the spec's -32602), but everything after that

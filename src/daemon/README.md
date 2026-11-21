@@ -67,7 +67,9 @@ session id, agy's conversation id). One conversation holds one session *per agen
 | `restart-drain.ts` | A SIGTERM with turns (an agent's background output counted as one) or scheduled runs in progress: the bounded wait for them before the daemon stops (`Daemon.beginDrain` refuses new turns and holds the scheduler meanwhile) |
 | `reverse-cli-shim.ts` | Guarantees `fleetherd` is on the agent's PATH; `selfInvocation` — how to re-run this CLI, shared with the tool server entry |
 | `agy-plugin.ts` | Links the bundled agy plugin (`agy-plugin/`: a Stop hook that keeps a turn open while a background command runs) into `~/.gemini/config/plugins` |
-| `skill-link.ts` | Links the bundled skills (`fleetherd`, `super`) into the skill directories the harnesses read (`~/.claude/skills`, `~/.agents/skills`, `~/.gemini/config/skills`) |
+| `skill-link.ts` | Links the bundled skills (`fleetherd`, `super`) into the skill directories the harnesses read (`~/.claude/skills`, `~/.agents/skills`, `~/.gemini/config/skills`); `fleetherd` through its rendered copy in `~/.fleetherd/bundled/<readers>` |
+| `bundled-skill.ts` | The `fleetherd` skill rendered for one skill directory: the library skills reaching every harness that reads it (`ipc/tools.ts` libraryLine) appended to the frontmatter description, checked by parsing it back as YAML |
+| `skill-copy.ts` | Keeping a directory of the gateway's equal to a map of files, writing only what differs — the managed skills' copies and the bundled skill's |
 | `instructions.ts` | The operator's instructions (`<configDir>/instructions/`: `common.md` + one file per kind of agent), composed and linked into each harness's own user-level instruction file (`~/.codex/AGENTS.md` …) — the per-harness evidence is in its header |
 | `instruction-imports.ts` | An agent's OWN instruction files, per harness, in one table (`harnessSources`): what each reads besides the delivered file — rules directories, `@path` / `@[label](path)` references and how deep they go, opencode's `instructions` list, codex's override — with the evidence |
 | `instructions-panel.ts` | The web UI's instruction editor: the gateway's files by name, an agent's own files walked on its machine for every request, a checked write, and a save of a global file placed at once on every machine (invariant 10) |
@@ -1632,8 +1634,11 @@ What replaced it:
   for claude, `~/.agents/skills` for codex and opencode, `~/.gemini/config/skills` for agy — each
   probed by asking the model what it sees, because a directory a harness documents is not
   necessarily one it reads (agy's own help names `~/.gemini/antigravity-cli/skills`, and a skill
-  there never reached the model). The evidence is in the file header. A symlink into the installed package, so it is only on machines that run the
-  daemon and always the running version's own. Linked only once the harness's own config
+  there never reached the model). The evidence is in the file header. `super` is a symlink into the installed package; `fleetherd` a symlink to
+  a copy rendered from it at every spawn with the library line in its description
+  (`bundled-skill.ts`, written only when its bytes change; on a host, under the version's own
+  directory, sent only when its digest changes) — so it is only on machines that run the daemon
+  and always the running version's own. Linked only once the harness's own config
   directory exists; a real directory by that name is the operator's and is left alone.
   `FLEETHERD_NO_SKILL_LINK=1` turns it off — set it on a test daemon run from a checkout, or
   it repoints the live daemon's link at the checkout until the live one next spawns an agent.

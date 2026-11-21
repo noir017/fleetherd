@@ -79,7 +79,9 @@ agent can do here reaches it through its harness's own mechanisms, in three laye
    process rather than spawning the server (`daemon/remote-hosts.ts` runCli, `mcpSession`).
 2. **The bundled skill** (`skill/SKILL.md`), whose one-line description is the only thing in
    context until an agent needs it. Its body sends the agent to `fleetherd help`. The daemon
-   links it into the skill directories the harnesses read (`daemon/skill-link.ts`).
+   links it into the skill directories the harnesses read (`daemon/skill-link.ts`), as a copy
+   whose description ends with the same library line as the `skills` tool
+   (`daemon/bundled-skill.ts`, below).
 3. **`fleetherd help <topic>`**, the reference: each topic's commands rendered from the
    specs, plus its `notes` — the rules, the traps, the defaults.
 
@@ -104,7 +106,24 @@ agent can neither do without nor guess exists:
   of the schema — and its description ends with what the library holds for that agent — its
   library skills' names by category, or counts past 40 names (`tools.ts` libraryLine) —
   asked of the daemon at `tools/list`. That line is a fact about the deployment, not instructions:
-  the same rule as every other description here.
+  the same rule as every other description here. A search that finds nothing answers with the
+  same line (`daemon/skill-library.ts`), so a miss names what there is instead of counting it.
+
+Every native tool carries `_meta: {"anthropic/alwaysLoad": true}` (`commands/mcp.ts`). Claude Code
+defers MCP tools behind its ToolSearch, which kept these three — and the library line — out of the
+first turn; with that key (2.1.330, measured) it loads them up front. A harness that does not know
+the key ignores it (MCP's `_meta` is an open map), so it is not a per-harness switch. The external
+entrance's tools (`external-tools.ts`) do not carry it: their caller is a program the operator
+connects, and whether its tools load eagerly is that client's to decide.
+
+The harnesses that do not show a deferred tool's description before the first turn — codex,
+opencode, agy, CodeBuddy — list skills instead, so the bundled skill carries the line too: the
+daemon renders a copy of `skill/` per skill directory with `libraryLine` appended to the frontmatter
+description and links that copy, never the package's file (`daemon/bundled-skill.ts`). One copy per
+directory rather than per harness because `~/.agents/skills` is read by codex and opencode alike:
+the line names what reaches every harness reading it. Past `LIBRARY_NAMES_MAX` names, or past the
+Agent Skills spec's 1,024-character description, it steps down to counts, then to no line; the
+rewrite is parsed back as YAML and dropped unless only the description changed.
 
 The skill documents these as CLI commands as well, and an agent that does not see the tools up
 front takes that route: in the 2026-10-09 end-to-end run, Claude Code called `mcp__chat__send_file`

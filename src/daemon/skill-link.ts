@@ -2,7 +2,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { AgentDef } from '../config/schema.js';
+import { renderBundledSkill } from './bundled-skill.js';
 import { selfInvocation } from './reverse-cli-shim.js';
+import { syncSkillCopy } from './skill-copy.js';
 import { LEGACY_SKILL_LINK, envOf, isUnderEitherName } from '../legacy-name.js';
 
 /**
@@ -16,8 +18,9 @@ import { LEGACY_SKILL_LINK, envOf, isUnderEitherName } from '../legacy-name.js';
  * Shipping it inside the package and linking it from here means:
  *  - it appears only on machines that run this daemon (a shared skill repo would put it in front of
  *    agents on every machine that syncs the repo, where the `fleetherd` command does not exist);
- *  - its content is always the running daemon's own — the link points into the installed package,
- *    so an upgrade updates the skill with nothing to re-copy.
+ *  - its content is always the running daemon's own — `super` links into the installed package, and
+ *    `fleetherd` into a copy rendered from it at every spawn (bundled-skill.ts, for the library line
+ *    in its description), so an upgrade updates both with nothing to re-copy by hand.
  *
  * ── Where, per harness ────────────────────────────────────────────────────────────────────────
  * Probed, not assumed:
@@ -71,9 +74,12 @@ export const SKILL_LINK_NAME = 'fleetherd';
  * first because it is invoked by name — a harness that turns skills into slash commands (Claude
  * Code) offers it as one — and its own directory rather than one inside `skill/`, because a harness
  * that finds skills by walking for SKILL.md (opencode reads several trees) would list it twice.
+ *
+ * `library`: its description ends with the library line, so it is delivered as a rendered copy
+ * (bundled-skill.ts) rather than linked into the package.
  */
-export const BUNDLED_SKILLS: ReadonlyArray<{ name: string; dir: string }> = [
-  { name: SKILL_LINK_NAME, dir: 'skill' },
+export const BUNDLED_SKILLS: ReadonlyArray<{ name: string; dir: string; library?: true }> = [
+  { name: SKILL_LINK_NAME, dir: 'skill', library: true },
   { name: 'super', dir: 'skill-super' },
 ];
 
@@ -117,15 +123,34 @@ export function skillHomes(harness: AgentDef['harness'], home: string, command?:
 }
 
 /**
+ * Every harness that has a skills directory, under the name `fleetherd-harnesses` gives it
+ * (managed-skills.ts skillHarnessOf), and where that directory is.
+ */
+const SKILL_READERS: ReadonlyArray<{ name: string; homes: (home: string) => SkillHome[] }> = [
+  { name: 'claude', homes: (h) => skillHomes('claude', h) },
+  { name: 'codex', homes: (h) => skillHomes('codex', h) },
+  { name: 'agy', homes: (h) => skillHomes('agy', h) },
+  { name: 'opencode', homes: (h) => skillHomes('opencode', h) },
+  { name: 'codebuddy', homes: (h) => skillHomes('custom', h, 'codebuddy') },
+];
+
+/**
  * Every directory a skill of ours could have been linked into under `home` — what a sweep of dead
  * links has to look at. The union, not the one harness being spawned: a link made by a version that
  * still mapped a harness outlives the mapping, and nothing else would ever look at it again.
  */
 export function allSkillDirs(home: string): string[] {
-  const mapped: AgentDef['harness'][] = ['claude', 'codex', 'agy', 'opencode'];
-  const dirs = mapped.flatMap((h) => skillHomes(h, home).map((s) => s.dir));
-  dirs.push(...skillHomes('custom', home, 'codebuddy').map((s) => s.dir));
-  return [...new Set(dirs)];
+  return [...new Set(SKILL_READERS.flatMap((r) => r.homes(home).map((s) => s.dir)))];
+}
+
+/** The harnesses that list what is in `dir` (one link there serves them all), as `fleetherd-harnesses` names them. */
+export function skillReaders(dir: string, home: string): string[] {
+  return SKILL_READERS.filter((r) => r.homes(home).some((s) => s.dir === dir)).map((r) => r.name);
+}
+
+/** Where the bundled skill's rendered copies go under `home`, one directory per set of readers. */
+export function bundledSkillsHome(home: string): string {
+  return path.join(home, '.fleetherd', 'bundled');
 }
 
 export type SkillLinkOutcome = 'linked' | 'relinked' | 'current' | 'occupied' | 'skipped' | 'failed' | 'removed';
@@ -210,9 +235,11 @@ export function ensureSkillLink(harness: AgentDef['harness'], home: string, comm
       warned.add(source);
       continue;
     }
-    for (const r of skillHomes(harness, home, command).map((h) => linkSkill(source, h, skill.name))) {
+    for (const h of skillHomes(harness, home, command)) {
+      const target = skill.library && fs.existsSync(h.requires) ? placeRendered(source, h, home) : source;
+      const r = linkSkill(target, h, skill.name);
       results.push(r);
-      report(r, source);
+      report(r, target);
     }
   }
   for (const h of skillHomes(harness, home, command)) {
@@ -223,6 +250,28 @@ export function ensureSkillLink(harness: AgentDef['harness'], home: string, comm
     }
   }
   return results;
+}
+
+/**
+ * The skill at `source` rendered for the harnesses reading `where` (bundled-skill.ts), kept at
+ * `<home>/.fleetherd/bundled/<readers>` — written only when its bytes differ. Answers the copy, or
+ * `source` itself when the copy cannot be written: the skill without the line beats no skill.
+ * No guard — the tests drive this directly; ensureSkillLink is the guarded caller.
+ */
+export function placeRendered(source: string, where: SkillHome, home: string): string {
+  try {
+    const rendered = renderBundledSkill(source, 'local', skillReaders(where.dir, home));
+    const copy = path.join(bundledSkillsHome(home), rendered.key);
+    const r = syncSkillCopy(copy, rendered.files);
+    if (r.outcome === 'placed') console.log(`[skill] wrote ${copy} for ${where.dir}`);
+    if (r.outcome !== 'failed') return copy;
+    throw new Error(r.detail);
+  } catch (e) {
+    const key = `render:${where.dir}`;
+    if (!warned.has(key)) console.warn(`[skill] could not render the skill for ${where.dir}, linking it as shipped:`, e instanceof Error ? e.message : e);
+    warned.add(key);
+    return source;
+  }
 }
 
 /**
