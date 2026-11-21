@@ -1,8 +1,9 @@
 # AGENTS.md
 
 Conventions for coding agents working in this repository. Read this first, then read
-the README of whichever module you are about to change — the details live there, not
-here.
+the `*.fras` map of whichever module you are touching to locate files, entrypoints,
+and invariants before running broad searches, and read that module's `README.md` for
+full contracts and design details — they live there, not here.
 
 `README.md` / `README.zh-CN.md` and `docs/` are the *user*-facing docs. The READMEs stay
 short — what it is, a screenshot, install, the smallest config, an index; each feature's
@@ -39,8 +40,12 @@ then, use the old names; read them as this project.
 
 ## Codebase Map (FRAS)
 
-Each module owns a `README.md` describing its contract, invariants, and how to extend
-it. Do not duplicate that content here.
+Use the two-layer FRAS map to navigate before repo-wide `rg`/`find`: pick the module
+here (L1), then read its `*.fras` file (L2) for exact source files, entrypoints (`A:`),
+dependencies (`R:`), and invariants (`S:`). Each module also owns a `README.md`
+describing its contract, invariants, and how to extend it — do not duplicate that
+content here. When adding, removing, or renaming a non-test source file or changing
+its primary entrypoints, update the module's `*.fras` in the same commit.
 Module documentation links: [config](src/config/README.md), [core](src/core/README.md), [platform](src/platform/README.md), [daemon](src/daemon/README.md), [api-agent](src/api-agent/README.md), [ipc](src/ipc/README.md), [history](src/history/README.md), [remote](src/remote/README.md), [remote-go](remote/README.md), [commands](src/commands/README.md), [scripts](scripts/README.md).
 
 ```fras

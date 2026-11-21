@@ -1,8 +1,10 @@
 # src/daemon FRAS Map
+src/daemon/acp-fork.ts [Core]: F:ACP session/fork and session/resume copy flow for /fork topics | A:forkInto,forkRefusal
 src/daemon/agent-acp.ts [Core]: F:ACP protocol runtime implementation and permission handling | R:src/daemon/agent.ts | A:createAcpAgentFactory,resolveHarness | S:See Security invariants item 1
 src/daemon/agent-files.ts [Infra]: F:Pictures from an agent's reply checked by their bytes, and bytes sent as a file through a private temporary one | A:decodeAgentImage,sendBytesAsFile
 src/daemon/attachment-io.ts [Infra]: F:Attachment fetch and storage with SSRF guards | A:assertSafeAttachmentUrl,createAttachmentIngestDeps | S:See Security invariants item 3 [T:assertSafeAttachmentUrl]
 src/daemon/config-reload.ts [Core]: F:Pure configuration diffing and reload plan computation | A:applyConfig,diffConfig
+src/daemon/connect-agent.ts [Infra]: F:TCP connect-mode ACP agent socket child and initialize _meta assembly | A:SocketChild,connectAddress,connectHere,connectMeta
 src/daemon/conversation-store.ts [Infra]: F:Atomic persistence for conversation bindings and sessions | A:ConversationStore
 src/daemon/conversation-token-registry.ts [Infra]: F:Token to conversation ID mapping for reverse commands | A:SessionTokenRegistry | S:See Security invariants item 2
 src/daemon/conversation.ts [Core]: F:Per-conversation runtime state registry and turn orchestration | R:src/daemon/routing.ts | A:ConversationRegistry
