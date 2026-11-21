@@ -97,6 +97,10 @@ config.yaml 自己的两个智能体冲突，加载时会被拒绝（`/reload` �
 也照常能打开，所以可以直接在页面上解决冲突。如果没有别的智能体读这个层，它会和任何没人读的层一样列在
 **Instructions no agent reads** 下面。
 
+[`connect` 智能体](agents.md#已经在运行的智能体connect)在它那台机器上没有约束文件，`common.md` 和 `<id>.md`（pod 的智能体去掉 `@host`）
+是在每个会话开始时随 `initialize` 发过去的。它的卡片照样列出这两个文件、算作它们的读者；保存后编辑器会说明它
+下一个会话才拿到新内容。
+
 ```yaml
 platforms:
   web:

@@ -186,6 +186,26 @@ describe('the list', () => {
       { id: 'mh@box', harness: 'mh', host: 'box', file: '~/.my-harness/AGENTS.md' },
     ]);
   });
+
+  it("counts a connect agent as a reader of common.md and of its layer, which no file of its harness's holds", async () => {
+    fs.mkdirSync(gateway, { recursive: true });
+    fs.writeFileSync(path.join(gateway, 'gt.md'), 'mine\n');
+    const withConnect = [def('cc', 'claude'), def('gt@box', 'custom', { host: 'box', connect: { url: 'tcp://w:1' } })];
+    const list = await panel({ agents: () => withConnect }).list();
+    expect(list.global).toEqual([
+      { name: 'common.md', layer: 'common', exists: false, agents: ['cc', 'gt@box'], reach: 'every agent' },
+      { name: 'claude.md', layer: 'claude', exists: false, agents: ['cc'], reach: 'every Claude Code agent' },
+      { name: 'gt.md', layer: 'gt', exists: true, size: 5, agents: ['gt@box'], reach: 'the gt layer' },
+    ]);
+    expect(list.agents.find((a) => a.id === 'gt@box')).toEqual({ id: 'gt@box', harness: 'gt', host: 'box' });
+  });
+
+  it('lists a connect agent’s layer before it is written, so it can be created', async () => {
+    const p = panel({ agents: () => [def('wa@box', 'custom', { host: 'box', connect: { url: 'tcp://w:1' } })] });
+    expect((await p.list()).global.find((g) => g.name === 'wa.md')).toMatchObject({ exists: false, agents: ['wa@box'] });
+    expect(await p.write({ scope: 'global', name: 'wa.md' }, 'hi\n', { missing: true })).toMatchObject({ ok: true });
+    expect([...(delivered[0] ?? [])]).toEqual(['wa']);
+  });
 });
 
 describe('who reads a layer', () => {
@@ -323,6 +343,14 @@ describe('global files', () => {
       missing: true,
     });
     expect(refused).toMatchObject({ ok: false, error: expect.stringMatching(/cx2 agents would be given \d+ bytes.*Nothing was saved/) });
+  });
+
+  it('measures a connect agent’s layer against the cap when common.md changes', async () => {
+    fs.mkdirSync(gateway, { recursive: true });
+    fs.writeFileSync(path.join(gateway, 'gt.md'), 'g'.repeat(INSTRUCTIONS_MAX_BYTES - 100));
+    const connect = [def('gt@box', 'custom', { host: 'box', connect: { url: 'tcp://w:1' } })];
+    const r = await panel({ agents: () => connect }).write({ scope: 'global', name: 'common.md' }, 'x'.repeat(200), { missing: true });
+    expect(r).toMatchObject({ ok: false, error: expect.stringMatching(/gt agents would be given \d+ bytes.*Nothing was saved/) });
   });
 });
 
@@ -559,6 +587,23 @@ describe('deliverInstructions', () => {
     const remote = vi.fn(async () => undefined);
     const out = await deliverInstructions({ agents: [off], layers: new Set(['cc']), local, remote });
     expect(out).toEqual([{ host: 'local', agents: ['cc'], outcome: 'not-delivered' }]);
+    expect(local).not.toHaveBeenCalled();
+    expect(remote).not.toHaveBeenCalled();
+  });
+
+  it('reports a connect agent as given the text at its next session, and places nothing for it', async () => {
+    const local = vi.fn(() => ({ link: '/h/x', outcome: 'linked' as const }));
+    const remote = vi.fn(async () => ({ link: '/r/x', outcome: 'linked' as const }));
+    const out = await deliverInstructions({
+      agents: [def('gt@box', 'custom', { host: 'box', connect: { url: 'tcp://w:1' } }), def('lc', 'custom', { connect: { url: 'tcp://w:1' } })],
+      layers: new Set(['gt', 'lc']),
+      local,
+      remote,
+    });
+    expect(out).toEqual([
+      { host: 'box', agents: ['gt@box'], outcome: 'next-session' },
+      { host: 'local', agents: ['lc'], outcome: 'next-session' },
+    ]);
     expect(local).not.toHaveBeenCalled();
     expect(remote).not.toHaveBeenCalled();
   });

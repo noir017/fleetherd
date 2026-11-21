@@ -1686,6 +1686,26 @@ describe('webui page: the instruction editor', () => {
     expect(h.el('files-dirty').hidden).toBe(true);
   });
 
+  it('says a connect agent gets a saved shared file with its next session, not that no agent reads it', async () => {
+    const h = await opened({
+      'api/instructions/write': {
+        ok: true,
+        mtimeMs: 8,
+        size: 6,
+        sha256: 'd'.repeat(64),
+        delivery: [{ host: 'box', agents: ['gt@box'], outcome: 'next-session' }],
+      },
+    });
+    await h.click('.ag-card[data-ag="cc"] [data-instr-file="g:common.md"]');
+    await until('the editor', () => Boolean(editor(h)));
+    type(h, 'hello!');
+    await h.click('#files-save');
+    await until('the answer', () => /Saved/.test(h.el('files-note').textContent ?? ''));
+    expect(h.el('files-note').textContent).toBe(
+      'Saved common.md. gt@box on box: given this when its next session starts; one already running keeps what it read.'
+    );
+  });
+
   it('creates a file not written yet instead of sending a version it never had', async () => {
     const h = await opened({ 'api/instructions/write': { ok: true, mtimeMs: 3, size: 2, sha256: 'e'.repeat(64), delivery: [] } });
     await h.click('.ag-card[data-ag="cc"] [data-instr-file="g:claude.md"]');

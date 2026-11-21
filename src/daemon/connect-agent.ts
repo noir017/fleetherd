@@ -17,6 +17,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { PassThrough, Writable } from 'node:stream';
+import { instructionsLayer } from '../config/instructions.js';
 import type { AgentConnect, AgentDef } from '../config/schema.js';
 import type { Welcome } from '../remote/connection.js';
 import type { RemoteHost } from '../remote/host.js';
@@ -150,10 +151,10 @@ async function readToken(def: AgentDef, file: string, place: ConnectPlace | unde
   }
 }
 
-/** common.md + `<id>.md`, the id without a pod's `@host`; undefined when there is nothing to give. */
+/** common.md + its layer (`instructionsLayer`); undefined when there is nothing to give. */
 function connectInstructions(def: AgentDef): string | undefined {
-  const suffix = def.host ? `@${def.host}` : '';
-  const layer = suffix && def.id.endsWith(suffix) ? def.id.slice(0, -suffix.length) : def.id;
+  const layer = instructionsLayer(def);
+  if (layer === undefined) return undefined;
   const composed = composeInstructions(instructionsDir(), layer);
   if (composed.kind === 'too-big') {
     console.warn(`[connect] ${def.id}: instructions not sent, ${composed.bytes} bytes is over the limit`);

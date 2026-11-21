@@ -148,6 +148,22 @@ export function instructionsHome(def: InstructionsAgent, home: string): Instruct
   }
 }
 
+/** The agent fields `instructionsLayer` reads. */
+export type LayeredInstructionsAgent = InstructionsAgent & Pick<AgentDef, 'host' | 'connect'>;
+
+/**
+ * The layer `def` reads, whether or not anything is placed for it: its harness file's layer
+ * (`instructionsHome`), or a `connect` agent's — its id without a pod's `@host`. A connect agent
+ * has no file; common.md and this layer are sent in its `initialize` (daemon/connect-agent.ts), so
+ * the editor must count it as a reader of both even though delivery places nothing for it.
+ */
+export function instructionsLayer(def: LayeredInstructionsAgent): string | undefined {
+  if (!def.connect) return instructionsHome(def, '~')?.name;
+  const suffix = def.host ? `@${def.host}` : '';
+  const layer = suffix && def.id.endsWith(suffix) ? def.id.slice(0, -suffix.length) : def.id;
+  return isInstructionLayer(layer) ? layer : undefined;
+}
+
 /** An agent the conflict check reads: its harness and instructions, where it runs, and as whom. */
 export type PlacedInstructionsAgent = InstructionsAgent & {
   /** The `hosts:` id it runs on; absent = the gateway's own machine. */

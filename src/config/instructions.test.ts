@@ -6,6 +6,7 @@ import {
   instructionClashes,
   instructionConflictMessage,
   instructionsHome,
+  instructionsLayer,
   instructionsOff,
   type PlacedInstructionsAgent,
 } from './instructions.js';
@@ -115,6 +116,23 @@ describe('instructionsHome', () => {
     expect(instructionsOff({ id: 'mh', harness: 'custom', command: 'my-harness', instructions: { file: '~/x' } })).toBe(false);
     // A non-object is not a marker, and must not throw on `'off' in`.
     expect(instructionsOff({ id: 'cc', harness: 'claude', instructions: false as unknown as { file: string } })).toBe(false);
+  });
+});
+
+describe('instructionsLayer', () => {
+  it('is the harness file’s layer for an agent that has one, and nothing for one that has none', () => {
+    expect(instructionsLayer({ id: 'cc', harness: 'claude' })).toBe('claude');
+    expect(instructionsLayer({ id: 'mh', harness: 'custom', command: 'h', instructions: { file: '~/f.md', layer: 'mine' } })).toBe('mine');
+    expect(instructionsLayer({ id: 'g', harness: 'gemini' })).toBeUndefined();
+  });
+
+  it('is a connect agent’s id without its pod’s @host, though it has no file', () => {
+    const connect = { url: 'tcp://w:1' };
+    expect(instructionsLayer({ id: 'gt@box', harness: 'custom', host: 'box', connect })).toBe('gt');
+    expect(instructionsLayer({ id: 'gt', harness: 'custom', connect })).toBe('gt');
+    // An id that is not a plain file name is no layer, rather than a path out of the directory.
+    expect(instructionsLayer({ id: '../x', harness: 'custom', connect })).toBeUndefined();
+    expect(instructionsLayer({ id: 'gt@other', harness: 'custom', host: 'box', connect })).toBeUndefined();
   });
 });
 
