@@ -4,7 +4,7 @@ Every turn the gateway carries, in `<configDir>/history.db`, so an agent can sea
 said before — in another topic, on another platform, with another agent. The `fleetherd
 sessions` commands read it (`ipc/commands.ts`), and so does `task-read` for a sub-agent's topic
 (`daemon/delegation.ts`); `TurnRunner` writes it through one optional `recordHistory` dep
-(`daemon/turn-runner.ts`, enriched in `daemon/conversation.ts`).
+(`daemon/turn-runner.ts`, enriched in `daemon/conversation-history.ts`).
 
 The module imports nothing from the rest of the project: it is IO plus pure tokenising, and
 its paths are injected. That is what makes it testable without a daemon, and what keeps the
