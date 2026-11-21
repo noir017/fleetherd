@@ -10,6 +10,8 @@ import { READ_CHAR_BUDGET, type HistoryReadOptions, type HistoryStore, type Hist
 import type {
   IpcAction,
   TaskActionResult,
+  TaskAgentDetail,
+  TaskAgentRow,
   TaskAgentsResult,
   TaskListResult,
   TaskNewResult,
@@ -213,6 +215,8 @@ type Registry = Pick<
   | 'boundAgentOf'
   | 'conversationTitle'
   | 'scheduledChoicesProblem'
+  | 'agentLists'
+  | 'runningOn'
 >;
 
 export interface DelegationDeps {
@@ -534,7 +538,7 @@ export class Delegation {
     }
     switch (action.kind) {
       case 'task-agents':
-        return this.agents(here);
+        return action.agent ? this.agentDetail(action.agent, this.externalOf(here) ? undefined : this.hostOf(here.key)) : this.agents(here);
       case 'task-list':
         return this.list(here, action.limit ?? 30);
       case 'task-new':
@@ -602,26 +606,54 @@ export class Delegation {
     return this.agentRows(undefined, undefined);
   }
 
+  /** `task-agents <id>` for an external caller: on no machine of the gateway's, so never `here`. */
+  externalAgent(id: string): Promise<TaskAgentDetail> {
+    return this.agentDetail(id, undefined);
+  }
+
   /** The agent rows, `current` first, then the ones on machine `mine` (none when it is undefined). */
   private agentRows(mine: string | undefined, current: string | undefined): TaskAgentsResult {
-    const rows = this.deps.config.agents.map((def) => {
-      const choices = this.deps.registry.workdirChoices(def.id);
-      return {
-        id: def.id,
-        harness: def.harness,
-        where: def.host ?? 'gateway',
-        here: mine !== undefined && (def.host ?? '') === mine,
-        model: def.model ?? '',
-        root: choices?.root ?? '',
-        // Short names for the column; `task-new --cwd` takes one of these or an absolute path
-        // (a worktree the coordinator made), which this list cannot know about.
-        dirs: (choices?.dirs ?? []).slice(0, 24).map((d) => d.split('/').pop() ?? d),
-      };
-    });
+    const rows = this.deps.config.agents.map((def) => this.agentRow(def, mine));
     const rest = rows.filter((r) => r.id !== current);
     // Stable: within each half, the configuration's own order.
     return {
       agents: [...rows.filter((r) => r.id === current), ...rest.filter((r) => r.here), ...rest.filter((r) => !r.here)],
+    };
+  }
+
+  private agentRow(def: AgentDef, mine: string | undefined): TaskAgentRow {
+    const choices = this.deps.registry.workdirChoices(def.id);
+    return {
+      id: def.id,
+      harness: def.harness,
+      where: def.host ?? 'gateway',
+      here: mine !== undefined && (def.host ?? '') === mine,
+      model: def.model ?? '',
+      root: choices?.root ?? '',
+      // Short names for the column; `task-new --cwd` takes one of these or an absolute path
+      // (a worktree the coordinator made), which this list cannot know about.
+      dirs: (choices?.dirs ?? []).slice(0, 24).map((d) => d.split('/').pop() ?? d),
+    };
+  }
+
+  /** One agent in full (`task-agents <id>`): its row, how busy it is, and what a fresh session of it offers. */
+  private async agentDetail(id: string, mine: string | undefined): Promise<TaskAgentDetail> {
+    const def = findAgent(this.deps.config, id);
+    if (!def) throw new Error(`no agent "${id}"; task-agents lists them: ${this.deps.config.agents.map((d) => d.id).join(', ')}`);
+    const lists = await this.deps.registry.agentLists(id);
+    const model = lists.models?.current;
+    return {
+      agent: {
+        ...this.agentRow(def, mine),
+        permissions: def.permissions ?? '',
+        running: this.deps.registry.runningOn(id),
+        cooling: this.deps.registry.coolingDown(id),
+      },
+      models: (lists.models?.options ?? []).map((o) => ({ value: o.value, name: o.name, default: o.value === model })),
+      settings: (lists.settings ?? []).flatMap((s) =>
+        s.options.map((c) => ({ id: s.id, label: s.name, value: c.value, name: c.name, note: c.description ?? '', default: c.value === s.current }))
+      ),
+      ...(lists.error !== undefined ? { error: lists.error } : {}),
     };
   }
 

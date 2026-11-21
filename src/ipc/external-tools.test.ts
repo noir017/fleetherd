@@ -52,6 +52,12 @@ describe('externalAction: tasks', () => {
     expect(() => externalAction('tasks', { action: 'list', topic: 't', option: 'account=a' })).toThrow(/option does not apply to list/);
   });
 
+  it('lists the agents, or one in full when agents names it', () => {
+    expect(externalAction('tasks', { action: 'agents' })).toEqual({ kind: 'task', action: { kind: 'task-agents' } });
+    expect(externalAction('tasks', { action: 'agents', agent: 'gt' })).toEqual({ kind: 'task', action: { kind: 'task-agents', agent: 'gt' } });
+    expect(() => externalAction('tasks', { action: 'agents', topic: 't' })).toThrow(/topic does not apply to agents/);
+  });
+
   it('needs the topic and the agent for new: an external topic has no agent to default to', () => {
     expect(() => externalAction('tasks', { action: 'new', text: 'x', agent: 'cc' })).toThrow(/new needs topic/);
     expect(() => externalAction('tasks', { action: 'new', topic: 't', text: 'x' })).toThrow(/new needs agent/);

@@ -14,6 +14,7 @@ import type {
   SessionReadResult,
   SessionSearchResult,
   TaskActionResult,
+  TaskAgentDetail,
   TaskAgentsResult,
   TaskListResult,
   TaskNewResult,
@@ -565,7 +566,7 @@ const DATA_PRINTERS: Partial<Record<IpcAction['kind'], (data: unknown, action: I
   'pod-add': (data) => (data as { summary?: string } | undefined)?.summary ?? '',
   'pod-remove': (data) => (data as { summary?: string } | undefined)?.summary ?? '',
   'pod-list': renderPodList,
-  'task-agents': renderTaskAgents,
+  'task-agents': (data, action) => ((action as Extract<IpcAction, { kind: 'task-agents' }>).agent ? renderTaskAgent(data) : renderTaskAgents(data)),
   'task-list': renderTaskList,
   'task-new': renderTaskProposed,
   'task-read': (data, action) => renderTaskRead(action as Extract<IpcAction, { kind: 'task-read' }>, data),
@@ -592,6 +593,21 @@ function renderTaskAgents(data: unknown): string {
     help: [
       'task-new [--agent <id>] [--model <id>] [--cwd <dir>] "<the task>" proposes a sub-task; without --agent it uses this conversation\'s agent. --cwd is the root or one of its dirs.',
       'here=true: on the same machine as you — prefer these. Another machine has its own checkouts and tools; use one only when the work needs that machine.',
+    ],
+  });
+}
+
+/** task-agents <id>: the row, then its models and every setting value, each a table of its own. */
+function renderTaskAgent(data: unknown): string {
+  const d = data as TaskAgentDetail;
+  return toon({
+    agent: { ...d.agent, dirs: d.agent.dirs.join(', ') },
+    models: d.models,
+    settings: d.settings,
+    ...(d.error !== undefined ? { error: d.error } : {}),
+    help: [
+      'task-new --agent <id> [--model <value>] [--option <id>=<value>[,<id>=<value>]] uses these; default marks what it uses without them. note is the agent\'s own word on a value (an account\'s quota, say).',
+      'running: turns in progress on this agent now, across the gateway. cooling: it hit a usage limit and is waiting it out. permissions plan, ask or edits: it puts its requests to the person, so it may stop and wait.',
     ],
   });
 }

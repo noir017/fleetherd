@@ -5,6 +5,19 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **`task-agents <agent>` shows one agent in full, so a coordinator can choose before it proposes.**
+  `task-new --model` and `--option` took only values the agent offers, but nothing said what those
+  were: an agent learned them by being refused. Now `task-agents <agent>` (and the external MCP
+  entrance's `agents` with `agent`) lists that agent's models with the default marked, every setting
+  with all its values and the agent's note on each (an account's quota), its permission level, how
+  many turns are running on it now and whether it is waiting out a usage limit. It reads a fresh
+  session of that agent — the only one that lists a setting's every value — so it takes a few seconds
+  on a cold agent and gives up after 45 seconds, saying why; callers asking about one agent at once
+  share that session. Plain `task-agents` still reads only the config. A setting id `--option` does
+  not know is now refused with every setting's values too, not just their names.
+
 ## [3.25.0] - 2026-11-21
 
 ### Added

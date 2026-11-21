@@ -55,6 +55,8 @@ export function clientTimeoutFor(action: IpcAction): number | undefined {
     return action.waitMs + SLOW_ACTION_TIMEOUT_MS;
   }
   if (SLOW_ACTIONS.has(action.kind)) return SLOW_ACTION_TIMEOUT_MS;
+  // One agent in full starts a session of it to ask, like `task-new --model`; the list reads config only.
+  if (action.kind === 'task-agents' && action.agent !== undefined) return SLOW_ACTION_TIMEOUT_MS;
   return undefined;
 }
 

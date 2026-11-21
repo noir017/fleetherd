@@ -989,6 +989,11 @@ of it: the daemon keeps none, so deleting a topic on the page is what ends it. T
   Settings are always read off a throwaway session, never the asking conversation's own: a session
   that has run may list only the value it locked. Nothing is written to the record — the agent keeps
   its settings across a reload itself (`AgentSession.setOption`).
+  `task-agents <id>` reads the same lists through `agentLists` (`readLists`, the probe both share):
+  always a fresh throwaway session, one per agent at a time however many callers ask at once, and
+  given up after `LISTS_TIMEOUT_MS` (45s, inside the CLI's 60s) with the reason instead of the
+  lists. The detail adds `runningOn` (turns in progress on that agent, across the gateway) and
+  `coolingDown`, both read from state the daemon already holds; plain `task-agents` reads config only.
   Start opens each part with `ConversationRegistry.openTask` (`createThread` with `under`), whose
   `handTo` shows the text under a `↳ From [parent]` header and ingests it with `DELEGATE_SENDER`.
   `task-send --forward <topic>` resolves that topic through `child` too, reads its last

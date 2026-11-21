@@ -8,6 +8,7 @@ import type { AgentStatus, InboundMessage, TopicActivity } from '../types.js';
 import type {
   ListChannelsResult,
   TaskActionResult,
+  TaskAgentDetail,
   TaskAgentsResult,
   TaskListResult,
   TaskNewResult,
@@ -262,6 +263,25 @@ function rig(
       }
       return undefined;
     },
+    agentLists: async (agent: string) => {
+      calls.push(['agentLists', agent]);
+      if (agent === 'oc2') return { error: 'no answer in 45s' };
+      return {
+        models: { current: 'base-model', options: [{ value: 'base-model', name: 'Base' }, { value: 'fast-model', name: 'Fast' }] },
+        settings: [
+          {
+            id: 'account',
+            name: 'Account',
+            current: 'alice@example.com',
+            options: [
+              { value: 'alice@example.com', name: 'Alice' },
+              { value: 'bob@example.com', name: 'Bob', description: 'quota used up' },
+            ],
+          },
+        ],
+      };
+    },
+    runningOn: (agent: string) => [...busy].filter((k) => bound.get(k) === agent).length,
   };
 
   const deps: DelegationDeps = {
@@ -327,6 +347,40 @@ function recordCard(r: ReturnType<typeof rig>, to = P): { to: string; text: stri
 }
 
 describe('Delegation: where the commands run', () => {
+  it('answers task-agents <id> with that agent in full: its row, how busy it is, and what a fresh session offers', async () => {
+    const r = rig();
+    r.bound.set('web#main#c1000000', 'cx');
+    r.busy.add('web#main#c1000000');
+    r.cooling.add('cx');
+    r.deps.config.agents.find((a) => a.id === 'cx')!.permissions = 'ask';
+    const res = (await r.d.handle(P, { kind: 'task-agents', agent: 'cx' })) as TaskAgentDetail;
+    expect(r.calls.filter(([c]) => c === 'agentLists')).toEqual([['agentLists', 'cx']]);
+    // cx runs on near, like the asking conversation's cc.
+    expect(res.agent).toMatchObject({ id: 'cx', where: 'near', here: true, permissions: 'ask', running: 1, cooling: true, dirs: ['fleetherd'] });
+    expect(res.models).toEqual([
+      { value: 'base-model', name: 'Base', default: true },
+      { value: 'fast-model', name: 'Fast', default: false },
+    ]);
+    expect(res.settings).toEqual([
+      { id: 'account', label: 'Account', value: 'alice@example.com', name: 'Alice', note: '', default: true },
+      { id: 'account', label: 'Account', value: 'bob@example.com', name: 'Bob', note: 'quota used up', default: false },
+    ]);
+    expect(res.error).toBeUndefined();
+  });
+
+  it('says why an agent’s lists are empty, and refuses an agent that is not configured before asking anyone', async () => {
+    const r = rig();
+    const res = (await r.d.handle(P, { kind: 'task-agents', agent: 'oc2' })) as TaskAgentDetail;
+    expect(res).toMatchObject({ agent: { id: 'oc2', here: false, running: 0, cooling: false }, models: [], settings: [], error: 'no answer in 45s' });
+    await expect(r.d.handle(P, { kind: 'task-agents', agent: 'zz' })).rejects.toThrow(/no agent "zz"; task-agents lists them: oc2, cc, cx, local/);
+    expect(r.calls.filter(([c, a]) => c === 'agentLists' && a === 'zz')).toEqual([]);
+    // The list itself still asks nobody.
+    await r.d.handle(P, { kind: 'task-agents' });
+    expect(r.calls.filter(([c]) => c === 'agentLists')).toHaveLength(1);
+    // An external caller is on no machine of the gateway's.
+    expect((await r.d.externalAgent('cc')).agent.here).toBe(false);
+  });
+
   it('refuses a call from no conversation, and a platform that cannot nest topics', async () => {
     const r = rig();
     await expect(r.d.handle(undefined, { kind: 'task-agents' })).rejects.toThrow(/from a conversation's own turn/);

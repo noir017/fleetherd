@@ -38,6 +38,11 @@ directly.
   a tool that only exists there), `fleetherd task-agents` lists the agents and where each runs.
   Prefer `here=true` — your own machine, with the same checkouts and tools — and say why on the
   card's title when a part goes elsewhere.
+- `fleetherd task-agents <id>` is one agent in full: its models, every setting with its values and
+  the agent's note on each (an account's quota, say), its permission level, how many turns are
+  running on it now and whether it is cooling down from a usage limit. It starts that agent to ask,
+  so run it for the agent you mean to use when a part needs `--model` or `--option`, or when you
+  want to know whether it is free — not for every row of the list.
 - One `fleetherd task-new [--agent <id>] [--cwd <dir>] --title "<short name>" "<text>"` per part.
   `--cwd` is a path on the machine that runs the part: a directory name from `task-agents`, or an
   absolute path such as a worktree you made there, so the part starts in it instead of the main
@@ -49,8 +54,9 @@ directly.
   model decides what the part costs, so the card shows it; an id the agent does not offer is
   refused, with the list.
 - `--option key=value[,key=value]` sets that agent's own settings for the part — the account it
-  works under, say — when the person named one. The card shows them; a setting or value the agent
-  does not offer is refused, with its choices and their notes, so propose again with one of those.
+  works under, say — when the person named one, or when `task-agents <id>` shows the default is a
+  poor fit (its quota used up). Take the ids and values from there. The card shows them; a setting
+  or value the agent does not offer is refused, with its choices and their notes.
 - The text is everything the sub-agent will see — it has not read this conversation. Give it the
   goal, the constraints, and how it will know it is done (a test that passes, a command whose
   output changes).

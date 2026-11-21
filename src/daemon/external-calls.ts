@@ -2,7 +2,7 @@ import { encode } from '@toon-format/toon';
 import type { Config } from '../config/schema.js';
 import { addressOf, formatAddress, parseTarget, type ConversationAddress } from '../core/conversation.js';
 import type { ExternalAction } from '../ipc/external-tools.js';
-import type { IpcAction, TaskAgentsResult, TaskListResult } from '../ipc/protocol.js';
+import type { IpcAction, TaskAgentDetail, TaskAgentsResult, TaskListResult } from '../ipc/protocol.js';
 import { libraryLine } from '../ipc/tools.js';
 import type { PlatformAdapter } from '../platform/adapter.js';
 import type { ConversationId, InboundMessage } from '../types.js';
@@ -47,7 +47,7 @@ export interface ExternalCallsDeps {
   platforms: Map<string, PlatformAdapter>;
   topics: ExternalTopics;
   conversationAt(platform: string, address: ConversationAddress): { key: ConversationId; agent?: string } | undefined;
-  delegation: Pick<Delegation, 'handleExternal' | 'externalAgents' | 'stopOpened'>;
+  delegation: Pick<Delegation, 'handleExternal' | 'externalAgents' | 'externalAgent' | 'stopOpened'>;
   skills: Pick<SkillLibrary, 'search' | 'show' | 'categories'>;
   /** A reverse command's result as the CLI prints it (commands/reverse.ts renderResult, injected). */
   render(action: IpcAction, data: unknown): string;
@@ -67,7 +67,10 @@ export class ExternalCalls {
       case 'topics':
         return this.topicsOf(caller);
       case 'task': {
-        if (action.action.kind === 'task-agents') return agentsText(this.deps.delegation.externalAgents());
+        if (action.action.kind === 'task-agents') {
+          const id = action.action.agent;
+          return id ? agentDetailText(await this.deps.delegation.externalAgent(id)) : agentsText(this.deps.delegation.externalAgents());
+        }
         const place = action.in !== undefined ? this.owned(caller, action.in) : this.parentOwned(caller, subTopicOf(action.action));
         const result = await this.deps.delegation.handleExternal(
           place.key,
@@ -298,6 +301,20 @@ function agentsText(result: TaskAgentsResult): string {
   return encode({
     agents: result.agents.map(({ here: _here, ...a }) => ({ ...a, dirs: a.dirs.join(', ') })),
     help: ['new with agent <id> proposes a sub-task to it; cwd is its root or one of its dirs, or an absolute path on its machine.'],
+  });
+}
+
+function agentDetailText(d: TaskAgentDetail): string {
+  const { here: _here, ...agent } = d.agent;
+  return encode({
+    agent: { ...agent, dirs: agent.dirs.join(', ') },
+    models: d.models,
+    settings: d.settings,
+    ...(d.error !== undefined ? { error: d.error } : {}),
+    help: [
+      'new with this agent, model (a value from models) and option (id=value from settings, comma-separated) proposes a sub-task on them; default marks what it uses without them. note is the agent\'s own word on a value (an account\'s quota, say).',
+      'running: turns in progress on it now. cooling: it hit a usage limit and is waiting it out. permissions plan, ask or edits: it may stop to ask the person.',
+    ],
   });
 }
 

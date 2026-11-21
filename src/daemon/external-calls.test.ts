@@ -82,6 +82,11 @@ function rig(opts: { skills?: ExternalCallsDeps['skills']; taskList?: TaskListRe
           : { ok: true };
       },
       externalAgents: () => ({ agents: [] }),
+      externalAgent: async (id) => ({
+        agent: { id, harness: 'custom', where: 'far', here: false, model: '', root: '/w', dirs: ['a', 'b'], permissions: '', running: 1, cooling: false },
+        models: [{ value: 'fast', name: 'Fast', default: true }],
+        settings: [{ id: 'account', label: 'Account', value: 'alice@example.com', name: 'Alice', note: '', default: true }],
+      }),
       stopOpened: (key) => {
         stopped.push(key);
         return 2;
@@ -127,6 +132,25 @@ describe('ExternalCalls: open', () => {
     await open(r, OTHER, 'theirs');
     r.threads.delete('e1000000');
     await expect(open(r, GEM, 'again')).resolves.toMatch(/^web:main\//);
+  });
+});
+
+describe('ExternalCalls: agents', () => {
+  it('answers agents with an agent with that one in full, in a caller\'s words and with no here column', async () => {
+    const r = rig();
+    const out = decode(await r.calls.call(GEM, { kind: 'task', action: { kind: 'task-agents', agent: 'gt' } })) as {
+      agent: Record<string, unknown>;
+      models: unknown[];
+      settings: Array<Record<string, unknown>>;
+      help: string[];
+    };
+    expect(out.agent).toMatchObject({ id: 'gt', dirs: 'a, b', running: 1, cooling: false });
+    expect(out.agent).not.toHaveProperty('here');
+    expect(out.settings[0]).toMatchObject({ id: 'account', value: 'alice@example.com' });
+    expect(out.help.join(' ')).toMatch(/option \(id=value from settings/);
+    expect(out.help.join(' ')).not.toMatch(/--option|task-new/);
+    // Needs no topic of its own, like the list.
+    expect(r.handled).toEqual([]);
   });
 });
 
