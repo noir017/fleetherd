@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.27.0] - 2026-11-21
+
 ### Changed
 
 - **A connect agent that goes away mid-turn is waited for, not failed.** A web-agent-driver restart
