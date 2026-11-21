@@ -59,6 +59,8 @@ naming it, and they are all of them:
 | `client/legacy-app.ts` | The client script, bundled into `dist/webui-assets/app-<hash>.js` — see below |
 | `client/panels/reviews.ts` | Typed Reviews tab module (`createReviewsPanel`), bundled into `app-<hash>.js` and checked by `client/tsconfig.json` and eslint |
 | `client/panels/history.ts` | Typed History tab and read-only transcript viewer (`createHistoryPanel`), bundled into `app-<hash>.js` and checked by `client/tsconfig.json` and eslint |
+| `client/panels/schedules.ts` | Typed Scheduled side panel (Tasks, Sessions, and task detail/edit/add page; `createSchedulesPanel`), bundled into `app-<hash>.js` and checked by `client/tsconfig.json` and eslint |
+| `client/panels/skills.ts` | Typed Skills management window (`createSkillsPanel`), bundled into `app-<hash>.js` and checked by `client/tsconfig.json` and eslint |
 | `client/styles/main.css` | The stylesheet, bundled into `dist/webui-assets/style-<hash>.css` |
 | `manifest.ts` | The web app manifest and the icon, as strings, for the same reason `page.ts` is a module |
 | `icons.ts` | The page's icons, hand-drawn inline SVG, and which emoji each one replaces — see [Icons](#icons) |
