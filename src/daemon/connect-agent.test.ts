@@ -191,8 +191,8 @@ describe('a connect agent as a conversation', () => {
     const session = createAcpAgentFactory(cfg, join(dir, 'ipc.sock'), store).getOrCreate('conv#1', 'web');
     live = session;
 
-    await session.runTurn({ prompt: 'hi', sessionToken: 'tok' }, quiet);
-    expect(agent.meta()).toEqual({ wad: { site: 'x', profile: 'p' }, fleetherd: { host: hostname() } });
+    await session.runTurn({ prompt: 'hi', sessionToken: 'tok', topic: 'web:main/3a9f0c12' }, quiet);
+    expect(agent.meta()).toEqual({ wad: { site: 'x', profile: 'p' }, fleetherd: { host: hostname(), topic: 'web:main/3a9f0c12' } });
 
     // End agent: the turn is interrupted (a session/cancel), and the session disposed at once.
     const turn = session.runTurn({ prompt: 'slow work', sessionToken: 'tok' }, quiet);

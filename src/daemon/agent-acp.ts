@@ -1762,7 +1762,7 @@ function createAcpSession(
    * The slot clears on settle either way, so a failed startup does not poison later attempts —
    * the next caller retries for real, which is what the crash-self-healing path expects.
    */
-  async function ensureStarted(sessionToken: string): Promise<void> {
+  async function ensureStarted(sessionToken: string, topic?: string): Promise<void> {
     if (active) return;
     starting ??= (async () => {
       // One cold start per machine slot; the wait happens before startSession's 30s timer starts
@@ -1770,7 +1770,7 @@ function createAcpSession(
       const slot = startupSlot(remoteHosts.hostFor(def)?.id ?? 'local');
       await slot.acquire();
       try {
-        await startSession(sessionToken);
+        await startSession(sessionToken, topic);
       } finally {
         slot.release();
       }
@@ -1799,9 +1799,10 @@ function createAcpSession(
    */
   async function launch(
     sessionToken: string,
-    place: { host: RemoteHost; welcome: Welcome } | undefined
+    place: { host: RemoteHost; welcome: Welcome } | undefined,
+    topic?: string
   ): Promise<{ command: string; args: string[]; initExtra: { _meta?: Record<string, unknown> }; child: AgentChild; mcpServers: () => McpServer[] }> {
-    const initExtra = def.connect ? { _meta: await connectMeta(def, def.connect, place) } : {};
+    const initExtra = def.connect ? { _meta: await connectMeta(def, def.connect, place, topic) } : {};
     const { command, args } = def.connect ? { command: def.connect.url, args: [] } : resolveHarness(def, place !== undefined);
     return { command, args, initExtra, ...spawnChild(command, args, sessionToken, place, await relayEnv(def, place?.host)) };
   }
@@ -1908,7 +1909,7 @@ function createAcpSession(
     store?.setAgentSession(conversationId, def.id, forked.session.sessionId);
   }
 
-  async function startSession(sessionToken: string): Promise<void> {
+  async function startSession(sessionToken: string, topic?: string): Promise<void> {
     if (active) return;
 
     // Re-read the conversation's directory: between the last child and this one the user may have
@@ -1929,7 +1930,7 @@ function createAcpSession(
       }
     }
 
-    const { command, args, initExtra, child, mcpServers } = await launch(sessionToken, place);
+    const { command, args, initExtra, child, mcpServers } = await launch(sessionToken, place, topic);
     const { spawnError, stderrTail } = adoptChild(child);
 
     const stream = ndJsonStream(
@@ -2823,7 +2824,7 @@ function createAcpSession(
       // What runs between this try and that one is synchronous bookkeeping that cannot throw.
       const closePromptWindow = openPromptWindow();
       try {
-        await ensureStarted(input.sessionToken);
+        await ensureStarted(input.sessionToken, input.topic);
 
         // Whatever background output was still rendering belongs to the previous exchange. AWAITED,
         // not fired and forgotten: in the default `once` delivery mode the burst's whole body is
@@ -3008,11 +3009,22 @@ function createAcpSession(
         endIfStoppedWhileStarting();
         const session = active!;
         const agentCtx = conn!.agent;
+        const promptInput = (): ContentBlock[] => {
+          if (input.reconnect) return [{ type: 'text', text: '', _meta: { fleetherd: { reconnect: true } } }] as ContentBlock[];
+          const blocks = blocksOf(input);
+          // Carry the topic on the prompt too for connect agents: a session warmed up by `/model`
+          // before the first turn initialized without one.
+          if (def.connect && input.topic) {
+            const last = blocks[blocks.length - 1];
+            if (last?.type === 'text') {
+              blocks[blocks.length - 1] = { ...last, _meta: { fleetherd: { topic: input.topic } } } as ContentBlock;
+            }
+          }
+          return blocks;
+        };
         send(
           session,
-          input.reconnect
-            ? ([{ type: 'text', text: '', _meta: { fleetherd: { reconnect: true } } }] as ContentBlock[])
-            : blocksOf(input)
+          promptInput()
         );
         turnStopped = stopWatch.stopped;
         joinTurn = steeringMode === 'none' ? undefined : (blocks) => {

@@ -226,6 +226,12 @@ export interface RunTurnInput {
   model?: string;
   /** Reconnect to an already-submitted turn to stream/fetch its latest reply without resending input. */
   reconnect?: boolean;
+  /**
+   * The topic this turn runs in (`<platform>:<channel>[/<thread>]`), when the platform supports
+   * nested sub-agent topics. Handed to `connect` agents so they can attach sub-tasks to this topic
+   * through the external MCP entrance instead of opening a separate coordination topic.
+   */
+  topic?: string;
 }
 
 export interface AgentSession {

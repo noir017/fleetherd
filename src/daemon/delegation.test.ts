@@ -2194,6 +2194,33 @@ describe('Delegation: a coordination topic an external caller opened', () => {
     expect(stopped.result).toMatch(/^Stopped\./);
     expect(r.posted.find((p) => p.to === C && p.text.startsWith('⏹'))?.text).toBe('⏹ Stopped by gem (external) in [Trip](?t=eeeeeeee).');
   });
+
+  it('on a hosted topic, still waits on Start card and forbids task-send, while waking the bound agent on updates', async () => {
+    const r = rig();
+    r.deps.config.delegation.confirm = false;
+    r.bound.set(P, 'oc2');
+
+    // Still refuses external-forbidden actions even with hosted: true.
+    await expect(r.d.handleExternal(P, { kind: 'task-send', topic: 'c1000000', text: 'hi' }, at(P), { hosted: true })).rejects.toThrow(/not offered/);
+
+    // Proposal waits on a Start card despite delegation.confirm = false, and uses native parent wording.
+    const res = (await r.d.handleExternal(P, task('cc', 'Investigate bug'), at(P), { hosted: true })) as TaskNewResult;
+    expect(res.result).toMatch(/you are told here as each finishes/);
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    await settle();
+    expect(r.cards).toHaveLength(1);
+    expect(r.cards[0]!.text).toMatch(/^\*\*oc2 wants to start a sub-agent\*\*/);
+    expect(r.cards[0]!.text).toContain('To change them, say what to change instead of tapping.');
+
+    // Sub-task attaches directly under the hosted topic and wakes the bound agent when done.
+    r.activity.set(C, { outcome: { kind: 'done', at: 5, line: 'Found root cause.' } });
+    r.replies.set(C, 'Found root cause.');
+    r.d.childChanged(C);
+    r.clock.advance(CARD_DELAY_MS);
+    await settle();
+    expect(r.calls.filter(([c]) => c === 'prompt')).toHaveLength(1);
+  });
 });
 
 /**

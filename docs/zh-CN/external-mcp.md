@@ -17,6 +17,7 @@ mcp:
     - name: gemini                          # 显示在它的话题和卡片上
       tokenEnv: FLEETHERD_MCP_GEMINI_TOKEN  # 存它 token 的环境变量名——不是 token 本身
       tools: [skills, tasks]
+      # agents: [gemini-task]               # 可选：允许该调用方把子任务直接挂到已绑定这些智能体的真实话题下
 ```
 
 token 放在配置目录的 `.env` 里（或网关的环境变量里）：
@@ -59,6 +60,11 @@ FLEETHERD_MCP_GEMINI_TOKEN=<至少 24 个随机字符，比如 openssl rand -hex
 
 调用方只能看到、只能停掉它自己开的话题下的子任务；同时最多持有 10 个话题——网页端开新话题时会挤掉你最久没动、
 没加星的话题，不能让调用方把你的话题挤掉。删掉它的一个话题就空出一个名额。
+
+如果调用方额外配置了 `agents:`（例如 `agents: [gemini-task]`，同时匹配 `gemini-task` 与
+`gemini-task@<host>`），跑在真实话题里的 `connect` 智能体可以直接把当前话题 id 传给 `tasks new` / `list`，
+无需先调 `open` 新建空协调话题。子任务提议仍必弹 Start 确认卡、仍禁用 `task-send`，但子任务会直接挂在当前对话下，
+完成后也会自动唤醒该智能体汇报结果。
 
 ## 吊销调用方
 

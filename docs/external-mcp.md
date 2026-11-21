@@ -18,6 +18,7 @@ mcp:
     - name: gemini                          # shown in its topics and cards
       tokenEnv: FLEETHERD_MCP_GEMINI_TOKEN  # the variable holding its token — never the token
       tools: [skills, tasks]
+      # agents: [gemini-task]               # optional: let this caller attach sub-tasks directly to live topics bound to these agents
 ```
 
 Put the token in the config directory's `.env` (or the gateway's environment):
@@ -66,6 +67,12 @@ The topic the caller opens is yours to watch, and nothing in it runs an agent:
 A caller sees and stops only sub-tasks under topics it opened itself, and holds at most 10 topics
 at a time — the web UI makes room for a new topic by dropping your oldest unstarred one, and a
 caller must not be able to push yours out. Deleting one of its topics frees a place.
+
+When a caller also lists `agents:` (e.g. `agents: [gemini-task]`, matching both `gemini-task` and
+`gemini-task@<host>`), a hosted `connect` agent running in a live topic can pass that topic's id
+directly to `tasks new` / `list` instead of calling `open`. Proposals still wait on a Start card
+and `task-send` remains disabled, while sub-tasks attach under that conversation and notify the
+bound agent there when they finish.
 
 ## Revoking a caller
 

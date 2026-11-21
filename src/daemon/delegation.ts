@@ -520,7 +520,7 @@ export class Delegation {
    * is outside the gateway (a coordination topic the entrance opened): it is passed in because the
    * conversation id alone cannot name the topic under every session scope.
    */
-  async handle(from: ConversationId | undefined, action: TaskAction, at?: TopicAt): Promise<unknown> {
+  async handle(from: ConversationId | undefined, action: TaskAction, at?: TopicAt, opts?: { externalCall?: boolean }): Promise<unknown> {
     const here = from ? this.place(from, at) : undefined;
     if (!here) throw new Error(`${action.kind} runs from a conversation's own turn, and this call came from none`);
     if (!commandSurface(here.adapter).nested) {
@@ -535,7 +535,7 @@ export class Delegation {
       case 'task-list':
         return this.list(here, action.limit ?? 30);
       case 'task-new':
-        return this.propose(here, action);
+        return this.propose(here, action, opts?.externalCall === true);
       case 'task-send':
         return this.send(here, action.topic, action.text, action.interrupt === true, action.forward);
       case 'task-read':
@@ -562,14 +562,16 @@ export class Delegation {
    * into the author's session, which is `task-send` by the gateway's hand — and `task-verdict`
    * belongs to a reviewer's own topic, never a coordination topic.
    */
-  async handleExternal(key: ConversationId, action: TaskAction, at: TopicAt): Promise<unknown> {
-    if (!this.deps.externalOf?.(at.platform, at.address)) throw new Error('not a coordination topic an external caller opened');
+  async handleExternal(key: ConversationId, action: TaskAction, at: TopicAt, opts?: { hosted?: boolean }): Promise<unknown> {
+    if (!opts?.hosted && !this.deps.externalOf?.(at.platform, at.address)) {
+      throw new Error('not a coordination topic an external caller opened');
+    }
     if (action.kind === 'task-send') throw new Error('task-send is not offered to an external caller');
     if (action.kind === 'task-verdict') throw new Error('task-verdict is not offered to an external caller');
     if (action.kind === 'task-new' && (action.reviewBy !== undefined || action.review !== undefined)) {
       throw new Error('an automatic review is not offered to an external caller');
     }
-    return this.handle(key, action, at);
+    return this.handle(key, action, at, { externalCall: true });
   }
 
   /** The caller that opened this coordination topic, at the place it is. */
@@ -648,16 +650,16 @@ export class Delegation {
    * case the card is still posted, without buttons, so the person sees what an agent started on its
    * own; it gathers a burst the same way, only for the record.
    */
-  private async propose(here: Place, a: Extract<TaskAction, { kind: 'task-new' }>): Promise<TaskNewResult> {
+  private async propose(here: Place, a: Extract<TaskAction, { kind: 'task-new' }>, externalCall = false): Promise<TaskNewResult> {
     this.syncConfirmMode();
     const ext = this.externalOf(here);
-    const item = await this.itemOf(here, a, ext !== undefined);
+    const item = await this.itemOf(here, a, externalCall || ext !== undefined);
     const key = this.cardKey(here);
     const review = item.review;
     const reviewed = review
       ? ` Its review by ${review.agent} starts on its own whenever one of its turns ends with new commits; you are told once it passes, or when the loop stops and needs you.`
       : '';
-    if (this.startsAtOnce(here, item.agent) && (!review || this.startsAtOnce(here, review.agent))) {
+    if (!externalCall && this.startsAtOnce(here, item.agent) && (!review || this.startsAtOnce(here, review.agent))) {
       const { opened, failed } = await this.start(here, [item]);
       this.queueStartedCard(key, opened, failed, { platform: here.platformId, address: here.address });
       // The card's position, the same fact `item` carries when a confirmation card is gathering.

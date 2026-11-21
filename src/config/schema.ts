@@ -926,6 +926,12 @@ export const ConfigSchema = z
                 tokenEnv: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/, 'tokenEnv is the NAME of an environment variable, not the token'),
                 /** What it may call. `skills` is search and show only; `tasks` proposes and follows sub-tasks. */
                 tools: z.array(z.enum(['skills', 'tasks'])).min(1),
+                /**
+                 * Agents whose own topics this caller may propose sub-tasks in directly (no `open`
+                 * coordination topic needed). A base id like `gemini-task` also matches pod-qualified
+                 * `gemini-task@<host>`. Proposals still wait on a Start card and cannot `task-send`.
+                 */
+                agents: z.array(z.string().min(1)).optional(),
               })
               .strict()
           )

@@ -105,13 +105,19 @@ export interface ConnectPlace {
  * (daemon/instructions.ts); a connect agent has no file here, so this is that file's contents,
  * nothing added.
  */
-export async function connectMeta(def: AgentDef, connect: AgentConnect, place: ConnectPlace | undefined): Promise<Record<string, unknown>> {
+export async function connectMeta(
+  def: AgentDef,
+  connect: AgentConnect,
+  place: ConnectPlace | undefined,
+  topic?: string
+): Promise<Record<string, unknown>> {
   const gateway: Record<string, unknown> = { host: place ? place.host.id : os.hostname() };
   if (connect.tokenFile) gateway['token'] = await readToken(def, connect.tokenFile, place);
   const instructions = connectInstructions(def);
   if (instructions !== undefined) gateway['instructions'] = instructions;
   const skills = connectResidentSkills(def);
   if (skills.length > 0) gateway['skills'] = skills;
+  if (topic) gateway['topic'] = topic;
   return { ...(connect.meta ?? {}), fleetherd: gateway };
 }
 

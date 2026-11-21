@@ -30,7 +30,7 @@ const GEM: ExternalCaller = { name: 'gem', tools: ['skills', 'tasks'] };
 const OTHER: ExternalCaller = { name: 'other', tools: ['tasks'] };
 const keyOf = (a: ConversationAddress): string => `web#${a.channel}#${a.thread ?? ''}`;
 
-function rig(opts: { skills?: ExternalCallsDeps['skills']; taskList?: TaskListResult; sharedKey?: boolean } = {}) {
+function rig(opts: { skills?: ExternalCallsDeps['skills']; taskList?: TaskListResult; sharedKey?: boolean; boundAgents?: Record<string, string> } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fleetherd-external-'));
   dirs.push(dir);
   const file = path.join(dir, 'external-topics.json');
@@ -38,7 +38,7 @@ function rig(opts: { skills?: ExternalCallsDeps['skills']; taskList?: TaskListRe
   const threads = new Set<string>();
   const parents = new Map<string, string>(); // child thread → parent thread
   const posted: Array<{ to: string; text: string }> = [];
-  const handled: Array<{ key: string; kind: string }> = [];
+  const handled: Array<{ key: string; kind: string; hosted?: boolean }> = [];
   const searched: unknown[] = [];
   let next = 0;
   let scope = '';
@@ -69,10 +69,14 @@ function rig(opts: { skills?: ExternalCallsDeps['skills']; taskList?: TaskListRe
     }),
     platforms: new Map([['web', adapter]]),
     topics,
-    conversationAt: (_p, a) => ({ key: opts.sharedKey ? 'web#main' : `${keyOf(a)}${scope}` }),
+    conversationAt: (_p, a) => {
+      const key = opts.sharedKey ? 'web#main' : `${keyOf(a)}${scope}`;
+      const agent = a.thread ? opts.boundAgents?.[a.thread] : undefined;
+      return { key, ...(agent ? { agent } : {}) };
+    },
     delegation: {
-      handleExternal: async (key, action) => {
-        handled.push({ key, kind: action.kind });
+      handleExternal: async (key, action, _at, callOpts) => {
+        handled.push({ key, kind: action.kind, ...(callOpts?.hosted ? { hosted: true } : {}) });
         return action.kind === 'task-list'
           ? (opts.taskList ?? { tasks: [{ stage: 'working' }, { stage: 'review' }], total: 2 })
           : { ok: true };
@@ -190,6 +194,30 @@ describe('ExternalCalls: ownership', () => {
     ]);
     expect(r.topics.get('web', { channel: 'main', thread: 'e1000000' })).toBeUndefined();
     expect(decode(await r.calls.call(OTHER, { kind: 'topics' }))).toMatchObject({ count: 0 });
+  });
+
+  it('allows acting on a live topic bound to an agent listed in caller.agents (exact or @host)', async () => {
+    const r = rig({ boundAgents: { aaaaaaaa: 'gemini-task@uniagent', bbbbbbbb: 'cc' } });
+    r.threads.add('aaaaaaaa');
+    r.threads.add('bbbbbbbb');
+    r.threads.add('c1000000');
+    r.parents.set('c1000000', 'aaaaaaaa');
+    const hostedCaller: ExternalCaller = { name: 'gem', tools: ['skills', 'tasks'], agents: ['gemini-task'] };
+
+    await r.calls.call(hostedCaller, { kind: 'task', in: 'web:main/aaaaaaaa', action: { kind: 'task-new', agent: 'cc', text: 'do work' } });
+    await r.calls.call(hostedCaller, { kind: 'task', action: { kind: 'task-read', topic: 'web:main/c1000000', reply: true } });
+    expect(r.handled).toEqual([
+      { key: 'web#main#aaaaaaaa', kind: 'task-new', hosted: true },
+      { key: 'web#main#aaaaaaaa', kind: 'task-read', hosted: true },
+    ]);
+
+    // A topic bound to an unlisted agent, or a caller without `agents`, is refused the same way.
+    await expect(
+      r.calls.call(hostedCaller, { kind: 'task', in: 'web:main/bbbbbbbb', action: { kind: 'task-list' } })
+    ).rejects.toThrow(/is not a topic you opened, or a sub-task under one/);
+    await expect(
+      r.calls.call(GEM, { kind: 'task', in: 'web:main/aaaaaaaa', action: { kind: 'task-list' } })
+    ).rejects.toThrow(/is not a topic you opened, or a sub-task under one/);
   });
 });
 

@@ -47,6 +47,8 @@ import {
 export interface ExternalCaller {
   name: string;
   tools: ExternalToolName[];
+  /** Agents whose own topics this caller may propose sub-tasks in directly. */
+  agents?: string[];
 }
 
 export interface ExternalMcpDeps {
@@ -220,7 +222,7 @@ export class ExternalMcp {
         }
         continue;
       }
-      out.push({ name: c.name, tools: [...c.tools], digest: digest(token!) });
+      out.push({ name: c.name, tools: [...c.tools], ...(c.agents?.length ? { agents: [...c.agents] } : {}), digest: digest(token!) });
     }
     return out;
   }

@@ -69,7 +69,12 @@ export class ExternalCalls {
       case 'task': {
         if (action.action.kind === 'task-agents') return agentsText(this.deps.delegation.externalAgents());
         const place = action.in !== undefined ? this.owned(caller, action.in) : this.parentOwned(caller, subTopicOf(action.action));
-        const result = await this.deps.delegation.handleExternal(place.key, action.action, place.at);
+        const result = await this.deps.delegation.handleExternal(
+          place.key,
+          action.action,
+          place.at,
+          place.hosted ? { hosted: true } : undefined
+        );
         // The CLI's printer says "this conversation has opened no sub-agent topics", and a caller
         // has no conversation (agentsText is the same split for `task-agents`).
         if (action.action.kind === 'task-list' && (result as TaskListResult).tasks.length === 0) {
@@ -202,19 +207,29 @@ export class ExternalCalls {
     return false;
   }
 
-  /** The caller's coordination topic named `topic`, or the refusal. The address goes with it. */
-  private owned(caller: ExternalCaller, topic: string): { key: ConversationId; at: TopicAt } {
-    const { id } = this.platform();
+  /**
+   * The topic named `topic` that this caller may act from, or the refusal: either a coordination
+   * topic it opened itself (`external-topics.json`), or a live topic bound to an agent listed in
+   * `caller.agents` (a hosted web agent calling back into its own conversation).
+   */
+  private owned(caller: ExternalCaller, topic: string): { key: ConversationId; at: TopicAt; hosted: boolean } {
+    const { id, adapter } = this.platform();
     const address = this.addressOf(caller, topic, id);
     if (!address) throw notYours(topic);
-    const key = this.deps.conversationAt(id, address)?.key;
+    const conv = this.deps.conversationAt(id, address);
+    const key = conv?.key;
     const t = this.deps.topics.get(id, address);
-    if (!key || !t || t.caller !== caller.name || t.platform !== id || !this.present(t)) throw notYours(topic);
-    return { key, at: { platform: id, address } };
+    if (key && t && t.caller === caller.name && t.platform === id && this.present(t)) {
+      return { key, at: { platform: id, address }, hosted: false };
+    }
+    if (key && conv?.agent && caller.agents?.length && adapter.hasThread?.(address) !== false && matchesCallerAgent(conv.agent, caller.agents)) {
+      return { key, at: { platform: id, address }, hosted: true };
+    }
+    throw notYours(topic);
   }
 
   /** The caller's coordination topic a sub-task `topic` is nested under, or the refusal. */
-  private parentOwned(caller: ExternalCaller, topic: string): { key: ConversationId; at: TopicAt } {
+  private parentOwned(caller: ExternalCaller, topic: string): { key: ConversationId; at: TopicAt; hosted: boolean } {
     const { id, adapter } = this.platform();
     const address = this.addressOf(caller, topic, id);
     const parent = address ? adapter.parentOf?.(address) : undefined;
@@ -294,4 +309,9 @@ function subTopicOf(a: Exclude<IpcAction, { kind: 'task-agents' }>): string {
 
 function notYours(topic: string): Error {
   return new Error(`"${topic}" is not a topic you opened, or a sub-task under one; list without a topic shows yours`);
+}
+
+/** Exact match or pod-qualified `<name>@<host>` match against `caller.agents`. */
+function matchesCallerAgent(bound: string, allowed: readonly string[]): boolean {
+  return allowed.some((name) => bound === name || bound.startsWith(`${name}@`));
 }

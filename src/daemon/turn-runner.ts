@@ -1,7 +1,7 @@
 import type { Config } from '../config/schema.js';
 import { findAgent } from '../config/schema.js';
 import { looksLikeCommand } from './routing.js';
-import { addressOf, sameAddress, type ConversationAddress, type ConversationRef } from '../core/conversation.js';
+import { addressOf, formatTarget, sameAddress, type ConversationAddress, type ConversationRef } from '../core/conversation.js';
 import type {
   AgentCommand,
   AgentElicitation,
@@ -17,6 +17,7 @@ import type {
   ToolEvent,
 } from '../types.js';
 import type { PlatformAdapter } from '../platform/adapter.js';
+import { commandSurface } from './delegation.js';
 import type { AgentFactory, AgentImage, AgentSession, AgentStreamHandlers, AgentUsage, FollowUpSink, TurnImage } from './agent.js';
 import { promptUndelivered } from './agent.js';
 import { retryButtons } from '../core/turn-retry.js';
@@ -841,6 +842,7 @@ export class TurnRunner {
             ...(!isReconnect && images.length > 0 ? { images } : {}),
             sessionToken,
             model: this.deps.getModelOverride(conversationId),
+            ...(commandSurface(platform).nested ? { topic: formatTarget(platformId, address) } : {}),
           },
           render.handlers
         );
