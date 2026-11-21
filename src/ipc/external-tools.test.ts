@@ -43,6 +43,15 @@ describe('externalAction: tasks', () => {
     });
   });
 
+  it('takes the agent\'s own settings as option, parsed and refused exactly as task-new --option is', () => {
+    expect(
+      externalAction('tasks', { action: 'new', topic: 't', text: 'Fix it', agent: 'gt', option: 'account=alice@example.com, region=eu' })
+    ).toMatchObject({ kind: 'task', in: 't', action: { kind: 'task-new', options: { account: 'alice@example.com', region: 'eu' } } });
+    expect(() => externalAction('tasks', { action: 'new', topic: 't', text: 'x', agent: 'gt', option: 'account' })).toThrow(/key=value pairs/);
+    expect(() => externalAction('tasks', { action: 'new', topic: 't', text: 'x', agent: 'gt', option: 'model=opus' })).toThrow(/use --model/);
+    expect(() => externalAction('tasks', { action: 'list', topic: 't', option: 'account=a' })).toThrow(/option does not apply to list/);
+  });
+
   it('needs the topic and the agent for new: an external topic has no agent to default to', () => {
     expect(() => externalAction('tasks', { action: 'new', text: 'x', agent: 'cc' })).toThrow(/new needs topic/);
     expect(() => externalAction('tasks', { action: 'new', topic: 't', text: 'x' })).toThrow(/new needs agent/);

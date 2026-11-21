@@ -5,7 +5,8 @@ import type { ConversationAddress } from '../core/conversation.js';
 import type { SoloOutcome } from '../core/inbound-merger.js';
 import { fallbackTitle } from '../core/title-namer.js';
 import type { PlatformAdapter } from '../platform/adapter.js';
-import type { ConversationId, InboundMessage } from '../types.js';
+import type { ConversationId, InboundMessage, SessionOption } from '../types.js';
+import type { AgentSession } from './agent.js';
 import { expandHome, resolveAgentCwd } from './agent-common.js';
 import type { ConversationContext } from './conversation-context.js';
 import { formatLaneTitle, type ConversationControls } from './conversation-controls.js';
@@ -25,6 +26,12 @@ export interface ScheduledConversationOptions {
   mustOpen?: boolean;
 }
 
+/** What a task names beyond the agent: a model from its `/model` list, and its own settings by id. */
+export interface TaskChoice {
+  model?: string;
+  options?: Record<string, string>;
+}
+
 export interface OpenTaskOptions {
   platform: string;
   parent: ConversationAddress;
@@ -34,6 +41,8 @@ export interface OpenTaskOptions {
   cwd?: string;
   title?: string;
   model?: string;
+  /** The agent's own settings by id (`task-new --option`), applied after the model. */
+  options?: Record<string, string>;
   /** A reply handed over with the task, as `task-send --forward` attaches one (the review loop's first review). */
   forward?: { heading: string; text: string };
 }
@@ -89,32 +98,32 @@ export class ConversationDelegation {
     return state.merger.enqueueSolo(msg);
   }
 
+  /** Whether `agentId` offers `model` (`schedule add --model`, `task-new --model`). */
+  scheduledModelProblem(agentId: string, model: string, from: ConversationId | undefined): Promise<string | undefined> {
+    return this.scheduledChoicesProblem(agentId, { model }, from);
+  }
+
   /**
-   * Whether `agentId` offers `model` (`schedule add --model`, `task-new --model`). Another agent's
-   * list is read under a throwaway key, never the caller's: one conversation belongs to one agent.
+   * Whether `agentId` offers `model` and every `options` setting with its value — one probe for
+   * both, so a cold agent starts one throwaway session, not two. Another agent's lists are read
+   * under a throwaway key, never the caller's: one conversation belongs to one agent.
    */
-  async scheduledModelProblem(agentId: string, model: string, from: ConversationId | undefined): Promise<string | undefined> {
+  async scheduledChoicesProblem(agentId: string, choice: TaskChoice, from: ConversationId | undefined): Promise<string | undefined> {
     // `from` is undefined for the web UI's task page, which has no conversation to borrow a session from.
-    const same = from !== undefined && this.ctx.boundAgentOf(from) === agentId;
+    // Settings are read off a fresh session: one that has run may list only the value it locked (SessionOption).
+    const same = from !== undefined && !choice.options && this.ctx.boundAgentOf(from) === agentId;
     const key = same ? from : `__schedule-model__#${agentId}#${++this.modelProbeSeq}`;
     const session = this.ctx.agents.getOrCreate(key, agentId);
     try {
-      let selector = session.modelSelector?.();
-      if (!selector && session.ensureSession) {
+      if (session.ensureSession && !hasListsFor(session, choice)) {
         try {
           await session.ensureSession(this.ctx.tokens.tokenFor(key));
         } catch (e) {
-          return `could not ask agent "${agentId}" for its models: ${e instanceof Error ? e.message : String(e)}`;
+          const what = [choice.model !== undefined && 'models', choice.options && 'settings'].filter(Boolean).join(' and ');
+          return `could not ask agent "${agentId}" for its ${what}: ${e instanceof Error ? e.message : String(e)}`;
         }
-        selector = session.modelSelector?.();
       }
-      if (!selector) {
-        return `agent "${agentId}" has no model list (its harness has no model selector), so --model cannot be used with it; drop --model to use the agent's configured model`;
-      }
-      if (!selector.options.some((o) => o.value === model)) {
-        return `unknown model "${model}" for agent "${agentId}"; choose one of: ${selector.options.map((o) => o.value).join(', ')}`;
-      }
-      return undefined;
+      return choicesProblem(agentId, choice, session);
     } finally {
       if (!same) {
         this.ctx.agents.dispose(key);
@@ -146,6 +155,33 @@ export class ConversationDelegation {
     } catch (e) {
       return `could not set model "${model}": ${e instanceof Error ? e.message : String(e)}`;
     }
+  }
+
+  /**
+   * Put a task's own settings on its conversation before the first turn, each as named. Strict like
+   * applyScheduledModel: one the agent refuses fails the run rather than leaving it on its default.
+   */
+  async applyScheduledOptions(key: ConversationId, platform: string, agentId: string, options: Record<string, string>): Promise<string | undefined> {
+    const state = this.ctx.ensureState(key, platform, agentId);
+    if (state.agentId !== agentId) return `this topic is now answered by ${state.agentId}, not ${agentId}`;
+    const session = this.ctx.agents.getOrCreate(key, agentId);
+    if (!session.setOption) return `agent "${agentId}" cannot change its settings at runtime`;
+    const named = Object.entries(options);
+    if (session.ensureSession) {
+      try {
+        await session.ensureSession(this.ctx.tokens.tokenFor(key));
+      } catch (e) {
+        return `could not start the session to set ${named.map(([id, v]) => `${id}=${v}`).join(', ')}: ${e instanceof Error ? e.message : String(e)}`;
+      }
+    }
+    for (const [id, value] of named) {
+      try {
+        this.ctx.status.options(key, await session.setOption(id, value));
+      } catch (e) {
+        return `could not set ${id}=${value}: ${e instanceof Error ? e.message : String(e)}`;
+      }
+    }
+    return undefined;
   }
 
   /**
@@ -239,21 +275,29 @@ export class ConversationDelegation {
       if (moved.kind === 'missing') throw new Error(`no directory ${cwd} on the machine "${opts.agentId}" runs on`);
       if (moved.kind === 'failed') throw new Error(moved.reason);
     }
-    if (opts.model) {
-      // Strict, like a scheduled run's: the card named this model. The topic says why nothing runs.
-      const why = await this.applyScheduledModel(conv.key, opts.platform, opts.agentId, opts.model);
-      if (why) {
-        await adapter
-          .sendMessage(opened, `Not started — ${why}.`)
-          .catch((e) => console.warn(`[conversation] ${conv.key}: could not say why the task did not start:`, e instanceof Error ? e.message : e));
-        throw new Error(why);
-      }
-      // Recorded, unlike a schedule's (re-applied every run): this topic has no next run to apply it at.
-      this.ctx.store?.setConversationChoice?.(conv.key, opts.agentId, 'model', opts.model);
-    }
+    await this.applyTaskChoices(conv.key, opts, adapter, opened);
     await this.handTo(conv.key, opts.platform, opened, opts.text, opts.header, opts.forward ? { forward: opts.forward } : {});
     // `name`, not the bare title: formatLaneTitle normalises it, and the card must match the topic.
     return { key: conv.key, address: opened, title: name };
+  }
+
+  /**
+   * A task's model, then its settings, on its new topic before the first turn. Strict, like a
+   * scheduled run's: the card named them. The topic says why nothing runs.
+   */
+  private async applyTaskChoices(key: ConversationId, opts: OpenTaskOptions, adapter: PlatformAdapter, opened: ConversationAddress): Promise<void> {
+    const why =
+      (opts.model ? await this.applyScheduledModel(key, opts.platform, opts.agentId, opts.model) : undefined) ??
+      (opts.options ? await this.applyScheduledOptions(key, opts.platform, opts.agentId, opts.options) : undefined);
+    if (why) {
+      await adapter
+        .sendMessage(opened, `Not started — ${why}.`)
+        .catch((e) => console.warn(`[conversation] ${key}: could not say why the task did not start:`, e instanceof Error ? e.message : e));
+      throw new Error(why);
+    }
+    // Recorded, unlike a schedule's (re-applied every run): this topic has no next run to apply it at.
+    // Settings need no record: the agent keeps them across a reload itself (AgentSession.setOption).
+    if (opts.model) this.ctx.store?.setConversationChoice?.(key, opts.agentId, 'model', opts.model);
   }
 
   /**
@@ -312,4 +356,43 @@ function taskDirectory(def: AgentDef, given: string): string {
   }
   const root = resolveAgentCwd(def);
   return def.host ? `${root.replace(/\/$/, '')}/${given}` : join(root, given);
+}
+
+/** Whether `session` already holds the lists `choice` is checked against (both reads are non-spawning). */
+function hasListsFor(session: AgentSession, choice: TaskChoice): boolean {
+  return (choice.model === undefined || Boolean(session.modelSelector?.())) && (!choice.options || Boolean(session.sessionOptions?.()));
+}
+
+function choicesProblem(agentId: string, choice: TaskChoice, session: AgentSession): string | undefined {
+  return (
+    (choice.model !== undefined ? modelProblem(agentId, choice.model, session.modelSelector?.()?.options) : undefined) ??
+    (choice.options ? optionsProblem(agentId, choice.options, session.sessionOptions?.()) : undefined)
+  );
+}
+
+function modelProblem(agentId: string, model: string, offered: Array<{ value: string }> | undefined): string | undefined {
+  if (!offered) {
+    return `agent "${agentId}" has no model list (its harness has no model selector), so --model cannot be used with it; drop --model to use the agent's configured model`;
+  }
+  if (offered.some((o) => o.value === model)) return undefined;
+  return `unknown model "${model}" for agent "${agentId}"; choose one of: ${offered.map((o) => o.value).join(', ')}`;
+}
+
+/** The first of `options` that `agentId` does not offer, with what it does offer — each value's note included (an account's quota). */
+function optionsProblem(agentId: string, options: Record<string, string>, offered: SessionOption[] | undefined): string | undefined {
+  const settings = offered ?? [];
+  if (!settings.length) {
+    return `agent "${agentId}" has no settings of its own, so --option cannot be used with it; drop --option to use the agent's defaults`;
+  }
+  for (const [id, value] of Object.entries(options)) {
+    const setting = settings.find((o) => o.id === id);
+    if (!setting) {
+      return `agent "${agentId}" has no setting "${id}"; it has: ${settings.map((o) => `${o.id} (${o.name})`).join(', ')}`;
+    }
+    if (!setting.options.some((c) => c.value === value)) {
+      const choices = setting.options.map((c) => (c.description ? `${c.value} (${c.description})` : c.value));
+      return `"${value}" is not a choice for ${id} on agent "${agentId}"; choose one of: ${choices.join(', ')}`;
+    }
+  }
+  return undefined;
 }

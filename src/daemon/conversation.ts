@@ -43,7 +43,12 @@ import type {
   ConversationState,
 } from './conversation-context.js';
 import { ConversationControls } from './conversation-controls.js';
-import { ConversationDelegation, type OpenTaskOptions, type ScheduledConversationOptions } from './conversation-delegation.js';
+import {
+  ConversationDelegation,
+  type OpenTaskOptions,
+  type ScheduledConversationOptions,
+  type TaskChoice,
+} from './conversation-delegation.js';
 import { ConversationHistory } from './conversation-history.js';
 import type { ConversationStore } from './conversation-store.js';
 import { SessionTokenRegistry } from './conversation-token-registry.js';
@@ -840,6 +845,10 @@ export class ConversationRegistry {
 
   scheduledModelProblem(agentId: string, model: string, from: ConversationId | undefined): Promise<string | undefined> {
     return this.delegation.scheduledModelProblem(agentId, model, from);
+  }
+
+  scheduledChoicesProblem(agentId: string, choice: TaskChoice, from: ConversationId | undefined): Promise<string | undefined> {
+    return this.delegation.scheduledChoicesProblem(agentId, choice, from);
   }
 
   applyScheduledModel(key: ConversationId, platform: string, agentId: string, model: string): Promise<string | undefined> {

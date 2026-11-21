@@ -16,8 +16,8 @@ in parallel, and come back with one report — so you follow one topic instead o
    of its own, unless you named another or the part needs another machine; it writes the task that
    agent will get. It asks for a reply it can act on: the conclusion first, then the evidence, under
    2,000 characters.
-2. A card lists every part: the agent, its machine, the model if one was chosen, the directory, and
-   the full text of the task.
+2. A card lists every part: the agent, its machine, the model and settings if any were chosen, the
+   directory, and the full text of the task.
    **Nothing starts until you tap Start** — unless confirmation is off (`/setting delegation off`),
    in which case each part starts as it is proposed and the card is posted after it, listing what
    started and where, with no Start button. The middle tier (`/setting delegation first`) asks once
@@ -157,6 +157,12 @@ gateway's process: after a restart the parts and reviewers carry on as ordinary 
   switch to when the part starts fails that part, with the reason, in its topic and on the card —
   it never runs on another model instead. The topic keeps that model, as if chosen there with
   `/model`.
+- A part can also pick the agent's own settings — the ones its settings switch offers, such as the
+  account an agent works under (`task-new --option account=alice@example.com`, several as
+  `key=value,key=value`). The card shows them after the model. A setting or value the agent does not
+  offer is refused when proposed, with the choices it does offer and their notes (an account's quota,
+  say); one the agent refuses when the part starts fails that part, with the reason — it never runs
+  on the agent's default instead. The model is `--model`'s, not `--option`'s.
 - With agents on several [machines](remote-hosts.md), a part goes to another machine only when it
   needs that machine; otherwise it stays on the agent's own, which has the same checkouts and tools.
   A part that runs elsewhere shows `@ <host>` on the card.

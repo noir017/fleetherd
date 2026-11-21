@@ -44,7 +44,7 @@ Two tools, and only the ones listed for it:
   |---|---|
   | `open` | opens a topic of its own in the web UI, named `[<caller>] <title>`; returns its id |
   | `agents` | who can take a sub-task, and the directories each can start in |
-  | `new` | proposes one sub-task in that topic: `topic`, `agent`, `text` (and `cwd`, `title`, `model`) |
+  | `new` | proposes one sub-task in that topic: `topic`, `agent`, `text` (and `cwd`, `title`, `model`, `option` — the agent's own settings as `key=value`, comma-separated, e.g. `account=alice@example.com`) |
   | `list` | with `topic`, its sub-tasks and where each stands; without, the caller's own topics |
   | `status` / `read` / `stop` | one sub-task, by the topic id `list` printed; `read` with `reply: true` is what it concluded |
 

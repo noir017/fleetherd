@@ -19,6 +19,14 @@ import type { InboundMessage } from '../types.js';
 /** Optional channel: empty = current session. Empty string is illegal (treated as unset), hence min(1). */
 const channelId = z.string().min(1).optional();
 
+/** `task-new --option`: setting id → value, none blank. The model is `--model`'s, which a harness applies differently. */
+const TaskOptionsSchema = z
+  .record(
+    z.string().regex(/\S/).max(100).refine((k) => k !== 'model', 'the model is set with model, not options'),
+    z.string().regex(/\S/).max(500)
+  )
+  .refine((o) => Object.keys(o).length > 0 && Object.keys(o).length <= 20, 'options names 1 to 20 settings');
+
 /**
  * How long an unanswered `ask` waits before giving up, when the caller names no `--timeout`.
  *
@@ -247,6 +255,8 @@ const IpcActionSchema = z.discriminatedUnion('kind', [
       cwd: z.string().min(1).max(4_096).optional(),
       title: z.string().min(1).max(200).optional(),
       model: z.string().min(1).max(200).optional(),
+      /** `--option`: the agent's own ACP settings (SessionOption) by id, e.g. `account`. */
+      options: TaskOptionsSchema.optional(),
       /**
        * `--review-by`: the agent that reviews the work on its own whenever one of its turns ends
        * with new commits (delegation.ts, the review loop). Comes with `review`, its whole task.
@@ -453,6 +463,7 @@ export type IpcAction =
       cwd?: string;
       title?: string;
       model?: string;
+      options?: Record<string, string>;
       reviewBy?: string;
       review?: string;
       rounds?: number;

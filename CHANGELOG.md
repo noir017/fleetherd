@@ -5,6 +5,18 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **A sub-task can pick the agent's own settings: `task-new --option key=value[,key=value]`.** An
+  agent with settings of its own — the account a web agent works under, say — could be handed a
+  sub-task only on whatever its default was, so the person had to open the topic and switch it by
+  hand before the first message, or let the part run on the wrong account. The settings are checked
+  against what the agent offers when proposed, in the same probe as `--model`, and a setting or value
+  it does not offer is refused with its choices and their notes (an account's quota); the card shows
+  them after the model; and they are applied before the first turn, strictly — one the agent refuses
+  fails that part with the reason in its topic instead of running on the default. The external MCP
+  entrance's `tasks new` takes the same as `option`.
+
 ## [3.24.2] - 2026-11-21
 
 ### Fixed

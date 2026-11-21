@@ -41,7 +41,7 @@ FLEETHERD_MCP_GEMINI_TOKEN=<至少 24 个随机字符，比如 openssl rand -hex
   |---|---|
   | `open` | 在网页端开一个它自己的话题，名为 `[<调用方>] <标题>`；返回话题 id |
   | `agents` | 哪些智能体能接子任务，各自能在哪些目录启动 |
-  | `new` | 在那个话题里提议一个子任务：`topic`、`agent`、`text`（另有 `cwd`、`title`、`model`） |
+  | `new` | 在那个话题里提议一个子任务：`topic`、`agent`、`text`（另有 `cwd`、`title`、`model`、`option`——智能体自己的设置，写成 `key=value`，多个用逗号隔开，如 `account=alice@example.com`） |
   | `list` | 带 `topic` 时列出它的子任务和各自进度；不带时列出调用方自己的话题 |
   | `status` / `read` / `stop` | 某个子任务，用 `list` 打印的话题 id；`read` 加 `reply: true` 是它的结论 |
 

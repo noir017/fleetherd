@@ -980,6 +980,12 @@ of it: the daemon keeps none, so deleting a topic on the page is what ends it. T
   (`applyScheduledModel`, strict): a refusal is said in the new topic and reported as a part that
   could not start. It is then written to the topic's record like a `/model` choice, because nothing
   re-applies it later — unlike a scheduled run's, which is applied per run and never written.
+  `task-new --option` (the agent's own settings, `SessionOption`) goes the same way: checked in the
+  same probe as the model (`scheduledChoicesProblem`, so a cold agent starts one throwaway session,
+  not two) and applied right after the model (`applyScheduledOptions`, strict, same refusal path).
+  Settings are always read off a throwaway session, never the asking conversation's own: a session
+  that has run may list only the value it locked. Nothing is written to the record — the agent keeps
+  its settings across a reload itself (`AgentSession.setOption`).
   Start opens each part with `ConversationRegistry.openTask` (`createThread` with `under`), whose
   `handTo` shows the text under a `↳ From [parent]` header and ingests it with `DELEGATE_SENDER`.
   `task-send --forward <topic>` resolves that topic through `child` too, reads its last

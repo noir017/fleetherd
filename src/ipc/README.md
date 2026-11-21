@@ -144,7 +144,8 @@ schema and actions (search and show), its description alone written for a caller
 list of its own, and `tasks` is the sub-agent commands as one tool with an `action`
 (`agents` → `task-agents`, `list` → `tasks`, `new` → `task-new`, `read`/`status`/`stop` → their
 commands), each built by the spec's own `build` through a tool view offering only that action's
-options. `open` is the one action with no reverse command: an agent in a conversation already has a
+options — an option's `parse` included, so `new`'s `option` string is split and refused exactly as
+`task-new --option` is. `open` is the one action with no reverse command: an agent in a conversation already has a
 topic to nest sub-tasks under, and a caller from outside has to be given one. `task-send` is not an
 action, and the daemon refuses it from a caller anyway (`Delegation.handleExternal`): a caller reads
 untrusted pages, and an injected instruction must not reach a running sub-agent without a tap. For

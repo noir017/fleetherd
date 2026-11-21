@@ -10,7 +10,7 @@ import type { PlatformAdapter } from '../platform/adapter.js';
 import type { AgentFactory, AgentSession, AgentStreamHandlers } from './agent.js';
 import { TurnFailure } from './agent.js';
 import { readPromptRefusal } from './session-failure.js';
-import type { InboundMessage, TopicActivity } from '../types.js';
+import type { InboundMessage, SessionOption, TopicActivity } from '../types.js';
 import type { PersonWords } from './turn-runner.js';
 
 /**
@@ -37,6 +37,9 @@ function rig(
     hold?: boolean;
     steer?: boolean;
     modelFailure?: string;
+    /** The agent's own settings, reported once its session has started; a value in `optionFailure` is refused when set. */
+    settings?: SessionOption[];
+    optionFailure?: string;
     store?: ConversationStore;
     onPersonWords?: (id: string, words: PersonWords) => void;
   } = {}
@@ -92,8 +95,11 @@ function rig(
   const prompts: Array<{ conversation: string; prompt: string }> = [];
   const models: Array<{ conversation: string; model: string }> = [];
   const events: string[] = [];
+  const ensured: string[] = [];
   const factory: AgentFactory = {
     getOrCreate(conversationId): AgentSession {
+      // Like an ACP session: the lists exist only once a session has started (both reads are non-spawning).
+      let started = false;
       return {
         runTurn: async (input: { prompt: string }, h: AgentStreamHandlers) => {
           prompts.push({ conversation: conversationId, prompt: input.prompt });
@@ -122,7 +128,18 @@ function rig(
         abort: () => {},
         setFollowUpSink: () => {},
         dispose: () => {},
-        ensureSession: async () => {},
+        ensureSession: async () => {
+          ensured.push(conversationId);
+          started = true;
+        },
+        modelSelector: () =>
+          started ? { current: 'base-model', options: [{ value: 'base-model', name: 'Base' }, { value: 'fast-model', name: 'Fast' }] } : undefined,
+        sessionOptions: () => (started ? (opts.settings ?? []) : undefined),
+        setOption: async (id: string, value: string) => {
+          events.push(`option:${id}=${value}`);
+          if (value === opts.optionFailure) throw new Error("that account's quota is used up");
+          return opts.settings ?? [];
+        },
         setModel: async (model: string) => {
           models.push({ conversation: conversationId, model });
           events.push(`model:${model}`);
@@ -138,7 +155,7 @@ function rig(
 
   const hooks = opts.onPersonWords ? { onPersonWords: opts.onPersonWords } : undefined;
   const registry = new ConversationRegistry(cfg, new Map([['web', platform]]), factory, clock, hooks, opts.store);
-  return { registry, sent, prompts, models, events, activity, renamed, nested };
+  return { registry, sent, prompts, models, events, ensured, activity, renamed, nested };
 }
 
 const storeDir = mkdtempSync(join(tmpdir(), 'delegation-registry-'));
@@ -294,6 +311,33 @@ describe('a sub-agent’s topic (openTask, handTo)', () => {
     expect(store.conversationChoice('web#main#new1', 'oc', 'model')).toBeUndefined();
   });
 
+  it('openTask applies its settings after the model and before the first turn', async () => {
+    const store = new ConversationStore(join(storeDir, 'options.json'));
+    const r = rig({ store, settings: ACCOUNT });
+    live = r.registry;
+    const options = { account: 'alice@example.com', region: 'eu' };
+    const opened = await r.registry.openTask({ platform: 'web', parent, agentId: 'oc', text: 'go', header, model: 'fast-model', options });
+    await wait();
+    expect(r.events.slice(0, 4)).toEqual(['model:fast-model', 'option:account=alice@example.com', 'option:region=eu', 'turn:go']);
+    expect(store.conversationChoice(opened.key, 'oc', 'model')).toBe('fast-model');
+  });
+
+  it('openTask runs nothing when the agent refuses a setting, and the topic says why', async () => {
+    const store = new ConversationStore(join(storeDir, 'option-refused.json'));
+    const r = rig({ store, settings: ACCOUNT, optionFailure: 'bob@example.com' });
+    live = r.registry;
+    await expect(
+      r.registry.openTask({ platform: 'web', parent, agentId: 'oc', text: 'go', header, model: 'fast-model', options: { account: 'bob@example.com' } })
+    ).rejects.toThrow("could not set account=bob@example.com: that account's quota is used up");
+    await wait();
+    // Not started on the default account instead: no turn, and the model is not kept for a topic that never ran.
+    expect(r.prompts).toEqual([]);
+    expect(r.sent).toEqual([
+      { to: 'main/new1', text: "Not started — could not set account=bob@example.com: that account's quota is used up." },
+    ]);
+    expect(store.conversationChoice('web#main#new1', 'oc', 'model')).toBeUndefined();
+  });
+
   it('openTask refuses an agent that is not configured, before opening anything', async () => {
     const r = rig();
     live = r.registry;
@@ -412,5 +456,57 @@ describe('what a person writes reaches delegation (recordPersonWords)', () => {
     await wait();
     // Waiting behind a turn that never ends here: nothing has reached the agent, so nothing is reported.
     expect(queued).toEqual([]);
+  });
+});
+
+const ACCOUNT: SessionOption[] = [
+  {
+    id: 'account',
+    name: 'Account',
+    current: 'alice@example.com',
+    options: [
+      { value: 'alice@example.com', name: 'Alice' },
+      { value: 'bob@example.com', name: 'Bob', description: 'quota used up' },
+    ],
+  },
+  { id: 'region', name: 'Region', current: 'us', options: [{ value: 'us', name: 'US' }, { value: 'eu', name: 'EU' }] },
+];
+
+describe('scheduledChoicesProblem: a sub-task’s model and settings checked before the card', () => {
+  it('checks --model and --option on one throwaway session, never the caller’s own', async () => {
+    const r = rig({ settings: ACCOUNT });
+    live = r.registry;
+    r.registry.route(inbound('hello', 'own'));
+    await wait();
+    const from = 'web#main#own';
+    expect(r.registry.boundAgentOf(from)).toBe('cc');
+    r.ensured.length = 0;
+    // The caller is cc too, but a session that has run may list only the value it locked.
+    expect(await r.registry.scheduledChoicesProblem('cc', { model: 'fast-model', options: { account: 'bob@example.com' } }, from)).toBeUndefined();
+    expect(r.ensured).toHaveLength(1);
+    expect(r.ensured[0]).toMatch(/^__schedule-model__#cc#/);
+  });
+
+  it('names what the agent does offer: its settings, or a setting’s choices with their notes', async () => {
+    const r = rig({ settings: ACCOUNT });
+    live = r.registry;
+    expect(await r.registry.scheduledChoicesProblem('oc', { options: { acct: 'x' } }, undefined)).toBe(
+      'agent "oc" has no setting "acct"; it has: account (Account), region (Region)'
+    );
+    expect(await r.registry.scheduledChoicesProblem('oc', { options: { account: 'carol@example.com' } }, undefined)).toBe(
+      '"carol@example.com" is not a choice for account on agent "oc"; choose one of: alice@example.com, bob@example.com (quota used up)'
+    );
+    // The model is checked first, and its own refusal is unchanged.
+    expect(await r.registry.scheduledChoicesProblem('oc', { model: 'nope', options: { acct: 'x' } }, undefined)).toBe(
+      'unknown model "nope" for agent "oc"; choose one of: base-model, fast-model'
+    );
+  });
+
+  it('refuses --option for an agent with no settings of its own', async () => {
+    const r = rig();
+    live = r.registry;
+    expect(await r.registry.scheduledChoicesProblem('oc', { options: { account: 'a' } }, undefined)).toBe(
+      'agent "oc" has no settings of its own, so --option cannot be used with it; drop --option to use the agent\'s defaults'
+    );
   });
 });
