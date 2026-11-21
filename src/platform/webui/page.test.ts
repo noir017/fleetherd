@@ -24,10 +24,8 @@ describe('webui page', () => {
   const shell = serveShell('Chat', false, true, false, testAssets()).html;
 
   it('emits a client script that actually parses, with every build marker filled', () => {
-    // `new Function` compiles the body without running it, which is exactly the check wanted:
-    // a stray brace or a broken string literal throws here instead of producing a page that
-    // renders and then does nothing at all. Both forms: the source, and the bundle the build ships.
-    expect(() => new Function(APP_SOURCE)).not.toThrow();
+    // `new Function` compiles the bundled IIFE without running it, catching a stray brace or
+    // broken literal before it reaches a browser. APP_SOURCE uses ES imports for split panels.
     expect(() => new Function(CLIENT.app.text)).not.toThrow();
     // An unfilled marker is a ReferenceError the moment the script starts.
     expect(CLIENT.app.text).not.toMatch(/__FH_[A-Z_]+__/);

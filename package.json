@@ -25,7 +25,7 @@
     "dev": "tsx src/cli.ts",
     "dev:watch": "tsx watch src/cli.ts start",
     "stop": "node scripts/stop.mjs",
-    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p src/platform/webui/codeview/tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p src/platform/webui/codeview/tsconfig.json && tsc -p src/platform/webui/client/tsconfig.json",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage --exclude 'src/platform/webui/page.dom.*.test.ts' && vitest run src/platform/webui/page.dom.*.test.ts",
     "lint": "eslint --max-warnings=18 .",
