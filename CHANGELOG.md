@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.24.1] - 2026-11-21
+
 ### Changed
 
 - **Split `daemon/conversation.ts` into focused collaborator modules.** `ConversationRegistry` previously held over 5,300 lines of turn scheduling, slash-command routing, model/effort/directory controls, history restoration, and sub-agent delegation in one file. Those responsibilities now live in dedicated modules (`conversation-turns.ts`, `conversation-controls.ts`, `conversation-commands.ts`, `conversation-history.ts`, `conversation-delegation.ts`) while keeping `ConversationRegistry` as the façade and shrinking it under 1,000 lines with zero behavioral change.
