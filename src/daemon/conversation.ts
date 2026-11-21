@@ -136,7 +136,7 @@ import { busyNote, formatUsageSnapshot } from '../core/busy-snapshot.js';
 import { InboundMerger, stopInputNote, type SoloOutcome } from '../core/inbound-merger.js';
 import { fallbackTitle, generateTitle } from '../core/title-namer.js';
 import { shouldRespond, type GateConfig } from '../core/inbound-gate.js';
-import { CONTINUE_SENDER, DELEGATE_SENDER, SCHEDULED_SENDER, TurnRunner, sendAside, type PersonWords, type TurnEnd, type TurnRunnerDeps } from './turn-runner.js';
+import { CONTINUE_SENDER, DELEGATE_SENDER, RECONNECT_SENDER, SCHEDULED_SENDER, TurnRunner, sendAside, type PersonWords, type TurnEnd, type TurnRunnerDeps } from './turn-runner.js';
 import { StatusBoard, statusOptions } from './status-board.js';
 import { TurnOutcomes, type KeptText } from './turn-outcomes.js';
 import { FailedInputs } from './failed-input.js';
@@ -569,7 +569,7 @@ export class ConversationRegistry {
    * What each conversation's last failed turn was asked: held for the next turn when the agent never
    * received it, and kept for the ❌ notice's Retry buttons. See failed-input.ts.
    */
-  private readonly failedInputs = new FailedInputs({ scheduled: SCHEDULED_SENDER, continued: CONTINUE_SENDER }, (notice) => {
+  private readonly failedInputs = new FailedInputs({ scheduled: SCHEDULED_SENDER, continued: CONTINUE_SENDER, reconnect: RECONNECT_SENDER }, (notice) => {
     // Read at call time: the platforms are the constructor's, and this runs only after a turn.
     const adapter = this.platforms.get(notice.platformId);
     if (!adapter?.capabilities.editButtons) return;
@@ -939,10 +939,11 @@ export class ConversationRegistry {
   }
 
   /** The turn runner's way to FailedInputs: the held messages, a failure's input, its notice. */
-  private failedInputDeps(): Pick<TurnRunnerDeps, 'takeUndelivered' | 'keepFailedInput' | 'failureNoticeSent'> {
+  private failedInputDeps(): Pick<TurnRunnerDeps, 'takeUndelivered' | 'keepFailedInput' | 'keepInterrupted' | 'failureNoticeSent'> {
     return {
       takeUndelivered: (id) => this.failedInputs.take(id),
       keepFailedInput: (id, failure) => this.failedInputs.failed(id, failure),
+      keepInterrupted: (id, agentId) => this.failedInputs.interrupted(id, agentId),
       failureNoticeSent: (retryId, notice) => this.failedInputs.noticeSent(retryId, notice),
     };
   }
@@ -4734,7 +4735,7 @@ ${formatTokens(left)} left before compaction — ${name}`;
    *
    * `done: false` means nothing was sent and the buttons stay; the text says why.
    */
-  async retryTurn(opts: { retryId: string; user: string; agentId?: string }): Promise<{ done: boolean; text: string }> {
+  async retryTurn(opts: { retryId: string; user: string; agentId?: string; reconnect?: boolean }): Promise<{ done: boolean; text: string }> {
     const record = this.failedInputs.peek(opts.retryId);
     if (!record) return { done: false, text: 'Nothing to retry any more — a later turn has run since, or this one was already retried.' };
     const key = record.conversation;
@@ -4749,6 +4750,14 @@ ${formatTokens(left)} left before compaction — ${name}`;
     if (!def) return { done: false, text: `No agent "${target}" is configured.` };
     // By id: two agents on one harness share a display name, and which one is the whole question.
     const name = target;
+    if (opts.reconnect) {
+      this.useRetry(record.id, key);
+      this.enqueueReconnect(key, lane.platformId, lane.address, bound);
+      return { done: true, text: `↻ Reconnecting to ${bound}…` };
+    }
+    if (record.input.length === 0) {
+      return { done: false, text: 'No saved input to resend — send the message again.' };
+    }
     if (target === bound) {
       this.useRetry(record.id, key);
       this.enqueueRetry(key, lane.platformId, lane.address, target, record.input, opts.user);
@@ -4838,6 +4847,32 @@ ${formatTokens(left)} left before compaction — ${name}`;
     void state.merger.enqueueSolo(batch);
   }
 
+  /** Reconnect to an interrupted turn on `agentId` without resending user input. */
+  private enqueueReconnect(
+    key: ConversationId,
+    platformId: string,
+    address: ConversationAddress,
+    agentId: string
+  ): void {
+    const state = this.ensureState(key, platformId, agentId);
+    state.reclaimOnIdle = false;
+    this.touch(key);
+    const msg: InboundMessage = {
+      conversation: {
+        platform: platformId,
+        channel: address.channel,
+        ...(address.thread ? { thread: address.thread } : {}),
+        kind: 'direct',
+        user: RECONNECT_SENDER,
+      },
+      messageId: '',
+      content: '',
+      timestamp: this.clock.now(),
+    };
+    console.log(`[retry] ${key}: reconnecting to interrupted turn on "${agentId}"`);
+    void state.merger.enqueueSolo([msg]);
+  }
+
   /** Whether an agent is cooling down after a usage limit (TurnOutcomes) — Delegation holds cards for it. */
   coolingDown(agentId: string): boolean {
     return this.outcomes.coolingDown(agentId);
@@ -4848,11 +4883,22 @@ ${formatTokens(left)} left before compaction — ${name}`;
    * daemon after its platforms are up. Returns how many were found.
    */
   recoverInterruptedTurns(): number {
-    return this.outcomes.recoverInterrupted((id, platform, agentId) => {
-      if (!findAgent(this.config, agentId)) return false;
-      this.ensureState(id, platform, agentId);
-      return true;
-    });
+    return this.outcomes.recoverInterrupted(
+      (id, platform, agentId) => {
+        if (!findAgent(this.config, agentId)) return false;
+        this.ensureState(id, platform, agentId);
+        return true;
+      },
+      (id, agentId) => {
+        const def = findAgent(this.config, agentId);
+        if (!def?.connect) return undefined;
+        const retryId = this.failedInputs.interrupted(id, agentId);
+        return {
+          retryId,
+          onSent: (platformId, ref, text) => this.failedInputs.noticeSent(retryId, { platformId, ref, text }),
+        };
+      }
+    );
   }
 
   /** What a conversation's last turn left (TurnOutcomes), for a list built on this side. */

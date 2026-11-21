@@ -58,6 +58,7 @@ export interface FailedNotice {
 export interface FailedInputSenders {
   scheduled: string;
   continued: string;
+  reconnect?: string;
 }
 
 /** The most messages one conversation holds for its next turn; older ones are dropped, and logged. */
@@ -87,7 +88,9 @@ export class FailedInputs {
     id: ConversationId,
     failure: { input: InboundMessage[]; undelivered: boolean; agentId: string }
   ): { retryId?: string; held: number } {
-    const own = failure.input.filter((m) => m.conversation.user !== this.senders.continued);
+    const own = failure.input.filter(
+      (m) => m.conversation.user !== this.senders.continued && m.conversation.user !== this.senders.reconnect
+    );
     const input = own.length > 0 ? own : this.records.get(id)?.input;
     let retryId: string | undefined;
     this.drop(id);
@@ -99,6 +102,7 @@ export class FailedInputs {
     const keep = failure.input.filter(
       (m) =>
         m.conversation.user !== this.senders.continued &&
+        m.conversation.user !== this.senders.reconnect &&
         m.conversation.user !== this.senders.scheduled &&
         !looksLikeCommand(m.content.trim())
     );
@@ -109,6 +113,17 @@ export class FailedInputs {
     if (held.length > 0) this.held.set(id, held);
     else this.held.delete(id);
     return { ...(retryId ? { retryId } : {}), held: held.length };
+  }
+
+  /**
+   * Record a reconnect-only retry handle when a turn was interrupted without in-memory input
+   * (e.g. after a gateway restart).
+   */
+  interrupted(id: ConversationId, agentId: string): string {
+    this.drop(id);
+    const retryId = this.newId();
+    this.records.set(id, { id: retryId, conversation: id, input: [], agentId });
+    return retryId;
   }
 
   /**

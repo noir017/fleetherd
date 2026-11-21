@@ -64,8 +64,14 @@ export const DELEGATE_SENDER = 'delegated';
  */
 export const UPDATE_SENDER = 'sub-agent-updates';
 
+/**
+ * The sender of a Reconnect turn (clicking Reconnect on a failed or interrupted turn):
+ * instructs a reconnect-capable agent to resume streaming/fetching the current turn without resending input.
+ */
+export const RECONNECT_SENDER = 'reconnect';
+
 /** The senders the gateway writes as. A message from any other sender is one a person typed. */
-const GATEWAY_SENDERS: ReadonlySet<string> = new Set([SCHEDULED_SENDER, CONTINUE_SENDER, DELEGATE_SENDER, UPDATE_SENDER]);
+const GATEWAY_SENDERS: ReadonlySet<string> = new Set([SCHEDULED_SENDER, CONTINUE_SENDER, DELEGATE_SENDER, UPDATE_SENDER, RECONNECT_SENDER]);
 
 /**
  * What a person's own messages put in front of an agent, as one turn's batch or a message merged into
@@ -119,6 +125,7 @@ export function historyTriggerOf(batch: InboundMessage[]): HistoryTrigger {
       case SCHEDULED_SENDER:
         return 'schedule';
       case CONTINUE_SENDER:
+      case RECONNECT_SENDER:
         return 'continue';
       case DELEGATE_SENDER:
         return 'delegate';
@@ -378,6 +385,8 @@ export interface TurnRunnerDeps {
     id: ConversationId,
     failure: { input: InboundMessage[]; undelivered: boolean; agentId: string }
   ): { retryId?: string; held: number };
+  /** Record a reconnect-only retry handle when a failed reconnect turn has no saved input. */
+  keepInterrupted?(id: ConversationId, agentId: string): string;
   /** The ❌ notice for Retry record `retryId` went out with its buttons (FailedInputs.noticeSent). */
   failureNoticeSent?(retryId: string, notice: { platformId: string; ref: MessageRef; text: string }): void;
   /**
@@ -720,7 +729,8 @@ export class TurnRunner {
     // What a failed start left here goes first: the agent never received it (see FailedInputs). The
     // turn is still started by `own` — its trigger, and the person's words reported for it, are the
     // new ones; the held messages were reported when they were first sent.
-    const batch = this.withUndelivered(conversationId, own);
+    const isReconnect = own.length > 0 && own.every((m) => m.conversation.user === RECONNECT_SENDER);
+    const batch = isReconnect ? own : this.withUndelivered(conversationId, own);
 
     const sessionToken = this.deps.tokenFor(conversationId);
     const agentId = this.deps.agentIdOf(conversationId);
@@ -825,7 +835,13 @@ export class TurnRunner {
       if (!stopped()) {
         changes = await this.beginTurnChanges(conversationId, last.conversation, platform, address);
         await agent.runTurn(
-          { prompt, ...(images.length > 0 ? { images } : {}), sessionToken, model: this.deps.getModelOverride(conversationId) },
+          {
+            prompt: isReconnect ? '' : prompt,
+            ...(isReconnect ? { reconnect: true } : {}),
+            ...(!isReconnect && images.length > 0 ? { images } : {}),
+            sessionToken,
+            model: this.deps.getModelOverride(conversationId),
+          },
           render.handlers
         );
       }
@@ -855,7 +871,15 @@ export class TurnRunner {
         end = { kind: 'done', text: finalText(ref) };
       }
     } catch (err) {
-      end = await this.turnFailed(conversationId, err, { render, platform, platformId, address, input: turn.input, agentId });
+      end = await this.turnFailed(conversationId, err, {
+        render,
+        platform,
+        platformId,
+        address,
+        input: turn.input,
+        agentId,
+        supportsReconnect: agent.supportsReconnect?.() === true,
+      });
       throw err;
     } finally {
       if (this.running.get(conversationId) === turn) this.running.delete(conversationId);
@@ -912,12 +936,16 @@ export class TurnRunner {
       address: ConversationAddress;
       input: InboundMessage[];
       agentId: string;
+      supportsReconnect?: boolean;
     }
   ): Promise<TurnEnd> {
     // Kept before anything is said, because the notice says what became of it: held for the next
     // turn when the agent never received it, and offered to Retry either way (FailedInputs).
     const undelivered = promptUndelivered(err);
     const kept = this.keepFailedInput(conversationId, { input: t.input, undelivered, agentId: t.agentId });
+    const canReconnect = !undelivered && t.supportsReconnect === true;
+    const retryId = kept.retryId ?? (canReconnect ? this.deps.keepInterrupted?.(conversationId, t.agentId) : undefined);
+    const canResend = kept.retryId !== undefined;
     // Log error detail (InboundMerger only adds a ❌ reaction, keeping no reason).
     console.error(`[turn] ${conversationId} turn failed:`, err instanceof Error ? err.stack ?? err.message : err);
     // Deliver what the turn DID produce before saying it failed — the same clean finalize a
@@ -944,11 +972,14 @@ export class TurnRunner {
     // Said after the cap, so a long error cannot cut it off: whether the agent has this message
     // is what decides the person's next move.
     const notice = `❌ This turn failed: ${short}${undelivered ? `\n${undeliveredLine(kept.held)}` : ''}`;
-    const sent = await this.sendFailureNotice(t.platform, t.address, notice, kept.retryId).catch((e) => {
+    const sent = await this.sendFailureNotice(t.platform, t.address, notice, retryId, {
+      reconnect: canReconnect,
+      resend: canResend,
+    }).catch((e) => {
       console.error('[turn] failed to send error notice:', e instanceof Error ? e.message : e);
       return undefined;
     });
-    if (sent && kept.retryId) this.deps.failureNoticeSent?.(kept.retryId, { platformId: t.platformId, ref: sent, text: notice });
+    if (sent && retryId) this.deps.failureNoticeSent?.(retryId, { platformId: t.platformId, ref: sent, text: notice });
     return { kind: 'failed', error: err, ...(undelivered ? { undelivered: { held: kept.held } } : {}) };
   }
 
@@ -1004,13 +1035,21 @@ export class TurnRunner {
     platform: PlatformAdapter,
     address: ConversationAddress,
     text: string,
-    retryId: string | undefined
+    retryId: string | undefined,
+    opts?: { reconnect?: boolean; resend?: boolean }
   ): Promise<MessageRef | undefined> {
     if (!retryId || !platform.capabilities.buttons) {
       await platform.sendMessage(address, text);
       return undefined;
     }
-    return platform.sendButtons(address, text, retryButtons(retryId, { anotherAgent: this.config.agents.length > 1 }));
+    return platform.sendButtons(
+      address,
+      text,
+      retryButtons(retryId, {
+        anotherAgent: this.config.agents.length > 1,
+        ...(opts?.reconnect ? { reconnect: true, resend: opts.resend } : {}),
+      })
+    );
   }
 
   /** recordTurnStart, never allowed to break the turn it reports on. */

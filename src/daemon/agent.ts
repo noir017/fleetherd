@@ -224,6 +224,8 @@ export interface RunTurnInput {
   sessionToken: string;
   /** Per-turn model override; defaults to agent.model. Under ACP, model is usually fixed at newSession, so overrides typically apply next session. */
   model?: string;
+  /** Reconnect to an already-submitted turn to stream/fetch its latest reply without resending input. */
+  reconnect?: boolean;
 }
 
 export interface AgentSession {
@@ -289,6 +291,11 @@ export interface AgentSession {
    * Optional, like stopBackground: a runtime with no out-of-turn output never has one.
    */
   backgroundActive?(): boolean;
+  /**
+   * Whether this agent supports reconnecting to an interrupted turn to fetch its latest output
+   * without resending the user's message (advertised in ACP `agentCapabilities._meta.fleetherd.reconnectTurn`).
+   */
+  supportsReconnect?(): boolean;
   /**
    * Ask a side question (`/btw`): answered from everything the conversation holds, without
    * stopping the turn that may be running, and without the question or its answer becoming part of

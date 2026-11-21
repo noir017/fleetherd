@@ -1435,6 +1435,7 @@ function createAcpSession(
    * because a harness that cannot reload is exactly the one whose child must stay resident.
    */
   let loadSessionSupported = false;
+  let reconnectSupported = false;
   /**
    * How this harness takes a message into a running turn (see SteeringMode), from its `initialize`.
    * Like loadSessionSupported, a property of the binary: kept across a rebuilt child.
@@ -2002,6 +2003,7 @@ function createAcpSession(
       });
       progress.answered = true;
       loadSessionSupported = initResult.agentCapabilities?.loadSession === true;
+      reconnectSupported = readReconnectSupport(initResult.agentCapabilities);
       // agy takes a second prompt into a running turn without advertising it (agy-acp.ts).
       steeringMode = steeringModeOf(initResult, takesPromptMidTurn(def));
       imagePrompts = initResult.agentCapabilities?.promptCapabilities?.image === true;
@@ -3006,7 +3008,12 @@ function createAcpSession(
         endIfStoppedWhileStarting();
         const session = active!;
         const agentCtx = conn!.agent;
-        send(session, blocksOf(input));
+        send(
+          session,
+          input.reconnect
+            ? ([{ type: 'text', text: '', _meta: { fleetherd: { reconnect: true } } }] as ContentBlock[])
+            : blocksOf(input)
+        );
         turnStopped = stopWatch.stopped;
         joinTurn = steeringMode === 'none' ? undefined : (blocks) => {
           // The turn's last prompt has settled, so its `stop` is on the way: a message taken now
@@ -3071,6 +3078,7 @@ function createAcpSession(
             throw new TurnTimeoutError(`${err.message}. ${def.harness} last logged: ${trimReason(reason)}`);
           }
         }
+        if (isNotSentRpcError(err)) throw asUndelivered(err);
         throw err;
       } finally {
         if (watchdog) clearTimeout(watchdog);
@@ -3130,6 +3138,10 @@ function createAcpSession(
 
     backgroundActive(): boolean {
       return !turnState && burstRendering;
+    },
+
+    supportsReconnect(): boolean {
+      return reconnectSupported;
     },
 
     stopBackground(): boolean {
@@ -4384,4 +4396,18 @@ export function toolLabel(kind?: string, title?: string): string {
 /** Runtime side-effect boundary that may read the clock directly. */
 function nowMs(): number {
   return Date.now();
+}
+
+function readReconnectSupport(capabilities: unknown): boolean {
+  if (!capabilities || typeof capabilities !== 'object') return false;
+  const meta = (capabilities as { _meta?: unknown })._meta;
+  if (!meta || typeof meta !== 'object') return false;
+  const fleetherd = (meta as Record<string, unknown>)['fleetherd'];
+  return !!fleetherd && typeof fleetherd === 'object' && (fleetherd as Record<string, unknown>)['reconnectTurn'] === true;
+}
+
+function isNotSentRpcError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const data = (err as { data?: unknown }).data;
+  return !!data && typeof data === 'object' && (data as Record<string, unknown>)['notSent'] === true;
 }

@@ -9,7 +9,8 @@ import {
   undeliveredLine,
 } from '../core/topic-stage.js';
 import type { PlatformAdapter } from '../platform/adapter.js';
-import type { ConversationId, TopicActivity, TurnFailureReason, TurnOutcome } from '../types.js';
+import type { ConversationId, MessageRef, TopicActivity, TurnFailureReason, TurnOutcome } from '../types.js';
+import { retryButtons } from '../core/turn-retry.js';
 import { turnFailureReason } from './agent.js';
 import { resolveConversationCwd } from './agent-common.js';
 import { runTurnFailedHook } from './agent-hooks.js';
@@ -284,7 +285,10 @@ export class TurnOutcomes {
    * `ensure` creates the conversation's state (bound as the store remembers) so a continue has a
    * merger to run in; false when it cannot be (an agent since removed from config).
    */
-  recoverInterrupted(ensure: (id: ConversationId, platform: string, agentId: string) => boolean): number {
+  recoverInterrupted(
+    ensure: (id: ConversationId, platform: string, agentId: string) => boolean,
+    reconnectFor?: (id: ConversationId, agentId: string) => { retryId: string; onSent: (platformId: string, ref: MessageRef, text: string) => void } | undefined
+  ): number {
     const store = this.deps.store;
     if (!store) return 0;
     let found = 0;
@@ -301,10 +305,19 @@ export class TurnOutcomes {
       if (!lane || !ensure(id, lane.platform, agent)) continue;
       const where = this.deps.laneOf(id);
       if (where) {
-        void this.deps.platforms
-          .get(where.platformId)
-          ?.sendMessage(where.address, '⚠️ The gateway restarted before this turn finished — the agent stopped where it was.')
-          .catch((e) => console.warn('[outcomes] could not report an interrupted turn:', e instanceof Error ? e.message : e));
+        const platform = this.deps.platforms.get(where.platformId);
+        const text = '⚠️ The gateway restarted before this turn finished — the agent stopped where it was.';
+        const recon = platform?.capabilities?.buttons ? reconnectFor?.(id, agent) : undefined;
+        if (platform && recon) {
+          void platform
+            .sendButtons(where.address, text, retryButtons(recon.retryId, { anotherAgent: false, reconnect: true, resend: false }))
+            .then((ref) => recon.onSent(where.platformId, ref, text))
+            .catch((e) => console.warn('[outcomes] could not report an interrupted turn:', e instanceof Error ? e.message : e));
+        } else {
+          void platform
+            ?.sendMessage(where.address, text)
+            .catch((e) => console.warn('[outcomes] could not report an interrupted turn:', e instanceof Error ? e.message : e));
+        }
       }
       this.failed(id, 'restart', 'the gateway restarted mid-turn', this.deps.clock.now());
     }

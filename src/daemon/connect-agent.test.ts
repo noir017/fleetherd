@@ -82,6 +82,33 @@ describe('what a connect agent is told in initialize', () => {
     expect(meta['fleetherd']).toEqual({ token: 'remote-token', host: 'box', instructions: 'Be brief.\n\nSay where.\n' });
   });
 
+  it('includes resident skills reaching the agent in initialize _meta.fleetherd.skills', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'fh-connect-skills-'));
+    const configDir = join(dir, 'config');
+    mkdirSync(join(configDir, 'skills', 'skills', 'server-ops'), { recursive: true });
+    writeFileSync(
+      join(configDir, 'skills', 'skills', 'server-ops', 'SKILL.md'),
+      '---\nname: server-ops\ndescription: Use when operating servers over SSH\nmetadata:\n  fleetherd-resident: "true"\n---\n# Body\n'
+    );
+    mkdirSync(join(configDir, 'skills', 'skills', 'lib-only'), { recursive: true });
+    writeFileSync(
+      join(configDir, 'skills', 'skills', 'lib-only', 'SKILL.md'),
+      '---\nname: lib-only\ndescription: Library skill not resident\n---\n# Body\n'
+    );
+    process.env.FLEETHERD_CONFIG_DIR = configDir;
+    cleanup.push(() => delete process.env.FLEETHERD_CONFIG_DIR);
+    const connect = { url: 'tcp://127.0.0.1:1' };
+    const def = parseConfig({
+      platforms: { discord: { type: 'discord', token: 't' } },
+      agents: [{ id: 'web', harness: 'custom', connect }],
+      routing: { default: 'web', pipeline: [] },
+    }).agents[0]!;
+    const meta = await connectMeta(def, connect, undefined);
+    expect((meta['fleetherd'] as Record<string, unknown>)['skills']).toEqual([
+      { name: 'server-ops', description: 'Use when operating servers over SSH' },
+    ]);
+  });
+
   it('says which file it could not read', async () => {
     const connect = { url: 'tcp://127.0.0.1:1', tokenFile: '/nonexistent/token' };
     const def = { id: 'web', connect } as unknown as Parameters<typeof connectMeta>[0];

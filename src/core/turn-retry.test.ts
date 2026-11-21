@@ -15,7 +15,23 @@ describe('turn-retry buttons', () => {
   });
 
   it('ignores ids that are not its own', () => {
-    expect(parseRetryButtonId('rty:x:2')).toBeNull();
+    expect(parseRetryButtonId('rty:x:3')).toBeNull();
     expect(parseRetryButtonId('aga:x:0')).toBeNull();
+  });
+
+  it('offers Reconnect primary + Resend fallback when reconnect is enabled', () => {
+    const btns = retryButtons('ab12cd34', { anotherAgent: true, reconnect: true });
+    expect(btns.map((b) => [b.label, b.style])).toEqual([
+      ['Reconnect', 'primary'],
+      ['Resend', 'secondary'],
+      ['Retry with another agent', 'secondary'],
+    ]);
+    expect(parseRetryButtonId(btns[0]!.id)).toEqual({ retryId: 'ab12cd34', mode: 'reconnect' });
+    expect(parseRetryButtonId(btns[1]!.id)).toEqual({ retryId: 'ab12cd34', mode: 'same' });
+    expect(parseRetryButtonId(btns[2]!.id)).toEqual({ retryId: 'ab12cd34', mode: 'other' });
+
+    expect(retryButtons('ab12cd34', { anotherAgent: true, reconnect: true, resend: false }).map((b) => b.label)).toEqual([
+      'Reconnect',
+    ]);
   });
 });

@@ -11,10 +11,10 @@ import { formatButtonId, parseButtonId } from './button-id.js';
  * the browser never managed to send.
  */
 
-/** `rty:<retryId>:<0 | 1>` — 0 the same agent, 1 another one. */
+/** `rty:<retryId>:<0 | 1 | 2>` — 0 resend to same agent, 1 another agent, 2 reconnect to current turn. */
 export const RETRY_PREFIX = 'rty:';
 
-export type RetryMode = 'same' | 'other';
+export type RetryMode = 'same' | 'other' | 'reconnect';
 
 export interface RetryButtonClick {
   retryId: string;
@@ -24,8 +24,16 @@ export interface RetryButtonClick {
 /** The notice's buttons. `anotherAgent` is false when there is no other agent to pick. */
 export function retryButtons(
   retryId: string,
-  opts: { anotherAgent: boolean }
+  opts: { anotherAgent: boolean; reconnect?: boolean; resend?: boolean }
 ): Array<{ id: string; label: string; style?: 'primary' | 'secondary' }> {
+  if (opts.reconnect) {
+    const resend = opts.resend !== false;
+    return [
+      { id: formatButtonId(RETRY_PREFIX, retryId, 2), label: 'Reconnect', style: 'primary' },
+      ...(resend ? [{ id: formatButtonId(RETRY_PREFIX, retryId, 0), label: 'Resend', style: 'secondary' as const }] : []),
+      ...(opts.anotherAgent && resend ? [{ id: formatButtonId(RETRY_PREFIX, retryId, 1), label: 'Retry with another agent', style: 'secondary' as const }] : []),
+    ];
+  }
   return [
     { id: formatButtonId(RETRY_PREFIX, retryId, 0), label: 'Retry', style: 'primary' },
     ...(opts.anotherAgent ? [{ id: formatButtonId(RETRY_PREFIX, retryId, 1), label: 'Retry with another agent', style: 'secondary' as const }] : []),
@@ -35,6 +43,7 @@ export function retryButtons(
 /** Decode a retry button's id, or null when it is not one. */
 export function parseRetryButtonId(id: string): RetryButtonClick | null {
   const parsed = parseButtonId(id, RETRY_PREFIX);
-  if (!parsed || parsed.n > 1) return null;
-  return { retryId: parsed.reqId, mode: parsed.n === 0 ? 'same' : 'other' };
+  if (!parsed || parsed.n > 2) return null;
+  const mode: RetryMode = parsed.n === 0 ? 'same' : parsed.n === 1 ? 'other' : 'reconnect';
+  return { retryId: parsed.reqId, mode };
 }

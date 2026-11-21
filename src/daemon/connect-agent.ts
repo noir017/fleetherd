@@ -22,6 +22,8 @@ import type { Welcome } from '../remote/connection.js';
 import type { RemoteHost } from '../remote/host.js';
 import { expandRemoteHome, type AgentChild } from './agent-common.js';
 import { composeInstructions, instructionsDir } from './instructions.js';
+import { deliveredTo } from './managed-skills.js';
+import { activeSkillFiles, frontmatterFields, SKILL_FILE } from './skills-store.js';
 
 /** `tcp://host:port` → `host:port`, what both sides dial. */
 export function connectAddress(connect: AgentConnect): string {
@@ -108,7 +110,21 @@ export async function connectMeta(def: AgentDef, connect: AgentConnect, place: C
   if (connect.tokenFile) gateway['token'] = await readToken(def, connect.tokenFile, place);
   const instructions = connectInstructions(def);
   if (instructions !== undefined) gateway['instructions'] = instructions;
+  const skills = connectResidentSkills(def);
+  if (skills.length > 0) gateway['skills'] = skills;
   return { ...(connect.meta ?? {}), fleetherd: gateway };
+}
+
+/** Resident skills reaching `def` (sorted by name for stable hashing on the agent side). */
+function connectResidentSkills(def: AgentDef): Array<{ name: string; description: string }> {
+  const out: Array<{ name: string; description: string }> = [];
+  for (const skill of activeSkillFiles()) {
+    if (!skill.meta.resident || !deliveredTo(skill, def)) continue;
+    const raw = skill.files.get(SKILL_FILE)?.toString('utf8') ?? '';
+    const description = frontmatterFields(raw).get('description')?.trim();
+    if (description) out.push({ name: skill.name, description });
+  }
+  return out.sort((a, b) => a.name.localeCompare(b.name));
 }
 
 /** The most a token file may be: a token, not a document. */

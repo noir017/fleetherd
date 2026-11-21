@@ -3606,6 +3606,10 @@ export class Daemon {
       this.runRetry(click.retryId, clicker.user, undefined, (text) => this.replyToClick(ev, text));
       return;
     }
+    if (click.mode === 'reconnect') {
+      this.runRetry(click.retryId, clicker.user, undefined, (text) => this.replyToClick(ev, text), true);
+      return;
+    }
     const record = this.registry.retryRecord(click.retryId);
     if (!record) {
       this.replyToClick(ev, 'Nothing to retry any more — a later turn has run since, or this one was already retried.');
@@ -3616,9 +3620,9 @@ export class Daemon {
   }
 
   /** Send a failed turn's input again (ConversationRegistry.retryTurn) and say what happened. */
-  private runRetry(retryId: string, user: string, agentId: string | undefined, say: (text: string) => void): void {
+  private runRetry(retryId: string, user: string, agentId: string | undefined, say: (text: string) => void, reconnect = false): void {
     this.registry
-      .retryTurn({ retryId, user, ...(agentId ? { agentId } : {}) })
+      .retryTurn({ retryId, user, ...(agentId ? { agentId } : {}), ...(reconnect ? { reconnect: true } : {}) })
       .then((r) => say(r.text))
       .catch((e) => {
         console.error('[retry] failed:', e instanceof Error ? e.message : e);

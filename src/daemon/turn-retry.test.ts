@@ -27,7 +27,7 @@ function inbound(content: string, extra: Partial<InboundMessage> = {}): InboundM
 /** Let the 1 ms merge window elapse, the turn run and end, and the render chain drain. */
 const drain = (): Promise<void> => new Promise((r) => setTimeout(r, 60));
 
-function rig(opts: { buttons: boolean; agents?: string[] }) {
+function rig(opts: { buttons: boolean; agents?: string[]; supportsReconnect?: boolean }) {
   const parsed = parseConfig({
     platforms: { web: { type: 'webui', token: 't' } },
     agents: (opts.agents ?? ['cc']).map((id) => ({ id, harness: 'claude' })),
@@ -69,7 +69,7 @@ function rig(opts: { buttons: boolean; agents?: string[] }) {
   } as unknown as PlatformAdapter;
 
   /** Each prompt that reached an agent, with which agent. */
-  const prompts: Array<{ agent: string; prompt: string }> = [];
+  const prompts: Array<{ agent: string; prompt: string; reconnect?: boolean }> = [];
   /** How the next turns go: 'undelivered' fails before the prompt is sent; 'ok' answers. */
   const script: Array<'undelivered' | 'delivered' | 'ok'> = [];
   const factory: AgentFactory = {
@@ -79,12 +79,13 @@ function rig(opts: { buttons: boolean; agents?: string[] }) {
         runTurn: async (input: RunTurnInput, h: AgentStreamHandlers) => {
           const step = script.shift() ?? 'ok';
           if (step === 'undelivered') throw asUndelivered(new TurnFailure(START_FAILED, 'startup'));
-          prompts.push({ agent: agentId, prompt: input.prompt });
+          prompts.push({ agent: agentId, prompt: input.prompt, ...(input.reconnect ? { reconnect: true } : {}) });
           if (step === 'delivered') throw new TurnFailure('upstream busy', 'service');
           h.onText('done');
         },
         abort: () => {},
         setFollowUpSink: () => {},
+        ...(opts.supportsReconnect ? { supportsReconnect: () => true } : {}),
         dispose: () => {},
       } as unknown as AgentSession;
     },
@@ -184,5 +185,26 @@ describe('the ❌ notice’s Retry buttons', () => {
     expect(answer).toEqual({ done: true, text: '↻ Retrying with ag — it answers this topic now.' });
     await drain();
     expect(r.prompts).toEqual([{ agent: 'ag', prompt: 'build the release' }]);
+  });
+
+  it('offers Reconnect + Resend for delivered failures on reconnect-capable agents, and keeps Retry for undelivered', async () => {
+    const r = rig({ buttons: true, supportsReconnect: true });
+    // Undelivered failure: still shows Retry (resend).
+    r.script.push('undelivered');
+    r.reg.route(inbound('first task'));
+    await drain();
+    expect(r.buttons[0]!.buttons.map((b) => b.label)).toEqual(['Retry']);
+
+    // Delivered failure (agent interrupted): shows Reconnect + Resend.
+    r.script.push('delivered');
+    r.reg.route(inbound('second task'));
+    await drain();
+    expect(r.buttons[1]!.buttons.map((b) => b.label)).toEqual(['Reconnect', 'Resend']);
+
+    // Clicking Reconnect sends reconnect: true without resending the user prompt.
+    const recon = await r.reg.retryTurn({ retryId: r.retryIdOf(1), user: 'u1', reconnect: true });
+    expect(recon).toEqual({ done: true, text: '↻ Reconnecting to cc…' });
+    await drain();
+    expect(r.prompts.at(-1)).toEqual({ agent: 'cc', prompt: '', reconnect: true });
   });
 });
