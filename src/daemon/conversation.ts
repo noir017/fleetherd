@@ -3782,6 +3782,8 @@ ${formatTokens(left)} left before compaction — ${name}`;
       await session.ensureSession?.(this.tokens.tokenFor(id));
       const options = await session.setOption(optionId, value);
       this.status.options(id, options);
+      const updated = options.find((o) => o.id === optionId);
+      if (updated) this.modelCatalog.noteOptionDefault(state.agentId, updated);
       console.log(`[option] ${id}: ${optionId} set to ${value} from the setting switch`);
       return { ok: true, options, text: `${option.name} set to ${choice.name} for this conversation.` };
     } catch (e) {

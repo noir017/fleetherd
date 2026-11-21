@@ -194,6 +194,20 @@ describe('what a status line draws before anything has reported', () => {
     });
   });
 
+  it('updates the cached default shown for a fresh topic after the person switches an option', async () => {
+    const r = rig();
+    expect(await r.registry.optionStatusForRef(REF)).toEqual({
+      agent: 'browser',
+      options: [{ id: 'account', name: 'Account', value: 'Work' }],
+    });
+    await r.registry.optionsForRef(REF);
+    await r.registry.chooseOptionForRef(REF, 'account', 'home');
+    expect(await r.registry.optionStatusForRef({ ...REF, thread: 't-new' })).toEqual({
+      agent: 'browser',
+      options: [{ id: 'account', name: 'Account', value: 'Home', note: '5-hour limit used up' }],
+    });
+  });
+
   it('marks a setting with a single choice as fixed', async () => {
     const r = rig();
     await r.registry.optionsForRef(REF);

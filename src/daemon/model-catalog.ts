@@ -107,6 +107,34 @@ export class ModelCatalog {
     if (def) this.known.set(def, answer);
   }
 
+  /**
+   * Update a cached option's fresh-session default after the person changed it (e.g. switching a
+   * multi-account agent's active account, which the agent remembers for future sessions). Keeps
+   * other cached options untouched so a locked setting on one conversation never overwrites them.
+   */
+  noteOptionDefault(agentId: string, option: SessionOption): void {
+    const def = this.deps.defOf(agentId);
+    if (!def) return;
+    const known = this.knownOptions.get(def);
+    if (!known) return;
+    const cur = option.current !== undefined ? option.options.find((c) => c.value === option.current) : undefined;
+    const defaultValue = option.current !== undefined ? (cur?.name ?? option.current) : undefined;
+    const defaultNote = cur?.description;
+    this.knownOptions.set(
+      def,
+      known.map((k) =>
+        k.id === option.id
+          ? {
+              id: k.id,
+              name: option.name,
+              ...(defaultValue !== undefined ? { defaultValue } : {}),
+              ...(defaultNote ? { defaultNote } : {}),
+            }
+          : k,
+      ),
+    );
+  }
+
   /** Whether opening this agent's list should ask: nothing known, or the last ask failed. */
   shouldAsk(agentId: string): boolean {
     const known = this.get(agentId);

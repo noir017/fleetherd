@@ -211,6 +211,13 @@ describe('ModelCatalog: the agent’s own settings', () => {
     expect(t.catalog.defaultModel('oc')).toBe('A');
   });
 
+  it('updates a cached option default when the person changes it', async () => {
+    const t = setup({ options: [ACCOUNT], selector: SELECTOR, ensure: async () => {} });
+    expect(await t.catalog.learnOptions('oc')).toEqual([{ id: 'account', name: 'Account', defaultValue: 'Work' }]);
+    t.catalog.noteOptionDefault('oc', { ...ACCOUNT, current: 'home' });
+    expect(await t.catalog.learnOptions('oc')).toEqual([{ id: 'account', name: 'Account', defaultValue: 'Home' }]);
+  });
+
   it('counts an agent that could not be asked as having none, and does not ask again', async () => {
     const t = setup({ ensure: async () => Promise.reject(new Error('host offline')) });
     expect(await t.catalog.learnOptions('oc')).toEqual([]);

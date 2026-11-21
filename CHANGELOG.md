@@ -5,6 +5,10 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **New topics show the newly chosen option default right away instead of the stale first-probe value.** `ModelCatalog` caches an agent's fresh-session `OptionKind.defaultValue` after the first probe so an empty topic's status line can render before opening a session. When an agent remembers a hand-picked setting across sessions (such as `web-agent-driver` keeping the last chosen account as the default), switching that setting in one topic left the cached preview stuck on the initial value for subsequent empty topics until the first message. `chooseOptionForRef` now updates the cached option default on success.
+
 ## [3.22.0] - 2026-11-21
 
 ### Added
