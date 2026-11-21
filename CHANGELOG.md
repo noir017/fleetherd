@@ -5,6 +5,11 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **Connect agents receive matching resident skills in `initialize._meta.fleetherd.skills`.** Resident skills reaching the agent (respecting `fleetherd-hosts` and `fleetherd-harnesses`) are now passed as `{ name, description }[]` so remote/connect agents that do not read local skill directories can still surface resident skills in their initial context.
+- **Reconnect vs. Resend on interrupted turns for reconnect-capable ACP agents.** Agents advertising `agentCapabilities._meta.fleetherd.reconnectTurn: true` now distinguish undelivered failures (`error.data.notSent: true` → **Retry** to resend) from mid-turn interruptions (primary **Reconnect** button to resume/fetch the latest reply via `_meta.fleetherd.reconnect: true` without resending input, plus a **Resend** fallback). Gateway-restart interruptions on connect agents also offer a **Reconnect** button.
+
 ## [3.22.2] - 2026-11-21
 
 ### Changed
