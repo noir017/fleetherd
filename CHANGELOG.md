@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.26.0] - 2026-11-21
+
 ### Added
 
 - **`task-agents <agent>` shows one agent in full, so a coordinator can choose before it proposes.**
