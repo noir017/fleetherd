@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.24.2] - 2026-11-21
+
 ### Fixed
 
 - **Preserve `caller.agents` during external MCP bearer authentication.** `ExternalMcp.authenticate()` previously reconstructed the matched caller with only `{ name, tools }`, dropping the `agents:` allowlist read by `usableCallers()`. As a result, external callers configured with `agents:` (such as connect agents attaching sub-tasks to their own topic) were always rejected as unowned topics.
