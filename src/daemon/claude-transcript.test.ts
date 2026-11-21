@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { AgentDefSchema } from '../config/schema.js';
@@ -11,6 +10,9 @@ import {
   projectSlug,
   readCacheExpiry,
 } from './claude-transcript.js';
+import { useTempDirs } from '../test-utils/temp-dir.test-helpers.js';
+
+const makeTempDir = useTempDirs();
 
 /**
  * Entry shapes captured from Claude Code 2.1.291 transcripts on this machine (2026-10-08), cut
@@ -137,7 +139,7 @@ describe('locating the transcript', () => {
   });
 
   it('finds it under the slug, and by scanning when the slug misses', async () => {
-    const projects = mkdtempSync(join(tmpdir(), 'aa-cc-projects-'));
+    const projects = makeTempDir('aa-cc-projects-');
     const sid = 'edab7e2b-fb5d-4594-9184-32e8999573a7';
     mkdirSync(join(projects, projectSlug('/w/a')));
     writeFileSync(join(projects, projectSlug('/w/a'), `${sid}.jsonl`), '');
@@ -154,7 +156,7 @@ describe('locating the transcript', () => {
   });
 
   it('refuses a session id that is not id-shaped instead of joining it into a path', async () => {
-    const projects = mkdtempSync(join(tmpdir(), 'aa-cc-projects-'));
+    const projects = makeTempDir('aa-cc-projects-');
     expect(await findTranscript(projects, '/w', '../../etc/passwd')).toBeUndefined();
   });
 
@@ -170,7 +172,7 @@ describe('locating the transcript', () => {
 
 describe('readCacheExpiry', () => {
   it('reads only the end of a long transcript, and copes with the window cutting a line', async () => {
-    const projects = mkdtempSync(join(tmpdir(), 'aa-cc-projects-'));
+    const projects = makeTempDir('aa-cc-projects-');
     const sid = 'cd4f9d58-d378-4a0e-85a6-7093515432a8';
     mkdirSync(join(projects, '-w'));
     // A 2 MB tool result first — the window starts inside it, so its tail is a broken line.

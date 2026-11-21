@@ -1,12 +1,14 @@
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { SessionUpdate } from '@agentclientprotocol/sdk';
 import { autonomousResultOrigin, createAcpAgentFactory, TOOL_SILENCE_FACTOR } from './agent-acp.js';
 import { parseConfig, type Config } from '../config/schema.js';
 import type { AgentSession, AgentStreamHandlers } from './agent.js';
+import { useTempDirs } from '../test-utils/temp-dir.test-helpers.js';
+
+const makeTempDir = useTempDirs();
 
 /**
  * The ACP runtime's update reader, driven against a real child process.
@@ -491,7 +493,7 @@ afterEach(() => {
 });
 
 function rig(opts: { resumeFrom?: string; turnTimeoutMs?: number } = {}): { session: AgentSession } {
-  const dir = mkdtempSync(join(tmpdir(), 'aa-acp-pump-'));
+  const dir = makeTempDir('aa-acp-pump-');
   const script = join(dir, 'fake-acp-agent.cjs');
   writeFileSync(script, FAKE_AGENT);
 

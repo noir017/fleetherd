@@ -1,5 +1,3 @@
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { Daemon } from './daemon.js';
@@ -8,6 +6,9 @@ import type { SessionOptionList, SessionOptionResult, PlatformAdapter } from '..
 import type { AgentFactory, AgentSession } from './agent.js';
 import { ConversationStore } from './conversation-store.js';
 import type { AgentStatus, ConversationId, SessionOption, StatusOption } from '../types.js';
+import { useTempDirs } from '../test-utils/temp-dir.test-helpers.js';
+
+const makeTempDir = useTempDirs();
 
 /**
  * The switch a platform draws for the agent's own settings (`useOptionPicker`), through the
@@ -83,7 +84,7 @@ function rig(opts: { stored?: boolean } = {}) {
     ],
     routing: { default: 'browser', pipeline: [] },
   });
-  const store = new ConversationStore(join(mkdtempSync(join(tmpdir(), 'aa-option-picker-')), 'conversations.json'));
+  const store = new ConversationStore(join(makeTempDir('aa-option-picker-'), 'conversations.json'));
   const platform = {
     platform: 'web',
     platformType: 'webui',

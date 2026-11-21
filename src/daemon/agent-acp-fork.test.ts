@@ -1,11 +1,13 @@
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createAcpAgentFactory } from './agent-acp.js';
 import { parseConfig } from '../config/schema.js';
 import { ConversationStore } from './conversation-store.js';
 import { ForkRefused, type AgentFactory, type AgentStreamHandlers } from './agent.js';
+import { useTempDirs } from '../test-utils/temp-dir.test-helpers.js';
+
+const makeTempDir = useTempDirs();
 
 /**
  * `/fork` over real children (AgentSession.forkFrom): the new conversation's own child forks the
@@ -86,7 +88,7 @@ afterEach(() => {
 });
 
 function rig(caps: Record<string, object> = { fork: {}, resume: {}, delete: {} }) {
-  const dir = mkdtempSync(join(tmpdir(), 'aa-acp-fork-'));
+  const dir = makeTempDir('aa-acp-fork-');
   const script = join(dir, 'fake-acp-agent.cjs');
   const logFile = join(dir, 'calls.log');
   writeFileSync(script, FAKE_AGENT);

@@ -1,11 +1,13 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, posix } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentDef } from '../config/schema.js';
 import type { RemoteHost } from '../remote/host.js';
 import { agyContextFromLines, agyTranscriptPath, readAgyContext } from './agy-transcript.js';
 import { remoteHosts } from './remote-hosts.js';
+import { useTempDirs } from '../test-utils/temp-dir.test-helpers.js';
+
+const makeTempDir = useTempDirs();
 
 /**
  * Lines of agy 1.5.2's `transcript.jsonl` as written (2026-11-06, a running fleetherd topic), with the
@@ -57,7 +59,7 @@ describe('readAgyContext', () => {
   const SID = 'ae5d900a-dfce-484f-93ac-ec790b7948f7';
 
   it('reads the transcript under the agent’s own home', async () => {
-    const home = mkdtempSync(join(tmpdir(), 'aa-agy-transcript-'));
+    const home = makeTempDir('aa-agy-transcript-');
     const file = agyTranscriptPath(home, SID);
     mkdirSync(join(file, '..'), { recursive: true });
     writeFileSync(file, CAPTURED.join('\n') + '\n');

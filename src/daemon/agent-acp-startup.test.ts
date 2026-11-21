@@ -1,10 +1,12 @@
-import { mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createAcpAgentFactory, startupFailureMessage } from './agent-acp.js';
 import { parseConfig } from '../config/schema.js';
 import { promptUndelivered, TurnFailure, type AgentSession, type AgentStreamHandlers } from './agent.js';
+import { useTempDirs } from '../test-utils/temp-dir.test-helpers.js';
+
+const makeTempDir = useTempDirs();
 
 /**
  * What a startup that failed says (agent-acp.ts startupFailureMessage): "the process never came up"
@@ -83,7 +85,7 @@ afterEach(() => {
 });
 
 function sessionFor(source: string): AgentSession {
-  const dir = mkdtempSync(join(tmpdir(), 'tc-acp-startup-'));
+  const dir = makeTempDir('tc-acp-startup-');
   const script = join(dir, 'agent.cjs');
   writeFileSync(script, source);
   const cfg = parseConfig({

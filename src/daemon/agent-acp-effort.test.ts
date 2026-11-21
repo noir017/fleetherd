@@ -1,10 +1,12 @@
-import { mkdtempSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createAcpAgentFactory } from './agent-acp.js';
 import { parseConfig } from '../config/schema.js';
 import type { AgentSession } from './agent.js';
+import { useTempDirs } from '../test-utils/temp-dir.test-helpers.js';
+
+const makeTempDir = useTempDirs();
 
 /**
  * `/effort` in the ACP runtime, driven against a real child process.
@@ -96,7 +98,7 @@ function rig(opts: {
   /** Just the model writes, as their values. */
   modelWrites: () => string[];
 } {
-  const dir = mkdtempSync(join(tmpdir(), 'aa-acp-effort-'));
+  const dir = makeTempDir('aa-acp-effort-');
   const script = join(dir, 'fake-acp-agent.cjs');
   const logPath = join(dir, 'requests.jsonl');
   writeFileSync(script, FAKE_AGENT);

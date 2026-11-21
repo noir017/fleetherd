@@ -1,5 +1,4 @@
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createAcpAgentFactory } from './agent-acp.js';
@@ -7,6 +6,9 @@ import { forkSupportOf, sideQuestionRefusal } from './acp-side-question.js';
 import { parseConfig, type Config } from '../config/schema.js';
 import { SideQuestionRefused, type AgentSession, type AgentStreamHandlers } from './agent.js';
 import type { AgentPermissionRequest } from '../types.js';
+import { useTempDirs } from '../test-utils/temp-dir.test-helpers.js';
+
+const makeTempDir = useTempDirs();
 
 /**
  * Side questions (`/btw`) over a real child: a fake ACP agent that forks the way the probed
@@ -148,7 +150,7 @@ function rig(opts: { caps?: Record<string, object>; turnTimeoutMs?: number; stor
   session: AgentSession;
   calls: () => string[];
 } {
-  const dir = mkdtempSync(join(tmpdir(), 'aa-acp-btw-'));
+  const dir = makeTempDir('aa-acp-btw-');
   const script = join(dir, 'fake-acp-agent.cjs');
   const logFile = join(dir, 'calls.log');
   writeFileSync(script, FAKE_AGENT);

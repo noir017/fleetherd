@@ -1,5 +1,4 @@
-import { mkdtempSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { SessionConfigOption, SessionUpdate } from '@agentclientprotocol/sdk';
@@ -7,6 +6,9 @@ import { createAcpAgentFactory, customOptionsOf, translateUpdate, type TurnState
 import { parseConfig } from '../config/schema.js';
 import type { AgentSession, AgentStreamHandlers } from './agent.js';
 import type { SessionOption } from '../types.js';
+import { useTempDirs } from '../test-utils/temp-dir.test-helpers.js';
+
+const makeTempDir = useTempDirs();
 
 /**
  * The agent's own settings (SessionOption): ACP `select` config options in a `_` category, which
@@ -146,7 +148,7 @@ afterEach(() => {
 });
 
 function rig(opts: { account?: string; started?: boolean; stored?: string } = {}) {
-  const dir = mkdtempSync(join(tmpdir(), 'aa-acp-settings-'));
+  const dir = makeTempDir('aa-acp-settings-');
   const script = join(dir, 'fake-acp-agent.cjs');
   const logPath = join(dir, 'requests.jsonl');
   writeFileSync(script, FAKE_AGENT);

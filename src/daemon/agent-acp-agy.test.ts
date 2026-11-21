@@ -1,7 +1,6 @@
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createAcpAgentFactory, resolveHarness } from './agent-acp.js';
@@ -9,6 +8,9 @@ import { parseConfig, type AgentDef } from '../config/schema.js';
 import { TurnFailure, type AgentSession, type AgentStreamHandlers, type AgentUsage } from './agent.js';
 import type { AgyCliRunner } from './agy-cli.js';
 import type { QuotaPool, ToolEvent } from '../types.js';
+import { useTempDirs } from '../test-utils/temp-dir.test-helpers.js';
+
+const makeTempDir = useTempDirs();
 
 /**
  * `harness: agy` in the ACP runtime, driven against a fake `agy acp` that behaves the way agy 1.5.1
@@ -207,7 +209,7 @@ function rig(
   writes: () => string[];
   quotaRuns: () => number;
 } {
-  const dir = mkdtempSync(join(tmpdir(), 'aa-acp-agy-'));
+  const dir = makeTempDir('aa-acp-agy-');
   const bin = join(dir, 'bin');
   const home = join(dir, 'home');
   mkdirSync(bin);
