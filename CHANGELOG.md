@@ -5,6 +5,10 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **External MCP callers with `agents:` configured can attach sub-tasks directly to a connect agent's own topic.** When a caller in `mcp.callers` lists `agents:` (matching both `<id>` and `<id>@<host>`), connect agents receive their topic id in `initialize._meta.fleetherd.topic` and can pass it to `tasks new` / `list` without opening a separate coordination topic. Proposals still require the Start confirmation card and `task-send` remains disallowed, while completed sub-tasks now wake the parent topic directly.
+
 ### Security
 
 - **The web UI's CSP no longer allows inline scripts (`script-src 'self'`).** The page's script and stylesheet used to be inline in the HTML, so the policy had to admit `'unsafe-inline'` for scripts, which meant anything that ever got past the markdown escaping as an inline handler would have run. Both are now built into `dist/webui-assets/` with content-hashed names and linked from the page (the first step of splitting the 12,000-line inline script into modules). What the server decides per deployment reaches the script as a JSON `boot-config` element instead of being spliced into it. The page looks and behaves the same; it now makes two cached requests for its own files, which are open before sign-in like the page itself, while the code view stays behind the session. A source checkout needs `npm run build:assets` before `tsx src/cli.ts start` (and after editing the client), and the page says so if it was skipped.
