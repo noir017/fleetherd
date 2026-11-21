@@ -74,14 +74,16 @@ jobs:
       - name: Build
         run: npm run build
 
-      # The page degrades to plain text when these are missing, silently: every server test
-      # injects its own asset directory, so nothing else notices the esbuild step disappearing
-      # from `npm run build`. licences.txt is here for the same reason — a tarball that ships
-      # the bundle without its notices would be an MIT violation nothing else checks.
-      - name: Check the code view and its notices were built
+      # Without these the page has no script or stylesheet at all (only a notice saying so), and
+      # code stays plain text: every server test injects its own asset directory, so nothing else
+      # notices the esbuild step disappearing from `npm run build`. licences.txt is here for the
+      # same reason — a tarball that ships the bundle without its notices would be an MIT
+      # violation nothing else checks.
+      - name: Check the page's assets and their notices were built
         run: |
           test -f dist/webui-assets/manifest.json
           test -f dist/webui-assets/licenses.txt
+          node -e "const fs=require('fs');const m=JSON.parse(fs.readFileSync('dist/webui-assets/manifest.json','utf8'));for(const k of ['app','style','codeview']){if(!m[k])throw new Error('manifest.json names no '+k);fs.accessSync('dist/webui-assets/'+m[k]);}"
 
       # `npm pack` emits the same tarball `npm publish` would, so what a user
       # installs from the Release is byte-identical to a real release build.

@@ -2,10 +2,10 @@
  * The web app manifest and the app icon, so a phone can install the web UI to its home screen.
  *
  * ── Why this lives in a .ts file as strings and base64 ────────────────────────
- * Same reason `page.ts` does: there is no asset-copy step anywhere in the build, and
- * `package.json`'s `files` ships only `dist` and `skill`. An `icon.png` beside the source
- * would typecheck, pass tests, and 404 in the published package. Anything the daemon serves
- * has to survive `tsc`, which means it has to be a module.
+ * Same reason `page.ts` does: `package.json`'s `files` ships only `dist` and `skill`, and the one
+ * asset step in the build bundles the client and the code view, copying nothing. An `icon.png`
+ * beside the source would typecheck, pass tests, and 404 in the published package. Anything the
+ * daemon serves has to survive `tsc` or that bundler, which for these means being a module.
  *
  * ── What is actually required ────────────────────────────────────────────────
  * Less than most guides claim. Chrome dropped the service-worker-with-a-fetch-handler

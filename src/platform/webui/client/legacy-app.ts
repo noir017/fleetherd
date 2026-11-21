@@ -1,0 +1,12189 @@
+// The web UI's client script, moved out of `page.ts` as it was (Phase 1 Step 1A of
+// docs/refactor-plan.md): the same text the page used to carry inline, now bundled by
+// `scripts/webui-client.mjs` into `dist/webui-assets/app-<hash>.js` and loaded by the page's one
+// `<script src>`, so the CSP can drop `script-src 'unsafe-inline'`.
+//
+// Still not typechecked or linted — `tsconfig.json` and `eslint.config.js` leave this file out —
+// and still kept deliberately stupid for the reasons `page.ts` gives: every decision that can live
+// in TypeScript lives on the server's side of the wire. Splitting it into typed modules is the
+// plan's later steps, not this one, so read it as the old inline script with three seams:
+//
+//   - What the server decides per deployment (terminal, files, instructions, which gate, the
+//     code view's bundle, the page's build) arrives in `<script type="application/json"
+//     id="boot-config">`, read once into `BOOT` below. It used to be spliced into this text.
+//   - The two `__FH_…__` markers below are replaced at build time (`scripts/webui-client.mjs`)
+//     with `clientIcons()` (icons.ts) and `CACHE_CORE` (cache-script.ts). The cache core is source
+//     text that sw.ts includes too, so it cannot be an import until both are modules; the build
+//     fails if either marker is missing or doubled rather than ship one that throws at load.
+//   - The test harness runs the same bundle (page.test-helpers.ts), so a page that renders
+//     nothing still fails page.dom.*.test.ts the way it always did.
+
+(function(){
+  var $ = function(id){ return document.getElementById(id); };
+  var log=$('log'), app=$('app'), gate=$('login'), err=$('err'), input=$('input'),
+      chips=$('chips'), hints=$('hints'), typing=$('typing'), note=$('note'), picker=$('picker'),
+      bar=$('topics'), sidebar=$('sidebar'), collapseBtn=$('collapse-sidebar'),
+      expandBtn=$('expand-sidebar'), newTopicBtn=$('new-topic'), backdrop=$('backdrop'),
+      clearBtn=$('clear-topics'), readBtn=$('read-topics'), idleBtn=$('close-idle'), noIdleBtn=$('no-idle'), idleCount=$('idle-count'),
+      notifyBtn=$('notify-toggle'), notifyState=$('notify-state'), idleDialog=$('idle-dialog'), idleTitle=$('idle-title'),
+      rowMenu=$('row-menu'),
+      optsBtn=$('opts-toggle'), optsMenu=$('opts-menu'), manageBtn=$('manage-toggle'), manageMenu=$('manage-menu'),
+      calmBtn=$('calm-toggle'), calmState=$('calm-state'),
+      idleWhy=$('idle-why'), idleList=$('idle-list'), idleGo=$('idle-go'), idleCancel=$('idle-cancel'), chatTitle=$('topic-title'), chatStatus=$('topic-status'), forkNote=$('fork-note'),
+      chat=$('chat'), chatHead=$('chat-header'), composer=$('bar'),
+      termBtn=$('term-toggle'), termHost=$('term-frames'), termEl=$('term'), termGrip=$('term-grip'),
+      termName=$('term-name'), termMinBtn=$('term-min'), termEndBtn=$('term-end'),
+      schedToggle=$('schedules-toggle'), schedAlert=$('sched-alert'), schedList=$('schedules-list'), schedSummary=$('schedules-summary'), schedReadBtn=$('sched-read'),
+      schedFilterHost=$('sched-filter'), schedNewBtn=$('sched-new'),
+      schedClose=$('schedules-close'), schedNote=$('schedules-note'),
+      schedPanel=$('schedules'), schedSessionList=$('sched-sessions'), schedResize=$('sched-resize'),
+      schedSubnav=$('sched-subnav'),
+      schedTabScheduled=$('sched-tab-scheduled'), schedTabScheduledN=$('sched-tab-scheduled-n'), schedTabScheduledAlert=$('sched-tab-alert'),
+      schedTabReviews=$('sched-tab-reviews'), schedTabReviewsN=$('sched-tab-reviews-n'),
+      schedTabTasks=$('sched-tab-tasks'), schedTabTasksN=$('sched-tab-tasks-n'),
+      schedTabSessions=$('sched-tab-sessions'), schedTabSessionsN=$('sched-tab-sessions-n'), schedSessionsAlert=$('sched-sessions-alert'),
+      revPane=$('sched-reviews'), revList=$('sched-reviews-list'),
+      lightbox=$('lightbox'), lightboxImg=$('lightbox-img'),
+      reader=$('reader'), readerName=$('reader-name'), readerGet=$('reader-get'), readerBody=$('reader-body'),
+      skillsWin=$('skills'), skillsToggle=$('skills-toggle'), skillsBack=$('skills-back'),
+      skillsTitle=$('skills-title'), skillsCount=$('skills-count'), skillsNewBtn=$('skills-new'),
+      skillsRefreshBtn=$('skills-refresh'),
+      skillsClose=$('skills-close'), skillsBody=$('skills-body'), skillsNote=$('skills-note'),
+      skillsListEl=$('skills-list'), skillsDetailEl=$('skills-detail'),
+      sbTabTopics=$('sb-tab-topics'), sbTabHistory=$('sb-tab-history'), topicsFilterHost=$('topics-filter'),
+      historyPane=$('history-pane'), historyCountEl=$('history-count'),
+      historyBody=$('history-body'), historyQ=$('history-q'), historyGo=$('history-go'),
+      historyErr=$('history-err'), historyListEl=$('history-list'), historyMore=$('history-more'),
+      libLog=$('lib-log'), libTitle=$('lib-title'), libNote=$('lib-note'), libWhy=$('lib-why'),
+      libTopicBtn=$('lib-topic'), libCloseBtn=$('lib-close'),
+      settingsPage=$('settings-page'), settingsBody=$('settings-body'), settingsTopicEl=$('settings-topic'),
+      taskPage=$('task-page'), taskTitle=$('task-title'), taskSub=$('task-sub'), taskClose=$('task-close'),
+      taskNote=$('task-note'), taskView=$('task-view'),
+      settingsClose=$('settings-close'), settingsOpenBtn=$('settings-open'),
+      killBtn=$('kill-agent'), stopBtn=$('stop-turn'), statusEl=$('status'), machineNoteEl=$('machine-note'),
+      updateEl=$('update'),
+      modelPop=$('model-pop'), mpList=$('mp-list'), mpFilter=$('mp-filter'), mpAgent=$('mp-agent'),
+      mpHeading=$('mp-heading'), mpFoot=$('mp-foot');
+  // The 30-second tick that keeps the ages current (see paintAges). Declared here, not beside
+  // its functions, because paintSessions can arm it while the script is still setting up — and a
+  // var initialised after that would overwrite the timer's handle with null and leak the timer.
+  var AGE_TICK_MS=30000, ageTimer=null;
+  var data={}, els={}, files=[], commands=[], stream=null;
+  // The row menu: which row it belongs to (a key like "topic:<id>", "sess:<id>", "task:<id>"),
+  // the button that opened it, and what a pick calls. The button is re-found after every repaint
+  // (rowMenuFollow), because the row it lives in is replaced while the menu stays open.
+  var rowMenuKey=null, rowMenuBtn=null, rowMenuPick=null;
+  // Last markup written per message, so a sync that re-sends an unchanged message touches no DOM.
+  var sig={};
+  // The tool-bubble lines a reader has opened, per message key. See lineOpen.
+  var opened={};
+  // Whether #log currently holds placeholders rather than messages, and whether the next sync is
+  // the one that opens a topic (which lands at the bottom no matter where the old one was read).
+  var skeleton=false, entering=true;
+  // What the last sync said about this topic being older than the daemon, and the notice element
+  // that says so. Both are per topic, so both are reset on the way into one.
+  var stale=false, emptyEl=null;
+  // The agents the last sync said this topic could still be given to (null once it cannot, or
+  // when the daemon offered none), the element laying them out, and what it was drawn from.
+  var launch=null, launchEl=null, launchSig='';
+  // Which of the agent's own settings to draw for a topic with no status yet (see "The agent's own
+  // settings"). Up here because paintStatus reads it, and the launcher repaints the status line
+  // while the script is still setting up.
+  var opk={ topic: null, agent: '', model: '', options: [], seq: 0, timer: null };
+  // The machines the daemon cannot reach, by the name the topic list and the agent cards use →
+  // since when (OfflineMachine), and what the list was drawn from. Replaced whole on every push.
+  var offlineMachines={}, offlineSig='[]';
+  // Which run of the daemon the live stream belongs to, and whether this topic's first sync has
+  // landed. 0 until one has: every message below is qualified by the generation it came from,
+  // and before the first sync the only generations known are the ones out of the cache.
+  var epoch=0, synced=false;
+  var topic = new URLSearchParams(location.search).get('t') || '';
+  // Whether this daemon serves a terminal at all, and whether it was given a way to END one (a
+  // configured terminal.endCommand). Without that, the window has no close button rather than a
+  // close button that cannot work.
+  // The icons (icons.ts): every one by name, and the menu marks and lifecycle reactions the page
+  // draws as icons, keyed by the glyph core and config write. Anything not in a table stays text.
+  var IC = __FH_ICONS__;
+  // What the server decided for this deployment (page.ts bootConfig), written into the page as
+  // JSON rather than spliced into this script: the script is now one file every deployment shares.
+  var BOOT = JSON.parse($('boot-config').textContent);
+  var TERM_OK = BOOT.terminal;
+  var TERM_END = BOOT.terminalEnd;
+  // Whether this daemon has the file window (platforms.<id>.files.enabled). False hides the
+  // header button; the routes behind it answer 404, exactly as the terminal's do.
+  var FILES_OK = BOOT.files;
+  // Whether the settings page offers the instruction editor (platforms.<id>.instructions.enabled).
+  // False leaves the section out; its routes answer 404 like the file window's.
+  var INSTR_OK = BOOT.instructions;
+  // Which page this is: a hash of everything it was rendered from, and the page's ETag (servePage).
+  // Compared with the daemon's after a restart (checkBuild), since the script on screen is the one
+  // the old process served.
+  var BUILD = BOOT.build;
+  // The code view's bundle, relative to this page (assets/codeview-<hash>.js), or null when the
+  // daemon was built without the asset build. Read only by codeView(), which every caller goes
+  // through. Relative for the same reason every other URL here is: a sub-path mount.
+  var CODEVIEW = BOOT.codeview;
+  // Whether the shared secret is still a way in. False means the gate above has no field and
+  // the only thing that can sign anyone in is the proxy in front (sso.password: false).
+  var PASSWORD_LOGIN = BOOT.password;
+  // A terminal panel belongs to a TOPIC, not to the page: 'open' is shown, 'min' is hidden and
+  // still connected, absent is no window at all. Keyed this way because the alternative — one
+  // window that follows whichever topic is on screen — would tear down the connection to the
+  // topic being left, which is both a surprise (the pane you minimized is gone) and the end of
+  // the switcher's marker ever meaning anything: at most one topic could ever be lit.
+  var termState = {};
+  var termFrames = {};
+  // A reload asked for the pane, before any topic is known. "Asked for" is separate from
+  // "shown": there is nothing to point a terminal at until the first sync names a topic, so
+  // this is spent there rather than here.
+  var termBoot = TERM_OK && new URLSearchParams(location.search).get('v')==='term';
+  var topics = [];
+  var readCounts = {};
+  try { readCounts = JSON.parse(localStorage.getItem('aa_reads') || '{}'); } catch(x){}
+  // The side panel: whether it is showing, the last task list drawn, and its refresh timer.
+  // See "The side panel" below.
+  var schedEnabled=true, schedTasks=null, schedBusy=false, schedSeq=0, schedTimer=0;
+  // The task list's bar, and which cards are open across a repaint. The bar's own state is in
+  // makeFilterBar; this is only the instance, and null until the DOM below is reached.
+  var schedFilter=null;
+  // Which of the panel's lists is on screen: Scheduled vs Reviews, and Tasks vs Sessions inside Scheduled.
+  // Persisted, because it is a preference about the workspace rather than about one visit.
+  var schedTab='scheduled', schedSubtab='tasks';
+  // The Sessions list's folded groups, per browser: a period key ('d:2026-11-08', 'm:2026-10')
+  // maps to open (true) or folded (false). A group with no entry follows the default in
+  // sessGroupOpen — the newest group and the one holding the topic on screen start open.
+  var sessGroups = {};
+  try { sessGroups = JSON.parse(localStorage.getItem('aa_sched_groups') || '{}') || {}; } catch(x){}
+  function saveSessGroups(){
+    // Only the groups the list still has: a day group becomes a month group when the calendar
+    // turns, and a deleted run's group can go entirely, so the keys kept here would otherwise
+    // pile up for ever.
+    var keep={}, now=schedSessionGroups(schedSessions());
+    for(var i=0;i<now.length;i++) keep[now[i].key]=true;
+    for(var k in sessGroups) if(!keep[k]) delete sessGroups[k];
+    try { localStorage.setItem('aa_sched_groups', JSON.stringify(sessGroups)); } catch(x){}
+  }
+  // The Reviews tab's last answer, and the rows the reader has opened. null is "not asked yet",
+  // which is different from an empty list and is what the tab shows as Loading….
+  var reviewData=null, reviewSeq=0, revOpen={};
+  // The suggestion each topic was opened for by Adopt, by topic id: {text}. This page's memory
+  // only. A message the daemon accepts that still carries the text dismisses the suggestion; a
+  // reload forgets the link and leaves the suggestion pending, which is the safe direction.
+  var revAdopted={};
+  // The skills window: its list, the skill open in it, and whether the New form is showing. The
+  // window's own state is not persisted — a management surface is opened on purpose, and one
+  // restored on load would sit over a conversation nobody asked it to cover. The LIST is cached
+  // (aa_skills, read on the first open): the store reads and hashes every delivered file, so
+  // waiting for it every time the window opened was visible, and the answer is only a row per
+  // skill. See skillCacheLoad for why localStorage rather than IndexedDB.
+  var skillsEnabled=true, skillList=[], skillSel=null, skillsBusy=false, skillNewMode=false, skillSearches=null;
+  var skillsCacheRead=false, skillsFetchedAt=0, skillSig='';
+  // A read of the list or of one skill is only as new as the last write this page sent: skillEpoch
+  // is bumped whenever a write leaves, and an answer that started before it is dropped rather than
+  // put back (see loadSkills). skillShowSeq does the same between two shows. skillRefreshPending is
+  // a refresh that arrived while a write was in flight, to be asked again once the writes are quiet.
+  var skillEpoch=0, skillShowSeq=0, skillRefreshPending=false, skillRefreshPendingManual=false, skillRedrawPending=false;
+  // A show that a write made stale: the skill the person asked to open, to be opened again once
+  // the write's answer is in. One slot is enough — a newer open replaces it (openSkill clears it).
+  var skillShowPending=null;
+  // The History tab's last answer, the cursor for the page after it, and the search it is showing
+  // (empty for the plain list). histSeq is which list request an answer belongs to: leave the tab
+  // or start a search before the first has answered, and without it the late answer would land in
+  // the new view. sbTab is the sidebar's tab, never stored: the page always opens on Topics.
+  var histSessions=[], histNext=null, histQuery='', histSeq=0, sbTab='topics';
+  // The conversation open in the transcript's place (openLib): its library id while it is up, its
+  // messages under keys of their own ('h:' + id, which no live key can be), and where #log was
+  // being read when it was covered. libSeq does for the read what histSeq does for the list.
+  var libId=null, libSession=null, libData={}, libEls={}, libSeq=0, libSaved=null;
+  // The /setting page: the live settings message it draws, the topic it was opened in, and the
+  // one message whose page the operator closed. A settings message is never a row in the
+  // transcript, and the daemon marks a retired one (wasSettings) so it cannot become one later.
+  // settingsClosed is per message id, so an edit to the page that was put away does not reopen
+  // it — a new /setting is a new message, and that does open.
+  //
+  // A request made from the menu has no message id yet, so closing it while it is still Loading
+  // cannot be remembered that way. It gets a token (settingsReq); the answers are matched to the
+  // tokens by order, since the daemon answers one /setting with one screen, and closing cancels
+  // every token issued so far (settingsClosedUpTo). An answer to a cancelled request is dropped;
+  // a later request has a later token and still opens. A token is also tagged with the topic it
+  // was asked in: an answer arriving after a topic switch belongs to that topic's queue, not the
+  // one on screen.
+  // settingsNote: the page's own line when a control's request failed (cleared by the next screen);
+  // settingsLevel: which level is drawn, so a move between them starts at the top.
+  // settingsListFk: the list's control that last posted, which a move back to the list lands on.
+  var settingsMsg=null, settingsTopic=null, settingsClosed={}, settingsNote=null, settingsLevel='', settingsFade=0, settingsQuery='';
+  var settingsListFk=null;
+  var SETTINGS_FADE_MS=5000;
+  var settingsReq=0, settingsPending=[], settingsClosedUpTo=0, settingsTimer=0;
+  // How long the page waits for the screen before saying the daemon did not answer. The send
+  // itself gives up after fifteen seconds on one attempt, so this is the same patience.
+  var SETTINGS_WAIT_MS=15000;
+
+  function saveReads(){
+    try { localStorage.setItem('aa_reads', JSON.stringify(readCounts)); } catch(x){}
+  }
+
+  /**
+   * Parents whose sub-agent topics are folded away (paintTopics), per browser. Folded by default:
+   * a /super job's children are the working detail behind one conversation, and a dispatcher that
+   * opens five of them would otherwise push five rows into a column read as a list of conversations.
+   * An entry of false is an operator who opened one, and it stays open on this browser.
+   */
+  var folded = {};
+  try { folded = JSON.parse(localStorage.getItem('aa_folded') || '{}') || {}; } catch(x){}
+  function saveFolded(){
+    try { localStorage.setItem('aa_folded', JSON.stringify(folded)); } catch(x){}
+  }
+
+  /**
+   * How a message is identified ON THIS PAGE, which is deliberately not its server id.
+   *
+   * Server ids are 'w1', 'w2'..., counted per PROCESS — so a restarted daemon hands the same
+   * ones out again, and this page keeps transcripts across restarts. Keyed by id alone, the
+   * first reply after a restart silently overwrites a cached message from before it. The
+   * generation — a sync's epoch field — is what tells the two apart. A message typed here and
+   * not yet acknowledged has no server id at all and travels under its nonce instead, behind a
+   * prefix no server id can collide with.
+   */
+  function keyOf(m){ return m._local ? m.id : m._g + ':' + m.id; }
+
+  /** A cached message from a daemon that is no longer the one on the other end of the stream. */
+  function isHistory(m){ return Boolean(m) && !m._local && epoch !== 0 && m._g !== epoch; }
+
+  // ── Each topic's copy ───────────────────────────────────────────────────────
+  // What lets a topic paint before its stream has answered, lets the stream resume rather than send
+  // the whole topic again, and makes a daemon restart cost the conversation its liveness rather than
+  // its contents.
+  //
+  // One copy per topic, behind one put and one get, in two layers: memory (copies: the topics most
+  // recently put, COPY_TOPICS of them and COPY_MSGS messages between them — no database read, and
+  // all a browser without IndexedDB has) and IndexedDB (cache-script.ts's records, shared with the
+  // service worker, which writes the topic a push is about). Every copy says what it is a copy of,
+  // the id of the last event it reflects, and one rule says which of two copies is newer (newer):
+  // neither layer takes an older copy over a newer one. vers is the newest copy this page knows of
+  // for each topic, {last, epoch} — from every put, read and peek, and from the service worker — so
+  // deciding how to open a topic and what to fetch reads no database. Absent: not looked at since
+  // the page loaded.
+  //
+  // Through 3.13 a topic could be on the page three times — held in memory when it was left, a
+  // record in the database, a copy fetched before it was opened — each with its own idea of new,
+  // and entering a topic took them in a fixed order rather than the newest. A topic left mid-turn
+  // came back as it was left, never fetched, and the finished turn arrived a second or two later.
+  __FH_CACHE_CORE__;
+  // How long the copy of the topic on screen waits to be put: a streamed reply upserts the same
+  // message every second or so, and each would otherwise re-serialise the whole topic.
+  var SAVE_MS=400, COPY_TOPICS=8, COPY_MSGS=4000;
+  // copySeq orders memory's copies by when they were put: two puts can share a millisecond.
+  var db=null, dbOff=false, saveTimer=null, copies={}, vers={}, copySeq=0;
+
+  function cacheOff(why){
+    if(dbOff) return;
+    dbOff=true; db=null;
+    // Once, and only once. The page works without the cache, and a line per attempted write
+    // would be the loudest thing in the console for a feature nobody can see failing.
+    try { console.warn('[webui] local transcript cache disabled:', (why && why.message) || why || 'unavailable'); } catch(x){}
+  }
+
+  function dbOn(){ return !dbOff && Boolean(window.indexedDB); }
+
+  function idb(){
+    if(db) return Promise.resolve(db);
+    if(!dbOn()) return Promise.resolve(null);
+    return cacheOpen(window.indexedDB).then(function(r){
+      if(r.db){ db = r.db; return db; }
+      cacheOff(r.error);
+      return null;
+    });
+  }
+
+  /** One transaction. Resolves {ok:true, value} with whatever body asked for, or {ok:false}. */
+  function cacheTx(mode, body){
+    return idb().then(function(d){
+      if(!d) return {ok:false};
+      return new Promise(function(res){
+        var t, out=null;
+        try { t = d.transaction(STORE, mode); } catch(x){ cacheOff(x); return res({ok:false}); }
+        var rq = body(t.objectStore(STORE));
+        if(rq) rq.onsuccess = function(){ out = rq.result; };
+        t.oncomplete = function(){ res({ok:true, value:out}); };
+        t.onabort = function(){ res({ok:false, error:t.error}); };
+        t.onerror = function(){ res({ok:false, error:t.error}); };
+      });
+    });
+  }
+
+  /** That a copy of a topic as new as last, of run ep, is somewhere ('' : one with nothing to resume from). */
+  function noteVer(id, last, ep){
+    var v = vers[id];
+    if(!v || newer(last, v.last, ep, v.epoch)) vers[id] = {last:last || '', epoch:ep || 0};
+  }
+
+  /**
+   * Keep a copy of a topic: msgs in the order they are read, meta {epoch, last, stale} saying what
+   * they are a copy of. Into memory now and into the database under cachePut's rule; neither takes
+   * it over a newer copy. Resolves whether the database now holds this copy or a newer one.
+   */
+  function put(id, msgs, meta){
+    var c = {topic:id, msgs:msgs, epoch:meta.epoch, last:meta.last || '', stale:Boolean(meta.stale), at:++copySeq};
+    var m = copies[id];
+    if(!m || !newer(m.last, c.last, m.epoch, c.epoch)){ copies[id] = c; trimCopies(); }
+    noteVer(id, c.last, c.epoch);
+    return dbOn() ? cacheWrite(id, msgs, meta, false) : Promise.resolve(false);
+  }
+
+  /** Memory keeps the topics most recently put, least recent out first; the database keeps the rest. */
+  function trimCopies(){
+    var ids = Object.keys(copies).sort(function(a, b){ return copies[b].at - copies[a].at; }), total = 0;
+    for(var i=0;i<ids.length;i++){
+      total += copies[ids[i]].msgs.length;
+      if(i < COPY_TOPICS && (i === 0 || total <= COPY_MSGS)) continue;
+      delete copies[ids[i]];
+      // Without a database that was the only copy.
+      if(!dbOn()) delete vers[ids[i]];
+    }
+  }
+
+  /** The copy in memory, unless the database is known to hold a newer one (the service worker's). */
+  function memCopy(id){
+    var m = copies[id], v = vers[id];
+    return m && !(v && newer(v.last, m.last, v.epoch, m.epoch)) ? m : null;
+  }
+
+  /** A topic's newest copy the page can find, {msgs, epoch, last, stale}, or null. */
+  function get(id){
+    var m = memCopy(id);
+    if(m || !dbOn()) return Promise.resolve(m || copies[id] || null);
+    return cacheRead(id).then(function(r){
+      var o = copies[id];
+      return o && (!r || newer(o.last, r.last, o.epoch, r.epoch)) ? o : r;
+    });
+  }
+
+  /** Write a topic's record under cachePut's rule. Resolves whether it, or a newer one, is there. */
+  function cacheWrite(tId, msgs, meta, retried){
+    var rec = cacheRecord(tId, msgs, meta), w = null;
+    return cacheTx('readwrite', function(store){ w = cachePut(store, rec); return null; })
+      .then(function(r){
+        if(r.ok){ if(w && w.stood) noteVer(tId, w.stood.last, w.stood.epoch); return true; }
+        if(dbOff) return false;
+        if(retried){ cacheOff(r.error || 'the write was refused twice'); return false; }
+        // Out of room, most likely. Everything except the topic being read goes, and the write
+        // is tried once more before the cache is written off for this session.
+        return cacheTx('readwrite', function(store){ cacheEvict(store, tId, true); return null; })
+          .then(function(){ return cacheWrite(tId, msgs, meta, true); });
+      });
+  }
+
+  /** A topic's record as {msgs, epoch, last, stale}, or null when there is none; noted in vers. */
+  function cacheRead(tId){
+    return cacheTx('readonly', function(store){ return store.get(tId); }).then(function(r){
+      var v = r.ok ? r.value : null, list = null;
+      if(v && v.json) try { list = JSON.parse(v.json); } catch(x){ list = null; }
+      if(!v || !Array.isArray(list)){ if(r.ok) noteVer(tId, '', 0); return null; }
+      noteVer(tId, v.last, v.epoch);
+      return {msgs:list, epoch:v.epoch || 0, last:v.last || '', stale:Boolean(v.stale)};
+    });
+  }
+
+  /**
+   * Learn what a topic's record is a copy of without parsing it: the prefetch asks this of every
+   * topic it has not looked at, and a whole topic is up to 2M characters of JSON.
+   */
+  function cachePeek(tId){
+    return cacheTx('readonly', function(store){ return store.get(tId); }).then(function(r){
+      var v = r.ok && r.value && r.value.json ? r.value : null;
+      noteVer(tId, v ? v.last : '', v ? v.epoch : 0);
+    });
+  }
+
+  function cacheDrop(tId){ cacheTx('readwrite', function(store){ store.delete(tId); return null; }); }
+  /** Drop every cached topic not in keep — over KEYS, for the same reason evict walks keys. */
+  function cacheKeep(keep){
+    cacheTx('readwrite', function(store){
+      var cur = store.index('at').openKeyCursor();
+      cur.onsuccess = function(){
+        var at = cur.result;
+        if(!at) return;
+        if(!keep[at.primaryKey]) store.delete(at.primaryKey);
+        at.continue();
+      };
+      return null;
+    });
+  }
+
+  /**
+   * What is on screen, in the order it is on screen, as the cache should hold it.
+   *
+   * Read off #log rather than from a list of our own, because here the DOM IS the order — and
+   * what it holds is already the union of cached history and what the daemon has since sent,
+   * which is exactly what the next reload should get back.
+   *
+   * A local message is never included. Everything this page has sent and not had acknowledged is
+   * written to localStorage the moment it is sent (see unsent), which a write coalesced into a
+   * 400ms window of an asynchronous database could not promise: a reload in that window used to
+   * lose a send still in flight outright.
+   */
+  function cacheable(){
+    var out=[];
+    for(var n=log.firstChild; n; n=n.nextSibling){
+      var k = n.getAttribute ? n.getAttribute('data-k') : null;
+      var m = k ? data[k] : null;
+      if(!m || m._local) continue;
+      out.push(m);
+    }
+    return out;
+  }
+
+  /**
+   * What the topic on screen is a copy of, or null while it is nothing a copy did not already say:
+   * before its sync, or before it was put up from a copy. Resumable from lastEv when lastEv names
+   * this topic — the screen is then every message the room had as of that event.
+   */
+  function liveMeta(){
+    var last = (lastEv && lastEv.indexOf(topic+'.') === 0) ? lastEv : '';
+    return topic && epoch && (synced || last) ? {epoch:epoch, stale:stale, last:last} : null;
+  }
+
+  /** Put the topic on screen into the store as it stands. */
+  function keepScreen(){
+    var meta = liveMeta();
+    if(meta) put(topic, cacheable(), meta);
+  }
+
+  /** Keep the topic on screen, at most once every SAVE_MS. */
+  function cacheSave(){
+    if(!topic || saveTimer) return;
+    saveTimer = setTimeout(function(){ saveTimer = null; keepScreen(); }, SAVE_MS);
+  }
+
+  /** The way out of a topic: kept now, since in a moment nothing on screen belongs to it. */
+  function leave(){
+    clearTimeout(saveTimer); saveTimer = null;
+    keepScreen();
+  }
+
+  // The one place the narrow-screen breakpoint lives on this side of the wire. It has to stay
+  // the same number as the @media rule above: the CSS turns the sidebar into an overlay, and
+  // this decides whether opening a topic should then get it back out of the way.
+  var NARROW = 640;
+  function narrow(){ return window.innerWidth <= NARROW; }
+
+  /**
+   * One side panel, used on both edges of the page: the topic list on the left and the
+   * scheduled work on the right. Everything about the way a panel behaves is here once — the
+   * width and its drag handle, the open/close animation, the drawer it becomes under its
+   * breakpoint, the inert state that keeps Tab out of a panel nobody can see, and the storage
+   * that remembers both choices. What the two sides do not share is passed in: which edge it
+   * is on, how wide it starts and may get, and how narrow the screen has to be before a column
+   * has no room and it slides over the chat instead.
+   *
+   * Closed, a panel keeps its width and is moved off-screen with a negative margin (a column)
+   * or a transform (a drawer) — never display:none, because a hidden element has nothing to
+   * animate. --pw is the dragged width, inline and kept per browser; the stylesheet's
+   * --pw-default is the fallback, and the two must agree with width() below.
+   */
+  function makePanel(cfg){
+    var el=cfg.el, handle=cfg.handle, open=false, drag=null;
+    function docked(){ return window.innerWidth >= cfg.dockAt; }
+    function width(){
+      var w=parseFloat(el.style.getPropertyValue('--pw'));
+      if(w > 0) return w;
+      return typeof cfg.width === 'function' ? cfg.width() : cfg.width;
+    }
+    function maxWidth(){
+      return Math.max(cfg.min, Math.min(cfg.max, cfg.maxWidth ? cfg.maxWidth() : cfg.max));
+    }
+    function setWidth(w, keep){
+      if(w == null){
+        el.style.removeProperty('--pw');
+        try { localStorage.removeItem(cfg.widthKey); } catch(x){}
+        return;
+      }
+      w = Math.round(Math.max(cfg.min, Math.min(maxWidth(), w)));
+      el.style.setProperty('--pw', w+'px');
+      if(keep) try { localStorage.setItem(cfg.widthKey, String(w)); } catch(x){}
+    }
+    function paint(){
+      el.classList.toggle('collapsed', !open);
+      // A panel moved off-screen is still in the tab order: without this, Tab walks into a
+      // column nobody can see. Removed as soon as it is open, and harmless on a docked column.
+      if(open) el.removeAttribute('inert'); else el.setAttribute('inert', '');
+      if(cfg.onPaint) cfg.onPaint(open);
+    }
+    function setOpen(next, opts){
+      opts = opts || {};
+      if(next === open){ if(opts.force) paint(); return; }
+      open = next;
+      // A close nobody asked for — following a session on an overlay, where the panel would
+      // cover the chat it just opened — is not a preference, so it leaves storage alone.
+      if(!opts.transient && cfg.storeKey){
+        try { if(open) localStorage.setItem(cfg.storeKey,'1'); else localStorage.removeItem(cfg.storeKey); } catch(x){}
+      }
+      paint();
+      if(cfg.onChange) cfg.onChange(open);
+    }
+    // The drag listens on the document rather than the 8px handle, because the pointer leaves
+    // the handle on the first fast move. The edge it measures from is the one the panel is
+    // anchored to: the left panel grows to the right, the right panel to the left.
+    handle.addEventListener('pointerdown', function(e){
+      if(!docked()) return;
+      e.preventDefault();
+      drag = {edge: cfg.side === 'left' ? el.getBoundingClientRect().left : el.getBoundingClientRect().right};
+      handle.className = 'panel-resize dragging';
+      document.body.style.userSelect = 'none';
+    });
+    document.addEventListener('pointermove', function(e){
+      if(drag) setWidth(cfg.side === 'left' ? e.clientX - drag.edge : drag.edge - e.clientX, false);
+    });
+    document.addEventListener('pointerup', function(){
+      if(!drag) return;
+      drag = null;
+      handle.className = 'panel-resize';
+      document.body.style.userSelect = '';
+      var w = parseFloat(el.style.getPropertyValue('--pw'));
+      if(w > 0) setWidth(w, true);
+    });
+    handle.addEventListener('dblclick', function(){ setWidth(null); });
+    // The saved width is applied before the first paint, so a reload does not flash the default
+    // column and then jump to the operator's.
+    var saved = 0;
+    try { saved = Number(localStorage.getItem(cfg.widthKey)); } catch(x){}
+    if(saved > 0) setWidth(saved, false);
+    paint();
+    return {el:el, isOpen:function(){ return open; }, setOpen:setOpen, toggle:function(){ setOpen(!open); },
+            width:width, setWidth:setWidth, docked:docked};
+  }
+
+  // The two panels. The left starts open on a wide screen and closed on a phone; the right is
+  // closed until asked for, and only restored where it can be docked (below 1024px it would come
+  // back as a drawer over the chat nobody asked it to cover).
+  var sbPane = makePanel({
+    el: sidebar, handle: $('sidebar-resize'), side:'left',
+    min:180, max:640, width:240, storeKey:'aa_sb_open', widthKey:'aa_sb_w',
+    dockAt: NARROW + 1,
+    // The cap leaves the chat 360px with the right panel docked: that panel's width comes off
+    // the top, and the sidebar may take the rest up to 640.
+    maxWidth: function(){
+      return window.innerWidth - 360 - (schedPane && schedPane.isOpen() && schedPane.docked() ? schedPane.width() : 0);
+    },
+    onPaint: function(open){
+      app.classList.toggle('sb-open', open);
+      expandBtn.hidden = open;
+    }
+  });
+  var schedPane = makePanel({
+    el: schedPanel, handle: schedResize, side:'right',
+    min:220, max:640,
+    // The stylesheet's clamp(240px,20vw,320px), as the number the caps and the drag need.
+    width: function(){ return Math.min(320, Math.max(240, Math.round(window.innerWidth * 0.20))); },
+    storeKey:'aa_sched_open', widthKey:'aa_sched_w',
+    dockAt: 1024,
+    // The sidebar's stored width, not its current on-screen one: that is the width the chat
+    // loses whenever the sidebar is open, which is what this cap has to keep room for.
+    maxWidth: function(){ return window.innerWidth - sbPane.width() - 360; },
+    onPaint: function(open){
+      app.classList.toggle('sched-open', open);
+      schedToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+      schedToggle.classList.toggle('on', open);
+      paintSchedTab();
+    },
+    onChange: function(open){
+      if(open){
+        if(schedTasks === null) schedList.innerHTML = '<div class="sched-empty">Loading…</div>';
+        loadSchedules();
+        if(schedTab === 'reviews') loadReviews();
+        armSched();
+      } else {
+        disarmSched();
+      }
+      clampPanels();
+    }
+  });
+
+  /**
+   * Both widths are capped against the other column, so opening or closing one can leave the
+   * other past its maximum. The clamp rewrites --pw, not storage: the narrower width stays until
+   * the page is reloaded, when the stored one is applied again.
+   */
+  function clampPanels(){
+    // Only a column has a width of its own; in drawer mode the screen decides it, and a clamp
+    // here would shrink the saved width of a window that is merely narrow at the moment.
+    if(!sbPane.docked()) return;
+    var w = parseFloat(sidebar.style.getPropertyValue('--pw'));
+    if(w > 0) sbPane.setWidth(w, false);
+    if(schedPane.docked()){
+      var sw = parseFloat(schedPanel.style.getPropertyValue('--pw'));
+      if(sw > 0) schedPane.setWidth(sw, false);
+    }
+  }
+
+  function setSidebar(open){ sbPane.setOpen(open); }
+  collapseBtn.addEventListener('click', function(){ setSidebar(false); });
+  expandBtn.addEventListener('click', function(){ setSidebar(true); });
+
+  // Restored on the next visit. A first visit on a phone starts with the topic list out of the
+  // way; a wide one starts with it open. Neither writes the default back to storage.
+  var savedSbOpen = null;
+  try { savedSbOpen = localStorage.getItem('aa_sb_open'); } catch(x){}
+  if(savedSbOpen === null) savedSbOpen = narrow() ? '0' : '1';
+  if(savedSbOpen !== '0') sbPane.setOpen(true, {transient:true});
+
+  /**
+   * The two menus at the foot of the sidebar — Menu (all settings, notifications, low attention,
+   * skills) and Manage (close idle). One open at a time, one box in one place;
+   * a click anywhere else puts it away, and Escape puts it away and gives the focus back to the
+   * button that opened it. A disclosure rather than an ARIA menu: role=menu promises arrow-key
+   * navigation, and these are reached with Tab like any other buttons.
+   */
+  var menus = [];
+  function setMenu(entry, open){
+    for(var i=0;i<menus.length;i++){
+      var e=menus[i], on = open && e === entry;
+      e.menu.hidden = !on;
+      e.btn.setAttribute('aria-expanded', on ? 'true' : 'false');
+    }
+  }
+  function openMenu(){
+    for(var i=0;i<menus.length;i++) if(!menus[i].menu.hidden) return menus[i];
+    return null;
+  }
+  function addMenu(btn, menu){
+    var entry={btn:btn, menu:menu};
+    menus.push(entry);
+    btn.addEventListener('click', function(){ setMenu(entry, menu.hidden); });
+  }
+  addMenu(optsBtn, optsMenu);
+  addMenu(manageBtn, manageMenu);
+  document.addEventListener('click', function(e){
+    var m=openMenu();
+    if(!m || m.menu.contains(e.target) || m.btn.contains(e.target)) return;
+    setMenu(null, false);
+  });
+
+  // One sheet dismisses whichever drawer is over the chat. Both are put away if a narrow screen
+  // has somehow got both open — a tap outside means "show me the chat".
+  backdrop.addEventListener('click', function(){
+    if(schedPane.isOpen()) setSchedules(false);
+    if(sbPane.isOpen()) setSidebar(false);
+  });
+
+  /**
+   * The gateway's settings page, from the Menu. The command is sent quietly — the daemon
+   * has to build the screen from the live config, and it answers with a message of its own, but a
+   * page opening must not leave a /setting bubble in the transcript.
+   */
+  settingsOpenBtn.addEventListener('click', function(){
+    setMenu(null, false);
+    var token = openSettingsLoading();
+    var t = settingsTopic;
+    if(!token || !t) return;
+    quietCommand('/setting', t).then(function(ok){
+      if(ok) return;
+      forgetSettingsRequest(token);
+      if(!settingsMsg && !settingsPage.hidden) settingsSay('Could not reach the daemon. Close this and try again.');
+    });
+  });
+  settingsClose.addEventListener('click', closeSettings);
+  settingsPage.addEventListener('click', function(e){ if(e.target === settingsPage) closeSettings(); });
+
+  /**
+   * Low attention (#app.calm in the stylesheet, which says what it changes and why). Per device,
+   * like the sidebar's width: the phone in a pocket and the desktop with five agents on it are not
+   * asking for the same list. Absent means off, so nothing changes until someone asks for it.
+   */
+  var calm = false;
+  try { calm = localStorage.getItem('aa_calm') === '1'; } catch(x){}
+  function paintCalm(){
+    app.classList.toggle('calm', calm);
+    calmBtn.setAttribute('aria-pressed', calm ? 'true' : 'false');
+    calmState.textContent = calm ? 'on' : 'off';
+  }
+  calmBtn.addEventListener('click', function(){
+    calm = !calm;
+    try { if(calm) localStorage.setItem('aa_calm', '1'); else localStorage.removeItem('aa_calm'); } catch(x){}
+    paintCalm();
+  });
+  paintCalm();
+
+  // ── The side panel ──────────────────────────────────────────────────────────
+  /**
+   * The gateway's background work, in a column of its own rather than in the topic list.
+   *
+   * Two top-level tabs at the foot: Scheduled work and automatic Reviews.
+   * Scheduled work is subdivided into Tasks (the definitions with their controls) and Sessions
+   * (the topics a new-session run opened), keeping definitions and runs grouped together yet distinct.
+   * Those session topics are left out of the switcher (topicRows), so the Sessions tab is their
+   * only home — and the only place to delete one. Reviews have no home anywhere else: a review that
+   * changed nothing posts no line, and its result used to live only in the log.
+   *
+   * Closed on a first visit, then open until the operator closes it: the choice is kept in
+   * localStorage (aa_sched_open), so opening a session from the panel leaves the panel where it
+   * was. Only a docked panel is restored on load — below 1024px the panel is a drawer over the
+   * chat, and coming back to a page with the whole screen covered is not "remembered", it is in
+   * the way. Closing is the close button, Escape, the backdrop or the clock, and each of them is
+   * remembered too.
+   *
+   * The task list is pulled when the panel opens, after every action, and on a timer while it is
+   * visible (5s while a task is running, 30s otherwise). The sessions list needs no request: the
+   * topics event that keeps the switcher current carries their flags, state and unread counts too.
+   * Reviews are pulled on the same timer when their tab is the one on screen.
+   */
+  try {
+    var savedSchedTab = localStorage.getItem('aa_sched_tab');
+    if(savedSchedTab === 'reviews'){
+      schedTab = 'reviews';
+    } else if(savedSchedTab === 'sessions'){
+      schedTab = 'scheduled';
+      schedSubtab = 'sessions';
+    } else if(savedSchedTab === 'tasks' || savedSchedTab === 'scheduled'){
+      schedTab = 'scheduled';
+    }
+    var savedSubtab = localStorage.getItem('aa_sched_subtab');
+    if(savedSubtab === 'sessions' || savedSubtab === 'tasks'){
+      schedSubtab = savedSubtab;
+    }
+    paintSchedTab();
+  } catch(x){}
+
+  /** The topics a scheduled run opened, most recently active first (the order topics is in). */
+  function schedSessions(){
+    var out=[];
+    for(var i=0;i<topics.length;i++) if(topics[i].scheduled) out.push(topics[i]);
+    return out;
+  }
+
+  /**
+   * Every topic the Sessions tab draws: the runs, and the sub-agents each opened under it
+   * (runOwners), in the order topics is in. What the tab counts and groups by is still the runs —
+   * schedSessions — and a sub-agent rides with its run, as it does with its topic in the switcher.
+   */
+  function schedMembers(){
+    var runs=runOwners(), out=[];
+    for(var i=0;i<topics.length;i++) if(runs[topics[i].id]) out.push(topics[i]);
+    return out;
+  }
+
+  function schedAgo(at){
+    if(!at) return '';
+    var s=Math.max(0, Math.round((Date.now()-at)/1000));
+    if(s<60) return s+'s ago';
+    if(s<3600) return Math.round(s/60)+'m ago';
+    if(s<86400) return Math.round(s/3600)+'h ago';
+    return Math.round(s/86400)+'d ago';
+  }
+
+  /**
+   * How long a span lasted, in the one format every age on this page uses: under a minute is
+   * "<1m", under an hour Nm, under a day Nh (no minutes — "23h" is as precise as a row needs),
+   * then Nd, or NdNh when the hours are not zero ("1d10h").
+   *
+   * Rounded down, so a row never claims a minute it has not reached. A negative span — the
+   * server's clock ahead of this browser's — counts as zero rather than rendering "-1m".
+   */
+  function durText(ms){
+    var m=Math.floor(Math.max(0, ms)/60000);
+    if(m<1) return '<1m';
+    if(m<60) return m+'m';
+    var h=Math.floor(m/60);
+    if(h<24) return h+'h';
+    var d=Math.floor(h/24), rh=h%24;
+    return d+'d'+(rh?rh+'h':'');
+  }
+
+  /** A span as an age: the same units, with " ago" only for something that has ended. */
+  function ageText(ms, done){
+    return durText(ms)+(done?' ago':'');
+  }
+
+  /** HH:MM, with the date in front when it was not today — the tooltip's "started/ended at". */
+  function ageClock(at){
+    var d=new Date(at), now=new Date();
+    var hm=(d.getHours()<10?'0':'')+d.getHours()+':'+(d.getMinutes()<10?'0':'')+d.getMinutes();
+    if(d.getFullYear()===now.getFullYear() && d.getMonth()===now.getMonth() && d.getDate()===now.getDate()) return hm;
+    var day=MONTH_NAMES[d.getMonth()].slice(0,3)+' '+d.getDate();
+    return (d.getFullYear()===now.getFullYear()?day:day+', '+d.getFullYear())+' '+hm;
+  }
+
+  /**
+   * One walk of a topic's subtree: whether anything under it is working, and the earliest start
+   * among the ones that are — 0 when none carries one.
+   *
+   * A /super dispatcher's own turn ends between jobs while its sub-agents keep working, and
+   * rowRunning draws it as running; its age has to be the job's, not a start it does not have.
+   * Earliest, because that is when the work the row is standing for began. Both answers come out
+   * of the same walk, so painting one row does not walk its subtree twice for them.
+   */
+  function subtreeRun(id){
+    var busy=false, since=0, stack=[id], seenB={}, n=0;
+    while(stack.length && n++<256){
+      var p=stack.pop();
+      if(seenB[p]) continue;
+      seenB[p]=true;
+      for(var i=0;i<topics.length;i++){
+        var t=topics[i];
+        if(t.parent!==p) continue;
+        if(t.running){
+          busy=true;
+          if(t.runningSince && (!since || t.runningSince<since)) since=t.runningSince;
+        }
+        stack.push(t.id);
+      }
+    }
+    return {busy:busy, since:since};
+  }
+
+  /**
+   * What a row's age counts from, and whether it is still running: its own start while it works
+   * (or the earliest start below a dispatcher), else when its last turn ended — the outcome's
+   * own timestamp, or the last message when the daemon sent no outcome. Null when there is
+   * nothing to count: a topic nothing has been said in yet, or a running one from a daemon
+   * older than runningSince.
+   */
+  function topicAge(t){
+    if(t.running) return t.runningSince ? {at:t.runningSince, run:true} : null;
+    // A dispatcher is drawn as running while its sub-agents work, so it has no "ended" to count
+    // from: with no start anywhere below (a daemon older than runningSince) it shows nothing.
+    var below=subtreeRun(t.id);
+    if(below.busy) return below.since ? {at:below.since, run:true} : null;
+    var at=(t.outcome && t.outcome.at) ? t.outcome.at : (t.msgCount ? t.lastAt : 0);
+    return at ? {at:at, run:false} : null;
+  }
+
+  /**
+   * The age element of a row, stamped so the 30-second tick can rewrite it without repainting
+   * the list (see paintAges): data-age is the instant counted from, data-age-run says which
+   * wording it takes.
+   */
+  function ageHtml(t){
+    var a=topicAge(t);
+    if(!a) return '';
+    return '<span class="topic-age'+(a.run?' run':'')+'" data-age="'+text(a.at)+'"'
+      + ' data-age-run="'+(a.run?'1':'0')+'"'
+      + ' title="'+text((a.run?'Started ':'Ended ')+ageClock(a.at))+'">'
+      + text(ageText(Date.now()-a.at, !a.run))+'</span>';
+  }
+
+  var MONTH_NAMES=['January','February','March','April','May','June','July','August','September','October','November','December'];
+
+  /**
+   * A topic's unread messages, as its row's badge counts them. The topic on screen is read by
+   * definition: opening it stamps readCounts.
+   */
+  function unreadOf(t){
+    var count=t.msgCount||0;
+    return t.id===topic?0:Math.max(0, count-(readCounts[t.id]||0));
+  }
+
+  /** Whether a topic has anything a Mark all read would clear: a badge, or a reply the daemon
+   *  still counts as unseen (stage review). The topic on screen is excluded: reportSeen is
+   *  already clearing it. A sub-agent has only its badge to clear: its finished turn is the news
+   *  of the agent that opened it, not the person's, and its row has no green dot to take away. */
+  function needsRead(t){
+    return t.id!==topic && (unreadOf(t)>0 || unseenReply(t));
+  }
+
+  /** A reply the daemon still counts as unseen — the green dot, cleared by api/seen. */
+  function unseenReply(t){
+    return t.stage==='review' && !t.parent;
+  }
+
+  /**
+   * The Sessions list's groups: this month one per day, everything older one per month.
+   *
+   * A day is only worth naming while it is recent: a daily run would otherwise make thirty
+   * headers that say nothing. The calendar is the browser's own — lastAt is when the run was
+   * last active, and the operator's day is what the list is read against, not the server's.
+   * Groups come out in the order their first run does, which is lastAt descending.
+   *
+   * A run with no timestamp at all (a record written before topics stored one — topics.ts
+   * defaults it to 0) has no date to name, so it goes in one "Earlier" group at the end rather
+   * than in a day in 1970 the run never had.
+   */
+  function schedSessionGroups(list){
+    var runs=runOwners(), below={}, now=new Date();
+    // What a folded header says for its rows has to include the sub-agents under them: a question
+    // from one is as much the person's as a question from the run, and has no other row to show it.
+    for(var b=0;b<topics.length;b++){
+      var r=runs[topics[b].id];
+      if(r && topics[b].asking) below[r]=true;
+    }
+    var y=now.getFullYear(), m=now.getMonth();
+    var yesterday=new Date(y, m, now.getDate()-1);
+    var out=[], byKey={};
+    for(var i=0;i<list.length;i++){
+      var t=list[i], at=t.lastAt?new Date(t.lastAt):null;
+      var day=Boolean(at) && at.getFullYear()===y && at.getMonth()===m;
+      var month=at?('0'+(at.getMonth()+1)).slice(-2):'';
+      var key=!at ? 'x:earlier'
+        : day ? 'd:'+at.getFullYear()+'-'+month+'-'+('0'+at.getDate()).slice(-2)
+        : 'm:'+at.getFullYear()+'-'+month;
+      var g=byKey[key];
+      if(!g){
+        var label;
+        if(!at) label='Earlier';
+        else if(day){
+          if(at.getDate()===now.getDate()) label='Today';
+          else if(at.getFullYear()===yesterday.getFullYear() && at.getMonth()===yesterday.getMonth() && at.getDate()===yesterday.getDate()) label='Yesterday';
+          else label=MONTH_NAMES[at.getMonth()].slice(0,3)+' '+at.getDate();
+        } else label=MONTH_NAMES[at.getMonth()]+' '+at.getFullYear();
+        g={ key:key, label:label, items:[], unread:0, running:0, asking:0, current:false };
+        byKey[key]=g;
+        out.push(g);
+      }
+      g.items.push(t);
+      if(t.id===topic || runs[topic]===t.id) g.current=true;
+      g.unread+=unreadOf(t);
+      if(rowRunning(t) || below[t.id]) g.running++;
+      if(t.asking || below[t.id]) g.asking++;
+    }
+    // Undated runs belong at the bottom even if the list arrived in another order.
+    for(var j=0;j<out.length;j++){
+      if(out[j].key==='x:earlier' && j<out.length-1){ out.push(out.splice(j,1)[0]); break; }
+    }
+    return out;
+  }
+
+  /**
+   * A group's fold state: what the operator chose, else the default for its position.
+   *
+   * The group holding the topic on screen is always open, whatever was chosen before: a link or
+   * a notification can land in a run from months ago, and the row that is the reason the page
+   * moved there must be visible.
+   */
+  function sessGroupOpen(g, newest){
+    if(g.current) return true;
+    var st=sessGroups[g.key];
+    if(st===true || st===false) return st;
+    return newest;
+  }
+
+  /**
+   * One row of any list: a state dot, a title, a quiet second line, an optional badge and mark,
+   * and the ⋯ that opens the row's menu.
+   *
+   * The topic list, a scheduled task and a scheduled run all draw this, because they are the
+   * same thing to read: what is it, what is it doing, and one control. The callers own what goes
+   * in each slot; this owns the shape, and the key that ties the row to an open menu across the
+   * innerHTML repaint every one of these lists does.
+   *
+   * The "time" slot is the right end of that second line, for the one row that carries a clock.
+   * It is a slot of its own rather than part of "sub" because it must not be ellipsised with it.
+   * The "legend" slot is a topic row's agent name on its frame (agentTagHtml); it is positioned
+   * out of the flex row, so it is first only to be painted under the row's controls, never over.
+   */
+  function rowHtml(o){
+    var key=o.key||'';
+    var more='<button type="button" class="btn-icon topic-more" data-rm="'+text(key)+'"'
+      + ' aria-haspopup="menu" aria-expanded="'+(rowMenuKey===key?'true':'false')+'"'
+      + ' title="'+text(o.moreTitle||'Row actions')+'" aria-label="'+text(o.moreTitle||'Row actions')+'">'+IC.icon.more+'</button>';
+    var sub=(o.sub||o.time)?'<span class="topic-sub">'+(o.sub||'')+(o.time||'')+'</span>':'';
+    return '<div class="topic-item'+(o.cls?' '+o.cls:'')+'"'+o.attrs+'>'
+      + (o.legend||'')
+      + '<span class="'+(o.dot||'topic-dot')+'"></span>'
+      + '<span class="topic-main">'+(o.title||'')+sub+'</span>'
+      + (o.badge||'')
+      + '<span class="topic-acts">'+(o.mark||'')+more+'</span>'
+      + '</div>';
+  }
+
+  /**
+   * One topic's row, in whichever list draws it: the switcher, and the Sessions tab — a scheduled
+   * run and the sub-agents under it. row is a treeWalker row, so the depth, the fold pill and what
+   * it hides come with it; the list decides the rest:
+   *   attr     the attribute its click handler reads the id from (data-topic, data-sess)
+   *   menu     the prefix of the ⋯'s key, which openRowMenuFor routes on (topic, sess)
+   *   cls/tail classes before / after the depth ones (after-needs, needs)
+   *   attrs    more attributes for the row
+   *   sub/time in place of the directory line and the age: a run's own row says when it ran, how
+   *            many messages and in what state instead
+   * Everything else — the agent legend, the dot, the title, the badge, the terminal and star marks —
+   * is one answer for every list, so a topic looks the same wherever it is found.
+   */
+  function treeRowHtml(row, o){
+    var t=row.t;
+    var isCur=(t.id===topic);
+    var isRunning=rowRunning(t);
+    // A question on screen holds its turn open, so t.running is true at the same time. Asked
+    // first everywhere below: "waiting for you" is the state you can act on, and the one the
+    // running blue would otherwise hide.
+    var isAsking=Boolean(t.asking);
+    var isLive=Boolean(t.live);
+    var unread=unreadOf(t);
+    var cls=(isCur?'on ':'')+(isRunning?'running':'idle')+(isLive?' live':'')
+      +(t.starred?' starred':'')+' framed'+(o.cls||'')
+      +(row.depth?' sub d'+Math.min(row.depth,3):'')
+      +(o.tail||'');
+    var isFailed=t.stage==='failed';
+    // A sub-agent's finished turn is news for the agent that opened it, not for the person
+    // (needsYou says the same): its row keeps the ordinary idle/online grey instead of the
+    // green "unread reply" dot, and the parent turns green when the report is waiting to be
+    // read. Work and a question are still its own — blue and amber — because both are states a
+    // person acts on, or watches, in that topic.
+    var dotCls='topic-dot'+(isAsking?' asking':(isRunning?' running':(isFailed?' failed':(t.stage==='review'&&!t.parent?' review':(isLive?' live':'')))));
+    var badge=unread>0?'<span class="topic-badge">'+(unread>99?'99+':unread)+'</span>':'';
+    // Not "a shell is alive over there" — the daemon only sees the connection, so this says a
+    // page has that topic's terminal open (shown or minimized). See terminal-sessions.ts.
+    var term=t.term?'<span class="topic-term" title="A terminal is attached to this topic">&gt;_</span>':'';
+    var line=o.sub!==undefined ? o.sub : topicDirHtml(t);
+    // The subject alone: who answers is the legend on the row's frame, not the "[cc] " the stored
+    // name opens with (which the chat platforms still need, and which a later /agent leaves stale).
+    var title='<span class="topic-title">'
+       + forkMarkHtml(t)
+       + text(splitTitle(t.title || 'Untitled').rest)+'</span>';
+    // A lit star on a starred row is a marker, not a button: Star/Unstar lives in the menu now.
+    var starMark=t.starred
+      ? '<span class="topic-star-mark" title="Starred: never removed to make room, and kept by Clear" aria-hidden="true">'+IC.icon.star+'</span>'
+      : '';
+    // Its own button, like the star: folding a parent is not a reason to switch to it.
+    var fold=row.kids?'<button type="button" class="topic-fold'+(row.shut?' folded':'')+(row.under?' '+row.under:'')+'"'
+       + ' data-fold="'+text(t.id)+'" aria-expanded="'+(row.shut?'false':'true')+'"'
+       + ' title="'+(row.shut?'Show':'Hide')+' the '+row.kids+' topic'+(row.kids>1?'s':'')+' its agent opened">'
+       + (row.shut?IC.icon.chevronRight:IC.icon.chevronDown)+' '+row.kids+'</button>':'';
+    return rowHtml({
+      cls:cls,
+      attrs:' '+o.attr+'="'+text(t.id)+'" role="button" tabindex="0"'+(o.attrs||''),
+      key:o.menu+':'+t.id,
+      legend:agentTagHtml(t),
+      dot:dotCls,
+      title:title,
+      sub:fold ? '<span class="topic-line">'+fold+line+'</span>' : line,
+      time:o.time!==undefined ? o.time : ageHtml(t),
+      badge:term+badge,
+      mark:starMark,
+      moreTitle:o.moreTitle
+    });
+  }
+
+  /**
+   * The mark a forked topic's row leads with (Topic.forkOf), saying where it came from on hover; empty
+   * for every other row. The source is named as the list shows it, so the hover and the row above
+   * read the same.
+   */
+  function forkMarkHtml(t){
+    if(!t.forkOf) return '';
+    return '<span class="topic-fork-mark" title="'+text(forkFromText(t))+'">'+IC.icon.fork+'</span>';
+  }
+  /** "Forked from <source> · turn N", for a fork's mark and the line at the top of its page. */
+  function forkFromText(t){
+    var src=topicById(t.forkOf);
+    return 'Forked from '+(src ? (src.title || 'Untitled') : 'another topic')+(t.forkTurn ? ' · turn '+t.forkTurn : '');
+  }
+
+  /**
+   * Where a topic works, as its row's second line says it: the machine, then the directory's name.
+   *
+   * The full path on the title attribute rather than in the row: two checkouts of one project have
+   * the same last segment, and the column is 240px wide. The machine goes first: it is the short
+   * word, and the one that tells apart two agents of one harness on two hosts — whose directories
+   * usually share a name too — so it is what the ellipsis spares. An offline machine keeps its name
+   * and gains a mark: the line still says where the topic is.
+   */
+  function topicDirHtml(t){
+    if(!t.dir) return '';
+    var offAt=t.dir.host?offSince(t.dir.host):0;
+    var where=t.dir.host
+      ? (offAt ? '<span class="topic-off" title="'+text(offTitle(t.dir.host))+'">'+IC.icon.offline+text(t.dir.host)+'</span> · ' : text(t.dir.host+' · '))
+      : '';
+    return '<span class="topic-dir" title="'+text((t.dir.host?t.dir.host+':':'')+t.dir.path)+'">'+where+text(t.dir.name)+'</span>';
+  }
+
+  /**
+   * One row of the Sessions tab: a scheduled run, or a sub-agent under one — treeRowHtml, the row
+   * the switcher draws, so a sub-agent a run opened is nested and folded exactly as one a topic
+   * opened is.
+   *
+   * The rows are the only way to reach these topics, since the switcher leaves them out, and the
+   * ⋯ is the operator deciding about this topic rather than the whole task — the same menu a topic
+   * row has (Star / End agent / Delete). A run's own second line is what this list is scanned for
+   * instead of where it works: when it was last active, how many messages, and its state. The age
+   * is in the same format as the topic rows, so a run read here and its topic read elsewhere cannot
+   * disagree about what "1h" means; stamped like theirs, so the same tick keeps it current without
+   * repainting the panel. An undated record keeps the empty cell.
+   */
+  function schedSessionRow(row){
+    var t=row.t, run=Boolean(t.scheduled), o={attr:'data-sess', menu:'sess', cls:' sess-item'};
+    if(!run){
+      o.moreTitle='Topic actions';
+      return treeRowHtml(row, o);
+    }
+    var count=t.msgCount||0;
+    var state=t.asking?'awaiting you':(rowRunning(t)?'running':(t.stage==='failed'?'failed':(t.stage==='review'?'finished':'')));
+    var when=t.lastAt
+      ? '<span class="topic-age" data-age="'+text(t.lastAt)+'" data-age-run="0"'
+        + ' title="Ended '+text(ageClock(t.lastAt))+'">'+text(ageText(Date.now()-t.lastAt, true))+'</span>'
+      : '';
+    o.sub='<span class="topic-dir">'+when+(count?' · '+count+' message'+(count===1?'':'s'):'')+(state?' · '+state:'')+'</span>';
+    o.time='';
+    o.moreTitle='Session actions';
+    return treeRowHtml(row, o);
+  }
+
+  /**
+   * The Sessions list: the groups, and whether the title's Mark all read has anything to mark.
+   *
+   * A folded group keeps its rows in the DOM but hidden, so aria-controls still names a real
+   * element and a repaint does not have to remember what it left out. The flags on a folded
+   * header are the whole point of folding: they say what the rows underneath would.
+   */
+  function paintSessions(){
+    var list=schedSessions();
+    if(!list.length){
+      paintSchedRead(0);
+      schedSessionList.innerHTML='<div class="sched-empty">No scheduled sessions yet. A task that runs in a new or daily session opens one here.</div>';
+      rowMenuFollow();
+      armAgeTick();
+      return;
+    }
+    var tree=topicTree(schedMembers()), walker=treeWalker(tree), pending=0;
+    for(var p=0;p<tree.visible.length;p++) if(needsRead(tree.visible[p])) pending++;
+    paintSchedRead(pending);
+    var groups=schedSessionGroups(list);
+    var h='';
+    for(var g=0;g<groups.length;g++){
+      var gr=groups[g];
+      var open=sessGroupOpen(gr, g===0);
+      var flags='';
+      if(!open){
+        if(gr.unread) flags+='<span class="sess-group-flag unread">'+gr.unread+' unread</span>';
+        if(gr.asking) flags+='<span class="sess-group-flag asking">'+gr.asking+' awaiting you</span>';
+        if(gr.running>gr.asking) flags+='<span class="sess-group-flag running">'+(gr.running-gr.asking)+' running</span>';
+      }
+      // Each run and, unfolded, the topics under it: a group holds runs, and a run's sub-agents
+      // ride with it rather than being dated on their own.
+      var body='', from=walker.rows.length;
+      for(var i=0;i<gr.items.length;i++) walker.walk(gr.items[i], 0);
+      for(var r=from;r<walker.rows.length;r++) body+=schedSessionRow(walker.rows[r]);
+      var id='sess-g-'+gr.key.replace(/:/g,'-');
+      h+='<div class="sess-group">'
+        + '<button type="button" class="sess-group-head" data-sgroup="'+text(gr.key)+'"'+(gr.current?' data-slock="1"':'')
+        + ' aria-expanded="'+(open?'true':'false')+'" aria-controls="'+id+'">'
+        + '<span class="sess-group-caret">'+(open?IC.icon.chevronDown:IC.icon.chevronRight)+'</span>'
+        + '<span class="sess-group-name">'+text(gr.label)+'</span>'
+        + '<span class="sess-group-count">'+gr.items.length+'</span>'
+        + flags
+        + '</button>'
+        + '<div class="sess-group-rows" id="'+id+'"'+(open?'':' hidden')+'>'+body+'</div>'
+        + '</div>';
+    }
+    schedSessionList.innerHTML=h;
+    rowMenuFollow();
+    armAgeTick();
+  }
+
+  /** The title's Mark all read, greyed when no run has anything to mark — the topic list's (paintTopics) does the same. */
+  function paintSchedRead(pending){
+    schedReadBtn.disabled = !pending;
+    schedReadBtn.title = pending ? 'Mark all read ('+pending+' session'+(pending===1?'':'s')+')' : 'Mark all read — nothing unread';
+  }
+
+  /**
+   * Mark a list's topics read: the Sessions tab's Mark all read (every run and the sub-agents under
+   * them) and the topic list's (every topic in it). noun names them in the failure, and say is
+   * where that list reports one.
+   *
+   * Two kinds of unread live in a list and both have to go: the badge is this page's own
+   * count (readCounts in localStorage), while the green dot is the daemon's stage: review,
+   * which clears only when the server is told the topic was seen. api/seen takes one topic
+   * and has no bulk form, so this posts once per topic that still has a reply to clear — a
+   * handful of requests on a tap, not a poll.
+   *
+   * One at a time, not all at once: every markSeen announces the topic list to every open page,
+   * and N parallel posts would be N announcements racing each other. And a 4xx/5xx is a
+   * resolved response, not a rejection — post() only rejects on a dead link — so r.ok has to be
+   * checked or a refused mark would leave the badge gone here and the topic still finished there,
+   * with nothing said.
+   */
+  function markAllRead(list, noun, say){
+    var wrote=false, queue=[];
+    for(var i=0;i<list.length;i++){
+      var count=list[i].msgCount||0;
+      if((readCounts[list[i].id]||0)!==count){ readCounts[list[i].id]=count; wrote=true; }
+      if(unseenReply(list[i])) queue.push(list[i].id);
+    }
+    if(wrote) saveReads();
+    // Both lists, and the button that started this: paintTopics repaints the Sessions tab too.
+    paintTopics();
+    var failed=0;
+    function markOneAt(n){
+      if(n>=queue.length){
+        if(failed) say('Could not mark '+failed+' '+noun+(failed===1?'':'s')+' read: the daemon did not accept it. '+(failed===1?'It':'They')+' keep the finished mark.');
+        return;
+      }
+      post('api/seen',{topic:queue[n]},0).then(function(r){
+        if(!r.ok) failed++;
+      }, function(){ failed++; }).then(function(){ markOneAt(n+1); });
+    }
+    markOneAt(0);
+  }
+
+  // ── Reviews ────────────────────────────────────────────────────────────────
+  /**
+   * What the automatic review did with the conversations that went quiet.
+   *
+   * Read-only, and pulled rather than pushed: a review is a rare, slow background event and the
+   * daemon has no event for one finishing. There is no daily quota: the sweep has no cap, so the
+   * list is the whole story.
+   */
+  function loadReviews(){
+    if(app.hidden) return;
+    var seq = ++reviewSeq;
+    fetch('api/reviews', {credentials:'same-origin'}).then(function(r){
+      if(!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    }).then(function(d){
+      if(seq !== reviewSeq) return;
+      reviewData = d || { enabled:false, running:false, reviews:[] };
+      paintReviews();
+      paintSchedCounts();
+      paintSummary();
+    }).catch(function(e){
+      if(seq !== reviewSeq) return;
+      showSchedNote('Could not refresh reviews: ' + ((e && e.message) || 'network error'));
+    });
+  }
+
+  function paintReviews(){
+    if(reviewData === null){
+      revList.innerHTML = '<div class="sched-empty">Loading…</div>';
+      return;
+    }
+    if(!reviewData.enabled){
+      revList.innerHTML = '<div class="sched-empty">This daemon has no conversation library, so there is no review history.</div>';
+      return;
+    }
+    if(!reviewData.reviews.length){
+      revList.innerHTML = '<div class="sched-empty">' + (reviewData.running
+        ? 'No reviews yet. A conversation is reviewed once it has been quiet for an hour, after three messages from you.'
+        : 'Automatic review is off. Name an agent under review.agent, or an endpoint under review.api, to turn it on; reviews recorded before then still appear here.') + '</div>';
+      return;
+    }
+    var h = revPending(reviewData.pending || []);
+    for(var i=0;i<reviewData.reviews.length;i++) h += revRow(reviewData.reviews[i]);
+    revList.innerHTML = h;
+  }
+
+  /**
+   * The suggestions nobody has dealt with, merged across reviews: preferences, and since 2026-11-09
+   * skills to archive. Nothing acts on them: the person has a preference added to the instructions
+   * every agent gets, archives the skill, or dismisses the suggestion — so this block says that,
+   * rather than looking like settings that are already in force.
+   *
+   * Adopt is the first half of a preference: it opens a topic whose composer holds a draft asking an
+   * agent to add the suggestion to the person's instructions. The draft is not sent, so the
+   * suggestion stays on the list until a message that carries it actually goes out from that topic
+   * (settleAdopted), or the daemon finds it in the instructions. A draft thrown away costs nothing.
+   * Archive is the Skills tab's own archive (archiveSuggested).
+   */
+  function revPending(list){
+    if(!list.length) return '';
+    var h = '<div class="rev-pending"><div class="rev-label">Suggestions · ' + list.length + '</div>';
+    h += '<div class="rev-note">Not in effect anywhere. Adopt opens a new topic with a draft asking an agent to add a preference to your instructions; Archive takes a skill off every agent (Restore in Skills brings it back); Dismiss takes a suggestion off this list.</div>';
+    for(var i=0;i<list.length;i++){
+      var p = list[i], from = [];
+      for(var j=0;j<p.from.length;j++) from.push(p.from[j].title);
+      h += '<div class="rev-pitem"><div class="rev-pbody"><div class="rev-ptext">' + text(p.text) + '</div>';
+      if(p.reason) h += '<div class="rev-reason">' + text(p.reason) + '</div>';
+      h += '<div class="rev-pmeta">' + (p.count > 1 ? text(p.count + ' reviews · ') : '') + text(from.join(', ')) + '</div></div>';
+      h += '<div class="rev-pacts">' + (p.archive
+        ? '<button type="button" class="rev-adopt rev-archive" data-rev-archive="' + i + '">Archive</button>'
+        : '<button type="button" class="rev-adopt" data-rev-adopt="' + i + '">Adopt</button>');
+      h += '<button type="button" class="rev-dismiss" data-rev-dismiss="' + i + '">Dismiss</button></div></div>';
+    }
+    return h + '</div>';
+  }
+
+  /**
+   * Carry out an archive suggestion with the Skills tab's own operation (api/skills/op), so the
+   * Reviews seam itself stays read-only. The suggestion leaves the list by itself once its skill is
+   * no longer active, so a refresh is all that follows; Restore in the Skills tab undoes it.
+   */
+  function archiveSuggested(btn){
+    var i = Number(btn.getAttribute('data-rev-archive'));
+    var p = reviewData && reviewData.pending ? reviewData.pending[i] : null;
+    if(!p || !p.archive) return;
+    btn.disabled = true;
+    // The same write as a row's Off switch, so the skills cache must treat it as one: a list that
+    // is already on the wire describes the store before this archive.
+    skillEpoch++;
+    post('api/skills/op', {action:'archive', name:p.archive.name}, 1).then(function(r){
+      return r.json().catch(function(){ return {ok:false, error:'HTTP ' + r.status}; });
+    }).then(function(d){
+      if(!d || !d.ok) throw new Error((d && d.error) || 'the archive was refused');
+      loadReviews();
+      // Keep the skills list (and its cache) in step even though this window is not open.
+      skillRefreshPending = true;
+      skillAfterWrite();
+    }).catch(function(e){
+      btn.disabled = false;
+      showSchedNote('Could not archive ' + p.archive.name + ': ' + ((e && e.message) || 'network error'));
+      skillAfterWrite();
+    });
+  }
+
+  /**
+   * The suggestion as a new topic's first draft: a request to an agent, never a message already
+   * sent. The person can edit it, change agent with /agent first, or throw it away. The suggestion
+   * is quoted at the end, which is also what settleAdopted looks for when the message goes out.
+   */
+  function adoptDraft(text){
+    return 'Add this to my standing instructions: the instructions/ directory on the gateway. '
+      + 'Choose common.md or the file for your own agent, fit it into the wording already there, '
+      + 'and show me the diff before you change anything.\n\n"' + text + '"';
+  }
+
+  /** Open a topic for one suggestion, with the draft in its composer. */
+  function adoptPreference(btn){
+    var i = Number(btn.getAttribute('data-rev-adopt'));
+    var p = reviewData && reviewData.pending ? reviewData.pending[i] : null;
+    if(!p) return;
+    btn.disabled = true;
+    createTopic({text:p.text, draft:adoptDraft(p.text)}).then(function(){ btn.disabled = false; },
+      function(){ btn.disabled = false; });
+  }
+
+  /** Take one suggestion off the pending list; the daemon answers with the fresh list. */
+  function dismissPreference(btn){
+    var i = Number(btn.getAttribute('data-rev-dismiss'));
+    var p = reviewData && reviewData.pending ? reviewData.pending[i] : null;
+    if(!p) return;
+    dismissSuggestion(p, btn);
+  }
+
+  /**
+   * The one dismiss request, from the button or from a message that carried the suggestion.
+   * The button is absent for the second: there is no control on screen to disable.
+   */
+  function dismissSuggestion(p, btn){
+    if(btn) btn.disabled = true;
+    post('api/reviews/op', {action:'dismiss', text:p.text}, 1).then(function(r){
+      if(!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    }).then(function(d){
+      // A list asked for before this answer must not put the suggestion back on screen: the
+      // topic a draft was sent in can open its stream and ask for one at the same moment.
+      reviewSeq++;
+      reviewData = d || reviewData;
+      forgetAdopted(p.text);
+      paintReviews();
+      paintSchedCounts();
+    }).catch(function(e){
+      if(btn) btn.disabled = false;
+      showSchedNote('Could not dismiss that suggestion: ' + ((e && e.message) || 'network error'));
+    });
+  }
+
+  /**
+   * A message the daemon accepted in a topic: when it is the draft an Adopt started there and still
+   * carries the suggestion, the suggestion has been dealt with. The text is compared, not the
+   * topic alone, so a draft cleared and replaced with something else leaves it on the list — a
+   * wrong dismissal cannot be undone from the page.
+   */
+  function settleAdopted(id, typed){
+    var a = revAdopted[id];
+    if(!a || !carries(typed, a.text)) return;
+    dismissSuggestion(a, null);
+  }
+
+  /** Whether a sent message still carries a suggestion, spacing ignored (as the store's key is). */
+  function carries(sent, want){
+    var flat = function(s){ return String(s == null ? '' : s).replace(/\s+/g, ''); };
+    var w = flat(want);
+    return w.length > 0 && flat(sent).indexOf(w) >= 0;
+  }
+
+  /** Drop every topic's link to a suggestion that has just been dealt with. */
+  function forgetAdopted(text){
+    for(var id in revAdopted){
+      if(Object.prototype.hasOwnProperty.call(revAdopted, id) && revAdopted[id].text === text) delete revAdopted[id];
+    }
+  }
+
+  /** The panel is a column: a review is one line until it is opened, like a task card. */
+  function revRow(r){
+    var open = Boolean(revOpen[r.id]);
+    var h = '<div class="rev-item ' + text(r.outcome) + (open ? ' open' : '') + '" data-rev="' + text(r.id) + '" role="button" tabindex="0" aria-expanded="' + (open ? 'true' : 'false') + '">';
+    h += '<div class="rev-row"><span class="rev-dot"></span><span class="rev-topic">' + text(r.title) + '</span>';
+    if(r.inferred) h += '<span class="rev-badge">inferred</span>';
+    h += '<span class="rev-when" title="' + text(revWhen(r.at)) + '">' + text(schedAgo(r.at)) + '</span></div>';
+    h += '<div class="rev-result">' + text(r.summary) + '</div>';
+    if(open) h += revDetail(r);
+    h += '</div>';
+    return h;
+  }
+
+  function revDetail(r){
+    var h = '<div class="rev-detail">';
+    if(r.error) h += '<div class="rev-note bad">' + text(r.error) + '</div>';
+    if(r.changes.length){
+      h += '<div class="rev-label">Changes</div>';
+      for(var i=0;i<r.changes.length;i++) h += revChange(r.changes[i]);
+    }
+    if(r.invalid.length){
+      h += '<div class="rev-label">Rejected</div>';
+      for(var j=0;j<r.invalid.length;j++) h += '<div class="rev-note">' + text(r.invalid[j]) + '</div>';
+    }
+    if(r.preferences.length){
+      h += '<div class="rev-label">Preferences</div>';
+      for(var k=0;k<r.preferences.length;k++) h += '<div class="rev-pref">' + text(r.preferences[k]) + '</div>';
+    }
+    if(r.inferred) h += '<div class="rev-note">Read from the raw answer: whether any of it took effect was not recorded.</div>';
+    if(!r.changes.length && !r.preferences.length && !r.invalid.length && !r.error) h += '<div class="rev-note">Nothing worth changing.</div>';
+    // Only when the topic is still in the switcher: a link to a topic the page does not have
+    // would look like one and do nothing.
+    if(r.topic && topicExists(r.topic)) h += '<button type="button" class="rev-open" data-rev-topic="' + text(r.topic) + '">Open the reviewed topic</button>';
+    h += '</div>';
+    return h;
+  }
+
+  /**
+   * One change. applied is three-state on purpose: true and false are what the gateway recorded,
+   * and absent is an old review whose raw answer never said — marked unknown rather than guessed —
+   * or a suggestion (an archive), which the gateway never applies and says so.
+   */
+  function revChange(c){
+    var what = c.action==='create' ? 'Create ' : (c.action==='patch' ? 'Update ' : (c.action==='archive' ? 'Archive ' : 'Write '));
+    var name = c.action==='write-file' ? (c.file || 'a file') + ' in ' + c.name
+      : (c.action==='archive' && c.into ? c.name + ' into ' + c.into : c.name);
+    var status = c.applied===true ? '<span class="rev-status ok">applied</span>'
+      : c.applied===false ? '<span class="rev-status bad">refused</span>'
+      : c.suggested ? '<span class="rev-status unknown">suggested</span>'
+      : '<span class="rev-status unknown">unknown</span>';
+    var h = '<div class="rev-change">' + what + '<span class="rev-name">' + text(name) + '</span>' + status;
+    if(c.reason) h += '<div class="rev-reason">' + text(c.reason) + '</div>';
+    if(c.error) h += '<div class="rev-note bad">' + text(c.error) + '</div>';
+    if(c.undo) h += '<code class="rev-undo">' + text(c.undo) + '</code>';
+    if(c.command) h += '<code class="rev-undo">' + text(c.command) + '</code>';
+    h += '</div>';
+    return h;
+  }
+
+  function revWhen(at){
+    try { return new Date(at).toLocaleString(); }
+    catch(x){ return new Date(at).toISOString(); }
+  }
+
+  function topicExists(id){
+    for(var i=0;i<topics.length;i++) if(topics[i].id === id) return true;
+    return false;
+  }
+
+  function paintSchedCounts(){
+    var tCount = schedTasks ? String(schedTasks.length) : '';
+    var sList = schedSessions();
+    schedTabTasksN.textContent = tCount;
+    schedTabSessionsN.textContent = String(sList.length);
+    schedTabReviewsN.textContent = reviewData ? String(reviewData.reviews.length) : '';
+    // No spaces around the separator: at the panel's narrowest width (220px) the tab is 100px
+    // and "Scheduled 2 · 1" plus the alert dot needs a little more than that, which pushed 1.5px
+    // of the dot past the tab's clip edge. The two spaces cost 6.7px; without them the dot ends
+    // 2.3px inside. Measured in Chromium, 2026-11-06.
+    schedTabScheduledN.textContent = sList.length > 0 ? (tCount ? tCount + '·' + sList.length : String(sList.length)) : tCount;
+  }
+
+  /**
+   * The clock's dot: a scheduled run, or a sub-agent it opened, is holding a question and nothing
+   * will move until it is answered. Those topics have no row in the switcher, so this is the one
+   * signal that reaches the operator without opening the panel. The same hint is reflected on the
+   * Scheduled outer tab and the Sessions sub-tab so it is visible even when the panel is open on
+   * Reviews.
+   */
+  function paintSchedAlert(){
+    var waiting=false, runs=runOwners();
+    for(var i=0;i<topics.length;i++){
+      if(runs[topics[i].id] && topics[i].stage==='answer'){ waiting=true; break; }
+    }
+    schedAlert.hidden = !waiting;
+    var label = waiting ? 'Side tasks — a run is waiting on your answer' : 'Side tasks';
+    schedToggle.title = label;
+    schedToggle.setAttribute('aria-label', label);
+
+    if(schedTabScheduledAlert) schedTabScheduledAlert.hidden = !waiting;
+    if(schedSessionsAlert) schedSessionsAlert.hidden = !waiting;
+    var schedTitle = waiting ? 'Scheduled — a run is waiting on your answer' : 'Scheduled';
+    schedTabScheduled.title = schedTitle;
+    var sessTitle = waiting ? 'Sessions — a run is waiting on your answer' : 'Sessions';
+    schedTabSessions.title = sessTitle;
+  }
+
+  function paintSummary(){
+    if(schedTab==='reviews'){
+      schedSummary.textContent = reviewData
+        ? (reviewData.reviews.length
+            ? reviewData.reviews.length + (reviewData.reviews.length===1?' review':' reviews')
+            : 'no reviews yet')
+        : 'loading…';
+      return;
+    }
+    if(schedSubtab==='sessions'){
+      var list=schedSessions(), busy=0;
+      for(var i=0;i<list.length;i++) if(rowRunning(list[i]) || list[i].asking) busy++;
+      schedSummary.textContent = list.length
+        ? list.length + (list.length===1?' session':' sessions') + (busy?' · '+busy+' running':'')
+        : 'no sessions yet';
+      return;
+    }
+    if(schedTasks === null){ schedSummary.textContent = 'loading…'; return; }
+    var active=0, paused=0, ended=0;
+    for(var j=0;j<schedTasks.length;j++){
+      if(schedTasks[j].state === 'active') active++;
+      else if(schedTasks[j].state === 'paused') paused++;
+      else ended++;
+    }
+    schedSummary.textContent = !schedEnabled
+      ? 'not enabled'
+      : schedTasks.length
+        ? active + ' active' + (paused ? ' · ' + paused + ' paused' : '') + (ended ? ' · ' + ended + ' ended' : '')
+        : 'nothing scheduled';
+  }
+
+  function paintSchedTab(){
+    var isReviews = schedTab === 'reviews';
+    schedTabScheduled.classList.toggle('on', !isReviews);
+    schedTabReviews.classList.toggle('on', isReviews);
+    schedTabScheduled.setAttribute('aria-selected', !isReviews ? 'true' : 'false');
+    schedTabReviews.setAttribute('aria-selected', isReviews ? 'true' : 'false');
+
+    schedSubnav.hidden = isReviews;
+    revPane.hidden = !isReviews;
+    // The bar belongs to the Tasks list only: Sessions is a list of run topics and Reviews is a
+    // different kind of thing, and a search box over either would filter nothing it names.
+    schedFilterHost.hidden = isReviews || schedSubtab === 'sessions';
+    schedReadBtn.hidden = isReviews || schedSubtab !== 'sessions';
+    schedNewBtn.hidden = isReviews || schedSubtab === 'sessions' || !schedEnabled;
+
+    if(!isReviews){
+      var isSessions = schedSubtab === 'sessions';
+      schedTabTasks.classList.toggle('on', !isSessions);
+      schedTabSessions.classList.toggle('on', isSessions);
+      schedTabTasks.setAttribute('aria-selected', !isSessions ? 'true' : 'false');
+      schedTabSessions.setAttribute('aria-selected', isSessions ? 'true' : 'false');
+      schedList.hidden = isSessions;
+      schedSessionList.hidden = !isSessions;
+      if(isSessions) paintSessions();
+    } else {
+      schedTabTasks.classList.remove('on');
+      schedTabSessions.classList.remove('on');
+      schedTabTasks.setAttribute('aria-selected', 'false');
+      schedTabSessions.setAttribute('aria-selected', 'false');
+      schedList.hidden = true;
+      schedSessionList.hidden = true;
+      paintReviews();
+    }
+    paintSchedCounts();
+    paintSchedAlert();
+    paintSummary();
+  }
+
+  function setSchedTab(tab){
+    // A menu belongs to a row in one of these panes; switching panes takes the row off screen.
+    closeRowMenu(false);
+    schedTab = tab==='reviews' ? 'reviews' : 'scheduled';
+    try { localStorage.setItem('aa_sched_tab', schedTab); } catch(x){}
+    if(schedTab==='reviews') loadReviews();
+    paintSchedTab();
+  }
+
+  function setSchedSubtab(sub){
+    closeRowMenu(false);
+    schedTab = 'scheduled';
+    schedSubtab = sub==='sessions' ? 'sessions' : 'tasks';
+    try {
+      localStorage.setItem('aa_sched_tab', 'scheduled');
+      localStorage.setItem('aa_sched_subtab', schedSubtab);
+    } catch(x){}
+    paintSchedTab();
+  }
+
+  function disarmSched(){
+    if(schedTimer) clearTimeout(schedTimer);
+    schedTimer = 0;
+  }
+
+  function armSched(){
+    disarmSched();
+    if(!schedPane.isOpen()) return;
+    var wait = schedTasks && schedTasks.some(function(t){ return t.running; }) ? 5000 : 30000;
+    schedTimer = setTimeout(function(){
+      schedTimer = 0;
+      if(!schedPane.isOpen()) return;
+      if(document.visibilityState === 'hidden'){ armSched(); return; }
+      loadSchedules();
+      // A review takes minutes, so the same 30s poll is plenty; only the visible tab is asked for.
+      if(schedTab === 'reviews') loadReviews();
+    }, wait);
+  }
+
+  function setSchedules(open, transient){
+    if(open === schedPane.isOpen()) return;
+    if(!open) closeRowMenu(false);
+    // Docking the panel narrows the chat, which re-wraps the transcript. A reader at the bottom
+    // should stay at the bottom; one reading history keeps the pixel position they chose.
+    var wasBottom = atBottom();
+    schedPane.setOpen(open, {transient:transient});
+    if(wasBottom) toBottom();
+  }
+
+  function showSchedNote(msg){
+    schedNote.hidden = false;
+    schedNote.textContent = msg;
+  }
+
+  function loadSchedules(){
+    // Before the gate is down the request would only be refused; the stream's open handler asks
+    // again the moment the page is really in.
+    if(app.hidden) return;
+    var seq = ++schedSeq;
+    schedNote.hidden = true;
+    fetch('api/schedules', {credentials:'same-origin'}).then(function(r){
+      if(!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    }).then(function(d){
+      if(seq !== schedSeq) return;
+      schedEnabled = d.enabled !== false;
+      if(!schedEnabled) schedNewBtn.hidden = true;
+      paintSchedulesList(d.tasks || []);
+    }).catch(function(e){
+      if(seq !== schedSeq) return;
+      // Keep what is on screen: a list that was true a moment ago beats an empty panel, and the
+      // note says why it did not move.
+      showSchedNote('Could not refresh: ' + ((e && e.message) || 'network error'));
+    }).then(function(){
+      if(seq === schedSeq) armSched();
+    });
+  }
+
+  function schedIn(at){
+    if(at <= Date.now()) return 'due now';
+    return 'in ' + stLeft(at - Date.now());
+  }
+
+  function schedDur(ms){
+    if(ms < 1000) return ms + 'ms';
+    if(ms < 60000) return (ms/1000).toFixed(1) + 's';
+    if(ms < 3600000) return Math.round(ms/60000) + 'm';
+    return (ms/3600000).toFixed(1) + 'h';
+  }
+
+  function schedTarget(t){
+    if(t.targetTopic){
+      for(var i=0;i<topics.length;i++){
+        if(topics[i].id === t.targetTopic) return 'posts to ' + (topics[i].title || t.targetTopic);
+      }
+    }
+    return 'posts to ' + t.target;
+  }
+
+  /** The last run in one line: a word, how long ago, and how long it took. Empty when it has never
+      run — "not run yet" is a line the eye reads to learn nothing. */
+  function schedLast(t){
+    if(!t.last) return '';
+    var word = {ok:'ok', failed:'failed', interrupted:'interrupted', skipped:'skipped', missed:'missed'}[t.last.status] || t.last.status;
+    var s = 'last run ' + word + ' · ' + schedAgo(t.last.at);
+    if(t.last.durationMs != null) s += ' · ' + schedDur(t.last.durationMs);
+    if(t.last.error) s += ' — ' + t.last.error;
+    return s;
+  }
+
+  /** The target without the "posts to" the filter and the hover card still say: on the row the
+      arrow says it in one character. */
+  function schedTargetShort(t){
+    if(t.targetTopic){
+      for(var i=0;i<topics.length;i++){
+        if(topics[i].id === t.targetTopic) return topics[i].title || t.targetTopic;
+      }
+    }
+    return t.target;
+  }
+
+  /** The last run in a row's second line: a word and how long ago. The duration, the error and
+      the exact time are in the row's hover card and in the detail. */
+  function schedLastShort(t){
+    if(!t.last) return '';
+    var word = {ok:'ok', failed:'failed', interrupted:'interrupted', skipped:'skipped', missed:'missed'}[t.last.status] || t.last.status;
+    return 'last ' + word + ' ' + schedAgo(t.last.at);
+  }
+
+  /**
+   * The dot, read the same way the topic list's is: the colour says whether anything is
+   * happening, and a failure stays until the next run. Running wins over a failed last run —
+   * something is happening now, and the failure is still on the row's line and in the detail.
+   */
+  function schedDot(t, state){
+    var dot = 'topic-dot';
+    if(t.running) dot += ' running';
+    else if(t.last && t.last.status !== 'ok') dot += ' failed';
+    else if(state === 'active') dot += ' live';
+    return dot;
+  }
+
+  /** Every tag on a task, or an empty list — the DTO always carries an array. */
+  function schedTags(t){
+    return t.tags && t.tags.length ? t.tags : [];
+  }
+
+  /** The task behind a card, for an action that starts in the card's own detail. */
+  function schedTask(id){
+    for(var i=0;i<schedTasks.length;i++) if(schedTasks[i].id === id) return schedTasks[i];
+    return null;
+  }
+
+  /**
+   * The four values the Status group filters by. Running is its own value rather than part of
+   * Active: a run in flight is the one thing on this list that is happening now, and the card
+   * already says so. Ended is expired and done together — both mean "will not run again", which is
+   * the question the filter answers.
+   */
+  function schedStatusKey(t){
+    if(t.running) return 'running';
+    if(t.state === 'paused') return 'paused';
+    if(t.state === 'active') return 'active';
+    return 'ended';
+  }
+
+  /**
+   * The bar's option lists, rebuilt from the tasks in hand: a tag that no task carries would
+   * filter the list to nothing with no chip left to explain why. Untagged is offered always, and
+   * its value is a string no tag can be — a tag cannot contain whitespace, so a leading space is
+   * outside the tag alphabet.
+   */
+  function schedFilterGroups(){
+    var counts={running:0, active:0, paused:0, ended:0}, tags={}, order=[], untagged=0, i;
+    for(i=0;i<schedTasks.length;i++){
+      var t=schedTasks[i], list=schedTags(t);
+      counts[schedStatusKey(t)]++;
+      if(!list.length) untagged++;
+      for(var k=0;k<list.length;k++){
+        if(tags[list[k]] === undefined){ tags[list[k]]=0; order.push(list[k]); }
+        tags[list[k]]++;
+      }
+    }
+    order.sort(function(a,b){ return a<b?-1:a>b?1:0; });
+    var tagOpts=[];
+    for(i=0;i<order.length;i++) tagOpts.push({value:order[i], label:order[i], icon:'tag', count:tags[order[i]]});
+    tagOpts.push({value:' untagged', label:'Untagged', icon:'tag', count:untagged});
+    return {groups:[
+      {id:'status', label:'Status', pinned:true, options:[
+        {value:'running', label:'Running', short:'Run', icon:'play', count:counts.running},
+        {value:'active', label:'Active', short:'Active', icon:'clock', count:counts.active},
+        {value:'paused', label:'Paused', short:'Pause', icon:'pause', count:counts.paused},
+        {value:'ended', label:'Ended', short:'End', icon:'stop', count:counts.ended}
+      ]},
+      {id:'tags', label:'Tags', options:tagOpts}
+    ]};
+  }
+
+  /**
+   * Whether a task survives the bar. Inside a group the selected values are a union, across
+   * groups an intersection — the same reading as the topic list's bar. The keyword is split on
+   * whitespace and every word has to hit somewhere: the name, the prompt or command, or the
+   * target (a resolved topic title too — that is what "posts to …" says).
+   */
+  function schedMatch(t, words, sel){
+    if(words.length){
+      var hay = (t.name || '') + ' ' + (t.detail || '') + ' ' + (t.target || '') + ' ' + schedTarget(t);
+      hay = hay.toLowerCase();
+      for(var w=0;w<words.length;w++) if(hay.indexOf(words[w]) < 0) return false;
+    }
+    var v = sel.status;
+    if(v && v.length && v.indexOf(schedStatusKey(t)) < 0) return false;
+    v = sel.tags;
+    if(v && v.length){
+      var tags = schedTags(t), hit = false;
+      if(!tags.length) hit = v.indexOf(' untagged') >= 0;
+      else for(var i=0;i<tags.length;i++) if(v.indexOf(tags[i]) >= 0){ hit = true; break; }
+      if(!hit) return false;
+    }
+    return true;
+  }
+
+  /**
+   * The order the rows are drawn in. Status is the daemon's own order — next run first, then
+   * paused, then ended — and the direction reverses it. The other fields put rows with no value
+   * last in BOTH directions: "never run" is not an old date, and a task that will not run again
+   * has no next run to sort by; both belong at the bottom whichever way the column is read.
+   */
+  function schedSorted(rows, fs){
+    var sort = fs.sort || 'status', desc = fs.dir === 'desc', i;
+    if(sort === 'status'){
+      return rows.slice().sort(function(a,b){ return (a.i - b.i) * (desc ? -1 : 1); });
+    }
+    var key = sort === 'next'
+      ? function(r){ return r.t.nextAt; }
+      : sort === 'last'
+        ? function(r){ return r.t.last ? r.t.last.at : undefined; }
+        : function(r){ return r.t.createdAt; };
+    var valued=[], missing=[];
+    for(i=0;i<rows.length;i++) (key(rows[i]) === undefined ? missing : valued).push(rows[i]);
+    valued.sort(function(a,b){
+      var d = key(a) - key(b);
+      return d ? (desc ? -d : d) : a.i - b.i;
+    });
+    return valued.concat(missing);
+  }
+
+  /**
+   * A task's second line: what it is doing, where it posts, how last time went, its tags — one
+   * line, ellipsised as a whole. A cron expression is deliberately absent: it is the one field
+   * nobody reads at a glance, and it lives on the row's hover card and in the detail instead.
+   */
+  function schedRowLine(t, state){
+    var bits = [];
+    if(t.running) bits.push('<span class="sched-next">running now</span>');
+    else if(state === 'active' && t.nextAt) bits.push('<span class="sched-next">' + text(schedIn(t.nextAt)) + '</span>');
+    else if(state !== 'active') bits.push('<span class="sched-next">' + text(state) + '</span>');
+    bits.push('<span class="sched-target">' + text('→ ' + schedTargetShort(t)) + '</span>');
+    var last = schedLastShort(t);
+    if(last) bits.push('<span class="sched-last' + (t.last.status !== 'ok' ? ' bad' : '') + '">' + text(last) + '</span>');
+    var tags = schedTags(t);
+    for(var i=0;i<tags.length;i++) bits.push('<span class="sched-row-tag">#' + text(tags[i]) + '</span>');
+    return '<span class="topic-dir sched-line">' + bits.join(' · ') + '</span>';
+  }
+
+  /**
+   * What the row no longer shows, on its hover card: the cron and its zone, the next run in full,
+   * the target's full name, the last run with its duration and error, and the run mode. The same
+   * facts are in the detail; the card is what a pointer can reach without opening anything.
+   */
+  function schedRowTitle(t){
+    var bits = [];
+    if(t.when) bits.push(t.when);
+    if(t.next) bits.push('next ' + t.next);
+    bits.push(schedTarget(t));
+    var last = schedLast(t);
+    if(last) bits.push(last);
+    if(t.run) bits.push(t.run);
+    return bits.join(' · ');
+  }
+
+  /**
+   * One task, as a row like a topic: the name, then what it is doing, where it posts, how last
+   * time went and its tags on one line. Everything that made the old card tall — the schedule,
+   * the next run in full, the run mode, the prompt — is on the row's hover card and on the task's
+   * page a tap opens (openTaskPage). Its actions are in the ⋯, like every other row's.
+   */
+  function schedCard(t){
+    var state = t.state || 'active';
+    var h = '<div class="sched-item ' + text(state) + (t.running ? ' running' : '') + '" data-id="' + text(t.id) + '">';
+    h += rowHtml({
+      // running is on the row, not only on the wrapper, because the row's own state colours
+      // (.topic-item.running .topic-title, .topic-item.running .sched-next) are keyed off it.
+      cls:(t.running ? 'running ' : '') + (state === 'active' ? '' : 'idle ') + 'sched-row',
+      attrs:' role="button" tabindex="0" title="' + text(schedRowTitle(t)) + '"',
+      key:'task:' + t.id,
+      dot:schedDot(t, state),
+      title:'<span class="topic-title">' + text(t.name) + '</span>',
+      sub:schedRowLine(t, state),
+      moreTitle:'Task actions'
+    });
+    return h + '</div>';
+  }
+
+  /** Draw the rows that survive the bar, and tell the bar how many did. */
+  function paintSchedTasks(){
+    // Before the first answer there is nothing to draw, and an empty result would read as "no
+    // tasks" — the one thing the panel must not say while it is still loading.
+    if(schedTasks === null){
+      schedList.innerHTML = '<div class="sched-empty">Loading…</div>';
+      if(schedFilter) schedFilter.setCounts(0, 0);
+      rowMenuFollow();
+      return;
+    }
+    var fs = schedFilter ? schedFilter.state() : {q:'', sel:{}, sort:'status', dir:'asc'};
+    var words = fs.q.trim() ? fs.q.trim().toLowerCase().split(/\s+/) : [];
+    var rows = [], total = schedTasks ? schedTasks.length : 0;
+    for(var i=0;i<total;i++){
+      if(schedMatch(schedTasks[i], words, fs.sel)) rows.push({t:schedTasks[i], i:i});
+    }
+    rows = schedSorted(rows, fs);
+    if(!total){
+      schedList.innerHTML = '<div class="sched-empty">' + (schedEnabled
+        ? 'No scheduled tasks yet. Add one with + above, or ask an agent in a topic — for example “every morning at 8, summarise the CI failures” — and it will be registered here.'
+        : 'Scheduled tasks are not enabled in this daemon.') + '</div>';
+    } else if(!rows.length){
+      schedList.innerHTML = '<div class="sched-empty sched-none">No matching tasks<button type="button" class="fb-clear" data-sched-clear="1">Clear</button></div>';
+    } else {
+      var h = '';
+      for(i=0;i<rows.length;i++) h += schedCard(rows[i].t);
+      schedList.innerHTML = h;
+    }
+    if(schedFilter) schedFilter.setCounts(rows.length, total);
+    rowMenuFollow();
+  }
+
+  function paintSchedulesList(tasks){
+    schedTasks = tasks || [];
+    if(schedFilter) schedFilter.setGroups(schedFilterGroups().groups);
+    paintSchedTasks();
+    paintSchedCounts();
+    paintSummary();
+    taskPageFollow();
+  }
+
+  /**
+   * tags is the whole new set for the "tags" action; every other action sends none. The panel
+   * is the acknowledgement, so no card is posted — the fresh list it answers with is what shows
+   * the change. A refusal is said where the person is looking: on the task's page when it is open
+   * for this task (it covers the panel), else in the panel.
+   */
+  function schedOp(id, action, btn, tags, clearDraft){
+    if(schedBusy) return;
+    schedBusy = true;
+    if(btn) btn.disabled = true;
+    schedNote.hidden = true;
+    var onPage = !taskPage.hidden && tp.id === id;
+    if(onPage) taskSay(null);
+    var body = tags !== undefined ? {id:id, action:action, tags:tags} : {id:id, action:action};
+    var say = function(msg){ if(onPage && !taskPage.hidden && tp.id === id) taskSay(msg, 'error'); else showSchedNote(msg); };
+    fetch('api/schedules/op', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(body),
+      credentials:'same-origin'
+    }).then(function(r){
+      return r.json().catch(function(){ return { ok:false, error:'HTTP ' + r.status }; });
+    }).then(function(d){
+      if(d && d.ok && d.tasks){
+        // A tag that was just sent is now a chip: emptying the field before the repaint lets the
+        // page redraw its chips (a field holding text is left alone — taskPageFollow), and the
+        // focus is put back for the next one.
+        if(clearDraft){
+          var field = taskView.querySelector('[data-tag-input]');
+          if(field) field.value = '';
+        }
+        paintSchedulesList(d.tasks);
+      } else say((d && d.error) || 'That did not work.');
+    }).catch(function(e){
+      say('Could not reach the daemon: ' + ((e && e.message) || 'network error'));
+    }).then(function(){
+      schedBusy = false;
+      if(btn) btn.disabled = false;
+      armSched();
+    });
+  }
+
+  /**
+   * The task list's bar (makeFilterBar above). Same component as the topic list's, with a sort
+   * this list needs and that one does not. It only says what the options are and repaints the
+   * rows when a choice changes; schedMatch and schedSorted do the filtering and ordering.
+   *
+   * Mounted outside #schedules-list on purpose: that list is replaced with innerHTML on every
+   * poll, and the bar's caret, panel and chip nodes live in the DOM that would throw away.
+   */
+  schedFilter = makeFilterBar({
+    key:'aa_sched_filter',
+    placeholder:'Search tasks',
+    groups:[],
+    sort:{
+      options:[
+        {value:'status', label:'Status'},
+        {value:'next', label:'Next run'},
+        {value:'last', label:'Last run'},
+        {value:'created', label:'Created'}
+      ],
+      value:'status',
+      dir:'asc'
+    },
+    onChange:function(){ paintSchedTasks(); }
+  });
+  schedFilterHost.appendChild(schedFilter.el);
+  // Until the first list arrives there is nothing to offer; null says "not loaded", so a
+  // selection restored from storage is not pruned as if its tag had gone.
+  schedFilter.setGroups(null);
+
+  schedToggle.addEventListener('click', function(){ setSchedules(!schedPane.isOpen()); });
+  schedClose.addEventListener('click', function(){ setSchedules(false); });
+  schedTabScheduled.addEventListener('click', function(){ setSchedTab('scheduled'); });
+  schedTabReviews.addEventListener('click', function(){ setSchedTab('reviews'); });
+  schedTabTasks.addEventListener('click', function(){ setSchedSubtab('tasks'); });
+  schedTabSessions.addEventListener('click', function(){ setSchedSubtab('sessions'); });
+
+  revList.addEventListener('click', function(e){
+    var adoptBtn = e.target.closest ? e.target.closest('[data-rev-adopt]') : null;
+    if(adoptBtn){
+      e.stopPropagation();
+      adoptPreference(adoptBtn);
+      return;
+    }
+    var archiveBtn = e.target.closest ? e.target.closest('[data-rev-archive]') : null;
+    if(archiveBtn){
+      e.stopPropagation();
+      archiveSuggested(archiveBtn);
+      return;
+    }
+    var dismissBtn = e.target.closest ? e.target.closest('[data-rev-dismiss]') : null;
+    if(dismissBtn){
+      e.stopPropagation();
+      dismissPreference(dismissBtn);
+      return;
+    }
+    var openBtn = e.target.closest ? e.target.closest('[data-rev-topic]') : null;
+    if(openBtn){
+      e.stopPropagation();
+      switchTopic(openBtn.getAttribute('data-rev-topic'));
+      return;
+    }
+    var row = e.target.closest ? e.target.closest('[data-rev]') : null;
+    if(!row) return;
+    var id = row.getAttribute('data-rev');
+    if(!id) return;
+    revOpen[id] = !revOpen[id];
+    paintReviews();
+  });
+
+  revList.addEventListener('keydown', function(e){
+    if(e.key !== 'Enter' && e.key !== ' ') return;
+    if(e.target.closest && e.target.closest('[data-rev-topic]')) return;
+    var row = e.target.closest ? e.target.closest('[data-rev]') : null;
+    if(!row) return;
+    e.preventDefault();
+    var id = row.getAttribute('data-rev');
+    if(!id) return;
+    revOpen[id] = !revOpen[id];
+    paintReviews();
+  });
+
+  schedReadBtn.addEventListener('click', function(){
+    markAllRead(schedMembers(), 'session', showSchedNote);
+  });
+
+  schedSessionList.addEventListener('click', function(e){
+    var head = e.target.closest ? e.target.closest('[data-sgroup]') : null;
+    if(head){
+      e.stopPropagation();
+      // The group holding the topic on screen is always open (sessGroupOpen), so folding it
+      // would be a tap that does nothing; leave the state alone rather than storing a fold that
+      // is invisible now and applies the next time the topic moves.
+      if(head.getAttribute('data-slock') === '1') return;
+      var key = head.getAttribute('data-sgroup');
+      if(!key) return;
+      sessGroups[key] = head.getAttribute('aria-expanded') !== 'true';
+      saveSessGroups();
+      paintSessions();
+      // The repaint replaced every header, so the button that was clicked is gone with its
+      // focus. Put it back on the same group's header, or a keyboard user is dropped on the page.
+      var again = schedSessionList.querySelector('[data-sgroup="' + key + '"]');
+      if(again && again.focus) again.focus();
+      return;
+    }
+    var more = e.target.closest ? e.target.closest('[data-rm]') : null;
+    if(more){
+      e.stopPropagation();
+      if(rowMenuKey && rowMenuKey===more.getAttribute('data-rm') && !rowMenu.hidden) closeRowMenu(true);
+      else openRowMenuFor(more);
+      return;
+    }
+    if(foldClick(e)) return;
+    var row = e.target.closest ? e.target.closest('[data-sess]') : null;
+    if(!row) return;
+    var id = row.getAttribute('data-sess');
+    if(!id || id===topic) return;
+    switchTopic(id);
+  });
+
+  schedSessionList.addEventListener('keydown', function(e){
+    if(e.key !== 'Enter' && e.key !== ' ') return;
+    if(e.target.closest && e.target.closest('[data-rm],[data-fold]')) return;
+    var row = e.target.closest ? e.target.closest('[data-sess]') : null;
+    if(!row) return;
+    e.preventDefault();
+    var id = row.getAttribute('data-sess');
+    if(id && id!==topic) switchTopic(id);
+  });
+
+  schedList.addEventListener('click', function(e){
+    // The empty result's Clear. Before the card lookup: it lives inside #schedules-list.
+    var clearBtn = e.target.closest ? e.target.closest('[data-sched-clear]') : null;
+    if(clearBtn){
+      e.stopPropagation();
+      if(schedFilter) schedFilter.clear();
+      return;
+    }
+    var more = e.target.closest ? e.target.closest('[data-rm]') : null;
+    if(more){
+      e.stopPropagation();
+      if(rowMenuKey && rowMenuKey===more.getAttribute('data-rm') && !rowMenu.hidden) closeRowMenu(true);
+      else openRowMenuFor(more);
+      return;
+    }
+    var card = e.target.closest ? e.target.closest('.sched-item') : null;
+    if(!card) return;
+    openTaskPage(card.getAttribute('data-id'), false);
+  });
+
+  // Enter and Space open a task, as they do a topic row and a scheduled run. The ⋯ is its own
+  // control: Enter there is that button's click, and swallowing it would open the page instead.
+  schedList.addEventListener('keydown', function(e){
+    if(e.key !== 'Enter' && e.key !== ' ') return;
+    if(e.target.closest && e.target.closest('[data-rm]')) return;
+    var card = e.target.closest ? e.target.closest('.sched-item') : null;
+    if(!card) return;
+    e.preventDefault();
+    openTaskPage(card.getAttribute('data-id'), false);
+  });
+
+  /**
+   * A task's own page: what its row folds away, the topics its runs opened, every recorded run,
+   * and the form that changes it. One task at a time; tp.id is which, tp.detail the daemon's
+   * answer (api/schedules/task), tp.mode whether the view or the form is drawn.
+   *
+   * The row facts (state, next run, last run, running) come from the list as well as from the
+   * detail, and the list is the fresher: it is polled while the panel is open, so paintSchedulesList
+   * hands every answer on (taskPageFollow) and the page asks for the detail again only when a run
+   * started or ended — the one change that adds to the runs and the sessions.
+   */
+  var tp = {id:null, detail:null, mode:'view', seq:0, busy:false};
+
+  function openTaskPage(id, edit){
+    if(!id) return;
+    var same = tp.id === id && !taskPage.hidden;
+    if(same && tp.mode === 'edit' && !edit) return;
+    tp.id = id;
+    tp.mode = edit ? 'edit' : 'view';
+    if(!same) tp.detail = null;
+    taskSay(null);
+    taskPage.hidden = false;
+    paintTaskPage();
+    loadTaskPage();
+    taskClose.focus();
+  }
+
+  /**
+   * Put the page away. An open form with changes asks first — a tap on the dimmed area is the
+   * easiest gesture on the page to make by accident — unless force says the task is gone anyway.
+   * Returns whether it closed.
+   */
+  function closeTaskPage(force){
+    if(taskPage.hidden) return true;
+    if(!force && (tp.mode === 'edit' || tp.mode === 'new') && tp.detail && taskDirty() && !confirm(taskDiscardText())) return false;
+    taskPage.hidden = true;
+    tp.id = null;
+    tp.detail = null;
+    tp.mode = 'view';
+    tp.seq++;
+    return true;
+  }
+
+  function taskSay(msg, kind){
+    if(!msg){ taskNote.hidden = true; taskNote.textContent = ''; return; }
+    taskNote.hidden = false;
+    taskNote.className = kind || '';
+    taskNote.textContent = msg;
+  }
+
+  function loadTaskPage(){
+    var id = tp.id, seq = ++tp.seq;
+    fetch('api/schedules/task?id=' + encodeURIComponent(id), {credentials:'same-origin'}).then(function(r){
+      return r.json().catch(function(){ return {ok:false, error:'HTTP ' + r.status}; });
+    }).then(function(d){
+      if(seq !== tp.seq || tp.id !== id || taskPage.hidden) return;
+      if(d && d.ok && d.detail){
+        // The list may have answered after this request left; its row facts are the fresher.
+        var row = schedTask(id);
+        if(row) d.detail.task = row;
+        var form = tp.mode === 'edit' && taskView.querySelector('#tp-form');
+        tp.detail = d.detail;
+        // A form already on screen keeps what is typed in it: only the title line follows.
+        if(form) paintTaskHead();
+        else paintTaskPage();
+      } else {
+        taskSay((d && d.error) || 'Could not load this task.', 'error');
+        if(!tp.detail) taskView.innerHTML = '';
+      }
+    }).catch(function(e){
+      if(seq !== tp.seq) return;
+      taskSay('Could not reach the daemon: ' + ((e && e.message) || 'network error'), 'error');
+      if(!tp.detail) taskView.innerHTML = '';
+    });
+  }
+
+  /**
+   * The list moved (a poll, or the answer to an action). A task deleted here or elsewhere takes
+   * its page with it. Otherwise the title line follows, the view is redrawn — unless a tag is
+   * being typed, which a redraw would throw away — and a run that started or ended since asks for
+   * the detail again, since it is the runs and the sessions that changed.
+   */
+  function taskPageFollow(){
+    if(taskPage.hidden || !tp.id || schedTasks === null) return;
+    var t = schedTask(tp.id);
+    if(!t){ closeTaskPage(true); return; }
+    var d = tp.detail;
+    if(!d) return;
+    var was = d.task;
+    var moved = t.runs !== was.runs || Boolean(t.running) !== Boolean(was.running) || t.state !== was.state
+      || (t.last ? t.last.at : 0) !== (was.last ? was.last.at : 0);
+    d.task = t;
+    paintTaskHead();
+    if(tp.mode === 'view'){
+      var field = taskView.querySelector('[data-tag-input]');
+      if(!field || !field.value){
+        var focused = Boolean(field) && document.activeElement === field;
+        paintTaskPage();
+        if(focused){ var again = taskView.querySelector('[data-tag-input]'); if(again) again.focus(); }
+      }
+    }
+    if(moved) loadTaskPage();
+  }
+
+  /** The title line: the name, and where the task stands — the row's second line, in full. */
+  function paintTaskHead(){
+    var t = tp.detail ? tp.detail.task : schedTask(tp.id);
+    if(tp.mode === 'new'){
+      taskTitle.textContent = 'New task';
+      taskSub.textContent = taskSub.title = '';
+      return;
+    }
+    taskTitle.textContent = t ? t.name : 'Task';
+    var bits = [];
+    if(t){
+      var state = t.state || 'active';
+      if(t.running) bits.push('running now');
+      else if(state === 'active' && t.nextAt) bits.push('next ' + (t.next || '') + ' (' + schedIn(t.nextAt) + ')');
+      else bits.push(state);
+      var last = schedLast(t);
+      if(last) bits.push(last);
+    }
+    taskSub.textContent = bits.join(' · ');
+    taskSub.title = taskSub.textContent;
+  }
+
+  function paintTaskPage(){
+    paintTaskHead();
+    var d = tp.detail;
+    if(!d){ taskView.innerHTML = '<div class="tp-empty">Loading…</div>'; return; }
+    if(tp.mode === 'new' || (tp.mode === 'edit' && !d.locked)){
+      taskView.innerHTML = taskFormHtml(d);
+      fillTaskForm(d);
+      return;
+    }
+    tp.mode = 'view';
+    taskView.innerHTML = taskViewHtml(d);
+    armAgeTick();
+  }
+
+  /** One labelled fact in the view's grid. */
+  function taskFact(label, value, mono){
+    return '<div><div class="tp-label">' + text(label) + '</div><div class="tp-val' + (mono ? ' tp-mono' : '') + '">' + value + '</div></div>';
+  }
+
+  function taskViewHtml(d){
+    var t = d.task, f = d.fields, state = t.state || 'active', h = '<div class="tp-acts">';
+    var busyNote = ' disabled title="A run is in progress — wait for it to finish"';
+    if(!d.locked) h += '<button type="button" data-tp-act="edit"' + (t.running ? busyNote : '') + '>' + IC.icon.pencil + 'Edit</button>';
+    if(state === 'active') h += '<button type="button" data-tp-act="pause">' + IC.icon.pause + 'Pause</button>';
+    if(state === 'paused') h += '<button type="button" data-tp-act="resume">' + IC.icon.play + 'Resume</button>';
+    if(state === 'active' || state === 'paused') h += '<button type="button" data-tp-act="run"' + (t.running ? busyNote : '') + '>' + IC.icon.clock + 'Run now</button>';
+    h += '<button type="button" class="danger" data-tp-act="remove">' + IC.icon.trash + 'Delete</button></div>';
+    if(d.locked) h += '<div class="tp-locked">' + text(d.locked) + '</div>';
+    h += '<div class="tp-grid">';
+    h += taskFact('Schedule', text(t.when) + (t.next ? ' · next ' + text(t.next) : ''), true);
+    h += taskFact('Runs as', text(t.run));
+    if(f.cwd) h += taskFact('Directory', text(f.cwd), true);
+    h += taskFact('Posts to', text(schedTargetShort(t)));
+    h += '</div>';
+    h += '<div class="tp-label">' + (t.kind === 'bash' ? 'Command' : 'Prompt') + '</div><div class="tp-body">' + text(t.detail) + '</div>';
+    h += '<div class="tp-label">Tags</div><div class="sched-tag-edit">';
+    var tags = schedTags(t);
+    for(var i=0;i<tags.length;i++){
+      h += '<span class="sched-tag">' + IC.icon.tag + '<span>' + text(tags[i]) + '</span>'
+        + '<button type="button" class="sched-tag-x" data-tag-del="' + text(tags[i]) + '" title="Remove ' + text(tags[i]) + '" aria-label="Remove ' + text(tags[i]) + '">' + IC.icon.cross + '</button></span>';
+    }
+    h += '<span class="sched-tag-add">' + IC.icon.plus
+      + '<input type="text" data-tag-input placeholder="tag" aria-label="Add a tag" autocomplete="off" spellcheck="false"></span></div>';
+    var meta = '#' + t.id + ' · ' + t.runs + (t.runs === 1 ? ' run' : ' runs') + (t.createdAt ? ' · created ' + ageClock(t.createdAt) : '');
+    if(t.expires) meta += ' · until ' + t.expires;
+    h += '<div class="tp-meta">' + text(meta) + '</div>';
+    h += '<div id="tp-sessions">' + taskSessionsHtml(d) + '</div>';
+    h += '<div class="tp-label">Runs<span class="tp-n">' + d.runs.length + '</span></div><div class="tp-list">';
+    if(!d.runs.length) h += '<div class="tp-empty">No runs yet.</div>';
+    for(var r=0;r<d.runs.length;r++) h += taskRunRow(d.runs[r]);
+    h += '</div>';
+    return h;
+  }
+
+  /**
+   * The topics this task's runs opened that this page still has: every one marked with the task
+   * (Topic.task, recorded since the topic was opened) and every one a recorded run names — the
+   * second is how a topic opened before the mark existed, and a fixed session's own topic, are
+   * found. Most recently active first, which for runs is newest first.
+   */
+  function taskSessions(d){
+    var named = {}, out = [], i;
+    for(i=0;i<d.runs.length;i++) if(d.runs[i].topic) named[d.runs[i].topic] = true;
+    for(i=0;i<topics.length;i++){
+      if(topics[i].task === d.task.id || named[topics[i].id]) out.push(topics[i]);
+    }
+    return out.sort(function(a, b){ return (b.lastAt || 0) - (a.lastAt || 0); });
+  }
+
+  function taskSessionsHtml(d){
+    var list = taskSessions(d), h = '<div class="tp-label">Sessions<span class="tp-n">' + list.length + '</span></div><div class="tp-list tp-topics">';
+    if(!list.length){
+      h += '<div class="tp-empty">' + (d.task.kind === 'bash'
+        ? 'A bash task runs without a conversation; its output is posted where it posts.'
+        : 'None on this page yet. Each run that opens a topic lists it here.') + '</div>';
+    }
+    for(var i=0;i<list.length;i++) h += taskSessionRow(list[i]);
+    return h + '</div>';
+  }
+
+  /**
+   * One topic a run opened: the dot, the agent legend, the title and the unread count the switcher
+   * would show for it, and its last activity, messages and state as the Sessions tab writes them. No
+   * ⋯: what to do with the topic is decided in the topic, which the row opens.
+   */
+  function taskSessionRow(t){
+    var running = rowRunning(t), asking = Boolean(t.asking), unread = unreadOf(t), count = t.msgCount || 0;
+    var dot = 'topic-dot' + (asking ? ' asking' : (running ? ' running' : (t.stage === 'failed' ? ' failed' : (t.stage === 'review' ? ' review' : ''))));
+    var state = asking ? 'awaiting you' : (running ? 'running' : (t.stage === 'failed' ? 'failed' : ''));
+    var when = t.lastAt
+      ? '<span class="topic-age" data-age="' + text(t.lastAt) + '" data-age-run="0" title="' + text(ageClock(t.lastAt)) + '">' + text(ageText(Date.now() - t.lastAt, true)) + '</span>'
+      : '';
+    return '<div class="topic-item tp-sess framed' + (t.id === topic ? ' on' : '') + (running ? ' running' : ' idle') + '" data-tp-topic="' + text(t.id) + '" role="button" tabindex="0">'
+      + agentTagHtml(t)
+      + '<span class="' + dot + '"></span>'
+      + '<span class="topic-main"><span class="topic-title">' + text(splitTitle(t.title || 'Untitled').rest) + '</span>'
+      + '<span class="topic-sub"><span class="topic-dir">' + when + (count ? ' · ' + count + ' message' + (count === 1 ? '' : 's') : '') + (state ? ' · ' + state : '') + '</span></span></span>'
+      + (unread > 0 ? '<span class="topic-badge">' + (unread > 99 ? '99+' : unread) + '</span>' : '')
+      + '</div>';
+  }
+
+  /** The topic list moved: the sessions on an open page follow it, and nothing else does. */
+  function taskPageTopics(){
+    if(taskPage.hidden || !tp.detail || tp.mode !== 'view') return;
+    var host = taskView.querySelector('#tp-sessions');
+    if(host) host.innerHTML = taskSessionsHtml(tp.detail);
+  }
+
+  /**
+   * One recorded run: how it ended, when, how long, and where its output is — a topic of this
+   * page to open, a place elsewhere by name, or a topic this page no longer has.
+   */
+  function taskRunRow(r){
+    var word = {ok:'ok', failed:'failed', interrupted:'interrupted', skipped:'skipped', missed:'missed'}[r.status] || r.status;
+    var bits = [text(r.atText)];
+    if(r.durationMs != null) bits.push(text(schedDur(r.durationMs)));
+    if(r.exitCode != null) bits.push('exit ' + text(r.exitCode));
+    var where = '';
+    if(r.topic){
+      var t = topicById(r.topic);
+      where = t
+        ? '<button type="button" class="tp-run-open" data-tp-topic="' + text(r.topic) + '" title="' + text(t.title || '') + '">Open</button>'
+        : '<span class="tp-run-where" title="The topic this run used is no longer on this page">topic gone</span>';
+    } else if(r.where) where = '<span class="tp-run-where" title="' + text(r.where) + '">' + text(r.where) + '</span>';
+    return '<div class="tp-run"><span class="topic-dot' + (r.status === 'ok' ? '' : ' failed') + '"></span>'
+      + '<span class="tp-run-main"><span class="tp-run-head"><span class="tp-run-status' + (r.status === 'ok' ? '' : ' bad') + '">' + text(word) + '</span> · ' + bits.join(' · ') + '</span>'
+      + (r.error ? '<span class="tp-run-err">' + text(r.error) + '</span>' : '')
+      + '</span>' + where + '</div>';
+  }
+
+  /** A timeout as a person writes one, and back: the CLI's units (90s, 10m, 1h). */
+  function taskDurText(ms){
+    if(ms % 3600000 === 0) return (ms / 3600000) + 'h';
+    if(ms % 60000 === 0) return (ms / 60000) + 'm';
+    if(ms % 1000 === 0) return (ms / 1000) + 's';
+    return ms + 'ms';
+  }
+  function taskDurParse(s){
+    var m = /^(\d+(?:\.\d+)?)\s*(ms|s|m|h)?$/i.exec(String(s).trim());
+    if(!m) return null;
+    var unit = (m[2] || 's').toLowerCase();
+    return Math.round(parseFloat(m[1]) * ({ms:1, s:1000, m:60000, h:3600000})[unit]);
+  }
+
+  var TP_CRON_HINT = 'Five fields: minute, hour, day of month, month, weekday — read in the task’s time zone.';
+  var TP_AT_HINT = 'One run, at this time in the task’s time zone.';
+
+  /**
+   * The form, for a new task and for an edit alike: every setting schedule add takes — what it is
+   * (a prompt or a bash command), the session, the agent, the model, the machine, the directory, the
+   * timeout, the time, where it posts, the tags. Which of them is on screen follows the shape the
+   * form is set to, from the daemon's table (d.shapes, core/schedule.ts SHAPE_SETTINGS) — so a
+   * field is offered exactly where a task of that shape keeps one, and what any value may be is
+   * left to the daemon to say when it is saved. Values are put in by fillTaskForm rather than
+   * written into the markup: a textarea drops a leading newline it is parsed with, and a prompt may
+   * begin with one.
+   */
+  function taskFormHtml(d){
+    var f = d.fields, isNew = tp.mode === 'new', h = '<form id="tp-form" novalidate>', i;
+    h += '<label class="tp-label" for="tp-name">Name</label><input id="tp-name" class="skill-field" type="text" autocomplete="off" spellcheck="false"' + (isNew ? ' placeholder="from the prompt or command"' : '') + '>';
+    h += '<div class="tp-label">Runs</div><div class="skill-seg tp-seg" role="group" aria-label="What it runs">'
+      + '<button type="button" data-tp-kind="agent" aria-pressed="false">Agent prompt</button>'
+      + '<button type="button" data-tp-kind="bash" aria-pressed="false">Bash command</button></div>';
+    if(!isNew) h += '<div class="tp-hint">Changing what a task is, how it runs or where it posts keeps its id, tags and run history.</div>';
+    h += '<label class="tp-label" for="tp-text" id="tp-text-label">Prompt</label><textarea id="tp-text" class="tp-text" spellcheck="false"></textarea>';
+    h += '<div class="tp-hint" data-tp-need="host">Run with bash -lc on the machine below.</div>';
+    h += '<div data-tp-kinded="agent"><div class="tp-label">Session</div><div class="skill-seg tp-seg" role="group" aria-label="Session">'
+      + '<button type="button" data-tp-session="new" aria-pressed="false">New each run</button>'
+      + '<button type="button" data-tp-session="daily" aria-pressed="false">One a day</button>'
+      + '<button type="button" data-tp-session="fixed" aria-pressed="false">In its topic</button></div>'
+      + '<div class="tp-hint" id="tp-session-hint"></div></div>';
+    var agents = d.agents.slice();
+    if(f.agent && agents.indexOf(f.agent) < 0) agents.unshift(f.agent);
+    h += '<div data-tp-need="agent"><label class="tp-label" for="tp-agent">Agent</label><select id="tp-agent" class="skill-field">';
+    for(i=0;i<agents.length;i++) h += '<option value="' + text(agents[i]) + '">' + text(agents[i]) + (d.agentHosts[agents[i]] ? ' · ' + text(d.agentHosts[agents[i]]) : '') + '</option>';
+    h += '</select></div>';
+    h += '<div data-tp-need="model"><label class="tp-label" for="tp-model">Model</label><input id="tp-model" class="skill-field" type="text" placeholder="the agent’s own" autocomplete="off" spellcheck="false"><div class="tp-hint">An id the agent’s /model list offers. Empty: the model the agent starts with.</div></div>';
+    h += '<div data-tp-need="host"><label class="tp-label" for="tp-host">Machine</label><select id="tp-host" class="skill-field"><option value="">The gateway’s machine</option>';
+    for(i=0;i<d.hosts.length;i++) h += '<option value="' + text(d.hosts[i]) + '">' + text(d.hosts[i]) + '</option>';
+    h += '</select></div>';
+    h += '<div data-tp-need="cwd"><label class="tp-label" for="tp-cwd">Directory</label><input id="tp-cwd" class="skill-field tp-mono" type="text" placeholder="the default directory" autocomplete="off" spellcheck="false"><div class="tp-hint" id="tp-cwd-hint"></div></div>';
+    h += '<div data-tp-need="timeout"><label class="tp-label" for="tp-timeout">Timeout</label><input id="tp-timeout" class="skill-field" type="text" placeholder="10m" autocomplete="off" spellcheck="false"><div class="tp-hint">How long a run may take: 90s, 10m, 1h — at most 6h.</div></div>';
+    var once = f.at !== undefined;
+    h += '<div class="tp-label">When</div>';
+    h += '<div class="skill-seg tp-when" role="group" aria-label="Repeats or once" data-tp-need="at">'
+      + '<button type="button" data-tp-when="cron" aria-pressed="' + (once ? 'false' : 'true') + '">Repeats</button>'
+      + '<button type="button" data-tp-when="at" aria-pressed="' + (once ? 'true' : 'false') + '">Once</button></div>';
+    h += '<div class="tp-row2"><div>'
+      + '<input id="tp-cron" class="skill-field tp-mono" type="text" placeholder="0 8 * * *" aria-label="Cron expression" autocomplete="off" spellcheck="false"' + (once ? ' hidden' : '') + '>'
+      + '<input id="tp-at" class="skill-field" type="datetime-local" step="1" aria-label="Time of the run"' + (once ? '' : ' hidden') + '>'
+      + '</div><div><input id="tp-tz" class="skill-field" type="text" list="tp-tzs" aria-label="Time zone" autocomplete="off" spellcheck="false">'
+      + taskZonesHtml() + '</div></div>';
+    h += '<div class="tp-hint" id="tp-when-hint">' + (once ? TP_AT_HINT : TP_CRON_HINT) + '</div>';
+    h += '<label class="tp-label" for="tp-target">Posts to</label><select id="tp-target" class="skill-field">' + taskTargetOptions(d) + '</select>';
+    h += '<input id="tp-target-other" class="skill-field tp-mono" type="text" list="tp-chans" placeholder="tg:-1001234567/8" aria-label="Another chat, as fleetherd channels lists it" autocomplete="off" spellcheck="false" hidden>';
+    h += '<datalist id="tp-chans">';
+    for(i=0;i<d.channels.length;i++) h += '<option value="' + text(d.channels[i].id) + '">' + text(d.channels[i].title) + '</option>';
+    h += '</datalist><div class="tp-hint" id="tp-target-hint"></div>';
+    h += '<label class="tp-label" for="tp-tags">Tags</label><input id="tp-tags" class="skill-field" type="text" placeholder="ci, ops" autocomplete="off" spellcheck="false"><div class="tp-hint">Comma-separated: up to 5, letters, digits and - _ . /</div>';
+    h += '<div class="tp-acts editor"><button type="submit" class="primary" data-tp-act="save">' + (isNew ? 'Add' : 'Save') + '</button><button type="button" data-tp-act="cancel">Cancel</button></div>';
+    return h + '</form>';
+  }
+
+  /**
+   * "Posts to": this page's topics by title — the ones a person talks in, plus the task's own
+   * target wherever it is — and "Another chat…", which takes any id fleetherd channels prints.
+   */
+  function taskTargetOptions(d){
+    var own = d.task ? d.task.targetTopic : '', h = '';
+    for(var i=0;i<topics.length;i++){
+      var t = topics[i];
+      if((t.scheduled || t.parent) && t.id !== own) continue;
+      h += '<option value="topic:' + text(t.id) + '">' + text(splitTitle(t.title || 'Untitled').rest) + '</option>';
+    }
+    return h + '<option value="other">Another chat…</option>';
+  }
+
+  /** Every zone the browser knows, offered to the zone field. Built once: the list is ~400 names. */
+  var tpZones = null;
+  function taskZonesHtml(){
+    if(tpZones === null){
+      var names = [];
+      try { names = Intl.supportedValuesOf ? Intl.supportedValuesOf('timeZone') : []; } catch(x){}
+      tpZones = '<datalist id="tp-tzs">';
+      for(var i=0;i<names.length;i++) tpZones += '<option value="' + text(names[i]) + '">';
+      tpZones += '</datalist>';
+    }
+    return tpZones;
+  }
+
+  function tpEl(id){ return taskView.querySelector('#' + id); }
+  function tpVal(id){ var e = tpEl(id); return e ? String(e.value) : ''; }
+
+  /** The target the form starts from: the task's own, or for a new task the topic on screen. */
+  function taskTargetStart(d){
+    if(d.task) return d.task.targetTopic && topicById(d.task.targetTopic) ? 'topic:' + d.task.targetTopic : 'other';
+    if(topic && topicById(topic)) return 'topic:' + topic;
+    var sel = tpEl('tp-target');
+    return sel && sel.options.length > 1 ? sel.options[0].value : 'other';
+  }
+
+  function fillTaskForm(d){
+    var f = d.fields, set = function(id, v){ var e = tpEl(id); if(e) e.value = v == null ? '' : v; };
+    set('tp-name', f.name);
+    set('tp-cron', f.cron || '');
+    set('tp-at', f.at ? f.at.replace(' ', 'T') : '');
+    set('tp-tz', f.tz);
+    set('tp-text', f.command !== undefined ? f.command : f.prompt);
+    set('tp-agent', f.agent || d.agent || '');
+    set('tp-model', f.model || '');
+    // A prompt task's machine is its agent's; switching it to a command starts on that machine,
+    // which is where the daemon would run it too.
+    set('tp-host', f.host || (f.agent && d.agentHosts[f.agent]) || '');
+    set('tp-cwd', f.cwd || '');
+    if(f.timeoutMs) set('tp-timeout', taskDurText(f.timeoutMs));
+    set('tp-tags', ((d.task && d.task.tags) || []).join(', '));
+    var start = taskTargetStart(d);
+    set('tp-target', start);
+    if(start === 'other' && f.target) set('tp-target-other', f.target);
+    taskPress('data-tp-kind', f.command !== undefined ? 'bash' : 'agent');
+    taskPress('data-tp-session', f.session || 'new');
+    taskShapePaint();
+    var first = tpEl('tp-name');
+    if(first) first.focus();
+  }
+
+  /** Press one button of a segmented control, release the others. */
+  function taskPress(attr, value){
+    var seg = taskView.querySelectorAll('[' + attr + ']');
+    for(var i=0;i<seg.length;i++) seg[i].setAttribute('aria-pressed', seg[i].getAttribute(attr) === value ? 'true' : 'false');
+  }
+  function taskPressed(attr){
+    var on = taskView.querySelector('[' + attr + '][aria-pressed="true"]');
+    return on ? on.getAttribute(attr) : '';
+  }
+  function taskKind(){ return taskPressed('data-tp-kind') || 'agent'; }
+  function taskShape(){ return taskKind() === 'bash' ? 'bash' : (taskPressed('data-tp-session') || 'new'); }
+
+  /** The machine the form's task would run on, as the hints name it. */
+  function taskMachine(){
+    var d = tp.detail, host = taskKind() === 'bash' ? tpVal('tp-host') : (d.agentHosts[tpVal('tp-agent')] || '');
+    return host || 'the gateway’s machine';
+  }
+
+  /**
+   * Show what the shape the form is set to keeps, and nothing else; say what follows from it. A
+   * hidden field keeps what was typed in it, so switching back and forth loses nothing — but only
+   * what is on screen is sent (taskEditDiff).
+   */
+  function taskShapePaint(){
+    var d = tp.detail, shape = taskShape(), keeps = d.shapes[shape] || [], kind = taskKind(), i;
+    var needs = taskView.querySelectorAll('[data-tp-need]');
+    for(i=0;i<needs.length;i++) needs[i].hidden = keeps.indexOf(needs[i].getAttribute('data-tp-need')) < 0;
+    var kinded = taskView.querySelectorAll('[data-tp-kinded]');
+    for(i=0;i<kinded.length;i++) kinded[i].hidden = kinded[i].getAttribute('data-tp-kinded') !== kind;
+    tpEl('tp-text-label').textContent = kind === 'bash' ? 'Command' : 'Prompt';
+    // A shape that runs on a cron only (daily) cannot hold a one-shot time.
+    if(keeps.indexOf('at') < 0 && taskWhenMode() === 'at') taskWhen(false, false);
+    var sh = tpEl('tp-session-hint');
+    if(sh){
+      sh.textContent = shape === 'fixed'
+        ? 'Each run is a turn in the topic it posts to, for 24 hours from when it starts there. Its directory and model are that topic’s — /cd and /model there change them.'
+        : shape === 'daily'
+          ? 'The first run of each day opens a topic; the rest of that day’s runs join it. Needs a repeating time.'
+          : 'Each run is a fresh session in a topic of its own.';
+    }
+    var ch = tpEl('tp-cwd-hint');
+    if(ch) ch.textContent = 'An absolute path on ' + taskMachine() + '; it is checked there before saving. Empty: the default directory.';
+    var other = tpVal('tp-target') === 'other';
+    tpEl('tp-target-other').hidden = !other;
+    tpEl('tp-target-hint').textContent = other
+      ? 'An id as fleetherd channels prints it: <instance>:<chat>[/<thread>].'
+      : (shape === 'bash' ? 'The command’s output is posted there.' : (shape === 'fixed' ? 'The runs are turns there.' : 'Each run’s topic is opened from there, and failures are reported there.'));
+  }
+
+  function taskWhenMode(){
+    var at = tpEl('tp-at');
+    return at && !at.hidden ? 'at' : 'cron';
+  }
+
+  /** Switch the time between a cron and one run. */
+  function taskWhen(once, focus){
+    taskPress('data-tp-when', once ? 'at' : 'cron');
+    tpEl('tp-cron').hidden = once;
+    tpEl('tp-at').hidden = !once;
+    tpEl('tp-when-hint').textContent = once ? TP_AT_HINT : TP_CRON_HINT;
+    if(focus) (once ? tpEl('tp-at') : tpEl('tp-cron')).focus();
+  }
+
+  /** "Posts to" as the request carries it: one of this page's topics, or an id typed in. */
+  function taskTargetValue(){
+    var v = tpVal('tp-target');
+    if(v.indexOf('topic:') === 0) return {topic: v.slice(6)};
+    var id = tpVal('tp-target-other').trim();
+    return id ? {channel: id} : null;
+  }
+
+  function taskTagList(raw){
+    return String(raw).split(',').map(function(x){ return x.trim(); }).filter(Boolean);
+  }
+
+  /**
+   * What the form says, as the request to send. For an edit, only what changed: a field left as it
+   * was is not sent, so the task keeps its own value (schedule edit's rule), and an emptied directory
+   * or model is sent as null, which empties it. A change of what the task is sends what the new
+   * kind runs with, typed or not — its text, its agent and session, or its machine — because those
+   * are what the person is looking at. Only what is on screen is sent: a field the shape does not
+   * keep is hidden, and an edit leaves it to the daemon, which drops it (SHAPE_SETTINGS). A one-time
+   * task whose zone changed sends its time again, so the time typed is read in the new zone rather
+   * than kept as the instant it was. A new task sends everything filled in.
+   */
+  function taskEditDiff(){
+    var d = tp.detail, f = d.fields, out = {}, v, isNew = tp.mode === 'new';
+    var kind = taskKind(), shape = taskShape(), keeps = d.shapes[shape] || [];
+    var shown = function(k){ return keeps.indexOf(k) >= 0; };
+    var turned = !isNew && kind !== (f.command !== undefined ? 'bash' : 'agent');
+    v = tpVal('tp-name').trim();
+    if(isNew ? v : v !== f.name) out.name = v;
+    var tz = tpVal('tp-tz').trim();
+    if(isNew || tz !== f.tz) out.tz = tz;
+    if(taskWhenMode() === 'at'){
+      v = tpVal('tp-at').replace('T', ' ');
+      if(!v) return {error:'Pick a date and time for the run.'};
+      if(isNew || f.at === undefined || v !== f.at || out.tz !== undefined) out.at = v;
+    } else {
+      v = tpVal('tp-cron').trim();
+      if(isNew || f.cron === undefined || v !== f.cron) out.cron = v;
+    }
+    v = tpVal('tp-text');
+    if(kind === 'bash'){ if(isNew || turned || v !== f.command) out.command = v; }
+    else if(isNew || turned || v !== f.prompt) out.prompt = v;
+    if(kind === 'agent'){
+      var session = taskShape();
+      if(isNew || turned || session !== f.session) out.session = session;
+    }
+    if(shown('agent')){ v = tpVal('tp-agent'); if(v && (isNew || turned || v !== f.agent)) out.agent = v; }
+    if(shown('model')){ v = tpVal('tp-model').trim(); if(isNew ? v : v !== (f.model || '')) out.model = v || null; }
+    if(shown('host')){ v = tpVal('tp-host'); if(isNew || turned || v !== (f.host || '')) out.host = v || null; }
+    if(shown('cwd')){ v = tpVal('tp-cwd').trim(); if(isNew ? v : v !== (f.cwd || '')) out.cwd = v || null; }
+    if(shown('timeout') && tpVal('tp-timeout').trim()){
+      var ms = taskDurParse(tpVal('tp-timeout'));
+      if(ms === null || ms <= 0) return {error:'The timeout is a length of time: 90s, 10m or 1h.'};
+      if(isNew || turned || ms !== f.timeoutMs) out.timeoutMs = ms;
+    }
+    var target = taskTargetValue();
+    if(!target) return {error:'Say where it posts: pick a topic, or give an id fleetherd channels lists.'};
+    var own = d.task && d.task.targetTopic && topicById(d.task.targetTopic) ? d.task.targetTopic : '';
+    if(isNew || (target.topic ? target.topic !== own : target.channel !== f.target)) out.target = target;
+    var tags = taskTagList(tpVal('tp-tags'));
+    var had = (d.task && d.task.tags) || [];
+    if(isNew ? tags.length : tags.join(',') !== had.join(',')) out.tags = tags;
+    return {edit:out};
+  }
+
+  function taskDirty(){
+    if(!tpEl('tp-form')) return false;
+    if(tp.mode === 'new'){
+      // Untouched: only the defaults the form was opened with, nothing a person typed.
+      return Boolean(tpVal('tp-name').trim() || tpVal('tp-text').trim() || tpVal('tp-cron').trim() || tpVal('tp-tags').trim());
+    }
+    var diff = taskEditDiff();
+    return Boolean(diff.error) || Object.keys(diff.edit).length > 0;
+  }
+
+  function taskDiscardText(){
+    return tp.mode === 'new' ? 'Discard this new task?' : 'Discard your changes to this task?';
+  }
+
+  /**
+   * Save the form: api/schedules/add for a new task, api/schedules/edit for a change. A refusal is
+   * the daemon's sentence — schedule add's or edit's — and leaves the form as it is; success draws
+   * the task's page from the answer, and the list behind it from the same answer.
+   */
+  function saveTaskEdit(){
+    if(tp.busy || !tp.detail) return;
+    var isNew = tp.mode === 'new';
+    var diff = taskEditDiff();
+    if(diff.error){ taskSay(diff.error, 'error'); return; }
+    if(!isNew && !Object.keys(diff.edit).length){
+      tp.mode = 'view';
+      paintTaskPage();
+      taskSay('Nothing was changed.');
+      return;
+    }
+    var id = tp.id, seq = tp.seq, btn = taskView.querySelector('[data-tp-act="save"]'), label = isNew ? 'Add' : 'Save';
+    tp.busy = true;
+    if(btn){ btn.disabled = true; btn.textContent = isNew ? 'Adding…' : 'Saving…'; }
+    taskSay(null);
+    fetch(isNew ? 'api/schedules/add' : 'api/schedules/edit', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(isNew ? {task:diff.edit} : {id:id, edit:diff.edit}),
+      credentials:'same-origin'
+    }).then(function(r){
+      return r.json().catch(function(){ return {ok:false, error:'HTTP ' + r.status}; });
+    }).then(function(d){
+      if(taskPage.hidden || (isNew ? tp.mode !== 'new' || tp.seq !== seq : tp.id !== id)) return;
+      if(d && d.ok && d.detail){
+        tp.id = d.detail.task.id;
+        tp.detail = d.detail;
+        tp.mode = 'view';
+        tp.seq++;
+        paintTaskPage();
+        taskSay(isNew ? 'Added. The conversation it posts to was sent the task.' : 'Saved. The conversation it posts to was sent the updated task.', 'ok');
+        if(d.tasks) paintSchedulesList(d.tasks);
+      } else taskSay((d && d.error) || 'That did not work.', 'error');
+    }).catch(function(e){
+      if(isNew ? tp.mode === 'new' : tp.id === id) taskSay('Could not reach the daemon: ' + ((e && e.message) || 'network error'), 'error');
+    }).then(function(){
+      tp.busy = false;
+      var again = taskView.querySelector('[data-tp-act="save"]');
+      if(again){ again.disabled = false; again.textContent = label; }
+    });
+  }
+
+  /**
+   * A new task: the same page and form an edit uses, filled from the daemon's choices
+   * (api/schedules/form) instead of a task. Opening it over an edit with changes asks first.
+   */
+  function openNewTask(){
+    if(!taskPage.hidden && !closeTaskPage(false)) return;
+    tp.id = null;
+    tp.mode = 'new';
+    tp.detail = null;
+    taskSay(null);
+    taskPage.hidden = false;
+    paintTaskPage();
+    var seq = ++tp.seq;
+    fetch('api/schedules/form', {credentials:'same-origin'}).then(function(r){
+      return r.json().catch(function(){ return {ok:false, error:'HTTP ' + r.status}; });
+    }).then(function(d){
+      if(seq !== tp.seq || tp.mode !== 'new' || taskPage.hidden) return;
+      if(d && d.ok && d.form){
+        tp.detail = newTaskDetail(d.form);
+        paintTaskPage();
+      } else {
+        taskSay((d && d.error) || 'Could not open the form.', 'error');
+        taskView.innerHTML = '';
+      }
+    }).catch(function(e){
+      if(seq !== tp.seq) return;
+      taskSay('Could not reach the daemon: ' + ((e && e.message) || 'network error'), 'error');
+      taskView.innerHTML = '';
+    });
+    taskClose.focus();
+  }
+
+  /** A blank task for the form: the daemon's choices, a new session by default, nothing typed. */
+  function newTaskDetail(form){
+    var d = {task:null, runs:[]};
+    for(var k in form) if(Object.prototype.hasOwnProperty.call(form, k)) d[k] = form[k];
+    d.fields = {name:'', tz:form.tz, prompt:'', agent:form.agent, session:'new', target:''};
+    return d;
+  }
+
+  taskClose.addEventListener('click', function(){ closeTaskPage(false); });
+  taskPage.addEventListener('click', function(e){
+    if(e.target === taskPage){ closeTaskPage(false); return; }
+    var go = e.target.closest ? e.target.closest('[data-tp-topic]') : null;
+    if(go){
+      var tid = go.getAttribute('data-tp-topic');
+      if(closeTaskPage(false)) switchTopic(tid);
+      return;
+    }
+    var when = e.target.closest ? e.target.closest('[data-tp-when]') : null;
+    if(when){
+      taskWhen(when.getAttribute('data-tp-when') === 'at', true);
+      return;
+    }
+    // What the task is, and its session: the form follows the shape at once (taskShapePaint).
+    var seg = e.target.closest ? e.target.closest('[data-tp-kind],[data-tp-session]') : null;
+    if(seg){
+      var attr = seg.hasAttribute('data-tp-kind') ? 'data-tp-kind' : 'data-tp-session';
+      taskPress(attr, seg.getAttribute(attr));
+      taskShapePaint();
+      return;
+    }
+    var del = e.target.closest ? e.target.closest('[data-tag-del]') : null;
+    if(del){
+      var tag = del.getAttribute('data-tag-del'), tagged = schedTask(tp.id);
+      if(tagged && tag) schedOp(tp.id, 'tags', null, schedTags(tagged).filter(function(x){ return x !== tag; }));
+      return;
+    }
+    var act = e.target.closest ? e.target.closest('[data-tp-act]') : null;
+    if(!act || act.disabled) return;
+    var what = act.getAttribute('data-tp-act'), t = tp.detail ? tp.detail.task : null;
+    if(what === 'edit'){ tp.mode = 'edit'; taskSay(null); paintTaskPage(); return; }
+    if(what === 'cancel'){
+      if(taskDirty() && !confirm(taskDiscardText())) return;
+      // A new task has no page to go back to.
+      if(tp.mode === 'new'){ closeTaskPage(true); return; }
+      tp.mode = 'view';
+      taskSay(null);
+      paintTaskPage();
+      return;
+    }
+    if(what === 'save') return;
+    if(!t) return;
+    if(what === 'remove' && !confirm('Delete task "' + (t.name || t.id) + '"?')) return;
+    schedOp(t.id, what, act);
+  });
+  taskPage.addEventListener('submit', function(e){
+    e.preventDefault();
+    saveTaskEdit();
+  });
+  // The agent, the machine and "Posts to" change what the hints say, and "Another chat…" shows the
+  // field it needs.
+  taskPage.addEventListener('change', function(e){
+    var id = e.target && e.target.id;
+    if(id === 'tp-agent' || id === 'tp-host' || id === 'tp-target') taskShapePaint();
+  });
+  schedNewBtn.addEventListener('click', function(){ openNewTask(); });
+  taskPage.addEventListener('keydown', function(e){
+    if(e.key === 'Enter' && !e.isComposing){
+      var input = e.target.closest ? e.target.closest('[data-tag-input]') : null;
+      if(input){
+        e.preventDefault();
+        var task = schedTask(tp.id);
+        var added = String(input.value || '').split(',').map(function(x){ return x.trim(); }).filter(Boolean);
+        if(task && added.length) schedOp(task.id, 'tags', null, schedTags(task).concat(added), true);
+        return;
+      }
+    }
+    // A session row is role=button: Enter and Space open it, as a click does.
+    if(e.key !== 'Enter' && e.key !== ' ') return;
+    var row = e.target.closest ? e.target.closest('.tp-sess') : null;
+    if(!row) return;
+    e.preventDefault();
+    if(closeTaskPage(false)) switchTopic(row.getAttribute('data-tp-topic'));
+  });
+
+  // A timer is not worth running behind a hidden tab; ask once on the way back instead.
+  document.addEventListener('visibilitychange', function(){
+    if(!schedPane.isOpen()) return;
+    if(document.visibilityState === 'hidden') disarmSched();
+    else {
+      loadSchedules();
+      if(schedTab === 'reviews') loadReviews();
+    }
+  });
+
+  // The panel's own choice, restored only where there is a column to dock it to. Its width was
+  // applied by makePanel before the first paint.
+  var restoreSched = false;
+  try { restoreSched = localStorage.getItem('aa_sched_open') === '1'; } catch(x){}
+  if(restoreSched && schedPane.docked()) setSchedules(true, true);
+
+  // Escapes for BOTH uses this page makes of it: element content, and the inside of a
+  // double-quoted attribute. textContent alone covers the first and leaves the quote, which is
+  // what the second needs — a directory whose name contains a double quote would end the title
+  // attribute early and put the rest of the path in the tag. Everything interpolated here is the
+  // (their paths, their command list), so this is a rendering bug rather than a way in; the
+  // load-bearing escaping is web-markdown.ts, which never lets agent output near a tag at all.
+  function text(s){
+    var d=document.createElement('div');
+    d.textContent=s==null?'':String(s);
+    return d.innerHTML.replace(/"/g,'&quot;');
+  }
+  function wait(ms){ return new Promise(function(r){ setTimeout(r, ms); }); }
+
+  // Retried, which is only safe because every send carries a nonce the server remembers: on a
+  // bad link a request can be accepted and still time out, and without the nonce a retry would
+  // post the same message twice.
+  //
+  // limit is how long ONE attempt may go unanswered, in ms, before it is abandoned and counted as
+  // a dropped request. fetch has no timeout of its own, so a request that never answers — a tunnel
+  // that took the body and went quiet, a socket the OS has not noticed is dead — used to leave the
+  // caller waiting for ever: for a send, a grey bubble that neither turned red nor offered Retry.
+  // Only a send passes one. The other callers' requests are short, and a stuck button is a
+  // different complaint from a message that looks sent and is not.
+  function post(path, body, tries, limit){
+    // Built first: JSON.stringify is the one thing here that can throw, and nothing is armed yet.
+    // Bytes (a send that carries files, see framed) go as they are.
+    var bytes = ArrayBuffer.isView(body);
+    var init = {method:'POST',headers:{'Content-Type': bytes ? 'application/octet-stream' : 'application/json'},
+      body: bytes ? body : JSON.stringify(body),credentials:'same-origin'};
+    var expired = false, timer = 0;
+    if(limit && typeof AbortController === 'function'){
+      var ctl = new AbortController();
+      init.signal = ctl.signal;
+      timer = setTimeout(function(){ expired = true; ctl.abort(); }, limit);
+    }
+    return fetch(path, init).then(function(r){
+      clearTimeout(timer);
+      if(!r.ok && r.status>=500 && tries>0) return wait(700).then(function(){ return post(path, body, tries-1, limit); });
+      return r;
+    }, function(e){
+      clearTimeout(timer);
+      // An attempt that was given a minute or more was carrying an upload, and starting one over
+      // from its first byte twice more is a quarter of an hour of grey for a link that has just
+      // shown it cannot do it. It fails once instead, and Retry is a single tap.
+      if(tries>0 && !(expired && limit > 60000)) return wait(700).then(function(){ return post(path, body, tries-1, limit); });
+      throw e;
+    });
+  }
+
+  /**
+   * How long one attempt at posting this message may take: fifteen seconds, plus one for every
+   * 64 KiB of it, up to the five minutes the server allows a request body (Node's
+   * http.Server.requestTimeout, whose default has been 300000 since v18 — nodejs.org, http docs).
+   *
+   * Scaled rather than flat because the same page sends a line of text and a 20 MB attachment: a
+   * limit short enough to catch the first would cut the second off mid-upload on any ordinary
+   * mobile uplink and call that a failure.
+   */
+  function sendLimit(body){
+    var n = (body.text || '').length, f = body.files || [];
+    for(var i=0;i<f.length;i++) n += f[i].data.length + f[i].name.length;
+    return Math.min(300000, 15000 + Math.round(n / 65.536));
+  }
+
+  /**
+   * A send that carries files, as bytes rather than JSON: a 4-byte big-endian length, the send as
+   * JSON with each file's base64 data replaced by its size, then the files' bytes (server.ts
+   * readFramedSend). Base64 in JSON is a third larger than the file, and on the uplinks this page
+   * is used over that third is the difference between 33 and 44 seconds for one photo. Built as one
+   * Uint8Array from strings — atob, and UTF-8 through encodeURIComponent — so it needs nothing a
+   * browser might lack, and the same array is sent again by a retry.
+   */
+  function framed(body){
+    var meta = {topic:body.topic, text:body.text, files:[]}, parts = [], total = 0, i, j;
+    if(body.nonce) meta.nonce = body.nonce;
+    if(body.quiet) meta.quiet = true;
+    for(i=0;i<body.files.length;i++){
+      var f = body.files[i], bin = atob(f.data);
+      meta.files.push({name:f.name, mime:f.mime || '', size:bin.length});
+      parts.push(bin);
+      total += bin.length;
+    }
+    var head = unescape(encodeURIComponent(JSON.stringify(meta)));
+    var out = new Uint8Array(4 + head.length + total), at = 4;
+    out[0] = (head.length >>> 24) & 255; out[1] = (head.length >>> 16) & 255;
+    out[2] = (head.length >>> 8) & 255; out[3] = head.length & 255;
+    for(j=0;j<head.length;j++) out[at++] = head.charCodeAt(j);
+    for(i=0;i<parts.length;i++){
+      var p = parts[i];
+      for(j=0;j<p.length;j++) out[at++] = p.charCodeAt(j);
+    }
+    return out;
+  }
+
+  function atBottom(){ return log.scrollHeight - log.scrollTop - log.clientHeight < 80; }
+  function toBottom(){ log.scrollTop = log.scrollHeight; }
+
+  // ── Where each topic was being read ────────────────────────────────────────
+  /**
+   * The place in a topic to come back to: the first message on screen when it was left, and how
+   * far its top sat from the top of the viewport. No entry means the bottom — which is where a
+   * reader who was following along wants to be, and where whatever was said while they were away
+   * is going to land.
+   *
+   * A message rather than a scrollTop, because the transcript a topic comes back to is not the one
+   * it was left with: it is rebuilt from its copy — from the database, only the tail of a topic too
+   * large for its budget — and then reconciled against a ring of 1000, so the sync can put older
+   * messages above the one being read. A pixel offset would land in the middle of those; a message
+   * does not move.
+   *
+   * In memory only, and with no scroll listener. The whole cost is one measurement on the way out
+   * of a topic, and one or two on the way back in (see land).
+   */
+  var views = {};
+  // The view being restored on the way into the current topic, until its first sync has landed;
+  // and the scrollTop that landing left behind, which is how a reader who has scrolled since is
+  // told apart from one who has not. -1 until something has been landed.
+  var view = null, landedAt = -1;
+
+  /**
+   * The first message whose bottom edge is below the top of the viewport. A binary search, since
+   * the children are in vertical order and a topic can hold 1000 of them: every rect after the
+   * first is read off a layout that is already up to date, so this forces one layout, not one per
+   * message.
+   */
+  function firstVisible(){
+    var kids = log.children, top = log.getBoundingClientRect().top;
+    var lo = 0, hi = kids.length;
+    while(lo < hi){
+      var mid = (lo + hi) >> 1;
+      if(kids[mid].getBoundingClientRect().bottom <= top) lo = mid + 1; else hi = mid;
+    }
+    // Past the divider, the waiting line and the placeholders: only a message has a key to find
+    // again.
+    for(var i=lo; i<kids.length; i++){ if(kids[i].getAttribute('data-k')) return kids[i]; }
+    return null;
+  }
+
+  /** Remember where the topic being left was being read. */
+  function saveView(id){
+    if(!id) return;
+    // Still on the way in: nothing on screen yet says more than the view being restored does, so
+    // flicking through a topic before it has loaded must not forget where it was being read. A
+    // reader who has scrolled the cached transcript since it was landed has answered for themselves.
+    if(entering && (landedAt < 0 || log.scrollTop === landedAt)){
+      if(view) views[id] = view; else delete views[id];
+      return;
+    }
+    // No box to measure (the page is still laying out), or at the bottom, which is what no entry
+    // already means.
+    var el = (log.clientHeight && !atBottom()) ? firstVisible() : null;
+    if(!el){ delete views[id]; return; }
+    views[id] = { key: el.getAttribute('data-k'),
+      off: el.getBoundingClientRect().top - log.getBoundingClientRect().top };
+  }
+
+  /**
+   * Put the reader back where they left this topic, or at the bottom when there is nowhere to put
+   * them: it was left there, it was never read, or the message they were on is no longer held.
+   */
+  function land(){
+    var el = view && els[view.key];
+    if(el) log.scrollTop += el.getBoundingClientRect().top - log.getBoundingClientRect().top - view.off;
+    else toBottom();
+    landedAt = log.scrollTop;
+  }
+
+  function clock(ms){
+    var d=new Date(ms), p=function(n){ return (n<10?'0':'')+n; };
+    return p(d.getHours())+':'+p(d.getMinutes());
+  }
+
+  /**
+   * Draw one message, creating its element if this is the first sight of it.
+   *
+   * before is how cached history gets ABOVE a transcript the daemon has already sent: the node
+   * is inserted in front of the first live message instead of appended after the last one.
+   */
+  function paint(key, before){
+    var m=data[key]; if(!m) return;
+    // A settings screen is drawn in the settings page, never in the transcript (see takeSettings).
+    // The guard is here as well as at every call site because paint is the one funnel: an edit
+    // that arrives through a path nobody thought of must not put the screen back in the log.
+    if(m.settings || m.wasSettings) return;
+    var el=els[key];
+    if(!el){
+      clearSkeleton();
+      el=document.createElement('div');
+      // The page's own key, on the node, so the order on screen can be read back off #log —
+      // which is what the cache writes and what places the history divider.
+      el.setAttribute('data-k', key);
+      // before is where cached history goes; the waiting line, when one is up, is the last thing
+      // in the log and has to stay there, so anything painted under it goes above it instead.
+      var at = (before && before.parentNode === log) ? before : syncingEl;
+      if(at) log.insertBefore(el, at); else log.appendChild(el);
+      els[key]=el;
+    }
+    var out = msgMarkup(key, m, isHistory(m));
+    // A side question's line says whether its answer has come, and an answer is held out of the
+    // transcript only while its question is on the page: each repaints the other (btwLink).
+    if(!btwNest) btwLink(key, m);
+    // Write nothing when nothing changed. A sync re-paints every message it carries, and most of
+    // them are messages already on screen unchanged — rewriting innerHTML for those would drop
+    // the caret out of a selection, restart any <img> decode, and undo the enabled state of a
+    // button the click handler just disabled, all for identical markup.
+    if(sig[key]===out.h && el.className===out.cls) return;
+    el.className = out.cls;
+    el.innerHTML = out.h;
+    sig[key] = out.h;
+    codeBlocks(el);
+  }
+
+  // ── Code blocks (web-markdown.ts codeBlock) ────────────────────────────────
+  // A fence arrives as a frame: a bar with its language, Wrap and Copy, over the plain pre. The two
+  // buttons are answered here, and the colours are put on here, after the HTML has landed — the
+  // server sends no colours, because it has no grammar and the code view's are in the bundle.
+
+  /** Colouring a block longer than this would hold the page up for one block nobody reads whole. */
+  var HL_MAX = 20000;
+  /** How long after the last write the blocks still waiting are looked at again (hlSweep). */
+  var HL_IDLE_MS = 250;
+  /**
+   * Coloured code, by language and text, so the same fence drawn again — a reply re-rendered around a
+   * block that did not change, a topic opened again, the History tab — is coloured in the same task
+   * as its HTML is written, before the browser paints, instead of flashing plain while the grammar is
+   * asked again. Bounded, the least recently used out first (a Map keeps insertion order).
+   */
+  var hlCache = new Map(), HL_CACHE_MAX = 300;
+  /** Per language: the highlight function, null while its grammar loads, false for none. */
+  var hlFns = Object.create(null), hlWarned = false, hlTimer = 0;
+  /** Which code blocks have Wrap on, by message key and position, so a re-render keeps the choice. */
+  var cbWrapped = Object.create(null);
+
+  /** The language a code element was fenced as, from the class web-markdown.ts gives it; '' for none. */
+  function codeLang(code){
+    var m = /(?:^|\s)language-(\S+)/.exec(code.className || '');
+    return m ? m[1].toLowerCase() : '';
+  }
+
+  /**
+   * The message a running turn may still be writing: the newest in the transcript, while the topic's
+   * turn is running. Read off the topic's row (kept by the list and by typing events alike) rather
+   * than the typing line, which nothing resets when another topic is opened.
+   */
+  function liveEl(){
+    var running = false;
+    for(var i=0;i<topics.length;i++) if(topics[i].id===topic){ running = Boolean(topics[i].running); break; }
+    if(!running) return null;
+    for(var n = log.lastElementChild; n; n = n.previousElementSibling) if(n.hasAttribute('data-k')) return n;
+    return null;
+  }
+
+  /**
+   * Restore Wrap and colour the code blocks under root, right after its HTML was written.
+   *
+   * What can be done now is done now, in the same task as the write, so nothing flashes: a block
+   * coloured before (hlCache), and — once its grammar has loaded — any block in a message that has
+   * stopped changing. The rest waits for hlSweep: a grammar still loading, and the message a running
+   * turn is still writing. That one stays plain until the turn ends or a newer message takes its
+   * place, so a block being streamed is not re-coloured under the reader at every edit; the edits
+   * themselves already arrive settled (room.ts SETTLE_MS), never per token.
+   */
+  function codeBlocks(root){
+    if(!root || !root.querySelectorAll) return;
+    // Every write, code or not: a message arriving under the live one is what ends that one's turn
+    // to stay plain, and the sweep is what notices.
+    hlLater();
+    var frames = root.querySelectorAll('.cb'), i;
+    for(i=0;i<frames.length;i++){
+      var k = cbKey(frames[i]);
+      if(k && cbWrapped[k]) cbWrapSet(frames[i], true);
+    }
+    var codes = root.querySelectorAll('.cb pre>code[class*="language-"]');
+    if(!codes.length) return;
+    var live = liveEl();
+    for(i=0;i<codes.length;i++){
+      var host = codes[i].closest('[data-k]');
+      hlApply(codes[i], Boolean(live) && host === live);
+    }
+  }
+
+  /** Colour one code element if that can be done now. */
+  function hlApply(code, live){
+    if(code.hasAttribute('data-hl') || code.firstElementChild) return;
+    var lang = codeLang(code), src = code.textContent;
+    if(!lang || !src || src.length > HL_MAX) return;
+    var key = lang + '\n' + src, spans = hlCache.get(key);
+    if(spans){
+      hlCache.delete(key);
+      hlCache.set(key, spans);
+      return hlPaint(code, src, spans);
+    }
+    if(live) return;
+    var fn = hlFns[lang];
+    if(fn === false) return;
+    if(!fn) return hlLoad(lang);
+    try { spans = fn(src); }
+    catch(e){ hlFns[lang] = false; return hlWarn(e); }
+    hlCache.set(key, spans);
+    if(hlCache.size > HL_CACHE_MAX) hlCache.delete(hlCache.keys().next().value);
+    hlPaint(code, src, spans);
+  }
+
+  /**
+   * The coloured text, built as text nodes and spans — never through innerHTML. The spans are offsets
+   * into the code's own text, so the element's text, and what Copy takes, is unchanged.
+   */
+  function hlPaint(code, src, spans){
+    var frag = document.createDocumentFragment(), at = 0;
+    for(var i=0;i<spans.length;i++){
+      var from = spans[i][0], to = spans[i][1];
+      if(!(from >= at && to > from && to <= src.length)) continue;
+      if(from > at) frag.appendChild(document.createTextNode(src.slice(at, from)));
+      var span = document.createElement('span');
+      span.className = String(spans[i][2]);
+      span.textContent = src.slice(from, to);
+      frag.appendChild(span);
+      at = to;
+    }
+    if(at < src.length) frag.appendChild(document.createTextNode(src.slice(at)));
+    code.textContent = '';
+    code.appendChild(frag);
+    code.setAttribute('data-hl', '');
+  }
+
+  /**
+   * Ask the code view for a language's grammar, once. No bundle, no grammar by that name, or a chunk
+   * that would not load all leave the block as it already is — plain, which is a complete answer —
+   * and only the last says so in the console, once per page.
+   */
+  function hlLoad(lang){
+    if(lang in hlFns) return;
+    hlFns[lang] = null;
+    codeView().then(function(cv){
+      return cv && typeof cv.highlighter === 'function' ? cv.highlighter(lang) : null;
+    }).then(function(fn){
+      hlFns[lang] = typeof fn === 'function' ? fn : false;
+      if(fn) hlSweep();
+    }, function(e){
+      hlFns[lang] = false;
+      hlWarn(e);
+    });
+  }
+  function hlWarn(e){
+    if(hlWarned) return;
+    hlWarned = true;
+    console.warn('a code language failed to load, showing plain text:', e);
+  }
+
+  /** Look at every waiting block again once the writes have stopped for a moment. */
+  function hlLater(){
+    clearTimeout(hlTimer);
+    hlTimer = setTimeout(hlSweep, HL_IDLE_MS);
+  }
+
+  /**
+   * Every place a reply's HTML is shown, looked at again: after a grammar has loaded, after a turn
+   * has ended, and a moment after the last write — which is when the message a newer one has just
+   * followed stops being the live one.
+   */
+  function hlSweep(){
+    clearTimeout(hlTimer);
+    var live = liveEl(), roots = [log, libLog, btwBody, readerBody, filesPreview];
+    for(var r=0;r<roots.length;r++){
+      if(!roots[r]) continue;
+      var codes = roots[r].querySelectorAll('.cb pre>code[class*="language-"]:not([data-hl])');
+      for(var i=0;i<codes.length;i++){
+        var host = codes[i].closest('[data-k]');
+        hlApply(codes[i], Boolean(live) && host === live);
+      }
+    }
+  }
+
+  /** Where a code block's Wrap is remembered: its message's key and its place in that message. */
+  function cbKey(frame){
+    var host = frame.closest('[data-k]');
+    if(!host) return null;
+    var all = host.querySelectorAll('.cb');
+    for(var i=0;i<all.length;i++) if(all[i] === frame) return host.getAttribute('data-k') + '#' + i;
+    return null;
+  }
+  function cbWrapSet(frame, on){
+    frame.classList.toggle('wrap', on);
+    var b = frame.querySelector('.cb-b[data-cb="wrap"]');
+    if(b) b.setAttribute('aria-pressed', on ? 'true' : 'false');
+  }
+
+  /**
+   * Copy the code — the code element's text, which the colouring never changes — and say so on the
+   * button for a moment: a copy that only changed the clipboard looks like a tap that did nothing.
+   */
+  function cbCopy(btn, s){
+    copyText(s, function(ok){
+      var say = ok ? 'Copied' : 'Could not copy \u2014 select the code instead';
+      btn.innerHTML = ok ? IC.icon.check : IC.icon.cross;
+      btn.title = say;
+      btn.setAttribute('aria-label', say);
+      clearTimeout(btn._copyTimer);
+      btn._copyTimer = setTimeout(function(){
+        btn.innerHTML = IC.icon.copy;
+        btn.title = 'Copy';
+        btn.setAttribute('aria-label', 'Copy code');
+      }, 1500);
+    });
+  }
+
+  // Delegated on the document: a code block can be in the transcript, the History tab, a side
+  // answer's card, the file reader or the file window's preview, and its markup is the same in all.
+  document.addEventListener('click', function(e){
+    var b = e.target && e.target.closest ? e.target.closest('.cb-b[data-cb]') : null;
+    var frame = b ? b.closest('.cb') : null;
+    var code = frame ? frame.querySelector('pre>code') : null;
+    if(!code) return;
+    if(b.getAttribute('data-cb') === 'copy') return cbCopy(b, code.textContent);
+    var on = !frame.classList.contains('wrap'), k = cbKey(frame);
+    cbWrapSet(frame, on);
+    if(k){ if(on) cbWrapped[k] = 1; else delete cbWrapped[k]; }
+  });
+
+  /**
+   * The kinds drawn as a marked bubble — a rail, and this tag — rather than as the agent talking:
+   * a task handed to a sub-agent, what sub-agents reported, and the answer to a side question.
+   */
+  var SUB_K = {dispatch:'Sub-agent task', report:'Sub-agent report', aside:'Side question'};
+
+  // ── Side questions (/btw) ──────────────────────────────────────────────────
+  // A /btw is asked of a copy of the conversation and kept out of it, and its answer often lands in
+  // the middle of a reply still streaming — where, drawn as a message, it read as that reply's next
+  // paragraph. So neither half is drawn as a message: the question stays where it was asked as one
+  // line, and the answer is read in a card over the composer (#btw) that the line opens again. The
+  // daemon sends every message of an answer, and a refusal, as a reply to the /btw (turn-runner.ts
+  // sendAside), whose quote names the question's id: the id, not the text, is what pairs them.
+  var btwBox=$('btw'), btwQ=$('btw-q'), btwBody=$('btw-body');
+  // The question the card shows, by its key in data; what the card last drew; the questions whose
+  // card was closed by hand, so an answer still arriving for one updates its line rather than
+  // opening the card again; and the guard that stops a question and its answer repainting each
+  // other for ever (btwLink).
+  var btwKey=null, btwSig='', btwShut={}, btwNest=false;
+  // What the daemon takes for a /btw (daemon/routing.ts parseTextCommand): the name exactly, then
+  // the question after whitespace, or nothing.
+  var BTW_RE=/^\s*\/btw(?:\s+([\s\S]*))?$/;
+  // The answer's first line names its question again, for a chat app (turn-runner.ts asideHeader).
+  // The card has the question for a title, so there it goes.
+  var BTW_HEAD_RE=/^<p>\u21aa btw: [\s\S]*?<\/p>\s*/;
+  // And its last says it was kept out of the conversation (asideFooter): small print, drawn as such.
+  var BTW_FOOT_RE=/<p>(side question \u2014 [^<]*)<\/p>\s*$/;
+
+  /** The text of a message typed here, as the daemon was given it; null when there is none. */
+  function ownText(m){
+    if(m._local) return m._text;
+    // room.ts renderBody: the text escaped, whole, in the first element.
+    var x = /^<div class="raw">([^<]*)<\/div>/.exec(m.html || '');
+    if(!x) return null;
+    return x[1].replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
+  }
+
+  /**
+   * What a message typed here asked on the side — '' for a bare /btw — or null when it is not a
+   * /btw. Never in a conversation opened from History ('h:' keys): the library keeps no side
+   * question, and a card opened from one would be over a topic that is not on screen.
+   */
+  function btwAsked(key, m){
+    if(!m || !m.own || String(key).indexOf('h:') === 0) return null;
+    var raw = ownText(m);
+    var x = raw == null ? null : BTW_RE.exec(raw);
+    return x ? (x[1] || '').trim() : null;
+  }
+
+  /** The key of the question a side answer replies to; null for anything else, and for an answer kept from before answers named it. */
+  function btwOf(m){
+    return m && m.kind === 'aside' && m.quote && m.quote.id ? (m._g || epoch) + ':' + m.quote.id : null;
+  }
+
+  /**
+   * Whether an answer is kept out of the transcript. Only while its question is on the page to stand
+   * for it: an answer whose question has aged out of the ring or the cache is drawn as a bubble, as
+   * every answer was before, rather than becoming unreachable.
+   */
+  function btwHeld(key, m){
+    if(String(key).indexOf('h:') === 0) return false;
+    var q = btwOf(m);
+    return Boolean(q && data[q] && btwAsked(q, data[q]) !== null);
+  }
+
+  /** Every message of the answer to the question under qk, in the order they were sent. */
+  function btwParts(qk){
+    var out=[];
+    for(var k in data){
+      if(Object.prototype.hasOwnProperty.call(data, k) && btwOf(data[k]) === qk) out.push(k);
+    }
+    out.sort(function(a, b){ return (data[a].at - data[b].at) || (seqOf(data[a].id) - seqOf(data[b].id)); });
+    return out;
+  }
+  function seqOf(id){ var n = parseInt(String(id).slice(1), 10); return isNaN(n) ? 0 : n; }
+
+  /** A side question in the transcript: one line that opens its answer, in place of the question's bubble. */
+  function btwLine(key, m, asked, hist){
+    var answered = !m._local && btwParts(key).length > 0;
+    var state = answered ? 'Answer' + IC.icon.chevronRight
+      : stuck(m) ? '' : hist ? 'No answer' : 'Waiting\u2026';
+    var shown = btwKey === key && !btwBox.hidden;
+    var cls = 'm btw-q' + (hist ? ' hist' : '')
+      + (m._local && m._state === 'sending' ? ' pending' : '')
+      + (stuck(m) ? ' failed' : '');
+    var h = '<button type="button" class="btw-chip" aria-haspopup="dialog" aria-controls="btw"'
+      + ' aria-expanded="'+(shown ? 'true' : 'false')+'" title="'+text(asked ? 'Side question: '+asked : 'Side question')+'">'
+      + '<span class="btw-tag">btw</span>'
+      + '<span class="btw-text">'+text(asked || '/btw')+'</span>'
+      + (state ? '<span class="btw-state'+(answered ? ' ready' : '')+'">'+state+'</span>' : '')
+      + '<span class="btw-when">'+text(clock(m.at))+'</span>'
+      + '</button>';
+    if(stuck(m)) h += failedActions(m);
+    return { cls: cls, h: h };
+  }
+
+  /** Repaint the other half of a side question — an answer's question, or a question's answers — where it is on screen. */
+  function btwLink(key, m){
+    var qk = btwOf(m), list = qk ? [qk] : btwAsked(key, m) !== null ? btwParts(key) : [];
+    if(!list.length) return;
+    btwNest = true;
+    try { for(var i=0;i<list.length;i++) if(els[list[i]] && data[list[i]]) paint(list[i]); }
+    finally { btwNest = false; }
+  }
+
+  /** Show the answer to the question under qk, from its start. */
+  function openBtw(qk){
+    if(!data[qk]) return;
+    var was = btwKey;
+    btwKey = qk;
+    delete btwShut[qk];
+    btwBox.hidden = false;
+    btwSig = '';
+    renderBtw(true);
+    if(was && was !== qk && els[was] && data[was]) paint(was);
+    if(els[qk]) paint(qk);
+  }
+
+  /**
+   * Put the card away. byHand is the person closing it, which keeps it shut while the rest of that
+   * answer arrives; the page closing it (a topic switch, the question gone) does not.
+   */
+  function closeBtw(byHand){
+    if(btwBox.hidden) return;
+    var k = btwKey;
+    btwBox.hidden = true;
+    btwKey = null;
+    btwSig = '';
+    btwBody.innerHTML = '';
+    if(!k) return;
+    if(byHand) btwShut[k] = 1;
+    if(els[k] && data[k]) paint(k);
+  }
+
+  /**
+   * Draw the card for the question it is on. top puts the reader at the start of the answer; any
+   * other redraw keeps a reader at the bottom of a growing answer there, and leaves one who has
+   * scrolled up where they are.
+   */
+  function renderBtw(top){
+    var m = btwKey ? data[btwKey] : null;
+    var asked = m ? btwAsked(btwKey, m) : null;
+    if(asked === null){ closeBtw(false); return; }
+    btwQ.textContent = asked || '/btw';
+    btwQ.title = asked;
+    var parts = m._local ? [] : btwParts(btwKey), h = '';
+    for(var i=0;i<parts.length;i++){
+      var body = String(data[parts[i]].html || '').replace(BTW_HEAD_RE, '').replace(BTW_FOOT_RE, '<p class="btw-foot">$1</p>');
+      if(body) h += '<div class="b">'+body+'</div>';
+    }
+    if(!h){
+      h = '<div class="btw-wait">' + (stuck(m) ? 'Not sent, so nothing is answering it.'
+        : isHistory(m) ? 'No answer came before the daemon restarted.'
+        : '<span class="set-spin" aria-hidden="true"></span>Asking a copy of this conversation\u2026') + '</div>';
+    }
+    var stick = btwBody.scrollHeight - btwBody.scrollTop - btwBody.clientHeight < 40;
+    if(h !== btwSig){ btwBody.innerHTML = h; btwSig = h; codeBlocks(btwBody); }
+    if(top) btwBody.scrollTop = 0;
+    else if(stick) btwBody.scrollTop = btwBody.scrollHeight;
+  }
+
+  /**
+   * A message of a side answer arrived, or grew. The card follows it when it is on that question,
+   * and opens on it when it is shut and was not shut by hand on this question: the answer is what
+   * the person asked for a moment ago, and a line under a reply still streaming is easy to miss.
+   */
+  function btwArrived(m){
+    var qk = btwOf(m);
+    if(!qk || !data[qk] || btwAsked(qk, data[qk]) === null) return;
+    if(!btwBox.hidden && btwKey === qk) renderBtw(false);
+    else if(btwBox.hidden && !btwShut[qk]) openBtw(qk);
+  }
+
+  $('btw-close').addEventListener('click', function(){ closeBtw(true); });
+
+  /**
+   * One message's class and inner markup. Shared by the transcript (paint) and by a conversation
+   * opened from the History tab (paintLib), which is what makes the two look the same: one place
+   * decides what a bubble is.
+   */
+  function msgMarkup(key, m, hist){
+    // A side question and its answer are read in a card over the composer, not here (openBtw).
+    var asked = btwAsked(key, m);
+    if(asked !== null) return btwLine(key, m, asked, hist);
+    if(btwHeld(key, m)) return { cls: 'm aside-held', h: '' };
+    var kind = m.kind;
+    // A report is a line-based bubble like a tool one: fold it and offer the same control. A
+    // dispatch is prose (the card, or the task a sub-agent was handed), so it only takes the tag.
+    var folded = kind === 'tools' || kind === 'report';
+    var tag = kind && Object.prototype.hasOwnProperty.call(SUB_K, kind) ? SUB_K[kind] : '';
+    var cls = 'm' + (m.own ? ' own' : '') + (hist ? ' hist' : '')
+      + (tag ? ' '+kind : '')
+      + (m._local && m._state === 'sending' ? ' pending' : '')
+      + (stuck(m) ? ' failed' : '');
+    var h='';
+    // The tag, not the text, is what makes the kinds tell apart before the body is read.
+    if(tag) h += '<div class="sub-k">'+tag+'</div>';
+    if(m.quote && m.quote.html) h += '<div class="q">'+m.quote.html+'</div>';
+    h += '<div class="b">'+(folded ? foldLines(key, m.html) : m.html)+'</div>';
+    if(m.file){
+      // An image is drawn, not just named — a screenshot the agent took is about to be looked
+      // at, and a round trip through the downloads folder to do that is the friction this
+      // exists to remove. The link stays underneath either way: it is still the only way to
+      // get the bytes onto disk, and it is what a picture that fails to load degrades to.
+      if(m.file.image) h += '<img class="shot" src="'+text(m.file.url)+'" alt="'+text(m.file.name)+'" loading="lazy">';
+      h += '<div class="files"><a href="'+text(m.file.url)+'" download'
+        + (m.file.view && !hist ? ' data-view="'+text(m.file.view)+'"' : '')
+        + '>'+text(m.file.name)+'</a>';
+      // A report or a log is read by tapping its name (openReader); Download beside it is the
+      // way to the bytes, which is what the name used to be. Not offered on history, for the
+      // reason its buttons are dropped below: the token died with the process that minted it, so
+      // the reader could only ever open onto "no longer here".
+      if(m.file.view && !hist) h += '<a class="view" href="'+text(m.file.url)+'" download>Download</a>';
+      h += '</div>';
+    }
+    // What the turn changed, when the daemon recorded it. Not gated on a message being history:
+    // the records outlive the run that took the snapshots, so the entry still opens its window for
+    // a reply restored from a previous run. (A message from the History tab never carries one —
+    // that transcript has no turn records behind it.) Nothing is drawn unless the page has a
+    // window to open (see turnChangeRow).
+    if(m.turnChanges) h += turnChangeRow(m);
+    // Buttons are dropped from a message that came out of the cache: the process that would
+    // answer them is gone, and the id they name now means a different message or nothing at
+    // all. A control that cannot act is worse than no control.
+    if(!hist && m.buttons && m.buttons.length) h += menu(m);
+    if(stuck(m)) h += failedActions(m);
+    var meta = text(clock(m.at)) + (m.reactions && m.reactions.length ? '  '+m.reactions.map(reactionMark).join(' ') : '');
+    h += '<div class="t">'+meta+(folded ? allToggle(key) : '')+'</div>';
+    return { cls: cls, h: h };
+  }
+
+  /**
+   * What one turn changed, under the reply it ended: "3 files changed +12 -4", and a tap opens the
+   * git panel's window on it.
+   *
+   * Nothing is drawn when the page has no such window (window.openGitWindow, which the git panel
+   * provides): an entry that opens nothing is worse than no entry, and a page served by a daemon
+   * built without that panel must not show a dead control. The check is at draw time rather than at
+   * click time for exactly that reason.
+   *
+   * The entry itself is part of the message (WebMessage.turnChanges), so a reload, a reconnect and
+   * a restart all bring it back with the transcript it belongs to.
+   */
+  function turnChangeRow(m){
+    if(typeof window.openGitWindow !== 'function') return '';
+    var c = m.turnChanges;
+    var files = c.files === 1 ? '1 file changed' : c.files + ' files changed';
+    return '<div class="tc"><button type="button" data-turns="'+text(String(c.turn))+'">'
+      + IC.icon.diff
+      + '<span>' + text(files) + '</span>'
+      + '<span class="add">+' + text(String(c.additions)) + '</span>'
+      + '<span class="del">-' + text(String(c.deletions) + (c.truncated ? '+' : '')) + '</span>'
+      + '</button></div>';
+  }
+
+  /**
+   * Open the git panel's window on one turn's changes.
+   *
+   * The two URLs answer the JSON shapes turnChangesStatusForRef / turnChangesFileForRef build;
+   * the window appends "&path=" and a URL-encoded repository-relative path to fileUrl itself, so
+   * fileUrl stops at the turn. The topic is the page's own — a transcript row is always in it.
+   */
+  function openTurnChanges(turn){
+    if(typeof window.openGitWindow !== 'function' || !turn) return;
+    var q = '?t=' + encodeURIComponent(topic) + '&turn=' + encodeURIComponent(String(turn));
+    window.openGitWindow({
+      title: 'Turn ' + turn + ' changes',
+      statusUrl: 'api/turn-changes/status' + q,
+      fileUrl: 'api/turn-changes/file' + q,
+    });
+  }
+
+  /**
+   * A message's buttons, laid out as what nearly all of them are: a menu to pick one thing from.
+   *
+   * A grid rather than buttons wrapped like words, because a wrapped row is only as wide as its
+   * labels: a page of directories came out as a ragged block whose columns moved on every row, and
+   * on a phone as one or two buttons a row in no order at all. The columns are sized from the
+   * widest label (--cw, in the menu's own ch), so short names get more of them and long model ids
+   * fewer, and the stylesheet keeps at least two — a label longer than half the row wraps inside
+   * its cell rather than taking the row.
+   *
+   * Two things are read off the labels, because a label is all the daemon sends. The marks core
+   * puts in front of an item (● the current one, ☑ ☐ a multi-select's ticks, ⌂ the workspace root)
+   * become a mark the cell can colour, and the current choice is lit rather than left to be found
+   * by a dot the same grey as its text. And the controls that move around a menu rather than
+   * answer it (◀ Prev, Next ▶, ◀ Back, ‹ ›) go on a row of their own under the items, instead of
+   * reading as two more things to choose. Both are presentation only: a label that happens to
+   * match is drawn differently and still posts exactly its own id.
+   */
+  var MARK = /^([●☑☐⌂]) /, NAV = /^[◀‹]|[▶›]$/;
+  /** A nav button's label with its arrow drawn as a chevron: "◀ Back", "Next ▶", "‹", "‹ machines". */
+  function navLabel(label){
+    var back = /^[◀‹] ?/.exec(label), on = / ?[▶›]$/.exec(label);
+    if(back) return IC.icon.chevronLeft + (label.length > back[0].length ? ' '+text(label.slice(back[0].length)) : '');
+    if(on) return (on.index ? text(label.slice(0, on.index))+' ' : '') + IC.icon.chevronRight;
+    return text(label);
+  }
+  /** A lifecycle reaction as its icon; one the page has none for (a configured emoji) as itself. */
+  function reactionMark(e){
+    return IC.reaction[String(e).replace(/\uFE0F/g, '')] || text(e);
+  }
+  function menu(m){
+    var items = '', nav = '', widest = 0, marked = false, msg = text(m.id);
+    for(var i=0;i<m.buttons.length;i++){
+      var b = m.buttons[i], label = String(b.label == null ? '' : b.label), mk = MARK.exec(label);
+      var tag = '<button type="button" data-msg="'+msg+'" data-btn="'+text(b.id)+'"';
+      if(NAV.test(label)){ nav += tag+'>'+navLabel(label)+'</button>'; continue; }
+      widest = Math.max(widest, labelWidth(label));
+      if(mk) marked = true;
+      var on = mk && (mk[1] === '●' || mk[1] === '☑');
+      items += tag + (on ? ' class="on"' : '') + '>'
+        + (mk ? '<span class="mk">'+(IC.mark[mk[1]] || text(mk[1]))+'</span> '+text(label.slice(2)) : text(label)) + '</button>';
+    }
+    // 40 is core's label budget (truncateLabel); a longer one would be a column no row can hold.
+    // A mark is drawn as a 1em icon where labelWidth counted its glyph as one column, so a menu
+    // with marks asks for the difference (--mk, in the stylesheet): without it "☑ APAC" was a
+    // hair too wide for its column and the icon wrapped onto a line of its own. Only the
+    // difference — a whole column more took the /cd menu on a phone from three columns to two.
+    return '<div class="btns" style="--cw:'+Math.min(widest, 40)+'ch'+(marked ? ';--mk:1' : '')+'">' + items
+      + (nav ? '<div class="nav">'+nav+'</div>' : '') + '</div>';
+  }
+
+  /**
+   * A /setting screen as markup, for the settings page rather than for the transcript.
+   *
+   * The daemon sends the screen as data (WebMessage.settings): groups, rows, values, what control
+   * each row is changed with, and the button id every control posts. Nothing here parses a label
+   * or decides a value — the grid did, because a label was all it had. What IS decided here is
+   * presentation: a choice of up to five short values is drawn as a segmented control (one tap,
+   * every option visible), a longer one as a select, and a per-agent row puts one labelled
+   * control per setting beside the agent's name.
+   *
+   * Every interactive element carries data-fk, a key that survives a redraw (the row's index and
+   * the part of it), so focus can be put back after the daemon's answer replaces the markup.
+   */
+  function settingsScreen(m){
+    var s = m.settings;
+    if(!s) return '';
+    return s.level === 'values' ? settingsValues(s) : settingsList(s);
+  }
+
+  // Escaped text with code spans kept: what the daemon writes in its sentences. Escaping comes
+  // first, so the only markup that can come out is the <code> put in here.
+  function inl(s){
+    return text(s == null ? '' : s).replace(/\x60([^\x60]+)\x60/g, '<code>$1</code>');
+  }
+
+  function settingsNotice(n){
+    if(!n) return '';
+    var tone = n.tone === 'ok' || n.tone === 'error' ? n.tone : 'info';
+    return '<div class="set-notice '+tone+'" role="'+(tone === 'error' ? 'alert' : 'status')+'">'+inl(n.text)+'</div>';
+  }
+
+  /**
+   * The list screen. A group's own rows sit in one card, and its agents — the Agents group's rows
+   * whose control is an agent — follow it as cards of their own (settingsAgents). The daemon puts the
+   * default agent first in that group, so drawing a group's plain rows before its agents keeps the
+   * order it sent.
+   */
+  function settingsList(s){
+    var h = '';
+    if(s.about) h += '<p class="set-about">'+inl(s.about)+'</p>';
+    if(settingsNote) h += settingsNotice({ tone: 'error', text: settingsNote });
+    h += settingsNotice(s.notice);
+    var notes = {}, groups = s.groups || [];
+    for(var g=0;g<groups.length;g++) notes[groups[g].name] = groups[g].note;
+    var rows = s.rows || [], secs = [], agentsShown = false;
+    for(var i=0;i<rows.length;i++){
+      var name = String(rows[i].group == null ? '' : rows[i].group), sec = secs[secs.length-1];
+      if(!sec || sec.name !== name){ sec = { name: name, plain: [], agents: [] }; secs.push(sec); }
+      (rows[i].control && rows[i].control.kind === 'agent' ? sec.agents : sec.plain).push(i);
+    }
+    for(var k=0;k<secs.length;k++){
+      var x = secs[k];
+      h += '<section class="set-sec">'+(x.name ? '<h3 class="set-group">'+text(x.name)+'</h3>' : '')
+        + (notes[x.name] ? '<p class="set-gnote">'+inl(notes[x.name])+'</p>' : '');
+      if(x.plain.length){
+        h += '<div class="set-card">';
+        for(var p=0;p<x.plain.length;p++) h += settingsItem(rows[x.plain[p]], x.plain[p]);
+        h += '</div>';
+      }
+      if(x.agents.length) h += settingsAgents(rows, x.agents);
+      // The gateway's files no agent reads have no card of their own; the Agents section is where
+      // a person looks for them (settingsOrphans). With no Agents section at all, they follow the
+      // last one so they are still reachable.
+      if(x.name === 'Agents'){ h += settingsOrphans(); agentsShown = true; }
+      h += '</section>';
+    }
+    if(!agentsShown) h += settingsOrphans();
+    return h;
+  }
+
+  /** A row's name, its badges and its one line: the left half of every kind of row. */
+  function settingsText(r){
+    var badges = '';
+    if(r.here) badges += '<span class="set-badge here" title="Answers the topic \u201c'+text(settingsTopicName(settingsTopic))+'\u201d">this topic</span>';
+    if(r.effectLabel) badges += '<span class="set-badge restart"'+(r.effectDetail ? ' title="'+text(r.effectDetail)+'"' : '')+'>'+text(r.effectLabel)+'</span>';
+    return '<div class="set-tx"><div class="set-label">'+settingsLabel(r.label)
+      + (r.targetKind ? '<span class="set-kind">'+text(r.targetKind)+'</span>' : '') + badges + '</div>'
+      + (r.hint ? '<div class="set-hint">'+inl(r.hint)+'</div>' : '') + '</div>';
+  }
+
+  /**
+   * A row's name. The scheduled tasks' row is named the way a chat button is, \u23f0 first (core
+   * schedule-menu.ts), and a glyph is the reader's font's to draw — an empty box where it has none
+   * (Chromium without an emoji font, 2026-11-19). The page draws its own clock instead.
+   */
+  function settingsLabel(label){
+    var s = String(label == null ? '' : label), m = /^\u23f0\uFE0F? */.exec(s);
+    return '<span>'+(m ? IC.icon.clock+' '+text(s.slice(m[0].length)) : text(s))+'</span>';
+  }
+
+  function settingsItem(r, i){
+    var c = r.control || { kind: 'list' };
+    if(c.kind === 'switch'){
+      return '<div class="set-item sw">' + settingsText(r)
+        + '<div class="set-ctl"><button type="button" class="set-switch" role="switch" aria-checked="'+(c.on ? 'true' : 'false')+'"'
+        + ' aria-label="'+text(r.label)+'" data-fk="r'+i+'" data-btn="'+text(c.set)+'"></button></div></div>';
+    }
+    if(c.kind === 'choice') return '<div class="set-item">' + settingsText(r) + '<div class="set-ctl">'+settingsChoice(r.label, c.options || [], 'r'+i, r.value)+'</div></div>';
+    // A row with a screen of its own, or a way to another menu: the whole row is the button.
+    var value = '';
+    if(c.kind !== 'link' && r.value != null){
+      value = '<span class="set-vv"><span class="set-v'+(r.unset ? ' unset' : '')+'" title="'+text(r.value)+'">'+text(r.value)+'</span>'
+        + (r.valueNote ? '<span class="set-vnote">'+text(r.valueNote)+'</span>' : '') + '</span>';
+    }
+    return '<button type="button" class="set-item set-open" data-fk="r'+i+'" data-btn="'+text(r.buttonId)+'">'
+      + settingsText(r) + value + '<span class="set-chev" aria-hidden="true">'+IC.icon.chevronRight+'</span></button>';
+  }
+
+  /**
+   * The agent cards, under a heading per machine (the row's place, which the daemon names as the
+   * /agent menu does) when they run on more than one. Machines in the order their first agent
+   * comes in config.yaml, and agents in config order within each: the order a person already knows
+   * them in from that menu.
+   */
+  function settingsAgents(rows, idx){
+    var places = [], by = new Map();
+    for(var k=0;k<idx.length;k++){
+      var p = String(rows[idx[k]].place || '');
+      if(!by.has(p)){ by.set(p, []); places.push(p); }
+      by.get(p).push(idx[k]);
+    }
+    var h = '<div class="ag-list">', heads = places.length > 1;
+    for(var j=0;j<places.length;j++){
+      var list = by.get(places[j]);
+      if(heads) h += '<h4 class="ag-place"><span>'+text(places[j] || 'elsewhere')+'</span><span class="ag-count">'+list.length+'</span></h4>';
+      for(var n=0;n<list.length;n++) h += settingsAgent(rows[list[n]], list[n]);
+    }
+    return h + '</div>';
+  }
+
+  /**
+   * Which agent's card is open, by its id: the page's alone, never posted. It survives every redraw
+   * — the daemon's answer to a change in it, the instruction list arriving, a model screen and back —
+   * and goes when the page is closed.
+   */
+  var agOpen = null;
+
+  /**
+   * The hue a harness is drawn in, from its name: the same harness the same colour on every card
+   * and every page, with nothing to keep in step with the list of harnesses. The palette is ordered
+   * so the names this project's harnesses hash to land far apart — Claude Code orange, Codex green,
+   * OpenCode blue, Antigravity violet, codebuddy yellow — and the six built-in names on six different
+   * hues (page.dom.test.ts pins that).
+   */
+  var AG_HUES = [0, 52, 245, 24, 188, 330, 100, 210, 280, 158];
+  function agHue(kind){
+    var s = String(kind || ''), x = 0;
+    for(var i=0;i<s.length;i++) x = (x * 31 + s.charCodeAt(i)) >>> 0;
+    return AG_HUES[x % AG_HUES.length];
+  }
+
+  function agentFieldOf(fields, label){
+    for(var k=0;k<fields.length;k++) if(fields[k].label === label) return fields[k];
+    return null;
+  }
+
+  /**
+   * One agent's card. Shut, it is a summary a person reads down a list by: the name and its badges,
+   * the harness in its colour, the model and the level, unset ones in italics. Open, it is every
+   * setting the daemon sent for the agent (settingsField), and then the instruction files it reads
+   * (agentInstr). The fields carry the daemon's button ids; the page decides only layout.
+   */
+  function settingsAgent(r, i){
+    var fields = (r.control && r.control.fields) || [], id = String(r.target || r.label), open = agOpen === id;
+    var badges = (r.here ? '<span class="set-badge here" title="Answers the topic \u201c'+text(settingsTopicName(settingsTopic))+'\u201d">this topic</span>' : '')
+      + (r.defaultAgent ? '<span class="set-badge def" title="A new conversation no routing rule claims gets this agent">default</span>' : '');
+    var sum = r.targetKind ? ['<span class="ag-kind">'+text(r.targetKind)+'</span>'] : [];
+    for(var k=0;k<fields.length;k++){
+      var f = fields[k], v = f.value == null ? '' : String(f.value);
+      sum.push('<span class="'+(f.label === 'Model' ? 'ag-mono' : 'ag-lvl')+(f.unset ? ' unset' : '')+'" title="'+text(f.label+': '+v+(f.unset ? ' (not set)' : ''))+'">'+text(v)+'</span>');
+    }
+    var body = '';
+    for(var n=0;n<fields.length;n++){
+      body += '<div class="ag-field"><span class="ag-lab">'+text(fields[n].label)+'</span><div class="ag-val">'
+        + settingsField(r.label, fields[n], 'r'+i+'f'+n) + '</div></div>';
+    }
+    body += agentInstr(r, i);
+    return '<div class="ag-card'+(open ? ' open' : '')+'" style="--ag-h:'+agHue(r.targetKind)+'" role="group" aria-label="'+text(r.label)+'" data-ag="'+text(id)+'">'
+      + '<button type="button" class="ag-top" data-fk="r'+i+'x" aria-expanded="'+(open ? 'true' : 'false')+'" aria-controls="ag-b'+i+'">'
+      + '<span class="ag-who"><span class="ag-id"><span class="ag-name">'+text(r.label)+'</span>'+badges+'</span>'
+      + '<span class="ag-sum">'+sum.join('<span class="ag-sep" aria-hidden="true">\u00b7</span>')+'</span></span>'
+      + '<span class="ag-chev" aria-hidden="true">'+IC.icon.chevronDown+'</span></button>'
+      + '<div class="ag-body" id="ag-b'+i+'"'+(open ? '' : ' hidden')+'>'+body+'</div></div>';
+  }
+
+  /** Open one agent's card, or shut it; any other open card shuts. Drawn here, never posted. */
+  function toggleAgent(top){
+    var card = top.closest('.ag-card');
+    if(!card) return;
+    var open = top.getAttribute('aria-expanded') !== 'true', cards = settingsBody.querySelectorAll('.ag-card');
+    for(var i=0;i<cards.length;i++){
+      var on = open && cards[i] === card, t = cards[i].querySelector('.ag-top'), b = cards[i].querySelector('.ag-body');
+      cards[i].classList.toggle('open', on);
+      if(t) t.setAttribute('aria-expanded', on ? 'true' : 'false');
+      if(b) b.hidden = !on;
+    }
+    agOpen = open ? card.getAttribute('data-ag') : null;
+  }
+
+  // agent is the row's name, carried into every control's accessible name: several agents' cards
+  // sit on one page, so a reader that hears only "Model" cannot tell whose it is.
+  function settingsField(agent, f, key){
+    var c = f.control || { kind: 'list' }, v = f.value == null ? '' : String(f.value);
+    var unset = f.unset ? ' unset' : '', tip = f.unset ? text(v + ' (not set)') : text(v);
+    var badge = f.effectLabel ? '<span class="set-badge restart"'+(f.effectDetail ? ' title="'+text(f.effectDetail)+'"' : '')+'>'+text(f.effectLabel)+'</span>' : '';
+    // Under a value, what it cannot say by itself: where it comes from (a pinned mode, a running
+    // session's, a pod's file), and for a level the chosen level's meaning — the levels are five
+    // short words, and what each one asks is the whole point of picking one. A level that was never
+    // set says so: the control shows what applies, and a selected button cannot say it was a default.
+    var note = f.valueNote ? String(f.valueNote) : (f.unset && c.kind === 'choice' ? 'not set' : '');
+    var foot = function(extra){
+      var parts = [];
+      if(extra) parts.push('<span>'+text(extra)+'</span>');
+      if(note) parts.push('<span>'+text(note)+'</span>');
+      return parts.length || badge ? '<div class="ag-note">'+parts.join('<span aria-hidden="true">\u00b7</span>')+badge+'</div>' : '';
+    };
+    if(c.kind === 'choice'){
+      var opts = c.options || [], now = null;
+      for(var k=0;k<opts.length;k++) if(opts[k].current) now = opts[k];
+      // One level on offer (an API agent asks about nothing) is a fact, not a control: a control
+      // with a single option invites a tap that cannot change anything.
+      if(opts.length < 2){
+        var only = opts[0];
+        return '<span class="ag-fixed'+unset+'" title="'+(only && only.detail ? text(only.detail) : tip)+'">'+text(only ? only.label : v)+'</span>' + foot(only && only.detail);
+      }
+      // The levels side by side where they fit (five short words do), a select where one is long:
+      // an open card has the width a table column did not.
+      return settingsChoice(agent + ' \u00b7 ' + f.label, opts, key, v, false, f.unset ? 'unset' : '') + foot(now && now.detail);
+    }
+    return '<button type="button" class="ag-open" data-fk="' + key + '" data-btn="' + text(f.buttonId) + '"'
+      + ' aria-label="' + text(agent + ' \u00b7 ' + f.label + ': ' + v) + '">'
+      + '<span class="set-v' + unset + '" title="' + tip + '">' + text(v) + '</span>'
+      + '<span class="set-chev" aria-hidden="true">' + IC.icon.chevronRight + '</span></button>' + foot('');
+  }
+
+  // key is what its controls' data-fk is built from: a row's ("r3"), or one field of an agent's
+  // row ("r3f1"), so a redraw can put focus back on the exact control that was used.
+  function settingsChoice(label, opts, key, value, select, cls){
+    var short = !select && opts.length > 0 && opts.length <= 5;
+    for(var k=0;k<opts.length;k++) if(String(opts[k].label).length > 6) short = false;
+    var h = '', any = false;
+    if(short){
+      for(var j=0;j<opts.length;j++){
+        var o = opts[j];
+        h += '<button type="button" role="radio" aria-checked="'+(o.current ? 'true' : 'false')+'" data-fk="'+key+'o'+j+'" data-btn="'+text(o.buttonId)+'"'
+          + (o.detail ? ' title="'+text(o.detail)+'"' : '')+'>'+text(o.label)+'</button>';
+      }
+      return '<div class="set-seg" role="radiogroup" aria-label="'+text(label)+'">'+h+'</div>';
+    }
+    for(var n=0;n<opts.length;n++){
+      var p = opts[n];
+      if(p.current) any = true;
+      // The value alone: a closed select shows its option's whole text, and a value with its
+      // explanation was cut mid-sentence at 390px. The row's hint says what the values mean.
+      h += '<option value="'+text(p.buttonId)+'"'+(p.current ? ' selected' : '')+(p.detail ? ' title="'+text(p.detail)+'"' : '')+'>'+text(p.label)+'</option>';
+    }
+    // A value none of the options names (a window typed by hand, 90m) is still shown as what it is.
+    if(!any) h = '<option value="" selected disabled>'+text(value == null ? '' : value)+'</option>' + h;
+    return '<select class="set-select'+(cls ? ' '+cls : '')+'" data-fk="'+key+'" aria-label="'+text(label)+'">'+h+'</select>';
+  }
+
+  function settingsValues(s){
+    var h = '', hd = s.head, n = s.nav || {};
+    if(n.back) h += '<button type="button" class="set-back" data-fk="back" data-btn="'+text(n.back)+'">'+IC.icon.chevronLeft+' All settings</button>';
+    if(hd){
+      h += '<div class="set-head"><h3><span>'+text(hd.label)+'</span>'
+        + (hd.target ? '<span class="set-tgt">'+text(hd.target)+'</span>' : '')
+        + (hd.targetKind ? '<span class="set-kind">'+text(hd.targetKind)+'</span>' : '') + '</h3>'
+        + '<p class="set-now">Now: <span class="set-v'+(hd.unset ? ' unset' : '')+'">'+text(hd.value)+'</span></p>'
+        + (hd.source ? '<p class="set-src">'+inl(hd.source)+'</p>' : '')
+        + '<p class="set-desc">'+inl(hd.description)+'</p>'
+        + (hd.effect ? '<p class="set-when">'+inl(hd.effect)+'</p>' : '') + '</div>';
+    }
+    if(settingsNote) h += settingsNotice({ tone: 'error', text: settingsNote });
+    h += settingsNotice(s.notice);
+    var opts = s.options || [];
+    // One field for both: it filters a long list as it is typed into, and Use (or Enter) takes
+    // what is typed as the value — a harness takes model names its list never offers.
+    if(s.typed){
+      h += '<div class="set-typed"><input type="text" class="set-type" data-fk="typed" data-btn="'+text(s.typed.buttonId)+'"'
+        + ' placeholder="'+text(opts.length > 8 ? 'Filter, or type a model name' : s.typed.placeholder)+'" aria-label="'+text(s.typed.placeholder)+'"'
+        + ' autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="done">'
+        + '<button type="button" class="set-use" data-fk="use">Use</button></div>';
+    }
+    if(s.loading || (hd && hd.hint)) h += '<div class="set-hintbox'+(s.loading ? ' loading' : '')+'">'+(s.loading ? '<span class="set-spin" aria-hidden="true"></span>' : '')+inl(hd && hd.hint ? hd.hint : 'Loading…')+'</div>';
+    if(opts.length){
+      h += '<div class="set-card set-list">';
+      for(var i=0;i<opts.length;i++) h += settingsOption(opts[i], i);
+      h += '</div><p class="set-nomatch" hidden>No model in the list matches. Use takes the name as typed.</p>';
+    }
+    if(n.pageCount > 1){
+      h += '<div class="set-nav">'
+        + (n.prev ? '<button type="button" data-fk="prev" data-btn="'+text(n.prev)+'">'+IC.icon.chevronLeft+' Prev</button>' : '')
+        + '<span class="set-page">'+text(n.page)+' / '+text(n.pageCount)+'</span>'
+        + (n.next ? '<button type="button" data-fk="next" data-btn="'+text(n.next)+'">Next '+IC.icon.chevronRight+'</button>' : '')
+        + '</div>';
+    }
+    return h;
+  }
+
+  function settingsOption(o, i){
+    return '<button type="button" class="set-opt'+(o.current ? ' on' : '')+'" data-fk="o'+i+'" data-btn="'+text(o.buttonId)+'"'
+      + (o.current ? ' aria-current="true"' : '')+' data-q="'+text(String(o.label+' '+(o.detail || '')).toLowerCase())+'">'
+      + '<span class="set-check" aria-hidden="true">'+(o.current ? IC.icon.check : '')+'</span>'
+      + '<span class="set-opt-main"><span class="set-opt-label">'+text(o.label)+'</span>'
+      + (o.detail ? '<span class="set-opt-detail">'+text(o.detail)+'</span>' : '')
+      + '</span></button>';
+  }
+
+  // ── The settings page ────────────────────────────────────────────────────────
+  /**
+   * /setting as a page of its own, not a message in the transcript.
+   *
+   * The daemon already answers /setting with one message carrying the structured screen
+   * (SettingsScreen) and the button ids that write config.yaml. That is still the only source of
+   * the rows, the values and the writes — this page never parses a label or builds a value. It
+   * only moves the drawing out of the transcript and into a window: the message is taken out of
+   * the log before it is painted, and its updates (the daemon edits the same message when a row is
+   * tapped) are painted into this page instead. Closing the page is remembered per message id, so
+   * a late edit does not reopen what the operator put away.
+   *
+   * It is bound to the topic it was opened in, though what it sets is not that topic's: every row
+   * is config.yaml, for every conversation. The binding is mechanical — the buttons carry that
+   * conversation's message id, and "this topic" marks the agent answering it — so switching topics
+   * closes the page rather than leaving it pointing at the old one.
+   */
+  function settingsKey(m){ return (m._g || m.g || epoch) + ':' + m.id; }
+
+  function settingsTopicName(id){
+    for(var i=0;i<topics.length;i++) if(topics[i].id===id) return topics[i].title || 'Untitled';
+    return 'Untitled';
+  }
+
+  // Where these settings live, which is the same for every topic. The bar used to name the topic
+  // the page was opened in, and that read as "these are this topic's settings" — they never were.
+  function paintSettingsTopic(){
+    settingsTopicEl.textContent = 'Saved to config.yaml · every topic';
+    settingsTopicEl.title = 'Opened from the topic “' + settingsTopicName(settingsTopic) + '”';
+  }
+
+  /**
+   * Draw the page from the message it holds. Focus goes back to the control that had it — the
+   * daemon's answer to a switch replaces the markup, and a keyboard user would otherwise be sent
+   * back to the top of the page after every toggle. A move to a value screen starts at the top; a
+   * move back to the list lands on the control that left it (settingsListFk), whose card is still
+   * open — the top of the page was three screens of agents away from the one being set.
+   */
+  function renderSettings(){
+    if(!settingsMsg) return;
+    var a = document.activeElement, fk = a && settingsBody.contains(a) ? a.getAttribute('data-fk') : null;
+    var level = settingsMsg.settings ? settingsMsg.settings.level : '';
+    var typed = settingsBody.querySelector('.set-type');
+    if(typed) settingsQuery = typed.value;
+    settingsBody.innerHTML = settingsScreen(settingsMsg);
+    if(INSTR_OK && level === 'list') instrEnsure();
+    if(level !== settingsLevel){
+      var back = level === 'list' && settingsLevel === 'values' ? settingsListFk : null;
+      settingsBody.scrollTop = 0; fk = back; settingsQuery = '';
+    }
+    settingsLevel = level;
+    // What was typed survives the redraw — the list arriving after "asking" is one — and so does
+    // the filter it applies.
+    var field = settingsBody.querySelector('.set-type');
+    if(field && settingsQuery){ field.value = settingsQuery; filterSettings(); }
+    // A notice that is good news fades once it has been seen; an error stays until the next screen.
+    clearTimeout(settingsFade);
+    var note = settingsBody.querySelector('.set-notice.ok, .set-notice.info');
+    if(note) settingsFade = setTimeout(function(){ note.classList.add('faded'); }, SETTINGS_FADE_MS);
+    if(fk){
+      var to = settingsBody.querySelector('[data-fk="'+fk+'"]');
+      if(to && to.focus) to.focus();
+    }
+  }
+
+  /**
+   * A live settings screen arrived: draw it, or update the page already drawing it.
+   *
+   * An edit of a page the operator closed is dropped; a new message is a new page. That is the
+   * whole rule, and it is why the id is remembered rather than a boolean. An answer that belongs
+   * to a request the operator closed while it was still Loading is dropped too — the request is
+   * identified by its token, and the answers come back in the order they were asked for.
+   */
+  function takeSettings(m){
+    m._g = m.g || epoch;
+    var k = settingsKey(m);
+    // An edit of the screen already on the page: update it in place, and do not consume a
+    // pending request — this answer belongs to the message, not to a new question.
+    if(!settingsPage.hidden && settingsMsg && settingsMsg.id === m.id){
+      settingsMsg = m;
+      settingsNote = null;
+      renderSettings();
+      return;
+    }
+    var wasHidden = settingsPage.hidden;
+    if(wasHidden && settingsClosed[k]) return;
+    if(!topic) return;
+    var token = 0;
+    for(var i=0;i<settingsPending.length;i++){
+      if(settingsPending[i].t !== topic) continue;
+      token = settingsPending[i].n;
+      settingsPending.splice(i, 1);
+      break;
+    }
+    if(wasHidden && token && token <= settingsClosedUpTo) return;
+    settingsMsg = m;
+    settingsNote = null;
+    settingsLevel = '';
+    settingsTopic = topic;
+    paintSettingsTopic();
+    renderSettings();
+    settingsPage.hidden = false;
+    settingsBody.scrollTop = 0;
+    disarmSettingsWait();
+  }
+
+  /** The page, before the daemon has answered: it says which topic it is about at once. */
+  function openSettingsLoading(){
+    if(!topic) return 0;
+    settingsMsg = null;
+    settingsTopic = topic;
+    settingsBody.innerHTML = '<div class="set-loading">Loading settings…</div>';
+    paintSettingsTopic();
+    settingsPage.hidden = false;
+    settingsBody.scrollTop = 0;
+    var token = ++settingsReq;
+    settingsPending.push({ t: topic, n: token });
+    armSettingsWait();
+    return token;
+  }
+
+  /** Stop waiting for an answer: the page is open, closed, or the request failed. */
+  function disarmSettingsWait(){
+    if(settingsTimer){ clearTimeout(settingsTimer); settingsTimer = 0; }
+  }
+
+  /**
+   * Say so rather than sitting on Loading for ever: the daemon may have dropped the request, or
+   * answered with something that is not a screen at all. The page stays up, so the operator can
+   * close it and try again.
+   */
+  function armSettingsWait(){
+    disarmSettingsWait();
+    settingsTimer = setTimeout(function(){
+      settingsTimer = 0;
+      if(settingsPage.hidden || settingsMsg) return;
+      settingsSay('The daemon did not answer. Close this and try again.');
+    }, SETTINGS_WAIT_MS);
+  }
+
+  /** The answer to a request that failed on the way out will never arrive; let its token go. */
+  function forgetSettingsRequest(token){
+    for(var i=0;i<settingsPending.length;i++){
+      if(settingsPending[i].n !== token) continue;
+      settingsPending.splice(i, 1);
+      return;
+    }
+  }
+
+  function settingsSay(s){
+    settingsBody.innerHTML = '<div class="set-loading">'+text(s)+'</div>';
+  }
+
+  function closeSettings(){
+    if(settingsPage.hidden) return;
+    if(settingsMsg) settingsClosed[settingsKey(settingsMsg)] = 1;
+    // Every request issued so far is cancelled, including one still in flight while Loading —
+    // otherwise its answer would reopen the page the operator just put away.
+    if(settingsReq) settingsClosedUpTo = Math.max(settingsClosedUpTo, settingsReq);
+    disarmSettingsWait();
+    settingsPage.hidden = true;
+    settingsMsg = null;
+    settingsNote = null;
+    settingsTopic = null;
+    settingsListFk = null;
+    agOpen = null;
+    settingsBody.textContent = '';
+  }
+
+  /**
+   * A control on the settings page was used. Posted like any menu button, with the page's own
+   * message and topic. A switch or a segment shows its new state at once — the round trip is the
+   * daemon writing config.yaml, and a control that sits unmoved for it reads as broken — and the
+   * daemon's answer redraws the page from what was actually written. When the answer cannot come
+   * (the request failed, or the message is gone), the page is redrawn from what it last had, which
+   * puts the control back, with a line saying why.
+   */
+  /** Show only the values whose name or meaning holds what is typed, and say so when none does. */
+  function filterSettings(){
+    var field = settingsBody.querySelector('.set-type');
+    var q = field ? field.value.trim().toLowerCase() : '';
+    var opts = settingsBody.querySelectorAll('.set-list .set-opt'), shown = 0;
+    for(var i=0;i<opts.length;i++){
+      var hit = !q || (opts[i].getAttribute('data-q') || '').indexOf(q) >= 0;
+      opts[i].hidden = !hit;
+      if(hit) shown++;
+    }
+    var none = settingsBody.querySelector('.set-nomatch');
+    if(none) none.hidden = !(q && opts.length && !shown);
+  }
+
+  /** Use what is typed: the click carries it as its value (ButtonInteraction.value). */
+  function useTyped(){
+    var field = settingsBody.querySelector('.set-type');
+    if(!field) return;
+    var v = field.value.trim();
+    if(!v){ field.focus(); return; }
+    postSetting(field, field.getAttribute('data-btn'), v);
+  }
+
+  function postSetting(el, id, value){
+    if(!settingsMsg || !settingsTopic || !id) return;
+    var msgId = settingsMsg.id;
+    if(settingsLevel === 'list') settingsListFk = el.getAttribute('data-fk');
+    if(el.getAttribute('role') === 'switch') el.setAttribute('aria-checked', el.getAttribute('aria-checked') === 'true' ? 'false' : 'true');
+    if(el.getAttribute('role') === 'radio'){
+      var peers = el.parentNode ? el.parentNode.children : [];
+      for(var i=0;i<peers.length;i++) peers[i].setAttribute('aria-checked', peers[i] === el ? 'true' : 'false');
+    }
+    el.disabled = true;
+    el.classList.add('busy');
+    var fail = function(why){
+      if(!settingsMsg || settingsMsg.id !== msgId) return;
+      settingsNote = why;
+      renderSettings();
+    };
+    // A limit, unlike a transcript menu's tap: a request that goes quiet would leave the control
+    // half-moved for ever, with nothing on the page to say the change never happened.
+    var body = {topic:settingsTopic,messageId:msgId,buttonId:id};
+    if(value) body.value = value;
+    post('api/click',body,2,SETTINGS_WAIT_MS)
+      .then(function(r){
+        if(r.ok) return;
+        fail(r.status === 409 || r.status === 404
+          ? 'This settings page is out of date, so nothing was changed. Close it and open Settings again.'
+          : 'The daemon did not take that (HTTP '+r.status+'), so nothing was changed. Try again.');
+      }, function(){ fail('Could not reach the daemon, so nothing was changed. Check the connection and try again.'); });
+  }
+
+  /**
+   * Send a command the operator did not type — the Menu asking the daemon for its own
+   * settings screen. quiet tells the room not to write it into the conversation: a page opening
+   * must not leave a /setting bubble in the transcript, and nothing on the daemon's side needs
+   * the echo (the answer is a new message of its own).
+   */
+  function quietCommand(cmd, t){
+    var nonce = Math.random().toString(36).slice(2)+Date.now().toString(36);
+    return post('api/send', {topic:t, text:cmd, nonce:nonce, quiet:true}, 2)
+      .then(function(r){ return r.ok; }, function(){ return false; });
+  }
+
+  /**
+   * A button in a menu or in the settings page. Disabled and lit as well as disabled: the answer
+   * is a round trip away, and a button that only greys out reads as "nothing happened" for
+   * exactly that long. A refusal (409: that message is gone) leaves it disabled, but no longer
+   * lit — nothing is coming.
+   */
+  function postButton(b, t){
+    b.disabled = true;
+    b.classList.add('busy');
+    post('api/click',{topic:t,messageId:b.getAttribute('data-msg'),buttonId:b.getAttribute('data-btn')},2)
+      .then(function(r){ if(!r.ok) b.classList.remove('busy'); })
+      .catch(function(){ b.disabled=false; b.classList.remove('busy'); });
+  }
+
+  /**
+   * A label's width in ch, near enough to size a column by: a CJK character is about two, and an
+   * agent asking in Chinese offers its choices in Chinese. Erring wide is the cheap direction — a
+   * column a little too roomy, against a label that wraps when it did not have to.
+   */
+  function labelWidth(s){
+    var n = 0;
+    for(var i=0;i<s.length;i++) n += s.charCodeAt(i) >= 0x2e80 ? 2 : 1;
+    return n;
+  }
+
+  /**
+   * Which lines of each tool bubble the reader has opened, by message key: {all, lines: {i: open}}.
+   * A line with no entry of its own follows all, which is how "Show all" also opens the lines the
+   * agent adds after it was pressed.
+   *
+   * Kept here rather than as a class on the elements, because a tool bubble is edited every time
+   * a tool starts or finishes and every edit rewrites its markup — a line opened on the old
+   * element would snap shut under the reader at the next ✓. In memory only: which line someone is
+   * reading is a reading position, not part of the conversation, and the cache does not keep it.
+   * Like a scroll position, though, it is not reset on the way out of a topic (opened is declared
+   * beside sig, and only drop() forgets an entry): coming back finds the same lines open.
+   */
+  function lineOpen(st, i){
+    if(!st) return false;
+    return st.lines[i] !== undefined ? st.lines[i] : st.all;
+  }
+
+  /**
+   * A tool bubble's markup with each line's index stamped on it and the opened ones marked.
+   *
+   * A string rewrite, not a DOM walk, so the result can be compared with what is on screen before
+   * anything is written (see sig in paint). The pattern is exact because the markup is:
+   * renderWebToolLines writes this tag and nothing else, and escapes every < inside a line.
+   */
+  function foldLines(key, html){
+    var st = opened[key], i = 0;
+    return html.replace(/<div class="tl">/g, function(){
+      var n = i++;
+      return '<div class="tl'+(lineOpen(st, n) ? ' open' : '')+'" data-i="'+n+'">';
+    });
+  }
+
+  function allToggle(key){
+    var st = opened[key];
+    return '<button type="button" class="tl-all" data-tl-all="'+text(key)+'">'
+      + (st && st.all ? 'Collapse' : 'Show all') + '</button>';
+  }
+
+  /** Open every line of a tool bubble, or fold them all back. Either way, per-line choices go. */
+  function toggleAll(key){
+    if(!msgAt(key)) return;
+    var st = opened[key];
+    opened[key] = { all: !(st && st.all), lines: {} };
+    repaintKey(key);
+  }
+
+  /**
+   * Open or fold one line. Not when the click ended a drag-select: copying part of a command is
+   * the other thing a reader does with these lines, and repainting the bubble under the selection
+   * would throw it away and fold the line they were copying from.
+   */
+  function toggleLine(line){
+    var sel = window.getSelection ? window.getSelection() : null;
+    if(sel && String(sel)) return;
+    var host = line.closest('[data-k]');
+    var key = host ? host.getAttribute('data-k') : null;
+    if(!key || !msgAt(key)) return;
+    var i = line.getAttribute('data-i');
+    var st = opened[key] || (opened[key] = { all: false, lines: {} });
+    st.lines[i] = !lineOpen(st, i);
+    repaintKey(key);
+  }
+
+  /** A message by key, in the transcript or in the conversation opened from History. */
+  function msgAt(key){ return data[key] || libData[key]; }
+  function repaintKey(key){ if(libData[key]) paintLib(key); else paint(key); }
+
+  /**
+   * What a message that never reached the daemon offers instead of silence.
+   *
+   * Retry is there whenever this page can rebuild exactly what was sent: always for a message
+   * typed in this tab, and after a reload for one that was text alone. A message that carried
+   * files offers Copy and Discard alone once the page has been reloaded — the files were base64 in
+   * a request body and deliberately never written down, and re-sending the text without the files
+   * it was written about would be a different message.
+   *
+   * 'unsure' is a message that was still on its way when the last page went away, so nothing here
+   * saw how it ended. The first sync settles it: carrying its echo, it is claimed like any other;
+   * not carrying it, from the same daemon, it never arrived. Until then — and for good, when the
+   * daemon has restarted since and its ring cannot say — it says it does not know.
+   */
+  function stuck(m){ return Boolean(m._local) && (m._state === 'failed' || m._state === 'unsure'); }
+
+  function failedActions(m){
+    var why = m._state === 'unsure'
+      ? 'Not confirmed — the page closed before the daemon answered, so this may not have arrived.'
+      : 'Not delivered — the agent never saw this.';
+    var h = '<div class="warn">'+why+'</div><div class="acts">';
+    if(outbox[m._nonce]) h += '<button type="button" data-retry="'+text(m._nonce)+'">Retry</button>';
+    return h + '<button type="button" data-copy="'+text(m._nonce)+'">Copy</button>'
+      + '<button type="button" data-discard="'+text(m._nonce)+'">Discard</button></div>';
+  }
+
+  function upsert(m){
+    m._g = m.g || epoch;
+    // The settings screen lives in its own page; it is not a message here. See takeSettings.
+    if(m.settings || m.wasSettings) return;
+    var stick=atBottom();
+    var key = keyOf(m);
+    data[key]=m; paint(key); syncEmptyNote(); if(stick) toBottom();
+  }
+
+  function drop(key){
+    var m = data[key];
+    if(els[key]) { els[key].remove(); delete els[key]; }
+    delete data[key];
+    delete sig[key];
+    delete opened[key];
+    // A side question that goes leaves its answers drawn in the transcript rather than nowhere, and
+    // takes the card with it; an answer that goes is taken out of the card.
+    if(m && btwAsked(key, m) !== null){
+      if(btwKey === key) closeBtw(false);
+      var parts = btwParts(key);
+      for(var i=0;i<parts.length;i++) paint(parts[i]);
+    }
+    var q = btwOf(m);
+    if(q && q === btwKey && !btwBox.hidden) renderBtw(false);
+    if(q && els[q] && data[q]) paint(q);
+    syncEmptyNote();
+  }
+
+  /**
+   * Bring the transcript to exactly the list given, reusing what is already on screen.
+   *
+   * The predecessor emptied #log and rebuilt every message from the sync. That is what made
+   * entering a topic jarring: the scroll container was destroyed along with its scrollTop, then
+   * refilled and snapped, so a topic whose messages were ALREADY painted from cache still flashed
+   * through blank. Here an unchanged message is left untouched (paint writes nothing when the
+   * markup matches), and appendChild MOVES a node that already exists rather than cloning it — so
+   * ordering costs no re-creation either, and nothing re-runs the fade-in animation.
+   *
+   * Only messages of the CURRENT generation are the sync's to remove. Cached history belongs to
+   * a daemon that is not on the other end of this stream, and a local message still waiting on
+   * its POST was never the server's to know about; both would otherwise vanish the moment the
+   * connection blipped.
+   *
+   * A local message whose echo the sync carries is claimed here, exactly as a msg event claims
+   * one. Only msg events used to, so an echo that arrived in a full sync instead — a reconnect the
+   * backlog no longer reached, a reload — left the local copy on screen beside it, and one restored
+   * after a reload could never be told it had arrived.
+   */
+  function reconcile(list){
+    clearSkeleton();
+    // The sync this was waiting for. Cleared before anything is painted, so the messages it
+    // carries are appended to a log whose last child is a message again.
+    clearSyncing();
+    var keep={};
+    for(var i=0;i<list.length;i++){
+      var m=list[i];
+      // A message a topic kept on disk from an earlier run says which run (g): it is that
+      // run's history, under the key this browser's cache already has it by.
+      m._g = m.g || epoch;
+      // A settings screen — live or retired — is drawn in its own page, never in the transcript.
+      // The sync is where a reload would otherwise bring one back as a plain bubble.
+      if(m.settings || m.wasSettings) continue;
+      claim(m);
+      var key=keyOf(m);
+      keep[key]=1;
+      data[key]=m;
+      paint(key);
+      log.appendChild(els[key]);
+    }
+    var gone=[];
+    for(var k in els){
+      if(keep[k]) continue;
+      var held=data[k];
+      if(!held || held._local || held._g !== epoch) continue;
+      gone.push(k);
+    }
+    for(var j=0;j<gone.length;j++) drop(gone[j]);
+    sinkLocals();
+  }
+
+  /**
+   * Put every message still waiting on the daemon under the transcript, in the order it was sent.
+   *
+   * The loop above appends each message the sync carries, which MOVES it to the end — so anything
+   * it does not carry ends up above all of them. For cached history that is the point. For a
+   * local message it put a failure restored after a reload at the head of the topic, above every
+   * message the reader lands below, which on a long topic is indistinguishable from having lost
+   * it. A message nobody has acknowledged is the newest thing in the room and waits where the
+   * composer is. Nothing moves when they are already there, so a sync with nothing pending, which
+   * is nearly all of them, re-runs no entrance animation.
+   */
+  function sinkLocals(){
+    var mine=[], tail=0, other=false;
+    for(var n=log.lastChild; n; n=n.previousSibling){
+      if(n === syncingEl) continue;
+      var k = n.getAttribute ? n.getAttribute('data-k') : null;
+      if(k && data[k] && data[k]._local){ mine.unshift(n); if(!other) tail++; }
+      else other = true;
+    }
+    if(tail === mine.length) return;
+    var at = (syncingEl && syncingEl.parentNode === log) ? syncingEl : null;
+    for(var i=0;i<mine.length;i++) log.insertBefore(mine[i], at);
+  }
+
+  /**
+   * Hold the shape of a transcript that has not arrived yet.
+   *
+   * Only ever shown into an EMPTY log: a topic painted from cache has real content to look at,
+   * and stacking placeholders under it would claim messages are still coming when the next event
+   * is going to replace what is there rather than extend it.
+   */
+  var SKELETON = '<div class="sk own"><i style="width:34%"></i></div>'
+    + '<div class="sk"><i style="width:86%"></i><i style="width:73%"></i><i style="width:41%"></i></div>'
+    + '<div class="sk own"><i style="width:52%"></i><i style="width:28%"></i></div>'
+    + '<div class="sk"><i style="width:79%"></i><i style="width:62%"></i></div>';
+
+  function showSkeleton(){
+    if(log.firstChild) return;
+    log.innerHTML = SKELETON;
+    skeleton = true;
+  }
+
+  function clearSkeleton(){
+    if(!skeleton) return;
+    skeleton = false;
+    log.innerHTML = '';
+    // Emptying #log invalidates anything held by reference into it, and these are the only
+    // things in there that are not messages.
+    emptyEl = null;
+    launchEl = null;
+    launchSig = '';
+    dividerEl = null;
+    syncingEl = null;
+  }
+
+  /**
+   * Say why an empty room is empty, when the server said this topic predates the daemon.
+   *
+   * A transcript is kept on the daemon's disk, but not by a daemon older than 2.13.0 for a topic that
+   * was not starred, nor when its file could not be read — and those topics are rows that open onto
+   * nothing. Rendered faithfully that is a blank panel, which is indistinguishable from a page that
+   * failed to load — and is exactly how it was reported.
+   */
+  var EMPTY_NOTE = 'This topic is older than the running daemon, and its transcript was not kept, so'
+    + ' anything said in it is no longer here. The agent still has its context, so you can carry on'
+    + ' where you left off.';
+
+  function hasMessages(){
+    for(var k in els) if(els.hasOwnProperty(k)) return true;
+    return false;
+  }
+
+  function syncEmptyNote(){
+    var empty = !hasMessages();
+    // The choice of agent first, and instead of the notice: while the choice is open no agent has a
+    // session here, so "the agent still has its context" would not be true of this room.
+    syncLaunch(Boolean(launch) && empty);
+    var want = stale && empty && !launchEl;
+    if(want === Boolean(emptyEl)) return;
+    if(want){
+      clearSkeleton();
+      emptyEl = document.createElement('div');
+      emptyEl.className = 'empty';
+      emptyEl.textContent = EMPTY_NOTE;
+      log.appendChild(emptyEl);
+    } else {
+      if(emptyEl.parentNode) emptyEl.parentNode.removeChild(emptyEl);
+      emptyEl = null;
+    }
+  }
+
+  /**
+   * A new topic: the agents it could be given to, laid out where its transcript is going to be.
+   *
+   * The daemon sends the choice on the sync of an empty room for as long as it is open — the agent
+   * that would answer has no session here yet — and it is drawn while the room stays empty. A tap
+   * sends /agent <id> the way typing it would (command), so the transcript records the choice and
+   * the daemon follows it with where that agent should work; the bubble that send paints is a
+   * message, and a message is what takes this away. Typing instead is an answer too, which is why
+   * the agent it would reach is marked. A send that fails and is discarded empties the room again,
+   * and the choice comes back with it.
+   */
+  function launchHtml(c){
+    var h = '<div class="launch-head"><div class="launch-title">Choose an agent</div>'
+      + '<div class="launch-sub">Or just type — <b>'+text(c.current)+'</b> answers by default.</div></div>';
+    // One machine needs no heading: it would name the only answer to a question nobody asked —
+    // unless it is offline, which is worth saying even of the only one.
+    var many = c.groups.length > 1;
+    for(var i=0;i<c.groups.length;i++){
+      var g = c.groups[i], off = offSince(g.name);
+      h += '<section class="launch-group'+(off?' off':'')+'">';
+      if(many || off) h += '<h3 class="launch-host">'+text(g.name)+' <span class="n">'+g.agents.length+'</span>'
+        + (off ? '<span class="off" title="'+text(offTitle(g.name))+'">'+IC.icon.offline+'offline since '+text(offWhen(off))+'</span>' : '')
+        + '</h3>';
+      h += '<div class="launch-grid">';
+      for(var j=0;j<g.agents.length;j++){
+        var a = g.agents[j], on = a.id === c.current;
+        h += '<button type="button" class="agent-card'+(on?' def':'')+'" data-agent="'+text(a.id)+'" title="/agent '+text(a.id)+(off?' — '+text(g.name)+' is offline':'')+'">'
+          + '<span class="ac-top"><span class="ac-id">'+text(a.id)+'</span>'+(on?'<span class="ac-tag">default</span>':'')+'</span>'
+          + '<span class="ac-kind"><i class="ac-dot h-'+text(a.harness)+'"></i><span>'+text(a.kind)+'</span></span>'
+          + (a.model ? '<span class="ac-model" title="'+text(a.model)+'">'+text(a.model)+'</span>' : '')
+          + '</button>';
+      }
+      h += '</div></section>';
+    }
+    return h;
+  }
+
+  /** Show the choice, or take it away; redrawn only when what it was drawn from changed. */
+  function syncLaunch(want){
+    // The machine list is part of what it is drawn from: an offline heading comes and goes with it.
+    var s = want ? JSON.stringify(launch)+offlineSig : '';
+    if(s === launchSig && want === Boolean(launchEl)) return;
+    if(launchEl && launchEl.parentNode) launchEl.parentNode.removeChild(launchEl);
+    launchEl = null;
+    launchSig = '';
+    if(want){
+      clearSkeleton();
+      launchEl = document.createElement('div');
+      launchEl.className = 'launch';
+      launchEl.innerHTML = launchHtml(launch);
+      log.appendChild(launchEl);
+      launchSig = s;
+    }
+    // The model switch waits on the launcher (paintStatus), so it follows it at once: up the moment
+    // an agent is chosen, gone again if a failed send empties the room and the choice comes back.
+    paintStatus();
+    paintMachineNote();
+  }
+
+  // ── Machines the gateway cannot reach ───────────────────────────────────────────
+  // The daemon measures it (daemon/host-availability.ts) and pushes the whole list on every change:
+  // the sync's offline field, then machines events. Shown where it explains something — a topic's
+  // line in the list, the heading over that machine's agents, and above the composer of a topic on
+  // it — because a message to such a machine is not refused: it waits, or fails once it is tried,
+  // and either way nothing on screen said why.
+
+  /** Take the list as state; true when it changed. The caller repaints. */
+  function takeMachines(list){
+    var sigNow = JSON.stringify(list || []);
+    if(sigNow === offlineSig) return false;
+    var next = {};
+    for(var i=0;i<(list||[]).length;i++) next[list[i].name] = list[i].since;
+    offlineMachines = next;
+    offlineSig = sigNow;
+    return true;
+  }
+
+  function setMachines(list){
+    if(!takeMachines(list)) return;
+    paintTopics();
+    if(launchEl) syncLaunch(true);
+  }
+
+  /** Since when a machine is offline (epoch ms), or 0 for one that is not. */
+  function offSince(name){
+    return name && Object.prototype.hasOwnProperty.call(offlineMachines, name) ? offlineMachines[name] : 0;
+  }
+
+  /** A time of day for an outage that began today-ish, the date as well for an older one. */
+  function offWhen(at){
+    return Date.now() - at < 20*3600000 ? stClock(at) : new Date(at).toLocaleString();
+  }
+
+  function offTitle(name){
+    return name+' has been offline since '+offWhen(offSince(name))+': the gateway cannot reach it, so its agents cannot answer until it is back.';
+  }
+
+  /** The line above the composer, for the topic on screen when its machine is offline. */
+  function paintMachineNote(){
+    var cur = null;
+    for(var i=0;i<topics.length;i++) if(topics[i].id===topic){ cur = topics[i]; break; }
+    var name = cur && cur.dir ? cur.dir.host : '';
+    var off = offSince(name);
+    // Not under the agent cards, whose heading already says it.
+    if(!off || launchEl){
+      machineNoteEl.hidden = true;
+      machineNoteEl.innerHTML = '';
+      return;
+    }
+    machineNoteEl.innerHTML = IC.icon.offline+'<span>'+text(name+' is offline since '+offWhen(off)+' — its agents cannot answer until it is back.')+'</span>';
+    machineNoteEl.title = offTitle(name);
+    machineNoteEl.hidden = false;
+  }
+
+  /**
+   * The line at the top of a forked topic (Topic.forkOf): where it came from, at which turn, and a tap
+   * back there. Hidden on every other topic, and once the source is gone — the daemon drops forkOf
+   * with it, so the line never points at nothing. Rewritten only when what it says changes: this runs
+   * on every topic list, and a list arrives with every message.
+   */
+  var forkNoteKey='';
+  function paintForkNote(cur){
+    var src=cur && cur.forkOf ? topicById(cur.forkOf) : null;
+    var key=src ? src.id+'|'+(cur.forkTurn||'')+'|'+(src.title||'') : '';
+    if(key===forkNoteKey) return;
+    forkNoteKey=key;
+    forkNote.hidden=!src;
+    if(!src){ forkNote.innerHTML=''; forkNote.removeAttribute('data-src'); return; }
+    forkNote.innerHTML=IC.icon.fork+'<span>Forked from</span><span class="fork-src">'+text(src.title||'Untitled')+'</span>'
+      +(cur.forkTurn?'<span>· turn '+cur.forkTurn+'</span>':'');
+    forkNote.setAttribute('data-src', src.id);
+    forkNote.title='Back to '+(src.title||'Untitled');
+  }
+  forkNote.addEventListener('click', function(){
+    var id=forkNote.getAttribute('data-src');
+    if(!id || !topicById(id)) return;
+    switchTopic(id);
+    if(narrow()) setSidebar(false);
+  });
+
+  /**
+   * The line between what was said before the daemon restarted and what it is serving now.
+   *
+   * A restart does not take the conversation, which the agent still has, and it no longer takes
+   * what was on screen either. The messages above this line came back out of the daemon's own copy
+   * on disk, or out of this browser's cache: they are real, they are just no longer anything the
+   * process can be asked about, which is why nothing up there has a button on it.
+   */
+  var DIVIDER_NOTE = 'Everything above is from before the daemon restarted.'
+    + ' The agent still has its context, so you can carry on below.';
+  var dividerEl=null;
+
+  /** Keep the divider immediately after the last cached message, or gone when there are none. */
+  function placeDivider(){
+    var last=null;
+    for(var n=log.firstChild; n; n=n.nextSibling){
+      var k = n.getAttribute ? n.getAttribute('data-k') : null;
+      if(k && isHistory(data[k])) last=n;
+    }
+    if(!last){
+      if(dividerEl && dividerEl.parentNode) dividerEl.parentNode.removeChild(dividerEl);
+      dividerEl=null;
+      return;
+    }
+    if(!dividerEl){
+      dividerEl=document.createElement('div');
+      dividerEl.className='divider';
+      dividerEl.textContent=DIVIDER_NOTE;
+    }
+    if(last.nextSibling !== dividerEl) log.insertBefore(dividerEl, last.nextSibling);
+  }
+
+  /**
+   * That a transcript painted out of the local cache is not the whole story yet.
+   *
+   * Entering a topic with the cache warm is instantaneous — and then, a second or two later,
+   * everything said in it while you were elsewhere appears in one frame, with nothing in between
+   * having suggested more was coming. The skeleton cannot answer that: it only ever goes into an
+   * EMPTY log, and this log is full. So the wait is marked where the missing messages are going
+   * to land, at the bottom, and it says what it is waiting FOR rather than impersonating one of
+   * them — most syncs add nothing and the line just goes away again.
+   */
+  var SYNC_NOTE = 'Checking for anything said while you were away';
+  var syncingEl=null;
+
+  function showSyncing(){
+    // Not over an empty log: the skeleton is already standing in for the whole transcript there,
+    // and two answers to one wait is one too many.
+    if(syncingEl || synced || skeleton || !log.firstChild) return;
+    syncingEl=document.createElement('div');
+    syncingEl.className='syncing';
+    syncingEl.innerHTML='<span class="dots"><i></i><i></i><i></i></span><span>'+SYNC_NOTE+'</span>';
+    log.appendChild(syncingEl);
+  }
+
+  function clearSyncing(){
+    if(syncingEl && syncingEl.parentNode) syncingEl.parentNode.removeChild(syncingEl);
+    syncingEl=null;
+  }
+
+  /**
+   * Re-draw whatever the cache handed us once a sync has said which generation is live.
+   *
+   * Before the first sync a cached message is painted as an ordinary message, because there is
+   * nothing yet to say it is not one. The sync answers that: if the daemon has been restarted
+   * since, every one of them is history, which changes how it is drawn (no buttons) and puts a
+   * line under the lot. paint writes nothing for the messages whose markup did not change, so on
+   * the ordinary path — same daemon, cache matching the ring — this costs one loop and no DOM.
+   */
+  function repaintHistory(){
+    for(var k in els){ if(isHistory(data[k])) paint(k); }
+    placeDivider();
+  }
+
+  /**
+   * Put cached messages on screen around whatever is already there.
+   *
+   * Both orders happen and both are normal. Usually the cache wins the race against the first
+   * sync, and is then simply the transcript, painted early — its keys are the ones the sync is
+   * about to produce, so the sync reuses the nodes and writes nothing. When the sync gets there
+   * first the only cached messages still worth showing are the ones the daemon does NOT have,
+   * and those belong above what it sent. current says the copy is the topic as it stands (enter),
+   * so there is nothing for the line that says the page is still checking to wait for.
+   */
+  function adopt(list, current){
+    clearSkeleton();
+    // On the way into a topic this is usually the first real paint, so it is where the reader is
+    // put back (land, below). Otherwise the sync got here first and only someone already at the
+    // bottom is kept there.
+    var stick = !entering && atBottom();
+    // Captured once: every history node goes in front of the same first live message, which is
+    // what keeps them in the order they were said rather than reversing them.
+    var anchor = synced ? log.firstChild : null;
+    var moved = false;
+    for(var i=0;i<list.length;i++){
+      var m=list[i];
+      if(!m || !m.id) continue;
+      if(m._local){ moved = adoptLegacy(m) || moved; continue; }
+      // Never a transcript row, and not something a cached copy should bring back either.
+      if(m.settings || m.wasSettings) continue;
+      var key = keyOf(m);
+      if(data[key] || els[key]) continue;
+      if(synced && !isHistory(m)) continue;
+      data[key]=m;
+      paint(key, synced ? anchor : null);
+    }
+    // Painted only now, and the cache rewritten without them: from here on unsent is their home.
+    if(moved){ showUnsent(topic); cacheSave(); }
+    // Before the waiting line goes in. Before the first sync the cache is appended under whatever is
+    // already on screen, and that includes the messages restored from unsent, which belong under
+    // all of it.
+    sinkLocals();
+    placeDivider();
+    syncEmptyNote();
+    // Last, so it is last in the log: what the sync may still add goes under what the cache had.
+    if(!current) showSyncing();
+    if(entering) land(); else if(stick) toBottom();
+  }
+
+  /**
+   * The scheduled run each topic belongs to, by id: a run is its own, and a topic its agent opened —
+   * or one opened under that, any depth — is the run's. A topic in no run has no entry.
+   *
+   * The two lists split the topics on this: the switcher (topicForest) draws what is in no run, and
+   * the Sessions tab (paintSessions) draws every run with the topics under it. Before this, a
+   * sub-agent a scheduled run opened was not a run itself, so the switcher drew it — as a root,
+   * because its parent was not in that list — while the run it belonged to sat in the panel
+   * (reported 2026-11-13). A parent chain that loops, or runs past 32, belongs to no run.
+   */
+  function runOwners(){
+    var byId={}, out={}, i;
+    for(i=0;i<topics.length;i++) byId[topics[i].id]=topics[i];
+    for(i=0;i<topics.length;i++){
+      var t=topics[i], hops=0;
+      while(t && hops++<32){
+        if(t.scheduled){ out[topics[i].id]=t.id; break; }
+        if(!t.parent || t.parent===t.id) break;
+        t=byId[t.parent];
+      }
+    }
+    return out;
+  }
+
+  /**
+   * A list's tree: each topic under the one its agent opened it from (Topic.parent), when that one
+   * is in the same list, and a root otherwise. visible keeps the list's order — the daemon's, most
+   * recently active first — and so does each topic's kids.
+   */
+  function topicTree(list){
+    var byId={}, kids={}, forks={}, roots=[], i;
+    for(i=0;i<list.length;i++) byId[list[i].id]=list[i];
+    for(i=0;i<list.length;i++){
+      var p=list[i].parent, f=list[i].forkOf;
+      if(p && p!==list[i].id && byId[p]) (kids[p]=kids[p]||[]).push(list[i]);
+      // A fork (Topic.forkOf) is drawn right after its source, at its depth — beside it, not under
+      // it: it is the person's own conversation, which no agent opened. A root when its source is
+      // not in this list (a scheduled run's, or one the filter left out).
+      else if(f && f!==list[i].id && byId[f]) (forks[f]=forks[f]||[]).push(list[i]);
+      else roots.push(list[i]);
+    }
+    return {visible:list, byId:byId, kids:kids, forks:forks, roots:roots};
+  }
+
+  /** Who a row hangs off in the drawn list: its parent, else the source it was forked from. */
+  function hangsOff(t, byId){
+    if(t.parent && byId[t.parent]) return t.parent;
+    if(t.forkOf && byId[t.forkOf]) return t.forkOf;
+    return null;
+  }
+
+  /**
+   * A tree's rows, depth-first: walk(t) adds t and, unless it is folded, the topics its agent
+   * opened under it, a level deeper. The one way a sub-agent is nested, in both lists that draw
+   * one: the switcher (topicRows) and the Sessions tab (paintSessions), which choose the roots and
+   * their order and leave the rest to this.
+   *
+   * folded is per browser and keyed by the parent's id, so a run folds the same way a topic does.
+   * The topic on screen is never folded away: its ancestors are drawn open, without that being
+   * saved, so a link into a sub-agent's topic lands on a row you can see. A folded row carries
+   * under, the most pressing state among the topics it hides, for the pill's colour.
+   *
+   * rest(keep) adds whatever no walk reached and no fold hides — only a parent field that loops
+   * (a hand-edited file) leaves one: with no root to start from, the first topic of the loop in the
+   * list's order is drawn as one and the rest under it, rather than lost. keep, when given, limits
+   * it to those ids.
+   */
+  function treeWalker(tree){
+    var byId=tree.byId, kids=tree.kids, forks=tree.forks||{};
+    // Up through sources as well as parents: a fork is drawn where its source is, so the topic on
+    // screen being a fork of a sub-agent's topic still opens the parent that topic is under.
+    var open={}, up=byId[topic], hops=0, next;
+    while(up && (next=hangsOff(up, byId)) && hops++<32){ if(up.parent===next) open[next]=true; up=byId[next]; }
+    var rows=[], seen={};
+    function state(t, depth){
+      var ch=kids[t.id]||[], s='';
+      for(var k=0;k<ch.length && depth<32;k++){
+        var c=ch[k];
+        var mine=c.asking?'asking':(c.stage==='failed'?'failed':(c.running?'running':''));
+        var deeper=state(c, depth+1);
+        var pick=[mine, deeper, s];
+        s=pick.indexOf('asking')>=0?'asking':(pick.indexOf('failed')>=0?'failed':(pick.indexOf('running')>=0?'running':''));
+      }
+      return s;
+    }
+    function walk(t, depth){
+      if(seen[t.id]) return;
+      seen[t.id]=true;
+      var ch=kids[t.id]||[];
+      var shut=ch.length>0 && folded[t.id]!==false && !open[t.id];
+      rows.push({t:t, depth:depth, kids:ch.length, shut:shut, under:shut?state(t, 0):''});
+      if(!shut) for(var k=0;k<ch.length;k++) walk(ch[k], depth+1);
+      // Its forks after it and everything under it, at its own depth, whether or not it is folded:
+      // folding hides what its agent opened, and a fork is not that.
+      var fk=forks[t.id]||[];
+      for(var j=0;j<fk.length;j++) walk(fk[j], depth);
+    }
+    function rest(keep){
+      var list=tree.visible;
+      for(var i=0;i<list.length;i++){
+        if(keep && !keep[list[i].id]) continue;
+        // Hidden under a folded parent is seen-by-design; only a loop leaves one unseen.
+        var hidden=false, a=list[i], n=0, by;
+        while(a && (by=hangsOff(a, byId)) && n++<32){
+          if(a.parent===by && seen[by] && folded[by]!==false && !open[by]){ hidden=true; break; }
+          a=byId[by];
+        }
+        if(!seen[list[i].id] && !hidden) walk(list[i], 0);
+      }
+    }
+    return {rows:rows, walk:walk, rest:rest};
+  }
+
+  /**
+   * The list's tree and its conversations, built from the topics in hand. A conversation is a
+   * root and everything its agent opened under it — the unit the filter keeps or drops whole
+   * (topicRows) and the unit the chips count (topicFilterGroups), so one tree is one result in
+   * both places. A parent that loops (only a hand-edited file could) gives the loop no root, so
+   * the first topic of it met in the list starts the conversation and the rest hang under it the
+   * way the walk reaches them — a two-topic loop is drawn as the first root with the second folded
+   * under it, and the conversation is exactly that pair. Scheduled runs are conversations, but not
+   * ones the person opened: the panel's Sessions tab is where they live, with the sub-agents they
+   * opened (runOwners), and leaving them out here also keeps their unread badges and "needs you"
+   * rows out of the switcher.
+   *
+   * Each conversation carries what the filter decides on: its most pressing state, whether any
+   * topic in it is starred, and every agent and host it touches. State and star are whole-tree
+   * properties, so the four state chips partition the conversations; agents and hosts are a
+   * union, because a root and a sub-agent may well run on different ones.
+   */
+  function topicForest(){
+    var runs=runOwners(), list=[], i;
+    for(i=0;i<topics.length;i++) if(!runs[topics[i].id]) list.push(topics[i]);
+    var tree=topicTree(list), visible=tree.visible, kids=tree.kids, roots=tree.roots;
+    var convs={}, convOrder=[], seenC={};
+    function mark(t, id){
+      if(seenC[t.id]) return;
+      seenC[t.id]=true;
+      var c=convs[id], rank=stateRank(t);
+      c.members.push(t);
+      if(rank<c.rank) c.rank=rank;
+      if(t.starred) c.starred=true;
+      // By the legend's own words, so a chip names an agent the way the rows do.
+      var agent=agentOf(t);
+      if(agent) c.agents[agent.label]=true;
+      c.hosts[t.dir && t.dir.host ? t.dir.host : '__local']=true;
+      // A fork belongs to its source's conversation here, as it is drawn beside it: a filter that
+      // keeps the source keeps the forks next to it.
+      var ch=(kids[t.id]||[]).concat(tree.forks[t.id]||[]);
+      for(var k=0;k<ch.length;k++) mark(ch[k], id);
+    }
+    function start(t){
+      if(seenC[t.id]) return;
+      convs[t.id]={members:[], rank:3, starred:false, agents:{}, hosts:{}};
+      convOrder.push(t.id);
+      mark(t, t.id);
+    }
+    for(i=0;i<roots.length;i++) start(roots[i]);
+    for(i=0;i<visible.length;i++) start(visible[i]);
+    tree.convs=convs;
+    tree.convOrder=convOrder;
+    return tree;
+  }
+
+  /**
+   * The rows in the order they are painted: what needs a decision first (needsYou, most pressing
+   * first), then every root by state — a topic with no title yet (Untitled) ahead of every
+   * state, then working, resident and idle, no agent — with a starred row ahead of its unstarred
+   * peers inside a state and the daemon's order (most recently active first) underneath. Every
+   * topic is followed by the ones its agent opened (Topic.parent),
+   * depth-first — unless it is folded. Only the painting is reordered: topics itself keeps the
+   * daemon's order, because topics[0] is read elsewhere as "the most recent topic" — where to land
+   * when the one on screen goes away.
+   *
+   * A filter picks conversations, not rows: one survives when the conversation as a whole
+   * matches (convMatch), and is then drawn by this same order, with its own fold state, its own
+   * fold count and the needs-you block — there is no second way of drawing a result.
+   *
+   * The nesting and folding are treeWalker's, the walk the Sessions tab draws its runs with too.
+   */
+  function topicRows(forest){
+    var visible=forest.visible, roots=forest.roots, i;
+    // The bar's state, read once: which conversations match. A match keeps the whole tree, so
+    // every row under a surviving root is drawn exactly as it is without a filter — nothing is
+    // dimmed, and no child is dropped for failing a search its parent answered.
+    var fs = topicFilter ? topicFilter.state() : null;
+    var keep=null, matched=forest.convOrder.length, words=[], filtering=false;
+    if(fs){
+      var anySel=false;
+      for(var gk in fs.sel) if(fs.sel[gk] && fs.sel[gk].length){ anySel=true; break; }
+      if(fs.q.trim() || anySel){
+        filtering=true;
+        words=fs.q.trim().toLowerCase().split(/\s+/);
+        keep={}; matched=0;
+        for(i=0;i<forest.convOrder.length;i++){
+          var conv=forest.convs[forest.convOrder[i]];
+          if(!convMatch(conv, words, fs.sel)) continue;
+          matched++;
+          for(var m=0;m<conv.members.length;m++) keep[conv.members[m].id]=1;
+        }
+      }
+    }
+    // Folded means folded with a filter on as well: the pill and its count are how the whole
+    // conversation is browsed, and a result must not open a tree the person keeps shut.
+    var w=treeWalker(forest), walk=w.walk, rows=w.rows, dividers={};
+    // What needs the person first (needsYou), most pressing first, each with the topics it
+    // opened. A filtered list keeps the block: a conversation that waits on an answer belongs
+    // at the top of the list whether or not the bar is in use.
+    var pinned=visible.filter(function(t){ return (!keep || keep[t.id]) && needsYou(t); })
+      .sort(function(a,b){ return NEEDS_ORDER[a.stage]-NEEDS_ORDER[b.stage] || (b.lastAt||0)-(a.lastAt||0); });
+    for(i=0;i<pinned.length;i++) walk(pinned[i], 0);
+    var afterPinned=rows.length;
+    var candidates = keep ? roots.filter(function(r){ return Boolean(keep[r.id]); }) : roots;
+    // Then everything else in the order the list is read: a topic with no title yet, working, a
+    // resident agent with nothing to do, and no agent at all (the decision group is already drawn
+    // above). The daemon's order — most recently active first — holds inside a state, and a
+    // starred row leads its unstarred peers there: a star is a promise not to forget a topic, not
+    // a claim on the top of the column.
+    var ordered=candidates.slice().sort(function(a,b){
+      var ra=listRank(a), rb=listRank(b), d=ra-rb;
+      if(d) return d;
+      if(ra===0) d=NEEDS_ORDER[a.stage]-NEEDS_ORDER[b.stage];
+      return d || (b.starred?1:0)-(a.starred?1:0);
+    });
+    for(i=0;i<ordered.length;i++) walk(ordered[i], 0);
+    w.rest(keep);
+    if(afterPinned && afterPinned<rows.length) dividers[afterPinned]=true;
+    // Any starred topic counts, not just a starred root: the label decides whether Clear would
+    // spare anything, and the daemon spares a starred sub-agent too.
+    var stars=0;
+    for(i=0;i<visible.length;i++) if(visible[i].starred) stars++;
+    // matched and total are conversations, not topics: one tree is one result, which is what
+    // the chips count and what "Showing N of M" has to agree with.
+    return {rows:rows, dividers:dividers, stars:stars, matched:matched, total:forest.convOrder.length, filtering:filtering};
+  }
+
+  /** Whether a topic this one opened, or one of theirs, is working. */
+  function busyBelow(id){
+    return subtreeRun(id).busy;
+  }
+
+  /**
+   * Whether a row is drawn as working: its own turn, or a sub-agent's.
+   *
+   * A /super dispatcher hands its work to topics of its own and then sits idle between turns, so
+   * drawn from its own flag alone it was the one row that looked dead while the agents under it
+   * worked (reported 2026-11-04). A sub-agent holding a question is running too — the daemon sends
+   * both flags — so busyBelow counts it, and the fold pill is what says which of the two it is.
+   */
+  function rowRunning(t){
+    return Boolean(t.running) || busyBelow(t.id);
+  }
+
+  var NEEDS_ORDER = {answer:0, failed:1, review:2};
+  var NEEDS_WHAT = {answer:'Waiting on your answer', failed:'Failed', review:'Finished'};
+  // stateRank's four values in its own order, as the filter chips name them.
+  var STATE_KEYS = ['needs', 'running', 'idle', 'none'];
+  /**
+   * What needs the person: every topic but the one on screen whose stage is a question, a failure,
+   * or a reply not yet read — the daemon decides the stage (core/topic-stage.ts) and sends it with
+   * the list. Drawn as the topic's own row, first in the list and green (paintTopics). It was a
+   * separate "Needs you" block above the list through 2.19.1, which put every such topic on screen
+   * twice — the same title, two rows — and read as two conversations.
+   *
+   * A sub-agent's topic (one with a parent) counts only for a question of its own: its replies and
+   * failures go to the agent that opened it, which says what comes of them (room.ts operatorStage,
+   * the same rule for notifications).
+   */
+  function needsYou(t){
+    if(t.id===topic || NEEDS_ORDER[t.stage]===undefined) return false;
+    return !t.parent || t.stage==='answer';
+  }
+
+  /**
+   * The four states the list is ordered by, most pressing first: a decision to make, work under
+   * way, a resident agent with nothing to do, and no agent at all. stage already says the first,
+   * rowRunning the second (a /super dispatcher is working while its sub-agents are), and live
+   * splits the last two — the same facts the dot and the row's colours are drawn from, so the order
+   * cannot disagree with what the rows say. The filter bar reads this too: its chips are these
+   * four, so it must keep meaning the row's state.
+   */
+  function stateRank(t){
+    if(needsYou(t)) return 0;
+    if(rowRunning(t)) return 1;
+    return t.live ? 2 : 3;
+  }
+
+  /**
+   * The rank the list is painted by: needsYou 0, a topic that has no title yet 1, and stateRank's
+   * other three states shifted up to 2–4. A topic is named by its first message (topics.ts seed),
+   * so an empty title means nothing has been said in it yet — the conversation the person has just
+   * opened and is about to work in, which the state order otherwise left at the bottom among the
+   * topics with no agent behind them. Only roots are ordered by this, which is why the untitled
+   * lift needs no "is this a child" guard: a sub-agent's empty title never reaches a sort.
+   *
+   * It is a rank of the list, not a fifth state: the dot is drawn from the same facts and the
+   * filter bar still counts by stateRank, so "No agent" keeps counting the new topic it is.
+   */
+  function listRank(t){
+    var r=stateRank(t);
+    return r===0 ? 0 : (!t.title ? 1 : r+1);
+  }
+
+  /**
+   * Split a topic's "[agent] subject" name into the agent id it opens with and its subject.
+   *
+   * Only ever reads a leading bracketed group, which formatLaneTitle guarantees: an untagged
+   * name (a topic seeded from its first message before any turn) has no tag and is shown as it is.
+   * The rows draw only the subject (the agent is their legend, agentTagHtml); the tag is read only
+   * where the daemon did not say which agent is bound (agentOf).
+   */
+  function splitTitle(title){
+    var m=/^\[([^\]]+)\]\s*([\s\S]*)$/.exec(title);
+    if(!m) return {tag:'', rest:title};
+    return {tag:m[1], rest:m[2]};
+  }
+
+  /**
+   * Which agent answers in a topic, for its row's legend, the Agent filter and the search:
+   *   id       the whole agent id, as config names it (cbc@uniagent)
+   *   label    what the legend says
+   *   harness  the configured harness, which picks the legend's colour; '' when not known
+   *
+   * The daemon's answer first (Topic.agent: the binding, with its harness). Failing that the title's
+   * own "[agent]" — a topic whose agent is gone from config, a daemon that offered no lookup — which
+   * says who answered when the topic was named and carries no harness, so its legend is grey.
+   *
+   * The label drops "@host" when the line under it already names that machine: an agent on a host is
+   * "cbc@uniagent", 15 characters spent on a machine the directory line repeats, and the part before
+   * the @ is what the operator types to bind it (reported 2026-11-03, against the title's tag). A host
+   * the line does not name — no directory known yet, or a group standing in for the host — keeps it,
+   * since dropping it would take the only place on the row that says which machine the agent is on.
+   * The whole id is on the legend's tooltip either way. null when nothing names an agent.
+   */
+  function agentOf(t){
+    var id='', harness='';
+    if(t.agent && t.agent.id){ id=t.agent.id; harness=t.agent.harness || ''; }
+    else id=splitTitle(t.title || '').tag;
+    if(!id) return null;
+    var host=t.dir && t.dir.host, at=id.indexOf('@');
+    var label=(at>0 && host && id.slice(at+1)===host) ? id.slice(0, at) : id;
+    return {id:id, label:label, harness:harness};
+  }
+
+  /** A topic row's agent legend, on its frame's top-left edge; empty for a row with no agent. */
+  function agentTagHtml(t){
+    var a=agentOf(t);
+    if(!a) return '';
+    return '<span class="agent-tag'+(a.harness?' h-'+text(a.harness):'')+'" title="'+text('Agent: '+a.id)+'">'+text(a.label)+'</span>';
+  }
+
+  // The topic list's bar, built with the rest of the page. paintTopics keeps its option lists and
+  // counts in step; the rows are filtered from the same state in topicRows.
+  var topicFilter = null;
+
+  /**
+   * The filter bar a list uses when it has outgrown a plain column: one row of search + Filter
+   * (+ an optional sort), a panel of chip groups under it, and a "Showing N of M" line while
+   * either is in use.
+   *
+   * The component owns the state and the widgets, not the data. groups are the options the
+   * caller has right now, and onChange is the caller's cue to re-filter and re-paint its own
+   * rows; it then reports how many survived with setCounts(shown, total), because only the
+   * caller knows that. setGroups is how a live list keeps the chips honest — agents and hosts
+   * appear and disappear — and a selected value that is no longer offered is dropped, so a chip
+   * cannot filter the list to nothing for a reason the panel no longer shows.
+   *
+   * The keyword, the selected values, the sort field and its direction, and whether the panel is
+   * open are persisted under key; a reload lands on the same view. The option lists and the
+   * counts are not: they describe the data, which the caller re-states on every paint.
+   *
+   * opts: {
+   *   key, placeholder,
+   *   groups: [{id, label, pinned?, options: [{value, label, short?, icon?, count?}]}],
+   *   sort?: {options: [{value, label}], value?, dir?: 'asc' | 'desc'},
+   *   onChange: (state) => void
+   * }
+   * A pinned group is drawn as one always-visible row under the search instead of folding into
+   * the panel — the state filter of both lists, which is what a person reaches for most and
+   * should not cost a click to see. short is its label in that row; the full label stays on the
+   * chip's title and aria-label, because the row hides the word when four chips cannot share the
+   * width (see .fb-pin in the stylesheet). The Filter dot counts the panel's groups only: a
+   * pinned chip is never hidden state.
+   * setGroups(null) is for the first frame only, before the caller's data has arrived: it offers
+   * nothing and prunes nothing. A refresh is not this — keep the last options by passing them
+   * again (or leave them alone until the new ones are in hand), because a reload that lands
+   * empty would prune a selection exactly as a genuinely empty list would.
+   * Returns {el, state, active, setGroups, setCounts, clear, destroy}. el is appended by the
+   * caller; destroy removes the document listener and the node.
+   */
+  function makeFilterBar(opts){
+    var key = opts.key;
+    var groups = opts.groups || [];
+    var sortDef = opts.sort || null;
+    var counts = null;
+    var st = {q:'', sel:{}, sort:'', dir:'', open:false};
+    try {
+      var saved = JSON.parse(localStorage.getItem(key) || 'null');
+      if(saved && typeof saved === 'object'){
+        if(typeof saved.q === 'string') st.q = saved.q;
+        if(saved.sel && typeof saved.sel === 'object' && !Array.isArray(saved.sel)){
+          var keys0 = Object.keys(saved.sel);
+          for(var k0=0;k0<keys0.length;k0++){
+            var sv = saved.sel[keys0[k0]];
+            if(!Array.isArray(sv)) continue;
+            var vals = [];
+            for(var v0=0;v0<sv.length;v0++) if(typeof sv[v0] === 'string') vals.push(sv[v0]);
+            if(vals.length) st.sel[keys0[k0]] = vals;
+          }
+        }
+        if(typeof saved.sort === 'string') st.sort = saved.sort;
+        if(saved.dir === 'asc' || saved.dir === 'desc') st.dir = saved.dir;
+        st.open = saved.open === true;
+      }
+    } catch(x){}
+    if(sortDef){
+      var offered = [];
+      for(var s0=0;s0<sortDef.options.length;s0++) offered.push(sortDef.options[s0].value);
+      if(offered.indexOf(st.sort) < 0){
+        st.sort = sortDef.value && offered.indexOf(sortDef.value) >= 0 ? sortDef.value : (offered[0] || '');
+      }
+      if(!st.dir) st.dir = sortDef.dir === 'desc' ? 'desc' : 'asc';
+    } else { st.sort = ''; st.dir = ''; }
+
+    var root = document.createElement('div');
+    root.className = 'filterbar';
+    var html = '<div class="fb-row">'
+      + '<div class="fb-search">' + IC.icon.search
+      + '<input class="fb-q" type="text" autocomplete="off" spellcheck="false"'
+      + ' placeholder="' + text(opts.placeholder || 'Search') + '" aria-label="' + text(opts.placeholder || 'Search') + '">'
+      + '<button type="button" class="fb-qclear" title="Clear search" aria-label="Clear search" hidden>' + IC.icon.cross + '</button>'
+      + '</div>'
+      + '<button type="button" class="fb-filter fb-btn" aria-expanded="false" title="Filter">'
+      + IC.icon.filter + '<span>Filter</span><span class="fb-dot" hidden></span></button>';
+    if(sortDef){
+      html += '<span class="fb-tools"><span class="fb-sort" title="Sort">' + IC.icon.sort
+        + '<select class="fb-sortsel" aria-label="Sort"></select></span>'
+        + '<button type="button" class="fb-dir fb-btn" aria-label="Ascending" title="Ascending"></button></span>';
+    }
+    html += '</div>'
+      + '<div class="fb-pins" hidden></div>'
+      + '<div class="fb-sum" hidden><span class="fb-sumtext"></span><button type="button" class="fb-clear">Clear</button></div>'
+      + '<div class="fb-panel" hidden></div>';
+    root.innerHTML = html;
+
+    var q = root.querySelector('.fb-q');
+    var qClear = root.querySelector('.fb-qclear');
+    var fBtn = root.querySelector('.fb-filter');
+    var dot = root.querySelector('.fb-dot');
+    var pins = root.querySelector('.fb-pins');
+    var panel = root.querySelector('.fb-panel');
+    var sum = root.querySelector('.fb-sum');
+    var sumText = root.querySelector('.fb-sumtext');
+    var clearBtn = root.querySelector('.fb-clear');
+    var sortSel = root.querySelector('.fb-sortsel');
+    var dirBtn = root.querySelector('.fb-dir');
+
+    function hasSel(){
+      for(var i=0;i<groups.length;i++){
+        var v = st.sel[groups[i].id];
+        if(v && v.length) return true;
+      }
+      return false;
+    }
+    /** A selection in a group that lives in the panel. A pinned group is always on screen, so
+        selecting one is not hidden state: the dot on Filter says "the panel holds a choice you
+        cannot see", and lighting it for a chip in the row would point at nothing. */
+    function panelHasSel(){
+      for(var i=0;i<groups.length;i++){
+        if(groups[i].pinned) continue;
+        var v = st.sel[groups[i].id];
+        if(v && v.length) return true;
+      }
+      return false;
+    }
+    function active(){ return st.q.trim() !== '' || hasSel(); }
+    function save(){ try { localStorage.setItem(key, JSON.stringify(st)); } catch(x){} }
+
+    function state(){
+      var sel = {};
+      for(var i=0;i<groups.length;i++){
+        var id = groups[i].id, v = st.sel[id];
+        if(v && v.length) sel[id] = v.slice();
+      }
+      return {q:st.q, sel:sel, sort:st.sort, dir:st.dir, open:st.open};
+    }
+
+    /** Drop selections whose group or value the caller no longer offers. */
+    function prune(){
+      var changed = false, keys = Object.keys(st.sel);
+      for(var i=0;i<keys.length;i++){
+        var id = keys[i], group = null;
+        for(var g=0;g<groups.length;g++) if(groups[g].id === id){ group = groups[g]; break; }
+        if(!group){ delete st.sel[id]; changed = true; continue; }
+        var kept = [], v = st.sel[id];
+        for(var k=0;k<v.length;k++){
+          var found = false;
+          for(var o=0;o<group.options.length;o++) if(group.options[o].value === v[k]){ found = true; break; }
+          if(found) kept.push(v[k]); else changed = true;
+        }
+        if(kept.length) st.sel[id] = kept; else { delete st.sel[id]; changed = true; }
+      }
+      return changed;
+    }
+
+    var panelSig = '';
+
+    function paintChips(){
+      var chips = root.querySelectorAll('[data-fb-value]');
+      for(var i=0;i<chips.length;i++){
+        var c = chips[i], id = c.getAttribute('data-fb-group'), v = c.getAttribute('data-fb-value');
+        var on = (st.sel[id] || []).indexOf(v) >= 0;
+        c.classList.toggle('on', on);
+        c.setAttribute('aria-pressed', on ? 'true' : 'false');
+      }
+    }
+
+    /** Only the numbers move between paints, so they are written in place rather than rebuilt. */
+    function paintCounts(){
+      var chips = root.querySelectorAll('[data-fb-value]');
+      for(var i=0;i<chips.length;i++){
+        var c = chips[i], id = c.getAttribute('data-fb-group'), v = c.getAttribute('data-fb-value'), o = null;
+        for(var g=0;g<groups.length;g++) if(groups[g].id === id){
+          for(var k=0;k<groups[g].options.length;k++) if(groups[g].options[k].value === v) o = groups[g].options[k];
+          break;
+        }
+        var n = c.querySelector('.fb-count');
+        if(o && n && typeof o.count === 'number') n.textContent = String(o.count);
+        // The pinned row's word may be hidden, so its full name is the accessible one — and the
+        // number is the half of the chip a reader cannot infer from the icon.
+        if(o && c.hasAttribute('aria-label')){
+          c.setAttribute('aria-label', o.label + (typeof o.count === 'number' ? ' ' + o.count : ''));
+        }
+      }
+    }
+
+    function paintPanel(){
+      // Counts move with every message; the chips themselves only when an agent or host appears
+      // or goes. Rebuilding on a count would replace the chip mid-click and lose its event path.
+      var shape = [];
+      for(var i=0;i<groups.length;i++){
+        var g = groups[i], row = [g.id, g.label, g.pinned ? 1 : 0];
+        for(var k=0;k<g.options.length;k++){
+          var o = g.options[k];
+          row.push([o.value, o.label, o.short || '', o.icon || '', typeof o.count === 'number' ? 1 : 0]);
+        }
+        shape.push(row);
+      }
+      var sig = JSON.stringify(shape);
+      if(sig === panelSig){ paintCounts(); paintChips(); return; }
+      panelSig = sig;
+      // A pinned group goes into its own always-visible row under the search; the rest keep the
+      // panel, label and all. Both are built here so one signature still guards both hosts.
+      var ph = '', h = '';
+      for(i=0;i<groups.length;i++){
+        var gg = groups[i], chips = '';
+        for(k=0;k<gg.options.length;k++){
+          var oo = gg.options[k];
+          chips += '<button type="button" class="fb-chip' + (gg.pinned ? ' fb-pin' : '') + '"'
+            + ' data-fb-group="' + text(gg.id) + '" data-fb-value="' + text(oo.value) + '"'
+            + ' aria-pressed="false" title="' + text(oo.label) + '"'
+            + (gg.pinned ? ' aria-label="' + text(oo.label + (typeof oo.count === 'number' ? ' ' + oo.count : '')) + '"' : '') + '>'
+            + (oo.icon && IC.icon[oo.icon] ? IC.icon[oo.icon] : '')
+            + '<span class="fb-chip-label">' + text(gg.pinned ? (oo.short || oo.label) : oo.label) + '</span>'
+            + (typeof oo.count === 'number' ? '<span class="fb-count">' + oo.count + '</span>' : '')
+            + '</button>';
+        }
+        if(gg.pinned){
+          ph += '<div class="fb-chips fb-pin-row" role="group" aria-label="' + text(gg.label) + '">' + chips + '</div>';
+        } else {
+          h += '<div class="fb-group"><div class="fb-label">' + text(gg.label) + '</div>'
+            + '<div class="fb-chips">' + chips + '</div></div>';
+        }
+      }
+      pins.innerHTML = ph;
+      pins.hidden = !ph;
+      panel.innerHTML = h;
+      paintChips();
+    }
+
+    function paintSummary(){
+      if(!active() || !counts){ sum.hidden = true; return; }
+      sum.hidden = false;
+      sumText.textContent = 'Showing ' + counts.shown + ' of ' + counts.total;
+    }
+
+    function paintChrome(){
+      qClear.hidden = !st.q;
+      dot.hidden = !panelHasSel();
+      fBtn.classList.toggle('on', panelHasSel());
+      fBtn.setAttribute('aria-expanded', st.open ? 'true' : 'false');
+      panel.hidden = !st.open;
+      if(st.q && q.value !== st.q) q.value = st.q;
+      paintSummary();
+    }
+
+    function emit(){
+      save();
+      paintChrome();
+      // The pressed state of a chip lives here, not in the caller's repaint: the task list
+      // redraws its rows on every change but does not restate its groups, so without this a
+      // click would filter the list while the chip still read unpressed.
+      paintChips();
+      if(opts.onChange) opts.onChange(state());
+    }
+
+    function paintDir(){
+      if(!dirBtn) return;
+      var up = st.dir !== 'desc';
+      dirBtn.innerHTML = up ? IC.icon.arrowUp : IC.icon.arrowDown;
+      dirBtn.title = up ? 'Ascending' : 'Descending';
+      dirBtn.setAttribute('aria-label', dirBtn.title);
+    }
+
+    function clear(){
+      st.q = ''; st.sel = {}; q.value = '';
+      emit();
+    }
+
+    q.addEventListener('input', function(){ st.q = q.value; emit(); });
+    qClear.addEventListener('click', function(){ q.value = ''; st.q = ''; emit(); q.focus(); });
+    // Escape is handled on the whole bar, not just the field: with the keyboard on Filter or a
+    // chip, Escape has to put the panel away — and in either case the keystroke must not bubble
+    // to the page-wide handler, which would close the whole sidebar drawer behind the panel.
+    // An IME uses Escape to cancel its candidate list; that Escape belongs to the composition.
+    root.addEventListener('keydown', function(e){
+      if(e.isComposing) return;
+      if(e.key !== 'Escape') return;
+      if(st.q && e.target === q){
+        q.value = ''; st.q = ''; emit(); e.preventDefault(); e.stopPropagation();
+        return;
+      }
+      if(st.open){
+        st.open = false; save(); paintChrome();
+        // A chip in the panel had focus and is hidden with it; leave the keyboard on the control
+        // that opens it rather than nowhere. A chip in the pinned row is still on screen, so
+        // there is nothing to move away from.
+        if(panel.contains(e.target)) fBtn.focus();
+        e.preventDefault(); e.stopPropagation();
+      } else if(e.target.closest && e.target.closest('[data-fb-value]')){
+        // A chip is in the bar whether the panel is open or not, and Escape on it is the person
+        // dismissing nothing. Let it through and the page-wide handler closes the whole drawer
+        // behind a filter that did not move.
+        e.stopPropagation();
+      }
+    });
+    fBtn.addEventListener('click', function(){ st.open = !st.open; save(); paintChrome(); });
+    clearBtn.addEventListener('click', clear);
+    if(sortSel) sortSel.addEventListener('change', function(){ st.sort = sortSel.value; emit(); });
+    if(dirBtn) dirBtn.addEventListener('click', function(){ st.dir = st.dir === 'desc' ? 'asc' : 'desc'; paintDir(); emit(); });
+    root.addEventListener('click', function(e){
+      var chip = e.target.closest ? e.target.closest('[data-fb-value]') : null;
+      if(!chip) return;
+      var id = chip.getAttribute('data-fb-group'), val = chip.getAttribute('data-fb-value');
+      if(!id || !val) return;
+      var arr = st.sel[id] || (st.sel[id] = []);
+      var at = arr.indexOf(val);
+      if(at >= 0) arr.splice(at, 1); else arr.push(val);
+      if(!arr.length) delete st.sel[id];
+      emit();
+    });
+    // A panel left open over the list is furniture while it filters; a click anywhere else is
+    // the person moving on, so it folds away like the footer menus do.
+    function onDocClick(e){
+      if(!st.open) return;
+      // The path, not contains(): a chip's own click repaints the panel in place (setGroups), so
+      // by the time the event reaches here its target can be a node that is no longer in root.
+      var path = e.composedPath ? e.composedPath() : [];
+      if(path.indexOf(root) >= 0 || root.contains(e.target)) return;
+      st.open = false; save(); paintChrome();
+    }
+    document.addEventListener('click', onDocClick);
+
+    /**
+     * Replace the option lists. null is only for the first frame, before the caller's data has
+     * arrived: an empty array here would be read as "every value is gone", and a saved selection
+     * would be pruned by a list that had not arrived (the scheduled panel's first frame is
+     * exactly this). Not a refresh signal: while reloading, pass the options still on screen
+     * again rather than null, or the same pruning waits one step later.
+     */
+    function setGroups(next){
+      if(next == null) return;
+      groups = next;
+      if(prune()) save();
+      paintPanel();
+      paintChrome();
+    }
+    function setCounts(shown, total){
+      counts = {shown: Math.max(0, shown | 0), total: Math.max(0, total | 0)};
+      paintSummary();
+    }
+
+    /**
+     * Let the caller take the bar down. It must be mounted outside any container the caller
+     * redraws with innerHTML — the keyword's caret, the panel's open state and the chip nodes
+     * live in this DOM, and replacing the container under them loses all three. destroy()
+     * removes the document listener and the node; a caller whose own redraw already removed the
+     * node can ignore it.
+     */
+    function destroy(){
+      document.removeEventListener('click', onDocClick);
+      if(root.parentNode) root.parentNode.removeChild(root);
+    }
+
+    // No prune yet: the caller supplies the live option lists with setGroups on its first paint,
+    // and pruning against the empty list here would drop a selection restored from storage.
+    paintPanel();
+    paintChrome();
+    if(sortDef){
+      var optsHtml = '';
+      for(var s1=0;s1<sortDef.options.length;s1++){
+        var so = sortDef.options[s1];
+        optsHtml += '<option value="' + text(so.value) + '">' + text(so.label) + '</option>';
+      }
+      sortSel.innerHTML = optsHtml;
+      sortSel.value = st.sort;
+      paintDir();
+    }
+
+    return {el:root, state:state, active:active, setGroups:setGroups, setCounts:setCounts, clear:clear, destroy:destroy};
+  }
+
+  /**
+   * The topic list's filter groups, rebuilt from the topics in hand on every paint: agents and
+   * hosts come and go, and a chip whose value is gone would filter the list to nothing with no
+   * way to see why. Counted by conversation, because that is what the chips filter: a tree whose
+   * sub-agent is the cbc one counts once under cbc, and the four state chips add up to the number
+   * of trees in the list. Scheduled runs are left out for the same reason topicRows leaves them
+   * out — they are not rows in this list. Takes the forest paintTopics already built, so the
+   * chips and the rows cannot disagree about what a conversation is.
+   */
+  function topicFilterGroups(forest){
+    var stateOpts = [
+      {value:'needs', label:'Needs you', short:'Needs', icon:'bell', count:0},
+      {value:'running', label:'Running', short:'Run', icon:'play', count:0},
+      {value:'idle', label:'Idle', short:'Idle', icon:'dot', count:0},
+      {value:'none', label:'No agent', short:'None', icon:'offline', count:0}
+    ];
+    var starredOpts = [
+      {value:'starred', label:'Starred', icon:'star', count:0},
+      {value:'plain', label:'Unstarred', count:0}
+    ];
+    var agents = {}, agentOrder = [], hosts = {}, hostOrder = [], i;
+    for(i=0;i<forest.visible.length;i++){
+      var t = forest.visible[i];
+      var who = agentOf(t);
+      if(who){
+        var agent = who.label;
+        if(agents[agent] === undefined){ agents[agent] = 0; agentOrder.push(agent); }
+      }
+      var host = t.dir && t.dir.host ? t.dir.host : '__local';
+      if(hosts[host] === undefined){ hosts[host] = 0; hostOrder.push(host); }
+    }
+    // One pass per conversation, not per topic: every value it carries gets one, however many
+    // of its topics carry it.
+    for(i=0;i<forest.convOrder.length;i++){
+      var c = forest.convs[forest.convOrder[i]];
+      stateOpts[c.rank].count++;
+      if(c.starred) starredOpts[0].count++; else starredOpts[1].count++;
+      for(var a in c.agents) agents[a]++;
+      for(var h in c.hosts) hosts[h]++;
+    }
+    agentOrder.sort(function(a,b){ return a < b ? -1 : a > b ? 1 : 0; });
+    hostOrder.sort(function(a,b){ return a < b ? -1 : a > b ? 1 : 0; });
+    var agentOpts = [], hostOpts = [];
+    for(i=0;i<agentOrder.length;i++){
+      // No tag icon here: a tag means a task label in the scheduled list this bar also serves.
+      agentOpts.push({value:agentOrder[i], label:agentOrder[i], count:agents[agentOrder[i]]});
+    }
+    for(i=0;i<hostOrder.length;i++){
+      var hv = hostOrder[i];
+      hostOpts.push({value:hv, label:hv === '__local' ? 'Local' : hv, icon:'globe', count:hosts[hv]});
+    }
+    var groups = [
+      {id:'state', label:'State', pinned:true, options:stateOpts},
+      {id:'starred', label:'Starred', options:starredOpts}
+    ];
+    if(agentOpts.length) groups.push({id:'agent', label:'Agent', options:agentOpts});
+    groups.push({id:'host', label:'Host', options:hostOpts});
+    return {groups:groups, total:forest.convOrder.length};
+  }
+
+  /** Everything a keyword is matched against on one topic: its title (with the "[agent]" it was
+      named under), the agent answering it now, and the second line — directory name, full path and
+      host. */
+  function topicHay(t){
+    var agent = agentOf(t);
+    var hay = (t.title || '') + ' ' + (agent ? agent.id : '');
+    if(t.dir) hay += ' ' + (t.dir.name || '') + ' ' + (t.dir.path || '') + ' ' + (t.dir.host || '');
+    return hay.toLowerCase();
+  }
+
+  /**
+   * Whether a conversation survives the bar. The unit is the conversation, not the row: the
+   * keyword, an agent and a host match when any topic in the tree carries them — the person is
+   * looking for the conversation that talks about this, and the sub-agents are part of it. State
+   * and star are whole-tree properties (the most pressing state among its topics, and whether any
+   * topic in it is starred), so the state chips partition the conversations and each chip's number
+   * is the number of conversations a tap on it leaves. Inside a group the values are a union,
+   * across groups an intersection. The keyword is split on whitespace and every word has to hit
+   * one topic, so "cbc parse" finds the parser topic of the cbc agent in either order.
+   */
+  function convMatch(conv, words, sel){
+    var v = sel.state;
+    if(v && v.length && v.indexOf(STATE_KEYS[conv.rank]) < 0) return false;
+    v = sel.starred;
+    if(v && v.length && v.indexOf(conv.starred ? 'starred' : 'plain') < 0) return false;
+    if(sel.agent && sel.agent.length){
+      var hitAgent = false;
+      for(var a in conv.agents) if(sel.agent.indexOf(a) >= 0){ hitAgent = true; break; }
+      if(!hitAgent) return false;
+    }
+    if(sel.host && sel.host.length){
+      var hitHost = false;
+      for(var h in conv.hosts) if(sel.host.indexOf(h) >= 0){ hitHost = true; break; }
+      if(!hitHost) return false;
+    }
+    if(words.length){
+      for(var i=0;i<conv.members.length;i++){
+        var hay = topicHay(conv.members[i]), all = true;
+        for(var w=0;w<words.length;w++) if(hay.indexOf(words[w]) < 0){ all = false; break; }
+        if(all) return true;
+      }
+      return false;
+    }
+    return true;
+  }
+
+  function paintTopics(){
+    var h='';
+    var cur=null;
+    // The way into a topic from a conversation opened in History is offered only while the topic is
+    // in this list, and the list just changed.
+    if(libSession) libReadOnly();
+    // One tree for the whole paint: the chips and the rows must count and draw the same
+    // conversations, and neither the groups nor the rows change the tree itself.
+    var forest = topicForest();
+    // Before the rows, so a selected agent or host that has just disappeared is dropped from the
+    // bar's state first and the list below is filtered by what the panel actually shows.
+    var fg = topicFilterGroups(forest);
+    if(topicFilter) topicFilter.setGroups(fg.groups);
+    var painted=topicRows(forest);
+    if(topicFilter) topicFilter.setCounts(painted.matched, painted.total);
+    // The topic on screen may be a scheduled run, which topicRows leaves out of the list. The
+    // header, Stop/power and the read marks still belong to it, so find it in the full list —
+    // and seed a mark for every topic, hidden ones included, or the Sessions tab would count a
+    // run's whole history as unread the first time it was opened.
+    for(var i=0;i<topics.length;i++){
+      var seed=topics[i];
+      if(readCounts[seed.id]===undefined){ readCounts[seed.id]=seed.msgCount||0; saveReads(); }
+      if(seed.id===topic){ cur=seed; readCounts[seed.id]=seed.msgCount||0; saveReads(); }
+    }
+    var stars=painted.stars;
+    for(i=0;i<painted.rows.length;i++){
+      var t=painted.rows[i].t;
+      // What the Needs-you block used to say on a second line, now on hover: the row keeps its shape.
+      h += treeRowHtml(painted.rows[i], {
+        attr:'data-topic',
+        menu:'topic',
+        cls:(painted.dividers[i]?' after-needs':''),
+        tail:(needsYou(t)?' needs':''),
+        attrs:needsYou(t)?' title="'+text(NEEDS_WHAT[t.stage]+(t.line?': '+t.line:''))+'"':'',
+        moreTitle:'Topic actions'
+      });
+    }
+    bar.innerHTML=h;
+    // From the same list the rows were drawn from, so the line and the row cannot disagree.
+    paintMachineNote();
+    // A filtered list with nothing left says so where the rows would be, rather than looking like
+    // a topic list that failed to load. Clear is the way back without hunting for the field.
+    if(!h && painted.filtering){
+      bar.innerHTML='<div class="topics-empty"><span>No matching topics</span>'
+        + '<button type="button" class="fb-clear" data-filter-clear="1">Clear</button></div>';
+    }
+    // The rows above replaced every age element, so the timer is re-armed against the new ones
+    // (and stopped when none is left).
+    armAgeTick();
+    // The row menu lives at the body, so the innerHTML above cannot take it with it. Follow the
+    // button's replacement, and close the menu only if its row is gone from the list.
+    rowMenuFollow();
+    // Greyed while there is nothing in the list to mark, as the Sessions tab's is. The whole list,
+    // not the filtered rows, like Clear: a search narrows what is shown, not what is unread.
+    var toRead=0;
+    for(i=0;i<forest.visible.length;i++) if(needsRead(forest.visible[i])) toRead++;
+    readBtn.disabled = !toRead;
+    readBtn.title = toRead ? 'Mark all read ('+toRead+' topic'+(toRead===1?'':'s')+')' : 'Mark all read — nothing unread';
+    // Says what it will do: with stars in the list it no longer clears all of them.
+    var clearLabel = stars ? 'Clear unstarred topics' : 'Clear all topics';
+    clearBtn.title = clearLabel;
+    clearBtn.setAttribute('aria-label', clearLabel);
+    // The count sits on Manage's face, so it is read without opening the menu; the item inside
+    // says what closing would do, or shows a disabled explanation when there is nothing to close.
+    var idle=idleTopics().length;
+    idleBtn.hidden = !idle;
+    noIdleBtn.hidden = Boolean(idle);
+    idleBtn.textContent = 'Close idle ('+idle+')';
+    idleCount.textContent = idle ? '('+idle+')' : '';
+    var below = cur ? busyBelow(cur.id) : false;
+    paintForkNote(cur);
+    if(cur){
+      chatTitle.textContent=cur.title || 'Untitled';
+      // Same order as the dot, and the same reason: during an ask the turn is still open, so
+      // "running" is true and is the less useful of the two things to say. A dispatcher whose
+      // sub-agents work is running too: its own turn ended, the job did not.
+      var curRunning=Boolean(cur.running) || below;
+      var state=cur.asking?'awaiting you':(curRunning?'running':'');
+      chatStatus.textContent=state;
+      chatStatus.className='chat-status'+(cur.asking?' asking':(curRunning?' running':''));
+    } else {
+      chatTitle.textContent='';
+      chatStatus.textContent='';
+    }
+    // Each control exists only while its command has something to act on, read off the same flags
+    // as the dot: Stop while a turn is open (a question holds one open, so asking implies it), and
+    // the power button while a process is resident. Hiding beats disabling — a greyed-out control
+    // asks to be explained, and "nothing is running" is already what an unlit dot says.
+    killBtn.hidden = !(cur && cur.live);
+    // Also over a topic whose own turn is over while the sub-agents it started still work — the
+    // usual state of a /super job, and the one where there was nothing to press: /stop there stops
+    // them too (Delegation.stopOpened).
+    stopBtn.hidden = !(cur && (cur.running || cur.asking || below));
+    stopBtn.title = below
+      ? 'Stop this topic and the sub-agents it started — their conversations are kept (/stop)'
+      : 'Stop what the agent is doing — the conversation is kept (/stop)';
+    // The window's title bar names the same topic this row does, so a rename lands on both in
+    // the same frame rather than leaving the bar holding the old name until the next switch.
+    if(TERM_OK) paintFrames();
+    // The panel's Sessions sub-tab is drawn from this same list, and its counts must move when a run
+    // opens or finishes even while the Tasks tab is the one on screen. The Reviews tab draws the
+    // same list for a different reason: a link back to a topic exists only while that topic does.
+    paintSchedCounts();
+    paintSummary();
+    paintSchedAlert();
+    if(schedPane.isOpen() && schedTab==='scheduled' && schedSubtab==='sessions') paintSessions();
+    else if(schedPane.isOpen() && schedTab==='reviews') paintReviews();
+    // A task's page lists the topics its runs opened, and they move like any other.
+    taskPageTopics();
+  }
+
+  /**
+   * Tell the daemon the operator is looking at the topic on screen, when that changes something: a
+   * reply it has not been told was read (stage review). It stamps its own clock (WebRoom.markSeen),
+   * and the stage — here and in the Needs-you list — moves on.
+   * Only while the page is actually visible, and at most every two seconds per topic.
+   */
+  var seenPosted={};
+  function reportSeen(){
+    // A conversation from History covers the topic: it is underneath, not being read.
+    if(!topic || document.visibilityState==='hidden' || libOn()) return;
+    var cur=null;
+    for(var i=0;i<topics.length;i++){ if(topics[i].id===topic){ cur=topics[i]; break; } }
+    if(!cur || cur.stage!=='review') return;
+    var now=Date.now();
+    if(seenPosted[topic] && now-seenPosted[topic]<2000) return;
+    seenPosted[topic]=now;
+    post('api/seen',{topic:topic},0).catch(function(){});
+  }
+  document.addEventListener('visibilitychange', reportSeen);
+
+  // ── Notifications ─────────────────────────────────────────────────────────
+  // Web Push (webpush.ts on the server, sw.ts the worker): what reaches this device when the page is
+  // closed or the phone is in a pocket. Off until the operator turns it on here, per device — the
+  // browser asks for permission, and a permission prompt nobody asked for is the fastest way to a
+  // "block". Only offered where the browser can do it at all: Chrome, Firefox, Edge, and Safari on
+  // iOS only once the page is installed as an app.
+  var PUSH_OK = Boolean(window.isSecureContext && navigator.serviceWorker && window.PushManager && window.Notification);
+  var pushKey = null, pushSub = null, notifyInit = false;
+  function keyBytes(s){
+    var b = atob((s + '==='.slice((s.length + 3) % 4)).replace(/-/g,'+').replace(/_/g,'/'));
+    var out = new Uint8Array(b.length);
+    for(var i=0;i<b.length;i++) out[i]=b.charCodeAt(i);
+    return out;
+  }
+  function paintNotify(){
+    if(!PUSH_OK || !pushKey){ notifyBtn.hidden=true; return; }
+    notifyBtn.hidden=false;
+    if(window.Notification.permission==='denied'){
+      notifyBtn.disabled=true;
+      notifyBtn.setAttribute('aria-pressed','false');
+      notifyState.textContent='blocked';
+      notifyBtn.title='Blocked in this browser: allow notifications for this site in the browser settings, then reload';
+      return;
+    }
+    notifyBtn.disabled=false;
+    notifyBtn.setAttribute('aria-pressed', pushSub ? 'true' : 'false');
+    notifyState.textContent = pushSub ? 'on' : 'off';
+    notifyBtn.title = pushSub
+      ? 'This device is notified when something needs you, even with the page closed. Click to stop.'
+      : 'Notify this device when something needs you, even with the page closed';
+  }
+  // Once the stream is open, i.e. once signed in: api/push is behind the session like every route.
+  function initNotify(){
+    if(!PUSH_OK || notifyInit) return;
+    notifyInit = true;
+    fetch('api/push', {credentials:'same-origin'}).then(function(r){ return r.json(); }).then(function(d){
+      if(!d || !d.enabled || !d.key) return;
+      pushKey = d.key;
+      return navigator.serviceWorker.getRegistration('sw.js').then(function(reg){
+        return reg ? reg.pushManager.getSubscription() : null;
+      }).then(function(sub){ pushSub = sub; paintNotify(); });
+    }).catch(function(){});
+  }
+  notifyBtn.addEventListener('click', function(){
+    if(!pushKey) return;
+    notifyBtn.disabled = true;
+    if(pushSub){
+      var endpoint = pushSub.endpoint;
+      pushSub.unsubscribe().catch(function(){}).then(function(){
+        pushSub = null;
+        return post('api/push/unsubscribe', {endpoint:endpoint}, 1);
+      }).catch(function(){}).then(paintNotify);
+      return;
+    }
+    window.Notification.requestPermission().then(function(permission){
+      if(permission !== 'granted') return;
+      return navigator.serviceWorker.register('sw.js').then(function(){ return navigator.serviceWorker.ready; }).then(function(reg){
+        return reg.pushManager.getSubscription().then(function(old){
+          return old || reg.pushManager.subscribe({userVisibleOnly:true, applicationServerKey:keyBytes(pushKey)});
+        });
+      }).then(function(sub){
+        return post('api/push/subscribe', sub.toJSON(), 1).then(function(r){
+          if(r.ok){ pushSub = sub; return; }
+          return r.json().then(function(d){ throw new Error((d && d.error) || ('HTTP '+r.status)); });
+        });
+      });
+    }).catch(function(e){
+      alert('Could not turn notifications on: ' + ((e && e.message) || e));
+    }).then(paintNotify);
+  });
+  // A notification tapped while this page is open: the worker asks it to show the topic. And a
+  // topic the worker has just written to the cache (sw.ts keepTopic), noted so the prefetch does not
+  // fetch it a second time and an older copy in memory is not put up in its place.
+  if(PUSH_OK) navigator.serviceWorker.addEventListener('message', function(e){
+    var kept = e.data && e.data.cached;
+    if(kept && typeof kept === 'object' && typeof kept.topic === 'string'){ noteVer(kept.topic, kept.last, kept.epoch); return; }
+    var goId = e.data && e.data.goto;
+    if(goId && goId!==topic && topics.some(function(t){ return t.id===goId; })){
+      switchTopic(goId);
+      if(narrow()) setSidebar(false);
+    }
+  });
+
+
+  // ── Terminal ───────────────────────────────────────────────────────────────
+  // A panel at the bottom of the conversation, one per topic. The iframe holds ttyd's own
+  // terminal, which is why this is a hundred lines instead of a terminal emulator. Nothing here
+  // speaks to the agent — the two share a topic id and nothing else.
+
+  // How tall the panel is, in pixels, once the divider has been dragged. 0 means "half the
+  // chat": recomputed rather than frozen, so a phone and a desktop each get half of their own
+  // screen, and a panel that was never resized follows a window that changes size.
+  var TERM_H_KEY = 'aa_term_h', TERM_MIN = 120, TERM_MIN_LOG = 120;
+  var termH = 0;
+  try { var storedTermH = parseInt(localStorage.getItem(TERM_H_KEY) || '', 10); if(storedTermH > 0) termH = storedTermH; } catch(x){}
+
+  /**
+   * What the panel may be: never taller than the chat it sits in, and never so tall that the
+   * transcript has no lines left. What is above it is measured rather than guessed — a phone's
+   * header and two-row composer are most of the chat, and a fixed allowance sized for a desktop
+   * would leave the log 20px tall there. On a window too short for both, the chat wins.
+   */
+  function termLimits(){
+    var room = chat.clientHeight;
+    if(!room) return {min:TERM_MIN, max:TERM_MIN + 40};
+    var fixed = chatHead.clientHeight + composer.clientHeight + (termGrip.offsetHeight || 12) + TERM_MIN_LOG;
+    var max = Math.min(room, Math.max(TERM_MIN, room - fixed));
+    return {min:Math.min(TERM_MIN, max), max:max};
+  }
+  function termHeight(){
+    var lim = termLimits();
+    return Math.max(lim.min, Math.min(lim.max, termH || Math.round(chat.clientHeight * 0.5)));
+  }
+  // Set as a pixel height rather than a percentage: a closed panel is parked at this size, and
+  // it must not change under a hidden iframe — a resize there is a redraw the reader never asked
+  // for, and on some backends a detach.
+  function paintTermHeight(){
+    // While a record from History is up, #bar and the divider are display:none and measure 0 —
+    // a ceiling worked out from those would be ~100px too generous, and the panel would come
+    // back from the record too tall. closeLib paints again once they are back on screen.
+    if(libOn()) return;
+    var lim = termLimits(), h = termHeight();
+    termEl.style.height = h + 'px';
+    termGrip.setAttribute('aria-valuenow', String(h));
+    termGrip.setAttribute('aria-valuemin', String(lim.min));
+    termGrip.setAttribute('aria-valuemax', String(lim.max));
+  }
+  function setTermHeight(h){
+    var lim = termLimits();
+    termH = Math.max(lim.min, Math.min(lim.max, Math.round(h)));
+    paintTermHeight();
+  }
+  function saveTermHeight(){
+    try { if(termH) localStorage.setItem(TERM_H_KEY, String(termH)); else localStorage.removeItem(TERM_H_KEY); } catch(x){}
+  }
+
+  // What the address bar should say now. The topic and the pane are both worth surviving a
+  // reload, and both are written the same way so neither can silently drop the other.
+  function urlNow(){
+    return '?t='+encodeURIComponent(topic) + (termState[topic]==='open' ? '&v=term' : '');
+  }
+
+  // Mounted on first use, so a page that never opens a terminal never connects to ttyd, and
+  // dropped only when the window is CLOSED — never when it is minimized and never when the
+  // topic changes. What survives a drop is the session itself, on the far side, which is the
+  // operator's arrangement (ttyd hangs up its child; their wrapper holds the session open) and
+  // the reason closing needs a server round trip while minimizing does not.
+  function applyTerm(){
+    if(!TERM_OK) return;
+    if(termBoot && topic){
+      termBoot = false;
+      if(!termState[topic]) termState[topic]='open';
+    }
+    var state = topic ? termState[topic] : undefined;
+    var on = state === 'open';
+    chat.classList.toggle('term', on);
+    // After the class, so the divider the panel is measured against is on screen and has its
+    // height — and only while it is on screen: painting a closed panel would resize the parked
+    // iframe for nothing, which is the redraw this design exists to avoid. Before mountTerm, so
+    // a window opened for the first time is born at the height it will keep.
+    if(on) paintTermHeight();
+    termBtn.classList.toggle('on', Boolean(state));
+    termBtn.title = on ? 'Minimize the terminal' : (state ? 'Show the terminal (still running)' : 'Terminal');
+    // Only ever rendered where a session can actually be ended; see TERM_END.
+    termEndBtn.hidden = !TERM_END;
+    if(state && topic) mountTerm(topic);
+    paintFrames();
+  }
+
+  function mountTerm(id){
+    if(termFrames[id]) return;
+    var frame = document.createElement('iframe');
+    frame.setAttribute('title','Terminal');
+    // Relative, for the same reason every fetch here is: a reverse proxy may mount the daemon
+    // under a sub-path, and an absolute "/" walks out of it.
+    frame.setAttribute('src','term/?arg='+encodeURIComponent(id));
+    termFrames[id] = frame;
+    termHost.appendChild(frame);
+  }
+
+  /**
+   * Exactly one mounted terminal is visible: the current topic's, and only while it is open and
+   * nothing else covers the chat.
+   *
+   * A record from History is why the second half is here rather than in the stylesheet. The
+   * panel's own visibility is inherited, and an iframe's rule saying visible wins over it — so a
+   * parent rule alone leaves the terminal painted over the record, visible and unclickable. The
+   * frame's on class is the one thing that decides, and openLib/closeLib repaint through here.
+   */
+  function paintFrames(){
+    var on = Boolean(topic && termState[topic]==='open' && !libOn());
+    for(var id in termFrames){
+      if(!Object.prototype.hasOwnProperty.call(termFrames, id)) continue;
+      var live = on && id===topic;
+      termFrames[id].classList.toggle('on', live);
+      // Per frame, not only on the panel: with one topic's terminal open, another topic's frame
+      // is still mounted and hidden, and inert is what keeps it out of reach from script.
+      termFrames[id].toggleAttribute('inert', !live);
+    }
+    // Inert as well as invisible: visibility keeps the keyboard out, but an iframe can still be
+    // focused from script — and a terminal that grabs focus while it is parked is typing going
+    // somewhere the person cannot see. This one covers the panel's own two buttons.
+    termEl.toggleAttribute('inert', !on);
+    var cur = null;
+    for(var i=0;i<topics.length;i++){ if(topics[i].id===topic){ cur=topics[i]; break; } }
+    termName.textContent = cur && cur.title ? cur.title : 'Untitled';
+  }
+
+  /** Unmount one topic's terminal. Ends a connection, never a session — see endTerm. */
+  function dropTerm(id){
+    var frame = termFrames[id];
+    if(frame){
+      if(frame.parentNode) frame.parentNode.removeChild(frame);
+      delete termFrames[id];
+    }
+    delete termState[id];
+  }
+
+  function showTerm(){
+    if(!TERM_OK || !topic) return;
+    // Opening the panel takes height from the transcript, and a reader who was at the bottom
+    // would otherwise find the newest message pushed under the divider.
+    var stick = atBottom();
+    termState[topic] = 'open';
+    history.replaceState(null,'',urlNow());
+    applyTerm();
+    if(stick) toBottom();
+  }
+
+  // Hidden, not unmounted: the point of minimizing is that whatever is running in there keeps
+  // running AND stays connected, so coming back is a repaint rather than a reconnect and a
+  // redraw.
+  function minTerm(){
+    if(!TERM_OK || !topic || !termState[topic]) return;
+    termState[topic] = 'min';
+    history.replaceState(null,'',urlNow());
+    applyTerm();
+  }
+
+  /**
+   * End the session, which is a different act from closing the window and is why it asks first.
+   *
+   * Dropping the iframe would only hang up on a shell that carries on without us. What actually
+   * ends it is a command the operator configured, so this is a request; the window is taken down
+   * only once the server says it worked, because a window closed over a session that is still
+   * alive is the one outcome nobody could explain from the screen.
+   */
+  function endTerm(){
+    if(!TERM_OK || !TERM_END || !topic || !termState[topic]) return;
+    var cur = null;
+    for(var i=0;i<topics.length;i++){ if(topics[i].id===topic){ cur=topics[i]; break; } }
+    var title = (cur && cur.title) ? cur.title : 'Untitled';
+    if(!confirm('End the terminal session in "'+title+'"?\n\nAnything still running in it is killed. Minimize instead to leave it running.')) return;
+    var id = topic;
+    // Not retried, unlike a send. A 500 here means the operator's command ran and failed, and
+    // running it again 700ms later answers the same way while spawning a second process; the
+    // retry in post() is for a link that dropped a request, which is not this.
+    post('api/terminal/end',{topic:id},0).then(function(r){
+      return r.ok ? {ok:true} : r.json().then(function(d){ return {ok:false, error:(d&&d.error)||'could not end the terminal session'}; }, function(){ return {ok:false, error:'could not end the terminal session'}; });
+    }).then(function(d){
+      if(!d.ok){ alert(d.error); return; }
+      dropTerm(id);
+      if(id===topic){ history.replaceState(null,'',urlNow()); applyTerm(); }
+    }, function(){
+      alert('could not reach the daemon to end the terminal session');
+    });
+  }
+
+  // ── Topics fetched before they are opened ───────────────────────────────────
+  // A topic in "needs you" is one the person is about to open, and opening it used to cost a full
+  // sync. The row says what the reply is; the transcript behind it can be fetched while the person
+  // is still deciding and put in the store, so tapping the row paints the reply at once and the
+  // stream only replays what came after (enter).
+  //
+  // One rule says what to fetch: a topic whose stage is in NEEDS_ORDER — a scheduled run's and a
+  // sub-agent's too, since each is opened from its own green row or its notification — that is not
+  // on screen and whose copy is not its row's latest (current). A topic this page left is no
+  // exception: left mid-turn, its copy is the turn half done. Nearest the top of the list first,
+  // three at a time, only while the tab is visible and its stream is up. Without IndexedDB memory
+  // holds eight topics, and fetching twenty into it would push them out and fetch them again for
+  // ever, so nothing is fetched.
+  var PRE_TOPICS=20, PRE_PARALLEL=3, PRE_DEBOUNCE_MS=400, PRE_RETRY_MS=60000, PRE_TIMEOUT_MS=60000;
+  // preTried: by topic, the row's last a fetch was made for, when, and whether it came in.
+  var preTimer=0, preBusy={}, preCount=0, preTried={};
+
+  /**
+   * Whether a copy as of last is its row's latest: the row's own last, or past it — a row reports
+   * its topic's events up to 300ms after them. A row without last has nothing to be matched against.
+   */
+  function current(row, last){
+    return Boolean(row && row.last && last) && !newer(row.last, last);
+  }
+
+  /** The topics worth fetching now, in the order the needs-you rows are drawn (topicRows). */
+  function prefetchWanted(){
+    if(!dbOn() || document.visibilityState === 'hidden' || parked || !epoch) return [];
+    if(!stream || stream.readyState !== 1) return [];
+    var rows = topics.filter(function(t){ return t.id !== topic && NEEDS_ORDER[t.stage] !== undefined; });
+    // What needs a decision first, then most recent: the row nearest the top is the one most likely
+    // to be tapped next.
+    rows.sort(function(a, b){ return NEEDS_ORDER[a.stage]-NEEDS_ORDER[b.stage] || (b.lastAt||0)-(a.lastAt||0); });
+    return rows.slice(0, PRE_TOPICS).filter(function(t){
+      var v = vers[t.id], tried = preTried[t.id];
+      if(!t.last || preBusy[t.id] || current(t, v && v.last)) return false;
+      // Once per version of the row: a failure is asked again a minute later, at the next list
+      // event; an answer that came in, not until the row moves — even one that is not the row's
+      // version, which would otherwise be fetched again the moment it landed.
+      return !(tried && tried.last === t.last && (tried.ok || Date.now() - tried.at < PRE_RETRY_MS));
+    });
+  }
+
+  /** Look again once a burst of list events has settled; a message posts one row per topic. */
+  function schedulePrefetch(){
+    if(preTimer) return;
+    preTimer = setTimeout(pumpPrefetch, PRE_DEBOUNCE_MS);
+  }
+
+  /**
+   * Start what is wanted, up to PRE_PARALLEL at once. Not one at a time, as through 3.9.0: the
+   * median topic is 11 KB gzipped (measured on the live gateway, 2026-11-17), so on a slow link
+   * each fetch is mostly round trip, and one at a time a sixth topic waited out five of them.
+   */
+  function pumpPrefetch(){
+    preTimer=0;
+    var want=prefetchWanted();
+    for(var i=0;i<want.length && preCount < PRE_PARALLEL;i++) prefetchOne(want[i]);
+  }
+
+  /**
+   * Fetch one topic into the store. Every way this can end goes through finish — an answer, a
+   * refusal, a body that does not parse, and a request that never comes back, which is aborted
+   * after PRE_TIMEOUT_MS. A rejected r.json() once skipped the only line that freed the slot, and
+   * one such answer stopped the page prefetching for the rest of its life.
+   */
+  function prefetchOne(t){
+    var done=false;
+    var ctl = typeof AbortController === 'function' ? new AbortController() : null;
+    preBusy[t.id]=true;
+    preCount++;
+    function finish(ok){
+      if(done) return;
+      done=true;
+      clearTimeout(timer);
+      delete preBusy[t.id];
+      preCount--;
+      preTried[t.id]={last:t.last, at:Date.now(), ok:ok};
+      pumpPrefetch();
+    }
+    var timer = setTimeout(function(){
+      if(ctl){ try{ ctl.abort(); }catch(x){} }
+      finish(false);
+    }, PRE_TIMEOUT_MS);
+    // A topic not looked at since the page loaded may be in the database already — written by an
+    // earlier page, or by the service worker when its push came — and reading that is cheaper than
+    // asking the daemon for it again.
+    (vers[t.id] === undefined ? cachePeek(t.id) : Promise.resolve()).then(function(){
+      if(done) return;
+      var v = vers[t.id];
+      if(t.id === topic || current(t, v && v.last)) return finish(true);
+      fetch('api/topic?t='+encodeURIComponent(t.id), {credentials:'same-origin', cache:'no-store', signal:ctl ? ctl.signal : undefined})
+        .then(function(r){ return r.ok ? r.json() : null; })
+        .then(function(d){ return takePrefetched(t, d); })
+        .then(finish, function(){ finish(false); });
+    });
+  }
+
+  /** Whether the answer was kept — or was not needed. May be a promise of it. */
+  function takePrefetched(t, d){
+    if(!d || d.topic !== t.id) return false;
+    // Opened while this was on the wire: the screen keeps its own copy. Gone: nothing to keep.
+    if(t.id === topic || !topicById(t.id)) return true;
+    // Another run of the daemon: these ids name something else. Not retried at once — a page
+    // whose epoch is a restart behind would otherwise ask again the moment this came back — and
+    // the sync that brings the new epoch clears preTried, so the next pass fetches it properly.
+    if(!epoch || d.epoch !== epoch) return false;
+    // An answer older than a copy the page has since put (the topic opened and left while this was
+    // in flight, a push the service worker kept) is refused by put, in both layers.
+    return put(t.id, snapshotMsgs(d), {epoch:d.epoch, last:d.last, stale:Boolean(d.stale)});
+  }
+
+  function switchTopic(id){
+    if(!id) return;
+    // Any way into a topic — a row, a link, the side panel, a notification — is a way out of a
+    // conversation opened from History, including into the very topic it covers.
+    closeLib();
+    if(id===topic) return;
+    // The settings page is bound to the topic it was opened in: its rows write that conversation's
+    // agent and model, and its buttons name a message that topic holds. Following another topic
+    // puts it away rather than leaving it pointing at the one being left.
+    closeSettings();
+    // The git window reads the directory of the topic it was opened on; following another topic
+    // puts it away rather than leaving it pointing at the one being left.
+    closeGit();
+    // The panel stays where it is: it is part of the workspace, and following a run out of it
+    // should leave the list of runs beside the transcript. The one exception is the overlay under
+    // 1024px, which covers the chat it just opened — there is nothing to keep it beside there.
+    if(schedPane.isOpen() && !schedPane.docked()) setSchedules(false, true);
+    // All three read off the topic being left — its copy, where it was being read, its draft — so
+    // all before anything below takes it off screen.
+    leave();
+    saveView(topic);
+    stashDraft(topic);
+    topic = id;
+    history.replaceState(null,'',urlNow());
+    // Before the transcript work below, so the terminal follows the topic in the same frame
+    // the title does rather than a repaint later.
+    applyTerm();
+    for(var i=0;i<topics.length;i++){
+      if(topics[i].id===id){
+        readCounts[id]=topics[i].msgCount || 0;
+        saveReads();
+        break;
+      }
+    }
+    paintTopics();
+    reportSeen();
+    log.innerHTML='';
+    data={};
+    els={};
+    sig={};
+    skeleton=false;
+    // All of these belong to the topic being left: the notice and divider elements are gone with
+    // #log's children, whether the NEXT topic predates the daemon is the incoming sync's answer
+    // to give, and its transcript has not been read back yet. epoch is NOT reset — it is a
+    // property of the daemon on the other end, not of the room being entered.
+    stale=false;
+    emptyEl=null;
+    launch=null;
+    launchEl=null;
+    launchSig='';
+    dividerEl=null;
+    syncingEl=null;
+    // The strip describes the topic being left; the incoming sync says what the new one's is.
+    closeModelPop();
+    closeBtw(false);
+    setStatus(null);
+    entering=true;
+    synced=false;
+    view = views[id] || null;
+    landedAt = -1;
+    loadDraft(id);
+    // The shape of a transcript while both its copy and the stream are outstanding. A copy in
+    // memory replaces it at once and one in the database normally answers first; nothing about
+    // that is guaranteed, which is why the placeholders go in regardless.
+    showSkeleton();
+    settleOnResume = false;
+    enter(id);
+  }
+
+  // How long entering a topic waits for the database to say whether it has a copy to resume from,
+  // before opening the stream with a sync instead. A read is a few milliseconds; this is for a
+  // database that hangs, which mobile Safari's has been known to do.
+  var LOCAL_WAIT_MS=300;
+  // Set when a topic is entered from a copy: the copy and what the resumed stream replays after it
+  // are the whole room, so the end of the replay can judge the previous page's unsure sends the way
+  // a sync does (see resumed). enterToken is which entry is the latest.
+  var settleOnResume=false, enterToken=0;
+
+  /**
+   * Into a topic, on a switch and on loading the page: its copy (get) put up, and its stream resumed
+   * from the copy's last event — the daemon replays what came after, or sends the whole topic when
+   * its backlog no longer reaches. A copy that is its row's latest is the topic as it stands, so
+   * nothing says more may be coming. Without a copy to resume from — none, one of another run, one
+   * cut to fit, an empty room (whose choice of agents only a sync carries), a page that has not had
+   * its first sync — the stream asks for a sync and whatever copy there is is painted as it comes.
+   *
+   * A copy in memory goes up at once; the database is waited on only when it may hold one to resume
+   * from, and for at most LOCAL_WAIT_MS. The copy may be older than the person's last page — a send
+   * that page left "Not confirmed" can postdate it — so the echoes in it are claimed here, and a
+   * send it does not carry is left for the end of the replay to judge, never failed on the copy.
+   */
+  function enter(id){
+    var mine = ++enterToken, used = false, v = vers[id];
+    // The topic being left has to stop talking now, not when the read comes back: everything its
+    // stream delivered in between would be drawn into this topic. Its handlers check es !== stream.
+    if(stream){ stream.close(); stream = null; }
+    function here(){ return mine === enterToken && id === topic; }
+    function go(c){
+      if(used) return;
+      used = true;
+      if(!here()) return;
+      var resume = Boolean(c && c.msgs.length && c.last && epoch && c.epoch === epoch);
+      if(c){
+        // Before the unsent bubbles go up, as a sync would: an echo settles its record instead of
+        // leaving a bubble behind for the messages below to skip.
+        for(var i=0;i<c.msgs.length;i++) claim(c.msgs[i]);
+        if(resume) stale = c.stale;
+        if(c.msgs.length) adopt(c.msgs, resume && current(topicById(id), c.last));
+      }
+      // What was sent into this topic and not acknowledged — including a send still in flight from
+      // before a switch, whose bubble went with the transcript it was in.
+      showUnsent(id);
+      if(resume){ lastEv = c.last; settleOnResume = true; }
+      connect(resume);
+    }
+    var m = id ? memCopy(id) : null;
+    if(m || !id) return go(m);
+    get(id).then(function(c){
+      if(!used) return go(c);
+      // Too late to choose how the stream opens; still worth painting.
+      if(c && c.msgs.length && here()) adopt(c.msgs);
+    });
+    if(epoch && dbOn() && (!v || (v.last && v.epoch === epoch))) setTimeout(function(){ go(null); }, LOCAL_WAIT_MS);
+    else go(null);
+  }
+
+  function deleteTopic(delId){
+    var target = null;
+    for(var i=0;i<topics.length;i++){
+      if(topics[i].id===delId){ target=topics[i]; break; }
+    }
+    var title = (target && target.title) ? target.title : 'Untitled';
+    // A star protects a topic from everything automatic, not from this: the × is the operator
+    // deciding about one row, which is exactly what a star defers to. The question says so.
+    if(!confirm('Delete '+(target && target.starred ? 'starred ' : '')+'topic "' + title + '"?')) return;
+    post('api/topics/delete',{topic:delId},1).then(function(r){
+      return r.ok ? r.json() : null;
+    }).then(function(d){
+      if(!d) return;
+      cacheDrop(delId);
+      // The row is gone, so its terminal window has nothing left to belong to. Only the window
+      // — the session on the far side outlives this exactly as it outlives a closed tab, which
+      // is why deleting a topic is not offered as a way to end one.
+      dropTerm(delId);
+      delete readCounts[delId];
+      saveReads();
+      if(topic === delId){
+        var remaining = topics.filter(function(t){ return t.id !== delId; });
+        if(remaining.length > 0){
+          switchTopic(remaining[0].id);
+        } else {
+          createTopic();
+        }
+      }
+      // After the switch, which is what writes down the view and the draft of the topic being
+      // left — this one, when it was the one on screen. The broadcast that is also on its way
+      // prunes the same entries; this is so a draft of a deleted topic is not waiting on it.
+      forget(delId);
+    });
+  }
+
+  // ── The status strip ─────────────────────────────────────────────────────────
+  // What the daemon last pushed about this topic's agent (see status-board.ts), or null. Every time
+  // in it is absolute, so a countdown is worked out here against the clock rather than re-sent:
+  // the server says when a cache expires once, and this page counts to it.
+  var agentStatus = null, statusTimer = null, statusHtml = '';
+  // How often a countdown on screen is redrawn. Minutes are its finest unit, so twice a minute is
+  // as often as it can visibly change; and only while one is on screen and the tab is visible.
+  var STATUS_TICK_MS = 30000;
+
+  function setStatus(s){
+    agentStatus = s || null;
+    paintStatus();
+    armStatusTick();
+  }
+
+  function hasCountdown(s){
+    if(!s) return false;
+    if(s.cacheExpiresAt) return true;
+    var q = s.quota || [];
+    for(var i=0;i<q.length;i++) if(q[i].resetsAt) return true;
+    return false;
+  }
+
+  function armStatusTick(){
+    var want = hasCountdown(agentStatus) && document.visibilityState !== 'hidden';
+    if(want && !statusTimer) statusTimer = setInterval(paintStatus, STATUS_TICK_MS);
+    else if(!want && statusTimer){ clearInterval(statusTimer); statusTimer = null; }
+  }
+
+  // ── The ages on the topic rows ──────────────────────────────────────────────
+  // A row's age is derived from a stamp the server sent, so it goes stale on its own. Rewritten
+  // in place rather than by repainting the list: paintTopics replaces every row's markup, which
+  // would throw away the hover state and any menu open over a row, twice a minute, for a string
+  // that changed by one character. Minutes are the finest unit a row shows, so twice a minute is
+  // as often as it can visibly move — and only while one is on screen and the tab is visible.
+  // AGE_TICK_MS and ageTimer are declared near the top of the script; see there.
+
+  function paintAges(){
+    // Both lists carry one: a topic row in the switcher, a scheduled run in the panel.
+    var nodes=document.querySelectorAll('.topic-age'), now=Date.now();
+    for(var i=0;i<nodes.length;i++){
+      var n=nodes[i], at=Number(n.getAttribute('data-age')) || 0;
+      if(!at) continue;
+      var run=n.getAttribute('data-age-run')==='1';
+      n.textContent=ageText(now-at, !run);
+      n.title=(run?'Started ':'Ended ')+ageClock(at);
+    }
+  }
+
+  function armAgeTick(){
+    var want=Boolean(document.querySelector('.topic-age')) && document.visibilityState !== 'hidden';
+    if(want && !ageTimer) ageTimer=setInterval(paintAges, AGE_TICK_MS);
+    else if(!want && ageTimer){ clearInterval(ageTimer); ageTimer=null; }
+  }
+
+  // A tab looked at again shows the age it should have had, at once, rather than up to half a
+  // minute late; and one put away stops the timer until it is back.
+  document.addEventListener('visibilitychange', function(){
+    if(document.visibilityState !== 'hidden') paintAges();
+    armAgeTick();
+  });
+
+  // The same units as the footer (core/runtime-footer.ts formatTokens / formatWindow), so a number
+  // read here and one read under a reply can be compared.
+  function stTokens(n){
+    return n >= 1e6 ? (n/1e6).toFixed(1).replace(/\.0$/,'')+'M' : Math.round(n/1000)+'k';
+  }
+  function stWindow(n){
+    return n >= 1e6 ? (Math.floor(n/1e5)/10).toFixed(1).replace(/\.0$/,'')+'M' : Math.floor(n/1000)+'k';
+  }
+  function stLeft(ms){
+    var m = Math.floor(ms/60000);
+    if(m < 1) return '<1m';
+    var d = Math.floor(m/1440), h = Math.floor((m%1440)/60), mm = m%60;
+    if(d > 0) return d+'d'+(h ? ' '+h+'h' : '');
+    if(h > 0) return h+'h'+(mm ? ' '+mm+'m' : '');
+    return m+'m';
+  }
+  function stClock(at){
+    var t = new Date(at);
+    return (t.getHours()<10?'0':'')+t.getHours()+':'+(t.getMinutes()<10?'0':'')+t.getMinutes();
+  }
+  // agy's pool ids, made readable: gemini-5h → Gemini 5h, 3p-weekly → 3P wk. An id of any other
+  // shape is shown as it came, rather than dropped for not being one of the four known today.
+  function poolLabel(id){
+    var cut = id.lastIndexOf('-');
+    var fam = cut > 0 ? id.slice(0, cut) : id, win = cut > 0 ? id.slice(cut+1) : '';
+    fam = fam === '3p' ? '3P' : (fam === 'gemini' ? 'Gemini' : fam);
+    win = win === 'weekly' ? 'wk' : (win === 'daily' ? 'day' : win);
+    return win ? fam+' '+win : fam;
+  }
+  function seg(cls, title, html){
+    return '<span class="st'+(cls ? ' '+cls : '')+'"'+(title ? ' title="'+text(title)+'"' : '')+'>'+html+'</span>';
+  }
+
+  function statusSegments(s, now, open){
+    var out = [];
+    out.push(seg('st-who', '', text(s.agent)+' \u00b7 '+modelChip(s.model || 'Model')+(s.effort ? ' \u00b7 '+text(s.effort) : '')
+      +optChips(s.options || opkFor(topic))));
+    if(s.context && s.context.size > 0){
+      var pct = Math.min(100, Math.max(0, Math.round(s.context.used / s.context.size * 100)));
+      out.push(seg(pct >= 80 ? 'bad' : (pct >= 50 ? 'warn' : ''),
+        s.context.used.toLocaleString()+' of '+s.context.size.toLocaleString()+' tokens in context',
+        '<i class="st-meter"><i style="width:'+pct+'%"></i></i>'+pct+'%'
+          +'<span class="st-x">'+stTokens(s.context.used)+'/'+stWindow(s.context.size)+'</span>'));
+    }
+    if(s.cost){
+      var c = s.cost;
+      out.push(seg('', 'Session cost so far, as the harness reports it ('+c.amount.toFixed(4)+' '+c.currency+')',
+        c.currency === 'USD' ? '$'+c.amount.toFixed(2) : text(c.amount.toFixed(2)+' '+c.currency)));
+    }
+    if(s.cacheExpiresAt){
+      var left = s.cacheExpiresAt - now;
+      out.push(left > 0
+        ? seg(left < 5*60000 ? 'warn' : '', 'Prompt cache expires at '+stClock(s.cacheExpiresAt)+'; after that the next message re-reads the whole context at full price', text('cache '+stLeft(left)))
+        : seg('', 'Prompt cache expired at '+stClock(s.cacheExpiresAt)+'; the next message re-reads the whole context at full price', 'cache expired'));
+    }
+    var pools = s.quota || [], anyActive = false;
+    for(var i=0;i<pools.length;i++) if(pools[i].active) anyActive = true;
+    var qAccts = {};
+    for(var a=0;a<pools.length;a++) if(pools[a].account) qAccts[pools[a].account] = 1;
+    var multiAcct = Object.keys(qAccts).length > 1;
+    for(var j=0;j<pools.length;j++){
+      var p = pools[j], off = anyActive && !p.active;
+      // Closed, only the pools being spent from: the others are context, and the line is short.
+      if(off && !open) continue;
+      var rp = Math.round(p.remaining * 100);
+      // A reset time is only worth the room while something has been spent.
+      var reset = p.resetsAt && rp < 100 ? ' ('+stLeft(p.resetsAt - now)+')' : '';
+      var acctTag = multiAcct && p.account ? p.account.split('@')[0]+' ' : '';
+      var tip = (p.account ? p.account+(p.resetsAt ? ' \u00b7 ' : '') : '')
+        + (p.resetsAt ? 'Refills '+new Date(p.resetsAt).toLocaleString() : '');
+      out.push(seg((rp <= 15 ? 'bad' : (rp <= 40 ? 'warn' : ''))+(off ? ' off' : ''),
+        tip,
+        text(acctTag+poolLabel(p.id)+' '+rp+'%'+reset)));
+    }
+    return out.join('');
+  }
+
+  function paintStatus(){
+    var s = agentStatus;
+    // With no status yet (a restart, a conversation that has not reported), the line still offers
+    // the switch once the topic has a conversation in it — not in a new one, where the agent
+    // launcher is the choice to make first. Asked of the launcher on screen, not of launch: that
+    // is the last sync's snapshot of the empty room and stays set until the next sync, so testing it
+    // hid the switch from the moment an agent was chosen until the first reply reported a status —
+    // exactly when someone wants to pick the model the first message goes to.
+    var bare = !s && topic && synced && !launchEl && log.querySelector('.m');
+    var opkSame = opk.topic === topic;
+    var bareWho = (opkSame && opk.agent ? text(opk.agent)+' \u00b7 ' : '')
+      + modelChip((opkSame && opk.model) || 'Model')
+      + optChips(opkFor(topic));
+    var html = s ? statusSegments(s, Date.now(), statusEl.classList.contains('open'))
+      : (bare ? seg('st-who', '', bareWho) : '');
+    // The agent's own settings have no status to come from yet either, so ask which to draw.
+    if(bare && opk.topic !== topic) schedulePeek();
+    // Compared before writing: the tick redraws twice a minute, and most of those change nothing.
+    if(html === statusHtml) return;
+    statusHtml = html;
+    statusEl.innerHTML = html;
+    statusEl.hidden = !html;
+  }
+
+  statusEl.addEventListener('click', function(e){
+    // A setting first: its switch is an .st-model too, for the look.
+    var ob = e.target.closest ? e.target.closest('.st-opt') : null;
+    if(ob){
+      if(ob.disabled) return;
+      var oid = ob.getAttribute('data-opt');
+      if(!modelPop.hidden && mp.opt === oid) closeModelPop(); else openOptPop(oid);
+      return;
+    }
+    if(e.target.closest && e.target.closest('.st-model')){
+      if(!modelPop.hidden && !mp.opt) closeModelPop(); else openModelPop();
+      return;
+    }
+    statusEl.classList.toggle('open');
+    paintStatus();
+  });
+
+  // ── The model switch ─────────────────────────────────────────────────────────
+  // /model as a control: the list the topic's agent offers (GET api/models, which starts a cold
+  // agent the way /model does — hence "Asking…"), and the switch (POST api/models), which is
+  // /model's own: a runtime override for this topic, config untouched. mp.seq drops an answer that
+  // belongs to a list closed or reopened since.
+  // The same list serves one of the agent's own settings (openOptPop): mp.opt is that setting's id,
+  // null for the model.
+  var mp = { topic: null, opt: null, data: null, err: '', loading: false, busy: false, seq: 0 };
+  var MODEL_WAIT_MS = 45000;
+
+  function modelChip(label){
+    return '<button type="button" class="st-model" aria-haspopup="dialog" aria-expanded="'+(modelPop.hidden || (mp && mp.opt) ? 'false' : 'true')+'"'
+      + ' title="Switch the model for this topic (/model)"><span class="st-mtext">'+text(label)+'</span></button>';
+  }
+
+  // ── The agent's own settings ─────────────────────────────────────────────────
+  // Settings an agent defines itself (an ACP select option in an underscore category — an account a web
+  // agent runs on, say), each drawn beside the model as a switch of the same kind. Their state is
+  // the agent's: the status carries it once a turn has reported, and before that — a new topic,
+  // the one time a setting like an account may still be changed — GET api/options?peek=1 says which
+  // to draw without starting the agent, and what it knows of them. opk is that answer for the topic
+  // on screen, asked again when a message arrives there (a /cd or /new ends the session it
+  // described) and after a pick. One with a single choice is one the agent will not change now.
+  // (opk is declared with the page's early state, for the reason given there.)
+
+  function opkFor(t){ return opk.topic === t ? opk.options : []; }
+
+  function optChips(list){
+    var h = '';
+    for(var i=0;i<(list||[]).length;i++) h += ' \u00b7 '+optChip(list[i]);
+    return h;
+  }
+
+  function optChip(o){
+    var val = o.value !== undefined && o.value !== null ? String(o.value) : '';
+    var body = '<span class="st-olabel">'+text(o.name)+'</span>'+(val ? ' <span class="st-mtext">'+text(val)+'</span>' : '');
+    var note = o.note ? '\n'+o.note : '';
+    if(o.fixed){
+      return '<button type="button" class="st-model st-opt fixed" disabled data-opt="'+text(o.id)+'"'
+        + ' title="'+text(o.name+': '+val+' \u2014 fixed for this conversation'+note)+'">'+body+'</button>';
+    }
+    var open = !modelPop.hidden && mp.opt === o.id;
+    return '<button type="button" class="st-model st-opt" data-opt="'+text(o.id)+'" aria-haspopup="dialog" aria-expanded="'+(open ? 'true' : 'false')+'"'
+      + ' title="'+text('Switch '+o.name+' for this topic'+note)+'">'+body+'</button>';
+  }
+
+  /** Ask which settings to draw, a moment from now: a burst of messages, or an agent being chosen, is one ask. */
+  function schedulePeek(){
+    if(opk.timer) clearTimeout(opk.timer);
+    opk.timer = setTimeout(function(){ opk.timer = null; peekOptions(); }, 400);
+  }
+
+  function peekOptions(){
+    // A status that has arrived since says it all, and is kept current by the daemon.
+    if(!topic || agentStatus) return;
+    var n = ++opk.seq, t = topic;
+    // Claimed now, so the repaints while it is asked do not ask again.
+    if(opk.topic !== t){ opk.topic = t; opk.agent = ''; opk.model = ''; opk.options = []; }
+    fetch('api/options?peek=1&t='+encodeURIComponent(t), {credentials:'same-origin'})
+      .then(function(r){ return r.ok ? r.json() : null; })
+      .then(function(j){
+        if(n !== opk.seq || t !== opk.topic || !j) return;
+        opk.agent = j.agent || '';
+        opk.model = j.model || '';
+        opk.options = j.options || [];
+        paintStatus();
+      }, function(){});
+  }
+
+  /** The setting's name, from what the line is drawn from — for the list's heading. */
+  function optName(id){
+    var list = (agentStatus && agentStatus.options) || opkFor(topic);
+    for(var i=0;i<list.length;i++) if(list[i].id === id) return list[i].name;
+    return 'Setting';
+  }
+
+  function openModelPop(){ openPop(null); }
+  function openOptPop(id){ openPop(id); }
+
+  function openPop(opt){
+    if(!topic) return;
+    var n = ++mp.seq, t = topic;
+    mp.topic = t; mp.opt = opt; mp.data = null; mp.err = ''; mp.loading = true; mp.busy = false;
+    mpFilter.value = '';
+    mpHeading.textContent = opt ? optName(opt)+' for this topic' : 'Model for this topic';
+    mpFilter.placeholder = opt ? 'Filter' : 'Filter models';
+    mpFoot.innerHTML = opt ? 'This topic only. The agent decides what can be changed, and when.'
+      : 'This topic only, like <code>/model</code>. The default for each agent is in Settings.';
+    modelPop.hidden = false;
+    paintStatus();
+    renderModelPop();
+    // Not on a phone: the keyboard would take half the screen before the list was read.
+    if(!narrow()) mpFilter.focus();
+    var ctl = typeof AbortController === 'function' ? new AbortController() : null;
+    var timer = setTimeout(function(){ if(ctl) ctl.abort(); }, MODEL_WAIT_MS);
+    fetch((opt ? 'api/options?t=' : 'api/models?t=')+encodeURIComponent(t), ctl ? {credentials:'same-origin', signal: ctl.signal} : {credentials:'same-origin'})
+      .then(function(r){ return r.json().then(function(j){ return { r: r, j: j }; }); })
+      .then(function(x){
+        clearTimeout(timer);
+        if(n !== mp.seq) return;
+        mp.loading = false;
+        if(!x.r.ok) mp.err = 'The daemon did not give a list (HTTP '+x.r.status+').';
+        else mp.data = x.j;
+        renderModelPop();
+        // Either list started the agent if it had to, so its settings are known now: draw them.
+        if(x.r.ok && x.j && x.j.ok && t === topic && !agentStatus) peekOptions();
+      }, function(){
+        clearTimeout(timer);
+        if(n !== mp.seq) return;
+        mp.loading = false;
+        mp.err = 'Could not reach the daemon for the list. Check the connection and try again.';
+        renderModelPop();
+      });
+  }
+
+  function closeModelPop(){
+    if(modelPop.hidden) return;
+    mp.seq++;
+    modelPop.hidden = true;
+    mpList.innerHTML = '';
+    paintStatus();
+  }
+
+  /** The list, or what stands in for it: asking, why there is none, or what went wrong. */
+  function renderModelPop(){
+    var d = mp.data;
+    mpAgent.textContent = d && d.agent ? d.agent : '';
+    mpFilter.hidden = !(d && d.ok && (mp.opt ? optChoices(d).length : d.options.length) > 8);
+    if(mp.loading){ mpList.innerHTML = '<div class="mp-msg mp-wait"><span class="set-spin" aria-hidden="true"></span>Asking the agent for its '+(mp.opt ? 'settings' : 'models')+'… a cold one takes a second or two to start.</div>'; return; }
+    if(mp.err){ mpList.innerHTML = '<div class="mp-msg err">'+inl(mp.err)+'</div>'; return; }
+    if(!d || !d.ok){ mpList.innerHTML = '<div class="mp-msg">'+inl(d ? d.text : '')+'</div>'; return; }
+    if(mp.opt){ renderOptList(d); return; }
+    var h = '';
+    for(var i=0;i<d.options.length;i++){
+      var o = d.options[i], on = o.value === d.current, def = d.configured && o.value === d.configured;
+      var name = o.name && o.name !== o.value ? o.name : '';
+      h += '<button type="button" class="mp-opt'+(on ? ' on' : '')+'" role="option" aria-selected="'+(on ? 'true' : 'false')+'" data-v="'+text(o.value)+'"'
+        + ' data-q="'+text((o.value+' '+name).toLowerCase())+'">'
+        + '<span class="mp-check" aria-hidden="true">'+(on ? IC.icon.check : '')+'</span>'
+        + '<span class="mp-main"><span class="mp-v">'+text(o.value)+'</span>'+(name ? '<span class="mp-n">'+text(name)+'</span>' : '')+'</span>'
+        + (def ? '<span class="mp-tag" title="What this agent starts a new session with (Settings)">default</span>' : '')
+        + '</button>';
+    }
+    mpList.innerHTML = h;
+    filterModels();
+  }
+
+  /** The setting the list is open on, out of the agent's answer. */
+  function optOf(d){
+    var list = (d && d.options) || [];
+    for(var i=0;i<list.length;i++) if(list[i].id === mp.opt) return list[i];
+    return null;
+  }
+  function optChoices(d){ var o = optOf(d); return o ? o.options : []; }
+
+  /**
+   * One setting's choices, each with the agent's description of it as a second line (an account's
+   * used-up quota). A single choice is listed and not offered: the agent will not change it now.
+   */
+  function renderOptList(d){
+    var o = optOf(d);
+    if(!o){ mpList.innerHTML = '<div class="mp-msg">The agent no longer offers this setting.</div>'; return; }
+    var fixed = o.options.length <= 1, h = '';
+    if(fixed) h += '<div class="mp-msg">Fixed for this conversation: the agent offers no other '+text(o.name)+' now.</div>';
+    for(var i=0;i<o.options.length;i++){
+      var c = o.options[i], on = c.value === o.current;
+      h += '<button type="button" class="mp-opt'+(on ? ' on' : '')+'" role="option" aria-selected="'+(on ? 'true' : 'false')+'" data-v="'+text(c.value)+'"'
+        + ' data-q="'+text((c.name+' '+c.value+' '+(c.description || '')).toLowerCase())+'"'+(fixed ? ' disabled' : '')+'>'
+        + '<span class="mp-check" aria-hidden="true">'+(on ? IC.icon.check : '')+'</span>'
+        + '<span class="mp-main"><span class="mp-o">'+text(c.name)+'</span>'+(c.description ? '<span class="mp-n">'+text(c.description)+'</span>' : '')+'</span>'
+        + '</button>';
+    }
+    mpList.innerHTML = h;
+    filterModels();
+  }
+
+  function filterModels(){
+    var q = mpFilter.value.trim().toLowerCase();
+    var opts = mpList.querySelectorAll('.mp-opt');
+    for(var i=0;i<opts.length;i++) opts[i].hidden = !!q && (opts[i].getAttribute('data-q') || '').indexOf(q) < 0;
+  }
+
+  /**
+   * Switch to one, as /model would — or set the agent's setting, which the agent may refuse. Either
+   * refusal is shown in the list in its own words.
+   */
+  function chooseModel(b){
+    if(mp.busy || !mp.topic || b.disabled) return;
+    var n = mp.seq, t = mp.topic, v = b.getAttribute('data-v'), opt = mp.opt;
+    mp.busy = true;
+    b.classList.add('busy');
+    post(opt ? 'api/options' : 'api/models', opt ? {topic: t, id: opt, value: v} : {topic: t, value: v}, 1, MODEL_WAIT_MS)
+      .then(function(r){ return r.json().then(function(j){ return { r: r, j: j }; }); })
+      .then(function(x){
+        mp.busy = false;
+        if(n !== mp.seq) return;
+        if(x.r.ok && x.j.ok){
+          if(!opt && t === topic && agentStatus) agentStatus = Object.assign({}, agentStatus, { model: x.j.model });
+          closeModelPop();
+          note.textContent = String(x.j.text || '').replace(/\x60/g, '');
+          // A status the daemon pushes says it too once there is one; until then this is how.
+          if(opt && t === topic) peekOptions();
+          return;
+        }
+        mp.err = x.j && x.j.text ? x.j.text : 'The daemon refused that (HTTP '+x.r.status+').';
+        renderModelPop();
+      }, function(){
+        mp.busy = false;
+        if(n !== mp.seq) return;
+        mp.err = 'Could not reach the daemon, so '+(opt ? 'nothing' : 'the model')+' was changed. Try again.';
+        renderModelPop();
+      });
+  }
+
+  mpList.addEventListener('click', function(e){
+    var b = e.target.closest ? e.target.closest('.mp-opt') : null;
+    if(b) chooseModel(b);
+  });
+  mpFilter.addEventListener('input', filterModels);
+  $('mp-close').addEventListener('click', closeModelPop);
+  // Its own Escape and outside click, ahead of nothing else: the list is not a window over the
+  // page, so it does not join the overlays the page-wide Escape closes.
+  document.addEventListener('keydown', function(e){
+    if(e.key === 'Escape' && !modelPop.hidden){ closeModelPop(); e.stopPropagation(); }
+  }, true);
+  document.addEventListener('click', function(e){
+    if(modelPop.hidden || !e.target.closest) return;
+    if(e.target.closest('#model-pop') || e.target.closest('.st-model')) return;
+    closeModelPop();
+  });
+  // A countdown is redrawn the moment the page is looked at again, rather than up to a tick late.
+  document.addEventListener('visibilitychange', function(){
+    if(document.visibilityState !== 'hidden') paintStatus();
+    armStatusTick();
+  });
+
+  function handle(ev){
+    if(ev.t==='sync'){
+      // Only a sync for a topic we have since left is stale enough to drop. A first visit has
+      // no topic at all — nothing put ?t= in the URL yet — and the server answers by picking
+      // one for us, so testing ev.topic against an empty string threw away the only sync that
+      // visit was ever going to get and left the page an empty shell.
+      if(topic && ev.topic !== topic) return;
+      var named = !topic;
+      topic = ev.topic;
+      // A visit that named no topic learns only here which room it is in, and so which composer
+      // is its own. Not over anything already typed, though: that was typed into this room.
+      if(named && drafts[topic] && !input.value && !files.length) loadDraft(topic);
+      history.replaceState(null,'',urlNow());
+      // The other half of "asked for is not shown": a reload straight into terminal mode, or a
+      // first visit with no ?t= at all, only learns which topic to point at here.
+      applyTerm();
+      // Where the reader was, decided BEFORE the transcript moves under them. Opening a topic lands
+      // where it was left (or at the bottom); a resync after a dropped connection must not yank
+      // someone out of the history they were reading, which is only a choice at all now that the
+      // reconcile leaves their scroll position intact. Nor may the sync that finishes OPENING a
+      // topic, once the cache has put the transcript up and the reader has scrolled it — but when
+      // they have not, landing again is what finds their message after the sync has put older
+      // ones above it.
+      var arriving = entering && (landedAt < 0 || log.scrollTop === landedAt);
+      var stick = atBottom();
+      entering = false;
+      // Which run of the daemon everything in this sync belongs to. Anything already on screen
+      // from another one is cached history from here on, whatever it was painted as.
+      // A different run under a page that was already open is a restart, and the daemon that came
+      // back may be a newer one than served this script.
+      if(epoch && ev.epoch && ev.epoch !== epoch) checkBuild();
+      // Whatever was fetched from the daemon that went away is about ids this one hands out
+      // again for different messages; what was tried goes with it.
+      if(ev.epoch && epoch && ev.epoch !== epoch) preTried={};
+      // A sync settles the previous page's sends itself, below.
+      settleOnResume = false;
+      epoch = ev.epoch || 0;
+      synced = true;
+      // What the server says about this room BEFORE the transcript is reconciled, so the drops
+      // that reconcile performs already know whether an emptied log needs explaining.
+      stale = Boolean(ev.stale);
+      // Present only for a room that is empty and can still be given to an agent; absent clears it.
+      launch = ev.agents || null;
+      // Before the launcher is drawn below, which marks an offline machine's agents. Absent: none.
+      takeMachines(ev.offline || []);
+      repaintHistory();
+      // Before the reconcile, which claims any of them whose echo this sync turns out to carry. A
+      // visit that named no topic learns only now which ones are its own.
+      showUnsent(topic);
+      reconcile(ev.messages);
+      settleUnsure();
+      placeDivider();
+      syncEmptyNote();
+      // The card follows what the sync says its question and answer now are, or goes with them.
+      if(!btwBox.hidden) renderBtw(false);
+      cacheSave();
+      // A visit that named no topic is only told which room it is in here, so this is also where
+      // that room's copy is asked for — painted as history above what the sync carried.
+      if(named) get(topic).then(function(c){ if(c && c.msgs.length && ev.topic === topic) adopt(c.msgs); });
+      readCounts[topic] = ev.messages.length;
+      saveReads();
+      commands = ev.commands || [];
+      topics = ev.topics || [];
+      topicsV = ev.tv || 0;
+      paintTopics();
+      prune();
+      // Absent when the topic's agent has reported nothing since the daemon started, which clears
+      // whatever a previous connection had put up.
+      setStatus(ev.status);
+      note.textContent='';
+      if(arriving) land(); else if(stick) toBottom();
+      view = null;
+      // The list this sync carried is what says which topics need a person; the debounce keeps a
+      // reconnect's sync and the list events after it to one look.
+      schedulePrefetch();
+    }
+    else if(ev.t==='msg'){
+      // /setting is a page here, not a message: the daemon's screen goes to it, and a retired
+      // one (wasSettings) stays out of the transcript for good. Anything else that edits the
+      // message the page is drawing — the scheduled-task handover does — puts the page away and
+      // is drawn as the menu it has become.
+      var sm = ev.msg;
+      if(sm && sm.settings){ takeSettings(sm); return; }
+      if(sm && sm.wasSettings) return;
+      if(sm && settingsMsg && sm.id === settingsMsg.id) closeSettings();
+      // Before the upsert: if this is the echo of something typed here, it takes over the node
+      // that local message is already occupying rather than appearing underneath it.
+      claim(ev.msg);
+      upsert(ev.msg);
+      btwArrived(ev.msg);
+      cacheSave();
+      // Without a status, the settings drawn came from a peek, and what just happened may have
+      // ended the session it described (a /cd, a /new): ask again.
+      if(!agentStatus){ paintStatus(); schedulePeek(); }
+      readCounts[topic] = (readCounts[topic] || 0) + 1;
+      saveReads();
+      for(var i=0;i<topics.length;i++){
+        if(topics[i].id===topic){
+          topics[i].msgCount = (topics[i].msgCount || 0) + 1;
+          break;
+        }
+      }
+      paintTopics();
+    }
+    else if(ev.t==='del'){
+      drop(epoch+':'+ev.id);
+      cacheSave();
+    }
+    else if(ev.t==='react'){
+      var rk = epoch+':'+ev.id;
+      var m=data[rk]; if(!m) return;
+      var kept=(m.reactions||[]).filter(function(e){ return e!==ev.emoji; });
+      m.reactions = ev.on ? kept.concat([ev.emoji]) : kept;
+      paint(rk);
+      cacheSave();
+    }
+    else if(ev.t==='typing'){
+      typing.hidden = !ev.on;
+      for(var i=0;i<topics.length;i++){
+        if(topics[i].id===topic){
+          topics[i].running = ev.on;
+          break;
+        }
+      }
+      paintTopics();
+      // The turn's last message is no longer being written: its code blocks are coloured now.
+      if(!ev.on) hlSweep();
+      // A turn just ended — the moment its changes are all on disk. The git window, if it is
+      // open on this topic, re-reads the list; an open diff is left where the reader put it. In
+      // Commits it re-reads the history, which a turn that committed something has changed.
+      if(!ev.on && !gitWin.hidden){
+        if(gitState.mode === 'commits') gitLoadLog(false);
+        else gitLoadStatus();
+      }
+    }
+    else if(ev.t==='commands'){ commands = ev.commands || []; }
+    else if(ev.t==='status'){ setStatus(ev.status); }
+    else if(ev.t==='machines'){ setMachines(ev.offline || []); }
+    else if(ev.t==='topics' || ev.t==='topic-rows'){
+      if(ev.t==='topics') topics = ev.topics || [];
+      else applyRows(ev);
+      topicsV = ev.tv || 0;
+      paintTopics();
+      reportSeen();
+      if(topic && !topics.some(function(t){ return t.id===topic; })){
+        if(topics.length > 0){
+          switchTopic(topics[0].id);
+        } else {
+          createTopic();
+        }
+      }
+      // After any switch above, which writes down the view and draft of the topic it leaves — a
+      // topic that has just gone, in that case.
+      prune();
+      schedulePrefetch();
+    }
+    // The daemon is going away. The stream is closed here rather than left to EventSource, which
+    // would retry it every few seconds for as long as the daemon is down; this tries again on a
+    // back-off instead. The resume point it sends names the run that is going away, so the daemon
+    // that answers hands over the whole topic — which is what a page that outlived a restart needs.
+    // It used to stop for good and ask for a reload.
+    else if(ev.t==='bye'){
+      if(stream) stream.close();
+      note.textContent='The daemon is restarting. Reconnecting...';
+      reconnectLater();
+    }
+    // The end of a resumed stream's catch-up. For a blip or a tab coming back there is nothing to
+    // finish; for a topic put up from its copy (enter) this is what a sync would have done: the
+    // waiting line goes, and what is on screen is the room from here on.
+    else if(ev.t==='resumed'){
+      if(synced) return;
+      synced = true;
+      entering = false;
+      // Entered from a copy: that and the replay just finished are the whole room, so a send the
+      // previous page left unsure that neither carried never arrived — a sync's judgement, which a
+      // resume has to make for itself when no sync is coming.
+      if(settleOnResume){ settleOnResume = false; settleUnsure(); }
+      clearSyncing();
+      placeDivider();
+      syncEmptyNote();
+      cacheSave();
+      note.textContent='';
+    }
+  }
+
+  // The version of the topic list on this page (the daemon's tv), sent on a resume so the list is
+  // only sent again if it moved.
+  var topicsV=0;
+
+  /**
+   * What changed in the topic list (a topic-rows event): every row it carries replaces the one with
+   * its id, or joins the end; the ids it names as gone are dropped; and the list is put back in the
+   * daemon's order — sorted by lastAt, newest first, ties left as they were, which is how the store
+   * orders it — unless the event says the order outright. room.ts derivedOrder is this same
+   * algorithm on the other side, and sends the order whenever the two would disagree.
+   */
+  function applyRows(ev){
+    var gone={}, at={}, next=[], i;
+    var g=ev.gone || [], rows=ev.rows || [];
+    for(i=0;i<g.length;i++) gone[g[i]]=1;
+    for(i=0;i<topics.length;i++){
+      if(gone[topics[i].id]) continue;
+      at[topics[i].id]=next.length;
+      next.push(topics[i]);
+    }
+    for(i=0;i<rows.length;i++){
+      var r=rows[i];
+      if(Object.prototype.hasOwnProperty.call(at, r.id)) next[at[r.id]]=r;
+      else { at[r.id]=next.length; next.push(r); }
+    }
+    if(ev.order){
+      var byId={};
+      for(i=0;i<next.length;i++) byId[next[i].id]=next[i];
+      next=[];
+      for(i=0;i<ev.order.length;i++) if(byId[ev.order[i]]) next.push(byId[ev.order[i]]);
+    } else {
+      next = next.map(function(t, n){ return {t:t, n:n}; })
+        .sort(function(a, b){ return (b.t.lastAt||0) - (a.t.lastAt||0) || a.n - b.n; })
+        .map(function(x){ return x.t; });
+    }
+    topics = next;
+  }
+
+  // How long until the next attempt after a bye or a refused stream: one second, doubling to half
+  // a minute, and back to nothing once a stream opens. Every attempt is one request, so a daemon
+  // that is down for an hour costs a tab two a minute. One that falls due behind a hidden tab is
+  // left for the tab to make when it is looked at again (see park).
+  var retryMs=0, retryTimer=0;
+  function reconnectLater(){
+    if(retryTimer) return;
+    retryMs = retryMs ? Math.min(retryMs*2, 30000) : 1000;
+    retryTimer = setTimeout(function(){
+      retryTimer=0;
+      if(document.visibilityState === 'hidden'){ parked = true; return; }
+      connect(true, true);
+    }, retryMs);
+  }
+
+  // ── The stream behind a hidden tab ──────────────────────────────────────────
+  // A tab nobody is looking at still received every event: each message in the topic, and the
+  // topic list after every message posted anywhere. A phone on the table and a desktop tab behind
+  // others are most of the time the page is open. So a tab hidden for PARK_MS closes its stream,
+  // and coming back opens a new one from the last event it had (?last=, which the server treats as
+  // Last-Event-ID): what was said meanwhile is replayed from the backlog, or the whole topic comes
+  // again if the backlog no longer reaches. Nothing on the page needs the stream while hidden —
+  // the title is never changed, notifications are Web Push and go through the service worker, the
+  // seen mark is only posted while visible — so the grace is only there so that glancing at another
+  // tab does not cost a reconnect. lastEv is the newest event id this stream has delivered.
+  var PARK_MS=15000, parkTimer=0, parked=false, lastEv='';
+  function park(){
+    parkTimer=0;
+    if(document.visibilityState !== 'hidden' || !stream || stream.readyState === 2) return;
+    parked=true;
+    stream.close();
+  }
+  document.addEventListener('visibilitychange', function(){
+    if(document.visibilityState === 'hidden'){
+      if(!parkTimer && !parked) parkTimer = setTimeout(park, PARK_MS);
+      return;
+    }
+    clearTimeout(parkTimer); parkTimer=0;
+    if(parked){ parked=false; connect(true, true); }
+    // A tab coming back is exactly when a topic may have started needing an answer while nobody
+    // was looking; nothing else fires until the next message.
+    schedulePrefetch();
+  });
+
+  /**
+   * Whether the session is still good, asked after a stream was refused for good.
+   *
+   * EventSource gives up on any answer that is not an event stream, and two very different answers
+   * are that: the daemon's 401 when the session is gone, and a proxy's 502 while the daemon behind
+   * it is restarting (cloudflared answers that way). Only the first is a reason to show the gate.
+   * A request that cannot get through says nothing about the session, so it counts as still good.
+   */
+  function signedIn(){
+    return fetch('api/push', {credentials:'same-origin', cache:'no-store'})
+      .then(function(r){ return r.status !== 401; }, function(){ return true; });
+  }
+
+  /**
+   * After a restart: does the daemon now serve a different page from this one?
+   *
+   * A HEAD names the page's ETag, which is its build (servePage), so this is one round trip with
+   * no body. When it differs the script on screen is the old one, talking to a newer daemon; the
+   * page says so and offers the reload rather than doing it, because a reload here would throw away
+   * whatever is open — a skill half-edited, a recording, the place in a long transcript. An answer
+   * with no ETag (a proxy that stripped it) says nothing, and nothing is shown.
+   */
+  function checkBuild(){
+    fetch(location.pathname, {method:'HEAD', cache:'no-store', credentials:'same-origin'}).then(function(r){
+      var tag = (r && r.headers && r.headers.get) ? (r.headers.get('ETag') || '') : '';
+      if(tag && tag.indexOf(BUILD) < 0) updateEl.hidden = false;
+    }, function(){});
+  }
+
+  /**
+   * Open the event stream for the topic on screen.
+   *
+   * resume carries the last event this page had (lastEv): for a stream opened again on the same
+   * topic (a tab coming back, a retry after a refused stream), or on a topic put up from its copy
+   * (enter). The daemon replays what came after it, or sends the whole topic when it cannot. Without
+   * it — a new topic, a fresh visit — there is nothing to resume from. quiet is for the same topic
+   * coming back: no focus taken, no side-panel lists asked for again.
+   */
+  function connect(resume, quiet){
+    if(stream) stream.close();
+    clearTimeout(retryTimer); retryTimer=0;
+    parked=false;
+    // Placeholders for the wait that is about to start. Guarded on an empty log inside, so a
+    // reconnect after a blip — where the conversation is still on screen and only the stream went
+    // away — is not answered by replacing it with skeletons.
+    showSkeleton();
+    var from = resume ? lastEv : '';
+    lastEv = from;
+    var qs = [];
+    if(topic) qs.push('t='+encodeURIComponent(topic));
+    if(from) qs.push('last='+encodeURIComponent(from));
+    if(from && topicsV) qs.push('tv='+topicsV);
+    // EventSource resends the last id it saw on its own, so a blip is answered with the few
+    // events that were missed rather than the whole conversation.
+    var es = stream = new EventSource('api/events' + (qs.length ? '?'+qs.join('&') : ''));
+    es.onmessage = function(e){
+      if(es === stream && e.lastEventId) lastEv = e.lastEventId;
+      try{ handle(JSON.parse(e.data)); }catch(x){}
+    };
+    // Not focused on a phone: the keyboard would come up before a word has been read, and on
+    // a portrait screen that is half the viewport gone to reach a field nobody asked for yet.
+    // Nor when the same topic's stream comes back (quiet): a tab returning to the front
+    // reconnects, and the focus is wherever the person left it.
+    es.onopen = function(){
+      retryMs = 0;
+      var fresh = app.hidden || !quiet;
+      gate.hidden=true; app.hidden=false; note.textContent=''; if(fresh && !narrow()) input.focus(); initNotify();
+      // The stream is the one thing that says the daemon is there to be asked; a tab that was
+      // hidden, or one that just rode out a restart, gets its prefetch from here.
+      schedulePrefetch();
+      // A panel opened (or restored from aa_sched_open) before the gate came down asked too
+      // early (loadSchedules and loadReviews refuse while #app is hidden); this is the first
+      // moment the answer can be had. The restored tab is read here too: on a reload that comes
+      // back to Reviews the panel opens before the gate does, so nothing else would ask. A tab
+      // coming back has already asked (the panel's own visibilitychange), so a resume does not.
+      if(fresh && schedPane.isOpen()){ loadSchedules(); if(schedTab === 'reviews') loadReviews(); armSched(); }
+    };
+    es.onerror = function(){
+      // A stream this page has since replaced or closed has nothing left to say.
+      if(es !== stream) return;
+      if(es.readyState === 2){
+        // Closed for good rather than retrying: the server answered with something that is not a
+        // stream. The gate only if that was the session going; otherwise a back-off, which is what
+        // carries a page through a restart behind a proxy that answers 502 meanwhile.
+        signedIn().then(function(ok){
+          if(es !== stream) return;
+          if(ok){ note.textContent='Reconnecting...'; reconnectLater(); }
+          else { app.hidden=true; gate.hidden=false; }
+        });
+      } else {
+        note.textContent='Reconnecting...';
+      }
+    };
+  }
+
+  /**
+   * The topic list's filter bar (makeFilterBar above). It only says what the options are and
+   * re-paints the list when one changes; the keyword and the chips are applied in topicRows.
+   */
+  topicFilter = makeFilterBar({
+    key: 'aa_topic_filter',
+    placeholder: 'Search topics',
+    groups: [],
+    onChange: function(){ paintTopics(); }
+  });
+  $('topics-filter').appendChild(topicFilter.el);
+  // The first frame, before the first list arrives: null says "nothing to offer yet", so a
+  // selection restored from storage is not pruned as if its option had gone.
+  topicFilter.setGroups(null);
+
+  bar.addEventListener('click', function(e){
+    // The empty state's Clear. The summary line's own Clear is a listener on the bar itself.
+    var fc = e.target.closest ? e.target.closest('[data-filter-clear]') : null;
+    if(fc){
+      e.stopPropagation();
+      if(topicFilter) topicFilter.clear();
+      return;
+    }
+    // The row's one control. Opening the menu is not opening the topic, like the star and the ×
+    // before it: the act is about the row, not about switching to it.
+    var more = e.target.closest ? e.target.closest('[data-rm]') : null;
+    if(more){
+      e.stopPropagation();
+      if(rowMenuKey && rowMenuKey===more.getAttribute('data-rm') && !rowMenu.hidden) closeRowMenu(true);
+      else openRowMenuFor(more);
+      return;
+    }
+    if(foldClick(e)) return;
+    var b = e.target.closest ? e.target.closest('[data-topic]') : null;
+    if(!b) return;
+    var id = b.getAttribute('data-topic');
+    if(!id || id===topic) return;
+    switchTopic(id);
+    if(narrow()) setSidebar(false);
+  });
+
+  /**
+   * A tap on a fold pill, in either list that draws one (treeRowHtml): flip it and repaint. Not a
+   * tap on the row — folding a parent is not a reason to switch to it. paintTopics repaints the
+   * Sessions tab too when it is on screen, so one call covers a pill in either.
+   */
+  function foldClick(e){
+    var fold = e.target.closest ? e.target.closest('[data-fold]') : null;
+    if(!fold) return false;
+    e.stopPropagation();
+    var foldId = fold.getAttribute('data-fold');
+    if(foldId){
+      // Folded is the default (an absent entry), so both choices are written down: false is
+      // "I opened this one", true is "I put it back".
+      folded[foldId] = folded[foldId] === false;
+      saveFolded();
+      paintTopics();
+    }
+    return true;
+  }
+
+  bar.addEventListener('keydown', function(e){
+    if(e.key==='Enter' || e.key===' '){
+      if(e.target.closest && e.target.closest('[data-rm],[data-fold]')) return;
+      var b = e.target.closest ? e.target.closest('[data-topic]') : null;
+      if(!b) return;
+      e.preventDefault();
+      var id = b.getAttribute('data-topic');
+      if(!id || id===topic) return;
+      switchTopic(id);
+    }
+  });
+
+  // ── A row's ⋯ menu ──────────────────────────────────────────────────────────
+  // One menu for every list on the page: a topic row, a scheduled run and a scheduled task all
+  // open it, with their own items. The box lives at the body, so a list's innerHTML repaint (every
+  // message a running agent posts, every poll of the task list) cannot take it away, and it is
+  // fixed so it stays beside the button that opened it. What ties it to a row is a key on the
+  // button — "topic:<id>", "sess:<id>", "task:<id>" — re-found after each repaint by rowMenuFollow,
+  // which closes the menu when the row it acts on has gone.
+  var ROW_MENU_ITEMS = '[role="menuitem"]';
+  function rowMenuButtons(){
+    return Array.prototype.filter.call(rowMenu.querySelectorAll(ROW_MENU_ITEMS), function(b){ return !b.disabled; });
+  }
+  /** Place the menu under its button, above it when the viewport runs out, inside both edges. */
+  function positionRowMenu(btn){
+    if(!btn) return;
+    var r=btn.getBoundingClientRect();
+    var w=rowMenu.offsetWidth || 210, h=rowMenu.offsetHeight || 0;
+    var left=Math.max(8, Math.min(r.right-w, window.innerWidth-8-w));
+    var top=r.bottom+4;
+    if(top+h+8>window.innerHeight) top=Math.max(8, r.top-4-h);
+    rowMenu.style.left=left+'px';
+    rowMenu.style.top=top+'px';
+  }
+  /**
+   * Draw the menu for one row and put it beside its button.
+   *
+   * items: {key, icon, label, title, disabled, danger} for an action, {sep:true} for a divider.
+   * onPick(key) runs after the menu has closed, so a handler may repaint the list it came from.
+   */
+  function openRowMenu(btn, key, items, onPick){
+    var h='';
+    for(var i=0;i<items.length;i++){
+      var it=items[i];
+      if(it.sep){ h+='<div class="rm-sep" role="separator"></div>'; continue; }
+      h+='<button type="button" role="menuitem" data-rmk="'+text(it.key)+'"'
+        +(it.disabled?' disabled':'')+(it.danger?' class="rm-del"':'')
+        +(it.title?' title="'+text(it.title)+'"':'')+'>'
+        +(it.icon||'')+'<span>'+text(it.label)+'</span></button>';
+    }
+    rowMenu.innerHTML=h;
+    // The composer's command list is another overlay; only one is ever up.
+    setMenu(null, false);
+    // The box moves to this row: the row it was on must stop saying its menu is open.
+    if(rowMenuBtn && rowMenuBtn!==btn) rowMenuBtn.setAttribute('aria-expanded','false');
+    rowMenuKey=key;
+    rowMenuBtn=btn;
+    rowMenuPick=onPick;
+    rowMenu.hidden=false;
+    btn.setAttribute('aria-expanded','true');
+    // Measured only once it is on screen; jsdom reports zeroes, hence the fallback width.
+    positionRowMenu(btn);
+    var first=rowMenuButtons()[0];
+    if(first) first.focus();
+  }
+  function closeRowMenu(focusBack){
+    if(rowMenu.hidden) return;
+    var btn=rowMenuBtn;
+    rowMenu.hidden=true;
+    rowMenuKey=null;
+    rowMenuBtn=null;
+    rowMenuPick=null;
+    if(btn) btn.setAttribute('aria-expanded','false');
+    if(focusBack && btn && btn.focus) btn.focus();
+  }
+  /**
+   * Keep an open menu beside the button that opened it, after the list was rebuilt with innerHTML,
+   * and close it when that row is gone — the task list is repainted on a 5s/30s poll, so a menu
+   * whose row vanished would otherwise act on something no longer on screen.
+   */
+  function rowMenuFollow(){
+    if(!rowMenuKey) return;
+    var anchor=document.querySelector('[data-rm="'+rowMenuKey+'"]');
+    if(!anchor){ closeRowMenu(false); return; }
+    rowMenuBtn=anchor;
+    anchor.setAttribute('aria-expanded','true');
+    positionRowMenu(anchor);
+  }
+  /** The topic and every topic under it, in the list's order — the ones End agent reaches. */
+  function subtreeOf(id){
+    var out=[], seen={}, stack=[id];
+    while(stack.length){
+      var cur=stack.pop();
+      if(seen[cur]) continue;
+      seen[cur]=1;
+      var t=topicById(cur);
+      if(t) out.push(t);
+      var kids=[];
+      for(var i=0;i<topics.length;i++) if(topics[i].parent===cur) kids.push(topics[i].id);
+      for(var j=kids.length-1;j>=0;j--) stack.push(kids[j]);
+    }
+    return out;
+  }
+  /** A topic's menu, shared by its sidebar row and its Sessions row: Star / End agent / Delete. */
+  function openTopicMenu(id, btn){
+    var t=topicById(id);
+    if(!t) return;
+    // How many sub-agent topics under this one have a process to end. The label says what the
+    // item reaches, not what the row's dot says: a child that is resident and idle is still a
+    // process, and the confirmation lists exactly the ones with one.
+    var under=subtreeOf(id).slice(1);
+    var alive=0;
+    for(var i=0;i<under.length;i++) if(under[i].live) alive++;
+    var able=Boolean(t.live) || alive>0;
+    // Fork is offered while nothing is running here, which is the only time the daemon makes one
+    // (a copy taken mid-turn would hold half of that turn); greyed with that reason otherwise.
+    var busy=Boolean(t.running || t.asking);
+    var items=[
+      {key:'star', icon:IC.icon.star, label:t.starred?'Unstar':'Star',
+       title:t.starred?'Stop keeping this topic through Clear and eviction':'Keep this topic through Clear and eviction'},
+      {key:'fork', icon:IC.icon.fork, label:'Fork', disabled:busy,
+       title:busy
+         ? 'A turn is running here — fork it once the turn ends'
+         : 'Copy this conversation into a new topic beside it: it carries on from here, and this one is unchanged (/fork)'},
+      {key:'end', icon:IC.icon.power,
+       label:'End agent'+(alive?' + '+alive+' sub-agent'+(alive===1?'':'s'):''),
+       disabled:!able,
+       // The reason, when there is nothing to end: a greyed item with no explanation asks.
+       title:able
+         ? 'End the agent process here'+(alive?' and in the '+alive+' topic'+(alive===1?'':'s')+' under it':'')
+           +' — the conversations are kept, and the next message resumes them'
+         : 'No agent process is running in this topic or the topics under it — there is nothing to end'},
+      {sep:true},
+      {key:'delete', icon:IC.icon.trash, label:'Delete topic', danger:true}
+    ];
+    openRowMenu(btn, btn.getAttribute('data-rm')||('topic:'+id), items, function(what){
+      if(what==='star') starTopic(id);
+      else if(what==='fork') forkTopic(id);
+      else if(what==='delete') deleteTopic(id);
+      else if(what==='end') endTopic(id);
+    });
+  }
+  /**
+   * A task's menu: its state changes, then Delete. Run now is greyed while a run is in flight and
+   * says so — the item a person reaches for is the one that would be wrong to allow, so it stays
+   * visible with the reason rather than disappearing.
+   */
+  function openTaskMenu(id, btn){
+    var t=schedTask(id);
+    if(!t) return;
+    var state=t.state||'active';
+    var items=[];
+    if(state==='active') items.push({key:'pause', icon:IC.icon.pause, label:'Pause', title:'Stop running this task on its schedule'});
+    if(state==='paused') items.push({key:'resume', icon:IC.icon.play, label:'Resume', title:'Put this task back on its schedule'});
+    if(state==='active'||state==='paused') items.push({key:'run', icon:IC.icon.clock, label:'Run now', disabled:Boolean(t.running),
+      title:t.running?'A run is in progress — wait for it to finish':'Run this task now, without waiting for its next scheduled time'});
+    // Edit opens the task's page on its form. Greyed rather than hidden while a run is in flight,
+    // like Run now; absent on a task that is over, which no edit can change.
+    if(state==='active'||state==='paused') items.push({key:'edit', icon:IC.icon.pencil, label:'Edit', disabled:Boolean(t.running),
+      title:t.running?'A run is in progress — edit it once that run finishes':'Change its schedule, prompt or command, agent, model or directory'});
+    // Delete is below a divider only when there is something above it: an expired or done task
+    // has no state change to offer, and a menu that opens with a line is a menu that looks cut.
+    if(items.length) items.push({sep:true});
+    items.push({key:'remove', icon:IC.icon.trash, label:'Delete', danger:true});
+    openRowMenu(btn, btn.getAttribute('data-rm')||('task:'+id), items, function(what){
+      if(what==='edit'){ openTaskPage(id, true); return; }
+      if(what==='remove'){
+        // One question, like deleting a topic: the task is gone for good, and a tap that opened
+        // the menu is not a decision to remove it.
+        if(!confirm('Delete task "'+(t.name||t.id)+'"?')) return;
+        schedOp(id,'remove',null);
+        return;
+      }
+      schedOp(id, what, null);
+    });
+  }
+  /** Open the menu a row's ⋯ belongs to. The key's prefix is what the row is. */
+  function openRowMenuFor(btn){
+    var key=btn.getAttribute('data-rm')||'';
+    var cut=key.indexOf(':');
+    if(cut<0) return;
+    var kind=key.slice(0,cut), id=key.slice(cut+1);
+    if(!id) return;
+    if(kind==='task') openTaskMenu(id, btn);
+    else openTopicMenu(id, btn);
+  }
+  rowMenu.addEventListener('click', function(e){
+    var item=e.target.closest ? e.target.closest('[data-rmk]') : null;
+    if(!item || item.disabled) return;
+    var pick=rowMenuPick, what=item.getAttribute('data-rmk');
+    if(!pick || !what) return;
+    closeRowMenu(false);
+    pick(what);
+  });
+  // Arrow keys move between the enabled items, as role=menu promises. Tab leaves the menu like any
+  // other focus trip; Escape is the page-wide handler's, which also puts the focus back.
+  rowMenu.addEventListener('keydown', function(e){
+    if(e.key!=='ArrowDown' && e.key!=='ArrowUp' && e.key!=='Home' && e.key!=='End') return;
+    var items=rowMenuButtons();
+    if(!items.length) return;
+    e.preventDefault();
+    var at=items.indexOf(document.activeElement);
+    var next;
+    if(e.key==='Home') next=0;
+    else if(e.key==='End') next=items.length-1;
+    else if(e.key==='ArrowDown') next=at<0 ? 0 : (at+1)%items.length;
+    else next=at<0 ? items.length-1 : (at+items.length-1)%items.length;
+    items[next].focus();
+  });
+  // Tab — or any other way the focus leaves — puts the menu away, and the ⋯ stops saying it is
+  // open. A move onto the ⋯ itself is left to its own click, which toggles: closing here would
+  // make the second tap close and reopen in one gesture. A focusout with NO relatedTarget is
+  // left to the document click below: iOS Safari does not focus a button on tap, so it reports
+  // one before the click that the tap is about to deliver, and closing here would swallow the
+  // action the person just hit.
+  rowMenu.addEventListener('focusout', function(e){
+    if(rowMenu.hidden) return;
+    var to=e.relatedTarget;
+    if(!to || rowMenu.contains(to) || (rowMenuBtn && rowMenuBtn.contains(to))) return;
+    closeRowMenu(false);
+  });
+  // A click anywhere else puts it away. The ⋯ itself is excluded: its own handler toggles, and
+  // closing it here too would make the second tap open and close in the same gesture.
+  document.addEventListener('click', function(e){
+    if(rowMenu.hidden) return;
+    if(rowMenu.contains(e.target) || (rowMenuBtn && rowMenuBtn.contains(e.target))) return;
+    closeRowMenu(false);
+  });
+  // Any list scrolls under the fixed menu — the sidebar's, the panel's — so follow the button
+  // rather than leave the box at a stale pixel.
+  document.addEventListener('scroll', function(){ if(rowMenuKey) positionRowMenu(rowMenuBtn); }, true);
+  window.addEventListener('resize', function(){ if(rowMenuKey) positionRowMenu(rowMenuBtn); });
+
+  /**
+   * Open a new topic, as the + does.
+   *
+   * seed is what an Adopt starts one with: the suggestion and the draft asking an agent to add
+   * it to the person's instructions. The draft goes into the composer and is never sent, and the
+   * topic is remembered against the suggestion in memory (revAdopted) so a message that really
+   * goes out from it can take the suggestion off the pending list. A refusal says why and leaves
+   * the suggestion alone. Answers whether a topic was opened.
+   */
+  function createTopic(seed){
+    return post('api/topics',{},1).then(function(r){
+      if(r.ok) return r.json();
+      // Never swallowed again. A refusal used to vanish here, so the + simply did nothing and the
+      // only trace was a 409 in the network panel. The daemon now gives up its oldest topic to
+      // make room by itself, which leaves one reason to refuse — every topic is starred or busy —
+      // and its own sentence says which and what to do about it.
+      return r.json().then(function(d){ return {error:(d && d.error) || ('HTTP '+r.status)}; },
+        function(){ return {error:'HTTP '+r.status}; });
+    }, function(){
+      return {error:'the daemon could not be reached'};
+    }).then(function(d){
+      if(d && d.error){ alert('Could not open a new topic: '+d.error); return false; }
+      if(!d || !d.topic) return false;
+      // Just made, so there is no copy of it to look for: entered at once (enter).
+      vers[d.topic.id] = {last:'', epoch:0};
+      switchTopic(d.topic.id);
+      if(narrow()) setSidebar(false);
+      if(seed){
+        // After the switch, which has just put an empty composer up for this topic. Written down
+        // like any draft, so a reload keeps the text even though it loses what it was for. The
+        // caret goes at the end, where someone about to edit or send it expects it.
+        drafts[d.topic.id] = {text:seed.draft, s:seed.draft.length, e:seed.draft.length, files:[]};
+        writeDraft(d.topic.id);
+        loadDraft(d.topic.id);
+        revAdopted[d.topic.id] = {text:seed.text};
+      }
+      return true;
+    });
+  }
+
+  /**
+   * Star or unstar a topic. Drawn at once rather than on the broadcast that confirms it — a tap
+   * on a slow link should not look ignored — and put back if the daemon refused, in which case
+   * the broadcast that would have corrected it is not coming.
+   */
+  function starTopic(id){
+    var t = topicById(id);
+    if(!t) return;
+    var on = !t.starred;
+    t.starred = on;
+    paintTopics();
+    post('api/topics/star',{topic:id, starred:on},1).then(function(r){ return r.ok; }, function(){ return false; }).then(function(ok){
+      if(ok) return;
+      // Looked up again: a broadcast in between replaces the array, and the object held above
+      // would no longer be the one on screen.
+      var now = topicById(id);
+      if(now){ now.starred = !on; paintTopics(); }
+      alert('Could not '+(on?'star':'unstar')+' that topic.');
+    });
+  }
+
+  function topicById(id){
+    for(var i=0;i<topics.length;i++){ if(topics[i].id===id) return topics[i]; }
+    return null;
+  }
+
+  /**
+   * The menu's Fork: /fork, typed into that topic, so the daemon has one way to be told and the
+   * topic's transcript records it like any command. Into the topic on screen it goes through
+   * command(), bubble and all; into another it is posted with no bubble here — there is no transcript
+   * of that topic on screen to put one in — and its answer is in that topic, while the fork itself
+   * appears beside it in the list.
+   */
+  function forkTopic(id){
+    if(id===topic){ command('/fork'); return; }
+    var nonce=Math.random().toString(36).slice(2)+Date.now().toString(36);
+    post('api/send',{topic:id, text:'/fork', nonce:nonce},1).then(function(r){
+      if(!r.ok) alert('Could not fork that topic: the daemon refused the request.');
+    }, function(){ alert('Could not reach the server to fork that topic.'); });
+  }
+
+  // Not createTopic itself: a listener is handed the MouseEvent, which would arrive as a seed.
+  // A new topic is a row in the Topics list, so that is the tab it is created into.
+  newTopicBtn.addEventListener('click', function(){ setSbTab('topics'); createTopic(); });
+
+  // Revealed only where there is something behind it. When the daemon serves no terminal the
+  // button stays hidden and these listeners never have anything to toggle.
+  if(TERM_OK){
+    termBtn.hidden = false;
+    // One button, three states: no window opens one, a shown window is minimized, a minimized
+    // one comes back. Minimizing from here as well as from the title bar because the header
+    // button is where the hand already is on a phone, and because it is what this button did
+    // before there was a window to minimize.
+    termBtn.addEventListener('click', function(){
+      if(termState[topic]==='open') minTerm(); else showTerm();
+    });
+    termMinBtn.addEventListener('click', minTerm);
+    termEndBtn.addEventListener('click', endTerm);
+
+    // Dragging the divider. The new height comes from the POINTER's travel rather than from the
+    // panel's box: a drag grabbed anywhere on the strip must not jump on the first move, and the
+    // panel's own bottom edge is the window's, which does not move.
+    var termDrag = null;
+    termGrip.addEventListener('pointerdown', function(e){
+      if(!topic || !termState[topic]) return;
+      e.preventDefault();
+      termDrag = {y:e.clientY, h:termHeight()};
+      termGrip.classList.add('drag');
+      if(termGrip.setPointerCapture) try { termGrip.setPointerCapture(e.pointerId); } catch(x){}
+    });
+    termGrip.addEventListener('pointermove', function(e){
+      if(termDrag) setTermHeight(termDrag.h - (e.clientY - termDrag.y));
+    });
+    var endTermDrag = function(){
+      if(!termDrag) return;
+      termDrag = null;
+      termGrip.classList.remove('drag');
+      saveTermHeight();
+    };
+    // On the window, not the strip: when the capture fails the pointerup can land anywhere, and
+    // a drag that never ends leaves the next pointermove still resizing the panel.
+    window.addEventListener('pointerup', endTermDrag);
+    window.addEventListener('pointercancel', endTermDrag);
+    termGrip.addEventListener('lostpointercapture', endTermDrag);
+    // Back to half the chat, the same gesture the two side panels offer for their width.
+    termGrip.addEventListener('dblclick', function(){
+      termH = 0;
+      paintTermHeight();
+      saveTermHeight();
+    });
+    // A divider is a control, so it answers the keyboard as well as the pointer.
+    termGrip.addEventListener('keydown', function(e){
+      if(e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+      e.preventDefault();
+      setTermHeight(termHeight() + (e.key === 'ArrowUp' ? 24 : -24));
+      saveTermHeight();
+    });
+    // A shorter window may leave a stored height taller than the chat; the transcript keeps its
+    // lines. Not while the panel is closed (the parked iframe must not be resized for nothing),
+    // and not while a record is up — its composer is hidden, so there is nothing to measure
+    // against; closeLib does it when the record goes.
+    window.addEventListener('resize', function(){
+      if(topic && termState[topic]==='open' && !libOn()) paintTermHeight();
+    });
+  }
+
+  readBtn.addEventListener('click', function(){
+    setMenu(null, false);
+    markAllRead(topicForest().visible, 'topic', function(msg){ note.textContent=msg; });
+  });
+
+  clearBtn.addEventListener('click', function(){
+    setMenu(null, false);
+    var stars = topics.filter(function(t){ return t.starred; }).length;
+    var gone = topics.length - stars;
+    if(stars && !gone){ alert('Every topic is starred, so there is nothing to clear. Unstar one first.'); return; }
+    // The button clears the whole list, not the filtered rows — say that where a search or a
+    // filter is on screen, or it reads as "clear these three".
+    var scope = topicFilter && topicFilter.active() ? ' This applies to every topic, not only the ones shown.' : '';
+    if(!confirm(stars
+      ? 'Delete '+gone+' topic'+(gone===1?'':'s')+'? The '+stars+' starred one'+(stars===1?' is':'s are')+' kept.'+scope+' This cannot be undone.'
+      : 'Delete all ' + topics.length + ' topics?'+scope+' This cannot be undone.')) return;
+    post('api/topics/clear',{},1).then(function(r){ return r.ok ? r.json() : null; }).then(function(d){
+      if(!d || !d.topic) return;
+      // What the daemon kept: the starred topics and the fresh one. Read from its answer rather
+      // than from the stars on this page, which another tab may have changed since they were drawn.
+      var list = d.topics || [d.topic];
+      var keep = {};
+      for(var i=0;i<list.length;i++) keep[list[i].id] = 1;
+      // Every local record of the rooms that went goes with them. Leaving the caches would put
+      // messages on screen for ids the daemon has forgotten, leaving the read marks would badge
+      // the replacement topic against a count from a room that no longer exists, and a draft or a
+      // terminal window would belong to nothing. The kept topics keep all of theirs.
+      keepOnly(keep);
+      // The list is replaced with what the server just told us rather than left to the broadcast
+      // that is also on its way: paintTopics re-seeds a read mark for every topic it renders, so
+      // painting the OLD list once more would write the ids we are here to forget straight back
+      // into storage.
+      topics=list;
+      // Cleared rather than handed straight to switchTopic when the topic on screen went too:
+      // nothing of a deleted room should be written back on the way out of it, and the
+      // replacement id is four random bytes and may repeat the one being read — a one-in-4-billion
+      // case where switchTopic would do nothing and leave a wiped transcript on screen. A starred
+      // topic on screen is left alone, so its view and draft are saved like any other switch.
+      if(!keep[topic]) topic='';
+      vers[d.topic.id] = {last:'', epoch:0};
+      switchTopic(d.topic.id);
+      if(narrow()) setSidebar(false);
+    });
+  });
+
+  // ── Closing idle agents ────────────────────────────────────────────────────
+  /**
+   * The topics whose agent is up and doing nothing — the dim dot, read off the same flags it is
+   * drawn from, so the button's count and the dots cannot disagree. A dispatcher whose sub-agents
+   * are still working is not one of them: its row is drawn as running (rowRunning), and offering
+   * to close it under that row would be the list contradicting itself. In the sidebar's order:
+   * starred first, so the dialog lists them where the eye already knows to find them.
+   */
+  function idleTopics(){
+    var on=[], rest=[];
+    for(var i=0;i<topics.length;i++){
+      var t=topics[i];
+      if(!t.live || t.running || t.asking || busyBelow(t.id)) continue;
+      (t.starred ? on : rest).push(t);
+    }
+    return on.concat(rest);
+  }
+
+  /**
+   * What the dialog was opened on: the ids it lists, which are the ids it posts. Not re-read from the
+   * topic list at the click — a topic that went idle while the dialog was open was not shown, and
+   * nothing is closed that the operator did not see. idleSeq drops an answer for a dialog since closed.
+   */
+  var idleIds=[], idleSeq=0;
+  function openIdle(){
+    var list=idleTopics();
+    if(!list.length) return;
+    idleIds=[];
+    var h='';
+    for(var i=0;i<list.length;i++){
+      var t=list[i];
+      idleIds.push(t.id);
+      var where=t.dir?(t.dir.host?t.dir.host+' · ':'')+t.dir.name:'';
+      h += '<li data-idle="'+text(t.id)+'"><span class="idle-main"><span class="idle-name">'+text(t.title || 'Untitled')+'</span>'
+         + (where?'<span class="idle-dir">'+text(where)+'</span>':'')+'</span><span class="idle-out"></span></li>';
+    }
+    idleList.innerHTML=h;
+    idleTitle.textContent='Close '+list.length+' idle agent'+(list.length===1?'':'s')+'?';
+    idleWhy.hidden=false;
+    idleGo.hidden=false;
+    idleGo.disabled=false;
+    idleGo.textContent='Close agents';
+    idleCancel.textContent='Cancel';
+    idleDialog.hidden=false;
+    // Cancel, not Close: an Enter pressed out of habit should be the answer that changes nothing.
+    idleCancel.focus();
+  }
+  /**
+   * A row menu's "End agent": end the process behind this topic and every topic under it at
+   * once. The item's label already says how far it reaches ("End agent + 2 sub-agents"), so the
+   * reach was on screen when it was clicked — there is no second question. /kill is one tap
+   * away in the header and does the same without asking, and a running turn is interrupted here
+   * on purpose.
+   *
+   * The request carries the list as the page drew it: the daemon walks the subtree from its own
+   * parent record and ends only the intersection, so a sub-agent opened since is left alone.
+   * Posted once, not retried: a retry after a lost answer would find every agent already ended.
+   */
+  function endTopic(id){
+    var list=subtreeOf(id).filter(function(t){ return Boolean(t.live); });
+    if(!list.length) return;
+    var ids=[];
+    for(var i=0;i<list.length;i++) ids.push(list[i].id);
+    post('api/topics/kill',{topic:id, topics:ids},0).then(function(r){
+      return r.ok ? r.json() : null;
+    }).then(function(d){
+      if(!d) return alert('Could not end the agent'+(ids.length===1?'':'s')+': the daemon refused the request.');
+      // Nothing to say for a clean end — the dots go grey from the daemon's own broadcast. A
+      // process the runtime cannot resume is the one refusal that leaves a row looking untouched,
+      // and nothing else on the page would say why it is still lit.
+      var results=d.results || [], stuck=0;
+      for(var i=0;i<results.length;i++) if(results[i].outcome==='unresumable') stuck++;
+      if(stuck) alert(stuck+' agent'+(stuck===1?'':'s')+' left running: the runtime cannot resume '+(stuck===1?'it':'them')+'.');
+    }, function(){
+      alert('Could not reach the server to end the agent'+(ids.length===1?'':'s')+'.');
+    });
+  }
+  function closeIdle(){
+    if(idleDialog.hidden) return;
+    idleDialog.hidden=true;
+    idleSeq++;
+    idleList.textContent='';
+  }
+  /**
+   * The result, in the dialog rather than under the transcript: on a phone the sidebar is a drawer
+   * over the transcript, and the status line there is behind it. Each row says what became of it,
+   * because a topic that started working since the list was drawn is left alone (room.ts closeIdle),
+   * and "5 of 6" alone would not say which one.
+   *
+   * Posted once, not retried: a retry after an answer that was lost would find every agent already
+   * ended and report them all as left running.
+   */
+  function goIdle(){
+    idleGo.disabled=true;
+    var mine=++idleSeq;
+    post('api/topics/close-idle',{topics:idleIds},0).then(function(r){ return r.ok ? r.json() : null; }).then(function(d){
+      if(mine!==idleSeq) return;
+      if(!d) return idleFailed('The daemon refused the request.');
+      var rows=idleList.querySelectorAll('li'), i;
+      var closed={};
+      for(i=0;i<d.closed.length;i++) closed[d.closed[i]]=1;
+      for(i=0;i<rows.length;i++){
+        var out=rows[i].querySelector('.idle-out'), ok=closed[rows[i].getAttribute('data-idle')];
+        out.textContent = ok ? 'closed' : 'left running';
+        out.className = 'idle-out' + (ok ? '' : ' kept');
+      }
+      var n=d.closed.length, k=d.kept.length;
+      idleTitle.textContent='Closed '+n+' idle agent'+(n===1?'':'s')
+        + (k ? '; '+k+' left running — busy again, or unable to resume' : '');
+      idleWhy.hidden=true;
+      idleGo.hidden=true;
+      idleCancel.textContent='Done';
+      idleCancel.focus();
+    }, function(){ if(mine===idleSeq) idleFailed('Could not reach the server.'); });
+  }
+  function idleFailed(why){
+    idleTitle.textContent=why;
+    idleGo.disabled=false;
+  }
+  idleBtn.addEventListener('click', function(){ setMenu(null, false); openIdle(); });
+  idleGo.addEventListener('click', goIdle);
+  idleCancel.addEventListener('click', closeIdle);
+  idleDialog.addEventListener('click', function(e){ if(e.target===idleDialog) closeIdle(); });
+
+  /**
+   * Forget everything local about every topic NOT in keep: cached transcript, read mark, reading
+   * position, draft, terminal window. With nothing starred, keep holds only the fresh topic and
+   * this is the whole-page wipe a clear always was.
+   */
+  function keepOnly(keep){
+    var id;
+    cacheKeep(keep);
+    for(id in copies) if(!keep[id]) delete copies[id];
+    for(id in vers) if(!keep[id]) delete vers[id];
+    for(id in readCounts) if(!keep[id]) delete readCounts[id];
+    saveReads();
+    for(id in views) if(!keep[id]) delete views[id];
+    for(id in drafts) if(!keep[id]) delete drafts[id];
+    // One read-modify-write of the stored drafts, for the same reason writeDraft is one: a second
+    // tab's drafts for the kept topics are on disk and not in this tab's map.
+    try {
+      var all = JSON.parse(localStorage.getItem(DRAFTS) || 'null') || {};
+      var left = 0;
+      for(id in all){ if(!keep[id]) delete all[id]; else left++; }
+      if(left) localStorage.setItem(DRAFTS, JSON.stringify(all)); else localStorage.removeItem(DRAFTS);
+    } catch(x){}
+    // And what was sent into those rooms and never arrived: there is no longer anywhere to send it.
+    for(var n in unsent) if(Object.prototype.hasOwnProperty.call(unsent, n) && !keep[unsent[n].t]) delete unsent[n];
+    try {
+      var out = JSON.parse(localStorage.getItem(UNSENT) || 'null') || {};
+      var kept = 0;
+      for(n in out){ if(!(out[n] && keep[out[n].t])) delete out[n]; else kept++; }
+      if(kept) localStorage.setItem(UNSENT, JSON.stringify(out)); else localStorage.removeItem(UNSENT);
+    } catch(x){}
+    for(id in termFrames){
+      if(Object.prototype.hasOwnProperty.call(termFrames, id) && !keep[id]) dropTerm(id);
+    }
+  }
+
+  // The draft first: a reload is a way out of the page, and the composer is the one thing here a
+  // person would have typed into.
+  $('update-reload').addEventListener('click', function(){ stashDraft(topic); location.reload(); });
+
+  $('gate').addEventListener('submit', function(e){
+    e.preventDefault();
+    // No password to send: this gate's only control is a reload, which is what sends the
+    // browser back through the identity provider.
+    if(!PASSWORD_LOGIN){ location.reload(); return; }
+    err.textContent='';
+    post('api/login',{token:$('secret').value},0).then(function(r){
+      if(r.ok){ $('secret').value=''; connect(); return; }
+      err.textContent = r.status===429 ? 'Too many attempts. Wait a minute.' : 'That is not the right token.';
+    }).catch(function(){ err.textContent='Could not reach the server.'; });
+  });
+
+  log.addEventListener('click', function(e){
+    // A picture, filling the screen. Not a new tab: installed as an app this page has no tab
+    // bar to come back from, and leaving the app to look at a screenshot is the same friction
+    // as downloading it. Checked first — a picture carries none of the attributes below.
+    var shot = e.target.closest ? e.target.closest('img.shot') : null;
+    if(shot) return openShot(shot);
+    // A link to another topic (a sub-agent's, see web-markdown.ts TOPIC_LINK_RE): switched to in
+    // place, not loaded as a page — the stream, the caches and the composer all stay as they are.
+    var go = e.target.closest ? e.target.closest('a[data-goto]') : null;
+    if(go){
+      e.preventDefault();
+      var goId = go.getAttribute('data-goto');
+      if(goId && topics.some(function(t){ return t.id===goId; })){
+        switchTopic(goId);
+        if(narrow()) setSidebar(false);
+      }
+      return;
+    }
+    // A new topic's choice of agent: typed for the operator, so it is a message like any other.
+    var card = e.target.closest ? e.target.closest('button[data-agent]') : null;
+    if(card) return command('/agent '+card.getAttribute('data-agent'));
+    // A side question's line opens its answer, or puts it away when that is what the card shows.
+    var chip = e.target.closest ? e.target.closest('.btw-chip') : null;
+    if(chip){
+      var holder = chip.closest('[data-k]'), qk = holder ? holder.getAttribute('data-k') : null;
+      if(qk){
+        if(!btwBox.hidden && btwKey === qk) closeBtw(true);
+        else openBtw(qk);
+      }
+      return;
+    }
+    // The name of a file the server can render opens it (openReader); the Download link beside
+    // it, and any file the server cannot render, stays an ordinary download.
+    var view = e.target.closest ? e.target.closest('a[data-view]') : null;
+    if(view){ e.preventDefault(); return openReader(view); }
+    // What a message that failed to send offers. Checked before the ordinary buttons: these are
+    // answered here, locally, and never posted as a click on a message the daemon has no idea
+    // about.
+    var act = e.target.closest ? e.target.closest('[data-retry],[data-copy],[data-discard]') : null;
+    if(act){
+      var retry = act.getAttribute('data-retry');
+      if(retry) return deliver(retry);
+      var copy = act.getAttribute('data-copy');
+      if(copy) return copyLocal(copy, act);
+      var discard = act.getAttribute('data-discard');
+      if(discard) return discardLocal(discard);
+      return;
+    }
+    // A tool bubble's lines, opened and folded. Also answered here and never posted: which line
+    // someone is reading is nothing the daemon has a view on.
+    var all = e.target.closest ? e.target.closest('[data-tl-all]') : null;
+    if(all) return toggleAll(all.getAttribute('data-tl-all'));
+    var line = e.target.closest ? e.target.closest('.tl') : null;
+    if(line) return toggleLine(line);
+    // The entry under a reply opens what that turn changed, in the git panel's window. Answered
+    // here and never posted: opening a diff says nothing to the daemon.
+    var turns = e.target.closest ? e.target.closest('button[data-turns]') : null;
+    if(turns) return openTurnChanges(Number(turns.getAttribute('data-turns')));
+    var b = e.target.closest ? e.target.closest('button[data-btn]') : null;
+    if(!b) return;
+    postButton(b, topic);
+  });
+
+  // The settings page's rows and values are the same buttons the transcript's menus carry, so
+  // they post through the same function — with the topic the page was opened in, not whichever
+  // one is on screen (the page is closed when that changes, but the two are not the same fact).
+  settingsBody.addEventListener('click', function(e){
+    if(!e.target.closest || !settingsMsg || !settingsTopic) return;
+    if(e.target.closest('.set-use')){ useTyped(); return; }
+    var top = e.target.closest('.ag-top');
+    if(top){ toggleAgent(top); return; }
+    var b = e.target.closest('button[data-btn]');
+    // A switch row is a target as a whole, as a settings row is anywhere: the label is the bigger
+    // half of it, and on a phone the one a thumb lands on.
+    if(!b){
+      var row = e.target.closest('.set-item.sw');
+      b = row ? row.querySelector('.set-switch') : null;
+    }
+    if(!b || b.disabled) return;
+    postSetting(b, b.getAttribute('data-btn'));
+  });
+  settingsBody.addEventListener('input', function(e){
+    if(e.target && e.target.classList && e.target.classList.contains('set-type')) filterSettings();
+  });
+  settingsBody.addEventListener('keydown', function(e){
+    if(e.key !== 'Enter' || !e.target || !e.target.classList || !e.target.classList.contains('set-type')) return;
+    e.preventDefault();
+    useTyped();
+  });
+  settingsBody.addEventListener('change', function(e){
+    var sel = e.target;
+    if(!sel || !sel.classList || !sel.classList.contains('set-select')) return;
+    postSetting(sel, sel.value);
+  });
+
+  /**
+   * A file the download table has since evicted, or one deleted off disk, answers 404 — and an
+   * <img> says so with a broken frame that reads like a bug in the page. Hide it and the link
+   * underneath is left, which is what a non-image shows anyway.
+   *
+   * Capture phase, because 'error' on an <img> does not bubble and so never reaches #log on its
+   * own. The hiding survives a repaint for free: identical markup is not rewritten, and markup
+   * that IS rewritten builds an image that 404s again.
+   */
+  log.addEventListener('error', function(e){
+    var t = e.target;
+    if(t && t.classList && t.classList.contains('shot')) t.style.display='none';
+  }, true);
+
+  function openShot(img){
+    lightboxImg.src = img.src;
+    lightboxImg.alt = img.alt;
+    lightbox.hidden = false;
+  }
+  function closeShot(){
+    if(lightbox.hidden) return;
+    lightbox.hidden = true;
+    // Dropped rather than left behind: a full-resolution screenshot held decoded by an overlay
+    // nobody is looking at is the kind of thing a daemon running for weeks pays for.
+    lightboxImg.removeAttribute('src');
+  }
+  lightbox.addEventListener('click', closeShot);
+
+  // ── History ─────────────────────────────────────────────────────────────────
+  // The sidebar's second tab: every conversation the gateway recorded, whichever agent and
+  // platform it ran on — the same history.db the fleetherd sessions command reads. The list pages
+  // backwards through the library and the search asks the store's own keyword search. A row opens
+  // in the transcript's place (openLib), drawn with the transcript's own bubbles, and read-only:
+  // the library keeps what was said, and has no way to say anything back.
+
+  /** Absolute time, unlike the side panel's "3h ago": this list spans years, and a relative age
+      on a conversation from last spring says nothing about when it happened. The year only when it
+      is not this one, so a row in a 240px column still reads on one line where it can. */
+  function histWhen(at){
+    try {
+      var d = new Date(at);
+      var o = { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' };
+      if(d.getFullYear() !== new Date().getFullYear()) o.year = 'numeric';
+      return d.toLocaleString(undefined, o);
+    } catch(x){ return ''; }
+  }
+
+  /**
+   * Topics or History. Not stored: the page opens on Topics as it always has, and a reload lands
+   * on the topic in the address — a conversation from the library is not in the address either,
+   * because ?t= is what links and notifications open, and a reload that reopened a read-only view
+   * over the topic they named would hide it.
+   *
+   * Leaving History is leaving what it opened: the Topics tab is the way back to the conversation
+   * underneath. Entering it reads the library again — or the search still in the field — as the side
+   * panel's Reviews tab is pulled on selection: the library is written as conversations happen.
+   */
+  function setSbTab(tab){
+    var hist = tab === 'history';
+    var was = sbTab;
+    sbTab = hist ? 'history' : 'topics';
+    sbTabTopics.classList.toggle('on', !hist);
+    sbTabHistory.classList.toggle('on', hist);
+    sbTabTopics.setAttribute('aria-selected', hist ? 'false' : 'true');
+    sbTabHistory.setAttribute('aria-selected', hist ? 'true' : 'false');
+    // Clear all topics is about the other tab's list, so it goes with it (a class, not hidden: the
+    // button is the header's, and nothing else should have to know this tab exists).
+    sidebar.classList.toggle('on-history', hist);
+    bar.hidden = hist;
+    topicsFilterHost.hidden = hist;
+    historyPane.hidden = !hist;
+    if(!hist){
+      // Any answer still on its way belongs to a list that is no longer on screen.
+      histSeq++;
+      closeLib();
+      return;
+    }
+    if(was === 'history') return;
+    if(historyQ.value.trim()) runHistorySearch(); else loadHistory();
+  }
+
+  /** One page of the library, or the page after the cursor appended to what is already shown. */
+  function loadHistory(before){
+    var seq = ++histSeq;
+    historyMore.disabled = true;
+    historyErr.hidden = true;
+    historyErr.textContent = '';
+    // The rows already there stay until the answer replaces them: entering the tab again would
+    // otherwise blink the list away and back. Only a list with nothing to show says it is loading.
+    if(!before && (!histSessions.length || histQuery)){
+      historyListEl.innerHTML = '<div class="skills-empty">Loading\u2026</div>';
+      historyCountEl.textContent = '';
+    }
+    fetch('api/history' + (before ? '?before=' + encodeURIComponent(before) : ''), {credentials:'same-origin'}).then(function(r){
+      if(!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    }).then(function(d){
+      if(seq !== histSeq) return;
+      var page = d || {};
+      if(page.enabled === false){
+        historyListEl.innerHTML = '<div class="skills-empty">This daemon has no conversation library.</div>';
+        historyMore.hidden = true;
+        return;
+      }
+      var rows = page.sessions || [];
+      histSessions = before ? histSessions.concat(rows) : rows;
+      histNext = page.next || null;
+      renderHistory();
+    }).catch(function(e){
+      if(seq !== histSeq) return;
+      // What is already on screen stays: a page that could not be read is not a reason to throw
+      // away the ones that were. The error is its own line, and the button comes back so the same
+      // page can be asked for again.
+      historyErr.textContent = 'Could not read the conversation library: ' + ((e && e.message) || 'network error');
+      historyErr.hidden = false;
+      if(!histSessions.length || histQuery) historyListEl.innerHTML = '';
+      historyMore.hidden = !histNext;
+      historyMore.disabled = false;
+      // The line took the button's place and pushed it down by its own height. The reader asked
+      // from the bottom, so both belong in view: keep them there rather than leave the retry
+      // half below the fold.
+      if(before) historyBody.scrollTop = historyBody.scrollHeight;
+    });
+  }
+
+  function renderHistory(){
+    histQuery = '';
+    historyErr.hidden = true;
+    historyErr.textContent = '';
+    var h = '';
+    if(!histSessions.length) h = '<div class="skills-empty">No conversations yet. Every conversation this gateway records appears here, whichever agent or platform it ran on.</div>';
+    for(var i=0;i<histSessions.length;i++) h += histRow(histSessions[i]);
+    historyListEl.innerHTML = h;
+    // The count is what is on screen, and a trailing + says the library goes further.
+    var n = histSessions.length;
+    historyCountEl.textContent = n ? n + (histNext ? '+' : '') + (n === 1 && !histNext ? ' conversation' : ' conversations') : '';
+    historyMore.hidden = !histNext;
+    historyMore.disabled = false;
+  }
+
+  function histRow(s){
+    var meta = [s.agent || 'no agent', s.platform || 'unknown', histWhen(s.lastAt), (s.messages || 0) + (s.messages === 1 ? ' message' : ' messages')];
+    return '<div class="hist-item' + (libId !== null && String(s.id) === libId ? ' on' : '') + '" data-hist="' + text(s.id) + '" role="button" tabindex="0">'
+      + '<div class="hist-title">' + text(s.title || '(untitled conversation)') + '</div>'
+      + '<div class="hist-meta">' + text(meta.join(' · ')) + '</div></div>';
+  }
+
+  function histHit(h){
+    var meta = [h.agent || 'no agent', h.platform || 'unknown', histWhen(h.at)];
+    return '<div class="hist-item' + (libId !== null && String(h.session) === libId ? ' on' : '') + '" data-hist="' + text(h.session) + '" role="button" tabindex="0">'
+      + '<div class="hist-title">' + text(h.title || '(untitled conversation)') + '</div>'
+      + '<div class="hist-excerpt">' + text(h.excerpt) + '</div>'
+      + '<div class="hist-meta">' + text(meta.join(' · ')) + '</div></div>';
+  }
+
+  /**
+   * Search the whole library. Enter or the button, not every keystroke: each one is a request, and
+   * the store's keyword search is not a type-ahead. Clearing the field puts the list back.
+   */
+  function runHistorySearch(){
+    var q = historyQ.value.trim();
+    if(!q) return showHistoryList();
+    var seq = ++histSeq;
+    historyMore.hidden = true;
+    historyErr.hidden = true;
+    historyErr.textContent = '';
+    historyCountEl.textContent = '';
+    historyListEl.innerHTML = '<div class="skills-empty">Searching\u2026</div>';
+    fetch('api/history/search?q=' + encodeURIComponent(q), {credentials:'same-origin'}).then(function(r){
+      return r.json().then(function(d){ return { ok:r.ok, d:d }; });
+    }).then(function(a){
+      if(seq !== histSeq) return;
+      if(!a.ok || !a.d || a.d.error){
+        historyListEl.innerHTML = '<div class="skills-empty">' + text((a.d && a.d.error) || 'could not search the library') + '</div>';
+        return;
+      }
+      if(a.d.enabled === false){
+        historyListEl.innerHTML = '<div class="skills-empty">This daemon has no conversation library.</div>';
+        return;
+      }
+      histQuery = q;
+      var hits = a.d.hits || [];
+      if(!hits.length){
+        historyListEl.innerHTML = '<div class="skills-empty">Nothing matches “' + text(q) + '”.</div>';
+        return;
+      }
+      var h = '';
+      for(var i=0;i<hits.length;i++) h += histHit(hits[i]);
+      historyListEl.innerHTML = h;
+      // "30+" when the daemon says there are more: the number is the size of the answer.
+      historyCountEl.textContent = hits.length + (a.d.more ? '+' : '') + (hits.length === 1 && !a.d.more ? ' match' : ' matches');
+    }).catch(function(e){
+      if(seq !== histSeq) return;
+      historyListEl.innerHTML = '<div class="skills-empty">Could not search the library: ' + text((e && e.message) || 'network error') + '</div>';
+    });
+  }
+
+  /** The library again, after a search: the rows already read, or a first page when there are none. */
+  function showHistoryList(){
+    histSeq++;
+    if(histSessions.length) renderHistory(); else loadHistory();
+  }
+
+  // ── A conversation from History, in the transcript's place ──────────────────
+  // #lib-log is drawn with msgMarkup, the transcript's own bubbles, from messages the daemon
+  // rendered the way it renders a topic's (room.ts historyMessages). It covers #log rather than
+  // replacing it: the topic underneath keeps its stream, its messages and its place, so closing
+  // this is a class coming off, not a topic being entered again. While it is up nothing is sent,
+  // pasted or dropped into the topic it covers, and the topic is not reported as seen.
+
+  function libOn(){ return chat.classList.contains('lib'); }
+
+  /** Where #log is being read: its first message on screen and that message's offset, or null for the bottom. */
+  function logPlace(){
+    var el = (log.clientHeight && !atBottom()) ? firstVisible() : null;
+    return el ? { key: el.getAttribute('data-k'), off: el.getBoundingClientRect().top - log.getBoundingClientRect().top } : null;
+  }
+
+  /** Light the row of the conversation that is open, in whichever list is showing. */
+  function markLibRow(){
+    var rows = historyListEl.querySelectorAll('[data-hist]');
+    for(var i=0;i<rows.length;i++) rows[i].classList.toggle('on', libId !== null && rows[i].getAttribute('data-hist') === libId);
+  }
+
+  /** The lines a reader opened in a conversation that is no longer open. */
+  function forgetLibLines(){
+    for(var k in opened){ if(Object.prototype.hasOwnProperty.call(opened, k) && k.indexOf('h:') === 0) delete opened[k]; }
+  }
+
+  /**
+   * Open one conversation from the library where the transcript is. On a phone the drawer goes,
+   * as it does for a topic: the conversation is what was asked for, and the drawer covers it.
+   */
+  function openLib(id){
+    id = String(id);
+    var seq = ++libSeq;
+    if(!libOn()){
+      libSaved = logPlace();
+      // The composer's own overlays belong to the topic being covered.
+      closeModelPop();
+      if(!hints.hidden){ hints.hidden = true; hints.innerHTML = ''; }
+      chat.classList.add('lib');
+      // The terminal goes behind the record rather than over it — and stays connected there.
+      paintFrames();
+    }
+    libId = id;
+    libSession = null;
+    libData = {};
+    libEls = {};
+    forgetLibLines();
+    libTitle.textContent = 'Loading\u2026';
+    libTitle.title = '';
+    libNote.hidden = true;
+    libNote.textContent = '';
+    libWhy.textContent = 'Read-only: a conversation from the library.';
+    libTopicBtn.hidden = true;
+    libLog.innerHTML = '<div class="empty">Loading\u2026</div>';
+    markLibRow();
+    fetch('api/history/read?id=' + encodeURIComponent(id), {credentials:'same-origin'}).then(function(r){
+      return r.json().then(function(d){ return { ok:r.ok, d:d }; });
+    }).then(function(a){
+      if(seq !== libSeq || !libOn()) return;
+      if(!a.ok || !a.d || a.d.error) return libFailed((a.d && a.d.error) || 'could not read that conversation');
+      paintLibRead(a.d);
+    }).catch(function(e){
+      if(seq !== libSeq || !libOn()) return;
+      libFailed('Could not read that conversation: ' + ((e && e.message) || 'network error'));
+    });
+  }
+
+  function libFailed(msg){
+    libTitle.textContent = 'History';
+    libLog.innerHTML = '<div class="hist-note bad">' + text(msg) + '</div>';
+    libWhy.textContent = 'Nothing could be read, so nothing is shown.';
+  }
+
+  function paintLibRead(d){
+    var s = d.session || {};
+    var title = s.title || '(untitled conversation)';
+    libSession = s;
+    libTitle.textContent = title;
+    libTitle.title = title;
+    var meta = [s.agent || 'no agent', s.platform || 'unknown', 'last active ' + histWhen(s.lastAt), (s.messages || 0) + (s.messages === 1 ? ' message' : ' messages')];
+    var h = '<div class="lib-head"><div class="hist-meta">' + text(meta.join(' · ')) + '</div>'
+      + '<div class="hist-meta hist-key">' + text(s.key || '') + '</div></div>';
+    var list = d.messages || [];
+    var i;
+    for(i=0;i<list.length;i++){
+      var key = 'h:' + list[i].id;
+      libData[key] = list[i];
+      var out = msgMarkup(key, list[i], false);
+      h += '<div class="' + out.cls + '" data-k="' + text(key) + '">' + out.h + '</div>';
+    }
+    if(!list.length) h += '<div class="empty">This conversation has no recorded messages.</div>';
+    // One write for the whole conversation: it arrives whole, and up to 500 nodes appended one at a
+    // time would lay the page out 500 times.
+    libLog.innerHTML = h;
+    codeBlocks(libLog);
+    var nodes = libLog.querySelectorAll('[data-k]');
+    for(i=0;i<nodes.length;i++) libEls[nodes[i].getAttribute('data-k')] = nodes[i];
+    // A read the store cut short says so, beside where the reader lands: the bottom of what was
+    // read is not the end of the conversation, and half a log shown as the whole is the one thing
+    // this view must not do.
+    libNote.hidden = !d.note;
+    libNote.textContent = d.note || '';
+    libReadOnly();
+    // At the newest, where a topic is entered too.
+    libLog.scrollTop = libLog.scrollHeight;
+  }
+
+  /** Repaint one message of the open conversation — a tool line opened or folded. */
+  function paintLib(key){
+    var m = libData[key], el = libEls[key];
+    if(!m || !el) return;
+    var out = msgMarkup(key, m, false);
+    el.className = out.cls;
+    el.innerHTML = out.h;
+    codeBlocks(el);
+  }
+
+  /**
+   * Why nothing can be sent here, where the composer was, and the way into the topic while this page
+   * still has it. Three cases, because the reason differs and so does what a person can do next.
+   * Asked again whenever the topic list changes, so a topic deleted meanwhile takes its button with it.
+   */
+  function libReadOnly(){
+    var s = libSession;
+    if(!s) return;
+    var here = Boolean(s.topic) && topicExists(s.topic);
+    libTopicBtn.hidden = !here;
+    libWhy.textContent = here
+      ? 'Read-only: this is the recorded copy. The conversation is still a topic on this page; open it to carry on.'
+      : s.topic
+        ? 'Read-only: its topic has been cleared from this page, so there is nowhere here to send a message.'
+        : 'Read-only: this conversation ran on ' + (s.platform || 'another platform') + ', not in a topic on this page, so nothing can be sent to it from here.';
+  }
+
+  /** Back to the topic underneath, where it was being read. */
+  function closeLib(){
+    if(!libOn()) return;
+    libSeq++;
+    chat.classList.remove('lib');
+    // The topic underneath is back on screen, so its terminal is too — same frame, same socket.
+    paintFrames();
+    // And its height is worked out again: a window that changed size under the record could not
+    // be measured while the composer and the divider were display:none.
+    if(topic && termState[topic]==='open') paintTermHeight();
+    libId = null;
+    libSession = null;
+    forgetLibLines();
+    libData = {};
+    libEls = {};
+    libLog.innerHTML = '';
+    libTitle.textContent = '';
+    markLibRow();
+    // #log was not laid out while it was covered, so the place it reports now is not where the
+    // reader left it; the one measured on the way in is.
+    var v = libSaved, el = v && els[v.key];
+    libSaved = null;
+    if(el) log.scrollTop += el.getBoundingClientRect().top - log.getBoundingClientRect().top - v.off;
+    else toBottom();
+    reportSeen();
+  }
+
+  sbTabTopics.addEventListener('click', function(){ setSbTab('topics'); });
+  sbTabHistory.addEventListener('click', function(){ setSbTab('history'); });
+  historyGo.addEventListener('click', runHistorySearch);
+  historyMore.addEventListener('click', function(){ if(histNext) loadHistory(histNext); });
+  historyQ.addEventListener('keydown', function(e){
+    // Mid-composition, Enter chooses an IME candidate — it is not a search. Same guard as the
+    // composer's: without it, picking 部署 from the candidate list would search for half of it.
+    if(e.key === 'Enter' && !e.isComposing){ e.preventDefault(); runHistorySearch(); }
+  });
+  historyQ.addEventListener('input', function(){
+    // The search field's own × (and a person deleting the query) puts the library back rather
+    // than leaving the last search's rows under an empty field.
+    if(historyQ.value.trim()) return;
+    if(sbTab === 'history') showHistoryList();
+  });
+  function pickLib(row){
+    openLib(row.getAttribute('data-hist'));
+    if(narrow()) setSidebar(false);
+  }
+  historyListEl.addEventListener('click', function(e){
+    var row = e.target.closest ? e.target.closest('[data-hist]') : null;
+    if(row) pickLib(row);
+  });
+  historyListEl.addEventListener('keydown', function(e){
+    if(e.key !== 'Enter' && e.key !== ' ') return;
+    var row = e.target.closest ? e.target.closest('[data-hist]') : null;
+    if(!row) return;
+    e.preventDefault();
+    pickLib(row);
+  });
+  libTopicBtn.addEventListener('click', function(){
+    var id = libSession && libSession.topic;
+    if(!id || !topicExists(id)){ libReadOnly(); return; }
+    // Into the topic, and the sidebar with it: the row to come back to is in the Topics list.
+    setSbTab('topics');
+    switchTopic(id);
+  });
+  libCloseBtn.addEventListener('click', closeLib);
+  // The transcript's own reading controls, on the transcript's own markup: a picture full screen, a
+  // link to a topic, a tool line opened. Nothing here posts — there is nothing to post to.
+  libLog.addEventListener('click', function(e){
+    var shot = e.target.closest ? e.target.closest('img.shot') : null;
+    if(shot) return openShot(shot);
+    var go = e.target.closest ? e.target.closest('a[data-goto]') : null;
+    if(go){
+      e.preventDefault();
+      var goId = go.getAttribute('data-goto');
+      if(goId && topicExists(goId)){
+        switchTopic(goId);
+        if(narrow()) setSidebar(false);
+      }
+      return;
+    }
+    var all = e.target.closest ? e.target.closest('[data-tl-all]') : null;
+    if(all) return toggleAll(all.getAttribute('data-tl-all'));
+    var line = e.target.closest ? e.target.closest('.tl') : null;
+    if(line) return toggleLine(line);
+  });
+
+  document.addEventListener('keydown', function(e){
+    if(e.key !== 'Escape') return;
+    // An IME uses Escape to cancel its candidate list. That keystroke belongs to the composition,
+    // not to the page: dismissing a panel (and remembering the dismissal) mid-word is not
+    // something the person asked for.
+    if(e.isComposing) return;
+    // A recording is cancelled by Escape too, and the recorder's own listener below does that.
+    // The same keystroke must not also put away what is behind the composer.
+    if(rec) return;
+    // The instruction editor is opened from the settings page and sits over it: put away the
+    // editor alone, and the page it came from is still there.
+    if(fileSrc && !filesWin.hidden){ closeFiles(); return; }
+    // Close the topmost thing first: Escape over a picture, the reader or a menu must not also
+    // put away a panel behind it. The command suggestions are the composer's own overlay.
+    var hintsOpen = !hints.hidden;
+    var overlay = hintsOpen || !lightbox.hidden || !reader.hidden || !idleDialog.hidden || !rowMenu.hidden
+      || openMenu() || !skillsWin.hidden || !settingsPage.hidden || !taskPage.hidden || !filesWin.hidden || !gitWin.hidden;
+    closeShot(); closeReader(); closeIdle(); closeSkills(); closeSettings(); closeFiles(); closeGit();
+    // Its own confirm when a form holds changes; a refused one leaves everything as it was.
+    closeTaskPage(false);
+    // The row menu gives the focus back to its ⋯, so a keyboard user is where they left off.
+    closeRowMenu(true);
+    if(hintsOpen){ hints.hidden = true; hints.innerHTML = ''; }
+    var m = openMenu();
+    if(m){ setMenu(null, false); m.btn.focus(); }
+    // The two panels answer Escape alike: the right one first, then the left. Each is a choice
+    // the page remembers, and each has a control on screen that brings it back. A side answer's
+    // card goes before either: it is the most passing thing on the page, and over the composer.
+    if(!overlay){
+      if(!btwBox.hidden) closeBtw(true);
+      else if(schedPane.isOpen()) setSchedules(false);
+      else if(sbPane.isOpen()) setSidebar(false);
+    }
+  });
+
+  /**
+   * The code view — CodeMirror, bundled into assets/ and loaded the first time a file needs it.
+   *
+   *   editor(parent, {doc, name, readOnly?, onChange?(doc), onSave?()})
+   *     → {getDoc(), setDoc(doc), focus(), destroy()}
+   *   diff(parent, {name, original, modified, layout: 'unified'|'split', onSelect?(sel|null)})
+   *     → {setLayout(layout), destroy()}     sel = {side: 'old'|'new', from, to, text}, lines from 1
+   *   highlighter(lang) → Promise<null | (code) → [[from, to, classes], ...]>   (a fence's colours)
+   *
+   * window.__fhCodeView is the seam, and it is checked first: page.dom.test.ts puts a fake there.
+   *
+   * Resolves null when there is nothing to load or the import failed. That is not an error the
+   * caller reports: the reader already has the server's pre element, which is a complete answer,
+   * and the page is built to work with no bundle at all (a source checkout that never ran the
+   * asset build). The warning is once per page, not once per file.
+   */
+  var codeViewP = null, codeViewWarned = false;
+  function codeView(){
+    if(window.__fhCodeView) return Promise.resolve(window.__fhCodeView);
+    if(!CODEVIEW) return Promise.resolve(null);
+    if(codeViewP) return codeViewP;
+    // Absolute, because a relative specifier in an INLINE classic script does not resolve:
+    // Chromium answers "Failed to resolve module specifier" — measured 2026-11-18, and the bundle
+    // is next to the page in its own directory. document.baseURI keeps a sub-path mount working
+    // (a proxy prefix is part of the page's own URL), and the URL is same-origin, which is what
+    // the CSP's script-src 'self' admits.
+    codeViewP = import(new URL(CODEVIEW, document.baseURI).href).then(function(m){
+      return (m && m.default) || m || null;
+    }).catch(function(e){
+      if(!codeViewWarned){ codeViewWarned = true; console.warn('code view unavailable, showing plain text:', e); }
+      return null;
+    });
+    return codeViewP;
+  }
+
+  /**
+   * Read a file the agent sent without downloading it. The server renders it (reading.ts) and the
+   * answer fills a window over the transcript. The name and the download link are on the file's
+   * own link, so a slow link shows which file is coming rather than an empty frame.
+   *
+   * A text file also arrives as its own bytes (text), and when the code view is available it is
+   * shown in that instead of the server's pre element; markdown keeps the rendered HTML. The pre
+   * is the fallback rather than a second mode, because it is what the server would have shown.
+   *
+   * readSeq is which opening an answer belongs to. Close one file and open another before the first
+   * has answered, and without it the first file's text would land under the second one's name.
+   */
+  var readSeq = 0, readerEditor = null;
+  function readerDoc(note, html){
+    readerBody.innerHTML = note + '<div class="b">' + html + '</div>';
+    codeBlocks(readerBody);
+    readerBody.scrollTop = 0;
+  }
+  function readerDropEditor(){
+    if(readerEditor){ readerEditor.destroy(); readerEditor = null; }
+    readerBody.classList.remove('cv');
+  }
+  function openReader(link){
+    readerDropEditor();
+    readerName.textContent = link.textContent;
+    readerName.title = readerName.textContent;
+    readerGet.setAttribute('href', link.getAttribute('href'));
+    readerSay('Loading\u2026');
+    reader.hidden = false;
+    readerBody.focus();
+    var mine = ++readSeq;
+    fetch(link.getAttribute('data-view'), {credentials:'same-origin'}).then(function(r){
+      return r.json().then(function(j){ return {ok:r.ok, status:r.status, body:j}; });
+    }).then(function(res){
+      if(mine !== readSeq) return;
+      if(!res.ok) return readerSay(res.status === 404
+        ? 'This file is no longer here: the daemon has let it go since it was sent.'
+        : (res.body && res.body.error) || 'This file cannot be shown.');
+      var j = res.body, note = '';
+      if(j.shown < j.size) note = '<div class="reader-note">Showing the first '+text(byteSize(j.shown))+' of '+text(byteSize(j.size))+'. Download it for the rest.</div>';
+      if(typeof j.text !== 'string') return readerDoc(note, j.html);
+      codeView().then(function(cv){
+        if(mine !== readSeq) return;
+        if(!cv) return readerDoc(note, j.html);
+        readerBody.classList.add('cv');
+        readerBody.innerHTML = note;
+        var host = document.createElement('div');
+        host.className = 'cv-host';
+        readerBody.appendChild(host);
+        try {
+          readerEditor = cv.editor(host, {doc:j.text, name:j.name, readOnly:true});
+        } catch(e) {
+          // A bundle that loaded but cannot build an editor is the same answer as no bundle:
+          // the plain text the server sent, rather than an empty window.
+          console.warn('code view failed, showing plain text:', e);
+          readerDropEditor();
+          readerDoc(note, j.html);
+        }
+      });
+    }).catch(function(){ if(mine === readSeq) readerSay('Could not reach the server.'); });
+  }
+  function readerSay(s){ readerBody.innerHTML = '<div class="empty">'+text(s)+'</div>'; }
+  function closeReader(){
+    if(reader.hidden) return;
+    reader.hidden = true;
+    readSeq++;
+    readerDropEditor();
+    // Emptied, not kept: half a megabyte of rendered document is a lot of DOM to leave behind an
+    // overlay nobody is looking at — the lightbox drops its picture for the same reason.
+    readerBody.textContent = '';
+  }
+  function byteSize(n){ return n < 1048576 ? Math.max(1, Math.round(n/1024)) + ' KB' : (n/1048576).toFixed(1) + ' MB'; }
+  $('reader-close').addEventListener('click', closeReader);
+  // The dimmed page behind the window is a way out too, as it is for the lightbox — but only the
+  // backdrop itself: a click that lands in the document must not close what is being read.
+  reader.addEventListener('click', function(e){ if(e.target === reader) closeReader(); });
+
+  // ── The git window ─────────────────────────────────────────────────────────
+  // What changed in the repository the topic's directory sits in, its commit history, one file's
+  // diff, and line comments that go into the composer (never sent from here). Everything is read
+  // through the daemon — daemon/git-panel.ts runs on the machine the agent runs on — so this half
+  // only draws.
+  //
+  // openGitWindow(source) has two callers: the chat header, with no argument, and the turn-change
+  // view, with { title, statusUrl, fileUrl }. The second fixes the two URLs, hides the mode
+  // controls, and appends &path= to fileUrl; the rest of the window is the same code.
+  var gitWin=$('git'), gitTitleEl=$('git-title'), gitBranchEl=$('git-branch'), gitModesEl=$('git-modes'),
+      gitBaseEl=$('git-base'), gitFilesEl=$('git-files'), gitDiffEl=$('git-diff'), gitNoteEl=$('git-note'),
+      gitSelEl=$('git-sel'), gitSelWhat=$('git-sel-what'), gitCommentEl=$('git-comment'),
+      gitCommentWhat=$('git-comment-what'), gitCommentText=$('git-comment-text'),
+      gitLayoutBtn=$('git-layout'), gitRefreshBtn=$('git-refresh'), gitToggleBtn=$('git-toggle'),
+      gitCloseBtn=$('git-close');
+  var gitState = {
+    source:null, mode:'working', base:'', root:'', repo:null, files:[], path:'', sel:null, branchError:'',
+    statusSeq:0, fileSeq:0, view:null, kind:'',
+    // Commits: the history read so far, whether the daemon has more, and the commit opened in it.
+    // Its own sequences drop answers the way statusSeq and fileSeq do — a log page arriving after
+    // a mode switch would otherwise list commits under a comparison that is no longer on screen.
+    commits:[], commitMore:false, commit:null, commitFiles:[], bodyOpen:false,
+    logSeq:0, commitSeq:0,
+    // Whether a list that has just arrived may open its first file by itself (a wide window does,
+    // a phone does not), and whether a file request is in flight.
+    pick:false, loading:false,
+    // A directory outside a repository is an answer, not a failure: the pane says so and the red
+    // note stays out of it, and the branch list's own refusal must not put one back.
+    notGit:false,
+    // Whether the branch list is missing because there was no repository to read it from. A
+    // status answer that succeeds makes that refusal stale. It is this flag and not notGit, which
+    // a history read in Commits clears first, and not branchError, which a failure for another
+    // reason also sets and which a status answer does not make stale.
+    branchStale:false,
+    // A phone opens on one column: a split diff at 390px gives each side five characters of code.
+    layout: (window.innerWidth < 900 ? 'unified' : 'split')
+  };
+
+  function gitCustom(){ return gitState.source; }
+
+  function gitBaseParam(){
+    // The working comparison never uses a base; sending one would only let a stale picker value
+    // reach the daemon's check.
+    return gitState.mode !== 'working' && gitState.base ? '&base='+encodeURIComponent(gitState.base) : '';
+  }
+  function gitStatusUrl(){
+    if(gitCustom()) return gitCustom().statusUrl;
+    return 'api/git/status?t='+encodeURIComponent(topic)+'&mode='+encodeURIComponent(gitState.mode)+gitBaseParam();
+  }
+  function gitFileUrl(path){
+    if(gitCustom()) return gitCustom().fileUrl+'&path='+encodeURIComponent(path);
+    // A file opened inside a commit is read from that commit, never from the working tree: the
+    // same path there is today's file, and the diff would be of something else entirely.
+    if(gitState.commit) return gitCommitFileUrl(gitState.commit.sha, path);
+    return 'api/git/file?t='+encodeURIComponent(topic)+'&mode='+encodeURIComponent(gitState.mode)+gitBaseParam()
+      +'&path='+encodeURIComponent(path);
+  }
+  function gitLogUrl(skip){
+    return 'api/git/log?t='+encodeURIComponent(topic)+'&skip='+skip;
+  }
+  function gitCommitUrl(sha){
+    return 'api/git/commit?t='+encodeURIComponent(topic)+'&sha='+encodeURIComponent(sha);
+  }
+  function gitCommitFileUrl(sha, path){
+    return 'api/git/commit-file?t='+encodeURIComponent(topic)+'&sha='+encodeURIComponent(sha)
+      +'&path='+encodeURIComponent(path);
+  }
+  /** The short sha a comment made on a commit carries, or '' outside one. */
+  function gitCommitTag(){
+    var c = gitState.commit;
+    if(!c) return '';
+    return c.short || String(c.sha || '').slice(0, 7);
+  }
+
+  function gitNote(message, bad){
+    gitNoteEl.hidden = !message;
+    gitNoteEl.className = bad ? 'bad' : '';
+    gitNoteEl.textContent = message || '';
+  }
+
+  function gitDestroyView(){
+    if(gitState.view && typeof gitState.view.destroy === 'function'){
+      try { gitState.view.destroy(); } catch(x){}
+    }
+    gitState.view = null;
+    gitState.kind = '';
+  }
+
+  function gitHideComment(){
+    gitCommentEl.hidden = true;
+    gitCommentText.value = '';
+  }
+
+  function gitClearSelection(){
+    gitState.sel = null;
+    gitSelEl.hidden = true;
+  }
+
+  function gitPaintBase(base){
+    // The working comparison and the commit history never use a base.
+    if(gitCustom() || gitState.mode === 'working' || gitState.mode === 'commits'){ gitBaseEl.hidden = true; return; }
+    if(base && !gitState.base) gitState.base = base;
+    // No origin/HEAD, main or master: the first branch the list offered is the base. A picker that
+    // shows a selected row while the state holds nothing would send no base at all.
+    if(!gitState.base && gitBaseEl.options.length)
+      gitState.base = gitBaseEl.value || gitBaseEl.options[0].value;
+    if(gitState.base) gitBaseEl.value = gitState.base;
+    gitBaseEl.hidden = gitBaseEl.options.length === 0;
+  }
+
+  /** Put the branch list into the picker; the selection follows the status answer, else its first row. */
+  function gitLoadBranches(){
+    if(gitCustom()) return;
+    fetch('api/git/branches?t='+encodeURIComponent(topic), {credentials:'same-origin', cache:'no-store'})
+      .then(function(r){ return r.json(); }).then(function(d){
+        if(!d || !d.ok){
+          // A list that could not be read is a sentence, not a silently empty picker: Branch and
+          // Committed both need a base, and this is why they cannot offer one. A directory outside
+          // a repository is already explained in the pane, and a second red sentence about
+          // branches beside it would read as a different failure.
+          gitState.branchError = (d && d.text) || 'Could not read the branches.';
+          gitState.branchStale = gitNoRepo(d);
+          if(!gitState.notGit) gitNote(gitState.branchError, true);
+          return;
+        }
+        var was = gitState.branchError;
+        gitState.branchError = '';
+        gitState.branchStale = false;
+        if(was && gitNoteEl.textContent === was) gitNote('', false);
+        var list = d.branches || [];
+        if(!list.length) return;
+        gitBaseEl.innerHTML = '';
+        for(var i=0;i<list.length;i++){
+          var o=document.createElement('option');
+          o.value=list[i]; o.textContent=list[i];
+          gitBaseEl.appendChild(o);
+        }
+        var had = gitState.base;
+        if(!gitState.base) gitState.base = d.base || list[0];
+        gitPaintBase(d.base);
+        // A mode that needs a base may have asked before this answer arrived, and been refused;
+        // the base the list just supplied makes that request answerable.
+        if(!had && gitState.base && (gitState.mode === 'branch' || gitState.mode === 'committed')) gitLoadStatus();
+      }).catch(function(){
+        gitState.branchError = 'Could not read the branches.';
+        if(!gitState.notGit) gitNote(gitState.branchError, true);
+      });
+  }
+
+  function gitFileRow(f, withEdit){
+    var letter = f.status === 'added' ? 'A' : f.status === 'deleted' ? 'D' : 'M';
+    var stat = f.binary
+      ? '<span class="gf-del">bin</span>'
+      : f.statsUnknown
+        ? '<span class="gf-nostat" title="Line counts were not read">counts not read</span>'
+        : '<span class="gf-add">+'+f.additions+'</span> <span class="gf-del">\u2212'+f.deletions+'</span>';
+    // The editor is the file window's (window.openFileEditor), which exists only while that
+    // feature is on — so no Edit is offered that would do nothing. It takes a path the way the files
+    // panel writes one — absolute, or relative to the topic's directory — so the repository-root
+    // path this list shows is made absolute first. Where the topic works in a repo subdirectory,
+    // handing it the root-relative path would point at the wrong file. A file inside a commit gets
+    // no Edit at all: the editor writes the working tree, and that is not the file being read.
+    var abs = gitState.root
+      ? (gitState.root.charAt(gitState.root.length-1) === '/' ? gitState.root : gitState.root+'/')+f.path
+      : f.path;
+    var edit = withEdit && typeof window.openFileEditor === 'function'
+      ? '<button type="button" class="gf-edit" data-gedit="'+text(abs)+'" title="Edit this file">Edit</button>'
+      : '';
+    return '<div class="git-file'+(f.path === gitState.path ? ' on' : '')+'" data-gpath="'+text(f.path)+'"'
+      +' role="button" tabindex="0">'
+      +'<span class="gf-status '+f.status+'">'+letter+'</span>'
+      +'<span class="gf-path" title="'+text(f.path)+'">'+text(f.path)+'</span>'
+      +'<span class="gf-stat">'+stat+'</span>'+edit+'</div>';
+  }
+
+  function gitPaintFiles(){
+    var html='';
+    for(var i=0;i<gitState.files.length;i++) html += gitFileRow(gitState.files[i], true);
+    gitFilesEl.innerHTML = html;
+  }
+
+  /** Whatever the left column is showing, redrawn with the open row marked. */
+  function gitPaintList(){
+    if(gitState.commit) gitPaintCommit();
+    else if(gitState.mode === 'commits') gitPaintCommits();
+    else gitPaintFiles();
+  }
+
+  /**
+   * The pane's own empty state, in the middle of the space a diff would use.
+   *
+   * The list used to carry one small "No changes." and leave the right half of the window blank,
+   * which said neither which comparison was empty nor why — and a directory outside a repository
+   * read as a failed request. The reason belongs where the diff would be, with the one action that
+   * gets somewhere from there.
+   */
+  function gitBlank(title, sub, act, actLabel){
+    // Nothing to lay out: the button would switch a diff that is not on screen.
+    gitLayoutBtn.hidden = true;
+    gitDiffEl.innerHTML = '<div class="git-blank"><div class="gb-title">'+text(title)+'</div>'
+      +(sub ? '<div class="gb-sub">'+text(sub)+'</div>' : '')
+      +(act ? '<button type="button" data-gact="'+text(act)+'">'+text(actLabel || act)+'</button>' : '')
+      +'</div>';
+  }
+
+  /**
+   * An answer that there is no repository to read: the directory is not in one (not-git), or it is
+   * gone (missing — a topic whose worktree was removed). Both are the window's empty state, not a
+   * failed request.
+   */
+  function gitNoRepo(d){
+    return !!(d && (d.reason === 'not-git' || d.reason === 'missing'));
+  }
+
+  function gitBlankNoRepo(d){
+    if(d.reason === 'missing') gitBlank('Directory not found.', d.text || 'This topic’s directory no longer exists.');
+    else gitBlank('Not a git repository.', d.text || 'This directory is not inside a git repository.');
+  }
+
+  /** Which comparison came back empty, said in its own terms — the base is the answer's, not a guess. */
+  function gitPaintNoChanges(){
+    if(gitCustom()){
+      // One turn, one comparison, fixed by the URLs the window was opened with: there is no other
+      // comparison to name and none to switch to, so the sentence stands alone.
+      gitBlank('No changes in this turn.', '');
+      return;
+    }
+    var base = gitState.base || 'the base branch';
+    if(gitState.mode === 'working'){
+      gitBlank('No changes.', 'The working tree has nothing that differs from HEAD, untracked files included.',
+        'commits', 'See commits');
+    } else if(gitState.mode === 'branch'){
+      gitBlank('No changes against '+base+'.',
+        'Neither the committed nor the uncommitted work differs from '+base+'.', 'commits', 'See commits');
+    } else {
+      gitBlank('Nothing committed on top of '+base+'.',
+        'HEAD is where '+base+' is, so there is nothing to show for this comparison.', 'commits', 'See commits');
+    }
+  }
+
+  /**
+   * A list that has just arrived opens its first file on a wide window — the whole right half used
+   * to stay blank until the reader guessed that the rows were clickable. A phone keeps the list:
+   * the two columns are stacked there, so opening a file would push the list out of sight, and one
+   * tap is cheap.
+   *
+   * Every list that arrives with nothing selected repaints the pane, whether or not it opens a
+   * file: a directory an agent just turned into a repository, or a comparison that emptied and
+   * filled again, must not keep the sentence of the answer before it.
+   */
+  function gitAutoOpen(list){
+    if(gitState.path || !list.length) return;
+    // Only the first list of a view opens a file by itself; a later refresh keeps the reader's
+    // choice — and once a file has been picked, the pane holds its diff and is left alone.
+    var open = gitState.pick && !narrow();
+    gitState.pick = false;
+    if(open) gitOpenFile(list[0].path);
+    else gitBlank('Select a file to see its diff.');
+  }
+
+  // ── Commits ────────────────────────────────────────────────────────────────
+  function gitCommitRow(c){
+    var sha = c.sha || '';
+    var on = gitState.commit && gitState.commit.sha === sha;
+    return '<div class="git-commit'+(on ? ' on' : '')+'" data-gsha="'+text(sha)+'"'
+      +' role="button" tabindex="0" title="'+text(c.subject || '')+'">'
+      +'<span class="gc-subject">'+text(c.subject || '')+'</span>'
+      +'<span class="gc-meta"><span class="gc-sha">'+text(c.short || sha.slice(0, 7))+'</span>'
+      +'<span class="gc-author">'+text(c.author || '')+'</span>'
+      +'<span class="gc-when">'+text(schedAgo(c.at))+'</span></span></div>';
+  }
+
+  function gitPaintCommits(){
+    if(!gitState.commits.length){ gitFilesEl.innerHTML = ''; return; }
+    var html='';
+    for(var i=0;i<gitState.commits.length;i++) html += gitCommitRow(gitState.commits[i]);
+    // The next page is asked for by skip, which the contract defines as the commits already shown.
+    // A commit landing at the top between two pages therefore shifts the window by one and the
+    // next page repeats a row; a cursor would not, but the contract has none, a refresh clears the
+    // repetition, and the list never pages itself.
+    if(gitState.commitMore) html += '<button type="button" class="git-more" data-gmore>Load more</button>';
+    gitFilesEl.innerHTML = html;
+  }
+
+  /** One commit in the left column: the way back, its message, then its files. */
+  function gitPaintCommit(){
+    var c = gitState.commit;
+    if(!c){ gitPaintCommits(); return; }
+    var html = '<div class="git-back" data-gback role="button" tabindex="0">'+IC.icon.chevronLeft
+      +'<span>Commits</span></div>'
+      +'<div class="git-commit-head">'
+      +'<div class="gch-subject">'+text(c.subject || '')+'</div>'
+      +'<div class="gch-meta"><span class="gch-sha">'+text(gitCommitTag())+'</span>'
+      +'<span>'+text(c.author || '')+'</span><span>'+text(schedAgo(c.at))+'</span></div>';
+    if(c.body){
+      html += '<button type="button" class="gch-toggle" data-gbody>'
+        +(gitState.bodyOpen ? 'Hide details' : 'Show details')+'</button>'
+        +'<pre class="gch-body"'+(gitState.bodyOpen ? '' : ' hidden')+'>'+text(c.body)+'</pre>';
+    }
+    html += '</div>';
+    for(var i=0;i<gitState.commitFiles.length;i++) html += gitFileRow(gitState.commitFiles[i], false);
+    gitFilesEl.innerHTML = html;
+  }
+
+  function gitToggleBody(btn){
+    gitState.bodyOpen = !gitState.bodyOpen;
+    var pre = btn.parentNode ? btn.parentNode.querySelector('.gch-body') : null;
+    if(pre) pre.hidden = !gitState.bodyOpen;
+    btn.textContent = gitState.bodyOpen ? 'Hide details' : 'Show details';
+  }
+
+  function gitLoadLog(more){
+    if(gitCustom() || gitState.mode !== 'commits') return;
+    var skip = more ? gitState.commits.length : 0;
+    var mine = ++gitState.logSeq;
+    gitRefreshBtn.disabled = true;
+    var moreBtn = gitFilesEl.querySelector('[data-gmore]');
+    if(moreBtn) moreBtn.disabled = true;
+    return fetch(gitLogUrl(skip), {credentials:'same-origin', cache:'no-store'}).then(function(r){
+      return r.json().then(function(d){ return {ok:r.ok, d:d}; }, function(){ return {ok:false, d:null}; });
+    }).then(function(res){
+      if(mine !== gitState.logSeq) return;
+      gitRefreshBtn.disabled = false;
+      if(moreBtn) moreBtn.disabled = false;
+      var d = res.d;
+      if(!res.ok || !d || !d.ok){
+        // Anything but "this is not a repository" keeps what is on screen: the rows it has are
+        // still true, and a reader who asked for more — or one looking at a commit — has not lost
+        // it. A turn's own refresh failing must not throw the commit away under them.
+        if(!gitNoRepo(d)){
+          gitNote((d && (d.text || d.error))
+            || (more ? 'Could not read more commits.' : 'Could not read the commits.'), true);
+          // The first page failing leaves "Loading…" in the column; there is no list to keep.
+          if(!gitState.commit) gitPaintCommits();
+          return;
+        }
+        gitState.notGit = true;
+        gitState.commits = [];
+        gitState.commitMore = false;
+        gitState.repo = null;
+        gitState.root = '';
+        gitBranchEl.textContent = '';
+        gitState.commit = null;
+        gitState.commitFiles = [];
+        gitState.fileSeq += 1;
+        gitState.loading = false;
+        gitClearSelection();
+        gitHideComment();
+        gitDestroyView();
+        gitPaintCommits();
+        gitNote('', false);
+        gitBlankNoRepo(d);
+        return;
+      }
+      gitState.notGit = false;
+      if(!more) gitState.commits = [];
+      var list = d.commits || [];
+      for(var i=0;i<list.length;i++) gitState.commits.push(list[i]);
+      gitState.commitMore = !!d.more;
+      if(d.repo){
+        gitState.repo = d.repo;
+        gitState.root = d.repo.root || '';
+        gitBranchEl.textContent = d.repo.branch || '';
+      }
+      // A refresh behind an open commit updates the list it will go back to, and leaves the
+      // commit alone: what a commit contains cannot change.
+      if(!gitState.commit){
+        gitNote('', false);
+        gitPaintCommits();
+        if(!gitState.commits.length) gitBlank('No commits yet.', 'This repository has nothing committed.');
+      }
+    }).catch(function(){
+      if(mine !== gitState.logSeq) return;
+      gitRefreshBtn.disabled = false;
+      if(moreBtn) moreBtn.disabled = false;
+      gitNote('Could not reach the server.', true);
+    });
+  }
+
+  function gitOpenCommit(sha){
+    var known = null;
+    for(var i=0;i<gitState.commits.length;i++) if(gitState.commits[i].sha === sha) known = gitState.commits[i];
+    gitState.commit = known || {sha:sha, short:String(sha).slice(0, 7), subject:'', author:'', at:0};
+    gitState.commitFiles = [];
+    gitState.path = '';
+    gitState.bodyOpen = false;
+    gitState.loading = false;
+    gitState.pick = true;
+    gitState.fileSeq += 1;
+    gitClearSelection();
+    gitHideComment();
+    gitDestroyView();
+    gitPaintCommit();
+    gitNote('', false);
+    gitDiffEl.innerHTML = '<div class="git-empty">Loading\u2026</div>';
+    gitLayoutBtn.hidden = true;
+    var mine = ++gitState.commitSeq;
+    fetch(gitCommitUrl(sha), {credentials:'same-origin', cache:'no-store'}).then(function(r){
+      return r.json().then(function(d){ return {ok:r.ok, d:d}; }, function(){ return {ok:false, d:null}; });
+    }).then(function(res){
+      if(mine !== gitState.commitSeq) return;
+      var d = res.d;
+      if(!res.ok || !d || !d.ok){
+        gitState.commitFiles = [];
+        gitPaintCommit();
+        // The header from the list row stays: it is what the person tapped, and it is true even
+        // when the daemon could not open the commit itself.
+        gitNote((d && (d.text || d.error)) || 'Could not read this commit.', true);
+        gitDiffEl.textContent = '';
+        return;
+      }
+      gitState.commit = d.commit || gitState.commit;
+      gitState.commitFiles = d.files || [];
+      gitState.root = (d.repo && d.repo.root) || gitState.root;
+      gitPaintCommit();
+      gitNote(d.truncated ? 'There are too many files in this commit to list.' : '', !!d.truncated);
+      if(!gitState.commitFiles.length){
+        gitBlank('This commit changed no files.', '');
+        return;
+      }
+      gitAutoOpen(gitState.commitFiles);
+    }).catch(function(){
+      if(mine !== gitState.commitSeq) return;
+      gitNote('Could not reach the server.', true);
+    });
+  }
+
+  function gitBackToCommits(){
+    gitState.commit = null;
+    gitState.commitFiles = [];
+    gitState.path = '';
+    gitState.loading = false;
+    gitState.commitSeq += 1;
+    gitState.fileSeq += 1;
+    gitClearSelection();
+    gitHideComment();
+    gitDestroyView();
+    gitPaintCommits();
+    gitNote('', false);
+    // The blank below is what takes the layout button off the bar: there is no diff to lay out.
+    gitBlank('Pick a commit.', "A commit's files and their diff are shown here.");
+  }
+
+  function gitLoadStatus(){
+    var mine = ++gitState.statusSeq;
+    gitRefreshBtn.disabled = true;
+    return fetch(gitStatusUrl(), {credentials:'same-origin', cache:'no-store'}).then(function(r){
+      return r.json().then(function(d){ return {ok:r.ok, d:d}; }, function(){ return {ok:false, d:null}; });
+    }).then(function(res){
+      if(mine !== gitState.statusSeq) return;
+      gitRefreshBtn.disabled = false;
+      var d = res.d;
+      if(!res.ok || !d || !d.ok){
+        gitState.repo = null;
+        gitState.root = '';
+        gitState.files = [];
+        gitState.path = '';
+        // A file request still in flight would otherwise land in a pane whose path is now empty.
+        gitState.fileSeq += 1;
+        gitState.loading = false;
+        gitFilesEl.innerHTML = '';
+        gitBranchEl.textContent = '';
+        gitClearSelection();
+        gitHideComment();
+        gitDestroyView();
+        gitDiffEl.textContent = '';
+        gitLayoutBtn.hidden = true;
+        if(gitNoRepo(d)){
+          // The window exists for a repository; outside one there is nothing to compare, and a
+          // red note beside an empty list read as a request that failed rather than an answer.
+          gitState.notGit = true;
+          gitNote('', false);
+          gitBlankNoRepo(d);
+          return;
+        }
+        gitState.notGit = false;
+        // The daemon's own sentence, including a 500's error field: a timeout or a broken
+        // repository must not read as "nothing changed".
+        gitNote((d && (d.text || d.error)) || 'Could not read the changes.', true);
+        return;
+      }
+      // The branch list could not be read because there was no repository; this answer says there
+      // is one now, so ask again — the refusal is stale and the picker has no branches.
+      gitState.notGit = false;
+      gitState.repo = d.repo || null;
+      gitState.root = (d.repo && d.repo.root) || '';
+      gitState.files = d.files || [];
+      gitBranchEl.textContent = (d.repo && d.repo.branch) || '';
+      gitPaintBase(d.repo && d.repo.base);
+      if(gitState.branchStale){
+        gitState.branchError = '';
+        gitLoadBranches();
+      }
+      gitPaintFiles();
+      if(d.truncated){
+        // The list itself is incomplete; any rows it did return are whole.
+        gitNote('There are too many changes to list. Narrow the comparison, or refresh once some are committed.', true);
+        if(!gitState.files.length) gitBlank('The change list is incomplete.', 'There are too many changes to list.');
+      } else {
+        gitNote(gitState.branchError, !!gitState.branchError);
+        if(!gitState.files.length) gitPaintNoChanges();
+      }
+      // The file that was open may have been committed away since the last list. Its old diff
+      // would then be a picture of something that is no longer there.
+      if(gitState.path && !gitState.files.some(function(f){ return f.path === gitState.path; })){
+        gitState.path = '';
+        // The file it was reading is gone from the comparison; its answer must not land here.
+        gitState.fileSeq += 1;
+        gitState.loading = false;
+        gitClearSelection();
+        gitHideComment();
+        gitDestroyView();
+        gitDiffEl.innerHTML = '<div class="git-empty">That file is no longer in the changes.</div>';
+        gitLayoutBtn.hidden = true;
+      } else {
+        gitAutoOpen(gitState.files);
+      }
+    }).catch(function(){
+      if(mine !== gitState.statusSeq) return;
+      gitRefreshBtn.disabled = false;
+      gitNote('Could not reach the server.', true);
+    });
+  }
+
+  /** The unified diff as coloured text: the fallback when codeView() answers null. */
+  function gitPaintPatch(patch){
+    var lines = String(patch || '').split('\n'), out='';
+    for(var i=0;i<lines.length;i++){
+      var line = lines[i];
+      var cls = (line.charAt(0) === '+' && line.slice(0,3) !== '+++') ? 'pa'
+        : (line.charAt(0) === '-' && line.slice(0,3) !== '---') ? 'pd'
+        : (line.slice(0,2) === '@@' ? 'ph' : '');
+      out += cls ? '<span class="'+cls+'">'+text(line)+'</span>\n' : text(line)+'\n';
+    }
+    return out;
+  }
+
+  function gitSelect(sel){
+    gitState.sel = sel || null;
+    if(!sel){ gitSelEl.hidden = true; return; }
+    var from = Math.min(sel.from, sel.to), to = Math.max(sel.from, sel.to);
+    gitSelWhat.textContent = (sel.side === 'old' ? 'Original' : 'New')
+      +' lines '+from+(to !== from ? '\u2013'+to : '');
+    gitSelEl.hidden = false;
+    gitHideComment();
+  }
+
+  function gitRenderDiff(d, mine){
+    gitDiffEl.innerHTML = '';
+    codeView().then(function(cv){
+      if(mine !== gitState.fileSeq) return;
+      if(cv && typeof cv.diff === 'function'){
+        gitState.kind = 'code';
+        // Kept for the comment block, which quotes WHOLE lines of the side the selection is on.
+        gitState.sides = {old: String(d.original || ''), 'new': String(d.modified || '')};
+        gitState.view = cv.diff(gitDiffEl, {name:d.path || gitState.path, original:d.original, modified:d.modified,
+          layout:gitState.layout, onSelect:function(sel){ gitSelect(sel); }});
+        gitLayoutBtn.hidden = false;
+        gitLayoutBtn.textContent = gitState.layout === 'split' ? 'Unified' : 'Split';
+      } else {
+        // No code view on this page: the patch is still readable as text, but there is no line
+        // selection, so line comments are not offered (the README says so).
+        gitState.kind = 'text';
+        gitState.view = null;
+        gitDiffEl.innerHTML = d.patch
+          ? '<pre class="git-patch">'+gitPaintPatch(d.patch)+'</pre>'
+          : '<div class="git-empty">No text to show for this change.</div>';
+        gitLayoutBtn.hidden = true;
+      }
+    }, function(){
+      if(mine !== gitState.fileSeq) return;
+      gitState.kind = 'text';
+      gitDiffEl.innerHTML = '<pre class="git-patch">'+gitPaintPatch(d.patch || '')+'</pre>';
+      gitLayoutBtn.hidden = true;
+    });
+  }
+
+  function gitOpenFile(path){
+    // Clicking a row whose read is still in flight asks for nothing — that answer is on its way.
+    // Clicking the row that is already open re-reads it, which is how a diff is brought up to date
+    // after the file was edited: Refresh re-reads the list and deliberately leaves the diff alone.
+    if(path === gitState.path && gitState.loading) return;
+    gitState.pick = false;
+    gitState.path = path;
+    gitClearSelection();
+    gitHideComment();
+    gitDestroyView();
+    gitPaintList();
+    gitDiffEl.innerHTML = '<div class="git-empty">Loading\u2026</div>';
+    gitLayoutBtn.hidden = true;
+    var mine = ++gitState.fileSeq;
+    gitState.loading = true;
+    fetch(gitFileUrl(path), {credentials:'same-origin', cache:'no-store'}).then(function(r){
+      return r.json().then(function(d){ return {ok:r.ok, d:d}; }, function(){ return {ok:false, d:null}; });
+    }).then(function(res){
+      if(mine !== gitState.fileSeq) return;
+      gitState.loading = false;
+      var d = res.d;
+      if(!res.ok || !d || !d.ok){
+        gitDiffEl.innerHTML = '<div class="git-empty">'
+          +text((d && (d.text || d.error)) || 'Could not read this file.')+'</div>';
+        return;
+      }
+      if(d.tooLarge){
+        gitDiffEl.innerHTML = '<div class="git-empty">'
+          +(d.patchTooLarge ? "This file's diff is too large to show." : 'This file is too large to show.')
+          +'</div>';
+        return;
+      }
+      if(d.binary){
+        gitDiffEl.innerHTML = '<div class="git-empty">Binary file: there is no text diff to show.</div>';
+        return;
+      }
+      gitRenderDiff(d, mine);
+    }).catch(function(){
+      if(mine !== gitState.fileSeq) return;
+      gitState.loading = false;
+      gitDiffEl.innerHTML = '<div class="git-empty">Could not reach the server.</div>';
+    });
+  }
+
+  function gitShowComment(){
+    if(!gitState.sel) return;
+    var from = Math.min(gitState.sel.from, gitState.sel.to), to = Math.max(gitState.sel.from, gitState.sel.to);
+    var tag = gitCommitTag();
+    gitCommentWhat.textContent = gitState.path+':L'+from+(to !== from ? '-L'+to : '')
+      +(gitState.sel.side === 'old' ? ' \u00b7 old side' : ' \u00b7 new side')+(tag ? ' \u00b7 '+tag : '');
+    gitCommentEl.hidden = false;
+    gitCommentText.value = '';
+    gitCommentText.focus();
+  }
+
+  /**
+   * One line comment in the shape the agent reads: the file and line range, which side of the
+   * diff the lines came from, the selected lines in a fence, then the person's words. Without the
+   * side, a deleted line's old number would read as a line of the new file. A comment made on a
+   * commit's diff carries its short sha too, because the same path and line in the working tree
+   * are a different file — without it the agent reads the comment against today's code. A fence
+   * longer than any run of backticks inside the code keeps the block closed. Multiple comments
+   * accumulate, separated by a blank line.
+   */
+  function gitCommentBlock(){
+    var sel = gitState.sel;
+    if(!sel) return '';
+    var from = Math.min(sel.from, sel.to), to = Math.max(sel.from, sel.to);
+    // The heading names lines, so the block quotes those lines whole — a drag starts and ends
+    // mid-line, and the characters it happened to cover would cite half a statement as L1-L2.
+    // The selection's own text is the fallback for a side the page does not hold.
+    var doc = gitState.sides ? gitState.sides[sel.side === 'old' ? 'old' : 'new'] : null;
+    var quoted = typeof doc === 'string'
+      ? doc.split('\n').slice(from-1, to).join('\n')
+      : String(sel.text);
+    var fence = String.fromCharCode(96,96,96);
+    while(quoted.indexOf(fence) >= 0) fence += String.fromCharCode(96);
+    var tag = gitCommitTag();
+    return gitState.path+':L'+from+(to !== from ? '-L'+to : '')+(sel.side === 'old' ? ' (old' : ' (new')
+      +(tag ? ', '+tag : '')+')'
+      +'\n'+fence+'\n'+quoted.replace(/\s+$/, '')+'\n'+fence+'\n'+gitCommentText.value.trim();
+  }
+
+  /** Put text in the composer without sending it: the person still presses Send. */
+  function gitInsertMessage(s){
+    var cur = input.value.replace(/\s+$/, '');
+    input.value = (cur ? cur+'\n\n' : '')+s;
+    // A programmatic value assignment fires no input event; the composer's own listener is what
+    // grows the box and refreshes the command hints.
+    input.dispatchEvent(new Event('input', {bubbles:true}));
+    input.focus();
+  }
+
+  function gitAddComment(){
+    if(!gitState.sel) return;
+    if(!gitCommentText.value.trim()){ gitCommentText.focus(); return; }
+    gitInsertMessage(gitCommentBlock());
+    gitHideComment();
+    gitClearSelection();
+    gitNote('Added to the message.', false);
+  }
+
+  function gitSetLayout(){
+    gitState.layout = gitState.layout === 'split' ? 'unified' : 'split';
+    gitLayoutBtn.textContent = gitState.layout === 'split' ? 'Unified' : 'Split';
+    if(gitState.view && typeof gitState.view.setLayout === 'function') gitState.view.setLayout(gitState.layout);
+  }
+
+  /**
+   * Switch the comparison. Every answer still in flight belongs to the view being left, so all
+   * four sequences move at once: a status, a file, a page of commits or a commit arriving after
+   * this would otherwise paint under a mode the reader is no longer in.
+   */
+  function gitSetMode(mode){
+    if(gitCustom() || mode === gitState.mode) return;
+    gitState.mode = mode;
+    gitState.path = '';
+    gitState.commit = null;
+    gitState.commitFiles = [];
+    gitState.commits = [];
+    gitState.commitMore = false;
+    gitState.bodyOpen = false;
+    gitState.loading = false;
+    gitState.statusSeq += 1;
+    gitState.fileSeq += 1;
+    gitState.logSeq += 1;
+    gitState.commitSeq += 1;
+    gitClearSelection();
+    gitHideComment();
+    gitDestroyView();
+    gitDiffEl.innerHTML = '';
+    gitLayoutBtn.hidden = true;
+    gitNote('', false);
+    gitBaseEl.hidden = mode === 'working' || mode === 'commits';
+    var all = gitModesEl.querySelectorAll('[data-gm]');
+    for(var i=0;i<all.length;i++) all[i].classList.toggle('on', all[i].getAttribute('data-gm') === mode);
+    gitState.pick = true;
+    if(mode === 'commits'){
+      gitFilesEl.innerHTML = '<div class="git-empty">Loading\u2026</div>';
+      gitBlank('Pick a commit.', "A commit's files and their diff are shown here.");
+      gitLoadLog(false);
+    } else {
+      gitLoadStatus();
+    }
+  }
+
+  function openGitWindow(source){
+    gitState.source = source || null;
+    gitState.mode = 'working';
+    gitState.base = '';
+    gitState.root = '';
+    gitState.branchError = '';
+    gitState.branchStale = false;
+    gitState.repo = null;
+    gitState.files = [];
+    gitState.path = '';
+    gitState.commits = [];
+    gitState.commit = null;
+    gitState.commitFiles = [];
+    gitState.commitMore = false;
+    gitState.bodyOpen = false;
+    gitState.loading = false;
+    gitState.notGit = false;
+    // The header's own list opens its first file on a wide window; the turn-changes view leaves
+    // the picking to the person, who came for a particular change.
+    gitState.pick = !source;
+    gitState.statusSeq += 1;
+    gitState.fileSeq += 1;
+    gitState.logSeq += 1;
+    gitState.commitSeq += 1;
+    gitDestroyView();
+    gitHideComment();
+    gitClearSelection();
+    gitNote('', false);
+    gitModesEl.hidden = !!gitCustom();
+    gitBaseEl.hidden = true;
+    gitBaseEl.innerHTML = '';
+    gitTitleEl.textContent = gitCustom() ? (gitCustom().title || 'Changes') : 'Changes';
+    gitBranchEl.textContent = '';
+    gitFilesEl.innerHTML = '<div class="git-empty">Loading\u2026</div>';
+    gitDiffEl.innerHTML = '';
+    gitLayoutBtn.hidden = true;
+    var modes = gitModesEl.querySelectorAll('[data-gm]');
+    for(var i=0;i<modes.length;i++) modes[i].classList.toggle('on', modes[i].getAttribute('data-gm') === 'working');
+    gitWin.hidden = false;
+    if(!gitCustom()) gitLoadBranches();
+    gitLoadStatus();
+    gitCloseBtn.focus();
+  }
+  // The turn-change view (another part of this page) opens this window with its own two URLs.
+  window.openGitWindow = openGitWindow;
+
+  function closeGit(){
+    if(!gitWin || gitWin.hidden) return;
+    gitWin.hidden = true;
+    gitState.statusSeq += 1;
+    gitState.fileSeq += 1;
+    gitState.logSeq += 1;
+    gitState.commitSeq += 1;
+    gitState.loading = false;
+    gitState.pick = false;
+    gitState.commit = null;
+    gitState.commitFiles = [];
+    gitState.commits = [];
+    gitDestroyView();
+    gitHideComment();
+    gitClearSelection();
+    gitDiffEl.textContent = '';
+    gitFilesEl.textContent = '';
+    gitState.files = [];
+    gitState.path = '';
+  }
+
+  gitToggleBtn.addEventListener('click', function(){ setMenu(null, false); openGitWindow(); });
+  gitCloseBtn.addEventListener('click', closeGit);
+  gitWin.addEventListener('click', function(e){ if(e.target === gitWin) closeGit(); });
+  gitRefreshBtn.addEventListener('click', function(){
+    // In Commits, Refresh re-reads the history list; a commit already opened is left alone,
+    // because what a commit contains cannot change.
+    if(gitState.mode === 'commits' && !gitCustom()) gitLoadLog(false);
+    else gitLoadStatus();
+  });
+  gitLayoutBtn.addEventListener('click', gitSetLayout);
+  gitBaseEl.addEventListener('change', function(){
+    gitState.base = gitBaseEl.value || '';
+    gitState.path = '';
+    // A file request still in flight belongs to the comparison being left; without this bump its
+    // answer would paint that diff into the new pane, under a path that is now empty.
+    gitState.fileSeq += 1;
+    gitState.loading = false;
+    gitState.pick = false;
+    gitClearSelection();
+    gitHideComment();
+    gitDestroyView();
+    gitDiffEl.innerHTML = '';
+    gitLoadStatus();
+  });
+  gitModesEl.addEventListener('click', function(e){
+    var btn = e.target.closest ? e.target.closest('[data-gm]') : null;
+    if(!btn) return;
+    gitSetMode(btn.getAttribute('data-gm'));
+  });
+  gitDiffEl.addEventListener('click', function(e){
+    var act = e.target.closest ? e.target.closest('[data-gact]') : null;
+    if(!act) return;
+    if(act.getAttribute('data-gact') === 'commits') gitSetMode('commits');
+  });
+  gitFilesEl.addEventListener('click', function(e){
+    var edit = e.target.closest ? e.target.closest('[data-gedit]') : null;
+    if(edit){
+      if(typeof window.openFileEditor === 'function') window.openFileEditor(edit.getAttribute('data-gedit'));
+      return;
+    }
+    var back = e.target.closest ? e.target.closest('[data-gback]') : null;
+    if(back){ gitBackToCommits(); return; }
+    var more = e.target.closest ? e.target.closest('[data-gmore]') : null;
+    if(more){ gitLoadLog(true); return; }
+    var body = e.target.closest ? e.target.closest('[data-gbody]') : null;
+    if(body){ gitToggleBody(body); return; }
+    var sha = e.target.closest ? e.target.closest('[data-gsha]') : null;
+    if(sha){ gitOpenCommit(sha.getAttribute('data-gsha')); return; }
+    var row = e.target.closest ? e.target.closest('[data-gpath]') : null;
+    if(row) gitOpenFile(row.getAttribute('data-gpath'));
+  });
+  gitFilesEl.addEventListener('keydown', function(e){
+    if(e.key !== 'Enter' && e.key !== ' ') return;
+    // A key pressed on a row's own button belongs to that button, not to the row that opens the
+    // diff; without this, a keyboard user could never reach Edit, Load more or the details.
+    if(e.target.closest && (e.target.closest('[data-gedit]') || e.target.closest('[data-gmore]')
+      || e.target.closest('[data-gbody]'))) return;
+    var sha = e.target.closest ? e.target.closest('[data-gsha]') : null;
+    if(sha){ e.preventDefault(); gitOpenCommit(sha.getAttribute('data-gsha')); return; }
+    var back = e.target.closest ? e.target.closest('[data-gback]') : null;
+    if(back){ e.preventDefault(); gitBackToCommits(); return; }
+    var row = e.target.closest ? e.target.closest('[data-gpath]') : null;
+    if(row){ e.preventDefault(); gitOpenFile(row.getAttribute('data-gpath')); }
+  });
+  $('git-comment-open').addEventListener('click', gitShowComment);
+  $('git-comment-add').addEventListener('click', gitAddComment);
+  $('git-comment-cancel').addEventListener('click', function(){ gitHideComment(); });
+
+  // ── The skills page ────────────────────────────────────────────────────────
+  // The gateway's managed skills (daemon/skills-store.ts), the same records the "fleetherd skills"
+  // command reads and writes. This half is presentation only: every verb is posted to api/skills/op and
+  // the store answers with its own sentence when it refuses — the version guard on patch, the
+  // 64 KB and path rules, and the archive that is the only "delete" there is.
+  function skillAgo(iso){
+    var at = iso ? Date.parse(iso) : 0;
+    return at ? schedAgo(at) : '';
+  }
+
+  /**
+   * The list's cache, and why it is localStorage rather than the IndexedDB the transcripts use.
+   *
+   * api/skills is not a cheap read: listSkills opens every delivered file of every skill,
+   * hashes them for the version and parses SKILL.md, and searches() reads the query log. The
+   * answer is still only a row per skill — a few kilobytes — so it fits where this page already
+   * keeps its drafts and read counts, and survives a reload without a database. It is this
+   * browser's copy, not the daemon's: another browser has its own, and every open refreshes it.
+   * A cached list is drawn before the request leaves and then corrected by a silent refresh, so
+   * the worst a stale one can do is be one open out of date. The version is checked on read, and
+   * so is every row: a page that stored a different shape is ignored rather than drawn as holes.
+   * The searches are not kept — they are a note about what agents looked for, not the list.
+   */
+  var SKILLS_CACHE = 'aa_skills', SKILLS_CACHE_V = 1;
+  function skillSigOf(){ return JSON.stringify([skillsEnabled, skillList, skillSearches]); }
+  function skillEntryOk(e){
+    return !!e && typeof e === 'object'
+      && typeof e.name === 'string' && e.name !== ''
+      && typeof e.description === 'string'
+      && typeof e.version === 'string'
+      && typeof e.status === 'string'
+      && typeof e.pinned === 'boolean'
+      && typeof e.resident === 'boolean'
+      && typeof e.uses === 'number'
+      && Array.isArray(e.agents);
+  }
+  function skillCacheLoad(){
+    var d = null;
+    try { d = JSON.parse(localStorage.getItem(SKILLS_CACHE) || 'null'); } catch(x){ return; }
+    if(!d || d.v !== SKILLS_CACHE_V || d.enabled === false || !Array.isArray(d.skills)) return;
+    for(var i=0;i<d.skills.length;i++) if(!skillEntryOk(d.skills[i])) return;
+    skillsEnabled = true;
+    skillList = d.skills;
+    skillSearches = null;
+    skillsFetchedAt = Number(d.at) || 0;
+    skillSig = skillSigOf();
+  }
+  function skillCacheSave(){
+    try {
+      localStorage.setItem(SKILLS_CACHE, JSON.stringify({
+        v:SKILLS_CACHE_V, at:skillsFetchedAt, enabled:true, skills:skillList
+      }));
+    } catch(x){}
+  }
+  /** After the daemon answered: remember what it said, both for the next open and as the baseline
+      a silent refresh compares against ("redraw only if this changed"). A daemon with no skills
+      store keeps no list to open on, so its answer takes the cache away. */
+  function skillRemember(){
+    skillSig = skillSigOf();
+    if(!skillsEnabled){ try { localStorage.removeItem(SKILLS_CACHE); } catch(x){} return; }
+    skillCacheSave();
+  }
+
+  /** One tap on the name, from a row or from the skill's own page. The button turns into a check
+      for a moment: a copy that only changed the clipboard looks like a tap that did nothing. */
+  function skillCopyName(name, btn){
+    if(!name) return;
+    copyText(name, function(ok){
+      if(!ok) return skillNote('Could not copy the name — select it instead.');
+      btn.innerHTML = IC.icon.check;
+      btn.title = 'Copied';
+      btn.setAttribute('aria-label', 'Copied');
+      clearTimeout(btn._copyTimer);
+      btn._copyTimer = setTimeout(function(){
+        btn.innerHTML = IC.icon.copy;
+        btn.title = 'Copy name';
+        btn.setAttribute('aria-label', 'Copy name');
+      }, 1200);
+    });
+  }
+
+  /** On is everything still under skills/ — active, or expired and not yet archived — and so still
+      delivered. Off is archived: the store's only way to stop delivering a skill without losing it. */
+  function skillOn(s){ return s.status !== 'archived'; }
+
+  /** The list's two tabs. A skill's tab is its tier whether it is on or off: an off one is listed
+      after the rest of its tab, which is where it comes back to when it is turned on. */
+  var SKILL_TABS = [
+    {key:'library', title:'Library', hint:'Delivered, but found only through a search.'},
+    {key:'resident', title:'Resident', hint:'In every agent’s skill list, on every request.'}
+  ];
+  var skillTab = 'library';
+  function skillTabOf(s){ return s.resident ? 'resident' : 'library'; }
+  function skillPlace(s){ return !skillOn(s) ? 'Off' : (s.resident ? 'Resident' : 'Library'); }
+
+  var SKILL_EXPIRED_TITLE = 'Unused for a while: it is turned off (archived) unless an agent uses it or you pin it';
+
+  function skillDetailMeta(s){
+    var parts = ['v' + s.version, 'created ' + skillAgo(s.createdAt)];
+    if(s.status === 'expired') parts.unshift('expired');
+    if(s.pinned) parts.push('pinned');
+    parts.push(s.lastUsedAt ? 'last used ' + skillAgo(s.lastUsedAt) : 'never used');
+    parts.push(s.uses + (s.uses === 1 ? ' use' : ' uses'));
+    return parts.join(' \u00b7 ');
+  }
+
+  /** The two switches a row and a skill's page share: resident or library, and on or off. Off greys
+      the tier out rather than hiding it — the store moves only a skill that is on (setResident),
+      and the greyed choice still says where the skill comes back to when it is turned on. */
+  function skillControls(s){
+    var on = skillOn(s), dis = on ? '' : ' disabled';
+    var tier = function(resident, label, title){
+      return '<button type="button" data-sop="tier" data-resident="' + (resident ? '1' : '0') + '" aria-pressed="'
+        + (s.resident === resident ? 'true' : 'false') + '"' + dis + ' title="' + title + '">' + label + '</button>';
+    };
+    return '<span class="skill-seg" role="group" aria-label="Tier">'
+      + tier(true, 'Resident', 'In every agent\u2019s skill list')
+      + tier(false, 'Library', 'Found through a search of the library')
+      + '</span>'
+      + '<button type="button" class="skill-switch" role="switch" data-sop="enabled" aria-checked="' + (on ? 'true' : 'false') + '" title="'
+      + (on ? SKILL_ON_TITLE : SKILL_OFF_TITLE) + '">'
+      + '<span class="skill-knob"></span><span class="skill-switch-label">' + (on ? 'On' : 'Off') + '</span></button>';
+  }
+  var SKILL_ON_TITLE = 'On: delivered to agents. Turn it off to archive it';
+  var SKILL_OFF_TITLE = 'Off: archived. Turn it on to deliver it again';
+
+  /** Set drawn switches to what the skill says, in place: the same buttons, so a keyboard keeps its focus
+      and a row keeps the tab it was drawn in — it moves only when the list is drawn again. */
+  function skillPaintCtl(ctl, s){
+    var on = skillOn(s), tiers = ctl.querySelectorAll('[data-sop="tier"]');
+    for(var i=0;i<tiers.length;i++){
+      tiers[i].setAttribute('aria-pressed', (tiers[i].getAttribute('data-resident') === '1') === s.resident ? 'true' : 'false');
+      tiers[i].disabled = !on;
+    }
+    var sw = ctl.querySelector('[data-sop="enabled"]');
+    if(!sw) return;
+    sw.setAttribute('aria-checked', on ? 'true' : 'false');
+    sw.title = on ? SKILL_ON_TITLE : SKILL_OFF_TITLE;
+    var label = sw.querySelector('.skill-switch-label');
+    if(label) label.textContent = on ? 'On' : 'Off';
+  }
+  function skillPaint(name){
+    var s = skillFind(name);
+    if(!s) return;
+    var rows = skillsListEl.querySelectorAll('[data-skill]');
+    for(var i=0;i<rows.length;i++){
+      if(rows[i].getAttribute('data-skill') !== name) continue;
+      rows[i].classList.toggle('skill-off', !skillOn(s));
+      var badge = rows[i].querySelector('.skill-state.expired');
+      if(badge && s.status !== 'expired') badge.parentNode.removeChild(badge);
+      var ctl = rows[i].querySelector('.skill-ctl');
+      if(ctl) skillPaintCtl(ctl, s);
+    }
+    if(skillSel && skillSel.skill.name === name){
+      var dctl = skillsDetailEl.querySelector('.skill-head .skill-ctl');
+      if(dctl) skillPaintCtl(dctl, skillSel.skill);
+      skillsCount.textContent = skillPlace(skillSel.skill);
+    }
+  }
+  function skillFind(name){
+    for(var i=0;i<skillList.length;i++) if(skillList[i].name === name) return skillList[i];
+    return null;
+  }
+  /** Take what the store says about one skill — and only that one, since another skill's taps may
+      still be on their way and its row must keep showing them. */
+  function skillTake(name, entry){
+    if(!entry) return;
+    skillList = skillList.slice();
+    for(var i=0;i<skillList.length;i++) if(skillList[i].name === name) skillList[i] = entry;
+    if(skillSel && skillSel.skill.name === name) skillSel.skill = entry;
+    skillRemember();
+  }
+
+  function skillCard(s){
+    var meta = [];
+    if(s.pinned) meta.push('pinned');
+    meta.push(s.lastUsedAt ? 'last used ' + skillAgo(s.lastUsedAt) : 'never used');
+    meta.push(s.uses + (s.uses === 1 ? ' use' : ' uses'));
+    // The row opens the skill, but is not itself a button: it holds the switches, and a button
+    // inside a button is two controls a screen reader announces as one. The name is the button.
+    var h = '<div class="skill-item skill-card' + (skillOn(s) ? '' : ' skill-off') + '" data-skill="' + text(s.name) + '">';
+    h += '<div class="skill-main"><div class="skill-row"><button type="button" class="skill-open" title="Open">' + text(s.name) + '</button>'
+      + '<button type="button" class="skill-copy" data-copy-skill="' + text(s.name) + '" title="Copy name" aria-label="Copy name">' + IC.icon.copy + '</button>';
+    if(s.status === 'expired') h += '<span class="skill-state expired" title="' + SKILL_EXPIRED_TITLE + '">Expired</span>';
+    if(s.pinned) h += '<span class="skill-pin">pinned</span>';
+    if(s.category) h += '<span class="skill-cat">' + text(s.category) + '</span>';
+    h += '</div>';
+    h += '<div class="skill-desc">' + text(s.description || 'No description') + '</div>';
+    h += '<div class="skill-meta">' + text(meta.join(' \u00b7 ') + ' \u00b7 v' + s.version) + '</div>';
+    if(s.warning) h += '<div class="skill-warn">' + text(s.warning) + '</div>';
+    // A skill someone committed by hand that breaks the store's rules is listed but not delivered;
+    // the store's own sentence says why, so the person who pushed it can fix it here.
+    if(s.problem) h += '<div class="skill-problem">Not delivered: ' + text(s.problem) + '</div>';
+    h += '</div><div class="skill-ctl">' + skillControls(s) + '</div></div>';
+    return h;
+  }
+
+  /** Both tabs are drawn and one is shown, so switching tabs is no request and keeps each one's
+      rows as they were. The searches belong to the library: they are what it was asked for. */
+  function skillTabsHtml(){
+    var counts = {library:0, resident:0};
+    for(var i=0;i<skillList.length;i++) counts[skillTabOf(skillList[i])]++;
+    var h = '<div class="skill-tabs" role="tablist">';
+    for(var t=0;t<SKILL_TABS.length;t++){
+      var tab = SKILL_TABS[t], sel = tab.key === skillTab;
+      h += '<button type="button" class="skill-tab' + (sel ? ' on' : '') + '" role="tab" aria-selected="' + (sel ? 'true' : 'false')
+        + '" data-stab="' + tab.key + '">' + text(tab.title) + '<span class="skill-tab-n">' + counts[tab.key] + '</span></button>';
+    }
+    h += '</div>';
+    for(var p=0;p<SKILL_TABS.length;p++){
+      var pane = SKILL_TABS[p], on = '', off = '', offN = 0;
+      for(var j=0;j<skillList.length;j++){
+        var s = skillList[j];
+        if(skillTabOf(s) !== pane.key) continue;
+        if(skillOn(s)) on += skillCard(s);
+        else { off += skillCard(s); offN++; }
+      }
+      h += '<div class="skill-pane" role="tabpanel" data-pane="' + pane.key + '"' + (pane.key === skillTab ? '' : ' hidden') + '>';
+      h += '<div class="skill-group-hint">' + text(pane.hint) + ' Agents pick up a change when they next start; a library search sees it at once.</div>';
+      if(!on && !off) h += '<div class="skills-empty">' + (pane.key === 'resident' ? 'No resident skills.' : 'Nothing in the library.') + '</div>';
+      if(on) h += '<div class="skill-group" data-group="' + pane.key + '">' + on + '</div>';
+      if(off) h += '<div class="skill-group" data-group="off"><div class="skill-group-head"><span class="skill-section">Off · ' + offN
+        + '</span><span class="skill-group-hint">Archived: delivered to no agent, kept with its history</span></div>' + off + '</div>';
+      if(pane.key === 'library') h += skillSearchesHtml();
+      h += '</div>';
+    }
+    return h;
+  }
+
+  function skillNewForm(){
+    return '<div class="skill-item skill-new-form" data-newform="1">'
+      + '<div class="skill-row"><span class="skill-name">New skill</span></div>'
+      + '<input class="skill-field" id="skill-new-name" placeholder="name — lowercase-words-with-hyphens" autocomplete="off">'
+      + '<input class="skill-field" id="skill-new-desc" placeholder="When should an agent use it?" autocomplete="off">'
+      + '<textarea class="skill-text" id="skill-new-body" placeholder="Body (optional)"></textarea>'
+      + '<div class="skill-acts editor"><button type="button" data-sop="create">Create</button>'
+      + '<button type="button" class="danger" data-sop="cancel-new">Cancel</button></div></div>';
+  }
+
+  function renderSkillsList(){
+    skillRedrawPending = false;
+    skillSel = null;
+    skillsBack.hidden = true;
+    skillsDetailEl.hidden = true;
+    skillsListEl.hidden = false;
+    skillsTitle.textContent = 'Skills';
+    skillsCount.textContent = skillList.length ? skillList.length + (skillList.length === 1 ? ' skill' : ' skills') : '';
+    skillsNewBtn.hidden = skillNewMode;
+    var h = '';
+    if(!skillsEnabled) h = '<div class="skills-empty">Skills are not enabled in this daemon.</div>';
+    else if(!skillList.length) h = '<div class="skills-empty">No managed skills yet. An agent can create one when you ask it to remember a procedure, or press New.</div>';
+    else h = skillTabsHtml();
+    if(skillNewMode) h = skillNewForm() + h;
+    skillsListEl.innerHTML = h;
+    if(skillNewMode){ var n = $('skill-new-name'); if(n) n.focus(); }
+  }
+
+  /** What agents searched the library for and did not get: no skill, or hits nobody opened. A
+      miss is a skill worth writing; an unopened hit is a description worth rewording. */
+  function skillSearchesHtml(){
+    if(!skillSearches) return '';
+    var rows = function(title, list, withHits){
+      if(!list || !list.length) return '';
+      var out = '<div class="skill-section">' + text(title) + '</div>';
+      for(var i=0;i<list.length;i++){
+        var q = list[i], meta = skillAgo(q.at);
+        if(q.agent) meta += ' \u00b7 ' + q.agent;
+        if(withHits && q.hits.length) meta += ' \u00b7 ' + q.hits.join(', ');
+        out += '<div class="skill-search">' + text(q.query) + '<small>' + text(meta) + '</small></div>';
+      }
+      return out;
+    };
+    var h = rows('Searches that found nothing', skillSearches.misses, false)
+      + rows('Found, but not opened', skillSearches.unread, true);
+    return h ? '<div class="skill-searches">' + h + '</div>' : '';
+  }
+
+  /** One history row. A gateway change offers a restore only when it had something before it — the
+      first version of a skill has nothing to go back to. A commit someone made in the repository by
+      hand (action "commit", its author named) carries no versions, so it always offers one, and
+      the store says so in its own sentence when that commit is the one that created the skill. */
+  function skillHistRow(e){
+    var meta = skillAgo(e.at);
+    // The gateway's own commits go unnamed: fleetherd, fleetherd-web, … and, made before 3.0.0,
+    // talkcode, talkcode-web, … (legacy-name.ts; the old name goes from here with it).
+    if(e.author && !/^(fleetherd|talkcode)(-|$)/.test(e.author)) meta += ' \u00b7 ' + e.author;
+    if(e.note) meta += ' \u00b7 ' + e.note;
+    if(e.beforeVersion) meta += ' \u00b7 ' + e.beforeVersion + ' \u2192 ' + (e.afterVersion || '(no version)');
+    var h = '<div class="skill-hist"><div class="skill-hist-main">'
+      + '<div class="skill-hist-action">' + text(e.action) + '</div>'
+      + '<div class="skill-hist-meta">' + text(meta) + '</div></div>';
+    if(e.beforeVersion || e.action === 'commit') h += '<button type="button" class="skill-file" data-revert="' + text(e.id) + '">Restore this version</button>';
+    h += '</div>';
+    return h;
+  }
+
+  function renderSkillDetail(){
+    if(!skillSel) return renderSkillsList();
+    var s = skillSel.skill, cur = skillSel.file;
+    skillsListEl.hidden = true;
+    skillsDetailEl.hidden = false;
+    skillsBack.hidden = false;
+    skillsNewBtn.hidden = true;
+    skillsTitle.textContent = s.name;
+    skillsCount.textContent = skillPlace(s);
+    var h = '<div class="skill-head"><span class="skill-name">' + text(s.name) + '</span>'
+      + '<button type="button" class="skill-copy" data-copy-skill="' + text(s.name) + '" title="Copy name" aria-label="Copy name">' + IC.icon.copy + '</button>';
+    h += '<div class="skill-acts">';
+    h += '<button type="button" data-sop="pin">' + (s.pinned ? 'Unpin' : 'Pin') + '</button>';
+    h += '</div><div class="skill-ctl">' + skillControls(s) + '</div></div>';
+    h += '<div class="skill-desc">' + text(s.description || 'No description') + '</div>';
+    h += '<div class="skill-meta">' + text(skillDetailMeta(s)) + '</div>';
+    h += '<div class="skill-section">Files</div><div class="skill-files">';
+    for(var i=0;i<skillSel.files.length;i++){
+      var f = skillSel.files[i];
+      h += '<button type="button" class="skill-file' + (cur.path === f.path ? ' on' : '') + '" data-file="' + text(f.path) + '">'
+        + text(f.path) + '<small>' + text(byteSize(f.size)) + '</small></button>';
+    }
+    h += '</div>';
+    h += '<div class="skill-section" id="skill-editor-label">' + text(cur.path) + '</div>';
+    h += '<input class="skill-field" id="skill-path" value="' + text(cur.path) + '" placeholder="references/notes.md" autocomplete="off"'
+      + (cur.path === 'SKILL.md' ? ' readonly' : '') + '>';
+    h += '<textarea class="skill-text" id="skill-text" spellcheck="false"></textarea>';
+    h += '<div class="skill-acts editor"><button type="button" data-sop="save">Save</button>'
+      + '<button type="button" data-sop="new-file">New file</button>';
+    if(cur.path !== 'SKILL.md') h += '<button type="button" class="danger" data-sop="remove-file">Remove file</button>';
+    h += '</div>';
+    h += '<div class="skill-section">History</div><div class="skill-history">';
+    if(!skillSel.history.length) h += '<div class="skills-empty">No recorded changes yet.</div>';
+    else for(var j=0;j<skillSel.history.length;j++) h += skillHistRow(skillSel.history[j]);
+    h += '</div>';
+    skillsDetailEl.innerHTML = h;
+    var ta = $('skill-text');
+    if(ta) ta.value = cur.content;
+  }
+
+  function skillNote(msg){
+    skillsNote.hidden = false;
+    skillsNote.textContent = msg;
+  }
+  function skillClearNote(){ skillsNote.hidden = true; }
+
+  /**
+   * The list from the daemon.
+   *
+   * manual is the refresh button: its failure is the person's to see, and a skill on screen is
+   * read again so its status is current. The other kind is the one every open makes, and it fails
+   * without a word — the cached list is still on screen and still usable. One request at a time: a
+   * silent one in flight is upgraded to manual by a tap on the button rather than raced, and the
+   * button stays live until that happens.
+   *
+   * An answer is only applied if no write left while it was in flight. The page sends a switch and
+   * its answer can beat a list that was already on the wire; applying that list would put the old
+   * switch back, and save it to the cache. When that happens the answer is dropped and the list is
+   * asked for again once the writes are quiet (skillReplayRefresh).
+   */
+  var skillFetching = false, skillFetchManual = false;
+  function loadSkills(manual){
+    if(skillFetching){
+      if(manual){
+        skillFetchManual = true;
+        if(skillsRefreshBtn) skillsRefreshBtn.disabled = true;
+      }
+      return;
+    }
+    if(app.hidden) return;
+    skillFetching = true;
+    skillFetchManual = !!manual;
+    if(manual && skillsRefreshBtn) skillsRefreshBtn.disabled = true;
+    var epoch = skillEpoch;
+    fetch('api/skills', {credentials:'same-origin'}).then(function(r){
+      if(!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    }).then(function(d){
+      var manualNow = skillFetchManual, was = skillSig;
+      skillFetching = false;
+      skillFetchManual = false;
+      if(skillsRefreshBtn) skillsRefreshBtn.disabled = false;
+      if(epoch !== skillEpoch) return skillRefreshStale(manualNow);
+      skillsEnabled = d.enabled !== false;
+      skillList = d.skills || [];
+      skillSearches = d.searches || null;
+      skillsFetchedAt = Date.now();
+      skillRemember();
+      skillRefreshDone(was !== skillSig, manualNow);
+    }).catch(function(e){
+      var manualNow = skillFetchManual;
+      skillFetching = false;
+      skillFetchManual = false;
+      if(skillsRefreshBtn) skillsRefreshBtn.disabled = false;
+      if(epoch !== skillEpoch) return skillRefreshStale(manualNow);
+      if(manualNow) skillNote((skillsFetchedAt ? 'Could not refresh skills: ' : 'Could not load skills: ') + ((e && e.message) || 'network error'));
+    });
+  }
+
+  /** An answer that a write has made stale: ask again after the writes are quiet, not now. */
+  function skillRefreshStale(manual){
+    skillRefreshPending = true;
+    skillRefreshPendingManual = skillRefreshPendingManual || !!manual;
+    skillReplayRefresh();
+  }
+
+  /** Ask for the list again, once nothing this page sent is still waiting to change it. */
+  function skillReplayRefresh(){
+    if(!skillRefreshPending || skillFetching || skillsBusy || skillPending()) return;
+    var manual = skillRefreshPendingManual;
+    skillRefreshPending = false;
+    skillRefreshPendingManual = false;
+    loadSkills(manual);
+  }
+
+  /** Open the skill a write interrupted, once that write's answer is in. */
+  function skillReplayShow(){
+    if(!skillShowPending || skillsBusy || skillPending()) return;
+    var p = skillShowPending;
+    skillShowPending = null;
+    openSkill(p.name, p.file);
+  }
+
+  /** Both halves of what a finished write may have held back: a list refresh and an open skill. */
+  function skillAfterWrite(){
+    skillReplayShow();
+    skillReplayRefresh();
+  }
+
+  /**
+   * Where a refreshed list goes. On a skill's page it never draws the list — that would take the
+   * page away from under the reader — and only the record is updated in place, and only when no
+   * write of this page is in flight (the write's own answer knows better). A typed-into New form
+   * is left alone for the same reason. The list itself is redrawn only when the answer differs
+   * from what is already on screen, and not while a switch's own write is still on its way: its
+   * answer draws the row, and drawing over it would put the old state back first.
+   */
+  function skillRefreshDone(changed, manual){
+    if(skillSel){
+      if(manual){
+        // A write owns the skill until it answers. Hold the refresh rather than dropping it: the
+        // list half has landed, and the re-read has to happen once the write is done.
+        if(skillsBusy || skillPending()){
+          skillRefreshPending = true;
+          skillRefreshPendingManual = true;
+          return;
+        }
+        skillRefreshDetail();
+      }
+      else if(!skillsBusy && !skillPending()){
+        var e = skillFind(skillSel.skill.name);
+        if(e){ skillSel.skill = e; skillPaint(skillSel.skill.name); }
+      }
+      return;
+    }
+    if(skillNewMode) return;
+    if(skillsBusy || skillPending()){
+      skillRefreshPending = true;
+      skillRedrawPending = true;
+      skillRefreshPendingManual = skillRefreshPendingManual || manual;
+      return;
+    }
+    // The data may already be the answer's (an earlier refresh applied it while a tap was in
+    // flight, only the drawing was held back), so a pending redraw forces one even if it matches.
+    if(!changed && !skillRedrawPending) return;
+    renderSkillsList();
+  }
+
+  /** The refresh button on a skill's page: read the skill again, unless the editor holds something
+      the person typed — the same rule skillReread follows after a switch. With unsaved text the
+      record is still refreshed in place; the text stays exactly where it is. While a write is in
+      flight the page leaves the skill alone: that write re-reads it when it answers, and a show
+      started now could land after that one with the pre-write file. */
+  function skillRefreshDetail(){
+    if(skillsBusy || skillPending()) return;
+    var name = skillSel.skill.name;
+    if(skillEditorClean()){ openSkill(name, skillSel.file.path); return; }
+    var e = skillFind(name);
+    if(e){ skillSel.skill = e; skillPaint(name); }
+  }
+
+  function skillPending(){
+    for(var k in skillQueue) if(skillQueue[k].pending) return true;
+    return false;
+  }
+
+  function openSkill(name, file){
+    var body = {action:'show', name:name};
+    if(file) body.file = file;
+    // This open is newer than any retry that was waiting; it is the page the person wants now.
+    skillShowPending = null;
+    var seq = ++skillShowSeq, epoch = skillEpoch;
+    skillsBusy = true;
+    skillClearNote();
+    post('api/skills/op', body, 1).then(function(r){
+      return r.json().catch(function(){ return {ok:false, error:'HTTP ' + r.status}; });
+    }).then(function(d){
+      // A newer show owns the page and the busy flag; this answer is for a page already replaced.
+      if(seq !== skillShowSeq) return;
+      // A write left after this show did: what it read is older than the write's answer. Ask
+      // again once that write is done, or the open would vanish without a word.
+      if(epoch !== skillEpoch){
+        skillsBusy = false;
+        if(!skillsWin.hidden) skillShowPending = {name:name, file:file};
+        skillAfterWrite();
+        return;
+      }
+      if(!d || !d.ok){
+        skillsBusy = false;
+        skillNote((d && d.error) || 'Could not open that skill.');
+        skillAfterWrite();
+        return;
+      }
+      skillList = d.skills || skillList;
+      skillRemember();
+      skillSel = d.detail;
+      skillNewMode = false;
+      skillClearNote();
+      // Released before the render, so a control that appears with it is usable at once. The
+      // alternative — clear it in a trailing .then — leaves a frame where the page is drawn and
+      // every button silently drops the click.
+      skillsBusy = false;
+      renderSkillDetail();
+      skillAfterWrite();
+    }).catch(function(e){
+      if(seq !== skillShowSeq) return;
+      skillsBusy = false;
+      if(epoch !== skillEpoch){
+        if(!skillsWin.hidden) skillShowPending = {name:name, file:file};
+        skillAfterWrite();
+        return;
+      }
+      skillNote('Could not reach the daemon: ' + ((e && e.message) || 'network error'));
+      skillAfterWrite();
+    });
+  }
+
+  /** One write, then whatever the answer changed. The list always comes back, so a row cannot
+      show the state from before the write; "show" also brings the detail. */
+  function skillOp(body, then){
+    if(skillsBusy) return;
+    skillsBusy = true;
+    // Anything already on the wire describes the store before this write.
+    skillEpoch++;
+    skillClearNote();
+    post('api/skills/op', body, 1).then(function(r){
+      return r.json().catch(function(){ return {ok:false, error:'HTTP ' + r.status}; });
+    }).then(function(d){
+      if(!d || !d.ok){
+        skillsBusy = false;
+        skillNote((d && d.error) || 'That did not work.');
+        skillAfterWrite();
+        return;
+      }
+      skillList = d.skills || skillList;
+      skillRemember();
+      if(d.detail) skillSel = d.detail;
+      // Released BEFORE then(): that callback may start a show of its own (the page re-reads the
+      // skill after every write), and clearing the flag after it would make the editor writable
+      // again while that request is still in flight — a late answer could then undo a newer one.
+      skillsBusy = false;
+      if(then) then(d);
+      else if(skillSel) renderSkillDetail();
+      else renderSkillsList();
+      skillAfterWrite();
+    }).catch(function(e){
+      skillsBusy = false;
+      skillNote('Could not reach the daemon: ' + ((e && e.message) || 'network error'));
+      skillAfterWrite();
+    });
+  }
+
+  function saveSkillFile(){
+    if(!skillSel) return;
+    var pathEl = $('skill-path'), textEl = $('skill-text');
+    if(!pathEl || !textEl) return;
+    var path = (pathEl.value || '').trim(), content = textEl.value, s = skillSel.skill;
+    if(!path) return skillNote('A file path is required.');
+    if(path === 'SKILL.md'){
+      if(!skillSel.file || skillSel.file.path !== 'SKILL.md') return skillNote('Open SKILL.md to edit it.');
+      skillOp({action:'patch', name:s.name, version:skillSel.file.version, content:content}, function(){
+        openSkill(s.name, 'SKILL.md');
+      });
+    } else {
+      skillOp({action:'write-file', name:s.name, file:path, content:content}, function(){
+        openSkill(s.name, path);
+      });
+    }
+  }
+
+  function removeFileUi(){
+    if(!skillSel) return;
+    var pathEl = $('skill-path');
+    var path = pathEl ? (pathEl.value || '').trim() : '';
+    if(!path || path === 'SKILL.md') return;
+    var name = skillSel.skill.name;
+    if(!confirm('Remove ' + path + ' from "' + name + '"? The previous version stays in its history.')) return;
+    skillOp({action:'remove-file', name:name, file:path}, function(){ openSkill(name, 'SKILL.md'); });
+  }
+
+  /** A row's switch, or the open skill's. One tap and no confirmation, where Delete used to take
+      two: the same tap undoes either, and off is an archive — every file and the history kept.
+
+      Drawn at once and sent behind: with skills.repo set, every write pulls from and pushes to that
+      repository before it answers, which is seconds, and a switch that waited for it read as one
+      that had not taken the tap (2026-11-06). So the tap changes the page's own copy and the
+      switches straight away, and the request queues behind that skill's earlier ones — one chain
+      per skill, so the store sees its taps in the order they were made, and no other skill waits.
+      A refusal says why, drops the taps queued behind it (they were made on top of it), and puts
+      the switches back as the store has them. */
+  var skillQueue = {};
+  function skillSwitch(btn, op){
+    var row = btn.closest('[data-skill]');
+    var name = row ? row.getAttribute('data-skill') : (skillSel ? skillSel.skill.name : null);
+    var cur = (!row && skillSel) ? skillSel.skill : skillFind(name);
+    if(!name || !cur) return;
+    var body, change;
+    if(op === 'enabled'){
+      var off = skillOn(cur);
+      body = {action: off ? 'archive' : 'restore', name:name};
+      change = {status: off ? 'archived' : 'active'};
+    } else {
+      var resident = btn.getAttribute('data-resident') === '1';
+      if(!skillOn(cur) || resident === cur.resident) return;
+      body = {action:'resident', name:name, resident:resident};
+      change = {resident: resident};
+    }
+    skillClearNote();
+    // Copies, not edits: the record the list was drawn from stays the store's until it answers.
+    skillList = skillList.slice();
+    for(var i=0;i<skillList.length;i++) if(skillList[i].name === name) skillList[i] = Object.assign({}, skillList[i], change);
+    if(skillSel && skillSel.skill.name === name) skillSel.skill = Object.assign({}, skillSel.skill, change);
+    skillPaint(name);
+    skillSend(name, body);
+  }
+
+  function skillSend(name, body){
+    var q = skillQueue[name] || (skillQueue[name] = {chain: Promise.resolve(), pending: 0, gen: 0});
+    var gen = q.gen;
+    q.pending++;
+    // The tap is a write the moment it is made, even while it waits behind this skill's earlier
+    // ones: a list that was already on the wire describes the store before it.
+    skillEpoch++;
+    q.chain = q.chain.then(function(){
+      if(q.gen !== gen) return null;
+      return post('api/skills/op', body, 1).then(function(r){
+        return r.json().catch(function(){ return {ok:false, error:'HTTP ' + r.status}; });
+      }).catch(function(e){
+        return {ok:false, error:'Could not reach the daemon: ' + ((e && e.message) || 'network error')};
+      });
+    }).then(function(d){
+      q.pending--;
+      if(d === null){ skillAfterWrite(); return; }
+      if(!d || !d.ok){
+        q.gen++;
+        skillNote((d && d.error) || 'That did not work.');
+        return skillResync(name);
+      }
+      if(q.pending) return;
+      var list = d.skills || [];
+      for(var i=0;i<list.length;i++) if(list[i].name === name) skillTake(name, list[i]);
+      skillPaint(name);
+      skillReread(name);
+      skillAfterWrite();
+    });
+  }
+
+  /** After a refusal: the store's own state for this skill, read fresh, drawn in place. A later
+      write makes this answer stale too, and that write's own answer draws the row. */
+  function skillResync(name){
+    var epoch = skillEpoch;
+    return fetch('api/skills', {credentials:'same-origin'}).then(function(r){ return r.json(); }).then(function(d){
+      if(epoch !== skillEpoch) return;
+      var list = (d && d.skills) || [];
+      for(var i=0;i<list.length;i++) if(list[i].name === name) skillTake(name, list[i]);
+      skillPaint(name);
+    }).catch(function(){}).then(skillAfterWrite);
+  }
+
+  /** On the skill's own page, read it again once its taps are all answered — a tier change rewrote
+      SKILL.md, and an editor left on the old version would have its next save refused — unless the
+      editor holds something unsaved, which a re-read would throw away. */
+  function skillReread(name){
+    if(!skillSel || skillSel.skill.name !== name || !skillSel.file) return;
+    if(!skillEditorClean()) return;
+    openSkill(name, skillSel.file.path);
+  }
+
+  /** Whether the editor still holds exactly what the detail read: the condition under which a
+      re-read costs nothing. A path the person changed counts as unsaved work too. */
+  function skillEditorClean(){
+    if(!skillSel || !skillSel.file) return false;
+    var ta = $('skill-text'), pathEl = $('skill-path');
+    return !!(ta && pathEl && ta.value === skillSel.file.content && pathEl.value === skillSel.file.path);
+  }
+
+  function openSkills(){
+    if(!skillsWin.hidden) return;
+    skillsWin.hidden = false;
+    skillNewMode = false;
+    skillClearNote();
+    if(!skillsCacheRead){ skillsCacheRead = true; skillCacheLoad(); }
+    // The cached list is drawn before the request leaves: the window opens on the skills the last
+    // answer named, and the silent refresh below corrects it only if the store has moved on. With
+    // no cache there is nothing to draw, so this is the one open that waits and says so.
+    if(skillsFetchedAt){
+      renderSkillsList();
+    } else {
+      skillsListEl.innerHTML = '<div class="skills-empty">Loading\u2026</div>';
+      skillsDetailEl.hidden = true;
+      skillsListEl.hidden = false;
+      skillsBack.hidden = true;
+      skillsTitle.textContent = 'Skills';
+      skillsCount.textContent = '';
+    }
+    loadSkills(!skillsFetchedAt);
+    skillsClose.focus();
+  }
+  function closeSkills(){
+    if(skillsWin.hidden) return;
+    skillsWin.hidden = true;
+    skillShowPending = null;
+  }
+
+  skillsToggle.addEventListener('click', function(){ setMenu(null, false); openSkills(); });
+  skillsRefreshBtn.addEventListener('click', function(){ loadSkills(true); });
+  skillsClose.addEventListener('click', closeSkills);
+  skillsWin.addEventListener('click', function(e){ if(e.target === skillsWin) closeSkills(); });
+  skillsBack.addEventListener('click', function(){ skillClearNote(); renderSkillsList(); });
+  skillsNewBtn.addEventListener('click', function(){
+    skillNewMode = true;
+    skillClearNote();
+    renderSkillsList();
+  });
+
+  skillsBody.addEventListener('click', function(e){
+    var tabBtn = e.target.closest ? e.target.closest('[data-stab]') : null;
+    if(tabBtn){
+      skillTab = tabBtn.getAttribute('data-stab') === 'resident' ? 'resident' : 'library';
+      var tabs = skillsListEl.querySelectorAll('[data-stab]'), panes = skillsListEl.querySelectorAll('[data-pane]');
+      for(var ti=0;ti<tabs.length;ti++){
+        var isOn = tabs[ti].getAttribute('data-stab') === skillTab;
+        tabs[ti].classList.toggle('on', isOn);
+        tabs[ti].setAttribute('aria-selected', isOn ? 'true' : 'false');
+      }
+      for(var pi=0;pi<panes.length;pi++) panes[pi].hidden = panes[pi].getAttribute('data-pane') !== skillTab;
+      return;
+    }
+    var copyBtn = e.target.closest ? e.target.closest('[data-copy-skill]') : null;
+    if(copyBtn){
+      e.stopPropagation();
+      skillCopyName(copyBtn.getAttribute('data-copy-skill'), copyBtn);
+      return;
+    }
+    var rev = e.target.closest ? e.target.closest('[data-revert]') : null;
+    if(rev){
+      e.stopPropagation();
+      if(!skillSel) return;
+      var id = rev.getAttribute('data-revert'), name = skillSel.skill.name;
+      if(!id) return;
+      if(!confirm('Restore the files from before this change? It is recorded as a new change, and can itself be reverted.')) return;
+      skillOp({action:'revert', name:name, id:id}, function(){ openSkill(name); });
+      return;
+    }
+    var opBtn = e.target.closest ? e.target.closest('[data-sop]') : null;
+    if(opBtn){
+      e.stopPropagation();
+      var op = opBtn.getAttribute('data-sop');
+      if(op === 'create'){
+        var nameEl = $('skill-new-name'), descEl = $('skill-new-desc'), bodyEl = $('skill-new-body');
+        var newName = nameEl ? nameEl.value.trim() : '';
+        var newDesc = descEl ? descEl.value.trim() : '';
+        if(!newName) return skillNote('A skill needs a name.');
+        if(!newDesc) return skillNote('A skill needs a one-line description of when to use it.');
+        var body = {action:'create', name:newName, description:newDesc};
+        if(bodyEl && bodyEl.value) body.body = bodyEl.value;
+        skillOp(body, function(){
+          skillNewMode = false;
+          skillSel = null;
+          renderSkillsList();
+          openSkill(newName);
+        });
+        return;
+      }
+      if(op === 'cancel-new'){ skillNewMode = false; skillClearNote(); renderSkillsList(); return; }
+      if(op === 'save'){ saveSkillFile(); return; }
+      if(op === 'new-file'){
+        var p = $('skill-path'), t = $('skill-text'), label = $('skill-editor-label');
+        if(!p || !t) return;
+        p.value = ''; p.removeAttribute('readonly'); t.value = '';
+        if(label) label.textContent = 'New file';
+        p.focus();
+        return;
+      }
+      if(op === 'remove-file'){ removeFileUi(); return; }
+      if(op === 'enabled' || op === 'tier'){ skillSwitch(opBtn, op); return; }
+      if(op === 'pin' && skillSel){
+        var pinName = skillSel.skill.name, pinned = !skillSel.skill.pinned;
+        skillOp({action:'pin', name:pinName, pinned:pinned}, function(){ openSkill(pinName); });
+        return;
+      }
+      return;
+    }
+    var fileBtn = e.target.closest ? e.target.closest('[data-file]') : null;
+    if(fileBtn && skillSel){
+      var path = fileBtn.getAttribute('data-file');
+      if(path) openSkill(skillSel.skill.name, path);
+      return;
+    }
+    var card = e.target.closest ? e.target.closest('[data-skill]') : null;
+    if(card){
+      var cardName = card.getAttribute('data-skill');
+      if(cardName) openSkill(cardName);
+    }
+  });
+
+  // ── The file window ────────────────────────────────────────────────────────
+  // Browse and edit the files of whichever machine this topic's agent runs on
+  // (daemon/file-panel.ts). Off unless platforms.<id>.files.enabled: FILES_OK hides the header
+  // button, and every route behind it answers 404 — the terminal's arrangement.
+  //
+  // One window for the page, bound to the topic that opened it. The files belong to a
+  // conversation, and a window that followed the switcher would show one topic's files under
+  // another's name; openFileEditor re-binds it when a panel asks for a file after a switch.
+  //
+  // Every path is sent as it is: the daemon normalizes it against the topic's workspace and
+  // refuses anything outside, which is the check that matters. What this half owns is the three
+  // states a person needs — dirty, saving, in conflict — and the confirmations that keep a
+  // half-typed edit from being thrown away by a tap.
+  var filesWin=$('files'), filesTitle=$('files-title'), filesWhere=$('files-where'),
+      filesTreeEl=$('files-tree'), filesTreeList=$('files-tree-list'), filesHits=$('files-hits'),
+      filesCrumbs=$('files-crumbs'), filesEditor=$('files-editor'), filesPreview=$('files-preview'),
+      filesNote=$('files-note'), filesEol=$('files-eol'), filesConflict=$('files-conflict'), filesConflictText=$('files-conflict-text'),
+      filesSaveBtn=$('files-save'), filesPreviewBtn=$('files-preview-toggle'),
+      filesRenameBtn=$('files-rename-open'), filesDeleteBtn=$('files-delete'), filesDirtyTag=$('files-dirty'),
+      filesNewRow=$('files-new-row'), filesNewName=$('files-new-name'),
+      filesRenameRow=$('files-rename-row'), filesRenameName=$('files-rename-name'),
+      filesTreeToggle=$('files-tree-toggle'), filesQ=$('files-q'), filesToggleBtn=$('files-toggle');
+  var fileTopic='', fileRoot='', fileDir='', filePath='', fileRel='', fileName='', fileKind='',
+      fileBase=null, fileSaved='', fileDirty=false, fileView=null, fileSeq=0, fileNodes={},
+      fileOpenDirs={}, fileNewIsDir=false, filePreviewing=false, fileBusy=false,
+      fileEol='lf', fileSha='', fileSep='/',
+      /* Set while the window edits instructions instead of a topic's files (instrOpen). */
+      fileSrc=null,
+      /* What the rename row is about: the open file, or a folder picked in the tree. */
+      fxRename=null;
+
+  function fileMsg(r, d){
+    if(d && d.error) return d.error;
+    return r.status === 404 ? 'The file window is not enabled on this daemon.' : 'That request failed (' + r.status + ').';
+  }
+  function filesGet(route, params){
+    if(fileSrc) return instrGet(route, params);
+    var qs=[];
+    for(var k in params){
+      if(!Object.prototype.hasOwnProperty.call(params, k)) continue;
+      if(params[k] === undefined || params[k] === '') continue;
+      qs.push(encodeURIComponent(k) + '=' + encodeURIComponent(params[k]));
+    }
+    return fetch('api/files/' + route + (qs.length ? '?' + qs.join('&') : ''), {credentials:'same-origin'})
+      .then(function(r){
+        return r.json().catch(function(){ return {}; }).then(function(d){ return {ok:r.ok, status:r.status, body:d}; });
+      });
+  }
+  function filesPost(route, body){
+    if(fileSrc) return instrPost(route, body);
+    return post('api/files/' + route, body, 1).then(function(r){
+      return r.json().catch(function(){ return {}; }).then(function(d){ return {ok:r.ok, status:r.status, body:d}; });
+    });
+  }
+  function filesSay(msg){
+    filesNote.hidden = !msg;
+    filesNote.textContent = msg || '';
+  }
+  /**
+   * Join as the machine names paths. A remote host is POSIX whatever this page is running on, but
+   * a local Windows workspace answers with backslashes, so the separator comes from the root the
+   * daemon sent rather than from an assumption here.
+   */
+  function fxSepOf(root){ return root && root.indexOf('\\') >= 0 && root.indexOf('/') < 0 ? '\\' : '/'; }
+  function fxAbs(dir, name){
+    if(!dir) return name;
+    var last = dir.charAt(dir.length-1);
+    return dir + (last === '/' || last === '\\' ? '' : fileSep) + name;
+  }
+  function fxDirOf(p){
+    var at = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'));
+    if(at < 0) return '';
+    if(at === 0) return p.charAt(0);
+    if(at === 2 && /^[A-Za-z]:$/.test(p.slice(0, 2))) return p.slice(0, 3);
+    return p.slice(0, at);
+  }
+  function fxBase(p){
+    var at = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'));
+    return at < 0 ? p : p.slice(at+1);
+  }
+  /**
+   * The editor holds LF; a save puts back the ending the read reported. Lone CR is normalized too:
+   * no editor holds it, and the file panel has already said so above the editor.
+   */
+  function fxToDoc(text){ return String(text || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n'); }
+  function fxFromDoc(doc){
+    var lf = String(doc || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    return fileEol === 'crlf' ? lf.replace(/\n/g, '\r\n') : lf;
+  }
+  function fileShortRoot(p){
+    var parts = String(p || '').split('/').filter(function(x){ return x; });
+    return parts.length ? parts[parts.length-1] : p || '/';
+  }
+
+  /** Whether leaving the open file may throw away what is in the editor. */
+  function fileConfirmLeave(){
+    if(!fileDirty) return true;
+    return confirm('Discard the unsaved changes to ' + (fileRel || fileName || 'this file') + '?');
+  }
+
+  function setFileDirty(v){
+    fileDirty = Boolean(v);
+    filesDirtyTag.hidden = !fileDirty;
+    filesSaveBtn.disabled = !(fileKind === 'text' && fileDirty);
+    filesSaveBtn.textContent = fileDirty ? 'Save *' : 'Save';
+  }
+
+  function paintFileActions(){
+    filesSaveBtn.disabled = !(fileKind === 'text' && fileDirty);
+    filesPreviewBtn.hidden = !(fileKind === 'text' && /.(md|markdown)$/i.test(fileName));
+    filesPreviewBtn.textContent = filePreviewing ? 'Edit' : 'Preview';
+    filesRenameBtn.disabled = !filePath;
+    filesDeleteBtn.disabled = !filePath;
+  }
+
+  function fileRowHtml(abs, name, dir, depth){
+    var pad = 6 + depth * 12;
+    if(dir){
+      var open = Boolean(fileOpenDirs[abs]);
+      // A div, not a button: the row carries two more buttons (rename, delete), and a button
+      // inside a button is one control to a screen reader and invalid markup besides.
+      return '<div class="fx-row fx-dirrow">'
+        + '<button type="button" class="fx-main" data-fx-dir="' + text(abs) + '" style="padding-left:' + pad + 'px">'
+        + '<span class="fx-caret">' + (open ? IC.icon.chevronDown : IC.icon.chevronRight) + '</span>'
+        + IC.icon.folder + '<span class="fx-name">' + text(name) + '</span></button>'
+        + '<button type="button" class="fx-act" data-fx-dir-rename="' + text(abs) + '" title="Rename folder" aria-label="Rename folder ' + text(name) + '">' + IC.icon.pencil + '</button>'
+        + '<button type="button" class="fx-act" data-fx-dir-delete="' + text(abs) + '" title="Delete empty folder" aria-label="Delete folder ' + text(name) + '">' + IC.icon.trash + '</button>'
+        + '</div>';
+    }
+    return '<button type="button" class="fx-row' + (filePath === abs ? ' on' : '') + '" data-fx-file="' + text(abs) + '" style="padding-left:' + pad + 'px">'
+      + '<span class="fx-caret blank"></span>' + IC.icon.note + '<span class="fx-name">' + text(name) + '</span></button>';
+  }
+
+  /** The tree as it is: every open directory's children, recursively — nothing is fetched twice. */
+  function paintTree(){
+    if(fileSrc){ filesTreeList.innerHTML = instrTree(); return; }
+    var h = '';
+    function walk(key, depth){
+      var node = fileNodes[key];
+      if(!node) return;
+      var entries = node.entries || [];
+      for(var i=0;i<entries.length;i++){
+        var e = entries[i], abs = fxAbs(node.path, e.name);
+        h += fileRowHtml(abs, e.name, e.dir, depth);
+        if(e.dir && fileOpenDirs[abs]) walk(abs, depth+1);
+      }
+    }
+    walk('', 0);
+    filesTreeList.innerHTML = h || '<div class="skills-empty">Empty directory.</div>';
+  }
+
+  function paintCrumbs(){
+    if(!fileRoot){ filesCrumbs.innerHTML = ''; return; }
+    var h = '<button type="button" data-fx-crumb="' + text(fileRoot) + '">' + text(fileShortRoot(fileRoot)) + '</button>';
+    // Directories are buttons that reveal themselves in the tree; the file at the end is the text
+    // this bar is about, not another way to open it.
+    var rel = fileDir && fileDir !== fileRoot && fileDir.indexOf(fileRoot + '/') === 0
+      ? fileDir.slice(fileRoot.length + 1) : '';
+    var acc = fileRoot;
+    if(rel){
+      var parts = rel.split('/');
+      for(var i=0;i<parts.length;i++){
+        acc = fxAbs(acc, parts[i]);
+        h += '<span class="fx-sep">/</span><button type="button" data-fx-crumb="' + text(acc) + '">' + text(parts[i]) + '</button>';
+      }
+    }
+    if(fileName) h += '<span class="fx-sep">/</span><span class="fx-crumb-file">' + text(fileName) + '</span>';
+    filesCrumbs.innerHTML = h;
+  }
+
+  /** Open every directory between the root and abs, so a crumb or a search hit is visible. */
+  function revealDir(abs){
+    if(!fileRoot || abs.indexOf(fileRoot) !== 0) return;
+    var rel = abs === fileRoot ? '' : abs.slice(fileRoot.length + 1);
+    var parts = rel ? rel.split('/') : [], chain = [{key:'', abs:fileRoot}], cur = fileRoot;
+    for(var i=0;i<parts.length;i++){ cur = fxAbs(cur, parts[i]); chain.push({key:cur, abs:cur}); }
+    var at = 0;
+    function next(){
+      if(at >= chain.length){
+        for(var j=0;j<chain.length;j++) fileOpenDirs[chain[j].key] = true;
+        paintTree();
+        return;
+      }
+      var c = chain[at++];
+      if(fileNodes[c.key]) return next();
+      filesGet('list', {topic:fileTopic, path:c.key}).then(function(res){
+        if(res.ok) fileNodes[c.key] = {path:res.body.path || c.abs, entries:res.body.entries || []};
+        next();
+      }, next);
+    }
+    next();
+  }
+
+  /** Reload one directory's listing in place — after a create, a rename or a delete. */
+  function reloadDir(abs){
+    var key = abs === fileRoot ? '' : abs;
+    filesGet('list', {topic:fileTopic, path:key}).then(function(res){
+      if(!res.ok) return;
+      fileNodes[key] = {path:res.body.path || abs, entries:res.body.entries || []};
+      paintTree();
+    }).catch(function(){});
+  }
+
+  function toggleDir(abs){
+    if(fileOpenDirs[abs]){ delete fileOpenDirs[abs]; paintTree(); return; }
+    fileOpenDirs[abs] = true;
+    fileDir = abs;
+    filesWin.classList.remove('tree-open');
+    if(fileNodes[abs]){ paintTree(); return; }
+    filesGet('list', {topic:fileTopic, path:abs}).then(function(res){
+      if(!res.ok){ delete fileOpenDirs[abs]; return filesSay(fileMsg(res, res.body)); }
+      fileNodes[abs] = {path:res.body.path || abs, entries:res.body.entries || []};
+      paintTree();
+    }).catch(function(){ filesSay('Could not reach the daemon.'); });
+  }
+
+  function makeFileEditor(doc){
+    filesEditor.textContent = '';
+    fileView = null;
+    var seq = ++fileSeq;
+    codeView().then(function(cv){
+      if(seq !== fileSeq) return;
+      if(cv && cv.editor){
+        // The CodeMirror path: it owns the document, the caret and the keymap's save.
+        fileView = cv.editor(filesEditor, {
+          doc: doc, name: fileName,
+          onChange: function(next){ setFileDirty(next !== fileSaved); },
+          onSave: function(){ saveFile(false); }
+        });
+        if(fileView && fileView.focus) fileView.focus();
+      } else {
+        // The fallback every other caller has: a plain textarea. The page cannot ship a broken
+        // editor just because an asset did not load.
+        var ta = document.createElement('textarea');
+        ta.className = 'fx-text';
+        ta.spellcheck = false;
+        ta.value = doc;
+        ta.setAttribute('aria-label', fileName || 'File contents');
+        ta.addEventListener('input', function(){ setFileDirty(ta.value !== fileSaved); });
+        ta.addEventListener('keydown', function(e){
+          if((e.metaKey || e.ctrlKey) && (e.key === 's' || e.key === 'S')){ e.preventDefault(); saveFile(false); }
+        });
+        filesEditor.appendChild(ta);
+        fileView = {
+          getDoc: function(){ return ta.value; },
+          setDoc: function(v){ ta.value = v; },
+          focus: function(){ ta.focus(); },
+          destroy: function(){}
+        };
+      }
+    });
+  }
+
+  function paintFile(d){
+    filePath = d.path;
+    fileRel = d.rel || '';
+    fileName = d.name || fxBase(d.path);
+    fileKind = d.kind;
+    fileDir = d.dir || fxDirOf(d.path);
+    fileBase = {mtimeMs:d.mtimeMs, size:d.size};
+    // The editor is always LF; the file's own ending and content version travel with the read and
+    // go back out on save. A BOM is a character in the text, so it is kept without a flag.
+    fileEol = d.eol === 'crlf' ? 'crlf' : 'lf';
+    fileSha = d.sha256 || '';
+    // A save that would change this file's endings says so before it happens.
+    var eolWarn = d.eolWarning;
+    filesEol.hidden = !eolWarn;
+    filesEol.textContent = eolWarn === 'cr'
+      ? 'This file uses CR line endings; saving will normalize them to LF.'
+      : eolWarn === 'mixed'
+        ? 'This file mixes line endings; saving will normalize them to ' + (fileEol === 'crlf' ? 'CRLF' : 'LF') + '.'
+        : '';
+    fileSaved = fxToDoc(d.text || '');
+    filePreviewing = false;
+    fileView = null;
+    filesPreview.hidden = true;
+    filesPreview.innerHTML = '';
+    filesEditor.hidden = false;
+    filesConflict.hidden = true;
+    filesTitle.textContent = fileName;
+    filesWhere.textContent = fileRel || filePath;
+    filesNewRow.hidden = true;
+    filesRenameRow.hidden = true;
+    fxRename = null;
+    filesSay(d.note || '');
+    setFileDirty(false);
+    paintCrumbs();
+    if(d.kind === 'image'){
+      filesEditor.textContent = '';
+      var wrap = document.createElement('div');
+      wrap.id = 'files-image';
+      var img = document.createElement('img');
+      img.alt = fileName;
+      img.src = d.dataUrl || '';
+      wrap.appendChild(img);
+      filesEditor.appendChild(wrap);
+    } else if(d.kind === 'text'){
+      makeFileEditor(fileSaved);
+    } else {
+      filesEditor.innerHTML = '<div class="skills-empty">' + text(d.note || 'This file cannot be shown here.') + '</div>';
+    }
+    paintFileActions();
+    paintTree();
+  }
+
+  /**
+   * Open one file. skipConfirm is the conflict dialog's Reload: the person has already chosen to
+   * drop their edit, so asking twice is noise — but nothing is dropped until the new content is
+   * actually here (paintFile resets the dirty mark), so a read that fails leaves both intact.
+   */
+  function openFile(path, skipConfirm){
+    if(!path || !fileTopic) return;
+    if(!skipConfirm && !fileConfirmLeave()) return;
+    var seq = ++fileSeq;
+    filesSay('');
+    filesConflict.hidden = true;
+    filesWin.classList.remove('tree-open');
+    filesGet('read', {topic:fileTopic, path:path}).then(function(res){
+      if(seq !== fileSeq) return;
+      if(!res.ok) return filesSay(fileMsg(res, res.body));
+      paintFile(res.body);
+    }).catch(function(){ if(seq === fileSeq) filesSay('Could not reach the daemon.'); });
+  }
+
+  function showFileConflict(d){
+    filesConflict.hidden = false;
+    filesConflictText.textContent = d && d.exists === false
+      ? 'That file was deleted on the machine since you opened it. Your changes are still here.'
+      : 'That file changed on the machine since you opened it. Reload it, overwrite it, or cancel and keep editing.';
+    paintFileActions();
+  }
+
+  /**
+   * Save the editor's text. force is the person's answer to a conflict dialog: the same write
+   * with the version check skipped, which the server treats as "overwrite whatever is there".
+   */
+  function saveFile(force){
+    if(fileKind !== 'text' || !filePath || !fileView || fileBusy) return Promise.resolve(false);
+    var doc = fileView.getDoc();
+    var body = {topic:fileTopic, path:filePath, text:fxFromDoc(doc)};
+    if(force) body.force = true;
+    else if(fileBase){
+      body.mtimeMs = fileBase.mtimeMs; body.size = fileBase.size;
+      if(fileSha) body.sha256 = fileSha;
+    }
+    var sent = doc;
+    fileBusy = true;
+    filesSaveBtn.disabled = true;
+    return filesPost('write', body).then(function(res){
+      fileBusy = false;
+      if(res.ok){
+        fileBase = {mtimeMs:res.body.mtimeMs, size:res.body.size};
+        if(res.body.sha256) fileSha = res.body.sha256;
+        if(fileView && fileView.getDoc() === sent){ fileSaved = sent; setFileDirty(false); }
+        filesConflict.hidden = true;
+        filesSay('Saved ' + (fileRel || fileName) + '.' + instrSaid());
+        paintFileActions();
+        return true;
+      }
+      if(res.body && res.body.conflict){ showFileConflict(res.body); return false; }
+      filesSay(fileMsg(res, res.body));
+      paintFileActions();
+      return false;
+    }, function(){
+      fileBusy = false;
+      filesSay('Could not reach the daemon; the file was not saved.');
+      paintFileActions();
+      return false;
+    });
+  }
+
+  /** Where a new entry goes: the open file's directory, else the last directory opened. */
+  function fileNewDirPath(){
+    return fileDir || fileRoot;
+  }
+
+  function filesNewStart(dir){
+    if(!fileRoot) return;
+    fileNewIsDir = dir;
+    filesNewRow.hidden = false;
+    filesNewName.value = '';
+    filesNewName.focus();
+  }
+
+  function filesNewGo(){
+    var name = String(filesNewName.value || '').trim();
+    if(!name || name === '.' || name === '..' || name.indexOf('/') >= 0){
+      filesSay('A name is one path segment, with no slash.');
+      return;
+    }
+    var dir = fileNewDirPath();
+    var abs = fxAbs(dir, name);
+    var where = fileRel ? fxDirOf(fileRel) : '';
+    if(!confirm('Create the ' + (fileNewIsDir ? 'folder' : 'file') + ' "' + (where ? where + '/' : '') + name + '"?')) return;
+    filesPost('create', {topic:fileTopic, path:abs, dir:fileNewIsDir}).then(function(res){
+      if(!res.ok) return filesSay(fileMsg(res, res.body));
+      filesNewRow.hidden = true;
+      reloadDir(dir);
+      if(!fileNewIsDir) openFile(abs);
+    }).catch(function(){ filesSay('Could not reach the daemon.'); });
+  }
+
+  function filesRenameShow(what, value){
+    filesRenameRow.hidden = false;
+    $('files-rename-what').textContent = what;
+    filesRenameName.value = value;
+    filesRenameName.focus();
+    filesRenameName.select();
+  }
+
+  function filesRenameStart(){
+    if(!filePath) return;
+    fxRename = {path:filePath, dir:false};
+    filesRenameShow('Rename file', fileName);
+  }
+
+  /** The tree's pencil: rename a folder in place, under its own parent. */
+  function filesRenameDirStart(abs){
+    fxRename = {path:abs, dir:true};
+    filesRenameShow('Rename folder', fxBase(abs));
+  }
+
+  /** Drop every cached listing below abs (or one node), so the next paint asks again. */
+  function forgetTreeBelow(abs){
+    for(var k in fileNodes){
+      if(k === abs || k.indexOf(abs + fileSep) === 0) delete fileNodes[k];
+    }
+    delete fileOpenDirs[abs];
+  }
+
+  /** Re-read the tree from the root, leaving it open where the person was. */
+  function refreshTree(keepDir){
+    fileNodes = {};
+    fileOpenDirs = {'':true};
+    fileDir = keepDir || fileRoot;
+    paintTree();
+    filesGet('list', {topic:fileTopic, path:''}).then(function(res){
+      if(!res.ok) return filesSay(fileMsg(res, res.body));
+      fileNodes[''] = {path:fileRoot, entries:res.body.entries || []};
+      paintTree();
+      if(keepDir && keepDir !== fileRoot) revealDir(keepDir);
+    }).catch(function(){ filesSay('Could not reach the daemon.'); });
+  }
+
+  function filesRenameGo(){
+    var target = fxRename;
+    if(!target) return;
+    var name = String(filesRenameName.value || '').trim();
+    if(!name || name === '.' || name === '..' || name.indexOf('/') >= 0){
+      filesSay('A name is one path segment, with no slash.');
+      return;
+    }
+    var to = fxAbs(fxDirOf(target.path), name);
+    if(to === target.path){ filesRenameRow.hidden = true; fxRename = null; return; }
+    var shown = target.dir ? fxBase(target.path) : (fileRel || fileName);
+    if(!confirm('Rename "' + shown + '" to "' + name + '"?')) return;
+    filesPost('rename', {topic:fileTopic, from:target.path, to:to}).then(function(res){
+      if(!res.ok) return filesSay(fileMsg(res, res.body));
+      filesRenameRow.hidden = true;
+      fxRename = null;
+      if(target.dir){
+        // The open file keeps its bytes and its unsaved text; only its path moved if it was
+        // inside the folder. No re-read, and no dirty mark cleared.
+        if(filePath && filePath.indexOf(target.path + fileSep) === 0){
+          filePath = to + filePath.slice(target.path.length);
+          fileDir = fxDirOf(filePath);
+          fileRel = filePath.indexOf(fileRoot + fileSep) === 0 ? filePath.slice(fileRoot.length + 1) : '';
+          filesWhere.textContent = fileRel || filePath;
+          paintCrumbs();
+        }
+        forgetTreeBelow(target.path);
+        filesSay('Renamed.');
+        refreshTree(to);
+        return;
+      }
+      // Re-point the open file instead of re-reading it: the rename moved the file on disk, and
+      // the editor's unsaved text is still the person's. Clearing the mark or reloading here would
+      // throw it away without the question a close would ask.
+      filePath = to;
+      fileName = fxBase(to);
+      fileRel = to.indexOf(fileRoot + fileSep) === 0 ? to.slice(fileRoot.length + 1) : '';
+      fileDir = fxDirOf(to);
+      filesTitle.textContent = fileName;
+      filesWhere.textContent = fileRel || filePath;
+      paintCrumbs();
+      var oldDir = fxDirOf(target.path);
+      reloadDir(oldDir);
+      if(fileDir !== oldDir) reloadDir(fileDir);
+      filesSay(fileDirty ? 'Renamed. The unsaved changes are still here.' : 'Renamed.');
+    }).catch(function(){ filesSay('Could not reach the daemon.'); });
+  }
+
+  /** Empty the editor and forget the open file — after a delete, or a folder holding it went. */
+  function clearOpenFile(){
+    fileDirty = false;
+    fileSeq++;
+    filePath = ''; fileRel = ''; fileName = ''; fileKind = ''; fileBase = null; fileView = null;
+    fileEol = 'lf'; fileSha = '';
+    filesEol.hidden = true;
+    filesEol.textContent = '';
+    setFileDirty(false);
+    filesTitle.textContent = 'Files';
+    filesWhere.textContent = fileRoot;
+    filesCrumbs.innerHTML = '';
+    filesEditor.textContent = '';
+    filesPreview.hidden = true;
+    filesPreview.innerHTML = '';
+    filesConflict.hidden = true;
+    filesPreviewBtn.hidden = true;
+    filesRenameBtn.disabled = true;
+    filesDeleteBtn.disabled = true;
+    paintFileActions();
+  }
+
+  function filesDeleteGo(){
+    if(!filePath) return;
+    if(!confirm('Delete "' + (fileRel || fileName) + '"? This cannot be undone.')) return;
+    var dir = fileDir;
+    filesPost('remove', {topic:fileTopic, path:filePath}).then(function(res){
+      if(!res.ok) return filesSay(fileMsg(res, res.body));
+      clearOpenFile();
+      filesSay(res.body.removed === false ? 'It was already gone.' : 'Deleted.');
+      reloadDir(dir);
+    }).catch(function(){ filesSay('Could not reach the daemon.'); });
+  }
+
+  /**
+   * The tree's bin: a folder goes only when it is empty — the daemon refuses anything else, and
+   * says so in a sentence the page shows as it is. Deleting the folder the open file lives in
+   * first asks the same question a close would, because the file goes with it.
+   */
+  function filesDeleteDir(abs){
+    var inside = Boolean(filePath) && (filePath === abs || filePath.indexOf(abs + fileSep) === 0);
+    if(inside && !fileConfirmLeave()) return;
+    if(!confirm('Delete the folder "' + fxBase(abs) + '"? Only an empty folder can be deleted, and this cannot be undone.')) return;
+    var parent = fxDirOf(abs);
+    filesPost('remove', {topic:fileTopic, path:abs}).then(function(res){
+      if(!res.ok) return filesSay(fileMsg(res, res.body));
+      if(inside) clearOpenFile();
+      // Where "New file" would land must not be the folder that just went. An empty folder cannot
+      // contain it, but the tree's own cursor may be on that folder with no file open.
+      if(fileDir === abs || fileDir.indexOf(abs + fileSep) === 0) fileDir = parent;
+      forgetTreeBelow(abs);
+      filesSay(res.body.removed === false ? 'It was already gone.' : 'Deleted.');
+      reloadDir(parent);
+      paintTree();
+    }).catch(function(){ filesSay('Could not reach the daemon.'); });
+  }
+
+  function filesSearchGo(){
+    var q = String(filesQ.value || '').trim();
+    if(!q){
+      filesHits.hidden = true;
+      filesHits.innerHTML = '';
+      paintTree();
+      return;
+    }
+    filesGet('search', {topic:fileTopic, q:q}).then(function(res){
+      if(!res.ok) return filesSay(fileMsg(res, res.body));
+      var hits = res.body.hits || [], h = '';
+      h += '<div class="fx-hit-head">' + (hits.length ? (res.body.truncated ? 'First ' : '') + hits.length + ' matches' : 'No matches') + '</div>';
+      for(var i=0;i<hits.length;i++){
+        var hit = hits[i];
+        h += '<button type="button" class="fx-row" data-fx-file="' + text(hit.path) + '">'
+          + (hit.dir ? IC.icon.folder : IC.icon.note) + '<span class="fx-name">' + text(hit.rel || hit.path) + '</span></button>';
+      }
+      filesHits.innerHTML = h;
+      filesHits.hidden = false;
+    }).catch(function(){ filesSay('Could not reach the daemon.'); });
+  }
+
+  function filesTogglePreview(){
+    if(!filePath || fileKind !== 'text') return;
+    if(filePreviewing){
+      filePreviewing = false;
+      filesPreview.hidden = true;
+      filesEditor.hidden = false;
+      paintFileActions();
+      return;
+    }
+    var seq = ++fileSeq;
+    filesGet('read', {topic:fileTopic, path:filePath, preview:'1'}).then(function(res){
+      if(seq !== fileSeq) return;
+      if(!res.ok) return filesSay(fileMsg(res, res.body));
+      filesPreview.innerHTML = res.body.html
+        ? '<div class="b">' + res.body.html + '</div>'
+        : '<div class="skills-empty">Nothing to render.</div>';
+      codeBlocks(filesPreview);
+      filesPreview.hidden = false;
+      filesEditor.hidden = true;
+      filePreviewing = true;
+      paintFileActions();
+    }).catch(function(){ filesSay('Could not reach the daemon.'); });
+  }
+
+  function openFilesWindow(t, path, src){
+    if(!(FILES_OK || src) || !t) return;
+    if(!filesWin.hidden && (fileTopic !== t || fileSrc !== (src || null)) && !fileConfirmLeave()) return;
+    fileTopic = t;
+    fileSrc = src || null;
+    paintFilesMode();
+    filesWin.hidden = false;
+    // On a phone the tree is a drawer. Opened from the header, with no file to show yet, the
+    // window would be an empty pane with the files behind a button — so the drawer starts open,
+    // and picking a file closes it. Opened on a file (another panel's Edit), the file is the point.
+    filesWin.classList.toggle('tree-open', !path);
+    filesTitle.textContent = fileSrc ? fileSrc.title : 'Files';
+    filesWhere.textContent = '';
+    filesCrumbs.innerHTML = '';
+    filesSay('');
+    filesNewRow.hidden = true;
+    filesRenameRow.hidden = true;
+    fxRename = null;
+    filesConflict.hidden = true;
+    filesPreview.hidden = true;
+    filesPreview.innerHTML = '';
+    filesEol.hidden = true;
+    filesEol.textContent = '';
+    filesHits.hidden = true;
+    filesHits.innerHTML = '';
+    filesEditor.textContent = '';
+    fileNodes = {};
+    fileOpenDirs = {'': true};
+    fileDir = '';
+    filePath = ''; fileRel = ''; fileName = ''; fileKind = ''; fileBase = null; fileSaved = '';
+    fileEol = 'lf'; fileSha = '';
+    fileView = null;
+    filePreviewing = false;
+    setFileDirty(false);
+    paintFileActions();
+    filesTreeList.innerHTML = '<div class="skills-empty">Loading\u2026</div>';
+    filesGet('list', {topic:t, path:''}).then(function(res){
+      if(fileTopic !== t) return;
+      if(!res.ok){ filesTreeList.innerHTML = ''; return filesSay(fileMsg(res, res.body)); }
+      fileRoot = res.body.path || '';
+      fileSep = fxSepOf(fileRoot);
+      fileDir = fileRoot;
+      fileNodes[''] = {path:fileRoot, entries:res.body.entries || []};
+      filesWhere.textContent = fileRoot;
+      paintTree();
+      if(path) openFile(path);
+    }).catch(function(){ filesSay('Could not reach the daemon.'); });
+  }
+
+  function closeFiles(){
+    if(filesWin.hidden) return;
+    if(!fileConfirmLeave()) return;
+    filesWin.hidden = true;
+    // What the editor saved shows on the settings page it was opened from.
+    if(fileSrc){ fileSrc = null; paintFilesMode(); instrLoad(true); }
+    filesWin.classList.remove('tree-open');
+    fileSeq++;
+    fileView = null;
+    filePath = ''; fileKind = ''; fileDirty = false;
+    filesEditor.textContent = '';
+    filesPreview.textContent = '';
+    filesPreview.hidden = true;
+    filesHits.hidden = true;
+    filesHits.innerHTML = '';
+    filesConflict.hidden = true;
+    filesEol.hidden = true;
+    filesEol.textContent = '';
+  }
+
+  if(FILES_OK){
+    filesToggleBtn.hidden = false;
+    // Only when the feature is on: another panel (the git one) asks typeof window.openFileEditor
+    // to decide whether to offer an Edit, and a function that answers "no" by doing nothing would
+    // offer a control that silently does nothing.
+    window.openFileEditor = openFileEditor;
+    filesToggleBtn.addEventListener('click', function(){ setMenu(null, false); openFilesWindow(topic); });
+  }
+  // The window's own controls, for either of the two things it edits: a topic's files, and the
+  // instructions the settings page opens in it.
+  if(FILES_OK || INSTR_OK){
+    filesTreeToggle.addEventListener('click', function(){ filesWin.classList.toggle('tree-open'); });
+    $('files-close').addEventListener('click', closeFiles);
+    filesWin.addEventListener('click', function(e){ if(e.target === filesWin) closeFiles(); });
+    $('files-refresh').addEventListener('click', function(){
+      if(!fileRoot) return;
+      fileNodes = {};
+      fileOpenDirs = {'': true};
+      fileDir = fileRoot;
+      var want = filePath;
+      filesGet('list', {topic:fileTopic, path:''}).then(function(res){
+        if(!res.ok) return filesSay(fileMsg(res, res.body));
+        fileRoot = res.body.path || fileRoot;
+        fileSep = fxSepOf(fileRoot);
+        fileNodes[''] = {path:fileRoot, entries:res.body.entries || []};
+        paintTree();
+        if(want) openFile(want);
+      }).catch(function(){ filesSay('Could not reach the daemon.'); });
+    });
+    filesTreeList.addEventListener('click', function(e){
+      var renameBtn = e.target.closest ? e.target.closest('[data-fx-dir-rename]') : null;
+      if(renameBtn) return filesRenameDirStart(renameBtn.getAttribute('data-fx-dir-rename'));
+      var deleteBtn = e.target.closest ? e.target.closest('[data-fx-dir-delete]') : null;
+      if(deleteBtn) return filesDeleteDir(deleteBtn.getAttribute('data-fx-dir-delete'));
+      var dirBtn = e.target.closest ? e.target.closest('[data-fx-dir]') : null;
+      if(dirBtn) return toggleDir(dirBtn.getAttribute('data-fx-dir'));
+      var fileBtn = e.target.closest ? e.target.closest('[data-fx-file]') : null;
+      if(fileBtn) return openFile(fileBtn.getAttribute('data-fx-file'));
+    });
+    filesHits.addEventListener('click', function(e){
+      var fileBtn = e.target.closest ? e.target.closest('[data-fx-file]') : null;
+      if(fileBtn) openFile(fileBtn.getAttribute('data-fx-file'));
+    });
+    filesCrumbs.addEventListener('click', function(e){
+      var crumb = e.target.closest ? e.target.closest('[data-fx-crumb]') : null;
+      if(crumb) revealDir(crumb.getAttribute('data-fx-crumb'));
+    });
+    $('files-q-go').addEventListener('click', filesSearchGo);
+    filesQ.addEventListener('keydown', function(e){ if(e.key === 'Enter'){ e.preventDefault(); filesSearchGo(); } });
+    $('files-new-file').addEventListener('click', function(){ filesNewStart(false); });
+    $('files-new-dir').addEventListener('click', function(){ filesNewStart(true); });
+    $('files-new-go').addEventListener('click', filesNewGo);
+    $('files-new-cancel').addEventListener('click', function(){ filesNewRow.hidden = true; });
+    filesNewName.addEventListener('keydown', function(e){ if(e.key === 'Enter'){ e.preventDefault(); filesNewGo(); } });
+    filesSaveBtn.addEventListener('click', function(){ saveFile(false); });
+    filesPreviewBtn.addEventListener('click', filesTogglePreview);
+    filesRenameBtn.addEventListener('click', filesRenameStart);
+    $('files-rename-go').addEventListener('click', filesRenameGo);
+    $('files-rename-cancel').addEventListener('click', function(){ filesRenameRow.hidden = true; fxRename = null; });
+    filesRenameName.addEventListener('keydown', function(e){ if(e.key === 'Enter'){ e.preventDefault(); filesRenameGo(); } });
+    filesDeleteBtn.addEventListener('click', filesDeleteGo);
+    $('files-reload').addEventListener('click', function(){
+      filesConflict.hidden = true;
+      // Dirty stays until the read lands: a reload that fails must not leave the old text on
+      // screen with nothing left to warn about it.
+      openFile(filePath, true);
+    });
+    $('files-overwrite').addEventListener('click', function(){
+      filesConflict.hidden = true;
+      saveFile(true);
+    });
+    $('files-cancel').addEventListener('click', function(){ filesConflict.hidden = true; paintFileActions(); });
+  }
+
+  // Ctrl/Cmd+S anywhere in the window, not only inside the editor: a person who just clicked
+  // Save, or has the tree focused, still reaches the save the title promises.
+  document.addEventListener('keydown', function(e){
+    if(filesWin.hidden) return;
+    if((e.metaKey || e.ctrlKey) && (e.key === 's' || e.key === 'S')){ e.preventDefault(); saveFile(false); }
+  });
+
+  /**
+   * Open one file, from another panel. path is relative to the topic's working directory or
+   * absolute on that machine. The git panel's file rows call this (window.openFileEditor), which
+   * is why it is on window rather than reachable only from this closure — and why it is assigned
+   * only when the feature is on.
+   */
+  function openFileEditor(path){
+    if(filesWin.hidden || fileTopic !== topic || fileSrc) openFilesWindow(topic, path);
+    else openFile(path);
+  }
+
+  // ── Instructions ────────────────────────────────────────────────────────────
+  // What each agent reads, on its card in Agents, and the file window's second mode: the same
+  // editor, dirty mark, conflict dialog and save, pointed at one agent's instruction files instead
+  // of a topic's workspace (daemon/instructions-panel.ts). Off unless instructions.enabled: INSTR_OK
+  // leaves it out of every card, and its routes answer 404.
+  //
+  // There is no section of its own any more (3.15.0). The gateway's files — common.md, and one per
+  // harness — sat in one beside the agents, each of which had an Instructions column of its own, and
+  // two lists by one name, one of them a row per harness, read as the same per-agent setting twice.
+  // Every file is now listed under the agents that read it: the shared ones marked as shared and by
+  // how many, then the agent's own on its machine, and the window opens on all of them at once.
+  //
+  // In this mode the tree is a fixed list the daemon gave and the window's file "paths" are ids into
+  // it (g:<name> for a shared file, a:<path> for one on the agent's machine). The page never sends a
+  // path of its own: a read or a save names the target, and the daemon checks it against what that
+  // harness reads now.
+  var instrData = null, instrBusy = false, instrFor = null;
+
+  function instrFetch(url){
+    return fetch(url, {credentials:'same-origin'}).then(function(r){
+      return r.json().catch(function(){ return {}; }).then(function(d){ return {ok:r.ok, status:r.status, body:d}; });
+    });
+  }
+
+  /** The list behind the cards; force asks again (a new settings page, a closed editor). */
+  function instrLoad(force){
+    if(!INSTR_OK || instrBusy || (instrData && !force)) return;
+    instrBusy = true;
+    instrFetch('api/instructions').then(function(res){
+      instrBusy = false;
+      instrData = res.ok ? res.body : {error: (res.body && res.body.error) || 'The instructions could not be listed.'};
+      instrArrived();
+    }, function(){
+      instrBusy = false;
+      instrData = {error:'Could not reach the daemon.'};
+      instrArrived();
+    });
+  }
+
+  /** Ask for the list once per settings page drawn: each card's files come from it. */
+  function instrEnsure(){
+    if(!settingsMsg || instrFor === settingsMsg.id) return;
+    instrFor = settingsMsg.id;
+    instrLoad(true);
+  }
+
+  /**
+   * The list arrived (or failed): every card's files are built from it, so the list is drawn again
+   * — renderSettings puts focus back on the control that had it, and the open card stays open.
+   *
+   * Not while a control is busy, though: that one was just tapped, its new state and its disabled
+   * flag live only in the markup, and a redraw would put it back for a second tap while the first
+   * request is still out. The daemon's answer (or its failure) draws the list next, and the files
+   * are on it then.
+   */
+  function instrArrived(){
+    if(!INSTR_OK || !settingsMsg || settingsPage.hidden) return;
+    var s = settingsMsg.settings;
+    if(!s || s.level !== 'list') return;
+    if(settingsBody.querySelector('.busy')) return;
+    renderSettings();
+  }
+
+  /** One agent's row of a list answer, or null. */
+  function instrAgentIn(d, id){
+    var a = (d && d.agents) || [];
+    for(var i=0;i<a.length;i++) if(a[i].id === id) return a[i];
+    return null;
+  }
+
+  /** What one agent's harness reads on its own machine, from a list answer, or null. */
+  function instrOwnIn(d, id){
+    var a = (d && d.agents) || [];
+    for(var i=0;i<a.length;i++) if(a[i].id === id && a[i].own) return a[i];
+    return null;
+  }
+
+  /** The gateway's files one agent reads, in the daemon's order: common.md, then its harness's. */
+  function instrSharedIn(d, id){
+    var g = (d && d.global) || [], out = [];
+    for(var i=0;i<g.length;i++) if((g[i].agents || []).indexOf(id) >= 0) out.push(g[i]);
+    return out;
+  }
+
+  /**
+   * Who else a shared file reaches, which is the one thing about it an edit has to know first. The
+   * words come from the daemon (InstructionsGlobalFile.reach), not from a table here: a layer can
+   * be shared by an agent of another kind, and a file can be left behind by an agent that is gone,
+   * so the layer's name is the only answer that stays right in both cases. A file no agent reads
+   * says so — it is still listed so it can be cleared.
+   */
+  function instrReach(f){
+    return f.reach + (f.layer !== 'common' && !(f.agents || []).length ? ' · no agent reads it' : '');
+  }
+  function instrShared(f){
+    var n = (f.agents || []).length;
+    return n ? f.reach + ' · ' + n + (n === 1 ? ' reads it' : ' read it') : instrReach(f);
+  }
+
+  /** The gateway's files no configured agent reads: a layer left by an agent that is gone, or one whose delivery is off. */
+  function instrOrphans(d){
+    var g = (d && d.global) || [], out = [];
+    for(var i=0;i<g.length;i++) if(g[i].layer !== 'common' && !(g[i].agents || []).length) out.push(g[i]);
+    return out;
+  }
+
+  /**
+   * The files no agent reads, drawn once under the Agents cards. No card is theirs — that is what
+   * being read by nobody means — and without this row they could not be reached at all, so a layer
+   * file left behind would sit there until some future agent took the same layer and inherited it.
+   */
+  function settingsOrphans(){
+    if(!INSTR_OK || !instrData || instrData.error) return '';
+    var o = instrOrphans(instrData);
+    if(!o.length) return '';
+    var names = o.map(function(f){ return f.name; }).join(', ');
+    return '<div class="set-card"><button type="button" class="set-item set-open" data-instr-orphans="1">'
+      + '<span class="set-tx"><span class="set-label">Instructions no agent reads</span>'
+      + '<span class="set-hint">' + text(names) + ' — open to clear a layer a later agent would inherit</span></span>'
+      + '<span class="set-chev" aria-hidden="true">' + IC.icon.chevronRight + '</span></button></div>';
+  }
+
+  function instrHost(h){ return h === 'local' ? 'this machine' : h; }
+
+  /**
+   * The Instructions part of an open card: a row per file the agent reads, each opening the window
+   * on that agent's whole list. Its own files are one row, because listing them reads its machine —
+   * the window does that when it is opened, not every card on every draw.
+   */
+  function agentInstr(r, i){
+    if(!INSTR_OK) return '';
+    var id = String(r.target || r.label), d = instrData, h = '<div class="ag-field ag-instr"><span class="ag-lab">Instructions</span><div class="ag-val">';
+    if(!d) return h + '<span class="ag-wait">Loading…</span></div></div>';
+    if(d.error) return h + '<span class="ag-err">' + text(d.error) + '</span></div></div>';
+    var row = instrAgentIn(d, id), g = instrSharedIn(d, id), own = instrOwnIn(d, id), off = Boolean(row && row.notDelivered), n = 0;
+    if(!g.length && !own && !off) return h + '<span class="ag-none">Its harness reads no instruction file the gateway knows of.</span></div></div>';
+    if(off) h += '<span class="ag-none">Not delivering: its instruction file is already delivered to another agent on the same machine with a different layer.</span>';
+    var files = '';
+    for(var k=0;k<g.length;k++){
+      files += '<button type="button" class="ag-file" data-fk="r' + i + 'i' + (n++) + '" data-instr-agent="' + text(id) + '" data-instr-file="' + text('g:' + g[k].name) + '"'
+        + ' aria-label="' + text(r.label + ' · ' + g[k].name) + '" title="' + text((g[k].agents || []).join(', ')) + '">'
+        + '<span class="ag-fname">' + text(g[k].name) + '</span>'
+        + '<span class="ag-fsub">' + text(instrShared(g[k])) + (g[k].exists ? '' : '<span class="fx-tag">not written</span>') + '</span>'
+        + '<span class="set-chev" aria-hidden="true">' + IC.icon.chevronRight + '</span></button>';
+    }
+    if(own){
+      files += '<button type="button" class="ag-file" data-fk="r' + i + 'i' + (n++) + '" data-instr-agent="' + text(id) + '"'
+        + ' aria-label="' + text(r.label + ' · its own files') + '">'
+        + '<span class="ag-fname own">Its own files</span>'
+        + '<span class="ag-fsub">' + inl(own.own) + ' · ' + text(instrHost(own.host)) + '</span>'
+        + '<span class="set-chev" aria-hidden="true">' + IC.icon.chevronRight + '</span></button>';
+    }
+    return h + (files ? '<div class="ag-files">' + files + '</div>' : '') + '</div></div>';
+  }
+
+  /** Open the file window on one agent's instruction files, and on one of them when file is given. */
+  function instrOpen(agent, file){
+    openFilesWindow(settingsTopic || topic, file || '', {agent:agent, title:agent + ' · instructions', files:{}, order:[], secs:{}});
+  }
+
+  /** Open the window on the gateway's files no agent reads, which is how one is cleared. */
+  function instrOpenOrphans(){
+    openFilesWindow(settingsTopic || topic, '', {agent:'', orphans:true, title:'Instructions no agent reads', files:{}, order:[], secs:{}});
+  }
+
+  /** The window's controls a topic's files have and instructions do not: create, rename, delete, search. */
+  function paintFilesMode(){
+    var on = Boolean(fileSrc);
+    filesWin.classList.toggle('instr', on);
+    $('files-tree-head').hidden = on;
+    $('files-search-row').hidden = on;
+    filesCrumbs.hidden = on;
+    filesRenameBtn.hidden = on;
+    filesDeleteBtn.hidden = on;
+    filesTreeToggle.title = on ? 'Instruction files' : 'Files';
+  }
+
+  /**
+   * The window's list for one agent, keyed by the ids it names files by: the shared files from the
+   * list answer d, then — when its harness reads files of its own — those from its machine (own, the
+   * refs answer, or {error}). Each section carries the sentence that says where its files live.
+   */
+  function instrIndex(src, d, own){
+    src.files = {};
+    src.order = [];
+    src.secs = {};
+    src.root = src.agent;
+    var add = function(id, f){ src.files[id] = f; src.order.push(id); };
+    var g = src.orphans ? instrOrphans(d) : instrSharedIn(d, src.agent);
+    if(g.length){
+      src.secs.shared = {title:'Shared, kept on the gateway',
+        note: src.orphans ? 'No configured agent reads these. Clearing one keeps a later agent on that layer from inheriting it.'
+          : (d.on ? 'A save places it on every machine an agent that reads it is configured for.'
+          : 'Nothing is delivered yet. The first save creates ' + d.dir + '.')};
+    }
+    for(var i=0;i<g.length;i++){
+      add('g:' + g[i].name, {scope:'global', sec:'shared', q:'scope=global&name=' + encodeURIComponent(g[i].name), name:g[i].name, shown:g[i].name,
+        sub: instrReach(g[i]), exists:g[i].exists, editable:true, depth:1});
+    }
+    if(!own) return;
+    var host = instrHost(own.host || (instrOwnIn(d, src.agent) || {}).host);
+    if(own.error){ src.secs.own = {title:'On ' + host, note:own.error}; return; }
+    src.secs.own = {title:'On ' + host, note: String(own.summary || '').replace(/\x60/g, '') + '.'
+      + (own.rootState === 'managed' ? ' ' + own.root + ' is the gateway’s copy: add a reference to a shared file above.'
+        : own.rootState === 'missing' ? ' ' + own.root + ' does not exist there.' : '')};
+    var r = own.refs || [];
+    for(var j=0;j<r.length;j++){
+      var kind = r[j].kind;
+      add('a:' + r[j].path, {scope:'agent', sec:'own', q:'scope=agent&agent=' + encodeURIComponent(src.agent) + '&path=' + encodeURIComponent(r[j].path),
+        path:r[j].path, name:fxBase(r[j].shown), shown:r[j].shown, exists:r[j].exists, editable:r[j].editable,
+        note:r[j].note || '', depth:r[j].depth || 1, via:r[j].via || '',
+        sub: r[j].note || (kind === 'rule' ? 'rule' : kind === 'listed' ? 'listed in its config' : '')});
+    }
+    if(!r.length) src.secs.own.empty = 'No file is referenced.';
+  }
+
+  function instrTree(){
+    var src = fileSrc, h = '', sec = null;
+    if(!src.order.length && !src.secs.own) return '<div class="skills-empty">Its harness reads no instruction file the gateway knows of.</div>';
+    var head = function(key){
+      var s = src.secs[key];
+      return s ? '<div class="fx-sec">' + text(s.title) + '</div>' + (s.note ? '<div class="fx-head">' + text(s.note) + '</div>' : '') : '';
+    };
+    for(var i=0;i<src.order.length;i++){
+      var id = src.order[i], f = src.files[id], pad = 6 + (f.depth - 1) * 12;
+      if(f.sec !== sec){ sec = f.sec; h += head(sec); }
+      var tail = (f.sub ? '<span class="fx-sub">' + text(f.sub) + '</span>' : '') + (f.exists ? '' : '<span class="fx-tag">not written</span>');
+      if(!f.editable){
+        h += '<div class="fx-row fx-off" title="' + text(f.note) + '" style="padding-left:' + pad + 'px"><span class="fx-caret blank"></span>'
+          + IC.icon.note + '<span class="fx-name">' + text(f.shown) + '</span><span class="fx-sub">' + text(f.note) + '</span></div>';
+        continue;
+      }
+      h += '<button type="button" class="fx-row' + (filePath === id ? ' on' : '') + '" data-fx-file="' + text(id) + '" title="' + text(f.shown + (f.via ? ' ← ' + f.via : '')) + '" style="padding-left:' + pad + 'px">'
+        + '<span class="fx-caret blank"></span>' + IC.icon.note + '<span class="fx-name">' + text(f.shown) + '</span>' + tail + '</button>';
+    }
+    // Its own files' heading even with none to show, so an error or an empty list is said there.
+    if(src.secs.own && sec !== 'own') h += head('own') + (src.secs.own.empty ? '<div class="skills-empty">' + text(src.secs.own.empty) + '</div>' : '');
+    return h;
+  }
+
+  /**
+   * The window's reads, in this mode. list builds the tree — the shared files from the list, and
+   * the agent's own from its machine when its harness has any; read answers for one id of it.
+   */
+  function instrGet(route, params){
+    var src = fileSrc;
+    if(route === 'list'){
+      var listed = function(){ return {ok:true, status:200, body:{path:src.root, entries:[]}}; };
+      return instrFetch('api/instructions').then(function(res){
+        if(!res.ok) return res;
+        var d = res.body;
+        if(src.orphans || !instrOwnIn(d, src.agent)){ instrIndex(src, d, null); return listed(); }
+        return instrFetch('api/instructions/refs?agent=' + encodeURIComponent(src.agent)).then(function(rr){
+          instrIndex(src, d, rr.ok ? rr.body : {error: (rr.body && rr.body.error) || 'Its own files could not be listed.'});
+          return listed();
+        }, function(){
+          instrIndex(src, d, {error:'Its own files could not be listed: the daemon did not answer.'});
+          return listed();
+        });
+      });
+    }
+    var f = route === 'read' ? src.files[params.path] : null;
+    if(!f) return Promise.resolve({ok:false, status:400, body:{error: route === 'read' ? 'That file is not in the list any more. Refresh it.' : 'Not available for instructions.'}});
+    return instrFetch('api/instructions/read?' + f.q + (params.preview ? '&preview=1' : '')).then(function(res){
+      if(!res.ok) return res;
+      f.missing = Boolean(res.body.missing);
+      // The window keeps naming the file by its id; the path the daemon resolved is what it shows.
+      res.body.path = params.path;
+      res.body.rel = f.shown;
+      res.body.dir = '';
+      if(f.missing && !res.body.note) res.body.note = 'Not written yet. Saving creates it.';
+      else if(f.note && !res.body.note) res.body.note = f.note.charAt(0).toUpperCase() + f.note.slice(1) + '.';
+      return res;
+    });
+  }
+
+  /** The window's save, in this mode: the version it read, or "create" for a file not written yet. */
+  function instrPost(route, body){
+    var src = fileSrc, f = src && route === 'write' ? src.files[body.path] : null;
+    if(!f) return Promise.resolve({ok:false, status:400, body:{error:'Not available for instructions.'}});
+    var req = f.scope === 'global' ? {scope:'global', name:f.name} : {scope:'agent', agent:src.agent, path:f.path};
+    req.text = body.text;
+    if(body.force) req.force = true;
+    else if(f.missing) req.missing = true;
+    else {
+      if(body.mtimeMs !== undefined) req.mtimeMs = body.mtimeMs;
+      if(body.size !== undefined) req.size = body.size;
+      if(body.sha256) req.sha256 = body.sha256;
+    }
+    src.said = '';
+    return post('api/instructions/write', req, 1).then(function(r){
+      return r.json().catch(function(){ return {}; }).then(function(d){
+        if(r.ok){
+          f.missing = false;
+          f.exists = true;
+          src.said = instrDelivery(d.delivery, f, src);
+          if(fileSrc === src) paintTree();
+        }
+        return {ok:r.ok, status:r.status, body:d};
+      });
+    });
+  }
+
+  /** What the last save in this mode came to, appended to the window's "Saved" line. */
+  function instrSaid(){
+    return fileSrc && fileSrc.said ? ' ' + fileSrc.said : '';
+  }
+
+  /** Where a saved shared file landed (InstructionsDelivery), as one or two sentences. */
+  function instrDelivery(list, f, src){
+    if(f.scope !== 'global') return src.agent + ' reads it when its next session starts.';
+    list = list || [];
+    if(!list.length) return 'No configured agent reads this file.';
+    var placed = [], other = [];
+    for(var i=0;i<list.length;i++){
+      var d = list[i], who = (d.agents || []).join(', ') + (d.host === 'local' ? '' : ' on ' + d.host);
+      if(d.outcome === 'linked' || d.outcome === 'relinked' || d.outcome === 'current') placed.push(who);
+      else if(d.outcome === 'removed' || d.outcome === 'absent') other.push('Nothing is left for ' + who + '.');
+      else if(d.outcome === 'occupied') other.push(who + ': ' + (d.link || 'its file') + ' is ' + (d.detail || 'its own') + ', left alone, so these do not reach it.');
+      else if(d.outcome === 'skipped') other.push(who + ': its harness has not run there yet, so nothing was placed.');
+      else if(d.outcome === 'unreachable') other.push(d.host + ' did not answer; it gets this when an agent next starts there.');
+      else if(d.outcome === 'not-delivered') other.push(who + ': its delivery is off — its file is already delivered to another agent there, so nothing was placed.');
+      else if(d.outcome === 'off') other.push(who + ': this gateway places no instructions, so nothing was placed now.');
+      else other.push(who + ': ' + d.outcome + (d.detail ? ' (' + d.detail + ')' : '') + '.');
+    }
+    return (placed.length ? 'Placed for ' + placed.join('; ') + '; a session already running keeps what it read. ' : '') + other.join(' ');
+  }
+
+  if(INSTR_OK){
+    settingsBody.addEventListener('click', function(e){
+      if(!e.target.closest) return;
+      if(e.target.closest('[data-instr-orphans]')){ instrOpenOrphans(); return; }
+      var a = e.target.closest('[data-instr-agent]');
+      if(a) instrOpen(a.getAttribute('data-instr-agent'), a.getAttribute('data-instr-file') || '');
+    });
+  }
+
+  // Grow to fit, and let the max-height in the stylesheet decide where to stop — it is stated
+  // in dvh there, which on a phone with the keyboard up is the viewport that is actually left.
+  // Clamping here as well would mean two numbers for one cap, and the JS one cannot see which
+  // media query won.
+  function grow(){ input.style.height='auto'; input.style.height=input.scrollHeight+'px'; }
+
+  /**
+   * The composer's attachments, one chip each: the name, a thumbnail when it is a picture, and a ×
+   * that takes it back off the message. Before this a chip was a name and nothing else, so a
+   * screenshot could not be checked before it went, and one pasted by mistake could only be got
+   * rid of by sending it or by switching topics and back — which keeps it, since the draft does.
+   *
+   * Two constraints shape how the thumbnail is made:
+   *   - It is a data: URL, not URL.createObjectURL. The page's CSP (server.ts) is img-src 'self'
+   *     data:, so a blob: URL is refused and every thumbnail would be a broken frame. Widening the
+   *     CSP for a preview is the wrong way round.
+   *   - Each chip is built ONCE per file and moved, never rebuilt. The URL is the whole file again,
+   *     and pushing it through innerHTML (and text() before that) on every paste re-parses and
+   *     re-decodes every screenshot already there. The node lives in a WeakMap, not on the file
+   *     object, because that object IS the upload: api/send is .strict() and would refuse a
+   *     message carrying one more key.
+   */
+  var chipEls = new WeakMap();
+  function chipFor(f){
+    var el = chipEls.get(f);
+    if(el) return el;
+    el = document.createElement('span');
+    el.className = 'chip';
+    if(/^image\//.test(f.mime) && f.data){
+      var img = document.createElement('img');
+      img.className = 'thumb';
+      img.alt = f.name;
+      img.src = 'data:'+f.mime+';base64,'+f.data;
+      el.appendChild(img);
+    }
+    var name = document.createElement('span');
+    name.className = 'chip-name';
+    name.textContent = f.name;
+    el.appendChild(name);
+    var x = document.createElement('button');
+    x.type = 'button';
+    x.className = 'chip-x';
+    x.title = 'Remove ' + f.name;
+    x.setAttribute('aria-label', 'Remove ' + f.name);
+    x.textContent = '\u00d7';
+    el.appendChild(x);
+    chipEls.set(f, el);
+    return el;
+  }
+  function renderChips(){
+    chips.textContent = '';
+    for(var i=0;i<files.length;i++){
+      var el = chipFor(files[i]);
+      // An index, re-stamped on every render: files only ever grows at the end or loses the one
+      // being removed, and either way this render follows it before another click can land.
+      el.lastChild.setAttribute('data-drop', String(i));
+      chips.appendChild(el);
+    }
+  }
+  chips.addEventListener('click', function(e){
+    var x = e.target.closest ? e.target.closest('button[data-drop]') : null;
+    if(x){ files.splice(Number(x.getAttribute('data-drop')), 1); renderChips(); return; }
+    var t = e.target.closest ? e.target.closest('img.thumb') : null;
+    if(t) openShot(t);
+  });
+  // A picture this browser cannot decode (HEIC on anything but Safari) keeps its name and loses
+  // the broken frame, the same answer #log gives one that 404s — and for the same reason in the
+  // capture phase: 'error' on an <img> does not bubble.
+  chips.addEventListener('error', function(e){
+    var t = e.target;
+    if(t && t.classList && t.classList.contains('thumb')) t.style.display='none';
+  }, true);
+
+  // ── A composer per topic ───────────────────────────────────────────────────
+  /**
+   * What each topic's composer held when it was left: the text, where the caret was, and the files
+   * attached. One textarea serves every topic, so before this a half-written prompt followed the
+   * reader into the next topic — and so did its attachments, which is how a screenshot meant for
+   * one conversation got sent into another.
+   *
+   * The text is written through to localStorage, so a reload does not cost it either. Files are
+   * not: they are base64, and a failed message cannot be retried after a reload for the same reason.
+   *
+   * Written when a topic is left, when a message is sent and when the page is hidden, and once
+   * typing has paused for DRAFT_IDLE_MS — never per keystroke. visibilitychange is the last event
+   * every way out of a page reliably fires (another tab, the app backgrounded, the window closed),
+   * so nothing typed is still only in memory by the time the browser is free to discard the page.
+   * The pause is for the ways out that fire nothing at all: a renderer that crashes, a phone that
+   * kills the tab in the foreground. Those used to cost the whole draft; now they cost the last
+   * second of typing, for one small write per pause rather than one per key.
+   */
+  var DRAFTS='aa_drafts';
+  // Past this a draft is kept in memory only. localStorage is one ~5MB budget for the origin, and a
+  // pasted log that filled it would take down the writes of the read marks and the drawer state too.
+  var DRAFT_MAX=64*1024;
+  var DRAFT_IDLE_MS=1000;
+  var drafts={}, draftTimer=0;
+  (function(){
+    var saved=null;
+    try { saved = JSON.parse(localStorage.getItem(DRAFTS) || 'null'); } catch(x){}
+    if(!saved || typeof saved !== 'object') return;
+    for(var id in saved){
+      var s = saved[id];
+      if(Object.prototype.hasOwnProperty.call(saved, id) && typeof s === 'string' && s)
+        drafts[id] = {text:s, s:s.length, e:s.length, files:[]};
+    }
+  })();
+
+  /**
+   * Write one topic's draft through to storage and leave every other entry as it is ON DISK: a
+   * second tab on this origin keeps drafts of its own, and writing this tab's whole map would put
+   * back ones that tab has since sent. Nothing is written when nothing would change.
+   */
+  function writeDraft(id){
+    try {
+      var all = JSON.parse(localStorage.getItem(DRAFTS) || 'null') || {};
+      var d = drafts[id];
+      var want = (d && d.text && d.text.length <= DRAFT_MAX) ? d.text : undefined;
+      if(all[id] === want) return;
+      if(want === undefined) delete all[id]; else all[id] = want;
+      localStorage.setItem(DRAFTS, JSON.stringify(all));
+    } catch(x){}
+  }
+
+  /**
+   * Take the composer's contents off the topic being left. Storage is only consulted when this
+   * topic had a draft before or has one now — leaving an empty composer for an empty one, which is
+   * most switches, reads and writes nothing.
+   */
+  function stashDraft(id){
+    // Whatever was waiting on a pause in the typing is being done now, for the topic it was typed in.
+    clearTimeout(draftTimer); draftTimer=0;
+    if(!id) return;
+    var had = Boolean(drafts[id]);
+    if(input.value || files.length)
+      drafts[id] = {text:input.value, s:input.selectionStart, e:input.selectionEnd, files:files};
+    else delete drafts[id];
+    if(had || drafts[id]) writeDraft(id);
+  }
+
+  /**
+   * Put a topic's own composer back — an empty one, when it has none. Each step only when it
+   * changes something: grow() measures the textarea, which forces a layout in the middle of the
+   * switch, and an empty composer replacing an empty one needs neither that nor new chips.
+   */
+  function loadDraft(id){
+    var d = id ? drafts[id] : null;
+    var next = d ? d.text : '', list = d ? d.files : [];
+    var chipsChange = files.length || list.length;
+    files = list;
+    if(chipsChange) renderChips();
+    if(input.value !== next){ input.value = next; suggest(); grow(); }
+    if(d) try { input.setSelectionRange(d.s, d.e); } catch(x){}
+    // "Compressing…" belongs to the composer whose pictures are being shrunk, not to whichever
+    // one is on screen now.
+    notePending();
+  }
+
+  /** Everything this page remembers about one topic, for a topic that no longer exists. */
+  function forget(id){
+    delete views[id];
+    delete copies[id];
+    delete vers[id];
+    delete preTried[id];
+    for(var n in unsent) if(Object.prototype.hasOwnProperty.call(unsent, n) && unsent[n].t === id) dropUnsent(n);
+    if(!drafts[id]) return;
+    delete drafts[id];
+    writeDraft(id);
+  }
+
+  /**
+   * Forget the topics the list no longer carries — deleted here, in another tab, or by a clear.
+   * Storage is only touched for a topic that actually had a draft or an unsent message.
+   */
+  function prune(){
+    // An empty list is a list about to be replaced (the page creates a topic in answer), not an
+    // instruction to throw every draft away.
+    if(!topics.length) return;
+    var known={}, id;
+    for(var i=0;i<topics.length;i++) known[topics[i].id]=1;
+    for(id in views) if(!known[id]) delete views[id];
+    for(id in copies) if(!known[id]) delete copies[id];
+    for(id in vers) if(!known[id]) delete vers[id];
+    for(id in preTried) if(!known[id]) delete preTried[id];
+    for(id in drafts) if(!known[id]) forget(id);
+    for(id in unsent) if(Object.prototype.hasOwnProperty.call(unsent, id) && !known[unsent[id].t]) dropUnsent(id);
+  }
+
+  // The way out of the page, whichever it is. The hidden transition is "the last reliable time to
+  // save app and user data"; beforeunload and unload are not, since on mobile neither fires when a
+  // tab or the browser itself is closed (developer.chrome.com, Page Lifecycle API, read
+  // 2026-09-29). pagehide is the belt: a second write of an unchanged draft writes nothing.
+  document.addEventListener('visibilitychange', function(){ if(document.visibilityState === 'hidden') stashDraft(topic); });
+  window.addEventListener('pagehide', function(){ stashDraft(topic); });
+
+  // ── Pictures are shrunk before they go ─────────────────────────────────────
+  /**
+   * A phone camera writes 3–10 MB for one photo, and what an agent can use of it is a fraction of
+   * that: Claude sees about 1568 px on the long edge whatever is sent. Every byte above that is
+   * paid for on the upload, over a mobile uplink, for nothing.
+   *
+   * So a still picture the browser can decode, and that is over 300 KB, is redrawn inside
+   * 2048×1536 pixels — about 3.1 MP, which is what a model can use of a photo — and re-encoded at
+   * the highest quality whose result fits under 300 KB: quality bisected between 0.5 and 0.92 at
+   * that size, and the dimensions stepped down only when even 0.5 is too big. A re-encode that did
+   * not come out smaller than the original is thrown away.
+   *
+   * Area, not a long edge, because the two pictures people send are shaped differently. A 1170×2532
+   * phone screenshot is already under 3.1 MP, so it keeps its size and its text stays the size it
+   * was; a 12 MP photo comes down to 2048×1536 whatever its shape. A 4096 px cap on one side is
+   * there for the panorama that fits the area budget by being extremely long and thin, and the
+   * floor below which shrinking stops is the area a 1024 px long edge would have at this shape.
+   *
+   * Never touched: GIF (a canvas keeps one frame, and the animation is the picture), SVG (the file
+   * is text), and anything already at or under 300 KB. A decode or encode that fails sends the
+   * original with a console warning — a slow send is a nuisance, a lost picture is not.
+   *
+   * Re-encoding drops EXIF, GPS included. That is a side benefit worth knowing, not the reason.
+   */
+  var SHRINK_LIMIT = 300 * 1024;
+  var SHRINK_PIXELS = 2048 * 1536;
+  var SHRINK_EDGE = 4096;
+  var SHRINK_EDGE_MIN = 1024;
+  // iOS refuses a canvas over 16,777,216 pixels and can answer with a blank one rather than an
+  // error, so no canvas here is ever allowed past it.
+  var CANVAS_MAX_PIXELS = 4096 * 4096;
+  var SHRINK_QUALITY_MAX = 0.92;
+  var SHRINK_QUALITY_MIN = 0.5;
+
+  // What the browser might decode as a still. The MIME a picker gives is the first answer; an
+  // empty one — a HEIC off an iPhone, through a picker that does not know the type — is read from
+  // the name, which is what Safari goes by anyway. GIF and SVG are excluded here, not later.
+  var STILL_MIME = /^image\/(jpeg|jpg|png|webp|heic|heif|avif|bmp|x-ms-bmp)$/i;
+  var STILL_NAME = /\.(jpe?g|png|webp|heic|heif|avif|bmp)$/i;
+  function stillImage(f){
+    var t = String(f.type || '').toLowerCase();
+    if(t) return STILL_MIME.test(t);
+    return STILL_NAME.test(String(f.name || ''));
+  }
+
+  /**
+   * One file's bytes as the base64 the send API takes, or null when the browser could not read it.
+   * A null is reported in #note by the caller: a picture that cannot be attached must not vanish
+   * without a word.
+   */
+  function readBase64(blob){
+    return new Promise(function(resolve){
+      var r = new FileReader();
+      r.onload = function(){
+        var s = String(r.result), c = s.indexOf(',');
+        resolve(c < 0 ? '' : s.slice(c + 1));
+      };
+      r.onerror = function(){ resolve(null); };
+      r.readAsDataURL(blob);
+    });
+  }
+
+  /**
+   * The decoded picture: a bitmap when the browser has createImageBitmap, an <img> otherwise.
+   *
+   * createImageBitmap is first because it decodes a File directly — no URL at all, which matters
+   * since the page's CSP is img-src 'self' data: and a blob: URL would be refused — and its
+   * imageOrientation:'from-image' applies the EXIF rotation a phone saved the shot with. A
+   * browser that lacks it, or refuses this file, gets the data: URL and an <img>, which those
+   * browsers rotate themselves when drawing.
+   */
+  function decodePhoto(f){
+    var attempt = null;
+    if(typeof createImageBitmap === 'function'){
+      try { attempt = createImageBitmap(f, {imageOrientation:'from-image'}); } catch(x){ attempt = null; }
+    }
+    if(attempt && typeof attempt.then === 'function')
+      return attempt.then(function(b){ return b; }, function(){ return decodeViaImg(f); });
+    return decodeViaImg(f);
+  }
+  function decodeViaImg(f){
+    return readBase64(f).then(function(b64){
+      if(b64 === null) throw new Error('the file could not be read');
+      return new Promise(function(resolve, reject){
+        var img = new Image();
+        img.onload = function(){ resolve(img); };
+        img.onerror = function(){ reject(new Error('the browser cannot decode it')); };
+        img.src = 'data:' + (f.type || '') + ';base64,' + b64;
+      });
+    });
+  }
+  function closePhoto(p){ if(p && p.close){ try { p.close(); } catch(x){} } }
+
+  /** A canvas with high-quality smoothing on: the default filter is what makes a shrunk picture soft. */
+  function paintCanvas(w, h){
+    var canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    var ctx = canvas.getContext('2d');
+    if(!ctx) return null;
+    ctx.imageSmoothingEnabled = true;
+    if('imageSmoothingQuality' in ctx) ctx.imageSmoothingQuality = 'high';
+    return {canvas:canvas, ctx:ctx};
+  }
+
+  /**
+   * The picture drawn at a fraction of its own pixels, never enlarged.
+   *
+   * A single drawImage of an 8000 px photo down to 2048 aliases badly — thin lines and text break
+   * up — so while the source is more than twice the target in both directions it is halved into
+   * an intermediate canvas first. Each of those is one high-quality resample rather than one
+   * huge jump.
+   */
+  function canvasAt(img, scale){
+    var iw = img.width, ih = img.height;
+    if(!iw || !ih) return null;
+    var w = Math.max(1, Math.round(iw * scale));
+    var h = Math.max(1, Math.round(ih * scale));
+    var from = img, fw = iw, fh = ih;
+    // One halving of an 80 MP source is still 20 MP — over the cap, and a canvas over it can come
+    // back blank. Come inside the cap in one step before the halving loop starts.
+    if(fw * fh > CANVAS_MAX_PIXELS){
+      var fit = Math.sqrt(CANVAS_MAX_PIXELS / (fw * fh));
+      var cw = Math.max(w, Math.floor(fw * fit)), ch = Math.max(h, Math.floor(fh * fit));
+      var first = paintCanvas(cw, ch);
+      if(!first) return null;
+      first.ctx.drawImage(from, 0, 0, cw, ch);
+      from = first.canvas; fw = cw; fh = ch;
+    }
+    while(fw > w * 2 && fh > h * 2){
+      var mw = Math.max(w, Math.round(fw / 2)), mh = Math.max(h, Math.round(fh / 2));
+      var mid = paintCanvas(mw, mh);
+      if(!mid) return null;
+      mid.ctx.drawImage(from, 0, 0, mw, mh);
+      from = mid.canvas; fw = mw; fh = mh;
+    }
+    var out = paintCanvas(w, h);
+    if(!out) return null;
+    out.ctx.drawImage(from, 0, 0, w, h);
+    return out.canvas;
+  }
+
+  /**
+   * Encode one canvas, or null if the browser would not.
+   *
+   * The blob's own type is checked against the one asked for because iOS Safari quietly answers a
+   * WebP request with a PNG; a PNG wearing a .webp name is worse than no shrink at all. A JPEG
+   * gets a white ground first: JPEG has no alpha, and every transparent pixel would otherwise
+   * turn black.
+   */
+  function encodeAs(canvas, mime, quality){
+    if(mime === 'image/jpeg'){
+      var flat = paintCanvas(canvas.width, canvas.height);
+      if(!flat) return Promise.resolve(null);
+      flat.ctx.fillStyle = '#fff';
+      flat.ctx.fillRect(0, 0, canvas.width, canvas.height);
+      flat.ctx.drawImage(canvas, 0, 0);
+      canvas = flat.canvas;
+    }
+    return new Promise(function(resolve){
+      try {
+        canvas.toBlob(function(blob){ resolve(blob && blob.type === mime ? blob : null); }, mime, quality);
+      } catch(x){ resolve(null); }
+    });
+  }
+
+  /** Whether this browser really encodes WebP, asked once with a 1×1 canvas and remembered. */
+  var webpProbe = null;
+  function canEncodeWebp(){
+    if(webpProbe) return webpProbe;
+    webpProbe = new Promise(function(resolve){
+      try {
+        var c = document.createElement('canvas');
+        c.width = 1; c.height = 1;
+        c.toBlob(function(b){ resolve(Boolean(b && b.type === 'image/webp')); }, 'image/webp', 0.8);
+      } catch(x){ resolve(false); }
+    });
+    return webpProbe;
+  }
+
+  /**
+   * The highest quality whose blob fits, by bisection. Five rounds take 0.5–0.92 down to about
+   * 0.013, finer than one JPEG quantisation step, and each round is a full encode at 2048 px —
+   * so more rounds would cost a visible moment for bytes nobody can see.
+   */
+  function findQuality(canvas, mime, limit, lo, hi, best, rounds){
+    if(rounds <= 0 || hi - lo < 0.05) return Promise.resolve(best);
+    var q = (lo + hi) / 2;
+    return encodeAs(canvas, mime, q).then(function(blob){
+      if(!blob) return best;
+      if(blob.size <= limit) return findQuality(canvas, mime, limit, q, hi, blob, rounds - 1);
+      return findQuality(canvas, mime, limit, lo, q, best, rounds - 1);
+    });
+  }
+
+  /**
+   * One size: the top quality first (most screenshots fit there), then the bottom one to learn
+   * whether this size can fit at all, then the bisection between them. blob is the smallest
+   * encode made either way, because when no size fits that is what gets kept.
+   */
+  function encodeAtSize(canvas, mime, limit){
+    var smallest = null;
+    function note(blob){
+      if(blob && (!smallest || blob.size < smallest.size)) smallest = blob;
+      return blob;
+    }
+    return encodeAs(canvas, mime, SHRINK_QUALITY_MAX).then(function(top){
+      note(top);
+      if(top && top.size <= limit) return {fits:true, blob:top};
+      return encodeAs(canvas, mime, SHRINK_QUALITY_MIN).then(function(bottom){
+        note(bottom);
+        if(!bottom || bottom.size > limit) return {fits:false, blob:smallest};
+        return findQuality(canvas, mime, limit, SHRINK_QUALITY_MIN, SHRINK_QUALITY_MAX, bottom, 5)
+          .then(function(best){ note(best); return {fits:true, blob:best || bottom}; });
+      });
+    });
+  }
+
+  /** Whether this one is worth the canvas at all. Asked twice: once to say "Compressing…", once to work. */
+  function willShrink(f){
+    return Boolean(f && f.size && f.size > SHRINK_LIMIT && stillImage(f));
+  }
+
+  /**
+   * The smaller picture, or null to send the file as it is.
+   *
+   * Rejects nothing: every failure — no decoder, a canvas that will not give a context, an encoder
+   * that returns nothing — ends in null and a warning, because the person attached a picture and
+   * the send is not allowed to lose it.
+   */
+  function shrinkPhoto(file){
+    if(!willShrink(file)) return Promise.resolve(null);
+    var photo = null;
+    return decodePhoto(file).then(function(img){
+      photo = img;
+      return canEncodeWebp();
+    }).then(function(webp){
+      if(!photo) return null;
+      /**
+       * One pass at one format: the smallest encode made at each size, and whether the encoder
+       * produced anything at all. That second answer is what tells a too-big picture apart from
+       * a format this browser will not write.
+       */
+      function attempt(mime){
+        var smallest = null, any = false;
+        var w = photo.width, h = photo.height;
+        var long = Math.max(w, h) || 1;
+        var scale = Math.min(1, Math.sqrt(SHRINK_PIXELS / (w * h)), SHRINK_EDGE / long);
+        // The floor is the area a 1024 px long edge would have at this shape: below it a picture
+        // would fit by being too small to read, and what was made so far is the answer instead.
+        var floor = Math.min(1, SHRINK_EDGE_MIN / long);
+        function step(){
+          var canvas = canvasAt(photo, scale);
+          if(!canvas) return Promise.resolve({blob:smallest, any:any});
+          return encodeAtSize(canvas, mime, SHRINK_LIMIT).then(function(out){
+            if(out.blob){
+              any = true;
+              if(!smallest || out.blob.size < smallest.size) smallest = out.blob;
+            }
+            if(out.fits) return {blob:out.blob, any:true};
+            // Nothing at all, even at the bottom quality: a smaller canvas would fail the same
+            // way, so only the format is worth another try.
+            if(!out.blob) return {blob:smallest, any:any};
+            var next = scale * 0.72;
+            if(!(next < scale) || next < floor) return {blob:smallest, any:any};
+            scale = Math.max(floor, next);
+            return step();
+          });
+        }
+        return step();
+      }
+      if(!webp) return attempt('image/jpeg').then(function(r){ return r.blob; });
+      return attempt('image/webp').then(function(r){
+        // The 1×1 probe can be right and a full-size canvas wrong: iOS Safari answers the probe
+        // with WebP and a real encode with PNG, which encodeAs refuses. Nothing came back, so
+        // JPEG is still worth trying.
+        if(r.any) return r.blob;
+        return attempt('image/jpeg').then(function(j){ return j.blob; });
+      });
+    }).then(function(blob){
+      closePhoto(photo);
+      // Not smaller than what was attached means the re-encode spent quality and saved nothing.
+      return blob && blob.size < file.size ? {blob:blob} : null;
+    }, function(x){
+      closePhoto(photo);
+      console.warn('fleetherd: could not shrink ' + (file.name || 'a picture') + '; sending the original', x);
+      return null;
+    });
+  }
+
+  /**
+   * The extension follows the bytes. The daemon sniffs the magic number, so a wrong name is not a
+   * format bug — but a JPEG called IMG_0001.HEIC is a trap for whoever saves it later, and the
+   * agent reads the name too.
+   */
+  function withMime(name, mime){
+    var base = String(name || 'image');
+    // Only a known picture extension is replaced. "2026.11 photo" is a name, not a .11 photo.
+    if(STILL_NAME.test(base)) base = base.replace(/\.[^.]*$/, '');
+    var sub = mime === 'image/jpeg' ? 'jpg' : String(mime || '').split('/')[1];
+    return (base || 'image') + '.' + (sub || 'jpg').toLowerCase();
+  }
+
+  /**
+   * What each composer is still waiting for, by topic, and the Send tap that arrived during the
+   * wait. Both are per topic: a picture being shrunk in one conversation must not hold up a send
+   * in another, and "Compressing…" may only appear over the composer it belongs to. A picture
+   * smaller than 300 KB is not worth a canvas, so it never counts here.
+   */
+  var pendingBy = {}, shrinkingBy = {}, queuedSend = null, noteOwner = null;
+  function countUp(map, id){ map[id] = (map[id] || 0) + 1; }
+  function countDown(map, id){
+    if((map[id] || 0) > 1) map[id]--;
+    else delete map[id];
+  }
+  function notePending(){
+    var n = shrinkingBy[topic] || 0;
+    if(!n){ clearPendingNote(); return; }
+    if(noteOwner === null && note.textContent) return;
+    noteOwner = 'Compressing ' + (n > 1 ? n + ' pictures' : 'picture') + '...';
+    note.textContent = noteOwner;
+  }
+  function clearPendingNote(){
+    if(noteOwner !== null && note.textContent === noteOwner) note.textContent = '';
+    noteOwner = null;
+  }
+  /**
+   * One file has become an attachment, or failed to. A queued Send happens only if the person is
+   * still in the topic they pressed it in and nothing else is still coming there; a switch away
+   * cancels it, and the text and picture stay in that topic's draft for when they come back.
+   */
+  function settled(into, tookCanvas){
+    countDown(pendingBy, into);
+    if(tookCanvas) countDown(shrinkingBy, into);
+    if(into === topic) notePending();
+    if(pendingBy[into]) return;
+    var queued = queuedSend;
+    if(!queued || queued.topic !== into) return;
+    queuedSend = null;
+    if(into === topic) send();
+  }
+
+  // The rename argument exists for the clipboard, which is the one source that hands over files
+  // the browser has already named badly — see the paste handler below. Everything else passes
+  // the name through, and this stays the single place a file becomes a chip.
+  function take(list, rename){
+    // The topic this is being attached in, fixed now: the shrink and the FileReader both answer a
+    // turn or more later, and a topic switched to in between must not receive a file picked in
+    // the one before it.
+    var into = topic;
+    for(var i=0;i<list.length;i++){
+      (function(f){
+        // The name is fixed here rather than after the shrink: the clipboard's counter has to
+        // advance in the order the files were handed over, or two pastes share one name.
+        var name = (rename ? rename(f) : f.name) || 'file';
+        var tookCanvas = willShrink(f);
+        countUp(pendingBy, into);
+        if(tookCanvas) countUp(shrinkingBy, into);
+        notePending();
+        shrinkPhoto(f).then(function(out){
+          var blob = out ? out.blob : f;
+          var mime = out ? out.blob.type : (f.type || '');
+          if(out) name = withMime(name, mime);
+          return readBase64(blob).then(function(data){
+            if(data === null){
+              // Degrade explicitly: the picture is not attached, and #note names the one that
+              // failed — in the composer it was attached in, never over whichever topic is on
+              // screen now.
+              if(into === topic){
+                noteOwner = null;
+                note.textContent = 'Could not read ' + name + '; it was not attached.';
+              } else {
+                console.warn('fleetherd: could not read ' + name + '; it was not attached');
+              }
+              return;
+            }
+            var file = {name:name, mime:mime, data:data};
+            if(!into || into === topic){ files.push(file); renderChips(); return; }
+            var d = drafts[into] || (drafts[into] = {text:'', s:0, e:0, files:[]});
+            d.files.push(file);
+          });
+        }).then(function(){ settled(into, tookCanvas); }, function(x){
+          // Nothing above is supposed to reject; if it ever does, the send must still be let go.
+          console.warn('fleetherd: could not prepare ' + name + '; it was not attached', x);
+          settled(into, tookCanvas);
+        });
+      })(list[i]);
+    }
+  }
+
+  // Every engine calls a pasted screenshot 'image.png', so two of them in one message would
+  // arrive as two attachments neither the chips nor the agent can tell apart. A counter is
+  // enough: the name only has to be distinct within the message being composed.
+  var pastes = 0;
+  function pastedName(f){
+    var type = f.type || 'image/png';
+    var slash = type.indexOf('/');
+    var ext = slash > 0 ? type.slice(slash+1).split(';')[0].split('+')[0] : 'png';
+    pastes++;
+    return 'pasted-' + pastes + '.' + ext;
+  }
+
+  picker.addEventListener('change', function(){ take(picker.files); picker.value=''; });
+  $('attach').addEventListener('click', function(){ picker.click(); });
+  document.addEventListener('dragover', function(e){ e.preventDefault(); });
+  document.addEventListener('drop', function(e){
+    e.preventDefault();
+    // Not while a conversation from History covers the composer: the file would go, unseen, to the
+    // topic underneath.
+    if(libOn()) return;
+    if(e.dataTransfer && e.dataTransfer.files) take(e.dataTransfer.files);
+  });
+  // Ctrl-V of a screenshot, which is the thing most worth showing an agent and the slowest to
+  // get to it any other way. On the document rather than the textarea: the composer is not
+  // necessarily focused after clicking a topic or a button, and a paste that reaches nothing is
+  // indistinguishable from a broken feature. The login field is the only other paste target on
+  // the page and a file is not a token, so nothing is taken away from it.
+  //
+  // preventDefault only once a file has actually been picked up. A clipboard carrying an image
+  // usually carries an img tag in text/html beside it — swallowing that is the point — but a
+  // plain text paste must still land in the textarea the ordinary way.
+  document.addEventListener('paste', function(e){
+    var items = e.clipboardData && e.clipboardData.items;
+    if(!items || libOn()) return;
+    var found = [];
+    for(var i=0;i<items.length;i++){
+      if(items[i].kind !== 'file') continue;
+      var f = items[i].getAsFile();
+      if(f) found.push(f);
+    }
+    if(!found.length) return;
+    e.preventDefault();
+    take(found, pastedName);
+  });
+
+  /**
+   * The voice-message button: tap to record, tap again to send.
+   *
+   * A recording is sent the moment it stops, as a message of its own, and the composer is left
+   * alone. Both halves are load-bearing. The daemon transcribes a message that is audio and NOTHING
+   * else (core/voice.ts) — a recording sent together with a half-typed draft would be read as a
+   * file with a caption, and handed to the agent untranscribed. And whatever was being typed is
+   * the user's, so recording must not cost it.
+   *
+   * The format is the browser's to choose, in this order: Ogg/Opus (Firefox), WebM/Opus
+   * (Chromium), MP4/AAC (Safari) — the transcriber takes all three. Capped at ten minutes, which
+   * is far past any voice message and well inside what the daemon will transcribe; at the cap it
+   * stops and sends rather than discarding what was said. Esc throws a recording away.
+   */
+  var micBtn=$('mic'), rec=null, recStarting=false, voices=0;
+  var MIC_TYPES=['audio/ogg;codecs=opus','audio/webm;codecs=opus','audio/mp4','audio/webm'];
+  var MIC_MAX_MS=10*60*1000;
+  micBtn.hidden = !(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
+
+  function recordType(){
+    for(var i=0;i<MIC_TYPES.length;i++){
+      try { if(MediaRecorder.isTypeSupported(MIC_TYPES[i])) return MIC_TYPES[i]; } catch(e){}
+    }
+    return '';
+  }
+  function micLabel(){
+    if(!rec){ micBtn.innerHTML=IC.icon.mic; micBtn.classList.remove('rec'); micBtn.title='Record a voice message'; return; }
+    var s=Math.floor((Date.now()-rec.started)/1000);
+    micBtn.innerHTML=IC.icon.stop+' '+Math.floor(s/60)+':'+('0'+(s%60)).slice(-2);
+    micBtn.classList.add('rec');
+    micBtn.title='Stop and send the recording (Esc discards it)';
+  }
+  function micFailed(e){
+    recStarting=false;
+    note.textContent='Could not record: '+((e && (e.message || e.name)) || 'the microphone is unavailable')+'.';
+    micLabel();
+  }
+  function releaseMic(r){ r.stream.getTracks().forEach(function(t){ t.stop(); }); }
+  function voiceExt(mime){ var sub=mime.split('/')[1] || 'webm'; return sub==='mp4' ? 'm4a' : sub; }
+
+  function startRec(){
+    recStarting=true;
+    navigator.mediaDevices.getUserMedia({audio:true}).then(function(stream){
+      recStarting=false;
+      var type=recordType(), mr;
+      try { mr = type ? new MediaRecorder(stream, {mimeType:type}) : new MediaRecorder(stream); }
+      catch(e){ stream.getTracks().forEach(function(t){ t.stop(); }); micFailed(e); return; }
+      var r={mr:mr, stream:stream, type:type, parts:[], started:Date.now(), keep:true, timer:0, cap:0};
+      mr.ondataavailable=function(ev){ if(ev.data && ev.data.size) r.parts.push(ev.data); };
+      mr.onstop=function(){
+        releaseMic(r);
+        if(!r.keep || !r.parts.length) return;
+        var mime=(mr.mimeType || r.type || 'audio/webm').split(';')[0];
+        var fr=new FileReader();
+        fr.onload=function(){
+          var s=String(fr.result), c=s.indexOf(',');
+          voices++;
+          dispatch('', [{name:'voice-'+voices+'.'+voiceExt(mime), mime:mime, data:c<0?'':s.slice(c+1)}]);
+        };
+        fr.readAsDataURL(new Blob(r.parts, {type:mime}));
+      };
+      rec=r;
+      mr.start();
+      r.timer=setInterval(micLabel, 1000);
+      r.cap=setTimeout(function(){ stopRec(true); }, MIC_MAX_MS);
+      note.textContent='';
+      micLabel();
+    }, micFailed);
+  }
+  function stopRec(keep){
+    var r=rec;
+    if(!r) return;
+    rec=null;
+    r.keep=keep;
+    clearInterval(r.timer); clearTimeout(r.cap);
+    micLabel();
+    try { r.mr.stop(); } catch(e){ releaseMic(r); }
+  }
+  micBtn.addEventListener('click', function(){
+    if(rec) stopRec(true);
+    else if(!recStarting && topic) startRec();
+  });
+  // Escape throws a recording away — unless it is an IME cancelling its candidate list, which is
+  // a different Escape and must not also cost the recording. Captured, and stopped there: while a
+  // recording is running Escape belongs to it, not to whatever the focus is on — the filter bar's
+  // own handler would otherwise fold its panel and swallow the keystroke.
+  document.addEventListener('keydown', function(e){
+    if(e.isComposing) return;
+    if(e.key === 'Escape' && rec){ stopRec(false); e.stopPropagation(); }
+  }, true);
+
+  function suggest(){
+    var v=input.value;
+    var picked=takesArg(v);
+    if(picked){
+      hints.innerHTML='<span class="arg-hint"><b>/'+text(picked.name)+' &lt;'+text(picked.options[0].name)+'&gt;</b> — '+text(picked.description)+'</span>';
+      hints.hidden=false;
+      return;
+    }
+    if(v.charAt(0)!=='/' || v.indexOf(' ')>=0 || v.indexOf('\n')>=0){ hints.hidden=true; hints.innerHTML=''; return; }
+    var q=v.slice(1).toLowerCase();
+    var hit=commands.filter(function(c){ return c.name.indexOf(q)===0; }).slice(0,8);
+    if(!hit.length){ hints.hidden=true; hints.innerHTML=''; return; }
+    var h='';
+    for(var i=0;i<hit.length;i++) h += '<button type="button" data-cmd="'+text(hit[i].name)+'" title="'+text(hit[i].description)+'">/'+text(hit[i].name)+'</button>';
+    hints.innerHTML=h; hints.hidden=false;
+  }
+
+  /**
+   * The command just chosen, when it takes an argument and nothing has been typed after it yet —
+   * "/super " and no job. The list it was picked from has gone by then, and with it the only place
+   * its description was (a button's title, which a phone never shows), so the hint row says what
+   * comes next instead. Gone at the first character typed.
+   */
+  function takesArg(v){
+    if(v.charAt(0)!=='/' || v.charAt(v.length-1)!==' ') return null;
+    var name=v.slice(1,-1);
+    for(var i=0;i<commands.length;i++){
+      var c=commands[i];
+      if(c.name===name && c.options && c.options.length) return c;
+    }
+    return null;
+  }
+
+  hints.addEventListener('click', function(e){
+    var b = e.target.closest ? e.target.closest('button[data-cmd]') : null;
+    if(!b) return;
+    input.value='/'+b.getAttribute('data-cmd')+' ';
+    suggest(); input.focus(); grow();
+  });
+
+  /**
+   * The request bodies of sends that have not been acknowledged, by nonce — what Retry re-posts.
+   *
+   * In memory only: the body carries the attachments as base64, which is not something to write
+   * into localStorage. What IS written down is the message itself, in unsent below; a text-only
+   * body is rebuilt from that after a reload, so only a message that carried files loses its Retry.
+   */
+  var outbox = {};
+
+  /**
+   * Every message sent from this page that the daemon has not acknowledged, by nonce, written
+   * through to localStorage at the moment it is sent — before the request leaves, and before the
+   * composer's draft is cleared, so there is no instant at which the text is in neither place.
+   *
+   * This is what a connection that goes away mid-send costs nothing of. A Cloudflare Access session
+   * that expires answers every request with a redirect to its sign-in page, so the send fails, the
+   * stream cannot reconnect, and the only way back is a reload; a dead link is the same with a grey
+   * bubble instead of a red one. Before this the bubble was all there was of the message: one still
+   * in flight at the reload was gone, and one that had failed came back from the transcript cache
+   * only to be sorted above the whole topic by the first sync. And a send still in flight when the
+   * topic was switched away from failed with no bubble left to turn red.
+   *
+   * A record goes when the daemon has it — a 2xx, or its echo, in an event or in a sync — or when
+   * it is discarded, or its topic is. { t: topic, x: text, n: file names, at, s: 'sending' |
+   * 'failed' | 'unsure', g: the daemon's epoch when it was sent }. Text over DRAFT_MAX is kept in
+   * memory only, for the same reason a draft that long is.
+   */
+  var UNSENT='aa_unsent';
+  var unsent={};
+  (function(){
+    var saved=null;
+    try { saved = JSON.parse(localStorage.getItem(UNSENT) || 'null'); } catch(x){}
+    if(!saved || typeof saved !== 'object') return;
+    for(var n in saved){
+      var r = saved[n];
+      if(!Object.prototype.hasOwnProperty.call(saved, n) || !r || typeof r.t !== 'string' || typeof r.x !== 'string') continue;
+      // Anything not known to have failed was on its way when the last page went away, and nothing
+      // that page saw can say how that ended. The first sync can.
+      unsent[n] = {t:r.t, x:r.x, n:Array.isArray(r.n) ? r.n.map(String) : [], at:Number(r.at) || 0,
+        s:r.s === 'failed' ? 'failed' : 'unsure', g:Number(r.g) || 0};
+    }
+  })();
+
+  /**
+   * Write one record through, leaving every other one as it is ON DISK — a second tab on this origin
+   * has sends of its own, and its record must not be put back after it has been acknowledged there.
+   */
+  function writeUnsent(nonce){
+    try {
+      var all = JSON.parse(localStorage.getItem(UNSENT) || 'null') || {};
+      var r = unsent[nonce];
+      if(r && r.x.length <= DRAFT_MAX) all[nonce] = r;
+      else if(Object.prototype.hasOwnProperty.call(all, nonce)) delete all[nonce];
+      else return;
+      var left = false;
+      for(var k in all) if(Object.prototype.hasOwnProperty.call(all, k)){ left = true; break; }
+      if(left) localStorage.setItem(UNSENT, JSON.stringify(all)); else localStorage.removeItem(UNSENT);
+    } catch(x){}
+  }
+
+  function dropUnsent(nonce){
+    if(!unsent[nonce]) return;
+    delete unsent[nonce];
+    writeUnsent(nonce);
+  }
+
+  /** The bubble for one record, in the shape dispatch draws one. */
+  function localMsg(nonce, r){
+    return { id:'p:'+nonce, _local:1, _nonce:nonce, _state:r.s, _text:r.x,
+      own:true, html:localBody(r.x, r.n), at:r.at, buttons:[], reactions:[] };
+  }
+
+  /**
+   * Draw what was sent into this topic and not acknowledged, oldest first, where it is not drawn
+   * already. A text-only one gets its body back, which is all Retry needs; nonce and all, so a Retry
+   * of one that did land is answered as the duplicate it is.
+   */
+  function showUnsent(tId){
+    var list=[];
+    for(var n in unsent){
+      if(Object.prototype.hasOwnProperty.call(unsent, n) && unsent[n].t === tId && !data['p:'+n]) list.push(n);
+    }
+    if(!list.length) return;
+    list.sort(function(a, b){ return unsent[a].at - unsent[b].at; });
+    var stick = atBottom();
+    for(var i=0;i<list.length;i++){
+      var r = unsent[list[i]];
+      if(!outbox[list[i]] && !r.n.length) outbox[list[i]] = {topic:r.t, text:r.x, nonce:list[i]};
+      data['p:'+list[i]] = localMsg(list[i], r);
+      paint('p:'+list[i]);
+    }
+    sinkLocals();
+    syncEmptyNote();
+    if(stick) toBottom();
+  }
+
+  /**
+   * After a sync: a message restored as 'unsure' that it did not claim never arrived — provided the
+   * daemon that answered is the one it was sent to. A restarted one starts with an empty ring, so
+   * its silence says nothing, and the message goes on saying it does not know.
+   */
+  function settleUnsure(){
+    for(var n in unsent){
+      if(!Object.prototype.hasOwnProperty.call(unsent, n)) continue;
+      var r = unsent[n];
+      if(r.t === topic && r.s === 'unsure' && r.g && r.g === epoch) setLocal(n, 'failed');
+    }
+  }
+
+  /**
+   * A failure out of a transcript cache written before unsent existed, when the cache was where a
+   * failed message was kept. Moved here, because the cache no longer carries local messages and the
+   * next write of it would otherwise lose this one a reload later.
+   */
+  function adoptLegacy(m){
+    var n = m._nonce;
+    if(!n || unsent[n]) return false;
+    var t = document.createElement('template');
+    t.innerHTML = String(m.html || '');
+    var chips = t.content.querySelectorAll('.files .chip'), names = [];
+    for(var i=0;i<chips.length;i++) names.push(chips[i].textContent);
+    unsent[n] = {t:topic, x:String(m._text || ''), n:names, at:Number(m.at) || 0, s:'failed', g:0};
+    writeUnsent(n);
+    return true;
+  }
+
+  /**
+   * The same shape renderBody builds server-side, minus the pictures, so the echo can replace it in
+   * place. The pictures arrive with the echo: they are served from the daemon's copy, and drawing
+   * them here would mean putting the whole file into this bubble as a data: URL — which a bubble
+   * rebuilt from unsent after a reload could not do again, since unsent keeps names and never bytes.
+   */
+  function localBody(typed, names){
+    var h = '<div class="raw">'+text(typed)+'</div>';
+    if(!names.length) return h;
+    var chips='';
+    for(var i=0;i<names.length;i++) chips += '<span class="chip">'+text(names[i])+'</span>';
+    return h + '<div class="files">'+chips+'</div>';
+  }
+
+  /**
+   * Show the message, then send it — in that order, and independently.
+   *
+   * Waiting for the daemon's echo to draw it meant a visibly empty transcript for as long as the
+   * round trip took, and on a request that failed after its retries it meant the text was gone:
+   * out of the composer, never into the conversation, nowhere to copy it back from. The local
+   * bubble is the message until the echo claims it, and if nothing ever claims it, it stays and
+   * says so.
+   */
+  function send(){
+    // A picture still being shrunk in THIS topic is not in files yet, so a send now would leave
+    // it out — or wait for nothing and look broken. The tap is remembered for this topic and
+    // happens when its last picture lands; #note says why nothing moved yet, unless it is
+    // carrying something of its own. Another topic's pictures do not hold this send.
+    if(pendingBy[topic]){
+      queuedSend = {topic:topic};
+      notePending();
+      return;
+    }
+    var typed = input.value;
+    if(!typed.trim() && !files.length) return;
+    var attached = files;
+    input.value=''; files=[]; renderChips(); suggest(); grow();
+    // Dispatched first, because dispatch is what writes the message down as unsent. Only then is
+    // the stored draft of this topic cleared — left on disk, a reload would put it back in the
+    // composer to be sent again.
+    dispatch(typed, attached);
+    stashDraft(topic);
+  }
+
+  /**
+   * Send a command on behalf of a control (Stop, the power button): exactly what typing it would
+   * post — same bubble, same nonce, same echo — so the daemon has one way to be told and the
+   * transcript records the command like any other.
+   *
+   * The composer is left alone on purpose. A half-written prompt is what someone reaching for Stop
+   * mid-reply is most likely to have in there, and pressing it must not cost them that.
+   */
+  function command(text){
+    if(topic) dispatch(text, []);
+  }
+
+  function dispatch(typed, attached){
+    var nonce = Math.random().toString(36).slice(2)+Date.now().toString(36);
+    var body = {topic:topic, text:typed, nonce:nonce};
+    var names = [];
+    for(var i=0;i<attached.length;i++) names.push(attached[i].name);
+    if(attached.length) body.files = attached;
+    outbox[nonce] = body;
+    unsent[nonce] = {t:topic, x:typed, n:names, at:Date.now(), s:'sending', g:epoch};
+    writeUnsent(nonce);
+    data['p:'+nonce] = localMsg(nonce, unsent[nonce]);
+    paint('p:'+nonce);
+    // A side question opens its card at once, saying it is being asked: the answer can take a
+    // while to start, and the line alone would not say anything was happening.
+    if(btwAsked('p:'+nonce, data['p:'+nonce]) !== null) openBtw('p:'+nonce);
+    syncEmptyNote();
+    // Unconditionally, unlike an arriving message: you have just written this one, so wherever
+    // you were in the history is not where you want to be now.
+    toBottom();
+    deliver(nonce);
+  }
+
+  /**
+   * Post one queued message, for the first time or on a Retry.
+   *
+   * The same nonce goes out every time on purpose: the server remembers the last 64 and answers
+   * a repeat as if it were the original, so a Retry after a request that actually landed cannot
+   * duplicate the message — and the echo of the first attempt retires this bubble either way.
+   */
+  function deliver(nonce){
+    var body = outbox[nonce];
+    if(!body) return;
+    setLocal(nonce, 'sending');
+    // post() can throw before it returns a promise — JSON.stringify on a body too big for the
+    // engine to build as one string. Left to escape, the bubble stayed 'sending' for ever, because
+    // nothing was attached that could ever change it; as a rejection it becomes a failure, with
+    // Copy and Discard, like any other message that did not go.
+    var sent;
+    try { sent = post('api/send', body.files ? framed(body) : body, 2, sendLimit(body)); }
+    catch(x){ sent = Promise.reject(x); }
+    sent.then(function(r){
+      setLocal(nonce, (r && r.ok) ? 'sent' : 'failed');
+    }, function(){
+      setLocal(nonce, 'failed');
+    });
+  }
+
+  function setLocal(nonce, state){
+    // The record first, and whether or not the bubble is on screen: a send still in flight when its
+    // topic was switched away from settles here too, and the record is all that is left of it. A
+    // 2xx is the daemon holding the message, so from there on its ring is what has it. Only a
+    // change is written — a first attempt is already on disk as 'sending', put there by dispatch.
+    var r = unsent[nonce];
+    if(r && r.s !== state){
+      if(state === 'sent'){
+        delete unsent[nonce];
+        // The daemon has the message, so a suggestion an Adopt opened this topic for is dealt
+        // with — only if this message still carries it (settleAdopted).
+        settleAdopted(r.t, r.x);
+      } else r.s = state;
+      writeUnsent(nonce);
+    }
+    var key='p:'+nonce, m=data[key];
+    if(!m) return;
+    // Measured before the repaint: a failure grows the bubble by a warning line and three
+    // buttons, and a reader sitting at the bottom would otherwise have the new controls pushed
+    // off the screen they were just looking at.
+    var stick = atBottom();
+    m._state = state;
+    paint(key);
+    if(stick) toBottom();
+  }
+
+  /**
+   * Put text on the clipboard.
+   *
+   * With a fallback, because navigator.clipboard does not exist on an insecure origin and
+   * plain http is exactly how this page is expected to be reached on a LAN. done() is told
+   * which way it went, so the caller can say so rather than reporting success it did not have.
+   */
+  function copyText(s, done){
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(s).then(function(){ done(true); }, function(){ done(fallbackCopy(s)); });
+      return;
+    }
+    done(fallbackCopy(s));
+  }
+
+  /** The text of a failed message, on the clipboard. */
+  function copyLocal(nonce, btn){
+    var m=data['p:'+nonce]; if(!m) return;
+    copyText(m._text, function(ok){ btn.textContent = ok ? 'Copied' : 'Select it above'; });
+  }
+
+  function fallbackCopy(s){
+    // The temporary field takes the selection, and with it the focus. Keep what had it, take the
+    // field out on every path (an execCommand that throws must not leave it in the page), and put
+    // the focus back where the person left it.
+    var prev = document.activeElement, ta = null;
+    try {
+      ta = document.createElement('textarea');
+      ta.value = s;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.top = '-1000px';
+      document.body.appendChild(ta);
+      ta.select();
+      return Boolean(document.execCommand('copy'));
+    } catch(x){ return false; }
+    finally {
+      if(ta && ta.parentNode) ta.parentNode.removeChild(ta);
+      if(prev && prev.focus){ try { prev.focus(); } catch(x){} }
+    }
+  }
+
+  function discardLocal(nonce){
+    delete outbox[nonce];
+    dropUnsent(nonce);
+    drop('p:'+nonce);
+    // For a failure an older page kept in the transcript cache: rewritten without it, or the next
+    // read of the cache would bring it back.
+    cacheSave();
+  }
+
+  input.addEventListener('input', function(){
+    grow(); suggest();
+    // Re-armed by every key, so it fires once typing pauses. stashDraft is what clears it, and every
+    // switch calls that for the topic being left, so this never lands on the wrong one.
+    clearTimeout(draftTimer);
+    draftTimer = setTimeout(function(){ stashDraft(topic); }, DRAFT_IDLE_MS);
+  });
+  /**
+   * Enter sends and Shift-Enter writes a newline — except under the narrow-screen layout, where
+   * the two are the other way round.
+   *
+   * 1.22.0 made Enter a newline on every width, and the half of that which was right is the
+   * phone: held upright there is no Shift key to hold down, so Enter-to-send makes a multi-line
+   * prompt impossible to type rather than merely awkward, and a stray Enter costs a half-written
+   * one. Neither is true of a keyboard, where Shift-Enter is right there and every other chat
+   * app on that screen sends on Enter — paying the cost of the phone's problem on a desktop buys
+   * nothing. Ctrl/Cmd-Enter sends on both, so what 1.22.0 taught still works.
+   *
+   * narrow() is read per keypress rather than once: rotating a phone and dragging a window both
+   * change the answer, and it is the same breakpoint the CSS uses to decide the layout — where
+   * the phone layout applies, the phone's Enter applies.
+   */
+  input.addEventListener('keydown', function(e){
+    // isComposing is an IME candidate being chosen, on either shortcut. It is a keystroke the
+    // composer never sees the end of, and sending on it truncates the word being typed.
+    if(e.key!=='Enter' || e.isComposing) return;
+    if(e.ctrlKey || e.metaKey){ e.preventDefault(); send(); return; }
+    if(e.shiftKey || e.altKey || narrow()) return;
+    e.preventDefault(); send();
+  });
+  $('composer').addEventListener('submit', function(e){ e.preventDefault(); send(); });
+  killBtn.addEventListener('click', function(){ command('/kill'); });
+  stopBtn.addEventListener('click', function(){ command('/stop'); });
+
+  /**
+   * Retire the local bubble this message is the echo of.
+   *
+   * The node is REUSED rather than replaced: creating another element with the same content
+   * would re-run the fade-in and move the scroll under whoever is reading, for a message that
+   * has been on screen since it was typed.
+   */
+  function claim(m){
+    if(!m.nonce) return;
+    var pk = 'p:' + m.nonce;
+    delete outbox[m.nonce];
+    // The echo can beat the 2xx: the daemon emits it before it answers the POST. The message has
+    // gone out either way, so an Adopt's suggestion is settled here too — by the time setLocal
+    // hears the 2xx there is no unsent record left for it to ask.
+    var r = unsent[m.nonce];
+    dropUnsent(m.nonce);
+    if(r) settleAdopted(r.t, r.x);
+    if(!els[pk]) return;
+    var key = (m.g || epoch) + ':' + m.id;
+    if(els[key]){ els[pk].remove(); }
+    else {
+      els[key]=els[pk];
+      sig[key]=sig[pk];
+      els[key].setAttribute('data-k', key);
+    }
+    delete els[pk];
+    delete sig[pk];
+    delete data[pk];
+    // A side question's card follows it to the key the daemon gave it.
+    if(btwKey === pk) btwKey = key;
+    if(btwShut[pk]){ btwShut[key] = 1; delete btwShut[pk]; }
+  }
+
+  // What was being typed into this topic before the reload. A visit with no ?t= does not know its
+  // topic yet, and picks its draft up from the first sync.
+  if(topic && drafts[topic]) loadDraft(topic);
+
+  // Reopens the pane a reload arrived in, when ?t= already named a topic. Without one this
+  // does nothing and the sync handler picks it up instead.
+  applyTerm();
+
+  // In the one way a topic is entered. No sync has said which run of the daemon is on the other
+  // end yet, so nothing is resumed: the stream opens at once and asks for a sync, and the copy this
+  // browser already has is painted as it comes — on a slow link long before the stream has said
+  // anything, and after a restart even though the daemon can no longer produce it. So is what was
+  // sent from it and never acknowledged. A visit with no ?t= is painted from the sync instead.
+  enter(topic);
+})();

@@ -49,7 +49,7 @@ import type { InstructionsPanel, InstructionsTarget } from '../adapter.js';
 import { ASSET_FILE, loadAssets, type WebAssets } from './assets.js';
 import { SESSION_COOKIE, readCookie, sessionCookie, type WebAuth } from './auth.js';
 import { ICON_PNG, ICON_SVG, renderManifest } from './manifest.js';
-import { servePage } from './page.js';
+import { servePage, type PageAssets } from './page.js';
 import {
   ClickRequestSchema,
   CreateTopicRequestSchema,
@@ -375,6 +375,11 @@ interface Route {
   method: string;
   path: string;
   prefix?: boolean;
+  /**
+   * Which of the names under a prefix this entry answers; the rest go on down the tables as if it
+   * were not there. How one prefix can be open for two files and guarded for everything else.
+   */
+  only?: (rest: string, ctx: Ctx) => boolean;
   run: (rq: Req, ctx: Ctx) => Promise<void> | void;
 }
 
@@ -396,6 +401,18 @@ const OPEN: Route[] = [
   // Open for the reason the manifest is: the browser fetches it again on its own schedule to look
   // for an update, with or without a live session, and it holds nothing but the script in sw.ts.
   { method: 'GET', path: '/sw.js', run: ({ req, res }) => sendServiceWorker(req, res) },
+  // The page's own script and stylesheet. Open because the page above is a shell without them,
+  // and it is served to someone who has not signed in yet — the gate is drawn and submitted by
+  // that script. They are the bytes the page used to carry inline, which was already open, so
+  // nothing is disclosed that was not. Only those two names (`only`): the code view's bundle
+  // under the same prefix is not needed before sign-in, and stays behind the session (GUARDED).
+  {
+    method: 'GET',
+    path: '/assets/',
+    prefix: true,
+    only: (rest, ctx) => rest === ctx.assets.app || rest === ctx.assets.style,
+    run: ({ req, res, rest }, ctx) => asset(req, res, ctx.assets, rest),
+  },
 ];
 
 /** Everything else. */
@@ -470,8 +487,9 @@ const GUARDED: Route[] = [
   // The same token, rendered for the reader instead of handed over: JSON holding HTML built by
   // `reading.ts`, never the file's own bytes or type. See `view`.
   { method: 'GET', path: '/view/', prefix: true, run: ({ req, res, rest }, ctx) => view(req, res, ctx.room, rest) },
-  // The code view's bundle, and the language chunks it imports. The one route that serves a
-  // script off disk — see `asset`, and the security note beside the page's CSP.
+  // Every built asset: the code view's bundle and the language chunks it imports, and the page's
+  // own script and stylesheet (also reachable before sign-in, see OPEN). The one route that serves
+  // a script off disk — see `asset`, and the security note beside the page's CSP.
   { method: 'GET', path: '/assets/', prefix: true, run: ({ req, res, rest }, ctx) => asset(req, res, ctx.assets, rest) },
   // The terminal pane's backend. Listed unconditionally even though the feature is usually
   // off, so this table stays the complete answer to "what is reachable"; `terminalPage`
@@ -508,11 +526,13 @@ const GUARDED: Route[] = [
  * to read at a glance; and a route added to the wrong list is then a visible mistake rather
  * than a missing `if`.
  */
-function match(routes: readonly Route[], method: string, path: string): { route: Route; rest: string } | undefined {
+function match(routes: readonly Route[], method: string, path: string, ctx: Ctx): { route: Route; rest: string } | undefined {
   for (const route of routes) {
     if (route.method !== method) continue;
     if (route.prefix) {
-      if (path.startsWith(route.path)) return { route, rest: path.slice(route.path.length) };
+      if (!path.startsWith(route.path)) continue;
+      const rest = path.slice(route.path.length);
+      if (!route.only || route.only(rest, ctx)) return { route, rest };
     } else if (path === route.path) {
       return { route, rest: '' };
     }
@@ -524,7 +544,7 @@ async function route(req: IncomingMessage, res: ServerResponse, ctx: Ctx): Promi
   const url = new URL(req.url ?? '/', 'http://x');
   const method = req.method ?? 'GET';
 
-  const open = match(OPEN, method, url.pathname);
+  const open = match(OPEN, method, url.pathname, ctx);
   if (open) return open.route.run({ req, res, url, rest: open.rest }, ctx);
 
   // One gate for everything else, rather than a check inside each handler, so a route added
@@ -532,7 +552,7 @@ async function route(req: IncomingMessage, res: ServerResponse, ctx: Ctx): Promi
   if (!(await admitted(req, ctx))) return send(req, res, 401, { error: 'not signed in' });
   if ((method === 'POST' || method === 'DELETE') && !sameOrigin(req)) return send(req, res, 403, { error: 'cross-origin request refused' });
 
-  const guarded = match(GUARDED, method, url.pathname);
+  const guarded = match(GUARDED, method, url.pathname, ctx);
   if (guarded) return guarded.route.run({ req, res, url, rest: guarded.rest }, ctx);
   send(req, res, 404, { error: 'no such route' });
 }
@@ -630,6 +650,12 @@ function sendPage(req: IncomingMessage, res: ServerResponse, ctx: Ctx): void {
   res.end(out);
 }
 
+/** The built files the page links, as page-relative URLs (see `PageAssets`). */
+function pageAssets(assets: WebAssets): PageAssets {
+  const at = (name: string | null): string | null => (name === null ? null : `assets/${name}`);
+  return { app: at(assets.app), style: at(assets.style), codeview: at(assets.codeview) };
+}
+
 /** Render, hash and compress the page — once per set of render inputs. */
 function servedPage(ctx: Ctx): ServedPage {
   const args = [
@@ -638,8 +664,8 @@ function servedPage(ctx: Ctx): ServedPage {
     passwordLogin(ctx.instance),
     ctx.terminal.sessions.canEnd,
     // Relative, like every other URL on the page: a gateway mounted under a sub-path serves the
-    // bundle from `<prefix>/assets/` and the page's own import resolves the same way.
-    ctx.assets.codeview === null ? null : `assets/${ctx.assets.codeview}`,
+    // assets from `<prefix>/assets/` and the page's own references resolve the same way.
+    pageAssets(ctx.assets),
     filesOn(ctx),
     instructionsOn(ctx),
   ] as const;
@@ -700,19 +726,27 @@ const PAGE_HEADERS: Record<string, string> = {
   // `worker-src 'self'` is what lets the page register sw.js (webpush.ts says why there is one).
   // It names where a WORKER may be loaded from and nothing else.
   //
-  // `script-src 'self'` is the code view (`/assets/`, see `asset`) and nothing else THIS FILE
-  // writes: the page's own script is still inline, and the only other JavaScript response a
-  // handler here produces is sw.js. `/term/` is not this file's to promise — `proxyRequest`
-  // copies the upstream's headers verbatim, so its Content-Type is ttyd's, whatever ttyd decides
-  // to serve (server.test.ts pins a fake upstream answering as JavaScript). What is left is the
+  // `script-src 'self'`, and nothing else: since Phase 1 Step 1A (docs/refactor-plan.md) the page
+  // has no inline script left — its own script and the code view are both files `/assets/` serves
+  // (see `asset`), and what the server decides per deployment travels as a JSON `boot-config`
+  // element, which no browser executes. So an inline script that got past web-markdown's escaping
+  // would not run at all, where before only an external one was refused. The only other
+  // JavaScript response a handler here produces is sw.js. `/term/` is not this file's to
+  // promise — `proxyRequest` copies the upstream's headers verbatim, so its Content-Type is
+  // ttyd's, whatever ttyd decides to serve (server.test.ts pins a fake upstream answering as
+  // JavaScript). What is left is the
   // hole an agent's file could climb through, and it is not one: a download is `attachment` with
   // `nosniff`, and its type is `application/octet-stream` unless it is one of the closed set of
   // raster images `inlineImageType` admits — so no bytes the agent wrote are ever parsed as a
   // script on this origin, and the reader shows an `.html` as source rather than a document. The
   // route is behind the session like everything else, and `server.test.ts` pins that no other
   // handler here carries a JavaScript content type.
+  //
+  // `style-src 'self'` is the page's stylesheet, from the same route. `'unsafe-inline'` stays
+  // beside it: the script sets `style` attributes throughout (widths, positions, the drawer), and
+  // the code view's CodeMirror injects its theme as `<style>` elements.
   'Content-Security-Policy':
-    "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline' 'self'; img-src 'self' data:; connect-src 'self'; frame-src 'self'; frame-ancestors 'self'; manifest-src 'self'; worker-src 'self'; form-action 'none'; base-uri 'none'",
+    "default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:; connect-src 'self'; frame-src 'self'; frame-ancestors 'self'; manifest-src 'self'; worker-src 'self'; form-action 'none'; base-uri 'none'",
   'X-Content-Type-Options': 'nosniff',
   'Referrer-Policy': 'no-referrer',
 };
@@ -1415,7 +1449,8 @@ async function readHead(file: string, limit: number): Promise<{ bytes: Buffer; s
 }
 
 /**
- * One file from the built asset directory — the code view's entry module and its language chunks.
+ * One file from the built asset directory — the page's own script and stylesheet, the code view's
+ * entry module and its language chunks.
  *
  * This is the only route that serves a script off disk, and it serves only what
  * `scripts/build-webui-assets.mjs` wrote: `ASSET_FILE` is one path segment with no leading dot,
@@ -1424,9 +1459,10 @@ async function readHead(file: string, limit: number): Promise<{ bytes: Buffer; s
  * anything but a name inside `dist/webui-assets/`.
  *
  * `immutable` because the name carries a content hash: the bytes behind a URL never change, and
- * a rebuild publishes a new name that the freshly rendered page points at. `text/javascript`
- * rather than sniffing is the point of the route — no agent-sent file can reach it, since a
- * download is served as an octet-stream attachment (see `download`) and never from here.
+ * a rebuild publishes a new name that the freshly rendered page points at. A declared type from
+ * the extension (`ASSET_FILE` admits `.js` and `.css` only) rather than sniffing is the point of
+ * the route — no agent-sent file can reach it, since a download is served as an octet-stream
+ * attachment (see `download`) and never from here.
  */
 async function asset(req: IncomingMessage, res: ServerResponse, assets: WebAssets, name: string): Promise<void> {
   if (!ASSET_FILE.test(name)) return send(req, res, 404, { error: 'no such asset' });
@@ -1435,8 +1471,11 @@ async function asset(req: IncomingMessage, res: ServerResponse, assets: WebAsset
   if (path.dirname(file) !== dir) return send(req, res, 404, { error: 'no such asset' });
   const bytes = await readFile(file).catch(() => undefined);
   if (!bytes) return send(req, res, 404, { error: 'no such asset' });
+  const type = name.endsWith('.css')
+    ? { 'Content-Type': 'text/css; charset=utf-8' }
+    : { 'Content-Type': 'text/javascript; charset=utf-8' };
   body(req, res, 200, bytes, {
-    'Content-Type': 'text/javascript; charset=utf-8',
+    ...type,
     'Cache-Control': 'public, max-age=31536000, immutable',
     'X-Content-Type-Options': 'nosniff',
   });

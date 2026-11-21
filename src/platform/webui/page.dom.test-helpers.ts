@@ -1,5 +1,5 @@
 /**
- * The inline client script, exercised in a real DOM.
+ * The client script, exercised in a real DOM.
  *
  * `page.test.ts` is the cheap half of testing this file: it greps the served HTML and proves the
  * script parses. That catches a stray brace and a character the template literal ate, and it
@@ -7,7 +7,8 @@
  * its event stream was perfectly healthy. Every gate in this repo was green for that bug, because
  * to all of them `page.ts` is one long string.
  *
- * So this file loads what the daemon actually serves into jsdom, stubs the two things a browser
+ * So this file loads what the daemon actually serves — the page, with the script and stylesheet
+ * it links put back inline (page.test-helpers.ts) — into jsdom, stubs the two things a browser
  * gives the script that Node does not (`EventSource` and `fetch`), and drives it through the
  * events `room.ts` really emits. The assertions are about what a person would see: how many
  * messages are on screen, whether the drawer is open, where the URL points.
@@ -33,7 +34,9 @@ export { JSDOM, type DOMWindow };
 import { IDBFactory } from 'fake-indexeddb';
 export { IDBFactory };
 
-import { renderPage, servePage } from './page.js';
+// The page with its script and stylesheet inline, built the way the asset build builds them
+// (page.test-helpers.ts says why and how): jsdom runs what the build ships.
+import { renderPage, servePage } from './page.test-helpers.js';
 export { renderPage, servePage };
 export { renderWebMarkdown, renderWebToolLines } from '../web-markdown.js';
 export { webMessageHtml } from './room.js';
@@ -494,9 +497,9 @@ export function pageOf(
   instructions = false,
   styles = false
 ): string {
-  const html = renderPage('Chat', terminal, password, terminalEnd, codeview ?? null, files, instructions);
-  // Stripping <style> skips jsdom's slow CSSOM parser (~43% of per-test cost); pass styles: true for CSS tests.
-  return styles ? html : html.replace(/<style>[\s\S]*?<\/style>/g, '<style></style>');
+  // Without styles the <style> is left empty: that skips jsdom's slow CSSOM parser (~43% of per-test
+  // cost); pass styles: true for CSS tests.
+  return servePage('Chat', terminal, password, terminalEnd, codeview ?? null, files, instructions, { as: 'built', styles }).html;
 }
 
 /**
