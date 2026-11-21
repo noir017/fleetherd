@@ -145,7 +145,10 @@ beforeEach(() => {
   fs.writeFileSync(file, FILE);
 });
 
-afterEach(() => {
+const daemons: Daemon[] = [];
+
+afterEach(async () => {
+  for (const d of daemons.splice(0)) await d.stop();
   for (const [k, v] of Object.entries(savedEnv)) {
     if (v === undefined) delete process.env[k];
     else process.env[k] = v;
@@ -205,12 +208,14 @@ function rig() {
     addReaction: async () => {},
     startTyping: async () => {},
     stopTyping: async () => {},
+    stop: async () => {},
     measureRendered: (t: string) => t.length,
   } as unknown as PlatformAdapter;
 
   const loaded = loadConfig();
   const cfg: Config = { ...loaded, inbound: { ...loaded.inbound, mergeWindowMs: 1, maxMergeWindowMs: 1 } };
   const daemon = new Daemon(cfg, new Map([['tg', platform]]), agents, path.join(dir, 'd.sock'));
+  daemons.push(daemon);
   const d = daemon as unknown as {
     onInbound(m: InboundMessage): void;
     reloadConfig(): { ok: boolean; summary: string };

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { Daemon } from './daemon.js';
 import { parseConfig, type Config } from '../config/schema.js';
 import type { PlatformAdapter } from '../platform/adapter.js';
@@ -20,6 +20,11 @@ import type { ButtonInteraction, InboundMessage, MessageRef, ModelSelector } fro
 const CONVERSATION = { platform: 'tg', channel: 'c1', kind: 'direct' as const, user: 'u1' };
 const MENU_MSG = 'menu-msg-id';
 const drain = (): Promise<void> => new Promise((r) => setTimeout(r, 30));
+const daemons: Daemon[] = [];
+
+afterEach(async () => {
+  for (const d of daemons.splice(0)) await d.stop();
+});
 
 const OPTIONS = [
   { value: 'custom-local:deepseek-v4.1-flash', name: 'DeepSeek V4.1 Flash' },
@@ -91,6 +96,7 @@ function rig(mode: Mode) {
     addReaction: async () => {},
     startTyping: async () => {},
     stopTyping: async () => {},
+    stop: async () => {},
     measureRendered: (t: string) => t.length,
   } as unknown as PlatformAdapter;
 
@@ -101,6 +107,7 @@ function rig(mode: Mode) {
   });
   const cfg: Config = { ...parsed, inbound: { ...parsed.inbound, mergeWindowMs: 1, maxMergeWindowMs: 1 } };
   const daemon = new Daemon(cfg, new Map([['tg', platform]]), agents, '/tmp/aa-custom-model-test.sock');
+  daemons.push(daemon);
   const d = daemon as unknown as { onInbound(m: InboundMessage): void; onButton(ev: ButtonInteraction): void };
   let n = 0;
   const send = async (content: string): Promise<void> => {

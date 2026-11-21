@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { Daemon } from './daemon.js';
 import { parseConfig } from '../config/schema.js';
 import type { SessionOptionList, SessionOptionResult, PlatformAdapter } from '../platform/adapter.js';
@@ -9,6 +9,11 @@ import type { AgentStatus, ConversationId, SessionOption, StatusOption } from '.
 import { useTempDirs } from '../test-utils/temp-dir.test-helpers.js';
 
 const makeTempDir = useTempDirs();
+const daemons: Daemon[] = [];
+
+afterEach(async () => {
+  for (const d of daemons.splice(0)) await d.stop();
+});
 
 /**
  * The switch a platform draws for the agent's own settings (`useOptionPicker`), through the
@@ -90,8 +95,10 @@ function rig(opts: { stored?: boolean } = {}) {
     platformType: 'webui',
     capabilities: { thread: true, editMessage: true, reaction: false, reply: true, slashCommands: true, typing: true, maxMessageLength: 100000 },
     sendMessage: async (address: unknown) => ({ address, messageId: 'm' }),
+    stop: async () => {},
   } as unknown as PlatformAdapter;
   const daemon = new Daemon(cfg, new Map([['web', platform]]), agents, '/tmp/aa-option-picker-test.sock', store);
+  daemons.push(daemon);
   const registry = (daemon as unknown as {
     registry: {
       idForRef(ref: typeof REF): ConversationId;

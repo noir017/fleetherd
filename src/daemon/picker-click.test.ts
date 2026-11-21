@@ -1,5 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { Daemon } from './daemon.js';
+
+const daemons: Daemon[] = [];
+
+afterEach(async () => {
+  for (const d of daemons.splice(0)) await d.stop();
+});
 import { parseConfig } from '../config/schema.js';
 import type { PlatformAdapter } from '../platform/adapter.js';
 import type { AgentFactory, AgentSession } from './agent.js';
@@ -89,10 +95,12 @@ function rig() {
     addReaction: async () => {},
     startTyping: async () => {},
     stopTyping: async () => {},
+    stop: async () => {},
     measureRendered: (t: string) => t.length,
   } as unknown as PlatformAdapter;
 
   const daemon = new Daemon(cfg, new Map([['tg', platform]]), agents, '/tmp/aa-picker-test.sock');
+  daemons.push(daemon);
   const d = daemon as unknown as {
     pendingPicks: Map<string, unknown>;
     onInbound(m: InboundMessage): void;

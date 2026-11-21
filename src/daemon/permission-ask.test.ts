@@ -40,7 +40,10 @@ const EDIT: AgentPermissionRequest = {
   ],
 };
 
-afterEach(() => {
+const daemons: Daemon[] = [];
+
+afterEach(async () => {
+  for (const d of daemons.splice(0)) await d.stop();
   vi.useRealTimers();
 });
 
@@ -92,10 +95,12 @@ function rig(caps: { buttons?: boolean } = {}, request: AgentPermissionRequest =
     addReaction: async () => {},
     startTyping: async () => {},
     stopTyping: async () => {},
+    stop: async () => {},
     measureRendered: (t: string) => t.length,
   } as unknown as PlatformAdapter;
 
   const daemon = new Daemon(cfg, new Map([['tg', platform]]), agents, '/tmp/aa-permission-test.sock');
+  daemons.push(daemon);
   const d = daemon as unknown as {
     onInbound(m: InboundMessage): void;
     onButton(ev: ButtonInteraction): void;
