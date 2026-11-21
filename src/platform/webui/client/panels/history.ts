@@ -1,0 +1,529 @@
+import type {
+  HistoryPanelHit,
+  HistoryPanelPage,
+  HistoryPanelSession,
+} from '../../../adapter.js';
+import type { WebMessage } from '../../protocol.js';
+import type { WebHistoryRead } from '../../room.js';
+
+export interface HistoryPanelDeps {
+  sidebar: HTMLElement;
+  bar: HTMLElement;
+  topicsFilterHost: HTMLElement;
+  sbTabTopics: HTMLElement;
+  sbTabHistory: HTMLElement;
+  historyPane: HTMLElement;
+  historyCountEl: HTMLElement;
+  historyBody: HTMLElement;
+  historyQ: HTMLInputElement;
+  historyGo: HTMLButtonElement;
+  historyErr: HTMLElement;
+  historyListEl: HTMLElement;
+  historyMore: HTMLButtonElement;
+  chat: HTMLElement;
+  log: HTMLElement;
+  hints: HTMLElement;
+  libLog: HTMLElement;
+  libTitle: HTMLElement;
+  libNote: HTMLElement;
+  libWhy: HTMLElement;
+  libTopicBtn: HTMLButtonElement;
+  libCloseBtn: HTMLButtonElement;
+  text: (s: unknown) => string;
+  atBottom: () => boolean;
+  firstVisible: () => Element | null;
+  toBottom: () => void;
+  getLogEl: (key: string) => Element | undefined;
+  closeModelPop: () => void;
+  paintFrames: () => void;
+  paintTermHeightIfOpen: () => void;
+  reportSeen: () => void;
+  topicExists: (id: string) => boolean;
+  switchTopic: (id: string) => void;
+  narrow: () => boolean;
+  setSidebar: (open: boolean) => void;
+  msgMarkup: (key: string, msg: WebMessage, isHist: boolean) => { cls: string; h: string };
+  codeBlocks: (root: Element) => void;
+  forgetOpenedPrefix: (prefix: string) => void;
+  openShot: (img: Element) => void;
+  toggleAll: (key: string | null) => void;
+  toggleLine: (line: Element) => void;
+}
+
+export interface HistoryPanel {
+  setTab: (tab: 'topics' | 'history') => void;
+  isOpen: () => boolean;
+  close: () => void;
+  getMessage: (key: string) => WebMessage | undefined;
+  repaintMessage: (key: string) => void;
+  refreshReadOnly: () => void;
+}
+
+interface HistorySearchResponse {
+  enabled?: boolean;
+  hits?: HistoryPanelHit[];
+  more?: boolean;
+  error?: string;
+}
+
+type HistoryReadResponse = Partial<WebHistoryRead> & { error?: string };
+
+function errorMessage(err: unknown): string {
+  if (err && typeof err === 'object' && 'message' in err && typeof err.message === 'string' && err.message) {
+    return err.message;
+  }
+  return 'network error';
+}
+
+function histWhen(at: number): string {
+  try {
+    const d = new Date(at);
+    const o: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' };
+    if (d.getFullYear() !== new Date().getFullYear()) o.year = 'numeric';
+    return d.toLocaleString(undefined, o);
+  } catch {
+    return '';
+  }
+}
+
+function renderHistoryRow(s: HistoryPanelSession, activeId: string | null, text: (s: unknown) => string): string {
+  const meta = [
+    s.agent || 'no agent',
+    s.platform || 'unknown',
+    histWhen(s.lastAt),
+    (s.messages || 0) + (s.messages === 1 ? ' message' : ' messages'),
+  ];
+  return (
+    '<div class="hist-item' +
+    (activeId !== null && String(s.id) === activeId ? ' on' : '') +
+    '" data-hist="' +
+    text(s.id) +
+    '" role="button" tabindex="0">' +
+    '<div class="hist-title">' +
+    text(s.title || '(untitled conversation)') +
+    '</div>' +
+    '<div class="hist-meta">' +
+    text(meta.join(' · ')) +
+    '</div></div>'
+  );
+}
+
+function renderHistoryHit(h: HistoryPanelHit, activeId: string | null, text: (s: unknown) => string): string {
+  const meta = [h.agent || 'no agent', h.platform || 'unknown', histWhen(h.at)];
+  return (
+    '<div class="hist-item' +
+    (activeId !== null && String(h.session) === activeId ? ' on' : '') +
+    '" data-hist="' +
+    text(h.session) +
+    '" role="button" tabindex="0">' +
+    '<div class="hist-title">' +
+    text(h.title || '(untitled conversation)') +
+    '</div>' +
+    '<div class="hist-excerpt">' +
+    text(h.excerpt) +
+    '</div>' +
+    '<div class="hist-meta">' +
+    text(meta.join(' · ')) +
+    '</div></div>'
+  );
+}
+
+function readOnlySentence(s: HistoryPanelSession, here: boolean): string {
+  if (here) {
+    return 'Read-only: this is the recorded copy. The conversation is still a topic on this page; open it to carry on.';
+  }
+  if (s.topic) {
+    return 'Read-only: its topic has been cleared from this page, so there is nowhere here to send a message.';
+  }
+  return (
+    'Read-only: this conversation ran on ' +
+    (s.platform || 'another platform') +
+    ', not in a topic on this page, so nothing can be sent to it from here.'
+  );
+}
+
+interface HistoryState {
+  sessions: HistoryPanelSession[];
+  next: string | null;
+  query: string;
+  seq: number;
+  tab: 'topics' | 'history';
+  libId: string | null;
+  libSession: HistoryPanelSession | null;
+  libData: Record<string, WebMessage>;
+  libEls: Record<string, Element>;
+  libSeq: number;
+  libSaved: { key: string; off: number } | null;
+}
+
+function isLibOpen(deps: HistoryPanelDeps): boolean {
+  return deps.chat.classList.contains('lib');
+}
+
+function logPlace(deps: HistoryPanelDeps): { key: string; off: number } | null {
+  const el = deps.log.clientHeight && !deps.atBottom() ? deps.firstVisible() : null;
+  const key = el?.getAttribute('data-k');
+  return el && key
+    ? { key, off: el.getBoundingClientRect().top - deps.log.getBoundingClientRect().top }
+    : null;
+}
+
+function markLibRow(state: HistoryState, deps: HistoryPanelDeps): void {
+  const rows = deps.historyListEl.querySelectorAll('[data-hist]');
+  for (const row of rows) {
+    row.classList.toggle('on', state.libId !== null && row.getAttribute('data-hist') === state.libId);
+  }
+}
+
+function refreshReadOnly(state: HistoryState, deps: HistoryPanelDeps): void {
+  const s = state.libSession;
+  if (!s) return;
+  const here = Boolean(s.topic) && deps.topicExists(s.topic ?? '');
+  deps.libTopicBtn.hidden = !here;
+  deps.libWhy.textContent = readOnlySentence(s, here);
+}
+
+function renderHistory(state: HistoryState, deps: HistoryPanelDeps): void {
+  state.query = '';
+  deps.historyErr.hidden = true;
+  deps.historyErr.textContent = '';
+  let h = '';
+  if (!state.sessions.length) {
+    h =
+      '<div class="skills-empty">No conversations yet. Every conversation this gateway records appears here, whichever agent or platform it ran on.</div>';
+  }
+  for (const s of state.sessions) h += renderHistoryRow(s, state.libId, deps.text);
+  deps.historyListEl.innerHTML = h;
+  const n = state.sessions.length;
+  deps.historyCountEl.textContent = n
+    ? n + (state.next ? '+' : '') + (n === 1 && !state.next ? ' conversation' : ' conversations')
+    : '';
+  deps.historyMore.hidden = !state.next;
+  deps.historyMore.disabled = false;
+}
+
+function loadHistory(state: HistoryState, deps: HistoryPanelDeps, before?: string): void {
+  const seq = ++state.seq;
+  deps.historyMore.disabled = true;
+  deps.historyErr.hidden = true;
+  deps.historyErr.textContent = '';
+  if (!before && (!state.sessions.length || state.query)) {
+    deps.historyListEl.innerHTML = '<div class="skills-empty">Loading\u2026</div>';
+    deps.historyCountEl.textContent = '';
+  }
+  fetch('api/history' + (before ? '?before=' + encodeURIComponent(before) : ''), { credentials: 'same-origin' })
+    .then((r) => {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json() as Promise<Partial<HistoryPanelPage> | null>;
+    })
+    .then((d) => {
+      if (seq !== state.seq) return;
+      const page = d || {};
+      if (page.enabled === false) {
+        deps.historyListEl.innerHTML = '<div class="skills-empty">This daemon has no conversation library.</div>';
+        deps.historyMore.hidden = true;
+        return;
+      }
+      const rows = page.sessions || [];
+      state.sessions = before ? state.sessions.concat(rows) : rows;
+      state.next = page.next || null;
+      renderHistory(state, deps);
+    })
+    .catch((e: unknown) => {
+      if (seq !== state.seq) return;
+      deps.historyErr.textContent = 'Could not read the conversation library: ' + errorMessage(e);
+      deps.historyErr.hidden = false;
+      if (!state.sessions.length || state.query) deps.historyListEl.innerHTML = '';
+      deps.historyMore.hidden = !state.next;
+      deps.historyMore.disabled = false;
+      if (before) deps.historyBody.scrollTop = deps.historyBody.scrollHeight;
+    });
+}
+
+function showHistoryList(state: HistoryState, deps: HistoryPanelDeps): void {
+  state.seq++;
+  if (state.sessions.length) renderHistory(state, deps);
+  else loadHistory(state, deps);
+}
+
+function runHistorySearch(state: HistoryState, deps: HistoryPanelDeps): void {
+  const q = deps.historyQ.value.trim();
+  if (!q) {
+    showHistoryList(state, deps);
+    return;
+  }
+  const seq = ++state.seq;
+  deps.historyMore.hidden = true;
+  deps.historyErr.hidden = true;
+  deps.historyErr.textContent = '';
+  deps.historyCountEl.textContent = '';
+  deps.historyListEl.innerHTML = '<div class="skills-empty">Searching\u2026</div>';
+  fetch('api/history/search?q=' + encodeURIComponent(q), { credentials: 'same-origin' })
+    .then((r) => r.json().then((d: HistorySearchResponse) => ({ ok: r.ok, d })))
+    .then((a) => {
+      if (seq !== state.seq) return;
+      if (!a.ok || !a.d || a.d.error) {
+        deps.historyListEl.innerHTML =
+          '<div class="skills-empty">' + deps.text((a.d && a.d.error) || 'could not search the library') + '</div>';
+        return;
+      }
+      if (a.d.enabled === false) {
+        deps.historyListEl.innerHTML = '<div class="skills-empty">This daemon has no conversation library.</div>';
+        return;
+      }
+      state.query = q;
+      const hits = a.d.hits || [];
+      if (!hits.length) {
+        deps.historyListEl.innerHTML = '<div class="skills-empty">Nothing matches “' + deps.text(q) + '”.</div>';
+        return;
+      }
+      let h = '';
+      for (const hit of hits) h += renderHistoryHit(hit, state.libId, deps.text);
+      deps.historyListEl.innerHTML = h;
+      deps.historyCountEl.textContent =
+        hits.length + (a.d.more ? '+' : '') + (hits.length === 1 && !a.d.more ? ' match' : ' matches');
+    })
+    .catch((e: unknown) => {
+      if (seq !== state.seq) return;
+      deps.historyListEl.innerHTML =
+        '<div class="skills-empty">Could not search the library: ' + deps.text(errorMessage(e)) + '</div>';
+    });
+}
+
+function libFailed(deps: HistoryPanelDeps, msg: string): void {
+  deps.libTitle.textContent = 'History';
+  deps.libLog.innerHTML = '<div class="hist-note bad">' + deps.text(msg) + '</div>';
+  deps.libWhy.textContent = 'Nothing could be read, so nothing is shown.';
+}
+
+function paintLibRead(state: HistoryState, deps: HistoryPanelDeps, d: HistoryReadResponse): void {
+  const s = (d.session || {}) as HistoryPanelSession;
+  const title = s.title || '(untitled conversation)';
+  state.libSession = s;
+  deps.libTitle.textContent = title;
+  deps.libTitle.title = title;
+  const meta = [
+    s.agent || 'no agent',
+    s.platform || 'unknown',
+    'last active ' + histWhen(s.lastAt),
+    (s.messages || 0) + (s.messages === 1 ? ' message' : ' messages'),
+  ];
+  let h =
+    '<div class="lib-head"><div class="hist-meta">' +
+    deps.text(meta.join(' · ')) +
+    '</div><div class="hist-meta hist-key">' +
+    deps.text(s.key || '') +
+    '</div></div>';
+  const list = d.messages || [];
+  for (const msg of list) {
+    const key = 'h:' + msg.id;
+    state.libData[key] = msg;
+    const out = deps.msgMarkup(key, msg, false);
+    h += '<div class="' + out.cls + '" data-k="' + deps.text(key) + '">' + out.h + '</div>';
+  }
+  if (!list.length) h += '<div class="empty">This conversation has no recorded messages.</div>';
+  deps.libLog.innerHTML = h;
+  deps.codeBlocks(deps.libLog);
+  const nodes = deps.libLog.querySelectorAll('[data-k]');
+  for (const node of nodes) {
+    const k = node.getAttribute('data-k');
+    if (k) state.libEls[k] = node;
+  }
+  deps.libNote.hidden = !d.note;
+  deps.libNote.textContent = d.note || '';
+  refreshReadOnly(state, deps);
+  deps.libLog.scrollTop = deps.libLog.scrollHeight;
+}
+
+function openLib(state: HistoryState, deps: HistoryPanelDeps, rawId: string): void {
+  const id = String(rawId);
+  const seq = ++state.libSeq;
+  if (!isLibOpen(deps)) {
+    state.libSaved = logPlace(deps);
+    deps.closeModelPop();
+    if (!deps.hints.hidden) {
+      deps.hints.hidden = true;
+      deps.hints.innerHTML = '';
+    }
+    deps.chat.classList.add('lib');
+    deps.paintFrames();
+  }
+  state.libId = id;
+  state.libSession = null;
+  state.libData = {};
+  state.libEls = {};
+  deps.forgetOpenedPrefix('h:');
+  deps.libTitle.textContent = 'Loading\u2026';
+  deps.libTitle.title = '';
+  deps.libNote.hidden = true;
+  deps.libNote.textContent = '';
+  deps.libWhy.textContent = 'Read-only: a conversation from the library.';
+  deps.libTopicBtn.hidden = true;
+  deps.libLog.innerHTML = '<div class="empty">Loading\u2026</div>';
+  markLibRow(state, deps);
+  fetch('api/history/read?id=' + encodeURIComponent(id), { credentials: 'same-origin' })
+    .then((r) => r.json().then((d: HistoryReadResponse) => ({ ok: r.ok, d })))
+    .then((a) => {
+      if (seq !== state.libSeq || !isLibOpen(deps)) return;
+      if (!a.ok || !a.d || a.d.error) {
+        libFailed(deps, (a.d && a.d.error) || 'could not read that conversation');
+        return;
+      }
+      paintLibRead(state, deps, a.d);
+    })
+    .catch((e: unknown) => {
+      if (seq !== state.libSeq || !isLibOpen(deps)) return;
+      libFailed(deps, 'Could not read that conversation: ' + errorMessage(e));
+    });
+}
+
+function closeLib(state: HistoryState, deps: HistoryPanelDeps): void {
+  if (!isLibOpen(deps)) return;
+  state.libSeq++;
+  deps.chat.classList.remove('lib');
+  deps.paintFrames();
+  deps.paintTermHeightIfOpen();
+  state.libId = null;
+  state.libSession = null;
+  deps.forgetOpenedPrefix('h:');
+  state.libData = {};
+  state.libEls = {};
+  deps.libLog.innerHTML = '';
+  deps.libTitle.textContent = '';
+  markLibRow(state, deps);
+  const v = state.libSaved;
+  const el = v ? deps.getLogEl(v.key) : undefined;
+  state.libSaved = null;
+  if (el && v) deps.log.scrollTop += el.getBoundingClientRect().top - deps.log.getBoundingClientRect().top - v.off;
+  else deps.toBottom();
+  deps.reportSeen();
+}
+
+function setHistoryTab(state: HistoryState, deps: HistoryPanelDeps, tab: 'topics' | 'history'): void {
+  const hist = tab === 'history';
+  const was = state.tab;
+  state.tab = hist ? 'history' : 'topics';
+  deps.sbTabTopics.classList.toggle('on', !hist);
+  deps.sbTabHistory.classList.toggle('on', hist);
+  deps.sbTabTopics.setAttribute('aria-selected', hist ? 'false' : 'true');
+  deps.sbTabHistory.setAttribute('aria-selected', hist ? 'true' : 'false');
+  deps.sidebar.classList.toggle('on-history', hist);
+  deps.bar.hidden = hist;
+  deps.topicsFilterHost.hidden = hist;
+  deps.historyPane.hidden = !hist;
+  if (!hist) {
+    state.seq++;
+    closeLib(state, deps);
+    return;
+  }
+  if (was === 'history') return;
+  if (deps.historyQ.value.trim()) runHistorySearch(state, deps);
+  else loadHistory(state, deps);
+}
+
+function bindHistoryEvents(state: HistoryState, deps: HistoryPanelDeps): void {
+  const pickLib = (row: Element): void => {
+    const id = row.getAttribute('data-hist');
+    if (id !== null) openLib(state, deps, id);
+    if (deps.narrow()) deps.setSidebar(false);
+  };
+
+  deps.sbTabTopics.addEventListener('click', () => setHistoryTab(state, deps, 'topics'));
+  deps.sbTabHistory.addEventListener('click', () => setHistoryTab(state, deps, 'history'));
+  deps.historyGo.addEventListener('click', () => runHistorySearch(state, deps));
+  deps.historyMore.addEventListener('click', () => {
+    if (state.next) loadHistory(state, deps, state.next);
+  });
+  deps.historyQ.addEventListener('keydown', (e) => {
+    // Mid-composition Enter commits an IME candidate, not a search.
+    if (e.key === 'Enter' && !e.isComposing) {
+      e.preventDefault();
+      runHistorySearch(state, deps);
+    }
+  });
+  deps.historyQ.addEventListener('input', () => {
+    if (deps.historyQ.value.trim()) return;
+    if (state.tab === 'history') showHistoryList(state, deps);
+  });
+  deps.historyListEl.addEventListener('click', (e) => {
+    const row = e.target instanceof Element ? e.target.closest('[data-hist]') : null;
+    if (row) pickLib(row);
+  });
+  deps.historyListEl.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const row = e.target instanceof Element ? e.target.closest('[data-hist]') : null;
+    if (!row) return;
+    e.preventDefault();
+    pickLib(row);
+  });
+  deps.libTopicBtn.addEventListener('click', () => {
+    const id = state.libSession?.topic;
+    if (!id || !deps.topicExists(id)) {
+      refreshReadOnly(state, deps);
+      return;
+    }
+    setHistoryTab(state, deps, 'topics');
+    deps.switchTopic(id);
+  });
+  deps.libCloseBtn.addEventListener('click', () => closeLib(state, deps));
+  deps.libLog.addEventListener('click', (e) => {
+    const target = e.target instanceof Element ? e.target : null;
+    if (!target) return;
+    const shot = target.closest('img.shot');
+    if (shot) {
+      deps.openShot(shot);
+      return;
+    }
+    const go = target.closest('a[data-goto]');
+    if (go) {
+      e.preventDefault();
+      const goId = go.getAttribute('data-goto');
+      if (goId && deps.topicExists(goId)) {
+        deps.switchTopic(goId);
+        if (deps.narrow()) deps.setSidebar(false);
+      }
+      return;
+    }
+    const all = target.closest('[data-tl-all]');
+    if (all) {
+      deps.toggleAll(all.getAttribute('data-tl-all'));
+      return;
+    }
+    const line = target.closest('.tl');
+    if (line) deps.toggleLine(line);
+  });
+}
+
+export function createHistoryPanel(deps: HistoryPanelDeps): HistoryPanel {
+  const state: HistoryState = {
+    sessions: [],
+    next: null,
+    query: '',
+    seq: 0,
+    tab: 'topics',
+    libId: null,
+    libSession: null,
+    libData: {},
+    libEls: {},
+    libSeq: 0,
+    libSaved: null,
+  };
+  bindHistoryEvents(state, deps);
+
+  return {
+    setTab: (tab) => setHistoryTab(state, deps, tab),
+    isOpen: () => isLibOpen(deps),
+    close: () => closeLib(state, deps),
+    getMessage: (key) => state.libData[key],
+    repaintMessage: (key) => {
+      const m = state.libData[key];
+      const el = state.libEls[key];
+      if (!m || !el) return;
+      const out = deps.msgMarkup(key, m, false);
+      el.className = out.cls;
+      el.innerHTML = out.h;
+      deps.codeBlocks(el);
+    },
+    refreshReadOnly: () => refreshReadOnly(state, deps),
+  };
+}

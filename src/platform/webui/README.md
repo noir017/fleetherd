@@ -57,6 +57,8 @@ naming it, and they are all of them:
 | `page.ts` | The page's HTML shell: head, gate, the `boot-config` JSON, and the links to its script and stylesheet |
 | `page-body.ts` | The page's markup — every element the script finds by id — as a template |
 | `client/legacy-app.ts` | The client script, bundled into `dist/webui-assets/app-<hash>.js` — see below |
+| `client/panels/reviews.ts` | Typed Reviews tab module (`createReviewsPanel`), bundled into `app-<hash>.js` and checked by `client/tsconfig.json` and eslint |
+| `client/panels/history.ts` | Typed History tab and read-only transcript viewer (`createHistoryPanel`), bundled into `app-<hash>.js` and checked by `client/tsconfig.json` and eslint |
 | `client/styles/main.css` | The stylesheet, bundled into `dist/webui-assets/style-<hash>.css` |
 | `manifest.ts` | The web app manifest and the icon, as strings, for the same reason `page.ts` is a module |
 | `icons.ts` | The page's icons, hand-drawn inline SVG, and which emoji each one replaces — see [Icons](#icons) |

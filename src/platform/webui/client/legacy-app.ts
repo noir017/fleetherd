@@ -18,6 +18,9 @@
 //   - The test harness runs the same bundle (page.test-helpers.ts), so a page that renders
 //     nothing still fails page.dom.*.test.ts the way it always did.
 
+import { createReviewsPanel } from './panels/reviews.js';
+import { createHistoryPanel } from './panels/history.js';
+
 (function(){
   var $ = function(id){ return document.getElementById(id); };
   var log=$('log'), app=$('app'), gate=$('login'), err=$('err'), input=$('input'),
@@ -69,6 +72,70 @@
   // var initialised after that would overwrite the timer's handle with null and leak the timer.
   var AGE_TICK_MS=30000, ageTimer=null;
   var data={}, els={}, files=[], commands=[], stream=null;
+  // Panels instantiated before makePanel(), which calls paintSchedTab() synchronously on setup.
+  var reviewsPanel = createReviewsPanel({
+    app: app,
+    revList: revList,
+    text: text,
+    schedAgo: schedAgo,
+    post: post,
+    showNote: showSchedNote,
+    paintCounts: paintSchedCounts,
+    paintSummary: paintSummary,
+    topicExists: topicExists,
+    switchTopic: switchTopic,
+    createTopic: createTopic,
+    beforeSkillArchive: function(){ skillEpoch++; },
+    afterSkillArchive: function(refreshPending){
+      if(refreshPending) skillRefreshPending = true;
+      skillAfterWrite();
+    },
+  });
+  var historyPanel = createHistoryPanel({
+    sidebar: sidebar,
+    bar: bar,
+    topicsFilterHost: topicsFilterHost,
+    sbTabTopics: sbTabTopics,
+    sbTabHistory: sbTabHistory,
+    historyPane: historyPane,
+    historyCountEl: historyCountEl,
+    historyBody: historyBody,
+    historyQ: historyQ,
+    historyGo: historyGo,
+    historyErr: historyErr,
+    historyListEl: historyListEl,
+    historyMore: historyMore,
+    chat: chat,
+    log: log,
+    hints: hints,
+    libLog: libLog,
+    libTitle: libTitle,
+    libNote: libNote,
+    libWhy: libWhy,
+    libTopicBtn: libTopicBtn,
+    libCloseBtn: libCloseBtn,
+    text: text,
+    atBottom: atBottom,
+    firstVisible: firstVisible,
+    toBottom: toBottom,
+    getLogEl: function(key){ return els[key]; },
+    closeModelPop: closeModelPop,
+    paintFrames: paintFrames,
+    paintTermHeightIfOpen: function(){ if(topic && termState[topic]==='open') paintTermHeight(); },
+    reportSeen: reportSeen,
+    topicExists: topicExists,
+    switchTopic: switchTopic,
+    narrow: narrow,
+    setSidebar: setSidebar,
+    msgMarkup: msgMarkup,
+    codeBlocks: codeBlocks,
+    forgetOpenedPrefix: function(prefix){
+      for(var k in opened){ if(Object.prototype.hasOwnProperty.call(opened, k) && k.indexOf(prefix) === 0) delete opened[k]; }
+    },
+    openShot: openShot,
+    toggleAll: toggleAll,
+    toggleLine: toggleLine,
+  });
   // The row menu: which row it belongs to (a key like "topic:<id>", "sess:<id>", "task:<id>"),
   // the button that opened it, and what a pick calls. The button is re-found after every repaint
   // (rowMenuFollow), because the row it lives in is replaced while the menu stays open.
@@ -163,13 +230,6 @@
     for(var k in sessGroups) if(!keep[k]) delete sessGroups[k];
     try { localStorage.setItem('aa_sched_groups', JSON.stringify(sessGroups)); } catch(x){}
   }
-  // The Reviews tab's last answer, and the rows the reader has opened. null is "not asked yet",
-  // which is different from an empty list and is what the tab shows as Loading….
-  var reviewData=null, reviewSeq=0, revOpen={};
-  // The suggestion each topic was opened for by Adopt, by topic id: {text}. This page's memory
-  // only. A message the daemon accepts that still carries the text dismisses the suggestion; a
-  // reload forgets the link and leaves the suggestion pending, which is the safe direction.
-  var revAdopted={};
   // The skills window: its list, the skill open in it, and whether the New form is showing. The
   // window's own state is not persisted — a management surface is opened on purpose, and one
   // restored on load would sit over a conversation nobody asked it to cover. The LIST is cached
@@ -186,15 +246,6 @@
   // A show that a write made stale: the skill the person asked to open, to be opened again once
   // the write's answer is in. One slot is enough — a newer open replaces it (openSkill clears it).
   var skillShowPending=null;
-  // The History tab's last answer, the cursor for the page after it, and the search it is showing
-  // (empty for the plain list). histSeq is which list request an answer belongs to: leave the tab
-  // or start a search before the first has answered, and without it the late answer would land in
-  // the new view. sbTab is the sidebar's tab, never stored: the page always opens on Topics.
-  var histSessions=[], histNext=null, histQuery='', histSeq=0, sbTab='topics';
-  // The conversation open in the transcript's place (openLib): its library id while it is up, its
-  // messages under keys of their own ('h:' + id, which no live key can be), and where #log was
-  // being read when it was covered. libSeq does for the read what histSeq does for the list.
-  var libId=null, libSession=null, libData={}, libEls={}, libSeq=0, libSaved=null;
   // The /setting page: the live settings message it draws, the topic it was opened in, and the
   // one message whose page the operator closed. A settings message is never a row in the
   // transcript, and the daemon marks a retired one (wasSettings) so it cannot become one later.
@@ -1216,251 +1267,10 @@
     markOneAt(0);
   }
 
-  // ── Reviews ────────────────────────────────────────────────────────────────
-  /**
-   * What the automatic review did with the conversations that went quiet.
-   *
-   * Read-only, and pulled rather than pushed: a review is a rare, slow background event and the
-   * daemon has no event for one finishing. There is no daily quota: the sweep has no cap, so the
-   * list is the whole story.
-   */
-  function loadReviews(){
-    if(app.hidden) return;
-    var seq = ++reviewSeq;
-    fetch('api/reviews', {credentials:'same-origin'}).then(function(r){
-      if(!r.ok) throw new Error('HTTP ' + r.status);
-      return r.json();
-    }).then(function(d){
-      if(seq !== reviewSeq) return;
-      reviewData = d || { enabled:false, running:false, reviews:[] };
-      paintReviews();
-      paintSchedCounts();
-      paintSummary();
-    }).catch(function(e){
-      if(seq !== reviewSeq) return;
-      showSchedNote('Could not refresh reviews: ' + ((e && e.message) || 'network error'));
-    });
-  }
-
-  function paintReviews(){
-    if(reviewData === null){
-      revList.innerHTML = '<div class="sched-empty">Loading…</div>';
-      return;
-    }
-    if(!reviewData.enabled){
-      revList.innerHTML = '<div class="sched-empty">This daemon has no conversation library, so there is no review history.</div>';
-      return;
-    }
-    if(!reviewData.reviews.length){
-      revList.innerHTML = '<div class="sched-empty">' + (reviewData.running
-        ? 'No reviews yet. A conversation is reviewed once it has been quiet for an hour, after three messages from you.'
-        : 'Automatic review is off. Name an agent under review.agent, or an endpoint under review.api, to turn it on; reviews recorded before then still appear here.') + '</div>';
-      return;
-    }
-    var h = revPending(reviewData.pending || []);
-    for(var i=0;i<reviewData.reviews.length;i++) h += revRow(reviewData.reviews[i]);
-    revList.innerHTML = h;
-  }
-
-  /**
-   * The suggestions nobody has dealt with, merged across reviews: preferences, and since 2026-11-09
-   * skills to archive. Nothing acts on them: the person has a preference added to the instructions
-   * every agent gets, archives the skill, or dismisses the suggestion — so this block says that,
-   * rather than looking like settings that are already in force.
-   *
-   * Adopt is the first half of a preference: it opens a topic whose composer holds a draft asking an
-   * agent to add the suggestion to the person's instructions. The draft is not sent, so the
-   * suggestion stays on the list until a message that carries it actually goes out from that topic
-   * (settleAdopted), or the daemon finds it in the instructions. A draft thrown away costs nothing.
-   * Archive is the Skills tab's own archive (archiveSuggested).
-   */
-  function revPending(list){
-    if(!list.length) return '';
-    var h = '<div class="rev-pending"><div class="rev-label">Suggestions · ' + list.length + '</div>';
-    h += '<div class="rev-note">Not in effect anywhere. Adopt opens a new topic with a draft asking an agent to add a preference to your instructions; Archive takes a skill off every agent (Restore in Skills brings it back); Dismiss takes a suggestion off this list.</div>';
-    for(var i=0;i<list.length;i++){
-      var p = list[i], from = [];
-      for(var j=0;j<p.from.length;j++) from.push(p.from[j].title);
-      h += '<div class="rev-pitem"><div class="rev-pbody"><div class="rev-ptext">' + text(p.text) + '</div>';
-      if(p.reason) h += '<div class="rev-reason">' + text(p.reason) + '</div>';
-      h += '<div class="rev-pmeta">' + (p.count > 1 ? text(p.count + ' reviews · ') : '') + text(from.join(', ')) + '</div></div>';
-      h += '<div class="rev-pacts">' + (p.archive
-        ? '<button type="button" class="rev-adopt rev-archive" data-rev-archive="' + i + '">Archive</button>'
-        : '<button type="button" class="rev-adopt" data-rev-adopt="' + i + '">Adopt</button>');
-      h += '<button type="button" class="rev-dismiss" data-rev-dismiss="' + i + '">Dismiss</button></div></div>';
-    }
-    return h + '</div>';
-  }
-
-  /**
-   * Carry out an archive suggestion with the Skills tab's own operation (api/skills/op), so the
-   * Reviews seam itself stays read-only. The suggestion leaves the list by itself once its skill is
-   * no longer active, so a refresh is all that follows; Restore in the Skills tab undoes it.
-   */
-  function archiveSuggested(btn){
-    var i = Number(btn.getAttribute('data-rev-archive'));
-    var p = reviewData && reviewData.pending ? reviewData.pending[i] : null;
-    if(!p || !p.archive) return;
-    btn.disabled = true;
-    // The same write as a row's Off switch, so the skills cache must treat it as one: a list that
-    // is already on the wire describes the store before this archive.
-    skillEpoch++;
-    post('api/skills/op', {action:'archive', name:p.archive.name}, 1).then(function(r){
-      return r.json().catch(function(){ return {ok:false, error:'HTTP ' + r.status}; });
-    }).then(function(d){
-      if(!d || !d.ok) throw new Error((d && d.error) || 'the archive was refused');
-      loadReviews();
-      // Keep the skills list (and its cache) in step even though this window is not open.
-      skillRefreshPending = true;
-      skillAfterWrite();
-    }).catch(function(e){
-      btn.disabled = false;
-      showSchedNote('Could not archive ' + p.archive.name + ': ' + ((e && e.message) || 'network error'));
-      skillAfterWrite();
-    });
-  }
-
-  /**
-   * The suggestion as a new topic's first draft: a request to an agent, never a message already
-   * sent. The person can edit it, change agent with /agent first, or throw it away. The suggestion
-   * is quoted at the end, which is also what settleAdopted looks for when the message goes out.
-   */
-  function adoptDraft(text){
-    return 'Add this to my standing instructions: the instructions/ directory on the gateway. '
-      + 'Choose common.md or the file for your own agent, fit it into the wording already there, '
-      + 'and show me the diff before you change anything.\n\n"' + text + '"';
-  }
-
-  /** Open a topic for one suggestion, with the draft in its composer. */
-  function adoptPreference(btn){
-    var i = Number(btn.getAttribute('data-rev-adopt'));
-    var p = reviewData && reviewData.pending ? reviewData.pending[i] : null;
-    if(!p) return;
-    btn.disabled = true;
-    createTopic({text:p.text, draft:adoptDraft(p.text)}).then(function(){ btn.disabled = false; },
-      function(){ btn.disabled = false; });
-  }
-
-  /** Take one suggestion off the pending list; the daemon answers with the fresh list. */
-  function dismissPreference(btn){
-    var i = Number(btn.getAttribute('data-rev-dismiss'));
-    var p = reviewData && reviewData.pending ? reviewData.pending[i] : null;
-    if(!p) return;
-    dismissSuggestion(p, btn);
-  }
-
-  /**
-   * The one dismiss request, from the button or from a message that carried the suggestion.
-   * The button is absent for the second: there is no control on screen to disable.
-   */
-  function dismissSuggestion(p, btn){
-    if(btn) btn.disabled = true;
-    post('api/reviews/op', {action:'dismiss', text:p.text}, 1).then(function(r){
-      if(!r.ok) throw new Error('HTTP ' + r.status);
-      return r.json();
-    }).then(function(d){
-      // A list asked for before this answer must not put the suggestion back on screen: the
-      // topic a draft was sent in can open its stream and ask for one at the same moment.
-      reviewSeq++;
-      reviewData = d || reviewData;
-      forgetAdopted(p.text);
-      paintReviews();
-      paintSchedCounts();
-    }).catch(function(e){
-      if(btn) btn.disabled = false;
-      showSchedNote('Could not dismiss that suggestion: ' + ((e && e.message) || 'network error'));
-    });
-  }
-
-  /**
-   * A message the daemon accepted in a topic: when it is the draft an Adopt started there and still
-   * carries the suggestion, the suggestion has been dealt with. The text is compared, not the
-   * topic alone, so a draft cleared and replaced with something else leaves it on the list — a
-   * wrong dismissal cannot be undone from the page.
-   */
-  function settleAdopted(id, typed){
-    var a = revAdopted[id];
-    if(!a || !carries(typed, a.text)) return;
-    dismissSuggestion(a, null);
-  }
-
-  /** Whether a sent message still carries a suggestion, spacing ignored (as the store's key is). */
-  function carries(sent, want){
-    var flat = function(s){ return String(s == null ? '' : s).replace(/\s+/g, ''); };
-    var w = flat(want);
-    return w.length > 0 && flat(sent).indexOf(w) >= 0;
-  }
-
-  /** Drop every topic's link to a suggestion that has just been dealt with. */
-  function forgetAdopted(text){
-    for(var id in revAdopted){
-      if(Object.prototype.hasOwnProperty.call(revAdopted, id) && revAdopted[id].text === text) delete revAdopted[id];
-    }
-  }
-
-  /** The panel is a column: a review is one line until it is opened, like a task card. */
-  function revRow(r){
-    var open = Boolean(revOpen[r.id]);
-    var h = '<div class="rev-item ' + text(r.outcome) + (open ? ' open' : '') + '" data-rev="' + text(r.id) + '" role="button" tabindex="0" aria-expanded="' + (open ? 'true' : 'false') + '">';
-    h += '<div class="rev-row"><span class="rev-dot"></span><span class="rev-topic">' + text(r.title) + '</span>';
-    if(r.inferred) h += '<span class="rev-badge">inferred</span>';
-    h += '<span class="rev-when" title="' + text(revWhen(r.at)) + '">' + text(schedAgo(r.at)) + '</span></div>';
-    h += '<div class="rev-result">' + text(r.summary) + '</div>';
-    if(open) h += revDetail(r);
-    h += '</div>';
-    return h;
-  }
-
-  function revDetail(r){
-    var h = '<div class="rev-detail">';
-    if(r.error) h += '<div class="rev-note bad">' + text(r.error) + '</div>';
-    if(r.changes.length){
-      h += '<div class="rev-label">Changes</div>';
-      for(var i=0;i<r.changes.length;i++) h += revChange(r.changes[i]);
-    }
-    if(r.invalid.length){
-      h += '<div class="rev-label">Rejected</div>';
-      for(var j=0;j<r.invalid.length;j++) h += '<div class="rev-note">' + text(r.invalid[j]) + '</div>';
-    }
-    if(r.preferences.length){
-      h += '<div class="rev-label">Preferences</div>';
-      for(var k=0;k<r.preferences.length;k++) h += '<div class="rev-pref">' + text(r.preferences[k]) + '</div>';
-    }
-    if(r.inferred) h += '<div class="rev-note">Read from the raw answer: whether any of it took effect was not recorded.</div>';
-    if(!r.changes.length && !r.preferences.length && !r.invalid.length && !r.error) h += '<div class="rev-note">Nothing worth changing.</div>';
-    // Only when the topic is still in the switcher: a link to a topic the page does not have
-    // would look like one and do nothing.
-    if(r.topic && topicExists(r.topic)) h += '<button type="button" class="rev-open" data-rev-topic="' + text(r.topic) + '">Open the reviewed topic</button>';
-    h += '</div>';
-    return h;
-  }
-
-  /**
-   * One change. applied is three-state on purpose: true and false are what the gateway recorded,
-   * and absent is an old review whose raw answer never said — marked unknown rather than guessed —
-   * or a suggestion (an archive), which the gateway never applies and says so.
-   */
-  function revChange(c){
-    var what = c.action==='create' ? 'Create ' : (c.action==='patch' ? 'Update ' : (c.action==='archive' ? 'Archive ' : 'Write '));
-    var name = c.action==='write-file' ? (c.file || 'a file') + ' in ' + c.name
-      : (c.action==='archive' && c.into ? c.name + ' into ' + c.into : c.name);
-    var status = c.applied===true ? '<span class="rev-status ok">applied</span>'
-      : c.applied===false ? '<span class="rev-status bad">refused</span>'
-      : c.suggested ? '<span class="rev-status unknown">suggested</span>'
-      : '<span class="rev-status unknown">unknown</span>';
-    var h = '<div class="rev-change">' + what + '<span class="rev-name">' + text(name) + '</span>' + status;
-    if(c.reason) h += '<div class="rev-reason">' + text(c.reason) + '</div>';
-    if(c.error) h += '<div class="rev-note bad">' + text(c.error) + '</div>';
-    if(c.undo) h += '<code class="rev-undo">' + text(c.undo) + '</code>';
-    if(c.command) h += '<code class="rev-undo">' + text(c.command) + '</code>';
-    h += '</div>';
-    return h;
-  }
-
-  function revWhen(at){
-    try { return new Date(at).toLocaleString(); }
-    catch(x){ return new Date(at).toISOString(); }
-  }
+  // ── Reviews (client/panels/reviews.ts) ─────────────────────────────────────
+  function loadReviews(){ reviewsPanel.load(); }
+  function paintReviews(){ reviewsPanel.paint(); }
+  function settleAdopted(id, typed){ reviewsPanel.settleAdopted(id, typed); }
 
   function topicExists(id){
     for(var i=0;i<topics.length;i++) if(topics[i].id === id) return true;
@@ -1472,7 +1282,8 @@
     var sList = schedSessions();
     schedTabTasksN.textContent = tCount;
     schedTabSessionsN.textContent = String(sList.length);
-    schedTabReviewsN.textContent = reviewData ? String(reviewData.reviews.length) : '';
+    var revCount = reviewsPanel.count();
+    schedTabReviewsN.textContent = revCount !== null ? String(revCount) : '';
     // No spaces around the separator: at the panel's narrowest width (220px) the tab is 100px
     // and "Scheduled 2 · 1" plus the alert dot needs a little more than that, which pushed 1.5px
     // of the dot past the tab's clip edge. The two spaces cost 6.7px; without them the dot ends
@@ -1507,9 +1318,10 @@
 
   function paintSummary(){
     if(schedTab==='reviews'){
-      schedSummary.textContent = reviewData
-        ? (reviewData.reviews.length
-            ? reviewData.reviews.length + (reviewData.reviews.length===1?' review':' reviews')
+      var revCount = reviewsPanel.count();
+      schedSummary.textContent = revCount !== null
+        ? (revCount
+            ? revCount + (revCount===1?' review':' reviews')
             : 'no reviews yet')
         : 'loading…';
       return;
@@ -1996,51 +1808,6 @@
   schedTabReviews.addEventListener('click', function(){ setSchedTab('reviews'); });
   schedTabTasks.addEventListener('click', function(){ setSchedSubtab('tasks'); });
   schedTabSessions.addEventListener('click', function(){ setSchedSubtab('sessions'); });
-
-  revList.addEventListener('click', function(e){
-    var adoptBtn = e.target.closest ? e.target.closest('[data-rev-adopt]') : null;
-    if(adoptBtn){
-      e.stopPropagation();
-      adoptPreference(adoptBtn);
-      return;
-    }
-    var archiveBtn = e.target.closest ? e.target.closest('[data-rev-archive]') : null;
-    if(archiveBtn){
-      e.stopPropagation();
-      archiveSuggested(archiveBtn);
-      return;
-    }
-    var dismissBtn = e.target.closest ? e.target.closest('[data-rev-dismiss]') : null;
-    if(dismissBtn){
-      e.stopPropagation();
-      dismissPreference(dismissBtn);
-      return;
-    }
-    var openBtn = e.target.closest ? e.target.closest('[data-rev-topic]') : null;
-    if(openBtn){
-      e.stopPropagation();
-      switchTopic(openBtn.getAttribute('data-rev-topic'));
-      return;
-    }
-    var row = e.target.closest ? e.target.closest('[data-rev]') : null;
-    if(!row) return;
-    var id = row.getAttribute('data-rev');
-    if(!id) return;
-    revOpen[id] = !revOpen[id];
-    paintReviews();
-  });
-
-  revList.addEventListener('keydown', function(e){
-    if(e.key !== 'Enter' && e.key !== ' ') return;
-    if(e.target.closest && e.target.closest('[data-rev-topic]')) return;
-    var row = e.target.closest ? e.target.closest('[data-rev]') : null;
-    if(!row) return;
-    e.preventDefault();
-    var id = row.getAttribute('data-rev');
-    if(!id) return;
-    revOpen[id] = !revOpen[id];
-    paintReviews();
-  });
 
   schedReadBtn.addEventListener('click', function(){
     markAllRead(schedMembers(), 'session', showSchedNote);
@@ -4214,8 +3981,8 @@
   }
 
   /** A message by key, in the transcript or in the conversation opened from History. */
-  function msgAt(key){ return data[key] || libData[key]; }
-  function repaintKey(key){ if(libData[key]) paintLib(key); else paint(key); }
+  function msgAt(key){ return data[key] || historyPanel.getMessage(key); }
+  function repaintKey(key){ if(historyPanel.getMessage(key)) historyPanel.repaintMessage(key); else paint(key); }
 
   /**
    * What a message that never reached the daemon offers instead of silence.
@@ -5506,7 +5273,7 @@
     var cur=null;
     // The way into a topic from a conversation opened in History is offered only while the topic is
     // in this list, and the list just changed.
-    if(libSession) libReadOnly();
+    historyPanel.refreshReadOnly();
     // One tree for the whole paint: the chips and the rows must count and draw the same
     // conversations, and neither the groups nor the rows change the tree itself.
     var forest = topicForest();
@@ -7279,7 +7046,7 @@
         drafts[d.topic.id] = {text:seed.draft, s:seed.draft.length, e:seed.draft.length, files:[]};
         writeDraft(d.topic.id);
         loadDraft(d.topic.id);
-        revAdopted[d.topic.id] = {text:seed.text};
+        reviewsPanel.rememberAdopted(d.topic.id, seed.text);
       }
       return true;
     });
@@ -7734,400 +7501,10 @@
   }
   lightbox.addEventListener('click', closeShot);
 
-  // ── History ─────────────────────────────────────────────────────────────────
-  // The sidebar's second tab: every conversation the gateway recorded, whichever agent and
-  // platform it ran on — the same history.db the fleetherd sessions command reads. The list pages
-  // backwards through the library and the search asks the store's own keyword search. A row opens
-  // in the transcript's place (openLib), drawn with the transcript's own bubbles, and read-only:
-  // the library keeps what was said, and has no way to say anything back.
-
-  /** Absolute time, unlike the side panel's "3h ago": this list spans years, and a relative age
-      on a conversation from last spring says nothing about when it happened. The year only when it
-      is not this one, so a row in a 240px column still reads on one line where it can. */
-  function histWhen(at){
-    try {
-      var d = new Date(at);
-      var o = { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' };
-      if(d.getFullYear() !== new Date().getFullYear()) o.year = 'numeric';
-      return d.toLocaleString(undefined, o);
-    } catch(x){ return ''; }
-  }
-
-  /**
-   * Topics or History. Not stored: the page opens on Topics as it always has, and a reload lands
-   * on the topic in the address — a conversation from the library is not in the address either,
-   * because ?t= is what links and notifications open, and a reload that reopened a read-only view
-   * over the topic they named would hide it.
-   *
-   * Leaving History is leaving what it opened: the Topics tab is the way back to the conversation
-   * underneath. Entering it reads the library again — or the search still in the field — as the side
-   * panel's Reviews tab is pulled on selection: the library is written as conversations happen.
-   */
-  function setSbTab(tab){
-    var hist = tab === 'history';
-    var was = sbTab;
-    sbTab = hist ? 'history' : 'topics';
-    sbTabTopics.classList.toggle('on', !hist);
-    sbTabHistory.classList.toggle('on', hist);
-    sbTabTopics.setAttribute('aria-selected', hist ? 'false' : 'true');
-    sbTabHistory.setAttribute('aria-selected', hist ? 'true' : 'false');
-    // Clear all topics is about the other tab's list, so it goes with it (a class, not hidden: the
-    // button is the header's, and nothing else should have to know this tab exists).
-    sidebar.classList.toggle('on-history', hist);
-    bar.hidden = hist;
-    topicsFilterHost.hidden = hist;
-    historyPane.hidden = !hist;
-    if(!hist){
-      // Any answer still on its way belongs to a list that is no longer on screen.
-      histSeq++;
-      closeLib();
-      return;
-    }
-    if(was === 'history') return;
-    if(historyQ.value.trim()) runHistorySearch(); else loadHistory();
-  }
-
-  /** One page of the library, or the page after the cursor appended to what is already shown. */
-  function loadHistory(before){
-    var seq = ++histSeq;
-    historyMore.disabled = true;
-    historyErr.hidden = true;
-    historyErr.textContent = '';
-    // The rows already there stay until the answer replaces them: entering the tab again would
-    // otherwise blink the list away and back. Only a list with nothing to show says it is loading.
-    if(!before && (!histSessions.length || histQuery)){
-      historyListEl.innerHTML = '<div class="skills-empty">Loading\u2026</div>';
-      historyCountEl.textContent = '';
-    }
-    fetch('api/history' + (before ? '?before=' + encodeURIComponent(before) : ''), {credentials:'same-origin'}).then(function(r){
-      if(!r.ok) throw new Error('HTTP ' + r.status);
-      return r.json();
-    }).then(function(d){
-      if(seq !== histSeq) return;
-      var page = d || {};
-      if(page.enabled === false){
-        historyListEl.innerHTML = '<div class="skills-empty">This daemon has no conversation library.</div>';
-        historyMore.hidden = true;
-        return;
-      }
-      var rows = page.sessions || [];
-      histSessions = before ? histSessions.concat(rows) : rows;
-      histNext = page.next || null;
-      renderHistory();
-    }).catch(function(e){
-      if(seq !== histSeq) return;
-      // What is already on screen stays: a page that could not be read is not a reason to throw
-      // away the ones that were. The error is its own line, and the button comes back so the same
-      // page can be asked for again.
-      historyErr.textContent = 'Could not read the conversation library: ' + ((e && e.message) || 'network error');
-      historyErr.hidden = false;
-      if(!histSessions.length || histQuery) historyListEl.innerHTML = '';
-      historyMore.hidden = !histNext;
-      historyMore.disabled = false;
-      // The line took the button's place and pushed it down by its own height. The reader asked
-      // from the bottom, so both belong in view: keep them there rather than leave the retry
-      // half below the fold.
-      if(before) historyBody.scrollTop = historyBody.scrollHeight;
-    });
-  }
-
-  function renderHistory(){
-    histQuery = '';
-    historyErr.hidden = true;
-    historyErr.textContent = '';
-    var h = '';
-    if(!histSessions.length) h = '<div class="skills-empty">No conversations yet. Every conversation this gateway records appears here, whichever agent or platform it ran on.</div>';
-    for(var i=0;i<histSessions.length;i++) h += histRow(histSessions[i]);
-    historyListEl.innerHTML = h;
-    // The count is what is on screen, and a trailing + says the library goes further.
-    var n = histSessions.length;
-    historyCountEl.textContent = n ? n + (histNext ? '+' : '') + (n === 1 && !histNext ? ' conversation' : ' conversations') : '';
-    historyMore.hidden = !histNext;
-    historyMore.disabled = false;
-  }
-
-  function histRow(s){
-    var meta = [s.agent || 'no agent', s.platform || 'unknown', histWhen(s.lastAt), (s.messages || 0) + (s.messages === 1 ? ' message' : ' messages')];
-    return '<div class="hist-item' + (libId !== null && String(s.id) === libId ? ' on' : '') + '" data-hist="' + text(s.id) + '" role="button" tabindex="0">'
-      + '<div class="hist-title">' + text(s.title || '(untitled conversation)') + '</div>'
-      + '<div class="hist-meta">' + text(meta.join(' · ')) + '</div></div>';
-  }
-
-  function histHit(h){
-    var meta = [h.agent || 'no agent', h.platform || 'unknown', histWhen(h.at)];
-    return '<div class="hist-item' + (libId !== null && String(h.session) === libId ? ' on' : '') + '" data-hist="' + text(h.session) + '" role="button" tabindex="0">'
-      + '<div class="hist-title">' + text(h.title || '(untitled conversation)') + '</div>'
-      + '<div class="hist-excerpt">' + text(h.excerpt) + '</div>'
-      + '<div class="hist-meta">' + text(meta.join(' · ')) + '</div></div>';
-  }
-
-  /**
-   * Search the whole library. Enter or the button, not every keystroke: each one is a request, and
-   * the store's keyword search is not a type-ahead. Clearing the field puts the list back.
-   */
-  function runHistorySearch(){
-    var q = historyQ.value.trim();
-    if(!q) return showHistoryList();
-    var seq = ++histSeq;
-    historyMore.hidden = true;
-    historyErr.hidden = true;
-    historyErr.textContent = '';
-    historyCountEl.textContent = '';
-    historyListEl.innerHTML = '<div class="skills-empty">Searching\u2026</div>';
-    fetch('api/history/search?q=' + encodeURIComponent(q), {credentials:'same-origin'}).then(function(r){
-      return r.json().then(function(d){ return { ok:r.ok, d:d }; });
-    }).then(function(a){
-      if(seq !== histSeq) return;
-      if(!a.ok || !a.d || a.d.error){
-        historyListEl.innerHTML = '<div class="skills-empty">' + text((a.d && a.d.error) || 'could not search the library') + '</div>';
-        return;
-      }
-      if(a.d.enabled === false){
-        historyListEl.innerHTML = '<div class="skills-empty">This daemon has no conversation library.</div>';
-        return;
-      }
-      histQuery = q;
-      var hits = a.d.hits || [];
-      if(!hits.length){
-        historyListEl.innerHTML = '<div class="skills-empty">Nothing matches “' + text(q) + '”.</div>';
-        return;
-      }
-      var h = '';
-      for(var i=0;i<hits.length;i++) h += histHit(hits[i]);
-      historyListEl.innerHTML = h;
-      // "30+" when the daemon says there are more: the number is the size of the answer.
-      historyCountEl.textContent = hits.length + (a.d.more ? '+' : '') + (hits.length === 1 && !a.d.more ? ' match' : ' matches');
-    }).catch(function(e){
-      if(seq !== histSeq) return;
-      historyListEl.innerHTML = '<div class="skills-empty">Could not search the library: ' + text((e && e.message) || 'network error') + '</div>';
-    });
-  }
-
-  /** The library again, after a search: the rows already read, or a first page when there are none. */
-  function showHistoryList(){
-    histSeq++;
-    if(histSessions.length) renderHistory(); else loadHistory();
-  }
-
-  // ── A conversation from History, in the transcript's place ──────────────────
-  // #lib-log is drawn with msgMarkup, the transcript's own bubbles, from messages the daemon
-  // rendered the way it renders a topic's (room.ts historyMessages). It covers #log rather than
-  // replacing it: the topic underneath keeps its stream, its messages and its place, so closing
-  // this is a class coming off, not a topic being entered again. While it is up nothing is sent,
-  // pasted or dropped into the topic it covers, and the topic is not reported as seen.
-
-  function libOn(){ return chat.classList.contains('lib'); }
-
-  /** Where #log is being read: its first message on screen and that message's offset, or null for the bottom. */
-  function logPlace(){
-    var el = (log.clientHeight && !atBottom()) ? firstVisible() : null;
-    return el ? { key: el.getAttribute('data-k'), off: el.getBoundingClientRect().top - log.getBoundingClientRect().top } : null;
-  }
-
-  /** Light the row of the conversation that is open, in whichever list is showing. */
-  function markLibRow(){
-    var rows = historyListEl.querySelectorAll('[data-hist]');
-    for(var i=0;i<rows.length;i++) rows[i].classList.toggle('on', libId !== null && rows[i].getAttribute('data-hist') === libId);
-  }
-
-  /** The lines a reader opened in a conversation that is no longer open. */
-  function forgetLibLines(){
-    for(var k in opened){ if(Object.prototype.hasOwnProperty.call(opened, k) && k.indexOf('h:') === 0) delete opened[k]; }
-  }
-
-  /**
-   * Open one conversation from the library where the transcript is. On a phone the drawer goes,
-   * as it does for a topic: the conversation is what was asked for, and the drawer covers it.
-   */
-  function openLib(id){
-    id = String(id);
-    var seq = ++libSeq;
-    if(!libOn()){
-      libSaved = logPlace();
-      // The composer's own overlays belong to the topic being covered.
-      closeModelPop();
-      if(!hints.hidden){ hints.hidden = true; hints.innerHTML = ''; }
-      chat.classList.add('lib');
-      // The terminal goes behind the record rather than over it — and stays connected there.
-      paintFrames();
-    }
-    libId = id;
-    libSession = null;
-    libData = {};
-    libEls = {};
-    forgetLibLines();
-    libTitle.textContent = 'Loading\u2026';
-    libTitle.title = '';
-    libNote.hidden = true;
-    libNote.textContent = '';
-    libWhy.textContent = 'Read-only: a conversation from the library.';
-    libTopicBtn.hidden = true;
-    libLog.innerHTML = '<div class="empty">Loading\u2026</div>';
-    markLibRow();
-    fetch('api/history/read?id=' + encodeURIComponent(id), {credentials:'same-origin'}).then(function(r){
-      return r.json().then(function(d){ return { ok:r.ok, d:d }; });
-    }).then(function(a){
-      if(seq !== libSeq || !libOn()) return;
-      if(!a.ok || !a.d || a.d.error) return libFailed((a.d && a.d.error) || 'could not read that conversation');
-      paintLibRead(a.d);
-    }).catch(function(e){
-      if(seq !== libSeq || !libOn()) return;
-      libFailed('Could not read that conversation: ' + ((e && e.message) || 'network error'));
-    });
-  }
-
-  function libFailed(msg){
-    libTitle.textContent = 'History';
-    libLog.innerHTML = '<div class="hist-note bad">' + text(msg) + '</div>';
-    libWhy.textContent = 'Nothing could be read, so nothing is shown.';
-  }
-
-  function paintLibRead(d){
-    var s = d.session || {};
-    var title = s.title || '(untitled conversation)';
-    libSession = s;
-    libTitle.textContent = title;
-    libTitle.title = title;
-    var meta = [s.agent || 'no agent', s.platform || 'unknown', 'last active ' + histWhen(s.lastAt), (s.messages || 0) + (s.messages === 1 ? ' message' : ' messages')];
-    var h = '<div class="lib-head"><div class="hist-meta">' + text(meta.join(' · ')) + '</div>'
-      + '<div class="hist-meta hist-key">' + text(s.key || '') + '</div></div>';
-    var list = d.messages || [];
-    var i;
-    for(i=0;i<list.length;i++){
-      var key = 'h:' + list[i].id;
-      libData[key] = list[i];
-      var out = msgMarkup(key, list[i], false);
-      h += '<div class="' + out.cls + '" data-k="' + text(key) + '">' + out.h + '</div>';
-    }
-    if(!list.length) h += '<div class="empty">This conversation has no recorded messages.</div>';
-    // One write for the whole conversation: it arrives whole, and up to 500 nodes appended one at a
-    // time would lay the page out 500 times.
-    libLog.innerHTML = h;
-    codeBlocks(libLog);
-    var nodes = libLog.querySelectorAll('[data-k]');
-    for(i=0;i<nodes.length;i++) libEls[nodes[i].getAttribute('data-k')] = nodes[i];
-    // A read the store cut short says so, beside where the reader lands: the bottom of what was
-    // read is not the end of the conversation, and half a log shown as the whole is the one thing
-    // this view must not do.
-    libNote.hidden = !d.note;
-    libNote.textContent = d.note || '';
-    libReadOnly();
-    // At the newest, where a topic is entered too.
-    libLog.scrollTop = libLog.scrollHeight;
-  }
-
-  /** Repaint one message of the open conversation — a tool line opened or folded. */
-  function paintLib(key){
-    var m = libData[key], el = libEls[key];
-    if(!m || !el) return;
-    var out = msgMarkup(key, m, false);
-    el.className = out.cls;
-    el.innerHTML = out.h;
-    codeBlocks(el);
-  }
-
-  /**
-   * Why nothing can be sent here, where the composer was, and the way into the topic while this page
-   * still has it. Three cases, because the reason differs and so does what a person can do next.
-   * Asked again whenever the topic list changes, so a topic deleted meanwhile takes its button with it.
-   */
-  function libReadOnly(){
-    var s = libSession;
-    if(!s) return;
-    var here = Boolean(s.topic) && topicExists(s.topic);
-    libTopicBtn.hidden = !here;
-    libWhy.textContent = here
-      ? 'Read-only: this is the recorded copy. The conversation is still a topic on this page; open it to carry on.'
-      : s.topic
-        ? 'Read-only: its topic has been cleared from this page, so there is nowhere here to send a message.'
-        : 'Read-only: this conversation ran on ' + (s.platform || 'another platform') + ', not in a topic on this page, so nothing can be sent to it from here.';
-  }
-
-  /** Back to the topic underneath, where it was being read. */
-  function closeLib(){
-    if(!libOn()) return;
-    libSeq++;
-    chat.classList.remove('lib');
-    // The topic underneath is back on screen, so its terminal is too — same frame, same socket.
-    paintFrames();
-    // And its height is worked out again: a window that changed size under the record could not
-    // be measured while the composer and the divider were display:none.
-    if(topic && termState[topic]==='open') paintTermHeight();
-    libId = null;
-    libSession = null;
-    forgetLibLines();
-    libData = {};
-    libEls = {};
-    libLog.innerHTML = '';
-    libTitle.textContent = '';
-    markLibRow();
-    // #log was not laid out while it was covered, so the place it reports now is not where the
-    // reader left it; the one measured on the way in is.
-    var v = libSaved, el = v && els[v.key];
-    libSaved = null;
-    if(el) log.scrollTop += el.getBoundingClientRect().top - log.getBoundingClientRect().top - v.off;
-    else toBottom();
-    reportSeen();
-  }
-
-  sbTabTopics.addEventListener('click', function(){ setSbTab('topics'); });
-  sbTabHistory.addEventListener('click', function(){ setSbTab('history'); });
-  historyGo.addEventListener('click', runHistorySearch);
-  historyMore.addEventListener('click', function(){ if(histNext) loadHistory(histNext); });
-  historyQ.addEventListener('keydown', function(e){
-    // Mid-composition, Enter chooses an IME candidate — it is not a search. Same guard as the
-    // composer's: without it, picking 部署 from the candidate list would search for half of it.
-    if(e.key === 'Enter' && !e.isComposing){ e.preventDefault(); runHistorySearch(); }
-  });
-  historyQ.addEventListener('input', function(){
-    // The search field's own × (and a person deleting the query) puts the library back rather
-    // than leaving the last search's rows under an empty field.
-    if(historyQ.value.trim()) return;
-    if(sbTab === 'history') showHistoryList();
-  });
-  function pickLib(row){
-    openLib(row.getAttribute('data-hist'));
-    if(narrow()) setSidebar(false);
-  }
-  historyListEl.addEventListener('click', function(e){
-    var row = e.target.closest ? e.target.closest('[data-hist]') : null;
-    if(row) pickLib(row);
-  });
-  historyListEl.addEventListener('keydown', function(e){
-    if(e.key !== 'Enter' && e.key !== ' ') return;
-    var row = e.target.closest ? e.target.closest('[data-hist]') : null;
-    if(!row) return;
-    e.preventDefault();
-    pickLib(row);
-  });
-  libTopicBtn.addEventListener('click', function(){
-    var id = libSession && libSession.topic;
-    if(!id || !topicExists(id)){ libReadOnly(); return; }
-    // Into the topic, and the sidebar with it: the row to come back to is in the Topics list.
-    setSbTab('topics');
-    switchTopic(id);
-  });
-  libCloseBtn.addEventListener('click', closeLib);
-  // The transcript's own reading controls, on the transcript's own markup: a picture full screen, a
-  // link to a topic, a tool line opened. Nothing here posts — there is nothing to post to.
-  libLog.addEventListener('click', function(e){
-    var shot = e.target.closest ? e.target.closest('img.shot') : null;
-    if(shot) return openShot(shot);
-    var go = e.target.closest ? e.target.closest('a[data-goto]') : null;
-    if(go){
-      e.preventDefault();
-      var goId = go.getAttribute('data-goto');
-      if(goId && topicExists(goId)){
-        switchTopic(goId);
-        if(narrow()) setSidebar(false);
-      }
-      return;
-    }
-    var all = e.target.closest ? e.target.closest('[data-tl-all]') : null;
-    if(all) return toggleAll(all.getAttribute('data-tl-all'));
-    var line = e.target.closest ? e.target.closest('.tl') : null;
-    if(line) return toggleLine(line);
-  });
+  // ── History (client/panels/history.ts) ──────────────────────────────────────
+  function setSbTab(tab){ historyPanel.setTab(tab); }
+  function libOn(){ return historyPanel.isOpen(); }
+  function closeLib(){ historyPanel.close(); }
 
   document.addEventListener('keydown', function(e){
     if(e.key !== 'Escape') return;
