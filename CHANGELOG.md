@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.27.1] - 2026-11-21
+
 ### Changed
 
 - **Web UI hides the Fork menu item for agents that do not support `session/fork`.** Previously the
