@@ -195,6 +195,7 @@ function commitTag(state: GitState): string {
 }
 
 function baseParam(state: GitState): string {
+  // Working and commits never use a base; omit it so a stale picker value cannot hit the daemon's check.
   return state.mode !== 'working' && state.base ? '&base=' + encodeURIComponent(state.base) : '';
 }
 
@@ -205,6 +206,7 @@ function statusUrl(state: GitState, topic: string): string {
 
 function fileUrl(state: GitState, topic: string, path: string): string {
   if (state.source) return state.source.fileUrl + '&path=' + encodeURIComponent(path);
+  // Read a file opened inside a commit from that commit, never the working tree.
   if (state.commit) {
     return (
       'api/git/commit-file?t=' +
@@ -411,6 +413,7 @@ function paintCommits(ctx: GitCtx): void {
   }
   let html = '';
   for (const c of state.commits) html += renderCommitRow(state, c, deps);
+  // Paged by skip (no cursor in contract); a new commit between pages may repeat a row until refresh.
   if (state.commitMore) html += '<button type="button" class="git-more" data-gmore>Load more</button>';
   dom.files.innerHTML = html;
 }

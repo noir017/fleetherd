@@ -258,6 +258,7 @@ function rowHtml(
   const pad = 6 + depth * 12;
   if (dir) {
     const open = Boolean(state.openDirs[abs]);
+    // Use a div, not a button: inner rename/delete buttons would nest buttons (invalid HTML, breaks screen readers).
     return (
       '<div class="fx-row fx-dirrow">' +
       '<button type="button" class="fx-main" data-fx-dir="' +
