@@ -43,7 +43,7 @@ session id, agy's conversation id). One conversation holds one session *per agen
 | `agy-acp.ts` | What `agy acp` does its own way, for the ACP runtime: model ids split into model + level, the model re-applied after a reload, `⚠` warnings in the message stream, which context report to trust and against what, the quota one-shot, tool labels |
 | `agy-cli.ts` | agy as a one-shot CLI (`agy -p=/<command>`), here or on a host — used by the ACP runtime and by chat commands |
 | `agy-meters.ts` | agy's measured context-window table, the `agy -p=/usage` parser, and which quota pool the serving model spends from |
-| `quota-meter.ts` | The quota for the status strip: an agent's `quotaCommand`, else agy's `agy -p=/usage`; once a minute per source, shared across conversations |
+| `quota-meter.ts` | The quota for the status strip: an agent's `quotaCommand`, else agy's `agy -p=/usage`; read at a session's first output and after each turn, one run per source shared across conversations (10 s reuse) |
 | `agy-relay.ts` | agy behind a relay: for `contextBudget`, rewrites the compaction point in the model list Google sends it, and remembers what each model was told for the footer; behind a model gateway, for `gatewayModels`, narrows the gateway's model list to the matches |
 | `relay.ts` | Relays: a loopback forwarder between an agent and its API that lets a harness's transform replace the responses on paths it names. Here for a local agent; on a host through fleetherd-remote (`remote/relay.go`), which hands those responses back over the link. Which harness uses one, and for what, is `harnessRelay` |
 | `agy-transcript.ts` | agy's context after a turn that ran tools, read off agy's own transcript here or on a host (its prompt usage is a sum over the turn's calls) |
@@ -1501,11 +1501,15 @@ the native tools over MCP. No launch flag from the previous print-mode runtime c
   (`agy-meters.ts` COMPACTION_POINTS), `contextWindow` when the agent sets one, or the budget its
   relay gave it.
 - **Quota** has no ACP channel: `createQuotaMeter` (`quota-meter.ts`) runs `agy -p=/usage` (`agy-cli.ts`)
-  — or the agent's `quotaCommand`, which through a model gateway is the only source — beside the
-  turn, at most once a minute per source. It is reported whenever it lands, even after the turn,
-  and nothing waits for it: quota feeds the conversation's status strip, not the turn's footer. (A
-  5 s wait at the turn's end, which dropped a later reading, lost the quota on the first turn after
-  a restart on a remote host, measured 2026-11-06.)
+  — or the agent's `quotaCommand`, which through a model gateway is the only source. A turn's start
+  reports the last reading only; the session's first output and the end of every turn read anew
+  (`AgyMeterHelper`). Not at the start: the agent may not be up yet — a web agent's browser for the
+  account is often still opening, its quota command then had nothing for it, and the strip stayed
+  blank for the whole turn (2026-11-21). One run per source at a time, and one begun in the last 10 s
+  answers instead of a new one, so conversations ending together share it. It is reported whenever
+  it lands, even after the turn, and nothing waits for it: quota feeds the conversation's status
+  strip, not the turn's footer. (A 5 s wait at the turn's end, which dropped a later reading, lost
+  the quota on the first turn after a restart on a remote host, measured 2026-11-06.)
 - **Tool labels.** Calls of kind `other` are titled `Run <tool>`; `agyAcpToolLabel` reads the tool
   from there (`invoke_subagent` → Task, `mcp_chat_send_file` → `send_file`). agy also sends a `name`
   field, but the SDK's validation strips it. Its generic `call_mcp_tool` is the exception: kind

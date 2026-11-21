@@ -902,6 +902,8 @@ export class AgyMeterHelper {
   private contextSeq = 0;
   private contextShown = 0;
   private contextReadAt = 0;
+  /** Whether this session has asked for the quota yet (quotaOnFirstOutput). */
+  private quotaRead = false;
 
   constructor(
     private readonly def: AgentDef,
@@ -927,13 +929,31 @@ export class AgyMeterHelper {
     }
   }
 
-  /** Report cached quota immediately and kick off a background refresh beside the turn. */
-  quotaForTurn(handlers: AgentStreamHandlers, cwd: string): void {
+  /**
+   * A turn starts: the last reading only. Asking now would race the agent's own start — a web
+   * agent's browser for this account is often still opening, its quota command then has nothing for
+   * the account, and the strip went blank for the whole turn (measured 2026-11-21).
+   */
+  quotaAtTurnStart(handlers: AgentStreamHandlers): void {
+    this.reportScopedQuota(handlers);
+  }
+
+  /** The turn showed its first output: the agent is up, so read — once per session. */
+  quotaOnFirstOutput(handlers: AgentStreamHandlers, cwd: string): void {
+    if (!this.quotaRead) this.refreshQuota(handlers, cwd);
+  }
+
+  /** A turn ended, however: read what it spent. */
+  quotaAfterTurn(handlers: AgentStreamHandlers, cwd: string): void {
+    this.refreshQuota(handlers, cwd);
+  }
+
+  /** Read in the background — nothing waits for it — and report it when it lands. */
+  private refreshQuota(handlers: AgentStreamHandlers, cwd: string): void {
     const meter = this.quota;
-    if (!meter) return;
-    const report = (): void => this.reportScopedQuota(handlers);
-    report();
-    void meter.refresh(this.def, cwd).then(report, () => {});
+    if (!meter || this.isDisposed()) return;
+    this.quotaRead = true;
+    void meter.refresh(this.def, cwd).then(() => this.reportScopedQuota(handlers), () => {});
   }
 
   /** Report agy's context against the window known for the session's model, or say once why not. */

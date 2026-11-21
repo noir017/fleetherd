@@ -456,7 +456,7 @@ describe('agy over ACP: a turn', () => {
     expect(r.quota).toEqual([]);
   });
 
-  it('asks for the quota at most once a minute', async () => {
+  it('reads the quota once for turns close together: at the first output, the turn ends reuse it', async () => {
     const { session, quotaRuns } = rig();
     await turn(session, 'plain', record());
     await turn(session, 'plain', record());

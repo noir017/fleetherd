@@ -96,29 +96,37 @@ export function isRenderableUpdate(update: SessionUpdate): boolean {
  * (see failIfRefused): claude-agent-acp sends `lastRefusalExplanation` as an ordinary
  * `agent_message_chunk` before reporting `stopReason: "refusal"`, and that explanation is a
  * perfectly good answer. Text counts only when it is not blank; a tool bubble counts as soon as it
- * opens.
+ * opens. `onFirst` runs once, at the first output that counts.
  */
-export function trackVisibleOutput(handlers: AgentStreamHandlers): {
+export function trackVisibleOutput(
+  handlers: AgentStreamHandlers,
+  onFirst?: () => void
+): {
   handlers: AgentStreamHandlers;
   sawOutput: () => boolean;
 } {
   let seen = false;
+  const see = (): void => {
+    if (seen) return;
+    seen = true;
+    onFirst?.();
+  };
   return {
     sawOutput: () => seen,
     handlers: {
       ...handlers,
       onText: (delta) => {
-        if (delta.trim() !== '') seen = true;
+        if (delta.trim() !== '') see();
         handlers.onText(delta);
       },
       onToolStart: (evt) => {
-        seen = true;
+        see();
         handlers.onToolStart(evt);
       },
       ...(handlers.onImage
         ? {
             onImage: (image) => {
-              seen = true;
+              see();
               handlers.onImage?.(image);
             },
           }

@@ -956,14 +956,14 @@ class AcpSession implements AgentSession {
   async runTurn(input: RunTurnInput, incomingHandlers: AgentStreamHandlers): Promise<void> {
     this.aborting = false;
     this.stoppedWhileStarting = false;
-    const output = trackVisibleOutput(incomingHandlers);
+    const output = trackVisibleOutput(incomingHandlers, () => this.agyMeter.quotaOnFirstOutput(incomingHandlers, this.cwd));
     const handlers = output.handlers;
     const closePromptWindow = this.openPromptWindow();
     if (!(await this.prepareTurnStart(input, closePromptWindow))) return;
 
     const state = this.newTranslationState(handlers, true);
     this.options.reportSessionFacts(handlers);
-    this.agyMeter.quotaForTurn(handlers, this.cwd);
+    this.agyMeter.quotaAtTurnStart(handlers);
 
     const host = remoteHosts.hostFor(this.def);
     const watchdog = this.createSilenceWatchdog(state, host);
@@ -1024,6 +1024,7 @@ class AcpSession implements AgentSession {
       unwatchLink();
       fold.stop();
       this.cleanupTurnState(closePromptWindow);
+      this.agyMeter.quotaAfterTurn(handlers, this.cwd);
     }
   }
 

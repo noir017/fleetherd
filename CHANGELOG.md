@@ -18,6 +18,16 @@ All notable changes to this project are documented here. The format is based on
   share that session. Plain `task-agents` still reads only the config. A setting id `--option` does
   not know is now refused with every setting's values too, not just their names.
 
+### Changed
+
+- **The status strip's quota is read once the agent is up, and after every turn.** It was read as
+  a turn started, at most once a minute per agent. A web agent's browser is often still opening
+  then, so its quota command had nothing for that account and the strip went blank for the whole
+  turn — most turns of a conversation that had sat idle a few minutes. Now a turn's start shows
+  the last reading, the session's first output reads anew, and so does the end of every turn,
+  stopped or failed ones included. Reads of one source never overlap, and one begun in the last
+  10 s answers in place of a new one, so conversations finishing together share a run.
+
 ## [3.25.0] - 2026-11-21
 
 ### Added

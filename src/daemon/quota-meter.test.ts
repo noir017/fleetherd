@@ -8,13 +8,22 @@ const def = (over: Partial<AgentDef> = {}) => ({ id: 'agy', harness: 'agy', env:
 const OUT = 'Gemini Models\tWeekly Limit Remaining\t74%\t2026-11-07T04:24:11Z';
 
 describe('createQuotaMeter', () => {
-  it('shares one run between callers, and keeps the reading for a minute', async () => {
+  it('shares one run between callers, and a run begun in the last ten seconds answers for a new one', async () => {
     const cli = vi.fn<AgyCliRunner>(async () => ({ ok: true, output: OUT }));
-    const m = createQuotaMeter({ agy: cli });
-    await Promise.all([m.refresh(def(), '/w'), m.refresh(def(), '/w')]);
-    await m.refresh(def(), '/w');
-    expect(cli).toHaveBeenCalledTimes(1);
-    expect(m.read(def())).toEqual([{ id: 'gemini-weekly', remaining: 0.74, resetsAt: Date.parse('2026-11-07T04:24:11Z') }]);
+    vi.useFakeTimers({ now: Date.now() });
+    try {
+      const m = createQuotaMeter({ agy: cli });
+      await Promise.all([m.refresh(def(), '/w'), m.refresh(def(), '/w')]);
+      vi.advanceTimersByTime(9_999);
+      await m.refresh(def(), '/w');
+      expect(cli).toHaveBeenCalledTimes(1);
+      expect(m.read(def())).toEqual([{ id: 'gemini-weekly', remaining: 0.74, resetsAt: Date.parse('2026-11-07T04:24:11Z') }]);
+      vi.advanceTimersByTime(1);
+      await m.refresh(def(), '/w');
+      expect(cli).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('keeps the last reading when a run fails', async () => {
@@ -25,7 +34,7 @@ describe('createQuotaMeter', () => {
       const m = createQuotaMeter({ agy: cli });
       await m.refresh(def(), '/w');
       fail = true;
-      vi.advanceTimersByTime(61_000);
+      vi.advanceTimersByTime(11_000);
       await m.refresh(def(), '/w');
       expect(m.read(def())?.[0]?.remaining).toBe(0.74);
     } finally {

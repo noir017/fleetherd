@@ -11,8 +11,9 @@ import { agentHome } from './skills-scan.js';
 const execFile = promisify(execFileCb);
 
 /**
- * An agent's usage quota, which no ACP message carries: read beside a turn and shown in the
- * conversation's status strip (TurnRunner → recordQuota), never in the turn's footer.
+ * An agent's usage quota, which no ACP message carries: read when a session's first output arrives
+ * and after each turn (AgyMeterHelper in agent-acp-harness.ts), and shown in the conversation's
+ * status strip (TurnRunner → recordQuota), never in the turn's footer.
  *
  * Two sources, and an agent has at most one:
  *
@@ -23,11 +24,12 @@ const execFile = promisify(execFileCb);
  *     parse is the same and a pool is the same pool whichever source reported it.
  *   - **agy's own `agy -p=/usage`** (agy-cli.ts), for an agy signed in to Google.
  *
- * Read at most once a minute per source and never twice at once, whichever conversation asked.
+ * Never read twice at once per source, whichever conversation asked, and a reading begun moments ago
+ * answers in place of a new one: conversations whose turns end together share one run.
  */
 
-/** How old a quota reading may get before a turn asks again. */
-const QUOTA_REFRESH_MS = 60_000;
+/** A reading begun this recently answers instead of a new run. */
+const QUOTA_REUSE_MS = 10_000;
 
 /**
  * How long a quota command may run. Generous for the same reason agy's one-shots are (agy-cli.ts):
@@ -207,7 +209,7 @@ export function createQuotaMeter(runners: { agy?: AgyCliRunner; command?: QuotaC
       if (!entry) bySource.set(key, (entry = { at: 0 }));
       if (entry.pending) return entry.pending;
       // Stamped when the run starts, so a failing one is not retried on every turn either.
-      if (Date.now() - entry.at < QUOTA_REFRESH_MS) return Promise.resolve();
+      if (Date.now() - entry.at < QUOTA_REUSE_MS) return Promise.resolve();
       entry.at = Date.now();
       const e = entry;
       const run = def.quotaCommand ? runQuotaCommandFor(def, cwd, command) : runAgyCliFor(def, 'usage', cwd, agy);
