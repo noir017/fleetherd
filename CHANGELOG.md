@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.28.1] - 2026-11-22
+
 ### Fixed
 
 - **Web UI reliably resumes new messages after mobile backgrounding.** Mobile browsers freeze JS
