@@ -10401,6 +10401,7 @@ import { createHistoryPanel } from './panels/history.js';
       else if(d.outcome === 'skipped') other.push(who + ': its harness has not run there yet, so nothing was placed.');
       else if(d.outcome === 'unreachable') other.push(d.host + ' did not answer; it gets this when an agent next starts there.');
       else if(d.outcome === 'not-delivered') other.push(who + ': its delivery is off — its file is already delivered to another agent there, so nothing was placed.');
+      else if(d.outcome === 'next-session') other.push(who + ': given this when its next session starts; one already running keeps what it read.');
       else if(d.outcome === 'off') other.push(who + ': this gateway places no instructions, so nothing was placed now.');
       else other.push(who + ': ' + d.outcome + (d.detail ? ' (' + d.detail + ')' : '') + '.');
     }

@@ -117,6 +117,11 @@ among the ones it gets. Its layer file stays in the list and editable, and **Its
 opens, so the clash can be fixed from the page. If no other agent reads that layer, the file is
 listed under **Instructions no agent reads**, like any layer with no reader.
 
+A [`connect` agent](agents.md#an-agent-that-is-already-running-connect) has no instruction file on its machine: `common.md` and `<id>.md`
+(without a pod's `@host`) are sent in its `initialize` when each session starts. Its card lists those
+two files all the same and counts it among their readers, and a save says it gets the new text with
+its next session.
+
 ```yaml
 platforms:
   web:

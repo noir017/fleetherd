@@ -17,6 +17,17 @@ All notable changes to this project are documented here. The format is based on
   fails that part with the reason in its topic instead of running on the default. The external MCP
   entrance's `tasks new` takes the same as `option`.
 
+### Fixed
+
+- **The settings page knows what a `connect` agent reads.** Since 3.21.0 a connect agent is sent
+  `common.md` and its `<id>.md` in `initialize`, but the instruction editor still went by where a
+  harness's file is placed, and a connect agent has none: its card said *Its harness reads no
+  instruction file the gateway knows of*, its layer file was listed under **Instructions no agent
+  reads** as if left behind, a layer not written yet could not be created from the page, and a
+  `common.md` save did not measure its layer against the size cap. The layer is now worked out in
+  one place for both the sending and the editor, so the card lists both files, the layer is never
+  an orphan, the cap counts it, and a save says the agent gets the new text with its next session.
+
 ## [3.24.2] - 2026-11-21
 
 ### Fixed

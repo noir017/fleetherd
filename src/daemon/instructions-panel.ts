@@ -7,6 +7,7 @@ import {
   HARNESS_LAYERS,
   harnessKind,
   instructionsHome,
+  instructionsLayer,
   instructionsOff,
   isInstructionLayer,
   type HarnessLayer,
@@ -124,14 +125,14 @@ function fail(e: unknown): { ok: false; error: string } {
 
 // ── the list ──────────────────────────────────────────────────────────────────────────────────
 
-/** Every layer name a configured agent reads: the presets' own, and each `instructions.layer` (or id). */
+/** Every layer name a configured agent reads: the presets' own, each `instructions.layer` (or id), and each connect agent's. */
 function layerNames(agents: readonly AgentDef[]): string[] {
   const out = new Set<string>(HARNESS_LAYERS);
   for (const def of agents) {
-    const where = instructionsHome(def, '~');
+    const layer = instructionsLayer(def);
     // A caller the config schema never saw could hand in any layer. The schema's rule is the one
     // this file goes by, so a name that could climb out of the instructions directory is not one.
-    if (where && isInstructionLayer(where.name)) out.add(where.name);
+    if (layer && isInstructionLayer(layer)) out.add(layer);
   }
   return [...out];
 }
@@ -195,7 +196,7 @@ function reachOf(layer: string, agents: readonly AgentDef[]): string {
   // An agent whose delivery is off (config/pods.ts) is not reached by an edit, so it is neither a
   // reader nor one of the kind that must all read this layer.
   const delivered = agents.filter((d) => !instructionsOff(d));
-  const readers = delivered.filter((d) => instructionsHome(d, '~')?.name === layer);
+  const readers = delivered.filter((d) => instructionsLayer(d) === layer);
   const ofKind = delivered.filter((d) => harnessKind(d.harness, d.command) === kind);
   const onlyThisKind = readers.every((d) => harnessKind(d.harness, d.command) === kind) && ofKind.every((d) => readers.includes(d));
   return readers.length > 0 && ofKind.length > 0 && onlyThisKind ? `every ${LAYER_KINDS[kind]} agent` : `the ${layer} layer`;
@@ -209,18 +210,19 @@ async function listAll(env: Env): Promise<InstructionsPanelList> {
   const rows: InstructionsAgent[] = agents.map((def) => {
     // `~` as the home: the page shows where the file is on that machine, not this one's path to it.
     const where = instructionsHome(def, '~');
+    const layer = instructionsLayer(def);
     const own = harnessSources(def, '~')?.summary;
     const off = instructionsOff(def);
     // An agent whose delivery is off (config/pods.ts) does not read the gateway's file — it must
     // not be counted under the layer another agent owns — but its layer stays in the list below and
     // its own files stay openable, so the file can still be edited.
-    if (where && !off) {
-      readers.set(where.name, [...(readers.get(where.name) ?? []), def.id]);
+    if (layer && !off) {
+      readers.set(layer, [...(readers.get(layer) ?? []), def.id]);
       everyone.push(def.id);
     }
     return {
       id: def.id,
-      harness: def.harness === 'custom' && where ? where.name : def.harness,
+      harness: def.harness === 'custom' && layer ? layer : def.harness,
       host: def.host ?? 'local',
       ...(where ? { file: where.file.split(path.sep).join('/') } : {}),
       ...(own ? { own } : {}),
@@ -578,8 +580,8 @@ function checkedLayers(name: string, agents: readonly AgentDef[]): Set<string> {
   const read = new Set<string>();
   for (const def of agents) {
     if (instructionsOff(def)) continue;
-    const where = instructionsHome(def, '~');
-    if (where) read.add(where.name);
+    const layer = instructionsLayer(def);
+    if (layer) read.add(layer);
   }
   return new Set([...read].filter((l) => name === 'common.md' || l === layer));
 }
@@ -628,7 +630,7 @@ function sha(data: Buffer): string {
  * what is never overwritten, the same log lines. A remote host that does not answer within
  * `timeoutMs` is reported as not reached; the next agent start there places the text, as it always
  * did. An agent whose delivery the merge turned off (config/pods.ts) is reported as `not-delivered`
- * — the file is still saved, but nothing is placed for it.
+ * — the file is still saved, but nothing is placed for it — and a connect agent as `next-session`.
  */
 export async function deliverInstructions(o: {
   agents: readonly AgentDef[];
@@ -645,11 +647,14 @@ export async function deliverInstructions(o: {
     else out.set(k, { host, agents: [agent], ...(r.link ? { link: r.link } : {}), outcome: r.outcome, ...(r.detail ? { detail: r.detail } : {}) });
   };
   const readers = o.agents.filter((def) => {
-    const where = instructionsHome(def, '~');
-    return where !== undefined && o.layers.has(where.name);
+    const layer = instructionsLayer(def);
+    return layer !== undefined && o.layers.has(layer);
   });
-  const remote = readers.filter((def) => def.host);
-  for (const def of readers.filter((d) => !d.host)) {
+  // Nothing is placed for a connect agent: its next `initialize` carries the text (connect-agent.ts).
+  for (const def of readers.filter((d) => d.connect)) add(def.host ?? 'local', def.id, { outcome: 'next-session' });
+  const placed = readers.filter((def) => !def.connect);
+  const remote = placed.filter((def) => def.host);
+  for (const def of placed.filter((d) => !d.host)) {
     add('local', def.id, instructionsOff(def) ? { outcome: 'not-delivered' } : (o.local(def) ?? { outcome: 'off' }));
   }
   const settled = await Promise.allSettled(
