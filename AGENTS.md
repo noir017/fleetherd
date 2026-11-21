@@ -125,17 +125,20 @@ instead, or inject it as a dependency.
 
 ## Conventions
 
-**Comments explain *why*, not *what*.** This codebase has an unusually high comment
-density, and it is deliberate: nearly every non-obvious decision carries a comment
-naming the constraint that forced it (a platform quirk, a protocol limitation, an
-upstream bug). Match that. A comment restating the code is noise; a comment recording
-why the obvious approach does not work is the point. When you discover a constraint the
-hard way, write it down where the next reader will trip over it.
+**Keep inline comments minimal.** Default to no comment; long narrative blocks eat agent
+context and go stale quickly. Write a brief (1–3 line) comment only where removing or
+"simplifying" the code would silently break something non-obvious:
+- **Counter-intuitive pitfalls**: an upstream bug, race condition, protocol quirk, or
+  Hyrum's Law warning on an undocumented internal (name the source/date concisely, and add
+  a contract test).
+- **Security invariants & trust boundaries**: why a check, allowlist, or fail-closed path
+  cannot be relaxed.
+- **Cross-file implicit contracts**: shared formats or invariants that must stay in sync
+  across modules (e.g. `sw.ts` and `cache-script.ts`).
 
-**Cite evidence for external behavior.** When code depends on a platform's documented
-subset or an undocumented library internal, say so with the source and date (see
-`platform/dingtalk-markdown.ts`, `platform/profiles/slack.ts`). Undocumented internals
-get an explicit Hyrum's Law warning and a contract test.
+Skip restating what the code does and skip routine JSDoc on self-evident functions. Put
+multi-paragraph design rationale, investigation logs, and measurement tables in the module's
+`README.md` or commit messages rather than inline in source files.
 
 **Single sources of truth.** Several lists are deliberately defined once and consumed
 in many places. Extend the source, never a copy:
