@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.22.2] - 2026-11-21
+
 ### Changed
 
 - **External MCP tools now declare MCP `annotations`.** Clients that prompt for confirmation on any tool missing `readOnlyHint: true` were treating every `skills` lookup as a write operation. `skills` (strictly `search` and `show`) now advertises `readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false`, and `tasks` advertises `readOnlyHint: false, destructiveHint: false, openWorldHint: false`.
