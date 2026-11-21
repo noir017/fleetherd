@@ -181,6 +181,18 @@ describe('ExternalMcp: the protocol', () => {
     expect(r.result.content[0].text).toMatch(/action must be one of search, show/);
     expect(s.calls).toEqual([]);
   });
+
+  it('preserves caller.agents across HTTP bearer authentication', async () => {
+    const s = await start({
+      mcp: settings({
+        callers: [{ name: 'gem', tokenEnv: 'TOK_A', tools: ['skills', 'tasks'], agents: ['gemini-task'] }],
+      }),
+    });
+    const res = await s.post(rpc('tools/call', { name: 'tasks', arguments: { action: 'list', topic: 'web:main/aaaaaaaa' } }));
+    expect(res.status).toBe(200);
+    expect(s.calls).toHaveLength(1);
+    expect(s.calls[0]?.caller).toEqual({ name: 'gem', tools: ['skills', 'tasks'], agents: ['gemini-task'] });
+  });
 });
 
 describe('ExternalMcp: the listener', () => {

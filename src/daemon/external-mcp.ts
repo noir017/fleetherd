@@ -187,7 +187,10 @@ export class ExternalMcp {
     const given = m?.[1] ? digest(m[1]) : undefined;
     let match: ExternalCaller | undefined;
     for (const c of this.usableCallers()) {
-      if (given && timingSafeEqual(given, c.digest) && !match) match = { name: c.name, tools: c.tools };
+      if (given && timingSafeEqual(given, c.digest) && !match) {
+        const { digest: _digest, ...caller } = c;
+        match = caller;
+      }
     }
     if (!match) this.logRefusal(req, m ? 'a token no caller has' : 'no bearer token');
     return match;
