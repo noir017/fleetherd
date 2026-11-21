@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.29.0] - 2026-11-22
+
 ### Added
 
 - **Stdin (`-`) support for long-text CLI commands.** `task-new` (`<text>` and `--review`),
