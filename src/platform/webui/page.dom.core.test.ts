@@ -851,6 +851,84 @@ describe('webui page: a tab in the background', () => {
     setVisible(h, true);
     expect(h.streams).toHaveLength(2);
   });
+
+  it('reconnects when hidden longer than PARK_MS even if the OS froze the park timer', async () => {
+    const h = await open();
+    let now = 1_000_000;
+    const origNow = h.window.Date.now;
+    h.window.Date.now = () => now;
+    try {
+      await h.emit(sync('a1b2c3d4', [message('m1', '<p>hello</p>')], ['a1b2c3d4']));
+      await numbered(h, { t: 'msg', msg: message('m2', '<p>two</p>') }, 'a1b2c3d4.run.7');
+      const first = h.live();
+      setVisible(h, false);
+      // Timer never fired (frozen mobile tab), but wall clock moved past PARK_MS.
+      now += 20_000;
+      setVisible(h, true);
+      expect(first.closed).toBe(true);
+      expect(h.streams).toHaveLength(2);
+      await opens(h, 'api/events?t=a1b2c3d4&last=a1b2c3d4.run.7');
+    } finally {
+      h.window.Date.now = origNow;
+    }
+  });
+
+  it('cancels a pending reconnect backoff and reconnects at once on returning to the tab', async () => {
+    const h = await open();
+    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4']));
+    setVisible(h, false);
+    await h.emit({ t: 'bye' });
+    // Still inside the 1s backoff window: returning should not wait out the timer.
+    setVisible(h, true);
+    expect(h.streams).toHaveLength(2);
+  });
+
+  it('reconnects on bfcache pageshow and on online recovery', async () => {
+    const h = await open();
+    await h.emit(sync('a1b2c3d4', [message('m1', '<p>hello</p>')], ['a1b2c3d4']));
+    await numbered(h, { t: 'msg', msg: message('m2', '<p>two</p>') }, 'a1b2c3d4.run.9');
+    const first = h.live();
+    const ps = new h.window.Event('pageshow');
+    Object.defineProperty(ps, 'persisted', { value: true });
+    h.window.dispatchEvent(ps);
+    expect(first.closed).toBe(true);
+    expect(h.streams).toHaveLength(2);
+    await opens(h, 'api/events?t=a1b2c3d4&last=a1b2c3d4.run.9');
+
+    const second = h.live();
+    h.window.dispatchEvent(new h.window.Event('online'));
+    expect(second.closed).toBe(true);
+    expect(h.streams).toHaveLength(3);
+    await opens(h, 'api/events?t=a1b2c3d4&last=a1b2c3d4.run.9');
+  });
+
+  it('treats ping events as stream activity and reconnects when a stream goes silent', async () => {
+    const h = await open();
+    let now = 2_000_000;
+    const origNow = h.window.Date.now;
+    h.window.Date.now = () => now;
+    try {
+      await h.emit(sync('a1b2c3d4', [message('m1', '<p>hello</p>')], ['a1b2c3d4']));
+      const first = h.live();
+      // Server ping at +60s keeps the stream fresh on a quick glance at +70s.
+      now += 60_000;
+      first.emitNamed('ping');
+      now += 10_000;
+      setVisible(h, false);
+      setVisible(h, true);
+      expect(first.closed).toBe(false);
+      expect(h.streams).toHaveLength(1);
+
+      // Without a ping for >65s, returning treats the stream as stale and reconnects.
+      now += 70_000;
+      setVisible(h, false);
+      setVisible(h, true);
+      expect(first.closed).toBe(true);
+      expect(h.streams).toHaveLength(2);
+    } finally {
+      h.window.Date.now = origNow;
+    }
+  });
 });
 
 describe('webui page: what changed in the topic list', () => {

@@ -119,7 +119,7 @@ export interface TerminalSettings {
   sessions: TerminalSessions;
 }
 
-/** Keeps proxies and NAT tables from dropping an idle stream. A comment line, not an event. */
+/** Keeps proxies and NAT tables from dropping an idle stream and lets the page's watchdog see it is alive. */
 const HEARTBEAT_MS = 25_000;
 
 /** How long `stop()` waits for connections to end before destroying them. */
@@ -197,7 +197,9 @@ export function createWebServer(
   server.on('upgrade', (req, socket, head) => upgrade(req, socket as Socket, head, ctx));
 
   const heartbeat = setInterval(() => {
-    for (const stream of streams) stream.write(': ping\n\n');
+    // Named event with no id: keeps lastEventId intact, never reaches onmessage on older pages,
+    // and lets EventSource.addEventListener('ping') reset the client watchdog.
+    for (const stream of streams) stream.write('event: ping\ndata:\n\n');
   }, HEARTBEAT_MS);
   // Unref'd so this interval can never be the reason the process stays alive — `daemon.stop()`
   // is called directly by several tests, and a live timer there hangs the runner.

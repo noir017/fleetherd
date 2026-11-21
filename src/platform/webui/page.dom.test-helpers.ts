@@ -81,6 +81,8 @@ export interface Stream {
   onmessage: ((e: { data: string; lastEventId?: string }) => void) | null;
   onopen: (() => void) | null;
   onerror: (() => void) | null;
+  /** Dispatch a named SSE event (such as the server's `ping` heartbeat) to listeners. */
+  emitNamed(type: string, e?: { data?: string }): void;
 }
 
 /** What the page can see of a fake MediaRecorder: enough to feed it audio and read what it chose. */
@@ -684,10 +686,22 @@ export async function open(
         onmessage: ((e: { data: string; lastEventId?: string }) => void) | null = null;
         onopen: (() => void) | null = null;
         onerror: (() => void) | null = null;
+        private listeners = new Map<string, Set<(e: { data?: string }) => void>>();
         constructor(readonly url: string) {
           streams.push(this);
           // The script assigns onopen after constructing, so this cannot be synchronous.
           setTimeout(() => this.onopen?.(), 0);
+        }
+        addEventListener(type: string, fn: (e: { data?: string }) => void): void {
+          let set = this.listeners.get(type);
+          if (!set) {
+            set = new Set();
+            this.listeners.set(type, set);
+          }
+          set.add(fn);
+        }
+        emitNamed(type: string, e: { data?: string } = { data: '' }): void {
+          for (const fn of this.listeners.get(type) ?? []) fn(e);
         }
         close(): void {
           this.readyState = 2;

@@ -5,6 +5,16 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **Web UI reliably resumes new messages after mobile backgrounding.** Mobile browsers freeze JS
+  timers soon after a tab is backgrounded, so the 15 s `park` timer never fired and returning to the
+  page left `EventSource` attached to a dead or half-open TCP socket with no reconnect until a manual
+  reload. The page now tracks wall-clock time spent hidden, reconnects immediately on return whenever
+  the tab was away for at least `PARK_MS`, the stream is not open, a retry backoff is pending, or the
+  page wakes from `pageshow` (bfcache) / `online`, and runs a client-side liveness watchdog driven by
+  named `event: ping` heartbeats from the server.
+
 ## [3.28.0] - 2026-11-22
 
 ### Added

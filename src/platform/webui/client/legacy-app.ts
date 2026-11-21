@@ -5148,23 +5148,63 @@ import { createSkillsPanel } from './panels/skills.js';
   // the title is never changed, notifications are Web Push and go through the service worker, the
   // seen mark is only posted while visible — so the grace is only there so that glancing at another
   // tab does not cost a reconnect. lastEv is the newest event id this stream has delivered.
-  var PARK_MS=15000, parkTimer=0, parked=false, lastEv='';
+  var PARK_MS=15000, WATCHDOG_CHECK_MS=15000, STREAM_STALE_MS=65000;
+  var parkTimer=0, parked=false, hiddenAt=0, lastEv='', lastActivityAt=0, watchdogTimer=0;
+  function armWatchdog(){
+    var want = document.visibilityState !== 'hidden' && !parked && Boolean(stream) && stream.readyState !== 2;
+    if(want && !watchdogTimer){
+      watchdogTimer = setInterval(function(){
+        if(document.visibilityState === 'hidden' || parked || !stream || stream.readyState === 2) return;
+        if(lastActivityAt && Date.now() - lastActivityAt > STREAM_STALE_MS) connect(true, true);
+      }, WATCHDOG_CHECK_MS);
+    } else if(!want && watchdogTimer){
+      clearInterval(watchdogTimer);
+      watchdogTimer = 0;
+    }
+  }
   function park(){
     parkTimer=0;
     if(document.visibilityState !== 'hidden' || !stream || stream.readyState === 2) return;
     parked=true;
     stream.close();
+    armWatchdog();
+  }
+  // Mobile browsers freeze JS timers on backgrounding before PARK_MS can fire, leaving parked=false
+  // over a half-open TCP socket. Checking wall-clock time away (hiddenAt) and stream/retry state on
+  // return catches that without breaking the short-glance grace.
+  function resumeStream(force){
+    if(document.visibilityState === 'hidden') return;
+    if(app.hidden && !gate.hidden) return;
+    var awayMs = hiddenAt ? Date.now() - hiddenAt : 0;
+    hiddenAt = 0;
+    clearTimeout(parkTimer); parkTimer=0;
+    var stale = Boolean(lastActivityAt && Date.now() - lastActivityAt > STREAM_STALE_MS);
+    var broken = !stream || stream.readyState !== 1 || Boolean(retryTimer);
+    if(force || parked || awayMs >= PARK_MS || stale || broken){
+      parked = false;
+      retryMs = 0;
+      connect(true, true);
+    } else {
+      armWatchdog();
+    }
   }
   document.addEventListener('visibilitychange', function(){
     if(document.visibilityState === 'hidden'){
+      if(!hiddenAt) hiddenAt = Date.now();
       if(!parkTimer && !parked) parkTimer = setTimeout(park, PARK_MS);
+      armWatchdog();
       return;
     }
-    clearTimeout(parkTimer); parkTimer=0;
-    if(parked){ parked=false; connect(true, true); }
+    resumeStream(false);
     // A tab coming back is exactly when a topic may have started needing an answer while nobody
     // was looking; nothing else fires until the next message.
     schedulePrefetch();
+  });
+  window.addEventListener('pageshow', function(e){
+    if(e && e.persisted){ resumeStream(true); schedulePrefetch(); }
+  });
+  window.addEventListener('online', function(){
+    resumeStream(true);
   });
 
   /**
@@ -5209,6 +5249,7 @@ import { createSkillsPanel } from './panels/skills.js';
     if(stream) stream.close();
     clearTimeout(retryTimer); retryTimer=0;
     parked=false;
+    lastActivityAt = Date.now();
     // Placeholders for the wait that is about to start. Guarded on an empty log inside, so a
     // reconnect after a blip — where the conversation is still on screen and only the stream went
     // away — is not answered by replacing it with skeletons.
@@ -5223,14 +5264,24 @@ import { createSkillsPanel } from './panels/skills.js';
     // events that were missed rather than the whole conversation.
     var es = stream = new EventSource('api/events' + (qs.length ? '?'+qs.join('&') : ''));
     es.onmessage = function(e){
-      if(es === stream && e.lastEventId) lastEv = e.lastEventId;
+      if(es === stream){
+        lastActivityAt = Date.now();
+        if(e.lastEventId) lastEv = e.lastEventId;
+      }
       try{ handle(JSON.parse(e.data)); }catch(x){}
     };
+    if(es.addEventListener){
+      es.addEventListener('ping', function(){
+        if(es === stream) lastActivityAt = Date.now();
+      });
+    }
     // Not focused on a phone: the keyboard would come up before a word has been read, and on
     // a portrait screen that is half the viewport gone to reach a field nobody asked for yet.
     // Nor when the same topic's stream comes back (quiet): a tab returning to the front
     // reconnects, and the focus is wherever the person left it.
     es.onopen = function(){
+      if(es !== stream) return;
+      lastActivityAt = Date.now();
       retryMs = 0;
       var fresh = app.hidden || !quiet;
       gate.hidden=true; app.hidden=false; note.textContent=''; if(fresh && !narrow()) input.focus(); initNotify();
@@ -5243,11 +5294,13 @@ import { createSkillsPanel } from './panels/skills.js';
       // back to Reviews the panel opens before the gate does, so nothing else would ask. A tab
       // coming back has already asked (the panel's own visibilitychange), so a resume does not.
       if(fresh && schedPane.isOpen()) schedulesPanel.onStreamOpen();
+      armWatchdog();
     };
     es.onerror = function(){
       // A stream this page has since replaced or closed has nothing left to say.
       if(es !== stream) return;
       if(es.readyState === 2){
+        armWatchdog();
         // Closed for good rather than retrying: the server answered with something that is not a
         // stream. The gate only if that was the session going; otherwise a back-off, which is what
         // carries a page through a restart behind a proxy that answers 502 meanwhile.
@@ -5260,6 +5313,7 @@ import { createSkillsPanel } from './panels/skills.js';
         note.textContent='Reconnecting...';
       }
     };
+    armWatchdog();
   }
 
   /**
