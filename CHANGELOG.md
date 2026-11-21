@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.25.0] - 2026-11-21
+
 ### Added
 
 - **A sub-task can pick the agent's own settings: `task-new --option key=value[,key=value]`.** An
