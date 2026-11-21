@@ -66,6 +66,7 @@ interface SkillsState {
   cacheRead: boolean;
   fetchedAt: number;
   sig: string;
+  // Bumped on every outgoing write; reads started before it are dropped and retried once writes settle.
   epoch: number;
   showSeq: number;
   refreshPending: boolean;
@@ -312,6 +313,7 @@ function skillCard(s: SkillPanelEntry, deps: SkillsPanelDeps): string {
   if (s.pinned) meta.push('pinned');
   meta.push(s.lastUsedAt ? 'last used ' + skillAgo(s.lastUsedAt, schedAgo) : 'never used');
   meta.push(s.uses + (s.uses === 1 ? ' use' : ' uses'));
+  // The name is the button, not the row, because nesting switches inside a button merges them for screen readers.
   let h =
     '<div class="skill-item skill-card' +
     (skillOn(s) ? '' : ' skill-off') +
@@ -700,6 +702,7 @@ function openSkill(state: SkillsState, deps: SkillsPanelDeps, name: string, file
     .then((r) => r.json().catch(() => ({ ok: false, error: 'HTTP ' + r.status })) as Promise<SkillOpResponse>)
     .then((d) => {
       if (seq !== state.showSeq) return;
+      // A write left after this show started; discard the stale read and reopen once writes settle.
       if (epoch !== state.epoch) {
         state.busy = false;
         if (!deps.skillsWin.hidden) state.showPending = { name, file };

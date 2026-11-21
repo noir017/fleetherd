@@ -892,6 +892,7 @@ function schedCard(t: SchedulePanelTask, deps: SchedulesPanelDeps): string {
   const taskState = t.state || 'active';
   let h = '<div class="sched-item ' + deps.text(taskState) + (t.running ? ' running' : '') + '" data-id="' + deps.text(t.id) + '">';
   h += deps.rowHtml({
+    // main.css keys .topic-item.running state colours off the row itself, not only the wrapper.
     cls: (t.running ? 'running ' : '') + (taskState === 'active' ? '' : 'idle ') + 'sched-row',
     attrs: ' role="button" tabindex="0" title="' + deps.text(schedRowTitle(t, deps)) + '"',
     key: 'task:' + t.id,
@@ -904,6 +905,7 @@ function schedCard(t: SchedulePanelTask, deps: SchedulesPanelDeps): string {
 }
 
 function paintSchedTasks(state: SchedulesState, deps: SchedulesPanelDeps): void {
+  // Do not render the empty state before the first fetch returns.
   if (state.tasks === null) {
     deps.schedList.innerHTML = '<div class="sched-empty">Loading\u2026</div>';
     if (state.filter) state.filter.setCounts(0, 0);
@@ -2076,6 +2078,7 @@ function initSchedulesPanel(state: SchedulesState, deps: SchedulesPanelDeps): vo
     onChange: () => paintSchedTasks(state, deps),
   });
   deps.schedFilterHost.appendChild(state.filter.el);
+  // null means not loaded yet, so restored tag selections are not pruned as deleted tags.
   state.filter.setGroups(null);
 
   try {
@@ -2137,6 +2140,7 @@ export function createSchedulesPanel(deps: SchedulesPanelDeps): SchedulesPanel {
       armSched(state, deps);
     },
     onTopicsUpdated: () => {
+      // Refresh Sessions counts even while Tasks is shown so tab badges stay current.
       paintSchedCounts(state, deps);
       paintSummary(state, deps);
       paintSchedAlert(deps);
