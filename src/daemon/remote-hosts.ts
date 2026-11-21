@@ -21,7 +21,8 @@ import {
 } from './instructions.js';
 import { selfInvocation } from './reverse-cli-shim.js';
 import { AGY_PLUGIN_DIR, AGY_PLUGIN_NAME, agyPluginHome, agyPluginSource } from './agy-plugin.js';
-import { BUNDLED_SKILLS, allSkillDirs, bundledSkillDir, skillHomes, type SkillHome } from './skill-link.js';
+import { BUNDLED_SKILLS, allSkillDirs, bundledSkillDir, skillHomes, skillReaders, type SkillHome } from './skill-link.js';
+import { renderBundledSkill } from './bundled-skill.js';
 import { deliveredTo, managedSkillsHome } from './managed-skills.js';
 import { activeSkillFiles, archivedSkillNames } from './skills-store.js';
 import { LEGACY_SKILL_LINK, envOf } from '../legacy-name.js';
@@ -89,8 +90,10 @@ export class RemoteHosts {
   private readonly epoch = randomBytes(8).toString('hex');
   private socketPath = '';
   private ns: string | undefined;
-  /** host id + version → the skill is on that host for that version. */
+  /** host id + version + daemon instance → the skill is on that host for that version. */
   private readonly skillPlaced = new Set<string>();
+  /** host id + version + daemon instance + readers → the digest of the rendered bundled skill sent there. */
+  private readonly renderedPlaced = new Map<string, string>();
   /** host id + version + daemon instance → the agy plugin's files are on that host for that version. */
   private readonly agyPluginPlaced = new Set<string>();
   /**
@@ -196,7 +199,8 @@ export class RemoteHosts {
    * Put the bundled skills where `def` reads skills on the host (skill-link.ts says where, and
    * why only for a harness that has run there). The files go into the version's own directory, so
    * an upgrade retires them along with the old build, and the links are repointed by the next
-   * spawn. Best-effort, like the local link: an agent without the skills still has its tools.
+   * spawn — `fleetherd` to a copy rendered for its directory (placeRendered). Best-effort, like the
+   * local link: an agent without the skills still has its tools.
    *
    * Once per version, before linking, the links an older build left behind are swept: a link into a
    * version directory that no longer exists is dead, and only a spawn of the harness it was made for
@@ -209,22 +213,12 @@ export class RemoteHosts {
     const homes = skillHomes(def.harness, home, def.command);
     try {
       if (!this.skillPlaced.has(key)) {
-        if (homes.length > 0) {
-          for (const skill of BUNDLED_SKILLS) {
-            const source = bundledSkillDir(skill.dir);
-            for (const rel of listFiles(source)) {
-              await host.writeFile(`${base}/${skill.dir}/${rel}`, fs.readFileSync(path.join(source, rel)), 0o644);
-            }
-          }
-        }
-        for (const dir of allSkillDirs(home)) {
-          for (const link of await host.sweepSkillLinks(dir)) console.log(`[skill] ${host.id}: removed dead link ${link}`);
-        }
+        await this.placeSkillFiles(host, homes, home, base);
         this.skillPlaced.add(key);
       }
       for (const skill of BUNDLED_SKILLS) {
-        const target = `${base}/${skill.dir}`;
         for (const h of homes) {
+          const target = skill.library ? await this.placeRendered(host, bundledSkillDir(skill.dir), h, home, base, key) : `${base}/${skill.dir}`;
           const r = await host.ensureLink(target, `${h.dir}/${skill.name}`, h.requires);
           if (r.outcome === 'linked' || r.outcome === 'relinked') console.log(`[skill] ${host.id}: linked ${r.link} → ${target}`);
           else if (r.outcome === 'occupied' || r.outcome === 'failed') console.warn(`[skill] ${host.id}: ${r.link}: ${r.outcome} (${r.detail ?? ''})`);
@@ -234,6 +228,40 @@ export class RemoteHosts {
     } catch (e) {
       console.warn(`[skill] ${host.id}: could not place the skill:`, e instanceof Error ? e.message : e);
     }
+  }
+
+  /** Once per version: the bundled skills that are linked as shipped, and the sweep of dead links. */
+  private async placeSkillFiles(host: RemoteHost, homes: SkillHome[], home: string, base: string): Promise<void> {
+    if (homes.length > 0) {
+      for (const skill of BUNDLED_SKILLS) {
+        if (skill.library) continue; // rendered per skill directory (placeRendered)
+        const source = bundledSkillDir(skill.dir);
+        for (const rel of listFiles(source)) {
+          await host.writeFile(`${base}/${skill.dir}/${rel}`, fs.readFileSync(path.join(source, rel)), 0o644);
+        }
+      }
+    }
+    for (const dir of allSkillDirs(home)) {
+      for (const link of await host.sweepSkillLinks(dir)) console.log(`[skill] ${host.id}: removed dead link ${link}`);
+    }
+  }
+
+  /**
+   * The remote twin of skill-link.ts placeRendered: the skill rendered for the harnesses reading
+   * `where` on this host, at `<version>/bundled/<readers>` — so an upgrade retires it with the build.
+   * Sent only when its digest differs from what this host and daemon instance last got, so an
+   * unchanged library costs no write.
+   */
+  private async placeRendered(host: RemoteHost, source: string, where: SkillHome, home: string, base: string, key: string): Promise<string> {
+    const rendered = renderBundledSkill(source, host.id, skillReaders(where.dir, home));
+    const target = `${base}/bundled/${rendered.key}`;
+    const placedKey = `${key}@${rendered.key}`;
+    if (this.renderedPlaced.get(placedKey) !== rendered.digest) {
+      for (const [rel, data] of rendered.files) await host.writeFile(`${target}/${rel}`, data, 0o444, { atomic: true });
+      this.renderedPlaced.set(placedKey, rendered.digest);
+      console.log(`[skill] ${host.id}: wrote ${target} for ${where.dir}`);
+    }
+    return target;
   }
 
   /**

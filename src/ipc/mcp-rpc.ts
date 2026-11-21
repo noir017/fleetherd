@@ -37,6 +37,8 @@ export interface McpTool {
   description: string;
   inputSchema: unknown;
   annotations?: McpToolAnnotations;
+  /** The spec's open `_meta` map, carried to the client as is; a client ignores keys it does not know. */
+  _meta?: Record<string, unknown>;
 }
 
 /** A tool call's answer: text for the model, flagged when the call did not happen. */

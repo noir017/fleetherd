@@ -33,12 +33,12 @@ CLI 给你弹按钮，模型通过内置 skill 找到它；再不行就用纯文
 
 - **三个原生工具** `send_file`、`schedule` 和 `skills`，所有走 ACP 的智能体（Claude Code、Codex、
   OpenCode、Antigravity……）都有：守护进程给每个会话挂一个小的 MCP server，它们就和别的工具一样出现在
-  智能体的工具列表里。`skills` 用来搜索和阅读[技能库](skills.md#常驻与库内)里那些不在智能体自己列表里的技能。
+  智能体的工具列表里，并且标明要一开始就加载，Claude Code 不会把它们藏在工具搜索后面。`skills` 用来搜索和阅读[技能库](skills.md#常驻与库内)里那些不在智能体自己列表里的技能。
 - **一个 skill** 管其余的——发到别的聊天、读聊天记录、回复、编辑、话题、按钮提问、语音转写。
   守护进程把内置的 [skill](../../skill/SKILL.md) 软链到各 harness 读 skill 的地方——Claude Code 是
   `~/.claude/skills`，Codex 和 OpenCode 是 `~/.agents/skills`，Antigravity 是 `~/.gemini/config/skills`
   ——只给在这台机器上跑过的 harness。
-  用到之前，它只占每个 skill 都占的那一行描述；正文指向 `fleetherd help <主题>`——`files`、
+  用到之前，它只占每个 skill 都占的那一行描述，描述末尾列着这个智能体能用的库内技能（[怎么做的](skills.md#怎么到达智能体)）；正文指向 `fleetherd help <主题>`——`files`、
   `schedule`、`channels`、`history`、`messages`、`threads`、`ask`、`voice`、`tasks`——打印该主题的命令
   和规则。旁边还链着第二个 skill `super`：你发 `/super` 时，它告诉智能体怎样把活拆给[子代理](sub-agents.md)。
 

@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { LIBRARY_NAMES_MAX } from '../ipc/tools.js';
 import { SkillLibrary, type LibraryAsker } from './skill-library.js';
 import { readQueryEvents } from './skill-queries.js';
 import { activeSkillFiles, createSkill, listSkills, patchSkill, setResident, showSkill, writeSkillFile } from './skills-store.js';
@@ -71,16 +72,42 @@ describe('search', () => {
     expect(library.search('agy gateway', agy, T0).results[0]!.name).toBe('agy-only');
   });
 
-  it('says what the library has when nothing matched, and logs the search either way', () => {
+  it('names the library skills that reach the asker when nothing matched, and logs the search either way', () => {
     const answer = library.search('quantum chromodynamics', codex, T0);
     expect(answer.results).toEqual([]);
-    expect(answer.note).toMatch(/the library has: 运维 1, other 2/);
+    // agy-only is limited to agy: a name codex could not search for is not offered to it.
+    expect(answer.note).toBe('no skill matched. In the library: other: deploy-check.');
     library.search('检查部署', codex, T0 + 1);
     expect(readQueryEvents(dir).map((e) => (e.kind === 'search' ? [e.query, e.hits] : e.kind))).toEqual([
       ['quantum chromodynamics', []],
       ['检查部署', ['deploy-check']],
     ]);
     expect(library.missesOf('web#main#a', T0)).toEqual(['quantum chromodynamics']);
+  });
+
+  it('names what reaches each asker on a miss: another harness, and a caller outside the gateway', () => {
+    expect(library.search('quantum chromodynamics', { ...codex, harness: 'agy' }, T0).note).toBe(
+      'no skill matched. In the library: 运维: agy-only; other: deploy-check.'
+    );
+    expect(library.search('quantum chromodynamics', outside, T0).note).toBe('no skill matched. In the library: other: deploy-check.');
+  });
+
+  it('goes back to counts on a miss past LIBRARY_NAMES_MAX names, as the tool description does', () => {
+    for (let i = 0; i < LIBRARY_NAMES_MAX; i++) {
+      const added = path.join(dir, 'skills', 'skills', `extra-${i}`);
+      fs.mkdirSync(added);
+      fs.writeFileSync(path.join(added, 'SKILL.md'), `---\nname: extra-${i}\ndescription: "Use when doing chore ${i}"\n---\n\nbody\n`);
+    }
+    expect(library.search('quantum chromodynamics', codex, T0).note).toBe('no skill matched. In the library: 运维 1, other 42.');
+  });
+
+  it('says only that nothing matched when no library skill reaches the asker', () => {
+    const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'skill-library-empty-'));
+    try {
+      expect(new SkillLibrary(() => empty).search('anything', codex, T0).note).toBe('no skill matched');
+    } finally {
+      fs.rmSync(empty, { recursive: true, force: true });
+    }
   });
 });
 
@@ -99,6 +126,15 @@ describe('categories', () => {
 
   it('names only the library skills that reach the asking agent', () => {
     expect(library.categories(codex).categories).toEqual([
+      { name: '运维', count: 1, library: [] },
+      { name: 'other', count: 2, library: ['deploy-check'] },
+    ]);
+  });
+
+  it('with several askers, names only what reaches every one of them', () => {
+    const agy = { ...codex, harness: 'agy' };
+    expect(library.categories(agy).categories[0]).toEqual({ name: '运维', count: 1, library: ['agy-only'] });
+    expect(library.categories(codex, agy).categories).toEqual([
       { name: '运维', count: 1, library: [] },
       { name: 'other', count: 2, library: ['deploy-check'] },
     ]);

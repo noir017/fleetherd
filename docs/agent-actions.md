@@ -37,13 +37,15 @@ it can do beyond answering reaches it the way any capability does, through its o
 
 - **Three native tools**, `send_file`, `schedule` and `skills`, on every ACP agent (Claude Code,
   Codex, OpenCode, Antigravity, …): the daemon hands each session a small MCP server, so they sit in
-  the agent's tool list like any other. `skills` searches and reads the
+  the agent's tool list like any other — marked to load up front, so Claude Code does not hold them
+  back behind its tool search. `skills` searches and reads the
   [skill library](skills.md#resident-and-library) — the skills not in the agent's own list.
 - **A skill** for the rest — posting to other chats, reading history, replies, edits, threads,
   button questions, voice transcripts. The daemon links the bundled [skill](../skill/SKILL.md) where each harness
   reads skills — `~/.claude/skills` for Claude Code, `~/.agents/skills` for Codex and OpenCode,
   `~/.gemini/config/skills` for Antigravity — once that harness has been run on the machine. Until it is
-  needed, it costs the one line of description every skill costs. Its body points at
+  needed, it costs the one line of description every skill costs, which ends with the library
+  skills that agent can reach ([how](skills.md#how-it-reaches-an-agent)). Its body points at
   `fleetherd help <topic>` — `files`, `schedule`, `channels`, `history`, `messages`,
   `threads`, `ask`, `voice`, `tasks` — which prints that topic's commands and rules. A second
   skill, `super`, is linked beside it: how to split a job across [sub-agents](sub-agents.md) when

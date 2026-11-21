@@ -1,4 +1,5 @@
 import { configDir } from '../config/load.js';
+import { libraryLine } from '../ipc/tools.js';
 import { SkillIndex, skillBody, type SearchableSkill } from './skill-index.js';
 import { missesOf, readQueryEvents, recordQueryEvent } from './skill-queries.js';
 import {
@@ -141,16 +142,17 @@ export class SkillLibrary {
     if (results.length > 0) {
       return asker.external ? { query, results, help: 'read one whole with skills show <name>' } : { query, results };
     }
-    const cats = this.categories().categories.map((c) => `${c.name} ${c.count}`).join(', ');
-    return { query, results, note: `no skill matched${cats ? `; the library has: ${cats}` : ''}` };
+    const library = libraryLine(this.categories(asker));
+    return { query, results, note: library ? `no skill matched. ${library}` : 'no skill matched' };
   }
 
   /**
    * How many skills, and per category (resident and library both), for the tool's description.
    * Each category also names its library skills — the ones not already in the agent's own skill
-   * list — that reach `asker`, when one is given: a name is what makes an agent look a skill up.
+   * list — that reach every one of `askers` (all of them, when none is given): a name is what makes
+   * an agent look a skill up. More than one asker is a skill directory several harnesses read.
    */
-  categories(asker?: LibraryAsker): {
+  categories(...askers: LibraryAsker[]): {
     total: number;
     library: number;
     categories: Array<{ name: string; count: number; library: string[] }>;
@@ -163,7 +165,7 @@ export class SkillLibrary {
       const c = s.meta.category ?? 'other';
       const entry = counts.get(c) ?? { count: 0, library: [] };
       entry.count++;
-      if (!s.meta.resident && (!asker || skillReaches(s.meta, asker.host, asker.harness))) entry.library.push(s.name);
+      if (!s.meta.resident && askers.every((a) => skillReaches(s.meta, a.host, a.harness))) entry.library.push(s.name);
       counts.set(c, entry);
     }
     const categories = [...counts]

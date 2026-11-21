@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { AgentDef } from '../config/schema.js';
 import { selfInvocation } from './reverse-cli-shim.js';
+import { syncSkillCopy } from './skill-copy.js';
 import { allSkillDirs, linkSkill, removeSkillLink, skillHomes } from './skill-link.js';
 import { activeSkillFiles, archivedSkillNames, skillReaches, type SkillFileSet } from './skills-store.js';
 import { envOf } from '../legacy-name.js';
@@ -66,7 +67,7 @@ export function applyManagedSkills(def: AgentDef, home: string, dir?: string): M
   for (const skill of activeSkillFiles(dir)) {
     if (!deliveredTo(skill, def)) continue;
     const copy = path.join(owned, skill.name);
-    const files = syncFiles(copy, skill);
+    const files = syncSkillCopy(copy, skill.files);
     results.push({ name: skill.name, path: copy, ...files });
     if (files.outcome === 'failed') continue;
     // A library skill is on disk for the search to point at, never linked: a link would put its
@@ -97,61 +98,6 @@ export function applyManagedSkills(def: AgentDef, home: string, dir?: string): M
     }
   }
   return results;
-}
-
-/** Keep `copy` exactly equal to `files` (which is SKILL.md plus the three directories). */
-function syncFiles(copy: string, skill: SkillFileSet): { outcome: ManagedOutcome; detail?: string } {
-  try {
-    let changed = false;
-    try {
-      if (fs.lstatSync(copy).isSymbolicLink()) fs.rmSync(copy, { force: true });
-    } catch {
-      // not there yet
-    }
-    for (const [rel, data] of skill.files) {
-      const dest = path.join(copy, ...rel.split('/'));
-      try {
-        if (fs.readFileSync(dest).equals(data)) continue;
-      } catch {
-        // missing, or a directory where a file belongs: write it
-      }
-      writeAtomic(dest, data, rel.startsWith('scripts/') ? 0o555 : 0o444);
-      changed = true;
-    }
-    for (const rel of walk(copy)) {
-      if (skill.files.has(rel)) continue;
-      fs.rmSync(path.join(copy, ...rel.split('/')), { force: true });
-      changed = true;
-    }
-    return { outcome: changed ? 'placed' : 'current' };
-  } catch (e) {
-    return { outcome: 'failed', detail: e instanceof Error ? e.message : String(e) };
-  }
-}
-
-function walk(dir: string, prefix = ''): string[] {
-  let entries: fs.Dirent[];
-  try {
-    entries = fs.readdirSync(path.join(dir, prefix), { withFileTypes: true });
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return [];
-    throw e;
-  }
-  const out: string[] = [];
-  for (const e of entries) {
-    const rel = prefix ? `${prefix}/${e.name}` : e.name;
-    if (e.isDirectory()) out.push(...walk(dir, rel));
-    else out.push(rel);
-  }
-  return out;
-}
-
-function writeAtomic(file: string, data: Buffer, mode: number): void {
-  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-  const tmp = path.join(path.dirname(file), `.${path.basename(file)}.tmp-${process.pid}`);
-  fs.rmSync(tmp, { force: true });
-  fs.writeFileSync(tmp, data, { mode });
-  fs.renameSync(tmp, file);
 }
 
 /** Problems already reported, so a spawn-time call does not repeat the warning. */

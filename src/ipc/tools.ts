@@ -259,10 +259,10 @@ export const LIBRARY_NAMES_MAX = 40;
 /**
  * From the daemon's `skills categories` answer: `In the library: 协作: grilling, siyuan-notes;
  * other: email-reader.` — the library skills that reach this agent, by category — or
- * `In the library: 运维 6, 开发 2, other 3.` past LIBRARY_NAMES_MAX names, or from a daemon that
+ * `In the library: 运维 6, 开发 2, other 3.` past `maxNames` names, or from a daemon that
  * does not send names. Empty when the library has nothing for this agent.
  */
-export function libraryLine(result: unknown): string {
+export function libraryLine(result: unknown, maxNames = LIBRARY_NAMES_MAX): string {
   const r = result as { library?: number; categories?: Array<{ name: string; count: number; library?: unknown }> } | undefined;
   if (!r?.library || !Array.isArray(r.categories) || r.categories.length === 0) return '';
   const named = r.categories.map((c) => ({
@@ -272,7 +272,7 @@ export function libraryLine(result: unknown): string {
   if (named.every((c) => c.skills !== undefined)) {
     const total = named.reduce((n, c) => n + c.skills!.length, 0);
     if (total === 0) return '';
-    if (total <= LIBRARY_NAMES_MAX) {
+    if (total <= maxNames) {
       return `In the library: ${named
         .filter((c) => c.skills!.length > 0)
         .map((c) => `${c.name}: ${c.skills!.join(', ')}`)

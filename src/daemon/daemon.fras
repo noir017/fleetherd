@@ -7,6 +7,7 @@ src/daemon/agent-acp.ts [Core]: F:ACP protocol runtime factory, session lifecycl
 src/daemon/agent-reconnect.ts [Core]: F:A lost agent connection: redial window and backoff, reconnectTurn/promptId support, and whether a turn can be picked up | R:src/daemon/agent.ts | A:Redialer,readResumeSupport,canPickUp,AgentUnreachable,RECONNECT_WINDOW_MS
 src/daemon/agent-files.ts [Infra]: F:Pictures from an agent's reply checked by their bytes, and bytes sent as a file through a private temporary one | A:decodeAgentImage,sendBytesAsFile
 src/daemon/attachment-io.ts [Infra]: F:Attachment fetch and storage with SSRF guards | A:assertSafeAttachmentUrl,createAttachmentIngestDeps | S:See Security invariants item 3 [T:assertSafeAttachmentUrl]
+src/daemon/bundled-skill.ts [Infra]: F:The bundled fleetherd skill rendered per skill directory with the library line appended to its frontmatter description, YAML-checked | R:src/daemon/skill-library.ts,src/ipc/tools.ts | A:renderBundledSkill,withLibraryLine,appendToDescription,DESCRIPTION_MAX | S:Never writes the package's skill/; a rewrite that does not parse back with only the description changed is dropped
 src/daemon/config-reload.ts [Core]: F:Pure configuration diffing and reload plan computation | A:applyConfig,diffConfig
 src/daemon/connect-agent.ts [Infra]: F:TCP connect-mode ACP agent socket child and initialize _meta assembly | A:SocketChild,connectAddress,connectHere,connectMeta
 src/daemon/conversation-commands.ts [Core]: F:Daemon slash commands, /setting, agent switch lock, and generic command translation before a turn | R:src/daemon/conversation-turns.ts,src/daemon/conversation-controls.ts,src/daemon/settings-store.ts | A:ConversationCommands | S:See Security invariants items 1, 6
@@ -31,5 +32,6 @@ src/daemon/remote-hosts.ts [Infra]: F:Remote host manager and reverse CLI shim |
 src/daemon/review.ts [Core]: F:Automated review of idle conversations distilling skills and learned preferences | A:ReviewService
 src/daemon/routing.ts [Core]: F:Inbound message to agent and scope resolution | A:resolveAgent,resolveScope | S:Deterministic pipeline and harness matching [T:resolveAgent]
 src/daemon/schedule-service.ts [Core]: F:Scheduled task execution engine | A:ScheduleService
+src/daemon/skill-copy.ts [Infra]: F:Keeps a gateway-owned directory equal to a map of files, writing only what differs | A:syncSkillCopy,listTree
 src/daemon/skills-store.ts [Infra]: F:Managed skill repository storage and git tracking | A:createSkill,listSkills,showSkill | S:See Security invariants item 8
 src/daemon/turn-runner.ts [Core]: F:Turn execution loop with streaming and tool bubble sinks | R:src/daemon/agent-acp.ts | A:TurnRunner

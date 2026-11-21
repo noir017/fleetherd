@@ -119,7 +119,10 @@ metadata:
   reach that agent, by category (`In the library: 协作: grilling, siyuan-notes; other: email-reader.`),
   which is what tells an agent there is something worth a `show` before it starts. Past 40 names it
   says how many each category holds instead (`In the library: 运维 6, 开发 2, other 3.`), so a
-  large library does not grow every request. **Hosts** and **harnesses** (a host is a `hosts:` id,
+  large library does not grow every request. The bundled `fleetherd` skill's description ends with
+  the same line, because Codex, OpenCode, Antigravity and CodeBuddy list their skills before the
+  first turn but not a tool's description — see [how it reaches an agent](#how-it-reaches-an-agent).
+  **Hosts** and **harnesses** (a host is a `hosts:` id,
   or `local`; a harness is `claude`, `codex`, `opencode`, `agy` or `codebuddy`) keep a skill off
   the agents it would only mislead.
 
@@ -136,7 +139,9 @@ runs `fleetherd skills search` / `show`, which is the same thing):
   says it is already in the agent's own list. Ranking is BM25 over the name, description, category
   and body, the description weighted above a passing mention in a body; Chinese is matched by
   two-character words, so 「部署检查」 finds a skill about 「检查部署」. Only skills that reach the
-  asking agent (its host and harness) are searched.
+  asking agent (its host and harness) are searched. When nothing matches, the answer names the
+  library skills that do reach it, by category — the same line as the tool's description — so the
+  agent can pick one or stop looking.
 - **show** — one skill: `SKILL.md` whole, with the list of its other files, which `file` reads.
   Reading counts as a use. A version this conversation already read comes back as "unchanged"
   instead of the whole text again, until `/new` or a change; `--again` reads it anyway, for an
@@ -204,6 +209,15 @@ real file, or a link of your own at `~/.claude/skills/<name>` stays as it is, an
 agent does not get the managed copy. An unchanged version is not written again. An archived skill
 has its copy and every link of the gateway's taken back at the next start; a skill moved to the
 library has its links taken back and keeps its copy.
+
+The bundled `fleetherd` skill is linked the same way, but to a copy the gateway renders: its
+`description` ends with the library skills that reach every harness reading that directory on that
+machine (`In the library: 运维: deploy-check; other: email-reader.`) — one copy for
+`~/.agents/skills`, which Codex and OpenCode share. It is kept in `~/.fleetherd/bundled/` (on a
+remote host, beside that version's own files), rewritten only when the line changes, and left as
+shipped when nothing in the library reaches that machine. Past 40 names it counts instead, and past
+the Agent Skills spec's 1,024-character description it drops the line rather than risk a harness
+refusing the skill. The package's own `skill/SKILL.md` is never edited.
 
 ## When a skill counts as used
 
