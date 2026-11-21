@@ -48,6 +48,9 @@ directly.
   asked for one, or a part plainly needs a stronger or a cheaper one. Otherwise leave it out. The
   model decides what the part costs, so the card shows it; an id the agent does not offer is
   refused, with the list.
+- `--option key=value[,key=value]` sets that agent's own settings for the part — the account it
+  works under, say — when the person named one. The card shows them; a setting or value the agent
+  does not offer is refused, with its choices and their notes, so propose again with one of those.
 - The text is everything the sub-agent will see — it has not read this conversation. Give it the
   goal, the constraints, and how it will know it is done (a test that passes, a command whose
   output changes).

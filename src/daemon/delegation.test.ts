@@ -125,7 +125,9 @@ function manualClock() {
 
 const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
 
-function rig(opts: { answer?: string | null | 'manual'; failOpen?: string; failModel?: string; noHistory?: boolean; noLane?: string } = {}) {
+function rig(
+  opts: { answer?: string | null | 'manual'; failOpen?: string; failModel?: string; failOption?: string; noHistory?: boolean; noLane?: string } = {}
+) {
   const clock = manualClock();
   const posted: Array<{ to: string; text: string; kind?: string }> = [];
   const parents = new Map<string, string>(); // child key → parent key
@@ -162,10 +164,22 @@ function rig(opts: { answer?: string | null | 'manual'; failOpen?: string; failM
   const telegram = { capabilities: { thread: true }, sendMessage: async () => ({ messageId: 'm' }) } as unknown as PlatformAdapter;
 
   const registry = {
-    openTask: async (o: { parent: ConversationAddress; agentId: string; text: string; header: string; cwd?: string; title?: string; model?: string }) => {
+    openTask: async (o: {
+      parent: ConversationAddress;
+      agentId: string;
+      text: string;
+      header: string;
+      cwd?: string;
+      title?: string;
+      model?: string;
+      options?: Record<string, string>;
+    }) => {
       calls.push(['openTask', o]);
       if (o.agentId === opts.failOpen) throw new Error(`no directory ${o.cwd} on the machine`);
       if (o.model && o.model === opts.failModel) throw new Error(`could not set model "${o.model}": the harness refused it`);
+      if (o.options?.account && o.options.account === opts.failOption) {
+        throw new Error(`could not set account=${o.options.account}: that account's quota is used up`);
+      }
       const key = `web#main#c${++threads}0000000`.slice(0, 17);
       parents.set(key, keyOf(o.parent));
       bound.set(key, o.agentId);
@@ -240,9 +254,13 @@ function rig(opts: { answer?: string | null | 'manual'; failOpen?: string; failM
     // The store's record, which knows a name written before the topic's first turn; `listChannels`
     // below is the fallback `titleOf` uses when there is none.
     conversationTitle: (k: string) => (k === P ? '[cc] Release' : bound.has(k) ? `[${bound.get(k)}] part` : undefined),
-    scheduledModelProblem: async (agent: string, model: string, from: string) => {
-      calls.push(['modelProblem', { agent, model, from }]);
-      return model === 'nope' ? `unknown model "nope" for agent "${agent}"; choose one of: base-model, fast-model` : undefined;
+    scheduledChoicesProblem: async (agent: string, choice: { model?: string; options?: Record<string, string> }, from: string) => {
+      calls.push(['choiceProblem', { agent, ...choice, from }]);
+      if (choice.model === 'nope') return `unknown model "nope" for agent "${agent}"; choose one of: base-model, fast-model`;
+      if (choice.options?.account === 'nobody') {
+        return `"nobody" is not a choice for account on agent "${agent}"; choose one of: alice@example.com, bob@example.com (quota used up)`;
+      }
+      return undefined;
     },
   };
 
@@ -292,7 +310,7 @@ function rig(opts: { answer?: string | null | 'manual'; failOpen?: string; failM
   };
 }
 
-const task = (agent: string | undefined, text: string, extra: Record<string, string> = {}) => ({
+const task = (agent: string | undefined, text: string, extra: Record<string, unknown> = {}) => ({
   kind: 'task-new' as const,
   ...(agent ? { agent } : {}),
   text,
@@ -375,7 +393,7 @@ describe('Delegation: proposing, and the card every start waits on', () => {
     const r = rig();
     r.bound.set(P, 'cx');
     await r.d.handle(P, task(undefined, 'Review the fix', { model: 'fast-model' }));
-    expect(r.calls.find(([c]) => c === 'modelProblem')?.[1]).toEqual({ agent: 'cx', model: 'fast-model', from: P });
+    expect(r.calls.find(([c]) => c === 'choiceProblem')?.[1]).toEqual({ agent: 'cx', model: 'fast-model', from: P });
     expect(r.calls.filter(([c]) => c === 'openTask')).toEqual([]);
 
     r.clock.advance(PROPOSAL_GATHER_MS);
@@ -404,10 +422,52 @@ describe('Delegation: proposing, and the card every start waits on', () => {
     }
   });
 
+  it('checks --model and --option in one probe, and shows the settings after the model on both cards', async () => {
+    const r = rig();
+    r.bound.set(P, 'cx');
+    const options = { account: 'alice@example.com', region: 'eu' };
+    await r.d.handle(P, task(undefined, 'Review the fix', { model: 'fast-model', options }));
+    expect(r.calls.filter(([c]) => c === 'choiceProblem')).toEqual([
+      ['choiceProblem', { agent: 'cx', model: 'fast-model', options, from: P }],
+    ]);
+
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    await settle();
+    expect(r.cards[0]!.text).toContain('1. **cx** · model `fast-model` @ near · `account=alice@example.com` · `region=eu`');
+    expect(r.calls.find(([c]) => c === 'openTask')?.[1]).toMatchObject({ agentId: 'cx', model: 'fast-model', options });
+    const said = r.posted.find((p) => p.to === P && p.text.includes('— a sub-agent, in a topic of its own'))!;
+    expect(said.text).toContain(
+      '- [part](?t=c1000000) · model `fast-model` @ near · `account=alice@example.com` · `region=eu` · web:main/c1000000'
+    );
+  });
+
+  it('refuses a setting the agent does not offer before either confirmation path starts anything', async () => {
+    for (const confirm of [true, false]) {
+      const r = rig();
+      r.deps.config.delegation.confirm = confirm;
+      await expect(r.d.handle(P, task('cc', 'x', { options: { account: 'nobody' } }))).rejects.toThrow(
+        /"nobody" is not a choice for account on agent "cc"; choose one of: alice@example.com, bob@example.com \(quota used up\)/
+      );
+      r.clock.advance(PROPOSAL_GATHER_MS);
+      await settle();
+      expect(r.cards).toEqual([]);
+      expect(r.calls.filter(([c]) => c === 'openTask')).toEqual([]);
+    }
+  });
+
+  it('reports a setting the agent refuses at start as a sub-task that could not start', async () => {
+    const r = rig({ failOption: 'bob@example.com' });
+    r.deps.config.delegation.confirm = false;
+    const res = (await r.d.handle(P, task('cx', 'x', { options: { account: 'bob@example.com' } }))) as TaskNewResult;
+    expect(res.result).toContain("could not set account=bob@example.com: that account's quota is used up");
+    expect(res.result).not.toContain('running now');
+  });
+
   it('does not probe the model list when --model is absent', async () => {
     const r = rig({ answer: null });
     await r.d.handle(P, task(undefined, 'x'));
-    expect(r.calls.filter(([c]) => c === 'modelProblem')).toEqual([]);
+    expect(r.calls.filter(([c]) => c === 'choiceProblem')).toEqual([]);
   });
 
   it('refuses to guess when neither --agent nor a bound agent names one', async () => {
@@ -562,7 +622,7 @@ describe('Delegation: with confirmation off', () => {
     r.deps.config.delegation.confirm = false;
     const res = (await r.d.handle(P, task(undefined, 'Fix the bump workflow', { model: 'fast-model' }))) as TaskNewResult;
     expect(res.result).toContain('running now');
-    expect(r.calls.find(([c]) => c === 'modelProblem')?.[1]).toEqual({ agent: 'cc', model: 'fast-model', from: P });
+    expect(r.calls.find(([c]) => c === 'choiceProblem')?.[1]).toEqual({ agent: 'cc', model: 'fast-model', from: P });
     expect(r.calls.find(([c]) => c === 'openTask')?.[1]).toMatchObject({ agentId: 'cc', model: 'fast-model' });
 
     r.clock.advance(PROPOSAL_GATHER_MS);
@@ -584,6 +644,20 @@ describe('Delegation: with confirmation off', () => {
     expect(card.text).toContain('**cc** — a sub-agent, in a topic of its own under this one:');
     expect(card.text).toContain('- [part](?t=c1000000) @ near · web:main/c1000000');
     expect(card.text).toContain('/setting delegation on');
+  });
+
+  it('names each part’s settings on the record card, after its model and before its topic', async () => {
+    const r = rig();
+    r.deps.config.delegation.confirm = false;
+    await r.d.handle(P, task('cc', 'One', { options: { account: 'alice@example.com' } }));
+    await r.d.handle(P, task('oc2', 'Two', { model: 'fast-model', options: { account: 'bob@example.com' } }));
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    const rows = recordCard(r)!.text.split('\n').filter((l) => l.startsWith('- '));
+    expect(rows).toEqual([
+      '- **cc** @ near · `account=alice@example.com` · [part](?t=c1000000) · web:main/c1000000',
+      '- **oc2** · model `fast-model` @ far · `account=bob@example.com` · [part](?t=c2000000) · web:main/c2000000',
+    ]);
   });
 
   it('opens with the sub-agent’s name first and bold, and leaves it out of a lone row', async () => {

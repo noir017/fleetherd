@@ -54,7 +54,7 @@ interface TasksAction {
 const TASKS_ACTIONS = {
   open: { params: ['title'] },
   agents: { command: 'task-agents', params: [] },
-  new: { command: 'task-new', params: ['topic', 'text', 'agent', 'cwd', 'title', 'model'] },
+  new: { command: 'task-new', params: ['topic', 'text', 'agent', 'cwd', 'title', 'model', 'option'] },
   list: { command: 'tasks', params: ['topic', 'limit'] },
   status: { command: 'task-status', params: ['topic'] },
   read: { command: 'task-read', params: ['topic', 'reply', 'turn', 'full', 'tail', 'limit'] },
@@ -84,6 +84,10 @@ const TASKS_PARAMS: Record<string, { description: string; type?: 'boolean' }> = 
   cwd: { description: 'new: where it starts on that agent\'s machine: a directory name from agents, or an absolute path.' },
   title: { description: 'open: the topic\'s name. new: the sub-task topic\'s name (default: named from text).' },
   model: { description: 'new: the model it runs on, from that agent\'s model list (default: its configured model).' },
+  option: {
+    description:
+      'new: the agent\'s own settings, key=value, comma-separated, e.g. account=alice@example.com. A setting or value it does not offer is refused with the choices.',
+  },
   limit: { description: 'list: how many (default 30). read: how many messages (default 10).' },
   reply: { description: 'read: the last turn that ended normally, its reply whole — what a finished sub-task concluded.', type: 'boolean' },
   turn: { description: 'read: one turn, by number (or last, done).' },

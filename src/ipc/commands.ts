@@ -208,6 +208,7 @@ export const HELP_TOPICS: HelpTopic[] = [
       'Web UI only: each sub-agent gets a topic of its own, nested under this one, where the person can also talk to it directly.',
       'task-new proposes ONE sub-task; call it once per sub-task. Everything proposed before the person answers goes on one card, however far apart the calls are. Nothing starts until the person confirms the card — unless confirmation is off, then task-new starts each one at once and a card lists what started, and its result says it is running. Confirmation off reaches only conversations the person talks to directly; in a sub-agent\'s own topic the card still waits. Once confirmed (or started), they all run in parallel. With confirmation on, if the person writes instead, they want changes: propose again, and the new card replaces the old one.',
       'Without --agent, task-new gives the sub-task to the agent answering this conversation. --model names the model it runs on, and must be in that agent\'s own /model list: a name it does not offer is refused at once, with the list. The card shows the model, and a sub-task that cannot switch to it when it starts fails with the reason instead of quietly using another. Without --model it runs on the agent\'s configured model.',
+      '--option key=value[,key=value] sets the agent\'s own settings for the sub-task — the account it works under, say — and is refused at once unless the agent offers that setting with that value; the refusal lists what it does offer. The card shows them, and a sub-task that cannot apply one when it starts fails with the reason instead of running on the agent\'s default. The model is --model\'s, never --option\'s.',
       'A sub-agent sees nothing of this conversation: <text> is all it gets. Make it whole — the goal, the constraints, how to tell it is done, and what you already know: the files involved, the cause you found, what you ruled out, the approach already settled. Leave only the steps nobody has worked out to the agent.',
       'The first row of task-agents is the agent answering this conversation; the next ones with here=true are on the same machine. Those are the ones to prefer — they have the same checkouts and tools. Agents on other machines work in their own checkouts.',
       'When a sub-agent finishes, fails or asks something, you are told here in a message beginning `[sub-agent updates]`, which says how many are still working. Its questions are the person\'s to answer in its topic unless they are only about what your task meant.',
@@ -384,6 +385,23 @@ const refuseChannel = (command: string, opts: Record<string, unknown>): void => 
 
 /** Commander collect parser: accumulate a repeatable option (e.g. -o) into an array. */
 const collect = (value: string, previous: string[] = []): string[] => [...previous, value];
+
+/** `task-new --option k=v[,k=v]`, repeatable; the external `tasks` tool's `option` goes through it too. */
+const taskOptionsArg = (value: string, previous: Record<string, string> = {}): Record<string, string> => {
+  const pairs = new Map(Object.entries(previous));
+  for (const part of value.split(',')) {
+    const eq = part.indexOf('=');
+    const key = eq < 0 ? '' : part.slice(0, eq).trim();
+    const val = eq < 0 ? '' : part.slice(eq + 1).trim();
+    if (!key || !val) {
+      throw new Error(`--option takes key=value pairs separated by commas, e.g. account=alice@example.com; got ${JSON.stringify(part)}`);
+    }
+    if (key === 'model') throw new Error('--option does not set the model; use --model');
+    if (pairs.has(key)) throw new Error(`--option names "${key}" twice`);
+    pairs.set(key, val);
+  }
+  return Object.fromEntries(pairs);
+};
 
 /**
  * The READ FILTERS, defined once for every command that selects rows from the library: `sessions
@@ -1234,6 +1252,11 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
       { flags: '--title <title>', description: 'the topic’s name (default: named from <text>)' },
       { flags: '--model <id>', description: "the model it runs on, from that agent's /model list (default: the agent's configured model)" },
       {
+        flags: '--option <k=v[,k=v]>',
+        description: "the agent's own settings, e.g. account=alice@example.com — ids and values it offers (repeatable; default: the agent's own)",
+        parse: taskOptionsArg,
+      },
+      {
         flags: '--review-by <id>',
         description:
           'an agent on the same machine that reviews the work on its own, in the same directory, whenever one of its turns ends with new commits (see `fleetherd help tasks`)',
@@ -1264,6 +1287,7 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
         cwd: str(opts.cwd),
         title: str(opts.title),
         model: str(opts.model),
+        options: opts.option as Record<string, string> | undefined,
         reviewBy,
         review,
         rounds: typeof opts.rounds === 'number' ? opts.rounds : undefined,

@@ -130,6 +130,28 @@ describe('task commands', () => {
     expect(() => spec('task-verdict').build(['maybe'], {})).toThrow(/pass, nits or changes/);
   });
 
+  it('parses task-new --option as key=value pairs, comma-separated and repeatable', () => {
+    const flag = spec('task-new').options.find((o) => o.flags.startsWith('--option'))!;
+    const parse = flag.parse as (v: string, prev?: Record<string, string>) => Record<string, string>;
+    expect(parse(' account = alice@example.com ,region=eu')).toEqual({ account: 'alice@example.com', region: 'eu' });
+    // Commander hands each repeat the result so far; a value may itself hold `=`.
+    expect(parse('token=a=b', parse('account=alice'))).toEqual({ account: 'alice', token: 'a=b' });
+    expect(spec('task-new').build(['go'], { agent: 'gt', option: { account: 'alice' } })).toMatchObject({
+      kind: 'task-new',
+      agent: 'gt',
+      options: { account: 'alice' },
+    });
+    expect(() => parse('account')).toThrow(/key=value pairs separated by commas.*"account"/);
+    expect(() => parse('account=a,')).toThrow(/got ""/);
+    expect(() => parse('=a')).toThrow(/key=value/);
+    expect(() => parse('account=')).toThrow(/key=value/);
+    expect(() => parse('model=opus')).toThrow(/use --model/);
+    expect(() => parse('account=b', { account: 'a' })).toThrow(/names "account" twice/);
+    // An id that names an Object.prototype member is just an id: never a prototype write, never "twice".
+    expect(Object.getPrototypeOf(parse('__proto__=x'))).toBe(Object.prototype);
+    expect(parse('constructor=x')).toEqual({ constructor: 'x' });
+  });
+
   it('task-read reuses the sessions-read filters, and its own --tail stays out of them', () => {
     const action = spec('task-read').build(['t'], {
       role: 'tool',

@@ -212,7 +212,7 @@ type Registry = Pick<
   | 'workdirOf'
   | 'boundAgentOf'
   | 'conversationTitle'
-  | 'scheduledModelProblem'
+  | 'scheduledChoicesProblem'
 >;
 
 export interface DelegationDeps {
@@ -306,6 +306,8 @@ interface Item {
   cwd?: string;
   title?: string;
   model?: string;
+  /** `--option`: the agent's own settings, shown after the model on both cards. */
+  options?: Record<string, string>;
   review?: ReviewPlan;
 }
 
@@ -369,6 +371,7 @@ interface OpenedTask {
   host?: string;
   cwd?: string;
   model?: string;
+  options?: Record<string, string>;
   /** The agent reviewing it, when it has a review loop. */
   review?: string;
 }
@@ -716,10 +719,11 @@ export class Delegation {
     if (!def) {
       throw new Error(`no agent "${agent}"; task-agents lists them: ${this.deps.config.agents.map((d) => d.id).join(', ')}`);
     }
-    if (a.model) {
-      // Refuse a typo while the asking agent can still retry in this turn, using the same list
-      // /model and schedule add --model use. Applying it later is strict too (openTask).
-      const why = await this.deps.registry.scheduledModelProblem(agent, a.model, here.key);
+    if (a.model || a.options) {
+      // Refuse a typo while the asking agent can still retry in this turn, using the same lists
+      // /model and the settings switch use. Applying them later is strict too (openTask).
+      const choice = { ...(a.model ? { model: a.model } : {}), ...(a.options ? { options: a.options } : {}) };
+      const why = await this.deps.registry.scheduledChoicesProblem(agent, choice, here.key);
       if (why) throw new Error(why);
     }
     const review = ext ? undefined : this.reviewPlanOf(a, def);
@@ -729,6 +733,7 @@ export class Delegation {
       ...(a.cwd ? { cwd: a.cwd } : {}),
       ...(a.title ? { title: a.title } : {}),
       ...(a.model ? { model: a.model } : {}),
+      ...(a.options ? { options: a.options } : {}),
       ...(review ? { review } : {}),
     };
   }
@@ -917,9 +922,10 @@ export class Delegation {
       const def = findAgent(this.deps.config, item.agent);
       const where = def?.host ? ` @ ${def.host}` : '';
       const model = item.model ? ` · model \`${item.model}\`` : '';
+      const options = item.options ? ` · ${optionsLabel(item.options)}` : '';
       const dir = item.cwd ? ` · \`${item.cwd}\`` : '';
       const title = item.title ? ` — ${item.title}` : '';
-      lines.push('', `${i + 1}. **${item.agent}**${model}${where}${dir}${title}`, ...quoteLines(item.text));
+      lines.push('', `${i + 1}. **${item.agent}**${model}${where}${options}${dir}${title}`, ...quoteLines(item.text));
       if (item.review) {
         // In full, like the task: the reviewer starts later without another card, on this tap.
         const r = item.review;
@@ -964,6 +970,7 @@ export class Delegation {
           ...(item.cwd ? { cwd: item.cwd } : {}),
           ...(item.title ? { title: item.title } : {}),
           ...(item.model ? { model: item.model } : {}),
+          ...(item.options ? { options: item.options } : {}),
         });
         this.owed.add(key);
         const title = subjectOf(named);
@@ -978,6 +985,7 @@ export class Delegation {
           ...(host ? { host } : {}),
           ...(item.cwd ? { cwd: item.cwd } : {}),
           ...(item.model ? { model: item.model } : {}),
+          ...(item.options ? { options: item.options } : {}),
           ...(item.review ? { review: item.review.agent } : {}),
         });
         console.log(`[delegation] ${here.key} opened ${key} for "${item.agent}"`);
@@ -2436,6 +2444,7 @@ function startedSection(asker: string, opened: OpenedTask[]): string[] {
 /** One started sub-agent's row; `lead` puts its name first, for a card carrying several parts. */
 function startedRow(t: OpenedTask, lead: boolean): string {
   const model = t.model ? `model \`${t.model}\`` : '';
+  const options = t.options ? optionsLabel(t.options) : '';
   // A host names its own agents `<id>@<host>` (daemon/pods.ts), so that id already says the machine.
   const machine = t.host && !t.agent.endsWith(`@${t.host}`) ? ` @ ${t.host}` : '';
   const dir = t.cwd ? `\`${t.cwd}\`` : '';
@@ -2443,9 +2452,16 @@ function startedRow(t: OpenedTask, lead: boolean): string {
   const review = t.review ? `reviewed by ${t.review}` : '';
   // The machine hangs off whichever of name/model comes first, so no row ever starts with "@ host".
   const fields = lead
-    ? [`**${t.agent}**${model ? '' : machine}`, model ? `${model}${machine}` : '', name, dir, review, t.topic]
-    : [`${name}${model ? '' : machine}`, model ? `${model}${machine}` : '', dir, review, t.topic];
+    ? [`**${t.agent}**${model ? '' : machine}`, model ? `${model}${machine}` : '', options, name, dir, review, t.topic]
+    : [`${name}${model ? '' : machine}`, model ? `${model}${machine}` : '', options, dir, review, t.topic];
   return `- ${fields.filter(Boolean).join(' · ')}`;
+}
+
+/** A sub-task's `--option` settings as both cards show them: `account=alice@example.com`, as typed. */
+function optionsLabel(options: Record<string, string>): string {
+  return Object.entries(options)
+    .map(([id, value]) => `\`${id}=${value}\``)
+    .join(' · ');
 }
 
 /** `/home/user/workspace/x` → `~/workspace/x`, for a column that is read, not used. */
