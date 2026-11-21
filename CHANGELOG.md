@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.23.0] - 2026-11-21
+
 ### Added
 
 - **Connect agents receive matching resident skills in `initialize._meta.fleetherd.skills`.** Resident skills reaching the agent (respecting `fleetherd-hosts` and `fleetherd-harnesses`) are now passed as `{ name, description }[]` so remote/connect agents that do not read local skill directories can still surface resident skills in their initial context.
