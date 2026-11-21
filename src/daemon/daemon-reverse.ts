@@ -145,6 +145,7 @@ export class DaemonReverse {
     // Resolve BEFORE any await: the scratch slots are only synchronously valid.
     const { id: platformId, adapter: platform } = this.reverseAdapter();
     const conversation = this.lastResolvedConversationId;
+    // Mark the conversation active on reverse commands so background jobs reporting between turns aren't idle-reclaimed.
     if (this.lastResolvedConversationId) this.ctx.registry.touch(this.lastResolvedConversationId);
     if (isTaskAction(action)) return this.ctx.delegation.handle(conversation, action);
     if (isSessionsQuery(action)) return this.handleSessionsQuery(action);
@@ -467,6 +468,7 @@ export class DaemonReverse {
   ): Promise<{ chosen: string | null }> {
     const labels = action.options;
     const conversationId = this.lastResolvedConversationId;
+    // Protocol options has no min(1); fast-path empty options instead of posting a buttonless message until timeout.
     if (labels.length === 0) {
       return { chosen: null };
     }

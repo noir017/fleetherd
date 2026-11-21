@@ -121,6 +121,8 @@ export {
   type AskOutcome,
 };
 
+// Slash-as-message platforms (Telegram) fire both message and command events with the same
+// messageId; dedup within this window so one `/cmd` routes once.
 const DEDUP_TTL_MS = 15_000;
 const STARTUP_POD_TIMEOUT_MS = 60_000;
 const PANEL_CHANNEL_LIMIT = 50;
@@ -276,6 +278,7 @@ export class Daemon {
         address: ConversationAddress,
         request: Parameters<DaemonMenus['onPermissionRequest']>[3]
       ) => this.menus.onPermissionRequest(id, platform, address, request),
+      // Idle reclaim guard: a pending `ask` holds work outside any turn while a CLI process sits blocked on a button.
       hasPendingWork: (id: ConversationId) => this.menus.hasPendingWork(id),
       answerPendingAsk: (id: ConversationId, text: string) => this.menus.answerPendingAskWithText(id, text),
       cancelPendingAsks: (id: ConversationId, reason: string) => this.menus.cancelPendingAsks(id, reason),
@@ -350,6 +353,7 @@ export class Daemon {
         const ws = this.registry.workspaceOf(id);
         return ws ? readHead(ws) : undefined;
       },
+      // Buttons only (security invariant 6): a typed reply is the user's next message to the agent, never a start confirmation.
       confirm: async ({ adapter, address, conversation, text, labels, timeoutMs, signal }) => {
         const outcome = await this.menus.askButtons(adapter, address, text, labels, timeoutMs, conversation, {
           acceptsText: false,
@@ -407,6 +411,7 @@ export class Daemon {
     return { calls, mcp };
   }
 
+  // Keyed by platform + address, never by conversation id: under per_channel an id names the whole channel (security invariant 11).
   private externalOwner(platform: string, address: ConversationAddress): ExternalOwner | undefined {
     const t = this.externalTopics.get(platform, address);
     return t && { caller: t.caller, platform: t.platform, address: t.address, title: t.title };
@@ -437,10 +442,13 @@ export class Daemon {
     await this.externalMcp
       .configure()
       .catch((e: Error) => console.error(`[external-mcp] ⚠️  not listening: ${e.message}`));
+    // After platforms and IPC are up: notices need adapters, and scheduled continues need working reverse commands.
     const interrupted = this.registry.recoverInterruptedTurns();
     if (interrupted > 0) console.log(`[daemon] ${interrupted} turn(s) were cut off by the last shutdown`);
+    // After platforms and IPC are up: catch-up runs need somewhere to post and working reverse commands.
     this.schedules?.scheduler.start();
     this.reviews?.start();
+    // Skip the daily managed-skill sweep in test workers (non-CLI entrypoints must not touch the operator's config dir).
     if (selfInvocation() && !envOf('NO_SKILL_LINK')) {
       this.skillSweepStop = startSkillSweep((skill, reason) => this.notifySkillArchived(skill, reason));
     }
@@ -542,10 +550,12 @@ export class Daemon {
     this.skillSweepStop = undefined;
     this.skillsSyncStop?.();
     this.skillsSyncStop = undefined;
+    // Stop reviews and scheduler first so no new work starts or posts to platforms about to shut down.
     this.reviews?.stop();
     this.schedules?.scheduler.stop();
     await this.externalMcp.stop();
     await this.ipc.stop();
+    // Drain queued outbound writes before stopping adapters so pending replies are not lost; bounded by outbound.drainMs.
     const drained = await this.pacer
       .drain(this.config.outbound.drainMs)
       .catch(() => ({ delivered: 0, abandoned: 0 }));
@@ -561,10 +571,13 @@ export class Daemon {
     }
     this.menus.clearMenus();
     this.voice.dispose();
+    // Clear pending asks after IPC/platforms stop and resolve null so blocked CLI callers do not hang forever.
     this.menus.clearAsks();
     this.delegation.dispose();
     this.registry.dispose();
+    // Close history after registry.dispose() so unwinding turns flush their last row and SQLite WAL closes cleanly.
     this.history?.close();
+    // Give stop signals sent to remote agents a short window to flush before closing SSH connections.
     await remoteHosts.flushAll(2_000);
     remoteHosts.closeAll();
     this.availability.stop();
@@ -682,6 +695,7 @@ export class Daemon {
       void this.externalMcp.configure().catch((e: Error) => console.error(`[external-mcp] ⚠️  not listening: ${e.message}`));
     }
     const respawn = this.registry.respawnAgents(new Set([...diff.agentsChanged, ...diff.agentsRemoved]));
+    // Re-register only when the spec set changed; Telegram and Discord rate-limit command registration.
     if (JSON.stringify(buildRegisteredSpecs(this.config)) !== commandsBefore) void this.registerCommands();
 
     const warnings: string[] = [];
@@ -897,6 +911,7 @@ export class Daemon {
       mentionedSelf: true,
     };
     this.onInbound(msg);
+    // Discord auto-deferred slash interactions require a followup ack or the UI reports "did not respond".
     if (this.platforms.get(ev.conversation.platform)?.capabilities.slashNeedsAck) {
       void ev.reply(`▸ /${ev.name}`).catch((e) =>
         console.error('[slash] interaction acknowledgement failed:', e instanceof Error ? e.message : e)

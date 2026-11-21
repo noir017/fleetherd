@@ -102,7 +102,9 @@ import type {
 import type { AskButtonsOptions, AskOutcome, DaemonContext } from './daemon-context.js';
 
 const DEFAULT_ASK_TIMEOUT_MS = PROTOCOL_DEFAULT_ASK_TIMEOUT_MS;
+// Discord caps messages at 25 components (5×5); commands past this cap are listed as text rather than dropped.
 const PICKER_BUTTON_MAX = 25;
+// Format `ask:<reqId>:<index>` (≤100 chars; must not start with `input`).
 const ASK_PREFIX = 'ask:';
 const ASK_ECHO_MAX = 300;
 const PERMISSION_TITLE_MAX = 600;
@@ -172,6 +174,7 @@ export function buildAskButtons(
   selected?: ReadonlySet<number>
 ): ButtonSpec[] {
   const buttons: ButtonSpec[] = labels.map((label, i) => ({
+    // custom_id: `ask:` prefix + index (≤100 chars; must not start with `input`).
     id: `${ASK_PREFIX}${reqId}:${i}`,
     label: selected ? `${selected.has(i) ? '☑' : '☐'} ${label}` : label,
   }));
@@ -204,10 +207,12 @@ interface PendingAsk {
   selected?: Set<number>;
 }
 
+// Stores command names by index: Telegram caps callback_data at 64 bytes and hashes longer ids lossily.
 interface PendingPick {
   conversationId: ConversationId;
   names: string[];
   conversation: ConversationRef;
+  // Edit the menu's own captured ref, never the click event's messageId (Telegram reports callback_query id there).
   ref?: MessageRef;
 }
 
@@ -278,6 +283,7 @@ interface PendingAgentMenu {
 /** Owns all eight pending menu/ask tables, their expiry/retirement, and button click handling. */
 export class DaemonMenus {
   private pendingAsks = new Map<string, PendingAsk>();
+  // Holds answers or /stop arriving in the network gap between multi-round elicitations so they don't abort the form.
   private elicitGaps = new Map<ConversationId, ElicitGap>();
   private agentCommands = new Map<string, AgentCommand[]>();
   readonly pendingPicks = new Map<string, PendingPick>();
@@ -316,7 +322,6 @@ export class DaemonMenus {
     this.pendingEffortMenus.clear();
     this.pendingSettingsMenus.clear();
     this.pendingScheduleMenus.clear();
-    this.pendingWorkdirMenus.clear();
     this.pendingAgentMenus.clear();
   }
 
@@ -331,7 +336,6 @@ export class DaemonMenus {
       }
     }
     this.pendingAsks.clear();
-    this.elicitGaps.clear();
   }
 
   askButtons(
@@ -347,6 +351,7 @@ export class DaemonMenus {
     const acceptsText = opts.acceptsText ?? true;
     const selected = opts.multi ? new Set<number>() : undefined;
     const buttons = buildAskButtons(reqId, labels, selected);
+    // Append MULTI_HINT here rather than in `prompt`, because retireAsk reprints `prompt` under the final outcome.
     return platform.sendButtons(
       address,
       selected ? `${prompt}\n\n${MULTI_HINT}` : prompt,
@@ -409,6 +414,7 @@ export class DaemonMenus {
     return true;
   }
 
+  // Replay any answer or cancellation that arrived while the next elicitation round was in flight (see elicitGaps).
   private settleFromGap(reqId: string, conversationId: ConversationId, acceptsText: boolean): void {
     const gap = this.elicitGaps.get(conversationId);
     if (!gap) return;
@@ -438,6 +444,7 @@ export class DaemonMenus {
       if (pending.conversationId === conversationId && pending.acceptsText) match = reqId;
     }
     if (match === undefined) {
+      // Park at most one typed answer during a between-rounds gap; a second message is not parked.
       const gap = this.elicitGaps.get(conversationId);
       if (!gap?.acceptsText || gap.parked !== undefined || gap.cancelled !== undefined) return false;
       gap.parked = text;
@@ -465,6 +472,7 @@ export class DaemonMenus {
     return cancelled;
   }
 
+  // Buttons only (security invariant 1): typed replies never approve permissions; platforms without buttons decline.
   async onPermissionRequest(
     conversationId: ConversationId,
     platform: PlatformAdapter,
@@ -541,18 +549,23 @@ export class DaemonMenus {
         return { action: 'cancel' };
       }
       if (answer.kind === 'text') {
+        // Leave the enum key unset when answering via customKey so the harness does not see two competing answers.
         content[q.customKey!] = answer.text;
         continue;
       }
+      // Return each option's `value`, not its button `label` (ACP separates display text from answer value).
       const picked = answer.labels.map((l) => q.options.find((o) => o.label === l)?.value);
       if (picked.some((v) => v === undefined)) return { action: 'cancel' };
       const values = picked as string[];
+      // Multi-select schema expects string[] even when a single option was ticked.
       content[q.key] = q.multi ? values : values[0]!;
     }
     return { action: 'accept', content };
   }
 
   onButton(ev: ButtonInteraction): void {
+    // Prefixes (`vtx:`/`mdl:`/`mpg:`/`eff:`/`wdr:`/`wdp:`/`stg:`/`stv:`/`stp:`/`stb:`/`cmd:`/`ask:`/`rty:`)
+    // are pairwise non-prefixing, so this order is for readability, not correctness.
     if (this.ctx.voice.onClick(ev)) return;
     const model = parseModelButtonId(ev.buttonId);
     if (model) {
@@ -731,6 +744,7 @@ export class DaemonMenus {
     this.pendingPicks.delete(parsed.reqId);
     const platformId = pick.conversation.platform;
     const address = addressOf(pick.conversation);
+    // Deliver straight to the menu's recorded conversation — re-routing a bare `/cmd` would hit routing.default.
     const delivered = this.ctx.registry.dispatchTo(pick.conversationId, {
       conversation: { ...pick.conversation, user: clicker.user },
       messageId: ev.messageId,
@@ -765,6 +779,7 @@ export class DaemonMenus {
     this.retireModelMenusFor(conversationId);
 
     const reqId = randomUUID().slice(0, 8);
+    // Copied, not referenced: the harness owns this array and may rebuild it mid-session (same for effort/workdir/settings).
     const options = [...selector.options];
     const pageSize = resolvePageSize(adapter.capabilities.menuPageSize);
     const pending: PendingModelMenu = {
@@ -788,6 +803,7 @@ export class DaemonMenus {
     void adapter
       .sendButtons(addressOf(msg.conversation), view.text, view.buttons)
       .then((ref) => {
+        // Keep the menu's own ref for edits (see PendingPick.ref; same for effort/workdir/settings menus).
         pending.ref = ref;
       })
       .catch((e) => {
@@ -821,6 +837,7 @@ export class DaemonMenus {
   }
 
   private onModelClick(ev: ButtonInteraction, click: ModelButtonClick): void {
+    // Re-check clicker against allowlist: anyone in a shared channel can tap a menu button.
     const clicker = ev.conversation;
     const allow = this.ctx.config.access.allowFrom;
     if (allow.length > 0 && !allow.includes(`${clicker.platform}:${clicker.user}`)) {
@@ -857,6 +874,7 @@ export class DaemonMenus {
   ): Promise<void> {
     const option = menu.options[index];
     if (!option) {
+      // Only reachable from a mangled/hashed callback id (e.g. Telegram >64B); still reply (same for workdir/settings).
       console.warn(`[model] click index ${index} is outside the menu's ${menu.options.length} options`);
       this.replyToClick(ev, modelMenuExpiredText());
       return;
@@ -953,6 +971,7 @@ export class DaemonMenus {
   }
 
   private async onEffortClick(ev: ButtonInteraction, click: EffortButtonClick): Promise<void> {
+    // Re-check clicker against allowlist (shared channel menu).
     const clicker = ev.conversation;
     const allow = this.ctx.config.access.allowFrom;
     if (allow.length > 0 && !allow.includes(`${clicker.platform}:${clicker.user}`)) {
@@ -1057,6 +1076,7 @@ export class DaemonMenus {
   }
 
   private onWorkdirClick(ev: ButtonInteraction, click: WorkdirButtonClick): void {
+    // Re-check clicker against allowlist (shared channel menu; ends the active session).
     const clicker = ev.conversation;
     const allow = this.ctx.config.access.allowFrom;
     if (allow.length > 0 && !allow.includes(`${clicker.platform}:${clicker.user}`)) {
@@ -1112,6 +1132,7 @@ export class DaemonMenus {
   // ───────────────────── Retry & /agent menu ─────────────────────
 
   private onRetryClick(ev: ButtonInteraction, click: RetryButtonClick): void {
+    // Re-check clicker against allowlist (shared channel button sending input to an agent).
     const clicker = ev.conversation;
     const allow = this.ctx.config.access.allowFrom;
     if (allow.length > 0 && !allow.includes(`${clicker.platform}:${clicker.user}`)) {
@@ -1195,6 +1216,7 @@ export class DaemonMenus {
   }
 
   private onAgentClick(ev: ButtonInteraction, click: AgentButtonClick): void {
+    // Re-check clicker against allowlist (shared channel menu; changes who answers).
     const clicker = ev.conversation;
     const allow = this.ctx.config.access.allowFrom;
     if (allow.length > 0 && !allow.includes(`${clicker.platform}:${clicker.user}`)) {
@@ -1367,6 +1389,7 @@ export class DaemonMenus {
   }
 
   private onSettingClick(ev: ButtonInteraction, click: SettingButtonClick): void {
+    // Re-check clicker against allowlist (shared channel menu; edits config.yaml, security invariant 1).
     const clicker = ev.conversation;
     const allow = this.ctx.config.access.allowFrom;
     if (allow.length > 0 && !allow.includes(`${clicker.platform}:${clicker.user}`)) {
@@ -1602,6 +1625,7 @@ export class DaemonMenus {
   }
 
   private onScheduleClick(ev: ButtonInteraction, click: ScheduleMenuClick): void {
+    // Re-check clicker against allowlist (shared channel menu).
     const clicker = ev.conversation;
     const allow = this.ctx.config.access.allowFrom;
     if (allow.length > 0 && !allow.includes(`${clicker.platform}:${clicker.user}`)) {
