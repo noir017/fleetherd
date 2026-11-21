@@ -117,6 +117,20 @@ describe('externalToolDefinition', () => {
     expect(Object.keys(def.inputSchema.properties).sort()).toEqual(['action', 'file', 'name']);
   });
 
+  it('declares MCP annotations so clients treat skills as read-only and tasks as non-destructive', () => {
+    expect(externalToolDefinition('skills').annotations).toEqual({
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    });
+    expect(externalToolDefinition('tasks').annotations).toEqual({
+      readOnlyHint: false,
+      destructiveHint: false,
+      openWorldHint: false,
+    });
+  });
+
   it('describes every tasks parameter, with the switches as booleans', () => {
     const def = externalToolDefinition('tasks') as {
       inputSchema: { required: string[]; properties: Record<string, { type: string; enum?: string[]; description?: string }> };

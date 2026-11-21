@@ -1,4 +1,5 @@
 import type { IpcAction } from './protocol.js';
+import type { McpTool, McpToolAnnotations } from './mcp-rpc.js';
 import { findNativeTool, SKILLS_TOOL_ACTIONS, toolAction, toolInputSchema, type NativeTool } from './tools.js';
 
 /**
@@ -126,15 +127,33 @@ function skillsTool(): NativeTool {
 const SKILLS_DESCRIPTION_FOR_CALLERS =
   'The skill library. Search it when the task needs a procedure or setup you do not have. ' + SKILLS_TOOL_ACTIONS;
 
+/**
+ * MCP clients treat tools without `readOnlyHint: true` as write actions and prompt on every call.
+ * `skills` is strictly read-only (`search` / `show`); `tasks` mixes reads with proposing/stopping
+ * sub-tasks (`open` / `new` / `stop`), so it cannot claim read-only, though nothing it does is
+ * destructive (sub-tasks wait on a confirmation card).
+ */
+const SKILLS_ANNOTATIONS: McpToolAnnotations = {
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: false,
+};
+const TASKS_ANNOTATIONS: McpToolAnnotations = {
+  readOnlyHint: false,
+  destructiveHint: false,
+  openWorldHint: false,
+};
+
 /** One tool as `tools/list` carries it; the `skills` description is extended by the caller. */
-export function externalToolDefinition(name: ExternalToolName): { name: string; description: string; inputSchema: unknown } {
+export function externalToolDefinition(name: ExternalToolName): McpTool {
   switch (name) {
     case 'skills': {
       const tool = skillsTool();
-      return { name, description: SKILLS_DESCRIPTION_FOR_CALLERS, inputSchema: toolInputSchema(tool) };
+      return { name, description: SKILLS_DESCRIPTION_FOR_CALLERS, inputSchema: toolInputSchema(tool), annotations: SKILLS_ANNOTATIONS };
     }
     case 'tasks':
-      return { name, description: TASKS_DESCRIPTION, inputSchema: tasksInputSchema() };
+      return { name, description: TASKS_DESCRIPTION, inputSchema: tasksInputSchema(), annotations: TASKS_ANNOTATIONS };
     default: {
       const _exhaustive: never = name;
       throw new Error(`unknown external tool ${String(_exhaustive)}`);

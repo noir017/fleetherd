@@ -22,11 +22,21 @@ export interface JsonRpcResponse {
   error?: { code: number; message: string };
 }
 
+/** MCP ToolAnnotations hints carried on `tools/list` so clients can distinguish read-only tools. */
+export interface McpToolAnnotations {
+  title?: string;
+  readOnlyHint?: boolean;
+  destructiveHint?: boolean;
+  idempotentHint?: boolean;
+  openWorldHint?: boolean;
+}
+
 /** One tool as `tools/list` carries it. */
 export interface McpTool {
   name: string;
   description: string;
   inputSchema: unknown;
+  annotations?: McpToolAnnotations;
 }
 
 /** A tool call's answer: text for the model, flagged when the call did not happen. */
