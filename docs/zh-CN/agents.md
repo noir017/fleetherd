@@ -92,6 +92,13 @@ agents:
 自己的文件里读到的内容。所以 `command`、`args`、`env` 和 `instructions` 不适用；`cwd`、`permissions`、
 `quotaCommand` 等照常。connect 智能体不能做[评审](sub-agents.md)，评审需要一个属于它自己的进程。
 
+连接断了（服务重启、网络抖动）时，这一轮不报错，而是等它回来：最多两分钟里按退避重新拨号（1、2、4、8 秒后，
+之后每 15 秒），连上后重新加载会话，从服务停下的地方接着收这一轮。短暂抖动什么都不说；超过 10 秒发一行 ⚠️，
+连回来再发一行 ✅。网关自己绝不把消息再发一遍：在 `initialize` 里声明了 `_meta.fleetherd.promptId` 的服务，
+每条 prompt 都带一个 id（点 Resend 重发时 id 不变），同一个 id 只收一次；只声明了 `reconnectTurn` 的，这一轮
+已经出过回复文字才接着收，否则照旧报错。两分钟用完仍连不上，这一轮才以 ❌ 加 Reconnect / Resend（或 Retry）
+按钮结束。拨号被拒的消息，等服务应答后再发出去。
+
 ## 启动前钩子
 
 `hooks.preLaunch` 是一条命令。每次启动智能体进程之前，守护进程都会先跑它，

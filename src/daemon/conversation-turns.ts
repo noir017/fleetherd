@@ -9,7 +9,7 @@ import type { RespawnCounts } from './config-reload.js';
 import type { ConversationContext, ConversationLane, ConversationState } from './conversation-context.js';
 import { formatLaneTitle, type ConversationControls } from './conversation-controls.js';
 import type { ConversationHistory } from './conversation-history.js';
-import { FailedInputs, type RetryRecord } from './failed-input.js';
+import { deliveryIdOf, FailedInputs, type RetryRecord } from './failed-input.js';
 import { beginSkillTurn, recordToolUse } from './skill-usage.js';
 import { TurnOutcomes } from './turn-outcomes.js';
 import {
@@ -700,6 +700,7 @@ export class ConversationTurns {
     this.ctx.touch(key);
     const batch: InboundMessage[] = input.map((m) => ({
       ...m,
+      deliveryId: deliveryIdOf(m),
       conversation: {
         platform: platformId,
         channel: address.channel,

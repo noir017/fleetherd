@@ -70,6 +70,8 @@ function rig(opts: { buttons: boolean; agents?: string[]; supportsReconnect?: bo
 
   /** Each prompt that reached an agent, with which agent. */
   const prompts: Array<{ agent: string; prompt: string; reconnect?: boolean }> = [];
+  /** Each prompt's RunTurnInput.promptId, in the same order. */
+  const ids: Array<string | undefined> = [];
   /** How the next turns go: 'undelivered' fails before the prompt is sent; 'ok' answers. */
   const script: Array<'undelivered' | 'delivered' | 'ok'> = [];
   const factory: AgentFactory = {
@@ -80,6 +82,7 @@ function rig(opts: { buttons: boolean; agents?: string[]; supportsReconnect?: bo
           const step = script.shift() ?? 'ok';
           if (step === 'undelivered') throw asUndelivered(new TurnFailure(START_FAILED, 'startup'));
           prompts.push({ agent: agentId, prompt: input.prompt, ...(input.reconnect ? { reconnect: true } : {}) });
+          ids.push(input.promptId);
           if (step === 'delivered') throw new TurnFailure('upstream busy', 'service');
           h.onText('done');
         },
@@ -95,7 +98,7 @@ function rig(opts: { buttons: boolean; agents?: string[]; supportsReconnect?: bo
 
   const reg = new ConversationRegistry(cfg, new Map([['web', platform]]), factory, clock);
   const retryIdOf = (i = buttons.length - 1): string => parseRetryButtonId(buttons[i]!.buttons[0]!.id)!.retryId;
-  return { reg, sent, buttons, edits, prompts, script, retryIdOf };
+  return { reg, sent, buttons, edits, prompts, ids, script, retryIdOf };
 }
 
 describe('a turn the agent never received', () => {
@@ -173,6 +176,21 @@ describe('the ❌ notice’s Retry buttons', () => {
     await r.reg.retryTurn({ retryId: r.retryIdOf(), user: 'u1' });
     await drain();
     expect(r.prompts.map((p) => p.prompt)).toEqual(['summarise the incident', 'summarise the incident']);
+  });
+
+  it('a Retry carries the prompt id the failed turn had; a new message with the same words gets its own', async () => {
+    const r = rig({ buttons: true });
+    r.script.push('delivered');
+    r.reg.route(inbound('summarise the incident'));
+    await drain();
+    await r.reg.retryTurn({ retryId: r.retryIdOf(), user: 'u1' });
+    await drain();
+    r.reg.route(inbound('summarise the incident', { messageId: 'm-again', timestamp: 5 }));
+    await drain();
+    const [first, retried, fresh] = r.ids;
+    expect(first).toMatch(/^[0-9a-f]{32}$/);
+    expect(retried).toBe(first);
+    expect(fresh).not.toBe(first);
   });
 
   it('Retry with another agent moves a topic that has no session yet, and sends it there', async () => {

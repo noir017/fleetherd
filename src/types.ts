@@ -28,6 +28,11 @@ export interface InboundMessage {
   /** Platform type ('discord'/'telegram'/…), for logs and type-specific behavior. Optional: absent on synthesized messages. */
   platformType?: string;
   messageId: string;
+  /**
+   * Which message this is when the gateway sends it again (a Retry rewrites `messageId` and
+   * `timestamp`): the original's identity, so the prompt keeps its id (daemon/failed-input.ts).
+   */
+  deliveryId?: string;
   /** Plain text content (platform markup stripped). */
   content: string;
   /** Target message id of a quote/reply (if any). */

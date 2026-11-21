@@ -51,6 +51,7 @@ session id, agy's conversation id). One conversation holds one session *per agen
 | `claude-transcript.ts` | claude's prompt-cache expiry, read off Claude Code's own transcript (headless Claude Code runs no status line) |
 | `agent-common.ts` | Protocol-agnostic helpers shared by the ACP runtime and the one-shot CLI paths |
 | `connect-agent.ts` | `connect` agents: an ACP service that is already running, dialled per session instead of started — the connection as an `AgentChild` here (on a host, fleetherd-remote's), and the `_meta` its `initialize` carries (token, machine, instructions) |
+| `agent-reconnect.ts` | An agent whose connection is the agent (a `connect` agent, or one that declares it can pick a turn up) going away: the redial window and its backoff, what the agent declared (`reconnectTurn`, `promptId`), and whether a lost turn can be picked up |
 | `agent-hooks.ts` | The operator's `agents[].hooks`: `preLaunch`, run to completion before every spawn of an agent's child |
 | `conversation-store.ts` | Persisted per conversation: the bound agent, each agent's own session id, and the directory it works in. Written atomically (temp file + rename, `0600`); only a turn's lane and `lastAt` wait up to 1 s to ride on the next write, everything restart needs is written at once |
 | `workdir-scan.ts` | The `/cd` option list: an agent's configured root plus the projects one level inside it |
@@ -1528,6 +1529,43 @@ them but hands them to the model as a question.
   `agy-plugin.ts` ships a Stop hook (`agy-plugin/` at the package root) that holds the turn open,
   silently, until agy's mailbox has something new. Linked like the skills: `ensureAgyPlugin` here,
   `RemoteHosts.placeAgyPlugin` on a host. The file header has the measurements and the limits.
+
+### An agent that goes away mid-turn (`agent-reconnect.ts`)
+
+A `connect` agent's connection is the agent, and the service behind it carries on when it drops —
+web-agent-driver restarting its container, a network blip. Until 3.27.0 every such drop was a ❌: on
+2026-11-21 a wad restart failed three turns at once with `connect ECONNREFUSED`, including one that
+was only queued there, and each needed a person to send "continue". Now the runtime waits it out.
+
+- **Which agents.** The dial is tried again for a `connect` agent, and for any agent whose
+  `initialize` declared `agentCapabilities._meta.fleetherd.reconnectTurn` or `.promptId` (a
+  `wad acp` relay is a process standing for the same service). A dial is "unreachable" when it is
+  refused or the connection closes before the agent answers (`AgentUnreachable`); an answer the agent
+  gave — a bad token, a missing setting — fails at once, as before. Other harnesses are untouched.
+- **The window.** `RECONNECT_WINDOW_MS` (2 minutes) from the moment the connection was lost, tries
+  after 1, 2, 4, 8 and then every 15 s. A container restart takes `docker stop`'s 10 s plus a few to
+  start, a recreate after `compose up --build` the same again: two minutes covers that with room,
+  and an agent that is really down still reaches the chat as a failure soon, well inside the 600 s
+  silence watchdog. Only when the window is over does the turn fail as before — ❌ with Reconnect and
+  Resend for a turn the agent had, the held input and Retry for one it never got.
+- **What the chat sees.** Nothing for a blip. Past 10 s, one ⚠️ notice and a ✅ once back — the
+  remote link's convention (`watchRemoteLink`). The log has every try.
+- **Picking a turn up never sends the input on the gateway's own initiative.** After a mid-turn loss
+  the same session is loaded (`session/load`; a session that comes back new fails the turn) and a
+  reconnect prompt is sent (`_meta.fleetherd.reconnect`). An agent that declared `promptId` gets
+  every prompt with `_meta.fleetherd.promptId`, and the reconnect names it; if it never took that
+  prompt — it was queued when the service died — it refuses with `data.notSent`, and only then is
+  the prompt sent, under the same id, which the agent takes at most once. An agent that declared
+  `reconnectTurn` alone is picked up only once the turn showed reply text: before that a running
+  turn and a queued one look alike from here, and a reconnect to a queued one would pick up the
+  previous reply. A dial that fails before the prompt is written sends it once the agent answers.
+- **The id is stable across a Retry.** `promptIdOf` (failed-input.ts) hashes the batch's message
+  identities, and a Retry keeps each message's original identity in `InboundMessage.deliveryId`
+  (the Retry rewrites `messageId` and `timestamp`). So a person's Resend of a turn the agent already
+  took reaches it under the same id, and the agent picks that turn up instead of starting the task
+  again. A new message with the same words is a new id.
+- **Compatibility.** Every field is under `_meta.fleetherd` and sent only after `initialize` declared
+  it: an older agent never sees a `promptId`, and an older gateway never sends one.
 
 ### `agent-common.ts`
 

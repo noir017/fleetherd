@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { looksLikeCommand } from './routing.js';
 import type { ConversationId, InboundMessage, MessageRef } from '../types.js';
 
@@ -36,6 +36,23 @@ import type { ConversationId, InboundMessage, MessageRef } from '../types.js';
  *
  * In memory only: a restart forgets both, as it forgets a waiting continue.
  */
+
+/**
+ * A message's identity, kept across a Retry (`InboundMessage.deliveryId`): a Retry's prompt then has
+ * the id the first one had, and an agent that takes a prompt at most once (agent-reconnect.ts) picks
+ * up the turn it already took instead of starting the task a second time.
+ */
+export function deliveryIdOf(m: InboundMessage): string {
+  if (m.deliveryId) return m.deliveryId;
+  const c = m.conversation;
+  const parts = [c.platform, c.channel, c.thread ?? '', c.user, m.messageId, m.timestamp, m.content];
+  return createHash('sha256').update(JSON.stringify(parts)).digest('hex').slice(0, 16);
+}
+
+/** A turn's prompt id (RunTurnInput.promptId): the same batch, retried, gets the same one. */
+export function promptIdOf(batch: readonly InboundMessage[]): string {
+  return createHash('sha256').update(batch.map(deliveryIdOf).join('\n')).digest('hex').slice(0, 32);
+}
 
 /** What a Retry button carries back: the input of the failed turn, and the agent it was meant for. */
 export interface RetryRecord {
