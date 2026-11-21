@@ -277,6 +277,7 @@ export const PAGE_BODY = `<main id="app" hidden>
            Separate from #topic-title, which every topics event rewrites for the topic underneath. -->
       <span id="lib-title" class="chat-title"></span>
       <span id="lib-tag" class="chat-status" title="A conversation from History, read-only">${icon('history')}<span class="lib-tag-word">History · read-only</span></span>
+      <button type="button" class="btn-icon" id="copy-ref" hidden title="Copy conversation reference" aria-label="Copy conversation reference">${icon('copy')}</button>
       <!-- /kill, one tap away. Beside the title rather than beside Send because it is about the
            topic — the process behind it — and not about the message being written; shown only
            while there is a process to end, which is the same fact the sidebar dot is lit by.

@@ -61,19 +61,22 @@ describe('webui page', () => {
   });
 
   it('hands the script what the server decided as JSON, and the page its build', () => {
-    const { html: page, build } = serveShell('Chat', true, false, true, testAssets(), true, true);
-    expect(bootOf(page)).toEqual({
-      terminal: true,
-      terminalEnd: true,
-      files: true,
-      instructions: true,
-      password: false,
-      codeview: null,
-      build,
-    });
-    expect(bootOf(shell)).toMatchObject({ terminal: false, terminalEnd: false, files: false, instructions: false, password: true });
-    expect(APP_SOURCE).toContain('var BOOT = JSON.parse($(\'boot-config\').textContent);');
-  });
+   const { html: page, build } = serveShell('Chat', true, false, true, testAssets(), true, true);
+   expect(bootOf(page)).toEqual({
+     terminal: true,
+     terminalEnd: true,
+     files: true,
+     instructions: true,
+     password: false,
+     codeview: null,
+      instance: 'web',
+     build,
+   });
+    expect(bootOf(shell)).toMatchObject({ terminal: false, terminalEnd: false, files: false, instructions: false, password: true, instance: 'web' });
+    const custom = serveShell('Chat', false, true, false, testAssets(), false, false, 'portal').html;
+    expect(bootOf(custom).instance).toBe('portal');
+   expect(APP_SOURCE).toContain('var BOOT = JSON.parse($(\'boot-config\').textContent);');
+ });
 
   it('cannot be broken out of through the boot config', () => {
     // Nothing in it is free text today; this pins that if one ever is, `</script>` stays inside.

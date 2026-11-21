@@ -48,12 +48,16 @@ export interface HistoryPanelDeps {
   openShot: (img: Element) => void;
   toggleAll: (key: string | null) => void;
   toggleLine: (line: Element) => void;
+  icons: () => Record<string, string>;
+  copyText: (s: string, done: (ok: boolean) => void) => void;
+  onLibStateChange: () => void;
 }
 
 export interface HistoryPanel {
   setTab: (tab: 'topics' | 'history') => void;
   isOpen: () => boolean;
   close: () => void;
+  currentRef: () => string | null;
   getMessage: (key: string) => WebMessage | undefined;
   repaintMessage: (key: string) => void;
   refreshReadOnly: () => void;
@@ -86,7 +90,26 @@ function histWhen(at: number): string {
   }
 }
 
-function renderHistoryRow(s: HistoryPanelSession, activeId: string | null, text: (s: unknown) => string): string {
+function historyRef(title: string | undefined, id: string | number): string {
+  return (title || '(untitled conversation)') + ' (#' + id + ')';
+}
+
+function histCopyBtn(title: string | undefined, id: string | number, deps: HistoryPanelDeps): string {
+  const ref = historyRef(title, id);
+  return (
+    '<button type="button" class="btn-icon hist-copy" data-hist-copy="' +
+    deps.text(id) +
+    '" data-hist-title="' +
+    deps.text(title || '') +
+    '" title="' +
+    deps.text('Copy reference: ' + ref) +
+    '" aria-label="Copy conversation reference">' +
+    (deps.icons().copy || '') +
+    '</button>'
+  );
+}
+
+function renderHistoryRow(s: HistoryPanelSession, activeId: string | null, deps: HistoryPanelDeps): string {
   const meta = [
     s.agent || 'no agent',
     s.platform || 'unknown',
@@ -97,33 +120,39 @@ function renderHistoryRow(s: HistoryPanelSession, activeId: string | null, text:
     '<div class="hist-item' +
     (activeId !== null && String(s.id) === activeId ? ' on' : '') +
     '" data-hist="' +
-    text(s.id) +
+    deps.text(s.id) +
     '" role="button" tabindex="0">' +
+    '<div class="hist-top">' +
     '<div class="hist-title">' +
-    text(s.title || '(untitled conversation)') +
+    deps.text(s.title || '(untitled conversation)') +
+    '</div>' +
+    histCopyBtn(s.title, s.id, deps) +
     '</div>' +
     '<div class="hist-meta">' +
-    text(meta.join(' · ')) +
+    deps.text(meta.join(' · ')) +
     '</div></div>'
   );
 }
 
-function renderHistoryHit(h: HistoryPanelHit, activeId: string | null, text: (s: unknown) => string): string {
+function renderHistoryHit(h: HistoryPanelHit, activeId: string | null, deps: HistoryPanelDeps): string {
   const meta = [h.agent || 'no agent', h.platform || 'unknown', histWhen(h.at)];
   return (
     '<div class="hist-item' +
     (activeId !== null && String(h.session) === activeId ? ' on' : '') +
     '" data-hist="' +
-    text(h.session) +
+    deps.text(h.session) +
     '" role="button" tabindex="0">' +
+    '<div class="hist-top">' +
     '<div class="hist-title">' +
-    text(h.title || '(untitled conversation)') +
+    deps.text(h.title || '(untitled conversation)') +
+    '</div>' +
+    histCopyBtn(h.title, h.session, deps) +
     '</div>' +
     '<div class="hist-excerpt">' +
-    text(h.excerpt) +
+    deps.text(h.excerpt) +
     '</div>' +
     '<div class="hist-meta">' +
-    text(meta.join(' · ')) +
+    deps.text(meta.join(' · ')) +
     '</div></div>'
   );
 }
@@ -154,6 +183,7 @@ interface HistoryState {
   libEls: Record<string, Element>;
   libSeq: number;
   libSaved: { key: string; off: number } | null;
+  copyTimers: WeakMap<HTMLElement, ReturnType<typeof setTimeout>>;
 }
 
 function isLibOpen(deps: HistoryPanelDeps): boolean {
@@ -192,7 +222,7 @@ function renderHistory(state: HistoryState, deps: HistoryPanelDeps): void {
     h =
       '<div class="skills-empty">No conversations yet. Every conversation this gateway records appears here, whichever agent or platform it ran on.</div>';
   }
-  for (const s of state.sessions) h += renderHistoryRow(s, state.libId, deps.text);
+  for (const s of state.sessions) h += renderHistoryRow(s, state.libId, deps);
   deps.historyListEl.innerHTML = h;
   const n = state.sessions.length;
   deps.historyCountEl.textContent = n
@@ -278,7 +308,7 @@ function runHistorySearch(state: HistoryState, deps: HistoryPanelDeps): void {
         return;
       }
       let h = '';
-      for (const hit of hits) h += renderHistoryHit(hit, state.libId, deps.text);
+      for (const hit of hits) h += renderHistoryHit(hit, state.libId, deps);
       deps.historyListEl.innerHTML = h;
       deps.historyCountEl.textContent =
         hits.length + (a.d.more ? '+' : '') + (hits.length === 1 && !a.d.more ? ' match' : ' matches');
@@ -294,6 +324,7 @@ function libFailed(deps: HistoryPanelDeps, msg: string): void {
   deps.libTitle.textContent = 'History';
   deps.libLog.innerHTML = '<div class="hist-note bad">' + deps.text(msg) + '</div>';
   deps.libWhy.textContent = 'Nothing could be read, so nothing is shown.';
+  deps.onLibStateChange();
 }
 
 function paintLibRead(state: HistoryState, deps: HistoryPanelDeps, d: HistoryReadResponse): void {
@@ -332,6 +363,7 @@ function paintLibRead(state: HistoryState, deps: HistoryPanelDeps, d: HistoryRea
   deps.libNote.hidden = !d.note;
   deps.libNote.textContent = d.note || '';
   refreshReadOnly(state, deps);
+  deps.onLibStateChange();
   deps.libLog.scrollTop = deps.libLog.scrollHeight;
 }
 
@@ -361,6 +393,7 @@ function openLib(state: HistoryState, deps: HistoryPanelDeps, rawId: string): vo
   deps.libTopicBtn.hidden = true;
   deps.libLog.innerHTML = '<div class="empty">Loading\u2026</div>';
   markLibRow(state, deps);
+  deps.onLibStateChange();
   fetch('api/history/read?id=' + encodeURIComponent(id), { credentials: 'same-origin' })
     .then((r) => r.json().then((d: HistoryReadResponse) => ({ ok: r.ok, d })))
     .then((a) => {
@@ -391,6 +424,7 @@ function closeLib(state: HistoryState, deps: HistoryPanelDeps): void {
   deps.libLog.innerHTML = '';
   deps.libTitle.textContent = '';
   markLibRow(state, deps);
+  deps.onLibStateChange();
   const v = state.libSaved;
   const el = v ? deps.getLogEl(v.key) : undefined;
   state.libSaved = null;
@@ -427,6 +461,30 @@ function bindHistoryEvents(state: HistoryState, deps: HistoryPanelDeps): void {
     if (id !== null) openLib(state, deps, id);
     if (deps.narrow()) deps.setSidebar(false);
   };
+  const copyRow = (btn: HTMLElement): void => {
+    const id = btn.getAttribute('data-hist-copy');
+    if (!id) return;
+    const ref = historyRef(btn.getAttribute('data-hist-title') || undefined, id);
+    deps.copyText(ref, (ok) => {
+      const ic = deps.icons();
+      btn.innerHTML = ok ? ic.check || '' : ic.cross || '';
+      btn.classList.toggle('copied', ok);
+      const say = ok ? 'Copied' : 'Could not copy';
+      btn.title = say;
+      btn.setAttribute('aria-label', say);
+      const prev = state.copyTimers.get(btn);
+      if (prev !== undefined) clearTimeout(prev);
+      state.copyTimers.set(
+        btn,
+        setTimeout(() => {
+          btn.innerHTML = ic.copy || '';
+          btn.classList.remove('copied');
+          btn.title = 'Copy reference: ' + ref;
+          btn.setAttribute('aria-label', 'Copy conversation reference');
+        }, 1500)
+      );
+    });
+  };
 
   deps.sbTabTopics.addEventListener('click', () => setHistoryTab(state, deps, 'topics'));
   deps.sbTabHistory.addEventListener('click', () => setHistoryTab(state, deps, 'history'));
@@ -446,12 +504,21 @@ function bindHistoryEvents(state: HistoryState, deps: HistoryPanelDeps): void {
     if (state.tab === 'history') showHistoryList(state, deps);
   });
   deps.historyListEl.addEventListener('click', (e) => {
-    const row = e.target instanceof Element ? e.target.closest('[data-hist]') : null;
+    const target = e.target instanceof Element ? e.target : null;
+    const copyBtn = target?.closest<HTMLElement>('[data-hist-copy]');
+    if (copyBtn) {
+      e.stopPropagation();
+      copyRow(copyBtn);
+      return;
+    }
+    const row = target?.closest('[data-hist]');
     if (row) pickLib(row);
   });
   deps.historyListEl.addEventListener('keydown', (e) => {
     if (e.key !== 'Enter' && e.key !== ' ') return;
-    const row = e.target instanceof Element ? e.target.closest('[data-hist]') : null;
+    const target = e.target instanceof Element ? e.target : null;
+    if (target?.closest('[data-hist-copy]')) return;
+    const row = target?.closest('[data-hist]');
     if (!row) return;
     e.preventDefault();
     pickLib(row);
@@ -507,6 +574,7 @@ export function createHistoryPanel(deps: HistoryPanelDeps): HistoryPanel {
     libEls: {},
     libSeq: 0,
     libSaved: null,
+    copyTimers: new WeakMap(),
   };
   bindHistoryEvents(state, deps);
 
@@ -514,6 +582,7 @@ export function createHistoryPanel(deps: HistoryPanelDeps): HistoryPanel {
     setTab: (tab) => setHistoryTab(state, deps, tab),
     isOpen: () => isLibOpen(deps),
     close: () => closeLib(state, deps),
+    currentRef: () => (state.libSession ? historyRef(state.libSession.title, state.libSession.id) : null),
     getMessage: (key) => state.libData[key],
     repaintMessage: (key) => {
       const m = state.libData[key];

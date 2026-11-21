@@ -1347,6 +1347,7 @@ describe('webui page: the scheduled-task panel', () => {
     await h.click(`[data-rm="sess:${C}"]`);
     expect(Array.from(h.el('row-menu').querySelectorAll('[role="menuitem"]')).map((b) => b.textContent)).toEqual([
       'Star',
+      'Copy reference',
       'Fork',
       'End agent',
       'Delete topic',
@@ -2757,4 +2758,3 @@ describe('webui page: the Reviews tab', () => {
     expect(h.el('sched-reviews').textContent).not.toContain('quota used up');
   });
 });
-

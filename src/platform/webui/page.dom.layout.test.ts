@@ -402,12 +402,14 @@ describe('webui page: a topic row' + "'s ⋯ menu", () => {
     expect(h.doc.querySelector(`[data-rm="topic:${D}"]`)?.getAttribute('aria-expanded')).toBe('true');
     expect(Array.from(menu.querySelectorAll('[role="menuitem"]')).map((b) => b.textContent)).toEqual([
       'Star',
+      'Copy reference',
       'Fork',
       'End agent',
       'Delete topic',
     ]);
     // An icon from IC, never an emoji.
     expect(menu.querySelector('[data-rmk="star"] .ic-star')).not.toBeNull();
+    expect(menu.querySelector('[data-rmk="copy"] .ic-copy')).not.toBeNull();
     expect(menu.querySelector('[data-rmk="fork"] .ic-fork')).not.toBeNull();
     expect(menu.querySelector('[data-rmk="end"] .ic-power')).not.toBeNull();
     expect(menu.querySelector('[data-rmk="delete"] .ic-trash')).not.toBeNull();
@@ -513,20 +515,22 @@ describe('webui page: a topic row' + "'s ⋯ menu", () => {
     const press = (key: string): void => {
       h.doc.activeElement?.dispatchEvent(new h.window.KeyboardEvent('keydown', { key, bubbles: true }));
     };
-    // Star, Fork, End agent (disabled), Delete topic.
+    // Star, Copy reference, Fork, End agent (disabled), Delete topic.
     items[0]!.focus();
     press('ArrowDown');
     expect(h.doc.activeElement).toBe(items[1]);
     press('ArrowDown');
-    expect(h.doc.activeElement).toBe(items[3]);
+    expect(h.doc.activeElement).toBe(items[2]);
+    press('ArrowDown');
+    expect(h.doc.activeElement).toBe(items[4]);
     press('ArrowDown');
     expect(h.doc.activeElement).toBe(items[0]);
     press('ArrowUp');
-    expect(h.doc.activeElement).toBe(items[3]);
+    expect(h.doc.activeElement).toBe(items[4]);
     press('Home');
     expect(h.doc.activeElement).toBe(items[0]);
     press('End');
-    expect(h.doc.activeElement).toBe(items[3]);
+    expect(h.doc.activeElement).toBe(items[4]);
   });
 
   it('greys End agent, and says why, when nothing in the subtree has a process', async () => {
@@ -556,12 +560,38 @@ describe('webui page: a topic row' + "'s ⋯ menu", () => {
     expect(h.doc.querySelector('[data-rmk="fork"]')).toBeNull();
     expect(Array.from(h.doc.querySelectorAll('#row-menu [role="menuitem"]')).map((b) => b.textContent)).toEqual([
       'Star',
+      'Copy reference',
       'End agent + 2 sub-agents',
       'Delete topic',
     ]);
 
     await rowMenu(h, D);
     expect(h.doc.querySelector('[data-rmk="fork"]')?.textContent).toBe('Fork');
+  });
+
+  it('copies the topic title and id from the row menu and the chat header', async () => {
+    const h = await open({ url: `http://localhost:8787/?t=${A}` });
+    await h.emit(sync(A, [], [A]));
+    await h.emit({ t: 'topics', topics: fleet({ [D]: { title: '[cc] Fix login CSS' } }) });
+
+    await rowMenu(h, D);
+    await h.click('[data-rmk="copy"]');
+    await tick();
+    expect(h.clipboard).toEqual([`[cc] Fix login CSS (web:main/${D})`]);
+    expect(h.el('note').textContent).toContain(`web:main/${D}`);
+    expect(h.el('row-menu').hidden).toBe(true);
+    // Copying another row does not switch the open topic.
+    expect(h.window.location.search).toBe(`?t=${A}`);
+
+    const hdrCopy = h.el('copy-ref');
+    expect(hdrCopy.hidden).toBe(false);
+    await h.click('#copy-ref');
+    await tick();
+    expect(h.clipboard).toEqual([
+      `[cc] Fix login CSS (web:main/${D})`,
+      `parent (web:main/${A})`,
+    ]);
+    expect(hdrCopy.querySelector('.ic-check')).not.toBeNull();
   });
 
   it('says how many sub-agents End reaches, counting topics with a process', async () => {

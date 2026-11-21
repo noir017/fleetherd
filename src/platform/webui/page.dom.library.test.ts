@@ -1636,6 +1636,39 @@ describe('webui page: the History tab', () => {
     expect(h.el('topics').hidden).toBe(false);
   });
 
+  it('copies a history conversation reference from the list row and from the open reader header', async () => {
+    const replies = {
+      'api/history': page([row({ id: 42, title: 'Deploy rollback', platform: 'telegram', topic: undefined })]),
+      'api/history/read?id=42': {
+        session: row({ id: 42, title: 'Deploy rollback', platform: 'telegram', topic: undefined }),
+        messages: [],
+      },
+    };
+    const h = await open({ replies });
+    await h.emit(sync(B, [], [A, B]));
+    await onHistory(h, 'Deploy rollback');
+
+    const rowCopy = h.doc.querySelector('[data-hist="42"] [data-hist-copy]') as HTMLElement;
+    expect(rowCopy).not.toBeNull();
+    rowCopy.click();
+    await tick();
+    expect(h.clipboard).toEqual(['Deploy rollback (#42)']);
+    expect(rowCopy.querySelector('.ic-check')).not.toBeNull();
+    // Clicking the row copy button must not open the conversation.
+    expect(libOn(h)).toBe(false);
+
+    await openRow(h, 0);
+    expect(h.el('copy-ref').hidden).toBe(false);
+    await h.click('#copy-ref');
+    await tick();
+    expect(h.clipboard).toEqual(['Deploy rollback (#42)', 'Deploy rollback (#42)']);
+
+    await h.click('#lib-close');
+    await h.click('#copy-ref');
+    await tick();
+    expect(h.clipboard[2]).toContain(`(web:main/${B})`);
+  });
+
   it('says when the daemon has no conversation library', async () => {
     const h = await open({ replies: { 'api/history': { enabled: false, sessions: [] } } });
     await h.emit(sync(A, [], [A]));

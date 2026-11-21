@@ -78,7 +78,7 @@ time. A topic nothing has been said in yet shows none. A machine the
 gateway cannot reach is marked there, over its agents on a new topic, and above the composer
 ([When a host is offline](remote-hosts.md#when-a-host-is-offline)). At the end of
 each row a **⋯** button (on hover or keyboard focus; always shown on a touch screen) opens that
-topic's menu without switching to it: **Star**/**Unstar**, **Fork** (copy the conversation into a
+topic's menu without switching to it: **Star**/**Unstar**, **Copy reference** (copies `<title> (<instance>:main/<id>)` so you can paste it into another conversation for an agent to inspect via `fleetherd sessions read`), **Fork** (copy the conversation into a
 new topic beside it — see [`/fork`](chat-commands.md#forking-a-topic-fork)), **End agent**, and
 **Delete topic** (red, with the same confirmation as before). **End agent** ends the process behind this topic and
 every sub-agent topic under it as soon as it is clicked — the item reads **End agent + N
@@ -139,7 +139,7 @@ between **Status** (the default), **Next run**, **Last run** and **Created**, ei
 a task with nothing to sort by stays last. The keyword, the filters and the sort are kept in this
 browser, and **Showing N of M** with **Clear** says what survived. **Sessions** lists the
 topics a new-session run opened; those topics are kept out of the main topic list, so this is where
-they live, and tapping one opens it (its ⋯ holds **Star**, **Fork**, **End agent** and **Delete topic**, the
+they live, and tapping one opens it (its ⋯ holds **Star**, **Copy reference**, **Fork**, **End agent** and **Delete topic**, the
 same menu a topic row has). A sub-agent a run opened is listed under that run, folded behind the
 same count pill a topic's sub-agents are, rather than in the topic list. The list groups this month's runs by day and
 older ones by month, each header folding on its own and the choice kept in this browser — the newest
@@ -366,7 +366,7 @@ be refused there.
 The topic list has two tabs at its top: **Topics** and **History**. History lists every
 conversation the gateway has recorded — whichever agent and platform it ran on. It is the same
 library `fleetherd sessions list/search/read` reads. A review's own session is left out; those are
-read on the Reviews tab.
+read on the Reviews tab. Each row (and the header while viewing a topic or a History conversation) also offers a copy button that copies `<title> (#<id>)` — or `<title> (<instance>:main/<id>)` for an active topic — so you can hand any conversation straight to an agent.
 
 A row says the title, the agent, the platform, when it was last active and how many messages it
 holds. **Load older conversations** pages further back — as far as the gateway has been recording.

@@ -74,9 +74,10 @@ export function renderPage(
   terminalEnd = false,
   assets: PageAssets = NO_ASSETS,
   files = false,
-  instructions = false
+  instructions = false,
+  instance = 'web'
 ): string {
-  return servePage(title, terminal, password, terminalEnd, assets, files, instructions).html;
+  return servePage(title, terminal, password, terminalEnd, assets, files, instructions, instance).html;
 }
 
 /**
@@ -97,7 +98,9 @@ export function servePage(
   assets: PageAssets = NO_ASSETS,
   files = false,
   /** Whether the settings page offers the instruction editor (`platforms.<id>.instructions`). */
-  instructions = false
+  instructions = false,
+  /** This web UI's platform instance id (`platforms.<id>`), used to format `<id>:main/<topic>` refs. */
+  instance = 'web'
 ): { html: string; build: string } {
   const boot = bootConfig({
     terminal,
@@ -106,6 +109,7 @@ export function servePage(
     instructions,
     password,
     codeview: assets.codeview,
+    instance,
     build: '__BUILD__',
   });
   const html = page({

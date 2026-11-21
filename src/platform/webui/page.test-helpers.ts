@@ -66,10 +66,10 @@ export function servePage(
   codeview: string | null = null,
   files = false,
   instructions = false,
-  opts: { as?: 'source' | 'built'; styles?: boolean } = {}
+  opts: { as?: 'source' | 'built'; styles?: boolean; instance?: string } = {}
 ): { html: string; build: string } {
-  const { as = 'source', styles = true } = opts;
-  const shell = serveShell(title, terminal, password, terminalEnd, testAssets(codeview), files, instructions);
+  const { as = 'source', styles = true, instance = 'web' } = opts;
+  const shell = serveShell(title, terminal, password, terminalEnd, testAssets(codeview), files, instructions, instance);
   const js = as === 'built' ? CLIENT.app.text : APP_SOURCE;
   const css = !styles ? null : as === 'built' ? CLIENT.style.text : STYLE_SOURCE;
   return { html: inline(shell.html, js, css), build: shell.build };

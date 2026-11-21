@@ -668,6 +668,7 @@ function servedPage(ctx: Ctx): ServedPage {
     pageAssets(ctx.assets),
     filesOn(ctx),
     instructionsOn(ctx),
+    ctx.instance.id,
   ] as const;
   const key = JSON.stringify(args);
   if (ctx.page?.key === key) return ctx.page;

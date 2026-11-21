@@ -68,7 +68,7 @@ import { createSkillsPanel } from './panels/skills.js';
       taskPage=$('task-page'), taskTitle=$('task-title'), taskSub=$('task-sub'), taskClose=$('task-close'),
       taskNote=$('task-note'), taskView=$('task-view'),
       settingsClose=$('settings-close'), settingsOpenBtn=$('settings-open'),
-      killBtn=$('kill-agent'), stopBtn=$('stop-turn'), statusEl=$('status'), machineNoteEl=$('machine-note'),
+      copyRefBtn=$('copy-ref'), killBtn=$('kill-agent'), stopBtn=$('stop-turn'), statusEl=$('status'), machineNoteEl=$('machine-note'),
       updateEl=$('update'),
       modelPop=$('model-pop'), mpList=$('mp-list'), mpFilter=$('mp-filter'), mpAgent=$('mp-agent'),
       mpHeading=$('mp-heading'), mpFoot=$('mp-foot');
@@ -137,6 +137,9 @@ import { createSkillsPanel } from './panels/skills.js';
     openShot: openShot,
     toggleAll: toggleAll,
     toggleLine: toggleLine,
+    icons: function(){ return IC.icon; },
+    copyText: copyText,
+    onLibStateChange: syncCopyRef,
   });
   var schedulesPanel = createSchedulesPanel({
     app: app,
@@ -268,6 +271,7 @@ import { createSkillsPanel } from './panels/skills.js';
   var BOOT = JSON.parse($('boot-config').textContent);
   var TERM_OK = BOOT.terminal;
   var TERM_END = BOOT.terminalEnd;
+  var INSTANCE_ID = BOOT.instance || 'web';
   // Whether this daemon has the file window (platforms.<id>.files.enabled). False hides the
   // header button; the routes behind it answer 404, exactly as the terminal's do.
   var FILES_OK = BOOT.files;
@@ -3908,6 +3912,7 @@ import { createSkillsPanel } from './panels/skills.js';
     // the power button while a process is resident. Hiding beats disabling — a greyed-out control
     // asks to be explained, and "nothing is running" is already what an unlit dot says.
     killBtn.hidden = !(cur && cur.live);
+    syncCopyRef();
     // Also over a topic whose own turn is over while the sub-agents it started still work — the
     // usual state of a /super job, and the one where there was nothing to press: /stop there stops
     // them too (Delegation.stopOpened).
@@ -5440,6 +5445,8 @@ import { createSkillsPanel } from './panels/skills.js';
       {key:'star', icon:IC.icon.star, label:t.starred?'Unstar':'Star',
        title:t.starred?'Stop keeping this topic through Clear and eviction':'Keep this topic through Clear and eviction'}
     ];
+    items.push({key:'copy', icon:IC.icon.copy, label:'Copy reference',
+      title:'Copy the title and topic id ('+INSTANCE_ID+':main/'+id+') so an agent can read this conversation'});
     if(canFork){
       items.push({key:'fork', icon:IC.icon.fork, label:'Fork', disabled:busy,
        title:busy
@@ -5460,6 +5467,7 @@ import { createSkillsPanel } from './panels/skills.js';
     );
     openRowMenu(btn, btn.getAttribute('data-rm')||('topic:'+id), items, function(what){
       if(what==='star') starTopic(id);
+      else if(what==='copy') copyTopicRef(id);
       else if(what==='fork') forkTopic(id);
       else if(what==='delete') deleteTopic(id);
       else if(what==='end') endTopic(id);
@@ -7235,6 +7243,53 @@ import { createSkillsPanel } from './panels/skills.js';
     done(fallbackCopy(s));
   }
 
+  function topicRef(t){
+    return (t.title || 'Untitled') + ' (' + INSTANCE_ID + ':main/' + t.id + ')';
+  }
+
+  function syncCopyRef(){
+    if(libOn()){
+      var ref = historyPanel.currentRef();
+      copyRefBtn.hidden = !ref;
+      copyRefBtn.title = ref ? 'Copy reference: ' + ref : 'Copy conversation reference';
+      return;
+    }
+    var cur = topicById(topic);
+    copyRefBtn.hidden = !cur;
+    copyRefBtn.title = cur ? 'Copy reference: ' + topicRef(cur) : 'Copy conversation reference';
+  }
+
+  var copyNoteTimer = null;
+  function flashCopyNote(msg){
+    note.textContent = msg;
+    clearTimeout(copyNoteTimer);
+    copyNoteTimer = setTimeout(function(){
+      if(note.textContent === msg) note.textContent = '';
+    }, 2500);
+  }
+
+  function copyTopicRef(id){
+    var t = topicById(id);
+    if(!t) return;
+    var ref = topicRef(t);
+    copyText(ref, function(ok){
+      flashCopyNote(ok ? 'Copied reference: ' + ref : 'Could not copy the reference.');
+    });
+  }
+
+  function flashCopyBtn(btn, ok, restoreTitle, restoreLabel){
+    var say = ok ? 'Copied' : 'Could not copy';
+    btn.innerHTML = ok ? IC.icon.check : IC.icon.cross;
+    btn.title = say;
+    btn.setAttribute('aria-label', say);
+    clearTimeout(btn._copyTimer);
+    btn._copyTimer = setTimeout(function(){
+      btn.innerHTML = IC.icon.copy;
+      btn.title = restoreTitle;
+      btn.setAttribute('aria-label', restoreLabel);
+    }, 1500);
+  }
+
   /** The text of a failed message, on the clipboard. */
   function copyLocal(nonce, btn){
     var m=data['p:'+nonce]; if(!m) return;
@@ -7302,6 +7357,13 @@ import { createSkillsPanel } from './panels/skills.js';
     e.preventDefault(); send();
   });
   $('composer').addEventListener('submit', function(e){ e.preventDefault(); send(); });
+  copyRefBtn.addEventListener('click', function(){
+    var ref = libOn() ? historyPanel.currentRef() : (topicById(topic) ? topicRef(topicById(topic)) : null);
+    if(!ref) return;
+    copyText(ref, function(ok){
+      flashCopyBtn(copyRefBtn, ok, 'Copy reference: ' + ref, 'Copy conversation reference');
+    });
+  });
   killBtn.addEventListener('click', function(){ command('/kill'); });
   stopBtn.addEventListener('click', function(){ command('/stop'); });
 

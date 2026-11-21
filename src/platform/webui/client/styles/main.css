@@ -816,6 +816,11 @@ select.skill-field{appearance:auto}
 .hist-item{display:flex;flex-direction:column;gap:2px;padding:7px 9px;border:1px solid transparent;border-radius:5px;background:#171717;cursor:pointer;transition:background .15s}
 .hist-item:hover{background:#222}
 .hist-item.on{background:#252525;border-color:var(--line)}
+.hist-top{display:flex;align-items:center;gap:4px;min-width:0}
+.hist-top .hist-title{flex:1;min-width:0}
+.hist-copy{flex:none;padding:3px 4px;color:var(--dim);font-size:12px}
+.hist-copy:hover{color:var(--fg)}
+@media(hover:hover){.hist-copy{opacity:0}.hist-item:hover .hist-copy,.hist-item:focus-within .hist-copy,.hist-copy.copied{opacity:1}}
 .hist-title{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--fg)}
 .hist-meta{font-size:11px;color:var(--dim);overflow-wrap:anywhere}
 .hist-key{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:10.5px}
