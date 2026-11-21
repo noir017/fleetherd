@@ -14,7 +14,13 @@ session id, agy's conversation id). One conversation holds one session *per agen
 |---|---|
 | `daemon.ts` | Top-level wiring: platforms + conversation registry + IPC. Slash registration, `ask` buttons, harness pickers, the `/model`, `/cd` and `/setting` menus. |
 | `routing.ts` | Pure: inbound → which agent (and whether the user *asked* for it) + which scope |
-| `conversation.ts` | `ConversationRegistry` — per-conversation state, agent binding, access + gating, command translation |
+| `conversation.ts` | `ConversationRegistry` — the per-conversation state table, access + gating, `route()`, agent binding, and the facade the daemon calls. The work is done by the collaborators below |
+| `conversation-context.ts` | Types only: `ConversationState`, `ConversationHooks`, and `ConversationContext` — the view of the registry (dependencies, state table, lookups) each collaborator is given |
+| `conversation-turns.ts` | Each conversation's merger and the `TurnRunner` behind it, delivery into the merger, `/stop` and `/kill`, the restart drain, idle reclaim, and Retry / continue after a failed turn |
+| `conversation-controls.ts` | `/model`, `/effort`, `/cd` (with remote directory listings), `/fork`, `/title` and automatic topic naming, and the web UI's model and option switches |
+| `conversation-commands.ts` | The slash commands `route()` meets before a turn: `DAEMON_COMMANDS`, `/setting`, the agent switch lock, a pending question's answer, bare agent commands, and generic command translation with its local and busy answers |
+| `conversation-history.ts` | The library rows a turn writes (`history.db`), the claude transcript's cache reading, and `fleetherd channels` |
+| `conversation-delegation.ts` | Work arriving from outside a conversation: scheduled runs and sub-agents' topics — opening the topic, applying the task's model, `handTo` |
 | `settings-store.ts` | The write half of `/setting`: validate, patch config.yaml, apply to the live `Config` |
 | `review-run.ts` | Who runs an automatic review and how: `review.api` (one `/chat/completions` request), an agy agent (`agy -p` with every class denied), or any other agent (one ACP session of its own, its tools switched off, every permission refused) |
 | `review-related.ts` | Pure: which skills beyond the used ones a review is given in full (description match on the person's words), and which of their reference files are quoted |
@@ -285,6 +291,13 @@ field touches only that interface. The stable token is the exception — it live
 `SessionTokenRegistry`, since token bookkeeping is a separate concern from turn
 orchestration.
 
+`ConversationRegistry` holds that table and is the only class the daemon sees; the work behind
+its methods is split by concern into the `conversation-*.ts` collaborators (see [Files](#files)).
+Each is constructed with one `ConversationContext` — the registry's dependencies, the state table
+and the lookups over it — plus the sibling collaborators it calls, so none of them imports the
+registry and each can be read on its own. Construction order follows those calls: history,
+controls, turns, then commands and delegation.
+
 ### The agent owns its context
 
 **The IM side is a client. It must never make an agent restart a task.** That rule
@@ -368,6 +381,25 @@ and the agent would answer its own follow-up from scratch. `TurnRunner` calls
 `deps.adoptThread`, and the registry aliases the thread's key to the conversation that
 opened it. The alias is in-memory only: after a restart such a thread becomes its own
 conversation, which is a self-correcting degradation, unlike discarding context.
+
+### Conversation titles
+
+A Telegram forum topic keeps the name it was created with, so a topic-per-task workflow ends up
+as a column of names typed before any work happened. `ConversationControls.nameConversation`
+names a lane after its opening message — **once**: it is called at every turn start and acts on
+the first only. Following the harness's `session_info_update` instead made topics drift to
+whatever was discussed last, and a name that moves costs more than one slightly off; `/title` and
+`/new` are the ways to get another. It runs **beside the turn**, so the lane is renamed seconds
+into a turn that may run for minutes.
+
+Every early return is a decision: no lane yet (nothing to point at); no `thread` (the address is
+the whole chat — renaming a group after one conversation is indefensible); already named (the
+once rule); a naming call in flight (the model takes seconds, and the store records nothing until
+the platform accepts the rename); `autoRenameThread: false`; and the platform refusing (nothing is
+recorded, so the next turn tries again). The thread and capability checks run *before* the model
+call as well as inside `retitleLane`, because thread-less platforms otherwise paid one summary per
+conversation that nothing could use. A rename made in the Telegram UI is not detected: Telegram
+offers no way to read a topic's name back.
 
 ### Idle reclaim
 
@@ -1509,7 +1541,7 @@ and an agent's scheduled `--bash` tasks run there (`schedule-bash.ts` runRemoteB
 inbound files are written there (`attachment-io.ts` remoteAttachmentSave), `send-file` fetches from
 there (`daemon.ts` sendAgentFile), and `/cd`, `/skills`, the claude cache countdown and opencode's
 log are read there. The `/cd` menu code is synchronous, so a remote listing is read into
-`ConversationRegistry.remoteScans` first; an explicit `/cd` always refreshes it.
+`ConversationControls.remoteScans` first; an explicit `/cd` always refreshes it.
 
 ### What a session is given: the user's words, three tools, a skill
 
@@ -1704,7 +1736,7 @@ skill is exempt, and nothing is deleted.
 the caller passed but a copy in which every adapter is wrapped by
 `withOutboundPacing`. That single wrap is what puts the reply, the tool bubbles, the
 reactions, the acks, the menus and the agent's own reverse commands on one shared per-chat
-budget — the ~38 call sites across `conversation.ts`, `daemon.ts` and `turn-runner.ts`
+budget — the call sites across `conversation*.ts`, `daemon.ts` and `turn-runner.ts`
 need no changes, and a path added later is paced by default rather than by remembering.
 
 `stop()` **drains** the pacer before stopping the adapters: a queued write is somebody's

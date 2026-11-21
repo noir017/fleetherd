@@ -8,9 +8,15 @@ src/daemon/agent-files.ts [Infra]: F:Pictures from an agent's reply checked by t
 src/daemon/attachment-io.ts [Infra]: F:Attachment fetch and storage with SSRF guards | A:assertSafeAttachmentUrl,createAttachmentIngestDeps | S:See Security invariants item 3 [T:assertSafeAttachmentUrl]
 src/daemon/config-reload.ts [Core]: F:Pure configuration diffing and reload plan computation | A:applyConfig,diffConfig
 src/daemon/connect-agent.ts [Infra]: F:TCP connect-mode ACP agent socket child and initialize _meta assembly | A:SocketChild,connectAddress,connectHere,connectMeta
+src/daemon/conversation-commands.ts [Core]: F:Daemon slash commands, /setting, agent switch lock, and generic command translation before a turn | R:src/daemon/conversation-turns.ts,src/daemon/conversation-controls.ts,src/daemon/settings-store.ts | A:ConversationCommands | S:See Security invariants items 1, 6
+src/daemon/conversation-context.ts [Core]: F:Shared ConversationState, ConversationHooks, and the ConversationContext view handed to registry collaborators | A:ConversationContext,ConversationState,ConversationHooks
+src/daemon/conversation-controls.ts [Core]: F:/model, /effort, /cd, /fork, /title controls and the web UI model and option switches | R:src/daemon/conversation-history.ts | A:ConversationControls,formatLaneTitle,REMOTE_LISTING_WAIT_MS
+src/daemon/conversation-delegation.ts [Core]: F:Scheduled runs and sub-agent topics: opening the topic, applying a task's model, handing work in | R:src/daemon/conversation-turns.ts,src/daemon/conversation-controls.ts | A:ConversationDelegation
+src/daemon/conversation-history.ts [Infra]: F:Conversation library recording, claude transcript cache reading, and channel listing | A:ConversationHistory
 src/daemon/conversation-store.ts [Infra]: F:Atomic persistence for conversation bindings and sessions | A:ConversationStore
 src/daemon/conversation-token-registry.ts [Infra]: F:Token to conversation ID mapping for reverse commands | A:SessionTokenRegistry | S:See Security invariants item 2
-src/daemon/conversation.ts [Core]: F:Per-conversation runtime state registry and turn orchestration | R:src/daemon/routing.ts | A:ConversationRegistry
+src/daemon/conversation-turns.ts [Core]: F:Merger and TurnRunner wiring, delivery, /stop and /kill, restart drain, idle reclaim, and retry after a failed turn | R:src/daemon/turn-runner.ts,src/daemon/turn-outcomes.ts,src/daemon/failed-input.ts | A:ConversationTurns
+src/daemon/conversation.ts [Core]: F:Per-conversation state registry, routing, agent binding, and the daemon-facing facade over its collaborators | R:src/daemon/routing.ts,src/daemon/conversation-turns.ts,src/daemon/conversation-controls.ts,src/daemon/conversation-commands.ts,src/daemon/conversation-history.ts,src/daemon/conversation-delegation.ts | A:ConversationRegistry,formatLaneTitle
 src/daemon/daemon.ts [Core]: F:Top-level daemon coordinator and reverse request dispatch | R:src/daemon/conversation.ts,src/ipc/server.ts | A:Daemon
 src/daemon/delegation.ts [Core]: F:Sub-agent task delegation, confirmation card workflows, and the automatic review loop | R:src/daemon/conversation.ts | A:Delegation | S:See Security invariants item 6
 src/daemon/external-mcp.ts [Edge]: F:External HTTP MCP entrance endpoint | A:ExternalMcp | S:See Security invariants item 11

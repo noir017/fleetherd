@@ -695,7 +695,7 @@ outranks the table — see `daemon/routing.ts` `resolveAgent`.
 
 `unconfiguredHarnessCommand` is the other side of that lookup: a name that IS in the
 vocabulary but selects nothing here, because this deployment configures no agent of that
-harness. `daemon/conversation.ts` answers it instead of forwarding — a declined name keeps
+harness. `daemon/conversation-commands.ts` answers it instead of forwarding — a declined name keeps
 its `/agy` prefix, so the bound agent would run it as one of its own slash commands, find
 nothing, and produce no output at all.
 
