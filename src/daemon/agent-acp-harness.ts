@@ -26,6 +26,7 @@ import {
   type AgentChild,
 } from './agent-common.js';
 import { agyWindow } from './agy-acp.js';
+import { isAgentAnswer } from './agent-reconnect.js';
 import { AGY_COMMAND } from './agy-cli.js';
 import { markActivePools } from './agy-meters.js';
 import { AGY_CONTEXT_REFRESH_MS, readAgyContext } from './agy-transcript.js';
@@ -423,26 +424,29 @@ export function adoptAcpChild(
 
 /**
  * Build the ACP content blocks for a turn prompt, handling reconnect probes and connect-agent
- * topic metadata.
+ * topic metadata. `promptId` only for an agent that declared it (agent-reconnect.ts).
  */
 export function buildTurnPromptInput(
   def: AgentDef,
   input: RunTurnInput,
-  blocksOf: (input: Pick<RunTurnInput, 'prompt' | 'images'>) => ContentBlock[]
+  blocksOf: (input: Pick<RunTurnInput, 'prompt' | 'images'>) => ContentBlock[],
+  promptId?: string
 ): ContentBlock[] {
-  if (input.reconnect) {
-    return [{ type: 'text', text: '', _meta: { fleetherd: { reconnect: true } } }] as ContentBlock[];
-  }
+  if (input.reconnect) return reconnectBlocks(promptId);
   const blocks = blocksOf(input);
   // Carry the topic on the prompt too for connect agents: a session warmed up by `/model`
   // before the first turn initialized without one.
-  if (def.connect && input.topic) {
-    const last = blocks[blocks.length - 1];
-    if (last?.type === 'text') {
-      blocks[blocks.length - 1] = { ...last, _meta: { fleetherd: { topic: input.topic } } } as ContentBlock;
-    }
+  const meta = { ...(def.connect && input.topic ? { topic: input.topic } : {}), ...(promptId ? { promptId } : {}) };
+  const last = blocks[blocks.length - 1];
+  if (Object.keys(meta).length > 0 && last?.type === 'text') {
+    blocks[blocks.length - 1] = { ...last, _meta: { fleetherd: meta } } as ContentBlock;
   }
   return blocks;
+}
+
+/** A prompt that asks the agent to pick its interrupted turn up, sending nothing of the person's. */
+export function reconnectBlocks(promptId?: string): ContentBlock[] {
+  return [{ type: 'text', text: '', _meta: { fleetherd: { reconnect: true, ...(promptId ? { promptId } : {}) } } }] as ContentBlock[];
 }
 
 // ───────────────────────── Startup diagnostics & RPC helpers ─────────────────────────
@@ -497,21 +501,12 @@ export function startupFailure(
     ...(p.host ? { host: p.host } : {}),
     launch: p.launch,
     // An error answer is the process speaking, whichever request it answered.
-    progress: isRpcError(err) ? { ...p.progress, answered: true } : p.progress,
+    progress: isAgentAnswer(err) ? { ...p.progress, answered: true } : p.progress,
     ...(timedOut ? { timeoutMs: p.timeoutMs } : { error: err }),
     stderr: p.stderr,
     hint: startupHint(def),
   });
   return new TurnFailure(message, 'startup');
-}
-
-/**
- * Whether an error is a JSON-RPC error answer (the SDK's RequestError carries the numeric `code`).
- * A closed connection rejects with a plain Error instead, which is the process going away without a
- * word — the one way an `initialize` failure says nothing about whether it ever came up.
- */
-function isRpcError(err: unknown): boolean {
-  return typeof err === 'object' && err !== null && typeof (err as { code?: unknown }).code === 'number';
 }
 
 /**
@@ -610,14 +605,6 @@ export function isAuthRequired(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : typeof err === 'string' ? err : JSON.stringify(err);
   const code = (err as { code?: unknown })?.code;
   return /auth[_-]?required|authentication|not\s+logged\s*in|unauthor/i.test(msg) || code === 'auth_required';
-}
-
-export function readReconnectSupport(capabilities: unknown): boolean {
-  if (!capabilities || typeof capabilities !== 'object') return false;
-  const meta = (capabilities as { _meta?: unknown })._meta;
-  if (!meta || typeof meta !== 'object') return false;
-  const fleetherd = (meta as Record<string, unknown>)['fleetherd'];
-  return !!fleetherd && typeof fleetherd === 'object' && (fleetherd as Record<string, unknown>)['reconnectTurn'] === true;
 }
 
 export function isNotSentRpcError(err: unknown): boolean {

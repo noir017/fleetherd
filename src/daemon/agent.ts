@@ -227,6 +227,11 @@ export interface RunTurnInput {
   /** Reconnect to an already-submitted turn to stream/fetch its latest reply without resending input. */
   reconnect?: boolean;
   /**
+   * The same for the same input, a Retry of it included (failed-input.ts promptIdOf): sent to an agent
+   * that declares `promptId`, which takes a prompt at most once (agent-reconnect.ts).
+   */
+  promptId?: string;
+  /**
    * The topic this turn runs in (`<platform>:<channel>[/<thread>]`), when the platform supports
    * nested sub-agent topics. Handed to `connect` agents so they can attach sub-tasks to this topic
    * through the external MCP entrance instead of opening a separate coordination topic.

@@ -72,7 +72,7 @@ import {
   launchAcpChild,
   placeOnHost,
   promptBlocks,
-  readReconnectSupport,
+  reconnectBlocks,
   startupFailure,
   startupSlot,
   StartupTimeout,
@@ -85,6 +85,17 @@ import {
   dshModelSelectorValue,
   reportedModes,
 } from './agent-acp-options.js';
+import {
+  AgentUnreachable,
+  canPickUp,
+  isAgentAnswer,
+  NO_RESUME,
+  readResumeSupport,
+  Redialer,
+  type OutageKind,
+  type RedialTiming,
+  type ResumeSupport,
+} from './agent-reconnect.js';
 import {
   decidePermission,
   failIfRefused,
@@ -182,7 +193,9 @@ export function createAcpAgentFactory(
   socketPath: string,
   store?: ConversationStore,
   /** How agy's one-shot `agy -p=/usage` is run — injectable so the tests never start a real agy. */
-  agyCli?: AgyCliRunner
+  agyCli?: AgyCliRunner,
+  /** How long a lost agent is tried again, and how often (agent-reconnect.ts); for the tests. */
+  redial?: RedialTiming
 ): AgentFactory {
   const sessions = new Map<string, AgentSession>();
   const turnTimeoutMs = cfg.session.turnTimeoutMs;
@@ -195,7 +208,7 @@ export function createAcpAgentFactory(
       if (!s) {
         const def = findAgent(cfg, agentId);
         if (!def) throw new Error(`unknown agent id: ${agentId} (check the routing and agents config)`);
-        s = new AcpSession(def, socketPath, sessionId, turnTimeoutMs, store, hasQuotaSource(def) ? quota : undefined);
+        s = new AcpSession(def, socketPath, sessionId, turnTimeoutMs, store, hasQuotaSource(def) ? quota : undefined, redial);
         sessions.set(sessionId, s);
       }
       return s;
@@ -253,7 +266,7 @@ class AcpSession implements AgentSession {
 
   /** Binary-level capabilities learned from `initialize` (kept across child rebuilds). */
   private loadSessionSupported = false;
-  private reconnectSupported = false;
+  private resume: ResumeSupport = NO_RESUME;
   private steeringMode: SteeringMode = 'none';
   private imagePrompts = false;
   private forkSupport: ForkSupport = NO_FORK;
@@ -272,6 +285,8 @@ class AcpSession implements AgentSession {
   private endChildAfterStop = false;
   private turnStopped: (() => void) | undefined;
   private stoppedWhileStarting = false;
+  /** Trips on `/stop` or dispose: ends a wait to redial a lost agent (agent-reconnect.ts). */
+  private stopRedial: AbortController | undefined;
   private readonly stopGraceMs: number;
 
   /** Composed collaborators for options/modes and agy/quota metering. */
@@ -284,7 +299,8 @@ class AcpSession implements AgentSession {
     conversationId: string,
     private readonly turnTimeoutMs: number,
     private readonly store?: ConversationStore,
-    quota?: QuotaMeter
+    quota?: QuotaMeter,
+    private readonly redialTiming?: RedialTiming
   ) {
     this.conversationId = conversationId;
     this.cwd = resolveConversationCwd(def, conversationId, store);
@@ -571,7 +587,7 @@ class AcpSession implements AgentSession {
     });
     progress.answered = true;
     this.loadSessionSupported = initResult.agentCapabilities?.loadSession === true;
-    this.reconnectSupported = readReconnectSupport(initResult.agentCapabilities);
+    this.resume = readResumeSupport(initResult.agentCapabilities);
     this.steeringMode = steeringModeOf(initResult, takesPromptMidTurn(this.def));
     this.imagePrompts = initResult.agentCapabilities?.promptCapabilities?.image === true;
     [this.forkSupport, this.forkKnown] = [forkSupportOf(initResult), true];
@@ -637,11 +653,16 @@ class AcpSession implements AgentSession {
       const failed = spawnError();
       if (failed) {
         const where = place ? ` on host "${place.host.id}"` : '';
-        throw new TurnFailure(`agent "${this.def.id}" could not start${where}: ${failed.message}`, 'startup');
+        const message = `agent "${this.def.id}" could not start${where}: ${failed.message}`;
+        // A connect agent's dial is its spawn: refused or unreachable is the service being away.
+        throw this.def.connect ? new AgentUnreachable(message) : new TurnFailure(message, 'startup');
       }
       if (err instanceof TurnFailure || err instanceof ForkRefused) throw err;
       const launch = `${command} ${args.join(' ')}`.trim();
-      throw startupFailure(this.def, err, { host: place?.host.id, launch, progress, stderr: stderrTail(), timeoutMs: START_TIMEOUT_MS });
+      const failure = startupFailure(this.def, err, { host: place?.host.id, launch, progress, stderr: stderrTail(), timeoutMs: START_TIMEOUT_MS });
+      // Closed before it answered: the service went away under the start.
+      const dropped = connection.signal.aborted && !isAgentAnswer(err) && !(err instanceof StartupTimeout);
+      throw dropped && this.mayRedial() ? new AgentUnreachable(failure.message) : failure;
     } finally {
       if (timer) clearTimeout(timer);
     }
@@ -939,16 +960,81 @@ class AcpSession implements AgentSession {
     flushPendingTools(state);
   }
 
-  private async prepareTurnStart(input: RunTurnInput, closePromptWindow: () => void): Promise<boolean> {
+  private async prepareTurnStart(input: RunTurnInput, closePromptWindow: () => void, redial: Redialer): Promise<boolean> {
     try {
-      await this.ensureStarted(input.sessionToken, input.topic);
+      await this.startReachable(input, redial, 'start');
       await this.closeFollowUp('stopped');
       return true;
     } catch (err) {
       closePromptWindow();
-      if (err instanceof PreLaunchCancelled) return false;
+      // A `/stop` while it waited to dial again: the person stopped it, nothing failed.
+      if (err instanceof PreLaunchCancelled || (err instanceof AgentUnreachable && this.stopRedial?.signal.aborted)) return false;
       throw asUndelivered(err);
     }
+  }
+
+  /** Whether a failed start is worth dialling again: a connect agent, or one that can pick a turn up. */
+  private mayRedial(): boolean {
+    return this.def.connect !== undefined || this.resume.reconnect || this.resume.promptId;
+  }
+
+  /** ensureStarted, trying an agent it cannot reach again until the window closes (agent-reconnect.ts). */
+  private async startReachable(input: RunTurnInput, redial: Redialer, kind: OutageKind): Promise<void> {
+    const stop = this.stopRedial?.signal ?? new AbortController().signal;
+    for (;;) {
+      try {
+        await this.ensureStarted(input.sessionToken, input.topic);
+        redial.back();
+        return;
+      } catch (err) {
+        if (!(err instanceof AgentUnreachable)) throw err;
+        // The failed start's teardown marked the session as aborting; only a `/stop` is one.
+        if (!stop.aborted) this.aborting = false;
+        console.warn(`[acp] ${this.conversationId}: "${this.def.id}" is unreachable (${err.message})`);
+        if (await redial.next(stop, kind)) continue;
+        if (stop.aborted) throw err;
+        throw new AgentUnreachable(`${err.message} (tried again for ${Math.round(redial.elapsedMs() / 1000)}s)`);
+      }
+    }
+  }
+
+  /**
+   * After a prompt failed: what to send next when the turn can go on (agent-reconnect.ts), or
+   * undefined to fail it. Throws when the connection was lost and could not be got back.
+   */
+  private async pickUpAfter(
+    err: unknown,
+    t: { conn: ClientConnection | undefined; pickingUp: boolean; original: ContentBlock[]; promptId?: string; sawText: boolean; input: RunTurnInput; redial: Redialer }
+  ): Promise<{ blocks: ContentBlock[]; pickingUp: boolean } | undefined> {
+    if (this.aborting || this.stopRedial?.signal.aborted) return undefined;
+    if (t.pickingUp && t.promptId && isNotSentRpcError(err)) {
+      console.log(`[acp] ${this.conversationId}: "${this.def.id}" never took this turn's prompt; sending it now, under the same id`);
+      return { blocks: t.original, pickingUp: false };
+    }
+    const lost = t.conn?.signal.aborted === true && !isAgentAnswer(err);
+    if (!lost || !canPickUp(this.resume, t.sawText)) return undefined;
+    await this.reconnectMidTurn(err, t.input, t.redial);
+    return { blocks: reconnectBlocks(t.promptId), pickingUp: true };
+  }
+
+  /** Get the same session back after the connection went away mid-turn, or throw why not. */
+  private async reconnectMidTurn(err: unknown, input: RunTurnInput, redial: Redialer): Promise<void> {
+    const sessionId = this.active?.sessionId ?? this.store?.agentSession(this.conversationId, this.def.id);
+    console.warn(
+      `[acp] ${this.conversationId}: lost the connection to "${this.def.id}" mid-turn (${err instanceof Error ? err.message : String(err)}); reconnecting`
+    );
+    this.teardown();
+    try {
+      await this.startReachable(input, redial, 'turn');
+    } catch (e) {
+      if (!(e instanceof AgentUnreachable) || this.stopRedial?.signal.aborted) throw e;
+      throw new TurnFailure(`agent "${this.def.id}" lost its connection mid-turn and could not get it back: ${e.message}`, 'other');
+    }
+    // Picking up is asking the same session; a fresh one has no turn to pick up.
+    if (this.active?.sessionId !== sessionId) {
+      throw new TurnFailure(`agent "${this.def.id}" came back without this conversation's session, so the interrupted turn could not be picked up`, 'other');
+    }
+    console.log(`[acp] ${this.conversationId}: reconnected to "${this.def.id}"; picking the turn up`);
   }
 
   // ───────────────────────── Public AgentSession methods ─────────────────────────
@@ -956,18 +1042,34 @@ class AcpSession implements AgentSession {
   async runTurn(input: RunTurnInput, incomingHandlers: AgentStreamHandlers): Promise<void> {
     this.aborting = false;
     this.stoppedWhileStarting = false;
+    const stop = new AbortController();
+    this.stopRedial = stop;
     const output = trackVisibleOutput(incomingHandlers, () => this.agyMeter.quotaOnFirstOutput(incomingHandlers, this.cwd));
-    const handlers = output.handlers;
+    const redial = new Redialer({ agent: this.def.id, notice: (text) => output.handlers.onNotice?.(text), ...this.redialTiming });
     const closePromptWindow = this.openPromptWindow();
-    if (!(await this.prepareTurnStart(input, closePromptWindow))) return;
+    try {
+      if (!(await this.prepareTurnStart(input, closePromptWindow, redial))) return;
+      await this.runStartedTurn(input, output, closePromptWindow, redial);
+    } finally {
+      redial.clear();
+      if (this.stopRedial === stop) this.stopRedial = undefined;
+    }
+  }
 
+  private async runStartedTurn(
+    input: RunTurnInput,
+    output: ReturnType<typeof trackVisibleOutput>,
+    closePromptWindow: () => void,
+    redial: Redialer
+  ): Promise<void> {
+    const handlers = output.handlers;
     const state = this.newTranslationState(handlers, true);
     this.options.reportSessionFacts(handlers);
     this.agyMeter.quotaAtTurnStart(handlers);
 
     const host = remoteHosts.hostFor(this.def);
     const watchdog = this.createSilenceWatchdog(state, host);
-    const driver = createTurnPromptDriver(this.conversationId);
+    let driver = createTurnPromptDriver(this.conversationId);
     const logWatch = watchHarnessLog(this.def, this.conversationId, () => this.active?.sessionId, handlers);
     const unwatchLink = watchRemoteLink(host, handlers, watchdog.rearm);
     const fold = watchForFoldedPrompt(this.conversationId, this.turnTimeoutMs, state, () => this.awaitingUser > 0);
@@ -978,34 +1080,52 @@ class AcpSession implements AgentSession {
       watchdog.rearm();
       if (driver.promptDone()) fold.observe(update);
     };
-    this.endTurnWait = driver.onStop;
-    this.joinedStillQueued = driver.hasQueuedPrompt;
     watchdog.rearm();
 
+    const promptId = this.resume.promptId ? input.promptId : undefined;
+    const original = buildTurnPromptInput(this.def, input, (i) => this.blocksOf(i), promptId);
+    let next = { blocks: original, pickingUp: false };
     try {
-      if (this.replayFence) await this.replayFence;
-      this.promptedYet = true;
-      this.endIfStoppedWhileStarting();
-      const session = this.active!;
-      driver.send(session, buildTurnPromptInput(this.def, input, (i) => this.blocksOf(i)));
-      this.turnStopped = stopWatch.stopped;
-      this.joinTurn = createSteerHandler({
-        conversationId: this.conversationId,
-        steeringMode: this.steeringMode,
-        session,
-        agentCtx: this.conn!.agent,
-        driver,
-        canSteer: () => !this.aborting && this.active === session,
-      });
-      closePromptWindow();
+      for (;;) {
+        this.endTurnWait = driver.onStop;
+        this.joinedStillQueued = driver.hasQueuedPrompt;
+        // Gone between the start and the prompt: nothing was sent, so it goes once the agent is back.
+        if ((!this.active || !this.conn) && this.mayRedial()) await this.startReachable(input, redial, 'start').catch((e: unknown) => Promise.reject(asUndelivered(e)));
+        const conn = this.conn;
+        try {
+          if (this.replayFence) await this.replayFence;
+          this.promptedYet = true;
+          this.endIfStoppedWhileStarting();
+          const session = this.active!;
+          driver.send(session, next.blocks);
+          this.turnStopped = stopWatch.stopped;
+          this.joinTurn = createSteerHandler({
+            conversationId: this.conversationId,
+            steeringMode: this.steeringMode,
+            session,
+            agentCtx: this.conn!.agent,
+            driver,
+            canSteer: () => !this.aborting && this.active === session,
+          });
+          closePromptWindow();
 
-      const outcome = await Promise.race([driver.settled, watchdog.timedOut, driver.promptFailed, fold.folded]);
-      if (outcome === 'folded') {
-        flushPendingTools(state);
-        return;
+          const outcome = await Promise.race([driver.settled, watchdog.timedOut, driver.promptFailed, fold.folded]);
+          if (outcome === 'folded') {
+            flushPendingTools(state);
+            return;
+          }
+          const response = await driver.promptDone()!;
+          await this.settleTurnResponse(state, response, output.sawOutput());
+          return;
+        } catch (err) {
+          if (err instanceof TurnTimeoutError) throw err;
+          const after = await this.pickUpAfter(err, { conn, ...next, original, promptId, sawText: output.sawText(), input, redial });
+          if (!after) throw err;
+          next = after;
+          driver = createTurnPromptDriver(this.conversationId);
+          watchdog.rearm();
+        }
       }
-      const response = await driver.promptDone()!;
-      await this.settleTurnResponse(state, response, output.sawOutput());
     } catch (err) {
       if (this.aborting) return;
       if (err instanceof TurnTimeoutError) {
@@ -1057,6 +1177,7 @@ class AcpSession implements AgentSession {
 
   abort(): void {
     this.aborting = true;
+    this.stopRedial?.abort();
     this.launchHook?.abort();
     if (this.joinedStillQueued?.()) this.endChildAfterStop = true;
     this.cancelledTools = new Set(this.turnState?.toolLedger.keys() ?? []);
@@ -1072,7 +1193,7 @@ class AcpSession implements AgentSession {
   }
 
   supportsReconnect(): boolean {
-    return this.reconnectSupported;
+    return this.resume.reconnect;
   }
 
   stopBackground(): boolean {
@@ -1181,6 +1302,7 @@ class AcpSession implements AgentSession {
 
   dispose(): void {
     this.disposed = true;
+    this.stopRedial?.abort();
     this.disposeChild();
   }
 }

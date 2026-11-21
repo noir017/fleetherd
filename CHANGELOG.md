@@ -5,6 +5,21 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **A connect agent that goes away mid-turn is waited for, not failed.** A web-agent-driver restart
+  used to fail every turn on it at once — `connect ECONNREFUSED`, a queued turn included — and each
+  needed a person to send "continue". Now a dropped connection or a refused dial is tried again for
+  up to two minutes (1, 2, 4, 8, then every 15 seconds; a container restart takes about 15), the
+  session is loaded again and the turn picks up where the service left it, with nothing in the chat
+  for a blip and one ⚠️ line, then a ✅, past ten seconds. The gateway never sends the message again
+  on its own: an agent that declares `agentCapabilities._meta.fleetherd.promptId` gets an id with
+  every prompt — the same for a Resend of it — and is asked to pick up that prompt, which it refuses
+  with `data.notSent` if it never took it, and only then is the prompt sent, under the same id. An
+  agent that declares only `reconnectTurn` is picked up once the turn showed reply text, since before
+  that a queued turn looks like a running one; other agents are unchanged. Only when the window is
+  over does the turn end in ❌ with its Reconnect / Resend buttons, as before.
+
 ## [3.26.0] - 2026-11-21
 
 ### Added

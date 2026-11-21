@@ -102,6 +102,16 @@ without a pod's `@host`), which a harness would have read from a file of its own
 `args`, `env` and `instructions` do not apply; `cwd`, `permissions`, `quotaCommand` and the rest do.
 A connect agent cannot run [reviews](sub-agents.md), which need a process of their own.
 
+When the connection drops — the service restarting, a network blip — the turn waits it out rather
+than failing: the address is dialled again for up to two minutes (after 1, 2, 4, 8, then every 15
+seconds), the session is loaded again, and the turn picks up where the service left it. Nothing is
+said for a blip; past 10 seconds one ⚠️ line, and a ✅ once it is back. The message is never sent a
+second time on the gateway's own: a service that declares `_meta.fleetherd.promptId` in its
+`initialize` gets an id with every prompt, the same for a Resend of it, and takes each prompt once; one
+that declares only `reconnectTurn` is picked up once the turn showed reply text, and otherwise fails as
+before. Only when the two minutes are over does the turn fail with ❌ and its Reconnect / Resend (or
+Retry) buttons. A message whose dial was refused goes out once the service answers.
+
 ## Pre-launch hook
 
 `hooks.preLaunch` is a command the daemon runs, and waits for, before every start

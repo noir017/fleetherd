@@ -20,6 +20,7 @@ import type { PlatformAdapter } from '../platform/adapter.js';
 import { commandSurface } from './delegation.js';
 import type { AgentFactory, AgentImage, AgentSession, AgentStreamHandlers, AgentUsage, FollowUpSink, TurnImage } from './agent.js';
 import { promptUndelivered } from './agent.js';
+import { promptIdOf } from './failed-input.js';
 import { retryButtons } from '../core/turn-retry.js';
 import { undeliveredLine } from '../core/topic-stage.js';
 import { StreamBuffer } from '../core/stream-buffer.js';
@@ -838,7 +839,7 @@ export class TurnRunner {
         await agent.runTurn(
           {
             prompt: isReconnect ? '' : prompt,
-            ...(isReconnect ? { reconnect: true } : {}),
+            ...(isReconnect ? { reconnect: true } : { promptId: promptIdOf(batch) }),
             ...(!isReconnect && images.length > 0 ? { images } : {}),
             sessionToken,
             model: this.deps.getModelOverride(conversationId),
