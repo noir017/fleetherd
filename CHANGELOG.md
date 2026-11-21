@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.24.0] - 2026-11-21
+
 ### Added
 
 - **External MCP callers with `agents:` configured can attach sub-tasks directly to a connect agent's own topic.** When a caller in `mcp.callers` lists `agents:` (matching both `<id>` and `<id>@<host>`), connect agents receive their topic id in `initialize._meta.fleetherd.topic` and can pass it to `tasks new` / `list` without opening a separate coordination topic. Proposals still require the Start confirmation card and `task-send` remains disallowed, while completed sub-tasks now wake the parent topic directly.
