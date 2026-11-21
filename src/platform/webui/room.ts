@@ -1413,7 +1413,15 @@ export class WebRoom {
     const full = found?.path;
     const work: Pick<Topic, 'dir' | 'agent'> = {
       ...(full ? { dir: { name: basename(full) || full, path: full, ...(found?.host ? { host: found.host } : {}) } } : {}),
-      ...(found?.agent ? { agent: { id: found.agent.id, harness: found.agent.harness } } : {}),
+      ...(found?.agent
+        ? {
+            agent: {
+              id: found.agent.id,
+              harness: found.agent.harness,
+              ...(found.agent.canFork !== undefined ? { canFork: found.agent.canFork } : {}),
+            },
+          }
+        : {}),
     };
     this.dirCache.set(topicId, { at: now, work });
     return work;
@@ -2516,7 +2524,7 @@ function flagsOf(topics: Topic[]): string {
   return topics
     .map(
       (t) =>
-        `${t.id}${t.live ? 'L' : ''}${t.asking ? 'A' : ''}${t.running ? 'R' : ''}${t.dir ? `@${t.dir.host ?? ''}:${t.dir.path}` : ''}${t.agent ? `=${t.agent.id}` : ''}`
+        `${t.id}${t.live ? 'L' : ''}${t.asking ? 'A' : ''}${t.running ? 'R' : ''}${t.dir ? `@${t.dir.host ?? ''}:${t.dir.path}` : ''}${t.agent ? `=${t.agent.id}${t.agent.canFork === false ? '!f' : t.agent.canFork === true ? '+f' : ''}` : ''}`
     )
     .join(',');
 }

@@ -206,6 +206,7 @@ export class ConversationRegistry {
           return modes && modes.options.length > 0 ? modes : undefined;
         }),
       liveOptions: (agentId) => live(agentId, (id) => this.agents.peek(id)?.sessionOptions?.()),
+      liveCanFork: (agentId) => live(agentId, (id) => this.agents.peek(id)?.canFork?.()),
       tokenFor: (sid) => this.tokens.tokenFor(sid as ConversationId),
       forget: (sid) => {
         this.store?.clear(sid);
@@ -623,10 +624,11 @@ export class ConversationRegistry {
     const def = findAgent(this.config, bound || this.config.routing.default);
     if (!def) return undefined;
     const host = agentPlaceOf(def);
+    const canFork = bound ? this.modelCatalog.canFork(def.id) : undefined;
     return {
       path: resolveConversationCwd(def, id, this.store),
       ...(host ? { host } : {}),
-      ...(bound ? { agent: { id: def.id, harness: def.harness } } : {}),
+      ...(bound ? { agent: { id: def.id, harness: def.harness, ...(canFork !== undefined ? { canFork } : {}) } } : {}),
     };
   }
 

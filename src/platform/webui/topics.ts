@@ -118,7 +118,7 @@ export interface Topic {
    * agent is bound. The row's label is drawn from it rather than from the `[agent]` the title opens
    * with, which records who answered when the topic was named and is not rewritten by `/agent`.
    */
-  agent?: { id: string; harness: string };
+  agent?: { id: string; harness: string; canFork?: boolean };
   /**
    * The topic whose agent opened this one (`fleetherd task-new`, started once the operator confirmed
    * it — daemon/delegation.ts). The switcher nests it there, and the daemon reads it back to know

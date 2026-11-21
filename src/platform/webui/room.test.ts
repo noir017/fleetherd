@@ -1884,6 +1884,22 @@ describe('WebRoom: which directory a topic is working in', () => {
     expect(list().find((t) => t.id === topic)?.agent).toEqual({ id: 'cx', harness: 'codex' });
   });
 
+  it('carries agent.canFork and announces when it becomes known on the liveness poll', () => {
+    vi.useFakeTimers();
+    const { room, topic, seen, list } = attached();
+    let agent: { id: string; harness: string; canFork?: boolean } = { id: 'gt', harness: 'custom' };
+    room.useWorkdirLookup(() => ({ path: '/srv/a', agent }));
+    room.useLivenessLookup(() => false);
+    vi.advanceTimersByTime(60_000);
+    expect(list().find((t) => t.id === topic)?.agent).toEqual({ id: 'gt', harness: 'custom' });
+    seen.length = 0;
+
+    agent = { id: 'gt', harness: 'custom', canFork: false };
+    vi.advanceTimersByTime(60_000);
+    expect(listEvents(seen).length).toBeGreaterThan(0);
+    expect(list().find((t) => t.id === topic)?.agent).toEqual({ id: 'gt', harness: 'custom', canFork: false });
+  });
+
   it('asks the daemon at the address of the topic, not of the channel', () => {
     // The lookup crosses back into the conversation store, which separates lanes — handing it
     // the channel would give every topic the directory of whichever one happened to be first.

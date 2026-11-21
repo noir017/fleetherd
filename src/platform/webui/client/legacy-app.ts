@@ -5435,13 +5435,18 @@ import { createSkillsPanel } from './panels/skills.js';
     // Fork is offered while nothing is running here, which is the only time the daemon makes one
     // (a copy taken mid-turn would hold half of that turn); greyed with that reason otherwise.
     var busy=Boolean(t.running || t.asking);
+    var canFork=!(t.agent && t.agent.canFork===false);
     var items=[
       {key:'star', icon:IC.icon.star, label:t.starred?'Unstar':'Star',
-       title:t.starred?'Stop keeping this topic through Clear and eviction':'Keep this topic through Clear and eviction'},
-      {key:'fork', icon:IC.icon.fork, label:'Fork', disabled:busy,
+       title:t.starred?'Stop keeping this topic through Clear and eviction':'Keep this topic through Clear and eviction'}
+    ];
+    if(canFork){
+      items.push({key:'fork', icon:IC.icon.fork, label:'Fork', disabled:busy,
        title:busy
          ? 'A turn is running here — fork it once the turn ends'
-         : 'Copy this conversation into a new topic beside it: it carries on from here, and this one is unchanged (/fork)'},
+         : 'Copy this conversation into a new topic beside it: it carries on from here, and this one is unchanged (/fork)'});
+    }
+    items.push(
       {key:'end', icon:IC.icon.power,
        label:'End agent'+(alive?' + '+alive+' sub-agent'+(alive===1?'':'s'):''),
        disabled:!able,
@@ -5452,7 +5457,7 @@ import { createSkillsPanel } from './panels/skills.js';
          : 'No agent process is running in this topic or the topics under it — there is nothing to end'},
       {sep:true},
       {key:'delete', icon:IC.icon.trash, label:'Delete topic', danger:true}
-    ];
+    );
     openRowMenu(btn, btn.getAttribute('data-rm')||('topic:'+id), items, function(what){
       if(what==='star') starTopic(id);
       else if(what==='fork') forkTopic(id);

@@ -67,6 +67,8 @@ export interface ModelCatalogDeps {
   liveModes(agentId: string): SessionModeSelector | undefined;
   /** The settings a live session of this agent reports (empty: it has none), if any session has reported. */
   liveOptions?(agentId: string): SessionOption[] | undefined;
+  /** Whether a live session of this agent declared `session/fork` in `initialize`. */
+  liveCanFork?(agentId: string): boolean | undefined;
   /** A token for the session the catalog starts itself (its MCP bridge needs one). */
   tokenFor(sessionId: string): string;
   /** Forget what that session left behind: its store entry, its token. */
@@ -78,6 +80,7 @@ export class ModelCatalog {
   private readonly knownModes = new WeakMap<AgentDef, AgentModes>();
   private readonly knownOptions = new WeakMap<AgentDef, OptionKind[]>();
   private readonly knownDefaultModel = new WeakMap<AgentDef, string>();
+  private readonly knownCanFork = new WeakMap<AgentDef, boolean>();
   private readonly probed = new WeakSet<AgentDef>();
   private readonly asking = new WeakMap<AgentDef, Promise<AgentModelList>>();
 
@@ -191,6 +194,20 @@ export class ModelCatalog {
     return this.knownOptions.get(def);
   }
 
+  /** Whether this agent declared `session/fork`, without asking: undefined until observed. */
+  canFork(agentId: string): boolean | undefined {
+    const def = this.deps.defOf(agentId);
+    if (!def) return undefined;
+    const known = this.knownCanFork.get(def);
+    if (known !== undefined) return known;
+    const live = this.deps.liveCanFork?.(agentId);
+    if (live !== undefined) {
+      this.knownCanFork.set(def, live);
+      return live;
+    }
+    return undefined;
+  }
+
   /**
    * The agent's own settings, asking when nothing is known (once at a time, sharing an ask already
    * running for the models). Never rejects; empty when the agent has none or could not be asked.
@@ -213,12 +230,13 @@ export class ModelCatalog {
     if (!def) return Promise.resolve({ kind: 'error', reason: `no agent named ${agentId}` });
     const running = this.asking.get(def);
     if (running) return running;
-    const p = this.probe(def).then(({ models, modes, options, defaultModel }) => {
+    const p = this.probe(def).then(({ models, modes, options, defaultModel, canFork }) => {
       this.known.set(def, models);
       this.knownModes.set(def, modes);
       // Keep live-learned options if a probe failed or returned nothing.
       if (options.length > 0 || !this.knownOptions.has(def)) this.knownOptions.set(def, options);
       if (defaultModel) this.knownDefaultModel.set(def, defaultModel);
+      if (canFork !== undefined) this.knownCanFork.set(def, canFork);
       this.probed.add(def);
       this.asking.delete(def);
       return models;
@@ -230,7 +248,7 @@ export class ModelCatalog {
   /** Start a session of the agent under an id no conversation has, read its selectors, dispose it. */
   private async probe(
     def: AgentDef,
-  ): Promise<{ models: AgentModelList; modes: AgentModes; options: OptionKind[]; defaultModel?: string }> {
+  ): Promise<{ models: AgentModelList; modes: AgentModes; options: OptionKind[]; defaultModel?: string; canFork?: boolean }> {
     const sid = `models:${def.id}`;
     const started = Date.now();
     let session;
@@ -241,17 +259,9 @@ export class ModelCatalog {
         await withTimeout(session.ensureSession(this.deps.tokenFor(sid)), PROBE_TIMEOUT_MS);
         selector = session.modelSelector?.();
       }
-      const models: AgentModelList =
-        selector && selector.options.length > 0 ? { kind: 'list', options: selector.options } : { kind: 'none' };
-      const defaultModel = selector ? currentModelLabel(selector) : undefined;
-      const offered = session.permissionModes?.();
-      const modes: AgentModes =
-        offered && offered.options.length > 0
-          ? { kind: 'list', options: offered.options, ...(offered.current ? { current: offered.current } : {}) }
-          : { kind: 'none' };
-      const options = optionKinds(session.sessionOptions?.(), true);
-      console.log(`[models] asked ${def.id} ${answerLine(models, modes, options)} (${Date.now() - started}ms)`);
-      return { models, modes, options, ...(defaultModel ? { defaultModel } : {}) };
+      const result = readProbeResult(session, selector);
+      console.log(`[models] asked ${def.id} ${answerLine(result.models, result.modes, result.options)} (${Date.now() - started}ms)`);
+      return result;
     } catch (e) {
       const reason = (e instanceof Error ? e.message : String(e)).split('\n')[0] ?? 'unknown';
       console.warn(`[models] could not ask ${def.id} for its models: ${reason}`);
@@ -261,6 +271,23 @@ export class ModelCatalog {
       this.deps.forget(sid);
     }
   }
+}
+
+function readProbeResult(
+  session: Pick<import('./agent.js').AgentSession, 'permissionModes' | 'sessionOptions' | 'canFork'>,
+  selector: ModelSelector | undefined
+): { models: AgentModelList; modes: AgentModes; options: OptionKind[]; defaultModel?: string; canFork?: boolean } {
+  const models: AgentModelList =
+    selector && selector.options.length > 0 ? { kind: 'list', options: selector.options } : { kind: 'none' };
+  const defaultModel = selector ? currentModelLabel(selector) : undefined;
+  const offered = session.permissionModes?.();
+  const modes: AgentModes =
+    offered && offered.options.length > 0
+      ? { kind: 'list', options: offered.options, ...(offered.current ? { current: offered.current } : {}) }
+      : { kind: 'none' };
+  const options = optionKinds(session.sessionOptions?.(), true);
+  const canFork = session.canFork?.();
+  return { models, modes, options, ...(defaultModel ? { defaultModel } : {}), ...(canFork !== undefined ? { canFork } : {}) };
 }
 
 function currentModelLabel(selector: ModelSelector): string | undefined {

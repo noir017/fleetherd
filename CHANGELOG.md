@@ -5,6 +5,14 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **Web UI hides the Fork menu item for agents that do not support `session/fork`.** Previously the
+  topic row menu always showed **Fork**, even on agents whose ACP `initialize` declared no fork
+  capability (so clicking it only produced a refusal). `ModelCatalog` now caches each agent's
+  `canFork` capability once observed and forwards it on `Topic.agent`, so the row menu omits **Fork**
+  whenever `canFork` is `false`.
+
 ## [3.27.0] - 2026-11-21
 
 ### Changed

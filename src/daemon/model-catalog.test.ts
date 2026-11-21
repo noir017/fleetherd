@@ -15,7 +15,13 @@ const SELECTOR: ModelSelector = { current: 'a', options: [{ value: 'a', name: 'A
 const MODES: SessionModeSelector = { current: 'build', options: [{ value: 'build', name: 'Build' }, { value: 'plan', name: 'Plan' }] };
 
 function setup(
-  opts: { selector?: ModelSelector; modes?: SessionModeSelector; options?: SessionOption[]; ensure?: () => Promise<void> } = {}
+  opts: {
+    selector?: ModelSelector;
+    modes?: SessionModeSelector;
+    options?: SessionOption[];
+    canFork?: boolean;
+    ensure?: () => Promise<void>;
+  } = {}
 ) {
   const cfg = parseConfig({
     platforms: { tg: { type: 'telegram', token: 't' } },
@@ -28,6 +34,7 @@ function setup(
   let live: ModelSelector | undefined;
   let liveModes: SessionModeSelector | undefined;
   let liveOptions: SessionOption[] | undefined;
+  let liveCanFork: boolean | undefined;
   let warmed = false;
   const agents: AgentFactory = {
     getOrCreate(id, agentId) {
@@ -40,6 +47,7 @@ function setup(
         modelSelector: () => (warmed || !opts.ensure ? opts.selector : undefined),
         permissionModes: () => (warmed || !opts.ensure ? opts.modes : undefined),
         sessionOptions: () => (warmed || !opts.ensure ? opts.options : undefined),
+        canFork: () => (warmed || !opts.ensure ? opts.canFork : undefined),
         ...(opts.ensure
           ? {
               ensureSession: async () => {
@@ -61,6 +69,7 @@ function setup(
     liveSelector: () => live,
     liveModes: () => liveModes,
     liveOptions: () => liveOptions,
+    liveCanFork: () => liveCanFork,
     tokenFor: (sid) => `tok-${sid}`,
     forget: (sid) => forgotten.push(sid),
   });
@@ -73,6 +82,7 @@ function setup(
     setLive: (s?: ModelSelector) => (live = s),
     setLiveModes: (m?: SessionModeSelector) => (liveModes = m),
     setLiveOptions: (o?: SessionOption[]) => (liveOptions = o),
+    setLiveCanFork: (v?: boolean) => (liveCanFork = v),
   };
 }
 
@@ -223,5 +233,24 @@ describe('ModelCatalog: the agent’s own settings', () => {
     expect(await t.catalog.learnOptions('oc')).toEqual([]);
     expect(await t.catalog.learnOptions('oc')).toEqual([]);
     expect(t.created).toEqual(['models:oc→oc']);
+  });
+
+  it('caches canFork from a live session and from a probe, and drops it on reload', async () => {
+    const t = setup({ canFork: false, selector: SELECTOR, ensure: async () => {} });
+    expect(t.catalog.canFork('oc')).toBeUndefined();
+
+    // Learned from a probe and retained after the probe session is disposed.
+    await t.catalog.ask('oc');
+    expect(t.catalog.canFork('oc')).toBe(false);
+
+    // A config reload replaces the AgentDef object, clearing the cache.
+    t.cfg.agents = [{ ...t.cfg.agents[0]! }];
+    expect(t.catalog.canFork('oc')).toBeUndefined();
+
+    // Learned from a live session and retained even after that session goes away.
+    t.setLiveCanFork(true);
+    expect(t.catalog.canFork('oc')).toBe(true);
+    t.setLiveCanFork(undefined);
+    expect(t.catalog.canFork('oc')).toBe(true);
   });
 });

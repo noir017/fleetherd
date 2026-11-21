@@ -51,7 +51,7 @@ export interface ConversationWorkdir {
    * then fall back to the default agent's, which is a fair guess for a directory but would read as
    * a fact on a label naming who answers.
    */
-  agent?: { id: string; harness: string };
+  agent?: { id: string; harness: string; canFork?: boolean };
 }
 
 /**

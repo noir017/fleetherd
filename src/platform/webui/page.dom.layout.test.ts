@@ -541,6 +541,29 @@ describe('webui page: a topic row' + "'s ⋯ menu", () => {
     expect(end.title).toMatch(/nothing to end/);
   });
 
+  it('omits Fork when the bound agent declares no fork support, and keeps it otherwise', async () => {
+    const h = await open({ url: `http://localhost:8787/?t=${A}` });
+    await h.emit(sync(A, [], [A]));
+    await h.emit({
+      t: 'topics',
+      topics: fleet({
+        [A]: { agent: { id: 'gt', harness: 'custom', canFork: false } },
+        [D]: { agent: { id: 'cc', harness: 'claude', canFork: true } },
+      }),
+    });
+
+    await rowMenu(h, A);
+    expect(h.doc.querySelector('[data-rmk="fork"]')).toBeNull();
+    expect(Array.from(h.doc.querySelectorAll('#row-menu [role="menuitem"]')).map((b) => b.textContent)).toEqual([
+      'Star',
+      'End agent + 2 sub-agents',
+      'Delete topic',
+    ]);
+
+    await rowMenu(h, D);
+    expect(h.doc.querySelector('[data-rmk="fork"]')?.textContent).toBe('Fork');
+  });
+
   it('says how many sub-agents End reaches, counting topics with a process', async () => {
     const h = await open({ url: `http://localhost:8787/?t=${A}` });
     await h.emit(sync(A, [], [A]));
@@ -1020,4 +1043,3 @@ describe('webui page: recording a voice message', () => {
     expect(h.recorders).toHaveLength(0);
   });
 });
-

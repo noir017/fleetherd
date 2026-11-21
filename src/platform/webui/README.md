@@ -298,7 +298,8 @@ topic's page opens with `#fork-note`, the same line, a button back to the source
 `parent`: nothing nests it, reports to it or stops it from the source, and `topics.ts` drops
 `forkOf` and `forkTurn` with the source as it drops `parent`. The menu's **Fork** types `/fork` —
 through `command()` into the topic on screen, posted without a bubble into another — and is greyed
-while that topic runs, which is when the daemon would refuse.
+while that topic runs, which is when the daemon would refuse. It is omitted when the bound agent has
+declared no `session/fork` (`Topic.agent.canFork === false`).
 
 **The dot on each row is about the agent, not about the turn.** Four states, and two of them
 exist because "a turn is running" turned out to be a bad proxy for both of the things a person
