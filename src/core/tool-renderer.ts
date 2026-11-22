@@ -1,4 +1,6 @@
 import type { MessageRef, ToolEvent, ToolFinishEvent, ToolMode } from '../types.js';
+import type { Locale } from './i18n/index.js';
+import { tRuntime } from './i18n/runtime.js';
 import { MessageNotEditableError, retryAfterMsOf } from './outbound-errors.js';
 
 /**
@@ -52,6 +54,10 @@ import { MessageNotEditableError, retryAfterMsOf } from './outbound-errors.js';
 
 /** What a row says after its call when the harness started that call after `/stop` (ToolEvent.afterStop). */
 export const AFTER_STOP_MARK = ' · still running after /stop';
+
+export function afterStopMark(locale?: Locale): string {
+  return tRuntime(locale, 'afterStopMark');
+}
 
 /** Retry interval used after a failure that named no wait of its own. */
 const DEFAULT_RETRY_INTERVAL_MS = 1_200;
@@ -107,6 +113,7 @@ export interface ToolRendererOptions {
   maxRetryMs?: number;
   /** Ceiling on a platform-stated wait (`RateLimitedError.retryAfterMs`). */
   maxRetryAfterMs?: number;
+  locale?: Locale;
 }
 
 /**
@@ -294,7 +301,8 @@ export class ToolRenderer {
     const call = preview && preview !== evt.name ? `${emoji} ${evt.name}: "${preview}"` : `${emoji} ${evt.name}`;
     // A call the harness started after `/stop` (the cancel had not reached it, or it had not acted on
     // it yet): the stop's ack under the reply says "Stopped", so a row appearing anyway has to say why.
-    return evt.afterStop ? `${call}${AFTER_STOP_MARK}` : call;
+    const mark = this.opts.locale ? afterStopMark(this.opts.locale) : AFTER_STOP_MARK;
+    return evt.afterStop ? `${call}${mark}` : call;
   }
 
   /**

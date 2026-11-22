@@ -3,6 +3,8 @@
  * again, and whether its turn can be picked up. Never by sending the input again on the gateway's
  * own initiative — the rules, and why, are in README.md "An agent that goes away mid-turn".
  */
+import type { Locale } from '../core/i18n/index.js';
+import { tRuntime } from '../core/i18n/runtime.js';
 import { TurnFailure } from './agent.js';
 
 /** How long a lost connection is tried again before the turn fails: a container restart, with room. */
@@ -82,6 +84,7 @@ export class Redialer {
   private readonly delaysMs: readonly number[];
   private readonly now: () => number;
   private readonly sleep: (ms: number, signal: AbortSignal) => Promise<void>;
+  private readonly locale: Locale;
 
   constructor(
     private readonly opts: {
@@ -91,12 +94,14 @@ export class Redialer {
       delaysMs?: readonly number[];
       now?: () => number;
       sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
+      locale?: Locale;
     }
   ) {
     this.windowMs = opts.windowMs ?? RECONNECT_WINDOW_MS;
     this.delaysMs = opts.delaysMs?.length ? opts.delaysMs : DELAYS_MS;
     this.now = opts.now ?? Date.now;
     this.sleep = opts.sleep ?? abortableSleep;
+    this.locale = opts.locale ?? 'en';
   }
 
   /** Wait before the next try. False once the window is over or `signal` aborted (a `/stop`). */
@@ -129,7 +134,7 @@ export class Redialer {
 
   /** The connection is up again: say so if the chat was told it was gone, and start afresh. */
   back(): void {
-    if (this.told) this.opts.notice?.(`✅ Reconnected to ${this.opts.agent}.`);
+    if (this.told) this.opts.notice?.(tRuntime(this.locale, 'noticeReconnected', { target: this.opts.agent }));
     this.clear();
   }
 
@@ -149,11 +154,16 @@ export class Redialer {
   private armNotice(kind: OutageKind): void {
     if (!this.opts.notice) return;
     const minutes = Math.round(this.windowMs / 60_000);
-    const span = minutes >= 1 ? `${minutes} minute${minutes === 1 ? '' : 's'}` : `${Math.round(this.windowMs / 1000)}s`;
+    const span =
+      minutes >= 1
+        ? minutes === 1
+          ? tRuntime(this.locale, 'spanMinutesSingle')
+          : tRuntime(this.locale, 'spanMinutesMultiple', { count: minutes })
+        : tRuntime(this.locale, 'spanSeconds', { count: Math.round(this.windowMs / 1000) });
     const text =
       kind === 'turn'
-        ? `⚠️ Lost the connection to ${this.opts.agent}; reconnecting for up to ${span}. Its reply follows once it is back.`
-        : `⚠️ Cannot reach ${this.opts.agent}; trying again for up to ${span}. The message goes out once it answers.`;
+        ? tRuntime(this.locale, 'noticeLostConnectionTurn', { agent: this.opts.agent, span })
+        : tRuntime(this.locale, 'noticeCannotReachStart', { agent: this.opts.agent, span });
     this.noticeTimer = setTimeout(() => {
       this.told = true;
       this.opts.notice?.(text);

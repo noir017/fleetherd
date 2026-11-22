@@ -1,5 +1,7 @@
 import type { InboundMessage, MessageRef, SteerOutcome } from '../types.js';
 import { addressOf } from './conversation.js';
+import type { Locale } from './i18n/index.js';
+import { tRuntime } from './i18n/runtime.js';
 
 /**
  * Inbound merger (one instance per session).
@@ -99,33 +101,46 @@ const STOP_QUOTE_MAX = 5;
  * Said, never left implicit: through 3.2.0 `/stop` dropped the queue without a word, and a correction
  * typed into a turn that went on after a stop was lost that way (2026-11-13; see interrupt).
  */
-export function stopInputNote(kept: readonly InboundMessage[], dropped: readonly InboundMessage[]): string {
-  const these = (n: number): string => (n === 1 ? 'this message' : `these ${n} messages`);
-  const it = (n: number): string => (n === 1 ? 'it' : 'them');
+export function stopInputNote(
+  kept: readonly InboundMessage[],
+  dropped: readonly InboundMessage[],
+  locale: Locale = 'en'
+): string {
   const lines: string[] = [];
   if (dropped.length > 0) {
-    lines.push(`Dropped ${these(dropped.length)} — the agent never saw ${it(dropped.length)}:`, ...quoteMessages(dropped));
+    const head =
+      dropped.length === 1
+        ? tRuntime(locale, 'stopDroppedSingle')
+        : tRuntime(locale, 'stopDroppedMultiple', { count: dropped.length });
+    lines.push(head, ...quoteMessages(dropped, locale));
   }
   if (kept.length > 0) {
-    lines.push(
-      `Kept ${these(kept.length)} for your next one — the agent has not seen ${it(kept.length)} yet, and ` +
-        `${kept.length === 1 ? 'it goes' : 'they go'} in with whatever you send next. \`/stop\` again drops ${it(kept.length)}:`,
-      ...quoteMessages(kept)
-    );
+    const head =
+      kept.length === 1
+        ? tRuntime(locale, 'stopKeptSingle')
+        : tRuntime(locale, 'stopKeptMultiple', { count: kept.length });
+    lines.push(head, ...quoteMessages(kept, locale));
   }
   return lines.join('\n');
 }
 
 /** One `> …` line per message, cut to a glance; attachments counted, since a quote cannot show them. */
-function quoteMessages(msgs: readonly InboundMessage[]): string[] {
+function quoteMessages(msgs: readonly InboundMessage[], locale: Locale = 'en'): string[] {
   const lines = msgs.slice(0, STOP_QUOTE_MAX).map((m) => {
     const flat = m.content.replace(/\s+/g, ' ').trim();
     const text = flat.length > STOP_QUOTE_CHARS ? `${flat.slice(0, STOP_QUOTE_CHARS - 1)}…` : flat;
     const files = m.attachments?.length ?? 0;
-    const extra = files > 0 ? `[${files} attachment${files === 1 ? '' : 's'}]` : '';
+    const extra =
+      files > 0
+        ? files === 1
+          ? tRuntime(locale, 'stopQuoteAttachmentSingle')
+          : tRuntime(locale, 'stopQuoteAttachmentMultiple', { count: files })
+        : '';
     return `> ${[text, extra].filter(Boolean).join(' ') || '(empty)'}`;
   });
-  if (msgs.length > STOP_QUOTE_MAX) lines.push(`> … and ${msgs.length - STOP_QUOTE_MAX} more`);
+  if (msgs.length > STOP_QUOTE_MAX) {
+    lines.push(tRuntime(locale, 'stopQuoteMore', { count: msgs.length - STOP_QUOTE_MAX }));
+  }
   return lines;
 }
 

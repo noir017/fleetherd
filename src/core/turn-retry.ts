@@ -1,4 +1,6 @@
 import { formatButtonId, parseButtonId } from './button-id.js';
+import type { Locale } from './i18n/index.js';
+import { tRuntime } from './i18n/runtime.js';
 
 /**
  * The buttons on a failed turn's ❌ notice: send the same input again, to the same agent or to one
@@ -24,19 +26,20 @@ export interface RetryButtonClick {
 /** The notice's buttons. `anotherAgent` is false when there is no other agent to pick. */
 export function retryButtons(
   retryId: string,
-  opts: { anotherAgent: boolean; reconnect?: boolean; resend?: boolean }
+  opts: { anotherAgent: boolean; reconnect?: boolean; resend?: boolean; locale?: Locale }
 ): Array<{ id: string; label: string; style?: 'primary' | 'secondary' }> {
+  const loc = opts.locale ?? 'en';
   if (opts.reconnect) {
     const resend = opts.resend !== false;
     return [
-      { id: formatButtonId(RETRY_PREFIX, retryId, 2), label: 'Reconnect', style: 'primary' },
-      ...(resend ? [{ id: formatButtonId(RETRY_PREFIX, retryId, 0), label: 'Resend', style: 'secondary' as const }] : []),
-      ...(opts.anotherAgent && resend ? [{ id: formatButtonId(RETRY_PREFIX, retryId, 1), label: 'Retry with another agent', style: 'secondary' as const }] : []),
+      { id: formatButtonId(RETRY_PREFIX, retryId, 2), label: tRuntime(loc, 'retryReconnect'), style: 'primary' },
+      ...(resend ? [{ id: formatButtonId(RETRY_PREFIX, retryId, 0), label: tRuntime(loc, 'retryResend'), style: 'secondary' as const }] : []),
+      ...(opts.anotherAgent && resend ? [{ id: formatButtonId(RETRY_PREFIX, retryId, 1), label: tRuntime(loc, 'retryAnotherAgent'), style: 'secondary' as const }] : []),
     ];
   }
   return [
-    { id: formatButtonId(RETRY_PREFIX, retryId, 0), label: 'Retry', style: 'primary' },
-    ...(opts.anotherAgent ? [{ id: formatButtonId(RETRY_PREFIX, retryId, 1), label: 'Retry with another agent', style: 'secondary' as const }] : []),
+    { id: formatButtonId(RETRY_PREFIX, retryId, 0), label: tRuntime(loc, 'retryRetry'), style: 'primary' },
+    ...(opts.anotherAgent ? [{ id: formatButtonId(RETRY_PREFIX, retryId, 1), label: tRuntime(loc, 'retryAnotherAgent'), style: 'secondary' as const }] : []),
   ];
 }
 

@@ -1,4 +1,6 @@
 import type { TopicActivity, TopicStage, TurnFailureReason } from '../types.js';
+import type { Locale } from './i18n/index.js';
+import { tRuntime } from './i18n/runtime.js';
 
 /**
  * Where a conversation stands from a person's point of view, decided from facts alone.
@@ -112,40 +114,40 @@ export function failureLine(message: string, max = LINE_MAX): string {
  * start read like any failure, and the "continue" sent after it became the only thing the agent
  * was ever told (2026-11-07, 18 sub-agent topics).
  */
-export function undeliveredLine(held: number): string {
+export function undeliveredLine(held: number, locale: Locale = 'en'): string {
   return held > 0
-    ? `The agent did not receive this — it will be sent along with the next message.`
-    : 'The agent did not receive this.';
+    ? tRuntime(locale, 'undeliveredHeld')
+    : tRuntime(locale, 'undeliveredNotHeld');
 }
 
 /**
  * How a failure reason reads in a sentence ("failed (service)" says nothing to most people). Total
  * over the union, so a new reason fails to compile here rather than reading as its identifier.
  */
-export function describeFailureReason(reason: TurnFailureReason): string {
+export function describeFailureReason(reason: TurnFailureReason, locale: Locale = 'en'): string {
   switch (reason) {
     case 'service':
-      return 'the model provider failed';
+      return tRuntime(locale, 'reasonService');
     case 'limit':
-      return 'a usage limit was hit';
+      return tRuntime(locale, 'reasonLimit');
     case 'connection':
-      return 'the connection to the model provider failed';
+      return tRuntime(locale, 'reasonConnection');
     case 'access':
-      return 'the agent is not signed in or not allowed';
+      return tRuntime(locale, 'reasonAccess');
     case 'request':
-      return 'the model provider refused the request';
+      return tRuntime(locale, 'reasonRequest');
     case 'provider':
-      return 'the model provider failed';
+      return tRuntime(locale, 'reasonProvider');
     case 'hung':
-      return 'the agent stopped responding';
+      return tRuntime(locale, 'reasonHung');
     case 'startup':
-      return 'the agent could not start';
+      return tRuntime(locale, 'reasonStartup');
     case 'preLaunch':
-      return 'the preLaunch hook failed';
+      return tRuntime(locale, 'reasonPreLaunch');
     case 'restart':
-      return 'the gateway restarted mid-turn';
+      return tRuntime(locale, 'reasonRestart');
     case 'other':
-      return 'the turn failed';
+      return tRuntime(locale, 'reasonOther');
     default: {
       const _exhaustive: never = reason;
       return String(_exhaustive);
