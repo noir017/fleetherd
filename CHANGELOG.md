@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.34.0] - 2026-11-22
+
 ### Added
 
 - **Fast OpenAI-compatible voice STT, dedicated cleanup model, and Web UI composer dictation.**
