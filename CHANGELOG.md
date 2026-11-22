@@ -5,6 +5,14 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **Encode WebM voice recordings as 16 kHz mono WAV in the browser before dictation upload.**
+  Chromium's `MediaRecorder` emits `audio/webm`, which OpenAI-compatible gateways without `ffprobe`
+  (such as `new-api`) reject when calculating audio duration. The Web UI now decodes and resamples
+  WebM recordings into 16 kHz mono PCM WAV via Web Audio API before calling
+  `POST /api/voice/transcribe`, falling back to the original container when Web Audio is absent.
+
 ## [3.34.0] - 2026-11-22
 
 ### Added

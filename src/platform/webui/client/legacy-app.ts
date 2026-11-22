@@ -7019,6 +7019,56 @@ import {
   }
   function releaseMic(r){ r.stream.getTracks().forEach(function(t){ t.stop(); }); }
   function voiceExt(mime){ var sub=mime.split('/')[1] || 'webm'; return sub==='mp4' ? 'm4a' : sub; }
+  function encodePcm16Wav(samples, sampleRate){
+    var len = samples.length * 2;
+    var buf = new ArrayBuffer(44 + len);
+    var v = new DataView(buf);
+    function str(o, s){ for(var i=0;i<s.length;i++) v.setUint8(o+i, s.charCodeAt(i)); }
+    str(0, 'RIFF'); v.setUint32(4, 36 + len, true); str(8, 'WAVE');
+    str(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true);
+    v.setUint16(22, 1, true); v.setUint32(24, sampleRate, true);
+    v.setUint32(28, sampleRate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+    str(36, 'data'); v.setUint32(40, len, true);
+    for(var i=0;i<samples.length;i++){
+      var s = Math.max(-1, Math.min(1, samples[i]));
+      v.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+    }
+    return new Blob([buf], {type:'audio/wav'});
+  }
+  function maybeToWav(blob, mime){
+    if(mime !== 'audio/webm') return Promise.resolve({blob:blob, mime:mime});
+    var AC = window.AudioContext || window.webkitAudioContext;
+    var OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+    if(!AC || !OAC) return Promise.resolve({blob:blob, mime:mime});
+    var ctx;
+    try { ctx = new AC(); } catch(e){ return Promise.resolve({blob:blob, mime:mime}); }
+    var readAb = typeof blob.arrayBuffer === 'function'
+      ? blob.arrayBuffer()
+      : new Promise(function(resolve, reject){
+          var r = new FileReader();
+          r.onload = function(){ resolve(r.result); };
+          r.onerror = reject;
+          r.readAsArrayBuffer(blob);
+        });
+    return readAb.then(function(ab){
+      return ctx.decodeAudioData(ab);
+    }).then(function(decoded){
+      var rate = 16000;
+      var frames = Math.max(1, Math.ceil(decoded.duration * rate));
+      var off = new OAC(1, frames, rate);
+      var src = off.createBufferSource();
+      src.buffer = decoded;
+      src.connect(off.destination);
+      src.start(0);
+      return off.startRendering();
+    }).then(function(rendered){
+      try { ctx.close(); } catch(e){}
+      return {blob: encodePcm16Wav(rendered.getChannelData(0), rendered.sampleRate || 16000), mime: 'audio/wav'};
+    }, function(){
+      try { ctx.close(); } catch(e){}
+      return {blob:blob, mime:mime};
+    });
+  }
   function appendDictation(into, text){
     if(!text) return;
     if(into && into !== topic){
@@ -7095,12 +7145,15 @@ import {
         releaseMic(r);
         if(!r.keep || !r.parts.length) return;
         var mime=(mr.mimeType || r.type || 'audio/webm').split(';')[0];
-        var fr=new FileReader();
-        fr.onload=function(){
-          var s=String(fr.result), c=s.indexOf(',');
-          dictateOrSend(into, mime, c<0?'':s.slice(c+1));
-        };
-        fr.readAsDataURL(new Blob(r.parts, {type:mime}));
+        var rawBlob=new Blob(r.parts, {type:mime});
+        maybeToWav(rawBlob, mime).then(function(out){
+          var fr=new FileReader();
+          fr.onload=function(){
+            var s=String(fr.result), c=s.indexOf(',');
+            dictateOrSend(into, out.mime, c<0?'':s.slice(c+1));
+          };
+          fr.readAsDataURL(out.blob);
+        });
       };
       rec=r;
       mr.start();
