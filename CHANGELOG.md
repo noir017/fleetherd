@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.30.0] - 2026-11-22
+
 ### Added
 
 - **WebUI theme system (`System` / `Dark` / `Light`).** All hardcoded colours in the WebUI
