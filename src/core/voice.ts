@@ -375,6 +375,7 @@ export function buildOpenAiCleanupRequest(
   return {
     model,
     temperature: 0,
+    max_tokens: Math.min(512, Math.max(64, Math.ceil(transcript.length * 2))),
     messages: [
       { role: 'system', content: cleanupInstructions(opts.vocabulary) },
       { role: 'user', content: `<transcript>\n${transcript}\n</transcript>` },

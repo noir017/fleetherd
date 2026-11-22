@@ -422,6 +422,8 @@ describe('OpenAI-compatible STT and cleanup', () => {
     const req = buildOpenAiCleanupRequest('groq-qwen3.8-27b', '那个部署到 A 不对 B', { vocabulary: ['Unraid'] });
     expect(req['model']).toBe('groq-qwen3.8-27b');
     expect(req['temperature']).toBe(0);
+    expect(req['max_tokens']).toBe(64);
+    expect(buildOpenAiCleanupRequest('groq-qwen3.8-27b', '字'.repeat(400))['max_tokens']).toBe(512);
     const msgs = req['messages'] as Array<{ role: string; content: string }>;
     expect(msgs[0]?.content).toContain('Unraid');
     expect(msgs[1]?.content).toBe('<transcript>\n那个部署到 A 不对 B\n</transcript>');

@@ -5,6 +5,14 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **Send 24 kbps Opus WebM directly for Web UI voice dictation and cap OpenAI cleanup `max_tokens`.**
+  Reverts browser-side WebM-to-16 kHz WAV transcoding so recordings stay ~14x smaller over the wire
+  (native Whisper endpoints such as Groq and OpenAI accept `audio/webm` directly) without client
+  decode/resample latency, and sets `max_tokens` proportionally to transcript length (`64–512`) on
+  OpenAI `/chat/completions` cleanup requests to avoid per-minute output-token rate-limit retries.
+
 ## [3.34.1] - 2026-11-22
 
 ### Fixed
