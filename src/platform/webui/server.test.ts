@@ -409,20 +409,30 @@ function buildAssets(files: Record<string, string>): WebAssets {
   const at = fs.mkdtempSync(path.join(dir, 'assets-'));
   for (const [name, body] of Object.entries(files)) fs.writeFileSync(path.join(at, name), body);
   const named = (prefix: string): string | null => Object.keys(files).find((n) => n.startsWith(prefix)) ?? null;
-  fs.writeFileSync(path.join(at, 'manifest.json'), JSON.stringify({ app: named('app-'), style: named('style-'), codeview: named('codeview-') }));
+  fs.writeFileSync(
+    path.join(at, 'manifest.json'),
+    JSON.stringify({ app: named('app-'), boot: named('boot-'), style: named('style-'), codeview: named('codeview-') })
+  );
   return loadAssets(at);
 }
 
 describe('webui server: the page’s own script and stylesheet', () => {
   const app = 'app-abc123.js';
+  const bootScript = 'boot-112233.js';
   const style = 'style-def456.css';
   const codeview = 'codeview-0a1b2c.js';
-  const files = { [app]: '(function(){})();', [style]: 'body{color:red}', [codeview]: 'export default 1;' };
+  const files = {
+    [app]: '(function(){})();',
+    [bootScript]: '(function(){})();',
+    [style]: 'body{color:red}',
+    [codeview]: 'export default 1;',
+  };
 
   it('links both from the page, relatively', async () => {
     const { base } = await boot({}, undefined, undefined, undefined, buildAssets(files));
     const html = await (await fetch(`${base}/`)).text();
     expect(html).toContain(`<link rel="stylesheet" href="assets/${style}">`);
+    expect(html).toContain(`<script src="assets/${bootScript}"></script>`);
     expect(html).toContain(`<script src="assets/${app}"></script>`);
     expect(html).not.toContain('id="unbuilt"');
   });
@@ -434,6 +444,10 @@ describe('webui server: the page’s own script and stylesheet', () => {
     expect(js.headers['content-type']).toBe('text/javascript; charset=utf-8');
     expect(js.headers['cache-control']).toBe('public, max-age=31536000, immutable');
     expect(js.headers['x-content-type-options']).toBe('nosniff');
+    const bootRes = await rawGet(port, `/assets/${bootScript}`);
+    expect(bootRes.status).toBe(200);
+    expect(bootRes.headers['content-type']).toBe('text/javascript; charset=utf-8');
+    expect(bootRes.headers['cache-control']).toBe('public, max-age=31536000, immutable');
     const css = await rawGet(port, `/assets/${style}`);
     expect(css.status).toBe(200);
     // Declared, never sniffed: with nosniff a browser applies a stylesheet only under this type.

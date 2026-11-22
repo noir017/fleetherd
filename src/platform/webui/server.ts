@@ -412,7 +412,7 @@ const OPEN: Route[] = [
     method: 'GET',
     path: '/assets/',
     prefix: true,
-    only: (rest, ctx) => rest === ctx.assets.app || rest === ctx.assets.style,
+    only: (rest, ctx) => rest === ctx.assets.app || rest === ctx.assets.boot || rest === ctx.assets.style,
     run: ({ req, res, rest }, ctx) => asset(req, res, ctx.assets, rest),
   },
 ];
@@ -655,7 +655,7 @@ function sendPage(req: IncomingMessage, res: ServerResponse, ctx: Ctx): void {
 /** The built files the page links, as page-relative URLs (see `PageAssets`). */
 function pageAssets(assets: WebAssets): PageAssets {
   const at = (name: string | null): string | null => (name === null ? null : `assets/${name}`);
-  return { app: at(assets.app), style: at(assets.style), codeview: at(assets.codeview) };
+  return { app: at(assets.app), boot: at(assets.boot), style: at(assets.style), codeview: at(assets.codeview) };
 }
 
 /** Render, hash and compress the page — once per set of render inputs. */

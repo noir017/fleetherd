@@ -26,6 +26,8 @@ export interface WebAssets {
   dir: string;
   /** The page's own script (`app-<hash>.js`), relative to `dir`; null when nothing was built. */
   app: string | null;
+  /** The synchronous theme boot script (`boot-<hash>.js`), relative to `dir`; null when not built. */
+  boot: string | null;
   /** The page's stylesheet (`style-<hash>.css`), relative to `dir`; null when nothing was built. */
   style: string | null;
   /** The entry module the code view imports, relative to `dir`; null when nothing was built. */
@@ -59,8 +61,14 @@ function entry(manifest: Record<string, unknown>, key: string): string | null {
 export function loadAssets(dir: string = assetDir()): WebAssets {
   try {
     const manifest = JSON.parse(readFileSync(path.join(dir, 'manifest.json'), 'utf8')) as Record<string, unknown>;
-    return { dir, app: entry(manifest, 'app'), style: entry(manifest, 'style'), codeview: entry(manifest, 'codeview') };
+    return {
+      dir,
+      app: entry(manifest, 'app'),
+      boot: entry(manifest, 'boot'),
+      style: entry(manifest, 'style'),
+      codeview: entry(manifest, 'codeview'),
+    };
   } catch {
-    return { dir, app: null, style: null, codeview: null };
+    return { dir, app: null, boot: null, style: null, codeview: null };
   }
 }

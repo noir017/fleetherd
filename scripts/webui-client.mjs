@@ -25,6 +25,8 @@ const webui = path.join(root, 'src', 'platform', 'webui');
 
 /** The client script's source, with its two build-time markers still in it. */
 export const APP_ENTRY = path.join(webui, 'client', 'legacy-app.ts');
+/** The synchronous theme boot script linked in <head> before first paint. */
+export const BOOT_ENTRY = path.join(webui, 'client', 'theme-boot.ts');
 /** The stylesheet's source. */
 export const STYLE_ENTRY = path.join(webui, 'client', 'styles', 'main.css');
 
@@ -90,16 +92,24 @@ export async function buildClient({ outdir } = {}) {
     stdin: { contents: source, loader: 'ts', resolveDir: path.dirname(APP_ENTRY), sourcefile: path.basename(APP_ENTRY) },
     format: 'iife',
   });
+  const boot = await build({
+    ...common,
+    entryPoints: [BOOT_ENTRY],
+    format: 'iife',
+    minify: true,
+  });
   // `outdir` only because esbuild wants one to name a CSS output; nothing is written by this call.
   const style = await build({ ...common, entryPoints: [STYLE_ENTRY], outdir: path.join(root, 'dist', 'webui-assets') });
   const appText = app.outputFiles[0].text;
+  const bootText = boot.outputFiles[0].text;
   const styleText = style.outputFiles[0].text;
   const result = {
     app: { file: hashed('app', '.js', appText), text: appText },
+    boot: { file: hashed('boot', '.js', bootText), text: bootText },
     style: { file: hashed('style', '.css', styleText), text: styleText },
   };
   if (outdir) {
-    for (const { file, text } of [result.app, result.style]) fs.writeFileSync(path.join(outdir, file), text, 'utf8');
+    for (const { file, text } of [result.app, result.boot, result.style]) fs.writeFileSync(path.join(outdir, file), text, 'utf8');
   }
   return result;
 }

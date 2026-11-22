@@ -34,11 +34,12 @@ export const APP_SOURCE = await appSource();
 export const STYLE_SOURCE = fs.readFileSync(STYLE_ENTRY, 'utf8');
 
 const APP_URL = `assets/${CLIENT.app.file}`;
+const BOOT_URL = `assets/${CLIENT.boot.file}`;
 const STYLE_URL = `assets/${CLIENT.style.file}`;
 
 /** What a test page links: the real build's two names, and whichever code view the test chose. */
 export function testAssets(codeview: string | null = null): PageAssets {
-  return { app: APP_URL, style: STYLE_URL, codeview };
+  return { app: APP_URL, boot: BOOT_URL, style: STYLE_URL, codeview };
 }
 
 /**
@@ -47,11 +48,17 @@ export function testAssets(codeview: string | null = null): PageAssets {
  * `css: null` leaves an empty `<style>`: jsdom's CSS parser is ~43% of a page's cost, and most
  * tests do not look at styles.
  */
-function inline(html: string, js: string, css: string | null): string {
+function inline(html: string, js: string, bootJs: string, css: string | null): string {
   const link = `<link rel="stylesheet" href="${STYLE_URL}">`;
+  const bootTag = `<script src="${BOOT_URL}"></script>`;
   const tag = `<script src="${APP_URL}"></script>`;
-  if (!html.includes(link) || !html.includes(tag)) throw new Error('the page does not link the built script and stylesheet');
-  return html.replace(link, () => `<style>${css ?? ''}</style>`).replace(tag, () => `<script>${js}</script>`);
+  if (!html.includes(link) || !html.includes(bootTag) || !html.includes(tag)) {
+    throw new Error('the page does not link the built scripts and stylesheet');
+  }
+  return html
+    .replace(bootTag, () => `<script>${bootJs}</script>`)
+    .replace(link, () => `<style>${css ?? ''}</style>`)
+    .replace(tag, () => `<script>${js}</script>`);
 }
 
 /**
@@ -72,7 +79,7 @@ export function servePage(
   const shell = serveShell(title, terminal, password, terminalEnd, testAssets(codeview), files, instructions, instance);
   const js = as === 'built' ? CLIENT.app.text : APP_SOURCE;
   const css = !styles ? null : as === 'built' ? CLIENT.style.text : STYLE_SOURCE;
-  return { html: inline(shell.html, js, css), build: shell.build };
+  return { html: inline(shell.html, js, CLIENT.boot.text, css), build: shell.build };
 }
 
 /** `servePage(...).html`. */
