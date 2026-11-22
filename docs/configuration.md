@@ -119,3 +119,41 @@ config.yaml reloaded.
 All commands accept `-c, --config <path>` before the command (`fleetherd -c <path> start`) and
 print structured output to stdout. After the command, `-c` is that command's own: `--channel` for
 the chat actions.
+
+## Windows
+
+fleetherd runs natively on Windows (PowerShell or Command Prompt) with **Node.js ≥ 22** for local
+agents and all chat platforms / Web UI. For a full POSIX toolchain, **WSL2** is also supported and
+behaves like Linux.
+
+### Prerequisites (native Windows)
+
+- **Node.js ≥ 22** on `PATH`.
+- **Git for Windows** if you use the Web UI Git panel, per-turn file diffs, or the managed skill
+  repository.
+- **Windows Developer Mode** (Settings → System → For developers) is optional, but recommended if
+  you use [standing instructions](instructions.md): directory skills use NTFS junctions (no elevated
+  privileges needed), while instruction files are linked as file symlinks.
+
+### Behavior differences on native Windows
+
+- **IPC transport**: the daemon listens on a per-config-directory Windows named pipe
+  (`\\.\pipe\fleetherd-<hash>`) instead of a Unix domain socket. You can still override it via
+  `ipc.socketPath`.
+- **Reverse CLI shims**: `fleetherd` and `talkcode` shims are provisioned under
+  `<configDir>\bin\` as both `.cmd` wrappers (for `cmd.exe` / PowerShell) and POSIX `#!/bin/sh`
+  scripts (for Git Bash / MSYS2 subshells).
+- **Config reload**: Windows does not use `SIGHUP` for reload; trigger hot reload with `/reload` in
+  chat or `fleetherd reload` from inside an agent session.
+- **Scheduled shell tasks & `quotaCommand`**: local shell tasks run via `%ComSpec% /d /s /c`
+  (Command Prompt) instead of `bash -lc`.
+
+### Known OS boundaries
+
+- **Remote SSH hosts (`hosts:`)**: the gateway itself can run on Windows and connect over OpenSSH
+  to Linux remote hosts, but the remote host helper binary (`fleetherd-remote`) targets **Linux
+  (amd64 / arm64)** only — a Windows machine cannot act as a `hosts:` remote target.
+- **Web UI docked terminal**: the optional `terminal:` panel expects a `ttyd` + `tmux` Unix socket
+  bridge (Linux / macOS / WSL2).
+- **Antigravity background-wait plugin**: `agy-plugin/wait-background.sh` is a POSIX shell hook; on
+  native Windows `agy` still runs, but long background commands will not hold the turn open.

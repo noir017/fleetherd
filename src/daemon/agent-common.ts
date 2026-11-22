@@ -1,6 +1,6 @@
 import { homedir } from 'node:os';
 import { join, posix, resolve, delimiter } from 'node:path';
-import { mkdirSync, statSync } from 'node:fs';
+import { accessSync, constants as fsConstants, mkdirSync, statSync } from 'node:fs';
 import type { Readable, Writable } from 'node:stream';
 import type { AgentDef } from '../config/schema.js';
 import type { Welcome } from '../remote/connection.js';
@@ -43,7 +43,7 @@ export function expandEnv(v: string): string {
 /** Expand a leading ~ to the home directory. */
 export function expandHome(p: string): string {
   if (p === '~') return homedir();
-  if (p.startsWith('~/')) return join(homedir(), p.slice(2));
+  if (p.startsWith('~/') || p.startsWith('~\\')) return join(homedir(), p.slice(2));
   return p;
 }
 
@@ -146,16 +146,71 @@ export function buildAgentEnv(
   // Guarantee the reverse CLI the skill promises: prepend the self-provisioned shim dir so
   // `fleetherd` resolves to THIS daemon's own entry regardless of launch mode (see reverse-cli-shim).
   const shimDir = ensureReverseCliShim();
-  if (shimDir) env.PATH = `${shimDir}${delimiter}${env.PATH ?? ''}`;
+  if (shimDir) prependPath(env, shimDir);
   // The skill goes under the home THIS agent runs as — an `env.HOME` override included — because
   // that is where its harness will look (see skill-link). The operator's instructions likewise.
-  ensureSkillLink(def.harness, env.HOME || homedir(), def.command);
+  const home = env.HOME || env.USERPROFILE || homedir();
+  ensureSkillLink(def.harness, home, def.command);
   // agy's background results come back only through its plugin (agy-plugin.ts).
-  ensureAgyPlugin(def.harness, env.HOME || homedir());
-  placeInstructions(def, env.HOME || homedir());
+  ensureAgyPlugin(def.harness, home);
+  placeInstructions(def, home);
   // The skills the gateway keeps itself, delivered the same way and from the same moment.
-  placeManagedSkills(def, env.HOME || homedir());
+  placeManagedSkills(def, home);
   return env;
+}
+
+/**
+ * Prepend `dir` to PATH in `env`, handling Windows's case-insensitive `Path` / `PATH` key so
+ * spreading `process.env` never creates two conflicting PATH entries or drops the original one.
+ */
+export function prependPath(env: Record<string, string | undefined>, dir: string, delim = delimiter): void {
+  const keys = Object.keys(env).filter((k) => k.toLowerCase() === 'path');
+  const primary = keys[0] ?? 'PATH';
+  const existing = keys.map((k) => env[k]).find((v) => v !== undefined && v !== '') ?? '';
+  for (const k of keys) {
+    if (k !== primary) delete env[k];
+  }
+  env[primary] = existing ? `${dir}${delim}${existing}` : dir;
+}
+
+/**
+ * Extra `spawn`/`execFile` options needed on Windows: hide console windows and enable `shell`
+ * only when the target resolves to a `.cmd`/`.bat` batch shim (e.g. npm global bins like
+ * `codex-acp.cmd`), avoiding a shell for `.exe` binaries and on POSIX.
+ */
+export function windowsSpawnOptions(
+  command: string,
+  env: Record<string, string | undefined> = process.env,
+  platform: NodeJS.Platform = process.platform
+): { shell?: boolean; windowsHide?: boolean } {
+  if (platform !== 'win32') return {};
+  if (/\.(cmd|bat)$/i.test(command)) return { shell: true, windowsHide: true };
+  if (/\.(exe|com)$/i.test(command)) return { windowsHide: true };
+  const pathKey = Object.keys(env).find((k) => k.toLowerCase() === 'path');
+  const dirs = (pathKey ? env[pathKey] ?? '' : '').split(';').filter(Boolean);
+  const exts = (env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean);
+  if (command.includes('/') || command.includes('\\')) {
+    for (const ext of exts) {
+      try {
+        accessSync(`${command}${ext}`, fsConstants.F_OK);
+        return /\.(cmd|bat)$/i.test(ext) ? { shell: true, windowsHide: true } : { windowsHide: true };
+      } catch {
+        // try next extension
+      }
+    }
+    return { windowsHide: true };
+  }
+  for (const dir of dirs) {
+    for (const ext of exts) {
+      try {
+        accessSync(join(dir, `${command}${ext}`), fsConstants.F_OK);
+        return /\.(cmd|bat)$/i.test(ext) ? { shell: true, windowsHide: true } : { windowsHide: true };
+      } catch {
+        // try next extension
+      }
+    }
+  }
+  return { windowsHide: true };
 }
 
 /**

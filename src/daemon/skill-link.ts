@@ -112,7 +112,7 @@ export function skillHomes(harness: AgentDef['harness'], home: string, command?:
     case 'custom':
       // CodeBuddy Code, by the last segment of its command (`/usr/local/bin/codebuddy`), the same
       // reading agentKindOf gives it. Its skills live in its own directory, not `.agents/skills`.
-      return path.basename(command ?? '') === 'codebuddy'
+      return ((command ?? '').split(/[\\/]/).pop() ?? '').replace(/\.(cmd|exe|bat)$/i, '').toLowerCase() === 'codebuddy'
         ? [{ dir: path.join(home, '.codebuddy', 'skills'), requires: path.join(home, '.codebuddy') }]
         : [];
     default: {
@@ -186,14 +186,15 @@ export function linkSkill(source: string, home: SkillHome, name = SKILL_LINK_NAM
       if (!st.isSymbolicLink()) return { link, outcome: 'occupied', detail: st.isDirectory() ? 'a directory' : 'a file' };
       previous = fs.readlinkSync(link);
       const dest = path.resolve(home.dir, previous);
-      if (dest === source) return { link, outcome: 'current' };
+      if (dest === path.resolve(source)) return { link, outcome: 'current' };
       if (owned && !isUnder(dest, owned)) return { link, outcome: 'occupied', detail: `a link to ${previous}` };
       fs.unlinkSync(link);
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
     }
     fs.mkdirSync(home.dir, { recursive: true });
-    fs.symlinkSync(source, link, 'dir');
+    // On Windows, directory junctions work without Administrator or Developer Mode privileges.
+    fs.symlinkSync(source, link, process.platform === 'win32' ? 'junction' : 'dir');
     return previous === undefined ? { link, outcome: 'linked' } : { link, outcome: 'relinked', detail: previous };
   } catch (e) {
     return { link, outcome: 'failed', detail: e instanceof Error ? e.message : String(e) };

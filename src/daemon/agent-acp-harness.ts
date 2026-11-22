@@ -1,6 +1,5 @@
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
-import path from 'node:path';
 import type {
   ActiveSession,
   ClientCapabilities,
@@ -25,6 +24,7 @@ import {
   prepareRemoteSpawn,
   remoteAgentEnv,
   trimReason,
+  windowsSpawnOptions,
   type AgentChild,
 } from './agent-common.js';
 import { agyWindow } from './agy-acp.js';
@@ -231,7 +231,8 @@ export function resolveHarness(def: AgentDef, remote = false): { command: string
  * "not offered by this session" in the log.
  */
 export function isCursorAgent(def: Pick<AgentDef, 'harness' | 'command'>): boolean {
-  return def.harness === 'custom' && path.basename(def.command ?? '') === 'cursor-agent';
+  const base = ((def.command ?? '').split(/[\\/]/).pop() ?? '').replace(/\.(cmd|exe|bat)$/i, '').toLowerCase();
+  return def.harness === 'custom' && base === 'cursor-agent';
 }
 
 /**
@@ -385,8 +386,9 @@ function spawnChild(
       : { child: connectHere(def.connect), mcpServers: () => acpMcpServers(sessionToken, socketPath, cwd) };
   }
   if (!place) {
+    const env = { ...buildAgentEnv(def, sessionToken, socketPath), ...relay };
     return {
-      child: spawn(command, args, { cwd, env: { ...buildAgentEnv(def, sessionToken, socketPath), ...relay } }),
+      child: spawn(command, args, { cwd, env, ...windowsSpawnOptions(command, env) }),
       mcpServers: () => acpMcpServers(sessionToken, socketPath, cwd),
     };
   }

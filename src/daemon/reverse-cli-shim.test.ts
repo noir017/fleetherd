@@ -21,6 +21,9 @@ describe('isCliEntry', () => {
     expect(isCliEntry('/usr/bin/talkcode')).toBe(true); // the same, by its name before 3.0.0
     expect(isCliEntry('/app/dist/cli.js')).toBe(true); // node dist/cli.js
     expect(isCliEntry('/home/u/src/cli.ts')).toBe(true); // tsx src/cli.ts
+    expect(isCliEntry('C:\\app\\dist\\cli.js')).toBe(true); // Windows path
+    expect(isCliEntry('C:\\Users\\u\\AppData\\Roaming\\npm\\fleetherd.cmd')).toBe(true);
+    expect(isCliEntry('C:\\Users\\u\\AppData\\Roaming\\npm\\talkcode.cmd')).toBe(true);
   });
 
   it('rejects a test runner’s worker entry — the regression', () => {
@@ -103,5 +106,20 @@ describe('ensureReverseCliShim', () => {
     ensureReverseCliShim();
     expect(fs.readFileSync(shimPath(), 'utf8')).toContain("'/app/dist/cli.js'");
     expect(fs.statSync(shimPath()).mtimeMs).toBe(first);
+  });
+
+  it('writes .cmd and POSIX shims on win32 with percent-escaping and preserves the guard', () => {
+    process.argv[1] = 'C:\\Users\\100%dev\\fleetherd\\dist\\cli.js';
+
+    const out = ensureReverseCliShim('win32');
+
+    expect(out).toBe(path.join(dir, 'bin'));
+    const cmd = fs.readFileSync(path.join(dir, 'bin', 'fleetherd.cmd'), 'utf8');
+    expect(cmd.startsWith('@echo off\r\n')).toBe(true);
+    expect(cmd).toContain('"C:\\Users\\100%%dev\\fleetherd\\dist\\cli.js"');
+    expect(cmd.endsWith(' %*\r\n')).toBe(true);
+    expect(fs.readFileSync(path.join(dir, 'bin', 'talkcode.cmd'), 'utf8')).toBe(cmd);
+    // POSIX shim is also written for Git Bash / MSYS2 subshells on Windows.
+    expect(fs.readFileSync(path.join(dir, 'bin', 'fleetherd'), 'utf8').startsWith('#!/bin/sh\n')).toBe(true);
   });
 });

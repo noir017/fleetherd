@@ -10,7 +10,7 @@ import type { AgentDef, Config } from '../config/schema.js';
 import { findAgent, REVIEW_ARGS_HARNESSES } from '../config/schema.js';
 import type { RemoteHost } from '../remote/host.js';
 import { applyModelPreference, resolveHarness } from './agent-acp.js';
-import { buildHarnessEnv, expandEnv, remoteAgentEnv, type AgentChild } from './agent-common.js';
+import { buildHarnessEnv, expandEnv, remoteAgentEnv, windowsSpawnOptions, type AgentChild } from './agent-common.js';
 import { AGY_COMMAND } from './agy-cli.js';
 import { remoteHosts } from './remote-hosts.js';
 
@@ -366,9 +366,15 @@ export async function runAcpReview(
 ): Promise<ReviewRun> {
   return inReviewDir(def, def.id, async (place) => {
     const launch = acpReviewLaunch(def, place.host !== undefined, args);
+    const localEnv = place.host ? undefined : { ...buildHarnessEnv(def), ...launch.env };
     const child: AgentChild = place.host
       ? place.host.spawn(launch.command, launch.args, { cwd: place.dir, env: { ...remoteAgentEnv(def), ...launch.env } })
-      : spawn(launch.command, launch.args, { cwd: place.dir, env: { ...buildHarnessEnv(def), ...launch.env }, stdio: ['pipe', 'pipe', 'pipe'] });
+      : spawn(launch.command, launch.args, {
+          cwd: place.dir,
+          env: localEnv,
+          stdio: ['pipe', 'pipe', 'pipe'],
+          ...windowsSpawnOptions(launch.command, localEnv),
+        });
     return driveAcpReview(child, { def, cwd: place.dir, meta: launch.meta, model, prompt, label: place.label, timeoutMs });
   });
 }
@@ -622,7 +628,13 @@ const REVIEW_OUTPUT_MAX = 4 << 20;
 
 function runAgyReviewLocal(def: AgentDef, dir: string, argv: string[], input: string): Promise<ReviewRun> {
   return new Promise<ReviewRun>((resolve) => {
-    const child = spawn(AGY_COMMAND, argv, { cwd: dir, env: buildHarnessEnv(def), stdio: ['pipe', 'pipe', 'pipe'] });
+    const env = buildHarnessEnv(def);
+    const child = spawn(AGY_COMMAND, argv, {
+      cwd: dir,
+      env,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      ...windowsSpawnOptions(AGY_COMMAND, env),
+    });
     let out = '';
     let err = '';
     let settled = false;

@@ -2,7 +2,7 @@ import { afterEach, describe, it, expect, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { configDir, configPath, defaultSocketPath } from './load.js';
+import { configDir, configPath, defaultSocketPath, expandHome } from './load.js';
 import { legacyConfigDirNote } from '../legacy-name.js';
 
 /**
@@ -11,7 +11,14 @@ import { legacyConfigDirNote } from '../legacy-name.js';
  * FLEETHERD_CONFIG_DIR, which overrides the ~/.config/fleetherd default.
  */
 describe('config path resolution', () => {
-  const NAMES = ['FLEETHERD_CONFIG_FILE', 'FLEETHERD_CONFIG_DIR', 'TALKCODE_CONFIG_FILE', 'TALKCODE_CONFIG_DIR', 'HOME'] as const;
+  const NAMES = [
+    'FLEETHERD_CONFIG_FILE',
+    'FLEETHERD_CONFIG_DIR',
+    'TALKCODE_CONFIG_FILE',
+    'TALKCODE_CONFIG_DIR',
+    'HOME',
+    'USERPROFILE',
+  ] as const;
   const saved = Object.fromEntries(NAMES.map((n) => [n, process.env[n]]));
   const homes: string[] = [];
   afterEach(() => {
@@ -28,6 +35,7 @@ describe('config path resolution', () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'fh-home-'));
     homes.push(home);
     process.env.HOME = home;
+    process.env.USERPROFILE = home;
     return home;
   };
 
@@ -80,7 +88,7 @@ describe('config path resolution', () => {
     delete process.env.FLEETHERD_CONFIG_FILE;
     process.env.FLEETHERD_CONFIG_DIR = '/srv/am';
     expect(configPath()).toBe(path.join('/srv/am', 'config.yaml'));
-    expect(defaultSocketPath()).toBe(path.join('/srv/am', 'daemon.sock'));
+    expect(defaultSocketPath(undefined, 'linux')).toBe(path.join('/srv/am', 'daemon.sock'));
   });
 
   it('FLEETHERD_CONFIG_FILE points configPath at the file and configDir at its parent', () => {
@@ -90,11 +98,25 @@ describe('config path resolution', () => {
     expect(configPath()).toBe(resolved);
     expect(configDir()).toBe(path.dirname(resolved));
     // socket sits next to the chosen file (one daemon at a time, so no collision with other configs).
-    expect(defaultSocketPath()).toBe(path.join(path.dirname(resolved), 'daemon.sock'));
+    expect(defaultSocketPath(undefined, 'linux')).toBe(path.join(path.dirname(resolved), 'daemon.sock'));
   });
 
   it('expands a leading ~ in FLEETHERD_CONFIG_FILE', () => {
     process.env.FLEETHERD_CONFIG_FILE = '~/am/discord.yaml';
     expect(configPath()).toBe(path.join(os.homedir(), 'am', 'discord.yaml'));
+  });
+
+  it('expands both ~/ and ~\\ in expandHome', () => {
+    expect(expandHome('~/sub/file.yaml')).toBe(path.join(os.homedir(), 'sub/file.yaml'));
+    expect(expandHome('~\\sub\\file.yaml')).toBe(path.join(os.homedir(), 'sub\\file.yaml'));
+  });
+
+  it('uses a deterministic per-directory Windows named pipe on win32', () => {
+    const a = defaultSocketPath('C:\\Users\\Alice\\.config\\fleetherd', 'win32');
+    const b = defaultSocketPath('c:\\users\\alice\\.config\\fleetherd', 'win32');
+    const c = defaultSocketPath('C:\\Users\\Bob\\.config\\fleetherd', 'win32');
+    expect(a).toMatch(/^\\\\\.\\pipe\\fleetherd-[0-9a-f]{16}$/);
+    expect(a).toBe(b);
+    expect(a).not.toBe(c);
   });
 });

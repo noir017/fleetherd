@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import type { ConversationAddress, ConversationRef } from '../core/conversation.js';
 import type {
@@ -492,8 +493,13 @@ export class TurnChanges {
       }
       return undefined;
     }
-    const home = await shell(ws, 'printf %s "${HOME:-}"', [], left(deadline));
-    const dir = home?.code === 0 ? home.output.toString('utf8').trim() : '';
+    let dir: string;
+    if (ws.host === 'local') {
+      dir = os.homedir().replaceAll('\\', '/');
+    } else {
+      const home = await shell(ws, 'printf %s "${HOME:-}"', [], left(deadline));
+      dir = home?.code === 0 ? home.output.toString('utf8').trim() : '';
+    }
     if (!dir) {
       this.log(`[changes] cannot read $HOME on ${ws.host}; no turn changes for ${ws.root}`);
       return undefined;
@@ -636,7 +642,7 @@ export class TurnChanges {
       const busy = await this.tempTree(ws, repo, deadline);
       return { tree: busy.tree, slow: false };
     }
-    void shell(ws, RM_SCRIPT, [shared], 5_000);
+    void removeIndexPair(ws, shared);
     const second = await this.tempTree(ws, repo, deadline);
     return { tree: second.tree, slow: !second.tree };
   }
@@ -650,7 +656,7 @@ export class TurnChanges {
       // Off the turn's clock: `start` has already stopped waiting for this whole operation (the
       // race in `start`), so the cleanup gets its own small budget instead of the deadline's
       // leftovers — which would be a millisecond and leave the temporary index behind.
-      await shell(ws, RM_SCRIPT, [temp], 5_000);
+      await removeIndexPair(ws, temp);
     }
   }
 
@@ -659,7 +665,7 @@ export class TurnChanges {
     const lock = `${dir}/index.lock`;
     const st = await ws.stat(lock).catch((): WorkspaceStat => ({ exists: false }));
     if (!st.exists || Date.now() - (st.mtimeMs ?? 0) < STALE_LOCK_MS) return;
-    await shell(ws, RM_SCRIPT, [lock], 5_000);
+    await removeIndexPair(ws, lock);
   }
 
   private async addTree(ws: Workspace, repo: Repo, index: string, deadline: number): Promise<TreeAttempt> {
@@ -928,8 +934,10 @@ function byGitDir(records: readonly TurnRecord[]): Map<string, TurnRecord[]> {
 
 /** The path of `p` under `root`, or undefined when it is not under it. POSIX, as the host is. */
 function relativeUnder(root: string, p: string): string | undefined {
-  const base = root.endsWith('/') ? root : `${root}/`;
-  return p.startsWith(base) ? p.slice(base.length) : undefined;
+  const normRoot = root.replaceAll('\\', '/');
+  const normP = p.replaceAll('\\', '/');
+  const base = normRoot.endsWith('/') ? normRoot : `${normRoot}/`;
+  return normP.startsWith(base) ? normP.slice(base.length) : undefined;
 }
 
 /** A tree's/objects' identity is all the ref needs; the conversation key may not be a ref name. */
@@ -1056,4 +1064,14 @@ async function shell(
   } catch {
     return undefined;
   }
+}
+
+/** Remove an index file and its `.lock` sibling: natively via fs on local workspaces, `sh -c` on remote hosts. */
+async function removeIndexPair(ws: Workspace, indexPath: string): Promise<void> {
+  if (ws.host === 'local') {
+    await fs.promises.rm(indexPath, { force: true }).catch(() => {});
+    await fs.promises.rm(`${indexPath}.lock`, { force: true }).catch(() => {});
+    return;
+  }
+  await shell(ws, RM_SCRIPT, [indexPath], 5_000);
 }

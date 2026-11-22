@@ -45,6 +45,22 @@ const KEEP_LOGS = 20;
 /** With settleOnExit: how long output already in the pipes gets to arrive after the shell exits. */
 const EXIT_DRAIN_MS = 200;
 
+/**
+ * How to launch a shell command on this host: `bash -lc` in its own process group on POSIX,
+ * or `%ComSpec% /d /s /c` (hidden, non-detached) on Windows.
+ */
+export function shellLaunch(
+  command: string,
+  platform: NodeJS.Platform = process.platform,
+  env: Record<string, string | undefined> = process.env
+): { command: string; args: string[]; detached: boolean; windowsHide?: boolean } {
+  if (platform === 'win32') {
+    const comspec = env.ComSpec || env.COMSPEC || 'cmd.exe';
+    return { command: comspec, args: ['/d', '/s', '/c', command], detached: false, windowsHide: true };
+  }
+  return { command: 'bash', args: ['-lc', command], detached: true };
+}
+
 export function runBashCommand(opts: {
   command: string;
   cwd?: string;
@@ -100,10 +116,12 @@ export function runBashCommand(opts: {
 
     let child: ReturnType<typeof spawn>;
     try {
-      child = spawn('bash', ['-lc', opts.command], {
+      const launch = shellLaunch(opts.command, process.platform, env);
+      child = spawn(launch.command, launch.args, {
         cwd: opts.cwd,
         env,
-        detached: true,
+        detached: launch.detached,
+        ...(launch.windowsHide ? { windowsHide: true } : {}),
         stdio: ['ignore', 'pipe', 'pipe'],
       });
     } catch (e) {
@@ -113,6 +131,18 @@ export function runBashCommand(opts: {
 
     const kill = (): void => {
       if (child.pid === undefined) return;
+      if (process.platform === 'win32') {
+        try {
+          spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { stdio: 'ignore', windowsHide: true });
+        } catch {
+          try {
+            child.kill();
+          } catch {
+            // already exited
+          }
+        }
+        return;
+      }
       try {
         process.kill(-child.pid, 'SIGTERM');
       } catch {

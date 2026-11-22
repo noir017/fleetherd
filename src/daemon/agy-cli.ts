@@ -1,7 +1,7 @@
 import { promisify } from 'node:util';
 import { execFile as execFileCb } from 'node:child_process';
 import type { AgentDef } from '../config/schema.js';
-import { buildHarnessEnv, remoteAgentEnv } from './agent-common.js';
+import { buildHarnessEnv, remoteAgentEnv, windowsSpawnOptions } from './agent-common.js';
 import { remoteHosts } from './remote-hosts.js';
 import type { RemoteHost } from '../remote/host.js';
 
@@ -68,6 +68,7 @@ export async function runAgyCliCommand(
       timeout: CLI_COMMAND_TIMEOUT_MS,
       // agy prints the whole changelog for `/changelog`; the default 1MB buffer is ample, but say so.
       maxBuffer: 1024 * 1024,
+      ...windowsSpawnOptions(AGY_COMMAND, env),
     });
     return { ok: true, output: stdout.trim() };
   } catch (e) {

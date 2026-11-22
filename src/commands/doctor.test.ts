@@ -1,5 +1,8 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { runDoctor } from './doctor.js';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { locateCommand, runDoctor } from './doctor.js';
 
 describe('commands/doctor i18n', () => {
   const origEnv = { ...process.env };
@@ -50,6 +53,22 @@ describe('commands/doctor i18n', () => {
 
     await runDoctor({ migrateConfig: true });
 
-    expect(logs.some((l) => l.includes('无法读取 /tmp/nonexistent-config-file.yaml'))).toBe(true);
+    const expected = path.resolve('/tmp/nonexistent-config-file.yaml');
+    expect(logs.some((l) => l.includes(`无法读取 ${expected}`))).toBe(true);
+  });
+});
+
+describe('locateCommand', () => {
+  it('resolves PATHEXT shims and case-insensitive Path on win32', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fh-locate-'));
+    try {
+      const cmdFile = path.join(dir, 'codex-acp.CMD');
+      fs.writeFileSync(cmdFile, '@echo off\r\n');
+      const env = { Path: dir, PATHEXT: '.COM;.EXE;.BAT;.CMD' };
+      expect(locateCommand('codex-acp', env, 'win32')).toBe(cmdFile);
+      expect(locateCommand('missing-tool', env, 'win32')).toBeNull();
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
