@@ -220,64 +220,53 @@ function applyLang(
     });
 }
 
-/**
- * The palette, in the page's own CSS variables where there is one (`page.ts` `:root`) so the
- * editor follows the page instead of carrying a second copy of the colours. The tokens are a
- * dark palette tuned against `--bg: #131313`; there is no light one, for the same reason the
- * page has none.
- */
-const theme = EditorView.theme(
-  {
-    '&': { color: 'var(--fg)', backgroundColor: 'var(--bg)', fontSize: '13px', height: '100%' },
-    '.cm-content': {
-      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace',
-      padding: '10px 0',
-      caretColor: 'var(--fg)',
-    },
-    '.cm-line': { padding: '0 12px' },
-    '.cm-scroller': { lineHeight: '1.55' },
-    '.cm-gutters': {
-      backgroundColor: 'var(--bg)',
-      color: 'var(--dim)',
-      border: 'none',
-      borderRight: '1px solid var(--line)',
-    },
-    '.cm-activeLine': { backgroundColor: 'rgba(255,255,255,.035)' },
-    '.cm-activeLineGutter': { backgroundColor: 'transparent', color: 'var(--fg)' },
-    '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--fg)' },
-    '&.cm-focused': { outline: 'none' },
-    '&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection': {
-      backgroundColor: '#2c4a6b',
-    },
-    // The merge view's own decorations: an added line reads green, a removed one red, both
-    // dimmed enough to sit under the text. `@codemirror/merge` names these classes.
-    '.cm-changedLine': { backgroundColor: 'rgba(74,222,128,.09)' },
-    '.cm-changedText': { background: 'rgba(74,222,128,.22)' },
-    '.cm-deletedChunk': { backgroundColor: 'rgba(248,113,113,.07)' },
-    '.cm-deletedText': { background: 'rgba(248,113,113,.2)' },
-    '.cm-mergeView': { height: '100%' },
-    '.cm-mergeView &': { height: '100%' },
-    '.cm-mergeViewEditors': { height: '100%' },
+const theme = EditorView.theme({
+  '&': { color: 'var(--fg)', backgroundColor: 'var(--bg)', fontSize: '13px', height: '100%' },
+  '.cm-content': {
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace',
+    padding: '10px 0',
+    caretColor: 'var(--fg)',
   },
-  { dark: true }
-);
+  '.cm-line': { padding: '0 12px' },
+  '.cm-scroller': { lineHeight: '1.55' },
+  '.cm-gutters': {
+    backgroundColor: 'var(--bg)',
+    color: 'var(--dim)',
+    border: 'none',
+    borderRight: '1px solid var(--line)',
+  },
+  '.cm-activeLine': { backgroundColor: 'var(--cm-active-line)' },
+  '.cm-activeLineGutter': { backgroundColor: 'transparent', color: 'var(--fg)' },
+  '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--fg)' },
+  '&.cm-focused': { outline: 'none' },
+  '&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection': {
+    backgroundColor: 'var(--cm-selection)',
+  },
+  '.cm-changedLine': { backgroundColor: 'var(--cm-diff-add-line)' },
+  '.cm-changedText': { background: 'var(--cm-diff-add-text)' },
+  '.cm-deletedChunk': { backgroundColor: 'var(--cm-diff-del-line)' },
+  '.cm-deletedText': { background: 'var(--cm-diff-del-text)' },
+  '.cm-mergeView': { height: '100%' },
+  '.cm-mergeView &': { height: '100%' },
+  '.cm-mergeViewEditors': { height: '100%' },
+});
 
 const highlight = HighlightStyle.define([
-  { tag: [tags.keyword, tags.modifier], color: '#c792ea' },
-  { tag: [tags.atom, tags.bool, tags.number, tags.null], color: '#f78c6c' },
-  { tag: [tags.string, tags.special(tags.string), tags.regexp], color: '#c3e88d' },
-  { tag: [tags.comment, tags.lineComment, tags.blockComment, tags.docComment], color: '#6b7683', fontStyle: 'italic' },
-  { tag: [tags.function(tags.variableName), tags.function(tags.propertyName), tags.labelName], color: '#82aaff' },
-  { tag: [tags.typeName, tags.className, tags.namespace, tags.standard(tags.name)], color: '#ffcb6b' },
-  { tag: [tags.propertyName, tags.attributeName], color: '#b2ccd6' },
-  { tag: [tags.tagName, tags.deleted], color: '#f07178' },
-  { tag: [tags.operator, tags.meta, tags.processingInstruction], color: '#89ddff' },
-  { tag: [tags.link, tags.url], color: '#8fa6c0', textDecoration: 'underline' },
-  { tag: [tags.heading1, tags.heading2, tags.heading3], color: '#dcdcdc', fontWeight: '600' },
+  { tag: [tags.keyword, tags.modifier], color: 'var(--syn-keyword)' },
+  { tag: [tags.atom, tags.bool, tags.number, tags.null], color: 'var(--syn-atom)' },
+  { tag: [tags.string, tags.special(tags.string), tags.regexp], color: 'var(--syn-string)' },
+  { tag: [tags.comment, tags.lineComment, tags.blockComment, tags.docComment], color: 'var(--syn-comment)', fontStyle: 'italic' },
+  { tag: [tags.function(tags.variableName), tags.function(tags.propertyName), tags.labelName], color: 'var(--syn-fn)' },
+  { tag: [tags.typeName, tags.className, tags.namespace, tags.standard(tags.name)], color: 'var(--syn-type)' },
+  { tag: [tags.propertyName, tags.attributeName], color: 'var(--syn-prop)' },
+  { tag: [tags.tagName, tags.deleted], color: 'var(--syn-tag)' },
+  { tag: [tags.operator, tags.meta, tags.processingInstruction], color: 'var(--syn-op)' },
+  { tag: [tags.link, tags.url], color: 'var(--syn-link)', textDecoration: 'underline' },
+  { tag: [tags.heading1, tags.heading2, tags.heading3], color: 'var(--syn-heading)', fontWeight: '600' },
   { tag: tags.emphasis, fontStyle: 'italic' },
   { tag: tags.strong, fontWeight: '600' },
-  { tag: tags.invalid, color: '#f87171' },
-  { tag: tags.inserted, color: '#4ade80' },
+  { tag: tags.invalid, color: 'var(--syn-invalid)' },
+  { tag: tags.inserted, color: 'var(--syn-inserted)' },
 ]);
 
 /**

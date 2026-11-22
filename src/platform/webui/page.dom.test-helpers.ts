@@ -148,6 +148,8 @@ export interface Harness {
   painted: () => number;
   /** Placeholder blocks held in the transcript while a sync is in flight. */
   skeletons: () => number;
+  /** Simulate an OS prefers-color-scheme change in tests that pass `colorScheme`. */
+  setColorScheme: (scheme: 'dark' | 'light') => void;
   /** The "still waiting on the daemon" line under a transcript painted from cache. */
   waiting: () => string | null;
   /** Topic rows currently painted in the sidebar. */
@@ -612,6 +614,8 @@ export async function open(
     codeviewUrl?: string;
     /** Keep the served <style> block for tests that inspect computed styles. Off by default. */
     styles?: boolean;
+    /** Stub window.matchMedia('(prefers-color-scheme: dark)') with the given initial scheme. */
+    colorScheme?: 'dark' | 'light';
   } = {}
 ): Promise<Harness> {
   const {
@@ -639,6 +643,7 @@ export async function open(
     codeView,
     codeviewUrl,
     styles = false,
+    colorScheme,
   } = opts;
   const pushLog: PushLog = { unsubscribed: false, listeners: [] };
   const photoLog: PhotoLog = {
@@ -657,6 +662,8 @@ export async function open(
   const warnings: string[] = [];
   const confirms: string[] = [];
   const longTimers: number[] = [];
+  let currentScheme: 'dark' | 'light' = colorScheme ?? 'dark';
+  const schemeListeners = new Set<(e: { matches: boolean; media: string }) => void>();
 
   const dom = new JSDOM(pageOf(terminal, password, terminalEnd, codeviewUrl, files, instructions, styles), {
     url,
@@ -671,6 +678,20 @@ export async function open(
       Object.defineProperty(w, 'innerHeight', { value: height, configurable: true });
       if (idb) (w as any).indexedDB = idb;
       for (const [k, v] of Object.entries(storage)) w.localStorage.setItem(k, v);
+      if (colorScheme !== undefined) {
+        (w as any).matchMedia = (query: string) => ({
+          media: query,
+          get matches() {
+            return query === '(prefers-color-scheme: dark)' ? currentScheme === 'dark' : currentScheme === 'light';
+          },
+          addEventListener: (_type: string, fn: (e: { matches: boolean; media: string }) => void) => {
+            schemeListeners.add(fn);
+          },
+          removeEventListener: (_type: string, fn: (e: { matches: boolean; media: string }) => void) => {
+            schemeListeners.delete(fn);
+          },
+        });
+      }
       Object.defineProperty(w.navigator, 'clipboard', {
         configurable: true,
         value: {
@@ -807,6 +828,10 @@ export async function open(
     },
     painted: () => doc.getElementById('log')!.querySelectorAll(':scope > .m').length,
     skeletons: () => doc.getElementById('log')!.querySelectorAll(':scope > .sk').length,
+    setColorScheme: (scheme) => {
+      currentScheme = scheme;
+      for (const fn of schemeListeners) fn({ matches: scheme === 'dark', media: '(prefers-color-scheme: dark)' });
+    },
     waiting: () => doc.querySelector('#log > .syncing')?.textContent ?? null,
     rows: () => doc.getElementById('topics')!.children.length,
     notice: () => doc.querySelector('#log > .empty')?.textContent ?? null,

@@ -459,7 +459,7 @@ describe('webui page: the agent status strip', () => {
     const html = renderPage('Chat', false);
     expect(html).toContain('#status{display:flex;flex-wrap:wrap;');
     expect(html).not.toContain('#status{display:flex;align-items:center;margin:-3px 0 7px;font-size:11.5px;line-height:1.5;color:var(--dim);white-space:nowrap;overflow:hidden;');
-    expect(html).toContain('.st-who{color:#a8a8a8;flex-wrap:wrap;row-gap:1px;max-width:100%}');
+    expect(html).toContain('.st-who{color:var(--fg-muted);flex-wrap:wrap;row-gap:1px;max-width:100%}');
   });
 
   it('escapes what it is sent — a model name is the agent’s to choose', async () => {
@@ -957,7 +957,8 @@ describe('webui page: sub-agent bubbles', () => {
     const html = renderPage('Chat', false, true, false);
     expect(html).toContain('.m.dispatch{background:var(--disp);border-left:3px solid var(--disp-edge)');
     expect(html).toContain('.m.report{background:var(--rep);border-left:3px solid var(--rep-edge)');
-    expect(html).toContain('--disp:#1a1622;--disp-edge:#8b6cc1;--rep:#14201a;--rep-edge:#3f8f6b');
+    expect(html).toContain('--disp:#1a1622;--disp-edge:#8b6cc1;');
+    expect(html).toContain('--rep:#14201a;--rep-edge:#3f8f6b;');
     expect(html).toContain('.sub-k{');
   });
 
@@ -990,7 +991,8 @@ describe('webui page: sub-agent bubbles', () => {
   it('styles a side answer like the other marked kinds, from variables', () => {
     const html = renderPage('Chat', false, true, false);
     expect(html).toContain('.m.aside{background:var(--aside);border-left:3px dashed var(--aside-edge)');
-    expect(html).toContain('--aside:#151c1f;--aside-edge:#4f8a99');
+    expect(html).toContain('--aside:#151c1f;');
+    expect(html).toContain('--aside-edge:#4f8a99');
   });
 });
 
@@ -1815,7 +1817,7 @@ describe('webui page: the sidebar footer, and low attention', () => {
     const h = await open();
     await h.emit(sync(A, [], [A]));
     const menu = h.el('opts-menu');
-    for (const id of ['settings-open', 'notify-toggle', 'calm-toggle', 'skills-toggle']) {
+    for (const id of ['settings-open', 'notify-toggle', 'calm-toggle', 'theme-toggle', 'skills-toggle']) {
       expect(menu.contains(h.el(id))).toBe(true);
     }
     const manage = h.el('manage-menu');
@@ -1982,7 +1984,7 @@ describe('webui page: the sidebar footer, and low attention', () => {
     // is quieted by the same rule — it is the same .topic-dot now.
     expect(css.match(/#app\.calm [^{]*\{[^}]*\}/g)).toEqual([
       '#app.calm .topic-dot.running{animation:none}',
-      '#app.calm .topic-badge{background:#2a2a2a;color:#8a8a8a;font-weight:500}',
+      '#app.calm .topic-badge{background:var(--hover-3);color:var(--fg-mid);font-weight:500}',
     ]);
     expect(css).toMatch(/\.topic-dot\.asking\{[^}]*animation:pulse/);
   });
@@ -2224,4 +2226,3 @@ describe('webui page: Escape belongs to what is in front of it', () => {
     expect(bothOpen(h)).toBe(true);
   });
 });
-

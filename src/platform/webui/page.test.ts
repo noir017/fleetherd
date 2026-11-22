@@ -27,6 +27,7 @@ describe('webui page', () => {
     // `new Function` compiles the bundled IIFE without running it, catching a stray brace or
     // broken literal before it reaches a browser. APP_SOURCE uses ES imports for split panels.
     expect(() => new Function(CLIENT.app.text)).not.toThrow();
+    expect(() => new Function(CLIENT.boot.text)).not.toThrow();
     // An unfilled marker is a ReferenceError the moment the script starts.
     expect(CLIENT.app.text).not.toMatch(/__FH_[A-Z_]+__/);
     expect(APP_SOURCE).not.toMatch(/__FH_[A-Z_]+__/);
@@ -37,19 +38,27 @@ describe('webui page', () => {
     // or handler here would simply not run. The one inline <script> is data, which no browser
     // executes.
     const scripts = [...shell.matchAll(/<script\b([^>]*)>/g)].map((m) => m[1] ?? '');
-    expect(scripts).toEqual([' type="application/json" id="boot-config"', ` src="assets/${CLIENT.app.file}"`]);
+    expect(scripts).toEqual([
+      ` src="assets/${CLIENT.boot.file}"`,
+      ' type="application/json" id="boot-config"',
+      ` src="assets/${CLIENT.app.file}"`,
+    ]);
     expect(shell).not.toMatch(/<[a-z][^>]*\son[a-z]+=/i);
     expect(shell).not.toContain('javascript:');
   });
 
   it('links its script and stylesheet by a path a sub-path mount still resolves', () => {
     expect(shell).toContain(`<link rel="stylesheet" href="assets/${CLIENT.style.file}">`);
+    expect(shell).toContain(`<script src="assets/${CLIENT.boot.file}"></script>`);
     expect(shell).toContain(`<script src="assets/${CLIENT.app.file}"></script>`);
     // Relative, like api/events and manifest.webmanifest: an absolute /assets/ would leave a proxy
     // prefix behind and 404 the whole page.
     expect(shell).not.toMatch(/(?:src|href)="\/assets\//);
     // The data comes before the script that reads it.
-    expect(shell.indexOf('id="boot-config"')).toBeLessThan(shell.indexOf('<script src='));
+    expect(shell.indexOf('id="boot-config"')).toBeLessThan(shell.indexOf(`src="assets/${CLIENT.app.file}"`));
+    // The anti-FOUC boot script sits in <head> after theme-color so it runs before first paint.
+    expect(shell.indexOf('name="theme-color"')).toBeLessThan(shell.indexOf(`src="assets/${CLIENT.boot.file}"`));
+    expect(shell.indexOf(`src="assets/${CLIENT.boot.file}"`)).toBeLessThan(shell.indexOf('</head>'));
   });
 
   it('contains no backtick and no ${ in the markup, which the template literal would have eaten', () => {
@@ -177,14 +186,14 @@ describe('webui page', () => {
     // behind the row above, the row's own colour below — so the border reads as broken by the name,
     // and it follows hover, the selected row and the green needs-you rows through --row-bg.
     // Asserted as text: jsdom computes no gradient, no custom property and no color-mix.
-    expect(html).toContain('background:linear-gradient(to bottom,var(--behind,#171717) 50%,var(--row-bg) 50%)');
+    expect(html).toContain('background:linear-gradient(to bottom,var(--behind,var(--bg-panel)) 50%,var(--row-bg) 50%)');
     expect(html).toContain('.agent-tag{position:absolute;top:-7px;left:7px;');
     // One palette for the agent cards' dots and the legend: a harness colour is written once.
-    expect(html).toContain('.ac-dot.h-claude,.agent-tag.h-claude{--hc:#d97757}');
-    expect(html).toContain('.ac-dot{flex:none;width:7px;height:7px;border-radius:50%;background:var(--hc,#6b6b6b)}');
+    expect(html).toContain('.ac-dot.h-claude,.agent-tag.h-claude{--hc:var(--hc-claude)}');
+    expect(html).toContain('.ac-dot{flex:none;width:7px;height:7px;border-radius:50%;background:var(--hc,var(--hc-dot-fallback))}');
     expect(html).not.toMatch(/\.ac-dot\.h-[a-z]+\{background:/);
     // The selected row's legend is a step brighter, mixed from the same colour rather than a second palette.
-    expect(html).toContain('.topic-item.on .agent-tag{color:color-mix(in srgb,var(--hc,#8d8d8d) 72%,#fff)}');
+    expect(html).toContain('.topic-item.on .agent-tag{color:color-mix(in srgb,var(--hc,var(--hc-fallback)) 72%,var(--mix-hi))}');
     expect(html).not.toContain('.topic-tag');
   });
 
@@ -233,11 +242,14 @@ describe('webui page', () => {
     expect(html).toContain('[hidden]{display:none!important}');
   });
 
-  it('ships one dark palette and no way to switch it', () => {
-    // "Dark by default" plus "no extra features" has one smallest answer, and a theme toggle
-    // is exactly the sort of thing that makes a page memorable.
-    expect(html).not.toContain('prefers-color-scheme');
+  it('defines semantic dark and light palettes with zero-JS system fallback', () => {
+    expect(html).toContain(':root,[data-theme="dark"]{');
+    expect(html).toContain('[data-theme="light"]{');
+    expect(html).toContain('@media (prefers-color-scheme: light){:root:not([data-theme="dark"]){');
+    expect(html).toContain('color-scheme:dark');
+    expect(html).toContain('color-scheme:light');
     expect(html).toMatch(/--bg:#1[0-9a-f]{5}/);
+    expect(html).toContain('id="theme-toggle"');
   });
 
   it('gives your own messages a tinted panel the agent does not get', () => {

@@ -50,6 +50,8 @@ import { PAGE_BODY } from './page-body.js';
 export interface PageAssets {
   /** The page's own script. Without it the page says it was not built, instead of the gate. */
   app: string | null;
+  /** The synchronous theme boot script linked in <head> before first paint. */
+  boot?: string | null;
   /** The page's stylesheet. */
   style: string | null;
   /** The code view's entry module, imported on demand by the script's `codeView()`. */
@@ -57,7 +59,7 @@ export interface PageAssets {
 }
 
 /** A daemon whose assets were never built (a source checkout without `npm run build:assets`). */
-export const NO_ASSETS: PageAssets = { app: null, style: null, codeview: null };
+export const NO_ASSETS: PageAssets = { app: null, boot: null, style: null, codeview: null };
 
 /**
  * Fill in the configured title, whether the terminal pane exists, and whether a session can be
@@ -114,6 +116,7 @@ export function servePage(
   });
   const html = page({
     title: escapeHtml(title),
+    bootScript: assets.boot == null ? '' : `<script src="${escapeHtml(assets.boot)}"></script>`,
     style: assets.style === null ? '' : `<link rel="stylesheet" href="${escapeHtml(assets.style)}">`,
     gate: (assets.app === null ? UNBUILT : '') + (password ? PASSWORD_GATE : SSO_GATE),
     boot,
@@ -170,7 +173,7 @@ const UNBUILT = `<p id="unbuilt">This page's script was not built. Run <code>npm
 `;
 
 /** The document. A function rather than placeholders, so no part's text can be read as another's slot. */
-function page(p: { title: string; style: string; gate: string; boot: string; app: string }): string {
+function page(p: { title: string; bootScript: string; style: string; gate: string; boot: string; app: string }): string {
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -187,6 +190,7 @@ function page(p: { title: string; style: string; gate: string; boot: string; app
 <!-- Android paints the status bar this colour in standalone, so the app starts at its own
      background instead of being framed in white. -->
 <meta name="theme-color" content="#131313">
+${p.bootScript}
 <!-- iOS ignores the manifest for both of these. "black" is the closest opaque bar to #131313;
      "black-translucent" would put the clock on top of the chat header. -->
 <meta name="apple-mobile-web-app-capable" content="yes">

@@ -159,7 +159,7 @@ describe('webui page: the scheduled-task panel', () => {
     const css = html.slice(html.indexOf('<style>'), html.indexOf('</style>'));
     // The old .sess-item.on .sess-title rule went with the row; this is the shared one that
     // replaces it. The topic list's own selected-idle greys are id-scoped and still win there.
-    expect(css).toContain('.topic-item.on .topic-title{color:#fff}');
+    expect(css).toContain('.topic-item.on .topic-title{color:var(--fg-hi)}');
   });
 
   it('keeps its menu through a poll, and closes it when the task goes', async () => {

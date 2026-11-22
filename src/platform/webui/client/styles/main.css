@@ -9,12 +9,14 @@
    as ragged. min-height rather than height because the panel's bar grows to 49px for a finger
    under 640px, and because a bar's own content can only make it taller, never shorter: whatever
    goes inside one has to fit this number. */
-:root{--bg:#131313;--fg:#dcdcdc;--dim:#7d7d7d;--line:#272727;--own:#1c222b;--own-edge:#3a5f86;--field:#1a1a1a;--disp:#1a1622;--disp-edge:#8b6cc1;--rep:#14201a;--rep-edge:#3f8f6b;--aside:#151c1f;--aside-edge:#4f8a99;--headh:42px;color-scheme:dark}
-*{box-sizing:border-box;scrollbar-width:thin;scrollbar-color:#333 transparent}
+:root,[data-theme="dark"]{--bg:#131313;--bg-panel:#171717;--bg-tree:#151515;--bg-editor:#141414;--bg-code:#111;--bg-bar:#161616;--field:#1a1a1a;--surface:#181818;--surface-2:#1b1b1b;--surface-pop:#1e1e1e;--hover:#1f1f1f;--hover-1:#202020;--hover-2:#222;--hover-3:#2a2a2a;--active:#252525;--active-2:#262626;--active-3:#2c2c2c;--surface-tag:#232323;--surface-skel:#242424;--surface-skel-own:#2b333e;--surface-subtle:rgba(255,255,255,.06);--surface-subtle-2:rgba(255,255,255,.08);--term-bg:#000;--fg:#dcdcdc;--fg-hi:#fff;--fg-2:#d0d0d0;--fg-3:#c9c9c9;--fg-own:#cdcdcd;--fg-muted:#a8a8a8;--fg-soft:#9a9a9a;--fg-mid:#8a8a8a;--dim:#7d7d7d;--fg-slate:#6b7683;--fg-slate-2:#6b7280;--fg-slate-hi:#8b98a6;--fg-cool:#c9d6e2;--fg-cool-2:#cfd8e2;--fg-cool-soft:#9aa4af;--fg-subtle:#666;--fg-faint:#5c5c5c;--fg-on-accent:#fff;--fg-idle-on:#a0a0a0;--fg-live-on:#bcbcbc;--fg-sub:#b4b4b4;--fg-head:#bdbdbd;--fg-bright:#e5e5e5;--fg-kind:#a3a3a3;--fg-model:#737373;--mix-hi:#fff;--line:#272727;--line-2:#333;--line-3:#3a3a3a;--line-focus:#3d3d3d;--line-hi:#4a4a4a;--line-strong:#555;--line-frame:rgba(255,255,255,.07);--line-frame-on:rgba(255,255,255,.16);--dot-idle:#444;--dot-live:#2b6a8f;--dot-rev:#555;--accent:#38bdf8;--accent-soft:#7dd3fc;--accent-link:#8fa6c0;--accent-back:#8fb3d6;--accent-back-hi:#b9d3ec;--accent-crumb:#9ecbff;--accent-sel:#9fb3c8;--accent-tag:#8cc4ea;--accent-file:#bae6fd;--accent-seg:#bfdbfe;--accent-unread:#60a5fa;--accent-glow:rgba(56,189,248,.8);--accent-tint:rgba(56,189,248,.08);--accent-tint-1:rgba(56,189,248,.1);--accent-tint-2:rgba(56,189,248,.12);--accent-tint-seg:rgba(96,165,250,.16);--accent-border:rgba(56,189,248,.25);--accent-border-1:rgba(56,189,248,.28);--accent-border-2:rgba(56,189,248,.5);--accent-solid:#3a6ea5;--accent-tab-bg:#2b3a4c;--accent-tab-fg:#fff;--accent-tab-count:#94a3b8;--accent-chip-bg:#24455a;--accent-chip-edge:#3a6f93;--accent-chip-fg:#fff;--accent-opt-on:#1b2430;--primary:#1d4ed8;--primary-edge:#2563eb;--primary-hover:#2563eb;--primary-hover-edge:#3b82f6;--badge-bg:#2563eb;--pending-bg:#162028;--pending-edge:#23404f;--def-badge-fg:#c4b5fd;--def-badge-bg:rgba(167,139,250,.14);--ok:#4ade80;--ok-solid:#16a34a;--ok-bg:#15201a;--ok-tint:rgba(74,222,128,.08);--ok-border:rgba(74,222,128,.35);--needs-bg:#14231a;--needs-hover:#1a2e21;--warn:#fbbf24;--warn-glow:rgba(251,191,36,.8);--warn-tint:rgba(251,191,36,.08);--warn-tint-2:rgba(251,191,36,.12);--warn-border:rgba(251,191,36,.25);--warn-border-2:rgba(251,191,36,.6);--err:#f87171;--err-soft:#fecaca;--err-soft-2:#fca5a5;--err-soft-3:#f8a5a5;--err-warn:#e08a8a;--err-muted:#c06a6a;--err-edge:#a14a4a;--err-bg:#261616;--err-tint:rgba(248,113,113,.08);--err-tint-2:rgba(248,113,113,.12);--err-tint-3:rgba(248,113,113,.15);--err-border:rgba(248,113,113,.25);--err-border-1:rgba(248,113,113,.3);--err-border-2:rgba(248,113,113,.35);--err-border-3:rgba(248,113,113,.4);--err-border-4:rgba(248,113,113,.6);--offline:#c98a7d;--own:#1c222b;--own-edge:#3a5f86;--own-hover:#212a35;--own-hover-edge:#4b78a8;--own-quote-edge:#3d4a5a;--own-quote-fg:#8b96a3;--own-code-bg:#161b22;--own-code-edge:#2b3441;--disp:#1a1622;--disp-edge:#8b6cc1;--disp-tag-fg:#cbb5ee;--disp-tag-bg:rgba(139,108,193,.16);--disp-tag-edge:rgba(139,108,193,.45);--rep:#14201a;--rep-edge:#3f8f6b;--rep-tag-fg:#9ad6b3;--rep-tag-bg:rgba(63,143,107,.16);--rep-tag-edge:rgba(63,143,107,.45);--aside:#151c1f;--aside-hover:#18242a;--aside-edge:#4f8a99;--aside-tag-fg:#a6cfd8;--aside-tag-bg:rgba(79,138,153,.16);--aside-tag-edge:rgba(79,138,153,.45);--aside-border:rgba(79,138,153,.5);--aside-sep:rgba(79,138,153,.25);--hc-fallback:#8d8d8d;--hc-dot-fallback:#6b6b6b;--hc-claude:#d97757;--hc-codex:#10a37f;--hc-opencode:#e2e2e2;--hc-agy:#4f8ff7;--hc-gemini:#a78bfa;--hc-dsh:#5b7cfa;--ag-l:58%;--ag-kind-l:74%;--ag-kind-bg-a:.15;--scroll-thumb:#303030;--scroll-thumb-hover:#484848;--scroll-ff:#333;--scrim:rgba(0,0,0,.5);--scrim-2:rgba(0,0,0,.6);--scrim-lightbox:rgba(0,0,0,.88);--shadow:rgba(0,0,0,.5);--shadow-lg:rgba(0,0,0,.55);--shadow-sm:rgba(0,0,0,.45);--shadow-drawer:rgba(0,0,0,.6);--cm-active-line:rgba(255,255,255,.035);--cm-selection:#2c4a6b;--cm-diff-add-line:rgba(74,222,128,.09);--cm-diff-add-text:rgba(74,222,128,.22);--cm-diff-del-line:rgba(248,113,113,.07);--cm-diff-del-text:rgba(248,113,113,.2);--syn-keyword:#c792ea;--syn-atom:#f78c6c;--syn-string:#c3e88d;--syn-comment:#6b7683;--syn-fn:#82aaff;--syn-type:#ffcb6b;--syn-prop:#b2ccd6;--syn-tag:#f07178;--syn-op:#89ddff;--syn-link:#8fa6c0;--syn-heading:#dcdcdc;--syn-invalid:#f87171;--syn-inserted:#4ade80;--headh:42px;color-scheme:dark}
+@media (prefers-color-scheme: light){:root:not([data-theme="dark"]){--bg:#ffffff;--bg-panel:#f5f6f8;--bg-tree:#f3f4f6;--bg-editor:#fafafa;--bg-code:#f4f5f7;--bg-bar:#f0f1f4;--field:#f0f2f5;--surface:#ffffff;--surface-2:#f7f8fa;--surface-pop:#ffffff;--hover:#eef0f4;--hover-1:#edf0f4;--hover-2:#e9ecf1;--hover-3:#e2e6ec;--active:#e4e8f0;--active-2:#dce1ea;--active-3:#d6dce6;--surface-tag:#eef1f5;--surface-skel:#e5e7eb;--surface-skel-own:#cbd5e1;--surface-subtle:rgba(0,0,0,.05);--surface-subtle-2:rgba(0,0,0,.09);--term-bg:#111318;--fg:#181a1f;--fg-hi:#090b10;--fg-2:#2d333b;--fg-3:#374151;--fg-own:#1e293b;--fg-muted:#525b68;--fg-soft:#5c6573;--fg-mid:#647080;--dim:#6b7280;--fg-slate:#64748b;--fg-slate-2:#64748b;--fg-slate-hi:#475569;--fg-cool:#1e3a5f;--fg-cool-2:#1e3a5f;--fg-cool-soft:#475569;--fg-subtle:#9ca3af;--fg-faint:#94a3b8;--fg-on-accent:#ffffff;--fg-idle-on:#4b5563;--fg-live-on:#374151;--fg-sub:#4b5563;--fg-head:#4b5563;--fg-bright:#111827;--fg-kind:#4b5563;--fg-model:#6b7280;--mix-hi:#000000;--line:#e2e5ea;--line-2:#d1d5db;--line-3:#cbd5e1;--line-focus:#94a3b8;--line-hi:#94a3b8;--line-strong:#64748b;--line-frame:rgba(0,0,0,.09);--line-frame-on:rgba(0,0,0,.22);--dot-idle:#cbd5e1;--dot-live:#60a5fa;--dot-rev:#94a3b8;--accent:#0284c7;--accent-soft:#0369a1;--accent-link:#1d4ed8;--accent-back:#1d4ed8;--accent-back-hi:#1e40af;--accent-crumb:#0369a1;--accent-sel:#334155;--accent-tag:#0369a1;--accent-file:#075985;--accent-seg:#1d4ed8;--accent-unread:#2563eb;--accent-glow:rgba(2,132,199,.55);--accent-tint:rgba(2,132,199,.08);--accent-tint-1:rgba(2,132,199,.1);--accent-tint-2:rgba(2,132,199,.12);--accent-tint-seg:rgba(37,99,235,.12);--accent-border:rgba(2,132,199,.3);--accent-border-1:rgba(2,132,199,.32);--accent-border-2:rgba(2,132,199,.45);--accent-solid:#2563eb;--accent-tab-bg:#dbeafe;--accent-tab-fg:#1e3a8a;--accent-tab-count:#3b82f6;--accent-chip-bg:#dbeafe;--accent-chip-edge:#3b82f6;--accent-chip-fg:#1e3a8a;--accent-opt-on:#eff6ff;--primary:#2563eb;--primary-edge:#1d4ed8;--primary-hover:#1d4ed8;--primary-hover-edge:#1e40af;--badge-bg:#2563eb;--pending-bg:#f0f9ff;--pending-edge:#bae6fd;--def-badge-fg:#6d28d9;--def-badge-bg:rgba(124,58,237,.1);--ok:#16a34a;--ok-solid:#16a34a;--ok-bg:#f0fdf4;--ok-tint:rgba(22,163,74,.1);--ok-border:rgba(22,163,74,.35);--needs-bg:#ecfdf5;--needs-hover:#d1fae5;--warn:#b45309;--warn-glow:rgba(217,119,6,.55);--warn-tint:rgba(217,119,6,.08);--warn-tint-2:rgba(217,119,6,.12);--warn-border:rgba(217,119,6,.3);--warn-border-2:rgba(217,119,6,.5);--err:#dc2626;--err-soft:#991b1b;--err-soft-2:#b91c1c;--err-soft-3:#b91c1c;--err-warn:#b91c1c;--err-muted:#b91c1c;--err-edge:#dc2626;--err-bg:#fef2f2;--err-tint:rgba(220,38,38,.08);--err-tint-2:rgba(220,38,38,.1);--err-tint-3:rgba(220,38,38,.12);--err-border:rgba(220,38,38,.25);--err-border-1:rgba(220,38,38,.3);--err-border-2:rgba(220,38,38,.35);--err-border-3:rgba(220,38,38,.4);--err-border-4:rgba(220,38,38,.5);--offline:#b45309;--own:#eff6ff;--own-edge:#3b82f6;--own-hover:#dbeafe;--own-hover-edge:#2563eb;--own-quote-edge:#93c5fd;--own-quote-fg:#475569;--own-code-bg:#e0edff;--own-code-edge:#bfdbfe;--disp:#f5f3ff;--disp-edge:#7c3aed;--disp-tag-fg:#6d28d9;--disp-tag-bg:rgba(124,58,237,.1);--disp-tag-edge:rgba(124,58,237,.35);--rep:#f0fdf4;--rep-edge:#16a34a;--rep-tag-fg:#15803d;--rep-tag-bg:rgba(22,163,74,.1);--rep-tag-edge:rgba(22,163,74,.35);--aside:#f0f9ff;--aside-hover:#e0f2fe;--aside-edge:#0284c7;--aside-tag-fg:#0369a1;--aside-tag-bg:rgba(2,132,199,.1);--aside-tag-edge:rgba(2,132,199,.35);--aside-border:rgba(2,132,199,.4);--aside-sep:rgba(2,132,199,.2);--hc-fallback:#64748b;--hc-dot-fallback:#94a3b8;--hc-claude:#c25735;--hc-codex:#0d8a6a;--hc-opencode:#475569;--hc-agy:#2563eb;--hc-gemini:#7c3aed;--hc-dsh:#4338ca;--ag-l:44%;--ag-kind-l:34%;--ag-kind-bg-a:.12;--scroll-thumb:#cbd5e1;--scroll-thumb-hover:#94a3b8;--scroll-ff:#cbd5e1;--scrim:rgba(15,23,42,.35);--scrim-2:rgba(15,23,42,.45);--scrim-lightbox:rgba(15,23,42,.88);--shadow:rgba(15,23,42,.12);--shadow-lg:rgba(15,23,42,.16);--shadow-sm:rgba(15,23,42,.1);--shadow-drawer:rgba(15,23,42,.2);--cm-active-line:rgba(0,0,0,.035);--cm-selection:#bfdbfe;--cm-diff-add-line:rgba(22,163,74,.1);--cm-diff-add-text:rgba(22,163,74,.24);--cm-diff-del-line:rgba(220,38,38,.09);--cm-diff-del-text:rgba(220,38,38,.22);--syn-keyword:#7c3aed;--syn-atom:#c2410c;--syn-string:#15803d;--syn-comment:#64748b;--syn-fn:#1d4ed8;--syn-type:#b45309;--syn-prop:#0f766e;--syn-tag:#be123c;--syn-op:#0369a1;--syn-link:#1d4ed8;--syn-heading:#0f172a;--syn-invalid:#dc2626;--syn-inserted:#16a34a;color-scheme:light}}
+[data-theme="light"]{--bg:#ffffff;--bg-panel:#f5f6f8;--bg-tree:#f3f4f6;--bg-editor:#fafafa;--bg-code:#f4f5f7;--bg-bar:#f0f1f4;--field:#f0f2f5;--surface:#ffffff;--surface-2:#f7f8fa;--surface-pop:#ffffff;--hover:#eef0f4;--hover-1:#edf0f4;--hover-2:#e9ecf1;--hover-3:#e2e6ec;--active:#e4e8f0;--active-2:#dce1ea;--active-3:#d6dce6;--surface-tag:#eef1f5;--surface-skel:#e5e7eb;--surface-skel-own:#cbd5e1;--surface-subtle:rgba(0,0,0,.05);--surface-subtle-2:rgba(0,0,0,.09);--term-bg:#111318;--fg:#181a1f;--fg-hi:#090b10;--fg-2:#2d333b;--fg-3:#374151;--fg-own:#1e293b;--fg-muted:#525b68;--fg-soft:#5c6573;--fg-mid:#647080;--dim:#6b7280;--fg-slate:#64748b;--fg-slate-2:#64748b;--fg-slate-hi:#475569;--fg-cool:#1e3a5f;--fg-cool-2:#1e3a5f;--fg-cool-soft:#475569;--fg-subtle:#9ca3af;--fg-faint:#94a3b8;--fg-on-accent:#ffffff;--fg-idle-on:#4b5563;--fg-live-on:#374151;--fg-sub:#4b5563;--fg-head:#4b5563;--fg-bright:#111827;--fg-kind:#4b5563;--fg-model:#6b7280;--mix-hi:#000000;--line:#e2e5ea;--line-2:#d1d5db;--line-3:#cbd5e1;--line-focus:#94a3b8;--line-hi:#94a3b8;--line-strong:#64748b;--line-frame:rgba(0,0,0,.09);--line-frame-on:rgba(0,0,0,.22);--dot-idle:#cbd5e1;--dot-live:#60a5fa;--dot-rev:#94a3b8;--accent:#0284c7;--accent-soft:#0369a1;--accent-link:#1d4ed8;--accent-back:#1d4ed8;--accent-back-hi:#1e40af;--accent-crumb:#0369a1;--accent-sel:#334155;--accent-tag:#0369a1;--accent-file:#075985;--accent-seg:#1d4ed8;--accent-unread:#2563eb;--accent-glow:rgba(2,132,199,.55);--accent-tint:rgba(2,132,199,.08);--accent-tint-1:rgba(2,132,199,.1);--accent-tint-2:rgba(2,132,199,.12);--accent-tint-seg:rgba(37,99,235,.12);--accent-border:rgba(2,132,199,.3);--accent-border-1:rgba(2,132,199,.32);--accent-border-2:rgba(2,132,199,.45);--accent-solid:#2563eb;--accent-tab-bg:#dbeafe;--accent-tab-fg:#1e3a8a;--accent-tab-count:#3b82f6;--accent-chip-bg:#dbeafe;--accent-chip-edge:#3b82f6;--accent-chip-fg:#1e3a8a;--accent-opt-on:#eff6ff;--primary:#2563eb;--primary-edge:#1d4ed8;--primary-hover:#1d4ed8;--primary-hover-edge:#1e40af;--badge-bg:#2563eb;--pending-bg:#f0f9ff;--pending-edge:#bae6fd;--def-badge-fg:#6d28d9;--def-badge-bg:rgba(124,58,237,.1);--ok:#16a34a;--ok-solid:#16a34a;--ok-bg:#f0fdf4;--ok-tint:rgba(22,163,74,.1);--ok-border:rgba(22,163,74,.35);--needs-bg:#ecfdf5;--needs-hover:#d1fae5;--warn:#b45309;--warn-glow:rgba(217,119,6,.55);--warn-tint:rgba(217,119,6,.08);--warn-tint-2:rgba(217,119,6,.12);--warn-border:rgba(217,119,6,.3);--warn-border-2:rgba(217,119,6,.5);--err:#dc2626;--err-soft:#991b1b;--err-soft-2:#b91c1c;--err-soft-3:#b91c1c;--err-warn:#b91c1c;--err-muted:#b91c1c;--err-edge:#dc2626;--err-bg:#fef2f2;--err-tint:rgba(220,38,38,.08);--err-tint-2:rgba(220,38,38,.1);--err-tint-3:rgba(220,38,38,.12);--err-border:rgba(220,38,38,.25);--err-border-1:rgba(220,38,38,.3);--err-border-2:rgba(220,38,38,.35);--err-border-3:rgba(220,38,38,.4);--err-border-4:rgba(220,38,38,.5);--offline:#b45309;--own:#eff6ff;--own-edge:#3b82f6;--own-hover:#dbeafe;--own-hover-edge:#2563eb;--own-quote-edge:#93c5fd;--own-quote-fg:#475569;--own-code-bg:#e0edff;--own-code-edge:#bfdbfe;--disp:#f5f3ff;--disp-edge:#7c3aed;--disp-tag-fg:#6d28d9;--disp-tag-bg:rgba(124,58,237,.1);--disp-tag-edge:rgba(124,58,237,.35);--rep:#f0fdf4;--rep-edge:#16a34a;--rep-tag-fg:#15803d;--rep-tag-bg:rgba(22,163,74,.1);--rep-tag-edge:rgba(22,163,74,.35);--aside:#f0f9ff;--aside-hover:#e0f2fe;--aside-edge:#0284c7;--aside-tag-fg:#0369a1;--aside-tag-bg:rgba(2,132,199,.1);--aside-tag-edge:rgba(2,132,199,.35);--aside-border:rgba(2,132,199,.4);--aside-sep:rgba(2,132,199,.2);--hc-fallback:#64748b;--hc-dot-fallback:#94a3b8;--hc-claude:#c25735;--hc-codex:#0d8a6a;--hc-opencode:#475569;--hc-agy:#2563eb;--hc-gemini:#7c3aed;--hc-dsh:#4338ca;--ag-l:44%;--ag-kind-l:34%;--ag-kind-bg-a:.12;--scroll-thumb:#cbd5e1;--scroll-thumb-hover:#94a3b8;--scroll-ff:#cbd5e1;--scrim:rgba(15,23,42,.35);--scrim-2:rgba(15,23,42,.45);--scrim-lightbox:rgba(15,23,42,.88);--shadow:rgba(15,23,42,.12);--shadow-lg:rgba(15,23,42,.16);--shadow-sm:rgba(15,23,42,.1);--shadow-drawer:rgba(15,23,42,.2);--cm-active-line:rgba(0,0,0,.035);--cm-selection:#bfdbfe;--cm-diff-add-line:rgba(22,163,74,.1);--cm-diff-add-text:rgba(22,163,74,.24);--cm-diff-del-line:rgba(220,38,38,.09);--cm-diff-del-text:rgba(220,38,38,.22);--syn-keyword:#7c3aed;--syn-atom:#c2410c;--syn-string:#15803d;--syn-comment:#64748b;--syn-fn:#1d4ed8;--syn-type:#b45309;--syn-prop:#0f766e;--syn-tag:#be123c;--syn-op:#0369a1;--syn-link:#1d4ed8;--syn-heading:#0f172a;--syn-invalid:#dc2626;--syn-inserted:#16a34a;color-scheme:light}
+*{box-sizing:border-box;scrollbar-width:thin;scrollbar-color:var(--scroll-ff) transparent}
 ::-webkit-scrollbar{width:6px;height:6px}
 ::-webkit-scrollbar-track{background:transparent}
-::-webkit-scrollbar-thumb{background:#303030;border-radius:3px}
-::-webkit-scrollbar-thumb:hover{background:#484848}
+::-webkit-scrollbar-thumb{background:var(--scroll-thumb);border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:var(--scroll-thumb-hover)}
 ::-webkit-scrollbar-corner{background:transparent}
 /* An id rule with display: wins over the browser's own [hidden]{display:none}, so #app and
    #hints would both ignore the attribute and show anyway — the chat pane before login, the
@@ -26,7 +28,7 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 #login{margin:auto;padding:24px;width:100%;max-width:320px}
 #login input{width:100%;padding:9px 11px;background:var(--field);color:var(--fg);border:1px solid var(--line);border-radius:4px;font:inherit}
 #login button{margin-top:10px;width:100%}
-#err{color:#c06a6a;min-height:1.6em;margin:8px 0 0;font-size:13px}
+#err{color:var(--err-muted);min-height:1.6em;margin:8px 0 0;font-size:13px}
 
 #app{display:flex;flex-direction:row;height:100%;width:100%;margin:0;overflow:hidden}
 
@@ -43,7 +45,7 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
    a hidden element has nothing to animate, and a column that vanished would re-wrap the
    transcript in one frame. The negative margin also hands its width back to the chat,
    so closing reads as the column folding away rather than sliding under it. */
-.panel{position:relative;display:flex;flex-direction:column;height:100%;min-width:0;background:#171717;z-index:10;transition:margin .18s ease,transform .18s ease}
+.panel{position:relative;display:flex;flex-direction:column;height:100%;min-width:0;background:var(--bg-panel);z-index:10;transition:margin .18s ease,transform .18s ease}
 .panel-left{width:var(--pw,var(--pw-default));flex:0 0 var(--pw,var(--pw-default));border-right:1px solid var(--line)}
 .panel-right{width:var(--pw,var(--pw-default));flex:0 0 var(--pw,var(--pw-default));border-left:1px solid var(--line)}
 .panel-left.collapsed{margin-left:calc(-1 * var(--pw,var(--pw-default)))}
@@ -54,12 +56,12 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 .panel-resize{position:absolute;top:0;bottom:0;width:8px;cursor:col-resize;z-index:11;touch-action:none}
 .panel-left>.panel-resize{right:-4px}
 .panel-right>.panel-resize{left:-4px}
-.panel-resize:hover,.panel-resize.dragging{background:linear-gradient(90deg,transparent 3px,#3d3d3d 3px,#3d3d3d 5px,transparent 5px)}
+.panel-resize:hover,.panel-resize.dragging{background:linear-gradient(90deg,transparent 3px,var(--line-focus) 3px,var(--line-focus) 5px,transparent 5px)}
 .panel.collapsed>.panel-resize{display:none}
 /* One backdrop for both drawers. It is displayed only where an edge really is a drawer
    (the media rules below), and only while that drawer is out (#app.sb-open /
    #app.sched-open). Tapping it puts away whichever drawer is open. */
-#backdrop{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:19}
+#backdrop{display:none;position:fixed;inset:0;background:var(--scrim);z-index:19}
 /* One bar, one height, one way out on both sides. The × is the panel's close button:
    the topic list and the task panel are both things a person opens and closes. */
 .panel-head{display:flex;align-items:center;gap:6px;padding:0 8px 0 12px;border-bottom:1px solid var(--line);min-height:var(--headh);flex:0 0 auto}
@@ -73,8 +75,8 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 /* A chevron is a thin mark centred in its box, so on the shared baseline it read as riding high
    beside lowercase words ("‹ Prev", "› 2"); a little lower, it sits on the line's middle. */
 .ic-chevronLeft,.ic-chevronRight,.ic-chevronDown{vertical-align:-.2em}
-.tone-ok{color:#4ade80}
-.tone-err{color:#f87171}
+.tone-ok{color:var(--ok)}
+.tone-err{color:var(--err)}
 .panel-head .add{font-size:15px;font-weight:600}
 
 /* ── The filter bar ───────────────────────────────────────────────────────────
@@ -91,20 +93,20 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 .filterbar{flex:0 0 auto;display:flex;flex-direction:column;gap:6px;padding:8px;border-bottom:1px solid var(--line);container-type:inline-size}
 .fb-row{display:flex;align-items:center;gap:5px;min-width:0}
 .fb-search{flex:1;min-width:0;display:flex;align-items:center;gap:4px;height:28px;padding:0 4px 0 7px;background:var(--field);border:1px solid transparent;border-radius:5px}
-.fb-search:focus-within{border-color:#3d3d3d}
+.fb-search:focus-within{border-color:var(--line-focus)}
 .fb-search .ic{width:12px;height:12px;color:var(--dim)}
 .fb-q{flex:1;min-width:0;height:100%;padding:0;background:none;border:0;outline:0;color:var(--fg);font:inherit;font-size:12.5px}
-.fb-q::placeholder{color:#6b7683}
+.fb-q::placeholder{color:var(--fg-slate)}
 .fb-qclear{display:inline-flex;align-items:center;justify-content:center;background:none;border:0;color:var(--dim);cursor:pointer;padding:2px;border-radius:3px;line-height:1}
-.fb-qclear:hover{color:var(--fg);background:#2a2a2a}
+.fb-qclear:hover{color:var(--fg);background:var(--hover-3)}
 .fb-btn{display:inline-flex;align-items:center;justify-content:center;gap:4px;height:28px;padding:0 7px;background:none;border:1px solid var(--line);border-radius:5px;color:var(--dim);font:inherit;font-size:12px;line-height:1;cursor:pointer;white-space:nowrap}
-.fb-btn:hover{color:var(--fg);border-color:#555}
+.fb-btn:hover{color:var(--fg);border-color:var(--line-strong)}
 .fb-btn[aria-expanded="true"],.fb-btn.on{color:var(--fg);background:var(--field)}
 .fb-btn .ic{width:12px;height:12px}
 /* A selection is a state, not a label: the dot on Filter says one exists with the
    panel shut. Same blue as a running row, the only other "something is on" mark. */
 .fb-filter{position:relative}
-.fb-dot{position:absolute;top:3px;right:3px;width:5px;height:5px;border-radius:50%;background:#38bdf8}
+.fb-dot{position:absolute;top:3px;right:3px;width:5px;height:5px;border-radius:50%;background:var(--accent)}
 .fb-tools{display:flex;align-items:center;gap:5px;flex:none;margin-left:auto}
 /* The panel this bar next goes into is 240–320px, where search + Filter + a sort field on one
    line leaves the search a sliver. Under 360px of bar the sort pair moves to a line of its own,
@@ -114,21 +116,21 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
   .fb-tools{flex-basis:100%;justify-content:flex-end}
 }
 .fb-sort{display:inline-flex;align-items:center;gap:3px;height:28px;padding:0 6px;border:1px solid var(--line);border-radius:5px;color:var(--dim);min-width:0}
-.fb-sort:focus-within{border-color:#555;color:var(--fg)}
+.fb-sort:focus-within{border-color:var(--line-strong);color:var(--fg)}
 .fb-sort .ic{width:12px;height:12px;flex:none}
 .fb-sort select{appearance:none;background:none;border:0;outline:0;color:inherit;font:inherit;font-size:12px;line-height:1;padding:0;max-width:88px;cursor:pointer}
-.fb-sort option{background:#1e1e1e;color:var(--fg)}
+.fb-sort option{background:var(--surface-pop);color:var(--fg)}
 .fb-dir{padding:0;width:28px;flex:none}
 .fb-sum{display:flex;align-items:center;gap:4px;font-size:11px;color:var(--dim);line-height:1.4}
-.fb-sum .fb-clear{margin-left:auto;background:none;border:0;color:#38bdf8;font:inherit;font-size:11px;cursor:pointer;padding:1px 3px;border-radius:3px}
+.fb-sum .fb-clear{margin-left:auto;background:none;border:0;color:var(--accent);font:inherit;font-size:11px;cursor:pointer;padding:1px 3px;border-radius:3px}
 .fb-sum .fb-clear:hover{text-decoration:underline}
 .fb-panel{display:flex;flex-direction:column;gap:7px;max-height:min(42vh,320px);overflow-y:auto;border-top:1px solid var(--line);padding-top:7px}
 .fb-group{display:flex;flex-direction:column;gap:4px}
 .fb-label{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--dim)}
 .fb-chips{display:flex;flex-wrap:wrap;gap:4px}
 .fb-chip{display:inline-flex;align-items:center;gap:3px;padding:2px 7px;background:none;border:1px solid var(--line);border-radius:11px;color:var(--dim);font:inherit;font-size:11.5px;line-height:1.5;cursor:pointer;white-space:nowrap}
-.fb-chip:hover{color:var(--fg);border-color:#555}
-.fb-chip.on{color:#fff;background:#24455a;border-color:#3a6f93}
+.fb-chip:hover{color:var(--fg);border-color:var(--line-strong)}
+.fb-chip.on{color:var(--accent-chip-fg);background:var(--accent-chip-bg);border-color:var(--accent-chip-edge)}
 .fb-chip .ic{width:10px;height:10px}
 .fb-count{opacity:.65;font-size:10px}
 /* A group the bar keeps on screen rather than folding into the panel: the state filter of both
@@ -146,7 +148,7 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 }
 /* What the list says instead of rows when a search or a filter matches nothing. */
 .topics-empty{display:flex;align-items:center;gap:8px;padding:14px 4px;color:var(--dim);font-size:12px}
-.topics-empty .fb-clear{margin-left:auto;background:none;border:0;color:#38bdf8;font:inherit;font-size:12px;cursor:pointer;padding:2px 4px;border-radius:3px}
+.topics-empty .fb-clear{margin-left:auto;background:none;border:0;color:var(--accent);font:inherit;font-size:12px;cursor:pointer;padding:2px 4px;border-radius:3px}
 .topics-empty .fb-clear:hover{text-decoration:underline}
 
 /* 6px between rows, and 10px above the first, because a topic row's agent legend (.agent-tag) stands
@@ -157,13 +159,13 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
    block, the sub-agent staircase, the star) stay scoped to it below.
    The row's colour is a variable because the hover buttons' fade (.topic-acts) has to end in exactly
    it: a fade into any other colour shows as a band across the title. #171717 is both panels' own. */
-.topic-item{--row-bg:#171717;display:flex;align-items:center;gap:8px;width:100%;padding:7px 9px;border:1px solid transparent;border-radius:5px;background:var(--row-bg);text-align:left;font:inherit;font-size:13px;cursor:pointer;transition:background .15s;position:relative}
-.topic-item:hover{--row-bg:#222}
-.topic-item.on{--row-bg:#252525;border-color:var(--line)}
+.topic-item{--row-bg:var(--bg-panel);display:flex;align-items:center;gap:8px;width:100%;padding:7px 9px;border:1px solid transparent;border-radius:5px;background:var(--row-bg);text-align:left;font:inherit;font-size:13px;cursor:pointer;transition:background .15s;position:relative}
+.topic-item:hover{--row-bg:var(--hover-2)}
+.topic-item.on{--row-bg:var(--active);border-color:var(--line)}
 /* The selected row's title is the brightest thing in the column. The state rules below are more
    specific and win where they apply (a selected idle row stays grey); this is what a selected row
    with no running/idle class gets. */
-.topic-item.on .topic-title{color:#fff}
+.topic-item.on .topic-title{color:var(--fg-hi)}
 /* Four states, and the dot is the only thing that carries all four. Read as one sentence: the
    colour says whether the agent is there, the pulse says whether it is busy.
      grey     — nothing resident. History, or a topic that will have to resume from a session id.
@@ -171,10 +173,10 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
      blue     — the agent is working: a turn, or background work reporting in after one.
      amber    — a question is on screen and nothing moves until it is answered. Wins over running,
                 because during an ask the turn IS still open and would otherwise paint over it. */
-.topic-dot{width:7px;height:7px;border-radius:50%;flex:0 0 7px;background:#444}
-.topic-dot.live{background:#2b6a8f}
-.topic-dot.running{background:#38bdf8;box-shadow:0 0 6px rgba(56,189,248,.8);animation:pulse 1.5s infinite}
-.topic-dot.asking{background:#fbbf24;box-shadow:0 0 6px rgba(251,191,36,.8);animation:pulse 1.5s infinite}
+.topic-dot{width:7px;height:7px;border-radius:50%;flex:0 0 7px;background:var(--dot-idle)}
+.topic-dot.live{background:var(--dot-live)}
+.topic-dot.running{background:var(--accent);box-shadow:0 0 6px var(--accent-glow);animation:pulse 1.5s infinite}
+.topic-dot.asking{background:var(--warn);box-shadow:0 0 6px var(--warn-glow);animation:pulse 1.5s infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
 /* Two lines in one row, so the second can hold the directory. min-width:0 is what lets either
    line actually ellipsis — without it a flex item refuses to shrink below its content and a
@@ -195,16 +197,16 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
    --row-bg through hover, the selected row and the green needs-you rows without rules of its own.
    The colour is the agent's harness, the palette the agent cards use (.h-* below); a custom harness
    has none of its own and stays grey. max-width keeps a long id clear of the row's right end. */
-.topic-item.framed{border-color:rgba(255,255,255,.07);border-radius:6px;padding-top:9px}
-.topic-item.framed.on{border-color:rgba(255,255,255,.16)}
-.agent-tag{position:absolute;top:-7px;left:7px;max-width:calc(100% - 50px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0 4px;font-size:10px;line-height:13px;letter-spacing:.02em;color:var(--hc,#8d8d8d);background:linear-gradient(to bottom,var(--behind,#171717) 50%,var(--row-bg) 50%);border-radius:3px}
+.topic-item.framed{border-color:var(--line-frame);border-radius:6px;padding-top:9px}
+.topic-item.framed.on{border-color:var(--line-frame-on)}
+.agent-tag{position:absolute;top:-7px;left:7px;max-width:calc(100% - 50px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0 4px;font-size:10px;line-height:13px;letter-spacing:.02em;color:var(--hc,var(--hc-fallback));background:linear-gradient(to bottom,var(--behind,var(--bg-panel)) 50%,var(--row-bg) 50%);border-radius:3px}
 /* A step brighter on the row on screen, as its title and frame are. Mixed toward white rather than a
    second palette, so a harness added to the palette needs one colour, not two. */
-.topic-item.on .agent-tag{color:color-mix(in srgb,var(--hc,#8d8d8d) 72%,#fff)}
+.topic-item.on .agent-tag{color:color-mix(in srgb,var(--hc,var(--hc-fallback)) 72%,var(--mix-hi))}
 /* Which project this topic is in. Dimmer than an idle title on purpose: it is what you scan
    for when several topics are open, not what you read. */
-.topic-dir{font-size:11px;line-height:1.35;color:#6b7683;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.topic-item.on .topic-dir{color:#8b98a6}
+.topic-dir{font-size:11px;line-height:1.35;color:var(--fg-slate);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.topic-item.on .topic-dir{color:var(--fg-slate-hi)}
 /* The line under a title: the directory on the left, how long the topic has been working or how
    long since it stopped on the right. A flex row so the age keeps its width while a long path is
    ellipsised — the time is the thing being scanned, and cutting it to "1d…" would say nothing.
@@ -212,30 +214,30 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
    directory to show. */
 .topic-sub{display:flex;align-items:baseline;gap:6px;min-width:0}
 .topic-sub .topic-line{flex:1 1 auto;min-width:0}
-.topic-age{flex:0 0 auto;margin-left:auto;font-size:11px;line-height:1.35;color:#6b7683;white-space:nowrap;font-variant-numeric:tabular-nums}
+.topic-age{flex:0 0 auto;margin-left:auto;font-size:11px;line-height:1.35;color:var(--fg-slate);white-space:nowrap;font-variant-numeric:tabular-nums}
 /* Working is the one state the row is watched in, so the age takes the running blue. Waiting on
    an answer keeps its own amber elsewhere; the age still says how long the turn has been open. */
-.topic-age.run{color:#38bdf8}
+.topic-age.run{color:var(--accent)}
 /* A machine the gateway cannot reach (OfflineMachine, the machines event): its name in a topic's
    line, the heading over its agents on a new topic, and a line above the composer. A muted red of
    its own, because amber already means "waiting for you" on this page, and this is not something to
    act on in the topic — it is why nothing there will answer. */
-.topic-off{color:#c98a7d}
+.topic-off{color:var(--offline)}
 .topic-off .ic{width:11px;height:11px;margin-right:3px;vertical-align:-.15em}
 .topic-item.running .topic-title{color:var(--fg)}
-.topic-item.on.running .topic-title{color:#fff}
+.topic-item.on.running .topic-title{color:var(--fg-hi)}
 .topic-item.idle .topic-title{color:var(--dim)}
-.topic-item.on.idle .topic-title{color:#a0a0a0}
+.topic-item.on.idle .topic-title{color:var(--fg-idle-on)}
 /* Quiet but not finished: half a step back from a running title, half a step ahead of a topic
    with nothing behind it. The dot says which; this is so the eye finds the right row first. */
-.topic-item.idle.live .topic-title{color:#9a9a9a}
-.topic-item.on.idle.live .topic-title{color:#bcbcbc}
-.topic-badge{background:#2563eb;color:#fff;border-radius:9px;padding:1px 6px;font-size:11px;font-weight:600;line-height:1.3;margin-left:4px;flex-shrink:0}
+.topic-item.idle.live .topic-title{color:var(--fg-soft)}
+.topic-item.on.idle.live .topic-title{color:var(--fg-live-on)}
+.topic-badge{background:var(--badge-bg);color:var(--fg-on-accent);border-radius:9px;padding:1px 6px;font-size:11px;font-weight:600;line-height:1.3;margin-left:4px;flex-shrink:0}
 /* A terminal is attached to this topic. Deliberately not a fifth colour on .topic-dot: that dot
    is about the agent — whether one is resident, busy, or waiting on an answer — and a terminal is
    an unrelated state that can be true alongside any of them.
    A prompt-shaped glyph says which of the two it is without a legend. */
-.topic-term{flex-shrink:0;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:9.5px;line-height:1;color:#4ade80;border:1px solid rgba(74,222,128,.35);border-radius:3px;padding:2px 3px;margin-left:4px}
+.topic-term{flex-shrink:0;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:9.5px;line-height:1;color:var(--ok);border:1px solid var(--ok-border);border-radius:3px;padding:2px 3px;margin-left:4px}
 /* The row's one control: a ⋯ that opens the topic's menu (Star/Unstar, End agent, Delete). The
    star and the × it replaced were two buttons competing for a 240px column's tail; the menu is
    one target the pointer reveals, and the rest live inside it.
@@ -247,7 +249,7 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 .topic-more{background:none;border:0;color:var(--dim);font:inherit;line-height:1;padding:1px 5px;cursor:pointer;border-radius:3px;flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;transition:color .15s,background .15s}
 .topic-more .ic{width:15px;height:15px}
 .topic-more:hover,.topic-more[aria-expanded="true"]{color:var(--fg);background:var(--field)}
-.topic-star-mark{display:inline-flex;align-items:center;justify-content:center;color:#fbbf24;flex-shrink:0;padding:0 2px}
+.topic-star-mark{display:inline-flex;align-items:center;justify-content:center;color:var(--warn);flex-shrink:0;padding:0 2px}
 .topic-star-mark .ic{width:13px;height:13px;fill:currentColor}
 /* A topic forked from another (/fork): its mark leads the title, in the title's own colour and a
    step dimmer — it says what the row is, and the source is the row right above it. Inside the one
@@ -274,13 +276,13 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
    with innerHTML on a poll or on every message a running agent posts, and a menu that lived in it
    would vanish mid-tap. Fixed, so it can sit beside the button that opened it and stay there while
    the list scrolls; above the sidebar's own z-index (20 on a phone) so it works inside the drawer. */
-#row-menu{position:fixed;z-index:21;min-width:210px;background:#1e1e1e;border:1px solid var(--line);border-radius:6px;box-shadow:0 6px 20px rgba(0,0,0,.5);padding:4px}
+#row-menu{position:fixed;z-index:21;min-width:210px;background:var(--surface-pop);border:1px solid var(--line);border-radius:6px;box-shadow:0 6px 20px var(--shadow);padding:4px}
 #row-menu button{display:flex;align-items:center;gap:9px;width:100%;background:none;border:0;padding:8px 10px;border-radius:4px;color:var(--fg);font:inherit;font-size:12.5px;text-align:left;cursor:pointer;white-space:nowrap}
 #row-menu button:hover:not(:disabled){background:var(--field)}
 #row-menu button:disabled{color:var(--dim);cursor:default}
 #row-menu .ic{width:14px;height:14px;flex:none}
-#row-menu .rm-del{color:#f87171}
-#row-menu .rm-del:hover{background:rgba(248,113,113,.12)}
+#row-menu .rm-del{color:var(--err)}
+#row-menu .rm-del:hover{background:var(--err-tint-2)}
 #row-menu .rm-sep{border-top:1px solid var(--line);margin:4px 2px}
 /* Where the group that needs the person ends. A pseudo-element on the first row after it rather
    than a node of its own, so #topics holds rows and nothing else. */
@@ -294,7 +296,7 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 .topic-item.d1{margin-left:14px}
 .topic-item.d2{margin-left:28px}
 .topic-item.d3{margin-left:42px}
-.topic-item.sub::before{content:'';position:absolute;left:-9px;top:50%;width:6px;border-top:1px solid #3a3a3a}
+.topic-item.sub::before{content:'';position:absolute;left:-9px;top:50%;width:6px;border-top:1px solid var(--line-3)}
 /* How many topics this one opened, and the switch that folds them away. Folded, it takes the colour
    of the most pressing state among them — a question, a failure, work — so folding hides the rows
    and not the fact that one of them wants you. At the START of the row's second line, before the
@@ -302,24 +304,24 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
    and a click meant to fold lands on delete — which the first end-to-end run did. */
 .topic-line{display:flex;align-items:center;gap:6px;min-width:0}
 .topic-fold{flex-shrink:0;border:1px solid var(--line);background:none;color:var(--dim);border-radius:9px;padding:0 5px;font:inherit;font-size:10px;line-height:1.4;cursor:pointer;transition:color .15s,border-color .15s}
-.topic-fold:hover{color:var(--fg);border-color:#555}
-.topic-fold.asking{color:#fbbf24;border-color:rgba(251,191,36,.6)}
-.topic-fold.failed{color:#f87171;border-color:rgba(248,113,113,.6)}
-.topic-fold.running{color:#38bdf8;border-color:rgba(56,189,248,.5)}
+.topic-fold:hover{color:var(--fg);border-color:var(--line-strong)}
+.topic-fold.asking{color:var(--warn);border-color:var(--warn-border-2)}
+.topic-fold.failed{color:var(--err);border-color:var(--err-border-4)}
+.topic-fold.running{color:var(--accent);border-color:var(--accent-border-2)}
 /* A failed last turn, when nothing else is going on: the one state that stays until something runs
    again, so the dot keeps saying it after the reply has been read. */
-.topic-dot.failed{background:#f87171}
+.topic-dot.failed{background:var(--err)}
 /* What needs the person — a question waiting, a failure, a reply not yet read — is the topic's own
    row, first in the list and green (page script: needsYou). The dot still says which of the three. */
-#topics .topic-item.needs{--row-bg:#14231a}
-#topics .topic-item.needs:hover{--row-bg:#1a2e21}
+#topics .topic-item.needs{--row-bg:var(--needs-bg)}
+#topics .topic-item.needs:hover{--row-bg:var(--needs-hover)}
 /* :not(.on) for the weight, not the meaning (a topic on screen is never one of these): the idle and
    live greys above are four classes deep, and a lighter rule lost to them on an idle agent. */
-#topics .topic-item.needs:not(.on) .topic-title{color:#4ade80}
+#topics .topic-item.needs:not(.on) .topic-title{color:var(--ok)}
 /* An unread reply, on a topic the person is expected to read. A sub-agent's row never takes this
    one: its finished turn is the news of the agent that opened it (see the dot class in
    paintTopics), so the row stays the ordinary idle/online grey. */
-.topic-dot.review{background:#4ade80}
+.topic-dot.review{background:var(--ok)}
 /* Low attention (the Menu, per device: calmBtn). With several agents working at once the
    list never stops moving — a pulsing dot per running topic, and an unread count in a bright pill
    that climbs with every message a running turn posts — and none of that is anything to act on.
@@ -328,7 +330,7 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
    dot still pulses, and a question, a failure and an unread reply still move up in green — so it
    is the only thing on the list that moves or stands out. */
 #app.calm .topic-dot.running{animation:none}
-#app.calm .topic-badge{background:#2a2a2a;color:#8a8a8a;font-weight:500}
+#app.calm .topic-badge{background:var(--hover-3);color:var(--fg-mid);font-weight:500}
 /* The rule midway between the last row that needs you and the agent legend standing above the next
    row: the gap is 6px plus this margin (13px total), and the legend's top is 6px above the row's
    edge, leaving 3px on each side of the 1px rule. */
@@ -353,22 +355,22 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 #manage-toggle{margin-left:auto}
 /* The idle count stays on Manage's face when its word drops: it is the one number on
    this row worth seeing without opening anything. */
-.foot-count{margin-left:4px;color:#a8a8a8}
+.foot-count{margin-left:4px;color:var(--fg-muted)}
 /* Both footer menus: one box, one place, one way to dismiss it. Opened upward from the
    footer over the bottom of the list, dismissed by a click anywhere else or Escape
    (setMenu). A disclosure rather than an ARIA menu: role=menu promises arrow-key
    navigation, and these are reached with Tab like any other buttons. */
-.panel-menu{position:absolute;left:8px;right:8px;bottom:100%;margin-bottom:4px;z-index:12;background:#1e1e1e;border:1px solid var(--line);border-radius:6px;box-shadow:0 6px 20px rgba(0,0,0,.5);padding:4px}
+.panel-menu{position:absolute;left:8px;right:8px;bottom:100%;margin-bottom:4px;z-index:12;background:var(--surface-pop);border:1px solid var(--line);border-radius:6px;box-shadow:0 6px 20px var(--shadow);padding:4px}
 .panel-menu button{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;background:none;border:0;padding:8px 10px;border-radius:4px;color:var(--fg);font:inherit;font-size:12.5px;text-align:left;cursor:pointer;white-space:nowrap;transition:color .15s,background .15s}
 .panel-menu button:hover{background:var(--field)}
 .panel-menu button:disabled{color:var(--dim);cursor:default}
 .panel-menu button:disabled:hover{background:none}
 .opt-state{color:var(--dim);font-size:12px}
-[aria-pressed="true"]>.opt-state{color:#4ade80}
+[aria-pressed="true"]>.opt-state{color:var(--ok)}
 .opts-sep{border-top:1px solid var(--line);margin:4px 2px}
 /* Clear all topics sits in the panel title: quiet until the pointer is on it. Dim, then red. */
 #clear-topics{flex-shrink:0;display:inline-flex;align-items:center;justify-content:center}
-#clear-topics:hover{color:#f87171;background:rgba(248,113,113,.15)}
+#clear-topics:hover{color:var(--err);background:var(--err-tint-3)}
 /* Mark all read sits beside it, in the same quiet, and the Sessions tab has the same icon in the side
    panel's title (#sched-read). An icon rather than a bar of its own above the rows, which would cost
    the list a row's height for a control that is greyed out most of the time. */
@@ -379,8 +381,8 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
    does not say whether the one you were about to come back to is among them. A dialog of the page's
    own rather than confirm(), which cannot hold a list a phone can scroll. The list scrolls inside
    the box, so a long one never pushes the buttons off screen. */
-#idle-dialog{position:fixed;inset:0;z-index:20;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;padding:16px}
-#idle-box{background:var(--bg);border:1px solid var(--line);border-radius:8px;width:min(440px,100%);max-height:80vh;max-height:80dvh;display:flex;flex-direction:column;gap:10px;padding:16px;box-shadow:0 8px 30px rgba(0,0,0,.5)}
+#idle-dialog{position:fixed;inset:0;z-index:20;background:var(--scrim-2);display:flex;align-items:center;justify-content:center;padding:16px}
+#idle-box{background:var(--bg);border:1px solid var(--line);border-radius:8px;width:min(440px,100%);max-height:80vh;max-height:80dvh;display:flex;flex-direction:column;gap:10px;padding:16px;box-shadow:0 8px 30px var(--shadow)}
 #idle-title{font-weight:600}
 #idle-why{margin:0;color:var(--dim);font-size:12.5px}
 #idle-list{list-style:none;margin:0;padding:0;overflow-y:auto;min-height:0;border-top:1px solid var(--line)}
@@ -389,9 +391,9 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 .idle-name,.idle-dir{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .idle-dir{color:var(--dim);font-size:12px}
 .idle-out{flex:none;font-size:12px;color:var(--dim)}
-.idle-out.kept{color:#fbbf24}
+.idle-out.kept{color:var(--warn)}
 .idle-acts{display:flex;justify-content:flex-end;gap:8px}
-#idle-go{color:#f87171;border-color:rgba(248,113,113,.4)}
+#idle-go{color:var(--err);border-color:var(--err-border-3)}
 
 #chat{flex:1;display:flex;flex-direction:column;height:100%;min-width:0;position:relative}
 #chat-header{display:flex;align-items:center;gap:10px;padding:9px 16px;border-bottom:1px solid var(--line);min-height:var(--headh);font-size:13px}
@@ -408,14 +410,14 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 #fork-note .fork-src{color:var(--fg);overflow:hidden;text-overflow:ellipsis;min-width:0;flex-shrink:1}
 .chat-title{font-weight:600;color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:50ch}
 .chat-status{font-size:11.5px;color:var(--dim);text-transform:uppercase;letter-spacing:.04em}
-.chat-status.running{color:#38bdf8}
-.chat-status.asking{color:#fbbf24}
+.chat-status.running{color:var(--accent)}
+.chat-status.asking{color:var(--warn)}
 /* The process behind this topic, ended on a tap (/kill). Red only under the pointer, as #term-end
    is: at rest it is one of the header's quiet controls, and one that is red all the time reads as
    an alarm rather than as an option. flex-shrink:0 because the title beside it is the thing that
    gives way to a narrow header; the control must not be what gets squeezed out. */
 #kill-agent{flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;padding:4px 6px}
-#kill-agent:hover{color:#f87171;background:rgba(248,113,113,.15)}
+#kill-agent:hover{color:var(--err);background:var(--err-tint-3)}
 /* The terminal is a panel at the bottom of the conversation rather than a mode over it: the
    transcript and the composer stay on screen and usable, and the panel keeps the height it was
    given — half the chat until the divider above it is dragged, and that height afterwards.
@@ -427,26 +429,26 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 #term-toggle{margin-left:0}
 /* The size of its neighbours' icons (the power button, the clock), which are 14px SVGs. */
 #term-toggle .ic{width:14px;height:14px}
-#term-toggle.on{color:#4ade80}
+#term-toggle.on{color:var(--ok)}
 #term-grip{display:none;flex:0 0 auto;height:9px;position:relative;cursor:row-resize;touch-action:none;background:transparent}
 #chat.term #term-grip{display:block}
-#term-grip::after{content:'';position:absolute;left:50%;top:4px;width:48px;height:2px;margin-left:-24px;border-radius:1px;background:#333}
-#term-grip:hover::after,#term-grip:focus-visible::after,#term-grip.drag::after{background:#555}
-#term-grip:focus-visible{outline:1px solid #3a6ea5;outline-offset:-2px}
-#term{display:flex;flex:0 0 auto;flex-direction:column;height:50%;min-height:0;background:#000}
+#term-grip::after{content:'';position:absolute;left:50%;top:4px;width:48px;height:2px;margin-left:-24px;border-radius:1px;background:var(--line-2)}
+#term-grip:hover::after,#term-grip:focus-visible::after,#term-grip.drag::after{background:var(--line-strong)}
+#term-grip:focus-visible{outline:1px solid var(--accent-solid);outline-offset:-2px}
+#term{display:flex;flex:0 0 auto;flex-direction:column;height:50%;min-height:0;background:var(--term-bg)}
 #chat:not(.term) #term{position:absolute;left:0;right:0;bottom:0;visibility:hidden;pointer-events:none}
-#term-bar{display:flex;align-items:center;gap:4px;padding:4px 6px 4px 12px;background:#161616;border-bottom:1px solid var(--line);flex:0 0 auto}
+#term-bar{display:flex;align-items:center;gap:4px;padding:4px 6px 4px 12px;background:var(--bg-bar);border-bottom:1px solid var(--line);flex:0 0 auto}
 .term-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dim);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px}
-#term-end:hover{color:#f87171;background:rgba(248,113,113,.15)}
+#term-end:hover{color:var(--err);background:var(--err-tint-3)}
 /* The side panel's toggle. It owns the auto margin the terminal used to: the clock is always in
    the header, so it is what pushes the right-hand group to the edge whether the terminal button
    is there or not. */
 #schedules-toggle{position:relative;flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;padding:4px 6px;margin-left:auto}
-#schedules-toggle.on{color:#4ade80}
+#schedules-toggle.on{color:var(--ok)}
 /* A scheduled run that is waiting on an answer has no row in the switcher any more, so without
    this the one state that needs a person would be behind two clicks. Same amber as the asking dot,
    and it disappears the moment the run is answered. */
-.sched-alert{position:absolute;top:2px;right:2px;width:6px;height:6px;border-radius:50%;background:#fbbf24;box-shadow:0 0 5px rgba(251,191,36,.8)}
+.sched-alert{position:absolute;top:2px;right:2px;width:6px;height:6px;border-radius:50%;background:var(--warn);box-shadow:0 0 5px var(--warn-glow)}
 
 /* ── The side panel ──────────────────────────────────────────────────────────
    A panel of its own on the right, not a section of the topic list: a task is not a
@@ -476,15 +478,15 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
    is not confused with a task definition, while keeping the footer clean with two tabs that
    match the sidebar's footer row. */
 .panel-foot>.sched-tab{flex:1;min-width:0;text-align:center;padding-left:6px;padding-right:6px;font-size:12px;overflow:hidden;text-overflow:ellipsis;display:inline-flex;align-items:center;justify-content:center}
-.sched-count{font-weight:500;color:#6b7683;margin-left:2px}
-.sched-tab.on .sched-count{color:#8a8a8a}
-.sched-tab-alert{display:inline-block;width:6px;height:6px;border-radius:50%;background:#fbbf24;box-shadow:0 0 5px rgba(251,191,36,.8);margin-left:5px;flex:none}
+.sched-count{font-weight:500;color:var(--fg-slate);margin-left:2px}
+.sched-tab.on .sched-count{color:var(--fg-mid)}
+.sched-tab-alert{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--warn);box-shadow:0 0 5px var(--warn-glow);margin-left:5px;flex:none}
 .sched-subnav{padding:6px 8px;display:flex;border-bottom:1px solid var(--line);background:var(--bg);gap:4px;flex:none}
 .sched-subtab{flex:1;min-width:0;display:inline-flex;align-items:center;justify-content:center;padding:5px 8px;border:1px solid var(--line);border-radius:5px;background:var(--field);color:var(--dim);font:inherit;font-size:12px;cursor:pointer;text-align:center;transition:color .15s,background .15s,border-color .15s;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.sched-subtab:hover{color:var(--fg);border-color:#3a3a3a}
-.sched-subtab.on{background:#2b3a4c;color:#fff;font-weight:600;border-color:#38bdf8}
-.sched-subtab .sched-count{margin-left:4px;font-weight:500;color:#6b7683}
-.sched-subtab.on .sched-count{color:#94a3b8}
+.sched-subtab:hover{color:var(--fg);border-color:var(--line-3)}
+.sched-subtab.on{background:var(--accent-tab-bg);color:var(--accent-tab-fg);font-weight:600;border-color:var(--accent)}
+.sched-subtab .sched-count{margin-left:4px;font-weight:500;color:var(--fg-slate)}
+.sched-subtab.on .sched-count{color:var(--accent-tab-count)}
 #schedules-body{flex:1;min-height:0;overflow-y:auto;padding:8px}
 /* The task list's bar sits between the sub-tabs and the scrolling body, outside #schedules-list:
    that list is redrawn with innerHTML on every poll, and the bar's caret and panel live in the
@@ -502,15 +504,15 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
    the panel's title (#sched-read). */
 .sess-group{display:flex;flex-direction:column;margin-top:2px}
 .sess-group-head{display:flex;align-items:center;gap:5px;width:100%;padding:5px 6px;border:0;border-radius:5px;background:none;color:var(--dim);font:inherit;font-size:11.5px;cursor:pointer;text-align:left}
-.sess-group-head:hover{background:#202020;color:var(--fg)}
-.sess-group-caret{display:inline-flex;flex:none;color:#6b7280}
-.sess-group-name{font-weight:600;color:#9aa4af;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.sess-group-count{flex:none;color:#6b7683}
-.sess-group-flag{margin-left:auto;flex:none;color:#9aa4af}
+.sess-group-head:hover{background:var(--hover-1);color:var(--fg)}
+.sess-group-caret{display:inline-flex;flex:none;color:var(--fg-slate-2)}
+.sess-group-name{font-weight:600;color:var(--fg-cool-soft);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sess-group-count{flex:none;color:var(--fg-slate)}
+.sess-group-flag{margin-left:auto;flex:none;color:var(--fg-cool-soft)}
 .sess-group-flag+.sess-group-flag{margin-left:6px}
-.sess-group-flag.unread{color:#60a5fa}
-.sess-group-flag.asking{color:#fbbf24}
-.sess-group-flag.running{color:#38bdf8}
+.sess-group-flag.unread{color:var(--accent-unread)}
+.sess-group-flag.asking{color:var(--warn)}
+.sess-group-flag.running{color:var(--accent)}
 /* Topic rows, so the same room for their agent legends as #topics, under the header too. */
 .sess-group-rows{display:flex;flex-direction:column;gap:6px;padding:8px 0 4px}
 /* A task, as the Tasks tab draws it: the same row every list uses, with the schedule on its hover
@@ -519,74 +521,74 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
 .sched-item{display:flex;flex-direction:column}
 /* The row's second line: what it is doing (a countdown, a state word), where it posts, how last
    time went, its tags — one line, ellipsised as a whole by .topic-dir. */
-.sched-next{color:#a8a8a8}
-.topic-item.running .sched-next{color:#38bdf8}
-.sched-last.bad{color:#f87171}
-.sched-row-tag{color:#8a8a8a}
+.sched-next{color:var(--fg-muted)}
+.topic-item.running .sched-next{color:var(--accent)}
+.sched-last.bad{color:var(--err)}
+.sched-row-tag{color:var(--fg-mid)}
 /* A task's labels, in its page's editor: the same chip the filter panel's Tags group draws, so a
    tag reads as one thing in both places. */
-.sched-tag{display:inline-flex;align-items:center;gap:3px;max-width:100%;padding:0 6px;border:1px solid var(--line);border-radius:9px;font-size:10.5px;color:#a8a8a8;background:#232323;line-height:1.55}
+.sched-tag{display:inline-flex;align-items:center;gap:3px;max-width:100%;padding:0 6px;border:1px solid var(--line);border-radius:9px;font-size:10.5px;color:var(--fg-muted);background:var(--surface-tag);line-height:1.55}
 .sched-tag .ic{width:9px;height:9px;flex:none;opacity:.8}
 .sched-tag>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sched-tag-x{display:inline-flex;align-items:center;background:none;border:0;color:inherit;cursor:pointer;padding:0 0 0 1px;line-height:1}
-.sched-tag-x:hover{color:#f87171}
+.sched-tag-x:hover{color:var(--err)}
 .sched-tag-x .ic{width:9px;height:9px;opacity:1}
 .sched-tag-edit{display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin-top:4px}
-.sched-tag-add{display:inline-flex;align-items:center;gap:3px;padding:0 6px;border:1px dashed #3a3a3a;border-radius:9px;color:var(--dim);line-height:1.55}
+.sched-tag-add{display:inline-flex;align-items:center;gap:3px;padding:0 6px;border:1px dashed var(--line-3);border-radius:9px;color:var(--dim);line-height:1.55}
 .sched-tag-add .ic{width:9px;height:9px;flex:none}
 .sched-tag-add input{width:64px;background:none;border:0;outline:0;color:var(--fg);font:inherit;font-size:10.5px;padding:0}
-.sched-tag-add:focus-within{border-color:#555;color:var(--fg)}
-#schedules-note{margin:0 2px 8px;font-size:12px;color:#fbbf24;overflow-wrap:anywhere}
+.sched-tag-add:focus-within{border-color:var(--line-strong);color:var(--fg)}
+#schedules-note{margin:0 2px 8px;font-size:12px;color:var(--warn);overflow-wrap:anywhere}
 .sched-empty{padding:8px 2px;font-size:12.5px;line-height:1.6;color:var(--dim)}
 .sched-none{display:flex;align-items:center;gap:8px}
-.sched-none .fb-clear{margin-left:auto;background:none;border:0;color:#38bdf8;font:inherit;font-size:12px;cursor:pointer;padding:2px 4px;border-radius:3px}
+.sched-none .fb-clear{margin-left:auto;background:none;border:0;color:var(--accent);font:inherit;font-size:12px;cursor:pointer;padding:2px 4px;border-radius:3px}
 .sched-none .fb-clear:hover{text-decoration:underline}
 /* ── The Reviews tab ─────────────────────────────────────────────────────────
    A review is a background event, not a control: one line per review, and the rest behind a tap. */
 #sched-reviews-list{display:flex;flex-direction:column;gap:6px}
-.rev-item{border:1px solid var(--line);border-radius:6px;padding:9px 10px;background:#1b1b1b;cursor:pointer;display:flex;flex-direction:column;gap:3px}
-.rev-item:hover{background:#1e1e1e}
-.rev-item.open{background:#202020;border-color:#3a3a3a}
+.rev-item{border:1px solid var(--line);border-radius:6px;padding:9px 10px;background:var(--surface-2);cursor:pointer;display:flex;flex-direction:column;gap:3px}
+.rev-item:hover{background:var(--surface-pop)}
+.rev-item.open{background:var(--hover-1);border-color:var(--line-3)}
 .rev-row{display:flex;align-items:center;gap:6px;min-width:0}
-.rev-dot{width:8px;height:8px;border-radius:50%;background:#555;flex:none}
-.rev-item.changed .rev-dot{background:#4ade80}
-.rev-item.preferences .rev-dot{background:#38bdf8}
-.rev-item.refused .rev-dot{background:#fbbf24}
-.rev-item.proposed .rev-dot{background:#8a8a8a}
-.rev-item.failed .rev-dot{background:#f87171}
+.rev-dot{width:8px;height:8px;border-radius:50%;background:var(--dot-rev);flex:none}
+.rev-item.changed .rev-dot{background:var(--ok)}
+.rev-item.preferences .rev-dot{background:var(--accent)}
+.rev-item.refused .rev-dot{background:var(--warn)}
+.rev-item.proposed .rev-dot{background:var(--fg-mid)}
+.rev-item.failed .rev-dot{background:var(--err)}
 .rev-topic{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;font-weight:600}
 .rev-when{flex:none;font-size:11px;color:var(--dim)}
-.rev-badge{flex:none;font-size:9.5px;font-weight:600;text-transform:uppercase;letter-spacing:.02em;padding:1px 4px;border-radius:999px;background:#2a2a2a;color:#a8a8a8}
-.rev-result{font-size:11.5px;color:#c9c9c9;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.rev-item.failed .rev-result{color:#f87171}
+.rev-badge{flex:none;font-size:9.5px;font-weight:600;text-transform:uppercase;letter-spacing:.02em;padding:1px 4px;border-radius:999px;background:var(--hover-3);color:var(--fg-muted)}
+.rev-result{font-size:11.5px;color:var(--fg-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rev-item.failed .rev-result{color:var(--err)}
 .rev-detail{margin-top:6px;padding-top:8px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:6px}
 .rev-label{font-size:10.5px;color:var(--dim);text-transform:uppercase;letter-spacing:.05em}
-.rev-change{font-size:12px;color:#d0d0d0;line-height:1.5;overflow-wrap:anywhere}
-.rev-change .rev-name{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#fff}
+.rev-change{font-size:12px;color:var(--fg-2);line-height:1.5;overflow-wrap:anywhere}
+.rev-change .rev-name{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--fg-hi)}
 .rev-reason{color:var(--dim)}
 .rev-status{font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;margin-left:5px}
-.rev-status.ok{color:#4ade80}
-.rev-status.bad{color:#fbbf24}
-.rev-status.unknown{color:#8a8a8a}
-.rev-undo{display:block;margin-top:2px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;color:#8a8a8a;overflow-wrap:anywhere;user-select:all}
-.rev-pref{font-size:12px;color:#d0d0d0;line-height:1.5;overflow-wrap:anywhere}
+.rev-status.ok{color:var(--ok)}
+.rev-status.bad{color:var(--warn)}
+.rev-status.unknown{color:var(--fg-mid)}
+.rev-undo{display:block;margin-top:2px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;color:var(--fg-mid);overflow-wrap:anywhere;user-select:all}
+.rev-pref{font-size:12px;color:var(--fg-2);line-height:1.5;overflow-wrap:anywhere}
 .rev-note{font-size:11.5px;color:var(--dim);line-height:1.5;overflow-wrap:anywhere}
-.rev-note.bad{color:#f87171}
+.rev-note.bad{color:var(--err)}
 .rev-open{background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:inherit;font-size:12px;padding:5px 10px;cursor:pointer;align-self:flex-start}
-.rev-open:hover{border-color:#3a3a3a;background:#2a2a2a}
-.rev-pending{border:1px solid #23404f;border-radius:6px;padding:9px 10px;background:#162028;display:flex;flex-direction:column;gap:7px}
+.rev-open:hover{border-color:var(--line-3);background:var(--hover-3)}
+.rev-pending{border:1px solid var(--pending-edge);border-radius:6px;padding:9px 10px;background:var(--pending-bg);display:flex;flex-direction:column;gap:7px}
 /* The two answers go under the suggestion, not beside it: the panel is never wider than 380px,
    and at 240px two buttons in the row would leave the text about 90px. */
 .rev-pitem{display:flex;flex-wrap:wrap;align-items:flex-start;gap:8px}
 .rev-pbody{flex:1 1 100%;min-width:0;display:flex;flex-direction:column;gap:2px}
-.rev-ptext{font-size:12.5px;color:#e5e5e5;line-height:1.5;overflow-wrap:anywhere}
+.rev-ptext{font-size:12.5px;color:var(--fg-bright);line-height:1.5;overflow-wrap:anywhere}
 .rev-pmeta{font-size:11px;color:var(--dim);overflow-wrap:anywhere}
 .rev-pacts{display:flex;flex:none;gap:6px;margin-left:auto}
-.rev-adopt{flex:none;background:#2a2a2a;border:1px solid #3a3a3a;border-radius:5px;color:var(--fg);font:inherit;font-size:11.5px;padding:3px 8px;cursor:pointer}
-.rev-adopt:hover:not(:disabled){background:#333;border-color:#4a4a4a}
+.rev-adopt{flex:none;background:var(--hover-3);border:1px solid var(--line-3);border-radius:5px;color:var(--fg);font:inherit;font-size:11.5px;padding:3px 8px;cursor:pointer}
+.rev-adopt:hover:not(:disabled){background:var(--line-2);border-color:var(--line-hi)}
 .rev-adopt:disabled{opacity:.5;cursor:default}
 .rev-dismiss{flex:none;background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--dim);font:inherit;font-size:11.5px;padding:3px 8px;cursor:pointer}
-.rev-dismiss:hover:not(:disabled){color:var(--fg);border-color:#3a3a3a}
+.rev-dismiss:hover:not(:disabled){color:var(--fg);border-color:var(--line-3)}
 .rev-dismiss:disabled{opacity:.5;cursor:default}
 /* ── The skills page ─────────────────────────────────────────────────────────
    A window over the transcript rather than a column: an editor needs width, and a history row
@@ -597,45 +599,45 @@ body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,
    panel is 240–320px wide: that had room to show a prompt, not to edit one. One layer above the
    other windows: it is opened FROM the panel, and on a phone the panel is a drawer at z-index 20
    that comes later in the document — at 20 the drawer covered the page and took its taps. */
-#task-page{position:fixed;inset:0;z-index:21;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;padding:24px}
+#task-page{position:fixed;inset:0;z-index:21;background:var(--scrim-2);display:flex;align-items:center;justify-content:center;padding:24px}
 #task-page[hidden]{display:none}
-#task-box{display:flex;flex-direction:column;width:min(760px,100%);max-height:100%;overflow:hidden;background:var(--bg);border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 30px rgba(0,0,0,.5)}
+#task-box{display:flex;flex-direction:column;width:min(760px,100%);max-height:100%;overflow:hidden;background:var(--bg);border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 30px var(--shadow)}
 #task-bar{display:flex;align-items:center;gap:8px;padding:6px 10px 6px 16px;border-bottom:1px solid var(--line);min-height:var(--headh)}
 #task-title{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #task-sub{font-size:11.5px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #task-close{font-size:18px;padding:6px 10px}
 #task-body{flex:1;min-height:0;overflow-y:auto;padding:12px 16px calc(16px + env(safe-area-inset-bottom,0px))}
 #task-note{margin:0 0 12px;padding:8px 12px;border-radius:6px;border:1px solid var(--line);border-left-width:3px;font-size:12.5px;line-height:1.5;white-space:pre-line;overflow-wrap:anywhere}
-#task-note.error{border-color:rgba(248,113,113,.35);border-left-color:#f87171;background:#261616;color:#fecaca}
-#task-note.ok{border-color:rgba(74,222,128,.35);border-left-color:#4ade80;background:#15201a}
+#task-note.error{border-color:var(--err-border-2);border-left-color:var(--err);background:var(--err-bg);color:var(--err-soft)}
+#task-note.ok{border-color:var(--ok-border);border-left-color:var(--ok);background:var(--ok-bg)}
 .tp-empty{padding:6px 0;font-size:12.5px;color:var(--dim)}
 .tp-label{display:block;margin-top:16px;font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.05em}
-.tp-label .tp-n{margin-left:6px;color:#6b7683}
+.tp-label .tp-n{margin-left:6px;color:var(--fg-slate)}
 .tp-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:0 18px}
-.tp-val{margin-top:4px;font-size:12.5px;color:#d0d0d0;overflow-wrap:anywhere}
+.tp-val{margin-top:4px;font-size:12.5px;color:var(--fg-2);overflow-wrap:anywhere}
 /* Also on a .skill-field, whose font:inherit comes later in this sheet at the same weight. */
 .tp-mono,.skill-field.tp-mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px}
-.tp-body{margin-top:6px;max-height:320px;overflow-y:auto;white-space:pre-wrap;overflow-wrap:anywhere;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;line-height:1.5;color:#c9c9c9;background:#111;border:1px solid var(--line);border-radius:5px;padding:8px 10px}
+.tp-body{margin-top:6px;max-height:320px;overflow-y:auto;white-space:pre-wrap;overflow-wrap:anywhere;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;line-height:1.5;color:var(--fg-3);background:var(--bg-code);border:1px solid var(--line);border-radius:5px;padding:8px 10px}
 .tp-meta{margin-top:12px;font-size:11.5px;color:var(--dim);overflow-wrap:anywhere}
-.tp-locked{margin-top:10px;font-size:12px;color:#fbbf24;overflow-wrap:anywhere}
+.tp-locked{margin-top:10px;font-size:12px;color:var(--warn);overflow-wrap:anywhere}
 .tp-list{margin-top:6px;display:flex;flex-direction:column;gap:2px}
 /* The task's sessions are topic rows, legends and all, on the window's own background. */
 .tp-list.tp-topics{margin-top:10px;gap:6px;--behind:var(--bg)}
 .tp-run{display:flex;align-items:flex-start;gap:8px;padding:6px 9px;border-radius:5px;font-size:12px;line-height:1.45}
-.tp-run:hover{background:#1e1e1e}
+.tp-run:hover{background:var(--surface-pop)}
 .tp-run>.topic-dot{margin-top:5px}
 .tp-run-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
-.tp-run-head{color:#bdbdbd;overflow-wrap:anywhere}
-.tp-run-status{font-weight:600;color:#d0d0d0}
-.tp-run-status.bad{color:#f87171}
-.tp-run-err{color:#f8a5a5;overflow-wrap:anywhere}
+.tp-run-head{color:var(--fg-head);overflow-wrap:anywhere}
+.tp-run-status{font-weight:600;color:var(--fg-2)}
+.tp-run-status.bad{color:var(--err)}
+.tp-run-err{color:var(--err-soft-3);overflow-wrap:anywhere}
 .tp-run-where{flex:none;max-width:45%;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.tp-run-open{flex:none;background:none;border:1px solid var(--line);border-radius:5px;color:#7dd3fc;font:inherit;font-size:11.5px;padding:2px 9px;cursor:pointer}
-.tp-run-open:hover{border-color:#38bdf8;background:rgba(56,189,248,.08)}
+.tp-run-open{flex:none;background:none;border:1px solid var(--line);border-radius:5px;color:var(--accent-soft);font:inherit;font-size:11.5px;padding:2px 9px;cursor:pointer}
+.tp-run-open:hover{border-color:var(--accent);background:var(--accent-tint)}
 .tp-hint{margin-top:4px;font-size:11.5px;line-height:1.45;color:var(--dim)}
 .tp-row2{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr);gap:0 10px}
 .tp-when{margin-top:8px}
-.tp-text{display:block;width:100%;box-sizing:border-box;margin-top:8px;min-height:180px;resize:vertical;background:#111;border:1px solid var(--line);border-radius:5px;color:var(--fg);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;line-height:1.5;padding:10px;white-space:pre-wrap;overflow-wrap:anywhere}
+.tp-text{display:block;width:100%;box-sizing:border-box;margin-top:8px;min-height:180px;resize:vertical;background:var(--bg-code);border:1px solid var(--line);border-radius:5px;color:var(--fg);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;line-height:1.5;padding:10px;white-space:pre-wrap;overflow-wrap:anywhere}
 select.skill-field{appearance:auto}
 /* The form's two segmented choices — what it runs, and the session — and the id field "Another
    chat…" opens under "Posts to". */
@@ -644,44 +646,44 @@ select.skill-field{appearance:auto}
 .tp-acts{margin-bottom:4px}
 .tp-acts.editor{margin-top:16px}
 .tp-acts button .ic{margin-right:4px}
-.tp-acts button.primary{background:#1d4ed8;border-color:#2563eb;color:#fff}
-.tp-acts button.primary:hover:not(:disabled){background:#2563eb;border-color:#3b82f6}
-#skills{position:fixed;inset:0;z-index:20;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;padding:24px}
+.tp-acts button.primary{background:var(--primary);border-color:var(--primary-edge);color:var(--fg-on-accent)}
+.tp-acts button.primary:hover:not(:disabled){background:var(--primary-hover);border-color:var(--primary-hover-edge)}
+#skills{position:fixed;inset:0;z-index:20;background:var(--scrim-2);display:flex;align-items:center;justify-content:center;padding:24px}
 #skills[hidden]{display:none}
-#skills-box{display:flex;flex-direction:column;width:min(980px,100%);max-height:100%;overflow:hidden;background:var(--bg);border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 30px rgba(0,0,0,.5)}
+#skills-box{display:flex;flex-direction:column;width:min(980px,100%);max-height:100%;overflow:hidden;background:var(--bg);border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 30px var(--shadow)}
 #skills-bar{display:flex;align-items:center;gap:8px;padding:6px 10px 6px 16px;border-bottom:1px solid var(--line);min-height:var(--headh);font-size:13px}
 #skills-title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
 #skills-count{flex:none;font-size:11.5px;color:var(--dim)}
 #skills-new{background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:inherit;font-size:12px;padding:5px 10px;cursor:pointer}
-#skills-new:hover{border-color:#3a3a3a;background:#2a2a2a}
+#skills-new:hover{border-color:var(--line-3);background:var(--hover-3)}
 #skills-refresh{font-size:15px}
 #skills-refresh:disabled{opacity:.45;cursor:default}
 #skills-close{font-size:18px;padding:6px 10px}
 #skills-body{flex:1;min-height:0;overflow-y:auto;padding:12px 16px calc(16px + env(safe-area-inset-bottom,0px))}
 /* Sticky, because the switches are on every row of a long list: a refusal (a description too long
    for a resident skill) written above the first row would be out of sight of the row tapped. */
-#skills-note{position:sticky;top:-12px;z-index:1;margin:-12px -16px 10px;padding:10px 16px;background:var(--bg);border-bottom:1px solid var(--line);font-size:12.5px;color:#fbbf24;overflow-wrap:anywhere}
+#skills-note{position:sticky;top:-12px;z-index:1;margin:-12px -16px 10px;padding:10px 16px;background:var(--bg);border-bottom:1px solid var(--line);font-size:12.5px;color:var(--warn);overflow-wrap:anywhere}
 /* ── The git window ──────────────────────────────────────────────────────────
    What changed in the repository the topic's directory sits in: the file list, one file's diff,
    and line comments that go back into the composer. A window over the transcript like Skills',
    because a diff needs width a message never had. It reads through the daemon on whichever
    machine the agent runs; nothing here runs a command. Read-only: there is no stage or commit. */
-#git{position:fixed;inset:0;z-index:20;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;padding:24px}
+#git{position:fixed;inset:0;z-index:20;background:var(--scrim-2);display:flex;align-items:center;justify-content:center;padding:24px}
 #git[hidden]{display:none}
-#git-box{display:flex;flex-direction:column;width:min(1180px,100%);height:100%;max-height:100%;overflow:hidden;background:var(--bg);border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 30px rgba(0,0,0,.5)}
+#git-box{display:flex;flex-direction:column;width:min(1180px,100%);height:100%;max-height:100%;overflow:hidden;background:var(--bg);border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 30px var(--shadow)}
 #git-bar{display:flex;align-items:center;flex-wrap:wrap;gap:6px 8px;padding:6px 10px 6px 16px;border-bottom:1px solid var(--line);min-height:var(--headh);font-size:13px}
 #git-title{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:34ch}
 #git-branch{font-size:11.5px;color:var(--dim);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:26ch}
-#git-modes{display:flex;gap:2px;background:#161616;border:1px solid var(--line);border-radius:6px;padding:2px}
+#git-modes{display:flex;gap:2px;background:var(--bg-bar);border:1px solid var(--line);border-radius:6px;padding:2px}
 #git-modes[hidden]{display:none}
 .git-mode{background:none;border:0;border-radius:4px;color:var(--dim);font:inherit;font-size:12px;padding:4px 9px;cursor:pointer}
 .git-mode:hover{color:var(--fg)}
-.git-mode.on{background:#2a2a2a;color:var(--fg)}
+.git-mode.on{background:var(--hover-3);color:var(--fg)}
 #git-base{appearance:auto;max-width:22ch;background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:inherit;font-size:12px;padding:4px 6px}
 #git-base[hidden]{display:none}
 #git-spacer{flex:1;min-width:8px}
 #git-layout{background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:inherit;font-size:12px;padding:4px 9px;cursor:pointer}
-#git-layout:hover{border-color:#3a3a3a;background:#2a2a2a}
+#git-layout:hover{border-color:var(--line-3);background:var(--hover-3)}
 #git-layout[hidden]{display:none}
 #git-refresh,#git-close{font-size:18px;padding:6px 10px}
 #git-refresh:disabled{opacity:.45;cursor:default}
@@ -689,72 +691,72 @@ select.skill-field{appearance:auto}
 #git-files{width:300px;flex:none;min-height:0;overflow-y:auto;border-right:1px solid var(--line);padding:6px}
 .git-empty{padding:10px 4px;font-size:12.5px;line-height:1.6;color:var(--dim);overflow-wrap:anywhere}
 .git-file{display:flex;align-items:center;gap:7px;padding:5px 7px;border-radius:5px;cursor:pointer;font-size:12px}
-.git-file:hover{background:#1e1e1e}
-.git-file.on{background:#252525}
+.git-file:hover{background:var(--surface-pop)}
+.git-file.on{background:var(--active)}
 .gf-status{flex:none;width:17px;text-align:center;font-weight:600;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
-.gf-status.added{color:#4ade80}
-.gf-status.deleted{color:#f87171}
-.gf-status.modified{color:#fbbf24}
+.gf-status.added{color:var(--ok)}
+.gf-status.deleted{color:var(--err)}
+.gf-status.modified{color:var(--warn)}
 .gf-path{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px}
 .gf-stat{flex:none;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;color:var(--dim)}
 .gf-nostat{flex:none;font-size:10.5px;font-style:italic;color:var(--dim);white-space:nowrap}
-.gf-add{color:#4ade80}
-.gf-del{color:#f87171}
-.gf-edit{flex:none;background:none;border:1px solid var(--line);border-radius:4px;color:#7dd3fc;font:inherit;font-size:10.5px;padding:1px 6px;cursor:pointer}
-.gf-edit:hover{border-color:#38bdf8;background:rgba(56,189,248,.08)}
+.gf-add{color:var(--ok)}
+.gf-del{color:var(--err)}
+.gf-edit{flex:none;background:none;border:1px solid var(--line);border-radius:4px;color:var(--accent-soft);font:inherit;font-size:10.5px;padding:1px 6px;cursor:pointer}
+.gf-edit:hover{border-color:var(--accent);background:var(--accent-tint)}
 /* Commits: the same left column, listing history instead of changed files, and one commit opened
    in place — the way back, its header, then its files. */
 .git-commit{display:flex;flex-direction:column;gap:2px;padding:5px 7px;border-radius:5px;cursor:pointer}
-.git-commit:hover{background:#1e1e1e}
-.git-commit.on{background:#252525}
+.git-commit:hover{background:var(--surface-pop)}
+.git-commit.on{background:var(--active)}
 .gc-subject{font-size:12px;line-height:1.45;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .gc-meta{display:flex;gap:8px;font-size:10.5px;color:var(--dim);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:nowrap}
-.gc-sha{flex:none;color:#7dd3fc}
+.gc-sha{flex:none;color:var(--accent-soft)}
 .gc-author{min-width:0;overflow:hidden;text-overflow:ellipsis}
 .gc-when{flex:none;margin-left:auto}
 .git-more{display:block;width:100%;margin:4px 0 2px;background:none;border:1px dashed var(--line);border-radius:5px;color:var(--dim);font:inherit;font-size:11.5px;padding:5px;cursor:pointer}
-.git-more:hover{color:var(--fg);border-color:#3a3a3a}
+.git-more:hover{color:var(--fg);border-color:var(--line-3)}
 .git-more:disabled{opacity:.45;cursor:default}
-.git-back{display:flex;align-items:center;gap:3px;padding:4px 7px;border-radius:5px;color:#7dd3fc;font-size:11.5px;cursor:pointer}
-.git-back:hover{background:#1e1e1e}
+.git-back{display:flex;align-items:center;gap:3px;padding:4px 7px;border-radius:5px;color:var(--accent-soft);font-size:11.5px;cursor:pointer}
+.git-back:hover{background:var(--surface-pop)}
 .git-back .ic{width:13px;height:13px}
 .git-commit-head{padding:6px 7px 8px;border-bottom:1px solid var(--line);margin-bottom:6px}
 .gch-subject{font-size:12.5px;line-height:1.45;overflow-wrap:anywhere}
 .gch-meta{display:flex;flex-wrap:wrap;gap:2px 8px;margin-top:3px;font-size:10.5px;color:var(--dim);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
-.gch-sha{color:#7dd3fc}
-.gch-toggle{margin-top:6px;background:none;border:0;padding:0;color:#7dd3fc;font:inherit;font-size:11px;cursor:pointer}
-.gch-body{margin:6px 0 0;padding:6px 8px;max-height:180px;overflow:auto;background:#161616;border-radius:5px;white-space:pre-wrap;overflow-wrap:anywhere;font-size:11.5px;line-height:1.5;color:#c9c9c9}
+.gch-sha{color:var(--accent-soft)}
+.gch-toggle{margin-top:6px;background:none;border:0;padding:0;color:var(--accent-soft);font:inherit;font-size:11px;cursor:pointer}
+.gch-body{margin:6px 0 0;padding:6px 8px;max-height:180px;overflow:auto;background:var(--bg-bar);border-radius:5px;white-space:pre-wrap;overflow-wrap:anywhere;font-size:11.5px;line-height:1.5;color:var(--fg-3)}
 /* The pane's own empty state, in the middle of the space the diff would use: one small line in
    the list beside a blank half-window said neither which comparison was empty nor why. */
 .git-blank{height:100%;box-sizing:border-box;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:24px;text-align:center}
 .gb-title{font-size:13px;color:var(--fg)}
 .gb-sub{max-width:48ch;font-size:12px;line-height:1.6;color:var(--dim);overflow-wrap:anywhere}
 .git-blank button{background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:inherit;font-size:12px;padding:5px 12px;cursor:pointer}
-.git-blank button:hover{border-color:#3a3a3a;background:#2a2a2a}
+.git-blank button:hover{border-color:var(--line-3);background:var(--hover-3)}
 #git-pane{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column}
 #git-note{margin:8px 10px 0;padding:7px 10px;border-radius:6px;border:1px solid var(--line);font-size:12px;line-height:1.5;overflow-wrap:anywhere;color:var(--dim)}
 #git-note[hidden]{display:none}
-#git-note.bad{color:#fca5a5;border-color:rgba(248,113,113,.35);background:#261616}
-#git-sel{display:flex;align-items:center;gap:8px;padding:6px 10px;border-bottom:1px solid var(--line);font-size:12px;color:#9fb3c8}
+#git-note.bad{color:var(--err-soft-2);border-color:var(--err-border-2);background:var(--err-bg)}
+#git-sel{display:flex;align-items:center;gap:8px;padding:6px 10px;border-bottom:1px solid var(--line);font-size:12px;color:var(--accent-sel)}
 #git-sel[hidden]{display:none}
 #git-sel span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #git-sel button{flex:none;background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:inherit;font-size:12px;padding:4px 10px;cursor:pointer}
-#git-sel button:hover{border-color:#3a3a3a;background:#2a2a2a}
+#git-sel button:hover{border-color:var(--line-3);background:var(--hover-3)}
 #git-diff{flex:1;min-height:0;overflow:auto;padding:8px}
-.git-patch{margin:0;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;line-height:1.5;white-space:pre;color:#c9c9c9}
+.git-patch{margin:0;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;line-height:1.5;white-space:pre;color:var(--fg-3)}
 /* A patch's lines, as text: the panel's fallback and a diff fence in a reply alike, in the code
    view's own added and removed colours (codeview/app.ts), so the three read as one thing. */
-.git-patch .pa,.cb .pa{color:#4ade80;background:rgba(74,222,128,.08)}
-.git-patch .pd,.cb .pd{color:#f87171;background:rgba(248,113,113,.08)}
-.git-patch .ph,.cb .ph{color:#7dd3fc}
+.git-patch .pa,.cb .pa{color:var(--ok);background:var(--ok-tint)}
+.git-patch .pd,.cb .pd{color:var(--err);background:var(--err-tint)}
+.git-patch .ph,.cb .ph{color:var(--accent-soft)}
 #git-comment{flex:none;border-top:1px solid var(--line);padding:8px 10px calc(8px + env(safe-area-inset-bottom,0px));display:flex;flex-direction:column;gap:6px}
 #git-comment[hidden]{display:none}
 #git-comment-what{font-size:11.5px;color:var(--dim);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;overflow-wrap:anywhere}
-#git-comment-text{width:100%;box-sizing:border-box;min-height:72px;resize:vertical;background:#111;border:1px solid var(--line);border-radius:5px;color:var(--fg);font:inherit;font-size:13px;line-height:1.5;padding:8px 10px}
+#git-comment-text{width:100%;box-sizing:border-box;min-height:72px;resize:vertical;background:var(--bg-code);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:inherit;font-size:13px;line-height:1.5;padding:8px 10px}
 #git-comment-acts{display:flex;justify-content:flex-end;gap:8px}
 #git-comment-acts button{background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:inherit;font-size:12px;padding:5px 12px;cursor:pointer}
-#git-comment-acts button.primary{background:#1d4ed8;border-color:#2563eb;color:#fff}
-#git-comment-acts button.primary:hover{background:#2563eb;border-color:#3b82f6}
+#git-comment-acts button.primary{background:var(--primary);border-color:var(--primary-edge);color:var(--fg-on-accent)}
+#git-comment-acts button.primary:hover{background:var(--primary-hover);border-color:var(--primary-hover-edge)}
 @media (max-width:640px){
   #git{padding:0}
   #git-box{border:0;border-radius:0}
@@ -796,7 +798,7 @@ select.skill-field{appearance:auto}
 .sb-tab{flex:0 1 auto;min-width:0;display:inline-flex;align-items:center;gap:5px;overflow:hidden;white-space:nowrap;background:none;border:0;border-radius:0;padding:0 5px;margin:0;color:var(--dim);font:inherit;font-size:12.5px;letter-spacing:0;text-transform:none;cursor:pointer;box-shadow:inset 0 -2px 0 transparent;transition:color .15s,box-shadow .15s}
 .sb-tab:first-child{margin-left:-5px}
 .sb-tab:hover{color:var(--fg);border:0}
-.sb-tab.on{color:var(--fg);box-shadow:inset 0 -2px 0 #38bdf8}
+.sb-tab.on{color:var(--fg);box-shadow:inset 0 -2px 0 var(--accent)}
 .sb-tab .ic{display:none;width:15px;height:15px}
 #sidebar-header{container-type:inline-size}
 @container (max-width:210px){ .sb-tab .ic{display:block} .sb-word{display:none} .sb-tab{padding:0 9px} .sb-tab:first-child{margin-left:-9px} }
@@ -806,16 +808,16 @@ select.skill-field{appearance:auto}
 #history-count:empty{display:none}
 #history-body{flex:1;min-height:0;overflow-y:auto;padding:8px;display:flex;flex-direction:column;gap:3px}
 #history-more{align-self:center;background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:inherit;font-size:12px;padding:7px 14px;cursor:pointer;margin:6px 0 8px}
-#history-more:hover{border-color:#3a3a3a;background:#2a2a2a}
+#history-more:hover{border-color:var(--line-3);background:var(--hover-3)}
 #history-list{display:flex;flex-direction:column;gap:3px}
 #history-list .skills-empty{padding:12px 4px;font-size:12px}
-.hist-note{font-size:12px;line-height:1.5;color:#fbbf24;background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.25);border-radius:6px;padding:8px 10px;overflow-wrap:anywhere}
-.hist-note.bad{color:#f87171;background:rgba(248,113,113,.08);border-color:rgba(248,113,113,.25)}
+.hist-note{font-size:12px;line-height:1.5;color:var(--warn);background:var(--warn-tint);border:1px solid var(--warn-border);border-radius:6px;padding:8px 10px;overflow-wrap:anywhere}
+.hist-note.bad{color:var(--err);background:var(--err-tint);border-color:var(--err-border)}
 /* A row is drawn like a topic row — the same padding, radius and lit state — so the two tabs read
    as one list of conversations in two scopes. */
-.hist-item{display:flex;flex-direction:column;gap:2px;padding:7px 9px;border:1px solid transparent;border-radius:5px;background:#171717;cursor:pointer;transition:background .15s}
-.hist-item:hover{background:#222}
-.hist-item.on{background:#252525;border-color:var(--line)}
+.hist-item{display:flex;flex-direction:column;gap:2px;padding:7px 9px;border:1px solid transparent;border-radius:5px;background:var(--bg-panel);cursor:pointer;transition:background .15s}
+.hist-item:hover{background:var(--hover-2)}
+.hist-item.on{background:var(--active);border-color:var(--line)}
 .hist-top{display:flex;align-items:center;gap:4px;min-width:0}
 .hist-top .hist-title{flex:1;min-width:0}
 .hist-copy{flex:none;padding:3px 4px;color:var(--dim);font-size:12px}
@@ -824,7 +826,7 @@ select.skill-field{appearance:auto}
 .hist-title{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--fg)}
 .hist-meta{font-size:11px;color:var(--dim);overflow-wrap:anywhere}
 .hist-key{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:10.5px}
-.hist-excerpt{font-size:11.5px;color:#c9c9c9;line-height:1.45;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.hist-excerpt{font-size:11.5px;color:var(--fg-3);line-height:1.45;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
 /* The conversation in the transcript's place. #lib-log is #log's twin; #chat.lib swaps them, and the
    composer for the read-only bar. It wins over the terminal too: a record parks the panel rather
    than sharing the screen with it (paintFrames is where the frame's on class is decided). */
@@ -846,16 +848,16 @@ select.skill-field{appearance:auto}
 .lib-ro{display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;font-size:12.5px;line-height:1.5;color:var(--dim)}
 #lib-why{flex:1 1 260px;min-width:0}
 .lib-acts{display:flex;gap:8px;flex:none;margin-left:auto}
-#lib-topic{color:#38bdf8}
+#lib-topic{color:var(--accent)}
 /* /setting as a page of its own, opened from the Menu or by typing the command, rather
    than a screen inserted into the transcript. A window over the conversation like the reader and
    the skills page, and drawn from the same message the daemon already sends (settingsScreen): the
    rows, the values, the validation and the write all stay on the daemon's side. The bar says where
    these settings live — config.yaml, so every topic — because the old one named the topic it was
    opened in, which read as though they were that topic's (2026-11-05). */
-#settings-page{position:fixed;inset:0;z-index:20;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;padding:24px}
+#settings-page{position:fixed;inset:0;z-index:20;background:var(--scrim-2);display:flex;align-items:center;justify-content:center;padding:24px}
 #settings-page[hidden]{display:none}
-#settings-box{display:flex;flex-direction:column;width:min(900px,100%);max-height:100%;overflow:hidden;background:var(--bg);border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 30px rgba(0,0,0,.5)}
+#settings-box{display:flex;flex-direction:column;width:min(900px,100%);max-height:100%;overflow:hidden;background:var(--bg);border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 30px var(--shadow)}
 #settings-bar{display:flex;align-items:center;gap:8px;padding:6px 10px 6px 16px;border-bottom:1px solid var(--line);min-height:var(--headh)}
 .set-heading{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px;line-height:1.25}
 #settings-title{font-size:13px;font-weight:600}
@@ -864,15 +866,15 @@ select.skill-field{appearance:auto}
 #settings-body{flex:1;min-height:0;overflow-y:auto;padding:14px 18px calc(18px + env(safe-area-inset-bottom,0px))}
 #settings-body .set-loading{padding:8px 2px;font-size:12.5px;color:var(--dim)}
 .skills-empty{padding:10px 2px;font-size:12.5px;line-height:1.6;color:var(--dim)}
-.skill-item{border:1px solid var(--line);border-radius:6px;padding:10px 12px;background:#1b1b1b;cursor:pointer;display:flex;flex-direction:column;gap:3px;margin-bottom:6px}
-.skill-item:hover{background:#1e1e1e}
+.skill-item{border:1px solid var(--line);border-radius:6px;padding:10px 12px;background:var(--surface-2);cursor:pointer;display:flex;flex-direction:column;gap:3px;margin-bottom:6px}
+.skill-item:hover{background:var(--surface-pop)}
 .skill-row{display:flex;align-items:center;gap:8px;min-width:0}
 .skill-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;font-weight:600}
-.skill-state{flex:none;font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;padding:1px 6px;border-radius:999px;background:#262626;color:#9a9a9a}
-.skill-state.expired{color:#fbbf24;background:rgba(251,191,36,.12)}
-.skill-pin{flex:none;font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:#fbbf24}
+.skill-state{flex:none;font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;padding:1px 6px;border-radius:999px;background:var(--active-2);color:var(--fg-soft)}
+.skill-state.expired{color:var(--warn);background:var(--warn-tint-2)}
+.skill-pin{flex:none;font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--warn)}
 .skill-cat{flex:none;font-size:11px;color:var(--dim)}
-.skill-warn{font-size:11.5px;color:#fbbf24;overflow-wrap:anywhere;margin-top:2px}
+.skill-warn{font-size:11.5px;color:var(--warn);overflow-wrap:anywhere;margin-top:2px}
 /* A list row: what the skill is on the left, its two switches on the right — on/off, and resident
    or library — so neither needs the skill opened first. The rows are grouped by where they stand
    (resident, library, off), which is what the two switches decide. */
@@ -892,46 +894,46 @@ select.skill-field{appearance:auto}
 /* Library and Resident as two tabs, each counting its skills; an off skill stays in its tier's tab. */
 .skill-tabs{display:flex;gap:4px;margin:0 0 8px}
 .skill-tab{flex:none;display:inline-flex;align-items:center;gap:6px;padding:5px 14px;border:1px solid var(--line);border-radius:5px;background:var(--field);color:var(--dim);font:inherit;font-size:12px;cursor:pointer}
-.skill-tab:hover{color:var(--fg);border-color:#3a3a3a}
-.skill-tab.on{background:#2b3a4c;color:#fff;font-weight:600;border-color:#38bdf8}
-.skill-tab-n{font-weight:500;color:#6b7683}
-.skill-tab.on .skill-tab-n{color:#94a3b8}
+.skill-tab:hover{color:var(--fg);border-color:var(--line-3)}
+.skill-tab.on{background:var(--accent-tab-bg);color:var(--accent-tab-fg);font-weight:600;border-color:var(--accent)}
+.skill-tab-n{font-weight:500;color:var(--fg-slate)}
+.skill-tab.on .skill-tab-n{color:var(--accent-tab-count)}
 .skill-pane>.skill-group-hint{margin:0 0 8px}
 .skill-seg{display:inline-flex;border:1px solid var(--line);border-radius:5px;overflow:hidden}
 .skill-seg button{background:var(--field);border:0;color:var(--dim);font:inherit;font-size:12px;padding:4px 9px;cursor:pointer}
 .skill-seg button+button{border-left:1px solid var(--line)}
-.skill-seg button:hover:not(:disabled){color:var(--fg);background:#2a2a2a}
-.skill-seg button[aria-pressed="true"]{background:rgba(96,165,250,.16);color:#bfdbfe;cursor:default}
+.skill-seg button:hover:not(:disabled){color:var(--fg);background:var(--hover-3)}
+.skill-seg button[aria-pressed="true"]{background:var(--accent-tint-seg);color:var(--accent-seg);cursor:default}
 .skill-seg button:disabled{opacity:.45;cursor:default}
 .skill-switch{display:inline-flex;align-items:center;gap:6px;background:none;border:0;padding:4px 0;color:var(--dim);font:inherit;font-size:12px;cursor:pointer;min-width:58px}
-.skill-knob{position:relative;flex:none;width:30px;height:17px;border-radius:999px;background:#3a3a3a;transition:background .15s}
-.skill-knob::after{content:"";position:absolute;top:2px;left:2px;width:13px;height:13px;border-radius:50%;background:#9a9a9a;transition:transform .15s,background .15s}
+.skill-knob{position:relative;flex:none;width:30px;height:17px;border-radius:999px;background:var(--line-3);transition:background .15s}
+.skill-knob::after{content:"";position:absolute;top:2px;left:2px;width:13px;height:13px;border-radius:50%;background:var(--fg-soft);transition:transform .15s,background .15s}
 .skill-switch[aria-checked="true"]{color:var(--fg)}
-.skill-switch[aria-checked="true"] .skill-knob{background:#16a34a}
-.skill-switch[aria-checked="true"] .skill-knob::after{transform:translateX(13px);background:#fff}
+.skill-switch[aria-checked="true"] .skill-knob{background:var(--ok-solid)}
+.skill-switch[aria-checked="true"] .skill-knob::after{transform:translateX(13px);background:var(--fg-on-accent)}
 .skill-searches{margin-top:14px}
 .skill-search{font-size:12px;padding:3px 0;overflow-wrap:anywhere}
 .skill-search small{color:var(--dim);margin-left:6px}
-.skill-desc{font-size:12.5px;color:#d0d0d0;line-height:1.45;overflow-wrap:anywhere}
+.skill-desc{font-size:12.5px;color:var(--fg-2);line-height:1.45;overflow-wrap:anywhere}
 .skill-meta{font-size:11.5px;color:var(--dim);overflow-wrap:anywhere}
-.skill-problem{font-size:11.5px;color:#f87171;overflow-wrap:anywhere;margin-top:2px}
+.skill-problem{font-size:11.5px;color:var(--err);overflow-wrap:anywhere;margin-top:2px}
 .skill-head{display:flex;align-items:flex-start;gap:10px;flex-wrap:wrap}
 .skill-head .skill-name{flex:1 1 220px;font-size:15px}
 .skill-acts,.tp-acts{display:flex;flex-wrap:wrap;gap:6px}
 .skill-acts.editor{margin-top:8px}
 .skill-acts button,.tp-acts button{display:inline-flex;align-items:center;background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:inherit;font-size:12px;padding:5px 10px;cursor:pointer}
-.skill-acts button:hover:not(:disabled),.tp-acts button:hover:not(:disabled){border-color:#3a3a3a;background:#2a2a2a}
+.skill-acts button:hover:not(:disabled),.tp-acts button:hover:not(:disabled){border-color:var(--line-3);background:var(--hover-3)}
 .skill-acts button:disabled,.tp-acts button:disabled{opacity:.45;cursor:default}
 .skill-acts button.danger,.tp-acts button.danger{color:var(--dim);border-color:transparent;background:none}
-.skill-acts button.danger:hover:not(:disabled),.tp-acts button.danger:hover:not(:disabled){color:#f87171;border-color:rgba(248,113,113,.4);background:rgba(248,113,113,.12)}
+.skill-acts button.danger:hover:not(:disabled),.tp-acts button.danger:hover:not(:disabled){color:var(--err);border-color:var(--err-border-3);background:var(--err-tint-2)}
 .skill-section{margin-top:16px;font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.05em}
 .skill-files{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
 .skill-file{background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:inherit;font-size:12px;padding:5px 9px;cursor:pointer;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
-.skill-file.on{border-color:#3a6ea5;background:rgba(56,189,248,.12);color:#bae6fd}
+.skill-file.on{border-color:var(--accent-solid);background:var(--accent-tint-2);color:var(--accent-file)}
 .skill-file small{color:var(--dim);margin-left:6px}
 .skill-field{display:block;width:100%;box-sizing:border-box;margin-top:8px;background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:inherit;font-size:12.5px;padding:8px 10px}
 .skill-field[readonly]{color:var(--dim)}
-.skill-text{width:100%;box-sizing:border-box;margin-top:8px;min-height:280px;resize:vertical;background:#111;border:1px solid var(--line);border-radius:5px;color:var(--fg);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;line-height:1.5;padding:10px;white-space:pre;overflow-wrap:normal;overflow-x:auto}
+.skill-text{width:100%;box-sizing:border-box;margin-top:8px;min-height:280px;resize:vertical;background:var(--bg-code);border:1px solid var(--line);border-radius:5px;color:var(--fg);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;line-height:1.5;padding:10px;white-space:pre;overflow-wrap:normal;overflow-x:auto}
 .skill-new-form{cursor:default}
 .skill-history{margin-top:6px;border-top:1px solid var(--line)}
 .skill-hist{display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--line);font-size:12px;flex-wrap:wrap}
@@ -959,9 +961,9 @@ select.skill-field{appearance:auto}
    four identical bars read as a broken layout rather than as text that has not arrived. */
 .sk{margin:0 0 18px}
 .sk.own{background:var(--own);border-left:2px solid var(--own-edge);border-radius:0 6px 6px 0;padding:9px 12px}
-.sk i{display:block;height:11px;margin-bottom:7px;border-radius:3px;background:#242424;animation:breathe 1.6s ease-in-out infinite}
+.sk i{display:block;height:11px;margin-bottom:7px;border-radius:3px;background:var(--surface-skel);animation:breathe 1.6s ease-in-out infinite}
 /* Inside the tinted panel a neutral grey bar disappears, the same way --line borders do there. */
-.sk.own i{background:#2b333e}
+.sk.own i{background:var(--surface-skel-own)}
 .sk i:last-child{margin-bottom:0}
 /* Its own swing rather than the running-topic dot's pulse: that one fades to .3, which on a 6px
    dot reads as blinking and on an 11px bar over this background reads as gone. Half opacity is
@@ -999,28 +1001,28 @@ select.skill-field{appearance:auto}
 .launch-head{text-align:center;margin-bottom:26px}
 .launch-title{font-size:19px;font-weight:600;color:var(--fg);letter-spacing:-.01em}
 .launch-sub{margin-top:5px;font-size:13px;color:var(--dim)}
-.launch-sub b{color:#a8a8a8;font-weight:600}
+.launch-sub b{color:var(--fg-muted);font-weight:600}
 .launch-group+.launch-group{margin-top:20px}
 /* The machine, as a rule with its name on it: the heading groups the cards without boxing them. */
 .launch-host{display:flex;align-items:center;gap:10px;margin:0 2px 9px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.07em;color:var(--dim)}
 .launch-host::after{content:'';flex:1;border-top:1px solid var(--line)}
-.launch-host .n{font-weight:400;color:#5c5c5c;letter-spacing:0}
-.launch-host .off{display:inline-flex;align-items:center;gap:4px;font-weight:500;letter-spacing:0;text-transform:none;color:#c98a7d}
+.launch-host .n{font-weight:400;color:var(--fg-faint);letter-spacing:0}
+.launch-host .off{display:inline-flex;align-items:center;gap:4px;font-weight:500;letter-spacing:0;text-transform:none;color:var(--offline)}
 .launch-host .off .ic{width:11px;height:11px}
 /* Dimmed, not disabled: the machine may be back before anyone writes, and the choice is kept. */
 .launch-group.off .agent-card{opacity:.55}
 .launch-group.off .agent-card:hover,.launch-group.off .agent-card:focus-visible{opacity:.85}
 .launch-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(148px,1fr));gap:8px}
-.agent-card{display:flex;flex-direction:column;align-items:stretch;gap:3px;min-width:0;min-height:68px;padding:11px 13px 10px;background:#181818;border:1px solid var(--line);border-radius:8px;text-align:left;line-height:1.3;transition:background .12s,border-color .12s,transform .12s}
-.agent-card:hover{background:#1e1e1e;border-color:#3a3a3a;transform:translateY(-1px)}
-.agent-card:active{transform:none;background:#232323}
-.agent-card:focus-visible{outline:2px solid #38bdf8;outline-offset:2px}
+.agent-card{display:flex;flex-direction:column;align-items:stretch;gap:3px;min-width:0;min-height:68px;padding:11px 13px 10px;background:var(--surface);border:1px solid var(--line);border-radius:8px;text-align:left;line-height:1.3;transition:background .12s,border-color .12s,transform .12s}
+.agent-card:hover{background:var(--surface-pop);border-color:var(--line-3);transform:translateY(-1px)}
+.agent-card:active{transform:none;background:var(--surface-tag)}
+.agent-card:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .agent-card.def{background:var(--own);border-color:var(--own-edge)}
-.agent-card.def:hover{background:#212a35;border-color:#4b78a8}
+.agent-card.def:hover{background:var(--own-hover);border-color:var(--own-hover-edge)}
 .ac-top{display:flex;align-items:center;gap:8px}
 .ac-id{flex:1;min-width:0;font-size:15px;font-weight:600;color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.ac-tag{flex:none;font-size:10.5px;line-height:1;padding:3px 6px;border-radius:9px;color:#8cc4ea;background:rgba(56,189,248,.1);border:1px solid rgba(56,189,248,.28)}
-.ac-kind{display:flex;align-items:center;gap:6px;font-size:12.5px;color:#a3a3a3;overflow:hidden;white-space:nowrap}
+.ac-tag{flex:none;font-size:10.5px;line-height:1;padding:3px 6px;border-radius:9px;color:var(--accent-tag);background:var(--accent-tint-1);border:1px solid var(--accent-border-1)}
+.ac-kind{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--fg-kind);overflow:hidden;white-space:nowrap}
 .ac-kind span{overflow:hidden;text-overflow:ellipsis}
 /* Which harness, at a glance, in a colour of its own: the eye finds "the Codex one" by colour
    before it has read a word. Keyed on the configured harness, not the label, which is prose.
@@ -1028,28 +1030,28 @@ select.skill-field{appearance:auto}
    agent legend (.agent-tag) — set as --hc so a colour is written once; each falls back to its own
    grey for a harness with none (custom). Set on the element carrying the class and never on a
    container: a custom property inherits, and a custom agent is grey only while nothing above sets one. */
-.ac-dot{flex:none;width:7px;height:7px;border-radius:50%;background:var(--hc,#6b6b6b)}
-.ac-dot.h-claude,.agent-tag.h-claude{--hc:#d97757}
-.ac-dot.h-codex,.agent-tag.h-codex{--hc:#10a37f}
-.ac-dot.h-opencode,.agent-tag.h-opencode{--hc:#e2e2e2}
-.ac-dot.h-agy,.agent-tag.h-agy{--hc:#4f8ff7}
-.ac-dot.h-gemini,.agent-tag.h-gemini{--hc:#a78bfa}
-.ac-dot.h-dsh,.agent-tag.h-dsh{--hc:#5b7cfa}
+.ac-dot{flex:none;width:7px;height:7px;border-radius:50%;background:var(--hc,var(--hc-dot-fallback))}
+.ac-dot.h-claude,.agent-tag.h-claude{--hc:var(--hc-claude)}
+.ac-dot.h-codex,.agent-tag.h-codex{--hc:var(--hc-codex)}
+.ac-dot.h-opencode,.agent-tag.h-opencode{--hc:var(--hc-opencode)}
+.ac-dot.h-agy,.agent-tag.h-agy{--hc:var(--hc-agy)}
+.ac-dot.h-gemini,.agent-tag.h-gemini{--hc:var(--hc-gemini)}
+.ac-dot.h-dsh,.agent-tag.h-dsh{--hc:var(--hc-dsh)}
 /* The UI face rather than monospace, and 720px for the launcher rather than less: measured in
    Chromium, "deepseek-v4.1-flash-free" is 159px in 11px monospace and 143px here, and a desktop card
    at four to a row leaves 148px for it. A longer name still ends in an ellipsis, whole on hover. */
-.ac-model{font-size:11.5px;color:#737373;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ac-model{font-size:11.5px;color:var(--fg-model);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* A rule and an indent were all that separated the two sides of the conversation, and at a
    glance down a long transcript that is not enough to find where your own question ended and
    the answer began. Own messages get a tinted panel instead — cool where the page is neutral,
    so it reads as "mine" without becoming a second theme. The agent's side stays flat on the
    background: one side marked is what makes the boundary visible, and marking both would just
    move the problem. */
-.m.own{background:var(--own);border-left:2px solid var(--own-edge);border-radius:0 6px 6px 0;padding:9px 12px;color:#cdcdcd}
+.m.own{background:var(--own);border-left:2px solid var(--own-edge);border-radius:0 6px 6px 0;padding:9px 12px;color:var(--fg-own)}
 /* Inside the panel the neutral --line borders disappear into the tint, so the quote rail and
    any code block it carries are lifted a step. */
-.m.own .q{border-left-color:#3d4a5a;color:#8b96a3}
-.m.own .b pre,.m.own .b :not(pre)>code{background:#161b22;border-color:#2b3441}
+.m.own .q{border-left-color:var(--own-quote-edge);color:var(--own-quote-fg)}
+.m.own .b pre,.m.own .b :not(pre)>code{background:var(--own-code-bg);border-color:var(--own-code-edge)}
 /* A bubble that is about a sub-agent rather than something the agent said to the reader: a task
    handed to one (dispatch), and what one reported back (report). A rail and a tag, not a tint
    alone — a tint is the first thing lost in a screenshot at phone width, and the tag also says
@@ -1059,33 +1061,33 @@ select.skill-field{appearance:auto}
 .m.dispatch{background:var(--disp);border-left:3px solid var(--disp-edge);border-radius:0 6px 6px 0;padding:9px 12px}
 .m.report{background:var(--rep);border-left:3px solid var(--rep-edge);border-radius:0 6px 6px 0;padding:9px 12px}
 .sub-k{display:inline-block;margin:0 0 6px;padding:1px 8px;border:1px solid;border-radius:9px;font-size:10.5px;line-height:1.6;font-weight:600;letter-spacing:.03em;text-transform:uppercase}
-.m.dispatch .sub-k{color:#cbb5ee;background:rgba(139,108,193,.16);border-color:rgba(139,108,193,.45)}
-.m.report .sub-k{color:#9ad6b3;background:rgba(63,143,107,.16);border-color:rgba(63,143,107,.45)}
+.m.dispatch .sub-k{color:var(--disp-tag-fg);background:var(--disp-tag-bg);border-color:var(--disp-tag-edge)}
+.m.report .sub-k{color:var(--rep-tag-fg);background:var(--rep-tag-bg);border-color:var(--rep-tag-edge)}
 /* The answer to a side question (/btw): asked of a copy of the conversation and kept out of it, so
    it must not read as the next step of the reply it may land in the middle of. The same rail and
    tag as the two above, dashed and slate-teal — none of mine, waiting, dispatch or done. Only an
    answer that cannot be paired with its question is drawn this way now (one kept from before
    answers were replies, or whose question has aged out); the rest are read in #btw. */
 .m.aside{background:var(--aside);border-left:3px dashed var(--aside-edge);border-radius:0 6px 6px 0;padding:9px 12px}
-.m.aside .sub-k{color:#a6cfd8;background:rgba(79,138,153,.16);border-color:rgba(79,138,153,.45)}
+.m.aside .sub-k{color:var(--aside-tag-fg);background:var(--aside-tag-bg);border-color:var(--aside-tag-edge)}
 /* A side question and its answer, out of the transcript (openBtw). The question stays where it was
    asked, as one line that opens the answer; the answer's own node stays in #log but empty and of no
    height, because the cache and the reading position are both read off #log's children (cacheable,
    firstVisible) and a node taken out would be lost to both. */
 .m.aside-held{margin:0;animation:none}
-.btw-chip{display:flex;align-items:center;gap:8px;width:100%;min-height:34px;padding:5px 10px;border:1px dashed rgba(79,138,153,.5);border-radius:6px;background:var(--aside);color:var(--fg);font:inherit;font-size:13px;text-align:left;cursor:pointer}
-.btw-chip:hover,.btw-chip[aria-expanded="true"]{border-style:solid;background:#18242a}
+.btw-chip{display:flex;align-items:center;gap:8px;width:100%;min-height:34px;padding:5px 10px;border:1px dashed var(--aside-border);border-radius:6px;background:var(--aside);color:var(--fg);font:inherit;font-size:13px;text-align:left;cursor:pointer}
+.btw-chip:hover,.btw-chip[aria-expanded="true"]{border-style:solid;background:var(--aside-hover)}
 .btw-chip:focus-visible{outline:2px solid var(--aside-edge);outline-offset:1px}
-.btw-tag{flex:none;padding:0 7px;border:1px solid rgba(79,138,153,.45);border-radius:9px;background:rgba(79,138,153,.16);color:#a6cfd8;font-size:10.5px;font-weight:600;line-height:1.6;letter-spacing:.03em;text-transform:uppercase}
-.btw-text{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#cdcdcd}
+.btw-tag{flex:none;padding:0 7px;border:1px solid var(--aside-tag-edge);border-radius:9px;background:var(--aside-tag-bg);color:var(--aside-tag-fg);font-size:10.5px;font-weight:600;line-height:1.6;letter-spacing:.03em;text-transform:uppercase}
+.btw-text{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--fg-own)}
 .btw-state{flex:none;display:inline-flex;align-items:center;gap:2px;color:var(--dim);font-size:11.5px}
-.btw-state.ready{color:#a6cfd8}
+.btw-state.ready{color:var(--aside-tag-fg)}
 .btw-when{flex:none;color:var(--dim);font-size:11.5px}
 /* The card the answer is read in: over the composer, inside #bar so it moves with it, like the model
    list. Not closed by a click elsewhere, unlike that list — the transcript under it is still being
    read, and scrolling it must not take the answer away. */
-#btw{position:absolute;left:16px;right:16px;bottom:calc(100% + 6px);z-index:14;display:flex;flex-direction:column;max-height:min(46vh,440px);background:#151c1f;border:1px solid rgba(79,138,153,.5);border-radius:8px;box-shadow:0 10px 30px rgba(0,0,0,.55);overflow:hidden}
-.btw-head{display:flex;align-items:center;gap:8px;padding:6px 6px 6px 12px;border-bottom:1px solid rgba(79,138,153,.25)}
+#btw{position:absolute;left:16px;right:16px;bottom:calc(100% + 6px);z-index:14;display:flex;flex-direction:column;max-height:min(46vh,440px);background:var(--aside);border:1px solid var(--aside-border);border-radius:8px;box-shadow:0 10px 30px var(--shadow-lg);overflow:hidden}
+.btw-head{display:flex;align-items:center;gap:8px;padding:6px 6px 6px 12px;border-bottom:1px solid var(--aside-sep)}
 #btw-q{flex:1;min-width:0;font-weight:600;font-size:13px;line-height:1.4;overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow-wrap:anywhere}
 #btw-close{flex:none;font-size:17px;padding:4px 10px}
 #btw-body{flex:1;min-height:0;overflow-y:auto;padding:10px 12px 4px;overflow-wrap:anywhere}
@@ -1096,8 +1098,8 @@ select.skill-field{appearance:auto}
    Dimmed while the request is in flight; edged red and given something to do about it once the
    request has failed, since the text in it is the only copy left. */
 .m.pending{opacity:.6}
-.m.failed{border-left-color:#a14a4a}
-.m .warn{color:#e08a8a;font-size:12px;margin-top:7px}
+.m.failed{border-left-color:var(--err-edge)}
+.m .warn{color:var(--err-warn);font-size:12px;margin-top:7px}
 .m .acts{margin-top:7px;display:flex;flex-wrap:wrap;gap:6px}
 .m .acts button{font-size:12px;padding:4px 10px}
 /* Cached from a daemon that is no longer running. Legible, just half a step back: it is real
@@ -1126,7 +1128,7 @@ select.skill-field{appearance:auto}
    with the items around it. Ticked is the green a finished thing has everywhere else here. */
 .b li.task{list-style:none}
 .b .task-box{display:inline-block;width:1.4em;margin-left:-1.4em;color:var(--dim)}
-.b li.task.done>.task-box{color:#4ade80}
+.b li.task.done>.task-box{color:var(--ok)}
 /* A table scrolls sideways inside its frame (web-markdown.ts renderTable) rather than widening the
    bubble on a phone. Its cells wrap at spaces only: a bubble breaks anywhere (.m), which in a
    390px-wide table split "Before" and every path a letter at a time to make it fit, and the frame
@@ -1147,15 +1149,15 @@ select.skill-field{appearance:auto}
 .cb-h{display:flex;align-items:center;gap:2px;min-height:26px;padding:0 3px 0 10px;border-bottom:1px solid var(--line);color:var(--dim);font-size:11.5px}
 .cb-lang{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 .cb-b{flex:none;display:inline-flex;align-items:center;justify-content:center;width:26px;height:24px;padding:0;border:0;border-radius:3px;background:none;color:var(--dim);font-size:14px;cursor:pointer}
-.cb-b:hover{color:var(--fg);background:rgba(255,255,255,.06)}
-.cb-b[aria-pressed="true"]{color:var(--fg);background:rgba(255,255,255,.08)}
+.cb-b:hover{color:var(--fg);background:var(--surface-subtle)}
+.cb-b[aria-pressed="true"]{color:var(--fg);background:var(--surface-subtle-2)}
 /* Wrap: long lines break inside the frame, anywhere, since a path or a minified line has no spaces. */
 .b .cb.wrap pre{white-space:pre-wrap;overflow-wrap:anywhere}
 /* A patch's lines (web-markdown.ts diffLines) take the whole width of the block, so an added or a
    removed line reads as a band like the git panel's rather than as tinted words. */
 .cb .pa,.cb .pd{display:inline-block;min-width:100%;vertical-align:top}
 .b hr{border:0;border-top:1px solid var(--line);margin:1em 0}
-.b a{color:#8fa6c0}
+.b a{color:var(--accent-link)}
 .q{margin:0 0 6px;padding-left:10px;border-left:2px solid var(--line);color:var(--dim);font-size:13px;max-height:4.8em;overflow:hidden}
 .t{color:var(--dim);font-size:11.5px;margin-top:4px}
 /* A tool-progress bubble: one row per tool call, cut at the bubble's edge rather than at a
@@ -1183,14 +1185,14 @@ select.skill-field{appearance:auto}
    is balanced, or a model id breaks at its last hyphen and leaves one character on a line. */
 .btns{--gap:4px;margin-top:8px;display:grid;grid-template-columns:repeat(auto-fill,minmax(min(calc(var(--cw,8ch) + var(--mk,0) * (1em - 1ch) + 22px),calc(50% - var(--gap))),1fr));gap:var(--gap);font-size:13px}
 .btns button{min-width:0;padding:5px 10px;border-radius:5px;text-align:left;line-height:1.35;overflow-wrap:anywhere;text-wrap:balance;transition:background .12s,border-color .12s}
-.btns button:not(.on):hover:not(:disabled){background:#202020}
+.btns button:not(.on):hover:not(:disabled){background:var(--hover-1)}
 /* The current choice, in the blue of the operator's own messages: it is the one they made. */
 .btns button.on{background:var(--own);border-color:var(--own-edge)}
 .btns .mk{color:var(--dim)}
-.btns .on .mk{color:#38bdf8}
+.btns .on .mk{color:var(--accent)}
 /* Pressed, then tapped and waiting on the daemon: full opacity over button:disabled's half, so the
    choice just made is the brightest thing in the menu rather than the faintest. */
-.btns button:active:not(:disabled){background:#262626}
+.btns button:active:not(:disabled){background:var(--active-2)}
 .btns button.busy{opacity:1;border-color:var(--own-edge);background:var(--own)}
 /* Paging and the way back: under the items, spanning the grid, and quieter than they are. */
 .btns .nav{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:4px}
@@ -1214,16 +1216,16 @@ select.skill-field{appearance:auto}
 /* Sticky, because the control that caused it may be a screen further down: an answer at the top
    of a page scrolled past it was an answer nobody saw (Chromium, 2026-11-05). A good one fades
    after a few seconds — the control already shows the new state — and an error stays. */
-.set-notice{position:sticky;top:-14px;z-index:1;margin:0 0 14px;padding:9px 12px;border-radius:6px;border:1px solid var(--line);border-left-width:3px;font-size:12.5px;line-height:1.5;white-space:pre-line;overflow-wrap:anywhere;box-shadow:0 4px 14px rgba(0,0,0,.45);transition:opacity .4s}
+.set-notice{position:sticky;top:-14px;z-index:1;margin:0 0 14px;padding:9px 12px;border-radius:6px;border:1px solid var(--line);border-left-width:3px;font-size:12.5px;line-height:1.5;white-space:pre-line;overflow-wrap:anywhere;box-shadow:0 4px 14px var(--shadow-sm);transition:opacity .4s}
 .set-notice.faded{opacity:0;pointer-events:none}
-.set-notice.ok{border-color:rgba(74,222,128,.35);border-left-color:#4ade80;background:#15201a}
-.set-notice.info{border-left-color:#7d7d7d;background:#1b1b1b}
-.set-notice.error{border-color:rgba(248,113,113,.35);border-left-color:#f87171;background:#261616;color:#fecaca}
+.set-notice.ok{border-color:var(--ok-border);border-left-color:var(--ok);background:var(--ok-bg)}
+.set-notice.info{border-left-color:var(--dim);background:var(--surface-2)}
+.set-notice.error{border-color:var(--err-border-2);border-left-color:var(--err);background:var(--err-bg);color:var(--err-soft)}
 .set-sec{margin:0 0 18px}
 .set-sec:last-child{margin-bottom:0}
-.set-group{margin:0 2px 6px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#9a9a9a}
+.set-group{margin:0 2px 6px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--fg-soft)}
 .set-gnote{margin:-2px 2px 8px;font-size:12px;line-height:1.5;color:var(--dim)}
-.set-card{border:1px solid var(--line);border-radius:8px;background:#181818;overflow:hidden}
+.set-card{border:1px solid var(--line);border-radius:8px;background:var(--surface);overflow:hidden}
 .set-item{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:4px 16px;min-height:48px;padding:9px 14px;border-bottom:1px solid var(--line)}
 .set-item:last-child{border-bottom:0}
 .set-item.sw{cursor:pointer}
@@ -1232,21 +1234,21 @@ select.skill-field{appearance:auto}
 .set-hint{font-size:12px;line-height:1.45;color:var(--dim)}
 .set-kind{font-size:11.5px;color:var(--dim)}
 .set-badge{display:inline-block;padding:0 7px;border-radius:999px;font-size:10.5px;font-weight:600;line-height:18px;letter-spacing:.02em}
-.set-badge.restart{color:#fbbf24;background:rgba(251,191,36,.12)}
-.set-badge.here{color:#7dd3fc;background:rgba(56,189,248,.12)}
+.set-badge.restart{color:var(--warn);background:var(--warn-tint-2)}
+.set-badge.here{color:var(--accent-soft);background:var(--accent-tint-2)}
 .set-ctl{justify-self:end;display:flex;align-items:center;min-width:0}
 /* The switch: a 36×20 track in a 44px-tall hit area. aria-checked is the state, so the page's
    optimistic flip and the daemon's answer are drawn by the same rule. */
 .set-switch{position:relative;flex:none;width:44px;height:32px;padding:0;margin:-6px -4px;background:none;border:0;cursor:pointer}
-.set-switch::before{content:"";position:absolute;left:4px;top:6px;width:36px;height:20px;border-radius:10px;background:#3a3a3a;transition:background .15s}
-.set-switch::after{content:"";position:absolute;left:7px;top:9px;width:14px;height:14px;border-radius:50%;background:#bdbdbd;transition:transform .15s,background .15s}
-.set-switch[aria-checked="true"]::before{background:#3a6ea5}
-.set-switch[aria-checked="true"]::after{transform:translateX(16px);background:#fff}
+.set-switch::before{content:"";position:absolute;left:4px;top:6px;width:36px;height:20px;border-radius:10px;background:var(--line-3);transition:background .15s}
+.set-switch::after{content:"";position:absolute;left:7px;top:9px;width:14px;height:14px;border-radius:50%;background:var(--fg-head);transition:transform .15s,background .15s}
+.set-switch[aria-checked="true"]::before{background:var(--accent-solid)}
+.set-switch[aria-checked="true"]::after{transform:translateX(16px);background:var(--fg-on-accent)}
 .set-switch:focus-visible{outline:2px solid var(--own-edge);outline-offset:0;border-radius:12px}
 .set-seg{display:inline-flex;border:1px solid var(--line);border-radius:6px;background:var(--field);padding:2px;gap:2px}
 .set-seg button{min-width:44px;min-height:30px;padding:3px 10px;border:0;border-radius:4px;background:none;color:var(--dim);font:inherit;font-size:12.5px;cursor:pointer;font-variant-numeric:tabular-nums}
 .set-seg button:hover{color:var(--fg)}
-.set-seg button[aria-checked="true"]{background:#2b3a4c;color:#fff;font-weight:600}
+.set-seg button[aria-checked="true"]{background:var(--accent-tab-bg);color:var(--accent-tab-fg);font-weight:600}
 .set-select{max-width:260px;min-height:32px;padding:4px 28px 4px 10px;border:1px solid var(--line);border-radius:6px;background:var(--field) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%239a9a9a' stroke-width='1.5'/%3E%3C/svg%3E") no-repeat right 10px center;color:var(--fg);font:inherit;font-size:13px;text-overflow:ellipsis;-webkit-appearance:none;appearance:none;cursor:pointer}
 .set-select:focus-visible,.set-seg button:focus-visible{outline:2px solid var(--own-edge);outline-offset:1px}
 /* The Agents section is a stack of cards, one per agent, under a heading per machine when there is
@@ -1258,26 +1260,26 @@ select.skill-field{appearance:auto}
    nothing. So: a gap between cards, the harness's own colour down each card's edge and on its name
    (--ag-h, a hue the page picks from the harness's name), and only one card open at a time. */
 .ag-list{display:flex;flex-direction:column;gap:8px;margin-top:8px}
-.ag-place{display:flex;align-items:baseline;gap:6px;margin:6px 2px -2px;font-size:11.5px;font-weight:600;color:#b4b4b4}
+.ag-place{display:flex;align-items:baseline;gap:6px;margin:6px 2px -2px;font-size:11.5px;font-weight:600;color:var(--fg-sub)}
 .ag-place:first-child{margin-top:0}
 .ag-count{font-weight:400;color:var(--dim)}
-.ag-card{--ag:hsl(var(--ag-h,0) 55% 58%);border:1px solid var(--line);border-left:3px solid var(--ag);border-radius:8px;background:#181818;overflow:hidden;transition:border-color .12s,background .12s}
-.ag-card.open{background:#1b1b1b;border-color:#3a3a3a;border-left-color:var(--ag)}
+.ag-card{--ag:hsl(var(--ag-h,0) 55% var(--ag-l));border:1px solid var(--line);border-left:3px solid var(--ag);border-radius:8px;background:var(--surface);overflow:hidden;transition:border-color .12s,background .12s}
+.ag-card.open{background:var(--surface-2);border-color:var(--line-3);border-left-color:var(--ag)}
 .ag-top{display:flex;align-items:center;gap:10px;width:100%;min-height:52px;padding:8px 12px 8px 12px;border:0;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer;transition:background .12s}
-.ag-top:hover{background:#1f1f1f}
+.ag-top:hover{background:var(--hover)}
 .ag-top:focus-visible{outline:2px solid var(--own-edge);outline-offset:-2px}
 .ag-who{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:3px}
 .ag-id{display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;font-size:13.5px;line-height:1.35;color:var(--fg);overflow-wrap:anywhere}
 .ag-name{font-weight:600}
-.ag-sum{display:flex;align-items:center;flex-wrap:wrap;gap:2px 6px;min-width:0;font-size:12px;line-height:1.4;color:#a8a8a8}
+.ag-sum{display:flex;align-items:center;flex-wrap:wrap;gap:2px 6px;min-width:0;font-size:12px;line-height:1.4;color:var(--fg-muted)}
 .ag-sum>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.ag-sum>.ag-sep{color:#4a4a4a}
-.ag-kind{flex:none;padding:0 7px;border-radius:999px;font-size:11px;font-weight:600;line-height:18px;color:hsl(var(--ag-h,0) 70% 74%);background:hsl(var(--ag-h,0) 50% 50% / .15)}
-.ag-mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px;color:#c9d6e2}
+.ag-sum>.ag-sep{color:var(--line-hi)}
+.ag-kind{flex:none;padding:0 7px;border-radius:999px;font-size:11px;font-weight:600;line-height:18px;color:hsl(var(--ag-h,0) 70% var(--ag-kind-l));background:hsl(var(--ag-h,0) 50% 50% / var(--ag-kind-bg-a))}
+.ag-mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px;color:var(--fg-cool)}
 .ag-sum .unset{font-style:italic;font-family:inherit;color:var(--dim)}
 .ag-chev{flex:none;display:inline-flex;color:var(--dim);transition:transform .15s}
 .ag-card.open .ag-chev{transform:rotate(180deg)}
-.set-badge.def{color:#c4b5fd;background:rgba(167,139,250,.14)}
+.set-badge.def{color:var(--def-badge-fg);background:var(--def-badge-bg)}
 /* The open card: a label column and a value column, every setting on a line of its own. */
 .ag-body{display:flex;flex-direction:column;gap:12px;padding:12px 14px 14px;border-top:1px solid var(--line)}
 .ag-body[hidden]{display:none}
@@ -1286,10 +1288,10 @@ select.skill-field{appearance:auto}
 .ag-val{display:flex;flex-direction:column;align-items:flex-start;gap:4px;min-width:0}
 .ag-val>.set-select{width:100%;max-width:320px}
 .ag-open{display:flex;align-items:center;gap:6px;width:100%;max-width:420px;min-width:0;min-height:32px;padding:3px 8px;border:1px solid var(--line);border-radius:6px;background:var(--field);color:inherit;font:inherit;text-align:left;cursor:pointer;transition:background .12s}
-.ag-open:hover{background:#242424}
+.ag-open:hover{background:var(--surface-skel)}
 .ag-open:focus-visible{outline:2px solid var(--own-edge);outline-offset:1px}
 .ag-open .set-v{flex:1 1 auto}
-.ag-fixed{display:flex;align-items:center;min-height:32px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;color:#c9d6e2}
+.ag-fixed{display:flex;align-items:center;min-height:32px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;color:var(--fg-cool)}
 .ag-fixed.unset{font-family:inherit;font-style:italic;color:var(--dim)}
 .set-select.unset{font-style:italic;color:var(--dim)}
 .set-select.unset option{font-style:normal;color:var(--fg)}
@@ -1300,68 +1302,68 @@ select.skill-field{appearance:auto}
 .ag-files{display:flex;flex-direction:column;width:100%;max-width:520px;border:1px solid var(--line);border-radius:6px;overflow:hidden}
 .ag-file{display:grid;grid-template-columns:minmax(0,max-content) minmax(0,1fr) auto;align-items:center;column-gap:10px;min-height:36px;padding:5px 8px 5px 10px;border:0;border-bottom:1px solid var(--line);background:var(--field);color:inherit;font:inherit;text-align:left;cursor:pointer;transition:background .12s}
 .ag-file:last-child{border-bottom:0}
-.ag-file:hover{background:#242424}
+.ag-file:hover{background:var(--surface-skel)}
 .ag-file:focus-visible{outline:2px solid var(--own-edge);outline-offset:-2px}
-.ag-fname{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;color:#c9d6e2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ag-fname{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;color:var(--fg-cool);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ag-fname.own{font-family:inherit;font-size:12.5px;color:var(--fg)}
 .ag-fsub{min-width:0;font-size:11.5px;line-height:1.4;color:var(--dim);overflow-wrap:anywhere}
 .ag-fsub code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.95em}
 .ag-fsub .fx-tag{margin-left:6px}
 .ag-file .set-chev{color:var(--dim)}
 .ag-wait,.ag-none{padding-top:7px;font-size:12px;color:var(--dim)}
-.ag-err{padding-top:7px;font-size:12px;color:#fca5a5}
+.ag-err{padding-top:7px;font-size:12px;color:var(--err-soft-2)}
 /* A row with a screen of its own (a model) or a way to another menu: the whole row is the target. */
 .set-open{width:100%;border:0;border-radius:0;background:none;text-align:left;font:inherit;color:inherit;cursor:pointer;transition:background .12s}
-.set-open:hover{background:#1f1f1f}
+.set-open:hover{background:var(--hover)}
 .set-open:focus-visible{outline:2px solid var(--own-edge);outline-offset:-2px}
 .set-open{grid-template-columns:minmax(0,1fr) minmax(0,max-content) auto;gap:4px 12px}
 .set-vv{display:flex;align-items:baseline;justify-content:flex-end;gap:6px;min-width:0;max-width:340px}
-.set-vnote{flex:none;font-size:10.5px;color:var(--dim);border:1px solid #333;border-radius:999px;padding:0 6px;line-height:16px}
-.set-v{min-width:0;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;color:#c9d6e2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.set-vnote{flex:none;font-size:10.5px;color:var(--dim);border:1px solid var(--line-2);border-radius:999px;padding:0 6px;line-height:16px}
+.set-v{min-width:0;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;color:var(--fg-cool);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .set-v.unset{font-family:inherit;font-style:italic;color:var(--dim)}
-.set-chev{flex:none;color:#666;font-size:17px;line-height:1}
+.set-chev{flex:none;color:var(--fg-subtle);font-size:17px;line-height:1}
 /* The value level: which setting, what it holds, then its values. */
-.set-back{display:inline-flex;align-items:center;gap:4px;margin:0 0 12px -6px;min-height:32px;padding:4px 8px;border:0;background:none;color:#8fb3d6;font:inherit;font-size:13px;cursor:pointer}
-.set-back:hover{color:#b9d3ec}
+.set-back{display:inline-flex;align-items:center;gap:4px;margin:0 0 12px -6px;min-height:32px;padding:4px 8px;border:0;background:none;color:var(--accent-back);font:inherit;font-size:13px;cursor:pointer}
+.set-back:hover{color:var(--accent-back-hi)}
 .set-head{margin:0 0 14px}
 .set-head h3{margin:0;display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 8px;font-size:15px;font-weight:600}
-.set-head .set-tgt{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px;font-weight:500;color:#c9d6e2}
+.set-head .set-tgt{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px;font-weight:500;color:var(--fg-cool)}
 .set-now{margin:6px 0 0;font-size:12.5px;color:var(--dim)}
 .set-now .set-v{display:inline;white-space:normal;overflow-wrap:anywhere}
-.set-src{margin:4px 0 0;font-size:12.5px;line-height:1.5;color:#a8a8a8}
-.set-desc{margin:8px 0 0;font-size:12.5px;line-height:1.55;color:#a8a8a8}
+.set-src{margin:4px 0 0;font-size:12.5px;line-height:1.5;color:var(--fg-muted)}
+.set-desc{margin:8px 0 0;font-size:12.5px;line-height:1.55;color:var(--fg-muted)}
 .set-typed{display:flex;gap:6px;margin:0 0 10px}
 .set-type{flex:1;min-width:0;min-height:36px;padding:6px 10px;border:1px solid var(--line);border-radius:6px;background:var(--field);color:var(--fg);font:inherit;font-size:13px}
 .set-type:focus{outline:none;border-color:var(--own-edge)}
 .set-use{flex:none;min-height:36px;padding:0 14px;border-radius:6px}
 .set-nomatch{margin:8px 2px 0;font-size:12px;color:var(--dim)}
 .set-hintbox.loading{display:flex;align-items:center;gap:8px;border-style:solid}
-.set-spin{flex:none;width:12px;height:12px;border:2px solid #444;border-top-color:#8fb3d6;border-radius:50%;animation:set-spin .8s linear infinite}
+.set-spin{flex:none;width:12px;height:12px;border:2px solid var(--dot-idle);border-top-color:var(--accent-back);border-radius:50%;animation:set-spin .8s linear infinite}
 @keyframes set-spin{to{transform:rotate(360deg)}}
 .set-when{margin:4px 0 0;font-size:12px;color:var(--dim)}
-.set-hintbox{margin:0 0 10px;padding:9px 12px;border:1px dashed #333;border-radius:6px;font-size:12.5px;line-height:1.5;color:#a8a8a8}
+.set-hintbox{margin:0 0 10px;padding:9px 12px;border:1px dashed var(--line-2);border-radius:6px;font-size:12.5px;line-height:1.5;color:var(--fg-muted)}
 .set-opt{display:flex;align-items:flex-start;gap:10px;width:100%;min-height:44px;padding:10px 14px;background:none;border:0;border-bottom:1px solid var(--line);border-radius:0;color:var(--fg);font:inherit;text-align:left;cursor:pointer;transition:background .12s}
 .set-opt:last-child{border-bottom:0}
 .set-opt[hidden]{display:none}
-.set-opt:hover{background:#1f1f1f}
-.set-opt.on{background:#1b2430}
-.set-check{flex:none;width:16px;color:#38bdf8;font-size:14px;line-height:1.5;text-align:center}
+.set-opt:hover{background:var(--hover)}
+.set-opt.on{background:var(--accent-opt-on)}
+.set-check{flex:none;width:16px;color:var(--accent);font-size:14px;line-height:1.5;text-align:center}
 .set-opt-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
 .set-opt-label{font-size:13.5px;line-height:1.35;overflow-wrap:anywhere}
 .set-opt-detail{font-size:12px;line-height:1.4;color:var(--dim)}
-.set-opt.on .set-opt-label{color:#fff;font-weight:600}
+.set-opt.on .set-opt-label{color:var(--fg-hi);font-weight:600}
 .set-opt:focus-visible,.set-nav button:focus-visible{outline:2px solid var(--own-edge);outline-offset:-2px}
 .set-nav{display:flex;align-items:center;gap:6px;margin-top:10px}
 .set-nav button{min-height:44px;padding:6px 14px;background:var(--field);color:var(--dim);border:1px solid var(--line);border-radius:6px;font:inherit;font-size:12.5px;cursor:pointer}
-.set-nav button:hover{color:var(--fg);border-color:#3a3a3a}
+.set-nav button:hover{color:var(--fg);border-color:var(--line-3)}
 .set-page{flex:1;min-width:0;text-align:center;font-size:11.5px;color:var(--dim);font-variant-numeric:tabular-nums}
 /* Tapped and waiting on the daemon. A switch has already moved; the rest are lit, so the control
    just pressed is the brightest thing on the screen rather than the faintest. */
 .set-open.busy,.set-opt.busy{opacity:1;background:var(--own);box-shadow:inset 2px 0 0 var(--own-edge)}
-.set-seg button.busy{opacity:1;background:var(--own);color:#fff}
+.set-seg button.busy{opacity:1;background:var(--own);color:var(--fg-hi)}
 .set-switch.busy,.set-select.busy{opacity:.7}
 button{background:var(--field);color:var(--fg);border:1px solid var(--line);border-radius:4px;padding:6px 11px;font:inherit;font-size:13px;cursor:pointer}
-button:hover{border-color:#3a3a3a}
+button:hover{border-color:var(--line-3)}
 button:disabled{opacity:.5;cursor:default}
 #typing{color:var(--dim);font-size:13px;padding:0 16px 6px;max-width:860px;width:100%;margin:0 auto}
 #bar{position:relative;border-top:1px solid var(--line);padding:10px 16px 14px;max-width:860px;width:100%;margin:0 auto}
@@ -1385,8 +1387,8 @@ button:disabled{opacity:.5;cursor:default}
 .tc{margin-top:8px}
 .tc button{display:inline-flex;align-items:center;gap:6px;max-width:100%;padding:2px 8px;font:inherit;font-size:12px;color:var(--dim);background:none;border:1px solid var(--line);border-radius:3px;cursor:pointer}
 .tc button:hover{color:var(--fg);border-color:var(--dim)}
-.tc .add{color:#4ade80}
-.tc .del{color:#f87171}
+.tc .add{color:var(--ok)}
+.tc .del{color:var(--err)}
 /* A picture the agent sent, drawn in the bubble. Capped in both directions: a screenshot of a
    4K display would otherwise push the timestamp and everything after it off the fold, and the
    point of showing it here is to recognise it, not to read it — that is what tapping is for. */
@@ -1401,19 +1403,19 @@ button:disabled{opacity:.5;cursor:default}
 .q .shots{display:none}
 /* The tapped-open view. display:flex has to be restated under [hidden] or it beats the
    attribute's UA display:none and the overlay is never actually hidden. */
-#lightbox{position:fixed;inset:0;z-index:20;background:rgba(0,0,0,.88);display:flex;align-items:center;justify-content:center;padding:12px;cursor:zoom-out}
+#lightbox{position:fixed;inset:0;z-index:20;background:var(--scrim-lightbox);display:flex;align-items:center;justify-content:center;padding:12px;cursor:zoom-out}
 #lightbox[hidden]{display:none}
 #lightbox img{max-width:100%;max-height:100%;object-fit:contain}
 /* A file the agent sent, read where it was sent (openReader; the HTML is reading.ts's). A window
    over the transcript and not a new tab, for the lightbox's reason: installed as an app there is no
    tab bar to come back from. The backdrop is dimmed and the box opaque, because this is read, not
    glanced at; the box is capped in both directions so the conversation stays visible around it. */
-#reader{position:fixed;inset:0;z-index:20;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;padding:24px}
+#reader{position:fixed;inset:0;z-index:20;background:var(--scrim-2);display:flex;align-items:center;justify-content:center;padding:24px}
 #reader[hidden]{display:none}
-#reader-box{display:flex;flex-direction:column;width:min(900px,100%);max-height:100%;overflow:hidden;background:var(--bg);border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 30px rgba(0,0,0,.5)}
+#reader-box{display:flex;flex-direction:column;width:min(900px,100%);max-height:100%;overflow:hidden;background:var(--bg);border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 30px var(--shadow)}
 #reader-bar{display:flex;align-items:center;gap:12px;padding:6px 10px 6px 16px;border-bottom:1px solid var(--line);min-height:var(--headh);font-size:13px}
 #reader-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
-#reader-get{color:#8fa6c0}
+#reader-get{color:var(--accent-link)}
 #reader-close{font-size:18px;padding:6px 10px}
 #reader-body{flex:1;min-height:0;overflow-y:auto;padding:16px 16px calc(16px + env(safe-area-inset-bottom,0px));outline:none}
 #reader-body>*{max-width:860px;margin-left:auto;margin-right:auto}
@@ -1431,14 +1433,14 @@ button:disabled{opacity:.5;cursor:default}
    buttons because it is about the file. An anchor rather than a button, so it still downloads
    with the script dead; dressed as a button to match the Preview it replaced. */
 .files .view{display:inline-block;font-size:12px;padding:1px 8px;color:var(--fg);background:var(--field);border:1px solid var(--line);border-radius:4px;text-decoration:none}
-.files .view:hover{border-color:#3a3a3a}
+.files .view:hover{border-color:var(--line-3)}
 #row{display:flex;gap:8px;align-items:flex-end}
 /* Red at rest, unlike #kill-agent: it only exists while a reply is streaming in, and in that
    moment it is the control being looked for. */
-#stop-turn{color:#f87171;border-color:rgba(248,113,113,.4)}
-#stop-turn:hover{border-color:#f87171}
+#stop-turn{color:var(--err);border-color:var(--err-border-3)}
+#stop-turn:hover{border-color:var(--err)}
 /* Recording: red and counting, so it cannot be mistaken for idle while the microphone is open. */
-#mic.rec{color:#f87171;border-color:#f87171;font-variant-numeric:tabular-nums}
+#mic.rec{color:var(--err);border-color:var(--err);font-variant-numeric:tabular-nums}
 #input{flex:1;resize:none;max-height:40vh;max-height:40dvh;padding:8px 10px;background:var(--field);color:var(--fg);border:1px solid var(--line);border-radius:4px;font:inherit;overflow-y:auto}
 /* Whether the composer has room for one row is the composer's question, not the window's: at
    641px the sidebar is still a 240px column, so the composer is 369px while the window calls
@@ -1459,7 +1461,7 @@ button:disabled{opacity:.5;cursor:default}
   #row #stop-turn:not([hidden]){margin-left:auto}
   #row #stop-turn:not([hidden])+button[type="submit"]{margin-left:0}
 }
-#input:focus,#login input:focus{outline:none;border-color:#3d3d3d}
+#input:focus,#login input:focus{outline:none;border-color:var(--line-focus)}
 #note{color:var(--dim);font-size:12px;padding:0 16px 8px;max-width:860px;width:100%;margin:0 auto}
 /* The agent's live status, above the composer: what the footer says once per reply, kept current
    between replies. Wraps by default so trailing segments (5h/wk quota, cache, cost) are never
@@ -1467,7 +1469,7 @@ button:disabled{opacity:.5;cursor:default}
    for inactive quota pools and narrow-screen token counts. The global [hidden] rule at the top
    keeps it hidden while there is nothing to show. */
 #status{display:flex;flex-wrap:wrap;align-items:center;row-gap:2px;column-gap:14px;margin:-3px 0 7px;font-size:11.5px;line-height:1.5;color:var(--dim);font-variant-numeric:tabular-nums;cursor:pointer;user-select:none;-webkit-user-select:none}
-#machine-note{display:flex;align-items:center;gap:6px;margin:-3px 0 7px;font-size:11.5px;line-height:1.5;color:#c98a7d}
+#machine-note{display:flex;align-items:center;gap:6px;margin:-3px 0 7px;font-size:11.5px;line-height:1.5;color:var(--offline)}
 #machine-note .ic{width:12px;height:12px}
 #update{display:flex;align-items:center;gap:8px;margin:-3px 0 7px;font-size:12px;line-height:1.5;color:var(--dim)}
 #update[hidden]{display:none}
@@ -1476,12 +1478,12 @@ button:disabled{opacity:.5;cursor:default}
 /* Spacing separates segments because the strip wraps by default (a middle-dot ::before would lead
    a wrapped line with a stray dot). .st-who wraps internally too so a long agent+model+account
    never overflows a narrow viewport. */
-.st-who{color:#a8a8a8;flex-wrap:wrap;row-gap:1px;max-width:100%}
+.st-who{color:var(--fg-muted);flex-wrap:wrap;row-gap:1px;max-width:100%}
 /* The model in the status line is a switch: /model without typing it (openModelPop). Drawn as the
    text it was with a caret and a background on hover, so the line still reads as a status line;
    the caret is what says it opens. A pseudo-element, so the line's text is still the model's. */
-.st-model{display:inline-flex;align-items:center;gap:3px;min-width:0;max-width:44ch;padding:0 4px;margin:0 -4px;border:0;border-radius:4px;background:none;color:#cfd8e2;font:inherit;cursor:pointer}
-.st-model:hover,.st-model[aria-expanded="true"]{background:var(--field);color:#fff}
+.st-model{display:inline-flex;align-items:center;gap:3px;min-width:0;max-width:44ch;padding:0 4px;margin:0 -4px;border:0;border-radius:4px;background:none;color:var(--fg-cool-2);font:inherit;cursor:pointer}
+.st-model:hover,.st-model[aria-expanded="true"]{background:var(--field);color:var(--fg-hi)}
 .st-model:focus-visible{outline:2px solid var(--own-edge);outline-offset:0}
 .st-model .st-mtext{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .st-model::after{content:'\25be';flex:none;font-size:9px;opacity:.8}
@@ -1491,10 +1493,10 @@ button:disabled{opacity:.5;cursor:default}
 .st-opt .st-olabel{flex:none;color:var(--dim)}
 .st-opt.fixed{cursor:default;opacity:.6}
 .st-opt.fixed::after{content:none}
-.st-opt.fixed:hover{background:none;color:#cfd8e2}
+.st-opt.fixed:hover{background:none;color:var(--fg-cool-2)}
 /* The list it opens: above the composer, inside #bar so it moves with it, and closed by Escape, a
    click outside, a pick, or a topic switch. A filter field first — opencode offers ~90 models. */
-#model-pop{position:absolute;left:16px;bottom:calc(100% - 6px);z-index:15;display:flex;flex-direction:column;width:min(440px,calc(100% - 32px));max-height:min(60vh,480px);background:#181818;border:1px solid #333;border-radius:8px;box-shadow:0 10px 30px rgba(0,0,0,.55);overflow:hidden}
+#model-pop{position:absolute;left:16px;bottom:calc(100% - 6px);z-index:15;display:flex;flex-direction:column;width:min(440px,calc(100% - 32px));max-height:min(60vh,480px);background:var(--surface);border:1px solid var(--line-2);border-radius:8px;box-shadow:0 10px 30px var(--shadow-lg);overflow:hidden}
 .mp-head{display:flex;align-items:center;gap:8px;padding:8px 6px 6px 12px;border-bottom:1px solid var(--line)}
 .mp-title{flex:1;min-width:0;display:flex;flex-direction:column;line-height:1.3}
 .mp-title b{font-size:13px;font-weight:600}
@@ -1504,28 +1506,28 @@ button:disabled{opacity:.5;cursor:default}
 #mp-filter:focus{outline:none;border-color:var(--own-edge)}
 #mp-list{flex:1;min-height:0;overflow-y:auto;padding:4px 0}
 .mp-opt{display:flex;align-items:center;gap:8px;width:100%;min-height:36px;padding:6px 12px;border:0;border-radius:0;background:none;color:var(--fg);font:inherit;text-align:left;cursor:pointer}
-.mp-opt:hover,.mp-opt:focus-visible{background:#222;outline:none}
+.mp-opt:hover,.mp-opt:focus-visible{background:var(--hover-2);outline:none}
 .mp-opt[hidden]{display:none}
-.mp-opt.on{background:#1b2430}
-.mp-check{flex:none;width:14px;color:#38bdf8;text-align:center}
+.mp-opt.on{background:var(--accent-opt-on)}
+.mp-check{flex:none;width:14px;color:var(--accent);text-align:center}
 .mp-main{flex:1;min-width:0;display:flex;flex-direction:column}
 .mp-v{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;overflow-wrap:anywhere}
 .mp-n{font-size:11.5px;color:var(--dim)}
 .mp-o{font-size:13px;overflow-wrap:anywhere}
 .mp-opt:disabled{cursor:default}
-.mp-tag{flex:none;font-size:10.5px;color:var(--dim);border:1px solid #333;border-radius:999px;padding:0 6px;line-height:16px}
+.mp-tag{flex:none;font-size:10.5px;color:var(--dim);border:1px solid var(--line-2);border-radius:999px;padding:0 6px;line-height:16px}
 .mp-opt.busy{background:var(--own);box-shadow:inset 2px 0 0 var(--own-edge)}
-.mp-msg{padding:12px;font-size:12.5px;line-height:1.5;color:#a8a8a8;white-space:pre-line}
-.mp-msg.err{color:#fecaca}
+.mp-msg{padding:12px;font-size:12.5px;line-height:1.5;color:var(--fg-muted);white-space:pre-line}
+.mp-msg.err{color:var(--err-soft)}
 .mp-msg code,.mp-foot code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.95em;background:var(--field);padding:0 4px;border-radius:3px}
 .mp-wait{display:flex;align-items:center;gap:8px}
 .mp-foot{margin:0;padding:7px 12px 9px;border-top:1px solid var(--line);font-size:11.5px;color:var(--dim)}
 .st-meter{display:inline-block;width:32px;height:4px;border-radius:2px;background:var(--line);overflow:hidden}
 .st-meter i{display:block;height:100%;background:var(--dim)}
-.st.warn{color:#fbbf24}
-.st.warn .st-meter i{background:#fbbf24}
-.st.bad{color:#f87171}
-.st.bad .st-meter i{background:#f87171}
+.st.warn{color:var(--warn)}
+.st.warn .st-meter i{background:var(--warn)}
+.st.bad{color:var(--err)}
+.st.bad .st-meter i{background:var(--err)}
 /* A pool the serving model is not spending from: shown only when the strip is open, and quieter. */
 .st.off{opacity:.55}
 /* ── The file window ─────────────────────────────────────────────────────────
@@ -1533,19 +1535,19 @@ button:disabled{opacity:.5;cursor:default}
    box: an editor is read in lines and a tree is only a way of getting to one. On a phone the
    tree becomes a drawer (the 640px block below), which is why the header carries a toggle for
    it that a desktop never shows. */
-#files{position:fixed;inset:0;z-index:22;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;padding:16px}
+#files{position:fixed;inset:0;z-index:22;background:var(--scrim-2);display:flex;align-items:center;justify-content:center;padding:16px}
 #files[hidden]{display:none}
-#files-box{display:flex;flex-direction:column;width:100%;height:100%;max-width:1400px;overflow:hidden;background:var(--bg);border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 30px rgba(0,0,0,.5)}
+#files-box{display:flex;flex-direction:column;width:100%;height:100%;max-width:1400px;overflow:hidden;background:var(--bg);border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 30px var(--shadow)}
 #files-bar{display:flex;align-items:center;gap:8px;padding:6px 10px 6px 16px;border-bottom:1px solid var(--line);min-height:var(--headh);font-size:13px}
 #files-title{font-weight:600;white-space:nowrap}
 #files-where{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11.5px;color:var(--dim);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 #files-tree-toggle{display:none}
 #files-close{font-size:18px;padding:6px 10px}
 #files-body{flex:1;min-height:0;display:flex;position:relative}
-#files-tree{width:250px;flex:none;min-height:0;display:flex;flex-direction:column;border-right:1px solid var(--line);background:#151515}
+#files-tree{width:250px;flex:none;min-height:0;display:flex;flex-direction:column;border-right:1px solid var(--line);background:var(--bg-tree)}
 #files-tree-head{display:flex;gap:6px;padding:8px;border-bottom:1px solid var(--line)}
 #files-tree-head button{flex:1;font:inherit;font-size:11.5px;padding:5px 6px;background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);cursor:pointer}
-#files-tree-head button:hover{border-color:#3a3a3a;background:#2a2a2a}
+#files-tree-head button:hover{border-color:var(--line-3);background:var(--hover-3)}
 #files-new-row{display:flex;gap:6px;padding:8px;border-bottom:1px solid var(--line)}
 #files-new-row input,#files-rename-row input{flex:1;min-width:0;background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:inherit;font-size:12.5px;padding:5px 7px}
 #files-new-row button,#files-rename-row button{flex:none;font:inherit;font-size:11.5px;padding:5px 8px;background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);cursor:pointer}
@@ -1553,17 +1555,17 @@ button:disabled{opacity:.5;cursor:default}
 #files-hits{border-top:1px solid var(--line);max-height:40%;overflow:auto;padding:4px 0}
 #files-hits .fx-hit-head{padding:4px 10px;font-size:11px;color:var(--dim)}
 .fx-row{display:flex;align-items:center;gap:3px;width:100%;padding:3px 8px;background:none;border:0;color:var(--fg);font:inherit;font-size:12.5px;text-align:left;cursor:pointer;white-space:nowrap}
-.fx-row:hover{background:#222}
-.fx-row.on{background:#252525}
+.fx-row:hover{background:var(--hover-2)}
+.fx-row.on{background:var(--active)}
 /* A folder row is a box holding its expand button and two actions, so the actions are reachable
    without turning the row into a second kind of selection. They stay out of the way until the
    pointer is on the row; a finger gets them always (the 640px block below). */
 .fx-dirrow{padding:0;gap:0}
-.fx-dirrow:hover{background:#222}
+.fx-dirrow:hover{background:var(--hover-2)}
 .fx-main{flex:1;min-width:0;display:flex;align-items:center;gap:3px;padding:3px 4px;background:none;border:0;color:var(--fg);font:inherit;font-size:12.5px;text-align:left;cursor:pointer;white-space:nowrap;overflow:hidden}
 .fx-act{flex:none;display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;padding:0;background:none;border:0;border-radius:4px;color:var(--dim);cursor:pointer;opacity:0;transition:opacity .12s}
 .fx-dirrow:hover .fx-act,.fx-act:focus-visible{opacity:1}
-.fx-act:hover{background:#2c2c2c;color:var(--fg)}
+.fx-act:hover{background:var(--active-3);color:var(--fg)}
 .fx-act .ic{width:12px;height:12px}
 #files-rename-what{flex:none;font-size:11px;color:var(--dim);white-space:nowrap}
 .fx-caret{flex:none;width:14px;height:14px;display:inline-flex;align-items:center;justify-content:center;color:var(--dim)}
@@ -1582,34 +1584,34 @@ button:disabled{opacity:.5;cursor:default}
 #files.instr .fx-sub{min-width:0}
 /* An agent's instruction files in two parts — the gateway's shared files, then its machine's own —
    each under a heading that says where its files live. */
-.fx-sec{padding:10px 10px 2px;font-size:10.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#9a9a9a}
+.fx-sec{padding:10px 10px 2px;font-size:10.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--fg-soft)}
 .fx-head{padding:2px 10px 8px;font-size:11.5px;color:var(--dim);white-space:normal;line-height:1.4;border-bottom:1px solid var(--line)}
 #files-main{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column}
 #files-crumbs{display:flex;flex-wrap:wrap;align-items:center;gap:2px;padding:5px 12px;border-bottom:1px solid var(--line);font-size:12px;color:var(--dim)}
-#files-crumbs button{background:none;border:0;color:#9ecbff;font:inherit;font-size:12px;padding:2px 3px;cursor:pointer;border-radius:4px}
-#files-crumbs button:hover{background:#222}
+#files-crumbs button{background:none;border:0;color:var(--accent-crumb);font:inherit;font-size:12px;padding:2px 3px;cursor:pointer;border-radius:4px}
+#files-crumbs button:hover{background:var(--hover-2)}
 #files-crumbs .fx-sep{opacity:.5}
 #files-crumbs .fx-crumb-file{color:var(--fg);padding:2px 3px;overflow:hidden;text-overflow:ellipsis}
 #files-search-row{display:flex;gap:6px;padding:6px 12px;border-bottom:1px solid var(--line)}
 #files-q{flex:1;min-width:0;background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:inherit;font-size:12.5px;padding:6px 8px}
 #files-q-go{display:inline-flex;align-items:center;justify-content:center;width:30px;flex:none;background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);cursor:pointer}
 #files-q-go .ic{width:14px;height:14px}
-#files-note{margin:8px 12px 0;padding:7px 9px;border-radius:5px;background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.25);color:#fbbf24;font-size:12px;line-height:1.45;overflow-wrap:anywhere}
-#files-eol{margin:8px 12px 0;padding:7px 9px;border-radius:5px;background:rgba(56,189,248,.08);border:1px solid rgba(56,189,248,.25);color:#9ecbff;font-size:12px;line-height:1.45;overflow-wrap:anywhere}
-#files-editor{flex:1;min-height:0;overflow:auto;background:#141414}
-#files-editor .fx-text{display:block;width:100%;height:100%;min-height:100%;resize:none;border:0;outline:0;background:#141414;color:var(--fg);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px;line-height:1.55;padding:12px 14px;tab-size:4}
+#files-note{margin:8px 12px 0;padding:7px 9px;border-radius:5px;background:var(--warn-tint);border:1px solid var(--warn-border);color:var(--warn);font-size:12px;line-height:1.45;overflow-wrap:anywhere}
+#files-eol{margin:8px 12px 0;padding:7px 9px;border-radius:5px;background:var(--accent-tint);border:1px solid var(--accent-border);color:var(--accent-crumb);font-size:12px;line-height:1.45;overflow-wrap:anywhere}
+#files-editor{flex:1;min-height:0;overflow:auto;background:var(--bg-editor)}
+#files-editor .fx-text{display:block;width:100%;height:100%;min-height:100%;resize:none;border:0;outline:0;background:var(--bg-editor);color:var(--fg);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px;line-height:1.55;padding:12px 14px;tab-size:4}
 #files-preview{flex:1;min-height:0;overflow:auto;padding:16px 22px;max-width:860px;width:100%;margin:0 auto;font-size:14px;line-height:1.6}
 #files-preview img{max-width:100%}
 #files-image{display:flex;align-items:center;justify-content:center;flex:1;min-height:0;overflow:auto;padding:16px}
 #files-image img{max-width:100%;max-height:100%}
-#files-conflict{margin:10px 12px 0;padding:10px 12px;border-radius:6px;background:rgba(248,113,113,.08);border:1px solid rgba(248,113,113,.3);font-size:12.5px;line-height:1.5;color:#f87171}
+#files-conflict{margin:10px 12px 0;padding:10px 12px;border-radius:6px;background:var(--err-tint);border:1px solid var(--err-border-1);font-size:12.5px;line-height:1.5;color:var(--err)}
 .fx-acts{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
 #files-actions{display:flex;align-items:center;gap:8px;padding:8px 12px;border-top:1px solid var(--line)}
 #files-actions button{background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:inherit;font-size:12px;padding:6px 12px;cursor:pointer;white-space:nowrap}
-#files-actions button:hover:not(:disabled){border-color:#3a3a3a;background:#2a2a2a}
+#files-actions button:hover:not(:disabled){border-color:var(--line-3);background:var(--hover-3)}
 #files-actions button:disabled{opacity:.45;cursor:default}
-#files-actions #files-delete{color:#f87171}
-#files-dirty{font-size:11.5px;color:#fbbf24;margin-left:auto}
+#files-actions #files-delete{color:var(--err)}
+#files-dirty{font-size:11.5px;color:var(--warn);margin-left:auto}
 #files-rename-row{display:flex;gap:6px;padding:8px 12px;border-top:1px solid var(--line)}
 /* Phones and tablets held upright. Everything here is about the parts of a handset a desktop
    layout has no concept of: a URL bar that eats viewport height, a home indicator under the
@@ -1621,7 +1623,7 @@ button:disabled{opacity:.5;cursor:default}
    is given up so the fixed position can take over. The backdrop is what dismisses it, as the
    sidebar drawer's is. */
 @media(max-width:1023px){
-  #schedules{position:fixed;top:0;right:0;bottom:0;z-index:20;width:min(88vw,380px);flex-basis:auto;box-shadow:-3px 0 12px rgba(0,0,0,.6)}
+  #schedules{position:fixed;top:0;right:0;bottom:0;z-index:20;width:min(88vw,380px);flex-basis:auto;box-shadow:-3px 0 12px var(--shadow-drawer)}
   #schedules.collapsed{margin:0;transform:translateX(100%)}
   #app.sched-open #backdrop{display:block}
   /* Nothing to dock it to here, so the resize handle is not offered: an overlay's width is the
@@ -1645,7 +1647,7 @@ button:disabled{opacity:.5;cursor:default}
      closed position is a transform rather than a negative margin, so it moves the full width
      of whatever the screen allowed — the same drawer the task panel is from 1023px down, at
      the same 88vw/380px, so the two edges feel like one component. */
-  #sidebar{position:fixed;top:0;bottom:0;left:0;height:auto;z-index:20;width:min(88vw,380px);flex-basis:min(88vw,380px);box-shadow:3px 0 12px rgba(0,0,0,.6)}
+  #sidebar{position:fixed;top:0;bottom:0;left:0;height:auto;z-index:20;width:min(88vw,380px);flex-basis:min(88vw,380px);box-shadow:3px 0 12px var(--shadow-drawer)}
   #sidebar.collapsed{margin:0;transform:translateX(-100%)}
   #app.sb-open #backdrop{display:block}
   #sidebar>.panel-resize{display:none}
@@ -1857,7 +1859,7 @@ button:disabled{opacity:.5;cursor:default}
   #files{padding:0}
   #files-box{width:100%;height:100%;max-height:none;border:0;border-radius:0}
   #files-tree-toggle{display:inline-flex;align-items:center;justify-content:center;min-width:44px;height:44px}
-  #files-tree{position:absolute;top:0;bottom:0;left:0;width:min(300px,86%);z-index:2;transform:translateX(-102%);transition:transform .18s;box-shadow:2px 0 14px rgba(0,0,0,.55)}
+  #files-tree{position:absolute;top:0;bottom:0;left:0;width:min(300px,86%);z-index:2;transform:translateX(-102%);transition:transform .18s;box-shadow:2px 0 14px var(--shadow-lg)}
   #files.tree-open #files-tree{transform:none}
   #files-bar{min-height:49px;padding:0 4px 0 8px}
   #files-close,#files-refresh{display:inline-flex;align-items:center;justify-content:center;min-width:44px;height:44px}

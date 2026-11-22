@@ -25,6 +25,7 @@ import { createFilesPanel } from './panels/files.js';
 import { createInstructionsPanel } from './panels/instructions.js';
 import { createSchedulesPanel } from './panels/schedules.js';
 import { createSkillsPanel } from './panels/skills.js';
+import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './theme.js';
 
 (function(){
   var $ = function(id){ return document.getElementById(id); };
@@ -37,6 +38,7 @@ import { createSkillsPanel } from './panels/skills.js';
       rowMenu=$('row-menu'),
       optsBtn=$('opts-toggle'), optsMenu=$('opts-menu'), manageBtn=$('manage-toggle'), manageMenu=$('manage-menu'),
       calmBtn=$('calm-toggle'), calmState=$('calm-state'),
+      themeBtn=$('theme-toggle'), themeState=$('theme-state'),
       idleWhy=$('idle-why'), idleList=$('idle-list'), idleGo=$('idle-go'), idleCancel=$('idle-cancel'), chatTitle=$('topic-title'), chatStatus=$('topic-status'), forkNote=$('fork-note'),
       chat=$('chat'), chatHead=$('chat-header'), composer=$('bar'),
       termBtn=$('term-toggle'), termHost=$('term-frames'), termEl=$('term'), termGrip=$('term-grip'),
@@ -838,6 +840,21 @@ import { createSkillsPanel } from './panels/skills.js';
     paintCalm();
   });
   paintCalm();
+
+  var themeLabels = THEMES.map(function(entry){ return entry.label; }).join(' / ');
+  function paintTheme(){
+    var current = getTheme();
+    var label = themeLabel(current);
+    themeState.textContent = label;
+    themeBtn.setAttribute('aria-label', 'Theme: ' + label);
+    themeBtn.title = 'Theme: ' + label + ' — click to switch (' + themeLabels + ')';
+  }
+  themeBtn.addEventListener('click', function(){
+    setTheme(nextTheme());
+    paintTheme();
+  });
+  initTheme(paintTheme);
+  paintTheme();
 
   function schedAgo(at){
     if(!at) return '';

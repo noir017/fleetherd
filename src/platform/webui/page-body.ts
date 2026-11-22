@@ -60,6 +60,7 @@ export const PAGE_BODY = `<main id="app" hidden>
         <button type="button" id="settings-open" title="Agents, models and conversation settings for this topic"><span>All settings</span></button>
         <button type="button" id="notify-toggle" hidden aria-pressed="false" title="Notify this device when something needs you"><span>Notifications</span><span class="opt-state" id="notify-state">off</span></button>
         <button type="button" id="calm-toggle" aria-pressed="false" title="Running topics stop pulsing and unread counts go grey; a question, a failure or an unread reply still stands out. This device only."><span>Low attention</span><span class="opt-state" id="calm-state">off</span></button>
+        <button type="button" id="theme-toggle" title="Theme: System — click to cycle System, Dark, Light" aria-label="Theme: System"><span>Theme</span><span class="opt-state" id="theme-state">System</span></button>
         <div class="opts-sep"></div>
         <!-- The gateway's managed skills: a surface of its own, not a setting, which is why it
              was a footer button of its own until the row ran out of width. -->

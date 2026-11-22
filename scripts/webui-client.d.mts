@@ -9,10 +9,11 @@ export interface ClientFile {
 }
 
 export const APP_ENTRY: string;
+export const BOOT_ENTRY: string;
 export const STYLE_ENTRY: string;
 
 /** The client script as source with its build-time markers filled. */
 export function appSource(): Promise<string>;
 
 /** Bundle the script and the stylesheet; with `outdir`, also write both there. */
-export function buildClient(opts?: { outdir?: string }): Promise<{ app: ClientFile; style: ClientFile }>;
+export function buildClient(opts?: { outdir?: string }): Promise<{ app: ClientFile; boot: ClientFile; style: ClientFile }>;
