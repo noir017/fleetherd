@@ -153,7 +153,7 @@ describe('the text answers', () => {
       { kind: 'gone' },
       { kind: 'failed', reason: 'Invalid params' },
     ];
-    const texts = outcomes.map(effortChoiceText);
+    const texts = outcomes.map((o) => effortChoiceText(o));
     expect(new Set(texts).size).toBe(outcomes.length);
     expect(texts[0]).toContain('`xhigh`');
     expect(texts[2]).toContain('`max`');

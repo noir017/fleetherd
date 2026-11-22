@@ -1,5 +1,6 @@
 import type { EffortSelector } from '../types.js';
 import type { Harness } from './command-translate.js';
+import { type Locale, tMenus } from './i18n/menus.js';
 import { formatButtonId, parseButtonId } from './button-id.js';
 import { resolvePageSize, truncateLabel } from './paging.js';
 
@@ -85,12 +86,15 @@ export function buildEffortMenu(menu: {
   reqId: string;
   options: EffortOption[];
   current?: string;
+  locale?: Locale;
 }): EffortMenuView {
-  const buttons = menu.options.map((o, i) => ({
-    id: effortPickButtonId(menu.reqId, i),
-    label: truncateLabel((o.value === menu.current ? CURRENT_MARK : '') + o.value),
+  const { reqId, options, current, locale = 'en' } = menu;
+  const buttons = options.map((o, i) => ({
+    id: effortPickButtonId(reqId, i),
+    label: truncateLabel((o.value === current ? CURRENT_MARK : '') + o.value),
   }));
-  const text = `Effort: ${menu.current ?? 'unknown'}\nTap one, or \`/effort <level>\`.`;
+  const currentLabel = current ?? tMenus(locale, 'model_menu_unknown');
+  const text = tMenus(locale, 'effort_menu_text', { current: currentLabel });
   return { text, buttons };
 }
 
@@ -132,11 +136,9 @@ function levelList(options: EffortOption[]): string {
 }
 
 /** The bare `/effort` text answer, for platforms that cannot carry a menu. */
-export function effortSummaryText(selector: EffortSelector): string {
-  return (
-    `Effort: ${selector.current ?? 'unknown'}\n` +
-    `Offered: ${levelList(selector.options)} — \`/effort <level>\` to switch.`
-  );
+export function effortSummaryText(selector: EffortSelector, locale: Locale = 'en'): string {
+  const currentLabel = selector.current ?? tMenus(locale, 'model_menu_unknown');
+  return tMenus(locale, 'effort_summary_text', { current: currentLabel, list: levelList(selector.options) });
 }
 
 /**
@@ -155,46 +157,39 @@ export function effortSummaryText(selector: EffortSelector): string {
  *   Claude models.
  * - anything else gets the generic sentence, with no advice it cannot back up.
  */
-export function effortNoSelectorText(harness: Harness | undefined, model: string | undefined): string {
-  const on = model ? `\`${model}\`` : 'the current model';
+export function effortNoSelectorText(
+  harness: Harness | undefined,
+  model: string | undefined,
+  locale: Locale = 'en'
+): string {
+  const on = model ? `\`${model}\`` : tMenus(locale, 'effort_on_current_model');
   if (harness === 'codex') {
-    return (
-      `Codex offers no effort levels for ${on}. codex takes them from its own model catalog, and ` +
-      'the installed codex-cli has none for this model (a newer codex-cli may). `/model` can ' +
-      'switch to a model it knows; until then the level comes from `model_reasoning_effort` in ' +
-      '~/.codex/config.toml.'
-    );
+    return tMenus(locale, 'effort_no_selector_codex', { on });
   }
   if (harness === 'opencode') {
-    return (
-      `OpenCode offers no effort levels for ${on} — it has them only for models with reasoning ` +
-      'variants. `/model` can switch to one that does.'
-    );
+    return tMenus(locale, 'effort_no_selector_opencode', { on });
   }
   if (harness === 'agy') {
-    return (
-      `agy offers no thinking level for ${on} — it has one only for its Gemini models. ` +
-      '`/model` can switch to one that does.'
-    );
+    return tMenus(locale, 'effort_no_selector_agy', { on });
   }
-  return `This agent offers no effort levels for ${on}.`;
+  return tMenus(locale, 'effort_no_selector_default', { on });
 }
 
 /**
  * The session could not be started, so there is nothing to choose from — and the reason why.
  * Same reasoning as modelStartFailedText: the real cause beats "send a message first".
  */
-export function effortStartFailedText(reason: string): string {
-  return `Could not start this agent, so its effort levels are unavailable:\n${reason}`;
+export function effortStartFailedText(reason: string, locale: Locale = 'en'): string {
+  return tMenus(locale, 'effort_start_failed', { reason });
 }
 
 /** No level matched. Lists the choices, since the whole list fits in one line. */
-export function effortNoMatchText(query: string, options: EffortOption[]): string {
-  return `No effort level matches "${query}". Offered: ${levelList(options)}.`;
+export function effortNoMatchText(query: string, options: EffortOption[], locale: Locale = 'en'): string {
+  return tMenus(locale, 'effort_no_match', { query, list: levelList(options) });
 }
 
-export function effortAmbiguousText(query: string, matches: EffortOption[]): string {
-  return `"${query}" could be ${levelList(matches)} — type more of it.`;
+export function effortAmbiguousText(query: string, matches: EffortOption[], locale: Locale = 'en'): string {
+  return tMenus(locale, 'effort_ambiguous', { query, list: levelList(matches) });
 }
 
 /**
@@ -225,20 +220,20 @@ export type EffortChoiceResult =
  * while a turn is running does not reach into that turn, and one set between turns has nothing to
  * apply to until the next one starts.
  */
-export function effortChoiceText(result: EffortChoiceResult): string {
+export function effortChoiceText(result: EffortChoiceResult, locale: Locale = 'en'): string {
   switch (result.kind) {
     case 'applied':
-      return `Effort set to \`${result.effort}\` for this conversation, from the next message.`;
+      return tMenus(locale, 'effort_applied', { effort: result.effort });
     case 'unavailable':
-      return 'This session offers no effort levels right now (its model may have changed). Run /effort again.';
+      return tMenus(locale, 'effort_unavailable');
     case 'missing':
-      return `\`${result.value}\` is no longer offered — the model's levels changed. Run /effort again for the current list.`;
+      return tMenus(locale, 'effort_missing', { value: result.value });
     case 'rebound':
-      return `This conversation is answered by ${result.agent} now, so that menu no longer applies. Run /effort again.`;
+      return tMenus(locale, 'effort_rebound', { agent: result.agent });
     case 'gone':
-      return 'That conversation is gone — send a message first, then /effort.';
+      return tMenus(locale, 'effort_gone');
     case 'failed':
-      return `Could not set effort: ${result.reason}`;
+      return tMenus(locale, 'effort_failed', { reason: result.reason });
     default: {
       const _exhaustive: never = result;
       return String(_exhaustive);
@@ -247,11 +242,12 @@ export function effortChoiceText(result: EffortChoiceResult): string {
 }
 
 /** A click on a menu this daemon no longer knows about (used up, superseded, or restarted). */
-export function effortMenuExpiredText(): string {
-  return 'That effort menu has expired (superseded, or the gateway restarted). Run /effort again for a fresh one.';
+export function effortMenuExpiredText(locale: Locale = 'en'): string {
+  return tMenus(locale, 'effort_expired');
 }
 
 /** What the previous menu becomes when a newer one is opened in the same conversation. */
-export function effortMenuSupersededText(current: string | undefined): string {
-  return `Effort: ${current ?? 'unknown'} — superseded by a newer /effort menu.`;
+export function effortMenuSupersededText(current: string | undefined, locale: Locale = 'en'): string {
+  const currentLabel = current ?? tMenus(locale, 'model_menu_unknown');
+  return tMenus(locale, 'effort_superseded', { current: currentLabel });
 }

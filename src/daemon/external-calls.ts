@@ -1,7 +1,13 @@
 import { encode } from '@toon-format/toon';
 import type { Config } from '../config/schema.js';
 import { addressOf, formatAddress, parseTarget, type ConversationAddress } from '../core/conversation.js';
+<<<<<<< HEAD
 import type { ExternalAction, SessionsCommand } from '../ipc/external-tools.js';
+=======
+import { localeOf } from '../core/i18n/index.js';
+import { tMenus } from '../core/i18n/menus.js';
+import type { ExternalAction } from '../ipc/external-tools.js';
+>>>>>>> feat/i18n-menus
 import type { IpcAction, TaskAgentDetail, TaskAgentsResult, TaskListResult } from '../ipc/protocol.js';
 import { libraryLine } from '../ipc/tools.js';
 import type { PlatformAdapter } from '../platform/adapter.js';
@@ -170,12 +176,11 @@ export class ExternalCalls {
     const key = this.deps.conversationAt(id, address)?.key;
     if (!key) throw new Error("this deployment's session scope gives a topic no conversation of its own");
     this.deps.topics.add({ caller: caller.name, platform: id, address, title: name, openedAt: new Date(this.deps.now()).toISOString() });
+    const locale = localeOf(this.deps.config);
     void adapter
       .sendMessage(
         address,
-        `Opened by **${caller.name}**, outside this gateway, through its MCP entrance. The sub-tasks it proposes appear ` +
-          `here as cards, and none starts until you tap Start. Nothing typed here reaches an agent; \`/stop\` stops every ` +
-          `sub-task under this topic.`
+        tMenus(locale, 'ext_topic_intro', { caller: caller.name })
       )
       .catch((e) => console.warn('[external-mcp] could not introduce a topic:', e instanceof Error ? e.message : e));
     console.log(`[external-mcp] ${caller.name} opened ${key} ("${name}")`);

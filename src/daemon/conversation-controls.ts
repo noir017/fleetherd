@@ -1,5 +1,7 @@
 import type { AgentDef } from '../config/schema.js';
 import { agentDisplayName, findAgent } from '../config/schema.js';
+import { localeOf } from '../core/i18n/index.js';
+import { tMenus } from '../core/i18n/menus.js';
 import { addressOf, type ConversationAddress, type ConversationRef } from '../core/conversation.js';
 import {
   effortAmbiguousText,
@@ -66,9 +68,6 @@ import { isDirectory, scanWorkdirs, workdirScanFrom, type WorkdirScan } from './
 /** How long a menu offered on the side (a bare `/cc`, `/new`) waits for a remote root's first listing. */
 export const REMOTE_LISTING_WAIT_MS = 5_000;
 
-const FORK_WEB_ONLY =
-  '/fork works in the web UI only: the copy opens as a topic beside this one, and only the web UI has a topic list to put it in.';
-
 /**
  * Shape a lane name: `[<agent>] <subject>`. Leading bracketed groups are stripped repeatedly, so
  * re-titling replaces the tag instead of stacking a second one.
@@ -114,22 +113,23 @@ export class ConversationControls {
     const wanted = rest.trim();
     const platformId = msg.conversation.platform;
     const current = this.ctx.store?.conversationTitle(key);
+    const locale = localeOf(this.ctx.config);
 
     if (wanted.toLowerCase() === 'auto') {
       if (!current) {
-        return 'I have not named this topic yet — it gets a name after the next message.';
+        return tMenus(locale, 'title_not_named_yet');
       }
       this.ctx.store?.releaseConversationTitle(key);
-      return `Forgot the name I gave this topic ("${current}"). It keeps that name until the next message, which will name it afresh.`;
+      return tMenus(locale, 'title_released', { current });
     }
 
     if (!wanted) {
       if (!current) {
-        return 'I have not named this topic. `/title <name>` to name it now, or it gets named automatically after the next message.';
+        return tMenus(locale, 'title_not_named_prompt');
       }
       return this.ctx.store?.titlePinned(key)
-        ? `This topic is named "${current}" — you set it, and it will not be renamed. \`/title auto\` to have it named afresh.`
-        : `I named this topic "${current}" from its opening message, and will not rename it again. \`/title <name>\` to set your own.`;
+        ? tMenus(locale, 'title_pinned_status', { current })
+        : tMenus(locale, 'title_auto_status', { current });
     }
 
     const agentId = this.ctx.boundAgentFor(key, fallbackAgent);
@@ -141,8 +141,8 @@ export class ConversationControls {
       formatLaneTitle(agentId, wanted),
       true
     );
-    if (failure) return `Could not rename this topic: ${failure}`;
-    return `Renamed this topic to "${wanted}". \`/title auto\` to have it named automatically again.`;
+    if (failure) return tMenus(locale, 'title_failed', { failure });
+    return tMenus(locale, 'title_success', { wanted });
   }
 
   /**
@@ -206,15 +206,16 @@ export class ConversationControls {
     title: string,
     pinned = false
   ): Promise<string | undefined> {
+    const locale = localeOf(this.ctx.config);
     const platform = this.ctx.platforms.get(platformId);
     if (!platform?.capabilities.renameThread || !platform.renameThread) {
-      return 'this platform cannot rename a conversation lane';
+      return tMenus(locale, 'title_err_platform');
     }
     if (!address.thread) {
-      return 'this conversation is not in a thread or topic, so there is no name to change';
+      return tMenus(locale, 'title_err_no_thread');
     }
     const wanted = title.trim();
-    if (!wanted) return 'that is an empty title';
+    if (!wanted) return tMenus(locale, 'title_err_empty');
     try {
       await platform.renameThread(address, wanted);
     } catch (e) {
@@ -241,22 +242,23 @@ export class ConversationControls {
     address: ConversationAddress,
     fallbackAgent: string
   ): Promise<string> {
+    const locale = localeOf(this.ctx.config);
     const platformId = msg.conversation.platform;
     const adapter = this.ctx.platforms.get(platformId);
     const forkThread = adapter?.forkThread?.bind(adapter);
-    if (!forkThread) return FORK_WEB_ONLY;
+    if (!forkThread) return tMenus(locale, 'fork_web_only');
     const agentId = this.ctx.boundAgentFor(key, fallbackAgent);
     const label = agentDisplayName(findAgent(this.ctx.config, agentId), agentId);
     if (!this.ctx.store?.agentSession(key, agentId)) {
-      return `Nothing to fork yet: ${label} has no conversation here. Send it a message first.`;
+      return tMenus(locale, 'fork_nothing_yet', { label });
     }
     const session = this.ctx.agents.getOrCreate(key, agentId);
-    if (!session.forkFrom) return `${label} does not support /fork.`;
+    if (!session.forkFrom) return tMenus(locale, 'fork_unsupported', { label });
     const asked = await this.forkReady(key, session, label, agentId);
     if (asked) return asked;
     // Read again: a source whose stored session could not be reloaded just now has a fresh one.
     const sourceId = this.ctx.store?.agentSession(key, agentId);
-    if (!sourceId) return `Nothing to fork yet: ${label} has no conversation here. Send it a message first.`;
+    if (!sourceId) return tMenus(locale, 'fork_nothing_yet', { label });
     return this.makeFork({ key, address, platformId, forkThread, agentId, label, sourceId });
   }
 
@@ -270,17 +272,18 @@ export class ConversationControls {
     sourceId: string;
   }): Promise<string> {
     const { key, address, platformId, forkThread, agentId, label, sourceId } = f;
+    const locale = localeOf(this.ctx.config);
     const turn = this.history.lastTurnOf(key);
     let opened: Awaited<ReturnType<typeof forkThread>>;
     try {
       opened = await forkThread(address, turn !== undefined ? { turn } : {});
     } catch (e) {
-      return `Could not fork: ${e instanceof Error ? e.message : String(e)}`;
+      return tMenus(locale, 'fork_failed', { reason: e instanceof Error ? e.message : String(e) });
     }
     const conv = this.ctx.conversationAt(platformId, opened.address);
     if (!conv) {
       opened.discard();
-      return "Could not fork: the new topic does not map to a conversation of its own under this deployment's scope.";
+      return tMenus(locale, 'fork_no_scope');
     }
     this.seedFork(key, conv.key, platformId, agentId);
     try {
@@ -294,13 +297,13 @@ export class ConversationControls {
       this.ctx.store?.clear(conv.key);
       opened.discard();
       console.warn(`[fork] ${key} (${agentId}): ${e instanceof Error ? e.message : e}`);
-      return e instanceof ForkRefused ? e.message : `Could not fork: ${e instanceof Error ? e.message : String(e)}`;
+      return e instanceof ForkRefused ? e.message : tMenus(locale, 'fork_failed', { reason: e instanceof Error ? e.message : String(e) });
     }
     console.log(`[fork] ${key} (${agentId}) → ${conv.key} at turn ${turn ?? '?'}`);
     this.warnIfForkRaced(key, turn, platformId, opened.address, label);
     const link = opened.address.thread ? `[${subjectOf(opened.title)}](?t=${opened.address.thread})` : `"${opened.title}"`;
-    const at = turn !== undefined ? ` at turn ${turn}` : '';
-    return `Forked into ${link}${at}: it carries on from everything said here so far, as a conversation of its own. This topic is unchanged.`;
+    const at = turn !== undefined ? tMenus(locale, 'fork_at_turn', { turn }) : '';
+    return tMenus(locale, 'fork_success', { link, at });
   }
 
   /**
@@ -308,9 +311,10 @@ export class ConversationControls {
    * fork is only said in `initialize`, so a cold conversation is started first, then asked again.
    */
   private async forkReady(key: ConversationId, session: AgentSession, label: string, agentId: string): Promise<string | undefined> {
+    const locale = localeOf(this.ctx.config);
     const busy = (): string | undefined => {
-      if (this.ctx.isBusy(key)) return `${label} is in the middle of a turn here. /fork once it ends: a copy taken now would hold half of that turn.`;
-      if (session.backgroundActive?.()) return `${label} is still reporting on background work here. /fork once it has finished.`;
+      if (this.ctx.isBusy(key)) return tMenus(locale, 'fork_busy_turn', { label });
+      if (session.backgroundActive?.()) return tMenus(locale, 'fork_busy_background', { label });
       return undefined;
     };
     const now = busy();
@@ -318,7 +322,7 @@ export class ConversationControls {
     try {
       if (session.canFork?.() === undefined) await session.ensureSession?.(this.ctx.tokens.tokenFor(key));
     } catch (e) {
-      return `Could not fork: ${e instanceof Error ? e.message : String(e)}`;
+      return tMenus(locale, 'fork_failed', { reason: e instanceof Error ? e.message : String(e) });
     }
     if (session.canFork?.() === false) return forkRefusal(agentId, NO_FORK);
     return busy();
@@ -349,11 +353,12 @@ export class ConversationControls {
   ): void {
     if (!this.ctx.isBusy(sourceKey) && this.history.lastTurnOf(sourceKey) === turn) return;
     console.warn(`[fork] ${sourceKey}: a turn started while the copy was being made`);
+    const locale = localeOf(this.ctx.config);
     void this.ctx.platforms
       .get(platformId)
       ?.sendMessage(
         forkAddress,
-        `⚠ ${label} started a turn in the original topic while this copy was being made, so the copy may end part-way through that turn. If that matters, delete this topic and /fork again once the turn ends.`
+        tMenus(locale, 'fork_warn_raced', { label })
       )
       .catch((e) => console.warn('[fork] could not say the copy raced a turn:', e instanceof Error ? e.message : e));
   }
@@ -393,13 +398,14 @@ export class ConversationControls {
     rest: string | undefined,
     msg: InboundMessage
   ): Promise<string | undefined> {
+    const locale = localeOf(this.ctx.config);
     const typing = this.ctx.platforms.get(msg.conversation.platform);
     void typing?.startTyping?.(addressOf(msg.conversation)).catch(() => undefined);
     const warm = await this.warmModelSelector(key, state.agentId);
     void typing?.stopTyping?.(addressOf(msg.conversation)).catch(() => undefined);
-    if (warm.error) return modelStartFailedText(warm.error);
+    if (warm.error) return modelStartFailedText(warm.error, locale);
     const selector = warm.selector;
-    if (!selector) return modelNoSelectorText();
+    if (!selector) return modelNoSelectorText(locale);
 
     const query = rest?.trim();
     if (!query) {
@@ -412,13 +418,13 @@ export class ConversationControls {
         this.ctx.hooks.onModelMenuRequest(key, state.agentId, msg, selector);
         return undefined;
       }
-      return modelSummaryText(selector);
+      return modelSummaryText(selector, locale);
     }
 
     const match = matchModels(selector.options, query);
-    if (match.kind === 'none') return modelNoMatchText(query);
-    if (match.kind === 'many') return modelAmbiguousText(query, match.matches);
-    return modelChoiceText(await this.setModelOn(warm.session, state, match.option.value));
+    if (match.kind === 'none') return modelNoMatchText(query, locale);
+    if (match.kind === 'many') return modelAmbiguousText(query, match.matches, locale);
+    return modelChoiceText(await this.setModelOn(warm.session, state, match.option.value), locale);
   }
 
   private async setModelOn(
@@ -470,24 +476,25 @@ export class ConversationControls {
     rest: string | undefined,
     msg: InboundMessage
   ): Promise<string | undefined> {
+    const locale = localeOf(this.ctx.config);
     const typing = this.ctx.platforms.get(msg.conversation.platform);
     void typing?.startTyping?.(addressOf(msg.conversation)).catch(() => undefined);
     const warm = await this.warmSelector(key, state.agentId, (s) => s.effortSelector?.());
     void typing?.stopTyping?.(addressOf(msg.conversation)).catch(() => undefined);
-    if (warm.error) return effortStartFailedText(warm.error);
+    if (warm.error) return effortStartFailedText(warm.error, locale);
     const selector = warm.selector;
     if (!selector) {
       const def = findAgent(this.ctx.config, state.agentId);
-      return effortNoSelectorText(def?.harness, warm.session.modelSelector?.()?.current);
+      return effortNoSelectorText(def?.harness, warm.session.modelSelector?.()?.current, locale);
     }
 
     const query = rest?.trim();
     if (!query) return this.answerBareEffort(state, key, msg, selector);
 
     const match = matchEfforts(selector.options, query);
-    if (match.kind === 'none') return effortNoMatchText(query, selector.options);
-    if (match.kind === 'many') return effortAmbiguousText(query, match.matches);
-    return effortChoiceText(await this.setEffortOn(warm.session, state.agentId, match.option.value));
+    if (match.kind === 'none') return effortNoMatchText(query, selector.options, locale);
+    if (match.kind === 'many') return effortAmbiguousText(query, match.matches, locale);
+    return effortChoiceText(await this.setEffortOn(warm.session, state.agentId, match.option.value), locale);
   }
 
   private answerBareEffort(
@@ -505,7 +512,8 @@ export class ConversationControls {
       this.ctx.hooks.onEffortMenuRequest(key, state.agentId, msg, selector);
       return undefined;
     }
-    return effortSummaryText(selector);
+    const locale = localeOf(this.ctx.config);
+    return effortSummaryText(selector, locale);
   }
 
   private async setEffortOn(session: AgentSession, agentId: string, value: string): Promise<EffortChoiceResult> {
@@ -544,14 +552,15 @@ export class ConversationControls {
 
   /** The model list for an ADDRESS (`useModelPicker`): warmed like `/model`, bound as a first message would bind. */
   async modelPickerForRef(ref: ConversationRef): Promise<ModelPickerList> {
+    const locale = localeOf(this.ctx.config);
     const id = this.ctx.idForRef(ref);
     const agentId =
       this.ctx.conversations.get(id)?.agentId ?? this.ctx.boundAgentFor(id, resolveAgent(this.ctx.config, routeInputFromRef(ref)).agentId);
     const state = this.ctx.ensureState(id, ref.platform, agentId, { opener: 'the model switch' });
     const warm = await this.warmModelSelector(id, state.agentId);
-    if (warm.error) return { ok: false, agent: state.agentId, reason: 'error', text: modelStartFailedText(warm.error) };
+    if (warm.error) return { ok: false, agent: state.agentId, reason: 'error', text: modelStartFailedText(warm.error, locale) };
     if (!warm.selector || warm.selector.options.length === 0) {
-      return { ok: false, agent: state.agentId, reason: 'none', text: modelNoSelectorText() };
+      return { ok: false, agent: state.agentId, reason: 'none', text: modelNoSelectorText(locale) };
     }
     const liveModel = selectorModelLabel(warm.selector);
     if (liveModel) this.ctx.status.model(id, liveModel);
@@ -569,10 +578,11 @@ export class ConversationControls {
   }
 
   async chooseModelForRef(ref: ConversationRef, value: string): Promise<ModelPickerResult> {
+    const locale = localeOf(this.ctx.config);
     const id = this.ctx.idForRef(ref);
     const state = this.ctx.conversations.get(id);
     const result = state ? await this.applyModelChoice(id, state.agentId, value) : ({ kind: 'gone' } as const);
-    const text = modelChoiceText(result);
+    const text = modelChoiceText(result, locale);
     if (result.kind !== 'applied') return { ok: false, text };
     this.ctx.status.model(id, result.model);
     console.log(`[model] ${id}: switched to ${result.model} from the model switch`);
@@ -613,12 +623,13 @@ export class ConversationControls {
   }
 
   async optionsForRef(ref: ConversationRef): Promise<SessionOptionList> {
+    const locale = localeOf(this.ctx.config);
     const id = this.ctx.idForRef(ref);
     const state = this.ctx.ensureState(id, ref.platform, this.agentForRef(id, ref), { opener: 'a setting switch' });
     const agent = state.agentId;
     const warm = await this.warmSelector(id, agent, (s) => nonEmpty(s.sessionOptions?.()));
-    if (warm.error) return { ok: false, agent, reason: 'error', text: `Could not start ${agent} to ask for its settings:\n${warm.error}` };
-    if (!warm.selector) return { ok: false, agent, reason: 'none', text: `${agent} has no settings of its own to change.` };
+    if (warm.error) return { ok: false, agent, reason: 'error', text: tMenus(locale, 'opt_start_failed', { agent, error: warm.error }) };
+    if (!warm.selector) return { ok: false, agent, reason: 'none', text: tMenus(locale, 'opt_none_to_change', { agent }) };
     const liveModel = selectorModelLabel(warm.session.modelSelector?.());
     if (liveModel) this.ctx.status.model(id, liveModel);
     this.ctx.status.options(id, warm.selector);
@@ -627,17 +638,18 @@ export class ConversationControls {
 
   /** Set one of the agent's own settings; the agent may still refuse a listed value, in its own words. */
   async chooseOptionForRef(ref: ConversationRef, optionId: string, value: string): Promise<SessionOptionResult> {
+    const locale = localeOf(this.ctx.config);
     const id = this.ctx.idForRef(ref);
     const state = this.ctx.conversations.get(id);
-    if (!state) return { ok: false, text: 'That conversation is gone — send a message first.' };
+    if (!state) return { ok: false, text: tMenus(locale, 'opt_conv_gone') };
     const warm = await this.warmSelector(id, state.agentId, (s) => nonEmpty(s.sessionOptions?.()));
-    if (warm.error) return { ok: false, text: `Could not start ${state.agentId}:\n${warm.error}` };
+    if (warm.error) return { ok: false, text: tMenus(locale, 'opt_start_failed', { agent: state.agentId, error: warm.error }) };
     const option = warm.selector?.find((o) => o.id === optionId);
-    if (!option) return { ok: false, text: `${state.agentId} no longer offers that setting.` };
+    if (!option) return { ok: false, text: tMenus(locale, 'opt_no_longer_offered', { agent: state.agentId }) };
     const choice = option.options.find((c) => c.value === value);
-    if (!choice) return { ok: false, text: `${option.name}: "${value}" is no longer offered.` };
+    if (!choice) return { ok: false, text: tMenus(locale, 'opt_value_no_longer_offered', { name: option.name, value }) };
     const session = warm.session;
-    if (!session.setOption) return { ok: false, text: `${state.agentId} cannot change its settings at runtime.` };
+    if (!session.setOption) return { ok: false, text: tMenus(locale, 'opt_runtime_unsupported', { agent: state.agentId }) };
     try {
       // The list survives a reclaimed child; the change itself needs the child back.
       await session.ensureSession?.(this.ctx.tokens.tokenFor(id));
@@ -646,7 +658,7 @@ export class ConversationControls {
       const updated = options.find((o) => o.id === optionId);
       if (updated) this.ctx.modelCatalog.noteOptionDefault(state.agentId, updated);
       console.log(`[option] ${id}: ${optionId} set to ${value} from the setting switch`);
-      return { ok: true, options, text: `${option.name} set to ${choice.name} for this conversation.` };
+      return { ok: true, options, text: tMenus(locale, 'opt_set_success', { name: option.name, choice: choice.name }) };
     } catch (e) {
       return { ok: false, text: e instanceof Error ? e.message : String(e) };
     }
@@ -773,26 +785,27 @@ export class ConversationControls {
     rest: string | undefined,
     msg: InboundMessage
   ): string | undefined {
+    const locale = localeOf(this.ctx.config);
     const def = findAgent(this.ctx.config, agentId);
-    if (!def) return `No agent "${agentId}" is configured, so there is no directory to change.`;
+    if (!def) return tMenus(locale, 'workdir_no_agent', { agentId });
     const root = resolveAgentCwd(def);
     const scan = this.rankedWorkdirs(def, root);
-    if (!scan.ok) return workdirUnreadableText(root, scan.reason);
+    if (!scan.ok) return workdirUnreadableText(root, scan.reason, locale);
 
     const current = this.ctx.workdirOf(id, agentId) ?? root;
     const query = rest?.trim();
     if (!query) {
       if (this.offerWorkdirMenu(id, agentId, msg.conversation)) return undefined;
-      const text = workdirSummaryText(current, scan.options);
+      const text = workdirSummaryText(current, scan.options, locale);
       return scan.truncated > 0
-        ? `${text}\n(+${scan.truncated} more not shown — type part of a name to reach one.)`
+        ? `${text}${tMenus(locale, 'workdir_summary_more', { truncated: scan.truncated })}`
         : text;
     }
 
     const match = matchWorkdirs(scan.options, query);
-    if (match.kind === 'none') return workdirNoMatchText(query);
-    if (match.kind === 'many') return workdirAmbiguousText(query, match.matches);
-    return workdirChoiceText(this.setWorkdir(id, agentId, match.option.path));
+    if (match.kind === 'none') return workdirNoMatchText(query, locale);
+    if (match.kind === 'many') return workdirAmbiguousText(query, match.matches, locale);
+    return workdirChoiceText(this.setWorkdir(id, agentId, match.option.path), locale);
   }
 
   /**

@@ -1,4 +1,5 @@
 import type { ModelSelector } from '../types.js';
+import { type Locale, tMenus } from './i18n/menus.js';
 import { formatButtonId, parseButtonId } from './button-id.js';
 import { PAGE_SIZE, pageCount, pageOf, pageSlice, truncateLabel, wrapPage } from './paging.js';
 
@@ -152,8 +153,9 @@ export function buildModelMenu(menu: {
   page: number;
   /** Items per page; omitted means this platform declared none (core/paging.ts PAGE_SIZE). */
   pageSize?: number;
+  locale?: Locale;
 }): ModelMenuView {
-  const { reqId, options, current } = menu;
+  const { reqId, options, current, locale = 'en' } = menu;
   const pageTotal = modelPageCount(options.length, menu.pageSize);
   // Wrap into range, tolerating a negative or out-of-range request.
   const page = wrapPage(menu.page, pageTotal);
@@ -174,18 +176,17 @@ export function buildModelMenu(menu: {
 
   if (pageTotal > 1) {
     buttons.push(
-      { id: modelPageButtonId(reqId, (page - 1 + pageTotal) % pageTotal), label: '◀ Prev' },
-      { id: modelPageButtonId(reqId, (page + 1) % pageTotal), label: 'Next ▶' }
+      { id: modelPageButtonId(reqId, (page - 1 + pageTotal) % pageTotal), label: tMenus(locale, 'model_menu_prev') },
+      { id: modelPageButtonId(reqId, (page + 1) % pageTotal), label: tMenus(locale, 'model_menu_next') }
     );
   }
 
   // The shortcut is repeated on every page on purpose: it is the only way to reach a model without
   // paging to it, and the page a user happens to be on is the one they will read. The page counter
   // itself only appears when there is more than one page (see buildWorkdirMenu).
-  const text =
-    `Model: ${current ?? 'unknown'}\n` +
-    `${options.length} available${pageTotal > 1 ? ` · page ${page + 1}/${pageTotal}` : ''} — ` +
-    'tap one, or `/model <part of a name>`.';
+  const currentLabel = current ?? tMenus(locale, 'model_menu_unknown');
+  const pageNote = pageTotal > 1 ? tMenus(locale, 'model_menu_page_note', { page: page + 1, total: pageTotal }) : '';
+  const text = tMenus(locale, 'model_menu_text', { current: currentLabel, count: options.length, pageNote });
 
   return { text, buttons, page, pageCount: pageTotal };
 }
@@ -220,12 +221,9 @@ export function matchModels(options: ModelOption[], query: string): ModelMatch {
 // ───────────────────────────── the strings, in one place ─────────────────────────────
 
 /** The bare `/model` text answer, for platforms that cannot carry a menu. */
-export function modelSummaryText(selector: ModelSelector): string {
-  return (
-    `Model: ${selector.current ?? 'unknown'}\n` +
-    `${selector.options.length} available — \`/model <part of a name>\` to switch ` +
-    '(e.g. `/model sonnet`).'
-  );
+export function modelSummaryText(selector: ModelSelector, locale: Locale = 'en'): string {
+  const currentLabel = selector.current ?? tMenus(locale, 'model_menu_unknown');
+  return tMenus(locale, 'model_summary_text', { current: currentLabel, count: selector.options.length });
 }
 
 /**
@@ -235,11 +233,8 @@ export function modelSummaryText(selector: ModelSelector): string {
  * reaching this text means the agent genuinely exposes no model selector. The `claude` harness is
  * the real example: it takes its model from ANTHROPIC_MODEL and never advertises a picker.
  */
-export function modelNoSelectorText(): string {
-  return (
-    'This agent offers no model selector — it does not let the model be chosen at runtime. ' +
-    'Set `agents[].model` (or the harness\'s own env, e.g. ANTHROPIC_MODEL) in config.yaml and send /reload to change it.'
-  );
+export function modelNoSelectorText(locale: Locale = 'en'): string {
+  return tMenus(locale, 'model_no_selector');
 }
 
 /**
@@ -249,19 +244,20 @@ export function modelNoSelectorText(): string {
  * binary and an un-logged-in harness alike, which sent the user to do the one thing guaranteed to
  * fail the same way.
  */
-export function modelStartFailedText(reason: string): string {
-  return `Could not start this agent, so its model list is unavailable:\n${reason}`;
+export function modelStartFailedText(reason: string, locale: Locale = 'en'): string {
+  return tMenus(locale, 'model_start_failed', { reason });
 }
 
-export function modelNoMatchText(query: string): string {
-  return `No model matches "${query}". \`/model\` alone shows the current one and how many are offered.`;
+export function modelNoMatchText(query: string, locale: Locale = 'en'): string {
+  return tMenus(locale, 'model_no_match', { query });
 }
 
-export function modelAmbiguousText(query: string, matches: ModelOption[]): string {
+export function modelAmbiguousText(query: string, matches: ModelOption[], locale: Locale = 'en'): string {
   const shown = matches.slice(0, MODEL_MATCH_MAX);
   const more = matches.length - shown.length;
   const list = shown.map((o) => `\`/model ${o.value}\` — ${o.name}`).join('\n');
-  return `"${query}" matches ${matches.length} models:\n${list}${more > 0 ? `\n…and ${more} more` : ''}`;
+  const moreText = more > 0 ? tMenus(locale, 'model_ambiguous_more', { count: more }) : '';
+  return tMenus(locale, 'model_ambiguous', { query, count: matches.length, list, more: moreText });
 }
 
 /**
@@ -287,22 +283,20 @@ export type ModelChoiceResult =
   | { kind: 'failed'; reason: string };
 
 /** Render a choice outcome for the user. Exhaustive: a new arm must be given words here. */
-export function modelChoiceText(result: ModelChoiceResult): string {
+export function modelChoiceText(result: ModelChoiceResult, locale: Locale = 'en'): string {
   switch (result.kind) {
     case 'applied':
-      return `Model set to \`${result.model}\` for this conversation.`;
+      return tMenus(locale, 'model_applied', { model: result.model });
     case 'unavailable':
-      return (
-        'No live session to switch — it starts with the next message. Send one, then /model.'
-      );
+      return tMenus(locale, 'model_unavailable');
     case 'missing':
-      return `\`${result.value}\` is no longer offered by this agent. Run /model again for the current list.`;
+      return tMenus(locale, 'model_missing', { value: result.value });
     case 'rebound':
-      return `This conversation is answered by ${result.agent} now, so that menu no longer applies. Run /model again.`;
+      return tMenus(locale, 'model_rebound', { agent: result.agent });
     case 'gone':
-      return 'That conversation is gone — send a message first, then /model.';
+      return tMenus(locale, 'model_gone');
     case 'failed':
-      return `Could not switch model: ${result.reason}`;
+      return tMenus(locale, 'model_failed', { reason: result.reason });
     default: {
       const _exhaustive: never = result;
       return String(_exhaustive);
@@ -311,11 +305,12 @@ export function modelChoiceText(result: ModelChoiceResult): string {
 }
 
 /** A click on a menu this daemon no longer knows about (used up, superseded, or restarted). */
-export function modelMenuExpiredText(): string {
-  return 'That model menu has expired (superseded, or the gateway restarted). Run /model again for a fresh one.';
+export function modelMenuExpiredText(locale: Locale = 'en'): string {
+  return tMenus(locale, 'model_expired');
 }
 
 /** What the previous menu becomes when a newer one is opened in the same conversation. */
-export function modelMenuSupersededText(current: string | undefined): string {
-  return `Model: ${current ?? 'unknown'} — superseded by a newer /model menu.`;
+export function modelMenuSupersededText(current: string | undefined, locale: Locale = 'en'): string {
+  const currentLabel = current ?? tMenus(locale, 'model_menu_unknown');
+  return tMenus(locale, 'model_superseded', { current: currentLabel });
 }

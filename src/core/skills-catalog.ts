@@ -1,3 +1,5 @@
+import { type Locale, tMenus } from './i18n/menus.js';
+
 /**
  * The `/skills` catalogue: the skills installed for an agent, rendered as text (pure functions).
  *
@@ -39,15 +41,20 @@ export interface CatalogEntry {
  * The example uses a real name from the list rather than a placeholder, because the one thing a
  * reader has to learn here is that the name takes a request after it.
  */
-export function formatSkillCatalog(agentLabel: string, skills: readonly CatalogEntry[]): string {
+export function formatSkillCatalog(
+  agentLabel: string,
+  skills: readonly CatalogEntry[],
+  locale: Locale = 'en'
+): string {
+  const skillsWord = skills.length === 1 ? tMenus(locale, 'skills_word_single') : tMenus(locale, 'skills_word_plural');
   const lines = [
-    `**${agentLabel}** has ${skills.length} skill${skills.length === 1 ? '' : 's'}:`,
+    tMenus(locale, 'skills_catalog_header', { agentLabel, count: skills.length, skillsWord }),
     '',
     ...skills.map((s) => `\`/${s.name}\``),
   ];
   const example = skills[0]?.name;
   if (example) {
-    lines.push('', `Type one with your request after it — e.g. \`/${example} <what you want>\`.`);
+    lines.push('', tMenus(locale, 'skills_catalog_example', { example }));
   }
   return lines.join('\n');
 }
@@ -63,13 +70,10 @@ export function formatSkillCatalog(agentLabel: string, skills: readonly CatalogE
  * An empty `dirs` means the harness has no known skills location at all, which is a different
  * sentence — there is no path to print and nothing for the operator to go and inspect.
  */
-export function formatEmptyCatalog(agentLabel: string, dirs: readonly string[]): string {
+export function formatEmptyCatalog(agentLabel: string, dirs: readonly string[], locale: Locale = 'en'): string {
   if (dirs.length === 0) {
-    return `**${agentLabel}** has no skills directory this gateway knows how to read.`;
+    return tMenus(locale, 'skills_empty_no_dir', { agentLabel });
   }
   const where = dirs.map((d) => `\`${d}\``).join(', ');
-  return (
-    `**${agentLabel}** has no skills installed.\n\n` +
-    `Looked in ${where} for directories containing a \`SKILL.md\`.`
-  );
+  return tMenus(locale, 'skills_empty_searched', { agentLabel, where });
 }
