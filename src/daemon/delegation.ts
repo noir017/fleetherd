@@ -2,6 +2,9 @@ import type { AgentDef, Config } from '../config/schema.js';
 import { findAgent } from '../config/schema.js';
 import { formatCost, formatElapsed } from '../core/busy-snapshot.js';
 import { formatTarget, parseTarget, type ConversationAddress } from '../core/conversation.js';
+import type { Locale } from '../core/i18n/index.js';
+import { localeOf } from '../core/i18n/index.js';
+import { tWorkflows } from '../core/i18n/workflows.js';
 import { stopInputNote } from '../core/inbound-merger.js';
 import { formatRuntimeFooter } from '../core/runtime-footer.js';
 import type { CommandSurface } from '../core/command-translate.js';
@@ -887,15 +890,20 @@ export class Delegation {
     g.card = abort;
     this.onScreen.set(key, abort);
     const n = items.length;
-    const start = n === 1 ? 'Start it' : `Start all ${n}`;
+    const locale = localeOf(this.deps.config);
+    const start =
+      n === 1
+        ? tWorkflows(locale, 'delegation.confirm.startOne')
+        : tWorkflows(locale, 'delegation.confirm.startAll', { count: n });
+    const cancel = tWorkflows(locale, 'delegation.confirm.cancel');
     let picked: string | null = null;
     try {
       picked = await this.deps.confirm({
         adapter: here.adapter,
         address: here.address,
         conversation: key,
-        text: this.cardText(here, items),
-        labels: [start, 'Cancel'],
+        text: this.cardText(here, items, locale),
+        labels: [start, cancel],
         timeoutMs: PROPOSAL_TIMEOUT_MS,
         signal: abort.signal,
       });
@@ -946,10 +954,14 @@ export class Delegation {
    * the record card's whole fix — and both cards put the model straight after that name, because it
    * is the fact that decides what the part costs.
    */
-  private cardText(here: Place, items: Item[]): string {
+  private cardText(here: Place, items: Item[], locale = localeOf(this.deps.config)): string {
     const ext = this.externalOf(here);
     const asker = this.askerOf(here);
-    const lines = [`**${asker} wants to start ${items.length === 1 ? 'a sub-agent' : `${items.length} sub-agents`}** — each in a topic of its own under this one:`];
+    const targets =
+      items.length === 1
+        ? tWorkflows(locale, 'delegation.confirm.targetOne')
+        : tWorkflows(locale, 'delegation.confirm.targetMany', { count: items.length });
+    const lines = [tWorkflows(locale, 'delegation.confirm.ask', { asker, targets })];
     items.forEach((item, i) => {
       const def = findAgent(this.deps.config, item.agent);
       const where = def?.host ? ` @ ${def.host}` : '';
@@ -962,7 +974,11 @@ export class Delegation {
         // In full, like the task: the reviewer starts later without another card, on this tap.
         const r = item.review;
         lines.push(
-          `   Reviewed by **${r.agent}** in the same directory, on its own, whenever a turn ends with new commits — sent back at most ${r.rounds} time${r.rounds === 1 ? '' : 's'}:`,
+          tWorkflows(locale, 'delegation.confirm.review', {
+            agent: r.agent,
+            rounds: r.rounds,
+            s: r.rounds === 1 ? '' : 's',
+          }),
           ...quoteLines(r.text)
         );
       }
@@ -971,8 +987,8 @@ export class Delegation {
     lines.push(
       '',
       ext
-        ? `${ext.caller} is outside this gateway and does not read this topic. Cancel refuses; it may propose again.`
-        : 'To change them, say what to change instead of tapping.'
+        ? tWorkflows(locale, 'delegation.confirm.extFooter', { caller: ext.caller })
+        : tWorkflows(locale, 'delegation.confirm.footer')
     );
     return lines.join('\n');
   }
@@ -1035,10 +1051,12 @@ export class Delegation {
     // The same first line and rows as the record card: this is the path the default tier takes on
     // every Start, so a card that read one way here and another way with confirmation off would be
     // two layouts for one fact.
+    const locale = localeOf(this.deps.config);
     const asker = this.askerOf(here);
+    const couldNotStart = tWorkflows(locale, 'delegation.started.couldNotStart', { count: failed.length });
     const said = [
-      ...startedSection(asker, opened),
-      ...(failed.length ? [`${opened.length ? '\n' : ''}Could not start ${failed.length}:`, ...failed] : []),
+      ...startedSection(asker, opened, locale),
+      ...(failed.length ? [`${opened.length ? '\n' : ''}${couldNotStart}`, ...failed] : []),
     ].join('\n');
     await here.adapter
       .sendMessage(here.address, said, { kind: 'dispatch' })
@@ -1082,17 +1100,20 @@ export class Delegation {
    * The head and the rows are `startedSection`'s, the same ones the answer to Start uses.
    */
   private startedCardText(here: Place, opened: OpenedTask[], failed: string[]): string {
+    const locale = localeOf(this.deps.config);
     const asker = this.deps.registry.boundAgentOf(here.key) ?? 'this agent';
-    const lines = startedSection(asker, opened);
+    const lines = startedSection(asker, opened, locale);
     if (!lines.length) {
-      lines.push(`**${asker} could not start the sub-agent** — no confirmation is asked here, so it was tried at once:`);
+      lines.push(tWorkflows(locale, 'delegation.started.failedDirect', { asker }));
     }
-    if (failed.length) lines.push('', `Could not start ${failed.length}:`, ...failed);
+    if (failed.length) {
+      lines.push('', tWorkflows(locale, 'delegation.started.couldNotStart', { count: failed.length }), ...failed);
+    }
     lines.push(
       '',
       this.deps.config.delegation.confirm === 'first'
-        ? 'Here confirmation is asked once per agent in each conversation; `/setting delegation on` asks every time.'
-        : '`/setting delegation on` makes new sub-tasks wait for Start again.'
+        ? tWorkflows(locale, 'delegation.started.confirmFooterFirst')
+        : tWorkflows(locale, 'delegation.started.confirmFooterOther')
     );
     return lines.join('\n');
   }
@@ -1297,20 +1318,29 @@ export class Delegation {
     // typed it reads (see InboundMerger.interrupt) — and is counted for the agent that asked.
     const { outcome, kept, dropped } = this.deps.registry.interruptConversation(c.key);
     const note = stopInputNote(kept, dropped);
+    const locale = localeOf(this.deps.config);
     if (outcome !== 'idle' || note) {
       const ext = this.externalOf(here);
-      const by = ext ? externalName(ext) : 'the agent';
-      const mark = `⏹ Stopped by ${by} in [${subjectOf(this.titleOf(here.key, here))}](?t=${here.address.thread ?? ''}).`;
+      const by = ext ? externalName(ext) : (locale === 'zh-CN' ? '该 Agent' : 'the agent');
+      const mark = tWorkflows(locale, 'delegation.stop.by', {
+        by,
+        title: subjectOf(this.titleOf(here.key, here)),
+        thread: here.address.thread ?? '',
+      });
       void c.adapter
         .sendMessage(c.address, note ? `${mark}\n${note}` : mark)
         .catch((e) => console.warn('[delegation] could not mark a stop:', e instanceof Error ? e.message : e));
     }
     const held = kept.length
-      ? ` ${kept.length} message(s) sent there while it ran never reached it; they are kept and go in with the next message there.`
+      ? tWorkflows(locale, 'delegation.stop.held', { count: kept.length })
       : '';
+    const resText =
+      outcome === 'idle'
+        ? tWorkflows(locale, 'delegation.stop.nothingRunning')
+        : tWorkflows(locale, 'delegation.stop.stoppedKept');
     return {
       topic,
-      result: (outcome === 'idle' ? 'Nothing was running there.' : 'Stopped. Its context is kept; a message there carries on from it.') + held,
+      result: resText + held,
     };
   }
 
@@ -1334,7 +1364,11 @@ export class Delegation {
       const note = stopInputNote(kept, dropped);
       if (outcome !== 'idle' || calledOff + transcripts > 0 || note) {
         if (outcome !== 'idle' || calledOff + transcripts > 0) stopped++;
-        const mark = `⏹ Stopped with /stop in [${subjectOf(this.titleOf(here.key, here))}](?t=${here.address.thread ?? ''}).`;
+        const locale = localeOf(this.deps.config);
+        const mark = tWorkflows(locale, 'delegation.stop.withSlash', {
+          title: subjectOf(this.titleOf(here.key, here)),
+          thread: here.address.thread ?? '',
+        });
         void c.adapter
           .sendMessage(c.address, note ? `${mark}\n${note}` : mark)
           .catch((e) => console.warn('[delegation] could not mark a stop:', e instanceof Error ? e.message : e));
@@ -1606,12 +1640,19 @@ export class Delegation {
     this.held.set(key, { agent: agentId, children: new Set(children), at });
     const n = children.size;
     console.log(`[delegation] ${agentId} is over its usage limit; holding ${n} update(s) for ${here.key}`);
+    const locale = localeOf(this.deps.config);
+    const updates =
+      n === 1
+        ? tWorkflows(locale, 'delegation.limit.updateSingular')
+        : tWorkflows(locale, 'delegation.limit.updatePlural');
+    const msg = tWorkflows(locale, 'delegation.limit.exceeded', {
+      agentId,
+      updates,
+      count: n,
+      s: n === 1 ? '' : 's',
+    });
     void here.adapter
-      .sendMessage(
-        here.address,
-        `⏸ ${agentId} is over its usage limit — ${n === 1 ? 'an update' : `updates`} from ${n} sub-agent${n === 1 ? '' : 's'} will reach it once the limit lifts.`,
-        { kind: 'report' }
-      )
+      .sendMessage(here.address, msg, { kind: 'report' })
       .catch((e) => console.warn('[delegation] could not say updates are held:', e instanceof Error ? e.message : e));
   }
 
@@ -1684,14 +1725,19 @@ export class Delegation {
       const said = this.said.get(c.key);
       this.said.delete(c.key);
       const row = this.row(c);
+      const locale = localeOf(this.deps.config);
+      const afterWrote = said ? tWorkflows(locale, 'delegation.report.afterWrote') : '';
       entries.push(this.entry(c, row, stage, said));
-      shown.push(`🔔 ${row.title || row.topic} (${row.agent}) — ${describeStage(stage)}${said ? ' after you wrote there' : ''}${row.line ? `: ${row.line}` : ''}`);
+      shown.push(`🔔 ${row.title || row.topic} (${row.agent}) — ${describeStage(stage, locale)}${afterWrote}${row.line ? `: ${row.line}` : ''}`);
     }
     if (entries.length === 0) return;
     const visible = entries.slice(0, CARD_MAX_ENTRIES);
     const extra = entries.length - visible.length;
     const folded = shown.slice(0, CARD_MAX_ENTRIES);
-    if (extra) folded.push(`🔔 ${extra} more — see fleetherd tasks`);
+    if (extra) {
+      const locale = localeOf(this.deps.config);
+      folded.push(tWorkflows(locale, 'delegation.report.extra', { count: extra }));
+    }
     this.tell(here, this.card(`[sub-agent updates] ${this.tally(here)}`, visible, extra), folded, entries.length);
   }
 
@@ -2416,23 +2462,23 @@ function oneLine(text: string, max = LINE_MAX): string {
 }
 
 /** A stage in a sentence. */
-function describeStage(stage: TopicStage): string {
+function describeStage(stage: TopicStage, locale: Locale = 'en'): string {
   switch (stage) {
     case 'answer':
-      return 'waiting on a question';
+      return tWorkflows(locale, 'delegation.stage.answer');
     case 'failed':
-      return 'failed';
+      return tWorkflows(locale, 'delegation.stage.failed');
     case 'review':
       // Its turn ended normally — that is all the gateway knows. "finished" claimed the job was
       // done, and a reply that says it is waiting for a background command is exactly the case
       // where the parent read that as done and stopped waiting (2026-11-07, three times).
-      return 'turn ended';
+      return tWorkflows(locale, 'delegation.stage.review');
     case 'retrying':
-      return 'failed, continuing automatically';
+      return tWorkflows(locale, 'delegation.stage.retrying');
     case 'working':
-      return 'working';
+      return tWorkflows(locale, 'delegation.stage.working');
     case 'idle':
-      return 'idle';
+      return tWorkflows(locale, 'delegation.stage.idle');
     default: {
       const _exhaustive: never = stage;
       return String(_exhaustive);
@@ -2460,28 +2506,41 @@ export function subjectOf(title: string): string {
  * already named by the first line, so its row leaves the name out — repeating it there is the same
  * word twice in two lines.
  */
-function startedSection(asker: string, opened: OpenedTask[]): string[] {
+function startedSection(asker: string, opened: OpenedTask[], locale: Locale = 'en'): string[] {
   if (!opened.length) return [];
   const names = [...new Set(opened.map((o) => o.agent))].join(', ');
   const many = opened.length !== 1;
   // "started by cc" under a line that already names cc reads as a stutter — in a batch that mixed
   // agents, the asker is still one of the names.
-  const by = opened.some((o) => o.agent === asker) ? '' : ` started by ${asker}`;
-  const head = `**${names}** — ${many ? `${opened.length} sub-agents` : 'a sub-agent'}${by}, ${
-    many ? 'each in a topic of its own' : 'in a topic of its own'
-  } under this one:`;
-  return [head, ...opened.map((t) => startedRow(t, many))];
+  const by = opened.some((o) => o.agent === asker)
+    ? ''
+    : tWorkflows(locale, 'delegation.started.by', { asker });
+  const target =
+    many
+      ? tWorkflows(locale, 'delegation.confirm.targetMany', { count: opened.length })
+      : tWorkflows(locale, 'delegation.confirm.targetOne');
+  const topicDesc =
+    many
+      ? tWorkflows(locale, 'delegation.started.topicMany')
+      : tWorkflows(locale, 'delegation.started.topicOne');
+  const head = tWorkflows(locale, 'delegation.started.head', {
+    names,
+    target,
+    by,
+    topicDesc,
+  });
+  return [head, ...opened.map((t) => startedRow(t, many, locale))];
 }
 
 /** One started sub-agent's row; `lead` puts its name first, for a card carrying several parts. */
-function startedRow(t: OpenedTask, lead: boolean): string {
-  const model = t.model ? `model \`${t.model}\`` : '';
+function startedRow(t: OpenedTask, lead: boolean, locale: Locale = 'en'): string {
+  const model = t.model ? tWorkflows(locale, 'delegation.started.model', { model: t.model }) : '';
   const options = t.options ? optionsLabel(t.options) : '';
   // A host names its own agents `<id>@<host>` (daemon/pods.ts), so that id already says the machine.
   const machine = t.host && !t.agent.endsWith(`@${t.host}`) ? ` @ ${t.host}` : '';
   const dir = t.cwd ? `\`${t.cwd}\`` : '';
   const name = t.link ? `[${t.title}](${t.link})` : t.title;
-  const review = t.review ? `reviewed by ${t.review}` : '';
+  const review = t.review ? tWorkflows(locale, 'delegation.started.reviewedBy', { reviewer: t.review }) : '';
   // The machine hangs off whichever of name/model comes first, so no row ever starts with "@ host".
   const fields = lead
     ? [`**${t.agent}**${model ? '' : machine}`, model ? `${model}${machine}` : '', options, name, dir, review, t.topic]

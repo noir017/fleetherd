@@ -5,6 +5,7 @@ import { configDir } from '../config/load.js';
 import type { Config } from '../config/schema.js';
 import type { AttachmentIngestDeps } from '../core/attachment-ingest.js';
 import { addressOf, type ConversationAddress } from '../core/conversation.js';
+import { localeOf } from '../core/i18n/index.js';
 import {
   buildCleanupRequest,
   buildTranscribeRequest,
@@ -14,13 +15,13 @@ import {
   parseVoiceButtonId,
   sniffAudio,
   VOICE_MAX_BYTES,
-  VOICE_NO_SPEECH_TEXT,
   VOICE_PENDING_TTL_MS,
-  VOICE_STALE_CLICK_TEXT,
   voiceAudioOf,
   voiceButtons,
   voiceCardText,
   voiceFailureText,
+  voiceNoSpeechText,
+  voiceStaleClickText,
   type InboundAttachment,
   type CleanupParse,
   type TranscribeAudio,
@@ -503,6 +504,7 @@ export class VoiceIntake {
     model: string;
     latencyMs: number;
   }): Promise<void> {
+    const locale = localeOf(this.config);
     const card = (status: VoiceStatus, reason?: string): string =>
       voiceCardText({
         text: t.text,
@@ -512,7 +514,7 @@ export class VoiceIntake {
         latencyMs: t.latencyMs,
         status,
         ...(reason ? { reason } : {}),
-      });
+      }, locale);
     // Overtaken while it was being transcribed: show it, say it was not sent, send nothing.
     const overtaken: CardOutcome | undefined = t.job.calledOff
       ? 'called-off'
@@ -527,14 +529,14 @@ export class VoiceIntake {
     const confirm = this.config.voice?.confirm ?? true;
     if (confirm && t.adapter.capabilities.buttons) {
       const ref = await t.adapter
-        .sendButtons(t.address, card('pending'), voiceButtons(t.id, t.cleaned !== undefined))
+        .sendButtons(t.address, card('pending'), voiceButtons(t.id, t.cleaned !== undefined, locale))
         .catch((e: unknown) => {
           console.warn(`[voice] ${t.job.conversationId}: could not post the card:`, e instanceof Error ? e.message : e);
           return undefined;
         });
       if (!ref) {
         // Nothing on screen to confirm, so nothing may be sent — and the user must hear about it.
-        await this.post(t.adapter, t.address, voiceFailureText('the confirmation card could not be posted'));
+        await this.post(t.adapter, t.address, voiceFailureText('the confirmation card could not be posted', locale));
         this.logOutcome(t.id, t.job.conversationId, 'failed', 'the confirmation card could not be posted');
         return;
       }
@@ -596,7 +598,8 @@ export class VoiceIntake {
       audio: files,
       ...(reason ? { reason } : {}),
     });
-    void this.post(adapter, address, outcome === 'no-speech' ? VOICE_NO_SPEECH_TEXT : voiceFailureText(reason ?? 'unknown error'));
+    const locale = localeOf(this.config);
+    void this.post(adapter, address, outcome === 'no-speech' ? voiceNoSpeechText(locale) : voiceFailureText(reason ?? 'unknown error', locale));
   }
 
   /** Best-effort plain send: a card that could not be shown is logged, never thrown into a chain. */
@@ -626,9 +629,10 @@ export class VoiceIntake {
     const pending = this.pending.get(parsed.reqId);
     if (!pending) {
       console.log(`[voice] click on a transcript that is no longer pending (${parsed.reqId})`);
+      const locale = localeOf(this.config);
       void this.deps.platforms
         .get(ev.conversation.platform)
-        ?.sendMessage(addressOf(ev.conversation), VOICE_STALE_CLICK_TEXT)
+        ?.sendMessage(addressOf(ev.conversation), voiceStaleClickText(locale))
         .catch(() => undefined);
       return true;
     }
@@ -696,6 +700,7 @@ export class VoiceIntake {
   private settle(p: PendingVoice, status: CardOutcome, reason?: string): void {
     if (!this.pending.delete(p.id)) return;
     p.cancelTimer();
+    const locale = localeOf(this.config);
     const text = voiceCardText({
       text: p.text,
       ...(p.cleaned !== undefined ? { cleaned: p.cleaned } : {}),
@@ -704,7 +709,7 @@ export class VoiceIntake {
       latencyMs: p.latencyMs,
       status,
       ...(reason ? { reason } : {}),
-    });
+    }, locale);
     const edit = p.adapter.capabilities.editButtons
       ? p.adapter.editButtons(p.ref, text, [])
       : p.adapter.editMessage(p.ref, text);

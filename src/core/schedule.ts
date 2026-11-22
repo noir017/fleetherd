@@ -1,6 +1,8 @@
 import { Cron } from 'croner';
 import type { ConversationAddress } from './conversation.js';
 import { formatTarget } from './conversation.js';
+import type { Locale } from './i18n/index.js';
+import { tWorkflows, type WorkflowMessageKey } from './i18n/workflows.js';
 
 /**
  * Scheduled tasks as data: what a task is, when it runs next, whether a late run is still worth
@@ -1019,15 +1021,22 @@ function mergedTime(task: ScheduleTask, input: EditTaskInput): Pick<NewTaskInput
 // ─────────────────────────────── saying things ───────────────────────────────
 
 /** `\`0 8 * * *\` (Asia/Shanghai)` / `once at …` — plus the zone, which is what makes the time mean something. */
-export function describeWhen(when: ScheduleWhen, plain = false): string {
+export function describeWhen(when: ScheduleWhen, plain = false, locale: Locale = 'en'): string {
   const tick = plain ? '' : '`';
-  return 'cron' in when ? `${tick}${when.cron}${tick} (${when.tz})` : `once at ${formatInZone(when.at, when.tz)} (${when.tz})`;
+  return 'cron' in when
+    ? `${tick}${when.cron}${tick} (${when.tz})`
+    : tWorkflows(locale, 'schedule.when.once', { time: formatInZone(when.at, when.tz), tz: when.tz });
 }
 
-export function describeRun(run: ScheduleRun): string {
+export function describeRun(run: ScheduleRun, locale: Locale = 'en'): string {
   if (run.kind === 'bash') return 'bash';
-  const session =
-    run.session === 'fixed' ? 'fixed session' : run.session === 'daily' ? 'one session a day' : 'new session each run';
+  const sessionKey: WorkflowMessageKey =
+    run.session === 'fixed'
+      ? 'schedule.run.fixed'
+      : run.session === 'daily'
+      ? 'schedule.run.daily'
+      : 'schedule.run.new';
+  const session = tWorkflows(locale, sessionKey);
   return `${run.agent}${run.model ? ` · ${run.model}` : ''} · ${session}`;
 }
 
@@ -1035,36 +1044,49 @@ export function describeRun(run: ScheduleRun): string {
  * ` · next <time>` for a recurring task that will run again, else nothing — a one-shot's `when`
  * already IS its next run, and saying the same time twice reads as two different things.
  */
-export function nextSuffix(task: ScheduleTask, now: number): string {
+export function nextSuffix(task: ScheduleTask, now: number, locale: Locale = 'en'): string {
   if (!('cron' in task.when)) return '';
   const next = nextRunOf(task, now);
-  return next !== undefined ? ` · next ${formatInZone(next, task.when.tz)}` : '';
+  return next !== undefined
+    ? tWorkflows(locale, 'schedule.nextSuffix', { time: formatInZone(next, task.when.tz) })
+    : '';
 }
 
 export function targetId(t: ScheduleTarget): string {
   return formatTarget(t.platform, t.thread ? { channel: t.channel, thread: t.thread } : { channel: t.channel });
 }
 
-const STATE_LABEL: Record<ScheduleState, string> = {
-  active: 'active',
-  paused: '⏸ paused',
-  expired: '⌛ expired',
-  done: '✔ done',
-};
+export function stateLabel(state: ScheduleState, locale: Locale = 'en'): string {
+  const key: WorkflowMessageKey =
+    state === 'active'
+      ? 'schedule.state.active'
+      : state === 'paused'
+      ? 'schedule.state.paused'
+      : state === 'expired'
+      ? 'schedule.state.expired'
+      : 'schedule.state.done';
+  return tWorkflows(locale, key);
+}
 
-const STATUS_LABEL: Record<ScheduleRunStatus, string> = {
-  ok: '✅',
-  failed: '❌',
-  interrupted: '⏹ interrupted',
-  skipped: '⏭ skipped',
-  missed: '⌛ missed',
-};
+export function statusLabel(status: ScheduleRunStatus, locale: Locale = 'en'): string {
+  const key: WorkflowMessageKey =
+    status === 'ok'
+      ? 'schedule.status.ok'
+      : status === 'failed'
+      ? 'schedule.status.failed'
+      : status === 'interrupted'
+      ? 'schedule.status.interrupted'
+      : status === 'skipped'
+      ? 'schedule.status.skipped'
+      : 'schedule.status.missed';
+  return tWorkflows(locale, key);
+}
 
-export function describeLastRun(task: ScheduleTask): string {
+export function describeLastRun(task: ScheduleTask, locale: Locale = 'en'): string {
   const last = task.lastRun;
-  if (!last) return 'not run yet';
+  if (!last) return tWorkflows(locale, 'schedule.lastRun.none');
   const tz = task.when.tz;
-  return `${STATUS_LABEL[last.status]} ${formatInZone(last.at, tz)}${last.error ? ` — ${last.error}` : ''}`;
+  return `${statusLabel(last.status, locale)} ${formatInZone(last.at, tz)}${last.error ? ` — ${last.error}` : ''}`;
 }
 
 /** What the task does, in one quoted line. */
@@ -1084,53 +1106,84 @@ function body(task: ScheduleTask): string {
  * full: a blockquote reads as folded under the card rather than competing with it, and the reader
  * can see exactly what will run. The card goes to the target conversation too (ScheduleService.card).
  */
-function bodyLines(task: ScheduleTask): string[] {
-  if (task.run.kind === 'bash') return [`• Command: ${body(task)}`];
+function bodyLines(task: ScheduleTask, locale: Locale = 'en'): string[] {
+  if (task.run.kind === 'bash') {
+    return [tWorkflows(locale, 'schedule.card.command', { command: body(task) })];
+  }
   const lines = task.run.prompt.replace(/\r\n/g, '\n').split('\n');
-  return ['• Prompt:', ...lines.map((line) => (line ? `> ${line}` : '>'))];
+  return [tWorkflows(locale, 'schedule.card.prompt'), ...lines.map((line) => (line ? `> ${line}` : '>'))];
+}
+
+function translateVerb(verb: string, locale: Locale): string {
+  if (verb === 'registered') return tWorkflows(locale, 'schedule.verb.registered');
+  if (verb === 'updated') return tWorkflows(locale, 'schedule.verb.updated');
+  if (verb === 'removed') return tWorkflows(locale, 'schedule.verb.removed');
+  if (verb === 'paused') return tWorkflows(locale, 'schedule.verb.paused');
+  if (verb === 'resumed') return tWorkflows(locale, 'schedule.verb.resumed');
+  return verb;
 }
 
 /**
  * The card posted when a task is registered, changed or removed — by the daemon itself, never left
  * to the agent's retelling, so what the user reads is what will actually run. `verb` is the change.
  */
-export function taskCardText(task: ScheduleTask, verb: string, now: number): string {
+export function taskCardText(task: ScheduleTask, verb: string, now: number, locale: Locale = 'en'): string {
   const tz = task.when.tz;
+  const translatedVerb = translateVerb(verb, locale);
+  const until =
+    task.expiresAt !== undefined
+      ? tWorkflows(locale, 'schedule.card.until', { time: formatInZone(task.expiresAt, tz) })
+      : '';
   const lines = [
-    `⏰ Scheduled task ${verb} — \`#${task.id}\` **${task.name}**`,
-    `• When: ${describeWhen(task.when)}${nextSuffix(task, now)}`,
-    `• Runs: ${describeRun(task.run)}${task.expiresAt !== undefined ? ` · until ${formatInZone(task.expiresAt, tz)}` : ''}`,
-    `• Posts to: \`${targetId(task.target)}\``,
-    ...bodyLines(task),
+    tWorkflows(locale, 'schedule.card.header', { verb: translatedVerb, id: task.id, name: task.name }),
+    tWorkflows(locale, 'schedule.card.when', {
+      value: `${describeWhen(task.when, false, locale)}${nextSuffix(task, now, locale)}`,
+    }),
+    tWorkflows(locale, 'schedule.card.runs', {
+      value: `${describeRun(task.run, locale)}${until}`,
+    }),
+    tWorkflows(locale, 'schedule.card.postsTo', { target: targetId(task.target) }),
+    ...bodyLines(task, locale),
   ];
-  if (task.tags?.length) lines.push(`• Tags: ${task.tags.map((tag) => `\`${tag}\``).join(', ')}`);
-  if (task.state !== 'active') lines.push(`• State: ${STATE_LABEL[task.state]}`);
-  lines.push('`/setting schedule` lists, pauses and deletes tasks.');
+  if (task.tags?.length) lines.push(tWorkflows(locale, 'schedule.card.tags', { tags: task.tags.map((tag) => `\`${tag}\``).join(', ') }));
+  if (task.state !== 'active') lines.push(tWorkflows(locale, 'schedule.card.state', { state: stateLabel(task.state, locale) }));
+  lines.push(tWorkflows(locale, 'schedule.card.footer'));
   return lines.join('\n');
 }
 
 /** One line per task, for `/setting schedule` where there are no buttons. */
-export function taskListText(tasks: readonly ScheduleTask[], now: number): string {
+export function taskListText(tasks: readonly ScheduleTask[], now: number, locale: Locale = 'en'): string {
   if (tasks.length === 0) {
-    return 'No scheduled tasks. An agent registers one with `fleetherd schedule add` — ask for "every morning at 8, …" in any conversation.';
+    return tWorkflows(locale, 'schedule.list.empty');
   }
-  return ['**Scheduled tasks**', ...tasks.map((t) => taskLine(t, now))].join('\n');
+  return [tWorkflows(locale, 'schedule.list.title'), ...tasks.map((t) => taskLine(t, now, locale))].join('\n');
 }
 
-export function taskLine(task: ScheduleTask, now: number): string {
-  const next = nextSuffix(task, now);
-  const state = next ? next.replace(/^ · /, '') : STATE_LABEL[task.state];
-  return `\`#${task.id}\` **${task.name}** — ${describeWhen(task.when)} · ${describeRun(task.run)} · ${state} · last ${describeLastRun(task)}`;
+export function taskLine(task: ScheduleTask, now: number, locale: Locale = 'en'): string {
+  const next = nextSuffix(task, now, locale);
+  const state = next ? next.replace(/^ · /, '') : stateLabel(task.state, locale);
+  const lastSuffix = tWorkflows(locale, 'schedule.line.last', { lastRun: describeLastRun(task, locale) });
+  return `\`#${task.id}\` **${task.name}** — ${describeWhen(task.when, false, locale)} · ${describeRun(task.run, locale)} · ${state}${lastSuffix}`;
 }
 
 /** The notice that opens a run in the chat, so output that arrives unasked says where it came from. */
-export function runNoticeText(task: ScheduleTask, planned: number): string {
-  return `⏰ Scheduled task \`#${task.id}\` **${task.name}** · ${formatInZone(planned, task.when.tz)}\n> ${body(task)}`;
+export function runNoticeText(task: ScheduleTask, planned: number, locale: Locale = 'en'): string {
+  return tWorkflows(locale, 'schedule.runNotice', {
+    id: task.id,
+    name: task.name,
+    planned: formatInZone(planned, task.when.tz),
+    body: body(task),
+  });
 }
 
 /** Posted where a fixed-session task ran, when its window closes. */
-export function taskExpiredText(task: ScheduleTask): string {
-  return `⌛ Scheduled task \`#${task.id}\` **${task.name}** has expired — a fixed-session task lives ${FIXED_SESSION_WINDOW_MS / 3_600_000}h. It ran ${task.runs} time(s). Ask for it again with a new session if it should keep going.`;
+export function taskExpiredText(task: ScheduleTask, locale: Locale = 'en'): string {
+  return tWorkflows(locale, 'schedule.expired', {
+    id: task.id,
+    name: task.name,
+    hours: FIXED_SESSION_WINDOW_MS / 3_600_000,
+    runs: task.runs,
+  });
 }
 
 /**
@@ -1199,10 +1252,10 @@ export interface BashOutcome {
 }
 
 /** Map a bash outcome onto a run status, with the reason worth keeping in the task's record. */
-export function bashStatus(r: BashOutcome, timeoutMs: number): { status: 'ok' | 'failed' | 'interrupted'; error?: string } {
+export function bashStatus(r: BashOutcome, timeoutMs: number, locale: Locale = 'en'): { status: 'ok' | 'failed' | 'interrupted'; error?: string } {
   if (r.spawnError) return { status: 'failed', error: r.spawnError };
-  if (r.aborted) return { status: 'interrupted', error: 'the gateway stopped while it ran' };
-  if (r.timedOut) return { status: 'failed', error: `timed out after ${formatDuration(timeoutMs)}` };
+  if (r.aborted) return { status: 'interrupted', error: tWorkflows(locale, 'schedule.bash.stopped') };
+  if (r.timedOut) return { status: 'failed', error: tWorkflows(locale, 'schedule.bash.timedOut', { duration: formatDuration(timeoutMs) }) };
   if (r.exitCode !== 0) return { status: 'failed', error: `exit ${r.exitCode ?? 'signal'}` };
   return { status: 'ok' };
 }
@@ -1219,16 +1272,16 @@ export function formatDuration(ms: number): string {
  * is one backtick longer than any run of backticks in the output, so output that itself contains a
  * fence cannot close it early. `attach` says the full log should follow as a file.
  */
-export function bashResultText(task: ScheduleTask, r: BashOutcome, timeoutMs: number): { text: string; attach: boolean } {
-  const { status, error } = bashStatus(r, timeoutMs);
+export function bashResultText(task: ScheduleTask, r: BashOutcome, timeoutMs: number, locale: Locale = 'en'): { text: string; attach: boolean } {
+  const { status, error } = bashStatus(r, timeoutMs, locale);
   const mark = status === 'ok' ? '✅' : status === 'interrupted' ? '⏹' : '❌';
   const head = `⏰ \`#${task.id}\` **${task.name}** · ${mark} ${error ?? `exit ${r.exitCode}`} · ${formatDuration(r.durationMs)}`;
   const out = r.tail.replace(/\s+$/, '');
-  if (!out) return { text: `${head}\n(no output)`, attach: false };
+  if (!out) return { text: `${head}\n${tWorkflows(locale, 'schedule.bash.noOutput')}`, attach: false };
   const cut = out.length > BASH_INLINE_LIMIT || r.bytes > Buffer.byteLength(r.tail);
   const shown = out.length > BASH_INLINE_LIMIT ? out.slice(out.length - BASH_INLINE_LIMIT) : out;
   const longest = Math.max(0, ...[...shown.matchAll(/`+/g)].map((m) => m[0].length));
   const fence = '`'.repeat(Math.max(3, longest + 1));
-  const note = cut ? `\n…last ${shown.length} characters of ${r.bytes} bytes; the full output is attached.` : '';
+  const note = cut ? tWorkflows(locale, 'schedule.bash.attachedNote', { shown: shown.length, bytes: r.bytes }) : '';
   return { text: `${head}\n${fence}\n${shown}\n${fence}${note}`, attach: cut };
 }

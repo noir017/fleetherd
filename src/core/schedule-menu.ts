@@ -1,4 +1,6 @@
 import { formatButtonId, parseButtonId } from './button-id.js';
+import type { Locale } from './i18n/index.js';
+import { tWorkflows } from './i18n/workflows.js';
 import { truncateLabel } from './paging.js';
 import {
   describeLastRun,
@@ -6,6 +8,7 @@ import {
   describeWhen,
   formatInZone,
   nextSuffix,
+  stateLabel,
   targetId,
   taskListText,
   type ScheduleTask,
@@ -62,9 +65,13 @@ export function parseScheduleButtonId(buttonId: string): ScheduleMenuClick | nul
 }
 
 /** The entry button's label on the settings screen. */
-export function scheduleEntryLabel(tasks: readonly ScheduleTask[]): string {
+export function scheduleEntryLabel(tasks: readonly ScheduleTask[], locale: Locale = 'en'): string {
   const active = tasks.filter((t) => t.state === 'active').length;
-  return truncateLabel(`⏰ Scheduled tasks · ${active} active${tasks.length > active ? `, ${tasks.length - active} other` : ''}`);
+  const otherText =
+    tasks.length > active
+      ? tWorkflows(locale, 'schedule.menu.entryOther', { count: tasks.length - active })
+      : '';
+  return truncateLabel(tWorkflows(locale, 'schedule.menu.entryLabel', { active, other: otherText }));
 }
 
 /** Tasks offered as buttons; the rest are listed in the text and managed by typing. */
@@ -78,52 +85,77 @@ export interface ScheduleMenuView {
 }
 
 /** The list level. `ids` is the frozen snapshot the task buttons index into. */
-export function buildScheduleListMenu(reqId: string, tasks: readonly ScheduleTask[], now: number): ScheduleMenuView & { ids: string[] } {
+export function buildScheduleListMenu(
+  reqId: string,
+  tasks: readonly ScheduleTask[],
+  now: number,
+  locale: Locale = 'en'
+): ScheduleMenuView & { ids: string[] } {
   const shown = tasks.slice(0, SCHEDULE_MENU_MAX);
   const buttons = shown.map((t, i) => ({
     id: formatButtonId(SCHEDULE_TASK_PREFIX, reqId, i),
     label: truncateLabel(`${STATE_MARK[t.state]}#${t.id} ${t.name}`),
   }));
-  buttons.push({ id: actionId(reqId, 'settings'), label: '◀ Settings' });
-  let text = taskListText(tasks, now);
-  if (tasks.length > 0) text += '\n\nTap one to pause, resume or delete it.';
+  buttons.push({ id: actionId(reqId, 'settings'), label: tWorkflows(locale, 'schedule.menu.settingsButton') });
+  let text = taskListText(tasks, now, locale);
+  if (tasks.length > 0) text += tWorkflows(locale, 'schedule.menu.listHint');
   if (tasks.length > SCHEDULE_MENU_MAX) {
-    text += `\n${tasks.length - SCHEDULE_MENU_MAX} more not shown as buttons — \`/setting schedule pause|resume|delete <id>\` works for any.`;
+    text += tWorkflows(locale, 'schedule.menu.listOverflow', { count: tasks.length - SCHEDULE_MENU_MAX });
   }
   return { text, buttons, ids: shown.map((t) => t.id) };
 }
 
 /** One task's level: what it is, and what can be done to it in its state. */
-export function buildScheduleTaskMenu(reqId: string, task: ScheduleTask, now: number): ScheduleMenuView {
+export function buildScheduleTaskMenu(
+  reqId: string,
+  task: ScheduleTask,
+  now: number,
+  locale: Locale = 'en'
+): ScheduleMenuView {
   const tz = task.when.tz;
   const what = task.run.kind === 'bash' ? task.run.command : task.run.prompt;
+  const until =
+    task.expiresAt !== undefined
+      ? tWorkflows(locale, 'schedule.card.until', { time: formatInZone(task.expiresAt, tz) })
+      : '';
+  const kindLabel =
+    task.run.kind === 'bash'
+      ? tWorkflows(locale, 'schedule.menu.commandLabel')
+      : tWorkflows(locale, 'schedule.menu.promptLabel');
   const lines = [
-    `⏰ \`#${task.id}\` **${task.name}** — ${task.state}`,
-    `• When: ${describeWhen(task.when)}${nextSuffix(task, now)}`,
-    `• Runs: ${describeRun(task.run)}${task.expiresAt !== undefined ? ` · until ${formatInZone(task.expiresAt, tz)}` : ''}`,
-    `• Posts to: \`${targetId(task.target)}\``,
-    `• Last run: ${describeLastRun(task)} · ${task.runs} run(s) so far`,
-    `• ${task.run.kind === 'bash' ? 'Command' : 'Prompt'}: ${what.length <= 300 ? what : `${what.slice(0, 299)}…`}`,
+    `⏰ \`#${task.id}\` **${task.name}** — ${stateLabel(task.state, locale)}`,
+    tWorkflows(locale, 'schedule.menu.taskWhen', {
+      value: `${describeWhen(task.when, false, locale)}${nextSuffix(task, now, locale)}`,
+    }),
+    tWorkflows(locale, 'schedule.menu.taskRuns', {
+      value: `${describeRun(task.run, locale)}${until}`,
+    }),
+    tWorkflows(locale, 'schedule.menu.taskPostsTo', { target: targetId(task.target) }),
+    tWorkflows(locale, 'schedule.menu.taskLastRun', {
+      last: describeLastRun(task, locale),
+      runs: task.runs,
+    }),
+    `• ${kindLabel}${locale === 'zh-CN' ? '：' : ': '}${what.length <= 300 ? what : `${what.slice(0, 299)}…`}`,
   ];
   const buttons: Array<{ id: string; label: string }> = [];
-  if (task.state === 'active') buttons.push({ id: actionId(reqId, 'pause'), label: '⏸ Pause' });
-  if (task.state === 'paused') buttons.push({ id: actionId(reqId, 'resume'), label: '▶ Resume' });
-  buttons.push({ id: actionId(reqId, 'delete'), label: '🗑 Delete' });
-  buttons.push({ id: actionId(reqId, 'back'), label: '◀ Back' });
+  if (task.state === 'active') buttons.push({ id: actionId(reqId, 'pause'), label: tWorkflows(locale, 'schedule.menu.btnPause') });
+  if (task.state === 'paused') buttons.push({ id: actionId(reqId, 'resume'), label: tWorkflows(locale, 'schedule.menu.btnResume') });
+  buttons.push({ id: actionId(reqId, 'delete'), label: tWorkflows(locale, 'schedule.menu.btnDelete') });
+  buttons.push({ id: actionId(reqId, 'back'), label: tWorkflows(locale, 'schedule.menu.btnBack') });
   return { text: lines.join('\n'), buttons };
 }
 
 /** Delete asks once more: the task is gone for good, and a mis-tap on a phone is easy. */
-export function buildScheduleDeleteConfirm(reqId: string, task: ScheduleTask): ScheduleMenuView {
+export function buildScheduleDeleteConfirm(reqId: string, task: ScheduleTask, locale: Locale = 'en'): ScheduleMenuView {
   return {
-    text: `Delete \`#${task.id}\` **${task.name}**? It stops running and cannot be brought back.`,
+    text: tWorkflows(locale, 'schedule.menu.deleteConfirm', { id: task.id, name: task.name }),
     buttons: [
-      { id: actionId(reqId, 'confirm-delete'), label: '🗑 Yes, delete it' },
-      { id: actionId(reqId, 'back'), label: 'Cancel' },
+      { id: actionId(reqId, 'confirm-delete'), label: tWorkflows(locale, 'schedule.menu.btnConfirmDelete') },
+      { id: actionId(reqId, 'back'), label: tWorkflows(locale, 'schedule.menu.btnCancel') },
     ],
   };
 }
 
-export function scheduleMenuExpiredText(): string {
-  return 'This menu has expired (the gateway restarted, or a newer one was opened). Send `/setting schedule` again.';
+export function scheduleMenuExpiredText(locale: Locale = 'en'): string {
+  return tWorkflows(locale, 'schedule.menu.expired');
 }

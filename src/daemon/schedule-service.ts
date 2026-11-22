@@ -3,6 +3,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { findAgent, type Config } from '../config/schema.js';
 import { formatTarget, type ConversationAddress, type ConversationRef } from '../core/conversation.js';
+import { localeOf } from '../core/i18n/index.js';
+import { tWorkflows } from '../core/i18n/workflows.js';
 import { splitByMeasure } from '../core/stream-buffer.js';
 import {
   bashResultText,
@@ -88,7 +90,8 @@ export class ScheduleService {
       run: (task, planned, signal) => this.run(task, planned, signal),
       notify: (task, notice) => {
         if (notice.event === 'expired') {
-          this.post(task.target.platform, targetAddress(task), taskExpiredText(task), 'expiry notice');
+          const locale = localeOf(this.config);
+          this.post(task.target.platform, targetAddress(task), taskExpiredText(task, locale), 'expiry notice');
           return;
         }
         // Skipped and missed: the run that never was. Nothing else in the gateway says a word about
@@ -275,7 +278,10 @@ export class ScheduleService {
     // The run in flight is using the values as they were when it started, and a daily run writes
     // its day's topic back when it opens one — both would race the edit. Editing is quick to retry;
     // a run is not.
-    if (this.scheduler.isRunning(id)) throw new Error(`#${id} is running right now; edit it once that run finishes`);
+    if (this.scheduler.isRunning(id)) {
+      const locale = localeOf(this.config);
+      throw new Error(tWorkflows(locale, 'schedule.service.runningNow', { id }));
+    }
     return task;
   }
 
@@ -698,7 +704,8 @@ export class ScheduleService {
       r = await runBashCommand(opts);
     }
     const outcome = { ...r, durationMs: this.clock.now() - started };
-    const { text, attach } = bashResultText(task, outcome, run.timeoutMs);
+    const locale = localeOf(this.config);
+    const { text, attach } = bashResultText(task, outcome, run.timeoutMs, locale);
     const address = targetAddress(task);
     await platform.sendMessage(address, text).catch((e) => warn('bash result', e));
     if (attach && r.logFile) {
@@ -728,7 +735,8 @@ export class ScheduleService {
         await this.reportFailure(task, platform, targetAddress(task), 'skipped', why, planned);
         return { status: 'failed', error: why };
       }
-      await platform.sendMessage(targetAddress(task), runNoticeText(task, planned)).catch((e) => warn('run notice', e));
+      const locale = localeOf(this.config);
+      await platform.sendMessage(targetAddress(task), runNoticeText(task, planned, locale)).catch((e) => warn('run notice', e));
       const result = toResult(
         await this.registry.runScheduledPrompt({ key, platform: task.target.platform, address: targetAddress(task), agentId: run.agent, prompt })
       );
@@ -751,15 +759,17 @@ export class ScheduleService {
       if (run.model) {
         // Before the notice: a run that cannot use the model it was given must not announce
         // itself as started. Strict by design — see applyScheduledModel.
+        const locale = localeOf(this.config);
         const why = await this.registry.applyScheduledModel(opened.key, task.target.platform, run.agent, run.model);
         if (why) {
           await platform
-            .sendMessage(opened.address, `⏰ \`#${task.id}\` **${task.name}** failed — ${why}.`)
+            .sendMessage(opened.address, tWorkflows(locale, 'schedule.service.failedNotice', { id: task.id, name: task.name, why }))
             .catch((e) => warn('model failure notice', e));
           return { status: 'failed', error: why };
         }
       }
-      await platform.sendMessage(opened.address, runNoticeText(task, planned)).catch((e) => warn('run notice', e));
+      const locale = localeOf(this.config);
+      await platform.sendMessage(opened.address, runNoticeText(task, planned, locale)).catch((e) => warn('run notice', e));
       const result = toResult(
         await this.registry.runScheduledPrompt({ key: opened.key, platform: task.target.platform, address: opened.address, agentId: run.agent, prompt })
       );
@@ -832,7 +842,8 @@ export class ScheduleService {
     const modelWhy = await this.applyDailyModel(task, run, platform, key, address, reuse, planned);
     if (modelWhy) return { status: 'failed', error: modelWhy };
     try {
-      await platform.sendMessage(address, runNoticeText(task, planned));
+      const locale = localeOf(this.config);
+      await platform.sendMessage(address, runNoticeText(task, planned, locale));
     } catch (e) {
       // A topic we only reused and cannot write to is gone: forget it so the next run opens a
       // new one rather than failing here for the rest of the day. A platform without `hasThread`
@@ -907,8 +918,25 @@ export class ScheduleService {
     }
     const previous = task.lastRun;
     if (previous?.error !== undefined && previous.error === capError(why)) return;
+    const locale = localeOf(this.config);
+    const verbKey =
+      verb === 'failed'
+        ? 'schedule.status.failedVerb'
+        : verb === 'skipped'
+        ? 'schedule.status.skippedVerb'
+        : 'schedule.status.missedVerb';
+    const verbText = tWorkflows(locale, verbKey);
     await platform
-      .sendMessage(address, `⏰ \`#${task.id}\` **${task.name}** ${verb} at ${formatInZone(at, task.when.tz)} — ${why}.`)
+      .sendMessage(
+        address,
+        tWorkflows(locale, 'schedule.service.missedNotice', {
+          id: task.id,
+          name: task.name,
+          verb: verbText,
+          time: formatInZone(at, task.when.tz),
+          why,
+        })
+      )
       .catch((e) => warn(`${verb} notice`, e));
   }
 
@@ -984,7 +1012,8 @@ export class ScheduleService {
    * the task, and is told so by the same card, which names where it posts now.
    */
   card(conversation: ConversationId | undefined, task: ScheduleTask, verb: string, was?: ScheduleTarget): void {
-    const text = taskCardText(task, verb, this.clock.now());
+    const locale = localeOf(this.config);
+    const text = taskCardText(task, verb, this.clock.now(), locale);
     const lane = conversation !== undefined ? this.registry.laneFor(conversation) : undefined;
     const posted: Destination[] = [];
     const postOnce = (to: Destination): void => {

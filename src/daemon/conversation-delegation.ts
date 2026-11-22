@@ -2,6 +2,8 @@ import { join } from 'node:path';
 import type { AgentDef } from '../config/schema.js';
 import { findAgent } from '../config/schema.js';
 import type { ConversationAddress } from '../core/conversation.js';
+import { localeOf } from '../core/i18n/index.js';
+import { tWorkflows } from '../core/i18n/workflows.js';
 import type { SoloOutcome } from '../core/inbound-merger.js';
 import { fallbackTitle } from '../core/title-namer.js';
 import type { PlatformAdapter } from '../platform/adapter.js';
@@ -334,8 +336,9 @@ export class ConversationDelegation {
       (opts.model ? await this.applyScheduledModel(key, opts.platform, opts.agentId, opts.model) : undefined) ??
       (opts.options ? await this.applyScheduledOptions(key, opts.platform, opts.agentId, opts.options) : undefined);
     if (why) {
+      const locale = localeOf(this.ctx.config);
       await adapter
-        .sendMessage(opened, `Not started — ${why}.`)
+        .sendMessage(opened, tWorkflows(locale, 'delegation.notStarted', { why }))
         .catch((e) => console.warn(`[conversation] ${key}: could not say why the task did not start:`, e instanceof Error ? e.message : e));
       throw new Error(why);
     }
