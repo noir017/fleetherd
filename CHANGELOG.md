@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.31.0] - 2026-11-22
+
 ### Added
 
 - **Read-only `sessions` tool on the external MCP entrance.** Callers configured with `sessions`
