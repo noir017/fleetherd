@@ -17,6 +17,7 @@ import {
   SLASH_NAME_RE,
 } from '../core/command-translate.js';
 import { addressOf, type ConversationAddress, type ConversationRef } from '../core/conversation.js';
+import { normalizeLocale, localeOf, type Locale } from '../core/i18n/index.js';
 import {
   buildEffortMenu,
   effortChoiceText,
@@ -249,6 +250,7 @@ interface PendingSettingsMenu {
   choices?: SettingChoice[];
   pageSize: number;
   ref?: MessageRef;
+  locale?: Locale;
 }
 
 interface PendingScheduleMenu {
@@ -594,6 +596,13 @@ export class DaemonMenus {
     }
     const setting = parseSettingButtonId(ev.buttonId);
     if (setting) {
+      if (ev.locale) {
+        const parsed = normalizeLocale(ev.locale);
+        if (parsed) {
+          const menu = this.pendingSettingsMenus.get(setting.reqId);
+          if (menu) menu.locale = parsed;
+        }
+      }
       this.onSettingClick(ev, setting);
       return;
     }
@@ -1273,11 +1282,13 @@ export class DaemonMenus {
     this.retireSettingsMenusFor(conversationId);
 
     const reqId = randomUUID().slice(0, 8);
+    const clientLocale = (msg.locale ? normalizeLocale(msg.locale) : undefined) ?? localeOf(this.ctx.config);
     const pending: PendingSettingsMenu = {
       conversationId,
       conversation: msg.conversation,
       rows: [...menu.rows],
       pageSize: resolvePageSize(adapter.capabilities.menuPageSize),
+      locale: clientLocale,
       ...(menu.open ? { open: { ...menu.open, options: [...menu.open.options] } } : {}),
     };
     this.pendingSettingsMenus.set(reqId, pending);
@@ -1305,6 +1316,7 @@ export class DaemonMenus {
       this.ctx.platforms.get(menu.conversation.platform)?.capabilities.settingsScreen === true;
     const notice = ack ? { tone: ack.tone, text: ack.text } : undefined;
     const open = menu.open;
+    const locale = menu.locale ?? localeOf(this.ctx.config);
     const view = open
       ? buildSettingValueMenu({
           reqId,
@@ -1312,16 +1324,18 @@ export class DaemonMenus {
           options: open.options,
           page: wantsScreen ? 0 : page,
           pageSize: wantsScreen ? Math.max(1, open.options.length) : menu.pageSize,
+          locale,
           ...(open.hint ? { hint: open.hint } : {}),
-          ...(wantsScreen ? { screen: this.valueScreenInput(open.row, notice) } : {}),
+          ...(wantsScreen ? { screen: this.valueScreenInput(open.row, notice, locale) } : {}),
         })
       : buildSettingsMenu({
           reqId,
           rows: menu.rows,
+          locale,
           ...(this.ctx.schedules
             ? { extra: { id: scheduleOpenButtonId(reqId), label: scheduleEntryLabel(this.ctx.schedules.tasks()) } }
             : {}),
-          ...(wantsScreen ? { screen: this.listScreenInput(menu, notice) } : {}),
+          ...(wantsScreen ? { screen: this.listScreenInput(menu, notice, locale) } : {}),
         });
     if (!menu.open) {
       if (view.choices) menu.choices = view.choices;
@@ -1334,19 +1348,26 @@ export class DaemonMenus {
     };
   }
 
-  private listScreenInput(menu: PendingSettingsMenu, notice?: SettingsAck): SettingsScreenInput {
+  private listScreenInput(menu: PendingSettingsMenu, notice?: SettingsAck, locale?: Locale): SettingsScreenInput {
+    const loc = locale ?? menu.locale ?? localeOf(this.ctx.config);
     return {
       cfg: this.ctx.config,
-      options: (row: SettingRow) => this.ctx.registry.settingOptionsFor(menu.conversationId, row, false).options,
+      options: (row: SettingRow) => this.ctx.registry.settingOptionsFor(menu.conversationId, row, false, loc).options,
       here: this.ctx.registry.settingsBoundAgent(menu.conversationId),
+      locale: loc,
       ...(notice ? { notice } : {}),
     };
   }
 
-  private valueScreenInput(row: SettingRow, notice?: SettingsAck): { cfg: Config; notice?: SettingsAck; loading?: boolean } {
+  private valueScreenInput(row: SettingRow, notice?: SettingsAck, locale?: Locale): { cfg: Config; notice?: SettingsAck; loading?: boolean; locale?: Locale } {
     const listAgent = modelListAgent(row, this.ctx.config);
     const loading = listAgent !== undefined && this.ctx.registry.modelListLoading(listAgent);
-    return { cfg: this.ctx.config, ...(notice ? { notice } : {}), ...(loading ? { loading } : {}) };
+    return {
+      cfg: this.ctx.config,
+      locale: locale ?? localeOf(this.ctx.config),
+      ...(notice ? { notice } : {}),
+      ...(loading ? { loading } : {}),
+    };
   }
 
   private retireSettingsMenusFor(conversationId: ConversationId): void {
@@ -1422,7 +1443,7 @@ export class DaemonMenus {
         return;
       case 'back':
         delete menu.open;
-        menu.rows = this.ctx.registry.settingRows();
+        menu.rows = this.ctx.registry.settingRows(menu.locale);
         this.editSettingsMenu(menu, ...this.viewParts(click.reqId, menu));
         return;
       default: {
@@ -1449,9 +1470,9 @@ export class DaemonMenus {
       this.editSettingsMenu(menu, ...this.viewParts(reqId, menu));
       return;
     }
-    const rows = this.ctx.registry.settingRows();
+    const rows = this.ctx.registry.settingRows(menu.locale);
     const row = rows.find((r) => r.id === frozen.id && r.target === frozen.target) ?? frozen;
-    const { options, hint, asking } = this.ctx.registry.settingOptionsFor(menu.conversationId, row);
+    const { options, hint, asking } = this.ctx.registry.settingOptionsFor(menu.conversationId, row, true, menu.locale);
     menu.rows = rows;
     menu.open = { row, options, ...(hint ? { hint } : {}) };
     this.editSettingsMenu(
@@ -1467,7 +1488,7 @@ export class DaemonMenus {
       const open = menu.open;
       if (this.pendingSettingsMenus.get(reqId) !== menu || !open || !row) return;
       if (open.row.id !== row.id || open.row.target !== row.target) return;
-      const { options, hint } = this.ctx.registry.settingOptionsFor(menu.conversationId, open.row, false);
+      const { options, hint } = this.ctx.registry.settingOptionsFor(menu.conversationId, open.row, false, menu.locale);
       menu.open = { row: open.row, options, ...(hint ? { hint } : {}) };
       this.editSettingsMenu(menu, ...this.viewParts(reqId, menu, settingValuePage(open.row, options, menu.pageSize)));
     });
@@ -1491,7 +1512,7 @@ export class DaemonMenus {
       return;
     }
     delete menu.open;
-    menu.rows = this.ctx.registry.settingRows();
+    menu.rows = this.ctx.registry.settingRows(menu.locale);
     this.editSettingsMenu(menu, ...this.viewParts(reqId, menu, 0, settingNotice(result)));
   }
 
@@ -1520,7 +1541,7 @@ export class DaemonMenus {
       return;
     }
     delete menu.open;
-    menu.rows = this.ctx.registry.settingRows();
+    menu.rows = this.ctx.registry.settingRows(menu.locale);
     this.editSettingsMenu(menu, ...this.viewParts(reqId, menu, 0, ack));
   }
 
@@ -1534,10 +1555,10 @@ export class DaemonMenus {
       return;
     }
     const row =
-      this.ctx.registry.settingRows().find((r) => r.id === frozen.id && r.target === frozen.target) ?? frozen;
+      this.ctx.registry.settingRows(menu.locale).find((r) => r.id === frozen.id && r.target === frozen.target) ?? frozen;
     const result = this.ctx.registry.applySetting(menu.conversationId, row, choice.raw);
     console.log(`[setting] ${menu.conversationId}: ${row.label} ← ${choice.raw} → ${result.kind}`);
-    menu.rows = this.ctx.registry.settingRows();
+    menu.rows = this.ctx.registry.settingRows(menu.locale);
     this.editSettingsMenu(menu, ...this.viewParts(reqId, menu, 0, settingNotice(result)));
   }
 

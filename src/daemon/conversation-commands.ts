@@ -18,6 +18,7 @@ import {
   type CommandTranslation,
 } from '../core/command-translate.js';
 import { addressOf, type ConversationAddress, type ConversationRef } from '../core/conversation.js';
+import { normalizeLocale, localeOf, type Locale } from '../core/i18n/index.js';
 import { formatRuntimeFooter, formatTokens } from '../core/runtime-footer.js';
 import {
   modelListAgent,
@@ -353,9 +354,10 @@ export class ConversationCommands {
       this.ctx.hooks?.onSettingMenuRequest !== undefined;
 
     const [rawKey = '', ...valueParts] = rest.trim().split(/\s+/);
+    const msgLocale = (msg.locale ? normalizeLocale(msg.locale) : undefined) ?? localeOf(this.ctx.config);
     if (!rawKey) {
       console.log(`[setting] listing settings for ${key}`);
-      if (canMenu) this.ctx.hooks!.onSettingMenuRequest!(key, msg, { rows: this.settingRows() });
+      if (canMenu) this.ctx.hooks!.onSettingMenuRequest!(key, msg, { rows: this.settingRows(msgLocale) });
       else reply([settingsListText(this.ctx.config, (id) => this.ctx.modelCatalog.modes(id)), this.ctx.hooks?.scheduleSummary?.()].filter(Boolean).join('\n'));
       return;
     }
@@ -447,8 +449,8 @@ export class ConversationCommands {
     }
   }
 
-  settingRows(): SettingRow[] {
-    return settingsRows(this.ctx.config, this.podModels(), (id) => this.ctx.modelCatalog.modes(id));
+  settingRows(locale?: Locale): SettingRow[] {
+    return settingsRows(this.ctx.config, this.podModels(), (id) => this.ctx.modelCatalog.modes(id), locale);
   }
 
   settingsBoundAgent(id: ConversationId): string {
@@ -462,7 +464,8 @@ export class ConversationCommands {
   settingOptionsFor(
     id: ConversationId,
     row: SettingRow,
-    ask = true
+    ask = true,
+    locale: Locale = localeOf(this.ctx.config)
   ): { options: SettingOption[]; hint?: string; asking?: Promise<unknown> } {
     let ctx = this.settingsContext(id, this.ctx.config.routing.default);
     let asking: Promise<unknown> | undefined;
@@ -479,7 +482,7 @@ export class ConversationCommands {
       ctx = this.settingsContext(id, this.ctx.config.routing.default);
     }
     const hint = settingTypedOnlyHint(row, this.ctx.config, ctx);
-    return { options: settingOptions(row, this.ctx.config, ctx), ...(hint ? { hint } : {}), ...(asking ? { asking } : {}) };
+    return { options: settingOptions(row, this.ctx.config, ctx, locale), ...(hint ? { hint } : {}), ...(asking ? { asking } : {}) };
   }
 
   modelListLoading(agentId: string): boolean {

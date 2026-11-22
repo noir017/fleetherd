@@ -12,6 +12,7 @@ import {
   type ConversationRef,
 } from '../core/conversation.js';
 import type { EffortChoiceResult } from '../core/effort-menu.js';
+import type { Locale } from '../core/i18n/index.js';
 import { shouldRespond, type GateConfig } from '../core/inbound-gate.js';
 import type { SoloOutcome } from '../core/inbound-merger.js';
 import type { ModelChoiceResult } from '../core/model-menu.js';
@@ -706,8 +707,8 @@ export class ConversationRegistry {
 
   // ───────────────────────────── menus the daemon posts ─────────────────────────────
 
-  settingRows(): SettingRow[] {
-    return this.commands.settingRows();
+  settingRows(locale?: Locale): SettingRow[] {
+    return this.commands.settingRows(locale);
   }
 
   settingsBoundAgent(id: ConversationId): string {
@@ -717,9 +718,10 @@ export class ConversationRegistry {
   settingOptionsFor(
     id: ConversationId,
     row: SettingRow,
-    ask = true
+    ask = true,
+    locale?: Locale
   ): { options: SettingOption[]; hint?: string; asking?: Promise<unknown> } {
-    return this.commands.settingOptionsFor(id, row, ask);
+    return this.commands.settingOptionsFor(id, row, ask, locale);
   }
 
   modelListLoading(agentId: string): boolean {

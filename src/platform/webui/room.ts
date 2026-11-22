@@ -40,6 +40,8 @@ import {
   formatTarget,
   type ConversationRef,
 } from '../../core/conversation.js';
+import { normalizeLocale, type Locale } from '../../core/i18n/index.js';
+import { tSettings } from '../../core/i18n/settings.js';
 import { MessageNotEditableError } from '../../core/outbound-errors.js';
 import { needsPerson, replyLine, topicStage } from '../../core/topic-stage.js';
 import { parseAgentButtonId } from '../../core/agent-menu.js';
@@ -501,6 +503,7 @@ export class WebRoom {
 
   /** Read-only git for a topic's directory — see `useGitPanel`. */
   private gitPanel: GitPanel | null = null;
+  private locale: Locale = 'en';
   private onMsg: ((m: InboundMessage) => void) | null = null;
   private onBtn: ((ev: ButtonInteraction) => void) | null = null;
   /** Injected by the daemon; absent in a deployment (or a test) that never offered one. */
@@ -792,7 +795,7 @@ export class WebRoom {
         const nowStage = now ? operatorStage(now) : 'idle';
         if (!now || !needsPerson(nowStage)) return;
         try {
-          this.notifier?.({ topic: now.id, title: now.title || 'Untitled', body: noticeBody(nowStage, now.line) });
+          this.notifier?.({ topic: now.id, title: now.title || 'Untitled', body: noticeBody(nowStage, now.line, this.locale) });
         } catch (e) {
           console.warn('[webui] could not send a notification:', e instanceof Error ? e.message : e);
         }
@@ -2216,8 +2219,9 @@ export class WebRoom {
    * link. Without it the honest choices are "retry and risk sending twice" or "do not retry",
    * and both are worse than remembering 64 strings.
    */
-  submit(req: SendRequest): 'accepted' | 'duplicate' | 'unknown-topic' {
+  submit(req: SendRequest, locale?: string): 'accepted' | 'duplicate' | 'unknown-topic' {
     if (!this.topics.has(req.topic)) return 'unknown-topic';
+    if (locale) this.locale = normalizeLocale(locale) ?? this.locale;
     if (req.nonce !== undefined) {
       if (this.nonces.has(req.nonce)) return 'duplicate';
       if (this.nonces.size >= MAX_NONCES) {
@@ -2240,6 +2244,7 @@ export class WebRoom {
       timestamp: msg.at,
       ...(attachments.length > 0 ? { attachments } : {}),
       authorIsBot: false,
+      ...(locale ? { locale } : {}),
     };
     // The listen allowlist, which `satori-core` applies for every other platform and this
     // adapter therefore has to apply for itself. `main` covers every topic, `main/<id>` names
@@ -2301,13 +2306,15 @@ export class WebRoom {
    * the page, and the daemon's click handlers go on to EDIT the message it names, so an id
    * nothing here holds is a stale tab or a hand-made request and neither should reach a writer.
    */
-  click(req: ClickRequest): boolean {
+  click(req: ClickRequest, locale?: string): boolean {
     if (!this.topics.has(req.topic) || !this.roomOf(req.topic).stored.has(req.messageId)) return false;
+    if (locale) this.locale = normalizeLocale(locale) ?? this.locale;
     this.onBtn?.({
       conversation: this.conversation(req.topic),
       messageId: req.messageId,
       buttonId: req.buttonId,
       ...(req.value !== undefined ? { value: req.value } : {}),
+      ...(locale ? { locale } : {}),
     });
     // A tap moves a topic as typing does (a `/cd` or `/agent` menu pick), so the same as `submit`.
     this.dirCache.delete(req.topic);
@@ -2420,8 +2427,13 @@ export function operatorStage(t: Pick<Topic, 'stage' | 'parent'>): TopicStage {
 }
 
 /** What a notification says under a topic's name. */
-function noticeBody(stage: TopicStage, line: string | undefined): string {
-  const what = stage === 'answer' ? 'Waiting on your answer' : stage === 'failed' ? 'Failed' : 'Finished';
+export function noticeBody(stage: TopicStage, line: string | undefined, locale: Locale = 'en'): string {
+  const what =
+    stage === 'answer'
+      ? tSettings(locale, 'push.waitingAnswer')
+      : stage === 'failed'
+        ? tSettings(locale, 'push.failed')
+        : tSettings(locale, 'push.finished');
   return line ? `${what}: ${line}` : what;
 }
 

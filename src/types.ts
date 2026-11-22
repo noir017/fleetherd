@@ -72,6 +72,8 @@ export interface InboundMessage {
   quotedContent?: string;
   /** Sender name of the replied-to message; used for reply backfill (labels the quoted identity). */
   quotedAuthor?: string;
+  /** Locale requested by the client (e.g. from an HTTP header or user preference). */
+  locale?: string;
 }
 
 /**
@@ -95,6 +97,8 @@ export interface ButtonInteraction {
    * a typed value (`SettingsScreenTyped`); a chat app's button carries nothing but its id.
    */
   value?: string;
+  /** Locale requested by the client. */
+  locale?: string;
 }
 
 /**
@@ -705,7 +709,7 @@ export type SettingsScreenControl =
  */
 export interface SettingsScreenField {
   /** What the setting is called. A new per-agent setting widens this union with its own name. */
-  label: 'Model' | 'Permissions';
+  label: 'Model' | 'Permissions' | string;
   /** The `stg:` id of the setting's own row; a tap posts it to open that setting's values. */
   buttonId: string;
   /** The current value, already formatted for display. */
