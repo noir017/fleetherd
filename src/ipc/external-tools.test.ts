@@ -106,6 +106,56 @@ describe('externalAction: tasks', () => {
   });
 });
 
+describe('externalAction: sessions', () => {
+  it('lists, searches, and reads through the sessions reverse command spec', () => {
+    expect(externalAction('sessions', { action: 'list', days: 14, limit: 20, before: '#42' })).toEqual({
+      kind: 'sessions',
+      action: { kind: 'sessions-list', days: 14, limit: 20, before: 42 },
+    });
+    expect(externalAction('sessions', { action: 'search', query: 'deploy check', agent: 'cc', days: 7, limit: 5, tools: true })).toEqual({
+      kind: 'sessions',
+      action: { kind: 'sessions-search', query: 'deploy check', agent: 'cc', days: 7, limit: 5, tools: true },
+    });
+    expect(externalAction('sessions', { action: 'read', session: 'web:main/2e233c24', reply: true })).toEqual({
+      kind: 'sessions',
+      action: { kind: 'sessions-read', session: 'web:main/2e233c24', role: 'agent', turn: 'done' },
+    });
+    expect(externalAction('sessions', { action: 'read', session: '2e233c24', around: '#87', window: 5 })).toEqual({
+      kind: 'sessions',
+      action: {
+        kind: 'sessions-read',
+        session: '2e233c24',
+        around: 87,
+        window: 5,
+        role: undefined,
+        turn: undefined,
+        turns: undefined,
+        since: undefined,
+        grep: undefined,
+        tail: undefined,
+      },
+    });
+    expect(externalAction('sessions', { action: 'read', session: '#12', role: 'user', turns: 3, grep: 'reload', full: 'true' })).toMatchObject({
+      kind: 'sessions',
+      action: { kind: 'sessions-read', session: '#12', role: 'user', turns: 3, grep: 'reload' },
+    });
+  });
+
+  it('requires query on search and session on read, and refuses stray or conflicting parameters', () => {
+    expect(() => externalAction('sessions', { action: 'search' })).toThrow(/search needs query/);
+    expect(() => externalAction('sessions', { action: 'read' })).toThrow(/read needs session/);
+    expect(() => externalAction('sessions', { action: 'list', query: 'x' })).toThrow(/query does not apply to list/);
+    expect(() => externalAction('sessions', { action: 'search', query: 'x', session: '#1' })).toThrow(/session does not apply to search/);
+    expect(() => externalAction('sessions', { action: 'read', session: '#1', reply: true, limit: 5 })).toThrow(/--reply selects one turn/);
+    expect(() => externalAction('sessions', { action: 'delete', session: '#1' })).toThrow(/action must be one of list, search, read/);
+    // Filled-in blanks are ignored as absent.
+    expect(externalAction('sessions', { action: 'list', query: '', session: null })).toEqual({
+      kind: 'sessions',
+      action: { kind: 'sessions-list', days: undefined, limit: undefined },
+    });
+  });
+});
+
 describe('externalToolDefinition', () => {
   it('describes skills for a caller with no skill list, and leaves the native description word for word', () => {
     const def = externalToolDefinition('skills') as { description: string };
@@ -139,11 +189,32 @@ describe('externalToolDefinition', () => {
       idempotentHint: true,
       openWorldHint: false,
     });
+    expect(externalToolDefinition('sessions').annotations).toEqual({
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    });
     expect(externalToolDefinition('tasks').annotations).toEqual({
       readOnlyHint: false,
       destructiveHint: false,
       openWorldHint: false,
     });
+  });
+
+  it('describes every sessions parameter, with boolean switches and role enum', () => {
+    const def = externalToolDefinition('sessions') as {
+      description: string;
+      inputSchema: { required: string[]; properties: Record<string, { type: string; enum?: string[]; description?: string }> };
+    };
+    expect(def.description).toMatch(/Read-only/);
+    expect(def.inputSchema.required).toEqual(['action']);
+    expect(def.inputSchema.properties.action?.enum).toEqual(['list', 'search', 'read']);
+    expect(def.inputSchema.properties.role?.enum).toEqual(['user', 'agent', 'tool']);
+    expect(def.inputSchema.properties.tools?.type).toBe('boolean');
+    expect(def.inputSchema.properties.full?.type).toBe('boolean');
+    expect(def.inputSchema.properties.reply?.type).toBe('boolean');
+    for (const p of Object.values(def.inputSchema.properties)) expect(p.description).toBeTruthy();
   });
 
   it('describes every tasks parameter, with the switches as booleans', () => {

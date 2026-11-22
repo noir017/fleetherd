@@ -3,9 +3,9 @@
 English | [简体中文](zh-CN/external-mcp.md)
 
 A program outside the gateway — a web agent such as Gemini's, reached through an MCP proxy — can
-search your [skills](skills.md) and propose [sub-tasks](sub-agents.md) to your agents, through an
-MCP server the gateway serves over HTTP. Nothing it proposes starts until you tap Start in the
-web UI.
+search your [skills](skills.md), read your [conversation library](conversation-history.md), and
+propose [sub-tasks](sub-agents.md) to your agents, through an MCP server the gateway serves over
+HTTP. Nothing it proposes starts until you tap Start in the web UI.
 
 It is off until config.yaml has an `mcp:` block.
 
@@ -17,7 +17,7 @@ mcp:
   callers:
     - name: gemini                          # shown in its topics and cards
       tokenEnv: FLEETHERD_MCP_GEMINI_TOKEN  # the variable holding its token — never the token
-      tools: [skills, tasks]
+      tools: [skills, tasks, sessions]
       # agents: [gemini-task]               # optional: let this caller attach sub-tasks directly to live topics bound to these agents
 ```
 
@@ -32,12 +32,17 @@ The caller then talks MCP (Streamable HTTP) to `http://<host>:<port>/mcp` with
 
 ## What a caller can do
 
-Two tools, and only the ones listed for it:
+Three tools, and only the ones listed for it:
 
 - **`skills`** — `search` and `show`. A caller reads the library; it cannot create, change or
   archive a skill. A skill limited to some hosts or harnesses (`fleetherd-hosts`,
   `fleetherd-harnesses`) does not reach it. Its searches are logged like any agent's, under
   `external:<name>`.
+- **`sessions`** — read-only access to the gateway's conversation library (`list`, `search`,
+  `read`), opt-in per caller. `read` accepts a conversation `#id`, a full topic key (such as
+  `web:main/2e233c24`), or an unambiguous 8-character short topic id, and supports the same read
+  filters (`reply: true`, `around` / `window`, `role`, `turn`, `turns`, `since`, `grep`, `tail`,
+  `limit`). It never writes or runs a turn.
 - **`tasks`** — sub-tasks, one `action` at a time:
 
   | action | what it does |

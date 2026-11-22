@@ -79,7 +79,9 @@ workdir:                      # 可选；目录选择菜单（/cd、/new）
 ## 守护进程运行时改配置
 
 改完文件，在任意聊天里发 `/reload`。如果是智能体改的配置，它也可以执行 `fleetherd reload`（这是反向命令，
-只能在会话里用）。守护进程会重新读取 `config.yaml` 和 `.env`，并回复改了什么：
+只能在会话里用）。在会话之外的 POSIX 宿主机环境（脚本、systemd 或 Docker 宿主机包装命令 `fleetherd reload`）
+中，可以直接向守护进程发送 `SIGHUP`（`kill -HUP <pid>` 或 `docker kill -s HUP fleetherd`）。守护进程会重新读取
+`config.yaml`、`.env` 和远程节点 `pod.yaml`，在日志中打印变更摘要，并在聊天/CLI 触发时直接回复改了什么：
 
 ```
 config.yaml reloaded.

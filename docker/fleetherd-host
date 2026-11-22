@@ -17,11 +17,12 @@
 #                     30 min) and this returns at once: `fleetherd status` shows it. --force
 #                     restarts at once, cutting them off; --dry-run only reports.
 #   fleetherd restart [--force]   the same, without pulling
+#   fleetherd reload              hot-reload config.yaml, .env and pods via SIGHUP (no restart)
 #   fleetherd logs [args]         docker logs -t (default: --tail 200)
 #   fleetherd status              the container, its image, the gateway's version, what is in
 #                                progress, and whether a restart is waiting for it
 #   fleetherd <anything else>     runs the fleetherd CLI inside the container: `fleetherd doctor`,
-#                                `fleetherd --version`. update / restart / logs / status are not
+#                                `fleetherd --version`. update / restart / reload / logs / status are not
 #                                CLI commands, so nothing is shadowed.
 #
 # The container's compose directory is $FLEETHERD_APP_DIR, by default ~/apps/fleetherd, and the
@@ -310,11 +311,29 @@ do_restart() {
     fi
 }
 
+do_reload() {
+    [ "$#" -eq 0 ] || die "reload: unknown argument $1"
+    running || die "the container is not running: fleetherd status"
+    local since line
+    since="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+    docker kill --signal SIGHUP "${CONTAINER}" >/dev/null || die "reload failed: fleetherd logs"
+    for _ in $(seq 1 30); do
+        line="$(docker logs --since "${since}" "${CONTAINER}" 2>&1 | grep '^\[reload\] ' | tail -1 || true)"
+        if [ -n "${line}" ]; then
+            printf '%s\n' "${line}"
+            return 0
+        fi
+        sleep 0.5
+    done
+    say "sent SIGHUP; check fleetherd logs for reload result"
+}
+
 command -v docker >/dev/null || die "docker not found"
 pick_container
 case "${1:-}" in
     update)  shift; take_lock; do_update "$@" ;;
     restart) shift; take_lock; do_restart "$@" ;;
+    reload)  shift; do_reload "$@" ;;
     # The detached half of an update or restart (detach); not for typing.
     __switch)
         shift

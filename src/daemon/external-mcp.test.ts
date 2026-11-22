@@ -193,6 +193,36 @@ describe('ExternalMcp: the protocol', () => {
     expect(s.calls).toHaveLength(1);
     expect(s.calls[0]?.caller).toEqual({ name: 'gem', tools: ['skills', 'tasks'], agents: ['gemini-task'] });
   });
+
+  it('exposes sessions only to callers granted it, and routes read-only session queries', async () => {
+    const s = await start({
+      mcp: settings({
+        callers: [
+          { name: 'gem', tokenEnv: 'TOK_A', tools: ['skills', 'tasks', 'sessions'] },
+          { name: 'reader', tokenEnv: 'TOK_B', tools: ['skills'] },
+        ],
+      }),
+    });
+    const gemTools = await (await s.post(rpc('tools/list'))).json();
+    expect(gemTools.result.tools.map((t: { name: string }) => t.name)).toEqual(['skills', 'tasks', 'sessions']);
+
+    const ok = await (
+      await s.post(rpc('tools/call', { name: 'sessions', arguments: { action: 'read', session: 'web:main/2e233c24', reply: true } }))
+    ).json();
+    expect(ok.result).toEqual({ content: [{ type: 'text', text: 'done: sessions' }] });
+    expect(s.calls).toEqual([
+      {
+        caller: { name: 'gem', tools: ['skills', 'tasks', 'sessions'] },
+        action: { kind: 'sessions', action: { kind: 'sessions-read', session: 'web:main/2e233c24', role: 'agent', turn: 'done' } },
+      },
+    ]);
+
+    const refused = await (
+      await s.post(rpc('tools/call', { name: 'sessions', arguments: { action: 'list' } }), {}, TOKEN_B)
+    ).json();
+    expect(refused.error).toEqual({ code: -32602, message: 'Unknown tool: sessions' });
+    expect(s.calls).toHaveLength(1);
+  });
 });
 
 describe('ExternalMcp: the listener', () => {

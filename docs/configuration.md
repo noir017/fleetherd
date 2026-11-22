@@ -84,8 +84,11 @@ restart — see [Settings from chat](settings.md).
 ## Changing it while the daemon runs
 
 Edit the file, then send `/reload` in any chat. An agent that made the edit can run
-`fleetherd reload` instead (a reverse command, so only from inside a conversation). The daemon re-reads
-`config.yaml` and `.env` and replies with what changed:
+`fleetherd reload` instead (a reverse command, so only from inside a conversation). On POSIX hosts
+outside a conversation — scripts, systemd, or the Docker host wrapper (`fleetherd reload`) — send
+`SIGHUP` to the daemon (`kill -HUP <pid>` or `docker kill -s HUP fleetherd`). The daemon re-reads
+`config.yaml`, `.env`, and remote pods, logs the summary, and (when triggered from chat/CLI) replies
+with what changed:
 
 ```
 config.yaml reloaded.

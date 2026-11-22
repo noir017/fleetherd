@@ -3,8 +3,7 @@
 [English](../external-mcp.md) | 简体中文
 
 网关之外的程序——比如经 MCP 代理接进来的 Gemini 这类网页智能体——可以通过网关在 HTTP 上提供的 MCP
-服务，搜索你的[技能](skills.md)、向你的智能体提议[子任务](sub-agents.md)。它提议的任何事，你在网页端点
-Start 之前都不会开始。
+服务，搜索你的[技能](skills.md)、只读查询[会话库](conversation-history.md)、向你的智能体提议[子任务](sub-agents.md)。它提议的任何事，你在网页端点 Start 之前都不会开始。
 
 config.yaml 里没有 `mcp:` 块时，这个入口是关着的。
 
@@ -16,7 +15,7 @@ mcp:
   callers:
     - name: gemini                          # 显示在它的话题和卡片上
       tokenEnv: FLEETHERD_MCP_GEMINI_TOKEN  # 存它 token 的环境变量名——不是 token 本身
-      tools: [skills, tasks]
+      tools: [skills, tasks, sessions]
       # agents: [gemini-task]               # 可选：允许该调用方把子任务直接挂到已绑定这些智能体的真实话题下
 ```
 
@@ -30,11 +29,15 @@ FLEETHERD_MCP_GEMINI_TOKEN=<至少 24 个随机字符，比如 openssl rand -hex
 
 ## 调用方能做什么
 
-两个工具，且只有给它列出的那几个：
+三个工具，且只有给它列出的那几个：
 
 - **`skills`** —— `search` 和 `show`。调用方只能读技能库，不能新建、修改或归档技能。限定了主机或
   harness 的技能（`fleetherd-hosts`、`fleetherd-harnesses`）对它不可见。它的搜索和智能体的一样记日志，
   记在 `external:<名字>` 下。
+- **`sessions`** —— 只读查询网关的会话库（`list`、`search`、`read`），按调用方显式授权开启。`read`
+  支持会话 `#id`、完整话题键（如 `web:main/2e233c24`）或无歧义的 8 位短话题 ID，并支持相同的过滤参数
+  （`reply: true`、`around` / `window`、`role`、`turn`、`turns`、`since`、`grep`、`tail`、`limit`）。
+  只读不写，也不触发任何轮次。
 - **`tasks`** —— 子任务，每次一个 `action`：
 
   | action | 作用 |

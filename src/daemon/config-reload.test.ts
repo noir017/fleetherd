@@ -376,3 +376,31 @@ describe('fleetherd reload', () => {
     await expect(r.daemon.handleGatewayQuery({ kind: 'reload-config' }, { channel: 'c1' })).rejects.toThrow(/nothing changed/);
   });
 });
+
+describe('SIGHUP hot reload', () => {
+  it('reloads config.yaml in place on SIGHUP and removes its listener on stop()', async () => {
+    if (process.platform === 'win32') return;
+    const r = rig();
+    const internal = r.daemon as unknown as {
+      installSignalHandlers(): void;
+      stop(): Promise<void>;
+    };
+    const before = process.listenerCount('SIGHUP');
+    internal.installSignalHandlers();
+    expect(process.listenerCount('SIGHUP')).toBe(before + 1);
+
+    edit('default: cc', 'default: oc');
+    process.emit('SIGHUP');
+    await drain();
+    expect(r.cfg.routing.default).toBe('oc');
+
+    // Invalid config on SIGHUP leaves the running config untouched.
+    edit('harness: opencode', 'harness: nonsense');
+    process.emit('SIGHUP');
+    await drain();
+    expect(r.cfg.agents[1]!.harness).toBe('opencode');
+
+    await internal.stop();
+    expect(process.listenerCount('SIGHUP')).toBe(before);
+  });
+});

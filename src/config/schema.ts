@@ -927,8 +927,8 @@ export const ConfigSchema = z
                 name: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,31}$/i, 'a caller name is 1-32 chars of letters/digits/_/- and starts alphanumeric'),
                 /** The environment variable (process env or the config's `.env`) holding its bearer token. */
                 tokenEnv: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/, 'tokenEnv is the NAME of an environment variable, not the token'),
-                /** What it may call. `skills` is search and show only; `tasks` proposes and follows sub-tasks. */
-                tools: z.array(z.enum(['skills', 'tasks'])).min(1),
+                /** What it may call. `skills` is search and show only; `sessions` is read-only conversation history; `tasks` proposes and follows sub-tasks. */
+                tools: z.array(z.enum(['skills', 'tasks', 'sessions'])).min(1),
                 /**
                  * Agents whose own topics this caller may propose sub-tasks in directly (no `open`
                  * coordination topic needed). A base id like `gemini-task` also matches pod-qualified
