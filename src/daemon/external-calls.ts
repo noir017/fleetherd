@@ -1,13 +1,9 @@
 import { encode } from '@toon-format/toon';
 import type { Config } from '../config/schema.js';
 import { addressOf, formatAddress, parseTarget, type ConversationAddress } from '../core/conversation.js';
-<<<<<<< HEAD
-import type { ExternalAction, SessionsCommand } from '../ipc/external-tools.js';
-=======
 import { localeOf } from '../core/i18n/index.js';
 import { tMenus } from '../core/i18n/menus.js';
-import type { ExternalAction } from '../ipc/external-tools.js';
->>>>>>> feat/i18n-menus
+import type { ExternalAction, SessionsCommand } from '../ipc/external-tools.js';
 import type { IpcAction, TaskAgentDetail, TaskAgentsResult, TaskListResult } from '../ipc/protocol.js';
 import { libraryLine } from '../ipc/tools.js';
 import type { PlatformAdapter } from '../platform/adapter.js';

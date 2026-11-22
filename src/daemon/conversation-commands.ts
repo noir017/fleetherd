@@ -1,6 +1,5 @@
 import type { AgentDef } from '../config/schema.js';
 import { agentDisplayName, findAgent } from '../config/schema.js';
-import { localeOf } from '../core/i18n/index.js';
 import { tMenus } from '../core/i18n/menus.js';
 import { configDir, readRawConfigIfExists } from '../config/load.js';
 import { podAgentModels, readPods } from '../config/pods.js';

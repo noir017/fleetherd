@@ -5,7 +5,7 @@ src/core/code-fence.ts [Core]: F:Fenced code blocks across a message boundary | 
 src/core/command-translate.ts [Core]: F:Cross-harness slash command mapping | A:translateCommand
 src/core/conversation.ts [Core]: F:Conversation reference and platform address identity | A:addressOf,addressSelects,conversationKey | S:Key contains no agent ID to allow in-thread agent switching
 src/core/frecency.ts [Infra]: F:Frecency ranking by usage frequency with exponential time decay | A:decayedScore,rankByFrecency
-src/core/i18n/* [Infra]: F:Zero-dependency pure i18n translator and domain message catalogs (en, zh-CN) | A:createTranslator,normalizeLocale,resolveLocale,detectEnvLocale,localeOf,SUPPORTED_LOCALES,tWorkflows | S:Pure layer with zero IO and no process.env access
+src/core/i18n/* [Infra]: F:Zero-dependency pure i18n translator and domain message catalogs (en, zh-CN) | A:createTranslator,normalizeLocale,resolveLocale,detectEnvLocale,localeOf,SUPPORTED_LOCALES,tSettings,tRuntime,tMenus,tWorkflows,tCli | S:Pure layer with zero IO and no process.env access
 src/core/inbound-gate.ts [Core]: F:Inbound message gating decision tree | A:shouldRespond | S:Deterministic decision tree returning stable reason strings in strict precedence order [T:shouldRespond]
 src/core/inbound-merger.ts [Core]: F:Per-conversation inbound message coalescing and steering | A:InboundMerger | S:Per-conversation message coalescing that never aborts running turns [T:InboundMerger]
 src/core/outbound-errors.ts [Infra]: F:Outbound delivery error categorization | A:describeOutboundError,retryAfterMsOf

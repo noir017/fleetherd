@@ -82,7 +82,6 @@ import {
   DEFAULT_ASK_TIMEOUT_MS as PROTOCOL_DEFAULT_ASK_TIMEOUT_MS,
   DEFAULT_ASK_REMINDER_MS,
 } from '../ipc/protocol.js';
-import { localeOf, type Locale } from '../core/i18n/index.js';
 import { tMenus } from '../core/i18n/menus.js';
 import type { ButtonSpec, PlatformAdapter } from '../platform/adapter.js';
 import type {

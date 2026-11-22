@@ -1654,7 +1654,7 @@ import {
   // The card has the question for a title, so there it goes.
   var BTW_HEAD_RE=/^<p>\u21aa btw: [\s\S]*?<\/p>\s*/;
   // And its last says it was kept out of the conversation (asideFooter): small print, drawn as such.
-  var BTW_FOOT_RE=/<p>(side question \u2014 [^<]*)<\/p>\s*$/;
+  var BTW_FOOT_RE=/<p>((?:side question|\u65c1\u767d\u63d0\u95ee) \u2014 [^<]*)<\/p>\s*$/;
 
   /** The text of a message typed here, as the daemon was given it; null when there is none. */
   function ownText(m){

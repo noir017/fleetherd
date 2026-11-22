@@ -5,6 +5,20 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **Full project internationalization (`en` / `zh-CN`).** Added a pure, zero-dependency core
+  i18n layer (`src/core/i18n/`) with domain catalogs (`settings`, `runtime`, `menus`, `workflows`,
+  `cli`) and a live-reloaded `locale` option in `config.yaml` (also editable live via `/setting
+  locale`). The WebUI settings page, permission level descriptions, Agent running/reconnecting/stop
+  notices, tool-bubble stop marks, `/btw` footers, busy `/usage` snapshots, retry/reconnect buttons,
+  slash commands and menus (`/help`, `/agent`, `/model`, `/effort`, `/cd`), sub-agent confirmation
+  cards, scheduled task cards, voice transcript cards, Web Push notifications, and CLI `setup` /
+  `doctor` / `start` prompts all support English and Simplified Chinese. WebUI requests now pass
+  `X-Fleetherd-Locale` so switching language in the browser immediately updates the settings page
+  as well, and remaining untranslated WebUI copy (code-block copy button, `Side tasks` header,
+  `this topic` badge) has been wired into i18n.
+
 ## [3.31.0] - 2026-11-22
 
 ### Added
