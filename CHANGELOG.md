@@ -5,6 +5,24 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **Dedicated onboarding & deployment skill (`skill-setup/SKILL.md`).** Added a standalone
+  `fleetherd-setup` skill published in the package tarball and linked from `README.md` /
+  `README.zh-CN.md` so any coding agent can run preflight checks, install fleetherd (native
+  tarball or Docker gateway-only), write `config.yaml` + `.env` without interactive `setup`,
+  validate with `fleetherd doctor`, and start the daemon cleanly. Kept out of `BUNDLED_SKILLS`
+  so already-running agents do not pay context overhead for initial-setup instructions.
+
+### Changed
+
+- **Refreshed `skill/references/config.md` to match the current config schema.** Documented
+  `locale`, `session.idleTimeoutMs`, `podModels`/`podPermissions`, five-level `permissions`,
+  `agents[].connect`/`instructions`/`options`/`contextWindow`/`contextBudget`, Web UI
+  `sso`/`terminal`/`files`/`instructions`, `autoRenameThread`, `delegation`, `review`, `skills`,
+  `mcp` (including `trusted: true`), `display`, `title`, `voice` (`openai-audio` + `cleaner`),
+  and `workdir`.
+
 ## [3.34.2] - 2026-11-22
 
 ### Changed

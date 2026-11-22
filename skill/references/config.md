@@ -23,6 +23,7 @@ per-field error message, so don't invent keys.
 ```yaml
 version: 1          # literal 1 (v0 single-`platform:` files are auto-migrated;
                     # `fleetherd doctor --migrate-config` rewrites the file)
+locale: en          # en (default) | zh-CN (gateway UI, chat menus, notifications, CLI)
 
 platforms:          # map of instance-id -> platform entry; at least one required.
   discord-main:     # id: 1-32 chars [a-z0-9_-], starts alphanumeric. Routing and
@@ -43,10 +44,15 @@ routing:
 
 session:
   scope: per_thread    # per_thread | per_channel | per_user | shared
+  idleTimeoutMs: 3600000  # stop idle conversation's agent process after 1h; 0 = never
 
 access:
   allowFrom: []     # identities "<instance-id>:<userId>"; EMPTY = anyone can drive
                     # a full-tool-access agent — fill this in shared deployments
+
+Optional top-level sections (all omitted = off / defaults): `hosts`, `podModels`,
+`podPermissions`, `review`, `skills`, `delegation`, `mcp`, `stream`, `display`, `title`,
+`voice`, `workdir` (or shorthand `workdirSort`).
 ```
 
 ## `platforms.<id>` — per-platform entries
@@ -116,13 +122,32 @@ agentId: 123456           # optional; only resolves the bot's display name/avata
 protocol: ws              # ws = Stream mode (default, no public URL) | http = webhook
 # http-only extras: host, port (DingTalk POSTs to <public host>/dingtalk)
 
-# Web UI — a browser page the daemon serves itself. No bot, no account, no upstream
-# service. One conversation only: no threads, no room list.
+# Web UI — a built-in browser workbench served by the daemon (multi-topic sidebar,
+# themes, i18n, Git changes, optional file editor, terminal, instructions editor, SSO, push).
 type: webui
 token: <shared secret the login page asks for>   # required
 host: 0.0.0.0             # default; 127.0.0.1 keeps it to an SSH tunnel
 port: 8787                # default
 title: Chat               # default; the browser tab's title
+sso:                      # optional: identity-aware proxy JWT auth (Cloudflare Access / Teleport)
+  header: Cf-Access-Jwt-Assertion   # default (Teleport: Teleport-Jwt-Assertion)
+  cookie: CF_Authorization          # optional fallback cookie (recommended for WS terminal)
+  jwksUrl: https://team.cloudflareaccess.com/cdn-cgi/access/certs  # https (or loopback)
+  issuer: https://team.cloudflareaccess.com
+  audience: <app-aud-tag>
+  claim: email            # default (Teleport: username)
+  allow: [you@example.com]
+  from: ["127.0.0.1"]     # required CIDRs/IPs of the proxy
+  password: true          # default; set false once SSO is verified
+terminal:                 # optional; off by default (security decision: interactive PTY)
+  enabled: false
+  socket: /path/to/term.sock        # optional unix socket to ttyd (default: <configDir>/term.sock)
+  endCommand: [tmux, -L, web, kill-session, -t, "web-{topic}"]  # argv with {topic}
+files:                    # optional; off by default (security decision: remote file writes)
+  enabled: false
+  roots: [~/projects]     # extra absolute or ~/... directories beyond each topic's cwd
+instructions:             # optional; off by default (security decision: global agent instructions)
+  enabled: false
 # Its identity for access.allowFrom is "<this instance id>:owner".
 # It binds every interface and speaks plain HTTP: the token is the only protection.
 # Two instances cannot share a host:port — config validation refuses it.
@@ -140,6 +165,7 @@ chat:                       # response gating for this instance
 slash: true                 # register platform-native slash commands (where supported)
 autoThread: off             # off | perTurn (open one thread per turn; thread-capable platforms)
 threadAutoArchiveMinutes: 1440  # Discord accepts only 60 | 1440 | 4320 | 10080
+autoRenameThread: true      # auto-rename thread/topic after the first turn (where supported)
 ```
 
 DMs always get a response regardless of `requireMention` (frozen behavior).
@@ -148,15 +174,26 @@ DMs always get a response regardless of `requireMention` (frozen behavior).
 
 ```yaml
 - id: claude            # unique; referenced by routing
-  harness: claude       # claude | gemini | codex | opencode | agy | custom
-  command: /path/bin    # required only when harness: custom (any ACP-speaking executable)
+  harness: claude       # claude | gemini | codex | opencode | dsh | agy | custom
+  command: /path/bin    # required when harness: custom (unless connect: is set)
+  connect:              # harness: custom only, in place of command (persistent TCP ACP daemon)
+    url: tcp://127.0.0.1:9100
+    tokenFile: ~/.config/my-agent/token  # optional file read on the agent's machine
+    meta: {}                             # optional extra _meta passed on initialize
   args: []              # extra CLI args appended to the harness command
                         # (harness-specific switches go here, e.g. claude's --setting-sources)
   cwd: ~/projects/main  # working dir; empty = auto workspace at ~/.fleetherd/agents/<id>
   model: <model-id>     # best-effort; whether it applies depends on the harness
+  instructions:         # optional: custom instruction file path & layer (not allowed with connect)
+    file: ~/.my-agent/AGENTS.md
+    layer: my-agent     # optional; defaults to agent id (cannot be "common")
+  options:              # optional: pinned ACP session config options (strings/numbers/booleans)
+    fast: false
+  contextWindow: 1000000  # optional: override context-window size (tokens) shown in footer
+  contextBudget: 512000   # optional: compaction target in tokens (64000-2000000, agy only)
   env:                  # env vars injected into the agent subprocess; ${VAR} expands
     ANTHROPIC_API_KEY: ${MY_KEY}
-  permissions: auto     # auto (default) | ask — see below
+  permissions: auto     # plan | ask | edits | auto | full (unset = harness default + auto-approve)
   host: devbox          # runs on hosts.devbox (see `hosts` below); absent = this machine
   group: build boxes    # the label /agent groups it under; default its host
   quotaCommand: ~/bin/pool-quota   # bash -lc on the agent's machine; prints agy's /usage table
@@ -179,12 +216,12 @@ Notes:
   never prompt. `/model` and `/effort` are answered by the gateway from the session's own
   config options; the names agy's CLI owns (`/usage`, `/credits`, …) run as one-shot processes
   rather than being sent to the session. `args` are appended after `agy acp`.
-- `permissions: auto` (the default) approves every tool request the agent asks about, so it
-  runs with full tool access and the only gate is `access.allowFrom`. `permissions: ask` puts
-  each request to the user as buttons in the chat; one nobody answers within an hour is
-  declined, and the agent is told no one answered (not that the user refused). Scheduled runs
-  are always approved. Only harnesses that ask at all are affected — Claude Code and `agy` do
-  in their default modes; Codex and OpenCode did not ask when measured.
+- `permissions` accepts five levels (`plan`, `ask`, `edits`, `auto`, `full`) and sets both the
+  harness session mode and how the daemon answers ACP `session/request_permission`. Unset keeps
+  the harness's own mode and auto-approves every request (`access.allowFrom` is the only gate);
+  `auto` and `full` also approve. `plan`, `ask`, and `edits` put each request to the user as
+  buttons in chat — including scheduled runs — and any request that cannot be shown or goes
+  unanswered is declined, never approved. Live-editable via `/setting permissions.<agent>`.
 - `quotaCommand` is for an agent whose harness cannot report its quota — agy through a model
   gateway (`AGY_LLM_GATEWAY_URL` in `env`), or anything behind a pooled proxy. It prints one
   tab-separated row per pool (pool, window, remaining %, ISO reset), as `agy -p=/usage` does; the
@@ -205,12 +242,23 @@ hosts:
   devbox:
     ssh: user@192.0.2.5:22022   # the gateway logs in with ~/.config/fleetherd/ssh/id_ed25519
                                # and checks the host against ~/.config/fleetherd/ssh/known_hosts
+    # identityFile: ~/.config/fleetherd/ssh/id_ed25519
+    # knownHostsFile: ~/.config/fleetherd/ssh/known_hosts
 ```
 
 Don't add one by hand: `fleetherd pod-add` writes the entry and pins the host key together, and
 `fleetherd pods` prints the line the machine needs in its authorized_keys (`fleetherd help pods`).
 A host usually declares its own agents in `~/.fleetherd/pod.yaml` on it — the gateway names them
 `<id>@<host>` and they are not in this file; edit that file and `fleetherd reload`.
+Gateway-side overrides for pod agents live in `podModels` and `podPermissions` (usually managed
+via `/setting model.<id>@<host>` and `/setting permissions.<id>@<host>`):
+
+```yaml
+podModels:
+  claude@devbox: claude-sonnet-4-6
+podPermissions:
+  claude@devbox: edits
+```
 
 ## `routing`
 
@@ -308,6 +356,75 @@ Identity format `"<platform-instance-id>:<userId>"`, e.g. `"discord-main:3250412
 Empty list = unrestricted, and the daemon only warns. Since agents run with full tool
 access (Bash, file writes), an empty allowlist in a public channel means anyone there
 can execute code on this machine — always fill it for shared deployments.
+
+## Additional optional sections
+
+```yaml
+delegation:
+  confirm: true            # true (default) | first | false (also /setting delegation)
+
+review:                    # automatic skill review of quiet conversations (set agent OR api)
+  agent: ag                # any configured agent id
+  model: <model-id>        # optional model override (agent reviewer only)
+  args: []                 # optional extra args (custom / gemini / dsh reviewers only)
+  # api:                   # alternative to agent: OpenAI-compatible /chat/completions
+  #   url: https://api.example.com/v1
+  #   key: ${REVIEW_API_KEY}
+  #   model: <model-id>
+
+skills:                    # optional shared Git repository for managed skills
+  repo: ssh://git@git.example.com:22/you/agent-skills.git
+  branch: main             # default
+  # identityFile: ~/.config/fleetherd/ssh/id_ed25519
+  # knownHostsFile: ~/.config/fleetherd/ssh/known_hosts
+
+mcp:                       # external HTTP MCP entrance (absent = disabled)
+  host: 127.0.0.1          # default (loopback only; no TLS)
+  port: 8790               # default (cannot collide with any platform port)
+  platform: web            # optional webui instance id (default: first webui)
+  callers:
+    - name: web-agent      # 1-32 chars [a-z0-9_-], starts alphanumeric
+      tokenEnv: MCP_TOKEN  # env var NAME (>=24 chars, must differ from webui token)
+      tools: [skills, sessions, tasks]
+      # trusted: true      # opt-in (default false): unlocks skills writes, tasks send/review,
+                           # and tools: schedule | send_file | messages | gateway
+      # agents: [claude]   # optional: propose sub-tasks directly in these agents' topics
+
+display:
+  header: { enabled: false }
+  footer:
+    enabled: false
+    fields: [agent, context, model, effort]  # subset of agent|model|context|contextPct|effort|cwd
+  reactions: { enabled: true }
+
+title:
+  llm:                     # optional OpenAI-compatible /chat/completions for topic naming
+    baseUrl: https://api.example.com/v1
+    apiKey: ${TITLE_API_KEY}
+    model: <flash-model>
+    timeoutMs: 45000       # default
+
+voice:                     # absent = voice notes handled as plain file attachments
+  confirm: true            # default; also /setting voice
+  cleanup: true            # default; also /setting cleanup
+  vocabulary: [fleetherd]  # domain terms for STT + cleanup
+  transcriber:
+    format: openai-audio   # gemini (default) | openai-audio
+    baseUrl: https://api.groq.com/openai/v1
+    apiKey: ${VOICE_STT_KEY}
+    model: whisper-large-v3-turbo
+    language: en           # optional ISO-639-1 hint (openai-audio only)
+    timeoutMs: 90000       # default
+  cleaner:                 # optional dedicated text model for voice.cleanup
+    format: openai         # openai (default) | gemini
+    baseUrl: https://api.example.com/v1
+    apiKey: ${VOICE_CLEANER_KEY}
+    model: <fast-text-model>
+    timeoutMs: 30000       # default
+
+workdir:
+  sort: name               # name (default) | frecency (or top-level workdirSort: frecency)
+```
 
 ## Not configurable (don't add these)
 

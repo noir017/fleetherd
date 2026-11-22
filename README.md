@@ -90,14 +90,11 @@ fleetherd start    # open the web UI or message your bot
 <details>
 <summary><strong>Or let your coding agent set it up</strong></summary>
 
-Paste into Claude Code (or any coding agent):
+Paste into Claude Code, Codex, OpenCode, or any coding agent — it follows the dedicated [setup skill](skill-setup/SKILL.md) (also bundled in the installed package at `$(npm root -g)/fleetherd/skill-setup/SKILL.md`):
 
 ```text
-Set up https://github.com/noir017/fleetherd for me: install the CLI
-from the latest GitHub release's fleetherd-X.Y.Z.tgz (npm i -g <its URL>;
-it is not on npm), then follow the skill bundled in the installed
-package (skill/SKILL.md, under `npm root -g`/fleetherd) to configure
-and start it.
+Read https://raw.githubusercontent.com/noir017/fleetherd/main/skill-setup/SKILL.md
+and follow it step by step to install, configure, verify, and start fleetherd for me.
 ```
 
 </details>
