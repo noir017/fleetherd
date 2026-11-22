@@ -644,3 +644,96 @@ describe('the log', () => {
     expect(r.intake.history(KEY, 10)).toMatchObject([{ status: 'called-off', reason: 'gateway stopped' }]);
   });
 });
+
+describe('OpenAI audio transcriber, dedicated cleaner, and web dictation buffer', () => {
+  it('transcribes via multipart /audio/transcriptions and cleans up via dedicated OpenAI cleaner', async () => {
+    const calls: Array<{ url: string; auth: string | null; isForm: boolean; bodyText?: string }> = [];
+    const fakeFetch: typeof fetch = async (input, init) => {
+      const url = String(input);
+      const headers = new Headers(init?.headers);
+      const isForm = init?.body instanceof FormData;
+      calls.push({
+        url,
+        auth: headers.get('authorization'),
+        isForm,
+        ...(typeof init?.body === 'string' ? { bodyText: init.body } : {}),
+      });
+      if (isForm) {
+        const form = init.body as FormData;
+        expect(form.get('model')).toBe('groq-whisper-large-v3-turbo');
+        expect(form.get('language')).toBe('zh');
+        expect(String(form.get('prompt'))).toContain('Unraid');
+        return new Response(JSON.stringify({ text: '那个把 fleetherd 部署到 A 不对 Unraid 上' }), { status: 200 });
+      }
+      return new Response(
+        JSON.stringify({ choices: [{ message: { content: '把 fleetherd 部署到 Unraid 上。' } }] }),
+        { status: 200 }
+      );
+    };
+
+    const res = await transcribe(
+      {
+        format: 'openai-audio',
+        baseUrl: 'http://newapi:3000/v1',
+        apiKey: 'sk-voice',
+        model: 'groq-whisper-large-v3-turbo',
+        language: 'zh',
+        timeoutMs: 30_000,
+      },
+      [{ mime: 'audio/ogg', base64: OGG.toString('base64') }],
+      { fetch: fakeFetch, sleep: async () => {} },
+      {
+        cleanup: true,
+        vocabulary: ['Unraid'],
+        cleaner: {
+          format: 'openai',
+          baseUrl: 'http://newapi:3000/v1',
+          apiKey: 'sk-voice',
+          model: 'groq-qwen3.8-27b',
+          timeoutMs: 15_000,
+        },
+      }
+    );
+
+    expect(res).toMatchObject({
+      ok: true,
+      text: '那个把 fleetherd 部署到 A 不对 Unraid 上',
+      cleaned: '把 fleetherd 部署到 Unraid 上。',
+    });
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toMatchObject({ url: 'http://newapi:3000/v1/audio/transcriptions', auth: 'Bearer sk-voice', isForm: true });
+    expect(calls[1]).toMatchObject({ url: 'http://newapi:3000/v1/chat/completions', auth: 'Bearer sk-voice', isForm: false });
+  });
+
+  it('skips cleanup when openai-audio has no dedicated cleaner', async () => {
+    let count = 0;
+    const fakeFetch: typeof fetch = async () => {
+      count++;
+      return new Response(JSON.stringify({ text: '你好世界' }), { status: 200 });
+    };
+    const res = await transcribe(
+      { format: 'openai-audio', baseUrl: 'http://newapi:3000/v1', apiKey: 'sk', model: 'whisper', timeoutMs: 10_000 },
+      [{ mime: 'audio/ogg', base64: OGG.toString('base64') }],
+      { fetch: fakeFetch, sleep: async () => {} },
+      { cleanup: true }
+    );
+    expect(count).toBe(1);
+    expect(res).toEqual({ ok: true, text: '你好世界', usage: {} });
+  });
+
+  it('VoiceIntake.transcribeBuffer returns cleaned dictation directly and handles silence/unsupported audio', async () => {
+    const r = rig({
+      cleanup: true,
+      responses: [geminiOk('然后 部署到 oracle'), geminiOk('部署到 oracle。'), geminiOk('[no speech]')],
+    });
+    expect(r.intake.isConfigured()).toBe(true);
+    const ok = await r.intake.transcribeBuffer(OGG, 'audio/ogg');
+    expect(ok).toMatchObject({ ok: true, text: '然后 部署到 oracle', cleaned: '部署到 oracle。', model: 'gemini-3-flash' });
+
+    const silent = await r.intake.transcribeBuffer(OGG, 'audio/ogg');
+    expect(silent).toMatchObject({ ok: false, noSpeech: true });
+
+    const bad = await r.intake.transcribeBuffer(AMR, 'audio/amr');
+    expect(bad).toMatchObject({ ok: false, reason: 'AMR audio cannot be transcribed here' });
+  });
+});

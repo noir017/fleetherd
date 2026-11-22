@@ -849,6 +849,10 @@ export class Daemon {
       forget: (ref) => this.registry.turnChangesForgetForRef(ref),
     });
     adapter.useGitPanel?.(buildGitPanel((ref) => this.registry.workspaceForRef(ref)));
+    adapter.useVoiceTranscriber?.({
+      enabled: () => this.voice.isConfigured(),
+      transcribe: (bytes, mime) => this.voice.transcribeBuffer(bytes, mime),
+    });
     this.wireWritingPanels(adapter, id);
   }
 

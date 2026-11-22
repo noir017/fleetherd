@@ -34,12 +34,26 @@ voice:
   confirm: true                           # false = 识别完直接发给智能体
   cleanup: true                           # false = 只要逐字转写
   vocabulary: [Unraid, OpenWrt]           # 你常说、希望它写对的名字
-  transcriber:                            # Gemini 的 generateContent 格式
-    baseUrl: https://generativelanguage.googleapis.com/v1beta   # 或 new-api 网关：http://newapi:3000/v1beta
-    apiKey: ${GEMINI_API_KEY}
-    model: gemini-3-flash
+  transcriber:                            # 'gemini'（默认）或 'openai-audio'（/audio/transcriptions）
+    format: openai-audio
+    baseUrl: https://api.groq.com/openai/v1   # 或任意 OpenAI 兼容网关
+    apiKey: ${GROQ_API_KEY}
+    model: whisper-large-v3-turbo
+    language: zh                          # 可选 ISO-639-1 语言提示，仅 openai-audio 生效
+  cleaner:                                # 可选：专门用于 voice.cleanup 润色的文本模型
+    format: openai                        # 'openai'（/chat/completions，默认）或 'gemini'
+    baseUrl: https://api.groq.com/openai/v1
+    apiKey: ${GROQ_API_KEY}
+    model: llama-3.3-70b-versatile
 ```
 
+- **Web UI 听写回填输入框**：配置 `voice:` 后，在网页端点 🎤 录音会直接调用
+  `POST /api/voice/transcribe` 完成转写与整理，并将结果回填进输入框（下方提示栏保留原话与耗时），
+  可直接编辑错别字或按 Enter 发送，不再生成满屏确认卡片。聊天平台语音条仍沿用确认卡片流程。
+- **高速专用 STT + 独立润色模型**：将 `transcriber.format` 设为 `openai-audio` 后，音频以
+  multipart 上传到 `<baseUrl>/audio/transcriptions`（并把 `vocabulary` 传作 `prompt`），可对接
+  Groq Whisper、OpenAI、硅基流动 SenseVoice 或自建兼容服务；搭配 `voice.cleaner` 可用独立的极速纯文本
+  模型完成去口头禅和改口整理。原有 Gemini `generateContent` 配置无需改动，继续兼容。
 - 识别质量信得过以后，在聊天里 `/setting voice off` 即可关掉确认，立即生效——此后自动发出的是整理稿。
   `/setting cleanup off` 回到逐字转写。
 - `vocabulary` 会加在内置词表（fleetherd、Claude Code、Codex……）后面：填你的主机名、服务名这类

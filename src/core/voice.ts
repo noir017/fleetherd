@@ -359,6 +359,30 @@ export function buildCleanupRequest(
 }
 
 /**
+ * Vocabulary and Simplified-Chinese priming string for OpenAI-compatible `/audio/transcriptions`
+ * `prompt` fields (Whisper uses it as prior context, not as an instruction).
+ */
+export function buildWhisperPrompt(vocabulary?: readonly string[]): string {
+  return `简体中文与英文技术对话，常见词：${vocabularyOf(vocabulary).join(', ')}。`;
+}
+
+/** The OpenAI `/chat/completions` request body that cleans up one transcript. */
+export function buildOpenAiCleanupRequest(
+  model: string,
+  transcript: string,
+  opts: { vocabulary?: readonly string[] } = {}
+): Record<string, unknown> {
+  return {
+    model,
+    temperature: 0,
+    messages: [
+      { role: 'system', content: cleanupInstructions(opts.vocabulary) },
+      { role: 'user', content: `<transcript>\n${transcript}\n</transcript>` },
+    ],
+  };
+}
+
+/**
  * How much longer than the transcript a cleaned-up version may be before it is not one.
  *
  * Cleaning up only removes words — numbering three steps adds a few characters, nothing more — so a
@@ -472,6 +496,35 @@ export function parseTranscribeResponse(body: unknown): TranscribeParse {
   return { ok: true, text: answer.text === NO_SPEECH ? '' : answer.text, usage: usageOf(answer.body) };
 }
 
+/** Read an OpenAI `/audio/transcriptions` JSON answer (`{ text: string }`). */
+export function parseOpenAiTranscribeResponse(body: unknown): TranscribeParse {
+  if (typeof body !== 'object' || body === null) {
+    return { ok: false, reason: 'the transcriber returned no JSON body' };
+  }
+  const raw = (body as Record<string, unknown>)['text'];
+  if (typeof raw !== 'string') {
+    return { ok: false, reason: 'the transcriber returned no text field' };
+  }
+  const trimmed = raw.trim();
+  // Whisper emits lone punctuation ("." / "。") on pure silence or tone-only clips.
+  const hasWord = /[\p{L}\p{N}]/u.test(trimmed);
+  return { ok: true, text: hasWord ? trimmed : '', usage: {} };
+}
+
+function finishCleanupText(raw: string, transcript: string): CleanupParse {
+  const stripped = raw
+    .replace(/<think>[\s\S]*?<\/think>/gi, '')
+    .replace(/^<transcript>\s*/i, '')
+    .replace(/\s*<\/transcript>$/i, '')
+    .trim();
+  if (!stripped) return { ok: false, reason: EMPTY_ANSWER, retry: true };
+  if (stripped === transcript.trim()) return { ok: true };
+  if (stripped.length > transcript.length * CLEANUP_MAX_GROWTH + CLEANUP_GROWTH_SLACK) {
+    return { ok: false, reason: 'it came back longer than what was said, which is not a cleanup' };
+  }
+  return { ok: true, cleaned: stripped };
+}
+
 /**
  * Read a cleanup answer against the transcript it was given.
  *
@@ -482,13 +535,21 @@ export function parseTranscribeResponse(body: unknown): TranscribeParse {
 export function parseCleanupResponse(body: unknown, transcript: string): CleanupParse {
   const answer = answerText(body);
   if (!answer.ok) return answer;
-  const cleaned = answer.text.replace(/^<transcript>\s*/i, '').replace(/\s*<\/transcript>$/i, '').trim();
-  if (!cleaned) return { ok: false, reason: EMPTY_ANSWER, retry: true };
-  if (cleaned === transcript.trim()) return { ok: true };
-  if (cleaned.length > transcript.length * CLEANUP_MAX_GROWTH + CLEANUP_GROWTH_SLACK) {
-    return { ok: false, reason: 'it came back longer than what was said, which is not a cleanup' };
+  return finishCleanupText(answer.text, transcript);
+}
+
+/** Read an OpenAI `/chat/completions` cleanup answer. */
+export function parseOpenAiCleanupResponse(body: unknown, transcript: string): CleanupParse {
+  if (typeof body !== 'object' || body === null) {
+    return { ok: false, reason: 'the cleaner returned no JSON body' };
   }
-  return { ok: true, cleaned };
+  const choices = (body as Record<string, unknown>)['choices'];
+  const first = Array.isArray(choices) ? (choices[0] as { message?: { content?: unknown } } | undefined) : undefined;
+  const content = first?.message?.content;
+  if (typeof content !== 'string' || !content.trim()) {
+    return { ok: false, reason: EMPTY_ANSWER, retry: true };
+  }
+  return finishCleanupText(content, transcript);
 }
 
 // ─────────────────────────────── the card ───────────────────────────────

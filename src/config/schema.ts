@@ -1135,6 +1135,12 @@ export const ConfigSchema = z
          */
         transcriber: z.object({
           /**
+           * Wire format: `'gemini'` (`<baseUrl>/models/<model>:generateContent`, default) or
+           * `'openai-audio'` (`<baseUrl>/audio/transcriptions` multipart upload — Groq Whisper,
+           * OpenAI, SiliconFlow SenseVoice, or a self-hosted compatible server).
+           */
+          format: z.enum(['gemini', 'openai-audio']).default('gemini'),
+          /**
            * Base URL up to and including the version segment: `http://newapi:3000/v1beta`, or
            * `https://generativelanguage.googleapis.com/v1beta`. The request goes to
            * `<baseUrl>/models/<model>:generateContent`.
@@ -1144,6 +1150,8 @@ export const ConfigSchema = z
           apiKey: z.string().min(1),
           /** e.g. `gemini-3-flash`. A flash-tier model is the right size: this is recognition, not reasoning. */
           model: z.string().min(1),
+          /** Optional ISO-639-1 language hint passed to `openai-audio` transcribers (e.g. `zh`, `en`). */
+          language: z.string().min(1).optional(),
           /**
            * Deadline for one transcription, retries included.
            *
@@ -1155,6 +1163,20 @@ export const ConfigSchema = z
            */
           timeoutMs: z.number().int().positive().default(90_000),
         }),
+        /**
+         * Optional dedicated text model for `voice.cleanup`. When omitted, a `'gemini'`
+         * transcriber cleans up with itself and an `'openai-audio'` transcriber skips cleanup
+         * (audio-only STT models cannot rewrite text).
+         */
+        cleaner: z
+          .object({
+            format: z.enum(['openai', 'gemini']).default('openai'),
+            baseUrl: z.string().min(1),
+            apiKey: z.string().min(1),
+            model: z.string().min(1),
+            timeoutMs: z.number().int().positive().default(30_000),
+          })
+          .optional(),
       })
       .optional(),
 

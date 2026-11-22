@@ -1072,4 +1072,49 @@ describe('webui page: recording a voice message', () => {
     expect(h.el('note').textContent).toContain('Could not record: Permission denied');
     expect(h.recorders).toHaveLength(0);
   });
+
+  it('fills the composer input with cleaned dictation when /api/voice/transcribe is configured', async () => {
+    const h = await open({
+      mic: { types: ['audio/webm;codecs=opus'] },
+      replies: {
+        'api/voice/transcribe': {
+          ok: true,
+          text: '那个帮我重启一下服务',
+          cleaned: '帮我重启一下服务。',
+          model: 'groq-whisper-large-v3-turbo',
+          latencyMs: 1200,
+        },
+      },
+    });
+    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4']));
+    const input = h.el('input') as HTMLTextAreaElement;
+    input.value = '前缀';
+    await h.click('#mic');
+    await tick();
+    h.recorders[0]!.feed('opus-bytes');
+    await h.click('#mic');
+    await until('dictation fills composer', () => input.value.includes('帮我重启一下服务。'));
+
+    expect(input.value).toBe('前缀 帮我重启一下服务。');
+    expect(sends(h)).toHaveLength(0);
+    expect(h.el('note').textContent).toContain('1.2s');
+    expect(h.el('note').textContent).toContain('那个帮我重启一下服务');
+  });
+
+  it('shows a no-speech notice without sending when dictation hears nothing', async () => {
+    const h = await open({
+      mic: { types: ['audio/webm;codecs=opus'] },
+      replies: {
+        'api/voice/transcribe': { ok: false, reason: 'no speech recognized', noSpeech: true },
+      },
+    });
+    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4']));
+    await h.click('#mic');
+    await tick();
+    h.recorders[0]!.feed('silence');
+    await h.click('#mic');
+    await until('no-speech note shown', () => (h.el('note').textContent ?? '').includes('No speech'));
+    expect((h.el('input') as HTMLTextAreaElement).value).toBe('');
+    expect(sends(h)).toHaveLength(0);
+  });
 });
