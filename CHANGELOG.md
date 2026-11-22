@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.35.0] - 2026-11-22
+
 ### Added
 
 - **Dedicated onboarding & deployment skill (`skill-setup/SKILL.md`).** Added a standalone
