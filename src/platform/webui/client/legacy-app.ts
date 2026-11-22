@@ -26,6 +26,16 @@ import { createInstructionsPanel } from './panels/instructions.js';
 import { createSchedulesPanel } from './panels/schedules.js';
 import { createSkillsPanel } from './panels/skills.js';
 import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './theme.js';
+import {
+  applyDomI18n,
+  getLocale,
+  initLocale,
+  localeLabel,
+  nextLocale,
+  onLocaleChange,
+  setLocale,
+  t as tr,
+} from './i18n/index.js';
 
 (function(){
   var $ = function(id){ return document.getElementById(id); };
@@ -39,6 +49,7 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
       optsBtn=$('opts-toggle'), optsMenu=$('opts-menu'), manageBtn=$('manage-toggle'), manageMenu=$('manage-menu'),
       calmBtn=$('calm-toggle'), calmState=$('calm-state'),
       themeBtn=$('theme-toggle'), themeState=$('theme-state'),
+      langBtn=$('lang-toggle'), langState=$('lang-state'),
       idleWhy=$('idle-why'), idleList=$('idle-list'), idleGo=$('idle-go'), idleCancel=$('idle-cancel'), chatTitle=$('topic-title'), chatStatus=$('topic-status'), forkNote=$('fork-note'),
       chat=$('chat'), chatHead=$('chat-header'), composer=$('bar'),
       termBtn=$('term-toggle'), termHost=$('term-frames'), termEl=$('term'), termGrip=$('term-grip'),
@@ -77,6 +88,10 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
   // The 30-second tick that keeps the ages current (see paintAges). Declared here, not beside
   // its functions, because paintSessions can arm it while the script is still setting up — and a
   // var initialised after that would overwrite the timer's handle with null and leak the timer.
+  initLocale();
+  var schedTitleEl = document.querySelector('#schedules-head .panel-title');
+  if(schedTitleEl) schedTitleEl.setAttribute('data-i18n', 'sideTasks.title');
+  applyDomI18n(document);
   var AGE_TICK_MS=30000, ageTimer=null;
   var data={}, els={}, files=[], commands=[], stream=null;
   // Panels instantiated before makePanel(), which calls paintSchedTab() synchronously on setup.
@@ -816,7 +831,7 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
     quietCommand('/setting', t).then(function(ok){
       if(ok) return;
       forgetSettingsRequest(token);
-      if(!settingsMsg && !settingsPage.hidden) settingsSay('Could not reach the daemon. Close this and try again.');
+      if(!settingsMsg && !settingsPage.hidden) settingsSay(tr('settings.reachErr'));
     });
   });
   settingsClose.addEventListener('click', closeSettings);
@@ -832,7 +847,7 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
   function paintCalm(){
     app.classList.toggle('calm', calm);
     calmBtn.setAttribute('aria-pressed', calm ? 'true' : 'false');
-    calmState.textContent = calm ? 'on' : 'off';
+    calmState.textContent = calm ? tr('common.on') : tr('common.off');
   }
   calmBtn.addEventListener('click', function(){
     calm = !calm;
@@ -841,13 +856,18 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
   });
   paintCalm();
 
-  var themeLabels = THEMES.map(function(entry){ return entry.label; }).join(' / ');
+  var THEME_I18N_KEYS = { system: 'menu.themeSystem', dark: 'menu.themeDark', light: 'menu.themeLight' };
+  function localizedThemeLabel(id){
+    var key = THEME_I18N_KEYS[id];
+    return key ? tr(key) : themeLabel(id);
+  }
   function paintTheme(){
     var current = getTheme();
-    var label = themeLabel(current);
+    var label = localizedThemeLabel(current);
+    var options = THEMES.map(function(entry){ return localizedThemeLabel(entry.id); }).join(' / ');
     themeState.textContent = label;
-    themeBtn.setAttribute('aria-label', 'Theme: ' + label);
-    themeBtn.title = 'Theme: ' + label + ' — click to switch (' + themeLabels + ')';
+    themeBtn.setAttribute('aria-label', tr('menu.themeAria', { label: label }));
+    themeBtn.title = tr('menu.themeTitle', { label: label, options: options });
   }
   themeBtn.addEventListener('click', function(){
     setTheme(nextTheme());
@@ -855,14 +875,23 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
   });
   initTheme(paintTheme);
   paintTheme();
+  function paintLang(){
+    if(langState) langState.textContent = localeLabel(getLocale());
+  }
+  if(langBtn){
+    langBtn.addEventListener('click', function(){
+      setLocale(nextLocale(getLocale()));
+    });
+  }
+  paintLang();
 
   function schedAgo(at){
     if(!at) return '';
     var s=Math.max(0, Math.round((Date.now()-at)/1000));
-    if(s<60) return s+'s ago';
-    if(s<3600) return Math.round(s/60)+'m ago';
-    if(s<86400) return Math.round(s/3600)+'h ago';
-    return Math.round(s/86400)+'d ago';
+    if(s<60) return tr('age.secAgo', { n: s });
+    if(s<3600) return tr('age.minAgo', { n: Math.round(s/60) });
+    if(s<86400) return tr('age.hourAgo', { n: Math.round(s/3600) });
+    return tr('age.dayAgo', { n: Math.round(s/86400) });
   }
 
   /**
@@ -885,7 +914,8 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
 
   /** A span as an age: the same units, with " ago" only for something that has ended. */
   function ageText(ms, done){
-    return durText(ms)+(done?' ago':'');
+    var d = durText(ms);
+    return done ? tr('age.ago', { dur: d }) : d;
   }
 
   /** HH:MM, with the date in front when it was not today — the tooltip's "started/ended at". */
@@ -893,7 +923,8 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
     var d=new Date(at), now=new Date();
     var hm=(d.getHours()<10?'0':'')+d.getHours()+':'+(d.getMinutes()<10?'0':'')+d.getMinutes();
     if(d.getFullYear()===now.getFullYear() && d.getMonth()===now.getMonth() && d.getDate()===now.getDate()) return hm;
-    var day=MONTH_NAMES[d.getMonth()].slice(0,3)+' '+d.getDate();
+    var mn=tr(MONTH_KEYS[d.getMonth()]);
+    var day=(getLocale()==='zh-CN'?mn:mn.slice(0,3))+' '+d.getDate();
     return (d.getFullYear()===now.getFullYear()?day:day+', '+d.getFullYear())+' '+hm;
   }
 
@@ -952,11 +983,11 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
     if(!a) return '';
     return '<span class="topic-age'+(a.run?' run':'')+'" data-age="'+text(a.at)+'"'
       + ' data-age-run="'+(a.run?'1':'0')+'"'
-      + ' title="'+text((a.run?'Started ':'Ended ')+ageClock(a.at))+'">'
+      + ' title="'+text(tr(a.run?'age.started':'age.ended', { when: ageClock(a.at) }))+'">'
       + text(ageText(Date.now()-a.at, !a.run))+'</span>';
   }
 
-  var MONTH_NAMES=['January','February','March','April','May','June','July','August','September','October','November','December'];
+  var MONTH_KEYS=['age.month0','age.month1','age.month2','age.month3','age.month4','age.month5','age.month6','age.month7','age.month8','age.month9','age.month10','age.month11'];
 
   /**
    * A topic's unread messages, as its row's badge counts them. The topic on screen is read by
@@ -998,7 +1029,7 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
     var key=o.key||'';
     var more='<button type="button" class="btn-icon topic-more" data-rm="'+text(key)+'"'
       + ' aria-haspopup="menu" aria-expanded="'+(rowMenuKey===key?'true':'false')+'"'
-      + ' title="'+text(o.moreTitle||'Row actions')+'" aria-label="'+text(o.moreTitle||'Row actions')+'">'+IC.icon.more+'</button>';
+      + ' title="'+text(o.moreTitle||tr('topic.rowActions'))+'" aria-label="'+text(o.moreTitle||tr('topic.rowActions'))+'">'+IC.icon.more+'</button>';
     var sub=(o.sub||o.time)?'<span class="topic-sub">'+(o.sub||'')+(o.time||'')+'</span>':'';
     return '<div class="topic-item'+(o.cls?' '+o.cls:'')+'"'+o.attrs+'>'
       + (o.legend||'')
@@ -1046,21 +1077,21 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
     var badge=unread>0?'<span class="topic-badge">'+(unread>99?'99+':unread)+'</span>':'';
     // Not "a shell is alive over there" — the daemon only sees the connection, so this says a
     // page has that topic's terminal open (shown or minimized). See terminal-sessions.ts.
-    var term=t.term?'<span class="topic-term" title="A terminal is attached to this topic">&gt;_</span>':'';
+    var term=t.term?'<span class="topic-term" title="'+text(tr('topic.termAttached'))+'">&gt;_</span>':'';
     var line=o.sub!==undefined ? o.sub : topicDirHtml(t);
     // The subject alone: who answers is the legend on the row's frame, not the "[cc] " the stored
     // name opens with (which the chat platforms still need, and which a later /agent leaves stale).
     var title='<span class="topic-title">'
        + forkMarkHtml(t)
-       + text(splitTitle(t.title || 'Untitled').rest)+'</span>';
+       + text(splitTitle(t.title || tr('common.untitled')).rest)+'</span>';
     // A lit star on a starred row is a marker, not a button: Star/Unstar lives in the menu now.
     var starMark=t.starred
-      ? '<span class="topic-star-mark" title="Starred: never removed to make room, and kept by Clear" aria-hidden="true">'+IC.icon.star+'</span>'
+      ? '<span class="topic-star-mark" title="'+text(tr('topic.starredTitle'))+'" aria-hidden="true">'+IC.icon.star+'</span>'
       : '';
     // Its own button, like the star: folding a parent is not a reason to switch to it.
     var fold=row.kids?'<button type="button" class="topic-fold'+(row.shut?' folded':'')+(row.under?' '+row.under:'')+'"'
        + ' data-fold="'+text(t.id)+'" aria-expanded="'+(row.shut?'false':'true')+'"'
-       + ' title="'+(row.shut?'Show':'Hide')+' the '+row.kids+' topic'+(row.kids>1?'s':'')+' its agent opened">'
+       + ' title="'+text(tr(row.shut?(row.kids>1?'topic.foldShowPlural':'topic.foldShow'):(row.kids>1?'topic.foldHidePlural':'topic.foldHide'), { count: row.kids }))+'">'
        + (row.shut?IC.icon.chevronRight:IC.icon.chevronDown)+' '+row.kids+'</button>':'';
     return rowHtml({
       cls:cls,
@@ -1089,7 +1120,8 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
   /** "Forked from <source> · turn N", for a fork's mark and the line at the top of its page. */
   function forkFromText(t){
     var src=topicById(t.forkOf);
-    return 'Forked from '+(src ? (src.title || 'Untitled') : 'another topic')+(t.forkTurn ? ' · turn '+t.forkTurn : '');
+    var source = src ? (src.title || tr('common.untitled')) : tr('topic.anotherTopic');
+    return t.forkTurn ? tr('topic.forkedFromTurn', { source: source, turn: t.forkTurn }) : tr('topic.forkedFrom', { source: source });
   }
 
   /**
@@ -1140,7 +1172,7 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
     var failed=0;
     function markOneAt(n){
       if(n>=queue.length){
-        if(failed) say('Could not mark '+failed+' '+noun+(failed===1?'':'s')+' read: the daemon did not accept it. '+(failed===1?'It':'They')+' keep the finished mark.');
+        if(failed) say(tr(failed===1?'topic.markReadFailedOne':'topic.markReadFailedMany', { count: failed, noun: noun }));
         return;
       }
       post('api/seen',{topic:queue[n]},0).then(function(r){
@@ -1595,7 +1627,7 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
    * The kinds drawn as a marked bubble — a rail, and this tag — rather than as the agent talking:
    * a task handed to a sub-agent, what sub-agents reported, and the answer to a side question.
    */
-  var SUB_K = {dispatch:'Sub-agent task', report:'Sub-agent report', aside:'Side question'};
+  var SUB_K = {dispatch:'msg.dispatch', report:'msg.report', aside:'msg.aside'};
 
   // ── Side questions (/btw) ──────────────────────────────────────────────────
   // A /btw is asked of a copy of the conversation and kept out of it, and its answer often lands in
@@ -1670,14 +1702,14 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
   /** A side question in the transcript: one line that opens its answer, in place of the question's bubble. */
   function btwLine(key, m, asked, hist){
     var answered = !m._local && btwParts(key).length > 0;
-    var state = answered ? 'Answer' + IC.icon.chevronRight
-      : stuck(m) ? '' : hist ? 'No answer' : 'Waiting\u2026';
+    var state = answered ? tr('btw.answer') + IC.icon.chevronRight
+      : stuck(m) ? '' : hist ? tr('btw.noAnswer') : tr('btw.waiting');
     var shown = btwKey === key && !btwBox.hidden;
     var cls = 'm btw-q' + (hist ? ' hist' : '')
       + (m._local && m._state === 'sending' ? ' pending' : '')
       + (stuck(m) ? ' failed' : '');
     var h = '<button type="button" class="btw-chip" aria-haspopup="dialog" aria-controls="btw"'
-      + ' aria-expanded="'+(shown ? 'true' : 'false')+'" title="'+text(asked ? 'Side question: '+asked : 'Side question')+'">'
+      + ' aria-expanded="'+(shown ? 'true' : 'false')+'" title="'+text(asked ? tr('btw.titleWith', { asked: asked }) : tr('btw.title'))+'">'
       + '<span class="btw-tag">btw</span>'
       + '<span class="btw-text">'+text(asked || '/btw')+'</span>'
       + (state ? '<span class="btw-state'+(answered ? ' ready' : '')+'">'+state+'</span>' : '')
@@ -1742,9 +1774,9 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
       if(body) h += '<div class="b">'+body+'</div>';
     }
     if(!h){
-      h = '<div class="btw-wait">' + (stuck(m) ? 'Not sent, so nothing is answering it.'
-        : isHistory(m) ? 'No answer came before the daemon restarted.'
-        : '<span class="set-spin" aria-hidden="true"></span>Asking a copy of this conversation\u2026') + '</div>';
+      h = '<div class="btw-wait">' + (stuck(m) ? text(tr('btw.notSent'))
+        : isHistory(m) ? text(tr('btw.restarted'))
+        : '<span class="set-spin" aria-hidden="true"></span>'+text(tr('btw.asking'))) + '</div>';
     }
     var stick = btwBody.scrollHeight - btwBody.scrollTop - btwBody.clientHeight < 40;
     if(h !== btwSig){ btwBody.innerHTML = h; btwSig = h; codeBlocks(btwBody); }
@@ -1780,7 +1812,7 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
     // A report is a line-based bubble like a tool one: fold it and offer the same control. A
     // dispatch is prose (the card, or the task a sub-agent was handed), so it only takes the tag.
     var folded = kind === 'tools' || kind === 'report';
-    var tag = kind && Object.prototype.hasOwnProperty.call(SUB_K, kind) ? SUB_K[kind] : '';
+    var tag = kind && Object.prototype.hasOwnProperty.call(SUB_K, kind) ? tr(SUB_K[kind]) : '';
     var cls = 'm' + (m.own ? ' own' : '') + (hist ? ' hist' : '')
       + (tag ? ' '+kind : '')
       + (m._local && m._state === 'sending' ? ' pending' : '')
@@ -1803,7 +1835,7 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
       // way to the bytes, which is what the name used to be. Not offered on history, for the
       // reason its buttons are dropped below: the token died with the process that minted it, so
       // the reader could only ever open onto "no longer here".
-      if(m.file.view && !hist) h += '<a class="view" href="'+text(m.file.url)+'" download>Download</a>';
+      if(m.file.view && !hist) h += '<a class="view" href="'+text(m.file.url)+'" download>'+text(tr('common.download'))+'</a>';
       h += '</div>';
     }
     // What the turn changed, when the daemon recorded it. Not gated on a message being history:
@@ -1837,7 +1869,7 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
   function turnChangeRow(m){
     if(typeof window.openGitWindow !== 'function') return '';
     var c = m.turnChanges;
-    var files = c.files === 1 ? '1 file changed' : c.files + ' files changed';
+    var files = c.files === 1 ? tr('msg.turnFilesOne') : tr('msg.turnFilesMany', { count: c.files });
     return '<div class="tc"><button type="button" data-turns="'+text(String(c.turn))+'">'
       + IC.icon.diff
       + '<span>' + text(files) + '</span>'
@@ -1857,7 +1889,7 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
     if(typeof window.openGitWindow !== 'function' || !turn) return;
     var q = '?t=' + encodeURIComponent(topic) + '&turn=' + encodeURIComponent(String(turn));
     window.openGitWindow({
-      title: 'Turn ' + turn + ' changes',
+      title: tr('msg.turnChangesTitle', { turn: turn }),
       statusUrl: 'api/turn-changes/status' + q,
       fileUrl: 'api/turn-changes/file' + q,
     });
@@ -2038,7 +2070,7 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
     var h = '<div class="ag-list">', heads = places.length > 1;
     for(var j=0;j<places.length;j++){
       var list = by.get(places[j]);
-      if(heads) h += '<h4 class="ag-place"><span>'+text(places[j] || 'elsewhere')+'</span><span class="ag-count">'+list.length+'</span></h4>';
+      if(heads) h += '<h4 class="ag-place"><span>'+text(places[j] || tr('settings.elsewhere'))+'</span><span class="ag-count">'+list.length+'</span></h4>';
       for(var n=0;n<list.length;n++) h += settingsAgent(rows[list[n]], list[n]);
     }
     return h + '</div>';
@@ -2078,12 +2110,12 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
    */
   function settingsAgent(r, i){
     var fields = (r.control && r.control.fields) || [], id = String(r.target || r.label), open = agOpen === id;
-    var badges = (r.here ? '<span class="set-badge here" title="Answers the topic \u201c'+text(settingsTopicName(settingsTopic))+'\u201d">this topic</span>' : '')
-      + (r.defaultAgent ? '<span class="set-badge def" title="A new conversation no routing rule claims gets this agent">default</span>' : '');
+    var badges = (r.here ? '<span class="set-badge here" title="'+text(tr('settings.thisTopicTitle', { title: settingsTopicName(settingsTopic) }))+'">'+text(tr('settings.thisTopic'))+'</span>' : '')
+      + (r.defaultAgent ? '<span class="set-badge def" title="'+text(tr('settings.defaultBadgeTitle'))+'">'+text(tr('chat.defaultTag'))+'</span>' : '');
     var sum = r.targetKind ? ['<span class="ag-kind">'+text(r.targetKind)+'</span>'] : [];
     for(var k=0;k<fields.length;k++){
       var f = fields[k], v = f.value == null ? '' : String(f.value);
-      sum.push('<span class="'+(f.label === 'Model' ? 'ag-mono' : 'ag-lvl')+(f.unset ? ' unset' : '')+'" title="'+text(f.label+': '+v+(f.unset ? ' (not set)' : ''))+'">'+text(v)+'</span>');
+      sum.push('<span class="'+(f.label === 'Model' ? 'ag-mono' : 'ag-lvl')+(f.unset ? ' unset' : '')+'" title="'+text(f.label+': '+v+(f.unset ? tr('settings.notSetParen') : ''))+'">'+text(v)+'</span>');
     }
     var body = '';
     for(var n=0;n<fields.length;n++){
@@ -2117,13 +2149,13 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
   // sit on one page, so a reader that hears only "Model" cannot tell whose it is.
   function settingsField(agent, f, key){
     var c = f.control || { kind: 'list' }, v = f.value == null ? '' : String(f.value);
-    var unset = f.unset ? ' unset' : '', tip = f.unset ? text(v + ' (not set)') : text(v);
+    var unset = f.unset ? ' unset' : '', tip = f.unset ? text(v + tr('settings.notSetParen')) : text(v);
     var badge = f.effectLabel ? '<span class="set-badge restart"'+(f.effectDetail ? ' title="'+text(f.effectDetail)+'"' : '')+'>'+text(f.effectLabel)+'</span>' : '';
     // Under a value, what it cannot say by itself: where it comes from (a pinned mode, a running
     // session's, a pod's file), and for a level the chosen level's meaning — the levels are five
     // short words, and what each one asks is the whole point of picking one. A level that was never
     // set says so: the control shows what applies, and a selected button cannot say it was a default.
-    var note = f.valueNote ? String(f.valueNote) : (f.unset && c.kind === 'choice' ? 'not set' : '');
+    var note = f.valueNote ? String(f.valueNote) : (f.unset && c.kind === 'choice' ? tr('settings.notSet') : '');
     var foot = function(extra){
       var parts = [];
       if(extra) parts.push('<span>'+text(extra)+'</span>');
@@ -2177,12 +2209,12 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
 
   function settingsValues(s){
     var h = '', hd = s.head, n = s.nav || {};
-    if(n.back) h += '<button type="button" class="set-back" data-fk="back" data-btn="'+text(n.back)+'">'+IC.icon.chevronLeft+' All settings</button>';
+    if(n.back) h += '<button type="button" class="set-back" data-fk="back" data-btn="'+text(n.back)+'">'+IC.icon.chevronLeft+' '+text(tr('menu.allSettings'))+'</button>';
     if(hd){
       h += '<div class="set-head"><h3><span>'+text(hd.label)+'</span>'
         + (hd.target ? '<span class="set-tgt">'+text(hd.target)+'</span>' : '')
         + (hd.targetKind ? '<span class="set-kind">'+text(hd.targetKind)+'</span>' : '') + '</h3>'
-        + '<p class="set-now">Now: <span class="set-v'+(hd.unset ? ' unset' : '')+'">'+text(hd.value)+'</span></p>'
+        + '<p class="set-now">'+text(tr('settings.now'))+'<span class="set-v'+(hd.unset ? ' unset' : '')+'">'+text(hd.value)+'</span></p>'
         + (hd.source ? '<p class="set-src">'+inl(hd.source)+'</p>' : '')
         + '<p class="set-desc">'+inl(hd.description)+'</p>'
         + (hd.effect ? '<p class="set-when">'+inl(hd.effect)+'</p>' : '') + '</div>';
@@ -2194,21 +2226,21 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
     // what is typed as the value — a harness takes model names its list never offers.
     if(s.typed){
       h += '<div class="set-typed"><input type="text" class="set-type" data-fk="typed" data-btn="'+text(s.typed.buttonId)+'"'
-        + ' placeholder="'+text(opts.length > 8 ? 'Filter, or type a model name' : s.typed.placeholder)+'" aria-label="'+text(s.typed.placeholder)+'"'
+        + ' placeholder="'+text(opts.length > 8 ? tr('settings.filterOrType') : s.typed.placeholder)+'" aria-label="'+text(s.typed.placeholder)+'"'
         + ' autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="done">'
-        + '<button type="button" class="set-use" data-fk="use">Use</button></div>';
+        + '<button type="button" class="set-use" data-fk="use">'+text(tr('common.use'))+'</button></div>';
     }
-    if(s.loading || (hd && hd.hint)) h += '<div class="set-hintbox'+(s.loading ? ' loading' : '')+'">'+(s.loading ? '<span class="set-spin" aria-hidden="true"></span>' : '')+inl(hd && hd.hint ? hd.hint : 'Loading…')+'</div>';
+    if(s.loading || (hd && hd.hint)) h += '<div class="set-hintbox'+(s.loading ? ' loading' : '')+'">'+(s.loading ? '<span class="set-spin" aria-hidden="true"></span>' : '')+inl(hd && hd.hint ? hd.hint : tr('common.loading'))+'</div>';
     if(opts.length){
       h += '<div class="set-card set-list">';
       for(var i=0;i<opts.length;i++) h += settingsOption(opts[i], i);
-      h += '</div><p class="set-nomatch" hidden>No model in the list matches. Use takes the name as typed.</p>';
+      h += '</div><p class="set-nomatch" hidden>'+text(tr('settings.noModelMatch'))+'</p>';
     }
     if(n.pageCount > 1){
       h += '<div class="set-nav">'
-        + (n.prev ? '<button type="button" data-fk="prev" data-btn="'+text(n.prev)+'">'+IC.icon.chevronLeft+' Prev</button>' : '')
+        + (n.prev ? '<button type="button" data-fk="prev" data-btn="'+text(n.prev)+'">'+IC.icon.chevronLeft+' '+text(tr('common.prev'))+'</button>' : '')
         + '<span class="set-page">'+text(n.page)+' / '+text(n.pageCount)+'</span>'
-        + (n.next ? '<button type="button" data-fk="next" data-btn="'+text(n.next)+'">Next '+IC.icon.chevronRight+'</button>' : '')
+        + (n.next ? '<button type="button" data-fk="next" data-btn="'+text(n.next)+'">'+text(tr('common.next'))+' '+IC.icon.chevronRight+'</button>' : '')
         + '</div>';
     }
     return h;
@@ -2243,15 +2275,15 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
   function settingsKey(m){ return (m._g || m.g || epoch) + ':' + m.id; }
 
   function settingsTopicName(id){
-    for(var i=0;i<topics.length;i++) if(topics[i].id===id) return topics[i].title || 'Untitled';
-    return 'Untitled';
+    for(var i=0;i<topics.length;i++) if(topics[i].id===id) return topics[i].title || tr('common.untitled');
+    return tr('common.untitled');
   }
 
   // Where these settings live, which is the same for every topic. The bar used to name the topic
   // the page was opened in, and that read as "these are this topic's settings" — they never were.
   function paintSettingsTopic(){
-    settingsTopicEl.textContent = 'Saved to config.yaml · every topic';
-    settingsTopicEl.title = 'Opened from the topic “' + settingsTopicName(settingsTopic) + '”';
+    settingsTopicEl.textContent = tr('settings.savedWhere');
+    settingsTopicEl.title = tr('settings.openedFrom', { title: settingsTopicName(settingsTopic) });
   }
 
   /**
@@ -2334,7 +2366,7 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
     if(!topic) return 0;
     settingsMsg = null;
     settingsTopic = topic;
-    settingsBody.innerHTML = '<div class="set-loading">Loading settings…</div>';
+    settingsBody.innerHTML = '<div class="set-loading">'+text(tr('settings.loading'))+'</div>';
     paintSettingsTopic();
     settingsPage.hidden = false;
     settingsBody.scrollTop = 0;
@@ -2359,7 +2391,7 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
     settingsTimer = setTimeout(function(){
       settingsTimer = 0;
       if(settingsPage.hidden || settingsMsg) return;
-      settingsSay('The daemon did not answer. Close this and try again.');
+      settingsSay(tr('settings.noAnswer'));
     }, SETTINGS_WAIT_MS);
   }
 
@@ -2447,9 +2479,9 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
       .then(function(r){
         if(r.ok) return;
         fail(r.status === 409 || r.status === 404
-          ? 'This settings page is out of date, so nothing was changed. Close it and open Settings again.'
-          : 'The daemon did not take that (HTTP '+r.status+'), so nothing was changed. Try again.');
-      }, function(){ fail('Could not reach the daemon, so nothing was changed. Check the connection and try again.'); });
+          ? tr('settings.outOfDate')
+          : tr('settings.httpErr', { status: r.status }));
+      }, function(){ fail(tr('settings.reachChangeErr')); });
   }
 
   /**
@@ -2524,7 +2556,7 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
   function allToggle(key){
     var st = opened[key];
     return '<button type="button" class="tl-all" data-tl-all="'+text(key)+'">'
-      + (st && st.all ? 'Collapse' : 'Show all') + '</button>';
+      + text(st && st.all ? tr('msg.collapse') : tr('msg.showAll')) + '</button>';
   }
 
   /** Open every line of a tool bubble, or fold them all back. Either way, per-line choices go. */
@@ -2574,12 +2606,12 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
 
   function failedActions(m){
     var why = m._state === 'unsure'
-      ? 'Not confirmed — the page closed before the daemon answered, so this may not have arrived.'
-      : 'Not delivered — the agent never saw this.';
-    var h = '<div class="warn">'+why+'</div><div class="acts">';
-    if(outbox[m._nonce]) h += '<button type="button" data-retry="'+text(m._nonce)+'">Retry</button>';
-    return h + '<button type="button" data-copy="'+text(m._nonce)+'">Copy</button>'
-      + '<button type="button" data-discard="'+text(m._nonce)+'">Discard</button></div>';
+      ? tr('msg.notConfirmed')
+      : tr('msg.notDelivered');
+    var h = '<div class="warn">'+text(why)+'</div><div class="acts">';
+    if(outbox[m._nonce]) h += '<button type="button" data-retry="'+text(m._nonce)+'">'+text(tr('common.retry'))+'</button>';
+    return h + '<button type="button" data-copy="'+text(m._nonce)+'">'+text(tr('common.copy'))+'</button>'
+      + '<button type="button" data-discard="'+text(m._nonce)+'">'+text(tr('common.discard'))+'</button></div>';
   }
 
   function upsert(m){
@@ -2725,10 +2757,6 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
    * nothing. Rendered faithfully that is a blank panel, which is indistinguishable from a page that
    * failed to load — and is exactly how it was reported.
    */
-  var EMPTY_NOTE = 'This topic is older than the running daemon, and its transcript was not kept, so'
-    + ' anything said in it is no longer here. The agent still has its context, so you can carry on'
-    + ' where you left off.';
-
   function hasMessages(){
     for(var k in els) if(els.hasOwnProperty(k)) return true;
     return false;
@@ -2745,7 +2773,7 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
       clearSkeleton();
       emptyEl = document.createElement('div');
       emptyEl.className = 'empty';
-      emptyEl.textContent = EMPTY_NOTE;
+      emptyEl.textContent = tr('chat.emptyNote');
       log.appendChild(emptyEl);
     } else {
       if(emptyEl.parentNode) emptyEl.parentNode.removeChild(emptyEl);
@@ -2765,8 +2793,8 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
    * and the choice comes back with it.
    */
   function launchHtml(c){
-    var h = '<div class="launch-head"><div class="launch-title">Choose an agent</div>'
-      + '<div class="launch-sub">Or just type — <b>'+text(c.current)+'</b> answers by default.</div></div>';
+    var h = '<div class="launch-head"><div class="launch-title">'+text(tr('chat.launchTitle'))+'</div>'
+      + '<div class="launch-sub">'+text(tr('chat.launchSubPrefix'))+'<b>'+text(c.current)+'</b>'+text(tr('chat.launchSubSuffix'))+'</div></div>';
     // One machine needs no heading: it would name the only answer to a question nobody asked —
     // unless it is offline, which is worth saying even of the only one.
     var many = c.groups.length > 1;
@@ -2774,13 +2802,13 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
       var g = c.groups[i], off = offSince(g.name);
       h += '<section class="launch-group'+(off?' off':'')+'">';
       if(many || off) h += '<h3 class="launch-host">'+text(g.name)+' <span class="n">'+g.agents.length+'</span>'
-        + (off ? '<span class="off" title="'+text(offTitle(g.name))+'">'+IC.icon.offline+'offline since '+text(offWhen(off))+'</span>' : '')
+        + (off ? '<span class="off" title="'+text(offTitle(g.name))+'">'+IC.icon.offline+text(tr('chat.offlineSince', { when: offWhen(off) }))+'</span>' : '')
         + '</h3>';
       h += '<div class="launch-grid">';
       for(var j=0;j<g.agents.length;j++){
         var a = g.agents[j], on = a.id === c.current;
-        h += '<button type="button" class="agent-card'+(on?' def':'')+'" data-agent="'+text(a.id)+'" title="/agent '+text(a.id)+(off?' — '+text(g.name)+' is offline':'')+'">'
-          + '<span class="ac-top"><span class="ac-id">'+text(a.id)+'</span>'+(on?'<span class="ac-tag">default</span>':'')+'</span>'
+        h += '<button type="button" class="agent-card'+(on?' def':'')+'" data-agent="'+text(a.id)+'" title="/agent '+text(a.id)+(off?text(tr('chat.agentOffline', { name: g.name })):'')+'">'
+          + '<span class="ac-top"><span class="ac-id">'+text(a.id)+'</span>'+(on?'<span class="ac-tag">'+text(tr('chat.defaultTag'))+'</span>':'')+'</span>'
           + '<span class="ac-kind"><i class="ac-dot h-'+text(a.harness)+'"></i><span>'+text(a.kind)+'</span></span>'
           + (a.model ? '<span class="ac-model" title="'+text(a.model)+'">'+text(a.model)+'</span>' : '')
           + '</button>';
@@ -2847,7 +2875,7 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
   }
 
   function offTitle(name){
-    return name+' has been offline since '+offWhen(offSince(name))+': the gateway cannot reach it, so its agents cannot answer until it is back.';
+    return tr('chat.machineOfflineTitle', { name: name, when: offWhen(offSince(name)) });
   }
 
   /** The line above the composer, for the topic on screen when its machine is offline. */
@@ -2862,7 +2890,7 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
       machineNoteEl.innerHTML = '';
       return;
     }
-    machineNoteEl.innerHTML = IC.icon.offline+'<span>'+text(name+' is offline since '+offWhen(off)+' — its agents cannot answer until it is back.')+'</span>';
+    machineNoteEl.innerHTML = IC.icon.offline+'<span>'+text(tr('chat.machineOfflineNote', { name: name, when: offWhen(off) }))+'</span>';
     machineNoteEl.title = offTitle(name);
     machineNoteEl.hidden = false;
   }
@@ -2881,10 +2909,10 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
     forkNoteKey=key;
     forkNote.hidden=!src;
     if(!src){ forkNote.innerHTML=''; forkNote.removeAttribute('data-src'); return; }
-    forkNote.innerHTML=IC.icon.fork+'<span>Forked from</span><span class="fork-src">'+text(src.title||'Untitled')+'</span>'
-      +(cur.forkTurn?'<span>· turn '+cur.forkTurn+'</span>':'');
+    forkNote.innerHTML=IC.icon.fork+'<span>'+text(tr('topic.forkedFromPrefix'))+'</span><span class="fork-src">'+text(src.title||tr('common.untitled'))+'</span>'
+      +(cur.forkTurn?'<span>'+text(tr('topic.forkedTurn', { turn: cur.forkTurn }))+'</span>':'');
     forkNote.setAttribute('data-src', src.id);
-    forkNote.title='Back to '+(src.title||'Untitled');
+    forkNote.title=tr('topic.backTo', { title: src.title || tr('common.untitled') });
   }
   forkNote.addEventListener('click', function(){
     var id=forkNote.getAttribute('data-src');
@@ -2901,8 +2929,6 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
    * on disk, or out of this browser's cache: they are real, they are just no longer anything the
    * process can be asked about, which is why nothing up there has a button on it.
    */
-  var DIVIDER_NOTE = 'Everything above is from before the daemon restarted.'
-    + ' The agent still has its context, so you can carry on below.';
   var dividerEl=null;
 
   /** Keep the divider immediately after the last cached message, or gone when there are none. */
@@ -2920,7 +2946,7 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
     if(!dividerEl){
       dividerEl=document.createElement('div');
       dividerEl.className='divider';
-      dividerEl.textContent=DIVIDER_NOTE;
+      dividerEl.textContent=tr('chat.dividerNote');
     }
     if(last.nextSibling !== dividerEl) log.insertBefore(dividerEl, last.nextSibling);
   }
@@ -2935,7 +2961,6 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
    * to land, at the bottom, and it says what it is waiting FOR rather than impersonating one of
    * them — most syncs add nothing and the line just goes away again.
    */
-  var SYNC_NOTE = 'Checking for anything said while you were away';
   var syncingEl=null;
 
   function showSyncing(){
@@ -2944,7 +2969,7 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
     if(syncingEl || synced || skeleton || !log.firstChild) return;
     syncingEl=document.createElement('div');
     syncingEl.className='syncing';
-    syncingEl.innerHTML='<span class="dots"><i></i><i></i><i></i></span><span>'+SYNC_NOTE+'</span>';
+    syncingEl.innerHTML='<span class="dots"><i></i><i></i><i></i></span><span>'+text(tr('chat.syncNote'))+'</span>';
     log.appendChild(syncingEl);
   }
 
@@ -3266,7 +3291,7 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
   }
 
   var NEEDS_ORDER = {answer:0, failed:1, review:2};
-  var NEEDS_WHAT = {answer:'Waiting on your answer', failed:'Failed', review:'Finished'};
+  var NEEDS_WHAT = {answer:'topic.needsAnswer', failed:'topic.needsFailed', review:'topic.needsReview'};
   // stateRank's four values in its own order, as the filter chips name them.
   var STATE_KEYS = ['needs', 'running', 'idle', 'none'];
   /**
@@ -3441,19 +3466,19 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
     var html = '<div class="fb-row">'
       + '<div class="fb-search">' + IC.icon.search
       + '<input class="fb-q" type="text" autocomplete="off" spellcheck="false"'
-      + ' placeholder="' + text(opts.placeholder || 'Search') + '" aria-label="' + text(opts.placeholder || 'Search') + '">'
-      + '<button type="button" class="fb-qclear" title="Clear search" aria-label="Clear search" hidden>' + IC.icon.cross + '</button>'
+      + ' placeholder="' + text(opts.placeholder || tr('common.search')) + '" aria-label="' + text(opts.placeholder || tr('common.search')) + '">'
+      + '<button type="button" class="fb-qclear" title="' + text(tr('common.clearSearch')) + '" aria-label="' + text(tr('common.clearSearch')) + '" hidden>' + IC.icon.cross + '</button>'
       + '</div>'
-      + '<button type="button" class="fb-filter fb-btn" aria-expanded="false" title="Filter">'
-      + IC.icon.filter + '<span>Filter</span><span class="fb-dot" hidden></span></button>';
+      + '<button type="button" class="fb-filter fb-btn" aria-expanded="false" title="' + text(tr('common.filter')) + '">'
+      + IC.icon.filter + '<span>' + text(tr('common.filter')) + '</span><span class="fb-dot" hidden></span></button>';
     if(sortDef){
-      html += '<span class="fb-tools"><span class="fb-sort" title="Sort">' + IC.icon.sort
-        + '<select class="fb-sortsel" aria-label="Sort"></select></span>'
-        + '<button type="button" class="fb-dir fb-btn" aria-label="Ascending" title="Ascending"></button></span>';
+      html += '<span class="fb-tools"><span class="fb-sort" title="' + text(tr('common.sort')) + '">' + IC.icon.sort
+        + '<select class="fb-sortsel" aria-label="' + text(tr('common.sort')) + '"></select></span>'
+        + '<button type="button" class="fb-dir fb-btn" aria-label="' + text(tr('common.ascending')) + '" title="' + text(tr('common.ascending')) + '"></button></span>';
     }
     html += '</div>'
       + '<div class="fb-pins" hidden></div>'
-      + '<div class="fb-sum" hidden><span class="fb-sumtext"></span><button type="button" class="fb-clear">Clear</button></div>'
+      + '<div class="fb-sum" hidden><span class="fb-sumtext"></span><button type="button" class="fb-clear">' + text(tr('common.clear')) + '</button></div>'
       + '<div class="fb-panel" hidden></div>';
     root.innerHTML = html;
 
@@ -3595,7 +3620,7 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
     function paintSummary(){
       if(!active() || !counts){ sum.hidden = true; return; }
       sum.hidden = false;
-      sumText.textContent = 'Showing ' + counts.shown + ' of ' + counts.total;
+      sumText.textContent = tr('common.showingOf', { shown: counts.shown, total: counts.total });
     }
 
     function paintChrome(){
@@ -3622,7 +3647,7 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
       if(!dirBtn) return;
       var up = st.dir !== 'desc';
       dirBtn.innerHTML = up ? IC.icon.arrowUp : IC.icon.arrowDown;
-      dirBtn.title = up ? 'Ascending' : 'Descending';
+      dirBtn.title = up ? tr('common.ascending') : tr('common.descending');
       dirBtn.setAttribute('aria-label', dirBtn.title);
     }
 
@@ -3716,6 +3741,35 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
       if(root.parentNode) root.parentNode.removeChild(root);
     }
 
+    function refreshI18n(placeholder, sortOptions){
+      var ph = placeholder || tr('common.search');
+      q.placeholder = ph;
+      q.setAttribute('aria-label', ph);
+      var cs = tr('common.clearSearch');
+      qClear.title = cs;
+      qClear.setAttribute('aria-label', cs);
+      var fl = tr('common.filter');
+      fBtn.title = fl;
+      var fSpan = fBtn.querySelector('span');
+      if(fSpan) fSpan.textContent = fl;
+      clearBtn.textContent = tr('common.clear');
+      if(sortSel){
+        var sortLabel = tr('common.sort');
+        if(sortSel.parentNode) sortSel.parentNode.title = sortLabel;
+        sortSel.setAttribute('aria-label', sortLabel);
+        if(sortOptions){
+          var h2 = '';
+          for(var i2=0;i2<sortOptions.length;i2++){
+            h2 += '<option value="' + text(sortOptions[i2].value) + '">' + text(sortOptions[i2].label) + '</option>';
+          }
+          sortSel.innerHTML = h2;
+          sortSel.value = st.sort;
+        }
+        paintDir();
+      }
+      paintSummary();
+    }
+
     // No prune yet: the caller supplies the live option lists with setGroups on its first paint,
     // and pruning against the empty list here would drop a selection restored from storage.
     paintPanel();
@@ -3731,7 +3785,7 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
       paintDir();
     }
 
-    return {el:root, state:state, active:active, setGroups:setGroups, setCounts:setCounts, clear:clear, destroy:destroy};
+    return {el:root, state:state, active:active, setGroups:setGroups, setCounts:setCounts, clear:clear, destroy:destroy, refreshI18n:refreshI18n};
   }
 
   /**
@@ -3745,14 +3799,14 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
    */
   function topicFilterGroups(forest){
     var stateOpts = [
-      {value:'needs', label:'Needs you', short:'Needs', icon:'bell', count:0},
-      {value:'running', label:'Running', short:'Run', icon:'play', count:0},
-      {value:'idle', label:'Idle', short:'Idle', icon:'dot', count:0},
-      {value:'none', label:'No agent', short:'None', icon:'offline', count:0}
+      {value:'needs', label:tr('filter.needsYou'), short:tr('filter.needsShort'), icon:'bell', count:0},
+      {value:'running', label:tr('filter.running'), short:tr('filter.runShort'), icon:'play', count:0},
+      {value:'idle', label:tr('filter.idle'), short:tr('filter.idle'), icon:'dot', count:0},
+      {value:'none', label:tr('filter.noAgent'), short:tr('filter.noneShort'), icon:'offline', count:0}
     ];
     var starredOpts = [
-      {value:'starred', label:'Starred', icon:'star', count:0},
-      {value:'plain', label:'Unstarred', count:0}
+      {value:'starred', label:tr('filter.starred'), icon:'star', count:0},
+      {value:'plain', label:tr('filter.unstarred'), count:0}
     ];
     var agents = {}, agentOrder = [], hosts = {}, hostOrder = [], i;
     for(i=0;i<forest.visible.length;i++){
@@ -3783,14 +3837,14 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
     }
     for(i=0;i<hostOrder.length;i++){
       var hv = hostOrder[i];
-      hostOpts.push({value:hv, label:hv === '__local' ? 'Local' : hv, icon:'globe', count:hosts[hv]});
+      hostOpts.push({value:hv, label:hv === '__local' ? tr('filter.local') : hv, icon:'globe', count:hosts[hv]});
     }
     var groups = [
-      {id:'state', label:'State', pinned:true, options:stateOpts},
-      {id:'starred', label:'Starred', options:starredOpts}
+      {id:'state', label:tr('filter.state'), pinned:true, options:stateOpts},
+      {id:'starred', label:tr('filter.starred'), options:starredOpts}
     ];
-    if(agentOpts.length) groups.push({id:'agent', label:'Agent', options:agentOpts});
-    groups.push({id:'host', label:'Host', options:hostOpts});
+    if(agentOpts.length) groups.push({id:'agent', label:tr('filter.agent'), options:agentOpts});
+    groups.push({id:'host', label:tr('filter.host'), options:hostOpts});
     return {groups:groups, total:forest.convOrder.length};
   }
 
@@ -3873,8 +3927,8 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
         menu:'topic',
         cls:(painted.dividers[i]?' after-needs':''),
         tail:(needsYou(t)?' needs':''),
-        attrs:needsYou(t)?' title="'+text(NEEDS_WHAT[t.stage]+(t.line?': '+t.line:''))+'"':'',
-        moreTitle:'Topic actions'
+        attrs:needsYou(t)?' title="'+text(tr(NEEDS_WHAT[t.stage])+(t.line?': '+t.line:''))+'"':'',
+        moreTitle:tr('topic.topicActions')
       });
     }
     bar.innerHTML=h;
@@ -3883,8 +3937,8 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
     // A filtered list with nothing left says so where the rows would be, rather than looking like
     // a topic list that failed to load. Clear is the way back without hunting for the field.
     if(!h && painted.filtering){
-      bar.innerHTML='<div class="topics-empty"><span>No matching topics</span>'
-        + '<button type="button" class="fb-clear" data-filter-clear="1">Clear</button></div>';
+      bar.innerHTML='<div class="topics-empty"><span>'+text(tr('sidebar.noMatchingTopics'))+'</span>'
+        + '<button type="button" class="fb-clear" data-filter-clear="1">'+text(tr('common.clear'))+'</button></div>';
     }
     // The rows above replaced every age element, so the timer is re-armed against the new ones
     // (and stopped when none is left).
@@ -3897,9 +3951,9 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
     var toRead=0;
     for(i=0;i<forest.visible.length;i++) if(needsRead(forest.visible[i])) toRead++;
     readBtn.disabled = !toRead;
-    readBtn.title = toRead ? 'Mark all read ('+toRead+' topic'+(toRead===1?'':'s')+')' : 'Mark all read — nothing unread';
+    readBtn.title = toRead ? tr(toRead===1?'sidebar.markAllReadTopics':'sidebar.markAllReadTopicsPlural', { count: toRead }) : tr('sidebar.markAllReadNone');
     // Says what it will do: with stars in the list it no longer clears all of them.
-    var clearLabel = stars ? 'Clear unstarred topics' : 'Clear all topics';
+    var clearLabel = stars ? tr('sidebar.clearUnstarredTopics') : tr('sidebar.clearAllTopics');
     clearBtn.title = clearLabel;
     clearBtn.setAttribute('aria-label', clearLabel);
     // The count sits on Manage's face, so it is read without opening the menu; the item inside
@@ -3907,17 +3961,17 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
     var idle=idleTopics().length;
     idleBtn.hidden = !idle;
     noIdleBtn.hidden = Boolean(idle);
-    idleBtn.textContent = 'Close idle ('+idle+')';
+    idleBtn.textContent = tr('menu.closeIdleCount', { count: idle });
     idleCount.textContent = idle ? '('+idle+')' : '';
     var below = cur ? busyBelow(cur.id) : false;
     paintForkNote(cur);
     if(cur){
-      chatTitle.textContent=cur.title || 'Untitled';
+      chatTitle.textContent=cur.title || tr('common.untitled');
       // Same order as the dot, and the same reason: during an ask the turn is still open, so
       // "running" is true and is the less useful of the two things to say. A dispatcher whose
       // sub-agents work is running too: its own turn ended, the job did not.
       var curRunning=Boolean(cur.running) || below;
-      var state=cur.asking?'awaiting you':(curRunning?'running':'');
+      var state=cur.asking?tr('topic.awaitingYou'):(curRunning?tr('topic.running'):'');
       chatStatus.textContent=state;
       chatStatus.className='chat-status'+(cur.asking?' asking':(curRunning?' running':''));
     } else {
@@ -3935,8 +3989,8 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
     // them too (Delegation.stopOpened).
     stopBtn.hidden = !(cur && (cur.running || cur.asking || below));
     stopBtn.title = below
-      ? 'Stop this topic and the sub-agents it started — their conversations are kept (/stop)'
-      : 'Stop what the agent is doing — the conversation is kept (/stop)';
+      ? tr('composer.stopSubTitle')
+      : tr('composer.stopTitle');
     // The window's title bar names the same topic this row does, so a rename lands on both in
     // the same frame rather than leaving the bar holding the old name until the next switch.
     if(TERM_OK) paintFrames();
@@ -3983,16 +4037,16 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
     if(window.Notification.permission==='denied'){
       notifyBtn.disabled=true;
       notifyBtn.setAttribute('aria-pressed','false');
-      notifyState.textContent='blocked';
-      notifyBtn.title='Blocked in this browser: allow notifications for this site in the browser settings, then reload';
+      notifyState.textContent=tr('menu.notificationsBlocked');
+      notifyBtn.title=tr('menu.notificationsBlockedTitle');
       return;
     }
     notifyBtn.disabled=false;
     notifyBtn.setAttribute('aria-pressed', pushSub ? 'true' : 'false');
-    notifyState.textContent = pushSub ? 'on' : 'off';
+    notifyState.textContent = pushSub ? tr('common.on') : tr('common.off');
     notifyBtn.title = pushSub
-      ? 'This device is notified when something needs you, even with the page closed. Click to stop.'
-      : 'Notify this device when something needs you, even with the page closed';
+      ? tr('menu.notificationsOnTitle')
+      : tr('menu.notificationsOffTitle');
   }
   // Once the stream is open, i.e. once signed in: api/push is behind the session like every route.
   function initNotify(){
@@ -4030,7 +4084,7 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
         });
       });
     }).catch(function(e){
-      alert('Could not turn notifications on: ' + ((e && e.message) || e));
+      alert(tr('menu.notificationsError', { err: (e && e.message) || e }));
     }).then(paintNotify);
   });
   // A notification tapped while this page is open: the worker asks it to show the topic. And a
@@ -4125,7 +4179,7 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
     // a window opened for the first time is born at the height it will keep.
     if(on) paintTermHeight();
     termBtn.classList.toggle('on', Boolean(state));
-    termBtn.title = on ? 'Minimize the terminal' : (state ? 'Show the terminal (still running)' : 'Terminal');
+    termBtn.title = on ? tr('term.minBtnTitle') : (state ? tr('term.showRunningTitle') : tr('term.title'));
     // Only ever rendered where a session can actually be ended; see TERM_END.
     termEndBtn.hidden = !TERM_END;
     if(state && topic) mountTerm(topic);
@@ -4214,20 +4268,20 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
     if(!TERM_OK || !TERM_END || !topic || !termState[topic]) return;
     var cur = null;
     for(var i=0;i<topics.length;i++){ if(topics[i].id===topic){ cur=topics[i]; break; } }
-    var title = (cur && cur.title) ? cur.title : 'Untitled';
-    if(!confirm('End the terminal session in "'+title+'"?\n\nAnything still running in it is killed. Minimize instead to leave it running.')) return;
+    var title = (cur && cur.title) ? cur.title : tr('common.untitled');
+    if(!confirm(tr('term.confirmEnd', { title: title }))) return;
     var id = topic;
     // Not retried, unlike a send. A 500 here means the operator's command ran and failed, and
     // running it again 700ms later answers the same way while spawning a second process; the
     // retry in post() is for a link that dropped a request, which is not this.
     post('api/terminal/end',{topic:id},0).then(function(r){
-      return r.ok ? {ok:true} : r.json().then(function(d){ return {ok:false, error:(d&&d.error)||'could not end the terminal session'}; }, function(){ return {ok:false, error:'could not end the terminal session'}; });
+      return r.ok ? {ok:true} : r.json().then(function(d){ return {ok:false, error:(d&&d.error)||tr('term.endFailed')}; }, function(){ return {ok:false, error:tr('term.endFailed')}; });
     }).then(function(d){
       if(!d.ok){ alert(d.error); return; }
       dropTerm(id);
       if(id===topic){ history.replaceState(null,'',urlNow()); applyTerm(); }
     }, function(){
-      alert('could not reach the daemon to end the terminal session');
+      alert(tr('term.endReachErr'));
     });
   }
 
@@ -4474,10 +4528,10 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
     for(var i=0;i<topics.length;i++){
       if(topics[i].id===delId){ target=topics[i]; break; }
     }
-    var title = (target && target.title) ? target.title : 'Untitled';
+    var title = (target && target.title) ? target.title : tr('common.untitled');
     // A star protects a topic from everything automatic, not from this: the × is the operator
     // deciding about one row, which is exactly what a star defers to. The question says so.
-    if(!confirm('Delete '+(target && target.starred ? 'starred ' : '')+'topic "' + title + '"?')) return;
+    if(!confirm(tr(target && target.starred ? 'topic.confirmDeleteStarred' : 'topic.confirmDelete', { title: title }))) return;
     post('api/topics/delete',{topic:delId},1).then(function(r){
       return r.ok ? r.json() : null;
     }).then(function(d){
@@ -4549,7 +4603,7 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
       if(!at) continue;
       var run=n.getAttribute('data-age-run')==='1';
       n.textContent=ageText(now-at, !run);
-      n.title=(run?'Started ':'Ended ')+ageClock(at);
+      n.title=tr(run?'age.started':'age.ended', { when: ageClock(at) });
     }
   }
 
@@ -4601,25 +4655,25 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
 
   function statusSegments(s, now, open){
     var out = [];
-    out.push(seg('st-who', '', text(s.agent)+' \u00b7 '+modelChip(s.model || 'Model')+(s.effort ? ' \u00b7 '+text(s.effort) : '')
+    out.push(seg('st-who', '', text(s.agent)+' \u00b7 '+modelChip(s.model || tr('status.model'))+(s.effort ? ' \u00b7 '+text(s.effort) : '')
       +optChips(s.options || opkFor(topic))));
     if(s.context && s.context.size > 0){
       var pct = Math.min(100, Math.max(0, Math.round(s.context.used / s.context.size * 100)));
       out.push(seg(pct >= 80 ? 'bad' : (pct >= 50 ? 'warn' : ''),
-        s.context.used.toLocaleString()+' of '+s.context.size.toLocaleString()+' tokens in context',
+        tr('status.contextTip', { used: s.context.used.toLocaleString(), size: s.context.size.toLocaleString() }),
         '<i class="st-meter"><i style="width:'+pct+'%"></i></i>'+pct+'%'
           +'<span class="st-x">'+stTokens(s.context.used)+'/'+stWindow(s.context.size)+'</span>'));
     }
     if(s.cost){
       var c = s.cost;
-      out.push(seg('', 'Session cost so far, as the harness reports it ('+c.amount.toFixed(4)+' '+c.currency+')',
+      out.push(seg('', tr('status.costTip', { amount: c.amount.toFixed(4), currency: c.currency }),
         c.currency === 'USD' ? '$'+c.amount.toFixed(2) : text(c.amount.toFixed(2)+' '+c.currency)));
     }
     if(s.cacheExpiresAt){
       var left = s.cacheExpiresAt - now;
       out.push(left > 0
-        ? seg(left < 5*60000 ? 'warn' : '', 'Prompt cache expires at '+stClock(s.cacheExpiresAt)+'; after that the next message re-reads the whole context at full price', text('cache '+stLeft(left)))
-        : seg('', 'Prompt cache expired at '+stClock(s.cacheExpiresAt)+'; the next message re-reads the whole context at full price', 'cache expired'));
+        ? seg(left < 5*60000 ? 'warn' : '', tr('status.cacheTip', { clock: stClock(s.cacheExpiresAt) }), text(tr('status.cacheLeft', { left: stLeft(left) })))
+        : seg('', tr('status.cacheExpiredTip', { clock: stClock(s.cacheExpiresAt) }), text(tr('status.cacheExpired'))));
     }
     var pools = s.quota || [], anyActive = false;
     for(var i=0;i<pools.length;i++) if(pools[i].active) anyActive = true;
@@ -4635,7 +4689,7 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
       var reset = p.resetsAt && rp < 100 ? ' ('+stLeft(p.resetsAt - now)+')' : '';
       var acctTag = multiAcct && p.account ? p.account.split('@')[0]+' ' : '';
       var tip = (p.account ? p.account+(p.resetsAt ? ' \u00b7 ' : '') : '')
-        + (p.resetsAt ? 'Refills '+new Date(p.resetsAt).toLocaleString() : '');
+        + (p.resetsAt ? tr('status.refills', { when: new Date(p.resetsAt).toLocaleString() }) : '');
       out.push(seg((rp <= 15 ? 'bad' : (rp <= 40 ? 'warn' : ''))+(off ? ' off' : ''),
         tip,
         text(acctTag+poolLabel(p.id)+' '+rp+'%'+reset)));
@@ -4654,7 +4708,7 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
     var bare = !s && topic && synced && !launchEl && log.querySelector('.m');
     var opkSame = opk.topic === topic;
     var bareWho = (opkSame && opk.agent ? text(opk.agent)+' \u00b7 ' : '')
-      + modelChip((opkSame && opk.model) || 'Model')
+      + modelChip((opkSame && opk.model) || tr('status.model'))
       + optChips(opkFor(topic));
     var html = s ? statusSegments(s, Date.now(), statusEl.classList.contains('open'))
       : (bare ? seg('st-who', '', bareWho) : '');
@@ -4696,7 +4750,7 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
 
   function modelChip(label){
     return '<button type="button" class="st-model" aria-haspopup="dialog" aria-expanded="'+(modelPop.hidden || (mp && mp.opt) ? 'false' : 'true')+'"'
-      + ' title="Switch the model for this topic (/model)"><span class="st-mtext">'+text(label)+'</span></button>';
+      + ' title="'+text(tr('status.switchModelTitle'))+'"><span class="st-mtext">'+text(label)+'</span></button>';
   }
 
   // ── The agent's own settings ─────────────────────────────────────────────────
@@ -4723,11 +4777,11 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
     var note = o.note ? '\n'+o.note : '';
     if(o.fixed){
       return '<button type="button" class="st-model st-opt fixed" disabled data-opt="'+text(o.id)+'"'
-        + ' title="'+text(o.name+': '+val+' \u2014 fixed for this conversation'+note)+'">'+body+'</button>';
+        + ' title="'+text(tr('status.optFixedTitle', { name: o.name, val: val, note: note }))+'">'+body+'</button>';
     }
     var open = !modelPop.hidden && mp.opt === o.id;
     return '<button type="button" class="st-model st-opt" data-opt="'+text(o.id)+'" aria-haspopup="dialog" aria-expanded="'+(open ? 'true' : 'false')+'"'
-      + ' title="'+text('Switch '+o.name+' for this topic'+note)+'">'+body+'</button>';
+      + ' title="'+text(tr('status.optSwitchTitle', { name: o.name, note: note }))+'">'+body+'</button>';
   }
 
   /** Ask which settings to draw, a moment from now: a burst of messages, or an agent being chosen, is one ask. */
@@ -4757,7 +4811,7 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
   function optName(id){
     var list = (agentStatus && agentStatus.options) || opkFor(topic);
     for(var i=0;i<list.length;i++) if(list[i].id === id) return list[i].name;
-    return 'Setting';
+    return tr('modelPop.settingFallback');
   }
 
   function openModelPop(){ openPop(null); }
@@ -4768,10 +4822,9 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
     var n = ++mp.seq, t = topic;
     mp.topic = t; mp.opt = opt; mp.data = null; mp.err = ''; mp.loading = true; mp.busy = false;
     mpFilter.value = '';
-    mpHeading.textContent = opt ? optName(opt)+' for this topic' : 'Model for this topic';
-    mpFilter.placeholder = opt ? 'Filter' : 'Filter models';
-    mpFoot.innerHTML = opt ? 'This topic only. The agent decides what can be changed, and when.'
-      : 'This topic only, like <code>/model</code>. The default for each agent is in Settings.';
+    mpHeading.textContent = opt ? tr('modelPop.headingOpt', { name: optName(opt) }) : tr('modelPop.headingModel');
+    mpFilter.placeholder = opt ? tr('common.filter') : tr('modelPop.filterModels');
+    mpFoot.innerHTML = opt ? tr('modelPop.footOpt') : tr('modelPop.footModel');
     modelPop.hidden = false;
     paintStatus();
     renderModelPop();
@@ -4785,7 +4838,7 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
         clearTimeout(timer);
         if(n !== mp.seq) return;
         mp.loading = false;
-        if(!x.r.ok) mp.err = 'The daemon did not give a list (HTTP '+x.r.status+').';
+        if(!x.r.ok) mp.err = tr('modelPop.httpErr', { status: x.r.status });
         else mp.data = x.j;
         renderModelPop();
         // Either list started the agent if it had to, so its settings are known now: draw them.
@@ -4794,7 +4847,7 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
         clearTimeout(timer);
         if(n !== mp.seq) return;
         mp.loading = false;
-        mp.err = 'Could not reach the daemon for the list. Check the connection and try again.';
+        mp.err = tr('modelPop.reachErr');
         renderModelPop();
       });
   }
@@ -4812,7 +4865,7 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
     var d = mp.data;
     mpAgent.textContent = d && d.agent ? d.agent : '';
     mpFilter.hidden = !(d && d.ok && (mp.opt ? optChoices(d).length : d.options.length) > 8);
-    if(mp.loading){ mpList.innerHTML = '<div class="mp-msg mp-wait"><span class="set-spin" aria-hidden="true"></span>Asking the agent for its '+(mp.opt ? 'settings' : 'models')+'… a cold one takes a second or two to start.</div>'; return; }
+    if(mp.loading){ mpList.innerHTML = '<div class="mp-msg mp-wait"><span class="set-spin" aria-hidden="true"></span>'+text(mp.opt ? tr('modelPop.askingSettings') : tr('modelPop.askingModels'))+'</div>'; return; }
     if(mp.err){ mpList.innerHTML = '<div class="mp-msg err">'+inl(mp.err)+'</div>'; return; }
     if(!d || !d.ok){ mpList.innerHTML = '<div class="mp-msg">'+inl(d ? d.text : '')+'</div>'; return; }
     if(mp.opt){ renderOptList(d); return; }
@@ -4824,7 +4877,7 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
         + ' data-q="'+text((o.value+' '+name).toLowerCase())+'">'
         + '<span class="mp-check" aria-hidden="true">'+(on ? IC.icon.check : '')+'</span>'
         + '<span class="mp-main"><span class="mp-v">'+text(o.value)+'</span>'+(name ? '<span class="mp-n">'+text(name)+'</span>' : '')+'</span>'
-        + (def ? '<span class="mp-tag" title="What this agent starts a new session with (Settings)">default</span>' : '')
+        + (def ? '<span class="mp-tag" title="'+text(tr('modelPop.defaultTitle'))+'">'+text(tr('chat.defaultTag'))+'</span>' : '')
         + '</button>';
     }
     mpList.innerHTML = h;
@@ -4845,9 +4898,9 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
    */
   function renderOptList(d){
     var o = optOf(d);
-    if(!o){ mpList.innerHTML = '<div class="mp-msg">The agent no longer offers this setting.</div>'; return; }
+    if(!o){ mpList.innerHTML = '<div class="mp-msg">'+text(tr('modelPop.optGone'))+'</div>'; return; }
     var fixed = o.options.length <= 1, h = '';
-    if(fixed) h += '<div class="mp-msg">Fixed for this conversation: the agent offers no other '+text(o.name)+' now.</div>';
+    if(fixed) h += '<div class="mp-msg">'+text(tr('modelPop.optFixed', { name: o.name }))+'</div>';
     for(var i=0;i<o.options.length;i++){
       var c = o.options[i], on = c.value === o.current;
       h += '<button type="button" class="mp-opt'+(on ? ' on' : '')+'" role="option" aria-selected="'+(on ? 'true' : 'false')+'" data-v="'+text(c.value)+'"'
@@ -4888,12 +4941,12 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
           if(opt && t === topic) peekOptions();
           return;
         }
-        mp.err = x.j && x.j.text ? x.j.text : 'The daemon refused that (HTTP '+x.r.status+').';
+        mp.err = x.j && x.j.text ? x.j.text : tr('modelPop.refused', { status: x.r.status });
         renderModelPop();
       }, function(){
         mp.busy = false;
         if(n !== mp.seq) return;
-        mp.err = 'Could not reach the daemon, so '+(opt ? 'nothing' : 'the model')+' was changed. Try again.';
+        mp.err = opt ? tr('modelPop.reachChangeOpt') : tr('modelPop.reachChangeModel');
         renderModelPop();
       });
   }
@@ -5080,7 +5133,7 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
     // It used to stop for good and ask for a reload.
     else if(ev.t==='bye'){
       if(stream) stream.close();
-      note.textContent='The daemon is restarting. Reconnecting...';
+      note.textContent=tr('chat.restarting');
       reconnectLater();
     }
     // The end of a resumed stream's catch-up. For a blip or a tab coming back there is nothing to
@@ -5323,11 +5376,11 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
         // carries a page through a restart behind a proxy that answers 502 meanwhile.
         signedIn().then(function(ok){
           if(es !== stream) return;
-          if(ok){ note.textContent='Reconnecting...'; reconnectLater(); }
+          if(ok){ note.textContent=tr('chat.reconnecting'); reconnectLater(); }
           else { app.hidden=true; gate.hidden=false; }
         });
       } else {
-        note.textContent='Reconnecting...';
+        note.textContent=tr('chat.reconnecting');
       }
     };
     armWatchdog();
@@ -5339,7 +5392,7 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
    */
   topicFilter = makeFilterBar({
     key: 'aa_topic_filter',
-    placeholder: 'Search topics',
+    placeholder: tr('sidebar.searchTopics'),
     groups: [],
     onChange: function(){ paintTopics(); }
   });
@@ -5513,28 +5566,27 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
     var busy=Boolean(t.running || t.asking);
     var canFork=!(t.agent && t.agent.canFork===false);
     var items=[
-      {key:'star', icon:IC.icon.star, label:t.starred?'Unstar':'Star',
-       title:t.starred?'Stop keeping this topic through Clear and eviction':'Keep this topic through Clear and eviction'}
+      {key:'star', icon:IC.icon.star, label:t.starred?tr('topic.unstar'):tr('topic.star'),
+       title:t.starred?tr('topic.unstarTitle'):tr('topic.starTitle')}
     ];
-    items.push({key:'copy', icon:IC.icon.copy, label:'Copy reference',
-      title:'Copy the title and topic id ('+INSTANCE_ID+':main/'+id+') so an agent can read this conversation'});
+    items.push({key:'copy', icon:IC.icon.copy, label:tr('topic.copyRef'),
+      title:tr('topic.copyRefTitle', { ref: INSTANCE_ID+':main/'+id })});
     if(canFork){
-      items.push({key:'fork', icon:IC.icon.fork, label:'Fork', disabled:busy,
+      items.push({key:'fork', icon:IC.icon.fork, label:tr('topic.fork'), disabled:busy,
        title:busy
-         ? 'A turn is running here — fork it once the turn ends'
-         : 'Copy this conversation into a new topic beside it: it carries on from here, and this one is unchanged (/fork)'});
+         ? tr('topic.forkBusyTitle')
+         : tr('topic.forkTitle')});
     }
     items.push(
       {key:'end', icon:IC.icon.power,
-       label:'End agent'+(alive?' + '+alive+' sub-agent'+(alive===1?'':'s'):''),
+       label:alive ? tr(alive===1?'topic.endAgentSub':'topic.endAgentSubs', { count: alive }) : tr('topic.endAgent'),
        disabled:!able,
        // The reason, when there is nothing to end: a greyed item with no explanation asks.
        title:able
-         ? 'End the agent process here'+(alive?' and in the '+alive+' topic'+(alive===1?'':'s')+' under it':'')
-           +' — the conversations are kept, and the next message resumes them'
-         : 'No agent process is running in this topic or the topics under it — there is nothing to end'},
+         ? (alive ? tr(alive===1?'topic.endAgentSubTitle':'topic.endAgentSubsTitle', { count: alive }) : tr('topic.endAgentTitle'))
+         : tr('topic.endAgentNoneTitle')},
       {sep:true},
-      {key:'delete', icon:IC.icon.trash, label:'Delete topic', danger:true}
+      {key:'delete', icon:IC.icon.trash, label:tr('topic.deleteTopic'), danger:true}
     );
     openRowMenu(btn, btn.getAttribute('data-rm')||('topic:'+id), items, function(what){
       if(what==='star') starTopic(id);
@@ -5554,24 +5606,24 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
     if(!t) return;
     var state=t.state||'active';
     var items=[];
-    if(state==='active') items.push({key:'pause', icon:IC.icon.pause, label:'Pause', title:'Stop running this task on its schedule'});
-    if(state==='paused') items.push({key:'resume', icon:IC.icon.play, label:'Resume', title:'Put this task back on its schedule'});
-    if(state==='active'||state==='paused') items.push({key:'run', icon:IC.icon.clock, label:'Run now', disabled:Boolean(t.running),
-      title:t.running?'A run is in progress — wait for it to finish':'Run this task now, without waiting for its next scheduled time'});
+    if(state==='active') items.push({key:'pause', icon:IC.icon.pause, label:tr('sched.pause'), title:tr('sched.pauseTitle')});
+    if(state==='paused') items.push({key:'resume', icon:IC.icon.play, label:tr('sched.resume'), title:tr('sched.resumeTitle')});
+    if(state==='active'||state==='paused') items.push({key:'run', icon:IC.icon.clock, label:tr('sched.runNow'), disabled:Boolean(t.running),
+      title:t.running?tr('sched.runNowBusyTitle'):tr('sched.runNowTitle')});
     // Edit opens the task's page on its form. Greyed rather than hidden while a run is in flight,
     // like Run now; absent on a task that is over, which no edit can change.
-    if(state==='active'||state==='paused') items.push({key:'edit', icon:IC.icon.pencil, label:'Edit', disabled:Boolean(t.running),
-      title:t.running?'A run is in progress — edit it once that run finishes':'Change its schedule, prompt or command, agent, model or directory'});
+    if(state==='active'||state==='paused') items.push({key:'edit', icon:IC.icon.pencil, label:tr('common.edit'), disabled:Boolean(t.running),
+      title:t.running?tr('sched.editBusyTitle'):tr('sched.editTitle')});
     // Delete is below a divider only when there is something above it: an expired or done task
     // has no state change to offer, and a menu that opens with a line is a menu that looks cut.
     if(items.length) items.push({sep:true});
-    items.push({key:'remove', icon:IC.icon.trash, label:'Delete', danger:true});
+    items.push({key:'remove', icon:IC.icon.trash, label:tr('common.delete'), danger:true});
     openRowMenu(btn, btn.getAttribute('data-rm')||('task:'+id), items, function(what){
       if(what==='edit'){ openTaskPage(id, true); return; }
       if(what==='remove'){
         // One question, like deleting a topic: the task is gone for good, and a tap that opened
         // the menu is not a decision to remove it.
-        if(!confirm('Delete task "'+(t.name||t.id)+'"?')) return;
+        if(!confirm(tr('sched.confirmDeleteTask', { name: t.name||t.id }))) return;
         schedOp(id,'remove',null);
         return;
       }
@@ -5654,9 +5706,9 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
       return r.json().then(function(d){ return {error:(d && d.error) || ('HTTP '+r.status)}; },
         function(){ return {error:'HTTP '+r.status}; });
     }, function(){
-      return {error:'the daemon could not be reached'};
+      return {error:tr('topic.createReachErr')};
     }).then(function(d){
-      if(d && d.error){ alert('Could not open a new topic: '+d.error); return false; }
+      if(d && d.error){ alert(tr('topic.createFailed', { err: d.error })); return false; }
       if(!d || !d.topic) return false;
       // Just made, so there is no copy of it to look for: entered at once (enter).
       vers[d.topic.id] = {last:'', epoch:0};
@@ -5692,7 +5744,7 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
       // would no longer be the one on screen.
       var now = topicById(id);
       if(now){ now.starred = !on; paintTopics(); }
-      alert('Could not '+(on?'star':'unstar')+' that topic.');
+      alert(on ? tr('topic.starFailed') : tr('topic.unstarFailed'));
     });
   }
 
@@ -5712,8 +5764,8 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
     if(id===topic){ command('/fork'); return; }
     var nonce=Math.random().toString(36).slice(2)+Date.now().toString(36);
     post('api/send',{topic:id, text:'/fork', nonce:nonce},1).then(function(r){
-      if(!r.ok) alert('Could not fork that topic: the daemon refused the request.');
-    }, function(){ alert('Could not reach the server to fork that topic.'); });
+      if(!r.ok) alert(tr('topic.forkRefused'));
+    }, function(){ alert(tr('topic.forkReachErr')); });
   }
 
   // Not createTopic itself: a listener is handed the MouseEvent, which would arrive as a seed.
@@ -5790,13 +5842,13 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
     setMenu(null, false);
     var stars = topics.filter(function(t){ return t.starred; }).length;
     var gone = topics.length - stars;
-    if(stars && !gone){ alert('Every topic is starred, so there is nothing to clear. Unstar one first.'); return; }
+    if(stars && !gone){ alert(tr('topic.allStarredAlert')); return; }
     // The button clears the whole list, not the filtered rows — say that where a search or a
     // filter is on screen, or it reads as "clear these three".
-    var scope = topicFilter && topicFilter.active() ? ' This applies to every topic, not only the ones shown.' : '';
+    var scope = topicFilter && topicFilter.active() ? tr('topic.clearScopeNote') : '';
     if(!confirm(stars
-      ? 'Delete '+gone+' topic'+(gone===1?'':'s')+'? The '+stars+' starred one'+(stars===1?' is':'s are')+' kept.'+scope+' This cannot be undone.'
-      : 'Delete all ' + topics.length + ' topics?'+scope+' This cannot be undone.')) return;
+      ? tr('topic.confirmClearStarred', { gone: gone, goneWord: gone===1?tr('topic.nounSingular'):tr('topic.nounPlural'), stars: stars, starsWord: stars===1?tr('topic.starredOneIs'):tr('topic.starredManyAre'), scope: scope })
+      : tr('topic.confirmClearAll', { total: topics.length, scope: scope }))) return;
     post('api/topics/clear',{},1).then(function(r){ return r.ok ? r.json() : null; }).then(function(d){
       if(!d || !d.topic) return;
       // What the daemon kept: the starred topics and the fresh one. Read from its answer rather
@@ -5859,16 +5911,16 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
       var t=list[i];
       idleIds.push(t.id);
       var where=t.dir?(t.dir.host?t.dir.host+' · ':'')+t.dir.name:'';
-      h += '<li data-idle="'+text(t.id)+'"><span class="idle-main"><span class="idle-name">'+text(t.title || 'Untitled')+'</span>'
+      h += '<li data-idle="'+text(t.id)+'"><span class="idle-main"><span class="idle-name">'+text(t.title || tr('common.untitled'))+'</span>'
          + (where?'<span class="idle-dir">'+text(where)+'</span>':'')+'</span><span class="idle-out"></span></li>';
     }
     idleList.innerHTML=h;
-    idleTitle.textContent='Close '+list.length+' idle agent'+(list.length===1?'':'s')+'?';
+    idleTitle.textContent=tr(list.length===1?'idle.confirmTitleOne':'idle.confirmTitleMany', { count: list.length });
     idleWhy.hidden=false;
     idleGo.hidden=false;
     idleGo.disabled=false;
-    idleGo.textContent='Close agents';
-    idleCancel.textContent='Cancel';
+    idleGo.textContent=tr('idle.closeAgents');
+    idleCancel.textContent=tr('common.cancel');
     idleDialog.hidden=false;
     // Cancel, not Close: an Enter pressed out of habit should be the answer that changes nothing.
     idleCancel.focus();
@@ -5892,15 +5944,15 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
     post('api/topics/kill',{topic:id, topics:ids},0).then(function(r){
       return r.ok ? r.json() : null;
     }).then(function(d){
-      if(!d) return alert('Could not end the agent'+(ids.length===1?'':'s')+': the daemon refused the request.');
+      if(!d) return alert(ids.length===1 ? tr('topic.endRefusedOne') : tr('topic.endRefusedMany'));
       // Nothing to say for a clean end — the dots go grey from the daemon's own broadcast. A
       // process the runtime cannot resume is the one refusal that leaves a row looking untouched,
       // and nothing else on the page would say why it is still lit.
       var results=d.results || [], stuck=0;
       for(var i=0;i<results.length;i++) if(results[i].outcome==='unresumable') stuck++;
-      if(stuck) alert(stuck+' agent'+(stuck===1?'':'s')+' left running: the runtime cannot resume '+(stuck===1?'it':'them')+'.');
+      if(stuck) alert(tr(stuck===1?'topic.endUnresumableOne':'topic.endUnresumableMany', { count: stuck }));
     }, function(){
-      alert('Could not reach the server to end the agent'+(ids.length===1?'':'s')+'.');
+      alert(ids.length===1 ? tr('topic.endReachErrOne') : tr('topic.endReachErrMany'));
     });
   }
   function closeIdle(){
@@ -5923,23 +5975,23 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
     var mine=++idleSeq;
     post('api/topics/close-idle',{topics:idleIds},0).then(function(r){ return r.ok ? r.json() : null; }).then(function(d){
       if(mine!==idleSeq) return;
-      if(!d) return idleFailed('The daemon refused the request.');
+      if(!d) return idleFailed(tr('idle.refused'));
       var rows=idleList.querySelectorAll('li'), i;
       var closed={};
       for(i=0;i<d.closed.length;i++) closed[d.closed[i]]=1;
       for(i=0;i<rows.length;i++){
         var out=rows[i].querySelector('.idle-out'), ok=closed[rows[i].getAttribute('data-idle')];
-        out.textContent = ok ? 'closed' : 'left running';
+        out.textContent = ok ? tr('idle.closed') : tr('idle.leftRunning');
         out.className = 'idle-out' + (ok ? '' : ' kept');
       }
       var n=d.closed.length, k=d.kept.length;
-      idleTitle.textContent='Closed '+n+' idle agent'+(n===1?'':'s')
-        + (k ? '; '+k+' left running — busy again, or unable to resume' : '');
+      idleTitle.textContent=tr(n===1?'idle.closedTitleOne':'idle.closedTitleMany', { count: n })
+        + (k ? tr('idle.keptSuffix', { count: k }) : '');
       idleWhy.hidden=true;
       idleGo.hidden=true;
-      idleCancel.textContent='Done';
+      idleCancel.textContent=tr('common.done');
       idleCancel.focus();
-    }, function(){ if(mine===idleSeq) idleFailed('Could not reach the server.'); });
+    }, function(){ if(mine===idleSeq) idleFailed(tr('common.reachServerError')); });
   }
   function idleFailed(why){
     idleTitle.textContent=why;
@@ -5997,8 +6049,8 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
     err.textContent='';
     post('api/login',{token:$('secret').value},0).then(function(r){
       if(r.ok){ $('secret').value=''; connect(); return; }
-      err.textContent = r.status===429 ? 'Too many attempts. Wait a minute.' : 'That is not the right token.';
-    }).catch(function(){ err.textContent='Could not reach the server.'; });
+      err.textContent = r.status===429 ? tr('gate.tooManyAttempts') : tr('gate.wrongToken');
+    }).catch(function(){ err.textContent=tr('common.reachServerError'); });
   });
 
   log.addEventListener('click', function(e){
@@ -6226,7 +6278,7 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
     readerName.textContent = link.textContent;
     readerName.title = readerName.textContent;
     readerGet.setAttribute('href', link.getAttribute('href'));
-    readerSay('Loading\u2026');
+    readerSay(tr('common.loading'));
     reader.hidden = false;
     readerBody.focus();
     var mine = ++readSeq;
@@ -6235,10 +6287,10 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
     }).then(function(res){
       if(mine !== readSeq) return;
       if(!res.ok) return readerSay(res.status === 404
-        ? 'This file is no longer here: the daemon has let it go since it was sent.'
-        : (res.body && res.body.error) || 'This file cannot be shown.');
+        ? tr('reader.gone')
+        : (res.body && res.body.error) || tr('reader.cannotShow'));
       var j = res.body, note = '';
-      if(j.shown < j.size) note = '<div class="reader-note">Showing the first '+text(byteSize(j.shown))+' of '+text(byteSize(j.size))+'. Download it for the rest.</div>';
+      if(j.shown < j.size) note = '<div class="reader-note">'+text(tr('reader.partial', { shown: byteSize(j.shown), size: byteSize(j.size) }))+'</div>';
       if(typeof j.text !== 'string') return readerDoc(note, j.html);
       codeView().then(function(cv){
         if(mine !== readSeq) return;
@@ -6258,7 +6310,7 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
           readerDoc(note, j.html);
         }
       });
-    }).catch(function(){ if(mine === readSeq) readerSay('Could not reach the server.'); });
+    }).catch(function(){ if(mine === readSeq) readerSay(tr('common.reachServerError')); });
   }
   function readerSay(s){ readerBody.innerHTML = '<div class="empty">'+text(s)+'</div>'; }
   function closeReader(){
@@ -6326,8 +6378,8 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
     var x = document.createElement('button');
     x.type = 'button';
     x.className = 'chip-x';
-    x.title = 'Remove ' + f.name;
-    x.setAttribute('aria-label', 'Remove ' + f.name);
+    x.title = tr('composer.removeFile', { name: f.name });
+    x.setAttribute('aria-label', x.title);
     x.textContent = '\u00d7';
     el.appendChild(x);
     chipEls.set(f, el);
@@ -6798,7 +6850,7 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
     var n = shrinkingBy[topic] || 0;
     if(!n){ clearPendingNote(); return; }
     if(noteOwner === null && note.textContent) return;
-    noteOwner = 'Compressing ' + (n > 1 ? n + ' pictures' : 'picture') + '...';
+    noteOwner = n > 1 ? tr('composer.compressingMany', { count: n }) : tr('composer.compressingOne');
     note.textContent = noteOwner;
   }
   function clearPendingNote(){
@@ -6849,7 +6901,7 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
               // screen now.
               if(into === topic){
                 noteOwner = null;
-                note.textContent = 'Could not read ' + name + '; it was not attached.';
+                note.textContent = tr('composer.readFileFailed', { name: name });
               } else {
                 console.warn('fleetherd: could not read ' + name + '; it was not attached');
               }
@@ -6940,15 +6992,15 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
     return '';
   }
   function micLabel(){
-    if(!rec){ micBtn.innerHTML=IC.icon.mic; micBtn.classList.remove('rec'); micBtn.title='Record a voice message'; return; }
+    if(!rec){ micBtn.innerHTML=IC.icon.mic; micBtn.classList.remove('rec'); micBtn.title=tr('composer.micTitle'); return; }
     var s=Math.floor((Date.now()-rec.started)/1000);
     micBtn.innerHTML=IC.icon.stop+' '+Math.floor(s/60)+':'+('0'+(s%60)).slice(-2);
     micBtn.classList.add('rec');
-    micBtn.title='Stop and send the recording (Esc discards it)';
+    micBtn.title=tr('composer.micStopTitle');
   }
   function micFailed(e){
     recStarting=false;
-    note.textContent='Could not record: '+((e && (e.message || e.name)) || 'the microphone is unavailable')+'.';
+    note.textContent=tr('composer.micFailed', { err: (e && (e.message || e.name)) || tr('composer.micUnavailable') });
     micLabel();
   }
   function releaseMic(r){ r.stream.getTracks().forEach(function(t){ t.stop(); }); }
@@ -7315,19 +7367,19 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
   }
 
   function topicRef(t){
-    return (t.title || 'Untitled') + ' (' + INSTANCE_ID + ':main/' + t.id + ')';
+    return (t.title || tr('common.untitled')) + ' (' + INSTANCE_ID + ':main/' + t.id + ')';
   }
 
   function syncCopyRef(){
     if(libOn()){
       var ref = historyPanel.currentRef();
       copyRefBtn.hidden = !ref;
-      copyRefBtn.title = ref ? 'Copy reference: ' + ref : 'Copy conversation reference';
+      copyRefBtn.title = ref ? tr('topic.copyRefWith', { ref: ref }) : tr('topic.copyRefBtn');
       return;
     }
     var cur = topicById(topic);
     copyRefBtn.hidden = !cur;
-    copyRefBtn.title = cur ? 'Copy reference: ' + topicRef(cur) : 'Copy conversation reference';
+    copyRefBtn.title = cur ? tr('topic.copyRefWith', { ref: topicRef(cur) }) : tr('topic.copyRefBtn');
   }
 
   var copyNoteTimer = null;
@@ -7344,12 +7396,12 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
     if(!t) return;
     var ref = topicRef(t);
     copyText(ref, function(ok){
-      flashCopyNote(ok ? 'Copied reference: ' + ref : 'Could not copy the reference.');
+      flashCopyNote(ok ? tr('topic.copiedRef', { ref: ref }) : tr('topic.copyRefFailed'));
     });
   }
 
   function flashCopyBtn(btn, ok, restoreTitle, restoreLabel){
-    var say = ok ? 'Copied' : 'Could not copy';
+    var say = ok ? tr('common.copied') : tr('common.copyFailed');
     btn.innerHTML = ok ? IC.icon.check : IC.icon.cross;
     btn.title = say;
     btn.setAttribute('aria-label', say);
@@ -7364,7 +7416,7 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
   /** The text of a failed message, on the clipboard. */
   function copyLocal(nonce, btn){
     var m=data['p:'+nonce]; if(!m) return;
-    copyText(m._text, function(ok){ btn.textContent = ok ? 'Copied' : 'Select it above'; });
+    copyText(m._text, function(ok){ btn.textContent = ok ? tr('common.copied') : tr('common.selectAbove'); });
   }
 
   function fallbackCopy(s){
@@ -7432,7 +7484,7 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
     var ref = libOn() ? historyPanel.currentRef() : (topicById(topic) ? topicRef(topicById(topic)) : null);
     if(!ref) return;
     copyText(ref, function(ok){
-      flashCopyBtn(copyRefBtn, ok, 'Copy reference: ' + ref, 'Copy conversation reference');
+      flashCopyBtn(copyRefBtn, ok, tr('topic.copyRefWith', { ref: ref }), tr('topic.copyRefBtn'));
     });
   });
   killBtn.addEventListener('click', function(){ command('/kill'); });
@@ -7484,5 +7536,49 @@ import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './
   // browser already has is painted as it comes — on a slow link long before the stream has said
   // anything, and after a restart even though the daemon can no longer produce it. So is what was
   // sent from it and never acknowledged. A visit with no ?t= is painted from the sync instead.
+  onLocaleChange(function(){
+    applyDomI18n(document);
+    paintLang();
+    paintTheme();
+    paintCalm();
+    paintNotify();
+    if(typeof micLabel === 'function' && $('mic')) micLabel();
+    if(topicFilter && topicFilter.refreshI18n) topicFilter.refreshI18n(tr('sidebar.searchTopics'));
+    forkNoteKey = '';
+    statusHtml = '';
+    launchSig = '';
+    paintTopics();
+    paintStatus();
+    paintAges();
+    if(launchEl) syncLaunch(true);
+    if(emptyEl) emptyEl.textContent = tr('chat.emptyNote');
+    if(dividerEl) dividerEl.textContent = tr('chat.dividerNote');
+    if(syncingEl){
+      var sp = syncingEl.querySelectorAll('span');
+      if(sp[1]) sp[1].textContent = tr('chat.syncNote');
+    }
+    for(var mk in els){
+      if(Object.prototype.hasOwnProperty.call(els, mk) && data[mk]) paint(mk);
+    }
+    if(!btwBox.hidden) renderBtw(false);
+    if(!settingsPage.hidden){
+      paintSettingsTopic();
+      if(settingsMsg) renderSettings();
+    }
+    if(!modelPop.hidden){
+      mpHeading.textContent = mp.opt ? tr('modelPop.headingOpt', { name: optName(mp.opt) }) : tr('modelPop.headingModel');
+      mpFilter.placeholder = mp.opt ? tr('common.filter') : tr('modelPop.filterModels');
+      mpFoot.innerHTML = mp.opt ? tr('modelPop.footOpt') : tr('modelPop.footModel');
+      renderModelPop();
+    }
+    schedulesPanel.repaint();
+    reviewsPanel.paint();
+    historyPanel.repaint();
+    skillsPanel.repaint();
+    gitPanel.repaint();
+    filesPanel.repaint();
+    if(TERM_OK) paintFrames();
+  });
+
   enter(topic);
 })();

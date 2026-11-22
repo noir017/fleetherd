@@ -5,6 +5,7 @@ import type {
   ReviewPanelPreference,
 } from '../../../adapter.js';
 import type { ReviewOpRequest, SkillOpRequest } from '../../protocol.js';
+import { t } from '../i18n/index.js';
 
 export interface ReviewsPanelDeps {
   app: HTMLElement;
@@ -34,7 +35,7 @@ function errorMessage(err: unknown): string {
   if (err && typeof err === 'object' && 'message' in err && typeof err.message === 'string' && err.message) {
     return err.message;
   }
-  return 'network error';
+  return t('common.networkError');
 }
 
 function revWhen(at: number): string {
@@ -46,13 +47,7 @@ function revWhen(at: number): string {
 }
 
 function adoptDraft(suggestion: string): string {
-  return (
-    'Add this to my standing instructions: the instructions/ directory on the gateway. ' +
-    'Choose common.md or the file for your own agent, fit it into the wording already there, ' +
-    'and show me the diff before you change anything.\n\n"' +
-    suggestion +
-    '"'
-  );
+  return t('reviews.adoptDraft', { suggestion });
 }
 
 // Spacing ignored to match the server's preferenceKey normalization.
@@ -65,10 +60,12 @@ function carries(sent: string, want: string): boolean {
 function renderPending(list: readonly ReviewPanelPreference[], text: (s: unknown) => string): string {
   if (!list.length) return '';
   let h =
-    '<div class="rev-pending"><div class="rev-label">Suggestions · ' +
-    list.length +
+    '<div class="rev-pending"><div class="rev-label">' +
+    text(t('reviews.suggestions', { count: list.length })) +
     '</div>' +
-    '<div class="rev-note">Not in effect anywhere. Adopt opens a new topic with a draft asking an agent to add a preference to your instructions; Archive takes a skill off every agent (Restore in Skills brings it back); Dismiss takes a suggestion off this list.</div>';
+    '<div class="rev-note">' +
+    text(t('reviews.suggestionsNote')) +
+    '</div>';
   for (let i = 0; i < list.length; i++) {
     const p = list[i];
     if (!p) continue;
@@ -77,17 +74,17 @@ function renderPending(list: readonly ReviewPanelPreference[], text: (s: unknown
     if (p.reason) h += '<div class="rev-reason">' + text(p.reason) + '</div>';
     h +=
       '<div class="rev-pmeta">' +
-      (p.count > 1 ? text(p.count + ' reviews · ') : '') +
+      (p.count > 1 ? text(t('reviews.reviewsCount', { count: p.count })) : '') +
       text(from.join(', ')) +
       '</div></div>';
     h +=
       '<div class="rev-pacts">' +
       (p.archive
-        ? '<button type="button" class="rev-adopt rev-archive" data-rev-archive="' + i + '">Archive</button>'
-        : '<button type="button" class="rev-adopt" data-rev-adopt="' + i + '">Adopt</button>') +
+        ? '<button type="button" class="rev-adopt rev-archive" data-rev-archive="' + i + '">' + text(t('reviews.archive')) + '</button>'
+        : '<button type="button" class="rev-adopt" data-rev-adopt="' + i + '">' + text(t('reviews.adopt')) + '</button>') +
       '<button type="button" class="rev-dismiss" data-rev-dismiss="' +
       i +
-      '">Dismiss</button></div></div>';
+      '">' + text(t('reviews.dismiss')) + '</button></div></div>';
   }
   return h + '</div>';
 }
@@ -95,28 +92,28 @@ function renderPending(list: readonly ReviewPanelPreference[], text: (s: unknown
 function renderChange(c: ReviewPanelChange, text: (s: unknown) => string): string {
   const what =
     c.action === 'create'
-      ? 'Create '
+      ? t('reviews.actionCreate')
       : c.action === 'patch'
-        ? 'Update '
+        ? t('reviews.actionPatch')
         : c.action === 'archive'
-          ? 'Archive '
-          : 'Write ';
+          ? t('reviews.actionArchive')
+          : t('reviews.actionWrite');
   const name =
     c.action === 'write-file'
-      ? (c.file || 'a file') + ' in ' + c.name
+      ? t('reviews.inName', { file: c.file || t('reviews.aFile'), name: c.name })
       : c.action === 'archive' && c.into
-        ? c.name + ' into ' + c.into
+        ? t('reviews.intoName', { name: c.name, into: c.into })
         : c.name;
   // applied is three-state: absent means inferred old review or unapplied archive suggestion.
   const status =
     c.applied === true
-      ? '<span class="rev-status ok">applied</span>'
+      ? '<span class="rev-status ok">' + text(t('reviews.statusApplied')) + '</span>'
       : c.applied === false
-        ? '<span class="rev-status bad">refused</span>'
+        ? '<span class="rev-status bad">' + text(t('reviews.statusRefused')) + '</span>'
         : c.suggested
-          ? '<span class="rev-status unknown">suggested</span>'
-          : '<span class="rev-status unknown">unknown</span>';
-  let h = '<div class="rev-change">' + what + '<span class="rev-name">' + text(name) + '</span>' + status;
+          ? '<span class="rev-status unknown">' + text(t('reviews.statusSuggested')) + '</span>'
+          : '<span class="rev-status unknown">' + text(t('reviews.statusUnknown')) + '</span>';
+  let h = '<div class="rev-change">' + text(what) + '<span class="rev-name">' + text(name) + '</span>' + status;
   if (c.reason) h += '<div class="rev-reason">' + text(c.reason) + '</div>';
   if (c.error) h += '<div class="rev-note bad">' + text(c.error) + '</div>';
   if (c.undo) h += '<code class="rev-undo">' + text(c.undo) + '</code>';
@@ -132,25 +129,25 @@ function renderDetail(
   let h = '<div class="rev-detail">';
   if (r.error) h += '<div class="rev-note bad">' + text(r.error) + '</div>';
   if (r.changes.length) {
-    h += '<div class="rev-label">Changes</div>';
+    h += '<div class="rev-label">' + text(t('reviews.changes')) + '</div>';
     for (const c of r.changes) h += renderChange(c, text);
   }
   if (r.invalid.length) {
-    h += '<div class="rev-label">Rejected</div>';
+    h += '<div class="rev-label">' + text(t('reviews.rejected')) + '</div>';
     for (const inv of r.invalid) h += '<div class="rev-note">' + text(inv) + '</div>';
   }
   if (r.preferences.length) {
-    h += '<div class="rev-label">Preferences</div>';
+    h += '<div class="rev-label">' + text(t('reviews.preferences')) + '</div>';
     for (const pref of r.preferences) h += '<div class="rev-pref">' + text(pref) + '</div>';
   }
   if (r.inferred) {
-    h += '<div class="rev-note">Read from the raw answer: whether any of it took effect was not recorded.</div>';
+    h += '<div class="rev-note">' + text(t('reviews.inferredNote')) + '</div>';
   }
   if (!r.changes.length && !r.preferences.length && !r.invalid.length && !r.error) {
-    h += '<div class="rev-note">Nothing worth changing.</div>';
+    h += '<div class="rev-note">' + text(t('reviews.nothingChanging')) + '</div>';
   }
   if (r.topic && topicExists(r.topic)) {
-    h += '<button type="button" class="rev-open" data-rev-topic="' + text(r.topic) + '">Open the reviewed topic</button>';
+    h += '<button type="button" class="rev-open" data-rev-topic="' + text(r.topic) + '">' + text(t('reviews.openTopic')) + '</button>';
   }
   return h + '</div>';
 }
@@ -171,7 +168,7 @@ function renderRow(
     (open ? 'true' : 'false') +
     '">';
   h += '<div class="rev-row"><span class="rev-dot"></span><span class="rev-topic">' + text(r.title) + '</span>';
-  if (r.inferred) h += '<span class="rev-badge">inferred</span>';
+  if (r.inferred) h += '<span class="rev-badge">' + text(t('reviews.inferredBadge')) + '</span>';
   h += '<span class="rev-when" title="' + text(revWhen(r.at)) + '">' + text(schedAgo(r.at)) + '</span></div>';
   h += '<div class="rev-result">' + text(r.summary) + '</div>';
   if (open) h += renderDetail(r, text, topicExists);
@@ -193,20 +190,17 @@ function forgetAdopted(state: ReviewsState, suggestion: string): void {
 
 function paintReviews(state: ReviewsState, deps: ReviewsPanelDeps): void {
   if (state.data === null) {
-    deps.revList.innerHTML = '<div class="sched-empty">Loading…</div>';
+    deps.revList.innerHTML = '<div class="sched-empty">' + deps.text(t('common.loading')) + '</div>';
     return;
   }
   if (!state.data.enabled) {
-    deps.revList.innerHTML =
-      '<div class="sched-empty">This daemon has no conversation library, so there is no review history.</div>';
+    deps.revList.innerHTML = '<div class="sched-empty">' + deps.text(t('reviews.noLibrary')) + '</div>';
     return;
   }
   if (!state.data.reviews.length) {
     deps.revList.innerHTML =
       '<div class="sched-empty">' +
-      (state.data.running
-        ? 'No reviews yet. A conversation is reviewed once it has been quiet for an hour, after three messages from you.'
-        : 'Automatic review is off. Name an agent under review.agent, or an endpoint under review.api, to turn it on; reviews recorded before then still appear here.') +
+      deps.text(state.data.running ? t('reviews.emptyRunning') : t('reviews.emptyOff')) +
       '</div>';
     return;
   }
@@ -232,7 +226,7 @@ function loadReviews(state: ReviewsState, deps: ReviewsPanelDeps): void {
     })
     .catch((e: unknown) => {
       if (seq !== state.seq) return;
-      deps.showNote('Could not refresh reviews: ' + errorMessage(e));
+      deps.showNote(t('reviews.refreshFailed', { err: errorMessage(e) }));
     });
 }
 
@@ -260,7 +254,7 @@ function dismissSuggestion(
     })
     .catch((e: unknown) => {
       if (btn) btn.disabled = false;
-      deps.showNote('Could not dismiss that suggestion: ' + errorMessage(e));
+      deps.showNote(t('reviews.dismissFailed', { err: errorMessage(e) }));
     });
 }
 
@@ -275,13 +269,13 @@ function archiveSuggested(state: ReviewsState, deps: ReviewsPanelDeps, btn: HTML
     .post('api/skills/op', body, 1)
     .then((r) => r.json().catch(() => ({ ok: false, error: 'HTTP ' + r.status })) as Promise<{ ok?: boolean; error?: string }>)
     .then((d) => {
-      if (!d || !d.ok) throw new Error((d && d.error) || 'the archive was refused');
+      if (!d || !d.ok) throw new Error((d && d.error) || t('reviews.archiveRefused'));
       loadReviews(state, deps);
       deps.afterSkillArchive(true);
     })
     .catch((e: unknown) => {
       btn.disabled = false;
-      deps.showNote('Could not archive ' + skillName + ': ' + errorMessage(e));
+      deps.showNote(t('reviews.archiveFailed', { name: skillName, err: errorMessage(e) }));
       deps.afterSkillArchive(false);
     });
 }

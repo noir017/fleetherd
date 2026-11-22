@@ -304,7 +304,7 @@ describe('webui page', () => {
     expect(html).toContain('data-retry=');
     expect(html).toContain('data-copy=');
     expect(html).toContain('data-discard=');
-    expect(html).toContain('Not delivered');
+    expect(CLIENT.app.text).toContain('Not delivered');
   });
 
   it('accepts the sync for a topic it did not name', () => {

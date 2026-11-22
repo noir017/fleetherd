@@ -1,6 +1,7 @@
 import type { GitCommitSummary, GitMode, GitStatusFile } from '../../../adapter.js';
 import type { CodeViewApi, DiffHandle, DiffSelection } from '../../codeview/app.js';
 import { icon } from '../../icons.js';
+import { t } from '../i18n/index.js';
 
 export interface GitCustomSource {
   title?: string;
@@ -25,6 +26,7 @@ export interface GitPanel {
   close: () => void;
   isOpen: () => boolean;
   onTurnEnd: () => void;
+  repaint: () => void;
 }
 
 declare global {
@@ -297,45 +299,38 @@ function renderBlank(
 
 function renderBlankNoRepo(dom: GitDom, text: (s: unknown) => string, d: GitErrorPayload): void {
   if (d.reason === 'missing') {
-    renderBlank(dom, text, 'Directory not found.', d.text || 'This topic’s directory no longer exists.');
+    renderBlank(dom, text, t('git.dirNotFound'), d.text || t('git.dirNotFoundSub'));
   } else {
-    renderBlank(dom, text, 'Not a git repository.', d.text || 'This directory is not inside a git repository.');
+    renderBlank(dom, text, t('git.notGit'), d.text || t('git.notGitSub'));
   }
 }
 
 function paintNoChanges(ctx: GitCtx): void {
   const { state, dom, deps } = ctx;
   if (state.source) {
-    renderBlank(dom, deps.text, 'No changes in this turn.', '');
+    renderBlank(dom, deps.text, t('git.noChangesTurn'), '');
     return;
   }
-  const base = state.base || 'the base branch';
+  const base = state.base || t('git.baseBranchFallback');
   if (state.mode === 'working') {
-    renderBlank(
-      dom,
-      deps.text,
-      'No changes.',
-      'The working tree has nothing that differs from HEAD, untracked files included.',
-      'commits',
-      'See commits'
-    );
+    renderBlank(dom, deps.text, t('git.noChanges'), t('git.noChangesWorkingSub'), 'commits', t('git.seeCommits'));
   } else if (state.mode === 'branch') {
     renderBlank(
       dom,
       deps.text,
-      'No changes against ' + base + '.',
-      'Neither the committed nor the uncommitted work differs from ' + base + '.',
+      t('git.noChangesBranch', { base }),
+      t('git.noChangesBranchSub', { base }),
       'commits',
-      'See commits'
+      t('git.seeCommits')
     );
   } else {
     renderBlank(
       dom,
       deps.text,
-      'Nothing committed on top of ' + base + '.',
-      'HEAD is where ' + base + ' is, so there is nothing to show for this comparison.',
+      t('git.noChangesCommitted', { base }),
+      t('git.noChangesCommittedSub', { base }),
       'commits',
-      'See commits'
+      t('git.seeCommits')
     );
   }
 }
@@ -345,7 +340,7 @@ function renderFileRow(state: GitState, f: GitStatusFile, withEdit: boolean, tex
   const stat = f.binary
     ? '<span class="gf-del">bin</span>'
     : f.statsUnknown
-      ? '<span class="gf-nostat" title="Line counts were not read">counts not read</span>'
+      ? '<span class="gf-nostat" title="' + text(t('git.countsNotReadTitle')) + '">' + text(t('git.countsNotRead')) + '</span>'
       : '<span class="gf-add">+' + f.additions + '</span> <span class="gf-del">\u2212' + f.deletions + '</span>';
   const abs = state.root
     ? (state.root.charAt(state.root.length - 1) === '/' ? state.root : state.root + '/') + f.path
@@ -353,7 +348,13 @@ function renderFileRow(state: GitState, f: GitStatusFile, withEdit: boolean, tex
   // Offer Edit only when the file window is enabled (window.openFileEditor is assigned only when FILES_OK).
   const edit =
     withEdit && typeof window.openFileEditor === 'function'
-      ? '<button type="button" class="gf-edit" data-gedit="' + text(abs) + '" title="Edit this file">Edit</button>'
+      ? '<button type="button" class="gf-edit" data-gedit="' +
+        text(abs) +
+        '" title="' +
+        text(t('git.editFileTitle')) +
+        '">' +
+        text(t('common.edit')) +
+        '</button>'
       : '';
   return (
     '<div class="git-file' +
@@ -414,7 +415,7 @@ function paintCommits(ctx: GitCtx): void {
   let html = '';
   for (const c of state.commits) html += renderCommitRow(state, c, deps);
   // Paged by skip (no cursor in contract); a new commit between pages may repeat a row until refresh.
-  if (state.commitMore) html += '<button type="button" class="git-more" data-gmore>Load more</button>';
+  if (state.commitMore) html += '<button type="button" class="git-more" data-gmore>' + deps.text(t('git.loadMore')) + '</button>';
   dom.files.innerHTML = html;
 }
 
@@ -428,7 +429,7 @@ function paintCommit(ctx: GitCtx): void {
   let html =
     '<div class="git-back" data-gback role="button" tabindex="0">' +
     icon('chevronLeft') +
-    '<span>Commits</span></div>' +
+    '<span>' + deps.text(t('git.modeCommits')) + '</span></div>' +
     '<div class="git-commit-head">' +
     '<div class="gch-subject">' +
     deps.text(c.subject || '') +
@@ -444,7 +445,7 @@ function paintCommit(ctx: GitCtx): void {
   if (c.body) {
     html +=
       '<button type="button" class="gch-toggle" data-gbody>' +
-      (state.bodyOpen ? 'Hide details' : 'Show details') +
+      deps.text(state.bodyOpen ? t('git.hideDetails') : t('git.showDetails')) +
       '</button>' +
       '<pre class="gch-body"' +
       (state.bodyOpen ? '' : ' hidden') +
@@ -530,8 +531,11 @@ function onSelect(ctx: GitCtx, sel: DiffSelection | null): void {
   }
   const from = Math.min(sel.from, sel.to);
   const to = Math.max(sel.from, sel.to);
-  ctx.dom.selWhat.textContent =
-    (sel.side === 'old' ? 'Original' : 'New') + ' lines ' + from + (to !== from ? '\u2013' + to : '');
+  const range = from + (to !== from ? '\u2013' + to : '');
+  ctx.dom.selWhat.textContent = t('git.selLines', {
+    side: sel.side === 'old' ? t('git.sideOriginal') : t('git.sideNew'),
+    range,
+  });
   ctx.dom.sel.hidden = false;
   hideComment(ctx.dom);
 }
@@ -553,13 +557,13 @@ function renderDiff(ctx: GitCtx, d: GitFilePayload, mine: number): void {
           onSelect: (sel) => onSelect(ctx, sel),
         });
         dom.layoutBtn.hidden = false;
-        dom.layoutBtn.textContent = state.layout === 'split' ? 'Unified' : 'Split';
+        dom.layoutBtn.textContent = state.layout === 'split' ? t('git.unified') : t('git.split');
       } else {
         state.kind = 'text';
         state.view = null;
         dom.diff.innerHTML = d.patch
           ? '<pre class="git-patch">' + paintPatch(d.patch, deps.text) + '</pre>'
-          : '<div class="git-empty">No text to show for this change.</div>';
+          : '<div class="git-empty">' + deps.text(t('git.noTextDiff')) + '</div>';
         dom.layoutBtn.hidden = true;
       }
     },
@@ -581,7 +585,7 @@ function openFile(ctx: GitCtx, path: string): void {
   hideComment(dom);
   destroyView(state);
   paintList(ctx);
-  dom.diff.innerHTML = '<div class="git-empty">Loading\u2026</div>';
+  dom.diff.innerHTML = '<div class="git-empty">' + deps.text(t('common.loading')) + '</div>';
   dom.layoutBtn.hidden = true;
   const mine = ++state.fileSeq;
   state.loading = true;
@@ -592,18 +596,18 @@ function openFile(ctx: GitCtx, path: string): void {
       const d = res.d;
       if (!res.ok || !d || !d.ok) {
         dom.diff.innerHTML =
-          '<div class="git-empty">' + deps.text((d && (d.text || d.error)) || 'Could not read this file.') + '</div>';
+          '<div class="git-empty">' + deps.text((d && (d.text || d.error)) || t('git.readFileFailed')) + '</div>';
         return;
       }
       if (d.tooLarge) {
         dom.diff.innerHTML =
           '<div class="git-empty">' +
-          (d.patchTooLarge ? "This file's diff is too large to show." : 'This file is too large to show.') +
+          deps.text(d.patchTooLarge ? t('git.patchTooLarge') : t('git.fileTooLarge')) +
           '</div>';
         return;
       }
       if (d.binary) {
-        dom.diff.innerHTML = '<div class="git-empty">Binary file: there is no text diff to show.</div>';
+        dom.diff.innerHTML = '<div class="git-empty">' + deps.text(t('git.binaryFile')) + '</div>';
         return;
       }
       renderDiff(ctx, d, mine);
@@ -611,7 +615,7 @@ function openFile(ctx: GitCtx, path: string): void {
     .catch(() => {
       if (mine !== state.fileSeq) return;
       state.loading = false;
-      dom.diff.innerHTML = '<div class="git-empty">Could not reach the server.</div>';
+      dom.diff.innerHTML = '<div class="git-empty">' + deps.text(t('common.reachServerError')) + '</div>';
     });
 }
 
@@ -621,7 +625,7 @@ function autoOpen(ctx: GitCtx, list: readonly GitStatusFile[]): void {
   ctx.state.pick = false;
   const first = list[0];
   if (shouldOpen && first) openFile(ctx, first.path);
-  else renderBlank(ctx.dom, ctx.deps.text, 'Select a file to see its diff.');
+  else renderBlank(ctx.dom, ctx.deps.text, t('git.selectFile'));
 }
 
 function loadBranches(ctx: GitCtx): void {
@@ -634,7 +638,7 @@ function loadBranches(ctx: GitCtx): void {
     .then((r) => r.json() as Promise<GitBranchesPayload | null>)
     .then((d) => {
       if (!d || !d.ok) {
-        state.branchError = (d && d.text) || 'Could not read the branches.';
+        state.branchError = (d && d.text) || t('git.readBranchesFailed');
         state.branchStale = isNoRepo(d);
         if (!state.notGit) setNote(dom, state.branchError, true);
         return;
@@ -658,7 +662,7 @@ function loadBranches(ctx: GitCtx): void {
       if (!had && state.base && (state.mode === 'branch' || state.mode === 'committed')) loadStatus(ctx);
     })
     .catch(() => {
-      state.branchError = 'Could not read the branches.';
+      state.branchError = t('git.readBranchesFailed');
       if (!state.notGit) setNote(dom, state.branchError, true);
     });
 }
@@ -681,7 +685,7 @@ function handleStatusFailure(ctx: GitCtx, d: GitStatusPayload | null): void {
     return;
   }
   state.notGit = false;
-  setNote(dom, (d && (d.text || d.error)) || 'Could not read the changes.', true);
+  setNote(dom, (d && (d.text || d.error)) || t('git.readChangesFailed'), true);
 }
 
 function applyStatusResult(ctx: GitCtx, d: GitStatusPayload): void {
@@ -698,13 +702,9 @@ function applyStatusResult(ctx: GitCtx, d: GitStatusPayload): void {
   }
   paintFiles(ctx);
   if (d.truncated) {
-    setNote(
-      dom,
-      'There are too many changes to list. Narrow the comparison, or refresh once some are committed.',
-      true
-    );
+    setNote(dom, t('git.tooManyChanges'), true);
     if (!state.files.length) {
-      renderBlank(dom, deps.text, 'The change list is incomplete.', 'There are too many changes to list.');
+      renderBlank(dom, deps.text, t('git.incompleteList'), t('git.incompleteListSub'));
     }
   } else {
     setNote(dom, state.branchError, Boolean(state.branchError));
@@ -713,7 +713,7 @@ function applyStatusResult(ctx: GitCtx, d: GitStatusPayload): void {
   if (state.path && !state.files.some((f) => f.path === state.path)) {
     state.path = '';
     clearDiffPane(state, dom);
-    dom.diff.innerHTML = '<div class="git-empty">That file is no longer in the changes.</div>';
+    dom.diff.innerHTML = '<div class="git-empty">' + deps.text(t('git.fileGone')) + '</div>';
     dom.layoutBtn.hidden = true;
   } else {
     autoOpen(ctx, state.files);
@@ -736,7 +736,7 @@ function loadStatus(ctx: GitCtx): void {
     .catch(() => {
       if (mine !== ctx.state.statusSeq) return;
       ctx.dom.refreshBtn.disabled = false;
-      setNote(ctx.dom, 'Could not reach the server.', true);
+      setNote(ctx.dom, t('common.reachServerError'), true);
     });
 }
 
@@ -771,7 +771,7 @@ function applyLogResult(ctx: GitCtx, d: GitLogPayload, more: boolean): void {
     setNote(dom, '', false);
     paintCommits(ctx);
     if (!state.commits.length) {
-      renderBlank(dom, deps.text, 'No commits yet.', 'This repository has nothing committed.');
+      renderBlank(dom, deps.text, t('git.noCommits'), t('git.noCommitsSub'));
     }
   }
 }
@@ -798,7 +798,7 @@ function loadLog(ctx: GitCtx, more: boolean): void {
         }
         setNote(
           dom,
-          (d && (d.text || d.error)) || (more ? 'Could not read more commits.' : 'Could not read the commits.'),
+          (d && (d.text || d.error)) || (more ? t('git.readMoreCommitsFailed') : t('git.readCommitsFailed')),
           true
         );
         if (!state.commit) paintCommits(ctx);
@@ -810,7 +810,7 @@ function loadLog(ctx: GitCtx, more: boolean): void {
       if (mine !== state.logSeq) return;
       dom.refreshBtn.disabled = false;
       if (moreBtn) moreBtn.disabled = false;
-      setNote(dom, 'Could not reach the server.', true);
+      setNote(dom, t('common.reachServerError'), true);
     });
 }
 
@@ -825,7 +825,7 @@ function openCommit(ctx: GitCtx, sha: string): void {
   clearDiffPane(state, dom);
   paintCommit(ctx);
   setNote(dom, '', false);
-  dom.diff.innerHTML = '<div class="git-empty">Loading\u2026</div>';
+  dom.diff.innerHTML = '<div class="git-empty">' + deps.text(t('common.loading')) + '</div>';
   dom.layoutBtn.hidden = true;
   const mine = ++state.commitSeq;
   const url = 'api/git/commit?t=' + encodeURIComponent(deps.getTopic()) + '&sha=' + encodeURIComponent(sha);
@@ -836,7 +836,7 @@ function openCommit(ctx: GitCtx, sha: string): void {
       if (!res.ok || !d || !d.ok) {
         state.commitFiles = [];
         paintCommit(ctx);
-        setNote(dom, (d && (d.text || d.error)) || 'Could not read this commit.', true);
+        setNote(dom, (d && (d.text || d.error)) || t('git.readCommitFailed'), true);
         dom.diff.textContent = '';
         return;
       }
@@ -844,16 +844,16 @@ function openCommit(ctx: GitCtx, sha: string): void {
       state.commitFiles = d.files || [];
       state.root = (d.repo && d.repo.root) || state.root;
       paintCommit(ctx);
-      setNote(dom, d.truncated ? 'There are too many files in this commit to list.' : '', Boolean(d.truncated));
+      setNote(dom, d.truncated ? t('git.tooManyCommitFiles') : '', Boolean(d.truncated));
       if (!state.commitFiles.length) {
-        renderBlank(dom, deps.text, 'This commit changed no files.', '');
+        renderBlank(dom, deps.text, t('git.commitNoFiles'), '');
         return;
       }
       autoOpen(ctx, state.commitFiles);
     })
     .catch(() => {
       if (mine !== state.commitSeq) return;
-      setNote(dom, 'Could not reach the server.', true);
+      setNote(dom, t('common.reachServerError'), true);
     });
 }
 
@@ -865,7 +865,7 @@ function backToCommits(ctx: GitCtx): void {
   clearDiffPane(ctx.state, ctx.dom);
   paintCommits(ctx);
   setNote(ctx.dom, '', false);
-  renderBlank(ctx.dom, ctx.deps.text, 'Pick a commit.', "A commit's files and their diff are shown here.");
+  renderBlank(ctx.dom, ctx.deps.text, t('git.pickCommit'), t('git.pickCommitSub'));
 }
 
 function setMode(ctx: GitCtx, mode: GitPanelMode): void {
@@ -892,8 +892,8 @@ function setMode(ctx: GitCtx, mode: GitPanelMode): void {
   }
   state.pick = true;
   if (mode === 'commits') {
-    dom.files.innerHTML = '<div class="git-empty">Loading\u2026</div>';
-    renderBlank(dom, deps.text, 'Pick a commit.', "A commit's files and their diff are shown here.");
+    dom.files.innerHTML = '<div class="git-empty">' + deps.text(t('common.loading')) + '</div>';
+    renderBlank(dom, deps.text, t('git.pickCommit'), t('git.pickCommitSub'));
     loadLog(ctx, false);
   } else {
     loadStatus(ctx);
@@ -926,9 +926,9 @@ function openWindow(ctx: GitCtx, source?: GitCustomSource): void {
   dom.modes.hidden = Boolean(state.source);
   dom.base.hidden = true;
   dom.base.innerHTML = '';
-  dom.title.textContent = state.source ? state.source.title || 'Changes' : 'Changes';
+  dom.title.textContent = state.source ? state.source.title || t('git.title') : t('git.title');
   dom.branch.textContent = '';
-  dom.files.innerHTML = '<div class="git-empty">Loading\u2026</div>';
+  dom.files.innerHTML = '<div class="git-empty">' + ctx.deps.text(t('common.loading')) + '</div>';
   dom.diff.innerHTML = '';
   dom.layoutBtn.hidden = true;
   for (const el of dom.modes.querySelectorAll('[data-gm]')) {
@@ -986,7 +986,7 @@ function bindFileListEvents(ctx: GitCtx): void {
       state.bodyOpen = !state.bodyOpen;
       const pre = body.parentElement?.querySelector<HTMLElement>('.gch-body');
       if (pre) pre.hidden = !state.bodyOpen;
-      body.textContent = state.bodyOpen ? 'Hide details' : 'Show details';
+      body.textContent = state.bodyOpen ? t('git.hideDetails') : t('git.showDetails');
       return;
     }
     const sha = target.closest('[data-gsha]')?.getAttribute('data-gsha');
@@ -1039,7 +1039,7 @@ function bindControlEvents(ctx: GitCtx): void {
   });
   dom.layoutBtn.addEventListener('click', () => {
     state.layout = state.layout === 'split' ? 'unified' : 'split';
-    dom.layoutBtn.textContent = state.layout === 'split' ? 'Unified' : 'Split';
+    dom.layoutBtn.textContent = state.layout === 'split' ? t('git.unified') : t('git.split');
     if (state.view && typeof state.view.setLayout === 'function') state.view.setLayout(state.layout);
   });
   dom.base.addEventListener('change', () => {
@@ -1069,7 +1069,7 @@ function bindControlEvents(ctx: GitCtx): void {
       ':L' +
       from +
       (to !== from ? '-L' + to : '') +
-      (state.sel.side === 'old' ? ' \u00b7 old side' : ' \u00b7 new side') +
+      (state.sel.side === 'old' ? t('git.oldSide') : t('git.newSide')) +
       (tag ? ' \u00b7 ' + tag : '');
     dom.comment.hidden = false;
     dom.commentText.value = '';
@@ -1084,7 +1084,7 @@ function bindControlEvents(ctx: GitCtx): void {
     insertMessage(deps.input, buildCommentBlock(state, dom.commentText.value));
     hideComment(dom);
     clearSelection(state, dom);
-    setNote(dom, 'Added to the message.', false);
+    setNote(dom, t('git.addedToMessage'), false);
   });
   dom.commentCancelBtn.addEventListener('click', () => hideComment(dom));
 }
@@ -1135,6 +1135,13 @@ export function createGitPanel(deps: GitPanelDeps): GitPanel {
       if (dom.win.hidden) return;
       if (state.mode === 'commits') loadLog(ctx, false);
       else loadStatus(ctx);
+    },
+    repaint: () => {
+      if (dom.win.hidden) return;
+      if (!state.source) dom.title.textContent = t('git.title');
+      if (!dom.layoutBtn.hidden) dom.layoutBtn.textContent = state.layout === 'split' ? t('git.unified') : t('git.split');
+      paintList(ctx);
+      if (!state.path && !state.files.length && !state.notGit && state.mode !== 'commits') paintNoChanges(ctx);
     },
   };
 }

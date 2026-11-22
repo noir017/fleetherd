@@ -1,6 +1,7 @@
 import type { FilesPanelEntry, FilesPanelFile, FilesPanelHit, FilesPanelKind } from '../../../adapter.js';
 import type { CodeViewApi, EditorHandle } from '../../codeview/app.js';
 import { icon } from '../../icons.js';
+import { t } from '../i18n/index.js';
 
 export interface FilesHttpResult {
   ok: boolean;
@@ -37,6 +38,7 @@ export interface FilesPanel {
   paintTree: () => void;
   currentSource: () => FilesSource | null;
   previewEl: () => HTMLElement;
+  repaint: () => void;
 }
 
 interface FilesDom {
@@ -169,7 +171,7 @@ function queryDom(): FilesDom {
 
 function fileMsg(r: { status: number }, d?: Record<string, unknown>): string {
   if (d && typeof d.error === 'string' && d.error) return d.error;
-  return r.status === 404 ? 'The file window is not enabled on this daemon.' : 'That request failed (' + r.status + ').';
+  return r.status === 404 ? t('files.notEnabled') : t('files.requestFailed', { status: r.status });
 }
 
 // Remote hosts are POSIX, but local Windows workspaces use backslashes; derive separator from daemon root.
@@ -218,20 +220,20 @@ function say(dom: FilesDom, msg: string): void {
 
 function confirmLeave(state: FilesState): boolean {
   if (!state.dirty) return true;
-  return confirm('Discard the unsaved changes to ' + (state.rel || state.name || 'this file') + '?');
+  return confirm(t('files.confirmDiscard', { name: state.rel || state.name || t('files.thisFile') }));
 }
 
 function setDirty(state: FilesState, dom: FilesDom, v: boolean): void {
   state.dirty = Boolean(v);
   dom.dirtyTag.hidden = !state.dirty;
   dom.saveBtn.disabled = !(state.kind === 'text' && state.dirty);
-  dom.saveBtn.textContent = state.dirty ? 'Save *' : 'Save';
+  dom.saveBtn.textContent = state.dirty ? t('files.saveDirty') : t('common.save');
 }
 
 function paintActions(state: FilesState, dom: FilesDom): void {
   dom.saveBtn.disabled = !(state.kind === 'text' && state.dirty);
   dom.previewBtn.hidden = !(state.kind === 'text' && /.(md|markdown)$/i.test(state.name));
-  dom.previewBtn.textContent = state.previewing ? 'Edit' : 'Preview';
+  dom.previewBtn.textContent = state.previewing ? t('common.edit') : t('files.preview');
   dom.renameBtn.disabled = !state.path;
   dom.deleteBtn.disabled = !state.path;
 }
@@ -244,7 +246,7 @@ function paintMode(state: FilesState, dom: FilesDom): void {
   dom.crumbs.hidden = on;
   dom.renameBtn.hidden = on;
   dom.deleteBtn.hidden = on;
-  dom.treeToggle.title = on ? 'Instruction files' : 'Files';
+  dom.treeToggle.title = on ? t('files.instrFiles') : t('files.title');
 }
 
 function rowHtml(
@@ -275,15 +277,19 @@ function rowHtml(
       '</span></button>' +
       '<button type="button" class="fx-act" data-fx-dir-rename="' +
       text(abs) +
-      '" title="Rename folder" aria-label="Rename folder ' +
-      text(name) +
+      '" title="' +
+      text(t('files.renameFolder')) +
+      '" aria-label="' +
+      text(t('files.renameFolderAria', { name })) +
       '">' +
       icon('pencil') +
       '</button>' +
       '<button type="button" class="fx-act" data-fx-dir-delete="' +
       text(abs) +
-      '" title="Delete empty folder" aria-label="Delete folder ' +
-      text(name) +
+      '" title="' +
+      text(t('files.deleteEmptyFolder')) +
+      '" aria-label="' +
+      text(t('files.deleteFolderAria', { name })) +
       '">' +
       icon('trash') +
       '</button></div>'
@@ -322,7 +328,7 @@ function paintTree(ctx: FilesCtx): void {
     }
   };
   walk('', 0);
-  dom.treeList.innerHTML = h || '<div class="skills-empty">Empty directory.</div>';
+  dom.treeList.innerHTML = h || '<div class="skills-empty">' + deps.text(t('files.emptyDir')) + '</div>';
 }
 
 function paintCrumbs(ctx: FilesCtx): void {
@@ -348,10 +354,8 @@ function paintCrumbs(ctx: FilesCtx): void {
 }
 
 function eolWarningText(eolWarning: unknown, eol: 'crlf' | 'lf'): string {
-  if (eolWarning === 'cr') return 'This file uses CR line endings; saving will normalize them to LF.';
-  if (eolWarning === 'mixed') {
-    return 'This file mixes line endings; saving will normalize them to ' + (eol === 'crlf' ? 'CRLF' : 'LF') + '.';
-  }
+  if (eolWarning === 'cr') return t('files.eolCr');
+  if (eolWarning === 'mixed') return t('files.eolMixed', { eol: eol === 'crlf' ? 'CRLF' : 'LF' });
   return '';
 }
 
@@ -380,7 +384,7 @@ function clearOpenFile(state: FilesState, dom: FilesDom): void {
   dom.eol.hidden = true;
   dom.eol.textContent = '';
   setDirty(state, dom, false);
-  dom.title.textContent = 'Files';
+  dom.title.textContent = t('files.title');
   dom.where.textContent = state.root;
   dom.crumbs.innerHTML = '';
   dom.editor.textContent = '';
@@ -487,7 +491,7 @@ function refreshTree(ctx: FilesCtx, keepDir: string): void {
       paintTree(ctx);
       if (keepDir && keepDir !== ctx.state.root) revealDir(ctx, keepDir);
     })
-    .catch(() => say(ctx.dom, 'Could not reach the daemon.'));
+    .catch(() => say(ctx.dom, t('common.reachDaemonError')));
 }
 
 function toggleDir(ctx: FilesCtx, abs: string): void {
@@ -517,7 +521,7 @@ function toggleDir(ctx: FilesCtx, abs: string): void {
       };
       paintTree(ctx);
     })
-    .catch(() => say(dom, 'Could not reach the daemon.'));
+    .catch(() => say(dom, t('common.reachDaemonError')));
 }
 
 function saveFile(ctx: FilesCtx, force: boolean): Promise<boolean> {
@@ -547,16 +551,14 @@ function saveFile(ctx: FilesCtx, force: boolean): Promise<boolean> {
           setDirty(state, dom, false);
         }
         dom.conflict.hidden = true;
-        say(dom, 'Saved ' + (state.rel || state.name) + '.' + (state.src ? state.src.said() : ''));
+        say(dom, t('files.saved', { name: state.rel || state.name, extra: state.src ? state.src.said() : '' }));
         paintActions(state, dom);
         return true;
       }
       if (res.body && res.body.conflict) {
         dom.conflict.hidden = false;
         dom.conflictText.textContent =
-          res.body.exists === false
-            ? 'That file was deleted on the machine since you opened it. Your changes are still here.'
-            : 'That file changed on the machine since you opened it. Reload it, overwrite it, or cancel and keep editing.';
+          res.body.exists === false ? t('files.conflictDeleted') : t('files.conflictChanged');
         paintActions(state, dom);
         return false;
       }
@@ -566,7 +568,7 @@ function saveFile(ctx: FilesCtx, force: boolean): Promise<boolean> {
     },
     () => {
       state.busy = false;
-      say(dom, 'Could not reach the daemon; the file was not saved.');
+      say(dom, t('files.saveReachErr'));
       paintActions(state, dom);
       return false;
     }
@@ -595,7 +597,7 @@ function makeEditor(ctx: FilesCtx, doc: string): void {
       ta.className = 'fx-text';
       ta.spellcheck = false;
       ta.value = doc;
-      ta.setAttribute('aria-label', state.name || 'File contents');
+      ta.setAttribute('aria-label', state.name || t('files.fileContentsAria'));
       ta.addEventListener('input', () => setDirty(state, dom, ta.value !== state.saved));
       ta.addEventListener('keydown', (e) => {
         if ((e.metaKey || e.ctrlKey) && (e.key === 's' || e.key === 'S')) {
@@ -656,7 +658,7 @@ function paintFile(ctx: FilesCtx, d: Partial<FilesPanelFile>): void {
   } else if (d.kind === 'text') {
     makeEditor(ctx, state.saved);
   } else {
-    dom.editor.innerHTML = '<div class="skills-empty">' + deps.text(d.note || 'This file cannot be shown here.') + '</div>';
+    dom.editor.innerHTML = '<div class="skills-empty">' + deps.text(d.note || t('files.cannotShow')) + '</div>';
   }
   paintActions(state, dom);
   paintTree(ctx);
@@ -680,7 +682,7 @@ function openFile(ctx: FilesCtx, path: string, skipConfirm?: boolean): void {
       paintFile(ctx, res.body as Partial<FilesPanelFile>);
     })
     .catch(() => {
-      if (seq === state.seq) say(dom, 'Could not reach the daemon.');
+      if (seq === state.seq) say(dom, t('common.reachDaemonError'));
     });
 }
 
@@ -696,13 +698,14 @@ function newGo(ctx: FilesCtx): void {
   const { state, dom } = ctx;
   const name = String(dom.newName.value || '').trim();
   if (!isValidSegment(name)) {
-    say(dom, 'A name is one path segment, with no slash.');
+    say(dom, t('files.invalidSegment'));
     return;
   }
   const dir = state.dir || state.root;
   const abs = fxAbs(dir, name, state.sep);
   const where = state.rel ? fxDirOf(state.rel) : '';
-  if (!confirm('Create the ' + (state.newIsDir ? 'folder' : 'file') + ' "' + (where ? where + '/' : '') + name + '"?')) {
+  const target = (where ? where + '/' : '') + name;
+  if (!confirm(t(state.newIsDir ? 'files.confirmCreateFolder' : 'files.confirmCreateFile', { path: target }))) {
     return;
   }
   apiPost(ctx, 'create', { topic: state.topic, path: abs, dir: state.newIsDir })
@@ -715,7 +718,7 @@ function newGo(ctx: FilesCtx): void {
       reloadDir(ctx, dir);
       if (!state.newIsDir) openFile(ctx, abs);
     })
-    .catch(() => say(dom, 'Could not reach the daemon.'));
+    .catch(() => say(dom, t('common.reachDaemonError')));
 }
 
 function showRename(dom: FilesDom, what: string, value: string): void {
@@ -736,7 +739,7 @@ function applyDirRename(ctx: FilesCtx, targetPath: string, to: string): void {
     paintCrumbs(ctx);
   }
   forgetTreeBelow(state, targetPath);
-  say(dom, 'Renamed.');
+  say(dom, t('files.renamed'));
   refreshTree(ctx, to);
 }
 
@@ -753,7 +756,7 @@ function applyFileRename(ctx: FilesCtx, targetPath: string, to: string): void {
   const oldDir = fxDirOf(targetPath);
   reloadDir(ctx, oldDir);
   if (state.dir !== oldDir) reloadDir(ctx, state.dir);
-  say(dom, state.dirty ? 'Renamed. The unsaved changes are still here.' : 'Renamed.');
+  say(dom, state.dirty ? t('files.renamedDirty') : t('files.renamed'));
 }
 
 function renameGo(ctx: FilesCtx): void {
@@ -762,7 +765,7 @@ function renameGo(ctx: FilesCtx): void {
   if (!target) return;
   const name = String(dom.renameName.value || '').trim();
   if (!isValidSegment(name)) {
-    say(dom, 'A name is one path segment, with no slash.');
+    say(dom, t('files.invalidSegment'));
     return;
   }
   const to = fxAbs(fxDirOf(target.path), name, state.sep);
@@ -772,7 +775,7 @@ function renameGo(ctx: FilesCtx): void {
     return;
   }
   const shown = target.dir ? fxBase(target.path) : state.rel || state.name;
-  if (!confirm('Rename "' + shown + '" to "' + name + '"?')) return;
+  if (!confirm(t('files.confirmRename', { from: shown, to: name }))) return;
   apiPost(ctx, 'rename', { topic: state.topic, from: target.path, to })
     .then((res) => {
       if (!res.ok) {
@@ -784,13 +787,13 @@ function renameGo(ctx: FilesCtx): void {
       if (target.dir) applyDirRename(ctx, target.path, to);
       else applyFileRename(ctx, target.path, to);
     })
-    .catch(() => say(dom, 'Could not reach the daemon.'));
+    .catch(() => say(dom, t('common.reachDaemonError')));
 }
 
 function deleteGo(ctx: FilesCtx): void {
   const { state, dom } = ctx;
   if (!state.path) return;
-  if (!confirm('Delete "' + (state.rel || state.name) + '"? This cannot be undone.')) return;
+  if (!confirm(t('files.confirmDeleteFile', { name: state.rel || state.name }))) return;
   const dir = state.dir;
   apiPost(ctx, 'remove', { topic: state.topic, path: state.path })
     .then((res) => {
@@ -799,17 +802,17 @@ function deleteGo(ctx: FilesCtx): void {
         return;
       }
       clearOpenFile(state, dom);
-      say(dom, res.body.removed === false ? 'It was already gone.' : 'Deleted.');
+      say(dom, res.body.removed === false ? t('files.alreadyGone') : t('files.deleted'));
       reloadDir(ctx, dir);
     })
-    .catch(() => say(dom, 'Could not reach the daemon.'));
+    .catch(() => say(dom, t('common.reachDaemonError')));
 }
 
 function deleteDir(ctx: FilesCtx, abs: string): void {
   const { state, dom } = ctx;
   const inside = Boolean(state.path) && (state.path === abs || state.path.indexOf(abs + state.sep) === 0);
   if (inside && !confirmLeave(state)) return;
-  if (!confirm('Delete the folder "' + fxBase(abs) + '"? Only an empty folder can be deleted, and this cannot be undone.')) {
+  if (!confirm(t('files.confirmDeleteFolder', { name: fxBase(abs) }))) {
     return;
   }
   const parent = fxDirOf(abs);
@@ -822,11 +825,11 @@ function deleteDir(ctx: FilesCtx, abs: string): void {
       if (inside) clearOpenFile(state, dom);
       if (state.dir === abs || state.dir.indexOf(abs + state.sep) === 0) state.dir = parent;
       forgetTreeBelow(state, abs);
-      say(dom, res.body.removed === false ? 'It was already gone.' : 'Deleted.');
+      say(dom, res.body.removed === false ? t('files.alreadyGone') : t('files.deleted'));
       reloadDir(ctx, parent);
       paintTree(ctx);
     })
-    .catch(() => say(dom, 'Could not reach the daemon.'));
+    .catch(() => say(dom, t('common.reachDaemonError')));
 }
 
 function searchGo(ctx: FilesCtx): void {
@@ -845,9 +848,14 @@ function searchGo(ctx: FilesCtx): void {
         return;
       }
       const hits = (res.body.hits as FilesPanelHit[] | undefined) || [];
+      const hitHead = !hits.length
+        ? t('files.noMatches')
+        : res.body.truncated
+          ? t('files.firstMatches', { count: hits.length })
+          : t('files.matchesCount', { count: hits.length });
       let h =
         '<div class="fx-hit-head">' +
-        (hits.length ? (res.body.truncated ? 'First ' : '') + hits.length + ' matches' : 'No matches') +
+        deps.text(hitHead) +
         '</div>';
       for (const hit of hits) {
         h +=
@@ -862,7 +870,7 @@ function searchGo(ctx: FilesCtx): void {
       dom.hits.innerHTML = h;
       dom.hits.hidden = false;
     })
-    .catch(() => say(dom, 'Could not reach the daemon.'));
+    .catch(() => say(dom, t('common.reachDaemonError')));
 }
 
 function togglePreview(ctx: FilesCtx): void {
@@ -886,26 +894,26 @@ function togglePreview(ctx: FilesCtx): void {
       dom.preview.innerHTML =
         typeof res.body.html === 'string' && res.body.html
           ? '<div class="b">' + res.body.html + '</div>'
-          : '<div class="skills-empty">Nothing to render.</div>';
+          : '<div class="skills-empty">' + deps.text(t('files.nothingToRender')) + '</div>';
       deps.codeBlocks(dom.preview);
       dom.preview.hidden = false;
       dom.editor.hidden = true;
       state.previewing = true;
       paintActions(state, dom);
     })
-    .catch(() => say(dom, 'Could not reach the daemon.'));
+    .catch(() => say(dom, t('common.reachDaemonError')));
 }
 
-function openWindow(ctx: FilesCtx, t: string, path?: string, src?: FilesSource | null): void {
+function openWindow(ctx: FilesCtx, topicId: string, path?: string, src?: FilesSource | null): void {
   const { state, dom, deps } = ctx;
-  if (!(deps.filesOk || src) || !t) return;
-  if (!dom.win.hidden && (state.topic !== t || state.src !== (src || null)) && !confirmLeave(state)) return;
-  state.topic = t;
+  if (!(deps.filesOk || src) || !topicId) return;
+  if (!dom.win.hidden && (state.topic !== topicId || state.src !== (src || null)) && !confirmLeave(state)) return;
+  state.topic = topicId;
   state.src = src || null;
   paintMode(state, dom);
   dom.win.hidden = false;
   dom.win.classList.toggle('tree-open', !path);
-  dom.title.textContent = state.src ? state.src.title : 'Files';
+  dom.title.textContent = state.src ? state.src.title : t('files.title');
   dom.where.textContent = '';
   dom.crumbs.innerHTML = '';
   say(dom, '');
@@ -935,10 +943,10 @@ function openWindow(ctx: FilesCtx, t: string, path?: string, src?: FilesSource |
   state.previewing = false;
   setDirty(state, dom, false);
   paintActions(state, dom);
-  dom.treeList.innerHTML = '<div class="skills-empty">Loading\u2026</div>';
-  apiGet(ctx, 'list', { topic: t, path: '' })
+  dom.treeList.innerHTML = '<div class="skills-empty">' + deps.text(t('common.loading')) + '</div>';
+  apiGet(ctx, 'list', { topic: topicId, path: '' })
     .then((res) => {
-      if (state.topic !== t) return;
+      if (state.topic !== topicId) return;
       if (!res.ok) {
         dom.treeList.innerHTML = '';
         say(dom, fileMsg(res, res.body));
@@ -952,7 +960,7 @@ function openWindow(ctx: FilesCtx, t: string, path?: string, src?: FilesSource |
       paintTree(ctx);
       if (path) openFile(ctx, path);
     })
-    .catch(() => say(dom, 'Could not reach the daemon.'));
+    .catch(() => say(dom, t('common.reachDaemonError')));
 }
 
 function closeWindow(ctx: FilesCtx): void {
@@ -1001,7 +1009,7 @@ function refreshRoot(ctx: FilesCtx): void {
       paintTree(ctx);
       if (want) openFile(ctx, want);
     })
-    .catch(() => say(dom, 'Could not reach the daemon.'));
+    .catch(() => say(dom, t('common.reachDaemonError')));
 }
 
 function bindTreeAndNavEvents(ctx: FilesCtx): void {
@@ -1018,7 +1026,7 @@ function bindTreeAndNavEvents(ctx: FilesCtx): void {
     const renameDir = target.closest('[data-fx-dir-rename]')?.getAttribute('data-fx-dir-rename');
     if (renameDir) {
       ctx.state.rename = { path: renameDir, dir: true };
-      showRename(dom, 'Rename folder', fxBase(renameDir));
+      showRename(dom, t('files.renameFolder'), fxBase(renameDir));
       return;
     }
     const delDir = target.closest('[data-fx-dir-delete]')?.getAttribute('data-fx-dir-delete');
@@ -1072,7 +1080,7 @@ function bindActionAndConflictEvents(ctx: FilesCtx): void {
   dom.renameBtn.addEventListener('click', () => {
     if (!state.path) return;
     state.rename = { path: state.path, dir: false };
-    showRename(dom, 'Rename file', state.name);
+    showRename(dom, t('files.renameFile'), state.name);
   });
   dom.renameGoBtn.addEventListener('click', () => renameGo(ctx));
   dom.renameCancelBtn.addEventListener('click', () => {
@@ -1167,5 +1175,13 @@ export function createFilesPanel(deps: FilesPanelDeps): FilesPanel {
     paintTree: () => paintTree(ctx),
     currentSource: () => state.src,
     previewEl: () => dom.preview,
+    repaint: () => {
+      if (dom.win.hidden) return;
+      paintMode(state, dom);
+      setDirty(state, dom, state.dirty);
+      paintActions(state, dom);
+      if (!state.name) dom.title.textContent = state.src ? state.src.title : t('files.title');
+      paintTree(ctx);
+    },
   };
 }
