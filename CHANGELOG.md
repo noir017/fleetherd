@@ -13,6 +13,12 @@ All notable changes to this project are documented here. The format is based on
   tarball or Docker gateway-only), write `config.yaml` + `.env` without interactive `setup`,
   validate with `fleetherd doctor`, and start the daemon cleanly. Kept out of `BUNDLED_SKILLS`
   so already-running agents do not pay context overhead for initial-setup instructions.
+- **Improved native Windows support.** Switched Windows IPC to deterministic named pipes
+  (`\\.\pipe\fleetherd-<hash>`), enabled `.cmd` + POSIX reverse-CLI shims and `Path`/`PATHEXT`
+  resolution, added safe `.cmd`/`.bat` spawn handling with `windowsHide`, switched Windows
+  directory links to NTFS junctions, added `%ComSpec%` + `taskkill` support for scheduled/quota
+  commands and `scripts/stop.mjs`, fixed cross-platform path assertions in `load.test.ts` and
+  `doctor.test.ts`, and documented native Windows vs. WSL2 boundaries in `docs/configuration.md`.
 
 ### Changed
 
