@@ -55,6 +55,9 @@ void _everyReasonListed;
  */
 export const PERMISSION_LEVELS = ['plan', 'ask', 'edits', 'auto', 'full'] as const;
 export type PermissionLevel = (typeof PERMISSION_LEVELS)[number];
+export const LOCALES = ['en', 'zh-CN'] as const;
+export const LocaleSchema = z.enum(LOCALES);
+export type Locale = z.infer<typeof LocaleSchema>;
 export const PermissionLevelSchema = z.enum(PERMISSION_LEVELS);
 
 /** Session scope: which agent session an inbound message belongs to (global default, overridable by route use.scope). */
@@ -1173,6 +1176,11 @@ export const ConfigSchema = z
      * Shorthand for `workdir.sort` in config.yaml (`workdirSort: 'name' | 'frecency'`).
      */
     workdirSort: z.enum(['name', 'frecency']).optional(),
+
+    /**
+     * Gateway UI/chat/CLI language (`'en'` | `'zh-CN'`). Defaults to `'en'` when omitted.
+     */
+    locale: LocaleSchema.optional(),
   })
   // Referential-integrity + cross-field checks (fail-fast at load). Otherwise a typo
   // would surface only when that agent/platform is used, as an obscure runtime error.

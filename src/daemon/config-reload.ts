@@ -62,6 +62,8 @@ const RELOAD_KIND = {
   // Live: rankedWorkdirs reads config.workdir per menu request (/new, /cd, agent switch).
   workdir: 'live',
   workdirSort: 'live',
+  // Live: gateway messages and menus read config.locale on demand.
+  locale: 'live',
 } as const satisfies Record<keyof UserConfig, 'ignore' | 'restart' | 'agents' | 'live'>;
 
 type LiveSection = { [K in keyof typeof RELOAD_KIND]: (typeof RELOAD_KIND)[K] extends 'live' ? K : never }[keyof typeof RELOAD_KIND];
