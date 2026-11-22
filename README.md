@@ -2,7 +2,7 @@
 
 # fleetherd
 
-**One gateway for the coding agents on all your machines — from chat apps or its own web UI.**
+**One gateway for the coding agents on all your machines — from its own web workbench or eight chat apps.**
 
 [![CI](https://github.com/noir017/fleetherd/actions/workflows/ci.yml/badge.svg)](https://github.com/noir017/fleetherd/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
@@ -11,92 +11,84 @@ English | [简体中文](README.zh-CN.md)
 
 </div>
 
-A gateway daemon. The agents — Claude Code, Codex, OpenCode, Antigravity, or any other
-[ACP](https://agentclientprotocol.com) agent — run on the gateway's machine or on any Linux host it
-reaches over ssh, and each host can declare its own agents in a `pod.yaml`
-([Remote hosts](docs/remote-hosts.md)). Talk to them from the [web UI](docs/web-ui.md) the gateway
-serves itself, or from eight chat platforms; `/super` splits one job across several agents working
-in parallel.
+**fleetherd** is a self-hosted gateway daemon that connects coding agents — Claude Code, Codex, OpenCode, Antigravity, or any [ACP](https://agentclientprotocol.com) / TCP `connect` agent — running locally or across remote Linux hosts over SSH (`pod.yaml`) to a full-featured browser workbench and eight chat platforms. Split work across parallel sub-agents with `/super`, share skills and standing instructions across every machine, and expose controlled gateway tools to external web agents over MCP.
 
-It began as a fork of [l0ng-ai/agent-anywhere](https://github.com/l0ng-ai/agent-anywhere), was
-called `agent-anywhere` until 2.0.0 and `talkcode` until 3.0.0; the `talkcode` command still works
-as an alias.
+It began as a fork of [l0ng-ai/agent-anywhere](https://github.com/l0ng-ai/agent-anywhere), was called `agent-anywhere` until 2.0.0 and `talkcode` until 3.0.0; the `talkcode` CLI still works as an alias.
 
-![The built-in web UI: Claude Code finding and fixing a failing test, with its tool calls, its answer, and the context and cost footer](docs/images/webui.png)
+![fleetherd Web UI: topic sidebar with harness badges, state filters and folded sub-agents, tool bubbles, syntax-highlighted code, turn diff summary, and live model/quota/voice composer](docs/images/webui.png)
 
-<p align="center"><sub>The built-in web UI — no chat platform needed. The same conversation works in Telegram, Discord, Slack, Lark and the rest.</sub></p>
+<p align="center"><sub>Built-in web workbench — no chat platform required. The same conversations work across Telegram, Discord, Slack, Lark, and more.</sub></p>
+
+| Git Changes & Inline Diff Review | Light Theme & Side Tasks Panel |
+| :---: | :---: |
+| ![Built-in Git Changes viewer with CodeMirror diff, branch/commit modes, and remote file editing](docs/images/webui-changes.png) | ![Light theme with the docked Side Tasks panel for scheduled jobs, sessions, and auto-reviews](docs/images/webui-light-panel.png) |
 
 ```text
-Discord · Telegram · Slack · Lark · QQ · LINE · WeCom · DingTalk · Web UI
-                                     │
-                                     ▼
-                       ┌───────────────────────────┐
-     ┌────────────────►│         fleetherd         │
-     │                 │   routing · sessions      │
-     │                 │   streaming · access      │
+Web UI · Discord · Telegram · Slack · Lark · QQ · LINE · WeCom · DingTalk   External MCP
+                                     │                                           │
+                                     ▼                                           │
+                       ┌───────────────────────────┐                             │
+     ┌────────────────►│         fleetherd         │◄────────────────────────────┘
+     │                 │  routing · sessions · i18n│
+     │                 │  skills · schedules · push│
      │                 └─────────────┬─────────────┘
-     │                               │ one ssh link per remote host
+     │                               │ SSH (pinned keys) or TCP connect
      │         ┌─────────────────────┼─────────────────────┐
      │         ▼                     ▼                     ▼
      │ ┌───────────────┐     ┌───────────────┐     ┌───────────────┐
      │ │ this machine  │     │ devbox (ssh)  │     │ buildbox(ssh) │
-     │ │ cc · oc · agy │     │ cc · oc       │     │ cx · agy      │
+     │ │ cc · oc · agy │     │ pod.yaml · cc │     │ cx · connect  │
      │ └───────┬───────┘     └───────┬───────┘     └───────┬───────┘
-     └─────────┴─────────────────────┴─────────────────────┘   fleetherd CLI
-       send-file / ask / react … — the agent's way back into the chat
+     └─────────┴─────────────────────┴─────────────────────┘   fleetherd CLI / MCP
+       tasks · skills · schedule · send-file · ask · sessions
 ```
 
 ## Features
 
-### Entry points
+### Entry points & web workbench
 
-- **Or no platform at all** — the [web UI](docs/web-ui.md) above, behind one shared token or your SSO, with an optional terminal.
-- **Eight platforms, one daemon** — Discord, Telegram, Slack, Lark, QQ, LINE, WeCom, DingTalk; multi-account. [→](docs/platforms.md)
-- **Voice messages** — transcribed, shown to you, and sent on once you confirm. [→](docs/voice.md)
+- **Built-in web workbench** — dark/light/system themes, `en` / `zh-CN` UI, token or SSO auth, PWA & Web Push notifications when an agent needs you. Inspect **Git changes** (working tree, branch, commits, inline diff comments), browse and edit remote files in **CodeMirror 6**, view per-turn file diffs, open a docked **terminal**, and manage **Settings**, **Instructions**, **Skills**, **History**, and **Side tasks** in one place. [→](docs/web-ui.md)
+- **Eight chat platforms, one daemon** — Discord, Telegram, Slack, Lark/Feishu, QQ, LINE, WeCom, and DingTalk, with multi-account support. [→](docs/platforms.md)
+- **Fast voice dictation & transcription** — OpenAI-compatible STT (e.g. Groq Whisper) paired with a dedicated cleanup LLM (or Gemini multimodal); dictate straight into the Web UI composer via 24 kbps Opus WebM, or confirm transcribed voice messages in chat apps. [→](docs/voice.md)
 
 ### Many machines, many agents
 
-- **Any ACP agent** — Claude Code, Codex, OpenCode, Antigravity, or `custom`; routed by platform, channel, user or command. [→](docs/agents.md)
-- **Agents on other machines** — an agent can run on any Linux host the gateway reaches over ssh, and a host can declare its own agents in a `pod.yaml`; it keeps working through a dropped connection, and `/agent` picks one by machine. [→](docs/remote-hosts.md)
-- **Sub-agents, and a list of what needs you** — `/super <job>`: the agent splits a job, hands the parts to other agents that work in parallel in topics nested under it — once you confirm — then checks and reports. The web UI lists what is waiting on you and can notify your phone. [→](docs/sub-agents.md)
-- **Callers from outside** — a web agent behind an MCP proxy can search your skills and propose sub-tasks, each waiting for your Start. [→](docs/external-mcp.md)
+- **Any ACP, polling, or `connect` agent** — Claude Code, Codex, OpenCode, Antigravity, `custom` commands, mailbox-relayed polling agents ([→](docs/mailbox.md)), and persistent TCP `connect` agents with automatic mid-turn reconnect; routed by platform, channel, user, or command. [→](docs/agents.md)
+- **Per-agent controls & telemetry** — live permission levels (`plan`, `ask`, `edits`, `auto`, `full`), custom `quotaCommand` + `/usage`, agent-specific status bar options (e.g. account/effort pickers), context/cost meters, and inline images in agent replies. [→](docs/agents.md)
+- **Remote hosts over SSH** — run agents on any Linux host over a pinned SSH link, declare host-local agents in `pod.yaml`, opt into a pod-to-pod SSH mesh, survive network drops, and switch machines with `/agent`. [→](docs/remote-hosts.md)
+- **Parallel sub-agents & autonomous review** — `/super <job>` splits work across child topics in parallel (with configurable confirmation tiers, `--model` / `--option` selection, and `task-send --forward`) and supports `--review-by` worker↔reviewer loops without waking the coordinator. [→](docs/sub-agents.md)
+- **External MCP entrance** — expose a bearer-authenticated HTTP MCP endpoint to external web agents: read-only `skills`/`sessions` and card-gated `tasks` by default, `agents:` direct topic attachment, or opt-in `trusted: true` mode for full 7-tool gateway parity. [→](docs/external-mcp.md)
 
-### Shared and accumulated
+### Shared memory & automation
 
-- **Skills that write themselves** — say "remember this as a skill" and the agent creates one the gateway keeps, delivers to every agent on every host, versions, and archives when it goes unused. Name a reviewer agent and quiet conversations are reviewed on their own. [→](docs/skills.md)
-- **Your instructions, for every agent** — write once how you want to be worked with; every agent on every host reads it, plus a file per agent for what only suits one. [→](docs/instructions.md)
-- **Scheduled tasks** — "every morning at 8, …" becomes a task the gateway keeps, surviving restarts. [→](docs/scheduled-tasks.md)
-- **Every conversation, searchable** — each turn is kept in a local library, and `fleetherd sessions` searches it by keyword, by agent, or by day. [→](docs/conversation-history.md)
+- **Self-evolving skill library** — agents create, version, and revert shared skills synced to every host and harness (with optional Git repo sync); an optional reviewer agent automatically distills quiet conversations into skill updates and preference suggestions. [→](docs/skills.md)
+- **Unified standing instructions** — write global rules (`common.md`) and per-agent layers once; delivered to every host and editable from the Web UI settings page. [→](docs/instructions.md)
+- **Scheduled tasks** — cron or one-shot agent prompts and cross-host bash commands that survive restarts, managed from chat or the Side tasks panel. [→](docs/scheduled-tasks.md)
+- **Searchable conversation archive** — every turn is indexed in local SQLite (FTS5); search via `fleetherd sessions`, 8-character short topic IDs, or one-click reference copy in the Web UI. [→](docs/conversation-history.md)
 
 ### Day to day
 
-- **Native streaming** — in-place edits, live tool-call bubbles, lifecycle reactions.
-- **Send while it works** — a message sent mid-turn joins the running turn instead of stopping it, as typing into Claude Code's own CLI does; `/stop` stops. [→](docs/chat-commands.md#sending-while-the-agent-works)
-- **Topics are conversations** — a Telegram or Feishu topic, a Slack or Discord thread, each with its own agent, its own [directory](docs/working-directory.md) and an [automatic name](docs/topic-names.md).
-- **Persistent** — conversations survive restarts; `/new`, `/stop`, `/kill`; idle agents are released and resumed on the next message. [→](docs/chat-commands.md)
-- **Failed turns can carry on** — continue automatically after an upstream outage, with your own words, and run a command to alert you. [→](docs/agents.md#when-a-turn-fails)
-- **Attachments** — images and files you send are downloaded and handed to the agent.
-- **The agent acts in the chat** — sends files, asks with buttons, replies, reacts, reads history. [→](docs/agent-actions.md)
-- **Small config** — five sections, `${VAR}` and `.env` expansion; [`/setting`](docs/settings.md) edits the fields worth changing from chat.
+- **Native streaming & rich rendering** — in-place edits, live tool-call bubbles, syntax-highlighted code blocks with Wrap/Copy, task lists, wide tables, and lifecycle reactions.
+- **Non-blocking workflow** — mid-turn messages join the running turn; `/btw` asks a side question without interrupting; `/fork` branches a topic from its current state; `/stop` and `/kill` control execution. [→](docs/chat-commands.md)
+- **Topics as workspaces** — each topic binds its own agent, `/cd` working directory, and automatic title; idle agent processes are reclaimed and resumed seamlessly, and failed turns can auto-continue or trigger alerts. [→](docs/working-directory.md)
+- **Full i18n & zero-downtime reload** — `en` / `zh-CN` across the Web UI, chat menus, notifications, and CLI; live config edits via [`/setting`](docs/settings.md) and hot reload via `SIGHUP` / `fleetherd reload`. [→](docs/configuration.md)
 
 ## Quick start
 
-fleetherd is not on npm. Install the tarball attached to the
-[latest release](https://github.com/noir017/fleetherd/releases/latest), with `X.Y.Z` its version:
+Requires **Node.js ≥ 22**. fleetherd is not published to npm — install the tarball from the [latest GitHub Release](https://github.com/noir017/fleetherd/releases/latest) (replace `X.Y.Z` with the release version):
 
 ```bash
 npm install -g https://github.com/noir017/fleetherd/releases/download/vX.Y.Z/fleetherd-X.Y.Z.tgz
 
-fleetherd setup    # wizard: platform, credentials, agent
+fleetherd setup    # interactive wizard: platform, credentials, agent
 fleetherd doctor   # self-check
-fleetherd start    # message your bot
+fleetherd start    # open the web UI or message your bot
 ```
 
-`harness: claude` reuses this machine's `claude /login` session — no API key
-needed for personal use.
+`harness: claude` reuses this machine's `claude /login` session — no API key needed for personal use. For containerized deployments, see [Running in a container](docs/docker.md).
 
 <details>
-<summary><strong>Or let your agent set it up</strong></summary>
+<summary><strong>Or let your coding agent set it up</strong></summary>
 
 Paste into Claude Code (or any coding agent):
 
@@ -110,14 +102,14 @@ and start it.
 
 </details>
 
-The smallest useful `~/.config/fleetherd/config.yaml` is the web UI and one agent:
+Minimal `~/.config/fleetherd/config.yaml` (Web UI + one local agent):
 
 ```yaml
 version: 1
 platforms:
   web:
     type: webui
-    token: ${WEB_TOKEN}       # the password the page asks for; ${VAR} also reads <configDir>/.env
+    token: ${WEB_TOKEN}       # login secret; ${VAR} also reads <configDir>/.env
 agents:
   - id: claude
     harness: claude
@@ -128,56 +120,45 @@ access:
   allowFrom: ["web:owner"]
 ```
 
-Then open `http://<host>:8787`. Everything else — more platforms, several agents, routing —
-is in [Configuration](docs/configuration.md).
+Then open `http://<host>:8787`. See [Configuration](docs/configuration.md) for multi-platform, multi-agent, and remote-host setups.
 
 > [!WARNING]
-> Agents run with full tool access. An empty `access.allowFrom` lets anyone
-> who can message the bot run commands on your machine — fill it in any
-> shared deployment. The web UI speaks plain HTTP on every interface by default;
-> read [Exposing it](docs/web-ui.md#exposing-it) before it leaves a network you control.
+> Agents run with full tool access by default unless restricted via `permissions` (`plan` / `ask` / `edits`). An empty `access.allowFrom` allows anyone who can reach the bot to run commands on your machine — always populate it in shared deployments. The Web UI binds plain HTTP on `0.0.0.0` by default; read [Exposing it](docs/web-ui.md#exposing-it) before exposing it outside a private network.
 
 ## Documentation
 
 | | |
 |---|---|
 | **Entry points** | |
-| [Web UI](docs/web-ui.md) | topics, the terminal, exposing it safely, single sign-on |
-| [Platforms](docs/platforms.md) | what each chat platform can and cannot do |
-| [Voice messages](docs/voice.md) | transcription and confirmation |
+| [Web UI](docs/web-ui.md) | themes, i18n, Git changes, file editor, terminal, settings, SSO, push |
+| [Platforms](docs/platforms.md) | capabilities and quirks of all eight chat platforms |
+| [Voice messages](docs/voice.md) | OpenAI/Gemini STT, cleanup LLM, Web UI composer dictation |
 | **Many machines, many agents** | |
-| [Agents](docs/agents.md) | the harnesses, what each needs installed, how Antigravity is driven |
-| [Agents that only poll](docs/mailbox.md) | Muse and the like, through a mailbox relay both sides poll |
-| [Remote hosts](docs/remote-hosts.md) | agents on other machines over ssh, `/agent`, what happens when the network drops |
-| [Sub-agents](docs/sub-agents.md) | `/super`: split a job across agents working in parallel |
-| [Callers from outside](docs/external-mcp.md) | an MCP entrance for a web agent to search skills and propose sub-tasks |
-| [Running in a container](docs/docker.md) | the gateway-only image, with every agent on a host |
-| **Shared and accumulated** | |
-| [Skills the gateway keeps](docs/skills.md) | skills every agent shares: write, version, archive, restore |
-| [Your instructions](docs/instructions.md) | one set of standing instructions for every agent, plus one per agent |
-| [Scheduled tasks](docs/scheduled-tasks.md) | prompts and commands on a schedule |
-| [Past conversations](docs/conversation-history.md) | `fleetherd sessions`: search every conversation the gateway carried |
+| [Agents](docs/agents.md) | harnesses, `connect` TCP agents, permissions, `quotaCommand`, turn hooks |
+| [Agents that only poll](docs/mailbox.md) | mailbox relay for polling-only harnesses |
+| [Remote hosts](docs/remote-hosts.md) | SSH hosts, `pod.yaml`, pod mesh, offline resilience |
+| [Sub-agents](docs/sub-agents.md) | `/super`, parallel child topics, `--review-by` loops, confirmation tiers |
+| [Callers from outside](docs/external-mcp.md) | external HTTP MCP entrance, `sessions`, `agents:`, `trusted` mode |
+| [Running in a container](docs/docker.md) | gateway-only Docker image (`ghcr.io/noir017/fleetherd`) & host wrapper |
+| **Shared & automated** | |
+| [Skills the gateway keeps](docs/skills.md) | shared skill library, Git sync, versioning, auto-review |
+| [Your instructions](docs/instructions.md) | global & per-agent standing instructions and Web UI editor |
+| [Scheduled tasks](docs/scheduled-tasks.md) | cron/one-shot prompts & bash jobs across hosts |
+| [Past conversations](docs/conversation-history.md) | SQLite FTS5 archive, `fleetherd sessions`, short IDs |
 | **Day to day** | |
-| [Chat commands](docs/chat-commands.md) | `/new` `/stop` `/kill`, agent commands, `/model`, `/effort` |
+| [Chat commands](docs/chat-commands.md) | `/new`, `/fork`, `/btw`, `/stop`, `/kill`, `/model`, `/effort`, `/usage` |
 | [Working directory](docs/working-directory.md) | `/cd`: one topic per project |
 | [Topic names](docs/topic-names.md) | `/title` and automatic naming |
-| [Settings from chat](docs/settings.md) | `/setting`: editing config.yaml without a restart |
-| [Configuration](docs/configuration.md) | config.yaml in full, `${VAR}` and `.env`, the CLI |
-| [What the agent can do](docs/agent-actions.md) | button questions, sending files, the bundled skill |
+| [Settings from chat](docs/settings.md) | `/setting` & Web UI settings page without restarting |
+| [Configuration](docs/configuration.md) | full `config.yaml` reference, `locale`, `.env`, `SIGHUP` reload, CLI |
+| [What the agent can do](docs/agent-actions.md) | reverse CLI, native MCP tools, inline images, button questions |
 
 ## Contributing
 
-[AGENTS.md](AGENTS.md) holds the conventions, layering rules, and security invariants,
-plus an index of the per-module docs ([config](src/config/README.md) ·
-[core](src/core/README.md) · [platform](src/platform/README.md) ·
-[daemon](src/daemon/README.md) · [ipc](src/ipc/README.md) ·
-[commands](src/commands/README.md)). Start there before changing code.
+[AGENTS.md](AGENTS.md) holds the conventions, layering rules, testing policy, and security invariants, plus the FRAS codebase map and per-module docs ([config](src/config/README.md) · [core](src/core/README.md) · [platform](src/platform/README.md) · [daemon](src/daemon/README.md) · [ipc](src/ipc/README.md) · [commands](src/commands/README.md)). Start there before changing code.
 
 ## License
 
 [MIT](LICENSE)
 
-This project began as a fork of [l0ng-ai/agent-anywhere](https://github.com/l0ng-ai/agent-anywhere)
-at `3d855f8`, and the original architecture — the platform profile seam in particular — is still
-recognisable underneath. It has grown a long way past that point since. The upstream MIT copyright
-notice is retained in [LICENSE](LICENSE), which covers both codebases.
+This project began as a fork of [l0ng-ai/agent-anywhere](https://github.com/l0ng-ai/agent-anywhere) at `3d855f8`, and the original architecture — the platform profile seam in particular — is still recognisable underneath. It has grown a long way past that point since. The upstream MIT copyright notice is retained in [LICENSE](LICENSE), which covers both codebases.

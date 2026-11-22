@@ -2,7 +2,7 @@
 
 # fleetherd
 
-**一个网关，指挥你所有机器上的编码智能体——在聊天软件里，或在浏览器里。**
+**一个网关，统一指挥你所有机器上的编码智能体——在内置网页工作台，或在八个聊天软件里。**
 
 [![CI](https://github.com/noir017/fleetherd/actions/workflows/ci.yml/badge.svg)](https://github.com/noir017/fleetherd/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
@@ -11,92 +11,86 @@
 
 </div>
 
-一个网关守护进程。智能体——Claude Code、Codex、OpenCode、Antigravity，或任何支持
-[Agent Client Protocol](https://agentclientprotocol.com) 的智能体——跑在网关所在的机器上，
-也可以跑在网关经 ssh 能连到的任意 Linux 主机上，每台主机还能在 `pod.yaml` 里声明自己的智能体
-（见[远程主机](docs/zh-CN/remote-hosts.md)）。入口是网关自带的[网页端](docs/zh-CN/web-ui.md)，
-以及八个聊天平台；`/super` 把一件活拆给几个智能体并行干。
+**fleetherd** 是一个自托管网关守护进程，把跑在本机或经 SSH 连接的多台 Linux 主机（支持 `pod.yaml`）上的编码智能体——Claude Code、Codex、OpenCode、Antigravity，或任意支持 [ACP](https://agentclientprotocol.com) / TCP `connect` 的智能体——统一接入自带的浏览器工作台和八个聊天平台。支持用 `/super` 把任务拆给多个子代理并行协作，在所有机器间同步共享技能与工作偏好，并通过受控的外部 MCP 入口供外部网页智能体调用。
 
-本项目起初是 [l0ng-ai/agent-anywhere](https://github.com/l0ng-ai/agent-anywhere) 的分支，
-2.0.0 之前名为 `agent-anywhere`，3.0.0 之前名为 `talkcode`；`talkcode` 命令仍然可用，是
-`fleetherd` 的别名。
+本项目起初是 [l0ng-ai/agent-anywhere](https://github.com/l0ng-ai/agent-anywhere) 的分支，2.0.0 之前名为 `agent-anywhere`，3.0.0 之前名为 `talkcode`；`talkcode` 命令仍作为别名保留。
 
-![内置网页端：Claude Code 找出并修好一个挂掉的测试，含工具调用、回答，以及上下文与花费状态栏](docs/images/webui.png)
+![fleetherd 内置网页工作台：带 harness 标签的话题侧栏、状态筛选与子代理折叠、工具调用气泡、代码高亮、回合改动摘要，以及模型/配额/语音听写输入栏](docs/images/webui.png)
 
-<p align="center"><sub>内置网页端——不需要任何聊天平台。同样的对话在 Telegram、Discord、Slack、飞书等平台上也一样。</sub></p>
+<p align="center"><sub>内置网页工作台——无需注册任何聊天平台机器人。同一套对话体验在 Telegram、Discord、Slack、飞书等平台同样可用。</sub></p>
+
+| Git 变更对比与行内评论 | 浅色主题与侧边任务面板 |
+| :---: | :---: |
+| ![内置 Git 变更视图：CodeMirror 对比、分支/提交切换与远程文件编辑](docs/images/webui-changes.png) | ![浅色主题与右侧停靠的侧边任务面板：定时任务、会话与自动复盘](docs/images/webui-light-panel.png) |
 
 ```text
-Discord · Telegram · Slack · 飞书 · QQ · LINE · 企业微信 · 钉钉 · 网页端
-                                     │
-                                     ▼
-                       ┌───────────────────────────┐
-     ┌────────────────►│         fleetherd         │
-     │                 │   routing · sessions      │
-     │                 │   streaming · access      │
+网页端 · Discord · Telegram · Slack · 飞书 · QQ · LINE · 企业微信 · 钉钉     外部 MCP
+                                     │                                        │
+                                     ▼                                        │
+                       ┌───────────────────────────┐                          │
+     ┌────────────────►│         fleetherd         │◄─────────────────────────┘
+     │                 │  路由 · 会话 · 中英文 i18n │
+     │                 │  技能 · 定时 · Web Push   │
      │                 └─────────────┬─────────────┘
-     │                               │ 每台远程主机一条 ssh
+     │                               │ SSH（固定主机密钥）或 TCP connect
      │         ┌─────────────────────┼─────────────────────┐
      │         ▼                     ▼                     ▼
      │ ┌───────────────┐     ┌───────────────┐     ┌───────────────┐
      │ │ 本机          │     │ devbox (ssh)  │     │ buildbox(ssh) │
-     │ │ cc · oc · agy │     │ cc · oc       │     │ cx · agy      │
+     │ │ cc · oc · agy │     │ pod.yaml · cc │     │ cx · connect  │
      │ └───────┬───────┘     └───────┬───────┘     └───────┬───────┘
-     └─────────┴─────────────────────┴─────────────────────┘   fleetherd CLI
-       send-file / ask / react …：智能体回到聊天的通道
+     └─────────┴─────────────────────┴─────────────────────┘   fleetherd CLI / MCP
+       tasks · skills · schedule · send-file · ask · sessions
 ```
 
-## 特性
+## 核心特性
 
-### 入口
+### 入口与内置网页工作台
 
-- **也可以一个平台都不用** —— 就是上图的[网页端](docs/zh-CN/web-ui.md)，一个共享密钥或你的 SSO 登录，可选开终端。
-- **八个平台，一个进程** —— Discord、Telegram、Slack、飞书、QQ、LINE、企业微信、钉钉；支持多账号。[→](docs/zh-CN/platforms.md)
-- **语音消息** —— 自动转写，先给你看，确认后再发。[→](docs/zh-CN/voice.md)
+- **全功能网页工作台** —— 支持**深色 / 浅色 / 跟随系统**主题与**中英文切换**，共享密钥或 SSO 登录，支持 PWA 与手机/桌面 **Web Push** 提醒。内置 **Git 变更对比**（工作区/分支/提交历史与行内评论）、**CodeMirror 6 远程文件浏览与编辑**、每轮回复下方的**文件改动摘要**、底部停靠**终端**，以及可视化**设置/指令编辑**、**技能库**、**历史搜索**与**侧边任务**面板。[→](docs/zh-CN/web-ui.md)
+- **八个聊天平台，一个进程** —— 同时接入 Discord、Telegram、Slack、飞书/Lark、QQ、LINE、企业微信、钉钉，支持多账号。[→](docs/zh-CN/platforms.md)
+- **高速语音听写与转写** —— 支持 OpenAI 兼容高速 STT（如 Groq Whisper）搭配独立文本整理模型（也支持 Gemini 多模态）；网页端输入框支持 24 kbps Opus WebM 直接语音听写上屏，聊天软件支持转写确认后发送。[→](docs/zh-CN/voice.md)
 
 ### 多台机器，多个智能体
 
-- **任意 ACP 智能体** —— Claude Code、Codex、OpenCode、Antigravity 或 `custom`；按平台、频道、用户或命令路由。[→](docs/zh-CN/agents.md)
-- **跑在别的机器上的智能体** —— 智能体可以跑在网关经 ssh 能连到的任意 Linux 主机上，主机还能在 `pod.yaml` 里声明自己的智能体；断网时继续干活，`/agent` 按机器选择。[→](docs/zh-CN/remote-hosts.md)
-- **子代理和待办列表** —— `/super <任务>`：智能体把活拆开，经你确认后交给几个智能体在挂在它下面的话题里同时干，再检查结果、汇报给你。网页端列出所有在等你的事，还能推送到手机。[→](docs/zh-CN/sub-agents.md)
-- **外部调用方** —— 经 MCP 代理接入的网页智能体可以搜你的技能、提议子任务，每个都等你点 Start。[→](docs/zh-CN/external-mcp.md)
+- **任意 ACP、轮询或 `connect` 智能体** —— 支持 Claude Code、Codex、OpenCode、Antigravity、`custom` 命令、轮询信箱中继（[→](docs/zh-CN/mailbox.md)）以及直连常驻 TCP 服务的 `connect` 智能体（断线自动重连、支持续接/重发）；按平台、频道、用户或命令路由。[→](docs/zh-CN/agents.md)
+- **精细权限与状态观测** —— 每个智能体可独立设置权限档位（`plan` / `ask` / `edits` / `auto` / `full`）并在聊天或网页端实时修改；支持自定义 `quotaCommand` 配额查询与 `/usage`、状态栏智能体自有选项切换（如账号/推理强度）、上下文与花费显示，以及回复内嵌图片。[→](docs/zh-CN/agents.md)
+- **经 SSH 调度远程主机** —— 通过固定密钥的 SSH 隧道在任意 Linux 主机上跑智能体，支持主机用 `pod.yaml` 自主声明智能体、可选 pod 间 SSH 互联、断网不中断执行，`/agent` 按机器分组切换。[→](docs/zh-CN/remote-hosts.md)
+- **子代理并行编排与自主 Review** —— `/super <任务>` 将任务拆解到挂在当前话题下的多个子话题并行执行（支持三档确认策略、`--model`/`--option` 选配、`task-send --forward` 转发），并支持 `--review-by` 自主完成“执行 ↔ 评审”闭环，无需反复唤醒主控。[→](docs/zh-CN/sub-agents.md)
+- **外部 MCP 入口** —— 为外部网页智能体提供按调用方独立鉴权的 HTTP MCP 入口：默认仅开放只读 `skills`/`sessions` 与需人工确认的 `tasks`；支持通过 `agents:` 直挂智能体话题，也可按调用方显式开启 `trusted: true` 解锁全部 7 组网关工具。[→](docs/zh-CN/external-mcp.md)
 
-### 共享与积累
+### 共享记忆与自动化
 
-- **会自己写自己的技能** —— 说「把这个记成技能」，智能体就建一个网关自己保存的技能，下发到每台主机上的每个智能体，有版本、能回滚，长期不用自动归档；指定复盘智能体后，闲下来的对话还会自己复盘。[→](docs/zh-CN/skills.md)
-- **工作偏好，所有智能体通用** —— 你希望怎么干活写一次，每台主机上的每个智能体都读得到；只适合某一种智能体的，另写一份给它。[→](docs/zh-CN/instructions.md)
-- **定时任务** —— 「每天早上 8 点……」会变成网关自己保存的任务，重启不丢。[→](docs/zh-CN/scheduled-tasks.md)
-- **每段对话都留档** —— 每一轮都存在本地库里，`fleetherd sessions` 按关键词、智能体或日期搜索。[→](docs/zh-CN/conversation-history.md)
+- **会自我进化的技能库** —— 智能体可随时创建、更新、回滚共享技能并自动下发到每台主机的所有 harness（支持绑定共享 Git 仓库）；配置复盘智能体后，静默对话会自动提炼为技能更新与偏好建议。[→](docs/zh-CN/skills.md)
+- **跨主机统一工作偏好** —— 一次编写全局规则（`common.md`）与单智能体专属规则，自动分发到各主机并可在网页端设置页直接编辑。[→](docs/zh-CN/instructions.md)
+- **定时任务** —— 支持 Cron 与一次性任务，可定时触发智能体提示词或跨主机 Bash 命令，重启不丢，在聊天或侧边任务面板均可管理。[→](docs/zh-CN/scheduled-tasks.md)
+- **可检索的对话归档** —— 每轮对话自动写入本地 SQLite（FTS5 全文索引），支持 `fleetherd sessions` 检索、8 位短话题 ID 读取以及网页端一键复制会话引用。[→](docs/zh-CN/conversation-history.md)
 
-### 日常
+### 日常体验
 
-- **原生流式体验** —— 消息原地编辑、工具调用气泡、生命周期回应表情。
-- **干活时也能发消息** —— 一轮中途发的消息并入正在跑的这一轮，不会打断它，和在 Claude Code 自己的命令行里边跑边打字一样；要停用 `/stop`。[→](docs/zh-CN/chat-commands.md#智能体干活时发消息)
-- **话题即会话** —— Telegram 话题、飞书话题、Slack 线程、Discord 子区，各自绑定智能体、各自的[工作目录](docs/zh-CN/working-directory.md)，并[自动命名](docs/zh-CN/topic-names.md)。
-- **持久会话** —— 重启不丢；`/new`、`/stop`、`/kill`；闲置的智能体进程会释放，下一条消息再从原处恢复。[→](docs/zh-CN/chat-commands.md)
-- **失败后自动继续** —— 上游故障导致一轮失败时，可以用你自己的话自动继续，并跑一条命令提醒你。[→](docs/zh-CN/agents.md#一轮失败之后)
-- **附件处理** —— 你发的图片和文件自动下载并交给智能体。
-- **在聊天中行动** —— 智能体可发文件、发按钮提问、引用回复、加回应、读历史。[→](docs/zh-CN/agent-actions.md)
-- **精简配置** —— 五个部分，支持 `${VAR}` 与 `.env` 展开；值得在聊天里改的那几项用 [`/setting`](docs/zh-CN/settings.md) 直接改。
+- **原生流式与富文本渲染** —— 消息原地流式更新、工具调用气泡、带语言标签与 Wrap/Copy 的语法高亮代码块、任务列表、宽表格与生命周期回应。
+- **不打断工作流** —— 回合中途发消息会直接并入当前轮次；`/btw` 可在不中断任务的情况下旁路提问；`/fork` 可从当前状态分叉出新话题；`/stop` 与 `/kill` 随时控制进程。[→](docs/zh-CN/chat-commands.md)
+- **话题即工作区** —— 每个话题独立绑定智能体、`/cd` 工作目录并自动命名；闲置进程自动回收、下次发消息无缝恢复；失败回合支持自动续跑与告警钩子。[→](docs/zh-CN/working-directory.md)
+- **全站中英文国际化与热重载** —— 网页端、聊天菜单、推送通知与 CLI 完整支持 `en` / `zh-CN`；支持 [`/setting`](docs/zh-CN/settings.md) 实时改配置及 `SIGHUP` / `fleetherd reload` 不重启热重载。[→](docs/zh-CN/configuration.md)
 
 ## 快速开始
 
-fleetherd 没有发布到 npm。请安装[最新 Release](https://github.com/noir017/fleetherd/releases/latest)
-附带的 tarball，`X.Y.Z` 换成它的版本号：
+需要 **Node.js ≥ 22**。fleetherd 未发布到 npm，请直接安装[最新 GitHub Release](https://github.com/noir017/fleetherd/releases/latest) 附带的 tarball（将 `X.Y.Z` 替换为对应版本号）：
 
 ```bash
 npm install -g https://github.com/noir017/fleetherd/releases/download/vX.Y.Z/fleetherd-X.Y.Z.tgz
 
-fleetherd setup    # 向导：选平台、填凭据、选智能体
-fleetherd doctor   # 自检
-fleetherd start    # 给机器人发消息即可
+fleetherd setup    # 交互式向导：选平台、填凭据、配智能体
+fleetherd doctor   # 环境与配置自检
+fleetherd start    # 打开网页端或直接给机器人发消息
 ```
 
-`harness: claude` 复用本机的 `claude /login` 登录态——个人使用无需 API key。
+`harness: claude` 会复用本机的 `claude /login` 登录态，个人使用无需 API Key。容器化部署请见[在容器里运行](docs/zh-CN/docker.md)。
 
 <details>
-<summary><strong>或者让你的智能体代劳</strong></summary>
+<summary><strong>或者让你的编码智能体代劳配置</strong></summary>
 
-把下面这段粘贴给 Claude Code（或任何编码智能体）：
+把下面这段直接粘贴给 Claude Code（或其他编码智能体）：
 
 ```text
 Set up https://github.com/noir017/fleetherd for me: install the CLI
@@ -108,14 +102,14 @@ and start it.
 
 </details>
 
-最小可用的 `~/.config/fleetherd/config.yaml` 就是网页端加一个智能体：
+最小可用的 `~/.config/fleetherd/config.yaml`（仅网页端 + 一个本机智能体）：
 
 ```yaml
 version: 1
 platforms:
   web:
     type: webui
-    token: ${WEB_TOKEN}       # 网页登录时要输的密码；${VAR} 也会读 <配置目录>/.env
+    token: ${WEB_TOKEN}       # 网页登录密码；${VAR} 也会从 <配置目录>/.env 读取
 agents:
   - id: claude
     harness: claude
@@ -126,53 +120,45 @@ access:
   allowFrom: ["web:owner"]
 ```
 
-然后打开 `http://<host>:8787`。其余的——更多平台、多个智能体、路由——见[配置](docs/zh-CN/configuration.md)。
+启动后访问 `http://<host>:8787`。多平台、多智能体与远程主机配置详见[配置说明](docs/zh-CN/configuration.md)。
 
 > [!WARNING]
-> 智能体拥有完整工具权限。`access.allowFrom` 留空意味着任何能给机器人发消息的人
-> 都能在你的机器上执行命令——共享部署务必填写白名单。网页端默认在所有网卡上以明文
-> HTTP 监听；要让它离开你掌控的网络之前，先读[对外暴露](docs/zh-CN/web-ui.md#对外暴露)。
+> 除非通过 `permissions`（`plan` / `ask` / `edits`）收紧，智能体默认拥有完整工具权限。`access.allowFrom` 留空意味着任何能发消息的人都能在你的机器上执行命令——共享环境务必配置白名单。网页端默认在 `0.0.0.0` 上以明文 HTTP 监听，暴露到公网或非信任网络前请务必阅读[对外暴露](docs/zh-CN/web-ui.md#对外暴露)。
 
-## 文档
+## 文档索引
 
 | | |
 |---|---|
 | **入口** | |
-| [网页端](docs/zh-CN/web-ui.md) | 话题、终端、安全地对外暴露、单点登录 |
-| [平台](docs/zh-CN/platforms.md) | 各聊天平台能做什么、不能做什么 |
-| [语音消息](docs/zh-CN/voice.md) | 转写与确认 |
+| [网页端](docs/zh-CN/web-ui.md) | 主题、国际化、Git 变更、文件编辑、终端、设置页、SSO 与推送 |
+| [平台](docs/zh-CN/platforms.md) | 八个聊天平台的能力差异与限制 |
+| [语音消息](docs/zh-CN/voice.md) | OpenAI/Gemini 转写、文本整理与网页端听写 |
 | **多台机器，多个智能体** | |
-| [智能体](docs/zh-CN/agents.md) | 各 harness、各需装什么、Antigravity 怎么驱动 |
-| [只能轮询的智能体](docs/zh-CN/mailbox.md) | Muse 这类智能体，经一个两边都轮询的信箱中继接入 |
-| [远程主机](docs/zh-CN/remote-hosts.md) | 经 ssh 跑在别的机器上的智能体、`/agent`、断网时会怎样 |
-| [子代理](docs/zh-CN/sub-agents.md) | `/super`：把一件活拆给几个智能体并行干 |
-| [外部调用方](docs/zh-CN/external-mcp.md) | 给网页智能体用的 MCP 入口：搜技能、提议子任务 |
-| [在容器里运行](docs/zh-CN/docker.md) | 只含网关的镜像，智能体全在主机上 |
-| **共享与积累** | |
-| [网关自己维护的技能](docs/zh-CN/skills.md) | 所有智能体共用的技能：写、版本、归档、恢复 |
-| [工作偏好](docs/zh-CN/instructions.md) | 一份给所有智能体的工作偏好，外加每种智能体各自一份 |
-| [定时任务](docs/zh-CN/scheduled-tasks.md) | 定时跑提示词或命令 |
-| [以前的对话](docs/zh-CN/conversation-history.md) | `fleetherd sessions`：搜索网关经手过的所有对话 |
-| **日常** | |
-| [聊天命令](docs/zh-CN/chat-commands.md) | `/new` `/stop` `/kill`、智能体命令、`/model`、`/effort` |
-| [工作目录](docs/zh-CN/working-directory.md) | `/cd`：一个话题一个项目 |
+| [智能体](docs/zh-CN/agents.md) | 各 harness、TCP `connect` 智能体、权限档位、`quotaCommand` 与钩子 |
+| [只能轮询的智能体](docs/zh-CN/mailbox.md) | 轮询型智能体的信箱中继接入 |
+| [远程主机](docs/zh-CN/remote-hosts.md) | SSH 远程主机、`pod.yaml`、pod 互联与断网容错 |
+| [子代理](docs/zh-CN/sub-agents.md) | `/super` 并行子话题、`--review-by` 自主评审闭环与确认档位 |
+| [外部调用方](docs/zh-CN/external-mcp.md) | 外部 HTTP MCP 入口、`sessions`、`agents:` 与 `trusted` 模式 |
+| [在容器里运行](docs/zh-CN/docker.md) | 纯网关镜像（`ghcr.io/noir017/fleetherd`）与宿主机包装脚本 |
+| **共享与自动化** | |
+| [网关自己维护的技能](docs/zh-CN/skills.md) | 共享技能库、Git 同步、版本回滚与自动复盘 |
+| [工作偏好](docs/zh-CN/instructions.md) | 全局与单智能体工作偏好及网页端编辑器 |
+| [定时任务](docs/zh-CN/scheduled-tasks.md) | 跨主机 Cron 与一次性提示词/命令任务 |
+| [以前的对话](docs/zh-CN/conversation-history.md) | SQLite FTS5 归档、`fleetherd sessions` 与短 ID 检索 |
+| **日常使用** | |
+| [聊天命令](docs/zh-CN/chat-commands.md) | `/new`、`/fork`、`/btw`、`/stop`、`/kill`、`/model`、`/effort`、`/usage` |
+| [工作目录](docs/zh-CN/working-directory.md) | `/cd`：一个话题对应一个项目 |
 | [话题命名](docs/zh-CN/topic-names.md) | `/title` 与自动命名 |
-| [在聊天里改配置](docs/zh-CN/settings.md) | `/setting`：不重启就改 config.yaml |
-| [配置](docs/zh-CN/configuration.md) | config.yaml 全貌、`${VAR}` 与 `.env`、CLI |
-| [智能体能做什么](docs/zh-CN/agent-actions.md) | 按钮提问、发文件、内置 skill |
+| [在聊天里改配置](docs/zh-CN/settings.md) | `/setting` 与网页端设置页（免重启生效） |
+| [配置](docs/zh-CN/configuration.md) | `config.yaml` 全貌、`locale`、`.env`、`SIGHUP` 热重载与 CLI |
+| [智能体能做什么](docs/zh-CN/agent-actions.md) | 反向 CLI、原生 MCP 工具、回复发图与按钮提问 |
 
 ## 参与开发
 
-[AGENTS.md](AGENTS.md) 记录了代码约定、分层规则与安全不变量，并索引了各模块文档
-（[config](src/config/README.md) · [core](src/core/README.md) ·
-[platform](src/platform/README.md) · [daemon](src/daemon/README.md) ·
-[ipc](src/ipc/README.md) · [commands](src/commands/README.md)）。改代码前请先读它。
+[AGENTS.md](AGENTS.md) 记录了代码约定、分层规则、测试规范与安全不变量，并附有 FRAS 代码地图及各模块文档（[config](src/config/README.md) · [core](src/core/README.md) · [platform](src/platform/README.md) · [daemon](src/daemon/README.md) · [ipc](src/ipc/README.md) · [commands](src/commands/README.md)）。改代码前请先阅读。
 
 ## 许可证
 
 [MIT](LICENSE)
 
-本项目起初是 [l0ng-ai/agent-anywhere](https://github.com/l0ng-ai/agent-anywhere) 在 `3d855f8`
-处的一个分支，原作者的架构设计（尤其是 platform 的 profile 抽象层）至今仍是这套代码的骨架，
-此后在其基础上做了大量扩展。上游的 MIT 版权声明保留在 [LICENSE](LICENSE) 中，该声明同时
-覆盖两边的代码。
+本项目起初是 [l0ng-ai/agent-anywhere](https://github.com/l0ng-ai/agent-anywhere) 在 `3d855f8` 处的一个分支，原作者的架构设计（尤其是 platform 的 profile 抽象层）至今仍是这套代码的骨架，此后在其基础上做了大量扩展。上游的 MIT 版权声明保留在 [LICENSE](LICENSE) 中，该声明同时覆盖两边的代码。
