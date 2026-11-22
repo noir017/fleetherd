@@ -1,4 +1,6 @@
 import { agentDisplayName, findAgent } from '../config/schema.js';
+import { localeOf, type Locale } from '../core/i18n/index.js';
+import { tRuntime } from '../core/i18n/runtime.js';
 import { addressOf, type ConversationAddress, type ConversationRef } from '../core/conversation.js';
 import { InboundMerger, stopInputNote } from '../core/inbound-merger.js';
 import { fallbackTitle } from '../core/title-namer.js';
@@ -57,17 +59,40 @@ const KILL_ACK: Record<KillOutcome, string> = {
     '`/stop` ends the turn; `/new` ends the process and starts fresh.',
 };
 
-/** A stop's ack with its note (stopInputNote) under it, when there is one. */
-export function withInputNote(ack: string, kept: readonly InboundMessage[], dropped: readonly InboundMessage[]): string {
-  const note = stopInputNote(kept, dropped);
+export function withInputNote(
+  ack: string,
+  kept: readonly InboundMessage[],
+  dropped: readonly InboundMessage[],
+  locale: Locale = 'en'
+): string {
+  const note = stopInputNote(kept, dropped, locale);
   return note ? `${ack}\n${note}` : ack;
 }
 
-function stopHead(outcome: StopOutcome, calledOff: number, transcripts: number, also: string): string {
-  if (outcome === 'idle' && calledOff > 0) return also ? `${STOP_ACK_QUESTION}\n⏹ Stopped ${also}.` : STOP_ACK_QUESTION;
-  if (outcome === 'idle' && transcripts > 0) return also ? `${STOP_ACK_VOICE}\n⏹ Stopped ${also}.` : STOP_ACK_VOICE;
+function stopAck(outcome: StopOutcome, locale: Locale = 'en'): string {
+  if (locale === 'zh-CN') {
+    switch (outcome) {
+      case 'running':
+        return tRuntime(locale, 'stopAckRunning');
+      case 'collecting':
+        return tRuntime(locale, 'stopAckCollecting');
+      case 'background':
+        return tRuntime(locale, 'stopAckBackground');
+      case 'idle':
+        return tRuntime(locale, 'stopAckIdle');
+    }
+  }
+  return STOP_ACK[outcome];
+}
+
+function stopHead(outcome: StopOutcome, calledOff: number, transcripts: number, also: string, locale: Locale = 'en'): string {
+  const ackQ = locale === 'zh-CN' ? tRuntime(locale, 'stopAckQuestion') : STOP_ACK_QUESTION;
+  const ackV = locale === 'zh-CN' ? tRuntime(locale, 'stopAckVoice') : STOP_ACK_VOICE;
+  const ack = stopAck(outcome, locale);
+  if (outcome === 'idle' && calledOff > 0) return also ? `${ackQ}\n⏹ Stopped ${also}.` : ackQ;
+  if (outcome === 'idle' && transcripts > 0) return also ? `${ackV}\n⏹ Stopped ${also}.` : ackV;
   if (outcome === 'idle' && also) return `⏹ Stopped the ${also}. Their conversations are kept — a message in one carries on from it.`;
-  return also ? `${STOP_ACK[outcome]}\n⏹ Also stopped the ${also}.` : STOP_ACK[outcome];
+  return also ? `${ack}\n⏹ Also stopped the ${also}.` : ack;
 }
 
 const SWEEP_INTERVAL_MS = 60_000;
@@ -123,6 +148,10 @@ export class ConversationTurns {
       onNeedsPerson: (id) => ctx.hooks?.onNeedsPerson?.(id),
       onCooldownOver: (agentId) => ctx.hooks?.onCooldownOver?.(agentId),
     });
+  }
+
+  private get locale(): Locale {
+    return localeOf(this.ctx.config);
   }
 
   /** Only what TurnRunner needs, never the registry itself (no circular dependency). */
@@ -307,7 +336,7 @@ export class ConversationTurns {
         `${kept.length ? `, ${kept.length} message(s) kept` : ''}${dropped.length ? `, ${dropped.length} dropped` : ''}`
     );
     const also = subs ? `${subs} sub-agent${subs === 1 ? '' : 's'} it started` : '';
-    return withInputNote(stopHead(outcome, calledOff, transcripts, also), kept, dropped);
+    return withInputNote(stopHead(outcome, calledOff, transcripts, also, this.locale), kept, dropped, this.locale);
   }
 
   /** What `/stop` does, silently; public for Delegation.stopOpened, which must leave no question live either. */
@@ -321,7 +350,7 @@ export class ConversationTurns {
   killAndReport(key: ConversationId, conv: ConversationRef): string {
     const { outcome, kept, dropped } = this.killWithInput(key);
     console.log(`[conversation] ${key} /kill by ${conv.platform}:${conv.user} → ${outcome}`);
-    return withInputNote(KILL_ACK[outcome], kept, dropped);
+    return withInputNote(KILL_ACK[outcome], kept, dropped, this.locale);
   }
 
   /** Cancel the running turn, keeping context, session ids, binding and child; says what was kept in the lane. */
@@ -345,7 +374,7 @@ export class ConversationTurns {
   }
 
   private sayInputNote(id: ConversationId, kept: readonly InboundMessage[], dropped: readonly InboundMessage[]): void {
-    const note = stopInputNote(kept, dropped);
+    const note = stopInputNote(kept, dropped, this.locale);
     const lane = this.ctx.laneOf(id);
     if (!note || !lane) return;
     void this.ctx.platforms
@@ -394,7 +423,7 @@ export class ConversationTurns {
       if (!lane) continue;
       void this.ctx.platforms
         .get(lane.platformId)
-        ?.sendMessage(lane.address, '⏳ The gateway restarts when this turn is done — it is waiting for it to finish.')
+        ?.sendMessage(lane.address, tRuntime(this.locale, 'gatewayRestartsDoneWaiting'))
         .catch((e) => console.warn('[drain] failed to tell a conversation about the restart:', e instanceof Error ? e.message : e));
     }
   }
@@ -598,31 +627,31 @@ export class ConversationTurns {
    */
   async retryTurn(opts: { retryId: string; user: string; agentId?: string; reconnect?: boolean }): Promise<{ done: boolean; text: string }> {
     const record = this.failedInputs.peek(opts.retryId);
-    if (!record) return { done: false, text: 'Nothing to retry any more — a later turn has run since, or this one was already retried.' };
+    if (!record) return { done: false, text: tRuntime(this.locale, 'retryNothingToRetry') };
     const key = record.conversation;
     const lane = this.ctx.laneFor(key);
     const bound = this.ctx.boundAgentOf(key) ?? record.agentId;
-    if (!lane) return { done: false, text: 'That conversation is gone — send the message again.' };
+    if (!lane) return { done: false, text: tRuntime(this.locale, 'retryConversationGone') };
     const live = this.ctx.conversations.get(key);
-    if (live && !live.merger.isIdle()) return { done: false, text: 'A turn is running here — Retry once it has ended.' };
-    if (this.drainingNow) return { done: false, text: 'The gateway is restarting — Retry in a minute.' };
+    if (live && !live.merger.isIdle()) return { done: false, text: tRuntime(this.locale, 'retryTurnRunning') };
+    if (this.drainingNow) return { done: false, text: tRuntime(this.locale, 'retryGatewayRestarting') };
     const target = opts.agentId ?? bound;
     const def = findAgent(this.ctx.config, target);
-    if (!def) return { done: false, text: `No agent "${target}" is configured.` };
+    if (!def) return { done: false, text: tRuntime(this.locale, 'retryAgentNotConfigured', { target }) };
     // By id: two agents on one harness share a display name, and which one is the whole question.
     const name = target;
     if (opts.reconnect) {
       this.useRetry(record.id, key);
       this.enqueueReconnect(key, lane.platformId, lane.address, bound);
-      return { done: true, text: `↻ Reconnecting to ${bound}…` };
+      return { done: true, text: tRuntime(this.locale, 'reconnectingTo', { bound }) };
     }
     if (record.input.length === 0) {
-      return { done: false, text: 'No saved input to resend — send the message again.' };
+      return { done: false, text: tRuntime(this.locale, 'noSavedInputResend') };
     }
     if (target === bound) {
       this.useRetry(record.id, key);
       this.enqueueRetry(key, lane.platformId, lane.address, target, record.input, opts.user);
-      return { done: true, text: `↻ Retrying with ${name}.` };
+      return { done: true, text: tRuntime(this.locale, 'retryingWith', { name }) };
     }
     const refused = this.ctx.switchRefusal(key, target);
     if (refused === undefined) {
@@ -632,7 +661,7 @@ export class ConversationTurns {
       this.ctx.rebind(key, state, target, lane.platformId, lane.address, false);
       this.carryWorkdir(key, bound, target, workdir);
       this.enqueueRetry(key, lane.platformId, lane.address, target, record.input, opts.user);
-      return { done: true, text: `↻ Retrying with ${name} — it answers this topic now.` };
+      return { done: true, text: tRuntime(this.locale, 'retryingWithAnswersTopic', { name }) };
     }
     return this.retryInNewTopic(record, lane, bound, target, refused, opts.user);
   }
@@ -659,11 +688,11 @@ export class ConversationTurns {
       })
     ).address;
     const conv = this.ctx.conversationAt(lane.platformId, opened);
-    if (!conv) return { done: false, text: 'The new topic does not map to a conversation of its own here — send the message there yourself.' };
+    if (!conv) return { done: false, text: tRuntime(this.locale, 'retryNewTopicMappingFailed') };
     this.ctx.ensureState(conv.key, lane.platformId, target, { fresh: true, opener: 'retry with another agent' });
     this.carryWorkdir(conv.key, bound, target, this.ctx.workdirOf(key, bound));
     this.enqueueRetry(conv.key, lane.platformId, opened, target, record.input, user);
-    return { done: true, text: `↻ Retrying with ${target} in a new topic — this one stays with ${bound}.` };
+    return { done: true, text: tRuntime(this.locale, 'retryingInNewTopic', { target, bound }) };
   }
 
   retryRecord(retryId: string): { conversation: ConversationId; agentId: string } | undefined {

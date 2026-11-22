@@ -1,5 +1,7 @@
 import type { Config } from '../config/schema.js';
 import { findAgent } from '../config/schema.js';
+import { localeOf, type Locale } from '../core/i18n/index.js';
+import { tRuntime } from '../core/i18n/runtime.js';
 import { looksLikeCommand } from './routing.js';
 import { addressOf, formatTarget, sameAddress, type ConversationAddress, type ConversationRef } from '../core/conversation.js';
 import type {
@@ -175,21 +177,28 @@ function attachmentNames(batch: InboundMessage[]): string[] {
  * the bot talking to itself. Deliberately not configurable — a gateway that could be set to deliver
  * background output indistinguishably from a reply would just be recreating the confusion.
  */
-const FOLLOW_UP_MARKER = '⏱ background update — picking up where the last reply left off';
+export const FOLLOW_UP_MARKER = '⏱ background update — picking up where the last reply left off';
+
+export function followUpMarker(locale?: Locale): string {
+  return tRuntime(locale, 'followUpMarker');
+}
 
 /** How long a side question may run in its answer's first line before it is cut. */
 const ASIDE_QUESTION_MAX = 120;
 
 /** The first line of a side answer: which question it answers, on one line. */
-function asideHeader(question: string): string {
+export function asideHeader(question: string, _locale?: Locale): string {
   const flat = question.replace(/\s+/g, ' ').trim();
   return `↪ btw: ${flat.length > ASIDE_QUESTION_MAX ? `${flat.slice(0, ASIDE_QUESTION_MAX - 1)}…` : flat}`;
 }
 
 /** The closing line of a side answer: that it is not in the conversation, and anything else worth saying. */
-function asideFooter(tools: number, note: string | undefined): string {
-  const parts = ['side question — not kept in this conversation'];
-  if (tools > 0) parts.push(`${tools} tool call${tools === 1 ? '' : 's'}`);
+export function asideFooter(tools: number, note: string | undefined, locale?: Locale): string {
+  const loc = locale ?? 'en';
+  const parts = [tRuntime(loc, 'asideFooterBase')];
+  if (tools > 0) {
+    parts.push(tools === 1 ? tRuntime(loc, 'asideFooterToolsSingle') : tRuntime(loc, 'asideFooterToolsMultiple', { count: tools }));
+  }
   if (note) parts.push(note);
   return parts.join(' · ');
 }
@@ -666,6 +675,10 @@ export class TurnRunner {
    */
   private readonly running = new Map<ConversationId, RunningTurn>();
 
+  private get locale(): Locale {
+    return localeOf(this.config);
+  }
+
   constructor(
     private readonly config: Config,
     /** Platform adapters keyed by instance id; each turn resolves its adapter from the batch's platform. */
@@ -974,7 +987,7 @@ export class TurnRunner {
     const short = reason.length > FAILURE_NOTICE_CHARS ? reason.slice(0, FAILURE_NOTICE_CHARS - 1) + '…' : reason;
     // Said after the cap, so a long error cannot cut it off: whether the agent has this message
     // is what decides the person's next move.
-    const notice = `❌ This turn failed: ${short}${undelivered ? `\n${undeliveredLine(kept.held)}` : ''}`;
+    const notice = `${tRuntime(this.locale, 'turnFailedPrefix')}: ${short}${undelivered ? `\n${undeliveredLine(kept.held, this.locale)}` : ''}`;
     const sent = await this.sendFailureNotice(t.platform, t.address, notice, retryId, {
       reconnect: canReconnect,
       resend: canResend,
@@ -1050,6 +1063,7 @@ export class TurnRunner {
       text,
       retryButtons(retryId, {
         anotherAgent: this.config.agents.length > 1,
+        locale: this.locale,
         ...(opts?.reconnect ? { reconnect: true, resend: opts.resend } : {}),
       })
     );
@@ -1434,6 +1448,7 @@ export class TurnRunner {
     const tools = new ToolRenderer(
       {
         mode: this.config.tools.mode,
+        locale: this.locale,
         // Tool-progress grouping (accumulate = edit one bubble in place; needs editBubble).
         grouping: this.config.tools.grouping,
         // A platform that folds long lines itself asks for more of each command than a chat app
@@ -1585,7 +1600,7 @@ export class TurnRunner {
       // after the first chunk of the text it is introducing.
       render.enqueue(() =>
         platform
-          .sendMessage(target.address, FOLLOW_UP_MARKER)
+          .sendMessage(target.address, followUpMarker(this.locale))
           .then(() => undefined)
           .catch((e) => console.warn('[follow-up] failed to send the marker:', e instanceof Error ? e.message : e))
       );
@@ -1682,7 +1697,7 @@ export class TurnRunner {
     const open = (): void => {
       if (opened) return;
       opened = true;
-      stream.push(asideHeader(question));
+      stream.push(asideHeader(question, this.locale));
     };
     const handlers: AgentStreamHandlers = {
       onText: (delta) => {
@@ -1720,7 +1735,7 @@ export class TurnRunner {
         open();
         if (!answered && !note) stream.push('\n\n(no answer)');
         await stream
-          .complete({ footer: asideFooter(tools, note) })
+          .complete({ footer: asideFooter(tools, note, this.locale) })
           .catch((e) => console.error('[btw] failed to finish the answer:', describeOutboundError(e)));
       },
     };
@@ -1979,11 +1994,11 @@ export class TurnRunner {
    * harness-swallowed built-in stdout, or an unknown command); send a note. best-effort, failures logged.
    */
   private async sendCommandFallback(platform: PlatformAdapter, address: ConversationAddress, lastContent: string): Promise<void> {
-    const cmd = lastContent.split(/\s+/)[0];
+    const cmd = lastContent.split(/\s+/)[0] ?? '';
     await platform
       .sendMessage(
         address,
-        `ℹ️ Ran \`${cmd}\`, but there was no output to display.\n(A few built-in commands such as /compact don't relay their results to IM; an unknown command does nothing.)`
+        tRuntime(this.locale, 'commandFallbackNotice', { cmd })
       )
       .catch((e) => console.error('[turn] failed to send command fallback notice:', e instanceof Error ? e.message : e));
   }

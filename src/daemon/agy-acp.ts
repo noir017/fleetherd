@@ -1,5 +1,7 @@
 import type { SessionConfigOption } from '@agentclientprotocol/sdk';
 import type { AgentDef } from '../config/schema.js';
+import type { Locale } from '../core/i18n/index.js';
+import { tRuntime } from '../core/i18n/runtime.js';
 import { TurnFailure } from './agent.js';
 import { truncateToolName } from './agent-common.js';
 import { agyCompactionPoint, agyContextWindow } from './agy-meters.js';
@@ -200,7 +202,8 @@ export function agyTurnWatch(
   agentId: string,
   notice: (text: string) => void,
   inTurn: boolean,
-  hooks: AgyWatchHooks = {}
+  hooks: AgyWatchHooks = {},
+  locale: Locale = 'en'
 ): AgyTurnWatch {
   /** Keys already said this turn: a retry loop repeats itself, the chat should not. */
   const said = new Set<string>();
@@ -233,7 +236,7 @@ export function agyTurnWatch(
       if (!inTurn) {
         say(warning, `⚠️ ${agentId}: ${warning}`);
       } else if (isRetryWarning(warning)) {
-        say(warning.replace(/\(attempt \d+\)/i, ''), `⚠️ ${agentId} hit an error and is retrying: ${warning}`);
+        say(warning.replace(/\(attempt \d+\)/i, ''), tRuntime(locale, 'noticeAgyRetrying', { agent: agentId, warning }));
       } else {
         held.push(warning);
       }
@@ -252,7 +255,7 @@ export function agyTurnWatch(
       if (endedInWarning && lastWarning) {
         return { failure: new TurnFailure(`agy: ${lastWarning}`, 'provider') };
       }
-      for (const w of held) say(w, `⚠️ ${agentId} hit an error and recovered: ${w}`);
+      for (const w of held) say(w, tRuntime(locale, 'noticeAgyRecovered', { agent: agentId, warning: w }));
       if (reported) return { noContext: 'reported' };
       const tokens = contextTokensOf(usage);
       if (tokens === undefined) return { noContext: 'no-usage' };

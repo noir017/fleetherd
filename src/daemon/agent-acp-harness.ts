@@ -13,6 +13,8 @@ import type {
 } from '@agentclientprotocol/sdk';
 import type { SteerOutcome } from '../types.js';
 import type { AgentDef } from '../config/schema.js';
+import type { Locale } from '../core/i18n/index.js';
+import { tRuntime } from '../core/i18n/runtime.js';
 import type { Welcome } from '../remote/connection.js';
 import type { RemoteHost } from '../remote/host.js';
 import type { AgentStreamHandlers, RunTurnInput } from './agent.js';
@@ -846,7 +848,8 @@ export function watchHarnessLog(
   def: AgentDef,
   conversationId: string,
   getSessionId: () => string | undefined,
-  handlers: AgentStreamHandlers
+  handlers: AgentStreamHandlers,
+  locale: Locale = 'en'
 ): {
   /** The harness's last word on this turn, re-read at the moment it is asked for. */
   lastReason: () => Promise<string | undefined>;
@@ -862,7 +865,7 @@ export function watchHarnessLog(
       if (!announce || announced.has(e.reason)) continue;
       announced.add(e.reason);
       console.log(`[acp] ${conversationId}: ${def.harness} logged an error mid-turn: ${e.reason}`);
-      handlers.onNotice?.(`⚠️ ${def.id} hit an error and is retrying: ${trimReason(e.reason)}`);
+      handlers.onNotice?.(tRuntime(locale, 'noticeHarnessErrorRetrying', { agent: def.id, reason: trimReason(e.reason) }));
     }
   };
   const timer = harnessLogProbe(def.harness)

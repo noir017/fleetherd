@@ -13,6 +13,8 @@ import { ensureReverseCliShim } from './reverse-cli-shim.js';
 import { ensureSkillLink } from './skill-link.js';
 import { ensureAgyPlugin } from './agy-plugin.js';
 import { withLegacyNames } from '../legacy-name.js';
+import type { Locale } from '../core/i18n/index.js';
+import { tRuntime } from '../core/i18n/runtime.js';
 
 /**
  * Helpers shared by the agent runtime and by the harness CLIs it runs beside a session.
@@ -252,7 +254,8 @@ const LINK_NOTICE_AFTER_MS = 10_000;
 export function watchRemoteLink(
   host: RemoteHost | undefined,
   handlers: Pick<AgentStreamHandlers, 'onNotice'>,
-  onUp: () => void
+  onUp: () => void,
+  locale: Locale = 'en'
 ): () => void {
   if (!host) return () => {};
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -261,14 +264,14 @@ export function watchRemoteLink(
     if (timer) return;
     timer = setTimeout(() => {
       told = true;
-      handlers.onNotice?.(`⚠️ Lost the connection to ${host.id}. The agent keeps working there; its reply follows once the connection is back.`);
+      handlers.onNotice?.(tRuntime(locale, 'noticeRemoteLost', { host: host.id }));
     }, LINK_NOTICE_AFTER_MS);
     timer.unref?.();
   };
   const up = (): void => {
     if (timer) clearTimeout(timer);
     timer = undefined;
-    if (told) handlers.onNotice?.(`✅ Reconnected to ${host.id}.`);
+    if (told) handlers.onNotice?.(tRuntime(locale, 'noticeReconnected', { target: host.id }));
     told = false;
     onUp();
   };

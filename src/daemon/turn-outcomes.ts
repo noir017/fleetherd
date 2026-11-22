@@ -1,5 +1,7 @@
 import type { AgentDef, Config } from '../config/schema.js';
 import { findAgent } from '../config/schema.js';
+import { localeOf, type Locale } from '../core/i18n/index.js';
+import { tRuntime } from '../core/i18n/runtime.js';
 import type { ConversationAddress } from '../core/conversation.js';
 import {
   continueDelayMs,
@@ -148,6 +150,10 @@ export class TurnOutcomes {
   private readonly cooldowns = new Map<string, Cooldown>();
 
   constructor(private readonly deps: TurnOutcomesDeps) {}
+
+  private get locale(): Locale {
+    return localeOf(this.deps.config);
+  }
 
   /** Whether an agent is cooling down after a usage limit (see Cooldown). */
   coolingDown(agentId: string): boolean {
@@ -306,11 +312,11 @@ export class TurnOutcomes {
       const where = this.deps.laneOf(id);
       if (where) {
         const platform = this.deps.platforms.get(where.platformId);
-        const text = '⚠️ The gateway restarted before this turn finished — the agent stopped where it was.';
+        const text = tRuntime(this.locale, 'gatewayRestartedInterrupted');
         const recon = platform?.capabilities?.buttons ? reconnectFor?.(id, agent) : undefined;
         if (platform && recon) {
           void platform
-            .sendButtons(where.address, text, retryButtons(recon.retryId, { anotherAgent: false, reconnect: true, resend: false }))
+            .sendButtons(where.address, text, retryButtons(recon.retryId, { anotherAgent: false, reconnect: true, resend: false, locale: this.locale }))
             .then((ref) => recon.onSent(where.platformId, ref, text))
             .catch((e) => console.warn('[outcomes] could not report an interrupted turn:', e instanceof Error ? e.message : e));
         } else {
@@ -365,7 +371,13 @@ export class TurnOutcomes {
     const state = this.continuing.get(id) ?? { sent: 0 };
     if (state.sent >= policy.max) {
       this.continuing.delete(id);
-      this.say(id, `↻ Not continuing again: ${policy.max} automatic ${policy.max === 1 ? 'continue' : 'continues'} in a row ended in a failure too.`);
+      this.say(
+        id,
+        tRuntime(this.locale, 'notContinuingAgain', {
+          max: policy.max,
+          continuesWord: policy.max === 1 ? tRuntime(this.locale, 'continuesWordSingle') : tRuntime(this.locale, 'continuesWordMultiple'),
+        })
+      );
       return undefined;
     }
     const attempt = state.sent + 1;
@@ -375,8 +387,13 @@ export class TurnOutcomes {
     this.continuing.set(id, state);
     this.say(
       id,
-      `↻ ${capitalise(describeFailureReason(reason))} — sending “${preview(policy.message)}” in ${seconds(delay)} ` +
-        `(${attempt}/${policy.max}). Send anything, or /stop, to call it off.`
+      tRuntime(this.locale, 'sendingContinueIn', {
+        reason: capitalise(describeFailureReason(reason, this.locale)),
+        preview: preview(policy.message),
+        seconds: seconds(delay, this.locale),
+        attempt,
+        max: policy.max,
+      })
     );
     console.log(`[outcomes] ${id}: ${reason} — continue ${attempt}/${policy.max} in ${seconds(delay)}`);
     return { attempt, max: policy.max, at };
@@ -440,7 +457,13 @@ export class TurnOutcomes {
     const state = this.continuing.get(id) ?? { sent: 0 };
     if (state.sent >= continues.max) {
       this.continuing.delete(id);
-      this.say(id, `↻ Not continuing again: ${continues.max} automatic ${continues.max === 1 ? 'continue' : 'continues'} in a row ended in a failure too.`);
+      this.say(
+        id,
+        tRuntime(this.locale, 'notContinuingAgain', {
+          max: continues.max,
+          continuesWord: continues.max === 1 ? tRuntime(this.locale, 'continuesWordSingle') : tRuntime(this.locale, 'continuesWordMultiple'),
+        })
+      );
       // The probe has spent the agent's budget: the limit outlasted it, and the conversations
       // waiting on the same limit are told so rather than each spending a budget of their own.
       if (wasProbe) this.giveUpWaiting(agentId, cd, continues.max);
@@ -491,15 +514,27 @@ export class TurnOutcomes {
     attempt: number,
     at: number
   ): string {
+    const loc = this.locale;
     const first = cd.waiting.keys().next().value === id && cd.probe === undefined;
     const others = cd.waiting.size - 1 + (cd.probe !== undefined ? 1 : 0);
-    const when = first ? `in ${seconds(Math.max(0, at - this.deps.clock.now()))}` : 'once another conversation on it gets through';
+    const when = first
+      ? tRuntime(loc, 'limitNoticeWaitingFirst', { seconds: seconds(Math.max(0, at - this.deps.clock.now()), loc) })
+      : tRuntime(loc, 'limitNoticeWaitingLater');
     const behind =
-      first && others > 0 ? `; ${others} more ${others === 1 ? 'conversation waits' : 'conversations wait'} for this one to get through` : '';
-    return (
-      `↻ ${capitalise(describeFailureReason('limit'))} on ${agentId} — sending “${preview(policy.message)}” ${when} ` +
-      `(${attempt}/${policy.max})${behind}. Send anything, or /stop, to call it off.`
-    );
+      first && others > 0
+        ? others === 1
+          ? tRuntime(loc, 'limitNoticeOthersSingle')
+          : tRuntime(loc, 'limitNoticeOthersMultiple', { count: others })
+        : '';
+    return tRuntime(loc, 'limitNotice', {
+      reason: capitalise(describeFailureReason('limit', loc)),
+      agent: agentId,
+      preview: preview(policy.message),
+      when,
+      attempt,
+      max: policy.max,
+      behind,
+    });
   }
 
   /** (Re)start the wait, at the length this many strikes earns. */
@@ -560,7 +595,14 @@ export class TurnOutcomes {
       this.continuing.delete(id);
       const current = this.activity.get(id);
       this.set(id, { ...(current?.outcome ? { outcome: current.outcome } : {}) });
-      this.say(id, `↻ Not continuing: ${agentId} stayed over its usage limit through ${max} automatic ${max === 1 ? 'continue' : 'continues'}.`);
+      this.say(
+        id,
+        tRuntime(this.locale, 'notContinuingLimit', {
+          agent: agentId,
+          max,
+          continuesWord: max === 1 ? tRuntime(this.locale, 'continuesWordSingle') : tRuntime(this.locale, 'continuesWordMultiple'),
+        })
+      );
       this.deps.onNeedsPerson?.(id);
     }
     console.log(`[outcomes] ${agentId}: the limit outlasted ${max} continue(s); ${cd.waiting.size} waiting conversation(s) left for the person`);
@@ -642,7 +684,10 @@ export class TurnOutcomes {
   }
 }
 
-function seconds(ms: number): string {
+function seconds(ms: number, locale: Locale = 'en'): string {
+  if (locale === 'zh-CN') {
+    return ms < 60_000 ? `${Math.round(ms / 1000)} 秒` : `${Math.round(ms / 60_000)} 分钟`;
+  }
   return ms < 60_000 ? `${Math.round(ms / 1000)}s` : `${Math.round(ms / 60_000)} min`;
 }
 

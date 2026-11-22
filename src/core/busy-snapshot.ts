@@ -1,3 +1,5 @@
+import { type Locale } from './i18n/index.js';
+import { tRuntime } from './i18n/runtime.js';
 import { formatRuntimeFooter } from './runtime-footer.js';
 
 /**
@@ -21,6 +23,7 @@ export interface UsageSnapshotInput {
   cost?: { amount: number; currency: string };
   /** How long the running turn has been going; absent while it is still being collected. */
   runningForMs?: number;
+  locale?: Locale;
 }
 
 /** `$30.64` for USD (the only currency seen so far), `12.50 EUR` otherwise. */
@@ -42,20 +45,25 @@ export function formatElapsed(ms: number): string {
 }
 
 /** The `/usage` snapshot body (the busy note is appended separately — see busyNote). */
-export function formatUsageSnapshot(input: UsageSnapshotInput): string {
-  const lines = [`**Usage** — gateway snapshot of ${input.agent}`];
+export function formatUsageSnapshot(input: UsageSnapshotInput, locale?: Locale): string {
+  const loc = locale ?? input.locale ?? 'en';
+  const lines = [tRuntime(loc, 'usageSnapshotTitle', { agent: input.agent })];
   const context = input.usage
     ? formatRuntimeFooter({ contextTokens: input.usage.used, contextLength: input.usage.size }, ['context'])
     : '';
-  lines.push(`Context: ${context || 'not reported yet'}`);
+  lines.push(
+    context
+      ? tRuntime(loc, 'usageSnapshotContext', { context })
+      : tRuntime(loc, 'usageSnapshotContextNotReported')
+  );
   // "Not reported" rather than "yet": codex-acp never sends a cost at all, while claude sends one
   // only when a turn finishes, and nothing here can tell the two apart honestly.
   lines.push(
     input.cost
-      ? `Cost: ${formatCost(input.cost)} this session, as of the last finished turn`
-      : 'Cost: not reported'
+      ? tRuntime(loc, 'usageSnapshotCost', { cost: formatCost(input.cost) })
+      : tRuntime(loc, 'usageSnapshotCostNotReported')
   );
-  if (input.runningForMs !== undefined) lines.push(`This turn: running ${formatElapsed(input.runningForMs)}`);
+  if (input.runningForMs !== undefined) lines.push(tRuntime(loc, 'usageSnapshotRunning', { elapsed: formatElapsed(input.runningForMs) }));
   return lines.join('\n');
 }
 
@@ -65,10 +73,6 @@ export function formatUsageSnapshot(input: UsageSnapshotInput): string {
  * would have had to wait out, and a batch still in its merge window, which it would have been glued
  * onto. Either way the command would not have been answered now.
  */
-export function busyNote(command: string, agent: string): string {
-  return (
-    `⏳ ${agent} is busy with a turn, and forwarded /${command} would only have been answered after ` +
-    `it — so the gateway answered from what it already holds. Send /${command} again once the turn ` +
-    `ends for ${agent}'s own full answer.`
-  );
+export function busyNote(command: string, agent: string, locale: Locale = 'en'): string {
+  return tRuntime(locale, 'busyNote', { command, agent });
 }

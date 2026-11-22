@@ -17,6 +17,8 @@ import type {
 import type { PermissionAnswer, SessionOption, SteerOutcome } from '../types.js';
 import type { AgentDef, Config } from '../config/schema.js';
 import { findAgent } from '../config/schema.js';
+import { localeOf, type Locale } from '../core/i18n/index.js';
+import { tRuntime } from '../core/i18n/runtime.js';
 import { asksPerson } from '../core/permission-levels.js';
 import type {
   AgentFactory,
@@ -199,6 +201,7 @@ export function createAcpAgentFactory(
 ): AgentFactory {
   const sessions = new Map<string, AgentSession>();
   const turnTimeoutMs = cfg.session.turnTimeoutMs;
+  const locale = localeOf(cfg);
   // One reading per agy account for the whole runtime, whichever conversation asked (agy-acp.ts).
   const quota = createQuotaMeter({ agy: agyCli });
 
@@ -208,7 +211,7 @@ export function createAcpAgentFactory(
       if (!s) {
         const def = findAgent(cfg, agentId);
         if (!def) throw new Error(`unknown agent id: ${agentId} (check the routing and agents config)`);
-        s = new AcpSession(def, socketPath, sessionId, turnTimeoutMs, store, hasQuotaSource(def) ? quota : undefined, redial);
+        s = new AcpSession(def, socketPath, sessionId, turnTimeoutMs, store, hasQuotaSource(def) ? quota : undefined, redial, locale);
         sessions.set(sessionId, s);
       }
       return s;
@@ -300,7 +303,8 @@ class AcpSession implements AgentSession {
     private readonly turnTimeoutMs: number,
     private readonly store?: ConversationStore,
     quota?: QuotaMeter,
-    private readonly redialTiming?: RedialTiming
+    private readonly redialTiming?: RedialTiming,
+    private readonly locale: Locale = 'en'
   ) {
     this.conversationId = conversationId;
     this.cwd = resolveConversationCwd(def, conversationId, store);
@@ -701,7 +705,7 @@ class AcpSession implements AgentSession {
           ? agyTurnWatch(this.def.id, (text) => handlers.onNotice?.(text), inTurn, {
               onModelCall: () => this.agyMeter.refreshAgyContext(handlers),
               window: (reported) => agyWindow(this.def, this.options.currentModelValue(), reported),
-            })
+            }, this.locale)
           : undefined,
     };
   }
@@ -866,7 +870,7 @@ class AcpSession implements AgentSession {
           `[acp] ${this.conversationId}: "${this.def.id}" is still running ${this.stopGraceMs}ms after the cancel and cannot resume a stored session; leaving its process up`
         );
         handlers.onNotice?.(
-          `⚠️ ${this.def.id} is still running ${secs}s after /stop. It cannot resume a stored session, so ending its process would lose this conversation — \`/new\` ends it and starts over.`
+          tRuntime(this.locale, 'noticeStillRunningUnresumable', { agent: this.def.id, secs })
         );
         return;
       }
@@ -874,7 +878,7 @@ class AcpSession implements AgentSession {
         `[acp] ${this.conversationId}: "${this.def.id}" is still running ${this.stopGraceMs}ms after the cancel; ending its process (the next message resumes the session)`
       );
       handlers.onNotice?.(
-        `⏹ ${this.def.id} was still running ${secs}s after /stop, so its process was ended. The conversation is kept — the next message resumes it.`
+        tRuntime(this.locale, 'noticeStillRunningKilled', { agent: this.def.id, secs })
       );
       this.disposeChild();
       endTurn(new Error(`"${this.def.id}" did not stop in time`));
@@ -1045,7 +1049,7 @@ class AcpSession implements AgentSession {
     const stop = new AbortController();
     this.stopRedial = stop;
     const output = trackVisibleOutput(incomingHandlers, () => this.agyMeter.quotaOnFirstOutput(incomingHandlers, this.cwd));
-    const redial = new Redialer({ agent: this.def.id, notice: (text) => output.handlers.onNotice?.(text), ...this.redialTiming });
+    const redial = new Redialer({ agent: this.def.id, notice: (text) => output.handlers.onNotice?.(text), locale: this.locale, ...this.redialTiming });
     const closePromptWindow = this.openPromptWindow();
     try {
       if (!(await this.prepareTurnStart(input, closePromptWindow, redial))) return;
@@ -1070,8 +1074,8 @@ class AcpSession implements AgentSession {
     const host = remoteHosts.hostFor(this.def);
     const watchdog = this.createSilenceWatchdog(state, host);
     let driver = createTurnPromptDriver(this.conversationId);
-    const logWatch = watchHarnessLog(this.def, this.conversationId, () => this.active?.sessionId, handlers);
-    const unwatchLink = watchRemoteLink(host, handlers, watchdog.rearm);
+    const logWatch = watchHarnessLog(this.def, this.conversationId, () => this.active?.sessionId, handlers, this.locale);
+    const unwatchLink = watchRemoteLink(host, handlers, watchdog.rearm, this.locale);
     const fold = watchForFoldedPrompt(this.conversationId, this.turnTimeoutMs, state, () => this.awaitingUser > 0);
     const stopWatch = this.watchStop(state, handlers, watchdog.trigger);
 
