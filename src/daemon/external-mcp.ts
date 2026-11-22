@@ -268,6 +268,8 @@ function describe(a: ExternalAction): string {
   switch (a.kind) {
     case 'skills':
       return a.action.action;
+    case 'sessions':
+      return a.action.kind;
     case 'open':
       return 'open';
     case 'topics':

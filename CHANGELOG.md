@@ -5,6 +5,20 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **Read-only `sessions` tool on the external MCP entrance.** Callers configured with `sessions`
+  in `mcp.callers[].tools` can now list, search, and read the gateway's conversation library
+  (`list`, `search`, `read`) over the external HTTP MCP endpoint without write access or shell
+  execution. Reuses `sessions`'s reverse-command validation and `HistoryStore` lookup (including
+  full topic keys such as `web:main/2e233c24` and unambiguous 8-character short topic IDs), so
+  external web agents can inspect referenced conversations directly.
+- **`SIGHUP` hot reload for the daemon and host wrapper.** The daemon now listens for `SIGHUP`
+  on POSIX platforms and runs `reloadAll()` in place (re-reading `config.yaml`, `.env`, and remote
+  `pod.yaml` without restarting or requiring `FLEETHERD_TURN_TOKEN`), ignoring signals while
+  shutting down or draining. The host-side Docker wrapper (`docker/fleetherd-host`) adds
+  `fleetherd reload` to send `SIGHUP` to the container and print the resulting `[reload]` log line.
+
 ## [3.30.0] - 2026-11-22
 
 ### Added

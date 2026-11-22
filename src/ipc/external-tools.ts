@@ -4,13 +4,16 @@ import { findNativeTool, SKILLS_TOOL_ACTIONS, toolAction, toolInputSchema, type 
 
 /**
  * The tools the external MCP entrance offers (daemon/external-mcp.ts): what a caller outside the
- * gateway — a web agent behind an MCP proxy — may do here. Two, and both are views of the reverse
+ * gateway — a web agent behind an MCP proxy — may do here. Three, all views of the reverse
  * commands an agent in a conversation already has, so a call is validated exactly as the same
  * command typed into a shell would be (tools.ts "One source"):
  *
  *  - `skills` — the native tool's schema and actions, `search` and `show`, nothing that writes; its
  *    description alone is written for a caller, which has no skill list of its own. A caller reads
  *    the library; it never adds to what every agent reads (invariant 8).
+ *  - `sessions` — read-only conversation library queries (`list`, `search`, `read`) fronted by one
+ *    tool with an `action`, reusing `sessions`'s own validation and HistoryStore lookup (including
+ *    unambiguous 8-char short topic ids). Strictly read-only, opt-in per caller.
  *  - `tasks` — the sub-agent commands (`task-agents`, `tasks`, `task-new`, `task-read`,
  *    `task-status`, `task-stop`) as one tool with an `action`, plus `open`, which a conversation never
  *    needs: an agent in one already has a topic to nest sub-tasks under, and a caller from outside
@@ -29,9 +32,16 @@ export type TaskCommand = Extract<
   { kind: 'task-agents' | 'task-list' | 'task-new' | 'task-read' | 'task-status' | 'task-stop' }
 >;
 
+/** The read-only conversation-library commands the `sessions` tool fronts. */
+export type SessionsCommand = Extract<
+  IpcAction,
+  { kind: 'sessions-list' | 'sessions-search' | 'sessions-read' }
+>;
+
 /** What one external tool call asks the daemon for. */
 export type ExternalAction =
   | { kind: 'skills'; action: Extract<IpcAction, { kind: 'skills' }> }
+  | { kind: 'sessions'; action: SessionsCommand }
   /** Open a coordination topic in the web UI, titled for the caller. */
   | { kind: 'open'; title?: string }
   /** The coordination topics this caller opened (`list` without a topic). */
@@ -42,8 +52,8 @@ export type ExternalAction =
    */
   | { kind: 'task'; in?: string; action: TaskCommand };
 
-export type ExternalToolName = 'skills' | 'tasks';
-export const EXTERNAL_TOOL_NAMES: readonly ExternalToolName[] = ['skills', 'tasks'];
+export type ExternalToolName = 'skills' | 'tasks' | 'sessions';
+export const EXTERNAL_TOOL_NAMES: readonly ExternalToolName[] = ['skills', 'tasks', 'sessions'];
 
 /** One `tasks` action: the reverse command it runs (none for `open`), and the parameters it takes. */
 interface TasksAction {
@@ -104,16 +114,71 @@ const TASKS_DESCRIPTION =
   'puts up. Nobody tells you when a sub-task ends: check with list, then read (reply: true for what it concluded). ' +
   'You see and stop only sub-tasks under topics you opened.';
 
-/** The `tasks` tool's argument schema: `action`, and every parameter some action takes. */
-function tasksInputSchema(): Record<string, unknown> {
+interface ParamSpec {
+  description: string;
+  type?: 'boolean';
+  enum?: readonly string[];
+}
+
+const SESSIONS_ACTIONS = {
+  list: { params: ['days', 'limit', 'before'] },
+  search: { params: ['query', 'agent', 'days', 'limit', 'tools'] },
+  read: { params: ['session', 'around', 'window', 'role', 'turn', 'turns', 'since', 'grep', 'tail', 'limit', 'full', 'reply'] },
+} as const satisfies Record<string, { params: readonly string[] }>;
+
+type SessionsActionName = keyof typeof SESSIONS_ACTIONS;
+const SESSIONS_ACTION_NAMES = Object.keys(SESSIONS_ACTIONS) as SessionsActionName[];
+
+const SESSIONS_PARAMS: Record<string, ParamSpec> = {
+  action: {
+    description:
+      'list: recent conversations (returns #id and topic key). ' +
+      'search: keyword search across past conversations (returns session #id, message #id, and excerpt). ' +
+      'read: open one conversation by #id, full topic key (e.g. web:main/3a9f0c12), or unambiguous 8-char short topic id.',
+  },
+  query: { description: 'search: keyword or phrase to look for (required).' },
+  session: { description: 'read: conversation #id (e.g. #12 or 12), full topic key (web:main/3a9f0c12), or unambiguous 8-char short topic id (required).' },
+  agent: { description: 'search: only conversations answered by this agent.' },
+  days: { description: 'list/search: only conversations or messages from the last n days (list default 7).' },
+  limit: { description: 'list: how many rows (default 30, max 200). search: how many hits (default 10, max 100). read: newest n messages (max 500).' },
+  before: { description: 'list: continue after this conversation #id (the last row of a full page).' },
+  tools: { description: 'search: include tool calls and their arguments (off by default).', type: 'boolean' },
+  around: { description: 'read: a message #id from a search hit, to read messages around it.' },
+  window: { description: 'read: messages on each side of around (default 10, max 100).' },
+  role: { description: 'read: only user, agent, or tool rows.', enum: ['user', 'agent', 'tool'] },
+  turn: { description: 'read: one turn — last, done (last normally-ended turn), or a 1-based turn number.' },
+  turns: { description: 'read: the last n turns (at most 100).' },
+  since: { description: 'read: rows after this message #id, oldest first (not combinable with turn/turns/tail/limit).' },
+  grep: { description: 'read: only rows of this conversation containing this text.' },
+  tail: { description: 'read: newest n matching messages, oldest first (max 500).' },
+  full: { description: 'read: accepted for parity with task read; a session read is already whole.', type: 'boolean' },
+  reply: { description: 'read: the last turn that ended normally, and its reply whole (stands alone).', type: 'boolean' },
+};
+
+const SESSIONS_DESCRIPTION =
+  'Read-only access to the gateway\'s library of past conversations across all agents and platforms. ' +
+  'Use list to browse recent topics, search to find hits by keyword, and read to inspect a referenced conversation ' +
+  'by #id, full topic key (web:main/3a9f0c12), or unambiguous 8-char short topic id.';
+
+/** Build an action-dispatched JSON Schema from an action map and parameter descriptions. */
+function actionInputSchema(
+  tool: string,
+  actions: Record<string, { params: readonly string[] }>,
+  params: Record<string, ParamSpec>
+): Record<string, unknown> {
+  const actionNames = Object.keys(actions);
   const properties: Record<string, Record<string, unknown>> = {
-    action: { type: 'string', enum: [...TASKS_ACTION_NAMES], description: TASKS_PARAMS.action!.description },
+    action: { type: 'string', enum: actionNames, description: params.action!.description },
   };
-  const names = new Set(TASKS_ACTION_NAMES.flatMap((a) => [...TASKS_ACTIONS[a].params]));
+  const names = new Set(actionNames.flatMap((a) => [...actions[a]!.params]));
   for (const name of names) {
-    const p = TASKS_PARAMS[name];
-    if (!p) throw new Error(`internal: tasks parameter "${name}" has no description`);
-    properties[name] = { type: p.type ?? 'string', description: p.description };
+    const p = params[name];
+    if (!p) throw new Error(`internal: ${tool} parameter "${name}" has no description`);
+    properties[name] = {
+      type: p.type ?? 'string',
+      description: p.description,
+      ...(p.enum ? { enum: [...p.enum] } : {}),
+    };
   }
   return { type: 'object', properties, required: ['action'], additionalProperties: false };
 }
@@ -136,11 +201,11 @@ const SKILLS_DESCRIPTION_FOR_CALLERS =
 
 /**
  * MCP clients treat tools without `readOnlyHint: true` as write actions and prompt on every call.
- * `skills` is strictly read-only (`search` / `show`); `tasks` mixes reads with proposing/stopping
+ * `skills` and `sessions` are strictly read-only; `tasks` mixes reads with proposing/stopping
  * sub-tasks (`open` / `new` / `stop`), so it cannot claim read-only, though nothing it does is
  * destructive (sub-tasks wait on a confirmation card).
  */
-const SKILLS_ANNOTATIONS: McpToolAnnotations = {
+const READ_ONLY_ANNOTATIONS: McpToolAnnotations = {
   readOnlyHint: true,
   destructiveHint: false,
   idempotentHint: true,
@@ -157,10 +222,22 @@ export function externalToolDefinition(name: ExternalToolName): McpTool {
   switch (name) {
     case 'skills': {
       const tool = skillsTool();
-      return { name, description: SKILLS_DESCRIPTION_FOR_CALLERS, inputSchema: toolInputSchema(tool), annotations: SKILLS_ANNOTATIONS };
+      return { name, description: SKILLS_DESCRIPTION_FOR_CALLERS, inputSchema: toolInputSchema(tool), annotations: READ_ONLY_ANNOTATIONS };
     }
+    case 'sessions':
+      return {
+        name,
+        description: SESSIONS_DESCRIPTION,
+        inputSchema: actionInputSchema('sessions', SESSIONS_ACTIONS, SESSIONS_PARAMS),
+        annotations: READ_ONLY_ANNOTATIONS,
+      };
     case 'tasks':
-      return { name, description: TASKS_DESCRIPTION, inputSchema: tasksInputSchema(), annotations: TASKS_ANNOTATIONS };
+      return {
+        name,
+        description: TASKS_DESCRIPTION,
+        inputSchema: actionInputSchema('tasks', TASKS_ACTIONS, TASKS_PARAMS),
+        annotations: TASKS_ANNOTATIONS,
+      };
     default: {
       const _exhaustive: never = name;
       throw new Error(`unknown external tool ${String(_exhaustive)}`);
@@ -174,20 +251,68 @@ export function externalToolDefinition(name: ExternalToolName): McpTool {
  * the action.
  */
 export function externalAction(name: ExternalToolName, args: unknown): ExternalAction {
-  if (name === 'skills') {
-    const action = toolAction(skillsTool(), args);
-    // The tool's enum already holds `action` to search and show; this is the second lock, so a
-    // change to the native tool cannot quietly hand a caller from outside the writes.
-    if (action.kind !== 'skills' || (action.action !== 'search' && action.action !== 'show')) {
-      throw new Error('skills: only search and show are offered here');
+  switch (name) {
+    case 'skills': {
+      const action = toolAction(skillsTool(), args);
+      // The tool's enum already holds `action` to search and show; this is the second lock, so a
+      // change to the native tool cannot quietly hand a caller from outside the writes.
+      if (action.kind !== 'skills' || (action.action !== 'search' && action.action !== 'show')) {
+        throw new Error('skills: only search and show are offered here');
+      }
+      return { kind: 'skills', action };
     }
-    return { kind: 'skills', action };
+    case 'sessions':
+      return sessionsAction(args);
+    case 'tasks':
+      return tasksAction(args);
+    default: {
+      const _exhaustive: never = name;
+      throw new Error(`unknown external tool ${String(_exhaustive)}`);
+    }
   }
-  return tasksAction(args);
+}
+
+function sessionsAction(args: unknown): ExternalAction {
+  const { which, given } = parseActionArgs('sessions', SESSIONS_ACTION_NAMES, SESSIONS_ACTIONS, args);
+  const str = (k: string): string | undefined => (given[k] === undefined ? undefined : String(given[k]));
+  let mapped: Record<string, unknown>;
+  switch (which) {
+    case 'list':
+      mapped = { action: 'list', ...given };
+      break;
+    case 'search': {
+      const query = str('query');
+      if (query === undefined) throw new Error('sessions: search needs query');
+      mapped = { action: 'search', arg: query, ...without(given, 'query') };
+      break;
+    }
+    case 'read': {
+      const session = str('session');
+      if (session === undefined) throw new Error('sessions: read needs session');
+      mapped = { action: 'read', arg: session, ...without(given, 'session') };
+      break;
+    }
+    default: {
+      const _exhaustive: never = which;
+      throw new Error(`sessions: unknown action ${String(_exhaustive)}`);
+    }
+  }
+  const view: NativeTool = {
+    name: 'sessions',
+    command: 'sessions',
+    description: '',
+    positionals: {},
+    options: SESSIONS_ACTIONS[which].params.filter((p) => p !== 'query' && p !== 'session'),
+  };
+  const action = toolAction(view, mapped);
+  if (action.kind !== 'sessions-list' && action.kind !== 'sessions-search' && action.kind !== 'sessions-read') {
+    throw new Error('sessions: only list, search and read are offered here');
+  }
+  return { kind: 'sessions', action };
 }
 
 function tasksAction(args: unknown): ExternalAction {
-  const { which, given } = tasksArgs(args);
+  const { which, given } = parseActionArgs('tasks', TASKS_ACTION_NAMES, TASKS_ACTIONS, args);
   const str = (k: string): string | undefined => (given[k] === undefined ? undefined : String(given[k]));
   const spec: TasksAction = TASKS_ACTIONS[which];
   switch (which) {
@@ -223,20 +348,25 @@ function tasksAction(args: unknown): ExternalAction {
  * The action named, and the parameters given for it — refused when one does not belong to it. A
  * parameter filled with "" or null is not given: models fill every optional one that way.
  */
-function tasksArgs(args: unknown): { which: TasksActionName; given: Record<string, unknown> } {
+function parseActionArgs<A extends string>(
+  tool: string,
+  names: readonly A[],
+  actions: Record<A, { params: readonly string[] }>,
+  args: unknown
+): { which: A; given: Record<string, unknown> } {
   const raw = args ?? {};
-  if (typeof raw !== 'object' || Array.isArray(raw)) throw new Error('tasks: arguments must be an object');
+  if (typeof raw !== 'object' || Array.isArray(raw)) throw new Error(`${tool}: arguments must be an object`);
   const { action, ...rest } = raw as Record<string, unknown>;
-  if (typeof action !== 'string' || !(TASKS_ACTION_NAMES as string[]).includes(action)) {
-    throw new Error(`tasks: action must be one of ${TASKS_ACTION_NAMES.join(', ')}`);
+  if (typeof action !== 'string' || !(names as readonly string[]).includes(action)) {
+    throw new Error(`${tool}: action must be one of ${names.join(', ')}`);
   }
-  const which = action as TasksActionName;
-  const params: readonly string[] = TASKS_ACTIONS[which].params;
+  const which = action as A;
+  const params: readonly string[] = actions[which].params;
   const present = Object.keys(rest).filter((k) => rest[k] !== undefined && rest[k] !== null && rest[k] !== '');
   const stray = present.filter((k) => !params.includes(k));
   if (stray.length) {
     throw new Error(
-      `tasks: ${stray.join(', ')} ${stray.length === 1 ? 'does' : 'do'} not apply to ${which}; it takes ${params.length ? params.join(', ') : 'nothing else'}`
+      `${tool}: ${stray.join(', ')} ${stray.length === 1 ? 'does' : 'do'} not apply to ${which}; it takes ${params.length ? params.join(', ') : 'nothing else'}`
     );
   }
   return { which, given: Object.fromEntries(present.map((k) => [k, rest[k]])) };

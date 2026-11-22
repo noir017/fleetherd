@@ -1,7 +1,7 @@
 import { encode } from '@toon-format/toon';
 import type { Config } from '../config/schema.js';
 import { addressOf, formatAddress, parseTarget, type ConversationAddress } from '../core/conversation.js';
-import type { ExternalAction } from '../ipc/external-tools.js';
+import type { ExternalAction, SessionsCommand } from '../ipc/external-tools.js';
 import type { IpcAction, TaskAgentDetail, TaskAgentsResult, TaskListResult } from '../ipc/protocol.js';
 import { libraryLine } from '../ipc/tools.js';
 import type { PlatformAdapter } from '../platform/adapter.js';
@@ -49,6 +49,8 @@ export interface ExternalCallsDeps {
   conversationAt(platform: string, address: ConversationAddress): { key: ConversationId; agent?: string } | undefined;
   delegation: Pick<Delegation, 'handleExternal' | 'externalAgents' | 'externalAgent' | 'stopOpened'>;
   skills: Pick<SkillLibrary, 'search' | 'show' | 'categories'>;
+  /** Read-only conversation library queries (`sessions list/search/read`). */
+  sessions?(action: SessionsCommand): unknown;
   /** A reverse command's result as the CLI prints it (commands/reverse.ts renderResult, injected). */
   render(action: IpcAction, data: unknown): string;
   now(): number;
@@ -62,6 +64,10 @@ export class ExternalCalls {
     switch (action.kind) {
       case 'skills':
         return this.deps.render(action.action, this.readSkills(caller, action.action));
+      case 'sessions': {
+        if (!this.deps.sessions) throw new Error('the conversation history is not enabled in this daemon');
+        return this.deps.render(action.action, this.deps.sessions(action.action));
+      }
       case 'open':
         return this.open(caller, action.title);
       case 'topics':

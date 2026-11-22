@@ -396,6 +396,7 @@ export class Daemon {
       conversationAt: (platform, address) => this.registry.conversationAt(platform, address),
       delegation: this.delegation,
       skills: this.skillLibrary,
+      sessions: (action) => this.reverse.handleSessionsQuery(action),
       render: (action, data) => this.renderTool(action, data),
       now: () => clock.now(),
     });
@@ -502,11 +503,24 @@ export class Daemon {
     };
     const onSigint = (): void => onSignal('SIGINT');
     const onSigterm = (): void => onSignal('SIGTERM');
+    const onSighup = (): void => {
+      if (this.stopping || this.drainCancel) {
+        console.log('[daemon] received SIGHUP while shutting down, ignoring');
+        return;
+      }
+      console.log('[daemon] received SIGHUP, reloading config…');
+      void this.reloadAll().catch((e: unknown) =>
+        console.warn('[daemon] SIGHUP reload failed:', e instanceof Error ? e.message : e)
+      );
+    };
     process.on('SIGINT', onSigint);
     process.on('SIGTERM', onSigterm);
+    // On Windows SIGHUP signals console window close rather than reload.
+    if (process.platform !== 'win32') process.on('SIGHUP', onSighup);
     this.signalCleanup = () => {
       process.removeListener('SIGINT', onSigint);
       process.removeListener('SIGTERM', onSigterm);
+      if (process.platform !== 'win32') process.removeListener('SIGHUP', onSighup);
     };
   }
 

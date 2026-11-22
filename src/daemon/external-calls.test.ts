@@ -11,6 +11,7 @@ import type { InboundMessage } from '../types.js';
 import { ExternalCalls, MAX_TOPICS_PER_CALLER, type ExternalCallsDeps } from './external-calls.js';
 import type { ExternalCaller } from './external-mcp.js';
 import { ExternalTopics } from './external-topics.js';
+import { HistoryStore } from '../history/store.js';
 import { SkillLibrary } from './skill-library.js';
 import { createSkill, setResident } from './skills-store.js';
 
@@ -30,7 +31,15 @@ const GEM: ExternalCaller = { name: 'gem', tools: ['skills', 'tasks'] };
 const OTHER: ExternalCaller = { name: 'other', tools: ['tasks'] };
 const keyOf = (a: ConversationAddress): string => `web#${a.channel}#${a.thread ?? ''}`;
 
-function rig(opts: { skills?: ExternalCallsDeps['skills']; taskList?: TaskListResult; sharedKey?: boolean; boundAgents?: Record<string, string> } = {}) {
+function rig(
+  opts: {
+    skills?: ExternalCallsDeps['skills'];
+    sessions?: ExternalCallsDeps['sessions'];
+    taskList?: TaskListResult;
+    sharedKey?: boolean;
+    boundAgents?: Record<string, string>;
+  } = {}
+) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fleetherd-external-'));
   dirs.push(dir);
   const file = path.join(dir, 'external-topics.json');
@@ -100,6 +109,7 @@ function rig(opts: { skills?: ExternalCallsDeps['skills']; taskList?: TaskListRe
       show: (name) => ({ name }),
       categories: () => ({ total: 0, library: 0, categories: [] }),
     },
+    ...(opts.sessions ? { sessions: opts.sessions } : {}),
     render: (action, data) => JSON.stringify({ kind: action.kind, data }),
     now: () => Date.UTC(2026, 10, 19),
   };
@@ -334,5 +344,64 @@ describe('ExternalCalls: what the person types in a coordination topic', () => {
     const listed = decode(await r.calls.call(GEM, { kind: 'topics' })) as { topics: unknown[] };
     expect(listed.topics).toHaveLength(1);
     expect(r.handled.at(-1)).toEqual({ key: 'web#main#e1000000@scope2', kind: 'task-list' });
+  });
+});
+
+describe('ExternalCalls: sessions', () => {
+  it('fails clearly when conversation history is not enabled', async () => {
+    const r = rig();
+    await expect(r.calls.call(GEM, { kind: 'sessions', action: { kind: 'sessions-list' } })).rejects.toThrow(
+      /conversation history is not enabled/
+    );
+  });
+
+  it('routes list, search, and read (including 8-char short topic id) through HistoryStore', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fleetherd-external-history-'));
+    dirs.push(dir);
+    const history = new HistoryStore(path.join(dir, 'history.db'), () => undefined);
+    const now = Date.now();
+    const sid = history.session({
+      key: 'web#main#2e233c24',
+      platform: 'web',
+      title: 'Fix MCP reload',
+      agent: 'cc',
+      at: now,
+    });
+    const turnId = history.startTurn(sid!, { agent: 'cc', generation: 0, trigger: 'person', at: now });
+    history.message(sid, { ts: now, role: 'user', kind: 'normal', text: 'check gateway reload path', turn: turnId });
+    history.message(sid, { ts: now + 1, role: 'agent', kind: 'normal', text: 'SIGHUP triggers reloadAll cleanly', turn: turnId });
+    history.endTurn(turnId, { outcome: 'done', at: now + 2 });
+
+    const r = rig({
+      sessions: (action) => {
+        if (action.kind === 'sessions-list') return { sessions: history.list({ days: action.days, limit: action.limit }), days: action.days ?? 7, limit: action.limit ?? 30 };
+        if (action.kind === 'sessions-search') return { hits: history.search(action.query, { agent: action.agent, days: action.days, limit: action.limit, tools: action.tools }), limit: action.limit ?? 10 };
+        return history.read(action.session, { role: action.role, turn: action.turn });
+      },
+    });
+    try {
+      const listed = JSON.parse(await r.calls.call(GEM, { kind: 'sessions', action: { kind: 'sessions-list' } })) as {
+        kind: string;
+        data: { sessions: Array<{ key: string; title: string }> };
+      };
+      expect(listed.kind).toBe('sessions-list');
+      expect(listed.data.sessions[0]).toMatchObject({ key: 'web#main#2e233c24', title: 'Fix MCP reload' });
+
+      const searched = JSON.parse(await r.calls.call(GEM, { kind: 'sessions', action: { kind: 'sessions-search', query: 'SIGHUP' } })) as {
+        kind: string;
+        data: { hits: Array<{ session: number; excerpt: string }> };
+      };
+      expect(searched.kind).toBe('sessions-search');
+      expect(searched.data.hits).toHaveLength(1);
+
+      const readByShortId = JSON.parse(
+        await r.calls.call(GEM, { kind: 'sessions', action: { kind: 'sessions-read', session: '2e233c24', role: 'agent', turn: 'done' } })
+      ) as { kind: string; data: { session: { key: string }; messages: Array<{ text: string }> } };
+      expect(readByShortId.kind).toBe('sessions-read');
+      expect(readByShortId.data.session.key).toBe('web#main#2e233c24');
+      expect(readByShortId.data.messages.map((m) => m.text)).toEqual(['SIGHUP triggers reloadAll cleanly']);
+    } finally {
+      history.close();
+    }
   });
 });

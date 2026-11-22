@@ -47,8 +47,14 @@ describe('mcp config', () => {
   it('needs a web UI for tasks, and a platform it names to be one', () => {
     const tg = { tg: { type: 'telegram', token: 'x' } };
     expect(() => cfg({ callers: [{ name: 'g', tokenEnv: 'A', tools: ['tasks'] }] }, tg)).toThrow(/no webui platform is configured/);
-    // Skills alone need no topic to open.
+    // Skills and sessions alone need no topic to open.
     expect(cfg({ callers: [{ name: 'g', tokenEnv: 'A', tools: ['skills'] }] }, tg).mcp?.callers).toHaveLength(1);
+    expect(cfg({ callers: [{ name: 'g', tokenEnv: 'A', tools: ['sessions'] }] }, tg).mcp?.callers).toHaveLength(1);
+    expect(cfg({ callers: [{ name: 'g', tokenEnv: 'A', tools: ['skills', 'tasks', 'sessions'] }] }).mcp?.callers[0]?.tools).toEqual([
+      'skills',
+      'tasks',
+      'sessions',
+    ]);
     expect(() => cfg({ platform: 'tg', callers: [] }, { ...tg, web: { type: 'webui', token: 't' } })).toThrow(/must name a webui instance/);
   });
 

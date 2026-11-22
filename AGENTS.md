@@ -474,9 +474,11 @@ Do not weaken these without saying so explicitly in the PR:
      environment on every request — so removing a caller or its variable and `/reload` revokes it.
      A token under 24 characters, or equal to a web UI login secret, is refused, never accepted on
      a weaker check. A request with an `Origin` header is refused (no browser has a reason to call).
-   - **Two tools, and only those listed for the caller.** `skills` is `search` and `show`; every
+   - **Three tools, and only those listed for the caller.** `skills` is `search` and `show`; every
      write is refused at the tool and again in the daemon (`ipc/external-tools.ts`,
      `daemon/external-calls.ts`), so a caller never adds to what every agent reads (invariant 8).
+     `sessions` is strictly read-only (`list`, `search`, `read` over `HistoryStore`, opt-in per
+     caller in `mcp.callers[].tools`), never writing or running a turn.
      `tasks` is the sub-agent commands minus `task-send` — refused in `Delegation.handleExternal`
      too — because a sub-agent has a shell and a running turn takes what is sent to it: an injected
      instruction must not reach one without a tap. No `send_file`, no `schedule`.
