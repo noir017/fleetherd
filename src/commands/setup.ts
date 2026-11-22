@@ -4,6 +4,8 @@ import { ConfigSchema, type UserConfig } from '../config/schema.js';
 import { PLATFORM_SCHEMAS, type PlatformType } from '../platform/config-schemas.js';
 import { isLegacyConfig, migrateLegacyConfig } from '../config/migrate.js';
 import { saveConfig, saveConfigPatch, configPath, readRawConfigIfExists } from '../config/load.js';
+import { detectEnvLocale, type Locale } from '../core/i18n/index.js';
+import { tCli, type CliMessageKey } from '../core/i18n/cli.js';
 
 /**
  * `fleetherd setup` — interactive wizard. Asks the minimal required items; everything
@@ -16,24 +18,13 @@ import { saveConfig, saveConfigPatch, configPath, readRawConfigIfExists } from '
  * change — the old per-platform switch (and its lark/qq placeholder-token hack) is gone.
  */
 
-/** Post-prompt hints, printed after a platform's credentials are collected. */
-const PLATFORM_NOTES: Partial<Record<PlatformType, string>> = {
-  slack: 'Note: defaults to ws (Socket Mode). To use protocol=http (Events API), edit the yaml and also set signing.',
-  lark: 'Note: edit the yaml to change endpoint (feishu/lark) or protocol (ws/http) if needed.',
-  qq: 'Note: edit the yaml to set sandbox/intents/protocol if needed.',
-  line: 'Note: edit the yaml to set host/port if needed.',
-  dingtalk: 'Note: defaults to ws (Stream mode, no public URL). Edit the yaml for protocol=http (webhook at <public host>/dingtalk) with host/port.',
-  webui:
-    'Note: the page is served at http://<host>:8787 — edit the yaml for host/port/title. It binds every interface and speaks plain HTTP, so the token you just set is the only thing protecting it; put TLS in front of it before exposing it beyond a network you trust, or set host: 127.0.0.1 and reach it over an SSH tunnel. Its identity for access.allowFrom is "<this instance id>:owner", and the "channels to listen on" question below is answered by "main" or left empty.',
-};
-
 /**
  * Ask for every required field of a platform entry schema. A field is required when
  * it is not wrapped in ZodOptional/ZodDefault (i.e. the operator MUST supply it);
  * `type` is the discriminator and skipped. Required enums (qq botType) become a
  * select; required strings become a non-empty input using .describe() as the label.
  */
-async function promptPlatformFields(type: PlatformType): Promise<Record<string, unknown>> {
+async function promptPlatformFields(type: PlatformType, locale: Locale): Promise<Record<string, unknown>> {
   const shape = PLATFORM_SCHEMAS[type].shape as Record<string, z.ZodTypeAny>;
   const out: Record<string, unknown> = {};
   for (const [key, field] of Object.entries(shape)) {
@@ -51,84 +42,22 @@ async function promptPlatformFields(type: PlatformType): Promise<Record<string, 
     out[key] = (
       await input({
         message: label,
-        validate: (v) => (v.trim().length > 0 ? true : 'This field cannot be empty.'),
+        validate: (v) => (v.trim().length > 0 ? true : tCli(locale, 'setup.prompt.fieldRequired')),
       })
     ).trim();
   }
   return out;
 }
 
-export async function runSetup(): Promise<void> {
-  let existing = readRawConfigIfExists();
-  // A v0 file gets migrated up-front so the wizard merges/validates against one shape.
-  // The final write is then a FULL rewrite (v0 files were machine-written; no comments to keep).
-  const migratedFromV0 = existing !== undefined && isLegacyConfig(existing);
-  if (existing && migratedFromV0) {
-    const { config, notes } = migrateLegacyConfig(existing);
-    existing = config;
-    console.log('Found a v0 config; it will be upgraded to the v1 `platforms:` format on save.');
-    for (const n of notes) console.log(`  - ${n}`);
-  }
-  if (existing) {
-    const ok = await confirm({
-      message: `Found an existing config at ${configPath()}. The wizard only updates the chosen platform/agents/routing/scope/allowFrom; any other hand-edited settings are preserved. Continue?`,
-    });
-    if (!ok) {
-      console.log('Cancelled.');
-      return;
-    }
-  }
-
-  // Pick the platform type; the choice list comes from the schema registry.
-  const platformNames: Record<PlatformType, string> = {
-    discord: 'Discord',
-    telegram: 'Telegram',
-    qq: 'QQ (qqguild channels)',
-    lark: 'Lark / Feishu',
-    slack: 'Slack',
-    line: 'LINE',
-    wecom: 'WeCom (WeChat Work)',
-    dingtalk: 'DingTalk (钉钉)',
-    webui: 'Web UI (a browser page this daemon serves)',
-  };
-  const platformType = (await select({
-    message: 'IM platform:',
-    choices: (Object.keys(PLATFORM_SCHEMAS) as PlatformType[]).map((t) => ({
-      name: platformNames[t],
-      value: t,
-    })),
-    default: 'discord',
-  })) as PlatformType;
-
-  const fields = await promptPlatformFields(platformType);
-  const note = PLATFORM_NOTES[platformType];
-  if (note) console.log(note);
-
-  const channelsRaw = await input({
-    message: 'Channel IDs to listen on (comma-separated; empty = all):',
-    default: '',
-  });
-  const channels = channelsRaw.split(',').map((s) => s.trim()).filter(Boolean);
-
-  const scope = await select({
-    message: 'Session scope (granularity of an agent session):',
-    choices: [
-      { name: 'One session per channel (recommended)', value: 'per_channel' },
-      { name: 'One session per user', value: 'per_user' },
-      { name: 'One session per thread', value: 'per_thread' },
-      { name: 'Single shared session', value: 'shared' },
-    ],
-    default: 'per_channel',
-  });
-
+async function promptHarnessAndModel(locale: Locale): Promise<{ harness: string; command?: string; model: string }> {
   const harness = await select({
-    message: 'Agent harness (the coding agent to drive):',
+    message: tCli(locale, 'setup.prompt.harness'),
     choices: [
-      { name: 'Claude (via claude-agent-acp)', value: 'claude' },
-      { name: 'Gemini CLI (native ACP)', value: 'gemini' },
-      { name: 'Codex', value: 'codex' },
-      { name: 'Antigravity CLI (agy)', value: 'agy' },
-      { name: 'Custom (provide your own command)', value: 'custom' },
+      { name: tCli(locale, 'setup.harness.claude'), value: 'claude' },
+      { name: tCli(locale, 'setup.harness.gemini'), value: 'gemini' },
+      { name: tCli(locale, 'setup.harness.codex'), value: 'codex' },
+      { name: tCli(locale, 'setup.harness.agy'), value: 'agy' },
+      { name: tCli(locale, 'setup.harness.custom'), value: 'custom' },
     ],
     default: 'claude',
   });
@@ -136,53 +65,168 @@ export async function runSetup(): Promise<void> {
   const command =
     harness === 'custom'
       ? await input({
-          message: 'Executable command to launch the ACP agent:',
-          validate: (v) => (v.trim().length > 0 ? true : 'A command is required for the custom harness.'),
+          message: tCli(locale, 'setup.prompt.customCommand'),
+          validate: (v) => (v.trim().length > 0 ? true : tCli(locale, 'setup.prompt.customCommandRequired')),
         })
       : undefined;
 
   const model = await input({
-    message: 'Model (leave empty to use the harness default):',
+    message: tCli(locale, 'setup.prompt.model'),
     default: harness === 'claude' ? 'claude-opus-4-8' : '',
   });
 
-  // Access control: who may trigger the bot. Agents always run with full tool access (the daemon
-  // auto-approves tool calls), so an empty allowlist means anyone who can message the bot can drive
-  // them. Strongly recommended in any shared/public deployment; empty is allowed (the daemon warns).
-  const allowFromRaw = await input({
-    message:
-      'Allowlist of identities allowed to trigger the bot (comma-separated, format platform:userId, e.g. discord:123456789). Strongly recommended; empty = anyone who can message the bot can trigger it:',
-    default: '',
-  });
-  const allowFrom = allowFromRaw.split(',').map((s) => s.trim()).filter(Boolean);
-  if (allowFrom.length === 0) {
-    console.log('⚠️  No allowlist set: anyone who can message the bot will be able to drive an agent with full tool access.');
-  }
+  return { harness, command, model };
+}
 
-  // Instance id = the platform type (multi-instance setups are yaml-edit territory).
-  // Merge onto any existing entry of the same id so hand-edited optional fields survive.
-  const instanceId = platformType;
-  const existingPlatforms =
-    existing && typeof existing.platforms === 'object' && existing.platforms
-      ? (existing.platforms as Record<string, unknown>)
-      : {};
-  const existingEntry =
-    typeof existingPlatforms[instanceId] === 'object' && existingPlatforms[instanceId]
-      ? (existingPlatforms[instanceId] as Record<string, unknown>)
-      : {};
-  const platformEntry: Record<string, unknown> = {
-    ...existingEntry,
-    type: platformType,
-    ...fields,
-    ...(channels.length || existingEntry.chat
+export function buildPlatformEntry(
+  platformType: PlatformType,
+  fields: Record<string, unknown>,
+  channels: string[],
+  existingEntry: Record<string, unknown>
+): Record<string, unknown> {
+  const chatConfig =
+    channels.length || existingEntry.chat
       ? {
           chat: {
             ...(typeof existingEntry.chat === 'object' && existingEntry.chat ? existingEntry.chat : {}),
             channels,
           },
         }
-      : {}),
+      : {};
+  return {
+    ...existingEntry,
+    type: platformType,
+    ...fields,
+    ...chatConfig,
   };
+}
+
+export function resolveExistingPlatforms(existing: Record<string, unknown> | undefined): Record<string, unknown> {
+  if (existing && typeof existing.platforms === 'object' && existing.platforms) {
+    return existing.platforms as Record<string, unknown>;
+  }
+  return {};
+}
+
+export function resolveExistingEntry(platforms: Record<string, unknown>, instanceId: string): Record<string, unknown> {
+  const entry = platforms[instanceId];
+  if (typeof entry === 'object' && entry) {
+    return entry as Record<string, unknown>;
+  }
+  return {};
+}
+
+async function checkExistingConfig(
+  rawExisting: Record<string, unknown> | undefined,
+  locale: Locale
+): Promise<{ existing: Record<string, unknown> | undefined; migrated: boolean; cancelled: boolean }> {
+  let existing = rawExisting;
+  const migrated = existing !== undefined && isLegacyConfig(existing);
+  if (existing && migrated) {
+    const { config, notes } = migrateLegacyConfig(existing);
+    existing = config;
+    console.log(tCli(locale, 'setup.foundV0'));
+    for (const n of notes) console.log(`  - ${n}`);
+  }
+  if (existing) {
+    const ok = await confirm({
+      message: tCli(locale, 'setup.existingConfig', { path: configPath() }),
+    });
+    if (!ok) {
+      console.log(tCli(locale, 'setup.cancelled'));
+      return { existing, migrated, cancelled: true };
+    }
+  }
+  return { existing, migrated, cancelled: false };
+}
+
+function saveSetupResult(
+  existing: Record<string, unknown> | undefined,
+  migratedFromV0: boolean,
+  cfg: UserConfig,
+  instanceId: string,
+  platformEntry: Record<string, unknown>,
+  locale: Locale,
+  scope: UserConfig['session']['scope'],
+  allowFrom: string[]
+): void {
+  if (migratedFromV0 || !existing) {
+    saveConfig(cfg);
+  } else {
+    saveConfigPatch([
+      { path: ['version'], value: 1 },
+      { path: ['locale'], value: locale },
+      { path: ['platforms', instanceId], value: platformEntry },
+      { path: ['agents'], value: cfg.agents },
+      { path: ['routing'], value: cfg.routing },
+      { path: ['session', 'scope'], value: scope },
+      { path: ['access', 'allowFrom'], value: allowFrom },
+    ]);
+  }
+}
+
+export async function runSetup(): Promise<void> {
+  const rawExisting = readRawConfigIfExists();
+  const envLocale = detectEnvLocale(process.env);
+  const initialLocale = (rawExisting?.locale as Locale | undefined) ?? envLocale;
+  const locale = (await select({
+    message: tCli(initialLocale, 'setup.prompt.locale'),
+    choices: [
+      { name: 'English', value: 'en' },
+      { name: '简体中文', value: 'zh-CN' },
+    ],
+    default: initialLocale,
+  })) as Locale;
+
+  const { existing, migrated, cancelled } = await checkExistingConfig(rawExisting, locale);
+  if (cancelled) return;
+
+  const platformType = (await select({
+    message: tCli(locale, 'setup.prompt.imPlatform'),
+    choices: (Object.keys(PLATFORM_SCHEMAS) as PlatformType[]).map((t) => ({
+      name: tCli(locale, `setup.platformName.${t}` as CliMessageKey),
+      value: t,
+    })),
+    default: 'discord',
+  })) as PlatformType;
+
+  const fields = await promptPlatformFields(platformType, locale);
+  const noteKey = `setup.platformNote.${platformType}` as CliMessageKey;
+  const note = tCli(locale, noteKey);
+  if (note && note !== noteKey) console.log(note);
+
+  const channelsRaw = await input({
+    message: tCli(locale, 'setup.prompt.channels'),
+    default: '',
+  });
+  const channels = channelsRaw.split(',').map((s) => s.trim()).filter(Boolean);
+
+  const scope = (await select({
+    message: tCli(locale, 'setup.prompt.scope'),
+    choices: [
+      { name: tCli(locale, 'setup.scope.perChannel'), value: 'per_channel' },
+      { name: tCli(locale, 'setup.scope.perUser'), value: 'per_user' },
+      { name: tCli(locale, 'setup.scope.perThread'), value: 'per_thread' },
+      { name: tCli(locale, 'setup.scope.shared'), value: 'shared' },
+    ],
+    default: 'per_channel',
+  })) as UserConfig['session']['scope'];
+
+  const { harness, command, model } = await promptHarnessAndModel(locale);
+
+  const allowFromRaw = await input({
+    message: tCli(locale, 'setup.prompt.allowFrom'),
+    default: '',
+  });
+  const allowFrom = allowFromRaw.split(',').map((s) => s.trim()).filter(Boolean);
+  if (allowFrom.length === 0) {
+    console.log(tCli(locale, 'setup.warn.noAllowlist'));
+  }
+
+  const instanceId = platformType;
+  const existingPlatforms = resolveExistingPlatforms(existing);
+  const existingEntry = resolveExistingEntry(existingPlatforms, instanceId);
+  const platformEntry = buildPlatformEntry(platformType, fields, channels, existingEntry);
 
   const agents = [
     {
@@ -194,12 +238,10 @@ export async function runSetup(): Promise<void> {
   ];
   const routing = { default: 'default', pipeline: [] };
 
-  // Validate the WHOLE merged config before writing anything (the wizard must not
-  // produce a file that loadConfig rejects). ${VAR} references are opaque strings
-  // here — expansion happens at load time only, so secrets never round-trip expanded.
   const merged = {
     ...(existing ?? {}),
     version: 1,
+    locale,
     platforms: { ...existingPlatforms, [instanceId]: platformEntry },
     agents,
     routing,
@@ -214,23 +256,9 @@ export async function runSetup(): Promise<void> {
   };
   const cfg: UserConfig = ConfigSchema.parse(merged);
 
-  if (migratedFromV0 || !existing) {
-    // Fresh file or v0 upgrade: full write of the validated config.
-    saveConfig(cfg);
-  } else {
-    // Existing v1 file: patch ONLY the sections the wizard asked about — comments,
-    // key order, and hand-edited sections elsewhere survive (yaml Document API).
-    saveConfigPatch([
-      { path: ['version'], value: 1 },
-      { path: ['platforms', instanceId], value: platformEntry },
-      { path: ['agents'], value: agents },
-      { path: ['routing'], value: routing },
-      { path: ['session', 'scope'], value: scope },
-      { path: ['access', 'allowFrom'], value: allowFrom },
-    ]);
-  }
+  saveSetupResult(existing, migrated, cfg, instanceId, platformEntry, locale, scope, allowFrom);
 
-  console.log(`✅ Wrote ${configPath()}`);
-  console.log('Multi-agent setups, routing pipelines, multi-instance platforms, and ${VAR} secrets are advanced features — edit the yaml directly (see the README).');
-  console.log('Next: run `fleetherd doctor` to self-check, then `fleetherd start` to launch the daemon.');
+  console.log(tCli(locale, 'setup.success.wrote', { path: configPath() }));
+  console.log(tCli(locale, 'setup.success.advanced'));
+  console.log(tCli(locale, 'setup.success.next'));
 }

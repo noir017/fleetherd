@@ -17,6 +17,8 @@ import { remoteAgentEnv } from '../daemon/agent-common.js';
 import { hostProbeScript, readHostProbe, type HostProbe } from '../daemon/host-probe.js';
 import { OWNER } from '../platform/webui/room.js';
 import { loadJwks } from '../platform/webui/sso.js';
+import { detectEnvLocale, type Locale } from '../core/i18n/index.js';
+import { tCli } from '../core/i18n/cli.js';
 
 /** Whether a host:port can be bound right now. Binds and releases; never leaves it held. */
 async function portFree(host: string, port: number): Promise<boolean> {
@@ -54,14 +56,20 @@ function locateCommand(cmd: string): string | null {
   return null;
 }
 
-/** Agent definition -> its harness's main executable name (doctor only checks reachability, the same convention as agent-acp's resolveHarness / agy-cli's AGY_COMMAND). claude is handled separately (a local dependency, not PATH). */
 /** One `hosts:` entry, checked the way the daemon will use it (see the check's own comment). */
-async function checkRemoteHost(def: HostDef, probes: HostProbe[]): Promise<{ ok: boolean; detail: string }> {
+async function checkRemoteHost(
+  def: HostDef,
+  probes: HostProbe[],
+  locale: Locale
+): Promise<{ ok: boolean; detail: string }> {
   const key = expandLocal(def.identityFile ?? defaultIdentityFile());
   const known = expandLocal(def.knownHostsFile ?? defaultKnownHostsFile());
-  if (!fs.existsSync(key)) return { ok: false, detail: `no private key at ${key}` };
+  if (!fs.existsSync(key)) return { ok: false, detail: tCli(locale, 'doctor.detail.hostNoPrivateKey', { path: key }) };
   if (!fs.existsSync(known)) {
-    return { ok: false, detail: `no known_hosts at ${known} — add the host's key (ssh-keyscan, checked by hand) before the daemon can connect` };
+    return {
+      ok: false,
+      detail: tCli(locale, 'doctor.detail.hostNoKnownHosts', { path: known }),
+    };
   }
   const script = `uname -sm; exec "\${SHELL:-/bin/sh}" -ilc "${hostProbeScript(probes)}" </dev/null 2>/dev/null`;
   const r = spawnSync('ssh', sshArgs({ destination: def.ssh, identityFile: key, knownHostsFile: known }, script), {
@@ -70,15 +78,16 @@ async function checkRemoteHost(def: HostDef, probes: HostProbe[]): Promise<{ ok:
   });
   if (r.error) return { ok: false, detail: r.error.message };
   if (r.status !== 0 && !r.stdout.includes('TCR-')) {
-    return { ok: false, detail: `ssh failed (exit ${r.status}): ${r.stderr.trim().split('\n').slice(-1)[0] ?? ''}` };
+    const errLine = r.stderr.trim().split('\n').slice(-1)[0] ?? '';
+    return { ok: false, detail: tCli(locale, 'doctor.detail.hostSshFailed', { status: r.status ?? -1, error: errLine }) };
   }
   const system = r.stdout.split('\n')[0]?.trim() ?? '';
   const { missing, unchecked } = readHostProbe(probes, r.stdout);
   const supported = /^Linux (x86_64|amd64|aarch64|arm64)$/.test(system);
-  const parts = [`connected (${system})`];
-  if (!supported) parts.push('✗ fleetherd-remote runs on Linux x86_64/arm64 only');
-  if (missing.length) parts.push(`✗ not found there: ${missing.join(', ')}`);
-  if (unchecked.length) parts.push(`not checked: ${unchecked.join(', ')}`);
+  const parts = [tCli(locale, 'doctor.detail.hostConnected', { system })];
+  if (!supported) parts.push(tCli(locale, 'doctor.detail.hostArchUnsupported'));
+  if (missing.length) parts.push(tCli(locale, 'doctor.detail.hostMissingCommands', { missing: missing.join(', ') }));
+  if (unchecked.length) parts.push(tCli(locale, 'doctor.detail.hostUncheckedCommands', { unchecked: unchecked.join(', ') }));
   return { ok: supported && missing.length === 0, detail: parts.join(', ') };
 }
 
@@ -115,20 +124,12 @@ function adapterResolves(resolve: () => string): boolean {
   }
 }
 
-/**
- * Auth-method note. harness=claude (claude-agent-acp) by default reuses this machine's
- * `claude /login` subscription session; if ANTHROPIC_API_KEY is set (via env or
- * environment) it uses an API key. harness=agy reuses the Google sign-in `agy` cached in the OS
- * keyring — headless runs never prompt, so a never-signed-in agy fails at the first turn, and
- * saying so here is the only warning the operator gets — unless it reaches its models through a
- * gateway (`AGY_LLM_GATEWAY_URL`), which needs no sign-in. Other harnesses aren't noted (own mechanisms).
- */
-function authNote(def: import('../config/schema.js').AgentDef): string {
-  if (def.harness === 'agy' && def.env?.AGY_LLM_GATEWAY_URL) return ' [agy through a model gateway: AGY_LLM_GATEWAY_URL]';
-  if (def.harness === 'agy') return ' [agy Google sign-in from the OS keyring; run `agy` once interactively if never signed in]';
+function authNote(def: import('../config/schema.js').AgentDef, locale: Locale): string {
+  if (def.harness === 'agy' && def.env?.AGY_LLM_GATEWAY_URL) return tCli(locale, 'doctor.auth.agyGateway');
+  if (def.harness === 'agy') return tCli(locale, 'doctor.auth.agyKeyring');
   if (def.harness !== 'claude') return '';
   const hasKey = Boolean(def.env?.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY);
-  return hasKey ? ' [API key]' : ' [claude /login subscription session]';
+  return hasKey ? tCli(locale, 'doctor.auth.apiKey') : tCli(locale, 'doctor.auth.claudeLogin');
 }
 
 /**
@@ -138,6 +139,13 @@ function authNote(def: import('../config/schema.js').AgentDef): string {
 interface Check {
   name: string;
   run(): Promise<{ ok: boolean; level?: 'warn'; detail?: string }>;
+}
+
+interface DoctorContext {
+  cfg: Config | null;
+  cfgError: string | null;
+  locale: Locale;
+  discordResult?: { ok: boolean; level?: 'warn'; detail?: string };
 }
 
 /**
@@ -163,7 +171,8 @@ function probeDaemon(socketPath: string, timeoutMs = 500): Promise<boolean> {
 
 /** Validate a Discord token: GET /users/@me; 200 yields the bot name, 401 means invalid. */
 async function checkDiscordToken(
-  token: string
+  token: string,
+  locale: Locale
 ): Promise<{ ok: boolean; level?: 'warn'; detail?: string }> {
   try {
     const resp = await fetch('https://discord.com/api/v10/users/@me', {
@@ -172,18 +181,17 @@ async function checkDiscordToken(
     if (resp.status === 200) {
       const me = (await resp.json()) as { username?: string; id?: string };
       const name = me.username ?? me.id ?? '(unknown)';
-      return { ok: true, detail: `bot username: ${name}` };
+      return { ok: true, detail: tCli(locale, 'doctor.discord.botUsername', { name }) };
     }
     if (resp.status === 401) {
-      return { ok: false, detail: 'invalid token (401 Unauthorized)' };
+      return { ok: false, detail: tCli(locale, 'doctor.discord.invalidToken') };
     }
-    return { ok: false, detail: `Discord returned an unexpected status ${resp.status}` };
+    return { ok: false, detail: tCli(locale, 'doctor.discord.unexpectedStatus', { status: resp.status }) };
   } catch (e) {
-    // Network errors etc. aren't treated as an invalid token; degrade to warn.
     return {
       ok: true,
       level: 'warn',
-      detail: `could not reach Discord to validate the token: ${e instanceof Error ? e.message : String(e)}`,
+      detail: tCli(locale, 'doctor.discord.networkError', { error: e instanceof Error ? e.message : String(e) }),
     };
   }
 }
@@ -195,10 +203,10 @@ function tildify(p: string): string {
 }
 
 /** AXI §10: identify the tool before the live data — absolute bin path + one-line description. */
-function printIdentity(): void {
+function printIdentity(locale: Locale): void {
   console.log(`bin: ${tildify(process.argv[1] ?? 'fleetherd')}`);
   console.log(`config: ${tildify(configPath())}`);
-  console.log('description: Gateway connecting IM platforms to coding agents; this is its self-check.');
+  console.log(`description: ${tCli(locale, 'doctor.description')}`);
 }
 
 /**
@@ -207,156 +215,122 @@ function printIdentity(): void {
  * (comments are lost — noted in the output; the in-memory migration path never
  * touches the file, so opting into the rewrite is explicit).
  */
-function migrateConfigFile(): void {
+function migrateConfigFile(locale: Locale): void {
   const p = configPath();
   const raw = readRawConfigIfExists();
   if (!raw) {
-    console.log(`❌ cannot read ${p} (missing or unparseable); nothing to migrate`);
+    console.log(`❌ ${tCli(locale, 'doctor.migrate.cannotRead', { path: p })}`);
     process.exitCode = 1;
     return;
   }
   if (!isLegacyConfig(raw)) {
-    console.log(`✅ ${p} is already in the v1 format (platforms: map); nothing to do`);
+    console.log(`✅ ${tCli(locale, 'doctor.migrate.alreadyV1', { path: p })}`);
     return;
   }
   const { config, notes } = migrateLegacyConfig(raw);
   const parsed = ConfigSchema.safeParse(config);
   if (!parsed.success) {
     const lines = parsed.error.issues.map((i) => `  - ${i.path.join('.') || '(root)'}: ${i.message}`);
-    console.log(`❌ migrated config does not validate; file left untouched:\n${lines.join('\n')}`);
+    console.log(`❌ ${tCli(locale, 'doctor.migrate.validationFailed', { lines: lines.join('\n') })}`);
     process.exitCode = 1;
     return;
   }
   fs.copyFileSync(p, `${p}.bak`);
-  // Write the SLIM migrated raw (validated above), not parsed.data — parsing materializes
-  // every schema default and would bloat the file with values the user never set.
   saveConfig(config as unknown as Parameters<typeof saveConfig>[0]);
-  console.log(`✅ migrated ${p} to the v1 format (backup at ${p}.bak; YAML comments were not preserved)`);
+  console.log(`✅ ${tCli(locale, 'doctor.migrate.success', { path: p, backup: `${p}.bak` })}`);
   for (const n of notes) console.log(`   - ${n}`);
 }
 
-export async function runDoctor(opts: { migrateConfig?: boolean } = {}): Promise<void> {
-  if (opts.migrateConfig) {
-    migrateConfigFile();
-    return;
-  }
-
-  printIdentity();
-
-  // Load config once and reuse it across checks; if loading fails, dependent checks degrade themselves.
-  let cfg: Config | null = null;
-  let cfgError: string | null = null;
-  try {
-    cfg = loadConfig();
-  } catch (e) {
-    cfgError = String(e instanceof Error ? e.message : e);
-  }
-
-  // Cache the Discord token result for the "platform adapter connectivity (placeholder)" check (only the discord path writes it).
-  let discordResult: { ok: boolean; level?: 'warn'; detail?: string } | null = null;
-
-  const checks: Check[] = [
+function buildConfigChecks(ctx: DoctorContext): Check[] {
+  const { cfg, cfgError, locale } = ctx;
+  return [
     {
-      name: 'Config file exists and is valid',
+      name: tCli(locale, 'doctor.check.configValid'),
       run: async () => {
         if (cfg) return { ok: true };
-        return { ok: false, detail: cfgError ?? 'unknown error' };
+        return { ok: false, detail: cfgError ?? tCli(locale, 'doctor.detail.unknownError') };
       },
     },
     {
-      // One daemon drives every configured instance; list them for a quick sanity read.
-      name: 'Platform instances',
+      name: tCli(locale, 'doctor.check.platformInstances'),
       run: async () => {
-        if (!cfg) return { ok: false, detail: 'config unavailable, cannot resolve platform instances' };
+        if (!cfg) return { ok: false, detail: tCli(locale, 'doctor.detail.configUnavailableInstances') };
         const insts = platformInstances(cfg);
         return { ok: true, detail: insts.map((i) => `"${i.id}" (${i.type})`).join(', ') };
       },
     },
     {
-      // Platform credential check per instance. Required credentials are already
-      // schema-validated at load (typed per-platform schemas), so only ONLINE validation
-      // remains: discord hits /users/@me; other platforms have none implemented yet.
-      name: 'Platform credentials usable',
+      name: tCli(locale, 'doctor.check.platformCredentials'),
       run: async () => {
-        if (!cfg) return { ok: false, detail: 'config unavailable, cannot read credentials' };
+        if (!cfg) return { ok: false, detail: tCli(locale, 'doctor.detail.configUnavailableCredentials') };
         const lines: string[] = [];
         let anyFail = false;
         let anyWarn = false;
         for (const [id, p] of Object.entries(cfg.platforms)) {
           if (p.type === 'webui') {
-            // Its credential is a secret the operator chose for a server this process runs;
-            // there is nothing upstream to ask. The port and the allowlist are what can be
-            // wrong here, and both are checked below.
-            lines.push(`${id} (webui): the login token is local — nothing to validate online`);
+            lines.push(`${id} (webui): ${tCli(locale, 'doctor.detail.webuiLocalToken')}`);
           } else if (p.type === 'discord') {
-            discordResult = await checkDiscordToken(p.token);
-            if (!discordResult.ok) anyFail = true;
-            else if (discordResult.level === 'warn') anyWarn = true;
-            lines.push(`${id}: ${discordResult.detail ?? (discordResult.ok ? 'ok' : 'failed')}`);
+            ctx.discordResult = await checkDiscordToken(p.token, locale);
+            if (!ctx.discordResult.ok) anyFail = true;
+            else if (ctx.discordResult.level === 'warn') anyWarn = true;
+            const okStr = tCli(locale, 'doctor.detail.ok');
+            const failStr = tCli(locale, 'doctor.detail.failed');
+            lines.push(`${id}: ${ctx.discordResult.detail ?? (ctx.discordResult.ok ? okStr : failStr)}`);
           } else {
             anyWarn = true;
-            lines.push(
-              `${id} (${p.type}): credentials schema-validated; online validation not implemented — if start fails to connect, re-check them`
-            );
+            lines.push(tCli(locale, 'doctor.detail.unsupportedOnlineValidation', { id, type: p.type }));
           }
         }
         return { ok: !anyFail, ...(anyWarn && !anyFail ? { level: 'warn' as const } : {}), detail: lines.join('; ') };
       },
     },
     {
-      // Adapter connectivity placeholder: only discord shows an honest "no gateway
-      // actually established" placeholder; other platforms skip this check (avoiding a
-      // misleading Discord-specific placeholder).
-      name: 'Platform adapter connectivity (placeholder)',
+      name: tCli(locale, 'doctor.check.platformConnectivity'),
       run: async () => {
         const types = cfg ? Object.values(cfg.platforms).map((p) => p.type) : [];
         if (!types.includes('discord')) {
-          // Non-discord has no online placeholder check; pass and explain why it's skipped.
-          return { ok: true, detail: `${types.join(',') || '(unknown)'} skipped (no online connectivity placeholder)` };
+          return { ok: true, detail: tCli(locale, 'doctor.detail.connectivitySkipped', { types: types.join(',') || '(unknown)' }) };
         }
-        // discord: don't actually start a gateway; token validation already covers most connectivity (same bot credential).
-        if (discordResult?.ok) {
+        if (ctx.discordResult?.ok) {
           return {
             ok: true,
             level: 'warn',
-            detail: 'placeholder: no gateway was actually established; the token check already covers most connectivity',
+            detail: tCli(locale, 'doctor.detail.connectivityPlaceholderOk'),
           };
         }
         return {
           ok: true,
           level: 'warn',
-          detail: 'placeholder: no gateway was actually established; the token check failed, so the adapter most likely cannot connect',
+          detail: tCli(locale, 'doctor.detail.connectivityPlaceholderFail'),
         };
       },
     },
+  ];
+}
+
+function buildRuntimeChecks(ctx: DoctorContext): Check[] {
+  const { cfg, locale } = ctx;
+  return [
     {
-      // Security posture: agents always run with full tool access, so an empty access.allowFrom
-      // means anyone who can message the bot can drive them. Surface it as a standing ⚠️.
-      name: 'Security: access control',
+      name: tCli(locale, 'doctor.check.accessControl'),
       run: async () => {
-        if (!cfg) return { ok: false, detail: 'config unavailable, cannot check access control' };
+        if (!cfg) return { ok: false, detail: tCli(locale, 'doctor.detail.configUnavailableAccess') };
         if (!accessUnrestricted(cfg)) {
-          return { ok: true, detail: `access.allowFrom restricts triggering to ${cfg.access.allowFrom.length} identity(ies)` };
+          return { ok: true, detail: tCli(locale, 'doctor.detail.accessRestricted', { count: cfg.access.allowFrom.length }) };
         }
         return {
           ok: true,
           level: 'warn',
-          detail:
-            'access.allowFrom is empty: ANYONE who can message the bot can trigger an agent with full ' +
-            'tool access (Bash / file writes). Set access.allowFrom to lock this down for production.',
+          detail: tCli(locale, 'doctor.detail.accessUnrestricted'),
         };
       },
     },
     {
-      // The web UI's two ways of being configured-but-dead: a port something else already
-      // holds, and an allowlist that does not name it. Both fail silently at runtime — the
-      // first as a startup error long after the other platforms are live, the second as a
-      // page that accepts your messages and never answers one.
-      name: 'Web UI',
+      name: tCli(locale, 'doctor.check.webui'),
       run: async () => {
-        if (!cfg) return { ok: false, detail: 'config unavailable, cannot check the web UI' };
+        if (!cfg) return { ok: false, detail: tCli(locale, 'doctor.detail.configUnavailableWebui') };
         const uis = Object.entries(cfg.platforms).filter(([, p]) => p.type === 'webui');
-        if (uis.length === 0) return { ok: true, detail: 'no webui instance configured; skipped' };
+        if (uis.length === 0) return { ok: true, detail: tCli(locale, 'doctor.detail.webuiSkipped') };
         const lines: string[] = [];
         let warn = false;
         for (const [id, p] of uis) {
@@ -364,42 +338,43 @@ export async function runDoctor(opts: { migrateConfig?: boolean } = {}): Promise
           const free = await portFree(p.host, p.port);
           if (!free) {
             warn = true;
-            lines.push(
-              `${id}: ${p.host}:${p.port} is already in use — that is this web UI if the daemon is running, and a conflict if it is not`
-            );
+            lines.push(tCli(locale, 'doctor.detail.webuiPortInUse', { id, host: p.host, port: p.port }));
           } else {
-            lines.push(`${id}: ${p.host}:${p.port} is free`);
+            lines.push(tCli(locale, 'doctor.detail.webuiPortFree', { id, host: p.host, port: p.port }));
           }
           const identity = `${id}:${OWNER}`;
           if (cfg.access.allowFrom.length > 0 && !cfg.access.allowFrom.includes(identity)) {
             warn = true;
-            lines.push(
-              `${id}: access.allowFrom does not list "${identity}", so every message typed into this page will be ignored`
-            );
+            lines.push(tCli(locale, 'doctor.detail.webuiAllowFromMissing', { id, identity }));
           }
           if (p.host !== '127.0.0.1' && p.host !== 'localhost' && p.host !== '::1') {
             warn = true;
-            lines.push(
-              `${id}: bound to ${p.host} over plain HTTP — the login token is the only thing between the network and an agent with full tool access; put TLS in front of it`
-            );
+            lines.push(tCli(locale, 'doctor.detail.webuiPlainHttp', { id, host: p.host }));
           }
           if (p.sso) {
-            // The one thing here that CAN be validated online, and the one most worth it: a
-            // JWKS URL with a typo in it fails closed, but it fails closed at 3am on a phone
-            // rather than here.
             try {
               const keys = await loadJwks(p.sso.jwksUrl);
               lines.push(
-                `${id}: sso reads ${p.sso.header} from ${p.sso.from.join(', ')}, verified against ${keys.size} key(s) at ${p.sso.jwksUrl}`
+                tCli(locale, 'doctor.detail.webuiSsoKeys', {
+                  id,
+                  header: p.sso.header,
+                  from: p.sso.from.join(', '),
+                  count: keys.size,
+                  url: p.sso.jwksUrl,
+                })
               );
             } catch (e) {
               warn = true;
               lines.push(
-                `${id}: sso cannot read ${p.sso.jwksUrl} (${e instanceof Error ? e.message : String(e)}) — nobody gets in this way until that URL answers`
+                tCli(locale, 'doctor.detail.webuiSsoError', {
+                  id,
+                  url: p.sso.jwksUrl,
+                  error: e instanceof Error ? e.message : String(e),
+                })
               );
             }
             if (p.sso.password) {
-              lines.push(`${id}: the shared token is still a second way in; set sso.password: false once sso works`);
+              lines.push(tCli(locale, 'doctor.detail.webuiSsoPassword', { id }));
             }
           }
         }
@@ -407,74 +382,66 @@ export async function runDoctor(opts: { migrateConfig?: boolean } = {}): Promise
       },
     },
     {
-      name: 'ACP SDK installed',
+      name: tCli(locale, 'doctor.check.acpSdk'),
       run: async () => {
         const sdkName = '@agentclientprotocol/sdk';
         try {
           await import(sdkName);
-          return { ok: true, detail: `${sdkName} loads successfully` };
+          return { ok: true, detail: tCli(locale, 'doctor.detail.acpSdkOk', { sdk: sdkName }) };
         } catch {
-          return { ok: false, detail: `${sdkName} is not installed — run npm i first` };
+          return { ok: false, detail: tCli(locale, 'doctor.detail.acpSdkMissing', { sdk: sdkName }) };
         }
       },
     },
     {
-      name: 'Agent harness commands reachable',
+      name: tCli(locale, 'doctor.check.agentHarness'),
       run: async () => {
-        if (!cfg) return { ok: false, detail: 'config unavailable, cannot check agents' };
+        if (!cfg) return { ok: false, detail: tCli(locale, 'doctor.detail.configUnavailableAgents') };
         const lines: string[] = [];
         let anyMissing = false;
         for (const def of cfg.agents) {
-          // An agent on another machine needs its command THERE (the remote-hosts check below).
           if (def.host) continue;
-          // A connect agent has no command: it is a service already running, dialled per session.
           if (def.connect) {
-            lines.push(`${def.id} (connect) → ${def.connect.url}, dialled when a session starts`);
+            lines.push(tCli(locale, 'doctor.detail.agentConnect', { id: def.id, url: def.connect.url }));
             continue;
           }
           const cmd = harnessCommand(def);
-          const auth = authNote(def);
-          // claude runs a locally installed adapter dependency (claude-agent-acp), so its check is
-          // "does the dependency resolve", not a PATH lookup. Every other harness, codex included,
-          // is a command the operator installed — see the codex arm of resolveHarness for why that
-          // adapter is deliberately not bundled. Whether they can actually log in is covered by authNote.
+          const auth = authNote(def, locale);
           const found =
             def.harness === 'claude'
               ? adapterResolves(resolveClaudeAdapterEntry)
               : Boolean(locateCommand(cmd));
           const note = !found
             ? def.harness === 'claude'
-              ? ' (dependency missing — run npm install)'
+              ? tCli(locale, 'doctor.detail.claudeMissing')
               : def.harness === 'codex'
-                ? ' (install it with `npm i -g @agentclientprotocol/codex-acp`)'
+                ? tCli(locale, 'doctor.detail.codexMissing')
                 : ''
             : '';
           if (found) {
             lines.push(`${def.id} (${def.harness}) → ${cmd} ✓${auth}`);
           } else {
             anyMissing = true;
-            lines.push(`${def.id} (${def.harness}) → ${cmd} ✗ not found${note}`);
+            lines.push(`${def.id} (${def.harness}) → ${cmd}${tCli(locale, 'doctor.detail.agentNotFound')}${note}`);
           }
         }
-        // A fully missing command means the agent subprocess can't launch at start -> escalate to ❌ (so the exit code reflects it), not warn.
         return anyMissing
-          ? { ok: false, detail: `some harness commands are not on PATH: ${lines.join('; ')}` }
+          ? { ok: false, detail: tCli(locale, 'doctor.detail.harnessNotOnPath', { lines: lines.join('; ') }) }
           : { ok: true, detail: lines.join('; ') };
       },
     },
+  ];
+}
+
+function buildHostAndStoreChecks(ctx: DoctorContext): Check[] {
+  const { cfg, locale } = ctx;
+  return [
     {
-      /**
-       * Each `hosts:` entry: the key and known_hosts the gateway pins, a real connection, and the
-       * harness commands of the agents placed there — looked up on the host's LOGIN PATH, which is
-       * the environment fleetherd-remote starts agents in (remote/shellenv.go), not the bare one a
-       * non-interactive ssh command gets; or in the agent's own PATH when its `env` sets one
-       * (doctor-hosts.ts).
-       */
-      name: 'Remote hosts reachable',
+      name: tCli(locale, 'doctor.check.remoteHosts'),
       run: async () => {
-        if (!cfg) return { ok: false, detail: 'config unavailable, cannot check hosts' };
+        if (!cfg) return { ok: false, detail: tCli(locale, 'doctor.detail.configUnavailableHosts') };
         const hosts = Object.entries(cfg.hosts ?? {});
-        if (hosts.length === 0) return { ok: true, detail: 'none configured (every agent runs here)' };
+        if (hosts.length === 0) return { ok: true, detail: tCli(locale, 'doctor.detail.noRemoteHosts') };
         const lines: string[] = [];
         let failed = false;
         for (const [id, def] of hosts) {
@@ -483,7 +450,7 @@ export async function runDoctor(opts: { migrateConfig?: boolean } = {}): Promise
             const p: HostProbe = { command: harnessCommand(a), path: remoteAgentEnv(a).PATH };
             probes.set(`${p.command}\0${p.path ?? ''}`, p);
           }
-          const r = await checkRemoteHost(def, [...probes.values()]);
+          const r = await checkRemoteHost(def, [...probes.values()], locale);
           failed ||= !r.ok;
           lines.push(`${id} (${def.ssh}): ${r.detail}`);
         }
@@ -491,47 +458,33 @@ export async function runDoctor(opts: { migrateConfig?: boolean } = {}): Promise
       },
     },
     {
-      /**
-       * The managed skills live in a git repository (daemon/skills-store.ts), so a gateway without
-       * git delivers none of them; and with `skills.repo` set, the repository has to answer with the
-       * key and known_hosts the gateway pins — `git ls-remote` is the daemon's own fetch, minus the
-       * download.
-       */
-      name: 'Skills repository',
+      name: tCli(locale, 'doctor.check.skillsRepo'),
       run: async () => {
-        if (!gitAvailable()) return { ok: false, detail: 'git is not installed — the managed skills are neither delivered nor writable' };
+        if (!gitAvailable()) return { ok: false, detail: tCli(locale, 'doctor.detail.gitNotInstalled') };
         const remote = cfg ? skillsRemoteOf(cfg) : undefined;
-        if (!remote) return { ok: true, detail: 'git found; no skills.repo, so the skills stay in a local repository' };
+        if (!remote) return { ok: true, detail: tCli(locale, 'doctor.detail.skillsLocal') };
         if (/^ssh:\/\//i.test(remote.url) || /^[^/]+@[^/]+:/.test(remote.url)) {
-          if (!fs.existsSync(remote.identityFile)) return { ok: false, detail: `no key at ${remote.identityFile}` };
+          if (!fs.existsSync(remote.identityFile)) return { ok: false, detail: tCli(locale, 'doctor.detail.skillsNoKey', { path: remote.identityFile }) };
           if (!fs.existsSync(remote.knownHostsFile)) {
-            return { ok: false, detail: `no known_hosts at ${remote.knownHostsFile} — add the repository host's key (checked by hand) first` };
+            return { ok: false, detail: tCli(locale, 'doctor.detail.skillsNoKnownHosts', { path: remote.knownHostsFile }) };
           }
         }
         try {
           await gitAsync(os.tmpdir(), ['ls-remote', '--heads', remote.url, remote.branch], { GIT_SSH_COMMAND: gitSshCommand(remote) }, 30_000);
-          return { ok: true, detail: `${redactRepoUrl(remote.url)} answers (branch ${remote.branch})` };
+          return { ok: true, detail: tCli(locale, 'doctor.detail.skillsAnswers', { url: redactRepoUrl(remote.url), branch: remote.branch }) };
         } catch (e) {
           return { ok: false, detail: `${redactRepoUrl(remote.url)}: ${(e instanceof Error ? e.message : String(e)).split('\n')[0]}` };
         }
       },
     },
     {
-      /**
-       * Only meaningful for claude agents, and only for the web UI's status strip: its cache
-       * countdown is read from Claude Code's own transcripts (see daemon/claude-transcript.ts),
-       * because headless Claude Code runs no status line to ask. A missing directory costs that one
-       * segment and nothing else, hence a warning.
-       */
-      name: 'claude transcripts readable for the cache countdown',
+      name: tCli(locale, 'doctor.check.claudeTranscripts'),
       run: async () => {
-        if (!cfg) return { ok: false, detail: 'config unavailable, cannot check agents' };
+        if (!cfg) return { ok: false, detail: tCli(locale, 'doctor.detail.configUnavailableAgents') };
         const allClaude = cfg.agents.filter((a) => a.harness === 'claude');
-        if (allClaude.length === 0) return { ok: true, detail: 'no claude agent configured' };
-        // A claude agent on a host writes its transcripts there, and the daemon reads them there
-        // (remoteClaudeProjectsDir). Looking on this disk warned "missing" for every remote agent.
+        if (allClaude.length === 0) return { ok: true, detail: tCli(locale, 'doctor.detail.noClaudeAgent') };
         const claudeAgents = allClaude.filter((a) => !a.host);
-        const remote = allClaude.filter((a) => a.host).map((a) => `${a.id} on ${a.host}: read there, not checked here`);
+        const remote = allClaude.filter((a) => Boolean(a.host)).map((a) => tCli(locale, 'doctor.detail.remoteClaude', { id: a.id, host: a.host ?? '' }));
         const lines: string[] = [...remote];
         let anyMissing = false;
         for (const dir of new Set(claudeAgents.map((a) => claudeProjectsDir(a)))) {
@@ -539,7 +492,7 @@ export async function runDoctor(opts: { migrateConfig?: boolean } = {}): Promise
             lines.push(`${dir} ✓`);
           } else {
             anyMissing = true;
-            lines.push(`${dir} missing (created by Claude Code on its first session)`);
+            lines.push(tCli(locale, 'doctor.detail.claudeDirMissing', { dir }));
           }
         }
         return anyMissing
@@ -548,21 +501,20 @@ export async function runDoctor(opts: { migrateConfig?: boolean } = {}): Promise
       },
     },
     {
-      name: 'IPC socket path usable',
+      name: tCli(locale, 'doctor.check.ipcSocket'),
       run: async () => {
-        if (!cfg) return { ok: false, detail: 'config unavailable, cannot resolve socket path' };
+        if (!cfg) return { ok: false, detail: tCli(locale, 'doctor.detail.configUnavailableSocket') };
         try {
           const sock = resolveSocketPath(cfg);
           if (fs.existsSync(sock)) {
-            // Socket file exists: probe to distinguish "daemon running" from "stale file".
             const alive = await probeDaemon(sock);
             if (alive) {
-              return { ok: true, level: 'warn', detail: `${sock} (a daemon is listening)` };
+              return { ok: true, level: 'warn', detail: tCli(locale, 'doctor.detail.socketAlive', { path: sock }) };
             }
             return {
               ok: true,
               level: 'warn',
-              detail: `${sock} exists but nothing is listening (stale file; the daemon cleans it up on start)`,
+              detail: tCli(locale, 'doctor.detail.socketStale', { path: sock }),
             };
           }
           return { ok: true, detail: sock };
@@ -571,6 +523,32 @@ export async function runDoctor(opts: { migrateConfig?: boolean } = {}): Promise
         }
       },
     },
+  ];
+}
+
+export async function runDoctor(opts: { migrateConfig?: boolean } = {}): Promise<void> {
+  let cfg: Config | null = null;
+  let cfgError: string | null = null;
+  try {
+    cfg = loadConfig();
+  } catch (e) {
+    cfgError = String(e instanceof Error ? e.message : e);
+  }
+  const raw = cfg ? null : readRawConfigIfExists();
+  const locale: Locale = cfg?.locale ?? (raw?.locale as Locale | undefined) ?? detectEnvLocale(process.env);
+
+  if (opts.migrateConfig) {
+    migrateConfigFile(locale);
+    return;
+  }
+
+  printIdentity(locale);
+
+  const ctx: DoctorContext = { cfg, cfgError, locale };
+  const checks: Check[] = [
+    ...buildConfigChecks(ctx),
+    ...buildRuntimeChecks(ctx),
+    ...buildHostAndStoreChecks(ctx),
   ];
 
   let failed = false;
