@@ -147,6 +147,18 @@ export const PushUnsubscribeSchema = z.object({ endpoint: z.string().min(1).max(
  * suit the first.
  */
 export const EndTerminalRequestSchema = z.object({ topic: TopicId }).strict();
+
+/**
+ * On-demand voice dictation for the web UI composer (`POST /api/voice/transcribe`).
+ * Carries raw base64 audio bytes + declared mime; the daemon sniffs the container and enforces
+ * `VOICE_MAX_BYTES`.
+ */
+export const VoiceTranscribeRequestSchema = z
+  .object({
+    mime: z.string().max(255).optional(),
+    data: z.string().min(1),
+  })
+  .strict();
 /**
  * Clear every topic. Takes no fields, and is still a schema rather than an ignored body:
  * `.strict()` is what makes "no fields" mean it, so a request carrying one is refused instead

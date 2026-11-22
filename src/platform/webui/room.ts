@@ -116,6 +116,8 @@ import type {
   TurnChangeFileResult,
   TurnChangesPanel,
   TurnChangeStatusResult,
+  VoiceTranscribeResult,
+  VoiceTranscriber,
 } from '../adapter.js';
 import type { WebuiPlatformConfig } from '../config-schemas.js';
 import { escapeHtml, renderWebMarkdown, renderWebToolLines } from '../web-markdown.js';
@@ -520,6 +522,8 @@ export class WebRoom {
   private optionPicker: SessionOptionPicker | null = null;
   /** A turn's changed files, for the transcript's change entry — see `useTurnChanges`. */
   private turnChangesPanel: TurnChangesPanel | null = null;
+  /** On-demand voice transcription for the composer — see `useVoiceTranscriber`. */
+  private voiceTranscriber: VoiceTranscriber | null = null;
   /** The daemon's managed skills and every operation on them — see `useSkillsPanel`. */
   private skillsPanel: SkillsPanel | null = null;
   /** The automatic reviews the daemon recorded — see `useReviewPanel`. */
@@ -936,6 +940,21 @@ export class WebRoom {
    */
   useTurnChanges(panel: TurnChangesPanel): void {
     this.turnChangesPanel = panel;
+  }
+
+  useVoiceTranscriber(transcriber: VoiceTranscriber): void {
+    this.voiceTranscriber = transcriber;
+  }
+
+  hasVoiceTranscriber(): boolean {
+    return this.voiceTranscriber?.enabled() ?? false;
+  }
+
+  async transcribeVoice(bytes: Uint8Array, mime?: string): Promise<VoiceTranscribeResult> {
+    if (!this.voiceTranscriber?.enabled()) {
+      return { ok: false, reason: 'voice transcription is not configured' };
+    }
+    return this.voiceTranscriber.transcribe(bytes, mime);
   }
 
   /** One turn's changed files, for the window the change entry opens. */

@@ -40,12 +40,29 @@ voice:
   confirm: true                           # false = send each transcript on at once
   cleanup: true                           # false = the word-for-word transcript only
   vocabulary: [Unraid, OpenWrt]           # names you say that it should spell right
-  transcriber:                            # Gemini's generateContent format
-    baseUrl: https://generativelanguage.googleapis.com/v1beta   # or a new-api gateway: http://newapi:3000/v1beta
-    apiKey: ${GEMINI_API_KEY}
-    model: gemini-3-flash
+  transcriber:                            # 'gemini' (default) or 'openai-audio' (/audio/transcriptions)
+    format: openai-audio
+    baseUrl: https://api.groq.com/openai/v1   # or any OpenAI-compatible gateway
+    apiKey: ${GROQ_API_KEY}
+    model: whisper-large-v3-turbo
+    language: zh                          # optional ISO-639-1 hint for openai-audio
+  cleaner:                                # optional dedicated text model for voice.cleanup
+    format: openai                        # 'openai' (/chat/completions, default) or 'gemini'
+    baseUrl: https://api.groq.com/openai/v1
+    apiKey: ${GROQ_API_KEY}
+    model: llama-3.3-70b-versatile
 ```
 
+- **Web UI dictation**: when `voice:` is configured, tapping 🎤 in the web UI transcribes and
+  cleans up the recording via `POST /api/voice/transcribe` and inserts the result straight into
+  the composer input so you can edit or press Enter to send (the spoken words are shown in the
+  status note beneath it). Chat platforms keep the confirmation card flow.
+- **Fast STT + separate cleaner**: setting `transcriber.format: openai-audio` uploads audio to
+  `<baseUrl>/audio/transcriptions` (multipart/form-data, passing `vocabulary` as `prompt`), which
+  works with Groq Whisper, OpenAI, SiliconFlow SenseVoice, or self-hosted compatible servers. Pair
+  it with `voice.cleaner` to run text cleanup on a fast chat model without waiting on a slow
+  multimodal model. Existing Gemini `generateContent` configs keep working unchanged (default
+  `format: gemini`).
 - Once transcripts have earned your trust, `/setting voice off` turns
   confirmation off from chat, live — the cleaned-up version is what is then
   sent. `/setting cleanup off` goes back to word-for-word transcripts.

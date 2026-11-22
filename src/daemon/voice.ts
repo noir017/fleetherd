@@ -8,9 +8,13 @@ import { addressOf, type ConversationAddress } from '../core/conversation.js';
 import { localeOf } from '../core/i18n/index.js';
 import {
   buildCleanupRequest,
+  buildOpenAiCleanupRequest,
   buildTranscribeRequest,
+  buildWhisperPrompt,
   foldVoiceLog,
   parseCleanupResponse,
+  parseOpenAiCleanupResponse,
+  parseOpenAiTranscribeResponse,
   parseTranscribeResponse,
   parseVoiceButtonId,
   sniffAudio,
@@ -32,7 +36,7 @@ import {
   type VoiceOutcome,
   type VoiceStatus,
 } from '../core/voice.js';
-import type { PlatformAdapter } from '../platform/adapter.js';
+import type { PlatformAdapter, VoiceTranscribeResult } from '../platform/adapter.js';
 import type { ButtonInteraction, ConversationId, InboundMessage, MessageRef } from '../types.js';
 import { createAttachmentIngestDeps } from './attachment-io.js';
 
@@ -128,12 +132,144 @@ const RETRYABLE = new Set([429, 500, 502, 503, 504]);
  */
 const ATTEMPT_BASE_MS = 20_000;
 const ATTEMPT_PER_MIB_MS = 30_000;
+const OPENAI_STT_ATTEMPT_BASE_MS = 8_000;
+const OPENAI_STT_ATTEMPT_PER_MIB_MS = 15_000;
+const OPENAI_CLEANUP_ATTEMPT_MS = 10_000;
+const OPENAI_RETRY_DELAY_MS = 800;
 /** The log is rotated to `.1` past this size, so it cannot grow without bound. */
 const LOG_MAX_BYTES = 5 * 1024 * 1024;
 /** Characters of a transcript quoted in daemon.log (the full text is in voice-log.jsonl). */
 const LOG_PREVIEW = 60;
 
-type TranscriberConfig = NonNullable<Config['voice']>['transcriber'];
+interface GeminiEndpointConfig {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  timeoutMs: number;
+}
+
+type TranscriberConfig = Omit<NonNullable<Config['voice']>['transcriber'], 'format'> & {
+  format?: 'gemini' | 'openai-audio';
+};
+type CleanerConfig = Omit<NonNullable<NonNullable<Config['voice']>['cleaner']>, 'format'> & {
+  format?: 'openai' | 'gemini';
+};
+
+function extForMime(mime: string): string {
+  const sub = (mime.split('/')[1] ?? 'webm').split(';')[0] ?? 'webm';
+  if (sub === 'mp4' || sub === 'x-m4a') return 'm4a';
+  if (sub === 'mpeg') return 'mp3';
+  return sub || 'webm';
+}
+
+async function fetchWithRetry<S extends { ok: true }>(
+  deps: TranscribeDeps,
+  opts: {
+    overall: AbortSignal;
+    overallTimeoutMs: number;
+    attemptMs: number;
+    retryDelayMs: number;
+    runAttempt: (signal: AbortSignal) => Promise<Response>;
+    parse: (json: unknown) => S | Failure;
+  }
+): Promise<S | Failure> {
+  const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  let last = 'no attempt was made';
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const signal = AbortSignal.any([opts.overall, AbortSignal.timeout(opts.attemptMs)]);
+    try {
+      const res = await opts.runAttempt(signal);
+      if (res.ok) {
+        const parsed = opts.parse(await res.json());
+        if (parsed.ok || !parsed.retry) return parsed;
+        last = parsed.reason;
+      } else {
+        const detail = errorDetail(await res.text().catch(() => ''));
+        last = `HTTP ${res.status}${detail ? `: ${detail}` : ''}`;
+        if (!RETRYABLE.has(res.status)) return { ok: false, reason: `the transcriber answered ${last}` };
+      }
+    } catch (e) {
+      if (opts.overall.aborted) {
+        return { ok: false, reason: `the transcriber did not answer within ${Math.ceil(opts.overallTimeoutMs / 1000)}s` };
+      }
+      last = signal.aborted ? `no answer within ${Math.round(opts.attemptMs / 1000)}s` : errText(e);
+    }
+    if (attempt < MAX_ATTEMPTS) await sleep(opts.retryDelayMs * attempt);
+  }
+  return { ok: false, reason: `the transcriber failed ${MAX_ATTEMPTS} times (last: ${last})` };
+}
+
+async function transcribeOpenAiAudio(
+  cfg: TranscriberConfig,
+  audio: TranscribeAudio[],
+  deps: TranscribeDeps,
+  overall: AbortSignal,
+  vocabulary?: readonly string[]
+): Promise<TranscribeParse> {
+  const fetchImpl = deps.fetch ?? fetch;
+  const url = `${cfg.baseUrl.replace(/\/+$/, '')}/audio/transcriptions`;
+  const prompt = buildWhisperPrompt(vocabulary);
+  const base = deps.attemptBaseMs ?? OPENAI_STT_ATTEMPT_BASE_MS;
+  const texts: string[] = [];
+  for (let i = 0; i < audio.length; i++) {
+    const part = audio[i]!;
+    const bytes = Buffer.from(part.base64, 'base64');
+    const mib = bytes.length / (1024 * 1024);
+    const filename = `voice-${i + 1}.${extForMime(part.mime)}`;
+    const one = await fetchWithRetry<Heard>(deps, {
+      overall,
+      overallTimeoutMs: cfg.timeoutMs,
+      attemptMs: Math.round(base + OPENAI_STT_ATTEMPT_PER_MIB_MS * mib),
+      retryDelayMs: OPENAI_RETRY_DELAY_MS,
+      runAttempt: (signal) => {
+        const form = new FormData();
+        form.append('file', new Blob([bytes], { type: part.mime }), filename);
+        form.append('model', cfg.model);
+        form.append('response_format', 'json');
+        form.append('temperature', '0');
+        form.append('prompt', prompt);
+        if (cfg.language) form.append('language', cfg.language);
+        return fetchImpl(url, {
+          method: 'POST',
+          headers: { authorization: `Bearer ${cfg.apiKey}` },
+          body: form,
+          signal,
+        });
+      },
+      parse: parseOpenAiTranscribeResponse,
+    });
+    if (!one.ok) return one;
+    if (one.text) texts.push(one.text);
+  }
+  return { ok: true, text: texts.join('\n\n'), usage: {} };
+}
+
+async function runOpenAiCleanup(
+  cfg: CleanerConfig,
+  transcript: string,
+  deps: TranscribeDeps,
+  overall: AbortSignal,
+  vocabulary?: readonly string[]
+): Promise<CleanupParse> {
+  const fetchImpl = deps.fetch ?? fetch;
+  const url = `${cfg.baseUrl.replace(/\/+$/, '')}/chat/completions`;
+  const body = JSON.stringify(buildOpenAiCleanupRequest(cfg.model, transcript, { vocabulary }));
+  const attemptMs = Math.min(deps.attemptBaseMs ?? OPENAI_CLEANUP_ATTEMPT_MS, cfg.timeoutMs);
+  return fetchWithRetry<Tidied>(deps, {
+    overall,
+    overallTimeoutMs: cfg.timeoutMs,
+    attemptMs,
+    retryDelayMs: OPENAI_RETRY_DELAY_MS,
+    runAttempt: (signal) =>
+      fetchImpl(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${cfg.apiKey}` },
+        body,
+        signal,
+      }),
+    parse: (json) => parseOpenAiCleanupResponse(json, transcript),
+  });
+}
 
 /** A final state a card can be left in (the log also knows `failed` and `no-speech`, which have no card). */
 type CardOutcome = Exclude<VoiceStatus, 'pending'>;
@@ -193,7 +329,7 @@ interface Exchange<S> {
  * Never throws: every failure is a reason sentence, because the only caller has a user to tell.
  */
 async function generate<S extends { ok: true }>(
-  cfg: TranscriberConfig,
+  cfg: GeminiEndpointConfig,
   deps: TranscribeDeps,
   call: Exchange<S>
 ): Promise<S | Failure> {
@@ -250,24 +386,43 @@ export async function transcribe(
   cfg: TranscriberConfig,
   audio: TranscribeAudio[],
   deps: TranscribeDeps = {},
-  opts: { cleanup?: boolean; vocabulary?: readonly string[] } = {}
+  opts: { cleanup?: boolean; vocabulary?: readonly string[]; cleaner?: CleanerConfig } = {}
 ): Promise<TranscribeParse> {
   const overall = AbortSignal.timeout(cfg.timeoutMs);
   const base = deps.attemptBaseMs ?? ATTEMPT_BASE_MS;
   const mib = audio.reduce((n, a) => n + (a.base64.length * 3) / 4, 0) / (1024 * 1024);
-  const heard = await generate<Heard>(cfg, deps, {
-    overall,
-    attemptMs: Math.round(base + ATTEMPT_PER_MIB_MS * mib),
-    body: (thinking) => buildTranscribeRequest(cfg.model, audio, { thinking, vocabulary: opts.vocabulary }),
-    parse: parseTranscribeResponse,
-  });
+  const format = cfg.format ?? 'gemini';
+  const heard =
+    format === 'openai-audio'
+      ? await transcribeOpenAiAudio(cfg, audio, deps, overall, opts.vocabulary)
+      : await generate<Heard>(cfg, deps, {
+          overall,
+          attemptMs: Math.round(base + ATTEMPT_PER_MIB_MS * mib),
+          body: (thinking) => buildTranscribeRequest(cfg.model, audio, { thinking, vocabulary: opts.vocabulary }),
+          parse: parseTranscribeResponse,
+        });
   if (!heard.ok || !heard.text || !opts.cleanup) return heard;
-  const tidied = await generate<Tidied>(cfg, deps, {
-    overall,
-    attemptMs: base,
-    body: (thinking) => buildCleanupRequest(cfg.model, heard.text, { thinking, vocabulary: opts.vocabulary }),
-    parse: (json) => parseCleanupResponse(json, heard.text),
-  });
+  const cleaner = opts.cleaner;
+  let tidied: CleanupParse | undefined;
+  if (cleaner) {
+    tidied =
+      (cleaner.format ?? 'openai') === 'openai'
+        ? await runOpenAiCleanup(cleaner, heard.text, deps, overall, opts.vocabulary)
+        : await generate<Tidied>(cleaner, deps, {
+            overall,
+            attemptMs: Math.min(base, cleaner.timeoutMs),
+            body: (thinking) => buildCleanupRequest(cleaner.model, heard.text, { thinking, vocabulary: opts.vocabulary }),
+            parse: (json) => parseCleanupResponse(json, heard.text),
+          });
+  } else if (format === 'gemini') {
+    tidied = await generate<Tidied>(cfg, deps, {
+      overall,
+      attemptMs: base,
+      body: (thinking) => buildCleanupRequest(cfg.model, heard.text, { thinking, vocabulary: opts.vocabulary }),
+      parse: (json) => parseCleanupResponse(json, heard.text),
+    });
+  }
+  if (!tidied) return heard;
   if (!tidied.ok) return { ...heard, cleanupError: tidied.reason };
   return tidied.cleaned === undefined ? heard : { ...heard, cleaned: tidied.cleaned };
 }
@@ -357,6 +512,53 @@ export class VoiceIntake {
     this.logFile = deps.logFile ?? path.join(configDir(), 'voice-log.jsonl');
   }
 
+  isConfigured(): boolean {
+    return Boolean(this.config.voice);
+  }
+
+  /**
+   * On-demand dictation for the web UI composer: sniff, transcribe and (when enabled) clean up
+   * raw audio bytes, returning the text directly without posting a chat card.
+   */
+  async transcribeBuffer(bytes: Uint8Array, declaredMime?: string): Promise<VoiceTranscribeResult> {
+    const voice = this.config.voice;
+    if (!voice) return { ok: false, reason: 'voice transcription is not configured' };
+    if (bytes.length > VOICE_MAX_BYTES) return { ok: false, reason: tooLarge(bytes.length) };
+    const format = sniffAudio(bytes);
+    if (!format) {
+      return {
+        ok: false,
+        reason: `its audio format is not one I recognize${declaredMime ? ` (declared as ${declaredMime})` : ''}`,
+      };
+    }
+    if (!format.supported) {
+      return { ok: false, reason: `${format.mime.slice('audio/'.length).toUpperCase()} audio cannot be transcribed here` };
+    }
+    const started = this.deps.clock.now();
+    const result = await transcribe(
+      voice.transcriber,
+      [{ mime: format.mime, base64: Buffer.from(bytes).toString('base64') }],
+      this.deps,
+      { cleanup: voice.cleanup, vocabulary: voice.vocabulary, ...(voice.cleaner ? { cleaner: voice.cleaner } : {}) }
+    );
+    const latencyMs = this.deps.clock.now() - started;
+    if (!result.ok) return { ok: false, reason: result.reason };
+    if (!result.text) return { ok: false, reason: 'no speech recognized', noSpeech: true };
+    const model = voice.transcriber.model;
+    console.log(
+      `[voice] dictation transcribed by ${model} in ${latencyMs}ms (${result.text.length} chars` +
+        `${result.cleaned !== undefined ? `, cleaned up to ${result.cleaned.length}` : ''})`
+    );
+    return {
+      ok: true,
+      text: result.text,
+      ...(result.cleaned !== undefined ? { cleaned: result.cleaned } : {}),
+      ...(result.cleanupError !== undefined ? { cleanupError: result.cleanupError } : {}),
+      model,
+      latencyMs,
+    };
+  }
+
   /**
    * Take a voice message: true when it is one and transcription is configured, in which case the
    * caller must do nothing else with it. Everything after this returns is asynchronous.
@@ -415,6 +617,7 @@ export class VoiceIntake {
       const result = await transcribe(voice.transcriber, prepared.audio, this.deps, {
         cleanup: voice.cleanup,
         vocabulary: voice.vocabulary,
+        ...(voice.cleaner ? { cleaner: voice.cleaner } : {}),
       });
       const latencyMs = this.deps.clock.now() - started;
       if (!result.ok) {

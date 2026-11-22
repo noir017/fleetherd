@@ -84,6 +84,7 @@ import {
   FilesRemoveRequestSchema,
   InstructionsWriteRequestSchema,
   StarTopicRequestSchema,
+  VoiceTranscribeRequestSchema,
   TOPIC_ID,
   parseBody,
   type SendRequest,
@@ -424,6 +425,7 @@ const GUARDED: Route[] = [
   // the topics that need a person. Read-only; see `WebRoom.snapshot`.
   { method: 'GET', path: '/api/topic', run: topicSnapshot },
   { method: 'POST', path: '/api/send', run: submit },
+  { method: 'POST', path: '/api/voice/transcribe', run: transcribeVoice },
   { method: 'POST', path: '/api/click', run: click },
   { method: 'POST', path: '/api/topics', run: createTopic },
   { method: 'POST', path: '/api/topics/clear', run: clearTopics },
@@ -951,6 +953,17 @@ async function submit({ req, res }: Req, ctx: Ctx): Promise<void> {
     case 'accepted':
       return send(req, res, 202, { ok: true });
   }
+}
+
+async function transcribeVoice({ req, res }: Req, ctx: Ctx): Promise<void> {
+  if (!ctx.room.hasVoiceTranscriber()) {
+    return send(req, res, 404, { error: 'voice transcription is not configured' });
+  }
+  const parsed = await readBody(req, res, VoiceTranscribeRequestSchema, true);
+  if (!parsed) return;
+  const bytes = Buffer.from(parsed.data, 'base64');
+  const result = await ctx.room.transcribeVoice(bytes, parsed.mime);
+  send(req, res, 200, result);
 }
 
 async function click({ req, res }: Req, ctx: Ctx): Promise<void> {

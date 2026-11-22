@@ -5,6 +5,18 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **Fast OpenAI-compatible voice STT, dedicated cleanup model, and Web UI composer dictation.**
+  `voice.transcriber` now supports `format: 'openai-audio'` (`POST <baseUrl>/audio/transcriptions`
+  multipart upload with `vocabulary` priming and optional `language`) alongside the existing
+  `gemini` format, and an optional `voice.cleaner` block (`format: 'openai' | 'gemini'`) decouples
+  spoken-to-written cleanup from the transcription model so fast STT + fast text LLMs can finish in
+  ~1–2s instead of waiting on a slow multimodal model. In the Web UI, 🎤 recordings now record at
+  24 kbps Opus and call `POST /api/voice/transcribe` to fill the cleaned text straight into the
+  composer input (showing latency and raw transcript in the status note) so you can edit or press
+  Enter immediately, falling back to audio attachment upload when `voice:` is not configured.
+
 ## [3.33.0] - 2026-11-22
 
 ### Added

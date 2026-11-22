@@ -765,6 +765,7 @@ function lifecycle(
   | 'useModelPicker'
   | 'useOptionPicker'
   | 'useTurnChanges'
+  | 'useVoiceTranscriber'
   | 'registerCommands'
   | 'start'
   | 'stop'
@@ -856,6 +857,7 @@ function lifecycle(
      * link. Read-only — the records are written by the turn itself.
      */
     useTurnChanges: (panel) => room.useTurnChanges(panel),
+    useVoiceTranscriber: (transcriber) => room.useVoiceTranscriber(transcriber),
     /**
      * Accepted and never called.
      *

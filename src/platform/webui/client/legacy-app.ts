@@ -6985,9 +6985,10 @@ import {
    * is far past any voice message and well inside what the daemon will transcribe; at the cap it
    * stops and sends rather than discarding what was said. Esc throws a recording away.
    */
-  var micBtn=$('mic'), rec=null, recStarting=false, voices=0;
+  var micBtn=$('mic'), rec=null, recStarting=false, recTranscribing=false, voices=0;
   var MIC_TYPES=['audio/ogg;codecs=opus','audio/webm;codecs=opus','audio/mp4','audio/webm'];
   var MIC_MAX_MS=10*60*1000;
+  var MIC_BITRATE=24000;
   micBtn.hidden = !(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
 
   function recordType(){
@@ -6997,6 +6998,14 @@ import {
     return '';
   }
   function micLabel(){
+    if(recTranscribing){
+      micBtn.innerHTML=IC.icon.mic;
+      micBtn.classList.remove('rec');
+      micBtn.disabled=true;
+      micBtn.title=tr('composer.micTranscribing');
+      return;
+    }
+    micBtn.disabled=false;
     if(!rec){ micBtn.innerHTML=IC.icon.mic; micBtn.classList.remove('rec'); micBtn.title=tr('composer.micTitle'); return; }
     var s=Math.floor((Date.now()-rec.started)/1000);
     micBtn.innerHTML=IC.icon.stop+' '+Math.floor(s/60)+':'+('0'+(s%60)).slice(-2);
@@ -7010,14 +7019,76 @@ import {
   }
   function releaseMic(r){ r.stream.getTracks().forEach(function(t){ t.stop(); }); }
   function voiceExt(mime){ var sub=mime.split('/')[1] || 'webm'; return sub==='mp4' ? 'm4a' : sub; }
+  function appendDictation(into, text){
+    if(!text) return;
+    if(into && into !== topic){
+      var d = drafts[into] || (drafts[into] = {text:'', s:0, e:0, files:[]});
+      var join = d.text && !/\s$/.test(d.text) ? ' ' : '';
+      d.text = d.text + join + text;
+      d.s = d.e = d.text.length;
+      writeDraft(into);
+      return;
+    }
+    var cur = input.value;
+    var sep = cur && !/\s$/.test(cur) ? ' ' : '';
+    input.value = cur + sep + text;
+    input.selectionStart = input.selectionEnd = input.value.length;
+    grow();
+    if(topic) stashDraft(topic);
+    input.focus();
+  }
+  function dictateOrSend(into, mime, b64){
+    recTranscribing=true;
+    micLabel();
+    note.textContent=tr('composer.micTranscribing');
+    var fallback=function(){
+      voices++;
+      note.textContent='';
+      dispatch('', [{name:'voice-'+voices+'.'+voiceExt(mime), mime:mime, data:b64}]);
+    };
+    post('api/voice/transcribe', {mime:mime, data:b64}, 1, 95000).then(function(res){
+      recTranscribing=false;
+      micLabel();
+      if(res.status === 404){ fallback(); return; }
+      return res.json().catch(function(){ return null; }).then(function(data){
+        if(!data || typeof data.ok !== 'boolean'){
+          if(res.ok){ fallback(); return; }
+          note.textContent=tr('composer.micTranscribeFailed', { err: (data && data.error) || ('HTTP '+res.status) });
+          return;
+        }
+        if(!data.ok){
+          note.textContent=data.noSpeech
+            ? tr('composer.micNoSpeech')
+            : tr('composer.micTranscribeFailed', { err: data.reason || 'unknown error' });
+          return;
+        }
+        var out = data.cleaned || data.text || '';
+        appendDictation(into, out);
+        var sec = ((data.latencyMs || 0) / 1000).toFixed(1);
+        note.textContent = (data.cleaned && data.text && data.cleaned !== data.text)
+          ? tr('composer.micTranscribedWithRaw', { seconds: sec, raw: data.text })
+          : tr('composer.micTranscribed', { seconds: sec });
+      });
+    }, function(e){
+      recTranscribing=false;
+      micLabel();
+      note.textContent=tr('composer.micTranscribeFailed', { err: (e && e.message) || 'network error' });
+    });
+  }
 
   function startRec(){
     recStarting=true;
+    var into=topic;
     navigator.mediaDevices.getUserMedia({audio:true}).then(function(stream){
       recStarting=false;
       var type=recordType(), mr;
-      try { mr = type ? new MediaRecorder(stream, {mimeType:type}) : new MediaRecorder(stream); }
-      catch(e){ stream.getTracks().forEach(function(t){ t.stop(); }); micFailed(e); return; }
+      try {
+        var opts = type ? {mimeType:type, audioBitsPerSecond:MIC_BITRATE} : {audioBitsPerSecond:MIC_BITRATE};
+        mr = new MediaRecorder(stream, opts);
+      } catch(e){
+        try { mr = type ? new MediaRecorder(stream, {mimeType:type}) : new MediaRecorder(stream); }
+        catch(e2){ stream.getTracks().forEach(function(t){ t.stop(); }); micFailed(e2); return; }
+      }
       var r={mr:mr, stream:stream, type:type, parts:[], started:Date.now(), keep:true, timer:0, cap:0};
       mr.ondataavailable=function(ev){ if(ev.data && ev.data.size) r.parts.push(ev.data); };
       mr.onstop=function(){
@@ -7027,8 +7098,7 @@ import {
         var fr=new FileReader();
         fr.onload=function(){
           var s=String(fr.result), c=s.indexOf(',');
-          voices++;
-          dispatch('', [{name:'voice-'+voices+'.'+voiceExt(mime), mime:mime, data:c<0?'':s.slice(c+1)}]);
+          dictateOrSend(into, mime, c<0?'':s.slice(c+1));
         };
         fr.readAsDataURL(new Blob(r.parts, {type:mime}));
       };
@@ -7051,7 +7121,7 @@ import {
   }
   micBtn.addEventListener('click', function(){
     if(rec) stopRec(true);
-    else if(!recStarting && topic) startRec();
+    else if(!recStarting && !recTranscribing && topic) startRec();
   });
   // Escape throws a recording away — unless it is an IME cancelling its candidate list, which is
   // a different Escape and must not also cost the recording. Captured, and stopped there: while a

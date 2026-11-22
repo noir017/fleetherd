@@ -243,6 +243,15 @@ export interface TurnChangeEntry {
   truncated?: true;
 }
 
+export type VoiceTranscribeResult =
+  | { ok: true; text: string; cleaned?: string; cleanupError?: string; model: string; latencyMs: number }
+  | { ok: false; reason: string; noSpeech?: boolean };
+
+export interface VoiceTranscriber {
+  readonly enabled: () => boolean;
+  transcribe(bytes: Uint8Array, mime?: string): Promise<VoiceTranscribeResult>;
+}
+
 /**
  * What `useTurnChanges` hands a platform: one turn's change list and one changed file. Read only,
  * and the same snapshot pair the entry was counted from.
@@ -1431,6 +1440,12 @@ export interface PlatformAdapter {
    * to show a diff in, and its reply has no room for a control that opens one.
    */
   useTurnChanges?(panel: TurnChangesPanel): void;
+
+  /**
+   * Hand the platform an on-demand voice transcription callback so the browser UI can dictate
+   * straight into its composer instead of posting an audio message and waiting on a card.
+   */
+  useVoiceTranscriber?(transcriber: VoiceTranscriber): void;
 
   /**
    * Hang a finished turn's change summary off the reply it ended — `reply` is the message this turn

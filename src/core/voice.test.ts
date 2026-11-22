@@ -2,10 +2,14 @@ import { describe, expect, it } from 'vitest';
 import {
   BUILTIN_VOCABULARY,
   buildCleanupRequest,
+  buildOpenAiCleanupRequest,
   buildTranscribeRequest,
+  buildWhisperPrompt,
   foldVoiceLog,
   isAudioAttachment,
   parseCleanupResponse,
+  parseOpenAiCleanupResponse,
+  parseOpenAiTranscribeResponse,
   parseTranscribeResponse,
   parseVoiceButtonId,
   sniffAudio,
@@ -392,5 +396,45 @@ describe('foldVoiceLog', () => {
       1
     );
     expect(items.map((i) => i.id)).toEqual(['c']);
+  });
+});
+
+describe('OpenAI-compatible STT and cleanup', () => {
+  it('builds a whisper prompt carrying built-in and custom vocabulary', () => {
+    const p = buildWhisperPrompt(['Unraid', 'OpenWrt']);
+    expect(p).toContain('fleetherd');
+    expect(p).toContain('Unraid');
+    expect(p).toContain('OpenWrt');
+  });
+
+  it('parses OpenAI audio transcription responses and treats lone punctuation as silence', () => {
+    expect(parseOpenAiTranscribeResponse({ text: '  把 fleetherd 部署到 oracle  ' })).toEqual({
+      ok: true,
+      text: '把 fleetherd 部署到 oracle',
+      usage: {},
+    });
+    expect(parseOpenAiTranscribeResponse({ text: ' . ' })).toEqual({ ok: true, text: '', usage: {} });
+    expect(parseOpenAiTranscribeResponse({ text: '' })).toEqual({ ok: true, text: '', usage: {} });
+    expect(parseOpenAiTranscribeResponse(null)).toMatchObject({ ok: false });
+  });
+
+  it('builds and parses OpenAI chat cleanup responses, stripping <think> and <transcript> tags', () => {
+    const req = buildOpenAiCleanupRequest('groq-qwen3.8-27b', '那个部署到 A 不对 B', { vocabulary: ['Unraid'] });
+    expect(req['model']).toBe('groq-qwen3.8-27b');
+    expect(req['temperature']).toBe(0);
+    const msgs = req['messages'] as Array<{ role: string; content: string }>;
+    expect(msgs[0]?.content).toContain('Unraid');
+    expect(msgs[1]?.content).toBe('<transcript>\n那个部署到 A 不对 B\n</transcript>');
+
+    expect(
+      parseOpenAiCleanupResponse(
+        { choices: [{ message: { content: '<think>reasoning</think>\n部署到 B。' } }] },
+        '那个部署到 A 不对 B'
+      )
+    ).toEqual({ ok: true, cleaned: '部署到 B。' });
+
+    expect(
+      parseOpenAiCleanupResponse({ choices: [{ message: { content: '原话' } }] }, '原话')
+    ).toEqual({ ok: true });
   });
 });

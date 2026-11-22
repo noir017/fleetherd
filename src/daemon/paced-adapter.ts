@@ -85,6 +85,7 @@ const PACING = {
   useOptionPicker: 'unpaced',
   // Registers the turn-change reads; the page asks over its own HTTP routes, not chat traffic.
   useTurnChanges: 'unpaced',
+  useVoiceTranscriber: 'unpaced',
   // Hangs a finished turn's summary off a message the turn has already written. Not chat traffic
   // the platform meters: it edits the page's own copy of that message, and `editMessage` for the
   // body has already been paced.
