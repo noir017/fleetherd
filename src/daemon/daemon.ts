@@ -397,6 +397,7 @@ export class Daemon {
       delegation: this.delegation,
       skills: this.skillLibrary,
       sessions: (action) => this.reverse.handleSessionsQuery(action),
+      reverse: (action, target) => this.reverse.handleExternalReverse(action, target),
       render: (action, data) => this.renderTool(action, data),
       now: () => clock.now(),
     });

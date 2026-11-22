@@ -29,13 +29,34 @@ import { findNativeTool, SKILLS_TOOL_ACTIONS, toolAction, toolInputSchema, type 
 /** The sub-agent commands the `tasks` tool fronts. */
 export type TaskCommand = Extract<
   IpcAction,
-  { kind: 'task-agents' | 'task-list' | 'task-new' | 'task-read' | 'task-status' | 'task-stop' }
+  { kind: 'task-agents' | 'task-list' | 'task-new' | 'task-send' | 'task-read' | 'task-status' | 'task-stop' }
 >;
 
 /** The read-only conversation-library commands the `sessions` tool fronts. */
 export type SessionsCommand = Extract<
   IpcAction,
   { kind: 'sessions-list' | 'sessions-search' | 'sessions-read' }
+>;
+
+/** Reverse commands offered to `trusted: true` external callers through `schedule`, `send_file`, `messages`, `gateway`. */
+export type ReverseExternalCommand = Extract<
+  IpcAction,
+  | { kind: 'schedule-add' | 'schedule-edit' | 'schedule-list' | 'schedule-op' }
+  | { kind: 'send-file' }
+  | {
+      kind:
+        | 'list-channels'
+        | 'send-message'
+        | 'reply'
+        | 'edit-message'
+        | 'react'
+        | 'delete'
+        | 'fetch-messages'
+        | 'create-thread'
+        | 'ask'
+        | 'voice-log';
+    }
+  | { kind: 'pod-list' | 'pod-add' | 'pod-remove' | 'reload-config' }
 >;
 
 /** What one external tool call asks the daemon for. */
@@ -50,10 +71,24 @@ export type ExternalAction =
    * A sub-agent command. `in` is the coordination topic it acts from, for `new` and `list`; the
    * others name a sub-task's topic in the action itself, and act from that topic's parent.
    */
-  | { kind: 'task'; in?: string; action: TaskCommand };
+  | { kind: 'task'; in?: string; action: TaskCommand }
+  /** A reverse command run on behalf of a trusted external caller, optionally scoped to `topic`. */
+  | { kind: 'reverse'; topic?: string; action: ReverseExternalCommand };
 
-export type ExternalToolName = 'skills' | 'tasks' | 'sessions';
-export const EXTERNAL_TOOL_NAMES: readonly ExternalToolName[] = ['skills', 'tasks', 'sessions'];
+export type ExternalToolName = 'skills' | 'tasks' | 'sessions' | 'schedule' | 'send_file' | 'messages' | 'gateway';
+export const EXTERNAL_TOOL_NAMES: readonly ExternalToolName[] = [
+  'skills',
+  'tasks',
+  'sessions',
+  'schedule',
+  'send_file',
+  'messages',
+  'gateway',
+];
+
+export interface ExternalToolOptions {
+  trusted?: boolean;
+}
 
 /** One `tasks` action: the reverse command it runs (none for `open`), and the parameters it takes. */
 interface TasksAction {
@@ -71,28 +106,46 @@ const TASKS_ACTIONS = {
   stop: { command: 'task-stop', params: ['topic'] },
 } as const satisfies Record<string, TasksAction>;
 
-type TasksActionName = keyof typeof TASKS_ACTIONS;
-const TASKS_ACTION_NAMES = Object.keys(TASKS_ACTIONS) as TasksActionName[];
+const TRUSTED_TASKS_ACTIONS = {
+  open: { params: ['title'] },
+  agents: { command: 'task-agents', params: ['agent'] },
+  new: {
+    command: 'task-new',
+    params: ['topic', 'text', 'agent', 'cwd', 'title', 'model', 'option', 'reviewBy', 'review', 'rounds'],
+  },
+  send: { command: 'task-send', params: ['topic', 'text', 'interrupt', 'forward'] },
+  list: { command: 'tasks', params: ['topic', 'limit'] },
+  status: { command: 'task-status', params: ['topic'] },
+  read: {
+    command: 'task-read',
+    params: ['topic', 'reply', 'turn', 'turns', 'role', 'since', 'grep', 'full', 'tail', 'limit'],
+  },
+  stop: { command: 'task-stop', params: ['topic'] },
+} as const satisfies Record<string, TasksAction>;
+
+type TasksActionName = keyof typeof TRUSTED_TASKS_ACTIONS;
+const UNTRUSTED_TASKS_ACTION_NAMES = Object.keys(TASKS_ACTIONS) as Array<keyof typeof TASKS_ACTIONS>;
+const TRUSTED_TASKS_ACTION_NAMES = Object.keys(TRUSTED_TASKS_ACTIONS) as TasksActionName[];
 
 /**
  * The parameters, described for a model that has none of the CLI's context: `topic` in particular
  * means the coordination topic for `new` and `list`, and a sub-task's topic for the rest.
  */
-const TASKS_PARAMS: Record<string, { description: string; type?: 'boolean' }> = {
+const TASKS_PARAMS: Record<string, ParamSpec> = {
   action: {
     description:
       'open: a topic of your own in the web UI to propose sub-tasks in (returns its topic id). agents: who can take a sub-task; with agent, that one in full. ' +
-      'new: propose one sub-task under your topic. list: with topic, its sub-tasks; without, your topics. ' +
-      "status / read / stop: one sub-task, by the topic id list printed.",
+      'new: propose/start one sub-task under your topic. send (trusted): follow up on an existing sub-task. list: with topic, its sub-tasks; without, your topics. ' +
+      'status / read / stop: one sub-task, by the topic id list printed.',
   },
   topic: {
     description:
-      'new, list: the topic id open returned. status, read, stop: a sub-task\'s topic id, as list prints it (web:main/3a9f0c12).',
+      'new, list: the topic id open returned (or your hosted topic). send, status, read, stop: a sub-task\'s topic id, as list prints it (web:main/3a9f0c12).',
   },
-  text: { description: 'new: the whole task. The agent sees nothing else — say the goal, the constraints and how to tell it is done.' },
+  text: { description: 'new: the whole task (the agent sees nothing else). send: the follow-up message to send to that sub-task.' },
   agent: {
     description:
-      'agents: one agent in full — its models, every setting with its values and notes, how busy it is (it is started to ask). new: who does the work, an id from agents (required).',
+      'agents: one agent in full — its models, every setting with its values and notes, how busy it is (it is started to ask). new: who does the work, an id from agents.',
   },
   cwd: { description: 'new: where it starts on that agent\'s machine: a directory name from agents, or an absolute path.' },
   title: { description: 'open: the topic\'s name. new: the sub-task topic\'s name (default: named from text).' },
@@ -101,9 +154,18 @@ const TASKS_PARAMS: Record<string, { description: string; type?: 'boolean' }> = 
     description:
       'new: the agent\'s own settings, key=value, comma-separated, e.g. account=alice@example.com. A setting or value it does not offer is refused with the choices.',
   },
+  reviewBy: { description: 'new (trusted): reviewer agent id on the same machine for automatic review on new commits.' },
+  review: { description: 'new (trusted): with reviewBy, the reviewer\'s instructions (must ask for `fleetherd task-verdict pass|nits|changes`).' },
+  rounds: { description: 'new (trusted): with reviewBy, max automatic review rounds (default 3).' },
+  interrupt: { description: 'send (trusted): stop the sub-agent\'s running turn first, then send text as its next turn.', type: 'boolean' },
+  forward: { description: 'send (trusted): attach another sub-task topic\'s last normally-ended reply whole.' },
   limit: { description: 'list: how many (default 30). read: how many messages (default 10).' },
   reply: { description: 'read: the last turn that ended normally, its reply whole — what a finished sub-task concluded.', type: 'boolean' },
   turn: { description: 'read: one turn, by number (or last, done).' },
+  turns: { description: 'read (trusted): the last n turns (at most 100).' },
+  role: { description: 'read (trusted): only user, agent, or tool rows.', enum: ['user', 'agent', 'tool'] },
+  since: { description: 'read (trusted): rows after this message #id, oldest first.' },
+  grep: { description: 'read (trusted): only rows containing this text.' },
   full: { description: 'read: raise the per-message cut from 1500 to 20000 characters.', type: 'boolean' },
   tail: { description: 'read: the last n lines of each returned message (use limit to pick how many newest messages).' },
 };
@@ -113,6 +175,103 @@ const TASKS_DESCRIPTION =
   'open a topic first; new proposes one sub-task there, and nothing starts until the person taps Start on the card it ' +
   'puts up. Nobody tells you when a sub-task ends: check with list, then read (reply: true for what it concluded). ' +
   'You see and stop only sub-tasks under topics you opened.';
+
+const TRUSTED_TASKS_DESCRIPTION =
+  'Hand work to the agents behind this gateway, each in a topic of its own in its web UI, and follow or steer it. ' +
+  'Pass your hosted topic (or open one) to new/list; use send to continue, interrupt, or forward a review to an existing sub-task; ' +
+  'use reviewBy/review on new for automatic review loops. Check progress with list/status and read results with read (reply: true).';
+
+const MESSAGES_ACTIONS = {
+  channels: { command: 'channels', params: ['platform', 'query', 'limit'] },
+  send: { command: 'send-message', params: ['topic', 'channel', 'text'] },
+  reply: { command: 'reply', params: ['topic', 'channel', 'messageId', 'text'] },
+  edit: { command: 'edit-message', params: ['topic', 'channel', 'messageId', 'text'] },
+  react: { command: 'react', params: ['topic', 'channel', 'messageId', 'emoji'] },
+  delete: { command: 'delete', params: ['topic', 'channel', 'messageId'] },
+  fetch: { command: 'fetch-messages', params: ['topic', 'channel', 'limit', 'before', 'fields'] },
+  thread: { command: 'create-thread', params: ['topic', 'channel', 'messageId', 'name'] },
+  ask: { params: ['topic', 'channel', 'prompt', 'options', 'timeout'] },
+  voice_log: { command: 'voice-log', params: ['topic', 'limit'] },
+} as const satisfies Record<string, TasksAction>;
+
+type MessagesActionName = keyof typeof MESSAGES_ACTIONS;
+const MESSAGES_ACTION_NAMES = Object.keys(MESSAGES_ACTIONS) as MessagesActionName[];
+
+const MESSAGES_PARAMS: Record<string, ParamSpec> = {
+  action: {
+    description:
+      'channels: list chat/topic ids. send/reply/edit/react/delete: post or update messages. ' +
+      'fetch: read earlier channel messages. thread: open a thread from a message. ask: blocking button question. voice_log: recent voice transcripts.',
+  },
+  topic: { description: 'the topic to act in (e.g. web:main/3a9f0c12) when channel is omitted.' },
+  channel: { description: 'target channel/topic id from channels (overrides topic).' },
+  platform: { description: 'channels: filter by platform instance (e.g. web, tg).' },
+  query: { description: 'channels: filter by id, title, or agent.' },
+  limit: { description: 'channels/fetch/voice_log: max rows to return.' },
+  text: { description: 'send/reply/edit: message text.' },
+  messageId: { description: 'reply/edit/react/delete/thread: target message id.' },
+  emoji: { description: 'react: emoji reaction.' },
+  before: { description: 'fetch: paginate older than this message id.' },
+  fields: { description: 'fetch: comma-separated fields (id, author, time, text, attachments).' },
+  name: { description: 'thread: new thread name.' },
+  prompt: { description: 'ask: question prompt shown with buttons.' },
+  options: { description: 'ask: comma-separated button labels (e.g. "Yes, No").' },
+  timeout: { description: 'ask: wait timeout in milliseconds.' },
+};
+
+const MESSAGES_DESCRIPTION =
+  'List gateway channels/topics, send/edit/reply/react/delete messages, fetch chat history, create threads, ask blocking button questions, or read voice logs.';
+
+const GATEWAY_ACTIONS = {
+  pods: { command: 'pods', params: [] },
+  pod_add: { command: 'pod-add', params: ['name', 'ssh', 'hostKey'] },
+  pod_remove: { command: 'pod-remove', params: ['name'] },
+  reload: { command: 'reload', params: [] },
+} as const satisfies Record<string, TasksAction>;
+
+type GatewayActionName = keyof typeof GATEWAY_ACTIONS;
+const GATEWAY_ACTION_NAMES = Object.keys(GATEWAY_ACTIONS) as GatewayActionName[];
+
+const GATEWAY_PARAMS: Record<string, ParamSpec> = {
+  action: { description: 'pods: list remote hosts and agents. pod_add/pod_remove: manage remote hosts. reload: hot-reload config.yaml.' },
+  name: { description: 'pod_add/pod_remove: host name.' },
+  ssh: { description: 'pod_add: user@address[:port].' },
+  hostKey: { description: 'pod_add: pinned public host key line read from the host.' },
+};
+
+const GATEWAY_DESCRIPTION = 'Manage gateway remote hosts (pods) and hot-reload config.yaml without restarting.';
+
+const TRUSTED_SKILLS_TOOL: NativeTool = {
+  name: 'skills',
+  command: 'skills',
+  description:
+    'The skill library: read and manage gateway skills (search, show, list, categories, create, patch, write-file, remove-file, archive, restore, pin, unpin, history, revert). ' +
+    SKILLS_TOOL_ACTIONS,
+  positionals: {
+    action: 'search | show | list | categories | create | patch | write-file | remove-file | archive | restore | pin | unpin | history | revert',
+    name: 'search: query words; show/write/admin: skill name',
+    file: 'show/write-file/remove-file: relative file path; revert: history commit id',
+  },
+  enums: {
+    action: [
+      'search',
+      'show',
+      'list',
+      'categories',
+      'create',
+      'patch',
+      'write-file',
+      'remove-file',
+      'archive',
+      'restore',
+      'pin',
+      'unpin',
+      'history',
+      'revert',
+    ],
+  },
+  options: ['again', 'description', 'body', 'version', 'content'],
+};
 
 interface ParamSpec {
   description: string;
@@ -190,6 +349,17 @@ function skillsTool(): NativeTool {
   return tool;
 }
 
+function requireNativeTool(name: string): NativeTool {
+  const tool = findNativeTool(name);
+  if (!tool) throw new Error(`internal: no native ${name} tool`);
+  return tool;
+}
+
+function withTopicParam(schema: Record<string, unknown>, description: string): Record<string, unknown> {
+  const props = (schema.properties ?? {}) as Record<string, unknown>;
+  return { ...schema, properties: { topic: { type: 'string', description }, ...props } };
+}
+
 /**
  * The `skills` description a caller outside the gateway is given. The native text opens with the
  * agent's own skill list, which a caller has none of, so that opening is replaced; the rest — what
@@ -218,9 +388,18 @@ const TASKS_ANNOTATIONS: McpToolAnnotations = {
 };
 
 /** One tool as `tools/list` carries it; the `skills` description is extended by the caller. */
-export function externalToolDefinition(name: ExternalToolName): McpTool {
+export function externalToolDefinition(name: ExternalToolName, opts?: ExternalToolOptions): McpTool {
+  const trusted = opts?.trusted === true;
   switch (name) {
     case 'skills': {
+      if (trusted) {
+        return {
+          name,
+          description: TRUSTED_SKILLS_TOOL.description,
+          inputSchema: toolInputSchema(TRUSTED_SKILLS_TOOL),
+          annotations: TASKS_ANNOTATIONS,
+        };
+      }
       const tool = skillsTool();
       return { name, description: SKILLS_DESCRIPTION_FOR_CALLERS, inputSchema: toolInputSchema(tool), annotations: READ_ONLY_ANNOTATIONS };
     }
@@ -234,8 +413,43 @@ export function externalToolDefinition(name: ExternalToolName): McpTool {
     case 'tasks':
       return {
         name,
-        description: TASKS_DESCRIPTION,
-        inputSchema: actionInputSchema('tasks', TASKS_ACTIONS, TASKS_PARAMS),
+        description: trusted ? TRUSTED_TASKS_DESCRIPTION : TASKS_DESCRIPTION,
+        inputSchema: actionInputSchema('tasks', trusted ? TRUSTED_TASKS_ACTIONS : TASKS_ACTIONS, TASKS_PARAMS),
+        annotations: TASKS_ANNOTATIONS,
+      };
+    case 'schedule': {
+      const tool = requireNativeTool('schedule');
+      return {
+        name,
+        description: tool.description,
+        inputSchema: withTopicParam(
+          toolInputSchema(tool),
+          'the topic this schedule belongs to (default conversation for add/edit when channel is omitted)'
+        ),
+        annotations: TASKS_ANNOTATIONS,
+      };
+    }
+    case 'send_file': {
+      const tool = requireNativeTool('send_file');
+      return {
+        name,
+        description: tool.description,
+        inputSchema: withTopicParam(toolInputSchema(tool), 'the topic to send the file into (used when channel is omitted)'),
+        annotations: TASKS_ANNOTATIONS,
+      };
+    }
+    case 'messages':
+      return {
+        name,
+        description: MESSAGES_DESCRIPTION,
+        inputSchema: actionInputSchema('messages', MESSAGES_ACTIONS, MESSAGES_PARAMS),
+        annotations: TASKS_ANNOTATIONS,
+      };
+    case 'gateway':
+      return {
+        name,
+        description: GATEWAY_DESCRIPTION,
+        inputSchema: actionInputSchema('gateway', GATEWAY_ACTIONS, GATEWAY_PARAMS),
         annotations: TASKS_ANNOTATIONS,
       };
     default: {
@@ -250,13 +464,14 @@ export function externalToolDefinition(name: ExternalToolName): McpTool {
  * the model on anything it refuses — the same words the CLI uses wherever a reverse command builds
  * the action.
  */
-export function externalAction(name: ExternalToolName, args: unknown): ExternalAction {
+export function externalAction(name: ExternalToolName, args: unknown, opts?: ExternalToolOptions): ExternalAction {
+  const trusted = opts?.trusted === true;
   switch (name) {
     case 'skills': {
-      const action = toolAction(skillsTool(), args);
+      const action = toolAction(trusted ? TRUSTED_SKILLS_TOOL : skillsTool(), args);
       // The tool's enum already holds `action` to search and show; this is the second lock, so a
       // change to the native tool cannot quietly hand a caller from outside the writes.
-      if (action.kind !== 'skills' || (action.action !== 'search' && action.action !== 'show')) {
+      if (action.kind !== 'skills' || (!trusted && action.action !== 'search' && action.action !== 'show')) {
         throw new Error('skills: only search and show are offered here');
       }
       return { kind: 'skills', action };
@@ -264,7 +479,19 @@ export function externalAction(name: ExternalToolName, args: unknown): ExternalA
     case 'sessions':
       return sessionsAction(args);
     case 'tasks':
-      return tasksAction(args);
+      return tasksAction(args, trusted);
+    case 'schedule':
+      if (!trusted) throw new Error('schedule: requires a trusted caller');
+      return nativeReverseAction('schedule', args);
+    case 'send_file':
+      if (!trusted) throw new Error('send_file: requires a trusted caller');
+      return nativeReverseAction('send_file', args);
+    case 'messages':
+      if (!trusted) throw new Error('messages: requires a trusted caller');
+      return messagesAction(args);
+    case 'gateway':
+      if (!trusted) throw new Error('gateway: requires a trusted caller');
+      return gatewayAction(args);
     default: {
       const _exhaustive: never = name;
       throw new Error(`unknown external tool ${String(_exhaustive)}`);
@@ -311,10 +538,12 @@ function sessionsAction(args: unknown): ExternalAction {
   return { kind: 'sessions', action };
 }
 
-function tasksAction(args: unknown): ExternalAction {
-  const { which, given } = parseActionArgs('tasks', TASKS_ACTION_NAMES, TASKS_ACTIONS, args);
+function tasksAction(args: unknown, trusted: boolean): ExternalAction {
+  const actions: Record<string, TasksAction> = trusted ? TRUSTED_TASKS_ACTIONS : TASKS_ACTIONS;
+  const names: readonly string[] = trusted ? TRUSTED_TASKS_ACTION_NAMES : UNTRUSTED_TASKS_ACTION_NAMES;
+  const { which, given } = parseActionArgs('tasks', names as readonly TasksActionName[], actions as Record<TasksActionName, TasksAction>, args);
   const str = (k: string): string | undefined => (given[k] === undefined ? undefined : String(given[k]));
-  const spec: TasksAction = TASKS_ACTIONS[which];
+  const spec: TasksAction = actions[which]!;
   switch (which) {
     case 'open':
       return { kind: 'open', ...(str('title') ? { title: str('title') } : {}) };
@@ -329,10 +558,11 @@ function tasksAction(args: unknown): ExternalAction {
     case 'new': {
       const topic = str('topic');
       if (topic === undefined) throw new Error('tasks: new needs topic — the id open returned');
-      if (str('agent') === undefined) throw new Error('tasks: new needs agent — an id from the agents action');
+      if (!trusted && str('agent') === undefined) throw new Error('tasks: new needs agent — an id from the agents action');
       return { kind: 'task', in: topic, action: build(spec, without(given, 'topic')) };
     }
     case 'agents':
+    case 'send':
     case 'status':
     case 'read':
     case 'stop':
@@ -342,6 +572,67 @@ function tasksAction(args: unknown): ExternalAction {
       throw new Error(`tasks: unknown action ${String(_exhaustive)}`);
     }
   }
+}
+
+function nativeReverseAction(name: 'schedule' | 'send_file', args: unknown): ExternalAction {
+  const raw = args ?? {};
+  if (typeof raw !== 'object' || Array.isArray(raw)) throw new Error(`${name}: arguments must be an object`);
+  const { topic: rawTopic, ...rest } = raw as Record<string, unknown>;
+  const topic = rawTopic === undefined || rawTopic === null || rawTopic === '' ? undefined : String(rawTopic);
+  const action = toolAction(requireNativeTool(name), rest) as ReverseExternalCommand;
+  return { kind: 'reverse', ...(topic ? { topic } : {}), action };
+}
+
+function messagesAction(args: unknown): ExternalAction {
+  const { which, given } = parseActionArgs('messages', MESSAGES_ACTION_NAMES, MESSAGES_ACTIONS, args);
+  const topic = given.topic === undefined ? undefined : String(given.topic);
+  const rest = without(given, 'topic');
+  if (which === 'ask') {
+    const prompt = rest.prompt === undefined ? undefined : String(rest.prompt);
+    if (!prompt) throw new Error('messages: ask needs prompt');
+    const rawOpts = rest.options;
+    const options = Array.isArray(rawOpts)
+      ? rawOpts.map((v) => String(v).trim()).filter(Boolean)
+      : typeof rawOpts === 'string'
+        ? rawOpts.split(',').map((s) => s.trim()).filter(Boolean)
+        : [];
+    let timeoutMs: number | undefined;
+    if (rest.timeout !== undefined) {
+      const n = Number(rest.timeout);
+      if (!Number.isInteger(n)) throw new Error(`messages: timeout must be an integer, got ${JSON.stringify(rest.timeout)}`);
+      timeoutMs = n;
+    }
+    const channelId = rest.channel === undefined ? undefined : String(rest.channel);
+    return {
+      kind: 'reverse',
+      ...(topic ? { topic } : {}),
+      action: { kind: 'ask', prompt, options, timeoutMs, channelId },
+    };
+  }
+  const spec = MESSAGES_ACTIONS[which];
+  const view: NativeTool = {
+    name: 'messages',
+    command: spec.command,
+    description: '',
+    positionals: {},
+    options: spec.params.filter((p) => !['topic', 'text', 'messageId', 'emoji', 'name'].includes(p)),
+  };
+  const action = toolAction(view, rest) as ReverseExternalCommand;
+  return { kind: 'reverse', ...(topic ? { topic } : {}), action };
+}
+
+function gatewayAction(args: unknown): ExternalAction {
+  const { which, given } = parseActionArgs('gateway', GATEWAY_ACTION_NAMES, GATEWAY_ACTIONS, args);
+  const spec = GATEWAY_ACTIONS[which];
+  const view: NativeTool = {
+    name: 'gateway',
+    command: spec.command,
+    description: '',
+    positionals: {},
+    options: spec.params.filter((p) => p !== 'name' && p !== 'ssh'),
+  };
+  const action = toolAction(view, given) as ReverseExternalCommand;
+  return { kind: 'reverse', action };
 }
 
 /**

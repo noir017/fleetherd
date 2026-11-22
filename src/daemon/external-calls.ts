@@ -53,6 +53,11 @@ export interface ExternalCallsDeps {
   skills: Pick<SkillLibrary, 'search' | 'show' | 'categories'>;
   /** Read-only conversation library queries (`sessions list/search/read`). */
   sessions?(action: SessionsCommand): unknown;
+  /** Reverse-command dispatch for `trusted: true` callers (`skills` writes, `schedule`, `send_file`, `messages`, `gateway`). */
+  reverse?(
+    action: IpcAction,
+    target: { conversationId?: ConversationId; platformId: string; address: ConversationAddress }
+  ): Promise<unknown>;
   /** A reverse command's result as the CLI prints it (commands/reverse.ts renderResult, injected). */
   render(action: IpcAction, data: unknown): string;
   now(): number;
@@ -64,41 +69,27 @@ export class ExternalCalls {
   /** One call, answered with the text the model reads. Throws a message for the model. */
   async call(caller: ExternalCaller, action: ExternalAction): Promise<string> {
     switch (action.kind) {
-      case 'skills':
-        return this.deps.render(action.action, this.readSkills(caller, action.action));
+      case 'skills': {
+        if (action.action.action === 'search' || action.action.action === 'show') {
+          return this.deps.render(action.action, this.readSkills(caller, action.action));
+        }
+        if (!caller.trusted) throw new Error('skills: only search and show are offered here');
+        return this.runReverse(caller, action.action, undefined);
+      }
       case 'sessions': {
         if (!this.deps.sessions) throw new Error('the conversation history is not enabled in this daemon');
         return this.deps.render(action.action, this.deps.sessions(action.action));
+      }
+      case 'reverse': {
+        if (!caller.trusted) throw new Error(`${action.action.kind}: requires a trusted caller`);
+        return this.runReverse(caller, action.action, action.topic);
       }
       case 'open':
         return this.open(caller, action.title);
       case 'topics':
         return this.topicsOf(caller);
       case 'task': {
-        if (action.action.kind === 'task-agents') {
-          const id = action.action.agent;
-          return id ? agentDetailText(await this.deps.delegation.externalAgent(id)) : agentsText(this.deps.delegation.externalAgents());
-        }
-        const place = action.in !== undefined ? this.owned(caller, action.in) : this.parentOwned(caller, subTopicOf(action.action));
-        const result = await this.deps.delegation.handleExternal(
-          place.key,
-          action.action,
-          place.at,
-          place.hosted ? { hosted: true } : undefined
-        );
-        // The CLI's printer says "this conversation has opened no sub-agent topics", and a caller
-        // has no conversation (agentsText is the same split for `task-agents`).
-        if (action.action.kind === 'task-list' && (result as TaskListResult).tasks.length === 0) {
-          const total = (result as TaskListResult).total;
-          return encode({
-            count: 0,
-            note:
-              total > 0
-                ? `${total} sub-task${total === 1 ? '' : 's'} in this topic; raise limit to list ${total === 1 ? 'it' : 'them'}`
-                : 'this topic has no sub-tasks yet; propose one with action new',
-          });
-        }
-        return this.deps.render(action.action, result);
+        return this.callTask(caller, action);
       }
       default: {
         const _exhaustive: never = action;
@@ -150,6 +141,79 @@ export class ExternalCalls {
       throw new Error(`platform instance "${id}" cannot hold topics nested under one another`);
     }
     return { id, adapter };
+  }
+
+  private async callTask(caller: ExternalCaller, action: Extract<ExternalAction, { kind: 'task' }>): Promise<string> {
+    if (action.action.kind === 'task-agents') {
+      const id = action.action.agent;
+      return id ? agentDetailText(await this.deps.delegation.externalAgent(id)) : agentsText(this.deps.delegation.externalAgents());
+    }
+    const place = action.in !== undefined ? this.owned(caller, action.in) : this.parentOwned(caller, subTopicOf(action.action));
+    const opts =
+      place.hosted || caller.trusted
+        ? { ...(place.hosted ? { hosted: true } : {}), ...(caller.trusted ? { trusted: true } : {}) }
+        : undefined;
+    const result = await this.deps.delegation.handleExternal(place.key, action.action, place.at, opts);
+    if (action.action.kind === 'task-list' && (result as TaskListResult).tasks.length === 0) {
+      const total = (result as TaskListResult).total;
+      return encode({
+        count: 0,
+        note:
+          total > 0
+            ? `${total} sub-task${total === 1 ? '' : 's'} in this topic; raise limit to list ${total === 1 ? 'it' : 'them'}`
+            : 'this topic has no sub-tasks yet; propose one with action new',
+      });
+    }
+    return this.deps.render(action.action, result);
+  }
+
+  private defaultPlatformId(): string {
+    const id =
+      this.deps.config.mcp?.platform ??
+      Object.entries(this.deps.config.platforms).find(([, p]) => p.type === 'webui')?.[0] ??
+      Object.keys(this.deps.config.platforms)[0];
+    if (!id) throw new Error('no platform instance is configured in this daemon');
+    return id;
+  }
+
+  private resolveTopicForReverse(
+    caller: ExternalCaller,
+    topic: string
+  ): { key?: ConversationId; platformId: string; address: ConversationAddress } {
+    try {
+      const own = this.owned(caller, topic);
+      return { key: own.key, platformId: own.at.platform, address: own.at.address };
+    } catch {
+      const instances = new Set(Object.keys(this.deps.config.platforms));
+      const parsed = parseTarget(topic, instances);
+      const platformId = parsed.platform ?? this.defaultPlatformId();
+      const key = this.deps.conversationAt(platformId, parsed.address)?.key;
+      return { key, platformId, address: parsed.address };
+    }
+  }
+
+  private async runReverse(caller: ExternalCaller, action: IpcAction, topic: string | undefined): Promise<string> {
+    if (!this.deps.reverse) throw new Error('reverse commands are not enabled for external callers in this daemon');
+    const instances = new Set(Object.keys(this.deps.config.platforms));
+    const topicTarget = topic ? this.resolveTopicForReverse(caller, topic) : undefined;
+    const rawChannel = 'channelId' in action && typeof action.channelId === 'string' && action.channelId !== '' ? action.channelId : undefined;
+    let platformId: string;
+    let address: ConversationAddress;
+    let conversationId = topicTarget?.key;
+    if (rawChannel) {
+      const parsed = parseTarget(rawChannel, instances);
+      platformId = parsed.platform ?? topicTarget?.platformId ?? this.defaultPlatformId();
+      address = parsed.address;
+      conversationId ??= this.deps.conversationAt(platformId, address)?.key;
+    } else if (topicTarget) {
+      platformId = topicTarget.platformId;
+      address = topicTarget.address;
+    } else {
+      platformId = this.defaultPlatformId();
+      address = { channel: '' };
+    }
+    const data = await this.deps.reverse(action, { conversationId, platformId, address });
+    return this.deps.render(action, data);
   }
 
   /**

@@ -35,6 +35,7 @@ function rig(
   opts: {
     skills?: ExternalCallsDeps['skills'];
     sessions?: ExternalCallsDeps['sessions'];
+    reverse?: ExternalCallsDeps['reverse'];
     taskList?: TaskListResult;
     sharedKey?: boolean;
     boundAgents?: Record<string, string>;
@@ -110,6 +111,7 @@ function rig(
       categories: () => ({ total: 0, library: 0, categories: [] }),
     },
     ...(opts.sessions ? { sessions: opts.sessions } : {}),
+    ...(opts.reverse ? { reverse: opts.reverse } : {}),
     render: (action, data) => JSON.stringify({ kind: action.kind, data }),
     now: () => Date.UTC(2026, 10, 19),
   };
@@ -403,5 +405,42 @@ describe('ExternalCalls: sessions', () => {
     } finally {
       history.close();
     }
+  });
+
+  it('routes trusted callers through reverse commands and passes trusted=true to delegation', async () => {
+    const reversed: Array<{ kind: string; platformId: string; channel: string; thread?: string }> = [];
+    const r = rig({
+      reverse: async (action, target) => {
+        reversed.push({ kind: action.kind, platformId: target.platformId, channel: target.address.channel, thread: target.address.thread });
+        return { ok: true };
+      },
+    });
+    const trustedCaller = { name: 'gwt', tools: ['skills', 'tasks', 'schedule', 'send_file', 'messages', 'gateway'] as const, trusted: true };
+    // Untrusted caller is still refused on skills writes and reverse actions.
+    await expect(
+      r.calls.call(GEM, { kind: 'skills', action: { kind: 'skills', action: 'create', name: 'x', description: 'd' } })
+    ).rejects.toThrow(/only search and show/);
+    await expect(
+      r.calls.call(GEM, { kind: 'reverse', action: { kind: 'reload-config' } })
+    ).rejects.toThrow(/requires a trusted caller/);
+
+    await r.calls.call({ ...trustedCaller, tools: [...trustedCaller.tools] }, {
+      kind: 'skills',
+      action: { kind: 'skills', action: 'create', name: 'x', description: 'd' },
+    });
+    await r.calls.call({ ...trustedCaller, tools: [...trustedCaller.tools] }, {
+      kind: 'reverse',
+      topic: 'web:main/e1000000',
+      action: { kind: 'send-file', path: '/tmp/a.txt' },
+    });
+    await r.calls.call({ ...trustedCaller, tools: [...trustedCaller.tools] }, {
+      kind: 'reverse',
+      action: { kind: 'reload-config' },
+    });
+    expect(reversed).toEqual([
+      { kind: 'skills', platformId: 'web', channel: '', thread: undefined },
+      { kind: 'send-file', platformId: 'web', channel: 'main', thread: 'e1000000' },
+      { kind: 'reload-config', platformId: 'web', channel: '', thread: undefined },
+    ]);
   });
 });

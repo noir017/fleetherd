@@ -402,16 +402,12 @@ Do not weaken these without saying so explicitly in the PR:
    the repository's key, and it never force-pushes: when both sides changed one file the
    repository's version wins and the gateway's commits are kept on a branch.
 
-   **Only a person puts a skill into every agent's context** (since 2.42.0). A skill is resident —
-   linked into every harness's skill directory — only when its frontmatter says
-   `fleetherd-resident: "true"` (or `talkcode-resident`, read as the same key — either saying
-   `"true"` makes it resident), and the store refuses a write by an agent or the review that changes
-   that line (`skills-store.ts` assertResidentUnchanged); the web UI's page (a person) and a commit
-   to the repository are the only ways to set it. Everything an agent or the review creates lands in
-   the library, reached only through a search an agent chose to run. Keep it that way: an agent
-   that can promote its own skill to resident is an agent writing every other agent's standing
-   instructions. Like invariant 6's, this is an interface boundary, not code enforcement: an agent
-   that holds the operator's push access to the repository can commit the line itself.
+   **Automatic review cannot promote or demote resident skills.** A skill is resident — linked into
+   every harness's skill directory — when its frontmatter says `fleetherd-resident: "true"` (or
+   `talkcode-resident`, read as the same key). Agents (including `trusted: true` external MCP
+   callers) and people may set or clear it, subject to the short description cap
+   (`assertResidentDescription`), while unattended automatic review (`by.kind === 'review'`) is
+   still refused (`skills-store.ts` assertResidentUnchanged).
 
 9. **The web UI's file window writes files on the agent's machine, and is off by default.**
    `platforms.<id>.files.enabled` is the fourth security decision in that schema, for the same
@@ -474,14 +470,15 @@ Do not weaken these without saying so explicitly in the PR:
      environment on every request — so removing a caller or its variable and `/reload` revokes it.
      A token under 24 characters, or equal to a web UI login secret, is refused, never accepted on
      a weaker check. A request with an `Origin` header is refused (no browser has a reason to call).
-   - **Three tools, and only those listed for the caller.** `skills` is `search` and `show`; every
-     write is refused at the tool and again in the daemon (`ipc/external-tools.ts`,
-     `daemon/external-calls.ts`), so a caller never adds to what every agent reads (invariant 8).
-     `sessions` is strictly read-only (`list`, `search`, `read` over `HistoryStore`, opt-in per
-     caller in `mcp.callers[].tools`), never writing or running a turn.
-     `tasks` is the sub-agent commands minus `task-send` — refused in `Delegation.handleExternal`
-     too — because a sub-agent has a shell and a running turn takes what is sent to it: an injected
-     instruction must not reach one without a tap. No `send_file`, no `schedule`.
+   - **Opt-in trust per caller (`trusted: true`, default `false`).** By default (`trusted: false`),
+     callers get only read-only `skills` (`search`/`show`), read-only `sessions`, and `tasks` minus
+     `task-send` / automatic review loops, with every sub-task waiting on the Start card; write/admin
+     tools (`schedule`, `send_file`, `messages`, `gateway`) are refused at config load and at call
+     time. When the operator explicitly sets `trusted: true` on a caller (e.g. a hosted web agent
+     behind a private MCP proxy), `skills` unlocks full CRUD/history/revert, `tasks` unlocks
+     `send` (`interrupt`/`forward`), `new` review loops (`reviewBy`/`review`/`rounds`), full `read`
+     filters, and `/setting delegation` on `hosted` (`agents:`) topics, and the caller may also be
+     granted `schedule`, `send_file`, `messages`, and `gateway`.
    - **Every sub-task waits on the card**, in the caller's own coordination topic, whatever
      `delegation.confirm` says (`Delegation.startsAtOnce`): invariant 6's lowered tiers are about
      agents the person talks to, not a caller from outside. A typed reply there reaches no agent

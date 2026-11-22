@@ -17,6 +17,7 @@ mcp:
       tokenEnv: FLEETHERD_MCP_GEMINI_TOKEN  # 存它 token 的环境变量名——不是 token 本身
       tools: [skills, tasks, sessions]
       # agents: [gemini-task]               # 可选：允许该调用方把子任务直接挂到已绑定这些智能体的真实话题下
+      # trusted: true                       # 可选（默认 false）：显式信任该调用方，开放完整读写与运维能力
 ```
 
 token 放在配置目录的 `.env` 里（或网关的环境变量里）：
@@ -68,6 +69,18 @@ FLEETHERD_MCP_GEMINI_TOKEN=<至少 24 个随机字符，比如 openssl rand -hex
 `gemini-task@<host>`），跑在真实话题里的 `connect` 智能体可以直接把当前话题 id 传给 `tasks new` / `list`，
 无需先调 `open` 新建空协调话题。子任务提议仍必弹 Start 确认卡、仍禁用 `task-send`，但子任务会直接挂在当前对话下，
 完成后也会自动唤醒该智能体汇报结果。
+
+## 完整信任模式（`trusted: true`）
+
+对由你本人直接控制、走私有 MCP 代理接入的主力智能体（如 `gwt`），可在对应 `callers` 项加上 `trusted: true`：
+
+- **`tasks`**：开放 `send`（含 `interrupt` / `forward`）、`new` 支持 `reviewBy` / `review` / `rounds` 自动审核闭环、`read` 补齐 `role` / `turns` / `since` / `grep`；在 `agents:` 命中的真实话题下遵循网关的 `/setting delegation` 设置（不再强制每次弹 Start 卡）。
+- **`skills`**：在同一个工具里开放完整读写与管理（`create / patch / write-file / remove-file / list / categories / history / revert / archive / restore / pin / unpin`），可修改 `fleetherd-resident`。
+- **扩展工具**（仅 `trusted: true` 时允许在 `tools` 中配置）：
+  - `schedule`：定时/循环任务完整管理（`add / list / show / edit / pause / resume / run / rm`）；
+  - `send_file`：往指定 `topic` / `channel` 发送文件或图片附件；
+  - `messages`：`channels / send / reply / edit / react / delete / fetch / thread / ask / voice_log`；
+  - `gateway`：`pods / pod_add / pod_remove / reload`。
 
 ## 吊销调用方
 

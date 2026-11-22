@@ -358,17 +358,20 @@ describe('resident and library', () => {
     expect(listSkills(dir)[0]).toMatchObject({ resident: false, category: '运维' });
   });
 
-  it('refuses an agent\'s or the review\'s patch that changes the tier, and takes a person\'s', () => {
+  it('refuses automatic review changing the tier, while allowing agents and a person', () => {
     const skill = create();
     const promote = md('metadata:\n  fleetherd-resident: "true"\n');
-    expect(() => patchSkill({ name: skill.name, version: skill.version, content: promote, now: T0 + 1 }, dir)).toThrow(/only a person/);
     expect(() =>
       patchSkill({ name: skill.name, version: skill.version, content: promote, by: { kind: 'review', agent: 'ag' }, now: T0 + 1 }, dir)
-    ).toThrow(/only a person/);
-    expect(patchSkill({ name: skill.name, version: skill.version, content: promote, by: { kind: 'person' }, now: T0 + 1 }, dir).resident).toBe(true);
-    // And an agent cannot demote what a person chose, either.
+    ).toThrow(/automatic review cannot change it/);
+    expect(patchSkill({ name: skill.name, version: skill.version, content: promote, now: T0 + 1 }, dir).resident).toBe(true);
     const v = showSkill(skill.name, undefined, dir).version;
-    expect(() => patchSkill({ name: skill.name, version: v, content: md(''), now: T0 + 2 }, dir)).toThrow(/only a person/);
+    expect(() =>
+      patchSkill({ name: skill.name, version: v, content: md(''), by: { kind: 'review', agent: 'ag' }, now: T0 + 2 }, dir)
+    ).toThrow(/automatic review cannot change it/);
+    expect(patchSkill({ name: skill.name, version: v, content: md(''), now: T0 + 2 }, dir).resident).toBe(false);
+    const v2 = showSkill(skill.name, undefined, dir).version;
+    expect(patchSkill({ name: skill.name, version: v2, content: promote, by: { kind: 'person' }, now: T0 + 3 }, dir).resident).toBe(true);
   });
 
   it('holds a resident description to one short line, and says so about a hand-made one', () => {
@@ -408,27 +411,32 @@ describe('the metadata keys under their names before 3.0.0', () => {
     });
   });
 
-  it('refuses an agent promoting a skill with the old spelling, as with the new', () => {
+  it('refuses automatic review promoting a skill with the old spelling, as with the new', () => {
     const skill = create();
     for (const promote of ['  talkcode-resident: "true"\n', '  fleetherd-resident: "true"\n', '  fleetherd-resident: "false"\n  talkcode-resident: "true"\n']) {
-      expect(() => patchSkill({ name: skill.name, version: skill.version, content: md(`metadata:\n${promote}`), now: T0 + 1 }, dir), promote).toThrow(/only a person/);
       expect(() =>
         patchSkill({ name: skill.name, version: skill.version, content: md(`metadata:\n${promote}`), by: { kind: 'review', agent: 'ag' }, now: T0 + 1 }, dir)
-      ).toThrow(/only a person/);
+      ).toThrow(/automatic review cannot change it/);
     }
     expect(listSkills(dir)[0]!.resident).toBe(false);
   });
 
-  it('refuses an agent demoting a talkcode-resident skill by rewriting or contradicting the key', () => {
+  it('refuses automatic review demoting a talkcode-resident skill by rewriting or contradicting the key', () => {
     const skill = create();
     patchSkill({ name: skill.name, version: skill.version, content: md('metadata:\n  talkcode-resident: "true"\n'), by: { kind: 'person' }, now: T0 + 1 }, dir);
     const v = showSkill(skill.name, undefined, dir).version;
     expect(listSkills(dir)[0]!.resident).toBe(true);
     // Dropping the line, or turning it off under the other spelling, is a change of tier.
-    expect(() => patchSkill({ name: skill.name, version: v, content: md(''), now: T0 + 2 }, dir)).toThrow(/only a person/);
-    expect(() => patchSkill({ name: skill.name, version: v, content: md('metadata:\n  fleetherd-resident: "false"\n'), now: T0 + 2 }, dir)).toThrow(/only a person/);
+    expect(() =>
+      patchSkill({ name: skill.name, version: v, content: md(''), by: { kind: 'review', agent: 'ag' }, now: T0 + 2 }, dir)
+    ).toThrow(/automatic review cannot change it/);
+    expect(() =>
+      patchSkill({ name: skill.name, version: v, content: md('metadata:\n  fleetherd-resident: "false"\n'), by: { kind: 'review', agent: 'ag' }, now: T0 + 2 }, dir)
+    ).toThrow(/automatic review cannot change it/);
     // Renaming the key to the new spelling changes nothing, and is allowed.
-    expect(patchSkill({ name: skill.name, version: v, content: md('metadata:\n  fleetherd-resident: "true"\n'), now: T0 + 2 }, dir).resident).toBe(true);
+    expect(
+      patchSkill({ name: skill.name, version: v, content: md('metadata:\n  fleetherd-resident: "true"\n'), by: { kind: 'review', agent: 'ag' }, now: T0 + 2 }, dir).resident
+    ).toBe(true);
   });
 
   it('writes only the current spelling when a person sets the tier, dropping the old line', () => {

@@ -228,4 +228,66 @@ describe('externalToolDefinition', () => {
     expect(def.inputSchema.properties.limit?.type).toBe('string');
     for (const p of Object.values(def.inputSchema.properties)) expect(p.description).toBeTruthy();
   });
+
+  it('unlocks full skills, tasks, schedule, send_file, messages and gateway for trusted callers', () => {
+    const trusted = { trusted: true };
+    expect(externalToolDefinition('skills', trusted).annotations?.readOnlyHint).toBe(false);
+    expect(
+      externalAction('skills', { action: 'create', name: 'my-skill', description: 'Use when testing', body: '# Hi' }, trusted)
+    ).toEqual({
+      kind: 'skills',
+      action: { kind: 'skills', action: 'create', name: 'my-skill', description: 'Use when testing', body: '# Hi' },
+    });
+    expect(
+      externalAction('tasks', { action: 'send', topic: 'web:main/c1000000', text: 'Continue', interrupt: true, forward: 'web:main/c2000000' }, trusted)
+    ).toEqual({
+      kind: 'task',
+      action: { kind: 'task-send', topic: 'web:main/c1000000', text: 'Continue', interrupt: true, forward: 'web:main/c2000000' },
+    });
+    expect(
+      externalAction(
+        'tasks',
+        { action: 'new', topic: 'web:main/aaaaaaaa', text: 'Ship it', agent: 'cc', reviewBy: 'codex', review: 'Check diff', rounds: 2 },
+        trusted
+      )
+    ).toMatchObject({
+      kind: 'task',
+      in: 'web:main/aaaaaaaa',
+      action: { kind: 'task-new', agent: 'cc', text: 'Ship it', reviewBy: 'codex', review: 'Check diff', rounds: 2 },
+    });
+    expect(
+      externalAction('tasks', { action: 'read', topic: 'c1000000', role: 'agent', turns: 2, grep: 'ok' }, trusted)
+    ).toMatchObject({
+      kind: 'task',
+      action: { kind: 'task-read', topic: 'c1000000', role: 'agent', turns: 2, grep: 'ok' },
+    });
+    expect(externalAction('schedule', { topic: 'web:main/aaaaaaaa', action: 'list' }, trusted)).toEqual({
+      kind: 'reverse',
+      topic: 'web:main/aaaaaaaa',
+      action: { kind: 'schedule-list', id: undefined },
+    });
+    expect(externalAction('send_file', { topic: 'web:main/aaaaaaaa', path: '/tmp/a.png', caption: 'hi' }, trusted)).toEqual({
+      kind: 'reverse',
+      topic: 'web:main/aaaaaaaa',
+      action: { kind: 'send-file', path: '/tmp/a.png', name: undefined, caption: 'hi', channelId: undefined },
+    });
+    expect(externalAction('messages', { action: 'channels', platform: 'web', limit: 5 }, trusted)).toEqual({
+      kind: 'reverse',
+      action: { kind: 'list-channels', platform: 'web', query: undefined, limit: 5 },
+    });
+    expect(
+      externalAction('messages', { action: 'ask', topic: 'web:main/aaaaaaaa', prompt: 'Pick one', options: 'A, B', timeout: 5000 }, trusted)
+    ).toEqual({
+      kind: 'reverse',
+      topic: 'web:main/aaaaaaaa',
+      action: { kind: 'ask', prompt: 'Pick one', options: ['A', 'B'], timeoutMs: 5000, channelId: undefined },
+    });
+    expect(externalAction('gateway', { action: 'reload' }, trusted)).toEqual({
+      kind: 'reverse',
+      action: { kind: 'reload-config' },
+    });
+    for (const tool of ['schedule', 'send_file', 'messages', 'gateway'] as const) {
+      expect(() => externalAction(tool, { action: 'list' })).toThrow(/requires a trusted caller/);
+    }
+  });
 });
