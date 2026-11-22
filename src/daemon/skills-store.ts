@@ -436,9 +436,9 @@ function skillWarning(meta: SkillMeta, files: Map<string, Buffer>): string | und
  * person chose — is the person's call, made on the web UI's page or in the repository.
  */
 function assertResidentUnchanged(before: SkillMeta, after: SkillMeta, by: SkillChangeBy | undefined): void {
-  if (before.resident === after.resident || by?.kind === 'person') return;
+  if (before.resident === after.resident || by?.kind !== 'review') return;
   throw new Error(
-    `${META_RESIDENT} decides whether a skill is in every agent's context, and only a person changes it (the web UI's skills page, or a commit to the repository); patch the skill without changing that line`
+    `${META_RESIDENT} decides whether a skill is in every agent's context, and automatic review cannot change it; patch the skill without changing that line`
   );
 }
 

@@ -928,7 +928,16 @@ export const ConfigSchema = z
                 /** The environment variable (process env or the config's `.env`) holding its bearer token. */
                 tokenEnv: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/, 'tokenEnv is the NAME of an environment variable, not the token'),
                 /** What it may call. `skills` is search and show only; `sessions` is read-only conversation history; `tasks` proposes and follows sub-tasks. */
-                tools: z.array(z.enum(['skills', 'tasks', 'sessions'])).min(1),
+                tools: z
+                  .array(z.enum(['skills', 'tasks', 'sessions', 'schedule', 'send_file', 'messages', 'gateway']))
+                  .min(1),
+                /**
+                 * Opt-in full trust for callers operated by the user (e.g. a hosted web agent behind
+                 * a private MCP proxy): unlocks `tasks` send/review loops/delegation.confirm on hosted
+                 * topics, `skills` writes, and the `schedule` / `send_file` / `messages` / `gateway`
+                 * tools. Defaults to false (read-only + confirmation-gated proposals).
+                 */
+                trusted: z.boolean().optional(),
                 /**
                  * Agents whose own topics this caller may propose sub-tasks in directly (no `open`
                  * coordination topic needed). A base id like `gemini-task` also matches pod-qualified
@@ -1325,9 +1334,17 @@ function checkMcp(
   const issue = (path: Array<string | number>, message: string): void =>
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['mcp', ...path], message });
   const seen = new Set<string>();
+  const trustedOnly = new Set(['schedule', 'send_file', 'messages', 'gateway']);
   mcp.callers.forEach((c, i) => {
     if (seen.has(c.name)) issue(['callers', i, 'name'], `caller "${c.name}" is listed twice`);
     seen.add(c.name);
+    if (!c.trusted) {
+      for (const tool of c.tools) {
+        if (trustedOnly.has(tool)) {
+          issue(['callers', i, 'tools'], `tool "${tool}" requires trusted: true on caller "${c.name}"`);
+        }
+      }
+    }
   });
   if (mcp.platform !== undefined && platforms[mcp.platform]?.type !== 'webui') {
     issue(['platform'], `mcp.platform must name a webui instance; "${mcp.platform}" is ${platforms[mcp.platform]?.type ?? 'not configured'}`);

@@ -49,6 +49,8 @@ export interface ExternalCaller {
   tools: ExternalToolName[];
   /** Agents whose own topics this caller may propose sub-tasks in directly. */
   agents?: string[];
+  /** Opt-in full trust: unlocks write/admin tools, task-send, review loops, and hosted delegation.confirm. */
+  trusted?: boolean;
 }
 
 export interface ExternalMcpDeps {
@@ -225,7 +227,13 @@ export class ExternalMcp {
         }
         continue;
       }
-      out.push({ name: c.name, tools: [...c.tools], ...(c.agents?.length ? { agents: [...c.agents] } : {}), digest: digest(token!) });
+      out.push({
+        name: c.name,
+        tools: [...c.tools],
+        ...(c.agents?.length ? { agents: [...c.agents] } : {}),
+        ...(c.trusted ? { trusted: true } : {}),
+        digest: digest(token!),
+      });
     }
     return out;
   }
@@ -244,7 +252,7 @@ export class ExternalMcp {
       version: this.deps.version,
       listTools: async () =>
         caller.tools.map((name) => {
-          const def = externalToolDefinition(name);
+          const def = externalToolDefinition(name, { trusted: caller.trusted });
           const library = name === 'skills' ? (this.deps.libraryLine?.(caller) ?? '') : '';
           return library ? { ...def, description: `${def.description} ${library}` } : def;
         }),
@@ -252,7 +260,7 @@ export class ExternalMcp {
         // A tool this caller was not given does not exist for it: the same answer as a name nobody has.
         if (!(caller.tools as string[]).includes(name)) return undefined;
         try {
-          const action = externalAction(name as ExternalToolName, args);
+          const action = externalAction(name as ExternalToolName, args, { trusted: caller.trusted });
           console.log(`[external-mcp] ${caller.name}: ${name} ${describe(action)}`);
           return { text: await this.deps.call(caller, action) };
         } catch (e) {
@@ -276,6 +284,8 @@ function describe(a: ExternalAction): string {
       return 'list';
     case 'task':
       return a.in ? `${a.action.kind} in ${a.in}` : a.action.kind;
+    case 'reverse':
+      return a.topic ? `${a.action.kind} in ${a.topic}` : a.action.kind;
     default: {
       const _exhaustive: never = a;
       return String(_exhaustive);

@@ -105,6 +105,15 @@ export class DaemonReverse {
     this.lastResolvedPlatform = platform;
   }
 
+  /** Run a reverse command on behalf of a trusted external MCP caller with an explicit resolved target. */
+  async handleExternalReverse(
+    action: IpcAction,
+    target: { conversationId?: ConversationId; platformId: string; address: ConversationAddress }
+  ): Promise<unknown> {
+    this.setResolved(target.conversationId, target.platformId);
+    return this.handleReverse(action, target.address);
+  }
+
   private reverseAdapter(): { id: string; adapter: PlatformAdapter } {
     const id = this.lastResolvedConversationId;
     const pid = this.lastResolvedPlatform ?? (id ? this.ctx.registry.platformFor(id) : undefined);

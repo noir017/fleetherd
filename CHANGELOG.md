@@ -5,6 +5,24 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **Full external MCP capability via per-caller `trusted: true`.** Callers in `mcp.callers[]` can
+  now opt into `trusted: true` (default `false`, preserving existing read-only / card-gated defaults
+  for untrusted callers). When enabled: `tasks` unlocks `send` (`interrupt`/`forward`), `new`
+  automatic review loops (`reviewBy`/`review`/`rounds`), full `read` filters (`role`/`turns`/`since`/`grep`),
+  and honours `/setting delegation` on `hosted` (`agents:`) topics; `skills` unlocks full CRUD,
+  history, revert, archive, restore, and pin/unpin in place; and callers may also enable `schedule`,
+  `send_file`, `messages` (`channels`/`send`/`reply`/`edit`/`react`/`delete`/`fetch`/`thread`/`ask`/`voice_log`),
+  and `gateway` (`pods`/`pod_add`/`pod_remove`/`reload`).
+
+### Changed
+
+- **Agents and trusted external MCP callers can now change `fleetherd-resident`.** Relaxed
+  `assertResidentUnchanged` in `skills-store.ts` so interactive agents (and `trusted: true` external
+  callers) can promote or demote resident skills directly while keeping the guard in place for
+  unattended automatic skill review (`by.kind === 'review'`).
+
 ## [3.32.1] - 2026-11-22
 
 ### Fixed

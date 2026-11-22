@@ -530,7 +530,12 @@ export class Delegation {
    * is outside the gateway (a coordination topic the entrance opened): it is passed in because the
    * conversation id alone cannot name the topic under every session scope.
    */
-  async handle(from: ConversationId | undefined, action: TaskAction, at?: TopicAt, opts?: { externalCall?: boolean }): Promise<unknown> {
+  async handle(
+    from: ConversationId | undefined,
+    action: TaskAction,
+    at?: TopicAt,
+    opts?: { externalCall?: boolean; allowReview?: boolean }
+  ): Promise<unknown> {
     const here = from ? this.place(from, at) : undefined;
     if (!here) throw new Error(`${action.kind} runs from a conversation's own turn, and this call came from none`);
     if (!commandSurface(here.adapter).nested) {
@@ -545,7 +550,7 @@ export class Delegation {
       case 'task-list':
         return this.list(here, action.limit ?? 30);
       case 'task-new':
-        return this.propose(here, action, opts?.externalCall === true);
+        return this.propose(here, action, opts?.externalCall === true, opts?.allowReview === true);
       case 'task-send':
         return this.send(here, action.topic, action.text, action.interrupt === true, action.forward);
       case 'task-read':
@@ -572,16 +577,24 @@ export class Delegation {
    * into the author's session, which is `task-send` by the gateway's hand — and `task-verdict`
    * belongs to a reviewer's own topic, never a coordination topic.
    */
-  async handleExternal(key: ConversationId, action: TaskAction, at: TopicAt, opts?: { hosted?: boolean }): Promise<unknown> {
+  async handleExternal(
+    key: ConversationId,
+    action: TaskAction,
+    at: TopicAt,
+    opts?: { hosted?: boolean; trusted?: boolean }
+  ): Promise<unknown> {
     if (!opts?.hosted && !this.deps.externalOf?.(at.platform, at.address)) {
       throw new Error('not a coordination topic an external caller opened');
     }
-    if (action.kind === 'task-send') throw new Error('task-send is not offered to an external caller');
+    const trusted = opts?.trusted === true;
+    if (!trusted && action.kind === 'task-send') throw new Error('task-send is not offered to an external caller');
     if (action.kind === 'task-verdict') throw new Error('task-verdict is not offered to an external caller');
-    if (action.kind === 'task-new' && (action.reviewBy !== undefined || action.review !== undefined)) {
+    if (!trusted && action.kind === 'task-new' && (action.reviewBy !== undefined || action.review !== undefined)) {
       throw new Error('an automatic review is not offered to an external caller');
     }
-    return this.handle(key, action, at, { externalCall: true });
+    // Trusted callers acting in a hosted topic (bound to an allowed agent) follow /setting delegation
+    // and review loops like a local agent; untrusted or coordination topics stay card-gated.
+    return this.handle(key, action, at, { externalCall: !(trusted && opts?.hosted), allowReview: trusted });
   }
 
   /** The caller that opened this coordination topic, at the place it is. */
@@ -688,10 +701,15 @@ export class Delegation {
    * case the card is still posted, without buttons, so the person sees what an agent started on its
    * own; it gathers a burst the same way, only for the record.
    */
-  private async propose(here: Place, a: Extract<TaskAction, { kind: 'task-new' }>, externalCall = false): Promise<TaskNewResult> {
+  private async propose(
+    here: Place,
+    a: Extract<TaskAction, { kind: 'task-new' }>,
+    externalCall = false,
+    allowReview = false
+  ): Promise<TaskNewResult> {
     this.syncConfirmMode();
     const ext = this.externalOf(here);
-    const item = await this.itemOf(here, a, externalCall || ext !== undefined);
+    const item = await this.itemOf(here, a, externalCall || ext !== undefined, allowReview);
     const key = this.cardKey(here);
     const review = item.review;
     const reviewed = review
@@ -742,7 +760,7 @@ export class Delegation {
   }
 
   /** One `task-new` as the sub-task it proposes, refused while the asking agent can still fix it. */
-  private async itemOf(here: Place, a: Extract<TaskAction, { kind: 'task-new' }>, ext: boolean): Promise<Item> {
+  private async itemOf(here: Place, a: Extract<TaskAction, { kind: 'task-new' }>, ext: boolean, allowReview = false): Promise<Item> {
     // An external topic has no agent of its own to default to; the caller names one.
     const agent = a.agent ?? (ext ? undefined : this.deps.registry.boundAgentOf(here.key));
     if (!agent) {
@@ -761,7 +779,7 @@ export class Delegation {
       const why = await this.deps.registry.scheduledChoicesProblem(agent, choice, here.key);
       if (why) throw new Error(why);
     }
-    const review = ext ? undefined : this.reviewPlanOf(a, def);
+    const review = !ext || allowReview ? this.reviewPlanOf(a, def) : undefined;
     return {
       agent,
       text: a.text,

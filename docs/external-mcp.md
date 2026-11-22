@@ -19,6 +19,7 @@ mcp:
       tokenEnv: FLEETHERD_MCP_GEMINI_TOKEN  # the variable holding its token — never the token
       tools: [skills, tasks, sessions]
       # agents: [gemini-task]               # optional: let this caller attach sub-tasks directly to live topics bound to these agents
+      # trusted: true                       # optional (default false): opt-in full trust for operator-controlled callers
 ```
 
 Put the token in the config directory's `.env` (or the gateway's environment):
@@ -78,6 +79,18 @@ When a caller also lists `agents:` (e.g. `agents: [gemini-task]`, matching both 
 directly to `tasks new` / `list` instead of calling `open`. Proposals still wait on a Start card
 and `task-send` remains disabled, while sub-tasks attach under that conversation and notify the
 bound agent there when they finish.
+
+## Trusted callers (`trusted: true`)
+
+For an operator-controlled agent behind a private MCP proxy, set `trusted: true` on its `callers` entry:
+
+- **`tasks`**: unlocks `send` (`interrupt` / `forward`), `new` automatic review loops (`reviewBy` / `review` / `rounds`), full `read` filters (`role` / `turns` / `since` / `grep`), and honours `/setting delegation` on `hosted` (`agents:`) topics.
+- **`skills`**: unlocks full CRUD and history in place (`create`, `patch`, `write-file`, `remove-file`, `list`, `categories`, `history`, `revert`, `archive`, `restore`, `pin`, `unpin`), including changing `fleetherd-resident`.
+- **Additional tools** (permitted in `tools` only when `trusted: true`):
+  - `schedule`: full scheduled-task management (`add`, `list`, `show`, `edit`, `pause`, `resume`, `run`, `rm`);
+  - `send_file`: upload a file or image into a `topic` or `channel`;
+  - `messages`: `channels`, `send`, `reply`, `edit`, `react`, `delete`, `fetch`, `thread`, `ask`, `voice_log`;
+  - `gateway`: `pods`, `pod_add`, `pod_remove`, `reload`.
 
 ## Revoking a caller
 

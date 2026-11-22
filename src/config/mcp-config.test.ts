@@ -63,4 +63,13 @@ describe('mcp config', () => {
       /mcp and platform instance ..?web..? both bind 0.0.0.0:8787/
     );
   });
+
+  it('requires trusted: true for write/admin tools, and accepts all 7 tools when trusted', () => {
+    for (const tool of ['schedule', 'send_file', 'messages', 'gateway']) {
+      expect(() => cfg({ callers: [{ name: 'g', tokenEnv: 'A', tools: [tool] }] })).toThrow(/requires trusted: true/);
+    }
+    const all = ['skills', 'tasks', 'sessions', 'schedule', 'send_file', 'messages', 'gateway'];
+    const c = cfg({ callers: [{ name: 'gwt', tokenEnv: 'A', trusted: true, tools: all }] });
+    expect(c.mcp?.callers[0]).toEqual({ name: 'gwt', tokenEnv: 'A', trusted: true, tools: all });
+  });
 });
