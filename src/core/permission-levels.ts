@@ -1,4 +1,6 @@
 import { PERMISSION_LEVELS, type AgentDef, type PermissionLevel } from '../config/schema.js';
+import type { Locale } from './i18n/index.js';
+import { tSettings } from './i18n/settings.js';
 
 /**
  * `agents[].permissions` as data: what each level asks of the harness, and what of the gateway.
@@ -166,6 +168,13 @@ export function isApiAgent(def: Pick<AgentDef, 'harness' | 'command' | 'args'>):
 export const API_AGENT_DETAIL =
   'the only one that applies: it calls a cloud API, runs nothing on this machine and never asks for permission';
 
+export function apiAgentDetail(locale: Locale = 'en'): string {
+  if (locale === 'zh-CN') {
+    return '唯一适用的档位：仅调用云端 API，不在本机执行任何操作且从不申请权限';
+  }
+  return API_AGENT_DETAIL;
+}
+
 /** Where an unset level's mode came from: a session, the agent's pinned `options.mode`, or neither. */
 export type UnsetLevelSource = 'session' | 'pin' | 'none';
 
@@ -203,13 +212,18 @@ export function unsetLevel(def: Pick<AgentDef, 'options'>, current?: string): Un
  * own case because what was measured (1.5.1, 2026-11-06) is specific: it asks before a command and
  * writes into its working directory without asking.
  */
-export function levelDetail(level: PermissionLevel, withoutMode?: 'none' | 'agy'): string {
+export function levelDetail(level: PermissionLevel, withoutMode?: 'none' | 'agy', locale: Locale = 'en'): string {
   if (level === 'ask' && withoutMode !== undefined) {
+    if (locale === 'zh-CN') {
+      return withoutMode === 'agy'
+        ? '执行命令等待你确认；修改文件不询问'
+        : '仅所请求的操作等待你确认；未请示的操作不会被阻止';
+    }
     return withoutMode === 'agy'
       ? 'commands wait for your OK; it writes files without asking'
       : 'only what it asks about waits for your OK; what it does without asking is not stopped';
   }
-  return LEVELS[level].detail;
+  return tSettings(locale, `level.${level}.detail`);
 }
 
 /** A typed level, or undefined when the word is not one (case-insensitive). */

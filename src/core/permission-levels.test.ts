@@ -143,4 +143,11 @@ describe('parseLevel and levelDetail', () => {
     // The other levels keep their own words; none of them is offered without a mode anyway.
     expect(levelDetail('auto', 'none')).toBe(levelDetail('auto'));
   });
+
+  it('supports zh-CN locale for levelDetail and apiAgentDetail', () => {
+    expect(levelDetail('plan', undefined, 'zh-CN')).toContain('计划');
+    expect(levelDetail('ask', undefined, 'zh-CN')).toContain('确认');
+    expect(levelDetail('ask', 'agy', 'zh-CN')).toContain('执行命令等待你确认');
+    expect(levelDetail('ask', 'none', 'zh-CN')).toContain('仅所请求的操作等待你确认');
+  });
 });

@@ -409,7 +409,7 @@ export const PAGE_BODY = `<main id="app" hidden>
     <div id="sched-resize" class="panel-resize" role="separator" aria-orientation="vertical" aria-label="Resize the side panel" data-i18n-aria="sideTasks.resizeAria" title="Drag to resize · double-click for the default width" data-i18n-title="sidebar.resizeTitle"></div>
     <div id="schedules-head" class="panel-head">
       <div class="sched-heading">
-        <span class="panel-title">Side tasks</span>
+        <span class="panel-title" data-i18n="sideTasks.title">Side tasks</span>
         <span id="schedules-summary" class="sched-summary"></span>
       </div>
       <!-- The Sessions tab's one bulk action, as the topic list has it beside its title. Shown only

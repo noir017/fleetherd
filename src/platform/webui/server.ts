@@ -941,7 +941,8 @@ function openStream(req: IncomingMessage, res: ServerResponse, instance: WebuiIn
 async function submit({ req, res }: Req, ctx: Ctx): Promise<void> {
   const parsed = isOctetStream(req) ? await readFramedSend(req, res) : await readBody(req, res, SendRequestSchema, true);
   if (!parsed) return;
-  switch (ctx.room.submit(parsed)) {
+  const locale = (Array.isArray(req.headers['x-fleetherd-locale']) ? req.headers['x-fleetherd-locale'][0] : req.headers['x-fleetherd-locale']) || undefined;
+  switch (ctx.room.submit(parsed, locale)) {
     case 'unknown-topic':
       return send(req, res, 404, { error: 'no such topic' });
     // A retry of something already accepted, which is the point of the nonce — answer as if
@@ -955,9 +956,10 @@ async function submit({ req, res }: Req, ctx: Ctx): Promise<void> {
 async function click({ req, res }: Req, ctx: Ctx): Promise<void> {
   const parsed = await readBody(req, res, ClickRequestSchema);
   if (!parsed) return;
+  const locale = (Array.isArray(req.headers['x-fleetherd-locale']) ? req.headers['x-fleetherd-locale'][0] : req.headers['x-fleetherd-locale']) || undefined;
   // An id the room does not hold is a stale tab or a hand-made request; either way the daemon's
   // click handlers would go on to EDIT whatever it names, so it stops here.
-  if (!ctx.room.click(parsed)) return send(req, res, 409, { error: 'that message is gone' });
+  if (!ctx.room.click(parsed, locale)) return send(req, res, 409, { error: 'that message is gone' });
   send(req, res, 202, { ok: true });
 }
 

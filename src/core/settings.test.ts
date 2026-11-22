@@ -100,6 +100,7 @@ describe('the settings screen', () => {
       'stream',
       'review.agent',
       'review.model',
+      'locale',
     ]);
   });
 
@@ -118,6 +119,7 @@ describe('the settings screen', () => {
     // Auto review is off until a reviewer is named, and its model says whose it would follow.
     expect(values.get('review.agent')).toBe('off');
     expect(values.get('review.model')).toBe('off');
+    expect(values.get('locale')).toBe('English');
   });
 
   it('names the key to type next to every row, and it resolves back', () => {
@@ -161,6 +163,7 @@ describe('the settings screen', () => {
       ['Live streaming', undefined, 'Replies'],
       ['Auto review', undefined, 'Reviews'],
       ['Review model', undefined, 'Reviews'],
+      ['Language', undefined, 'General'],
       ['⏰ Scheduled tasks · 2 active', undefined, 'More'],
     ]);
     expect(screen.groups.map((g) => g.name)).toEqual([
@@ -169,6 +172,7 @@ describe('the settings screen', () => {
       'Conversations',
       'Replies',
       'Reviews',
+      'General',
       'More',
     ]);
     // "Next session" and the permission level are said once, for the group, rather than on every
@@ -284,8 +288,8 @@ describe('the settings screen', () => {
     if (view.screen?.level !== 'list') throw new Error('no list screen');
     expect(view.buttons.filter((b) => b.id.startsWith('stg:'))).toHaveLength(20);
     // Each of the 24 agents is one row now (model and permission merged), plus the default agent
-    // and the six global rows — every row, past the chat menu's 20-button cap.
-    expect(view.screen.rows).toHaveLength(1 + 24 + 6);
+    // and the seven global rows — every row, past the chat menu's 20-button cap.
+    expect(view.screen.rows).toHaveLength(1 + 24 + 7);
     expect(view.screen.rows.at(-1)?.buttonId).toBe(`stg:r9:${settingsRows(many).length - 1}`);
   });
 
@@ -1173,8 +1177,8 @@ describe('the voice-confirmation switch', () => {
     expect(settingsRows(cfg).some((r) => r.id === 'cleanup')).toBe(false);
     const rows = settingsRows(withVoice);
     // After the always-present rows, so every row above them keeps its menu index whether or not
-    // the feature is on (the two review rows follow, last of all).
-    expect(rows.slice(-4, -2)).toMatchObject([
+    // the feature is on (the two review rows and locale follow, last of all).
+    expect(rows.slice(-5, -3)).toMatchObject([
       { id: 'voice', value: 'on', effect: 'live' },
       { id: 'cleanup', value: 'on', effect: 'live' },
     ]);
@@ -1375,5 +1379,91 @@ describe('auto review', () => {
     expect(settingKeyOf(reviewRow('review'))).toBe('review.agent');
     expect(settingKeyOf(reviewRow('reviewer'))).toBe('review.agent');
     expect(settingKeyOf(reviewRow('review.model'))).toBe('review.model');
+  });
+
+  describe('settings i18n & locale setting (zh-CN)', () => {
+    it('provides locale setting row and parses supported locales', () => {
+      const rows = settingsRows(cfg);
+      const locRow = rows.find((r) => r.id === 'locale')!;
+      expect(locRow).toBeDefined();
+      expect(locRow.label).toBe('Language');
+      expect(locRow.value).toBe('English');
+      expect(settingLocation(locRow)).toEqual({ kind: 'path', path: ['locale'] });
+      expect(readSettingValue(locRow, cfg)).toBe('en');
+
+      // Aliases
+      const res = resolveSettingKey('lang', cfg, ctx);
+      expect(res.kind).toBe('row');
+      if (res.kind === 'row') expect(res.row.id).toBe('locale');
+
+      // Parsing values
+      expect(parseSettingValue(locRow, 'zh-CN', cfg, ctx)).toMatchObject({
+        kind: 'value',
+        value: 'zh-CN',
+        display: '简体中文',
+      });
+      expect(parseSettingValue(locRow, 'chinese', cfg, ctx)).toMatchObject({
+        kind: 'value',
+        value: 'zh-CN',
+        display: '简体中文',
+      });
+      expect(parseSettingValue(locRow, 'unknown-lang', cfg, ctx).kind).toBe('invalid');
+    });
+
+    it('translates settingsRows and buildSettingsMenu to zh-CN', () => {
+      const zhRows = settingsRows(cfg, undefined, undefined, 'zh-CN');
+      expect(zhRows.find((r) => r.id === 'agent')?.label).toBe('默认代理');
+      expect(zhRows.find((r) => r.id === 'locale')?.label).toBe('语言');
+      expect(zhRows.find((r) => r.id === 'model')?.value).toBe('宿主默认');
+
+      const view = buildSettingsMenu({
+        reqId: 'r1',
+        rows: zhRows,
+        extra: { id: 'ext1', label: '定时任务' },
+        screen: { cfg, options: (r) => settingOptions(r, cfg, ctx, 'zh-CN'), locale: 'zh-CN' },
+        locale: 'zh-CN',
+      });
+
+      expect(view.text).toContain('系统设置 —— 保存至 config.yaml');
+      if (view.screen?.level !== 'list') throw new Error('expected list screen');
+      expect(view.screen.about).toContain('这些设置对所有会话生效');
+      expect(view.screen.groups.map((g) => g.name)).toContain('代理设置');
+      expect(view.screen.groups.map((g) => g.name)).toContain('更多');
+
+      const agentRow = view.screen.rows.find((r) => r.control.kind === 'agent');
+      expect(agentRow).toBeDefined();
+      if (agentRow?.control.kind === 'agent') {
+        const labels = agentRow.control.fields.map((f) => f.label);
+        expect(labels).toContain('模型');
+        expect(labels).toContain('权限档位');
+      }
+    });
+
+    it('translates buildSettingValueMenu to zh-CN', () => {
+      const zhRows = settingsRows(cfg, undefined, undefined, 'zh-CN');
+      const modelRow = zhRows.find((r) => r.id === 'model')!;
+      const opts = [
+        { raw: 'm1', label: 'Model 1' },
+        { raw: 'm2', label: 'Model 2' },
+        { raw: 'm3', label: 'Model 3' },
+      ];
+      const view = buildSettingValueMenu({
+        reqId: 'r1',
+        row: modelRow,
+        options: opts,
+        page: 0,
+        pageSize: 2,
+        locale: 'zh-CN',
+        screen: { cfg, locale: 'zh-CN' },
+      });
+
+      expect(view.buttons.map((b) => b.label)).toContain('◀ 返回');
+      expect(view.buttons.map((b) => b.label)).toContain('下一页 ▶');
+      if (view.screen?.level !== 'values' || !view.screen.head) throw new Error('expected values screen with head');
+      expect(view.screen.head.label).toBe('默认模型');
+      expect(view.screen.head.description).toContain('默认使用的模型');
+      expect(view.screen.head.effect).toContain('自 cc 下次会话生效');
+      expect(view.screen.typed?.placeholder).toBe('或直接输入模型名称');
+    });
   });
 });

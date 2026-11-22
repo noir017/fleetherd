@@ -26,10 +26,18 @@ export function normalizeLocale(raw: string | null | undefined): Locale | undefi
   if (!raw) return undefined;
   const cleaned = raw.trim().split('.')[0]?.split('@')[0]?.toLowerCase().replace(/_/g, '-');
   if (!cleaned) return undefined;
-  if (cleaned === 'zh-cn' || cleaned === 'zh' || cleaned.startsWith('zh-hans') || cleaned === 'zh-sg') {
+  if (
+    cleaned === 'zh-cn' ||
+    cleaned === 'zh' ||
+    cleaned === 'cn' ||
+    cleaned === 'chinese' ||
+    cleaned === '中文' ||
+    cleaned.startsWith('zh-hans') ||
+    cleaned === 'zh-sg'
+  ) {
     return 'zh-CN';
   }
-  if (cleaned === 'en' || cleaned.startsWith('en-')) {
+  if (cleaned === 'en' || cleaned === 'english' || cleaned.startsWith('en-')) {
     return 'en';
   }
   return undefined;

@@ -1231,7 +1231,12 @@ import {
     // Built first: JSON.stringify is the one thing here that can throw, and nothing is armed yet.
     // Bytes (a send that carries files, see framed) go as they are.
     var bytes = ArrayBuffer.isView(body);
-    var init = {method:'POST',headers:{'Content-Type': bytes ? 'application/octet-stream' : 'application/json'},
+    var headers = {'Content-Type': bytes ? 'application/octet-stream' : 'application/json'};
+    try {
+      var loc = getLocale();
+      if(loc) headers['X-Fleetherd-Locale'] = loc;
+    } catch(e){}
+    var init = {method:'POST',headers:headers,
       body: bytes ? body : JSON.stringify(body),credentials:'same-origin'};
     var expired = false, timer = 0;
     if(limit && typeof AbortController === 'function'){
@@ -1597,15 +1602,15 @@ import {
    */
   function cbCopy(btn, s){
     copyText(s, function(ok){
-      var say = ok ? 'Copied' : 'Could not copy \u2014 select the code instead';
+      var say = ok ? tr('common.copied') : tr('msg.copyCodeFailed');
       btn.innerHTML = ok ? IC.icon.check : IC.icon.cross;
       btn.title = say;
       btn.setAttribute('aria-label', say);
       clearTimeout(btn._copyTimer);
       btn._copyTimer = setTimeout(function(){
         btn.innerHTML = IC.icon.copy;
-        btn.title = 'Copy';
-        btn.setAttribute('aria-label', 'Copy code');
+        btn.title = tr('common.copy');
+        btn.setAttribute('aria-label', tr('msg.copyCodeAria'));
       }, 1500);
     });
   }
@@ -2009,7 +2014,7 @@ import {
       // The gateway's files no agent reads have no card of their own; the Agents section is where
       // a person looks for them (settingsOrphans). With no Agents section at all, they follow the
       // last one so they are still reachable.
-      if(x.name === 'Agents'){ h += instructionsPanel.renderOrphans(); agentsShown = true; }
+      if(x.name === 'Agents' || x.name === '代理设置'){ h += instructionsPanel.renderOrphans(); agentsShown = true; }
       h += '</section>';
     }
     if(!agentsShown) h += instructionsPanel.renderOrphans();
@@ -2019,7 +2024,7 @@ import {
   /** A row's name, its badges and its one line: the left half of every kind of row. */
   function settingsText(r){
     var badges = '';
-    if(r.here) badges += '<span class="set-badge here" title="Answers the topic \u201c'+text(settingsTopicName(settingsTopic))+'\u201d">this topic</span>';
+    if(r.here) badges += '<span class="set-badge here" title="'+text(tr('settings.thisTopicTitle', { title: settingsTopicName(settingsTopic) }))+'">'+text(tr('settings.thisTopic'))+'</span>';
     if(r.effectLabel) badges += '<span class="set-badge restart"'+(r.effectDetail ? ' title="'+text(r.effectDetail)+'"' : '')+'>'+text(r.effectLabel)+'</span>';
     return '<div class="set-tx"><div class="set-label">'+settingsLabel(r.label)
       + (r.targetKind ? '<span class="set-kind">'+text(r.targetKind)+'</span>' : '') + badges + '</div>'
@@ -2115,7 +2120,7 @@ import {
     var sum = r.targetKind ? ['<span class="ag-kind">'+text(r.targetKind)+'</span>'] : [];
     for(var k=0;k<fields.length;k++){
       var f = fields[k], v = f.value == null ? '' : String(f.value);
-      sum.push('<span class="'+(f.label === 'Model' ? 'ag-mono' : 'ag-lvl')+(f.unset ? ' unset' : '')+'" title="'+text(f.label+': '+v+(f.unset ? tr('settings.notSetParen') : ''))+'">'+text(v)+'</span>');
+      sum.push('<span class="'+(f.label === 'Model' || f.label === '模型' ? 'ag-mono' : 'ag-lvl')+(f.unset ? ' unset' : '')+'" title="'+text(f.label+': '+v+(f.unset ? tr('settings.notSetParen') : ''))+'">'+text(v)+'</span>');
     }
     var body = '';
     for(var n=0;n<fields.length;n++){
@@ -7563,7 +7568,16 @@ import {
     if(!btwBox.hidden) renderBtw(false);
     if(!settingsPage.hidden){
       paintSettingsTopic();
-      if(settingsMsg) renderSettings();
+      var token = openSettingsLoading();
+      var t = settingsTopic;
+      if(token && t){
+        quietCommand('/setting', t).then(function(ok){
+          if(!ok){
+            forgetSettingsRequest(token);
+            if(!settingsMsg && !settingsPage.hidden) settingsSay(tr('settings.reachErr'));
+          }
+        });
+      }
     }
     if(!modelPop.hidden){
       mpHeading.textContent = mp.opt ? tr('modelPop.headingOpt', { name: optName(mp.opt) }) : tr('modelPop.headingModel');

@@ -13,10 +13,18 @@ import type {
 } from '../types.js';
 import { agentGroupOf, agentKindOf } from './agent-menu.js';
 import { formatButtonId, parseButtonId } from './button-id.js';
+import {
+  localeLabel,
+  localeOf,
+  normalizeLocale,
+  SUPPORTED_LOCALES,
+  type Locale,
+} from './i18n/index.js';
+import { tSettings } from './i18n/settings.js';
 import { matchModels, type ModelOption } from './model-menu.js';
 import { pageCount, pageOf, pageSlice, truncateLabel, wrapPage } from './paging.js';
 import {
-  API_AGENT_DETAIL,
+  apiAgentDetail,
   isApiAgent,
   levelDetail,
   levelMode,
@@ -99,7 +107,8 @@ export type SettingId =
   | 'voice'
   | 'cleanup'
   | 'review.agent'
-  | 'review.model';
+  | 'review.model'
+  | 'locale';
 
 /**
  * When a change reaches the running daemon.
@@ -382,6 +391,10 @@ const KEY_ALIASES: Record<string, SettingId> = {
   'review.agent': 'review.agent',
   reviewer: 'review.agent',
   'review.model': 'review.model',
+  locale: 'locale',
+  'config.locale': 'locale',
+  lang: 'locale',
+  language: 'locale',
 };
 
 // ─────────────────────────────── reading ───────────────────────────────
@@ -445,12 +458,13 @@ function reviewModelValue(cfg: Config): string {
 export function settingsRows(
   cfg: Config,
   pods?: PodModels,
-  modes?: (agentId: string) => AgentModes | undefined
+  modes?: (agentId: string) => AgentModes | undefined,
+  locale: Locale = localeOf(cfg)
 ): SettingRow[] {
   const rows: SettingRow[] = [
     {
       id: 'agent',
-      label: 'Default agent',
+      label: tSettings(locale, 'row.agent.label'),
       value: agentLabel(cfg, cfg.routing.default),
       effect: 'live',
     },
@@ -460,36 +474,36 @@ export function settingsRows(
     rows.push({
       id: 'model',
       target: agent.id,
-      label: `Default model · ${agent.id}`,
-      value: agent.model ?? MODEL_UNSET,
+      label: tSettings(locale, 'row.model.label', { target: agent.id }),
+      value: agent.model ?? (locale === 'zh-CN' ? '宿主默认' : MODEL_UNSET),
       effect: 'next-session',
       ...(pods?.has(agent.id) ? { pod: podModel !== undefined ? { model: podModel } : {} } : {}),
     });
   }
   // One permission row per agent, after the model rows, for the reason those are one per agent.
-  for (const agent of cfg.agents) rows.push(permissionRow(agent, pods, modes));
+  for (const agent of cfg.agents) rows.push(permissionRow(agent, pods, modes, locale));
   rows.push(
     {
       id: 'delegation',
-      label: 'Confirm sub-agent starts',
+      label: tSettings(locale, 'row.delegation.label'),
       value: delegationValue(cfg.delegation.confirm),
       effect: 'live',
     },
     {
       id: 'idle',
-      label: 'Idle reclaim',
+      label: tSettings(locale, 'row.idle.label'),
       value: formatIdle(cfg.session.idleTimeoutMs),
       effect: 'live',
     },
     {
       id: 'scope',
-      label: 'Conversation scope',
+      label: tSettings(locale, 'row.scope.label'),
       value: cfg.session.scope,
       effect: 'restart',
     },
     {
       id: 'stream',
-      label: 'Live streaming',
+      label: tSettings(locale, 'row.stream.label'),
       value: cfg.stream.enabled ? 'on' : 'off',
       effect: 'live',
     }
@@ -500,13 +514,13 @@ export function settingsRows(
     rows.push(
       {
         id: 'voice',
-        label: 'Confirm voice transcripts',
+        label: tSettings(locale, 'row.voice.label'),
         value: cfg.voice.confirm ? 'on' : 'off',
         effect: 'live',
       },
       {
         id: 'cleanup',
-        label: 'Clean up voice transcripts',
+        label: tSettings(locale, 'row.cleanup.label'),
         value: cfg.voice.cleanup ? 'on' : 'off',
         effect: 'live',
       }
@@ -518,14 +532,20 @@ export function settingsRows(
   rows.push(
     {
       id: 'review.agent',
-      label: 'Auto review',
+      label: tSettings(locale, 'row.reviewAgent.label'),
       value: reviewAgentValue(cfg),
       effect: 'live',
     },
     {
       id: 'review.model',
-      label: 'Review model',
+      label: tSettings(locale, 'row.reviewModel.label'),
       value: reviewModelValue(cfg),
+      effect: 'live',
+    },
+    {
+      id: 'locale',
+      label: tSettings(locale, 'row.locale.label'),
+      value: localeLabel(cfg.locale),
       effect: 'live',
     }
   );
@@ -541,7 +561,8 @@ export function settingsRows(
 function permissionRow(
   agent: AgentDef,
   pods: PodModels | undefined,
-  modes?: (agentId: string) => AgentModes | undefined
+  modes?: (agentId: string) => AgentModes | undefined,
+  locale: Locale = 'en'
 ): SettingRow {
   const unset = agent.permissions === undefined;
   const known = modes?.(agent.id);
@@ -550,9 +571,9 @@ function permissionRow(
   return {
     id: 'permissions',
     target: agent.id,
-    label: `Permissions · ${agent.id}`,
+    label: tSettings(locale, 'row.permissions.label', { target: agent.id }),
     value: agent.permissions ?? inferred.level,
-    ...(unset ? { unset: true, valueNote: unsetNote(inferred.from) } : {}),
+    ...(unset ? { unset: true, valueNote: unsetNote(inferred.from, locale) } : {}),
     effect: 'live',
     ...(pods?.has(agent.id) ? { pod: {} } : {}),
   };
@@ -563,75 +584,44 @@ function permissionRow(
  * `none` says only that nothing is stored: there is no mode to name, and claiming one would be the
  * "from its mode" a harness with no modes cannot honour.
  */
-function unsetNote(from: UnsetLevelSource): string {
+function unsetNote(from: UnsetLevelSource, locale: Locale = 'en'): string {
   switch (from) {
     case 'session':
-      return 'not set · from a running session’s mode';
+      return tSettings(locale, 'unset.permissionSession');
     case 'pin':
-      return 'not set · from its pinned mode';
+      return tSettings(locale, 'unset.permissionPin');
     case 'none':
-      return 'not set';
+      return tSettings(locale, 'unset.permissionNone');
   }
 }
 
 /** One sentence on what a setting decides — the detail screen's subtitle. */
-export function settingDescription(row: SettingRow): string {
+export function settingDescription(row: SettingRow, locale: Locale = 'en'): string {
   switch (row.id) {
     case 'agent':
-      return 'Which agent answers when no routing rule matches.';
+      return tSettings(locale, 'desc.agent');
     case 'model':
-      return `The model \`${row.target}\` starts its sessions with. \`/model\` still overrides it for one conversation.`;
+      return tSettings(locale, 'desc.model', { target: row.target ?? '' });
     case 'permissions':
-      return (
-        `How much \`${row.target}\` may do without you. Each level sets the mode its harness runs in ` +
-        'and whether what it asks to do waits for your OK: `plan`, `ask` and `edits` put each request ' +
-        'to you as buttons — one nobody answers is declined, never approved; `auto` and `full` approve. ' +
-        'Only the levels its harness has a mode for are offered. A change applies at once: a running ' +
-        'session is switched to the new mode, and its next request is answered the new way.'
-      );
+      return tSettings(locale, 'desc.permissions', { target: row.target ?? '' });
     case 'delegation':
-      return (
-        'When `task-new` waits for you to tap Start on a card listing every sub-task: always ' +
-        '(`on`, the default), once per agent in each conversation (`first`), or never (`off`, ' +
-        'which starts each one at once and posts a card showing what started). `first` remembers ' +
-        'only in memory, so a restart or another conversation asks again. `first` and `off` reach ' +
-        'only conversations you talk to directly; a sub-agent\'s own topic still asks. Only you ' +
-        'can change this; no agent command reaches it.'
-      );
+      return tSettings(locale, 'desc.delegation');
     case 'idle':
-      return 'How long a conversation may sit quiet before its agent child is stopped. It resumes on the next message.';
+      return tSettings(locale, 'desc.idle');
     case 'scope':
-      return 'What counts as one conversation — a thread, a channel, a person, or the whole deployment.';
+      return tSettings(locale, 'desc.scope');
     case 'stream':
-      return (
-        'Whether a reply is typed out by editing one message as it arrives (`on`), or sent whole once ' +
-        'each part is finished (`off`, the default). Off costs no edits, so a long reply can never run ' +
-        'into a platform’s per-message edit cap; either way a segment is sent at every tool boundary.'
-      );
+      return tSettings(locale, 'desc.stream');
     case 'voice':
-      return (
-        'Whether a voice message’s transcript waits for your ✅ Send (`on`, the default) or goes to the ' +
-        'agent at once (`off`). Either way the transcript is shown in the chat, labelled as one.'
-      );
+      return tSettings(locale, 'desc.voice');
     case 'cleanup':
-      return (
-        'Whether a voice message is also written up as the message you meant — fillers, repeats and ' +
-        'self-corrections removed — and shown above the words as heard, with ✅ Send sending that ' +
-        'version (`on`, the default); or transcribed word for word only (`off`).'
-      );
+      return tSettings(locale, 'desc.cleanup');
     case 'review.agent':
-      return (
-        'Which agent reviews conversations that go quiet and writes what it learns into the skill ' +
-        'library. Any agent can: a review runs on its machine with its tools switched off where the ' +
-        'harness allows it and every permission refused. `off` turns auto review off; naming an agent ' +
-        'replaces a `review.api` endpoint. The next sweep reads the new value — within a minute.'
-      );
+      return tSettings(locale, 'desc.reviewAgent');
     case 'review.model':
-      return (
-        'The model reviews run with. Unset follows the reviewer’s own model; pick one here to give ' +
-        'reviews a different model from the agent’s. A `review.api` endpoint names its own model in ' +
-        'config.yaml. A change lands on the next sweep.'
-      );
+      return tSettings(locale, 'desc.reviewModel');
+    case 'locale':
+      return tSettings(locale, 'desc.locale');
     default: {
       const _exhaustive: never = row.id;
       return String(_exhaustive);
@@ -640,14 +630,14 @@ export function settingDescription(row: SettingRow): string {
 }
 
 /** How the ack describes when the change lands. */
-function effectText(row: SettingRow): string {
+function effectText(row: SettingRow, locale: Locale = 'en'): string {
   switch (row.effect) {
     case 'live':
-      return 'in effect now';
+      return tSettings(locale, 'effect.live.text');
     case 'next-session':
-      return `applies to ${row.target ?? 'that agent'}'s next agent session — /new starts one now`;
+      return tSettings(locale, 'effect.nextSession.text', { target: row.target ?? 'that agent' });
     case 'restart':
-      return 'takes effect when the daemon restarts; conversations keep their current identity until then';
+      return tSettings(locale, 'effect.restart.text');
     default: {
       const _exhaustive: never = row.effect;
       return String(_exhaustive);
@@ -656,14 +646,14 @@ function effectText(row: SettingRow): string {
 }
 
 /** effectText as a sentence of its own, for a screen's head. */
-function effectSentence(row: SettingRow): string {
+function effectSentence(row: SettingRow, locale: Locale = 'en'): string {
   switch (row.effect) {
     case 'live':
-      return 'Takes effect at once.';
+      return tSettings(locale, 'effect.live.sentence');
     case 'next-session':
-      return `Takes effect from ${row.target ?? 'that agent'}'s next agent session — \`/new\` starts one now.`;
+      return tSettings(locale, 'effect.nextSession.sentence', { target: row.target ?? 'that agent' });
     case 'restart':
-      return 'Takes effect when the daemon restarts; conversations keep their current identity until then.';
+      return tSettings(locale, 'effect.restart.sentence');
     default: {
       const _exhaustive: never = row.effect;
       return String(_exhaustive);
@@ -675,14 +665,14 @@ function effectSentence(row: SettingRow): string {
  * The same fact as effectText, in the two or three words a settings row can carry. Live changes say
  * nothing: a badge on every row would stop meaning anything.
  */
-function effectLabel(row: SettingRow): string | undefined {
+function effectLabel(row: SettingRow, locale: Locale = 'en'): string | undefined {
   switch (row.effect) {
     case 'live':
       return undefined;
     case 'next-session':
-      return 'next session';
+      return tSettings(locale, 'effect.nextSession.label');
     case 'restart':
-      return 'after restart';
+      return tSettings(locale, 'effect.restart.label');
     default: {
       const _exhaustive: never = row.effect;
       return String(_exhaustive);
@@ -701,25 +691,27 @@ function effectLabel(row: SettingRow): string | undefined {
  * The model and permission rows for an agent are merged into that one row (settingsListScreen), so
  * a setting added per agent later joins them instead of growing a third run of headings.
  */
-function settingGroup(row: SettingRow): string {
+function settingGroup(row: SettingRow, locale: Locale = 'en'): string {
   switch (row.id) {
     case 'agent':
     case 'model':
     case 'permissions':
-      return 'Agents';
+      return tSettings(locale, 'group.agents');
     case 'delegation':
-      return 'Sub-agents';
+      return tSettings(locale, 'group.subagents');
     case 'idle':
     case 'scope':
-      return 'Conversations';
+      return tSettings(locale, 'group.conversations');
     case 'stream':
-      return 'Replies';
+      return tSettings(locale, 'group.replies');
     case 'voice':
     case 'cleanup':
-      return 'Voice';
+      return tSettings(locale, 'group.voice');
     case 'review.agent':
     case 'review.model':
-      return 'Reviews';
+      return tSettings(locale, 'group.reviews');
+    case 'locale':
+      return tSettings(locale, 'group.general');
     default: {
       const _exhaustive: never = row.id;
       return String(_exhaustive);
@@ -728,15 +720,15 @@ function settingGroup(row: SettingRow): string {
 }
 
 /** A sentence under a group heading, for what every row in it shares. */
-function settingGroupNote(row: SettingRow): string | undefined {
+function settingGroupNote(row: SettingRow, locale: Locale = 'en'): string | undefined {
   // The Agents group's first row is the default agent, and its note speaks for the per-agent rows
   // below: what each setting is and when it lands. The levels' meanings stay on the value screen —
   // spelling them out here ran to nine lines on a phone (2026-11-18).
   if (row.id === 'agent') {
-    return 'Each agent’s own settings. A model applies from its next session (`/new`), `/model` changes one topic only; a permission level applies at once.';
+    return tSettings(locale, 'group.note.agents');
   }
   if (row.id === 'review.agent') {
-    return 'An agent reads a conversation that has gone quiet and writes what it learned into the skill library. The review runs with its tools switched off and every permission refused.';
+    return tSettings(locale, 'group.note.reviews');
   }
   return undefined;
 }
@@ -746,29 +738,31 @@ function settingGroupNote(row: SettingRow): string | undefined {
  * is the paragraph a single setting's own screen has room for. A model or permission row has none:
  * its group says it.
  */
-function settingHint(row: SettingRow): string | undefined {
+function settingHint(row: SettingRow, locale: Locale = 'en'): string | undefined {
   switch (row.id) {
     case 'agent':
-      return 'Answers a new conversation that no routing rule claims.';
+      return tSettings(locale, 'hint.agent');
     case 'model':
     case 'permissions':
       return undefined;
     case 'delegation':
-      return 'Wait for your Start before an agent’s sub-tasks run. `first` asks once per agent in each conversation; `off` starts them at once. A sub-agent’s own topic still asks.';
+      return tSettings(locale, 'hint.delegation');
     case 'idle':
-      return 'Stop an agent that has been quiet this long. Its conversation resumes on the next message.';
+      return tSettings(locale, 'hint.idle');
     case 'scope':
-      return 'What counts as one conversation: a topic, a channel, a person, or the whole gateway.';
+      return tSettings(locale, 'hint.scope');
     case 'stream':
-      return 'Type each reply out as it arrives, instead of sending each part once it is finished.';
+      return tSettings(locale, 'hint.stream');
     case 'voice':
-      return 'Hold a voice message’s transcript until you tap ✅ Send.';
+      return tSettings(locale, 'hint.voice');
     case 'cleanup':
-      return 'Also write a voice message up as the message you meant, and send that version.';
+      return tSettings(locale, 'hint.cleanup');
     case 'review.agent':
-      return 'Have an agent review a quiet conversation and write what it learned into the skill library. Off by default.';
+      return tSettings(locale, 'hint.reviewAgent');
     case 'review.model':
-      return 'The model reviews run with. Unset follows the reviewer’s own model.';
+      return tSettings(locale, 'hint.reviewModel');
+    case 'locale':
+      return tSettings(locale, 'hint.locale');
     default: {
       const _exhaustive: never = row.id;
       return String(_exhaustive);
@@ -799,6 +793,7 @@ export function settingControl(row: SettingRow): 'switch' | 'choice' | 'list' {
     case 'idle':
     case 'scope':
     case 'review.agent':
+    case 'locale':
       return 'choice';
     case 'model':
     case 'review.model':
@@ -820,6 +815,21 @@ export type KeyResolution =
   /** Not a name this gateway knows at all. */
   | { kind: 'unknown'; key: string };
 
+function refusalText(group: string, key: string, locale: Locale): string {
+  if (locale === 'zh-CN') {
+    return (
+      `\`${key}\` 无法在聊天中修改 —— ${group}必须在配置文件中修改，因为 ` +
+      `${REFUSAL_REASON[group] ?? '此处未提供该项'}。\n` +
+      (group === NOT_EDITABLE.platforms ? '编辑 config.yaml 并重启网关守护进程。' : '编辑 config.yaml，然后发送 /reload。')
+    );
+  }
+  return (
+    `\`${key}\` is not editable from chat — ${group} stays in the file, because ` +
+    `${REFUSAL_REASON[group] ?? 'it is not offered here'}.\n` +
+    (group === NOT_EDITABLE.platforms ? 'Edit config.yaml and restart the daemon.' : 'Edit config.yaml, then send /reload.')
+  );
+}
+
 /**
  * Resolve a typed key to a row.
  *
@@ -830,17 +840,24 @@ export type KeyResolution =
  * A bare per-agent key targets the agent answering HERE: unqualified means here and now, which is
  * the only target a phone user can be expected to have in mind.
  */
-export function resolveSettingKey(key: string, cfg: Config, ctx: SettingsContext): KeyResolution {
+export function resolveSettingKey(
+  key: string,
+  cfg: Config,
+  ctx: SettingsContext,
+  locale: Locale = localeOf(cfg)
+): KeyResolution {
   const norm = key.trim().replace(/^\//, '').toLowerCase();
   if (!norm) return { kind: 'unknown', key };
 
-  const rows = settingsRows(cfg, ctx.pods, ctx.modes);
+  const rows = settingsRows(cfg, ctx.pods, ctx.modes, locale);
   const perAgent = perAgentTarget(norm, cfg);
   if (perAgent !== undefined) {
     if (perAgent.target === null) {
       return {
         kind: 'refused',
-        text: `No agent named there. Configured agents: ${cfg.agents.map((a) => a.id).join(', ')}.`,
+        text: locale === 'zh-CN'
+          ? `不存在该名称的代理。已配置的代理：${cfg.agents.map((a) => a.id).join(', ')}。`
+          : `No agent named there. Configured agents: ${cfg.agents.map((a) => a.id).join(', ')}.`,
       };
     }
     const row = rows.find((r) => r.id === perAgent.id && r.target === perAgent.target);
@@ -859,16 +876,7 @@ export function resolveSettingKey(key: string, cfg: Config, ctx: SettingsContext
 
   const group = NOT_EDITABLE[norm.split('.')[0] ?? ''];
   if (group) {
-    return {
-      kind: 'refused',
-      text:
-        `\`${key}\` is not editable from chat — ${group} stays in the file, because ` +
-        `${REFUSAL_REASON[group] ?? 'it is not offered here'}.\n` +
-        // Platforms are the one section /reload cannot apply (see daemon/config-reload.ts).
-        (group === NOT_EDITABLE.platforms
-          ? 'Edit config.yaml and restart the daemon.'
-          : 'Edit config.yaml, then send /reload.'),
-    };
+    return { kind: 'refused', text: refusalText(group, key, locale) };
   }
   return { kind: 'unknown', key };
 }
@@ -893,9 +901,62 @@ function perAgentTarget(
 
 // ─────────────────────────────── values ───────────────────────────────
 
+function reviewModelOptions(
+  row: SettingRow,
+  cfg: Config,
+  ctx: SettingsContext,
+  locale: Locale
+): SettingOption[] {
+  if (!cfg.review?.agent) return [];
+  return [
+    ...modelList(row, cfg, ctx).map((m) => {
+      const name = m.name.trim();
+      return { raw: m.value, label: name || m.value, ...(name && name !== m.value ? { title: m.value, detail: name } : {}) };
+    }),
+    ...(cfg.review.model !== undefined
+      ? [{ raw: '-', label: clearedReviewModelLabel(cfg, locale) }]
+      : []),
+  ];
+}
+
+function delegationOptions(locale: Locale): SettingOption[] {
+  return [
+    {
+      raw: 'on',
+      label: tSettings(locale, 'option.delegation.on'),
+      title: 'on',
+      detail: tSettings(locale, 'option.delegation.onDetail'),
+    },
+    {
+      raw: 'first',
+      label: tSettings(locale, 'option.delegation.first'),
+      title: 'first',
+      detail: tSettings(locale, 'option.delegation.firstDetail'),
+    },
+    {
+      raw: 'off',
+      label: tSettings(locale, 'option.delegation.off'),
+      title: 'off',
+      detail: tSettings(locale, 'option.delegation.offDetail'),
+    },
+  ];
+}
+
 /** The values a setting offers as buttons. Empty means "typed value only" (see settingDetailText). */
-export function settingOptions(row: SettingRow, cfg: Config, ctx: SettingsContext): SettingOption[] {
+export function settingOptions(
+  row: SettingRow,
+  cfg: Config,
+  ctx: SettingsContext,
+  locale: Locale = localeOf(cfg)
+): SettingOption[] {
   switch (row.id) {
+    case 'locale':
+      return SUPPORTED_LOCALES.map((l) => ({
+        raw: l.code,
+        label: `${l.label} (${l.code})`,
+        title: l.label,
+        detail: l.code,
+      }));
     case 'agent':
       return cfg.agents.map((a) => ({ raw: a.id, label: agentLabel(cfg, a.id) }));
     case 'model':
@@ -908,110 +969,96 @@ export function settingOptions(row: SettingRow, cfg: Config, ctx: SettingsContex
           const name = m.name.trim();
           return { raw: m.value, label: name || m.value, ...(name && name !== m.value ? { title: m.value, detail: name } : {}) };
         }),
-        ...(readSettingValue(row, cfg) !== undefined ? [{ raw: '-', label: clearedModelLabel(row) }] : []),
+        ...(readSettingValue(row, cfg) !== undefined ? [{ raw: '-', label: clearedModelLabel(row, locale) }] : []),
       ];
     case 'permissions':
-      return permissionOptions(row, cfg, ctx);
+      return permissionOptions(row, cfg, ctx, locale);
     case 'review.agent': {
       // Every agent: the review's switches and refusals are the gateway's (daemon/review-run.ts).
       const off = {
         raw: 'off',
-        label: 'off — no automatic reviews',
+        label: tSettings(locale, 'option.review.off'),
         title: 'off',
-        detail: 'no automatic reviews',
+        detail: tSettings(locale, 'option.review.offDetail'),
       };
       return [
         off,
         ...cfg.agents.map((a) => ({ raw: a.id, label: agentLabel(cfg, a.id) })),
       ];
     }
-    case 'review.model': {
-      // An endpoint's model is in config.yaml beside its URL; there is no list to offer for it.
-      if (!cfg.review?.agent) return [];
-      return [
-        ...modelList(row, cfg, ctx).map((m) => {
-          const name = m.name.trim();
-          return { raw: m.value, label: name || m.value, ...(name && name !== m.value ? { title: m.value, detail: name } : {}) };
-        }),
-        ...(cfg.review.model !== undefined
-          ? [{ raw: '-', label: clearedReviewModelLabel(cfg) }]
-          : []),
-      ];
-    }
+    case 'review.model':
+      return reviewModelOptions(row, cfg, ctx, locale);
     case 'idle':
       return IDLE_PRESETS.map((p) => ({
         raw: p,
-        label: p === 'off' ? 'off (never reclaim)' : p,
+        label: p === 'off' ? tSettings(locale, 'option.idle.never') : p,
         title: p,
-        ...(p === 'off' ? { detail: 'never reclaim' } : {}),
+        ...(p === 'off' ? { detail: tSettings(locale, 'option.idle.neverDetail') } : {}),
       }));
     case 'delegation':
-      return [
-        {
-          raw: 'on',
-          label: 'on — wait for Start before any sub-task runs',
-          title: 'on',
-          detail: 'wait for Start before any sub-task runs',
-        },
-        {
-          raw: 'first',
-          label: 'first — wait for Start once per agent in each conversation',
-          title: 'first',
-          detail: 'wait for Start once per agent in each conversation',
-        },
-        {
-          raw: 'off',
-          label: 'off — start each sub-task at once, and post a card for the record',
-          title: 'off',
-          detail: 'start each sub-task at once, and post a card for the record',
-        },
-      ];
+      return delegationOptions(locale);
     case 'scope':
-      return SCOPE_OPTIONS.map(([value, gloss]) => ({
-        raw: value,
-        label: `${value} — ${gloss}`,
-        title: value,
-        detail: gloss,
-      }));
+      return SCOPE_OPTIONS.map(([value]) => {
+        const key =
+          value === 'per_thread'
+            ? 'option.scope.perThread'
+            : value === 'per_channel'
+              ? 'option.scope.perChannel'
+              : value === 'per_user'
+                ? 'option.scope.perUser'
+                : 'option.scope.shared';
+        const gloss = tSettings(locale, key);
+        return {
+          raw: value,
+          label: `${value} — ${gloss}`,
+          title: value,
+          detail: gloss,
+        };
+      });
     case 'stream':
       return [
         {
           raw: 'off',
-          label: 'off — send each finished part as a whole message',
+          label: tSettings(locale, 'option.stream.off'),
           title: 'off',
-          detail: 'send each finished part as a whole message',
+          detail: tSettings(locale, 'option.stream.offDetail'),
         },
         {
           raw: 'on',
-          label: 'on — type the reply out by editing one message',
+          label: tSettings(locale, 'option.stream.on'),
           title: 'on',
-          detail: 'type the reply out by editing one message',
+          detail: tSettings(locale, 'option.stream.onDetail'),
         },
       ];
     case 'voice':
       return [
         {
           raw: 'on',
-          label: 'on — wait for ✅ Send before the agent sees it',
+          label: tSettings(locale, 'option.voice.on'),
           title: 'on',
-          detail: 'wait for ✅ Send before the agent sees it',
+          detail: tSettings(locale, 'option.voice.onDetail'),
         },
         {
           raw: 'off',
-          label: 'off — send each transcript on at once',
+          label: tSettings(locale, 'option.voice.off'),
           title: 'off',
-          detail: 'send each transcript on at once',
+          detail: tSettings(locale, 'option.voice.offDetail'),
         },
       ];
     case 'cleanup':
       return [
         {
           raw: 'on',
-          label: 'on — show a cleaned-up version too, and send that',
+          label: tSettings(locale, 'option.cleanup.on'),
           title: 'on',
-          detail: 'show a cleaned-up version too, and send that',
+          detail: tSettings(locale, 'option.cleanup.onDetail'),
         },
-        { raw: 'off', label: 'off — word for word only', title: 'off', detail: 'word for word only' },
+        {
+          raw: 'off',
+          label: tSettings(locale, 'option.cleanup.off'),
+          title: 'off',
+          detail: tSettings(locale, 'option.cleanup.offDetail'),
+        },
       ];
     default: {
       const _exhaustive: never = row.id;
@@ -1042,13 +1089,19 @@ function knownModes(row: SettingRow, ctx: SettingsContext): SessionModeSelector[
  * from an unset level's mode (row.unset) is not: tapping it would write something the harness
  * cannot honour.
  */
-function permissionOptions(row: SettingRow, cfg: Config, ctx: SettingsContext): SettingOption[] {
+function permissionOptions(
+  row: SettingRow,
+  cfg: Config,
+  ctx: SettingsContext,
+  locale: Locale = 'en'
+): SettingOption[] {
   const def = row.target ? findAgent(cfg, row.target) : undefined;
   // The API agent never asks, so no other level has anything to decide — and its modes need not be
   // known first, since the answer does not depend on them. A value hand-written into config.yaml is
   // not offered back; picking `auto` is how it gets put right.
   if (def && isApiAgent(def)) {
-    return [{ raw: 'auto', label: `auto — ${API_AGENT_DETAIL}`, title: 'auto', detail: API_AGENT_DETAIL }];
+    const detail = apiAgentDetail(locale);
+    return [{ raw: 'auto', label: `auto — ${detail}`, title: 'auto', detail }];
   }
   const modes = knownModes(row, ctx);
   // agy's modes are left out in code (agent-acp.ts modesLeftOut), not because the harness cannot
@@ -1062,7 +1115,7 @@ function permissionOptions(row: SettingRow, cfg: Config, ctx: SettingsContext): 
   return PERMISSION_LEVELS.filter((l) => offered.includes(l) || (!row.unset && l === row.value)).map((level) => {
     const mode = levelMode(level, ids, pinned === undefined ? undefined : String(pinned));
     const name = mode ? (modes?.find((m) => m.value === mode)?.name ?? mode) : undefined;
-    const detail = `${levelDetail(level, withoutMode)}${name ? ` (${name})` : ''}`;
+    const detail = `${levelDetail(level, withoutMode, locale)}${name ? ` (${name})` : ''}`;
     return { raw: level, label: `${level} — ${detail}`, title: level, detail };
   });
 }
@@ -1100,14 +1153,17 @@ function modelList(row: SettingRow, cfg: Config, ctx: SettingsContext): readonly
 }
 
 /** What a model row falls back to when the value set here is cleared. */
-function clearedModelLabel(row: SettingRow): string {
+function clearedModelLabel(row: SettingRow, locale: Locale = 'en'): string {
   if (row.pod?.model) return `${row.pod.model} (pod.yaml)`;
-  return MODEL_UNSET;
+  return locale === 'zh-CN' ? '宿主默认' : MODEL_UNSET;
 }
 
 /** What a review model falls back to: the reviewer's own model, named so the choice is explicit. */
-function clearedReviewModelLabel(cfg: Config): string {
-  return cfg.review?.agent ? `follow ${cfg.review.agent} (its own model)` : REVIEW_MODEL_UNSET;
+function clearedReviewModelLabel(cfg: Config, locale: Locale = 'en'): string {
+  if (cfg.review?.agent) {
+    return locale === 'zh-CN' ? `跟随 ${cfg.review.agent} (其自身模型)` : `follow ${cfg.review.agent} (its own model)`;
+  }
+  return locale === 'zh-CN' ? '代理自身模型' : REVIEW_MODEL_UNSET;
 }
 
 /**
@@ -1122,6 +1178,41 @@ export function modelSource(row: SettingRow, cfg: Config): 'gateway' | 'pod' | '
   return cfgModel(cfg, row.target) !== undefined ? 'config' : 'unset';
 }
 
+function parseLocaleSetting(input: string, locale: Locale): ParsedSettingValue {
+  const norm = normalizeLocale(input);
+  if (!norm) {
+    return {
+      kind: 'invalid',
+      reason: locale === 'zh-CN'
+        ? `\`${input}\` 不是支持的语言。可选值：${SUPPORTED_LOCALES.map((l) => l.code).join(', ')}。`
+        : `\`${input}\` is not a supported locale. One of: ${SUPPORTED_LOCALES.map((l) => l.code).join(', ')}.`,
+    };
+  }
+  return { kind: 'value', value: norm, display: localeLabel(norm) };
+}
+
+function parseAgentSetting(input: string, cfg: Config): ParsedSettingValue {
+  const match = cfg.agents.find((a) => a.id.toLowerCase() === input.toLowerCase());
+  if (!match) {
+    return {
+      kind: 'invalid',
+      reason: `No agent named \`${input}\`. Configured: ${cfg.agents.map((a) => a.id).join(', ')}.`,
+    };
+  }
+  return { kind: 'value', value: match.id, display: agentLabel(cfg, match.id) };
+}
+
+function parseScopeValue(input: string): ParsedSettingValue {
+  const match = SCOPE_OPTIONS.find(([value]) => value === input.toLowerCase());
+  if (!match) {
+    return {
+      kind: 'invalid',
+      reason: `\`${input}\` is not a scope. One of: ${SCOPE_OPTIONS.map(([v]) => v).join(', ')}.`,
+    };
+  }
+  return { kind: 'value', value: match[0], display: match[0] };
+}
+
 /**
  * Read a user-supplied value for a setting: the one place both surfaces go through, so a typed
  * `/setting idle 15m` and a tapped `15m` cannot disagree about what they did.
@@ -1130,43 +1221,30 @@ export function parseSettingValue(
   row: SettingRow,
   raw: string,
   cfg: Config,
-  ctx: SettingsContext
+  ctx: SettingsContext,
+  locale: Locale = localeOf(cfg)
 ): ParsedSettingValue {
   const input = raw.trim();
   if (!input) return { kind: 'invalid', reason: 'No value given.' };
   switch (row.id) {
-    case 'agent': {
-      const match = cfg.agents.find((a) => a.id.toLowerCase() === input.toLowerCase());
-      if (!match) {
-        return {
-          kind: 'invalid',
-          reason: `No agent named \`${input}\`. Configured: ${cfg.agents.map((a) => a.id).join(', ')}.`,
-        };
-      }
-      return { kind: 'value', value: match.id, display: agentLabel(cfg, match.id) };
-    }
+    case 'locale':
+      return parseLocaleSetting(input, locale);
+    case 'agent':
+      return parseAgentSetting(input, cfg);
     case 'model':
-      return parseModelValue(input, row, cfg, ctx);
+      return parseModelValue(input, row, cfg, ctx, locale);
     case 'permissions':
       return parsePermissionsValue(input, row, cfg, ctx);
     case 'review.agent':
       return parseReviewAgentValue(input, cfg);
     case 'review.model':
-      return parseReviewModelValue(input, row, cfg, ctx);
+      return parseReviewModelValue(input, row, cfg, ctx, locale);
     case 'delegation':
       return parseDelegationValue(input);
     case 'idle':
       return parseIdleValue(input);
-    case 'scope': {
-      const match = SCOPE_OPTIONS.find(([value]) => value === input.toLowerCase());
-      if (!match) {
-        return {
-          kind: 'invalid',
-          reason: `\`${input}\` is not a scope. One of: ${SCOPE_OPTIONS.map(([v]) => v).join(', ')}.`,
-        };
-      }
-      return { kind: 'value', value: match[0], display: match[0] };
-    }
+    case 'scope':
+      return parseScopeValue(input);
     case 'stream':
     case 'voice':
     case 'cleanup':
@@ -1197,13 +1275,14 @@ function parseModelValue(
   input: string,
   row: SettingRow,
   cfg: Config,
-  ctx: SettingsContext
+  ctx: SettingsContext,
+  locale: Locale = 'en'
 ): ParsedSettingValue {
   return parseModelName(
     input,
     modelList(row, cfg, ctx),
     row.target ?? 'the agent',
-    clearedModelLabel(row)
+    clearedModelLabel(row, locale)
   );
 }
 
@@ -1295,7 +1374,8 @@ function parseReviewModelValue(
   input: string,
   row: SettingRow,
   cfg: Config,
-  ctx: SettingsContext
+  ctx: SettingsContext,
+  locale: Locale = 'en'
 ): ParsedSettingValue {
   if (cfg.review?.api) return { kind: 'invalid', reason: REVIEW_API_MODEL };
   const reviewer = cfg.review?.agent;
@@ -1309,7 +1389,7 @@ function parseReviewModelValue(
     input,
     modelList(row, cfg, ctx),
     reviewer,
-    clearedReviewModelLabel(cfg),
+    clearedReviewModelLabel(cfg, locale),
     `${reviewer} did not offer its model list here — saved as typed, so check it is a name that agent accepts.`
   );
 }
@@ -1419,6 +1499,8 @@ export function settingLocation(row: SettingRow): SettingLocation {
       return { kind: 'path', path: ['review', 'agent'] };
     case 'review.model':
       return { kind: 'path', path: ['review', 'model'] };
+    case 'locale':
+      return { kind: 'path', path: ['locale'] };
     default: {
       const _exhaustive: never = row.id;
       return _exhaustive;
@@ -1463,6 +1545,20 @@ function storedReviewer(cfg: Config): string | undefined {
   return cfg.review?.api ? 'review.api' : undefined;
 }
 
+function storedModel(row: SettingRow, cfg: Config): string | undefined {
+  if (row.pod) {
+    const target = row.target;
+    return target && cfg.podModels ? cfg.podModels[target] : undefined;
+  }
+  return cfgModel(cfg, row.target);
+}
+
+function readVoiceSetting(id: 'voice' | 'cleanup', cfg: Config): boolean | undefined {
+  const voice = cfg.voice;
+  if (!voice) return undefined;
+  return id === 'voice' ? voice.confirm : voice.cleanup;
+}
+
 /**
  * The value currently stored for a row, in the form a patch would write — as opposed to
  * `SettingRow.value`, which is formatted for a human. The writer compares against this to answer
@@ -1473,10 +1569,7 @@ export function readSettingValue(row: SettingRow, cfg: Config): string | number 
     case 'agent':
       return cfg.routing.default;
     case 'model':
-      // For a pod's agent, what is written here is the gateway's own entry — not the merged model,
-      // which may be the pod's: clearing one that is not set must be "already", not a write.
-      if (row.pod) return row.target ? cfg.podModels?.[row.target] : undefined;
-      return cfgModel(cfg, row.target);
+      return storedModel(row, cfg);
     case 'permissions':
       return storedPermissions(row, cfg);
     case 'delegation':
@@ -1488,13 +1581,14 @@ export function readSettingValue(row: SettingRow, cfg: Config): string | number 
     case 'stream':
       return cfg.stream.enabled;
     case 'voice':
-      return cfg.voice?.confirm;
     case 'cleanup':
-      return cfg.voice?.cleanup;
+      return readVoiceSetting(row.id, cfg);
     case 'review.agent':
       return storedReviewer(cfg);
     case 'review.model':
-      return cfg.review?.model;
+      return cfg.review ? cfg.review.model : undefined;
+    case 'locale':
+      return cfg.locale ?? 'en';
     default: {
       const _exhaustive: never = row.id;
       return _exhaustive;
@@ -1827,6 +1921,8 @@ export interface SettingsScreenInput {
   here?: string;
   /** The outcome of the action that led here, shown above the list. */
   notice?: SettingsScreenNotice;
+  /** Locale to use for visible strings on the screen, falling back to localeOf(cfg). */
+  locale?: Locale;
 }
 
 export function settingRowButtonId(reqId: string, index: number): string {
@@ -1879,17 +1975,22 @@ export function buildSettingsMenu(menu: {
   rows: SettingRow[];
   extra?: { id: string; label: string };
   screen?: SettingsScreenInput;
+  locale?: Locale;
 }): SettingsMenuView {
   const shown = menu.rows.slice(0, SETTING_ROW_MAX);
   const overflow = menu.rows.slice(SETTING_ROW_MAX);
+  const locale = menu.locale ?? menu.screen?.locale ?? 'en';
   const buttons = shown.map((row, i) => ({
     id: settingRowButtonId(menu.reqId, i),
     label: truncateLabel(`${row.label} · ${row.value}`),
   }));
   if (menu.extra) buttons.push(menu.extra);
-  let text = 'Settings — saved to config.yaml, not just this conversation. Tap one to change it.';
+  let text = tSettings(locale, 'menu.head');
   if (overflow.length > 0) {
-    text += `\n\n${overflow.length} more (type them): ${overflow.map((r) => `\`/setting ${settingKeyOf(r)}\``).join(', ')}`;
+    text += `\n\n${tSettings(locale, 'menu.overflow', {
+      count: overflow.length,
+      keys: overflow.map((r) => `\`/setting ${settingKeyOf(r)}\``).join(', '),
+    })}`;
   }
   if (!menu.screen) return { text, buttons, page: 0, pageCount: 1 };
   // Every row, not the first SETTING_ROW_MAX: that cap is Discord's 25 components per message, and
@@ -1921,11 +2022,14 @@ function settingsListScreen(
     choices.push({ row, raw });
     return settingSetButtonId(reqId, choices.length - 1);
   };
+  const locale = input.locale ?? localeOf(input.cfg);
   // Draw every row of the frozen list first, in its own order: `choose` numbers an `sts:` id by
   // the order it is called in, and a click resolves that number against the list the daemon kept.
   // Merging as we go would put a permissions field before the next agent's model row and renumber
   // every choice after the first agent.
-  const drawn = rows.map((row, i) => settingsScreenRow(reqId, row, i, settingGroup(row), input, choose));
+  const drawn = rows.map((row, i) =>
+    settingsScreenRow(reqId, row, i, settingGroup(row, locale), input, choose, locale)
+  );
   const agentRows: SettingsScreenRow[] = [];
   const byTarget = new Map<string, SettingsScreenRow>();
   const tail: Array<{ screen: SettingsScreenRow; note?: string }> = [];
@@ -1936,18 +2040,19 @@ function settingsListScreen(
     // FIELD_LABEL, whose Record is over exactly these two ids so no chat label can stand in.
     const id = row.id;
     if ((id === 'model' || id === 'permissions') && row.target) {
-      const field = settingsScreenField(FIELD_LABEL[id], screen);
+      const fieldLabel = id === 'model' ? tSettings(locale, 'field.model') : tSettings(locale, 'field.permissions');
+      const field = settingsScreenField(fieldLabel, screen);
       const merged = byTarget.get(row.target);
       if (merged?.control.kind === 'agent') merged.control.fields.push(field);
       else {
         const def = findAgent(input.cfg, row.target);
-        const agentRow = agentScreenRow(screen, field, def, row.target === input.cfg.routing.default);
+        const agentRow = agentScreenRow(screen, field, def, row.target === input.cfg.routing.default, locale);
         byTarget.set(row.target, agentRow);
         agentRows.push(agentRow);
       }
       continue;
     }
-    const placed = { screen, note: settingGroupNote(row) };
+    const placed = { screen, note: settingGroupNote(row, locale) };
     if (row.id === 'agent') defaultAgent = placed;
     else tail.push(placed);
   }
@@ -1963,14 +2068,14 @@ function settingsListScreen(
   for (const agentRow of agentRows) place(agentRow);
   for (const placed of tail) place(placed.screen, placed.note);
   if (extra) {
-    groups.push({ name: 'More' });
-    screenRows.push({ buttonId: extra.id, label: extra.label, group: 'More', control: { kind: 'link' } });
+    const moreGroup = tSettings(locale, 'group.more');
+    groups.push({ name: moreGroup });
+    screenRows.push({ buttonId: extra.id, label: extra.label, group: moreGroup, control: { kind: 'link' } });
   }
   return {
     screen: {
       level: 'list',
-      about:
-        'These apply to every conversation. A change applies at once unless its row says when; `/model` and `/agent` change one topic only.',
+      about: tSettings(locale, 'screen.about'),
       groups,
       rows: screenRows,
       ...(input.notice ? { notice: input.notice } : {}),
@@ -1978,12 +2083,6 @@ function settingsListScreen(
     choices,
   };
 }
-
-/** What a per-agent setting is called inside its agent's row. */
-const FIELD_LABEL: Record<'model' | 'permissions', SettingsScreenField['label']> = {
-  model: 'Model',
-  permissions: 'Permissions',
-};
 
 /** The field a per-agent row becomes inside its agent's row. */
 function settingsScreenField(label: SettingsScreenField['label'], screen: SettingsScreenRow): SettingsScreenField {
@@ -2003,7 +2102,13 @@ function settingsScreenField(label: SettingsScreenField['label'], screen: Settin
  * comes along, named as the `/agent` menu names it, so the page can sort a dozen agents by machine
  * the way a person picking one already does.
  */
-function agentScreenRow(screen: SettingsScreenRow, field: SettingsScreenField, def: AgentDef | undefined, isDefault: boolean): SettingsScreenRow {
+function agentScreenRow(
+  screen: SettingsScreenRow,
+  field: SettingsScreenField,
+  def: AgentDef | undefined,
+  isDefault: boolean,
+  locale: Locale = 'en'
+): SettingsScreenRow {
   return {
     buttonId: field.buttonId,
     label: screen.label,
@@ -2012,7 +2117,7 @@ function agentScreenRow(screen: SettingsScreenRow, field: SettingsScreenField, d
     ...(def ? { place: agentGroupOf(def) } : {}),
     ...(screen.here ? { here: true } : {}),
     ...(isDefault ? { defaultAgent: true } : {}),
-    group: 'Agents',
+    group: tSettings(locale, 'group.agents'),
     control: { kind: 'agent', fields: [field] },
   };
 }
@@ -2035,14 +2140,15 @@ function settingsScreenRow(
   index: number,
   group: string,
   input: SettingsScreenInput,
-  choose: (row: number, raw: string) => string
+  choose: (row: number, raw: string) => string,
+  locale: Locale = 'en'
 ): SettingsScreenRow {
-  const hint = settingHint(row);
+  const hint = settingHint(row, locale);
   // A model row's "next session" is said once, in its group's note, rather than on every row.
-  const effect = row.id === 'model' ? undefined : effectLabel(row);
+  const effect = row.id === 'model' ? undefined : effectLabel(row, locale);
   const def = row.target ? findAgent(input.cfg, row.target) : undefined;
   const unset = rowUnset(row);
-  const note = rowValueNote(row, input.cfg);
+  const note = rowValueNote(row, input.cfg, locale);
   return {
     buttonId: settingRowButtonId(reqId, index),
     // `Default model · cc` is two facts in one chat label. On a screen the group heading is the
@@ -2054,11 +2160,11 @@ function settingsScreenRow(
     // `harness default`, not `(harness default)`: the parentheses were a chat label's way of saying
     // "not a model name", which a screen says by drawing it as a placeholder. A permission row's
     // unset value is a real level (`full` / `auto`) and keeps its own words.
-    value: unset && row.id === 'model' ? 'harness default' : row.value,
+    value: unset && row.id === 'model' ? tSettings(locale, 'unset.model') : row.value,
     ...(unset ? { unset: true } : {}),
     ...(note ? { valueNote: note } : {}),
     ...(hint ? { hint } : {}),
-    ...(effect ? { effectLabel: effect, effectDetail: effectText(row) } : {}),
+    ...(effect ? { effectLabel: effect, effectDetail: effectText(row, locale) } : {}),
     group,
     control: rowControl(row, index, input, choose),
   };
@@ -2077,25 +2183,25 @@ function rowUnset(row: SettingRow): boolean {
  * The few words beside a list row's value: a permission row's own note (`not set · …`), or a pod
  * agent's model saying whose it is. Undefined where there is nothing to say.
  */
-function rowValueNote(row: SettingRow, cfg: Config): string | undefined {
-  return row.valueNote ?? (row.id === 'model' ? modelValueNote(row, cfg) : undefined);
+function rowValueNote(row: SettingRow, cfg: Config, locale: Locale = 'en'): string | undefined {
+  return row.valueNote ?? (row.id === 'model' ? modelValueNote(row, cfg, locale) : undefined);
 }
 
 /** Where a value screen's head says its value came from: the row's note, else a model's own source. */
-function valueSource(row: SettingRow, cfg: Config): string | undefined {
-  return row.valueNote ?? (row.id === 'model' ? modelSourceSentence(row, cfg) : undefined);
+function valueSource(row: SettingRow, cfg: Config, locale: Locale = 'en'): string | undefined {
+  return row.valueNote ?? (row.id === 'model' ? modelSourceSentence(row, cfg, locale) : undefined);
 }
 
 /**
  * The few words beside a pod agent's model saying whose it is. Only for a pod's agent: an agent
  * config.yaml defines has one source, and the page already says config.yaml.
  */
-function modelValueNote(row: SettingRow, cfg: Config): string | undefined {
+function modelValueNote(row: SettingRow, cfg: Config, locale: Locale = 'en'): string | undefined {
   switch (modelSource(row, cfg)) {
     case 'gateway':
-      return 'set here';
+      return tSettings(locale, 'source.gateway');
     case 'pod':
-      return 'pod.yaml';
+      return tSettings(locale, 'source.pod');
     case 'config':
     case 'unset':
       return undefined;
@@ -2103,9 +2209,24 @@ function modelValueNote(row: SettingRow, cfg: Config): string | undefined {
 }
 
 /** Where a model row's value comes from, as the sentence its own screen carries. */
-function modelSourceSentence(row: SettingRow, cfg: Config): string | undefined {
+function modelSourceSentence(row: SettingRow, cfg: Config, locale: Locale = 'en'): string | undefined {
   if (!row.pod) return undefined;
   const host = row.target ? findAgent(cfg, row.target)?.host : undefined;
+  if (locale === 'zh-CN') {
+    const pod = host ? `${host} 的 pod.yaml` : '其 pod.yaml';
+    switch (modelSource(row, cfg)) {
+      case 'gateway':
+        return row.pod.model
+          ? `由网关设定，覆盖了 ${pod}（\`${row.pod.model}\`）。清除此项可恢复使用该模型。`
+          : `由网关设定；${pod} 未指定。清除此项将由宿主自行选择。`;
+      case 'pod':
+        return `来自 ${pod}。在此选择的模型保存在网关的 config.yaml 中，并优先于 pod 中的设定。`;
+      case 'unset':
+        return `网关与 ${pod} 均未指定，由宿主自行选择。在此选择的模型将保存在网关的 config.yaml 中。`;
+      case 'config':
+        return undefined;
+    }
+  }
   const pod = host ? `${host}'s pod.yaml` : 'its pod.yaml';
   switch (modelSource(row, cfg)) {
     case 'gateway':
@@ -2170,9 +2291,11 @@ export function buildSettingValueMenu(menu: {
    * Build the structured form too — see buildSettingsMenu. `loading`: the list is being asked for
    * and will arrive as an edit.
    */
-  screen?: { cfg: Config; notice?: SettingsScreenNotice; loading?: boolean };
+  screen?: { cfg: Config; notice?: SettingsScreenNotice; loading?: boolean; locale?: Locale };
+  locale?: Locale;
 }): SettingsMenuView {
   const { reqId, row, options } = menu;
+  const locale = menu.locale ?? menu.screen?.locale ?? 'en';
   const total = pageCount(options.length, menu.pageSize);
   const page = wrapPage(menu.page, total);
   const { start, items } = pageSlice(options, page, menu.pageSize);
@@ -2183,23 +2306,23 @@ export function buildSettingValueMenu(menu: {
   }));
   if (total > 1) {
     buttons.push(
-      { id: settingPageButtonId(reqId, (page - 1 + total) % total), label: '◀ Prev' },
-      { id: settingPageButtonId(reqId, (page + 1) % total), label: 'Next ▶' }
+      { id: settingPageButtonId(reqId, (page - 1 + total) % total), label: tSettings(locale, 'menu.prev') },
+      { id: settingPageButtonId(reqId, (page + 1) % total), label: tSettings(locale, 'menu.next') }
     );
   }
-  buttons.push({ id: settingBackButtonId(reqId), label: '◀ Back' });
+  buttons.push({ id: settingBackButtonId(reqId), label: tSettings(locale, 'menu.back') });
 
   // The note rides along here too: a platform without a screen reads the same value the screen does.
-  const head = `**${row.label}** — \`${row.value}\`${row.valueNote ? ` (${row.valueNote})` : ''}\n${settingDescription(row)}`;
+  const head = `**${row.label}** — \`${row.value}\`${row.valueNote ? ` (${row.valueNote})` : ''}\n${settingDescription(row, locale)}`;
   // The hint rides along with the options rather than replacing them, for the reason
   // settingTypedOnlyHint records: "clear it" alone is a complete-looking list that is not complete.
   const parts = [
     menu.hint,
     // The screen's own nav row says which page this is; only the button menu needs it in the text.
-    total > 1 && !menu.screen ? `page ${page + 1}/${total}` : undefined,
+    total > 1 && !menu.screen ? tSettings(locale, 'menu.pageNav', { page: page + 1, total }) : undefined,
   ].filter((p): p is string => p !== undefined);
   const screen = menu.screen
-    ? settingsValueScreen(reqId, row, items, { start, page, total }, { ...menu.screen, hint: menu.hint })
+    ? settingsValueScreen(reqId, row, items, { start, page, total }, { ...menu.screen, hint: menu.hint, locale })
     : undefined;
   return {
     text: parts.length > 0 ? `${head}\n\n${parts.join('\n')}` : head,
@@ -2211,7 +2334,11 @@ export function buildSettingValueMenu(menu: {
 }
 
 /** A per-agent row's screen is titled by its group; the agent is named beside it (`target`). */
-const VALUE_SCREEN_LABEL: Partial<Record<SettingId, string>> = { model: 'Default model', permissions: 'Permissions' };
+function valueScreenLabel(id: SettingId, locale: Locale): string | undefined {
+  if (id === 'model') return locale === 'zh-CN' ? '默认模型' : 'Default model';
+  if (id === 'permissions') return tSettings(locale, 'field.permissions');
+  return undefined;
+}
 
 /**
  * The value level as rows for a screen. `start` is the absolute index of the first item, so a
@@ -2224,9 +2351,10 @@ function settingsValueScreen(
   row: SettingRow,
   items: SettingOption[],
   at: { start: number; page: number; total: number },
-  extra: { cfg: Config; notice?: SettingsScreenNotice; loading?: boolean; hint?: string }
+  extra: { cfg: Config; notice?: SettingsScreenNotice; loading?: boolean; hint?: string; locale?: Locale }
 ): SettingsScreen {
   const { start, page, total } = at;
+  const locale = extra.locale ?? localeOf(extra.cfg);
   const current = settingCurrentRaw(row);
   const options: SettingsScreenOption[] = items.map((o, i) => ({
     buttonId: settingValueButtonId(reqId, start + i),
@@ -2236,7 +2364,7 @@ function settingsValueScreen(
   }));
   const def = row.target ? findAgent(extra.cfg, row.target) : undefined;
   const unset = rowUnset(row);
-  const source = valueSource(row, extra.cfg);
+  const source = valueSource(row, extra.cfg, locale);
   // The review model's list is the reviewer's, so the header names that agent the way a per-agent
   // row names its own — otherwise "Now: agent's own" would leave the agent implicit.
   const listAgent = modelListAgent(row, extra.cfg);
@@ -2246,17 +2374,17 @@ function settingsValueScreen(
     ...(extra.loading ? { loading: true } : {}),
     // A model is taken by any name the harness accepts, listed or not (parseModelValue).
     ...(row.id === 'model' || row.id === 'review.model'
-      ? { typed: { buttonId: settingTypeButtonId(reqId), placeholder: 'Or type a model name' } }
+      ? { typed: { buttonId: settingTypeButtonId(reqId), placeholder: tSettings(locale, 'menu.typeModelPlaceholder') } }
       : {}),
     head: {
-      label: VALUE_SCREEN_LABEL[row.id] ?? row.label,
+      label: valueScreenLabel(row.id, locale) ?? row.label,
       ...(listAgent ? { target: listAgent } : {}),
       ...(listDef ? { targetKind: agentKindOf(listDef) } : {}),
-      value: unset && row.id === 'model' ? 'harness default' : row.value,
+      value: unset && row.id === 'model' ? tSettings(locale, 'unset.model') : row.value,
       ...(unset ? { unset: true } : {}),
-      description: settingDescription(row),
+      description: settingDescription(row, locale),
       ...(extra.hint ? { hint: extra.hint } : {}),
-      effect: effectSentence(row),
+      effect: effectSentence(row, locale),
       ...(source ? { source } : {}),
     },
     options,
@@ -2308,20 +2436,24 @@ export function settingCurrentRaw(row: SettingRow): string {
       // `off` has no harness suffix to strip; an agent's label does (`ag · agy`).
       return row.value === 'off' ? 'off' : (row.value.split(' · ')[0] ?? row.value);
     case 'model':
-      return row.value === MODEL_UNSET ? '-' : row.value;
+      return row.value === MODEL_UNSET || row.value === '宿主默认' ? '-' : row.value;
     case 'review.model':
-      return row.value === REVIEW_MODEL_UNSET ? '-' : row.value;
+      return row.value === REVIEW_MODEL_UNSET || row.value === '代理自身模型' ? '-' : row.value;
+    case 'locale': {
+      const match = SUPPORTED_LOCALES.find((l) => l.label === row.value || l.code === row.value);
+      return match ? match.code : row.value;
+    }
     default:
       return row.value;
   }
 }
 
 /** A click on a menu this daemon no longer knows about (superseded, or it restarted). */
-export function settingsMenuExpiredText(): string {
-  return 'That settings menu has expired (superseded, or the gateway restarted). Run /setting again for a fresh one.';
+export function settingsMenuExpiredText(locale: Locale = 'en'): string {
+  return tSettings(locale, 'menu.expired');
 }
 
 /** What the previous menu becomes when a newer one is opened in the same conversation. */
-export function settingsMenuSupersededText(): string {
-  return 'Settings — superseded by a newer /setting menu.';
+export function settingsMenuSupersededText(locale: Locale = 'en'): string {
+  return tSettings(locale, 'menu.superseded');
 }

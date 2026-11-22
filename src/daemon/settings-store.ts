@@ -1,4 +1,4 @@
-import { ConfigSchema, findAgent, REVIEW_ARGS_HARNESSES, type Config, type SessionScope } from '../config/schema.js';
+import { ConfigSchema, findAgent, REVIEW_ARGS_HARNESSES, type Config, type Locale, type SessionScope } from '../config/schema.js';
 import { configDir, configPath, readRawConfigIfExists, saveConfigPatch } from '../config/load.js';
 import { readPods, mergePodAgents } from '../config/pods.js';
 import { POD_FILE } from './pods.js';
@@ -273,6 +273,9 @@ function applyToConfig(cfg: Config, row: SettingRow, value: string | number | bo
       if (!cfg.review) return;
       if (value === undefined) delete cfg.review.model;
       else cfg.review = { ...cfg.review, model: String(value) };
+      return;
+    case 'locale':
+      cfg.locale = value as Locale;
       return;
     default: {
       const _exhaustive: never = row.id;

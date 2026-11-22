@@ -53,6 +53,7 @@ export interface Call {
    * so an assertion about what was sent reads the same either way.
    */
   binary?: boolean;
+  headers?: Record<string, string>;
 }
 
 /** A framed send (page.ts `framed`) read back as the server does, into the JSON request's shape. */
@@ -756,7 +757,7 @@ export async function open(
           return real(fn, 30);
         };
       }
-      (w as any).fetch = (path: string, init: { body?: unknown; signal?: AbortSignal; method?: string } = {}) => {
+      (w as any).fetch = (path: string, init: { body?: unknown; signal?: AbortSignal; method?: string; headers?: Record<string, string> } = {}) => {
         // A GET (the file reader's) carries no body; recorded as an empty one.
         const bytes = ArrayBuffer.isView(init.body);
         calls.push({
@@ -764,6 +765,7 @@ export async function open(
           body: init.body === undefined ? {} : bytes ? unframe(init.body as ArrayBufferView) : JSON.parse(String(init.body)),
           ...(init.method && init.method !== 'POST' ? { method: init.method } : {}),
           ...(bytes ? { binary: true } : {}),
+          ...(init.headers ? { headers: init.headers } : {}),
         });
         if (hang.includes(path)) {
           return new Promise((_, reject) => {
