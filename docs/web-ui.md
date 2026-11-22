@@ -207,7 +207,10 @@ topic's dot pulses, and its unread count climbs in a bright blue pill with each 
 topic's dot stays bright blue but holds still, and unread counts turn grey. A question waiting on
 you (its amber dot still pulses), a failed turn and a reply you have not read still move to the
 top in green, so they are the only things that stand out. The setting is kept in this browser
-only. **All settings** (the page above), Notifications and **Skills** are in the same menu;
+only. **Theme** (`System` / `Dark` / `Light`, applied before first paint and shared with the code
+viewer and syntax highlighting) and **Language** (`English` / `简体中文`, switched in place without
+reloading) are also kept in this browser under the same menu, alongside **All settings** (the page
+above), Notifications and **Skills**;
 **Close idle** is in **Manage** beside it, and **Clear all topics** is an icon button beside Topics in the sidebar header.
 
 **Code in a reply.** Every code block has a bar naming its language, with **Wrap** (long lines

@@ -5,6 +5,22 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **WebUI theme system (`System` / `Dark` / `Light`).** All hardcoded colours in the WebUI
+  stylesheet and CodeMirror syntax highlighter are now semantic CSS custom properties with
+  `dark` and `light` palettes plus `@media (prefers-color-scheme: light)` support, making
+  additional themes a single `[data-theme="..."]` block. A tiny external boot script in `<head>`
+  applies the saved preference (`fh_theme` in `localStorage`) and updates `<meta name="theme-color">`
+  before first paint with zero flash while keeping the strict `script-src 'self'` CSP unchanged.
+  Switch themes anytime from **⚙ Menu → Theme**.
+- **WebUI internationalization (`en` and `zh-CN`).** Added a zero-dependency i18n layer under
+  `src/platform/webui/client/i18n/` (`en` as the default fallback and type source, `zh-CN`
+  type-checked for key parity at compile time) covering the static HTML shell, login gate,
+  sidebar/composer/modals, and all seven panel modules. Switch languages in place without
+  reloading via **⚙ Menu → Language** (persisted in `localStorage` under `fh_lang`, falling
+  back to `navigator.languages` and then `en`).
+
 ## [3.29.0] - 2026-11-22
 
 ### Added
