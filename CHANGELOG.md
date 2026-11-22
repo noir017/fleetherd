@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.34.1] - 2026-11-22
+
 ### Fixed
 
 - **Encode WebM voice recordings as 16 kHz mono WAV in the browser before dictation upload.**
