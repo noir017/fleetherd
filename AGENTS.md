@@ -72,6 +72,7 @@ Module documentation links: [config](src/config/README.md), [core](src/core/READ
 - `remote/`: Static Go binary per architecture built into `dist/remote-bin/`.
 - `skill/`: Bundled agent skill ([SKILL.md](skill/SKILL.md)): how an agent finds the reverse CLI, linked into each harness's skill directory (`daemon/skill-link.ts`).
 - `skill-super/`: Second bundled skill, `super` ([SKILL.md](skill-super/SKILL.md)): how an agent splits a job across sub-agents (`/super`, `daemon/delegation.ts`), linked the same way.
+- `skill-setup/`: Onboarding and deployment skill, `fleetherd-setup` ([SKILL.md](skill-setup/SKILL.md)): end-to-end installation, configuration, verification, and startup guide for coding agents setting up fleetherd. Published in `package.json` `files` (and referenced by raw GitHub URL from the READMEs), and deliberately NOT listed in `BUNDLED_SKILLS` (`daemon/skill-link.ts`) so running agents do not spend context on pre-install instructions.
 - `agy-plugin/`: Bundled plugin ([agy-plugin.ts](src/daemon/agy-plugin.ts)): a Stop hook that keeps an agy turn open while a command it put in the background runs, linked into `~/.gemini/config/plugins` (`daemon/agy-plugin.ts`).
 
 ## Layering

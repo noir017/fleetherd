@@ -90,14 +90,11 @@ fleetherd start    # 打开网页端或直接给机器人发消息
 <details>
 <summary><strong>或者让你的编码智能体代劳配置</strong></summary>
 
-把下面这段直接粘贴给 Claude Code（或其他编码智能体）：
+把下面这段直接粘贴给 Claude Code、Codex、OpenCode 或任意编码智能体，它会按专属[安装配置技能](skill-setup/SKILL.md)一步步完成环境检查、安装、配置与启动（安装包内也随附于 `$(npm root -g)/fleetherd/skill-setup/SKILL.md`）：
 
 ```text
-Set up https://github.com/noir017/fleetherd for me: install the CLI
-from the latest GitHub release's fleetherd-X.Y.Z.tgz (npm i -g <its URL>;
-it is not on npm), then follow the skill bundled in the installed
-package (skill/SKILL.md, under `npm root -g`/fleetherd) to configure
-and start it.
+请先阅读 https://raw.githubusercontent.com/noir017/fleetherd/main/skill-setup/SKILL.md，
+按里面的步骤帮我完成 fleetherd 的安装、配置、自检和启动。
 ```
 
 </details>

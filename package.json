@@ -16,6 +16,7 @@
     "dist",
     "skill",
     "skill-super",
+    "skill-setup",
     "agy-plugin"
   ],
   "scripts": {

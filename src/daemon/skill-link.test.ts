@@ -152,6 +152,14 @@ describe('BUNDLED_SKILLS', () => {
     expect(r).toEqual({ link: path.join(home, '.claude', 'skills', 'super'), outcome: 'linked' });
     expect(fs.realpathSync(r.link)).toBe(fs.realpathSync(source));
   });
+
+  it('publishes skill-setup/SKILL.md in package.json without auto-linking it to running agents', () => {
+    const pkg = JSON.parse(fs.readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as { files: string[] };
+    const md = fs.readFileSync(path.join(bundledSkillDir('skill-setup'), 'SKILL.md'), 'utf8');
+    expect(md).toMatch(/^---\nname: fleetherd-setup\n/);
+    expect(pkg.files).toContain('skill-setup');
+    expect(BUNDLED_SKILLS.map((s) => s.dir)).not.toContain('skill-setup');
+  });
 });
 
 // 3.0.0 compatibility (legacy-name.ts): the bundled skill was linked as `talkcode`, and managed
