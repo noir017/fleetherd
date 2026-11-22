@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import type { ConversationRef } from '../core/conversation.js';
 import type {
   GitBranchesResult,
@@ -660,12 +661,25 @@ async function worktreeSide(
   path: string
 ): Promise<{ content: Buffer; tooLarge: boolean }> {
   const abs = joinAbs(root, path);
-  const link = await ws.run(['readlink', '-n', '--', abs], { maxBytes: 8 << 10 });
-  if (link.timedOut) throw new GitFailed('readlink timed out.');
-  if (link.spawnError) throw new GitFailed(`readlink could not run: ${link.spawnError}`);
-  // 0 is a symlink; any other exit is the ordinary "this is not one" answer.
-  if (link.code === 0) {
-    return link.truncated ? { content: Buffer.alloc(0), tooLarge: true } : { content: link.output, tooLarge: false };
+  if (ws.host === 'local' && process.platform === 'win32') {
+    // Local workspaces use Node's native lstat/readlink directly (Windows has no `readlink` binary).
+    try {
+      const lst = await fs.promises.lstat(abs);
+      if (lst.isSymbolicLink()) {
+        const target = Buffer.from(await fs.promises.readlink(abs), 'utf8');
+        return target.length > (8 << 10) ? { content: Buffer.alloc(0), tooLarge: true } : { content: target, tooLarge: false };
+      }
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw new GitFailed(`lstat failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  } else {
+    const link = await ws.run(['readlink', '-n', '--', abs], { maxBytes: 8 << 10 });
+    if (link.timedOut) throw new GitFailed('readlink timed out.');
+    if (link.spawnError) throw new GitFailed(`readlink could not run: ${link.spawnError}`);
+    // 0 is a symlink; any other exit is the ordinary "this is not one" answer.
+    if (link.code === 0) {
+      return link.truncated ? { content: Buffer.alloc(0), tooLarge: true } : { content: link.output, tooLarge: false };
+    }
   }
   const st = await ws.stat(abs);
   if (st.exists && st.dir) throw new GitFailed('That is a directory, not a file.');

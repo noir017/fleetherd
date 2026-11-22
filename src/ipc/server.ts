@@ -3,9 +3,14 @@ import net from 'node:net';
 import { StringDecoder } from 'node:string_decoder';
 import { parseIpcRequest, type IpcAction, type IpcResponse } from './protocol.js';
 
+/** Whether `socketPath` is a Windows named pipe (`\\.\pipe\...` or `\\?\pipe\...`). */
+export function isNamedPipe(socketPath: string): boolean {
+  return /^\\\\[.?]\\pipe\\/i.test(socketPath);
+}
+
 /**
- * Daemon-side IPC server over a unix socket. Token validation and address
- * resolution are delegated to the handler (daemon).
+ * Daemon-side IPC server over a unix socket (POSIX) or named pipe (Windows). Token validation
+ * and address resolution are delegated to the handler (daemon).
  */
 export interface IpcServerHandler<TAddress = unknown> {
   /**
@@ -72,16 +77,19 @@ export class IpcServer<TAddress = unknown> {
 
     await new Promise<void>((res, rej) => {
       const server = this.server!;
+      const pipe = isNamedPipe(this.socketPath);
       let attempted = false;
 
       const onListening = (): void => {
-        try {
-          // Socket file perms 0600: owner-only read/write.
-          fs.chmodSync(this.socketPath, 0o600);
-        } catch (e) {
-          console.error(
-            `[ipc] failed to set socket permissions: ${e instanceof Error ? e.message : String(e)}`
-          );
+        if (!pipe) {
+          try {
+            // Socket file perms 0600: owner-only read/write.
+            fs.chmodSync(this.socketPath, 0o600);
+          } catch (e) {
+            console.error(
+              `[ipc] failed to set socket permissions: ${e instanceof Error ? e.message : String(e)}`
+            );
+          }
         }
         res();
       };
@@ -104,11 +112,13 @@ export class IpcServer<TAddress = unknown> {
                 return;
               }
               // Can't connect (ECONNREFUSED etc.) -> stale file; unlink and retry listen once.
-              try {
-                fs.unlinkSync(this.socketPath);
-              } catch (e) {
-                rej(e instanceof Error ? e : new Error(String(e)));
-                return;
+              if (!pipe) {
+                try {
+                  fs.unlinkSync(this.socketPath);
+                } catch (e) {
+                  rej(e instanceof Error ? e : new Error(String(e)));
+                  return;
+                }
               }
               attemptListen();
             })
@@ -120,6 +130,13 @@ export class IpcServer<TAddress = unknown> {
 
       const attemptListen = (): void => {
         server.once('error', onError);
+        if (pipe) {
+          server.listen(this.socketPath, () => {
+            server.removeListener('error', onError);
+            onListening();
+          });
+          return;
+        }
         // Tighten umask before bind: the unix socket file is created at listen() time
         // under the current umask, and we only chmod 0600 afterwards — leaving a
         // world-accessible window in between. Setting umask to 0o077 makes the socket
@@ -209,10 +226,12 @@ export class IpcServer<TAddress = unknown> {
       this.server.close(() => res());
     });
     this.server = null;
-    try {
-      if (fs.existsSync(this.socketPath)) fs.unlinkSync(this.socketPath);
-    } catch (e) {
-      console.error(`[ipc] failed to clean up socket file: ${e instanceof Error ? e.message : String(e)}`);
+    if (!isNamedPipe(this.socketPath)) {
+      try {
+        if (fs.existsSync(this.socketPath)) fs.unlinkSync(this.socketPath);
+      } catch (e) {
+        console.error(`[ipc] failed to clean up socket file: ${e instanceof Error ? e.message : String(e)}`);
+      }
     }
   }
 }

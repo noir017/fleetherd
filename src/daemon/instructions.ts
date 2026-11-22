@@ -179,7 +179,8 @@ function writeCopy(file: string, text: string): void {
   const tmp = path.join(path.dirname(file), `.${path.basename(file)}.tmp-${process.pid}`);
   // A temporary left by a run that died between the two steps is read-only too: clear it first.
   fs.rmSync(tmp, { force: true });
-  fs.writeFileSync(tmp, text, { mode: 0o444 });
+  // On Windows, 0o444 sets the NTFS Read-Only attribute which blocks subsequent renameSync/rmSync.
+  fs.writeFileSync(tmp, text, { mode: process.platform === 'win32' ? 0o644 : 0o444 });
   fs.renameSync(tmp, file);
 }
 

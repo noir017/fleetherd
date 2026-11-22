@@ -14,35 +14,46 @@ import { CLI_NAMES } from '../legacy-name.js';
  * a tsx reverse CLI, a dist daemon spawns dist), and agent-acp prepends the shim dir to each agent
  * child's PATH. This also pins the agent to THIS daemon's version when a different global one exists.
  *
- * POSIX only for now; on win32 it returns null and the agent falls back to whatever PATH offers.
+ * On POSIX this writes `<configDir>/bin/<name>` (`#!/bin/sh`). On Windows it writes both
+ * `<name>.cmd` (for cmd.exe / PowerShell / CreateProcess) and `<name>` (`#!/bin/sh`, for Git Bash /
+ * MSYS2 subshells that agents such as Claude Code invoke).
  */
-export function ensureReverseCliShim(): string | null {
-  if (process.platform === 'win32') return null;
+export function ensureReverseCliShim(platform: NodeJS.Platform = process.platform): string | null {
   const self = selfInvocation();
   if (!self) return null;
   const dir = path.join(configDir(), 'bin');
-  const script = [
+  const posixScript = [
     '#!/bin/sh',
     `exec ${[self.command, ...self.args].map(shellQuote).join(' ')} "$@"`,
     '',
   ].join('\n');
+  const cmdScript =
+    platform === 'win32'
+      ? `@echo off\r\n${[self.command, ...self.args].map(cmdQuote).join(' ')} %*\r\n`
+      : undefined;
   try {
     // One shim under each of the CLI's names: `talkcode` is the one an agent learned before 3.0.0
     // (legacy-name.ts), and an older skill copy or a scheduled bash task may still call it.
     for (const name of CLI_NAMES) {
-      const shim = path.join(dir, name);
-      // Idempotent: rewrite only when the content drifts (entry moved, node upgraded).
-      if (!fs.existsSync(shim) || fs.readFileSync(shim, 'utf8') !== script) {
-        fs.mkdirSync(dir, { recursive: true });
-        fs.writeFileSync(shim, script, { mode: 0o755 });
-      } else {
-        fs.chmodSync(shim, 0o755);
+      writeShimFile(path.join(dir, name), posixScript, platform !== 'win32');
+      if (cmdScript !== undefined) {
+        writeShimFile(path.join(dir, `${name}.cmd`), cmdScript, false);
       }
     }
     return dir;
   } catch (e) {
     console.warn('[shim] failed to provision the reverse CLI shim:', e instanceof Error ? e.message : e);
     return null;
+  }
+}
+
+function writeShimFile(shim: string, content: string, executable: boolean): void {
+  // Idempotent: rewrite only when the content drifts (entry moved, node upgraded).
+  if (!fs.existsSync(shim) || fs.readFileSync(shim, 'utf8') !== content) {
+    fs.mkdirSync(path.dirname(shim), { recursive: true });
+    fs.writeFileSync(shim, content, executable ? { mode: 0o755 } : undefined);
+  } else if (executable) {
+    fs.chmodSync(shim, 0o755);
   }
 }
 
@@ -72,10 +83,15 @@ export function selfInvocation(): { command: string; args: string[] } | null {
  * REPL, an embedding host — means this process is not the CLI and must not claim to be one.
  */
 export function isCliEntry(entry: string): boolean {
-  const base = path.basename(entry);
-  return (CLI_NAMES as readonly string[]).includes(base) || /^cli\.(js|mjs|cjs|ts)$/.test(base);
+  const raw = entry.split(/[\\/]/).pop() ?? '';
+  const base = raw.replace(/\.(cmd|exe|bat)$/i, '');
+  return (CLI_NAMES as readonly string[]).includes(base) || /^cli\.(js|mjs|cjs|ts)$/i.test(raw);
 }
 
 function shellQuote(s: string): string {
   return `'${s.replaceAll("'", `'\\''`)}'`;
+}
+
+function cmdQuote(s: string): string {
+  return `"${s.replaceAll('%', '%%').replaceAll('"', '""')}"`;
 }

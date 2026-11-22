@@ -116,12 +116,14 @@ export function migrateHostDir(home: string): string | undefined {
   }
   try {
     fs.renameSync(legacy, current);
-    fs.symlinkSync('.fleetherd', legacy);
+    if (process.platform === 'win32') fs.symlinkSync(path.resolve(current), legacy, 'junction');
+    else fs.symlinkSync('.fleetherd', legacy);
     return `moved ${legacy} to ${current}, and left a link at the old path`;
   } catch (e) {
     if (fs.existsSync(current)) return `moved ${legacy} to ${current}, but could not link the old path: ${(e as Error).message}`;
     try {
-      fs.symlinkSync(LEGACY_HOST_DIR, current);
+      if (process.platform === 'win32') fs.symlinkSync(path.resolve(legacy), current, 'junction');
+      else fs.symlinkSync(LEGACY_HOST_DIR, current);
       return `could not move ${legacy} (${(e as Error).message}); linked ${current} to it instead`;
     } catch (e2) {
       return `could not move ${legacy} (${(e as Error).message}) nor link ${current} to it (${(e2 as Error).message})`;

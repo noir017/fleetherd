@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { createHash } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import { isScalar, parse, parseDocument, stringify } from 'yaml';
@@ -40,8 +41,12 @@ export function configPath(): string {
   return path.join(configDir(), 'config.yaml');
 }
 
-export function defaultSocketPath(): string {
-  return path.join(configDir(), 'daemon.sock');
+export function defaultSocketPath(dir = configDir(), platform: NodeJS.Platform = process.platform): string {
+  if (platform === 'win32') {
+    const hash = createHash('sha256').update(path.win32.resolve(dir).toLowerCase()).digest('hex').slice(0, 16);
+    return `\\\\.\\pipe\\fleetherd-${hash}`;
+  }
+  return path.join(dir, 'daemon.sock');
 }
 
 /**
@@ -52,7 +57,7 @@ export function defaultSocketPath(): string {
  */
 export function expandHome(p: string): string {
   if (p === '~') return os.homedir();
-  if (p.startsWith('~/')) return path.join(os.homedir(), p.slice(2));
+  if (p.startsWith('~/') || p.startsWith('~\\')) return path.join(os.homedir(), p.slice(2));
   return p;
 }
 

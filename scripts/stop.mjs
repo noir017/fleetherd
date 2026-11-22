@@ -12,6 +12,7 @@
 //   - fleetherd daemon started from src:   tsx ... src/cli.ts start  (dev:watch)
 //   - agent subprocesses:               claude-agent-acp
 import { execSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 
 const sh = (c) => {
   try {
@@ -21,27 +22,49 @@ const sh = (c) => {
   }
 };
 
-const rows = sh('ps -Ao pid,command').split('\n');
-// The `start` subcommand may be separated from the entry file by global flags
-// (`node dist/cli.js --config foo.yaml start`), and the entry may be a relative
-// path — so: entry file anywhere in the line, `start` anywhere after it.
-// Anchor the first token after the pid to node/tsx: a shell line that merely
-// QUOTES such a command (`zsh -c "…; node dist/cli.js start"`) must not match,
-// or this script kills the wrapping shell.
-const isTarget = (l) =>
-  /^\s*\d+\s+\S*(?:node|tsx)\s/.test(l) &&
-  /(?:(?:dist\/cli\.js|src\/cli\.ts)\b.*\bstart\b|claude-agent-acp)/.test(l) &&
-  !/\bgrep\b|stop\.mjs/.test(l);
+let pids = [];
+if (process.platform === 'win32') {
+  const psOut = sh(
+    'powershell -NoProfile -Command "Get-CimInstance Win32_Process | ForEach-Object { if ($_.CommandLine) { \\"$($_.ProcessId) $($_.CommandLine)\\" } }"'
+  );
+  const isWinTarget = (l) =>
+    /^\s*\d+\s+(?:"[^"]*(?:node|tsx)(?:\.exe|\.cmd)?"|\S*(?:node|tsx)(?:\.exe|\.cmd)?)\s/i.test(l) &&
+    /(?:(?:dist[\\/]cli\.js|src[\\/]cli\.ts)\b.*\bstart\b|claude-agent-acp)/i.test(l) &&
+    !/stop\.mjs/i.test(l);
+  pids = [...new Set(psOut.split(/\r?\n/).filter(isWinTarget).map((l) => l.trim().split(/\s+/)[0]))].filter(Boolean);
+  for (const pid of pids) {
+    const r = spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
+    if (r.error) {
+      try {
+        process.kill(Number(pid));
+      } catch {
+        /* already gone */
+      }
+    }
+  }
+} else {
+  const rows = sh('ps -Ao pid,command').split('\n');
+  // The `start` subcommand may be separated from the entry file by global flags
+  // (`node dist/cli.js --config foo.yaml start`), and the entry may be a relative
+  // path — so: entry file anywhere in the line, `start` anywhere after it.
+  // Anchor the first token after the pid to node/tsx: a shell line that merely
+  // QUOTES such a command (`zsh -c "…; node dist/cli.js start"`) must not match,
+  // or this script kills the wrapping shell.
+  const isTarget = (l) =>
+    /^\s*\d+\s+\S*(?:node|tsx)\s/.test(l) &&
+    /(?:(?:dist\/cli\.js|src\/cli\.ts)\b.*\bstart\b|claude-agent-acp)/.test(l) &&
+    !/\bgrep\b|stop\.mjs/.test(l);
 
-const pids = [
-  ...new Set(rows.filter(isTarget).map((l) => l.trim().split(/\s+/)[0])),
-].filter(Boolean);
+  pids = [
+    ...new Set(rows.filter(isTarget).map((l) => l.trim().split(/\s+/)[0])),
+  ].filter(Boolean);
 
-for (const pid of pids) {
-  try {
-    process.kill(Number(pid), 'SIGKILL');
-  } catch {
-    /* already gone */
+  for (const pid of pids) {
+    try {
+      process.kill(Number(pid), 'SIGKILL');
+    } catch {
+      /* already gone */
+    }
   }
 }
 

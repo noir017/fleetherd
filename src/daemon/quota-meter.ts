@@ -7,6 +7,7 @@ import { runAgyCliCommand, runAgyCliFor, type AgyCliResult, type AgyCliRunner } 
 import { parseAgyUsagePools } from './agy-meters.js';
 import { remoteHosts } from './remote-hosts.js';
 import { agentHome } from './skills-scan.js';
+import { shellLaunch } from './schedule-bash.js';
 
 const execFile = promisify(execFileCb);
 
@@ -47,7 +48,14 @@ export type QuotaCommandRunner = (command: string, cwd: string, env: NodeJS.Proc
  */
 export async function runQuotaCommand(command: string, cwd: string, env: NodeJS.ProcessEnv): Promise<AgyCliResult> {
   try {
-    const { stdout } = await execFile('bash', ['-lc', command], { cwd, env, timeout: QUOTA_COMMAND_TIMEOUT_MS, maxBuffer: 1024 * 1024 });
+    const launch = shellLaunch(command, process.platform, env);
+    const { stdout } = await execFile(launch.command, launch.args, {
+      cwd,
+      env,
+      timeout: QUOTA_COMMAND_TIMEOUT_MS,
+      maxBuffer: 1024 * 1024,
+      ...(launch.windowsHide ? { windowsHide: true } : {}),
+    });
     return { ok: true, output: stdout.trim() };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };

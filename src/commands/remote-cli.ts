@@ -126,7 +126,8 @@ function runShim(shim: string, argv: string[]): Promise<number> {
     const child = spawn(shim, argv, { stdio: 'inherit' });
     // A harness stops a command with a signal. It has to reach the shim, or a killed `mcp` or `ask`
     // leaves the shim waiting on a socket the gateway still thinks is alive.
-    const signals: NodeJS.Signals[] = ['SIGINT', 'SIGTERM', 'SIGHUP'];
+    const signals: NodeJS.Signals[] =
+      process.platform === 'win32' ? ['SIGINT', 'SIGTERM'] : ['SIGINT', 'SIGTERM', 'SIGHUP'];
     const relay = (sig: NodeJS.Signals): void => void child.kill(sig);
     for (const sig of signals) process.on(sig, relay);
     let settled = false;

@@ -107,3 +107,26 @@ config.yaml reloaded.
 | `<反向命令>` | 供智能体使用的聊天操作，见[在聊天中行动](agent-actions.md#在聊天中行动) |
 
 所有命令均接受写在命令之前的 `-c, --config <path>`（`fleetherd -c <path> start`），并将结构化输出写到 stdout。写在命令之后的 `-c` 归该命令自己：聊天动作里是 `--channel`。
+
+## Windows 支持
+
+fleetherd 可在原生 Windows（PowerShell 或命令提示符）上直接运行（需 **Node.js ≥ 22**），支持本机智能体、所有聊天平台和内置网页端。如需完整 POSIX 工具链，也可运行在 **WSL2** 中（行为与 Linux 一致）。
+
+### 前置条件（原生 Windows）
+
+- 已安装 **Node.js ≥ 22** 并加入 `PATH`。
+- 如需使用网页端 Git 变更面板、每轮文件改动摘要或自管技能仓库，请安装 **Git for Windows**。
+- 如需使用[统一工作偏好](instructions.md)，建议开启 **Windows 开发者模式**（设置 → 系统 → 开发者选项）：目录技能使用 NTFS Junction（无需管理员权限），而单文件指令依赖文件符号链接。
+
+### 原生 Windows 下的行为差异
+
+- **IPC 通信**：守护进程默认监听按配置目录隔离的 Windows 命名管道（`\\.\pipe\fleetherd-<hash>`），而非 Unix 域套接字；仍可通过 `ipc.socketPath` 手动覆盖。
+- **反向 CLI 垫片**：在 `<configDir>\bin\` 下同时生成 `.cmd`（供 `cmd.exe` / PowerShell 使用）和 POSIX `#!/bin/sh` 脚本（供 Git Bash / MSYS2 子 shell 使用），覆盖 `fleetherd` 与 `talkcode` 两个命令名。
+- **配置热重载**：Windows 不使用 `SIGHUP` 触发重载，请通过聊天中的 `/reload` 或智能体会话里的 `fleetherd reload` 重载配置。
+- **定时 Shell 任务与 `quotaCommand`**：本机定时命令和配额命令通过 `%ComSpec% /d /s /c` 执行，而非 `bash -lc`。
+
+### 已知系统边界
+
+- **远程 SSH 主机（`hosts:`）**：网关本身可运行在 Windows 上并通过 OpenSSH 连接远端 Linux 主机，但远端助手二进制 `fleetherd-remote` 仅支持 **Linux（amd64 / arm64）**，Windows 机器不能作为 `hosts:` 远端受控节点。
+- **网页端内嵌终端**：可选的 `terminal:` 面板依赖基于 Unix 套接字的 `ttyd` + `tmux` 桥接（仅限 Linux / macOS / WSL2）。
+- **Antigravity 后台等待插件**：`agy-plugin/wait-background.sh` 为 POSIX Shell 钩子；在原生 Windows 上 `agy` 仍可正常运行，但后台长任务不会自动保持回合开启。

@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { loadConfig, resolveSocketPath, configPath, readRawConfigIfExists, saveConfig } from '../config/load.js';
 import { ConfigSchema, accessUnrestricted, platformInstances, type Config, type HostDef } from '../config/schema.js';
+import { isNamedPipe } from '../ipc/server.js';
 import { spawnSync } from 'node:child_process';
 import { sshArgs } from '../remote/binaries.js';
 import { defaultIdentityFile, defaultKnownHostsFile } from '../daemon/remote-hosts.js';
@@ -34,24 +35,32 @@ async function portFree(host: string, port: number): Promise<boolean> {
  * Locate an executable: if it contains a path separator, check the file directly;
  * otherwise scan PATH. Returns the path, or null if not found.
  */
-function locateCommand(cmd: string): string | null {
-  if (cmd.includes('/')) {
-    try {
-      fs.accessSync(cmd, fs.constants.X_OK);
-      return cmd;
-    } catch {
-      return null;
+export function locateCommand(
+  cmd: string,
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform
+): string | null {
+  const isWin = platform === 'win32';
+  const mode = isWin ? fs.constants.F_OK : fs.constants.X_OK;
+  const exts = isWin ? ['', ...(env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean)] : [''];
+  const check = (base: string): string | null => {
+    for (const ext of exts) {
+      const candidate = ext && !base.toLowerCase().endsWith(ext.toLowerCase()) ? `${base}${ext}` : base;
+      try {
+        fs.accessSync(candidate, mode);
+        return candidate;
+      } catch {
+        /* not found with this extension */
+      }
     }
-  }
-  const dirs = (process.env.PATH ?? '').split(path.delimiter).filter(Boolean);
+    return null;
+  };
+  if (cmd.includes('/') || cmd.includes('\\')) return check(cmd);
+  const pathKey = Object.keys(env).find((k) => k.toLowerCase() === 'path');
+  const dirs = (pathKey ? env[pathKey] ?? '' : '').split(isWin ? ';' : ':').filter(Boolean);
   for (const dir of dirs) {
-    const p = path.join(dir, cmd);
-    try {
-      fs.accessSync(p, fs.constants.X_OK);
-      return p;
-    } catch {
-      /* command not in this dir, continue */
-    }
+    const found = check(path.join(dir, cmd));
+    if (found) return found;
   }
   return null;
 }
@@ -92,7 +101,7 @@ async function checkRemoteHost(
 }
 
 function expandLocal(p: string): string {
-  return p === '~' ? os.homedir() : p.startsWith('~/') ? path.join(os.homedir(), p.slice(2)) : p;
+  return p === '~' ? os.homedir() : p.startsWith('~/') || p.startsWith('~\\') ? path.join(os.homedir(), p.slice(2)) : p;
 }
 
 function harnessCommand(def: import('../config/schema.js').AgentDef): string {
@@ -506,6 +515,13 @@ function buildHostAndStoreChecks(ctx: DoctorContext): Check[] {
         if (!cfg) return { ok: false, detail: tCli(locale, 'doctor.detail.configUnavailableSocket') };
         try {
           const sock = resolveSocketPath(cfg);
+          if (isNamedPipe(sock)) {
+            const alive = await probeDaemon(sock);
+            if (alive) {
+              return { ok: true, level: 'warn', detail: tCli(locale, 'doctor.detail.socketAlive', { path: sock }) };
+            }
+            return { ok: true, detail: sock };
+          }
           if (fs.existsSync(sock)) {
             const alive = await probeDaemon(sock);
             if (alive) {
