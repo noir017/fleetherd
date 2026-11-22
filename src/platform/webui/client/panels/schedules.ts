@@ -9,6 +9,7 @@ import type {
 } from '../../../adapter.js';
 import type { ScheduleTargetRequest } from '../../protocol.js';
 import type { Topic } from '../../topics.js';
+import { t as tr, type MessageKey } from '../i18n/index.js';
 
 export interface FilterBarOption {
   value: string;
@@ -38,6 +39,7 @@ export interface FilterBar {
   setGroups: (groups: FilterBarGroup[] | null) => void;
   setCounts: (shown: number, total: number) => void;
   clear: () => void;
+  refreshI18n?: (placeholder: string, sortLabels?: Record<string, string>) => void;
 }
 
 export interface FilterBarOpts {
@@ -188,6 +190,7 @@ export interface SchedulesPanel {
   ) => void;
   openTaskPage: (id: string | null, edit?: boolean) => void;
   closeTaskPage: (force?: boolean) => boolean;
+  repaint: () => void;
 }
 
 interface SessionGroup {
@@ -265,37 +268,44 @@ interface ScheduleFormResponse {
   form?: SchedulePanelFormContext;
 }
 
-const MONTH_NAMES = [
-  'January',
-  'February',
-  'March',
-  'April',
-  'May',
-  'June',
-  'July',
-  'August',
-  'September',
-  'October',
-  'November',
-  'December',
+const MONTH_KEYS: readonly MessageKey[] = [
+  'age.month0',
+  'age.month1',
+  'age.month2',
+  'age.month3',
+  'age.month4',
+  'age.month5',
+  'age.month6',
+  'age.month7',
+  'age.month8',
+  'age.month9',
+  'age.month10',
+  'age.month11',
 ];
 
-const RUN_STATUS_WORD: Record<string, string> = {
-  ok: 'ok',
-  failed: 'failed',
-  interrupted: 'interrupted',
-  skipped: 'skipped',
-  missed: 'missed',
+const RUN_STATUS_KEYS: Record<string, MessageKey> = {
+  ok: 'sched.runOk',
+  failed: 'sched.runFailed',
+  interrupted: 'sched.runInterrupted',
+  skipped: 'sched.runSkipped',
+  missed: 'sched.runMissed',
 };
 
-const TP_CRON_HINT = 'Five fields: minute, hour, day of month, month, weekday \u2014 read in the task\u2019s time zone.';
-const TP_AT_HINT = 'One run, at this time in the task\u2019s time zone.';
+function monthName(index: number): string {
+  const key = MONTH_KEYS[index];
+  return key ? tr(key) : '';
+}
+
+function runStatusWord(status: string): string {
+  const key = RUN_STATUS_KEYS[status];
+  return key ? tr(key) : status;
+}
 
 function errorMessage(err: unknown): string {
   if (err && typeof err === 'object' && 'message' in err && typeof err.message === 'string' && err.message) {
     return err.message;
   }
-  return 'network error';
+  return tr('common.networkError');
 }
 
 function schedSessions(deps: SchedulesPanelDeps): Topic[] {
@@ -316,7 +326,7 @@ function sessionGroupMeta(
   now: Date,
   yesterday: Date
 ): { key: string; label: string } {
-  if (!at) return { key: 'x:earlier', label: 'Earlier' };
+  if (!at) return { key: 'x:earlier', label: tr('sched.earlier') };
   const y = now.getFullYear();
   const m = now.getMonth();
   const day = at.getFullYear() === y && at.getMonth() === m;
@@ -324,19 +334,19 @@ function sessionGroupMeta(
   if (!day) {
     return {
       key: 'm:' + at.getFullYear() + '-' + month,
-      label: (MONTH_NAMES[at.getMonth()] ?? '') + ' ' + at.getFullYear(),
+      label: monthName(at.getMonth()) + ' ' + at.getFullYear(),
     };
   }
   const key = 'd:' + at.getFullYear() + '-' + month + '-' + ('0' + at.getDate()).slice(-2);
-  if (at.getDate() === now.getDate()) return { key, label: 'Today' };
+  if (at.getDate() === now.getDate()) return { key, label: tr('sched.today') };
   if (
     at.getFullYear() === yesterday.getFullYear() &&
     at.getMonth() === yesterday.getMonth() &&
     at.getDate() === yesterday.getDate()
   ) {
-    return { key, label: 'Yesterday' };
+    return { key, label: tr('sched.yesterday') };
   }
-  return { key, label: (MONTH_NAMES[at.getMonth()] ?? '').slice(0, 3) + ' ' + at.getDate() };
+  return { key, label: monthName(at.getMonth()).slice(0, 3) + ' ' + at.getDate() };
 }
 
 function schedSessionGroups(list: readonly Topic[], deps: SchedulesPanelDeps): SessionGroup[] {
@@ -399,24 +409,24 @@ function schedSessionRow(row: TreeRow, deps: SchedulesPanelDeps): string {
   const run = Boolean(t.scheduled);
   const o: TreeRowOpts = { attr: 'data-sess', menu: 'sess', cls: ' sess-item' };
   if (!run) {
-    o.moreTitle = 'Topic actions';
+    o.moreTitle = tr('topic.topicActions');
     return deps.treeRowHtml(row, o);
   }
   const count = t.msgCount || 0;
   const stateLabel = t.asking
-    ? 'awaiting you'
+    ? tr('topic.awaitingYou')
     : deps.rowRunning(t)
-      ? 'running'
+      ? tr('topic.running')
       : t.stage === 'failed'
-        ? 'failed'
+        ? tr('topic.failed')
         : t.stage === 'review'
-          ? 'finished'
+          ? tr('topic.finished')
           : '';
   const when = t.lastAt
     ? '<span class="topic-age" data-age="' +
       deps.text(t.lastAt) +
-      '" data-age-run="0" title="Ended ' +
-      deps.text(deps.ageClock(t.lastAt)) +
+      '" data-age-run="0" title="' +
+      deps.text(tr('age.ended', { when: deps.ageClock(t.lastAt) })) +
       '">' +
       deps.text(deps.ageText(Date.now() - t.lastAt, true)) +
       '</span>'
@@ -424,19 +434,19 @@ function schedSessionRow(row: TreeRow, deps: SchedulesPanelDeps): string {
   o.sub =
     '<span class="topic-dir">' +
     when +
-    (count ? ' \u00b7 ' + count + ' message' + (count === 1 ? '' : 's') : '') +
-    (stateLabel ? ' \u00b7 ' + stateLabel : '') +
+    (count ? ' \u00b7 ' + deps.text(tr(count === 1 ? 'sched.msgOne' : 'sched.msgMany', { count })) : '') +
+    (stateLabel ? ' \u00b7 ' + deps.text(stateLabel) : '') +
     '</span>';
   o.time = '';
-  o.moreTitle = 'Session actions';
+  o.moreTitle = tr('sched.sessionActions');
   return deps.treeRowHtml(row, o);
 }
 
 function paintSchedRead(deps: SchedulesPanelDeps, pending: number): void {
   deps.schedReadBtn.disabled = !pending;
   deps.schedReadBtn.title = pending
-    ? 'Mark all read (' + pending + ' session' + (pending === 1 ? '' : 's') + ')'
-    : 'Mark all read \u2014 nothing unread';
+    ? tr(pending === 1 ? 'sched.markAllReadSessionsOne' : 'sched.markAllReadSessionsMany', { count: pending })
+    : tr('sidebar.markAllReadNone');
 }
 
 function renderSessionGroup(
@@ -448,10 +458,10 @@ function renderSessionGroup(
   const ic = deps.icons();
   let flags = '';
   if (!open) {
-    if (gr.unread) flags += '<span class="sess-group-flag unread">' + gr.unread + ' unread</span>';
-    if (gr.asking) flags += '<span class="sess-group-flag asking">' + gr.asking + ' awaiting you</span>';
+    if (gr.unread) flags += '<span class="sess-group-flag unread">' + deps.text(tr('sched.unreadCount', { count: gr.unread })) + '</span>';
+    if (gr.asking) flags += '<span class="sess-group-flag asking">' + deps.text(tr('sched.awaitingCount', { count: gr.asking })) + '</span>';
     if (gr.running > gr.asking) {
-      flags += '<span class="sess-group-flag running">' + (gr.running - gr.asking) + ' running</span>';
+      flags += '<span class="sess-group-flag running">' + deps.text(tr('sched.runningCount', { count: gr.running - gr.asking })) + '</span>';
     }
   }
   let body = '';
@@ -498,8 +508,7 @@ function paintSessions(state: SchedulesState, deps: SchedulesPanelDeps): void {
   const list = schedSessions(deps);
   if (!list.length) {
     paintSchedRead(deps, 0);
-    deps.schedSessionList.innerHTML =
-      '<div class="sched-empty">No scheduled sessions yet. A task that runs in a new or daily session opens one here.</div>';
+    deps.schedSessionList.innerHTML = '<div class="sched-empty">' + deps.text(tr('sched.noSessions')) + '</div>';
     deps.rowMenuFollow();
     deps.armAgeTick();
     return;
@@ -543,18 +552,18 @@ function paintSchedAlert(deps: SchedulesPanelDeps): void {
     }
   }
   deps.schedAlert.hidden = !waiting;
-  const label = waiting ? 'Side tasks \u2014 a run is waiting on your answer' : 'Side tasks';
+  const label = waiting ? tr('sideTasks.alertTitle') : tr('sideTasks.title');
   deps.schedToggle.title = label;
   deps.schedToggle.setAttribute('aria-label', label);
   if (deps.schedTabScheduledAlert) deps.schedTabScheduledAlert.hidden = !waiting;
   if (deps.schedSessionsAlert) deps.schedSessionsAlert.hidden = !waiting;
-  deps.schedTabScheduled.title = waiting ? 'Scheduled \u2014 a run is waiting on your answer' : 'Scheduled';
-  deps.schedTabSessions.title = waiting ? 'Sessions \u2014 a run is waiting on your answer' : 'Sessions';
+  deps.schedTabScheduled.title = waiting ? tr('sideTasks.tabScheduledAlert') : tr('sideTasks.tabScheduled');
+  deps.schedTabSessions.title = waiting ? tr('sideTasks.tabSessionsAlert') : tr('sideTasks.tabSessions');
 }
 
 function paintTasksSummary(state: SchedulesState, deps: SchedulesPanelDeps): void {
   if (state.tasks === null) {
-    deps.schedSummary.textContent = 'loading\u2026';
+    deps.schedSummary.textContent = tr('common.loadingLower');
     return;
   }
   let active = 0;
@@ -566,10 +575,12 @@ function paintTasksSummary(state: SchedulesState, deps: SchedulesPanelDeps): voi
     else ended++;
   }
   deps.schedSummary.textContent = !state.enabled
-    ? 'not enabled'
+    ? tr('sched.notEnabled')
     : state.tasks.length
-      ? active + ' active' + (paused ? ' \u00b7 ' + paused + ' paused' : '') + (ended ? ' \u00b7 ' + ended + ' ended' : '')
-      : 'nothing scheduled';
+      ? tr('sched.summaryActive', { count: active }) +
+        (paused ? ' \u00b7 ' + tr('sched.summaryPaused', { count: paused }) : '') +
+        (ended ? ' \u00b7 ' + tr('sched.summaryEnded', { count: ended }) : '')
+      : tr('sched.nothingScheduled');
 }
 
 function paintSummary(state: SchedulesState, deps: SchedulesPanelDeps): void {
@@ -578,9 +589,9 @@ function paintSummary(state: SchedulesState, deps: SchedulesPanelDeps): void {
     deps.schedSummary.textContent =
       revCount !== null
         ? revCount
-          ? revCount + (revCount === 1 ? ' review' : ' reviews')
-          : 'no reviews yet'
-        : 'loading\u2026';
+          ? tr(revCount === 1 ? 'sched.summaryReviewOne' : 'sched.summaryReviewMany', { count: revCount })
+          : tr('sched.summaryNoReviews')
+        : tr('common.loadingLower');
     return;
   }
   if (state.subtab === 'sessions') {
@@ -588,8 +599,9 @@ function paintSummary(state: SchedulesState, deps: SchedulesPanelDeps): void {
     let busy = 0;
     for (const item of list) if (deps.rowRunning(item) || item.asking) busy++;
     deps.schedSummary.textContent = list.length
-      ? list.length + (list.length === 1 ? ' session' : ' sessions') + (busy ? ' \u00b7 ' + busy + ' running' : '')
-      : 'no sessions yet';
+      ? tr(list.length === 1 ? 'sched.summarySessionOne' : 'sched.summarySessionMany', { count: list.length }) +
+        (busy ? ' \u00b7 ' + tr('sched.runningCount', { count: busy }) : '')
+      : tr('sched.summaryNoSessions');
     return;
   }
   paintTasksSummary(state, deps);
@@ -706,7 +718,7 @@ function loadSchedules(state: SchedulesState, deps: SchedulesPanelDeps): void {
     })
     .catch((e: unknown) => {
       if (seq !== state.seq) return;
-      showSchedNote(deps, 'Could not refresh: ' + errorMessage(e));
+      showSchedNote(deps, tr('sched.refreshFailed', { err: errorMessage(e) }));
     })
     .then(() => {
       if (seq === state.seq) armSched(state, deps);
@@ -714,8 +726,8 @@ function loadSchedules(state: SchedulesState, deps: SchedulesPanelDeps): void {
 }
 
 function schedIn(at: number, stLeft: (ms: number) => string): string {
-  if (at <= Date.now()) return 'due now';
-  return 'in ' + stLeft(at - Date.now());
+  if (at <= Date.now()) return tr('sched.dueNow');
+  return tr('sched.inLeft', { left: stLeft(at - Date.now()) });
 }
 
 function schedDur(ms: number): string {
@@ -735,13 +747,13 @@ function schedTargetShort(t: SchedulePanelTask, deps: SchedulesPanelDeps): strin
 }
 
 function schedTarget(t: SchedulePanelTask, deps: SchedulesPanelDeps): string {
-  return 'posts to ' + schedTargetShort(t, deps);
+  return tr('sched.postsTo', { target: schedTargetShort(t, deps) });
 }
 
 function schedLast(t: SchedulePanelTask, schedAgo: (at: number) => string): string {
   if (!t.last) return '';
-  const word = RUN_STATUS_WORD[t.last.status] || t.last.status;
-  let s = 'last run ' + word + ' \u00b7 ' + schedAgo(t.last.at);
+  const word = runStatusWord(t.last.status);
+  let s = tr('sched.lastRun', { status: word, ago: schedAgo(t.last.at) });
   if (t.last.durationMs != null) s += ' \u00b7 ' + schedDur(t.last.durationMs);
   if (t.last.error) s += ' \u2014 ' + t.last.error;
   return s;
@@ -749,8 +761,8 @@ function schedLast(t: SchedulePanelTask, schedAgo: (at: number) => string): stri
 
 function schedLastShort(t: SchedulePanelTask, schedAgo: (at: number) => string): string {
   if (!t.last) return '';
-  const word = RUN_STATUS_WORD[t.last.status] || t.last.status;
-  return 'last ' + word + ' ' + schedAgo(t.last.at);
+  const word = runStatusWord(t.last.status);
+  return tr('sched.lastShort', { status: word, ago: schedAgo(t.last.at) });
 }
 
 function schedDot(t: SchedulePanelTask, taskState: string): string {
@@ -802,20 +814,20 @@ function schedFilterGroups(tasks: readonly SchedulePanelTask[]): FilterBarGroup[
     icon: 'tag',
     count: tags[tag] ?? 0,
   }));
-  tagOpts.push({ value: ' untagged', label: 'Untagged', icon: 'tag', count: untagged });
+  tagOpts.push({ value: ' untagged', label: tr('sched.untagged'), icon: 'tag', count: untagged });
   return [
     {
       id: 'status',
-      label: 'Status',
+      label: tr('sched.sortStatus'),
       pinned: true,
       options: [
-        { value: 'running', label: 'Running', short: 'Run', icon: 'play', count: counts.running },
-        { value: 'active', label: 'Active', short: 'Active', icon: 'clock', count: counts.active },
-        { value: 'paused', label: 'Paused', short: 'Pause', icon: 'pause', count: counts.paused },
-        { value: 'ended', label: 'Ended', short: 'End', icon: 'stop', count: counts.ended },
+        { value: 'running', label: tr('sched.statusRunning'), short: tr('filter.runShort'), icon: 'play', count: counts.running },
+        { value: 'active', label: tr('sched.statusActive'), short: tr('sched.statusActive'), icon: 'clock', count: counts.active },
+        { value: 'paused', label: tr('sched.statusPaused'), short: tr('sched.statusPausedShort'), icon: 'pause', count: counts.paused },
+        { value: 'ended', label: tr('sched.statusEnded'), short: tr('sched.statusEndedShort'), icon: 'stop', count: counts.ended },
       ],
     },
-    { id: 'tags', label: 'Tags', options: tagOpts },
+    { id: 'tags', label: tr('sched.tags'), options: tagOpts },
   ];
 }
 
@@ -864,7 +876,7 @@ function schedSorted(rows: Array<{ t: SchedulePanelTask; i: number }>, fs: Filte
 
 function schedRowLine(t: SchedulePanelTask, taskState: string, deps: SchedulesPanelDeps): string {
   const bits: string[] = [];
-  if (t.running) bits.push('<span class="sched-next">running now</span>');
+  if (t.running) bits.push('<span class="sched-next">' + deps.text(tr('sched.runningNow')) + '</span>');
   else if (taskState === 'active' && t.nextAt) {
     bits.push('<span class="sched-next">' + deps.text(schedIn(t.nextAt, deps.stLeft)) + '</span>');
   } else if (taskState !== 'active') bits.push('<span class="sched-next">' + deps.text(taskState) + '</span>');
@@ -880,7 +892,7 @@ function schedRowLine(t: SchedulePanelTask, taskState: string, deps: SchedulesPa
 function schedRowTitle(t: SchedulePanelTask, deps: SchedulesPanelDeps): string {
   const bits: string[] = [];
   if (t.when) bits.push(t.when);
-  if (t.next) bits.push('next ' + t.next);
+  if (t.next) bits.push(tr('sched.nextPrefix', { next: t.next }));
   bits.push(schedTarget(t, deps));
   const last = schedLast(t, deps.schedAgo);
   if (last) bits.push(last);
@@ -899,7 +911,7 @@ function schedCard(t: SchedulePanelTask, deps: SchedulesPanelDeps): string {
     dot: schedDot(t, taskState),
     title: '<span class="topic-title">' + deps.text(t.name) + '</span>',
     sub: schedRowLine(t, taskState, deps),
-    moreTitle: 'Task actions',
+    moreTitle: tr('sched.taskActions'),
   });
   return h + '</div>';
 }
@@ -907,7 +919,7 @@ function schedCard(t: SchedulePanelTask, deps: SchedulesPanelDeps): string {
 function paintSchedTasks(state: SchedulesState, deps: SchedulesPanelDeps): void {
   // Do not render the empty state before the first fetch returns.
   if (state.tasks === null) {
-    deps.schedList.innerHTML = '<div class="sched-empty">Loading\u2026</div>';
+    deps.schedList.innerHTML = '<div class="sched-empty">' + deps.text(tr('common.loading')) + '</div>';
     if (state.filter) state.filter.setCounts(0, 0);
     deps.rowMenuFollow();
     return;
@@ -924,13 +936,15 @@ function paintSchedTasks(state: SchedulesState, deps: SchedulesPanelDeps): void 
   if (!total) {
     deps.schedList.innerHTML =
       '<div class="sched-empty">' +
-      (state.enabled
-        ? 'No scheduled tasks yet. Add one with + above, or ask an agent in a topic \u2014 for example \u201cevery morning at 8, summarise the CI failures\u201d \u2014 and it will be registered here.'
-        : 'Scheduled tasks are not enabled in this daemon.') +
+      deps.text(state.enabled ? tr('sched.noTasksEnabled') : tr('sched.noTasksDisabled')) +
       '</div>';
   } else if (!sorted.length) {
     deps.schedList.innerHTML =
-      '<div class="sched-empty sched-none">No matching tasks<button type="button" class="fb-clear" data-sched-clear="1">Clear</button></div>';
+      '<div class="sched-empty sched-none">' +
+      deps.text(tr('sched.noMatchingTasks')) +
+      '<button type="button" class="fb-clear" data-sched-clear="1">' +
+      deps.text(tr('common.clear')) +
+      '</button></div>';
   } else {
     let h = '';
     for (const r of sorted) h += schedCard(r.t, deps);
@@ -995,11 +1009,11 @@ function schedOp(
         }
         paintSchedulesList(state, deps, d.tasks);
       } else {
-        say((d && d.error) || 'That did not work.');
+        say((d && d.error) || tr('common.didNotWork'));
       }
     })
     .catch((e: unknown) => {
-      say('Could not reach the daemon: ' + errorMessage(e));
+      say(tr('common.reachDaemonWithErr', { err: errorMessage(e) }));
     })
     .then(() => {
       state.busy = false;
@@ -1083,31 +1097,27 @@ function taskWhen(deps: SchedulesPanelDeps, once: boolean, focus: boolean): void
   const hintEl = tpEl<HTMLElement>(deps, 'tp-when-hint');
   if (cronEl) cronEl.hidden = once;
   if (atEl) atEl.hidden = !once;
-  if (hintEl) hintEl.textContent = once ? TP_AT_HINT : TP_CRON_HINT;
+  if (hintEl) hintEl.textContent = once ? tr('taskPage.atHint') : tr('taskPage.cronHint');
   if (focus) (once ? atEl : cronEl)?.focus();
 }
 
 function taskMachine(state: SchedulesState, deps: SchedulesPanelDeps): string {
   const d = state.tp.detail;
   const host = taskKind(deps) === 'bash' ? tpVal(deps, 'tp-host') : (d?.agentHosts[tpVal(deps, 'tp-agent')] || '');
-  return host || 'the gateway\u2019s machine';
+  return host || tr('taskPage.gatewayMachine');
 }
 
 function sessionHintText(shape: SchedulePanelShape): string {
-  if (shape === 'fixed') {
-    return 'Each run is a turn in the topic it posts to, for 24 hours from when it starts there. Its directory and model are that topic\u2019s \u2014 /cd and /model there change them.';
-  }
-  if (shape === 'daily') {
-    return 'The first run of each day opens a topic; the rest of that day\u2019s runs join it. Needs a repeating time.';
-  }
-  return 'Each run is a fresh session in a topic of its own.';
+  if (shape === 'fixed') return tr('taskPage.sessionFixedHint');
+  if (shape === 'daily') return tr('taskPage.sessionDailyHint');
+  return tr('taskPage.sessionNewHint');
 }
 
 function targetHintText(other: boolean, shape: SchedulePanelShape): string {
-  if (other) return 'An id as fleetherd channels prints it: <instance>:<chat>[/<thread>].';
-  if (shape === 'bash') return 'The command\u2019s output is posted there.';
-  if (shape === 'fixed') return 'The runs are turns there.';
-  return 'Each run\u2019s topic is opened from there, and failures are reported there.';
+  if (other) return tr('taskPage.targetOtherHint');
+  if (shape === 'bash') return tr('taskPage.targetBashHint');
+  if (shape === 'fixed') return tr('taskPage.targetFixedHint');
+  return tr('taskPage.targetNewHint');
 }
 
 function taskShapePaint(state: SchedulesState, deps: SchedulesPanelDeps): void {
@@ -1124,12 +1134,12 @@ function taskShapePaint(state: SchedulesState, deps: SchedulesPanelDeps): void {
     el.hidden = el.getAttribute('data-tp-kinded') !== kind;
   }
   const textLabel = tpEl<HTMLElement>(deps, 'tp-text-label');
-  if (textLabel) textLabel.textContent = kind === 'bash' ? 'Command' : 'Prompt';
+  if (textLabel) textLabel.textContent = kind === 'bash' ? tr('taskPage.command') : tr('taskPage.prompt');
   if (keeps.indexOf('at') < 0 && taskWhenMode(deps) === 'at') taskWhen(deps, false, false);
   const sh = tpEl<HTMLElement>(deps, 'tp-session-hint');
   if (sh) sh.textContent = sessionHintText(shape);
   const ch = tpEl<HTMLElement>(deps, 'tp-cwd-hint');
-  if (ch) ch.textContent = 'An absolute path on ' + taskMachine(state, deps) + '; it is checked there before saving. Empty: the default directory.';
+  if (ch) ch.textContent = tr('taskPage.cwdHint', { machine: taskMachine(state, deps) });
   const other = tpVal(deps, 'tp-target') === 'other';
   const targetOther = tpEl<HTMLInputElement>(deps, 'tp-target-other');
   if (targetOther) targetOther.hidden = !other;
@@ -1142,44 +1152,45 @@ function taskTargetOptions(d: TaskPageDetail, deps: SchedulesPanelDeps): string 
   let h = '';
   for (const t of deps.getTopics()) {
     if ((t.scheduled || t.parent) && t.id !== own) continue;
-    h += '<option value="topic:' + deps.text(t.id) + '">' + deps.text(deps.splitTitle(t.title || 'Untitled').rest) + '</option>';
+    h += '<option value="topic:' + deps.text(t.id) + '">' + deps.text(deps.splitTitle(t.title || tr('common.untitled')).rest) + '</option>';
   }
-  return h + '<option value="other">Another chat\u2026</option>';
+  return h + '<option value="other">' + deps.text(tr('taskPage.anotherChat')) + '</option>';
 }
 
 function taskFormScheduleHtml(state: SchedulesState, d: TaskPageDetail, deps: SchedulesPanelDeps): string {
   const once = d.fields.at !== undefined;
+  const { text } = deps;
   let h =
-    '<div class="tp-label">When</div>' +
-    '<div class="skill-seg tp-when" role="group" aria-label="Repeats or once" data-tp-need="at">' +
+    '<div class="tp-label">' + text(tr('taskPage.when')) + '</div>' +
+    '<div class="skill-seg tp-when" role="group" aria-label="' + text(tr('taskPage.whenAria')) + '" data-tp-need="at">' +
     '<button type="button" data-tp-when="cron" aria-pressed="' +
     (once ? 'false' : 'true') +
-    '">Repeats</button>' +
+    '">' + text(tr('taskPage.repeats')) + '</button>' +
     '<button type="button" data-tp-when="at" aria-pressed="' +
     (once ? 'true' : 'false') +
-    '">Once</button></div>' +
+    '">' + text(tr('taskPage.once')) + '</button></div>' +
     '<div class="tp-row2"><div>' +
-    '<input id="tp-cron" class="skill-field tp-mono" type="text" placeholder="0 8 * * *" aria-label="Cron expression" autocomplete="off" spellcheck="false"' +
+    '<input id="tp-cron" class="skill-field tp-mono" type="text" placeholder="0 8 * * *" aria-label="' + text(tr('taskPage.cronAria')) + '" autocomplete="off" spellcheck="false"' +
     (once ? ' hidden' : '') +
     '>' +
-    '<input id="tp-at" class="skill-field" type="datetime-local" step="1" aria-label="Time of the run"' +
+    '<input id="tp-at" class="skill-field" type="datetime-local" step="1" aria-label="' + text(tr('taskPage.atAria')) + '"' +
     (once ? '' : ' hidden') +
     '>' +
-    '</div><div><input id="tp-tz" class="skill-field" type="text" list="tp-tzs" aria-label="Time zone" autocomplete="off" spellcheck="false">' +
-    taskZonesHtml(state, deps.text) +
+    '</div><div><input id="tp-tz" class="skill-field" type="text" list="tp-tzs" aria-label="' + text(tr('taskPage.tzAria')) + '" autocomplete="off" spellcheck="false">' +
+    taskZonesHtml(state, text) +
     '</div></div>' +
     '<div class="tp-hint" id="tp-when-hint">' +
-    (once ? TP_AT_HINT : TP_CRON_HINT) +
+    text(once ? tr('taskPage.atHint') : tr('taskPage.cronHint')) +
     '</div>' +
-    '<label class="tp-label" for="tp-target">Posts to</label><select id="tp-target" class="skill-field">' +
+    '<label class="tp-label" for="tp-target">' + text(tr('taskPage.postsTo')) + '</label><select id="tp-target" class="skill-field">' +
     taskTargetOptions(d, deps) +
     '</select>' +
-    '<input id="tp-target-other" class="skill-field tp-mono" type="text" list="tp-chans" placeholder="tg:-1001234567/8" aria-label="Another chat, as fleetherd channels lists it" autocomplete="off" spellcheck="false" hidden>' +
+    '<input id="tp-target-other" class="skill-field tp-mono" type="text" list="tp-chans" placeholder="tg:-1001234567/8" aria-label="' + text(tr('taskPage.targetOtherAria')) + '" autocomplete="off" spellcheck="false" hidden>' +
     '<datalist id="tp-chans">';
-  for (const ch of d.channels) h += '<option value="' + deps.text(ch.id) + '">' + deps.text(ch.title) + '</option>';
+  for (const ch of d.channels) h += '<option value="' + text(ch.id) + '">' + text(ch.title) + '</option>';
   h +=
     '</datalist><div class="tp-hint" id="tp-target-hint"></div>' +
-    '<label class="tp-label" for="tp-tags">Tags</label><input id="tp-tags" class="skill-field" type="text" placeholder="ci, ops" autocomplete="off" spellcheck="false"><div class="tp-hint">Comma-separated: up to 5, letters, digits and - _ . /</div>';
+    '<label class="tp-label" for="tp-tags">' + text(tr('sched.tags')) + '</label><input id="tp-tags" class="skill-field" type="text" placeholder="ci, ops" autocomplete="off" spellcheck="false"><div class="tp-hint">' + text(tr('taskPage.tagsHint')) + '</div>';
   return h;
 }
 
@@ -1189,43 +1200,43 @@ function taskFormHtml(state: SchedulesState, d: TaskPageDetail, deps: SchedulesP
   const isNew = state.tp.mode === 'new';
   let h =
     '<form id="tp-form" novalidate>' +
-    '<label class="tp-label" for="tp-name">Name</label><input id="tp-name" class="skill-field" type="text" autocomplete="off" spellcheck="false"' +
-    (isNew ? ' placeholder="from the prompt or command"' : '') +
+    '<label class="tp-label" for="tp-name">' + text(tr('taskPage.name')) + '</label><input id="tp-name" class="skill-field" type="text" autocomplete="off" spellcheck="false"' +
+    (isNew ? ' placeholder="' + text(tr('taskPage.namePlaceholder')) + '"' : '') +
     '>' +
-    '<div class="tp-label">Runs</div><div class="skill-seg tp-seg" role="group" aria-label="What it runs">' +
-    '<button type="button" data-tp-kind="agent" aria-pressed="false">Agent prompt</button>' +
-    '<button type="button" data-tp-kind="bash" aria-pressed="false">Bash command</button></div>';
+    '<div class="tp-label">' + text(tr('taskPage.runs')) + '</div><div class="skill-seg tp-seg" role="group" aria-label="' + text(tr('taskPage.runsAria')) + '">' +
+    '<button type="button" data-tp-kind="agent" aria-pressed="false">' + text(tr('taskPage.agentPrompt')) + '</button>' +
+    '<button type="button" data-tp-kind="bash" aria-pressed="false">' + text(tr('taskPage.bashCommand')) + '</button></div>';
   if (!isNew) {
-    h += '<div class="tp-hint">Changing what a task is, how it runs or where it posts keeps its id, tags and run history.</div>';
+    h += '<div class="tp-hint">' + text(tr('taskPage.editKeepHint')) + '</div>';
   }
   h +=
-    '<label class="tp-label" for="tp-text" id="tp-text-label">Prompt</label><textarea id="tp-text" class="tp-text" spellcheck="false"></textarea>' +
-    '<div class="tp-hint" data-tp-need="host">Run with bash -lc on the machine below.</div>' +
-    '<div data-tp-kinded="agent"><div class="tp-label">Session</div><div class="skill-seg tp-seg" role="group" aria-label="Session">' +
-    '<button type="button" data-tp-session="new" aria-pressed="false">New each run</button>' +
-    '<button type="button" data-tp-session="daily" aria-pressed="false">One a day</button>' +
-    '<button type="button" data-tp-session="fixed" aria-pressed="false">In its topic</button></div>' +
+    '<label class="tp-label" for="tp-text" id="tp-text-label">' + text(tr('taskPage.prompt')) + '</label><textarea id="tp-text" class="tp-text" spellcheck="false"></textarea>' +
+    '<div class="tp-hint" data-tp-need="host">' + text(tr('taskPage.bashHint')) + '</div>' +
+    '<div data-tp-kinded="agent"><div class="tp-label">' + text(tr('taskPage.session')) + '</div><div class="skill-seg tp-seg" role="group" aria-label="' + text(tr('taskPage.session')) + '">' +
+    '<button type="button" data-tp-session="new" aria-pressed="false">' + text(tr('taskPage.sessionNew')) + '</button>' +
+    '<button type="button" data-tp-session="daily" aria-pressed="false">' + text(tr('taskPage.sessionDaily')) + '</button>' +
+    '<button type="button" data-tp-session="fixed" aria-pressed="false">' + text(tr('taskPage.sessionFixed')) + '</button></div>' +
     '<div class="tp-hint" id="tp-session-hint"></div></div>';
   const agents = d.agents.slice();
   if (f.agent && agents.indexOf(f.agent) < 0) agents.unshift(f.agent);
-  h += '<div data-tp-need="agent"><label class="tp-label" for="tp-agent">Agent</label><select id="tp-agent" class="skill-field">';
+  h += '<div data-tp-need="agent"><label class="tp-label" for="tp-agent">' + text(tr('taskPage.agent')) + '</label><select id="tp-agent" class="skill-field">';
   for (const ag of agents) {
     h += '<option value="' + text(ag) + '">' + text(ag) + (d.agentHosts[ag] ? ' \u00b7 ' + text(d.agentHosts[ag]) : '') + '</option>';
   }
   h +=
     '</select></div>' +
-    '<div data-tp-need="model"><label class="tp-label" for="tp-model">Model</label><input id="tp-model" class="skill-field" type="text" placeholder="the agent\u2019s own" autocomplete="off" spellcheck="false"><div class="tp-hint">An id the agent\u2019s /model list offers. Empty: the model the agent starts with.</div></div>' +
-    '<div data-tp-need="host"><label class="tp-label" for="tp-host">Machine</label><select id="tp-host" class="skill-field"><option value="">The gateway\u2019s machine</option>';
+    '<div data-tp-need="model"><label class="tp-label" for="tp-model">' + text(tr('taskPage.model')) + '</label><input id="tp-model" class="skill-field" type="text" placeholder="' + text(tr('taskPage.modelPlaceholder')) + '" autocomplete="off" spellcheck="false"><div class="tp-hint">' + text(tr('taskPage.modelHint')) + '</div></div>' +
+    '<div data-tp-need="host"><label class="tp-label" for="tp-host">' + text(tr('taskPage.machine')) + '</label><select id="tp-host" class="skill-field"><option value="">' + text(tr('taskPage.gatewayMachineCap')) + '</option>';
   for (const host of d.hosts) h += '<option value="' + text(host) + '">' + text(host) + '</option>';
   h +=
     '</select></div>' +
-    '<div data-tp-need="cwd"><label class="tp-label" for="tp-cwd">Directory</label><input id="tp-cwd" class="skill-field tp-mono" type="text" placeholder="the default directory" autocomplete="off" spellcheck="false"><div class="tp-hint" id="tp-cwd-hint"></div></div>' +
-    '<div data-tp-need="timeout"><label class="tp-label" for="tp-timeout">Timeout</label><input id="tp-timeout" class="skill-field" type="text" placeholder="10m" autocomplete="off" spellcheck="false"><div class="tp-hint">How long a run may take: 90s, 10m, 1h \u2014 at most 6h.</div></div>';
+    '<div data-tp-need="cwd"><label class="tp-label" for="tp-cwd">' + text(tr('taskPage.directory')) + '</label><input id="tp-cwd" class="skill-field tp-mono" type="text" placeholder="' + text(tr('taskPage.dirPlaceholder')) + '" autocomplete="off" spellcheck="false"><div class="tp-hint" id="tp-cwd-hint"></div></div>' +
+    '<div data-tp-need="timeout"><label class="tp-label" for="tp-timeout">' + text(tr('taskPage.timeout')) + '</label><input id="tp-timeout" class="skill-field" type="text" placeholder="10m" autocomplete="off" spellcheck="false"><div class="tp-hint">' + text(tr('taskPage.timeoutHint')) + '</div></div>';
   h += taskFormScheduleHtml(state, d, deps);
   h +=
     '<div class="tp-acts editor"><button type="submit" class="primary" data-tp-act="save">' +
-    (isNew ? 'Add' : 'Save') +
-    '</button><button type="button" data-tp-act="cancel">Cancel</button></div></form>';
+    text(isNew ? tr('common.add') : tr('common.save')) +
+    '</button><button type="button" data-tp-act="cancel">' + text(tr('common.cancel')) + '</button></div></form>';
   return h;
 }
 
@@ -1289,7 +1300,7 @@ function diffWhen(
   if (isNew || tz !== f.tz) out.tz = tz;
   if (taskWhenMode(deps) === 'at') {
     const v = tpVal(deps, 'tp-at').replace('T', ' ');
-    if (!v) return 'Pick a date and time for the run.';
+    if (!v) return tr('taskPage.pickDateErr');
     if (isNew || f.at === undefined || v !== f.at || out.tz !== undefined) out.at = v;
   } else {
     const v = tpVal(deps, 'tp-cron').trim();
@@ -1318,7 +1329,7 @@ function diffTimeoutField(
   const raw = tpVal(deps, 'tp-timeout').trim();
   if (!raw) return null;
   const ms = taskDurParse(raw);
-  if (ms === null || ms <= 0) return 'The timeout is a length of time: 90s, 10m or 1h.';
+  if (ms === null || ms <= 0) return tr('taskPage.timeoutErr');
   if (isNew || turned || ms !== prevMs) out.timeoutMs = ms;
   return null;
 }
@@ -1378,7 +1389,7 @@ function diffTargetAndTags(
   out: TaskEditPayload
 ): string | null {
   const target = taskTargetValue(deps);
-  if (!target) return 'Say where it posts: pick a topic, or give an id fleetherd channels lists.';
+  if (!target) return tr('taskPage.targetErr');
   const own = d.task?.targetTopic && deps.topicById(d.task.targetTopic) ? d.task.targetTopic : '';
   const targetChanged = 'topic' in target ? target.topic !== own : target.channel !== d.fields.target;
   if (isNew || targetChanged) out.target = target;
@@ -1431,7 +1442,7 @@ function taskDirty(state: SchedulesState, deps: SchedulesPanelDeps): boolean {
 }
 
 function taskDiscardText(state: SchedulesState): string {
-  return state.tp.mode === 'new' ? 'Discard this new task?' : 'Discard your changes to this task?';
+  return state.tp.mode === 'new' ? tr('taskPage.discardNew') : tr('taskPage.discardEdit');
 }
 
 function taskFact(label: string, value: string, text: (s: unknown) => string, mono?: boolean): string {
@@ -1455,7 +1466,7 @@ function taskSessionRow(t: Topic, deps: SchedulesPanelDeps): string {
   const count = t.msgCount || 0;
   const dot =
     'topic-dot' + (asking ? ' asking' : running ? ' running' : t.stage === 'failed' ? ' failed' : t.stage === 'review' ? ' review' : '');
-  const stateLabel = asking ? 'awaiting you' : running ? 'running' : t.stage === 'failed' ? 'failed' : '';
+  const stateLabel = asking ? tr('topic.awaitingYou') : running ? tr('topic.running') : t.stage === 'failed' ? tr('topic.failed') : '';
   const when = t.lastAt
     ? '<span class="topic-age" data-age="' +
       deps.text(t.lastAt) +
@@ -1477,12 +1488,12 @@ function taskSessionRow(t: Topic, deps: SchedulesPanelDeps): string {
     dot +
     '"></span>' +
     '<span class="topic-main"><span class="topic-title">' +
-    deps.text(deps.splitTitle(t.title || 'Untitled').rest) +
+    deps.text(deps.splitTitle(t.title || tr('common.untitled')).rest) +
     '</span>' +
     '<span class="topic-sub"><span class="topic-dir">' +
     when +
-    (count ? ' \u00b7 ' + count + ' message' + (count === 1 ? '' : 's') : '') +
-    (stateLabel ? ' \u00b7 ' + stateLabel : '') +
+    (count ? ' \u00b7 ' + deps.text(tr(count === 1 ? 'sched.msgOne' : 'sched.msgMany', { count })) : '') +
+    (stateLabel ? ' \u00b7 ' + deps.text(stateLabel) : '') +
     '</span></span></span>' +
     (unread > 0 ? '<span class="topic-badge">' + (unread > 99 ? '99+' : unread) + '</span>' : '') +
     '</div>'
@@ -1491,13 +1502,11 @@ function taskSessionRow(t: Topic, deps: SchedulesPanelDeps): string {
 
 function taskSessionsHtml(d: SchedulePanelTaskDetail, deps: SchedulesPanelDeps): string {
   const list = taskSessions(d, deps);
-  let h = '<div class="tp-label">Sessions<span class="tp-n">' + list.length + '</span></div><div class="tp-list tp-topics">';
+  let h = '<div class="tp-label">' + deps.text(tr('sideTasks.tabSessions')) + '<span class="tp-n">' + list.length + '</span></div><div class="tp-list tp-topics">';
   if (!list.length) {
     h +=
       '<div class="tp-empty">' +
-      (d.task.kind === 'bash'
-        ? 'A bash task runs without a conversation; its output is posted where it posts.'
-        : 'None on this page yet. Each run that opens a topic lists it here.') +
+      deps.text(d.task.kind === 'bash' ? tr('taskPage.noSessionsBash') : tr('taskPage.noSessionsAgent')) +
       '</div>';
   }
   for (const t of list) h += taskSessionRow(t, deps);
@@ -1505,10 +1514,10 @@ function taskSessionsHtml(d: SchedulePanelTaskDetail, deps: SchedulesPanelDeps):
 }
 
 function taskRunRow(r: SchedulePanelRun, deps: SchedulesPanelDeps): string {
-  const word = RUN_STATUS_WORD[r.status] || r.status;
+  const word = runStatusWord(r.status);
   const bits = [deps.text(r.atText)];
   if (r.durationMs != null) bits.push(deps.text(schedDur(r.durationMs)));
-  if (r.exitCode != null) bits.push('exit ' + deps.text(r.exitCode));
+  if (r.exitCode != null) bits.push(deps.text(tr('taskPage.exitCode', { code: r.exitCode })));
   let where = '';
   if (r.topic) {
     const t = deps.topicById(r.topic);
@@ -1517,8 +1526,8 @@ function taskRunRow(r: SchedulePanelRun, deps: SchedulesPanelDeps): string {
         deps.text(r.topic) +
         '" title="' +
         deps.text(t.title || '') +
-        '">Open</button>'
-      : '<span class="tp-run-where" title="The topic this run used is no longer on this page">topic gone</span>';
+        '">' + deps.text(tr('common.open')) + '</button>'
+      : '<span class="tp-run-where" title="' + deps.text(tr('taskPage.topicGoneTitle')) + '">' + deps.text(tr('taskPage.topicGone')) + '</span>';
   } else if (r.where) {
     where = '<span class="tp-run-where" title="' + deps.text(r.where) + '">' + deps.text(r.where) + '</span>';
   }
@@ -1543,20 +1552,21 @@ function taskRunRow(r: SchedulePanelRun, deps: SchedulesPanelDeps): string {
 function taskActionButtonsHtml(d: SchedulePanelTaskDetail, ic: Record<string, string>): string {
   const t = d.task;
   const taskState = t.state || 'active';
-  const busyNote = ' disabled title="A run is in progress \u2014 wait for it to finish"';
+  const busyNote = ' disabled title="' + tr('sched.runNowBusyTitle') + '"';
   let h = '<div class="tp-acts">';
-  if (!d.locked) h += '<button type="button" data-tp-act="edit"' + (t.running ? busyNote : '') + '>' + (ic.pencil || '') + 'Edit</button>';
-  if (taskState === 'active') h += '<button type="button" data-tp-act="pause">' + (ic.pause || '') + 'Pause</button>';
-  if (taskState === 'paused') h += '<button type="button" data-tp-act="resume">' + (ic.play || '') + 'Resume</button>';
+  if (!d.locked) h += '<button type="button" data-tp-act="edit"' + (t.running ? busyNote : '') + '>' + (ic.pencil || '') + tr('common.edit') + '</button>';
+  if (taskState === 'active') h += '<button type="button" data-tp-act="pause">' + (ic.pause || '') + tr('sched.pause') + '</button>';
+  if (taskState === 'paused') h += '<button type="button" data-tp-act="resume">' + (ic.play || '') + tr('sched.resume') + '</button>';
   if (taskState === 'active' || taskState === 'paused') {
-    h += '<button type="button" data-tp-act="run"' + (t.running ? busyNote : '') + '>' + (ic.clock || '') + 'Run now</button>';
+    h += '<button type="button" data-tp-act="run"' + (t.running ? busyNote : '') + '>' + (ic.clock || '') + tr('sched.runNow') + '</button>';
   }
-  return h + '<button type="button" class="danger" data-tp-act="remove">' + (ic.trash || '') + 'Delete</button></div>';
+  return h + '<button type="button" class="danger" data-tp-act="remove">' + (ic.trash || '') + tr('common.delete') + '</button></div>';
 }
 
 function taskTagsHtml(t: SchedulePanelTask, ic: Record<string, string>, text: (s: unknown) => string): string {
-  let h = '<div class="tp-label">Tags</div><div class="sched-tag-edit">';
+  let h = '<div class="tp-label">' + text(tr('sched.tags')) + '</div><div class="sched-tag-edit">';
   for (const tag of schedTags(t)) {
+    const removeLabel = text(tr('taskPage.removeTag', { tag }));
     h +=
       '<span class="sched-tag">' +
       (ic.tag || '') +
@@ -1564,10 +1574,10 @@ function taskTagsHtml(t: SchedulePanelTask, ic: Record<string, string>, text: (s
       text(tag) +
       '</span><button type="button" class="sched-tag-x" data-tag-del="' +
       text(tag) +
-      '" title="Remove ' +
-      text(tag) +
-      '" aria-label="Remove ' +
-      text(tag) +
+      '" title="' +
+      removeLabel +
+      '" aria-label="' +
+      removeLabel +
       '">' +
       (ic.cross || '') +
       '</button></span>';
@@ -1576,7 +1586,11 @@ function taskTagsHtml(t: SchedulePanelTask, ic: Record<string, string>, text: (s
     h +
     '<span class="sched-tag-add">' +
     (ic.plus || '') +
-    '<input type="text" data-tag-input placeholder="tag" aria-label="Add a tag" autocomplete="off" spellcheck="false"></span></div>'
+    '<input type="text" data-tag-input placeholder="' +
+    text(tr('taskPage.tagPlaceholder')) +
+    '" aria-label="' +
+    text(tr('taskPage.addTagAria')) +
+    '" autocomplete="off" spellcheck="false"></span></div>'
   );
 }
 
@@ -1588,25 +1602,24 @@ function taskViewHtml(d: SchedulePanelTaskDetail, deps: SchedulesPanelDeps): str
   let h = taskActionButtonsHtml(d, ic);
   if (d.locked) h += '<div class="tp-locked">' + text(d.locked) + '</div>';
   h += '<div class="tp-grid">';
-  h += taskFact('Schedule', text(t.when) + (t.next ? ' \u00b7 next ' + text(t.next) : ''), text, true);
-  h += taskFact('Runs as', text(t.run), text);
-  if (f.cwd) h += taskFact('Directory', text(f.cwd), text, true);
-  h += taskFact('Posts to', text(schedTargetShort(t, deps)), text);
+  h += taskFact(tr('taskPage.schedule'), text(t.when) + (t.next ? ' \u00b7 ' + text(tr('sched.nextPrefix', { next: t.next })) : ''), text, true);
+  h += taskFact(tr('taskPage.runsAs'), text(t.run), text);
+  if (f.cwd) h += taskFact(tr('taskPage.directory'), text(f.cwd), text, true);
+  h += taskFact(tr('taskPage.postsTo'), text(schedTargetShort(t, deps)), text);
   h += '</div>';
-  h += '<div class="tp-label">' + (t.kind === 'bash' ? 'Command' : 'Prompt') + '</div><div class="tp-body">' + text(t.detail) + '</div>';
+  h += '<div class="tp-label">' + text(t.kind === 'bash' ? tr('taskPage.command') : tr('taskPage.prompt')) + '</div><div class="tp-body">' + text(t.detail) + '</div>';
   h += taskTagsHtml(t, ic, text);
   let meta =
     '#' +
     t.id +
     ' \u00b7 ' +
-    t.runs +
-    (t.runs === 1 ? ' run' : ' runs') +
-    (t.createdAt ? ' \u00b7 created ' + deps.ageClock(t.createdAt) : '');
-  if (t.expires) meta += ' \u00b7 until ' + t.expires;
+    tr(t.runs === 1 ? 'taskPage.runCountOne' : 'taskPage.runCountMany', { count: t.runs }) +
+    (t.createdAt ? ' \u00b7 ' + tr('taskPage.created', { when: deps.ageClock(t.createdAt) }) : '');
+  if (t.expires) meta += ' \u00b7 ' + tr('taskPage.until', { when: t.expires });
   h += '<div class="tp-meta">' + text(meta) + '</div>';
   h += '<div id="tp-sessions">' + taskSessionsHtml(d, deps) + '</div>';
-  h += '<div class="tp-label">Runs<span class="tp-n">' + d.runs.length + '</span></div><div class="tp-list">';
-  if (!d.runs.length) h += '<div class="tp-empty">No runs yet.</div>';
+  h += '<div class="tp-label">' + text(tr('taskPage.runs')) + '<span class="tp-n">' + d.runs.length + '</span></div><div class="tp-list">';
+  if (!d.runs.length) h += '<div class="tp-empty">' + text(tr('taskPage.noRuns')) + '</div>';
   for (const r of d.runs) h += taskRunRow(r, deps);
   return h + '</div>';
 }
@@ -1614,17 +1627,17 @@ function taskViewHtml(d: SchedulePanelTaskDetail, deps: SchedulesPanelDeps): str
 function paintTaskHead(state: SchedulesState, deps: SchedulesPanelDeps): void {
   const t = state.tp.detail?.task || schedTask(state, state.tp.id);
   if (state.tp.mode === 'new') {
-    deps.taskTitle.textContent = 'New task';
+    deps.taskTitle.textContent = tr('taskPage.newTitle');
     deps.taskSub.textContent = '';
     deps.taskSub.title = '';
     return;
   }
-  deps.taskTitle.textContent = t ? t.name : 'Task';
+  deps.taskTitle.textContent = t ? t.name : tr('taskPage.title');
   const bits: string[] = [];
   if (t) {
     const taskState = t.state || 'active';
-    if (t.running) bits.push('running now');
-    else if (taskState === 'active' && t.nextAt) bits.push('next ' + (t.next || '') + ' (' + schedIn(t.nextAt, deps.stLeft) + ')');
+    if (t.running) bits.push(tr('sched.runningNow'));
+    else if (taskState === 'active' && t.nextAt) bits.push(tr('sched.nextPrefix', { next: (t.next || '') + ' (' + schedIn(t.nextAt, deps.stLeft) + ')' }));
     else bits.push(taskState);
     const last = schedLast(t, deps.schedAgo);
     if (last) bits.push(last);
@@ -1637,7 +1650,7 @@ function paintTaskPage(state: SchedulesState, deps: SchedulesPanelDeps): void {
   paintTaskHead(state, deps);
   const d = state.tp.detail;
   if (!d) {
-    deps.taskView.innerHTML = '<div class="tp-empty">Loading\u2026</div>';
+    deps.taskView.innerHTML = '<div class="tp-empty">' + deps.text(tr('common.loading')) + '</div>';
     return;
   }
   if (state.tp.mode === 'new' || (state.tp.mode === 'edit' && !d.locked)) {
@@ -1680,13 +1693,13 @@ function loadTaskPage(state: SchedulesState, deps: SchedulesPanelDeps): void {
         if (form) paintTaskHead(state, deps);
         else paintTaskPage(state, deps);
       } else {
-        taskSay(deps, (d && d.error) || 'Could not load this task.', 'error');
+        taskSay(deps, (d && d.error) || tr('taskPage.loadErr'), 'error');
         if (!state.tp.detail) deps.taskView.innerHTML = '';
       }
     })
     .catch((e: unknown) => {
       if (seq !== state.tp.seq) return;
-      taskSay(deps, 'Could not reach the daemon: ' + errorMessage(e), 'error');
+      taskSay(deps, tr('common.reachDaemonWithErr', { err: errorMessage(e) }), 'error');
       if (!state.tp.detail) deps.taskView.innerHTML = '';
     });
 }
@@ -1754,17 +1767,17 @@ function saveTaskEdit(state: SchedulesState, deps: SchedulesPanelDeps): void {
   if (!isNew && !Object.keys(diff.edit).length) {
     state.tp.mode = 'view';
     paintTaskPage(state, deps);
-    taskSay(deps, 'Nothing was changed.');
+    taskSay(deps, tr('taskPage.nothingChanged'));
     return;
   }
   const id = state.tp.id;
   const seq = state.tp.seq;
   const btn = deps.taskView.querySelector<HTMLButtonElement>('[data-tp-act="save"]');
-  const label = isNew ? 'Add' : 'Save';
+  const label = isNew ? tr('common.add') : tr('common.save');
   state.tp.busy = true;
   if (btn) {
     btn.disabled = true;
-    btn.textContent = isNew ? 'Adding\u2026' : 'Saving\u2026';
+    btn.textContent = isNew ? tr('common.adding') : tr('common.saving');
   }
   taskSay(deps, null);
   fetch(isNew ? 'api/schedules/add' : 'api/schedules/edit', {
@@ -1784,19 +1797,17 @@ function saveTaskEdit(state: SchedulesState, deps: SchedulesPanelDeps): void {
         paintTaskPage(state, deps);
         taskSay(
           deps,
-          isNew
-            ? 'Added. The conversation it posts to was sent the task.'
-            : 'Saved. The conversation it posts to was sent the updated task.',
+          isNew ? tr('taskPage.addedNote') : tr('taskPage.savedNote'),
           'ok'
         );
         if (d.tasks) paintSchedulesList(state, deps, d.tasks);
       } else {
-        taskSay(deps, (d && d.error) || 'That did not work.', 'error');
+        taskSay(deps, (d && d.error) || tr('common.didNotWork'), 'error');
       }
     })
     .catch((e: unknown) => {
       if (isNew ? state.tp.mode === 'new' : state.tp.id === id) {
-        taskSay(deps, 'Could not reach the daemon: ' + errorMessage(e), 'error');
+        taskSay(deps, tr('common.reachDaemonWithErr', { err: errorMessage(e) }), 'error');
       }
     })
     .then(() => {
@@ -1835,13 +1846,13 @@ function openNewTask(state: SchedulesState, deps: SchedulesPanelDeps): void {
         state.tp.detail = newTaskDetail(d.form);
         paintTaskPage(state, deps);
       } else {
-        taskSay(deps, (d && d.error) || 'Could not open the form.', 'error');
+        taskSay(deps, (d && d.error) || tr('taskPage.formErr'), 'error');
         deps.taskView.innerHTML = '';
       }
     })
     .catch((e: unknown) => {
       if (seq !== state.tp.seq) return;
-      taskSay(deps, 'Could not reach the daemon: ' + errorMessage(e), 'error');
+      taskSay(deps, tr('common.reachDaemonWithErr', { err: errorMessage(e) }), 'error');
       deps.taskView.innerHTML = '';
     });
   deps.taskClose.focus();
@@ -1868,7 +1879,7 @@ function handleTaskAct(state: SchedulesState, deps: SchedulesPanelDeps, act: HTM
     return;
   }
   if (what === 'save' || !t) return;
-  if (what === 'remove' && !confirm('Delete task "' + (t.name || t.id) + '"?')) return;
+  if (what === 'remove' && !confirm(tr('sched.confirmDeleteTask', { name: t.name || t.id }))) return;
   if (what === 'pause' || what === 'resume' || what === 'run' || what === 'remove') {
     schedOp(state, deps, t.id, what, act);
   }
@@ -2063,14 +2074,14 @@ function readSavedSessGroups(): Record<string, boolean> {
 function initSchedulesPanel(state: SchedulesState, deps: SchedulesPanelDeps): void {
   state.filter = deps.makeFilterBar({
     key: 'aa_sched_filter',
-    placeholder: 'Search tasks',
+    placeholder: tr('sched.searchTasks'),
     groups: [],
     sort: {
       options: [
-        { value: 'status', label: 'Status' },
-        { value: 'next', label: 'Next run' },
-        { value: 'last', label: 'Last run' },
-        { value: 'created', label: 'Created' },
+        { value: 'status', label: tr('sched.sortStatus') },
+        { value: 'next', label: tr('sched.sortNext') },
+        { value: 'last', label: tr('sched.sortLast') },
+        { value: 'created', label: tr('sched.sortCreated') },
       ],
       value: 'status',
       dir: 'asc',
@@ -2129,7 +2140,7 @@ export function createSchedulesPanel(deps: SchedulesPanelDeps): SchedulesPanel {
     init: () => initSchedulesPanel(state, deps),
     setOpen: (open, transient) => setSchedules(deps, open, transient),
     onPanelOpen: () => {
-      if (state.tasks === null) deps.schedList.innerHTML = '<div class="sched-empty">Loading\u2026</div>';
+      if (state.tasks === null) deps.schedList.innerHTML = '<div class="sched-empty">' + deps.text(tr('common.loading')) + '</div>';
       loadSchedules(state, deps);
       if (state.tab === 'reviews') deps.loadReviews();
       armSched(state, deps);
@@ -2157,5 +2168,19 @@ export function createSchedulesPanel(deps: SchedulesPanelDeps): SchedulesPanel {
     op: (id, action, btn, tags, clearDraft) => schedOp(state, deps, id, action, btn, tags, clearDraft),
     openTaskPage: (id, edit) => openTaskPage(state, deps, id, edit),
     closeTaskPage: (force) => closeTaskPage(state, deps, force),
+    repaint: () => {
+      if (state.filter && state.filter.refreshI18n) {
+        state.filter.refreshI18n(tr('sched.searchTasks'), {
+          status: tr('sched.sortStatus'),
+          next: tr('sched.sortNext'),
+          last: tr('sched.sortLast'),
+          created: tr('sched.sortCreated'),
+        });
+      }
+      if (state.tasks !== null && state.filter) state.filter.setGroups(schedFilterGroups(state.tasks));
+      paintSchedTasks(state, deps);
+      paintSchedTab(state, deps);
+      if (!deps.taskPage.hidden && state.tp.mode === 'view') paintTaskPage(state, deps);
+    },
   };
 }

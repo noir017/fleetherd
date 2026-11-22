@@ -150,14 +150,14 @@ function bootConfig(config: Record<string, unknown>): string {
  * Reloading is what re-triggers the provider's sign-in, so that is the button.
  */
 const PASSWORD_GATE = `<form id="gate" autocomplete="off"><div id="login">
-<input id="secret" type="password" placeholder="Token" autocomplete="current-password" autofocus>
-<button type="submit">Enter</button>
+<input id="secret" type="password" placeholder="Token" data-i18n-placeholder="gate.tokenPlaceholder" autocomplete="current-password" autofocus>
+<button type="submit" data-i18n="gate.enter">Enter</button>
 <p id="err"></p>
 </div></form>`;
 
 const SSO_GATE = `<form id="gate" autocomplete="off"><div id="login">
-<p id="err">Not signed in. Your access session may have expired.</p>
-<button type="submit">Reload</button>
+<p id="err" data-i18n="gate.ssoExpired">Not signed in. Your access session may have expired.</p>
+<button type="submit" data-i18n="gate.reload">Reload</button>
 </div></form>`;
 
 /**

@@ -6,6 +6,7 @@ import type {
   SkillPanelSearch,
   SkillPanelSearches,
 } from '../../../adapter.js';
+import { t as tr, type MessageKey } from '../i18n/index.js';
 
 export interface SkillsPanelDeps {
   app: HTMLElement;
@@ -35,6 +36,7 @@ export interface SkillsPanel {
   close: () => void;
   beforeExternalWrite: () => void;
   afterExternalWrite: (refreshPending: boolean) => void;
+  repaint: () => void;
 }
 
 interface SkillQueueEntry {
@@ -82,19 +84,16 @@ interface SkillsState {
 
 const SKILLS_CACHE = 'aa_skills';
 const SKILLS_CACHE_V = 1;
-const SKILL_ON_TITLE = 'On: delivered to agents. Turn it off to archive it';
-const SKILL_OFF_TITLE = 'Off: archived. Turn it on to deliver it again';
-const SKILL_EXPIRED_TITLE = 'Unused for a while: it is turned off (archived) unless an agent uses it or you pin it';
-const SKILL_TABS: ReadonlyArray<{ key: 'library' | 'resident'; title: string; hint: string }> = [
-  { key: 'library', title: 'Library', hint: 'Delivered, but found only through a search.' },
-  { key: 'resident', title: 'Resident', hint: 'In every agent\u2019s skill list, on every request.' },
+const SKILL_TABS: ReadonlyArray<{ key: 'library' | 'resident'; titleKey: MessageKey; hintKey: MessageKey }> = [
+  { key: 'library', titleKey: 'skills.tabLibrary', hintKey: 'skills.tabLibraryHint' },
+  { key: 'resident', titleKey: 'skills.tabResident', hintKey: 'skills.tabResidentHint' },
 ];
 
 function errorMessage(err: unknown): string {
   if (err && typeof err === 'object' && 'message' in err && typeof err.message === 'string' && err.message) {
     return err.message;
   }
-  return 'network error';
+  return tr('common.networkError');
 }
 
 function getEl<T extends HTMLElement>(id: string): T | null {
@@ -115,7 +114,7 @@ function skillTabOf(s: SkillPanelEntry): 'library' | 'resident' {
 }
 
 function skillPlace(s: SkillPanelEntry): string {
-  return !skillOn(s) ? 'Off' : s.resident ? 'Resident' : 'Library';
+  return !skillOn(s) ? tr('common.offCap') : s.resident ? tr('skills.tabResident') : tr('skills.tabLibrary');
 }
 
 function skillSigOf(state: SkillsState): string {
@@ -197,32 +196,34 @@ function skillCopyName(state: SkillsState, deps: SkillsPanelDeps, name: string, 
   if (!name) return;
   deps.copyText(name, (ok) => {
     if (!ok) {
-      skillNote(deps, 'Could not copy the name \u2014 select it instead.');
+      skillNote(deps, tr('skills.copyFailed'));
       return;
     }
     const ic = deps.icons();
     btn.innerHTML = ic.check || '';
-    btn.title = 'Copied';
-    btn.setAttribute('aria-label', 'Copied');
+    const copied = tr('common.copied');
+    btn.title = copied;
+    btn.setAttribute('aria-label', copied);
     const prev = state.copyTimers.get(btn);
     if (prev !== undefined) clearTimeout(prev);
     state.copyTimers.set(
       btn,
       setTimeout(() => {
         btn.innerHTML = ic.copy || '';
-        btn.title = 'Copy name';
-        btn.setAttribute('aria-label', 'Copy name');
+        const copyLabel = tr('skills.copyName');
+        btn.title = copyLabel;
+        btn.setAttribute('aria-label', copyLabel);
       }, 1200)
     );
   });
 }
 
 function skillDetailMeta(s: SkillPanelEntry, schedAgo: (at: number) => string): string {
-  const parts = ['v' + s.version, 'created ' + skillAgo(s.createdAt, schedAgo)];
-  if (s.status === 'expired') parts.unshift('expired');
-  if (s.pinned) parts.push('pinned');
-  parts.push(s.lastUsedAt ? 'last used ' + skillAgo(s.lastUsedAt, schedAgo) : 'never used');
-  parts.push(s.uses + (s.uses === 1 ? ' use' : ' uses'));
+  const parts = ['v' + s.version, tr('skills.created', { ago: skillAgo(s.createdAt, schedAgo) })];
+  if (s.status === 'expired') parts.unshift(tr('skills.expired'));
+  if (s.pinned) parts.push(tr('skills.pinned'));
+  parts.push(s.lastUsedAt ? tr('skills.lastUsed', { ago: skillAgo(s.lastUsedAt, schedAgo) }) : tr('skills.neverUsed'));
+  parts.push(tr(s.uses === 1 ? 'skills.useOne' : 'skills.useMany', { count: s.uses }));
   return parts.join(' \u00b7 ');
 }
 
@@ -242,17 +243,19 @@ function skillControls(s: SkillPanelEntry): string {
     label +
     '</button>';
   return (
-    '<span class="skill-seg" role="group" aria-label="Tier">' +
-    tier(true, 'Resident', 'In every agent\u2019s skill list') +
-    tier(false, 'Library', 'Found through a search of the library') +
+    '<span class="skill-seg" role="group" aria-label="' +
+    tr('skills.tierAria') +
+    '">' +
+    tier(true, tr('skills.tabResident'), tr('skills.tierResidentTitle')) +
+    tier(false, tr('skills.tabLibrary'), tr('skills.tierLibraryTitle')) +
     '</span>' +
     '<button type="button" class="skill-switch" role="switch" data-sop="enabled" aria-checked="' +
     (on ? 'true' : 'false') +
     '" title="' +
-    (on ? SKILL_ON_TITLE : SKILL_OFF_TITLE) +
+    (on ? tr('skills.onTitle') : tr('skills.offTitle')) +
     '">' +
     '<span class="skill-knob"></span><span class="skill-switch-label">' +
-    (on ? 'On' : 'Off') +
+    (on ? tr('common.onCap') : tr('common.offCap')) +
     '</span></button>'
   );
 }
@@ -267,9 +270,9 @@ function skillPaintCtl(ctl: Element, s: SkillPanelEntry): void {
   const sw = ctl.querySelector<HTMLButtonElement>('[data-sop="enabled"]');
   if (!sw) return;
   sw.setAttribute('aria-checked', on ? 'true' : 'false');
-  sw.title = on ? SKILL_ON_TITLE : SKILL_OFF_TITLE;
+  sw.title = on ? tr('skills.onTitle') : tr('skills.offTitle');
   const label = sw.querySelector('.skill-switch-label');
-  if (label) label.textContent = on ? 'On' : 'Off';
+  if (label) label.textContent = on ? tr('common.onCap') : tr('common.offCap');
 }
 
 function skillFind(state: SkillsState, name: string | null): SkillPanelEntry | null {
@@ -310,32 +313,41 @@ function skillTake(state: SkillsState, name: string, entry: SkillPanelEntry | un
 function skillCard(s: SkillPanelEntry, deps: SkillsPanelDeps): string {
   const { text, schedAgo } = deps;
   const meta: string[] = [];
-  if (s.pinned) meta.push('pinned');
-  meta.push(s.lastUsedAt ? 'last used ' + skillAgo(s.lastUsedAt, schedAgo) : 'never used');
-  meta.push(s.uses + (s.uses === 1 ? ' use' : ' uses'));
+  if (s.pinned) meta.push(tr('skills.pinned'));
+  meta.push(s.lastUsedAt ? tr('skills.lastUsed', { ago: skillAgo(s.lastUsedAt, schedAgo) }) : tr('skills.neverUsed'));
+  meta.push(tr(s.uses === 1 ? 'skills.useOne' : 'skills.useMany', { count: s.uses }));
   // The name is the button, not the row, because nesting switches inside a button merges them for screen readers.
+  const copyLabel = text(tr('skills.copyName'));
   let h =
     '<div class="skill-item skill-card' +
     (skillOn(s) ? '' : ' skill-off') +
     '" data-skill="' +
     text(s.name) +
     '">' +
-    '<div class="skill-main"><div class="skill-row"><button type="button" class="skill-open" title="Open">' +
+    '<div class="skill-main"><div class="skill-row"><button type="button" class="skill-open" title="' +
+    text(tr('common.open')) +
+    '">' +
     text(s.name) +
     '</button>' +
     '<button type="button" class="skill-copy" data-copy-skill="' +
     text(s.name) +
-    '" title="Copy name" aria-label="Copy name">' +
+    '" title="' +
+    copyLabel +
+    '" aria-label="' +
+    copyLabel +
+    '">' +
     (deps.icons().copy || '') +
     '</button>';
-  if (s.status === 'expired') h += '<span class="skill-state expired" title="' + SKILL_EXPIRED_TITLE + '">Expired</span>';
-  if (s.pinned) h += '<span class="skill-pin">pinned</span>';
+  if (s.status === 'expired') {
+    h += '<span class="skill-state expired" title="' + text(tr('skills.expiredTitle')) + '">' + text(tr('skills.expiredCap')) + '</span>';
+  }
+  if (s.pinned) h += '<span class="skill-pin">' + text(tr('skills.pinned')) + '</span>';
   if (s.category) h += '<span class="skill-cat">' + text(s.category) + '</span>';
   h += '</div>';
-  h += '<div class="skill-desc">' + text(s.description || 'No description') + '</div>';
+  h += '<div class="skill-desc">' + text(s.description || tr('skills.noDesc')) + '</div>';
   h += '<div class="skill-meta">' + text(meta.join(' \u00b7 ') + ' \u00b7 v' + s.version) + '</div>';
   if (s.warning) h += '<div class="skill-warn">' + text(s.warning) + '</div>';
-  if (s.problem) h += '<div class="skill-problem">Not delivered: ' + text(s.problem) + '</div>';
+  if (s.problem) h += '<div class="skill-problem">' + text(tr('skills.notDelivered')) + text(s.problem) + '</div>';
   h += '</div><div class="skill-ctl">' + skillControls(s) + '</div></div>';
   return h;
 }
@@ -360,13 +372,13 @@ function renderSearchRows(
 function skillSearchesHtml(state: SkillsState, deps: SkillsPanelDeps): string {
   if (!state.searches) return '';
   const h =
-    renderSearchRows('Searches that found nothing', state.searches.misses, false, deps) +
-    renderSearchRows('Found, but not opened', state.searches.unread, true, deps);
+    renderSearchRows(tr('skills.searchesEmpty'), state.searches.misses, false, deps) +
+    renderSearchRows(tr('skills.searchesUnread'), state.searches.unread, true, deps);
   return h ? '<div class="skill-searches">' + h + '</div>' : '';
 }
 
 function renderTabPane(
-  pane: { key: 'library' | 'resident'; title: string; hint: string },
+  pane: { key: 'library' | 'resident'; titleKey: MessageKey; hintKey: MessageKey },
   state: SkillsState,
   deps: SkillsPanelDeps
 ): string {
@@ -388,17 +400,20 @@ function renderTabPane(
     (pane.key === state.tab ? '' : ' hidden') +
     '>' +
     '<div class="skill-group-hint">' +
-    deps.text(pane.hint) +
-    ' Agents pick up a change when they next start; a library search sees it at once.</div>';
+    deps.text(tr(pane.hintKey)) +
+    deps.text(tr('skills.pickupHint')) +
+    '</div>';
   if (!on && !off) {
-    h += '<div class="skills-empty">' + (pane.key === 'resident' ? 'No resident skills.' : 'Nothing in the library.') + '</div>';
+    h += '<div class="skills-empty">' + deps.text(pane.key === 'resident' ? tr('skills.noResident') : tr('skills.noLibrary')) + '</div>';
   }
   if (on) h += '<div class="skill-group" data-group="' + pane.key + '">' + on + '</div>';
   if (off) {
     h +=
-      '<div class="skill-group" data-group="off"><div class="skill-group-head"><span class="skill-section">Off \u00b7 ' +
-      offN +
-      '</span><span class="skill-group-hint">Archived: delivered to no agent, kept with its history</span></div>' +
+      '<div class="skill-group" data-group="off"><div class="skill-group-head"><span class="skill-section">' +
+      deps.text(tr('skills.offSection', { count: offN })) +
+      '</span><span class="skill-group-hint">' +
+      deps.text(tr('skills.offHint')) +
+      '</span></div>' +
       off +
       '</div>';
   }
@@ -420,7 +435,7 @@ function skillTabsHtml(state: SkillsState, deps: SkillsPanelDeps): string {
       '" data-stab="' +
       tab.key +
       '">' +
-      deps.text(tab.title) +
+      deps.text(tr(tab.titleKey)) +
       '<span class="skill-tab-n">' +
       counts[tab.key] +
       '</span></button>';
@@ -433,12 +448,23 @@ function skillTabsHtml(state: SkillsState, deps: SkillsPanelDeps): string {
 function skillNewForm(): string {
   return (
     '<div class="skill-item skill-new-form" data-newform="1">' +
-    '<div class="skill-row"><span class="skill-name">New skill</span></div>' +
-    '<input class="skill-field" id="skill-new-name" placeholder="name \u2014 lowercase-words-with-hyphens" autocomplete="off">' +
-    '<input class="skill-field" id="skill-new-desc" placeholder="When should an agent use it?" autocomplete="off">' +
-    '<textarea class="skill-text" id="skill-new-body" placeholder="Body (optional)"></textarea>' +
-    '<div class="skill-acts editor"><button type="button" data-sop="create">Create</button>' +
-    '<button type="button" class="danger" data-sop="cancel-new">Cancel</button></div></div>'
+    '<div class="skill-row"><span class="skill-name">' +
+    tr('skills.newSkill') +
+    '</span></div>' +
+    '<input class="skill-field" id="skill-new-name" placeholder="' +
+    tr('skills.newNamePlaceholder') +
+    '" autocomplete="off">' +
+    '<input class="skill-field" id="skill-new-desc" placeholder="' +
+    tr('skills.newDescPlaceholder') +
+    '" autocomplete="off">' +
+    '<textarea class="skill-text" id="skill-new-body" placeholder="' +
+    tr('skills.newBodyPlaceholder') +
+    '"></textarea>' +
+    '<div class="skill-acts editor"><button type="button" data-sop="create">' +
+    tr('common.create') +
+    '</button><button type="button" class="danger" data-sop="cancel-new">' +
+    tr('common.cancel') +
+    '</button></div></div>'
   );
 }
 
@@ -448,16 +474,15 @@ function renderSkillsList(state: SkillsState, deps: SkillsPanelDeps): void {
   deps.skillsBack.hidden = true;
   deps.skillsDetailEl.hidden = true;
   deps.skillsListEl.hidden = false;
-  deps.skillsTitle.textContent = 'Skills';
+  deps.skillsTitle.textContent = tr('skills.title');
   deps.skillsCount.textContent = state.list.length
-    ? state.list.length + (state.list.length === 1 ? ' skill' : ' skills')
+    ? tr(state.list.length === 1 ? 'skills.countOne' : 'skills.countMany', { count: state.list.length })
     : '';
   deps.skillsNewBtn.hidden = state.newMode;
   let h = '';
-  if (!state.enabled) h = '<div class="skills-empty">Skills are not enabled in this daemon.</div>';
+  if (!state.enabled) h = '<div class="skills-empty">' + deps.text(tr('skills.disabled')) + '</div>';
   else if (!state.list.length) {
-    h =
-      '<div class="skills-empty">No managed skills yet. An agent can create one when you ask it to remember a procedure, or press New.</div>';
+    h = '<div class="skills-empty">' + deps.text(tr('skills.empty')) + '</div>';
   } else h = skillTabsHtml(state, deps);
   if (state.newMode) h = skillNewForm() + h;
   deps.skillsListEl.innerHTML = h;
@@ -469,7 +494,7 @@ function skillHistRow(e: SkillPanelHistoryEntry, deps: SkillsPanelDeps): string 
   // Keep talkcode* compatibility alongside fleetherd* until legacy-name.ts is removed.
   if (e.author && !/^(fleetherd|talkcode)(-|$)/.test(e.author)) meta += ' \u00b7 ' + e.author;
   if (e.note) meta += ' \u00b7 ' + e.note;
-  if (e.beforeVersion) meta += ' \u00b7 ' + e.beforeVersion + ' \u2192 ' + (e.afterVersion || '(no version)');
+  if (e.beforeVersion) meta += ' \u00b7 ' + e.beforeVersion + ' \u2192 ' + (e.afterVersion || tr('skills.noVersion'));
   let h =
     '<div class="skill-hist"><div class="skill-hist-main">' +
     '<div class="skill-hist-action">' +
@@ -479,7 +504,7 @@ function skillHistRow(e: SkillPanelHistoryEntry, deps: SkillsPanelDeps): string 
     deps.text(meta) +
     '</div></div>';
   if (e.beforeVersion || e.action === 'commit') {
-    h += '<button type="button" class="skill-file" data-revert="' + deps.text(e.id) + '">Restore this version</button>';
+    h += '<button type="button" class="skill-file" data-revert="' + deps.text(e.id) + '">' + deps.text(tr('skills.restoreVersion')) + '</button>';
   }
   return h + '</div>';
 }
@@ -498,27 +523,34 @@ function renderSkillDetail(state: SkillsState, deps: SkillsPanelDeps): void {
   deps.skillsNewBtn.hidden = true;
   deps.skillsTitle.textContent = s.name;
   deps.skillsCount.textContent = skillPlace(s);
+  const copyLabel = text(tr('skills.copyName'));
   let h =
     '<div class="skill-head"><span class="skill-name">' +
     text(s.name) +
     '</span>' +
     '<button type="button" class="skill-copy" data-copy-skill="' +
     text(s.name) +
-    '" title="Copy name" aria-label="Copy name">' +
+    '" title="' +
+    copyLabel +
+    '" aria-label="' +
+    copyLabel +
+    '">' +
     (deps.icons().copy || '') +
     '</button>' +
     '<div class="skill-acts"><button type="button" data-sop="pin">' +
-    (s.pinned ? 'Unpin' : 'Pin') +
+    text(s.pinned ? tr('skills.unpin') : tr('skills.pin')) +
     '</button></div><div class="skill-ctl">' +
     skillControls(s) +
     '</div></div>' +
     '<div class="skill-desc">' +
-    text(s.description || 'No description') +
+    text(s.description || tr('skills.noDesc')) +
     '</div>' +
     '<div class="skill-meta">' +
     text(skillDetailMeta(s, schedAgo)) +
     '</div>' +
-    '<div class="skill-section">Files</div><div class="skill-files">';
+    '<div class="skill-section">' +
+    text(tr('skills.files')) +
+    '</div><div class="skill-files">';
   for (const f of state.sel.files) {
     h +=
       '<button type="button" class="skill-file' +
@@ -542,11 +574,16 @@ function renderSkillDetail(state: SkillsState, deps: SkillsPanelDeps): void {
     (cur.path === 'SKILL.md' ? ' readonly' : '') +
     '>' +
     '<textarea class="skill-text" id="skill-text" spellcheck="false"></textarea>' +
-    '<div class="skill-acts editor"><button type="button" data-sop="save">Save</button>' +
-    '<button type="button" data-sop="new-file">New file</button>';
-  if (cur.path !== 'SKILL.md') h += '<button type="button" class="danger" data-sop="remove-file">Remove file</button>';
-  h += '</div><div class="skill-section">History</div><div class="skill-history">';
-  if (!state.sel.history.length) h += '<div class="skills-empty">No recorded changes yet.</div>';
+    '<div class="skill-acts editor"><button type="button" data-sop="save">' +
+    text(tr('common.save')) +
+    '</button><button type="button" data-sop="new-file">' +
+    text(tr('skills.newFile')) +
+    '</button>';
+  if (cur.path !== 'SKILL.md') {
+    h += '<button type="button" class="danger" data-sop="remove-file">' + text(tr('skills.removeFile')) + '</button>';
+  }
+  h += '</div><div class="skill-section">' + text(tr('skills.history')) + '</div><div class="skill-history">';
+  if (!state.sel.history.length) h += '<div class="skills-empty">' + text(tr('skills.noHistory')) + '</div>';
   else for (const entry of state.sel.history) h += skillHistRow(entry, deps);
   h += '</div>';
   deps.skillsDetailEl.innerHTML = h;
@@ -684,7 +721,7 @@ function loadSkills(state: SkillsState, deps: SkillsPanelDeps, manual: boolean):
       if (manualNow) {
         skillNote(
           deps,
-          (state.fetchedAt ? 'Could not refresh skills: ' : 'Could not load skills: ') + errorMessage(e)
+          tr(state.fetchedAt ? 'skills.refreshFailed' : 'skills.loadFailed', { err: errorMessage(e) })
         );
       }
     });
@@ -711,7 +748,7 @@ function openSkill(state: SkillsState, deps: SkillsPanelDeps, name: string, file
       }
       if (!d || !d.ok) {
         state.busy = false;
-        skillNote(deps, (d && d.error) || 'Could not open that skill.');
+        skillNote(deps, (d && d.error) || tr('skills.openFailed'));
         skillAfterWrite(state, deps);
         return;
       }
@@ -733,7 +770,7 @@ function openSkill(state: SkillsState, deps: SkillsPanelDeps, name: string, file
         skillAfterWrite(state, deps);
         return;
       }
-      skillNote(deps, 'Could not reach the daemon: ' + errorMessage(e));
+      skillNote(deps, tr('common.reachDaemonWithErr', { err: errorMessage(e) }));
       skillAfterWrite(state, deps);
     });
 }
@@ -754,7 +791,7 @@ function skillOp(
     .then((d) => {
       if (!d || !d.ok) {
         state.busy = false;
-        skillNote(deps, (d && d.error) || 'That did not work.');
+        skillNote(deps, (d && d.error) || tr('common.didNotWork'));
         skillAfterWrite(state, deps);
         return;
       }
@@ -770,7 +807,7 @@ function skillOp(
     })
     .catch((e: unknown) => {
       state.busy = false;
-      skillNote(deps, 'Could not reach the daemon: ' + errorMessage(e));
+      skillNote(deps, tr('common.reachDaemonWithErr', { err: errorMessage(e) }));
       skillAfterWrite(state, deps);
     });
 }
@@ -784,12 +821,12 @@ function saveSkillFile(state: SkillsState, deps: SkillsPanelDeps): void {
   const content = textEl.value;
   const s = state.sel.skill;
   if (!path) {
-    skillNote(deps, 'A file path is required.');
+    skillNote(deps, tr('skills.filePathRequired'));
     return;
   }
   if (path === 'SKILL.md') {
     if (!state.sel.file || state.sel.file.path !== 'SKILL.md') {
-      skillNote(deps, 'Open SKILL.md to edit it.');
+      skillNote(deps, tr('skills.openSkillMd'));
       return;
     }
     skillOp(state, deps, { action: 'patch', name: s.name, version: state.sel.file.version, content }, () => {
@@ -808,7 +845,7 @@ function removeFileUi(state: SkillsState, deps: SkillsPanelDeps): void {
   const path = pathEl ? (pathEl.value || '').trim() : '';
   if (!path || path === 'SKILL.md') return;
   const name = state.sel.skill.name;
-  if (!confirm('Remove ' + path + ' from "' + name + '"? The previous version stays in its history.')) return;
+  if (!confirm(tr('skills.confirmRemoveFile', { path, name }))) return;
   skillOp(state, deps, { action: 'remove-file', name, file: path }, () => openSkill(state, deps, name, 'SKILL.md'));
 }
 
@@ -843,7 +880,7 @@ function skillSend(state: SkillsState, deps: SkillsPanelDeps, name: string, body
       return deps
         .post('api/skills/op', body, 1)
         .then((r) => r.json().catch(() => ({ ok: false, error: 'HTTP ' + r.status })) as Promise<SkillOpResponse>)
-        .catch((e: unknown) => ({ ok: false, error: 'Could not reach the daemon: ' + errorMessage(e) }));
+        .catch((e: unknown) => ({ ok: false, error: tr('common.reachDaemonWithErr', { err: errorMessage(e) }) }));
     })
     .then((d) => {
       q.pending--;
@@ -853,7 +890,7 @@ function skillSend(state: SkillsState, deps: SkillsPanelDeps, name: string, body
       }
       if (!d || !d.ok) {
         q.gen++;
-        skillNote(deps, (d && d.error) || 'That did not work.');
+        skillNote(deps, (d && d.error) || tr('common.didNotWork'));
         return skillResync(state, deps, name);
       }
       if (q.pending) return;
@@ -905,11 +942,11 @@ function openSkills(state: SkillsState, deps: SkillsPanelDeps): void {
   if (state.fetchedAt) {
     renderSkillsList(state, deps);
   } else {
-    deps.skillsListEl.innerHTML = '<div class="skills-empty">Loading\u2026</div>';
+    deps.skillsListEl.innerHTML = '<div class="skills-empty">' + deps.text(tr('common.loading')) + '</div>';
     deps.skillsDetailEl.hidden = true;
     deps.skillsListEl.hidden = false;
     deps.skillsBack.hidden = true;
-    deps.skillsTitle.textContent = 'Skills';
+    deps.skillsTitle.textContent = tr('skills.title');
     deps.skillsCount.textContent = '';
   }
   loadSkills(state, deps, !state.fetchedAt);
@@ -929,11 +966,11 @@ function handleCreateSkill(state: SkillsState, deps: SkillsPanelDeps): void {
   const newName = nameEl ? nameEl.value.trim() : '';
   const newDesc = descEl ? descEl.value.trim() : '';
   if (!newName) {
-    skillNote(deps, 'A skill needs a name.');
+    skillNote(deps, tr('skills.nameRequired'));
     return;
   }
   if (!newDesc) {
-    skillNote(deps, 'A skill needs a one-line description of when to use it.');
+    skillNote(deps, tr('skills.descRequired'));
     return;
   }
   const body: SkillPanelOp =
@@ -971,7 +1008,7 @@ function handleSkillOpClick(state: SkillsState, deps: SkillsPanelDeps, opBtn: El
     p.value = '';
     p.removeAttribute('readonly');
     t.value = '';
-    if (label) label.textContent = 'New file';
+    if (label) label.textContent = tr('skills.newFile');
     p.focus();
     return;
   }
@@ -1043,7 +1080,7 @@ function bindSkillEvents(state: SkillsState, deps: SkillsPanelDeps): void {
       const id = rev.getAttribute('data-revert');
       const name = state.sel.skill.name;
       if (!id) return;
-      if (!confirm('Restore the files from before this change? It is recorded as a new change, and can itself be reverted.')) {
+      if (!confirm(tr('skills.confirmRevert'))) {
         return;
       }
       skillOp(state, deps, { action: 'revert', name, id }, () => openSkill(state, deps, name));
@@ -1103,6 +1140,11 @@ export function createSkillsPanel(deps: SkillsPanelDeps): SkillsPanel {
     afterExternalWrite: (refreshPending) => {
       if (refreshPending) state.refreshPending = true;
       skillAfterWrite(state, deps);
+    },
+    repaint: () => {
+      if (deps.skillsWin.hidden) return;
+      if (state.sel) renderSkillDetail(state, deps);
+      else if (state.fetchedAt) renderSkillsList(state, deps);
     },
   };
 }

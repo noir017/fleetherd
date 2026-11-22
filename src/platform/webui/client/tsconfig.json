@@ -4,6 +4,6 @@
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "noEmit": true
   },
-  "include": ["./panels/**/*.ts"],
+  "include": ["./i18n/**/*.ts", "./panels/**/*.ts"],
   "exclude": ["./legacy-app.ts"]
 }

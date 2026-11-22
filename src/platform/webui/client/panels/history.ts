@@ -5,6 +5,7 @@ import type {
 } from '../../../adapter.js';
 import type { WebMessage } from '../../protocol.js';
 import type { WebHistoryRead } from '../../room.js';
+import { t } from '../i18n/index.js';
 
 export interface HistoryPanelDeps {
   sidebar: HTMLElement;
@@ -61,6 +62,7 @@ export interface HistoryPanel {
   getMessage: (key: string) => WebMessage | undefined;
   repaintMessage: (key: string) => void;
   refreshReadOnly: () => void;
+  repaint: () => void;
 }
 
 interface HistorySearchResponse {
@@ -76,7 +78,7 @@ function errorMessage(err: unknown): string {
   if (err && typeof err === 'object' && 'message' in err && typeof err.message === 'string' && err.message) {
     return err.message;
   }
-  return 'network error';
+  return t('common.networkError');
 }
 
 function histWhen(at: number): string {
@@ -91,7 +93,7 @@ function histWhen(at: number): string {
 }
 
 function historyRef(title: string | undefined, id: string | number): string {
-  return (title || '(untitled conversation)') + ' (#' + id + ')';
+  return (title || t('history.untitled')) + ' (#' + id + ')';
 }
 
 function histCopyBtn(title: string | undefined, id: string | number, deps: HistoryPanelDeps): string {
@@ -102,19 +104,22 @@ function histCopyBtn(title: string | undefined, id: string | number, deps: Histo
     '" data-hist-title="' +
     deps.text(title || '') +
     '" title="' +
-    deps.text('Copy reference: ' + ref) +
-    '" aria-label="Copy conversation reference">' +
+    deps.text(t('topic.copyRefWith', { ref })) +
+    '" aria-label="' +
+    deps.text(t('topic.copyRefBtn')) +
+    '">' +
     (deps.icons().copy || '') +
     '</button>'
   );
 }
 
 function renderHistoryRow(s: HistoryPanelSession, activeId: string | null, deps: HistoryPanelDeps): string {
+  const count = s.messages || 0;
   const meta = [
-    s.agent || 'no agent',
-    s.platform || 'unknown',
+    s.agent || t('history.noAgent'),
+    s.platform || t('history.unknown'),
     histWhen(s.lastAt),
-    (s.messages || 0) + (s.messages === 1 ? ' message' : ' messages'),
+    t(count === 1 ? 'sched.msgOne' : 'sched.msgMany', { count }),
   ];
   return (
     '<div class="hist-item' +
@@ -124,7 +129,7 @@ function renderHistoryRow(s: HistoryPanelSession, activeId: string | null, deps:
     '" role="button" tabindex="0">' +
     '<div class="hist-top">' +
     '<div class="hist-title">' +
-    deps.text(s.title || '(untitled conversation)') +
+    deps.text(s.title || t('history.untitled')) +
     '</div>' +
     histCopyBtn(s.title, s.id, deps) +
     '</div>' +
@@ -135,7 +140,7 @@ function renderHistoryRow(s: HistoryPanelSession, activeId: string | null, deps:
 }
 
 function renderHistoryHit(h: HistoryPanelHit, activeId: string | null, deps: HistoryPanelDeps): string {
-  const meta = [h.agent || 'no agent', h.platform || 'unknown', histWhen(h.at)];
+  const meta = [h.agent || t('history.noAgent'), h.platform || t('history.unknown'), histWhen(h.at)];
   return (
     '<div class="hist-item' +
     (activeId !== null && String(h.session) === activeId ? ' on' : '') +
@@ -144,7 +149,7 @@ function renderHistoryHit(h: HistoryPanelHit, activeId: string | null, deps: His
     '" role="button" tabindex="0">' +
     '<div class="hist-top">' +
     '<div class="hist-title">' +
-    deps.text(h.title || '(untitled conversation)') +
+    deps.text(h.title || t('history.untitled')) +
     '</div>' +
     histCopyBtn(h.title, h.session, deps) +
     '</div>' +
@@ -158,17 +163,9 @@ function renderHistoryHit(h: HistoryPanelHit, activeId: string | null, deps: His
 }
 
 function readOnlySentence(s: HistoryPanelSession, here: boolean): string {
-  if (here) {
-    return 'Read-only: this is the recorded copy. The conversation is still a topic on this page; open it to carry on.';
-  }
-  if (s.topic) {
-    return 'Read-only: its topic has been cleared from this page, so there is nowhere here to send a message.';
-  }
-  return (
-    'Read-only: this conversation ran on ' +
-    (s.platform || 'another platform') +
-    ', not in a topic on this page, so nothing can be sent to it from here.'
-  );
+  if (here) return t('history.roHere');
+  if (s.topic) return t('history.roCleared');
+  return t('history.roOther', { platform: s.platform || t('history.anotherPlatform') });
 }
 
 interface HistoryState {
@@ -219,14 +216,14 @@ function renderHistory(state: HistoryState, deps: HistoryPanelDeps): void {
   deps.historyErr.textContent = '';
   let h = '';
   if (!state.sessions.length) {
-    h =
-      '<div class="skills-empty">No conversations yet. Every conversation this gateway records appears here, whichever agent or platform it ran on.</div>';
+    h = '<div class="skills-empty">' + deps.text(t('history.empty')) + '</div>';
   }
   for (const s of state.sessions) h += renderHistoryRow(s, state.libId, deps);
   deps.historyListEl.innerHTML = h;
   const n = state.sessions.length;
+  const countStr = n + (state.next ? '+' : '');
   deps.historyCountEl.textContent = n
-    ? n + (state.next ? '+' : '') + (n === 1 && !state.next ? ' conversation' : ' conversations')
+    ? t(n === 1 && !state.next ? 'history.convOne' : 'history.convMany', { count: countStr })
     : '';
   deps.historyMore.hidden = !state.next;
   deps.historyMore.disabled = false;
@@ -238,7 +235,7 @@ function loadHistory(state: HistoryState, deps: HistoryPanelDeps, before?: strin
   deps.historyErr.hidden = true;
   deps.historyErr.textContent = '';
   if (!before && (!state.sessions.length || state.query)) {
-    deps.historyListEl.innerHTML = '<div class="skills-empty">Loading\u2026</div>';
+    deps.historyListEl.innerHTML = '<div class="skills-empty">' + deps.text(t('common.loading')) + '</div>';
     deps.historyCountEl.textContent = '';
   }
   fetch('api/history' + (before ? '?before=' + encodeURIComponent(before) : ''), { credentials: 'same-origin' })
@@ -250,7 +247,7 @@ function loadHistory(state: HistoryState, deps: HistoryPanelDeps, before?: strin
       if (seq !== state.seq) return;
       const page = d || {};
       if (page.enabled === false) {
-        deps.historyListEl.innerHTML = '<div class="skills-empty">This daemon has no conversation library.</div>';
+        deps.historyListEl.innerHTML = '<div class="skills-empty">' + deps.text(t('history.noLibrary')) + '</div>';
         deps.historyMore.hidden = true;
         return;
       }
@@ -261,7 +258,7 @@ function loadHistory(state: HistoryState, deps: HistoryPanelDeps, before?: strin
     })
     .catch((e: unknown) => {
       if (seq !== state.seq) return;
-      deps.historyErr.textContent = 'Could not read the conversation library: ' + errorMessage(e);
+      deps.historyErr.textContent = t('history.readLibraryFailed', { err: errorMessage(e) });
       deps.historyErr.hidden = false;
       if (!state.sessions.length || state.query) deps.historyListEl.innerHTML = '';
       deps.historyMore.hidden = !state.next;
@@ -287,57 +284,59 @@ function runHistorySearch(state: HistoryState, deps: HistoryPanelDeps): void {
   deps.historyErr.hidden = true;
   deps.historyErr.textContent = '';
   deps.historyCountEl.textContent = '';
-  deps.historyListEl.innerHTML = '<div class="skills-empty">Searching\u2026</div>';
+  deps.historyListEl.innerHTML = '<div class="skills-empty">' + deps.text(t('common.searching')) + '</div>';
   fetch('api/history/search?q=' + encodeURIComponent(q), { credentials: 'same-origin' })
     .then((r) => r.json().then((d: HistorySearchResponse) => ({ ok: r.ok, d })))
     .then((a) => {
       if (seq !== state.seq) return;
       if (!a.ok || !a.d || a.d.error) {
         deps.historyListEl.innerHTML =
-          '<div class="skills-empty">' + deps.text((a.d && a.d.error) || 'could not search the library') + '</div>';
+          '<div class="skills-empty">' + deps.text((a.d && a.d.error) || t('history.searchFailedDefault')) + '</div>';
         return;
       }
       if (a.d.enabled === false) {
-        deps.historyListEl.innerHTML = '<div class="skills-empty">This daemon has no conversation library.</div>';
+        deps.historyListEl.innerHTML = '<div class="skills-empty">' + deps.text(t('history.noLibrary')) + '</div>';
         return;
       }
       state.query = q;
       const hits = a.d.hits || [];
       if (!hits.length) {
-        deps.historyListEl.innerHTML = '<div class="skills-empty">Nothing matches “' + deps.text(q) + '”.</div>';
+        deps.historyListEl.innerHTML = '<div class="skills-empty">' + deps.text(t('history.noMatches', { query: q })) + '</div>';
         return;
       }
       let h = '';
       for (const hit of hits) h += renderHistoryHit(hit, state.libId, deps);
       deps.historyListEl.innerHTML = h;
+      const countStr = hits.length + (a.d.more ? '+' : '');
       deps.historyCountEl.textContent =
-        hits.length + (a.d.more ? '+' : '') + (hits.length === 1 && !a.d.more ? ' match' : ' matches');
+        t(hits.length === 1 && !a.d.more ? 'history.matchOne' : 'history.matchMany', { count: countStr });
     })
     .catch((e: unknown) => {
       if (seq !== state.seq) return;
       deps.historyListEl.innerHTML =
-        '<div class="skills-empty">Could not search the library: ' + deps.text(errorMessage(e)) + '</div>';
+        '<div class="skills-empty">' + deps.text(t('history.searchFailed', { err: errorMessage(e) })) + '</div>';
     });
 }
 
 function libFailed(deps: HistoryPanelDeps, msg: string): void {
-  deps.libTitle.textContent = 'History';
+  deps.libTitle.textContent = t('sidebar.history');
   deps.libLog.innerHTML = '<div class="hist-note bad">' + deps.text(msg) + '</div>';
-  deps.libWhy.textContent = 'Nothing could be read, so nothing is shown.';
+  deps.libWhy.textContent = t('history.roFailed');
   deps.onLibStateChange();
 }
 
 function paintLibRead(state: HistoryState, deps: HistoryPanelDeps, d: HistoryReadResponse): void {
   const s = (d.session || {}) as HistoryPanelSession;
-  const title = s.title || '(untitled conversation)';
+  const title = s.title || t('history.untitled');
   state.libSession = s;
   deps.libTitle.textContent = title;
   deps.libTitle.title = title;
+  const count = s.messages || 0;
   const meta = [
-    s.agent || 'no agent',
-    s.platform || 'unknown',
-    'last active ' + histWhen(s.lastAt),
-    (s.messages || 0) + (s.messages === 1 ? ' message' : ' messages'),
+    s.agent || t('history.noAgent'),
+    s.platform || t('history.unknown'),
+    t('history.lastActive', { when: histWhen(s.lastAt) }),
+    t(count === 1 ? 'sched.msgOne' : 'sched.msgMany', { count }),
   ];
   let h =
     '<div class="lib-head"><div class="hist-meta">' +
@@ -352,7 +351,7 @@ function paintLibRead(state: HistoryState, deps: HistoryPanelDeps, d: HistoryRea
     const out = deps.msgMarkup(key, msg, false);
     h += '<div class="' + out.cls + '" data-k="' + deps.text(key) + '">' + out.h + '</div>';
   }
-  if (!list.length) h += '<div class="empty">This conversation has no recorded messages.</div>';
+  if (!list.length) h += '<div class="empty">' + deps.text(t('history.noMessages')) + '</div>';
   deps.libLog.innerHTML = h;
   deps.codeBlocks(deps.libLog);
   const nodes = deps.libLog.querySelectorAll('[data-k]');
@@ -385,13 +384,13 @@ function openLib(state: HistoryState, deps: HistoryPanelDeps, rawId: string): vo
   state.libData = {};
   state.libEls = {};
   deps.forgetOpenedPrefix('h:');
-  deps.libTitle.textContent = 'Loading\u2026';
+  deps.libTitle.textContent = t('common.loading');
   deps.libTitle.title = '';
   deps.libNote.hidden = true;
   deps.libNote.textContent = '';
-  deps.libWhy.textContent = 'Read-only: a conversation from the library.';
+  deps.libWhy.textContent = t('history.roLibrary');
   deps.libTopicBtn.hidden = true;
-  deps.libLog.innerHTML = '<div class="empty">Loading\u2026</div>';
+  deps.libLog.innerHTML = '<div class="empty">' + deps.text(t('common.loading')) + '</div>';
   markLibRow(state, deps);
   deps.onLibStateChange();
   fetch('api/history/read?id=' + encodeURIComponent(id), { credentials: 'same-origin' })
@@ -399,14 +398,14 @@ function openLib(state: HistoryState, deps: HistoryPanelDeps, rawId: string): vo
     .then((a) => {
       if (seq !== state.libSeq || !isLibOpen(deps)) return;
       if (!a.ok || !a.d || a.d.error) {
-        libFailed(deps, (a.d && a.d.error) || 'could not read that conversation');
+        libFailed(deps, (a.d && a.d.error) || t('history.readConvDefault'));
         return;
       }
       paintLibRead(state, deps, a.d);
     })
     .catch((e: unknown) => {
       if (seq !== state.libSeq || !isLibOpen(deps)) return;
-      libFailed(deps, 'Could not read that conversation: ' + errorMessage(e));
+      libFailed(deps, t('history.readConvFailed', { err: errorMessage(e) }));
     });
 }
 
@@ -469,7 +468,7 @@ function bindHistoryEvents(state: HistoryState, deps: HistoryPanelDeps): void {
       const ic = deps.icons();
       btn.innerHTML = ok ? ic.check || '' : ic.cross || '';
       btn.classList.toggle('copied', ok);
-      const say = ok ? 'Copied' : 'Could not copy';
+      const say = ok ? t('common.copied') : t('common.copyFailed');
       btn.title = say;
       btn.setAttribute('aria-label', say);
       const prev = state.copyTimers.get(btn);
@@ -479,8 +478,8 @@ function bindHistoryEvents(state: HistoryState, deps: HistoryPanelDeps): void {
         setTimeout(() => {
           btn.innerHTML = ic.copy || '';
           btn.classList.remove('copied');
-          btn.title = 'Copy reference: ' + ref;
-          btn.setAttribute('aria-label', 'Copy conversation reference');
+          btn.title = t('topic.copyRefWith', { ref });
+          btn.setAttribute('aria-label', t('topic.copyRefBtn'));
         }, 1500)
       );
     });
@@ -594,5 +593,9 @@ export function createHistoryPanel(deps: HistoryPanelDeps): HistoryPanel {
       deps.codeBlocks(el);
     },
     refreshReadOnly: () => refreshReadOnly(state, deps),
+    repaint: () => {
+      if (state.tab === 'history' && !state.query && state.sessions.length) renderHistory(state, deps);
+      refreshReadOnly(state, deps);
+    },
   };
 }
