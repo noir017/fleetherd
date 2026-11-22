@@ -166,7 +166,8 @@ export const en = {
     '_This question takes more than one answer, which this platform cannot offer as buttons — tap the most important one, or type them all as a reply._',
   elicit_done_btn: '✅ Done',
   elicit_done_count_btn: '✅ Done ({count})',
-  elicit_reminder_text: '⏱ Reminder: an unanswered question is still waiting above.',
+  elicit_reminder_text:
+    '⏳ Still waiting for a response to the question above (30 minutes elapsed). Click an option or type a reply; the question will automatically close after 1 hour.',
   ask_outcome_timeout: '(timed out)',
   ask_outcome_replaced: '(replaced)',
   ask_outcome_answered: '→ Answered: {echo}',
@@ -402,7 +403,7 @@ export const zhCN: DictOf<typeof en> = {
     '_此问题支持多选，但当前平台无法以按钮形式提供多选 — 请点击最重要的一项，或以回复形式发送全部答案。_',
   elicit_done_btn: '✅ 完成',
   elicit_done_count_btn: '✅ 完成 ({count})',
-  elicit_reminder_text: '⏱ 提醒：上方仍有待回复的问题。',
+  elicit_reminder_text: '⏳ 仍在等待您回复上方的问题（已过 30 分钟）。请点击选项或直接输入回复；1 小时后该问题将自动关闭。',
   ask_outcome_timeout: '(已超时)',
   ask_outcome_replaced: '(已替换)',
   ask_outcome_answered: '→ 已回复：{echo}',

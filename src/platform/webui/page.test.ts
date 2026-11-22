@@ -212,7 +212,7 @@ describe('webui page', () => {
     expect(html).toContain('.panel-left.collapsed{margin-left:calc(-1 * var(--pw,var(--pw-default)))}');
     expect(html).toContain('.panel-right.collapsed{margin-right:calc(-1 * var(--pw,var(--pw-default)))}');
     // The heading is words, not a clock glyph.
-    expect(html).toContain('<span class="panel-title">Side tasks</span>');
+    expect(html).toContain('<span class="panel-title" data-i18n="sideTasks.title">Side tasks</span>');
     // Two top-level tabs at the foot (Scheduled and Reviews), with Scheduled subdivided into Tasks and Sessions.
     expect(html).toContain('id="sched-tabs"');
     expect(html).toContain('id="sched-tab-scheduled"');

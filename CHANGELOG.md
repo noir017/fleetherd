@@ -5,6 +5,12 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **Restore default ask-reminder copy in English i18n catalog** so 30-minute pending-question
+  reminders match `DEFAULT_ASK_REMINDER_TEXT`, and update settings/WebUI tests for the new
+  `locale` setting row and `data-i18n` markup.
+
 ## [3.32.0] - 2026-11-22
 
 ### Added

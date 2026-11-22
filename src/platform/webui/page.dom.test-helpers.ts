@@ -760,13 +760,14 @@ export async function open(
       (w as any).fetch = (path: string, init: { body?: unknown; signal?: AbortSignal; method?: string; headers?: Record<string, string> } = {}) => {
         // A GET (the file reader's) carries no body; recorded as an empty one.
         const bytes = ArrayBuffer.isView(init.body);
-        calls.push({
+        const entry: (typeof calls)[number] = {
           path,
           body: init.body === undefined ? {} : bytes ? unframe(init.body as ArrayBufferView) : JSON.parse(String(init.body)),
           ...(init.method && init.method !== 'POST' ? { method: init.method } : {}),
           ...(bytes ? { binary: true } : {}),
-          ...(init.headers ? { headers: init.headers } : {}),
-        });
+        };
+        if (init.headers) Object.defineProperty(entry, 'headers', { value: init.headers, enumerable: false });
+        calls.push(entry);
         if (hang.includes(path)) {
           return new Promise((_, reject) => {
             init.signal?.addEventListener('abort', () =>

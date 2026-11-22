@@ -659,7 +659,7 @@ describe('the button menu', () => {
     expect(r.buttonSends).toHaveLength(1);
     expect(r.replies()).toEqual([]); // the text surface must not also fire
     expect(r.menu().text).toContain('saved to config.yaml');
-    expect(r.ids('stg:')).toHaveLength(11); // agent + 2 models + 2 permissions + 4 rows + auto review's 2
+    expect(r.ids('stg:')).toHaveLength(12); // agent + 2 models + 2 permissions + 4 rows + auto review's 2 + locale
   });
 
   it('labels each row with its current value', async () => {
@@ -753,7 +753,7 @@ describe('the button menu', () => {
     await r.click(r.ids('stg:')[7]!);
     await r.click(r.ids('stb:')[0]!);
     expect(r.screen().text).toContain('saved to config.yaml');
-    expect(r.ids('stg:')).toHaveLength(11);
+    expect(r.ids('stg:')).toHaveLength(12);
     expect(text()).toBe(before);
   });
 

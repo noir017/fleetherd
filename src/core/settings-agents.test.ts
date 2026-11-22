@@ -74,6 +74,7 @@ describe('the Agents group', () => {
       ['Live streaming', undefined, 'Replies'],
       ['Auto review', undefined, 'Reviews'],
       ['Review model', undefined, 'Reviews'],
+      ['Language', undefined, 'General'],
     ]);
     // The model rows' order, which is config order, is the agent rows' order too.
     expect(screen.rows.slice(1, 4).map((r) => r.target)).toEqual(['cc', 'oc', 'cbc@uniagent']);
