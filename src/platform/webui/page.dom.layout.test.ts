@@ -1118,30 +1118,13 @@ describe('webui page: recording a voice message', () => {
     expect(sends(h)).toHaveLength(0);
   });
 
-  it('transcodes WebM recordings to 16kHz mono WAV when Web Audio API is available', async () => {
+  it('uploads WebM recordings directly without transcoding to WAV', async () => {
     const h = await open({
       mic: { types: ['audio/webm;codecs=opus'] },
       replies: {
         'api/voice/transcribe': { ok: true, text: '测试', model: 'whisper', latencyMs: 500 },
       },
     });
-    const w = h.window as unknown as Record<string, unknown>;
-    w['AudioContext'] = class {
-      async decodeAudioData() {
-        return { duration: 0.01 };
-      }
-      close() {}
-    };
-    w['OfflineAudioContext'] = class {
-      destination = {};
-      constructor(public ch: number, public frames: number, public sampleRate: number) {}
-      createBufferSource() {
-        return { buffer: null, connect() {}, start() {} };
-      }
-      async startRendering() {
-        return { sampleRate: 16000, getChannelData: () => new Float32Array([0, 0.5, -0.5, 0]) };
-      }
-    };
     await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4']));
     await h.click('#mic');
     await tick();
@@ -1150,9 +1133,8 @@ describe('webui page: recording a voice message', () => {
     await until('transcribe called', () => h.calls.some((c) => c.path === 'api/voice/transcribe'));
     const call = h.calls.find((c) => c.path === 'api/voice/transcribe')!;
     const body = call.body as { mime: string; data: string };
-    expect(body.mime).toBe('audio/wav');
+    expect(body.mime).toBe('audio/webm');
     const raw = Buffer.from(body.data, 'base64');
-    expect(raw.subarray(0, 4).toString('ascii')).toBe('RIFF');
-    expect(raw.subarray(8, 12).toString('ascii')).toBe('WAVE');
+    expect(raw.toString('utf8')).toBe('fake-webm');
   });
 });
