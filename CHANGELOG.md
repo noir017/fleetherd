@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.32.1] - 2026-11-22
+
 ### Fixed
 
 - **Restore default ask-reminder copy in English i18n catalog** so 30-minute pending-question
