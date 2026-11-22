@@ -39,6 +39,8 @@
 
 import type { InboundMessage } from '../types.js';
 import { formatButtonId, parseButtonId } from './button-id.js';
+import type { Locale } from './i18n/index.js';
+import { tWorkflows } from './i18n/workflows.js';
 
 /** One inbound attachment, as the adapters normalize it. */
 export type InboundAttachment = NonNullable<InboundMessage['attachments']>[number];
@@ -509,29 +511,34 @@ export type VoiceStatus =
   | 'called-off';
 
 /** The line under the transcript, per status. `cleaned`: the card carries a cleaned-up version. */
-function statusLine(status: VoiceStatus, cleaned: boolean, reason?: string): string {
-  const sentWhat = cleaned ? 'Sent the cleaned-up version to the agent' : 'Sent to the agent';
+function statusLine(status: VoiceStatus, cleaned: boolean, reason?: string, locale: Locale = 'en'): string {
   switch (status) {
     case 'pending':
       return cleaned
-        ? 'Send the cleaned-up version to the agent? Tap ✅ Send, or 🗣️ Send as spoken for the words as heard — or type your own, and this one is dropped.'
-        : 'Send this to the agent? Tap ✅ Send — or type a corrected version instead, and this one is dropped.';
+        ? tWorkflows(locale, 'voice.status.pendingCleaned')
+        : tWorkflows(locale, 'voice.status.pendingRaw');
     case 'sent':
-      return `→ ${sentWhat}.`;
+      return cleaned
+        ? tWorkflows(locale, 'voice.status.sentCleaned')
+        : tWorkflows(locale, 'voice.status.sentRaw');
     case 'sent-as-spoken':
-      return '→ Sent to the agent as spoken.';
+      return tWorkflows(locale, 'voice.status.sentAsSpoken');
     case 'auto':
-      return `→ ${sentWhat} automatically.`;
+      return cleaned
+        ? tWorkflows(locale, 'voice.status.autoCleaned')
+        : tWorkflows(locale, 'voice.status.autoRaw');
     case 'auto-no-buttons':
-      return `→ ${sentWhat} automatically (this platform cannot show confirm buttons).`;
+      return cleaned
+        ? tWorkflows(locale, 'voice.status.autoNoButtonsCleaned')
+        : tWorkflows(locale, 'voice.status.autoNoButtonsRaw');
     case 'cancelled':
-      return '✖ Cancelled — nothing was sent.';
+      return tWorkflows(locale, 'voice.status.cancelled');
     case 'expired':
-      return `⌛ Expired after ${Math.round(VOICE_PENDING_TTL_MS / 60_000)} min — nothing was sent. Send the voice message again if you still want it.`;
+      return tWorkflows(locale, 'voice.status.expired', { minutes: Math.round(VOICE_PENDING_TTL_MS / 60_000) });
     case 'superseded':
-      return '✎ Replaced by the message you typed — this transcript was not sent.';
+      return tWorkflows(locale, 'voice.status.superseded');
     case 'called-off':
-      return `⏹ Called off (${reason ?? 'stopped'}) — nothing was sent.`;
+      return tWorkflows(locale, 'voice.status.calledOff', { reason: reason ?? (locale === 'zh-CN' ? '已停止' : 'stopped') });
     default: {
       const _exhaustive: never = status;
       return String(_exhaustive);
@@ -555,9 +562,9 @@ export interface VoiceCardInput {
 }
 
 /** Up to `max` characters of a text, saying how much more there is and that it is still sent whole. */
-function preview(text: string, max: number): string {
+function preview(text: string, max: number, locale: Locale = 'en'): string {
   return text.length > max
-    ? `${text.slice(0, max)}…\n(${text.length - max} more characters not shown here — the full text is what gets sent)`
+    ? `${text.slice(0, max)}…\n${tWorkflows(locale, 'voice.card.previewMore', { count: text.length - max })}`
     : text;
 }
 
@@ -573,31 +580,41 @@ function preview(text: string, max: number): string {
  * card and the other is named as left out rather than clipped into a fragment — it is in the voice
  * log either way.
  */
-export function voiceCardText(input: VoiceCardInput): string {
+export function voiceCardText(input: VoiceCardInput, locale: Locale = 'en'): string {
   const seconds = (input.latencyMs / 1000).toFixed(1);
-  const header = `🎙️ Voice transcript · ${input.model} · ${seconds}s`;
-  const status = statusLine(input.status, input.cleaned !== undefined, input.reason);
+  const header = tWorkflows(locale, 'voice.card.header', { model: input.model, seconds });
+  const status = statusLine(input.status, input.cleaned !== undefined, input.reason, locale);
   if (input.cleaned === undefined) {
     // A cleanup that failed says so: a card that quietly fell back to the verbatim transcript
     // would read as "nothing needed cleaning up".
-    const note = input.cleanupError ? `\n\n✍️ Not cleaned up: ${input.cleanupError}.` : '';
-    return `${header}\n\n${preview(input.text, VOICE_CARD_MAX_CHARS)}${note}\n\n${status}`;
+    const note = input.cleanupError ? tWorkflows(locale, 'voice.card.notCleaned', { error: input.cleanupError }) : '';
+    return `${header}\n\n${preview(input.text, VOICE_CARD_MAX_CHARS, locale)}${note}\n\n${status}`;
   }
+  const spokenHeader = tWorkflows(locale, 'voice.card.spokenHeader');
   const spoken =
     input.cleaned.length + input.text.length <= VOICE_CARD_MAX_CHARS
-      ? `🗣️ As spoken:\n${input.text}`
-      : '🗣️ As spoken: too long to show beside the cleaned-up version (it is in the voice log).';
-  return `${header}\n\n✍️ Cleaned up:\n${preview(input.cleaned, VOICE_CARD_MAX_CHARS)}\n\n${spoken}\n\n${status}`;
+      ? `${spokenHeader}\n${input.text}`
+      : tWorkflows(locale, 'voice.card.spokenTooLong');
+  const cleanedHeader = tWorkflows(locale, 'voice.card.cleanedHeader');
+  return `${header}\n\n${cleanedHeader}\n${preview(input.cleaned, VOICE_CARD_MAX_CHARS, locale)}\n\n${spoken}\n\n${status}`;
 }
 
 /** Said instead of a card when there is nothing to confirm. */
-export function voiceFailureText(reason: string): string {
-  return `🎙️ Couldn't transcribe that voice message: ${reason}. Nothing was sent to the agent — type it instead, or send it again.`;
+export function voiceFailureText(reason: string, locale: Locale = 'en'): string {
+  return tWorkflows(locale, 'voice.failure', { reason });
+}
+
+export function voiceNoSpeechText(locale: Locale = 'en'): string {
+  return tWorkflows(locale, 'voice.noSpeech');
 }
 
 /** Said when the transcriber heard nothing. */
 export const VOICE_NO_SPEECH_TEXT =
   '🎙️ No speech was recognized in that voice message. Nothing was sent to the agent.';
+
+export function voiceStaleClickText(locale: Locale = 'en'): string {
+  return tWorkflows(locale, 'voice.staleClick');
+}
 
 /** Said for a tap on a card the daemon no longer holds. */
 export const VOICE_STALE_CLICK_TEXT =
@@ -626,14 +643,15 @@ export type VoiceButtonAction = 'send' | 'send-as-spoken' | 'cancel';
  */
 export function voiceButtons(
   reqId: string,
-  asSpoken = false
+  asSpoken = false,
+  locale: Locale = 'en'
 ): Array<{ id: string; label: string; style: 'success' | 'secondary' | 'danger' }> {
   return [
-    { id: formatButtonId(VOICE_BUTTON_PREFIX, reqId, SEND), label: '✅ Send', style: 'success' },
+    { id: formatButtonId(VOICE_BUTTON_PREFIX, reqId, SEND), label: tWorkflows(locale, 'voice.button.send'), style: 'success' },
     ...(asSpoken
-      ? [{ id: formatButtonId(VOICE_BUTTON_PREFIX, reqId, SEND_AS_SPOKEN), label: '🗣️ Send as spoken', style: 'secondary' as const }]
+      ? [{ id: formatButtonId(VOICE_BUTTON_PREFIX, reqId, SEND_AS_SPOKEN), label: tWorkflows(locale, 'voice.button.sendAsSpoken'), style: 'secondary' as const }]
       : []),
-    { id: formatButtonId(VOICE_BUTTON_PREFIX, reqId, CANCEL), label: '✖ Cancel', style: 'danger' },
+    { id: formatButtonId(VOICE_BUTTON_PREFIX, reqId, CANCEL), label: tWorkflows(locale, 'voice.button.cancel'), style: 'danger' },
   ];
 }
 
