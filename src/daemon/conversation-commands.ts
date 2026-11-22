@@ -1,5 +1,7 @@
 import type { AgentDef } from '../config/schema.js';
 import { agentDisplayName, findAgent } from '../config/schema.js';
+import { localeOf } from '../core/i18n/index.js';
+import { tMenus } from '../core/i18n/menus.js';
 import { configDir, readRawConfigIfExists } from '../config/load.js';
 import { podAgentModels, readPods } from '../config/pods.js';
 import { agentGroups, agentListText, matchAgent } from '../core/agent-menu.js';
@@ -122,6 +124,7 @@ export class ConversationCommands {
     };
 
     if (CONTEXT_CLEAR_RE.test(text)) {
+      const locale = localeOf(this.ctx.config);
       const agentId = this.ctx.boundAgentFor(key, fallbackAgent);
       // Before the reset: a question or transcript waiting here belongs to the context being discarded.
       this.callOffPending(key, 'context cleared');
@@ -129,7 +132,7 @@ export class ConversationCommands {
       const dropped = this.ctx.conversations.get(key)?.merger.dropKept() ?? [];
       this.ctx.resetConversation(key);
       console.log(`[conversation] ${key} context cleared by ${conv.platform}:${conv.user}`);
-      ack('context clear', withInputNote('Context cleared — the next message starts a fresh conversation.', [], dropped));
+      ack('context clear', withInputNote(tMenus(locale, 'cmd_context_cleared'), [], dropped));
       // A reset is the one moment "where should this happen" costs nothing to ask.
       this.controls.afterRemoteListing(findAgent(this.ctx.config, agentId), () => this.controls.offerWorkdirMenu(key, agentId, conv));
       return true;
@@ -193,7 +196,7 @@ export class ConversationCommands {
     if (!RELOAD_RE.test(text)) return false;
     console.log(`[conversation] /reload by ${conv.platform}:${conv.user}`);
     const reload = this.ctx.hooks?.onReloadRequest;
-    if (!reload) ack('/reload', 'Reloading the config is not available in this daemon.');
+    if (!reload) ack('/reload', tMenus(localeOf(this.ctx.config), 'cmd_reload_unavailable'));
     else void reload().then((summary) => ack('/reload', summary));
     return true;
   }
@@ -208,9 +211,10 @@ export class ConversationCommands {
     const agentId = this.ctx.conversations.get(key)?.agentId ?? this.ctx.store?.boundAgent(key) ?? fallback;
     const def = findAgent(this.ctx.config, agentId);
     const adapter = this.ctx.platforms.get(platformId);
+    const locale = localeOf(this.ctx.config);
     console.log(`[command] /help answered for ${key} (agent ${agentId})`);
     void adapter
-      ?.sendMessage(address, buildHelpText(this.ctx.config, { agent: agentId, harness: def?.harness }, commandSurface(adapter)))
+      ?.sendMessage(address, buildHelpText(this.ctx.config, { agent: agentId, harness: def?.harness }, commandSurface(adapter), locale))
       .catch((e) => console.warn('[conversation] failed to send help:', e instanceof Error ? e.message : e));
   }
 
@@ -263,12 +267,13 @@ export class ConversationCommands {
     const name = parseTextCommand(msg.content)?.name;
     const missing = name ? unconfiguredHarnessCommand(this.ctx.config, name) : undefined;
     if (!missing) return false;
+    const locale = localeOf(this.ctx.config);
     console.log(`[command] /${name} names the unconfigured harness "${missing}"; not forwarded`);
     void this.ctx.platforms
       .get(msg.conversation.platform)
       ?.sendMessage(
         address,
-        `No ${missing} agent is configured here, so /${missing} selects nothing. Add one under \`agents:\` in config.yaml (\`harness: ${missing}\`) and send /reload; /help lists the agents this gateway does have.`
+        tMenus(locale, 'unconfigured_harness', { missing })
       )
       .catch((e) => console.warn('[conversation] failed to report an unconfigured harness:', e instanceof Error ? e.message : e));
     return true;
@@ -310,6 +315,7 @@ export class ConversationCommands {
     fallbackAgent: string,
     msg: InboundMessage
   ): { text?: string; chosen?: string } {
+    const locale = localeOf(this.ctx.config);
     const groups = agentGroups(this.ctx.config.agents, this.ctx.hooks?.offlinePlaces?.());
     const current = this.ctx.boundAgentFor(key, fallbackAgent);
     const query = rest?.trim();
@@ -319,11 +325,11 @@ export class ConversationCommands {
         this.ctx.hooks.onAgentMenuRequest(key, msg, { groups, current });
         return {};
       }
-      return { text: agentListText(groups, current) };
+      return { text: agentListText(groups, current, locale) };
     }
     const match = matchAgent(this.ctx.config.agents, query);
-    if (match.kind === 'none') return { text: `No agent matches "${query}".\n${agentListText(groups, current)}` };
-    if (match.kind === 'many') return { text: `"${query}" matches ${match.ids.join(', ')} — which one?` };
+    if (match.kind === 'none') return { text: tMenus(locale, 'agent_match_none', { query, list: agentListText(groups, current, locale) }) };
+    if (match.kind === 'many') return { text: tMenus(locale, 'agent_match_many', { query, ids: match.ids.join(', ') }) };
     return { text: this.ctx.chooseAgent(key, match.def.id, msg.conversation), chosen: match.def.id };
   }
 
@@ -539,9 +545,10 @@ export class ConversationCommands {
       return;
     }
     const name = agentDisplayName(def, state.agentId);
+    const locale = localeOf(this.ctx.config);
     void this.ctx.platforms
       .get(platformId)
-      ?.sendMessage(address, `▸ this conversation is now answered by ${name} — just type to continue`)
+      ?.sendMessage(address, tMenus(locale, 'agent_bound_ack', { name }))
       .catch((e) => console.warn('[route] failed to ack the binding:', e instanceof Error ? e.message : e));
   }
 
@@ -607,12 +614,13 @@ export class ConversationCommands {
       void this.answerHarnessCliCommand(key, state, command, msg);
       return;
     }
+    const locale = localeOf(this.ctx.config);
     // Point at the agent command (`/oc`), which is what the menu registers.
     const own = harnessCommandName(def?.harness);
     const hint = harnessHasPicker(def?.harness) && own
-      ? `\nIts own commands are available under /${own}.`
+      ? tMenus(locale, 'cmd_unsupported_hint', { own })
       : '';
-    this.reportUnsupported(msg, command, `${name} does not support /${command}.${hint}`);
+    this.reportUnsupported(msg, command, tMenus(locale, 'cmd_unsupported', { name, command, hint }));
     console.log(`[command] /${command} unsupported by ${state.agentId} (${name}); not forwarded`);
   }
 
@@ -679,10 +687,11 @@ export class ConversationCommands {
   private refusedForNesting(command: string, msg: InboundMessage): boolean {
     const adapter = this.ctx.platforms.get(msg.conversation.platform);
     if (!adapter || !needsNestedTopics(command) || commandSurface(adapter).nested) return false;
+    const locale = localeOf(this.ctx.config);
     void adapter
       .sendMessage(
         addressOf(msg.conversation),
-        `/${command} works in the web UI only: its sub-agents open as topics nested under this one, and only the web UI can show them.`
+        tMenus(locale, 'cmd_nested_unsupported', { command })
       )
       .catch((e) => console.warn('[conversation] failed to report an unsupported command:', e instanceof Error ? e.message : e));
     console.log(`[command] /${command} needs nested topics, which "${msg.conversation.platform}" has not; not forwarded`);
@@ -783,19 +792,20 @@ export class ConversationCommands {
         console.warn('[btw] failed to reply:', e instanceof Error ? e.message : e)
       );
     };
+    const locale = localeOf(this.ctx.config);
     const text = question?.trim();
     if (!text) {
-      say('Usage: `/btw <question>` — asked of a copy of this conversation and answered on the side; the copy is then deleted, and a running turn carries on.');
+      say(tMenus(locale, 'cmd_btw_usage'));
       return;
     }
     // A side question that dropped its pictures would answer about something it never saw.
     if ((msg.attachments?.length ?? 0) > 0) {
-      say('/btw takes a question in words only. Send pictures and files as an ordinary message.');
+      say(tMenus(locale, 'cmd_btw_words_only'));
       return;
     }
     const session = this.ctx.agents.getOrCreate(key, state.agentId);
     if (!session.sideQuestion) {
-      say(`${agentDisplayName(findAgent(this.ctx.config, state.agentId), state.agentId)} does not support /btw.`);
+      say(tMenus(locale, 'cmd_btw_unsupported', { name: agentDisplayName(findAgent(this.ctx.config, state.agentId), state.agentId) }));
       return;
     }
     const render = this.turns.runner.beginAside(key, platform, address, text, asked);
@@ -827,6 +837,7 @@ export class ConversationCommands {
   ): Promise<void> {
     const def = findAgent(this.ctx.config, state.agentId);
     const label = agentDisplayName(def, state.agentId);
+    const locale = localeOf(this.ctx.config);
     const reply = (text: string): void => {
       void this.ctx.platforms
         .get(msg.conversation.platform)
@@ -837,14 +848,14 @@ export class ConversationCommands {
     };
     const own = name === 'usage' && def?.quotaCommand !== undefined;
     if (!def || (!own && def.harness !== 'agy')) {
-      reply(`${label} has no way to answer /${name} outside a turn.`);
+      reply(tMenus(locale, 'cmd_harness_cli_outside', { label, name }));
       return;
     }
     const cwd = resolveConversationCwd(def, key, this.ctx.store);
     console.log(`[command] /${name} run as ${own ? 'the agent\'s quotaCommand' : 'a one-shot agy process'} for ${key} (${state.agentId})`);
     const result = own ? await runQuotaCommandFor(def, cwd) : await runAgyCliFor(def, name, cwd, this.ctx.runHarnessCli);
     if (!result.ok) {
-      reply(`Could not ask ${label} for /${name}: ${result.error}`);
+      reply(tMenus(locale, 'cmd_harness_cli_failed', { label, name, error: result.error }));
       return;
     }
     reply(formatAgyCliOutput(name, result.output));
@@ -858,10 +869,11 @@ export class ConversationCommands {
   private describeContext(state: ConversationState): string {
     const def = findAgent(this.ctx.config, state.agentId);
     const name = agentDisplayName(def, state.agentId);
+    const locale = localeOf(this.ctx.config);
     const usage = state.lastUsage;
     if (!usage) {
       if (!state.turnCompleted) {
-        return 'No context numbers yet — they arrive with the first reply. Send a message, then /context.';
+        return tMenus(locale, 'cmd_context_no_numbers');
       }
       const fix =
         def?.harness === 'opencode'
@@ -869,18 +881,13 @@ export class ConversationCommands {
           : def?.harness === 'agy'
             ? ' agy reports usage once per turn, summed over every model call in it, so after a turn that ran tools the count comes from its transcript on the agent\'s machine, and is missing when that cannot be read; and agy never says how big its window is, so the daemon measures the context against where agy compacts, which it knows for the models it was measured on (Gemini 3.8 Flash, Claude Sonnet/Opus 4.6, GPT-OSS 120B) — any other model shows no numbers.'
             : '';
-      return (
-        `Context: not reported. ${name} finished a turn without sending any usage numbers, and ` +
-        `another message will not change that — a harness reports context only for a model whose ` +
-        `window it knows.${fix}`
-      );
+      return tMenus(locale, 'cmd_context_not_reported', { name, fix });
     }
     const line = formatRuntimeFooter(
       { contextTokens: usage.used, contextLength: usage.size },
       ['context']
     );
     const left = Math.max(0, usage.size - usage.used);
-    return `Context: ${line}
-${formatTokens(left)} left before compaction — ${name}`;
+    return `Context: ${line}\n${tMenus(locale, 'cmd_context_left', { tokens: formatTokens(left), name })}`;
   }
 }

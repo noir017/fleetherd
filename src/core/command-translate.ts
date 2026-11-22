@@ -1,5 +1,6 @@
 import type { AgentDef, Config } from '../config/schema.js';
 import type { SlashCommandSpec } from '../types.js';
+import { type Locale, tMenus, type MenusMessageKey } from './i18n/menus.js';
 
 /**
  * The registered slash vocabulary: daemon commands, agent commands, and the generic
@@ -594,12 +595,17 @@ export function needsNestedTopics(name: string): boolean {
  * The generic commands as registrable slash specs, in a stable (alphabetical) order — those offered
  * on `surface`, or all of them when no surface is given.
  */
-export function genericCommandSpecs(surface?: CommandSurface): SlashCommandSpec[] {
+export function genericCommandSpecs(surface?: CommandSurface, locale: Locale = 'en'): SlashCommandSpec[] {
   return Object.entries(GENERIC_COMMANDS)
     .filter(([, cmd]) => offeredOn(cmd, surface))
     .map(([name, cmd]) => {
-      const spec: SlashCommandSpec = { name, description: cmd.description };
-      if (cmd.arg) spec.options = [{ name: cmd.arg.name, description: cmd.arg.description, type: 'string', required: true }];
+      const descKey = `cmd_desc_${name}` as MenusMessageKey;
+      const description = tMenus(locale, descKey);
+      const spec: SlashCommandSpec = { name, description };
+      if (cmd.arg) {
+        const argKey = `cmd_arg_${name}_${cmd.arg.name}` as MenusMessageKey;
+        spec.options = [{ name: cmd.arg.name, description: tMenus(locale, argKey), type: 'string', required: true }];
+      }
       return spec;
     })
     .sort((a, b) => a.name.localeCompare(b.name));
@@ -630,7 +636,7 @@ export function genericNativeNames(harness: Harness | undefined): Set<string> {
  *
  * Ordered by the registered name so the menu is stable across restarts and config edits.
  */
-export function agentCommandSpecs(cfg: Pick<Config, 'agents'>): SlashCommandSpec[] {
+export function agentCommandSpecs(cfg: Pick<Config, 'agents'>, locale: Locale = 'en'): SlashCommandSpec[] {
   const harnesses = new Set<Harness>();
   for (const agent of cfg.agents) {
     if (HARNESS_COMMANDS[agent.harness]) harnesses.add(agent.harness);
@@ -646,8 +652,8 @@ export function agentCommandSpecs(cfg: Pick<Config, 'agents'>): SlashCommandSpec
       // advertised only on a harness that actually has a list to show. "Use", not "Switch to":
       // a topic with a session no longer switches, so the old verb promised what the tap refuses.
       description: cmd.picker
-        ? `Use ${harness} — alone, lists its own commands`
-        : `Use ${harness}`,
+        ? tMenus(locale, 'cmd_use_agent_picker', { target: harness })
+        : tMenus(locale, 'cmd_use_agent', { target: harness }),
     }));
 }
 
@@ -716,11 +722,13 @@ function routeTarget(cfg: Pick<Config, 'agents'>, agentId: string): string {
  *
  * Described like an agent command, because it is one — the same binding, and bare, the same picker.
  */
-export function routeCommandSpecs(cfg: Pick<Config, 'agents' | 'routing'>): SlashCommandSpec[] {
+export function routeCommandSpecs(cfg: Pick<Config, 'agents' | 'routing'>, locale: Locale = 'en'): SlashCommandSpec[] {
   return commandRoutes(cfg).map(({ name, agentId }) => {
     const harness = cfg.agents.find((a) => a.id === agentId)?.harness;
-    const use = `Use ${routeTarget(cfg, agentId)}`;
-    const description = harnessHasPicker(harness) ? `${use} — alone, lists its own commands` : use;
+    const target = routeTarget(cfg, agentId);
+    const description = harnessHasPicker(harness)
+      ? tMenus(locale, 'cmd_use_agent_picker', { target })
+      : tMenus(locale, 'cmd_use_agent', { target });
     return { name, description: description.slice(0, SLASH_DESC_MAX) };
   });
 }
@@ -744,17 +752,21 @@ export function routeCommandAgent(cfg: Pick<Config, 'routing'>, name: string): s
 export function buildHelpText(
   cfg: Pick<Config, 'agents' | 'routing'>,
   current?: { agent: string; harness: Harness | undefined },
-  surface?: CommandSurface
+  surface?: CommandSurface,
+  locale: Locale = 'en'
 ): string {
   const lines: string[] = [];
 
-  lines.push('**This gateway**');
-  for (const cmd of DAEMON_COMMANDS) lines.push(`\`/${cmd.name}\` — ${cmd.description}`);
+  lines.push(tMenus(locale, 'help_gateway_header'));
+  for (const cmd of DAEMON_COMMANDS) {
+    const descKey = `cmd_desc_${cmd.name}` as MenusMessageKey;
+    lines.push(`\`/${cmd.name}\` — ${tMenus(locale, descKey)}`);
+  }
 
-  const agents = agentCommandSpecs(cfg);
+  const agents = agentCommandSpecs(cfg, locale);
   const routes = commandRoutes(cfg);
   if (agents.length + routes.length > 0) {
-    lines.push('', '**Agents** — `/<cmd> <prompt>` asks it; alone, lists its commands. A topic keeps the agent it started with; `/new` to choose again');
+    lines.push('', tMenus(locale, 'help_agents_header'));
     // Named by harness rather than reusing the menu description, which repeats the line above:
     // the menu has no header to carry that explanation, this section does.
     for (const spec of agents) lines.push(`\`/${spec.name}\` — ${harnessForCommand(spec.name)}`);
@@ -763,11 +775,11 @@ export function buildHelpText(
 
   // Generic names are translated to each harness's own spelling at invocation time, so what is
   // listed is what this harness will actually accept.
-  const generic = genericCommandSpecs(surface).filter(
+  const generic = genericCommandSpecs(surface, locale).filter(
     (spec) => translateCommand(spec.name, current?.harness).kind !== 'unsupported'
   );
   if (generic.length > 0) {
-    lines.push('', '**Works on the current agent**');
+    lines.push('', tMenus(locale, 'help_generic_header'));
     for (const spec of generic) {
       const arg = spec.options?.[0];
       lines.push(`\`/${spec.name}${arg ? ` <${arg.name}>` : ''}\` — ${spec.description}`);
@@ -775,8 +787,12 @@ export function buildHelpText(
   }
 
   if (current) {
-    lines.push('', `Answering now: **${current.harness ?? current.agent}**`);
+    lines.push('', tMenus(locale, 'help_answering_now', { target: current.harness ?? current.agent }));
   }
   return lines.join('\n');
+}
+
+export function unconfiguredHarnessCommandText(missing: string, locale: Locale = 'en'): string {
+  return tMenus(locale, 'unconfigured_harness', { missing });
 }
 

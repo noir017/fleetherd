@@ -1,5 +1,6 @@
 import type { AgentDef } from '../config/schema.js';
 import type { AgentCatalog, OfflineMachine } from '../types.js';
+import { type Locale, tMenus } from './i18n/menus.js';
 import { parseButtonId, formatButtonId } from './button-id.js';
 import { shortModelName } from './runtime-footer.js';
 import { pageCount, pageSlice, truncateLabel, wrapPage } from './paging.js';
@@ -34,9 +35,6 @@ export interface AgentGroup {
   /** Every agent in it runs on a host the gateway cannot reach right now (offlinePlaces). */
   offline?: true;
 }
-
-/** What the menus say after an offline machine's name. */
-const OFFLINE_NOTE = 'offline';
 
 /** What an agent is grouped under (see the header). */
 export function agentGroupOf(def: AgentDef): string {
@@ -143,15 +141,18 @@ export function buildAgentMenu(opts: {
   page?: number;
   pageSize: number;
   purpose?: 'answer' | 'retry';
+  locale?: Locale;
 }): AgentMenuView {
-  const { reqId, groups, current, pageSize } = opts;
+  const { reqId, groups, current, pageSize, locale = 'en' } = opts;
   const currentGroup = groups.findIndex((g) => g.agents.some((a) => a.id === current));
+  const offlineNote = tMenus(locale, 'agent_menu_offline_note');
   if (opts.group === undefined && groups.length > 1) {
+    const currentPart = current ? tMenus(locale, 'agent_menu_now', { current }) : '';
     return {
-      text: `Which machine? ${current ? `(now: ${current})` : ''}`.trim(),
+      text: tMenus(locale, 'agent_menu_which_machine', { current: currentPart }).trim(),
       buttons: groups.map((g, i) => ({
         id: formatButtonId(AGENT_GROUP_PREFIX, reqId, i),
-        label: truncateLabel(`${i === currentGroup ? CURRENT_MARK : ''}${g.name} (${g.agents.length})${g.offline ? ` · ${OFFLINE_NOTE}` : ''}`),
+        label: truncateLabel(`${i === currentGroup ? CURRENT_MARK : ''}${g.name} (${g.agents.length})${g.offline ? ` · ${offlineNote}` : ''}`),
       })),
     };
   }
@@ -171,12 +172,14 @@ export function buildAgentMenu(opts: {
       { id: formatButtonId(AGENT_PAGE_PREFIX, reqId, gi * 1000 + wrapPage(page + 1, pages)), label: '›' }
     );
   }
-  if (groups.length > 1) buttons.push({ id: formatButtonId(AGENT_BACK_PREFIX, reqId, 0), label: '‹ machines' });
-  const where = groups.length > 1 ? ` on ${group.name}` : '';
+  if (groups.length > 1) buttons.push({ id: formatButtonId(AGENT_BACK_PREFIX, reqId, 0), label: tMenus(locale, 'agent_menu_back_machines') });
+  const where = groups.length > 1 ? tMenus(locale, 'agent_menu_where', { name: group.name }) : '';
   const pageNote = pages > 1 ? ` (${page + 1}/${pages})` : '';
   // Said, not refused: the machine may well be back by the time anyone writes.
-  const offline = group.offline ? `\n${group.name} is ${OFFLINE_NOTE}: its agents cannot answer until it is back.` : '';
-  const question = opts.purpose === 'retry' ? `Retry with which agent${where}?` : `Which agent${where} should answer this topic?`;
+  const offline = group.offline ? tMenus(locale, 'agent_menu_offline_warning', { name: group.name }) : '';
+  const question = opts.purpose === 'retry'
+    ? tMenus(locale, 'agent_menu_retry_question', { where })
+    : tMenus(locale, 'agent_menu_answer_question', { where });
   return { text: `${question}${pageNote}${offline}`, buttons };
 }
 
@@ -237,11 +240,16 @@ export function flatAgents(groups: readonly AgentGroup[]): AgentDef[] {
 }
 
 /** The text form, for a platform with no buttons, and the answer to a `/agent` that named nothing. */
-export function agentListText(groups: readonly AgentGroup[], current: string | undefined): string {
-  const lines = ['Agents (`/agent <id>` chooses one for this topic):'];
+export function agentListText(
+  groups: readonly AgentGroup[],
+  current: string | undefined,
+  locale: Locale = 'en'
+): string {
+  const offlineNote = tMenus(locale, 'agent_menu_offline_note');
+  const lines = [tMenus(locale, 'agent_list_header')];
   for (const g of groups) {
-    if (groups.length > 1) lines.push(`${g.name}${g.offline ? ` (${OFFLINE_NOTE})` : ''}:`);
-    else if (g.offline) lines.push(`(${g.name} is ${OFFLINE_NOTE})`);
+    if (groups.length > 1) lines.push(`${g.name}${g.offline ? ` (${offlineNote})` : ''}:`);
+    else if (g.offline) lines.push(tMenus(locale, 'agent_list_offline_banner', { name: g.name }));
     for (const def of g.agents) {
       const mark = def.id === current ? '● ' : '  ';
       lines.push(`${groups.length > 1 ? '  ' : ''}${mark}${def.id} — ${def.harness}${def.model ? ` (${def.model})` : ''}`);

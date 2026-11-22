@@ -1,4 +1,5 @@
 import { formatButtonId, parseButtonId } from './button-id.js';
+import { type Locale, tMenus } from './i18n/menus.js';
 import { PAGE_SIZE, pageCount, pageOf, pageSlice, truncateLabel, wrapPage } from './paging.js';
 
 /**
@@ -136,8 +137,9 @@ export function buildWorkdirMenu(menu: {
   page: number;
   /** Items per page; omitted means this platform declared none (core/paging.ts PAGE_SIZE). */
   pageSize?: number;
+  locale?: Locale;
 }): WorkdirMenuView {
-  const { reqId, options, current } = menu;
+  const { reqId, options, current, locale = 'en' } = menu;
   const pageTotal = workdirPageCount(options.length, menu.pageSize);
   const page = wrapPage(menu.page, pageTotal);
 
@@ -149,8 +151,8 @@ export function buildWorkdirMenu(menu: {
 
   if (pageTotal > 1) {
     buttons.push(
-      { id: workdirPageButtonId(reqId, (page - 1 + pageTotal) % pageTotal), label: '◀ Prev' },
-      { id: workdirPageButtonId(reqId, (page + 1) % pageTotal), label: 'Next ▶' }
+      { id: workdirPageButtonId(reqId, (page - 1 + pageTotal) % pageTotal), label: tMenus(locale, 'workdir_menu_prev') },
+      { id: workdirPageButtonId(reqId, (page + 1) % pageTotal), label: tMenus(locale, 'workdir_menu_next') }
     );
   }
 
@@ -161,10 +163,9 @@ export function buildWorkdirMenu(menu: {
   // The page counter appears only when there IS more than one page — which, since platforms began
   // declaring their own page size, is no longer the common case. "page 1/1" is a line of noise
   // above the answer, and the setting menu has always left it out for the same reason.
-  const text =
-    `Working dir: ${current ?? 'unknown'}\n` +
-    `${options.length} available${pageTotal > 1 ? ` · page ${page + 1}/${pageTotal}` : ''} — ` +
-    'tap one to work there (starts a fresh session), or `/cd <part of a name>`.';
+  const currentLabel = current ?? tMenus(locale, 'model_menu_unknown');
+  const pageNote = pageTotal > 1 ? tMenus(locale, 'workdir_menu_page_note', { page: page + 1, total: pageTotal }) : '';
+  const text = tMenus(locale, 'workdir_menu_text', { current: currentLabel, count: options.length, pageNote });
 
   return { text, buttons, page, pageCount: pageTotal };
 }
@@ -198,29 +199,30 @@ export function matchWorkdirs(options: WorkdirOption[], query: string): WorkdirM
 // ───────────────────────────── the strings, in one place ─────────────────────────────
 
 /** The `/cd` text answer, for platforms that cannot carry a menu (or a list of one). */
-export function workdirSummaryText(current: string, options: WorkdirOption[]): string {
+export function workdirSummaryText(current: string, options: WorkdirOption[], locale: Locale = 'en'): string {
   const others = options.filter((o) => o.path !== current).slice(0, WORKDIR_MATCH_MAX);
   if (others.length === 0) {
-    return `Working dir: ${current}\nNothing else on offer — no sub-directories under the agent's root.`;
+    return tMenus(locale, 'workdir_summary_empty', { current });
   }
   const list = others.map((o) => `\`/cd ${o.name}\` — ${o.path}`).join('\n');
-  return `Working dir: ${current}\n${list}\n\nSwitching starts a fresh session there.`;
+  return tMenus(locale, 'workdir_summary_list', { current, list });
 }
 
 /** The agent's root cannot be read (deleted, or a typo in `agents[].cwd`). */
-export function workdirUnreadableText(root: string, reason: string): string {
-  return `Cannot list ${root} (${reason}). Check \`agents[].cwd\` in config.yaml.`;
+export function workdirUnreadableText(root: string, reason: string, locale: Locale = 'en'): string {
+  return tMenus(locale, 'workdir_unreadable', { root, reason });
 }
 
-export function workdirNoMatchText(query: string): string {
-  return `No directory matches "${query}". \`/cd\` alone lists what is on offer.`;
+export function workdirNoMatchText(query: string, locale: Locale = 'en'): string {
+  return tMenus(locale, 'workdir_no_match', { query });
 }
 
-export function workdirAmbiguousText(query: string, matches: WorkdirOption[]): string {
+export function workdirAmbiguousText(query: string, matches: WorkdirOption[], locale: Locale = 'en'): string {
   const shown = matches.slice(0, WORKDIR_MATCH_MAX);
   const more = matches.length - shown.length;
   const list = shown.map((o) => `\`/cd ${o.path}\``).join('\n');
-  return `"${query}" matches ${matches.length} directories:\n${list}${more > 0 ? `\n…and ${more} more` : ''}`;
+  const moreText = more > 0 ? tMenus(locale, 'workdir_ambiguous_more', { count: more }) : '';
+  return tMenus(locale, 'workdir_ambiguous', { query, count: matches.length, list, more: moreText });
 }
 
 /**
@@ -243,18 +245,18 @@ export type WorkdirChoiceResult =
   | { kind: 'failed'; reason: string };
 
 /** Render a choice outcome for the user. Exhaustive: a new arm must be given words here. */
-export function workdirChoiceText(result: WorkdirChoiceResult): string {
+export function workdirChoiceText(result: WorkdirChoiceResult, locale: Locale = 'en'): string {
   switch (result.kind) {
     case 'applied':
-      return `Working in \`${result.path}\` now — fresh session; the previous context stayed behind.`;
+      return tMenus(locale, 'workdir_applied', { path: result.path });
     case 'unchanged':
-      return `Already working in \`${result.path}\` — nothing reset.`;
+      return tMenus(locale, 'workdir_unchanged', { path: result.path });
     case 'missing':
-      return `\`${result.path}\` no longer exists. Run /cd again for the current list.`;
+      return tMenus(locale, 'workdir_missing', { path: result.path });
     case 'rebound':
-      return `This conversation is answered by ${result.agent} now, so that menu no longer applies. Run /cd again.`;
+      return tMenus(locale, 'workdir_rebound', { agent: result.agent });
     case 'failed':
-      return `Could not switch directory: ${result.reason}`;
+      return tMenus(locale, 'workdir_failed', { reason: result.reason });
     default: {
       const _exhaustive: never = result;
       return String(_exhaustive);
@@ -263,11 +265,12 @@ export function workdirChoiceText(result: WorkdirChoiceResult): string {
 }
 
 /** A click on a menu this daemon no longer knows about (used up, superseded, or restarted). */
-export function workdirMenuExpiredText(): string {
-  return 'That directory menu has expired (superseded, or the gateway restarted). Run /cd again for a fresh one.';
+export function workdirMenuExpiredText(locale: Locale = 'en'): string {
+  return tMenus(locale, 'workdir_expired');
 }
 
 /** What the previous menu becomes when a newer one is opened in the same conversation. */
-export function workdirMenuSupersededText(current: string | undefined): string {
-  return `Working dir: ${current ?? 'unknown'} — superseded by a newer /cd menu.`;
+export function workdirMenuSupersededText(current: string | undefined, locale: Locale = 'en'): string {
+  const currentLabel = current ?? tMenus(locale, 'model_menu_unknown');
+  return tMenus(locale, 'workdir_superseded', { current: currentLabel });
 }

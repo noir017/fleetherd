@@ -80,8 +80,9 @@ import {
 import {
   DEFAULT_ASK_TIMEOUT_MS as PROTOCOL_DEFAULT_ASK_TIMEOUT_MS,
   DEFAULT_ASK_REMINDER_MS,
-  DEFAULT_ASK_REMINDER_TEXT,
 } from '../ipc/protocol.js';
+import { localeOf, type Locale } from '../core/i18n/index.js';
+import { tMenus } from '../core/i18n/menus.js';
 import type { ButtonSpec, PlatformAdapter } from '../platform/adapter.js';
 import type {
   AgentCommand,
@@ -118,11 +119,6 @@ const SCHEDULE_TYPED_OPS: Record<string, 'pause' | 'resume' | 'remove' | 'run'> 
   run: 'run',
 };
 
-const MULTI_HINT = '_Tap to select as many as apply, then tap Done._';
-const MULTI_EMPTY_NOTE = '_Nothing selected yet — tick at least one option, or type your own answer._';
-const MULTI_DEGRADED_NOTE =
-  '_This question takes more than one answer, which this platform cannot offer as buttons — tap the most important one, or type them all as a reply._';
-
 export function parseAskButtonId(buttonId: string): { reqId: string; index: number } | null {
   const parsed = parseButtonId(buttonId, ASK_PREFIX);
   return parsed && { reqId: parsed.reqId, index: parsed.n };
@@ -155,13 +151,18 @@ export function composeElicitPrompt(
   return note ? `${body}\n\n${note}` : body;
 }
 
-export function composePermissionPrompt(title: string, timeoutMs: number, detail?: string): string {
+export function composePermissionPrompt(
+  title: string,
+  timeoutMs: number,
+  detail?: string,
+  locale: Locale = 'en'
+): string {
   // Neutralize runs of 3+ backticks so a tool preview cannot break out of the fenced block.
   const shown = (title.length > PERMISSION_TITLE_MAX ? `${title.slice(0, PERMISSION_TITLE_MAX)}…` : title)
     .replace(/`{3,}/g, '``');
   const change = detail ? `\n\n\`\`\`\n${detail.replace(/`{3,}/g, '``')}\n\`\`\`` : '';
   const minutes = Math.round(timeoutMs / 60_000);
-  return `🔐 The agent asks to run:\n\`\`\`\n${shown}\n\`\`\`${change}\nNo answer within ${minutes} min declines it.`;
+  return tMenus(locale, 'permission_prompt', { shown, change, minutes });
 }
 
 function canMultiSelect(platform: PlatformAdapter, q: ElicitQuestion): boolean {
@@ -171,7 +172,8 @@ function canMultiSelect(platform: PlatformAdapter, q: ElicitQuestion): boolean {
 export function buildAskButtons(
   reqId: string,
   labels: string[],
-  selected?: ReadonlySet<number>
+  selected?: ReadonlySet<number>,
+  locale: Locale = 'en'
 ): ButtonSpec[] {
   const buttons: ButtonSpec[] = labels.map((label, i) => ({
     // custom_id: `ask:` prefix + index (≤100 chars; must not start with `input`).
@@ -181,7 +183,9 @@ export function buildAskButtons(
   if (selected) {
     buttons.push({
       id: `${ASK_PREFIX}${reqId}:${labels.length}`,
-      label: selected.size > 0 ? `✅ Done (${selected.size})` : '✅ Done',
+      label: selected.size > 0
+        ? tMenus(locale, 'elicit_done_count_btn', { count: selected.size })
+        : tMenus(locale, 'elicit_done_btn'),
       style: 'primary',
     });
   }
@@ -347,22 +351,26 @@ export class DaemonMenus {
     conversationId?: ConversationId,
     opts: AskButtonsOptions = {}
   ): Promise<AskOutcome | null> {
+    const locale = localeOf(this.ctx.config);
     const reqId = randomUUID().slice(0, 8);
     const acceptsText = opts.acceptsText ?? true;
     const selected = opts.multi ? new Set<number>() : undefined;
-    const buttons = buildAskButtons(reqId, labels, selected);
-    // Append MULTI_HINT here rather than in `prompt`, because retireAsk reprints `prompt` under the final outcome.
+    const buttons = buildAskButtons(reqId, labels, selected, locale);
+    // Append elicit_multi_hint here rather than in `prompt`, because retireAsk reprints `prompt` under the final outcome.
+    const hint = tMenus(locale, 'elicit_multi_hint');
     return platform.sendButtons(
       address,
-      selected ? `${prompt}\n\n${MULTI_HINT}` : prompt,
+      selected ? `${prompt}\n\n${hint}` : prompt,
       buttons,
       undefined,
       opts.kind ? { kind: opts.kind } : undefined
     ).then(
       (ref) =>
         new Promise<AskOutcome | null>((resolve) => {
+          const timeoutNote = opts.timeoutNote ?? tMenus(locale, 'ask_outcome_timeout');
+          const replacedNote = tMenus(locale, 'ask_outcome_replaced');
           const timer = setTimeout(() => {
-            if (this.settleAsk(reqId, { kind: 'timeout' }, opts.timeoutNote ?? '(timed out)')) {
+            if (this.settleAsk(reqId, { kind: 'timeout' }, timeoutNote)) {
               if (conversationId !== undefined && timeoutMs >= DEFAULT_ASK_TIMEOUT_MS) {
                 this.ctx.registry.reclaimAfterAskTimeout(conversationId);
               }
@@ -372,7 +380,7 @@ export class DaemonMenus {
             timeoutMs > DEFAULT_ASK_REMINDER_MS
               ? setTimeout(() => {
                   void platform
-                    .sendMessage(address, DEFAULT_ASK_REMINDER_TEXT)
+                    .sendMessage(address, tMenus(locale, 'elicit_reminder_text'))
                     .catch((err) =>
                       console.warn(
                         `[ask] ${conversationId ?? reqId}: failed to send reminder notice:`,
@@ -393,8 +401,8 @@ export class DaemonMenus {
             conversationId,
             ...(selected ? { selected } : {}),
           });
-          opts.signal?.addEventListener('abort', () => this.settleAsk(reqId, null, '(replaced)'), { once: true });
-          if (opts.signal?.aborted) this.settleAsk(reqId, null, '(replaced)');
+          opts.signal?.addEventListener('abort', () => this.settleAsk(reqId, null, replacedNote), { once: true });
+          if (opts.signal?.aborted) this.settleAsk(reqId, null, replacedNote);
           if (conversationId !== undefined) {
             this.settleFromGap(reqId, conversationId, acceptsText);
             if (this.pendingAsks.has(reqId)) this.ctx.delegation.childChanged(conversationId);
@@ -452,7 +460,8 @@ export class DaemonMenus {
       return true;
     }
     const echo = text.length > ASK_ECHO_MAX ? `${text.slice(0, ASK_ECHO_MAX)}…` : text;
-    this.settleAsk(match, { kind: 'text', text }, `→ Answered: ${echo}`);
+    const locale = localeOf(this.ctx.config);
+    this.settleAsk(match, { kind: 'text', text }, tMenus(locale, 'ask_outcome_answered', { echo }));
     console.log(`[ask] ${conversationId}: question answered by a typed reply`);
     return true;
   }
@@ -479,19 +488,20 @@ export class DaemonMenus {
     address: ConversationAddress,
     request: AgentPermissionRequest
   ): Promise<PermissionAnswer> {
+    const locale = localeOf(this.ctx.config);
     if (!platform.capabilities.buttons) {
-      return { kind: 'unavailable', why: `${platform.platformType} cannot show buttons` };
+      return { kind: 'unavailable', why: tMenus(locale, 'permission_no_buttons', { platform: platform.platformType }) };
     }
     const answer = await this.askButtons(
       platform,
       address,
-      composePermissionPrompt(request.title, DEFAULT_ASK_TIMEOUT_MS, request.detail),
+      composePermissionPrompt(request.title, DEFAULT_ASK_TIMEOUT_MS, request.detail, locale),
       request.options.map((o) => o.label),
       DEFAULT_ASK_TIMEOUT_MS,
       conversationId,
       {
         acceptsText: false,
-        timeoutNote: '⏱ Nobody answered — declined. The agent was told no one answered, not that you refused.',
+        timeoutNote: tMenus(locale, 'permission_timeout_note'),
       }
     );
     if (answer === null) return { kind: 'cancelled' };
@@ -527,6 +537,7 @@ export class DaemonMenus {
     address: ConversationAddress,
     request: AgentElicitation
   ): Promise<ElicitAnswer> {
+    const locale = localeOf(this.ctx.config);
     const content: Record<string, string | string[]> = {};
     for (const [i, q] of request.questions.entries()) {
       const multi = canMultiSelect(platform, q);
@@ -537,7 +548,7 @@ export class DaemonMenus {
           q,
           i,
           request.questions.length,
-          q.multi && !multi ? MULTI_DEGRADED_NOTE : undefined
+          q.multi && !multi ? tMenus(locale, 'elicit_multi_degraded') : undefined
         ),
         q.options.map((o) => o.label),
         DEFAULT_ASK_TIMEOUT_MS,
@@ -615,11 +626,12 @@ export class DaemonMenus {
   }
 
   private onAskClick(reqId: string, index: number, pending: PendingAsk): void {
+    const locale = localeOf(this.ctx.config);
     const { labels, selected } = pending;
     if (!selected) {
       if (index >= labels.length) return;
       const label = labels[index]!;
-      this.settleAsk(reqId, { kind: 'option', labels: [label] }, `→ Selected: ${label}`);
+      this.settleAsk(reqId, { kind: 'option', labels: [label] }, tMenus(locale, 'ask_outcome_selected', { selection: label }));
       return;
     }
     if (index > labels.length) return;
@@ -630,17 +642,18 @@ export class DaemonMenus {
       return;
     }
     if (selected.size === 0) {
-      this.redrawAsk(reqId, pending, MULTI_EMPTY_NOTE);
+      this.redrawAsk(reqId, pending, tMenus(locale, 'elicit_multi_empty'));
       return;
     }
     const chosen = [...selected].sort((a, b) => a - b).map((i) => labels[i]!);
-    this.settleAsk(reqId, { kind: 'option', labels: chosen }, `→ Selected: ${chosen.join(', ')}`);
+    this.settleAsk(reqId, { kind: 'option', labels: chosen }, tMenus(locale, 'ask_outcome_selected', { selection: chosen.join(', ') }));
   }
 
   private redrawAsk(reqId: string, pending: PendingAsk, note?: string): void {
-    const body = `${pending.prompt}\n\n${MULTI_HINT}${note ? `\n${note}` : ''}`;
+    const locale = localeOf(this.ctx.config);
+    const body = `${pending.prompt}\n\n${tMenus(locale, 'elicit_multi_hint')}${note ? `\n${note}` : ''}`;
     void pending.adapter
-      .editButtons(pending.ref, body, buildAskButtons(reqId, pending.labels, pending.selected))
+      .editButtons(pending.ref, body, buildAskButtons(reqId, pending.labels, pending.selected, locale))
       .catch((err) =>
         console.warn(
           `[ask] ${pending.conversationId ?? reqId}: failed to repaint the selection:`,
@@ -661,21 +674,20 @@ export class DaemonMenus {
         .catch((e) => console.error('[picker] reply failed:', e instanceof Error ? e.message : e));
     };
 
+    const locale = localeOf(this.ctx.config);
     const def = findAgent(this.ctx.config, agentId);
     const label = agentDisplayName(def, agentId);
     const cmd = harnessCommandName(def?.harness) ?? label;
     const reported = this.agentCommands.get(agentId);
     if (!reported || reported.length === 0) {
-      send(
-        `▸ this conversation is now answered by ${label}.\nNo command list from it yet — send it a message first, then /${cmd} again.`
-      );
+      send(tMenus(locale, 'picker_no_commands', { label, cmd }));
       return;
     }
 
     const generic = genericNativeNames(def?.harness);
     const offered = reported.filter((c) => !generic.has(c.name) && agentCommandToSpec(c) !== null);
     if (offered.length === 0) {
-      send(`${label} reports no commands beyond the ones already in the menu.`);
+      send(tMenus(locale, 'picker_none_beyond_menu', { label }));
       return;
     }
 
@@ -689,9 +701,9 @@ export class DaemonMenus {
       conversation: msg.conversation,
     });
 
-    let prompt = `${label} commands:`;
+    let prompt = tMenus(locale, 'picker_prompt', { label });
     if (overflow.length > 0) {
-      prompt += `\n\n${overflow.length} more (type them directly): ${overflow.map((c) => `/${c.name}`).join(', ')}`;
+      prompt += tMenus(locale, 'picker_overflow', { count: overflow.length, list: overflow.map((c) => `/${c.name}`).join(', ') });
     }
     const buttons = shown.map((c, i) => ({ id: `${PICK_PREFIX}${reqId}:${i}`, label: `/${c.name}` }));
     void adapter
@@ -707,18 +719,20 @@ export class DaemonMenus {
   }
 
   private retirePicksFor(conversationId: ConversationId): void {
+    const locale = localeOf(this.ctx.config);
     for (const [reqId, pick] of this.pendingPicks) {
       if (pick.conversationId !== conversationId) continue;
       this.pendingPicks.delete(reqId);
       const adapter = this.ctx.platforms.get(pick.conversation.platform);
       if (!adapter || !pick.ref) continue;
       void adapter
-        .editButtons(pick.ref, 'This menu was replaced by a newer one.', [])
+        .editButtons(pick.ref, tMenus(locale, 'picker_replaced'), [])
         .catch((e) => console.warn('[picker] menu edit failed:', e instanceof Error ? e.message : e));
     }
   }
 
   private onPickClick(ev: ButtonInteraction, parsed: { reqId: string; index: number }): void {
+    const locale = localeOf(this.ctx.config);
     const pick = this.pendingPicks.get(parsed.reqId);
     if (!pick) {
       console.log(`[picker] click on an expired menu (${parsed.reqId})`);
@@ -726,7 +740,7 @@ export class DaemonMenus {
         .get(ev.conversation.platform)
         ?.sendMessage(
           addressOf(ev.conversation),
-          'That menu has expired (already used, replaced by a newer one, or the gateway restarted). Re-open it with the agent command (`/oc`, `/cc`, …), or /help for the full list.'
+          tMenus(locale, 'picker_expired')
         )
         .catch(() => undefined);
       return;
@@ -755,7 +769,7 @@ export class DaemonMenus {
     if (!delivered) {
       void this.ctx.platforms
         .get(platformId)
-        ?.sendMessage(address, `That conversation is gone — send a message first, then run /${name}.`)
+        ?.sendMessage(address, tMenus(locale, 'picker_conv_gone', { name }))
         .catch(() => undefined);
       return;
     }
@@ -792,6 +806,7 @@ export class DaemonMenus {
     };
     this.pendingModelMenus.set(reqId, pending);
 
+    const locale = localeOf(this.ctx.config);
     const index = modelIndexOf(options, selector.current);
     const view = buildModelMenu({
       reqId,
@@ -799,6 +814,7 @@ export class DaemonMenus {
       current: selector.current,
       page: index >= 0 ? modelPageOf(index, pageSize) : 0,
       pageSize,
+      locale,
     });
     void adapter
       .sendButtons(addressOf(msg.conversation), view.text, view.buttons)
@@ -813,10 +829,11 @@ export class DaemonMenus {
   }
 
   private retireModelMenusFor(conversationId: ConversationId): void {
+    const locale = localeOf(this.ctx.config);
     for (const [reqId, menu] of this.pendingModelMenus) {
       if (menu.conversationId !== conversationId) continue;
       this.pendingModelMenus.delete(reqId);
-      this.editModelMenu(menu, modelMenuSupersededText(menu.current), []);
+      this.editModelMenu(menu, modelMenuSupersededText(menu.current, locale), []);
     }
   }
 
@@ -845,10 +862,11 @@ export class DaemonMenus {
       return;
     }
 
+    const locale = localeOf(this.ctx.config);
     const menu = this.pendingModelMenus.get(click.reqId);
     if (!menu) {
       console.log(`[model] click on an expired menu (${click.reqId})`);
-      this.replyToClick(ev, modelMenuExpiredText());
+      this.replyToClick(ev, modelMenuExpiredText(locale));
       return;
     }
 
@@ -859,6 +877,7 @@ export class DaemonMenus {
         current: menu.current,
         page: click.page,
         pageSize: menu.pageSize,
+        locale,
       });
       this.editModelMenu(menu, view.text, view.buttons);
       return;
@@ -872,16 +891,17 @@ export class DaemonMenus {
     menu: PendingModelMenu,
     index: number
   ): Promise<void> {
+    const locale = localeOf(this.ctx.config);
     const option = menu.options[index];
     if (!option) {
       // Only reachable from a mangled/hashed callback id (e.g. Telegram >64B); still reply (same for workdir/settings).
       console.warn(`[model] click index ${index} is outside the menu's ${menu.options.length} options`);
-      this.replyToClick(ev, modelMenuExpiredText());
+      this.replyToClick(ev, modelMenuExpiredText(locale));
       return;
     }
 
     const result = await this.ctx.registry.applyModelChoice(menu.conversationId, menu.agentId, option.value);
-    const text = modelChoiceText(result);
+    const text = modelChoiceText(result, locale);
     console.log(`[model] ${menu.conversationId}: ${option.value} → ${result.kind}`);
 
     const retire =
@@ -900,6 +920,7 @@ export class DaemonMenus {
       current: menu.current,
       page: modelPageOf(index, menu.pageSize),
       pageSize: menu.pageSize,
+      locale,
     });
     this.editModelMenu(menu, `${view.text}\n\n${text}`, view.buttons);
   }
@@ -923,6 +944,7 @@ export class DaemonMenus {
     if (!adapter) return;
     this.retireEffortMenusFor(conversationId);
 
+    const locale = localeOf(this.ctx.config);
     const reqId = randomUUID().slice(0, 8);
     const options = [...selector.options];
     const pending: PendingEffortMenu = {
@@ -934,7 +956,7 @@ export class DaemonMenus {
     };
     this.pendingEffortMenus.set(reqId, pending);
 
-    const view = buildEffortMenu({ reqId, options, current: selector.current });
+    const view = buildEffortMenu({ reqId, options, current: selector.current, locale });
     void adapter
       .sendButtons(addressOf(msg.conversation), view.text, view.buttons)
       .then((ref) => {
@@ -947,10 +969,11 @@ export class DaemonMenus {
   }
 
   private retireEffortMenusFor(conversationId: ConversationId): void {
+    const locale = localeOf(this.ctx.config);
     for (const [reqId, menu] of this.pendingEffortMenus) {
       if (menu.conversationId !== conversationId) continue;
       this.pendingEffortMenus.delete(reqId);
-      this.editEffortMenu(menu, effortMenuSupersededText(menu.current), []);
+      this.editEffortMenu(menu, effortMenuSupersededText(menu.current, locale), []);
     }
   }
 
@@ -979,16 +1002,17 @@ export class DaemonMenus {
       return;
     }
 
+    const locale = localeOf(this.ctx.config);
     const menu = this.pendingEffortMenus.get(click.reqId);
     const option = menu?.options[click.index];
     if (!menu || !option) {
       console.log(`[effort] click on an expired menu (${click.reqId}:${click.index})`);
-      this.replyToClick(ev, effortMenuExpiredText());
+      this.replyToClick(ev, effortMenuExpiredText(locale));
       return;
     }
 
     const result = await this.ctx.registry.applyEffortChoice(menu.conversationId, menu.agentId, option.value);
-    const text = effortChoiceText(result);
+    const text = effortChoiceText(result, locale);
     console.log(`[effort] ${menu.conversationId}: ${option.value} → ${result.kind}`);
 
     if (result.kind !== 'failed') {
@@ -996,7 +1020,7 @@ export class DaemonMenus {
       this.editEffortMenu(menu, text, []);
       return;
     }
-    const view = buildEffortMenu({ reqId: click.reqId, options: menu.options, current: menu.current });
+    const view = buildEffortMenu({ reqId: click.reqId, options: menu.options, current: menu.current, locale });
     this.editEffortMenu(menu, `${view.text}\n\n${text}`, view.buttons);
   }
 
@@ -1028,6 +1052,7 @@ export class DaemonMenus {
     };
     this.pendingWorkdirMenus.set(reqId, pending);
 
+    const locale = localeOf(this.ctx.config);
     const index = workdirIndexOf(options, menu.current);
     const view = buildWorkdirMenu({
       reqId,
@@ -1035,10 +1060,11 @@ export class DaemonMenus {
       current: menu.current,
       page: index >= 0 ? workdirPageOf(index, pageSize) : 0,
       pageSize,
+      locale,
     });
     const text =
       menu.truncated > 0
-        ? `${view.text}\n(+${menu.truncated} more not shown — type part of a name instead.)`
+        ? `${view.text}\n${tMenus(locale, 'workdir_summary_more', { truncated: menu.truncated })}`
         : view.text;
     void adapter
       .sendButtons(addressOf(conv), text, view.buttons)
@@ -1052,10 +1078,11 @@ export class DaemonMenus {
   }
 
   private retireWorkdirMenusFor(conversationId: ConversationId): void {
+    const locale = localeOf(this.ctx.config);
     for (const [reqId, menu] of this.pendingWorkdirMenus) {
       if (menu.conversationId !== conversationId) continue;
       this.pendingWorkdirMenus.delete(reqId);
-      this.editWorkdirMenu(menu, workdirMenuSupersededText(menu.current), []);
+      this.editWorkdirMenu(menu, workdirMenuSupersededText(menu.current, locale), []);
     }
   }
 
@@ -1084,10 +1111,11 @@ export class DaemonMenus {
       return;
     }
 
+    const locale = localeOf(this.ctx.config);
     const menu = this.pendingWorkdirMenus.get(click.reqId);
     if (!menu) {
       console.log(`[workdir] click on an expired menu (${click.reqId})`);
-      this.replyToClick(ev, workdirMenuExpiredText());
+      this.replyToClick(ev, workdirMenuExpiredText(locale));
       return;
     }
 
@@ -1098,6 +1126,7 @@ export class DaemonMenus {
         current: menu.current,
         page: click.page,
         pageSize: menu.pageSize,
+        locale,
       });
       this.editWorkdirMenu(menu, view.text, view.buttons);
       return;
@@ -1106,12 +1135,12 @@ export class DaemonMenus {
     const option = menu.options[click.index];
     if (!option) {
       console.warn(`[workdir] click index ${click.index} is outside the menu's ${menu.options.length} options`);
-      this.replyToClick(ev, workdirMenuExpiredText());
+      this.replyToClick(ev, workdirMenuExpiredText(locale));
       return;
     }
 
     const result = this.ctx.registry.applyWorkdirChoice(menu.conversationId, menu.agentId, option.path);
-    const text = workdirChoiceText(result);
+    const text = workdirChoiceText(result, locale);
     console.log(`[workdir] ${menu.conversationId}: ${option.path} → ${result.kind}`);
 
     if (result.kind === 'failed') {
@@ -1121,6 +1150,7 @@ export class DaemonMenus {
         current: menu.current,
         page: workdirPageOf(click.index, menu.pageSize),
         pageSize: menu.pageSize,
+        locale,
       });
       this.editWorkdirMenu(menu, `${view.text}\n\n${text}`, view.buttons);
       return;
@@ -1174,10 +1204,11 @@ export class DaemonMenus {
   ): void {
     const adapter = this.ctx.platforms.get(conversation.platform);
     if (!adapter) return;
+    const locale = localeOf(this.ctx.config);
     for (const [reqId, old] of this.pendingAgentMenus) {
       if (old.conversationId !== conversationId) continue;
       this.pendingAgentMenus.delete(reqId);
-      this.editAgentMenu(old, 'This menu was replaced by a newer one.', []);
+      this.editAgentMenu(old, tMenus(locale, 'picker_replaced'), []);
     }
     const reqId = randomUUID().slice(0, 8);
     const pending: PendingAgentMenu = {
@@ -1195,6 +1226,7 @@ export class DaemonMenus {
       current: pending.current,
       pageSize: pending.pageSize,
       ...(retry ? { purpose: 'retry' as const } : {}),
+      locale,
     });
     void adapter
       .sendButtons(addressOf(conversation), view.text, view.buttons)
@@ -1223,6 +1255,7 @@ export class DaemonMenus {
       console.log(`[access] denied agent-menu click from ${clicker.platform}:${clicker.user}`);
       return;
     }
+    const locale = localeOf(this.ctx.config);
     const menu = this.pendingAgentMenus.get(click.reqId);
     if (!menu) {
       this.replyToClick(ev, 'That menu has expired — send /agent again.');
@@ -1237,6 +1270,7 @@ export class DaemonMenus {
         page,
         pageSize: menu.pageSize,
         ...(menu.retry ? { purpose: 'retry' as const } : {}),
+        locale,
       });
       this.editAgentMenu(menu, view.text, view.buttons);
     };
