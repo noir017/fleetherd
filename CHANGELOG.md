@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.33.0] - 2026-11-22
+
 ### Added
 
 - **Full external MCP capability via per-caller `trusted: true`.** Callers in `mcp.callers[]` can
