@@ -1,4 +1,6 @@
 import { Command } from 'commander';
+import { detectEnvLocale, type Locale } from '../core/i18n/index.js';
+import { tCli } from '../core/i18n/cli.js';
 
 /**
  * The top-level command and its global options, apart from `cli.ts` so a test can parse through it
@@ -13,16 +15,17 @@ import { Command } from 'commander';
  * second skill on the same subject instead. `fleetherd -c <file> start` still works;
  * `fleetherd start -c <file>` no longer does.
  */
-export function newProgram(version: string): Command {
+export function newProgram(version: string, locale?: Locale): Command {
+  const loc = locale ?? detectEnvLocale(process.env);
   return (
     new Command()
       .name('fleetherd')
-      .description('Gateway that connects IM platforms to coding agents: messaging via Koishi, handled over ACP')
+      .description(tCli(loc, 'cli.description'))
       .version(version)
       .enablePositionalOptions()
       // Global: pick a specific config file (e.g. one per platform). Default is ~/.config/fleetherd/config.yaml.
       // We stash it on process.env so it's inherited by the spawned agent — its reverse commands then resolve
       // the same config/socket. Only one daemon runs at a time, so the socket sits next to the chosen file.
-      .option('-c, --config <path>', 'path to the config YAML to use (default: ~/.config/fleetherd/config.yaml); goes before the command')
+      .option('-c, --config <path>', tCli(loc, 'cli.option.config'))
   );
 }

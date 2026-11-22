@@ -20,6 +20,8 @@ import { installDaemonLog } from './log-file.js';
 import { mcpSession } from './mcp.js';
 import { renderResult } from './reverse.js';
 import { legacyConfigDirNote, migrateHostDir } from '../legacy-name.js';
+import { detectEnvLocale, type Locale } from '../core/i18n/index.js';
+import { tCli } from '../core/i18n/cli.js';
 
 /**
  * `fleetherd start` — default command. Read config -> build platform adapter + agent factory -> start the daemon.
@@ -59,6 +61,7 @@ export async function runStart(): Promise<void> {
     renameAgentsInConfig(renames);
   }
   const cfg = await loadConfigReadingPods();
+  const locale: Locale = cfg.locale ?? detectEnvLocale(process.env);
   const socket = resolveSocketPath(cfg);
 
   // Provision the reverse-CLI shim up front (agent-acp refreshes it per spawn): fail loudly at
@@ -71,7 +74,7 @@ export async function runStart(): Promise<void> {
   // conversation and, per agent, that agent's own session id (ACP session id / agy conversation id)
   // so a restart resumes it. Only /new forgets any of it.
   const store = new ConversationStore(path.join(configDir(), 'conversations.json'));
-  migrateLegacy(cfg, store);
+  migrateLegacy(cfg, store, locale);
   // How often each directory has been chosen with `/cd`, so the menu leads with the projects this
   // machine actually works in. Separate from the conversation store because it is a fact about the
   // MACHINE, not about one topic — a brand-new conversation gets the benefit of it immediately.
@@ -92,17 +95,22 @@ export async function runStart(): Promise<void> {
     const tasks = schedules.store.renameAgents(renames);
     setRenamesAside(configDir(), stamp);
     console.log(
-      `[renames] ${[...renames].map(([a, b]) => `${a} → ${b}`).join(', ')}: ${conversations} conversation(s), ${tasks} scheduled task(s); backups *.bak-renames-${stamp}`
+      tCli(locale, 'start.renamesApplied', {
+        renames: [...renames].map(([a, b]) => `${a} → ${b}`).join(', '),
+        conversations,
+        tasks,
+        stamp,
+      })
     );
   }
-  const daemon = new Daemon(cfg, platforms, agents, socket, store, workdirUsage, schedules, openHistory());
+  const daemon = new Daemon(cfg, platforms, agents, socket, store, workdirUsage, schedules, openHistory(locale));
   daemon.renderToolsWith((action, data) => {
     const out = renderResult(action, data);
     return [out.stdout, out.stderr].filter(Boolean).join('\n');
   });
 
   await daemon.run();
-  console.log(`🚀 fleetherd daemon is running (socket: ${socket})`);
+  console.log(tCli(locale, 'start.daemonRunning', { socket }));
 
   // Don't register SIGINT/SIGTERM here: installSignalHandlers inside daemon.run()
   // already handles graceful shutdown (exit codes 130/143, cleanup, re-entrancy guard).
@@ -118,13 +126,15 @@ export async function runStart(): Promise<void> {
  * pods are read the way the daemon reads them, with the hosts as config.yaml has them.
  */
 async function loadConfigReadingPods(): Promise<Config> {
+  const envLocale = detectEnvLocale(process.env);
   try {
     return loadConfig();
   } catch (e) {
     const raw = readRawConfigIfExists();
+    const locale: Locale = (raw?.locale as Locale | undefined) ?? envLocale;
     const hosts = z.record(HostDefSchema).safeParse(raw?.hosts);
     if (!hosts.success || Object.keys(hosts.data).length === 0) throw e;
-    console.warn(`[pods] the config did not load; reading the hosts' pods in case it names their agents`);
+    console.warn(tCli(locale, 'start.podsLoadFallback'));
     remoteHosts.configure({ hosts: hosts.data }, defaultSocketPath());
     const read = await refreshPods({
       dir: configDir(),
@@ -150,7 +160,7 @@ async function loadConfigReadingPods(): Promise<Config> {
  * Best-effort and idempotent-ish: entries whose key no longer maps under the CURRENT scope are
  * skipped, and the legacy file is left untouched so a downgrade still finds it.
  */
-function migrateLegacy(cfg: ReturnType<typeof loadConfig>, store: ConversationStore): void {
+function migrateLegacy(cfg: ReturnType<typeof loadConfig>, store: ConversationStore, locale: Locale): void {
   const legacy = path.join(configDir(), 'sessions.json');
   const recovered = migrateLegacySessions(legacy, store, ({ platform, marker, rest }) => {
     // Old scope markers: c = per_channel, t = per_thread, u = per_user, plus the shared key.
@@ -173,9 +183,7 @@ function migrateLegacy(cfg: ReturnType<typeof loadConfig>, store: ConversationSt
     return conversationKey(cfg.session.scope, ref);
   });
   if (recovered > 0) {
-    console.log(
-      `[migrate] carried ${recovered} conversation(s) over from sessions.json — their agents resume where they left off`
-    );
+    console.log(tCli(locale, 'start.migrateLegacySessions', { count: recovered }));
   }
 }
 
@@ -190,16 +198,19 @@ const BLANK = { platform: '', channel: '', kind: 'group' as const, user: '' };
  * `HistoryStore` logs it once and the daemon runs without history, which is what the recording
  * path's best-effort rule already assumes.
  */
-function openHistory(): HistoryStore {
+function openHistory(locale: Locale): HistoryStore {
   const store = new HistoryStore(path.join(configDir(), 'history.db'));
   const imported = importWebuiTranscripts(configDir(), store);
   if (imported.imported > 0) {
     console.log(
-      `[history] imported ${imported.imported} web UI conversation(s), ${imported.messages} message(s)`
+      tCli(locale, 'start.historyImported', {
+        count: imported.imported,
+        messages: imported.messages,
+      })
     );
   }
   if (imported.failed > 0) {
-    console.warn(`[history] ${imported.failed} web UI transcript(s) could not be imported`);
+    console.warn(tCli(locale, 'start.historyImportFailed', { count: imported.failed }));
   }
   return store;
 }
