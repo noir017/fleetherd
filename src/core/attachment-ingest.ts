@@ -47,6 +47,8 @@ export interface IngestedAttachments {
   files: Array<{ path: string; name: string; mime?: string }>;
   /** Pictures that can go to the agent as pictures, in attachment order. Each also has its path line. */
   images: PromptImage[];
+  /** Non-image (or held-back) persisted files that can go to an agent claiming `embeddedContext`. */
+  promptFiles: PromptFile[];
   /** Pictures that did not make `images`, and why — for the daemon to log, since none of this is visible to anyone. */
   heldBack: Array<{ name: string; reason: string }>;
 }
@@ -69,6 +71,19 @@ export interface PromptImage {
   mimeType: PromptImageType;
   bytes: Uint8Array;
 }
+
+/** One non-image persisted file to forward as an ACP embedded resource when the agent supports it. */
+export interface PromptFile {
+  name: string;
+  path: string;
+  mimeType: string;
+  bytes: Uint8Array;
+}
+
+/** Largest single file sent inline as an ACP embedded resource blob (10 MB raw). */
+export const MAX_PROMPT_FILE_BYTES = 10_000_000;
+/** Most non-image file bytes one prompt carries inline (20 MB raw). */
+export const MAX_PROMPT_FILE_TOTAL_BYTES = 20_000_000;
 
 /**
  * Largest picture sent as a picture: 5,000,000 bytes once base64'd, the strictest per-image cap
@@ -113,12 +128,14 @@ export function sniffImageType(bytes: Uint8Array): PromptImageType | undefined {
  * tokens of context on something nobody asked to be looked at.
  */
 function pickImages(
-  saved: Array<{ name: string; type: AttachmentInput['type']; mime?: string; bytes: Uint8Array }>
-): Pick<IngestedAttachments, 'images' | 'heldBack'> {
+  saved: Array<{ name: string; path: string; type: AttachmentInput['type']; mime?: string; bytes: Uint8Array }>
+): Pick<IngestedAttachments, 'images' | 'heldBack'> & { pickedIndices: Set<number> } {
   const images: PromptImage[] = [];
   const heldBack: IngestedAttachments['heldBack'] = [];
+  const pickedIndices = new Set<number>();
   let total = 0;
-  for (const f of saved) {
+  for (let i = 0; i < saved.length; i++) {
+    const f = saved[i]!;
     if (f.type !== 'image' && !f.mime?.toLowerCase().startsWith('image/')) continue;
     const mimeType = sniffImageType(f.bytes);
     if (!mimeType) {
@@ -130,9 +147,33 @@ function pickImages(
     } else {
       total += f.bytes.length;
       images.push({ name: f.name, mimeType, bytes: f.bytes });
+      pickedIndices.add(i);
     }
   }
-  return { images, heldBack };
+  return { images, heldBack, pickedIndices };
+}
+
+/** Pick persisted non-image (or held-back) files within size caps for agents claiming `embeddedContext`. */
+function pickPromptFiles(
+  saved: Array<{ name: string; path: string; type: AttachmentInput['type']; mime?: string; bytes: Uint8Array }>,
+  pickedImages: ReadonlySet<number>
+): PromptFile[] {
+  const out: PromptFile[] = [];
+  let total = 0;
+  for (let i = 0; i < saved.length; i++) {
+    if (pickedImages.has(i)) continue;
+    const f = saved[i]!;
+    if (f.bytes.length === 0 || f.bytes.length > MAX_PROMPT_FILE_BYTES) continue;
+    if (total + f.bytes.length > MAX_PROMPT_FILE_TOTAL_BYTES) continue;
+    total += f.bytes.length;
+    out.push({
+      name: f.name,
+      path: f.path,
+      mimeType: f.mime?.split(';')[0]?.trim() || 'application/octet-stream',
+      bytes: f.bytes,
+    });
+  }
+  return out;
 }
 
 // ============================================================================
@@ -262,8 +303,8 @@ export async function ingestAttachments(
           continue;
         }
         // Exceeded maxInjectBytes after download: persist and give the path.
-        await saveAndRecord(att, name, bytes, deps, files, lines);
-        saved.push({ name, type: att.type, mime: att.mime, bytes });
+        const savedPath = await saveAndRecord(att, name, bytes, deps, files, lines);
+        saved.push({ name, path: savedPath, type: att.type, mime: att.mime, bytes });
         continue;
       }
 
@@ -290,7 +331,7 @@ export async function ingestAttachments(
         lines.push(`Attachment ${display}:\n\`\`\`${fenceLang(resolvedName)}\n${text}\n\`\`\``);
         continue;
       }
-      await saveAndRecord(
+      const savedPath = await saveAndRecord(
         { ...att, ...(resolvedName ? { name: resolvedName } : {}), ...(resolvedMime ? { mime: resolvedMime } : {}) },
         display,
         got.bytes,
@@ -298,14 +339,16 @@ export async function ingestAttachments(
         files,
         lines
       );
-      saved.push({ name: display, type: att.type, mime: resolvedMime, bytes: got.bytes });
+      saved.push({ name: display, path: savedPath, type: att.type, mime: resolvedMime, bytes: got.bytes });
     } catch {
       // Single failure degrades to a line, doesn't affect the rest.
       lines.push(`[Attachment ${name} failed to download. URL: ${displayUrl(att.url)}]`);
     }
   }
 
-  return { promptText: lines.join('\n'), files, ...pickImages(saved) };
+  const { images, heldBack, pickedIndices } = pickImages(saved);
+  const promptFiles = pickPromptFiles(saved, pickedIndices);
+  return { promptText: lines.join('\n'), files, images, promptFiles, heldBack };
 }
 
 /**
@@ -326,9 +369,10 @@ async function saveAndRecord(
   deps: AttachmentIngestDeps,
   files: IngestedAttachments['files'],
   lines: string[]
-): Promise<void> {
+): Promise<string> {
   const path = await deps.save(name, bytes);
   files.push({ path, name, mime: att.mime });
   const mimeNote = att.mime ? ` (${att.mime})` : '';
   lines.push(`[Attachment ${name}: ${path}${mimeNote}]`);
+  return path;
 }

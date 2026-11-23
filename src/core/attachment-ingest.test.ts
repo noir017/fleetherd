@@ -382,4 +382,21 @@ describe('ingestAttachments · pictures the agent is shown', () => {
       ['b.gif', 'image/gif'],
     ]);
   });
+
+  it('collects non-image persisted files in promptFiles without duplicating picked images', async () => {
+    const pdf = new Uint8Array([0x25, 0x50, 0x44, 0x46]);
+    const atts: AttachmentInput[] = [
+      { type: 'image', url: 'img', name: 'shot.png', mime: 'image/png' },
+      { type: 'file', url: 'doc', name: 'report.pdf', mime: 'application/pdf' },
+    ];
+    const deps = makeDeps({
+      contents: { img: { bytes: picture(MAGIC.png) }, doc: { bytes: pdf } },
+    });
+    const res = await ingestAttachments(atts, ROOMY, deps);
+
+    expect(res.images.map((i) => i.name)).toEqual(['shot.png']);
+    expect(res.promptFiles).toEqual([
+      { name: 'report.pdf', path: '/cache/report.pdf', mimeType: 'application/pdf', bytes: pdf },
+    ]);
+  });
 });

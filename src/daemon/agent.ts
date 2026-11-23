@@ -207,6 +207,16 @@ export interface TurnImage {
   data: string;
 }
 
+/** One non-image file as a runtime sends it: base64'd for ACP's `EmbeddedResource.blob`. */
+export interface TurnFile {
+  name: string;
+  /** `file://` URI carrying the saved path (basename is the original filename). */
+  uri: string;
+  mimeType: string;
+  /** base64, no `data:` prefix — the shape ACP's `BlobResourceContents.blob` takes. */
+  data: string;
+}
+
 export interface RunTurnInput {
   /** Merged user input (already assembled into one segment). */
   prompt: string;
@@ -217,6 +227,12 @@ export interface RunTurnInput {
    * logs that it did, and still leaves the agent a file it can open.
    */
   images?: TurnImage[];
+  /**
+   * Non-image files the user sent, for a runtime whose ACP `initialize` claims
+   * `promptCapabilities.embeddedContext`. Dropped silently for runtimes that do not claim it
+   * (they still have the saved paths in `prompt`).
+   */
+  files?: TurnFile[];
   /**
    * per-session stable token (injected into the agent child env as FLEETHERD_TURN_TOKEN at spawn).
    * Reverse commands use it to connect back; the daemon resolves it to the current turn's channel. Same value every turn.
@@ -259,7 +275,7 @@ export interface AgentSession {
    *
    * Optional: a runtime with no notion of it omits it, which reads as `refused` every time.
    */
-  steer?(input: Pick<RunTurnInput, 'prompt' | 'images'>): Promise<SteerOutcome>;
+  steer?(input: Pick<RunTurnInput, 'prompt' | 'images' | 'files'>): Promise<SteerOutcome>;
   /** Interrupt the current turn (`/stop`). */
   abort(): void;
   /**

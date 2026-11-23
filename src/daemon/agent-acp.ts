@@ -272,6 +272,7 @@ class AcpSession implements AgentSession {
   private resume: ResumeSupport = NO_RESUME;
   private steeringMode: SteeringMode = 'none';
   private imagePrompts = false;
+  private embeddedContext = false;
   private forkSupport: ForkSupport = NO_FORK;
   private forkKnown = false;
   private forkSeed: string | undefined;
@@ -404,13 +405,13 @@ class AcpSession implements AgentSession {
     };
   }
 
-  private blocksOf(input: Pick<RunTurnInput, 'prompt' | 'images'>): ContentBlock[] {
+  private blocksOf(input: Pick<RunTurnInput, 'prompt' | 'images' | 'files'>): ContentBlock[] {
     if (input.images?.length && !this.imagePrompts) {
       console.log(
         `[acp] ${this.conversationId}: "${this.def.id}" does not take pictures in a prompt (initialize: promptCapabilities.image is not true); ${input.images.length} go by path only`
       );
     }
-    return promptBlocks(input, this.imagePrompts);
+    return promptBlocks(input, this.imagePrompts, this.embeddedContext);
   }
 
   private resetHandles(): void {
@@ -594,6 +595,7 @@ class AcpSession implements AgentSession {
     this.resume = readResumeSupport(initResult.agentCapabilities);
     this.steeringMode = steeringModeOf(initResult, takesPromptMidTurn(this.def));
     this.imagePrompts = initResult.agentCapabilities?.promptCapabilities?.image === true;
+    this.embeddedContext = initResult.agentCapabilities?.promptCapabilities?.embeddedContext === true;
     [this.forkSupport, this.forkKnown] = [forkSupportOf(initResult), true];
 
     if (this.forkSeed !== undefined) {
@@ -1169,7 +1171,7 @@ class AcpSession implements AgentSession {
     }
   }
 
-  async steer(input: Pick<RunTurnInput, 'prompt' | 'images'>): Promise<SteerOutcome> {
+  async steer(input: Pick<RunTurnInput, 'prompt' | 'images' | 'files'>): Promise<SteerOutcome> {
     if (this.promptSent) await this.promptSent;
     if (!this.joinTurn || this.aborting) return 'refused';
     return this.joinTurn(this.blocksOf(input));

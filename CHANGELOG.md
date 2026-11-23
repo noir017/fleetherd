@@ -5,6 +5,10 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **ACP embeddedContext file forwarding.** Agents declaring `promptCapabilities.embeddedContext: true` now receive persisted non-image attachments (up to 10 MB per file / 20 MB per prompt) as standard ACP `resource` (`blob`) blocks alongside the existing saved-path lines, enabling browser-backed agents (such as Gemini and Muse via `web-agent-driver`) to upload arbitrary files directly.
+
 ## [3.36.0] - 2026-11-23
 
 ### Changed

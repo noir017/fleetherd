@@ -69,10 +69,28 @@ import {
  * may reject the block. The pictures go first, the order Anthropic's vision docs recommend; the
  * text still names each by path, in the same order.
  */
-export function promptBlocks(turn: Pick<RunTurnInput, 'prompt' | 'images'>, takesImages: boolean): ContentBlock[] {
+export function promptBlocks(
+  turn: Pick<RunTurnInput, 'prompt' | 'images' | 'files'>,
+  takesImages: boolean,
+  takesEmbeddedContext = false
+): ContentBlock[] {
   const text: ContentBlock = { type: 'text', text: turn.prompt };
-  if (!takesImages || !turn.images?.length) return [text];
-  return [...turn.images.map((img): ContentBlock => ({ type: 'image', data: img.data, mimeType: img.mimeType })), text];
+  const blocks: ContentBlock[] = [];
+  if (takesImages && turn.images?.length) {
+    for (const img of turn.images) {
+      blocks.push({ type: 'image', data: img.data, mimeType: img.mimeType });
+    }
+  }
+  if (takesEmbeddedContext && turn.files?.length) {
+    for (const file of turn.files) {
+      blocks.push({
+        type: 'resource',
+        resource: { uri: file.uri, mimeType: file.mimeType, blob: file.data },
+      });
+    }
+  }
+  blocks.push(text);
+  return blocks;
 }
 
 /**
@@ -433,7 +451,7 @@ export function adoptAcpChild(
 export function buildTurnPromptInput(
   def: AgentDef,
   input: RunTurnInput,
-  blocksOf: (input: Pick<RunTurnInput, 'prompt' | 'images'>) => ContentBlock[],
+  blocksOf: (input: Pick<RunTurnInput, 'prompt' | 'images' | 'files'>) => ContentBlock[],
   promptId?: string
 ): ContentBlock[] {
   if (input.reconnect) return reconnectBlocks(promptId);

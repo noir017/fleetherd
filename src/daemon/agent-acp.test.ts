@@ -1116,6 +1116,20 @@ describe('what the agent is given', () => {
     ]);
   });
 
+  it('attaches non-image files as embedded resource blocks only when the harness claims embeddedContext', () => {
+    const files = [
+      { name: 'report.pdf', uri: 'file:///cache/report.pdf', mimeType: 'application/pdf', data: 'JVBERg==' },
+    ];
+    expect(promptBlocks({ prompt: 'read this', images: shots.slice(0, 1), files }, true, true)).toEqual([
+      { type: 'image', data: 'iVBORw0K', mimeType: 'image/png' },
+      { type: 'resource', resource: { uri: 'file:///cache/report.pdf', mimeType: 'application/pdf', blob: 'JVBERg==' } },
+      { type: 'text', text: 'read this' },
+    ]);
+    expect(promptBlocks({ prompt: 'read this', files }, true, false)).toEqual([
+      { type: 'text', text: 'read this' },
+    ]);
+  });
+
   it('hands every session the stdio tool server, with token, socket and cwd in its own env', () => {
     const self = { command: '/usr/bin/node', args: ['--import', 'tsx', '/srv/aa/dist/cli.js'] };
     expect(acpMcpServers('tok-1', '/run/aa.sock', '/work/p', self)).toEqual([

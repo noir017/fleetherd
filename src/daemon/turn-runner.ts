@@ -1,3 +1,4 @@
+import { pathToFileURL } from 'node:url';
 import type { Config } from '../config/schema.js';
 import { findAgent } from '../config/schema.js';
 import { localeOf, type Locale } from '../core/i18n/index.js';
@@ -20,7 +21,7 @@ import type {
 } from '../types.js';
 import type { PlatformAdapter } from '../platform/adapter.js';
 import { commandSurface } from './delegation.js';
-import type { AgentFactory, AgentImage, AgentSession, AgentStreamHandlers, AgentUsage, FollowUpSink, TurnImage } from './agent.js';
+import type { AgentFactory, AgentImage, AgentSession, AgentStreamHandlers, AgentUsage, FollowUpSink, TurnFile, TurnImage } from './agent.js';
 import { promptUndelivered } from './agent.js';
 import { promptIdOf } from './failed-input.js';
 import { retryButtons } from '../core/turn-retry.js';
@@ -794,7 +795,7 @@ export class TurnRunner {
     // (crash, `/cd`, idle reclaim all rebuild one underneath it), and a sink installed on a dead
     // child would leave background output with nowhere to go.
     agent.setFollowUpSink?.(this.followUpSink(conversationId));
-    const { prompt, images } = await this.buildPrompt(batch, platform, agentId);
+    const { prompt, images, files } = await this.buildPrompt(batch, platform, agentId);
     // Open the turn only now, immediately before the first row that names it: everything above
     // can throw (spawning an agent, building a prompt), and a turn opened before it would be left
     // running until the next start. A failure HERE leaves turnId undefined, and every later row
@@ -854,6 +855,7 @@ export class TurnRunner {
             prompt: isReconnect ? '' : prompt,
             ...(isReconnect ? { reconnect: true } : { promptId: promptIdOf(batch) }),
             ...(!isReconnect && images.length > 0 ? { images } : {}),
+            ...(!isReconnect && files.length > 0 ? { files } : {}),
             sessionToken,
             model: this.deps.getModelOverride(conversationId),
             ...(commandSurface(platform).nested ? { topic: formatTarget(platformId, address) } : {}),
@@ -1141,9 +1143,13 @@ export class TurnRunner {
         turn.lanes.some((lane) => sameAddress(lane, addressOf(m.conversation)))
     );
     if (!fromThisLane) return 'refused';
-    const { prompt, images } = await this.buildPrompt(batch, this.adapterFor(turn.platformId), this.deps.agentIdOf(conversationId));
+    const { prompt, images, files } = await this.buildPrompt(batch, this.adapterFor(turn.platformId), this.deps.agentIdOf(conversationId));
     if (this.running.get(conversationId) !== turn) return 'refused';
-    const outcome = await turn.agent.steer({ prompt, ...(images.length > 0 ? { images } : {}) });
+    const outcome = await turn.agent.steer({
+      prompt,
+      ...(images.length > 0 ? { images } : {}),
+      ...(files.length > 0 ? { files } : {}),
+    });
     // Recorded only when the harness really took it. A `refused` message stays queued and runs as
     // the next turn, which records it then — writing it here too would put it in the library twice.
     //
@@ -2183,9 +2189,9 @@ export class TurnRunner {
     batch: InboundMessage[],
     platform: PlatformAdapter,
     agentId: string
-  ): Promise<{ prompt: string; images: TurnImage[] }> {
+  ): Promise<{ prompt: string; images: TurnImage[]; files: TurnFile[] }> {
     const base = this.mergePrompt(batch);
-    if (!this.config.attachments.enabled) return { prompt: base, images: [] };
+    if (!this.config.attachments.enabled) return { prompt: base, images: [], files: [] };
 
     // Collect all attachments in the batch (order-preserving); return early if none.
     const atts: AttachmentInput[] = [];
@@ -2194,7 +2200,7 @@ export class TurnRunner {
         atts.push({ type: a.type, url: a.url, name: a.name, mime: a.mime, size: a.size });
       }
     }
-    if (atts.length === 0) return { prompt: base, images: [] };
+    if (atts.length === 0) return { prompt: base, images: [], files: [] };
 
     try {
       // The platform fetches its own private media (Lark `internal:` URLs); everything else
@@ -2206,7 +2212,7 @@ export class TurnRunner {
       // A file for an agent on another machine is put on that machine, where it can open it.
       const host = remoteHosts.hostFor(findAgent(this.config, agentId));
       if (host) deps.save = remoteAttachmentSave(host);
-      const { promptText, images, heldBack } = await ingestAttachments(
+      const { promptText, images, promptFiles, heldBack } = await ingestAttachments(
         atts,
         {
           maxInjectBytes: this.config.attachments.maxInjectBytes,
@@ -2222,12 +2228,18 @@ export class TurnRunner {
         mimeType: img.mimeType,
         data: Buffer.from(img.bytes).toString('base64'),
       }));
-      if (!promptText) return { prompt: base, images: turnImages };
-      return { prompt: `${base}\n\n---\nAttachments:\n${promptText}`, images: turnImages };
+      const turnFiles: TurnFile[] = promptFiles.map((f) => ({
+        name: f.name,
+        uri: pathToFileURL(f.path).href,
+        mimeType: f.mimeType,
+        data: Buffer.from(f.bytes).toString('base64'),
+      }));
+      if (!promptText) return { prompt: base, images: turnImages, files: turnFiles };
+      return { prompt: `${base}\n\n---\nAttachments:\n${promptText}`, images: turnImages, files: turnFiles };
     } catch (e) {
       // best-effort: attachment injection failure never blocks the turn.
       console.error('[turn] attachment injection failed:', e instanceof Error ? e.message : e);
-      return { prompt: base, images: [] };
+      return { prompt: base, images: [], files: [] };
     }
   }
 }
