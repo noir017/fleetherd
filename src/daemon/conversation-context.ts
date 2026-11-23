@@ -48,6 +48,8 @@ export interface ConversationState {
   lastUsage?: AgentUsage;
   /** Kept apart from lastUsage: only the snapshot tied to a finished result carries a cost. */
   lastCost?: { amount: number; currency: string };
+  /** A message has been forwarded to the agent under the current binding (locks workdir even before a session id lands). */
+  turnStarted?: boolean;
   /** A turn ended normally under the current binding: tells `/context`'s "not yet" from "never". */
   turnCompleted?: boolean;
 }
@@ -121,6 +123,7 @@ export interface ConversationHooks {
   takeVoice?(id: ConversationId, msg: InboundMessage): boolean;
   supersedeVoice?(id: ConversationId): number;
   supersedeProposals?(id: ConversationId): void;
+  retireWorkdirMenus?(id: ConversationId): void;
   cancelPendingVoice?(id: ConversationId, reason: string): number;
   stopSubAgents?(id: ConversationId): number;
   onScheduleSetting?(id: ConversationId, msg: InboundMessage, args: string[], canMenu: boolean): void;

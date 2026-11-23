@@ -309,10 +309,12 @@ export class ConversationTurns {
 
   /** The end of route(): the message goes to the agent. Also where a deferred passthrough lands. */
   forward(key: ConversationId, state: ConversationState, msg: InboundMessage, opts?: { transcript?: boolean }): void {
+    state.turnStarted = true;
     this.sendHeader(state, msg);
     // Typing is how a transcript or a sub-agent card is corrected: the one not tapped must not go later.
     if (!opts?.transcript) this.ctx.hooks?.supersedeVoice?.(key);
     this.ctx.hooks?.supersedeProposals?.(key);
+    this.ctx.hooks?.retireWorkdirMenus?.(key);
     state.reclaimOnIdle = false;
     void state.merger.ingest(msg);
   }
@@ -327,6 +329,8 @@ export class ConversationTurns {
   dispatchTo(id: ConversationId, msg: InboundMessage): boolean {
     const state = this.ctx.conversations.get(id);
     if (!state) return false;
+    state.turnStarted = true;
+    this.ctx.hooks?.retireWorkdirMenus?.(id);
     state.platform = msg.conversation.platform;
     state.reclaimOnIdle = false;
     void state.merger.ingest(msg);

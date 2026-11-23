@@ -283,6 +283,7 @@ export class Daemon {
       answerPendingAsk: (id: ConversationId, text: string) => this.menus.answerPendingAskWithText(id, text),
       cancelPendingAsks: (id: ConversationId, reason: string) => this.menus.cancelPendingAsks(id, reason),
       supersedeProposals: (id: ConversationId) => this.delegation.personSpoke(id),
+      retireWorkdirMenus: (id: ConversationId) => this.menus.retireWorkdirMenusFor(id, 'session-started'),
       onDelegationSettingChanged: () => this.delegation.forgetConfirmations(),
       onModelMenuRequest: (
         id: ConversationId,

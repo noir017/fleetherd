@@ -323,6 +323,10 @@ export class ConversationCommands {
       const text = this.controls.applyWorkdirCommand(key, agentId, setting.rest, msg);
       if (text !== undefined) ack('/cd', text);
     };
+    if (this.controls.isWorkdirLocked(key, agentId)) {
+      answer();
+      return true;
+    }
     // An asked-for `/cd` on a remote agent lists what is there now, not what was there last time.
     const def = findAgent(this.ctx.config, agentId);
     if (def?.host) void this.controls.refreshRemoteScan(def).then(answer);

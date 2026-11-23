@@ -75,6 +75,7 @@ import {
   workdirChoiceText,
   workdirIndexOf,
   workdirMenuExpiredText,
+  workdirMenuLockedText,
   workdirMenuSupersededText,
   workdirPageOf,
   workdirParentOf,
@@ -284,6 +285,8 @@ interface PendingWorkdirMenu {
   supportsScreen: boolean;
   pageSize: number;
   ref?: MessageRef;
+  /** Set when retired before `sendButtons` resolved, so `.then` closes the menu immediately on arrival. */
+  retiredText?: string;
 }
 
 interface PendingAgentMenu {
@@ -1105,6 +1108,9 @@ export class DaemonMenus {
       )
       .then((ref) => {
         pending.ref = ref;
+        if (pending.retiredText !== undefined) {
+          this.editWorkdirMenu(pending, pending.retiredText, []);
+        }
       })
       .catch((e) => {
         this.pendingWorkdirMenus.delete(reqId);
@@ -1174,12 +1180,20 @@ export class DaemonMenus {
     this.editWorkdirMenu(menu, rendered.text, rendered.buttons, rendered.screen);
   }
 
-  private retireWorkdirMenusFor(conversationId: ConversationId): void {
+  retireWorkdirMenusFor(
+    conversationId: ConversationId,
+    reason: 'superseded' | 'session-started' = 'superseded'
+  ): void {
     const locale = localeOf(this.ctx.config);
     for (const [reqId, menu] of this.pendingWorkdirMenus) {
       if (menu.conversationId !== conversationId) continue;
       this.pendingWorkdirMenus.delete(reqId);
-      this.editWorkdirMenu(menu, workdirMenuSupersededText(menu.current, locale), []);
+      const text =
+        reason === 'session-started'
+          ? workdirMenuLockedText(menu.current, locale)
+          : workdirMenuSupersededText(menu.current, locale);
+      menu.retiredText = text;
+      if (menu.ref) this.editWorkdirMenu(menu, text, []);
     }
   }
 

@@ -234,19 +234,29 @@ describe('when the directory question is asked', () => {
 });
 
 describe('moving a conversation', () => {
-  it('records the directory, drops every session id, and stops the child', async () => {
-    const { send, replies, disposed, store, key } = rig();
+  it('refuses to move once a session has started, and allows moving again after /new', async () => {
+    const { send, replies, menus, disposed, store, key } = rig();
     await send('/cc hello');
     store.setAgentSession(key, 'cc', 'acp-1');
     store.setAgentSession(key, 'oc', 'oc-1');
     disposed.length = 0;
 
+    await send('/cd');
+    expect(menus).toHaveLength(0);
+    expect(replies().at(-1)).toContain('/new');
+
+    await send('/cd shop-api');
+    expect(store.conversationCwd(key)).toBeUndefined();
+    expect(store.agentSession(key, 'cc')).toBe('acp-1');
+    expect(store.agentSession(key, 'oc')).toBe('oc-1');
+    expect(disposed).toEqual([]);
+    expect(replies().at(-1)).toContain('/new');
+
+    await send('/new');
     await send('/cd shop-api');
     expect(store.conversationCwd(key)).toBe(SHOP_API);
-    // Every agent's, not just the bound one's: the directory belongs to the conversation.
     expect(store.agentSession(key, 'cc')).toBeUndefined();
     expect(store.agentSession(key, 'oc')).toBeUndefined();
-    expect(disposed).toEqual([key]);
     expect(replies().at(-1)).toContain('fresh session');
   });
 
@@ -261,15 +271,13 @@ describe('moving a conversation', () => {
   });
 
   it('costs nothing when the directory picked is the one already in use', async () => {
-    const { send, replies, disposed, store, key } = rig();
+    const { send, replies, disposed } = rig();
     await send('/cd shop-api');
-    store.setAgentSession(key, 'cc', 'acp-2');
     disposed.length = 0;
 
     await send('/cd shop-api');
     expect(replies().at(-1)).toContain('nothing reset');
     expect(disposed).toEqual([]);
-    expect(store.agentSession(key, 'cc')).toBe('acp-2');
   });
 
   it('clears the override when the root is chosen, so config can still move it later', async () => {
@@ -415,6 +423,14 @@ describe('applying a click', () => {  it('moves the conversation the menu was op
     await send('/cc');
     const result = reg.applyWorkdirChoice(key, 'cc', join(root, 'deleted-since'));
     expect(result).toEqual({ kind: 'missing', path: join(root, 'deleted-since') });
+  });
+
+  it('refuses a click once a session has started', async () => {
+    const { reg, send, store, key } = rig();
+    await send('/cc hello');
+    const result = reg.applyWorkdirChoice(key, 'cc', SHOP_API);
+    expect(result).toEqual({ kind: 'locked', path: root });
+    expect(store.conversationCwd(key)).toBeUndefined();
   });
 });
 

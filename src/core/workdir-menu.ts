@@ -397,6 +397,8 @@ export type WorkdirChoiceResult =
   | { kind: 'applied'; path: string }
   /** Already working there — nothing was reset, which is why this is not folded into `applied`. */
   | { kind: 'unchanged'; path: string }
+  /** A session has already started in this conversation, so its directory cannot be changed. */
+  | { kind: 'locked'; path: string }
   /** The directory is gone since the menu was built (renamed, deleted). */
   | { kind: 'missing'; path: string }
   /** Another agent answers this conversation now, so this menu's option list belongs to nobody. */
@@ -411,6 +413,8 @@ export function workdirChoiceText(result: WorkdirChoiceResult, locale: Locale = 
       return tMenus(locale, 'workdir_applied', { path: result.path });
     case 'unchanged':
       return tMenus(locale, 'workdir_unchanged', { path: result.path });
+    case 'locked':
+      return tMenus(locale, 'workdir_locked', { path: result.path });
     case 'missing':
       return tMenus(locale, 'workdir_missing', { path: result.path });
     case 'rebound':
@@ -433,4 +437,10 @@ export function workdirMenuExpiredText(locale: Locale = 'en'): string {
 export function workdirMenuSupersededText(current: string | undefined, locale: Locale = 'en'): string {
   const currentLabel = current ?? tMenus(locale, 'model_menu_unknown');
   return tMenus(locale, 'workdir_superseded', { current: currentLabel });
+}
+
+/** What an open workdir menu becomes once the user starts the session by sending a message. */
+export function workdirMenuLockedText(current: string | undefined, locale: Locale = 'en'): string {
+  const currentLabel = current ?? tMenus(locale, 'model_menu_unknown');
+  return tMenus(locale, 'workdir_session_started', { current: currentLabel });
 }

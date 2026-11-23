@@ -14,6 +14,7 @@ import {
   workdirHomeButtonId,
   workdirIndexOf,
   workdirMenuSurface,
+  workdirMenuLockedText,
   workdirNoMatchText,
   workdirPageCount,
   workdirPageOf,
@@ -214,6 +215,10 @@ describe('choice outcomes', () => {
   });
 
   it('gives every failure its own sentence', () => {
+    expect(workdirChoiceText({ kind: 'locked', path: '/p' })).toContain('/new');
+    expect(workdirChoiceText({ kind: 'locked', path: '/p' }, 'zh-CN')).toContain('/new');
+    expect(workdirMenuLockedText('/p')).toContain('session started');
+    expect(workdirMenuLockedText('/p', 'zh-CN')).toContain('会话已开始');
     expect(workdirChoiceText({ kind: 'missing', path: '/gone' })).toContain('no longer exists');
     expect(workdirChoiceText({ kind: 'rebound', agent: 'opencode' })).toContain('opencode');
     expect(workdirChoiceText({ kind: 'failed', reason: 'no store' })).toContain('no store');

@@ -587,6 +587,7 @@ export class ConversationRegistry {
   private forgetUsage(id: ConversationId, state: ConversationState): void {
     state.lastUsage = undefined;
     state.lastCost = undefined;
+    state.turnStarted = false;
     state.turnCompleted = false;
     this.status.reset(id);
   }

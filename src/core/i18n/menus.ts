@@ -137,6 +137,8 @@ export const en = {
   workdir_applied:
     'Working in `{path}` now — fresh session; the previous context stayed behind.',
   workdir_unchanged: 'Already working in `{path}` — nothing reset.',
+  workdir_locked:
+    'Working directory is locked to `{path}` once a session has started. Run `/new` or open a new topic to switch directories.',
   workdir_missing: '`{path}` no longer exists. Run /cd again for the current list.',
   workdir_rebound:
     'This conversation is answered by {agent} now, so that menu no longer applies. Run /cd again.',
@@ -144,6 +146,7 @@ export const en = {
   workdir_expired:
     'That directory menu has expired (superseded, or the gateway restarted). Run /cd again for a fresh one.',
   workdir_superseded: 'Working dir: {current} — superseded by a newer /cd menu.',
+  workdir_session_started: 'Working dir: `{current}` — session started.',
   workdir_no_agent: 'No agent "{agentId}" is configured, so there is no directory to change.',
 
   // Skills catalog
@@ -380,11 +383,14 @@ export const zhCN: DictOf<typeof en> = {
   workdir_applied:
     '已切换至目录 `{path}` 工作 — 新会话已启动，之前的上下文已保留在原目录。',
   workdir_unchanged: '当前已在目录 `{path}` 工作 — 会话未重置。',
+  workdir_locked:
+    '会话已开始，工作目录已锁定为 `{path}`。如需切换目录，请先运行 `/new` 或新开一个话题。',
   workdir_missing: '目录 `{path}` 已不存在。请重新运行 /cd 查看最新列表。',
   workdir_rebound: '当前会话已改由 {agent} 响应，该菜单已失效。请重新运行 /cd。',
   workdir_failed: '无法切换工作目录：{reason}',
   workdir_expired: '该目录菜单已过期（已被新菜单取代，或网关已重启）。请重新运行 /cd 获取新菜单。',
   workdir_superseded: '工作目录: {current} — 已被更新的 /cd 菜单取代。',
+  workdir_session_started: '工作目录: `{current}` — 会话已开始。',
   workdir_no_agent: '未配置名为 "{agentId}" 的 Agent，没有可更改的目录。',
 
   // 技能列表

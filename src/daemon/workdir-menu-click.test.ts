@@ -325,16 +325,29 @@ describe('clicking a directory', () => {
     expect(r.disposed).toEqual([]);
   });
 
-  it('refuses a menu another agent has taken over, rather than applying it anyway', async () => {
+  it('automatically closes an open workdir menu when a message is sent', async () => {
     const r = rig();
     await r.send('/cc');
     const target = r.pickIds()[1]!;
-    // Rebind WITH a prompt: a bare `/oc` would open its own menu and retire this one, which is a
-    // different (and already-covered) path. Here the stale menu is still live when it is clicked.
-    await r.send('/oc have a look');
-    await r.click(target);
+    await r.send('hello');
     const edit = r.buttonEdits.at(-1)!;
-    expect(edit.text).toContain('no longer applies');
+    expect(edit.buttons).toEqual([]);
+    expect(edit.text).toContain('session started');
+    await r.click(target);
+    expect(r.replies().at(-1)).toContain('expired');
+    expect(r.store.conversationCwd(r.key)).toBeUndefined();
+  });
+
+  it('closes a menu when another agent takes over with a prompt and ignores stale clicks', async () => {
+    const r = rig();
+    await r.send('/cc');
+    const target = r.pickIds()[1]!;
+    await r.send('/oc have a look');
+    const edit = r.buttonEdits.at(-1)!;
+    expect(edit.buttons).toEqual([]);
+    expect(edit.text).toContain('session started');
+    await r.click(target);
+    expect(r.replies().at(-1)).toContain('expired');
     expect(r.store.conversationCwd(r.key)).toBeUndefined();
   });
 
@@ -385,12 +398,11 @@ describe('choosing a model straight after choosing a directory', () => {
     expect(r.modelIds()).toHaveLength(2);
   });
 
-  // `/cd` in an ESTABLISHED conversation is the second, independent repro: setWorkdir disposes the
-  // session to move it, which drops the closure holding the model list. Warming on demand covers
-  // this case for free, and it is worth pinning because the dispose is the whole point of `/cd`.
-  it('offers the models again after /cd has moved an established conversation', async () => {
+  it('offers the models again after /new and /cd move a conversation', async () => {
     const r = rig();
     await r.send('/oc do some work'); // a real turn: the conversation is now established
+    await r.send('/new');
+    r.disposed.length = 0;
     await r.send('/cd beta');
     expect(r.disposed).toContain(r.key);
 

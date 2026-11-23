@@ -35,9 +35,11 @@ You are asked the question at the two moments it is free: a bare agent command
 `/new`. An **ongoing** conversation is never interrupted with it — including one
 whose agent process was reclaimed while idle, which resumes where it left off.
 
-Moving **starts a fresh session** in the new directory, and the menu says so
-before you tap. That is not a policy choice: a session is pinned to the directory
-it was created in (ACP takes `cwd` at `session/new`), so the move
-cannot reach a process that is already running. Tapping the directory you are
-already in (marked ●) costs nothing. The choice is recorded per conversation, so
-it survives a restart and a `/new`, and applies to every agent that answers there.
+Once a session has started, its working directory is **locked**: any open
+directory picker closes automatically as soon as you send a message, and `/cd`
+is refused until you run `/new` or open a new topic. That matches how harnesses
+work — a session is pinned to the directory it was created in (ACP takes `cwd`
+at `session/new`). Before the first message (or right after `/new`), tapping the
+directory you are already in (marked ●) costs nothing, and picking another
+records it per conversation so it survives restarts and `/new`, applying to
+every agent that answers there.

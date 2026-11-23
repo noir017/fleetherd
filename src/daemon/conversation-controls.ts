@@ -774,6 +774,7 @@ export class ConversationControls {
     const caps = this.ctx.platforms.get(conv.platform)?.capabilities;
     const def = findAgent(this.ctx.config, agentId);
     if (!this.ctx.store || !this.ctx.hooks?.onWorkdirMenuRequest || !caps || !def) return false;
+    if (this.isWorkdirLocked(id, agentId)) return false;
 
     const root = resolveAgentCwd(def);
     if (def.host && !this.remoteScans.has(`${def.host}\0${root}`)) {
@@ -798,8 +799,15 @@ export class ConversationControls {
   /** After `/agent` chose an agent, ask where it works — only while the answer is free (no session here). */
   offerPlacement(key: ConversationId, agentId: string, conv: ConversationRef): void {
     if (this.ctx.boundAgentFor(key, '') !== agentId) return;
-    if (this.ctx.store?.agentSession(key, agentId) !== undefined) return;
+    if (this.isWorkdirLocked(key, agentId)) return;
     this.afterRemoteListing(findAgent(this.ctx.config, agentId), () => this.offerWorkdirMenu(key, agentId, conv));
+  }
+
+  /** Once a session has started (persisted or first turn in flight), the working directory cannot change. */
+  isWorkdirLocked(id: ConversationId, agentId: string): boolean {
+    if (this.ctx.store?.agentSession(id, agentId) !== undefined) return true;
+    const state = this.ctx.conversations.get(id);
+    return Boolean(state && (state.turnStarted || state.turnCompleted || state.merger.runningSince() !== undefined));
   }
 
   /** `/cd`: the menu, the list as text, or a move by path or substring; undefined when a menu went out. */
@@ -813,10 +821,13 @@ export class ConversationControls {
     const def = findAgent(this.ctx.config, agentId);
     if (!def) return tMenus(locale, 'workdir_no_agent', { agentId });
     const root = resolveAgentCwd(def);
+    const current = this.ctx.workdirOf(id, agentId) ?? root;
+    if (this.isWorkdirLocked(id, agentId)) {
+      return workdirChoiceText({ kind: 'locked', path: current }, locale);
+    }
     const scan = this.rankedWorkdirs(def, root);
     if (!scan.ok) return workdirUnreadableText(root, scan.reason, locale);
 
-    const current = this.ctx.workdirOf(id, agentId) ?? root;
     const query = rest?.trim();
     if (!query) {
       if (this.offerWorkdirMenu(id, agentId, msg.conversation)) return undefined;
@@ -877,6 +888,11 @@ export class ConversationControls {
     if (state && state.agentId !== expectAgentId) {
       const def = findAgent(this.ctx.config, state.agentId);
       return { kind: 'rebound', agent: agentDisplayName(def, state.agentId) };
+    }
+    if (this.isWorkdirLocked(id, expectAgentId)) {
+      const def = findAgent(this.ctx.config, expectAgentId);
+      const current = this.ctx.workdirOf(id, expectAgentId) ?? (def ? resolveAgentCwd(def) : path);
+      return { kind: 'locked', path: current };
     }
     return this.setWorkdir(id, expectAgentId, path);
   }

@@ -5,6 +5,14 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **Auto-close the working directory picker and lock workdir once a session starts.** Sending a
+  message into a conversation now automatically retires any open working-directory picker (collapsing
+  the Web UI folder browser and stripping buttons on chat platforms), and `/cd` or stale picker
+  clicks are refused once a session has started — prompting the user to run `/new` or open a new
+  topic to switch directories.
+
 ## [3.37.0] - 2026-11-23
 
 ### Added
