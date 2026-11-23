@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.37.3] - 2026-11-23
+
 ### Fixed
 
 - **Recover custom session options (such as multi-account pickers) after a failed probe.** Previously,
