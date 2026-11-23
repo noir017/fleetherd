@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.37.0] - 2026-11-23
+
 ### Added
 
 - **Recallable mid-turn message queue and immediate send.** Messages sent while a turn is running
