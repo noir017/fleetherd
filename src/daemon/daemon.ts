@@ -434,6 +434,10 @@ export class Daemon {
       adapter.useIdleReclaim?.((ref) => this.registry.reclaimIdleForRef(ref));
       this.wireTopicKill(adapter);
       adapter.useScheduleLookup?.((ref) => this.schedules?.targets(ref) ?? false);
+      adapter.usePendingQueueActions?.({
+        recall: (ref, messageId) => this.registry.recallPendingForRef(ref, messageId),
+        sendNow: (ref, messageId) => this.registry.sendNowPendingForRef(ref, messageId),
+      });
       this.wirePanels(adapter, id);
       await adapter.start();
       console.log(`[daemon] platform instance "${id}" (${adapter.platformType}) started`);

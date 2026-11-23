@@ -91,6 +91,8 @@ export const DAEMON_COMMANDS: SlashCommandSpec[] = [
   { name: 'clear', description: 'Alias of /new: start a fresh conversation' },
   { name: 'stop', description: 'Stop the current turn or background work (keeps the conversation)' },
   { name: 'kill', description: 'End the agent process (keeps the conversation; the next message resumes it)' },
+  { name: 'recall', description: 'Withdraw pending mid-turn message(s) before they reach the agent' },
+  { name: 'sendnow', description: 'Send pending mid-turn message(s) into the running turn immediately' },
   { name: 'cd', description: 'Choose the working directory (starts a fresh session there)' },
   { name: 'agent', description: 'Choose which agent answers this topic (grouped by machine)' },
   { name: 'setting', description: 'Change a saved setting (default agent, model, session)' },
@@ -795,4 +797,3 @@ export function buildHelpText(
 export function unconfiguredHarnessCommandText(missing: string, locale: Locale = 'en'): string {
   return tMenus(locale, 'unconfigured_harness', { missing });
 }
-

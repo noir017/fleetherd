@@ -66,6 +66,7 @@ import {
   GitStatusQuerySchema,
   LoginRequestSchema,
   MAX_BODY_BYTES,
+  PendingActionRequestSchema,
   SendRequestSchema,
   PushSubscribeSchema,
   PushUnsubscribeSchema,
@@ -425,6 +426,8 @@ const GUARDED: Route[] = [
   // the topics that need a person. Read-only; see `WebRoom.snapshot`.
   { method: 'GET', path: '/api/topic', run: topicSnapshot },
   { method: 'POST', path: '/api/send', run: submit },
+  { method: 'POST', path: '/api/pending/recall', run: recallPending },
+  { method: 'POST', path: '/api/pending/send-now', run: sendNowPending },
   { method: 'POST', path: '/api/voice/transcribe', run: transcribeVoice },
   { method: 'POST', path: '/api/click', run: click },
   { method: 'POST', path: '/api/topics', run: createTopic },
@@ -953,6 +956,20 @@ async function submit({ req, res }: Req, ctx: Ctx): Promise<void> {
     case 'accepted':
       return send(req, res, 202, { ok: true });
   }
+}
+
+async function recallPending({ req, res }: Req, ctx: Ctx): Promise<void> {
+  const parsed = await readBody(req, res, PendingActionRequestSchema);
+  if (!parsed) return;
+  const result = ctx.room.recallPending(parsed.topic, parsed.messageId);
+  send(req, res, 200, result);
+}
+
+async function sendNowPending({ req, res }: Req, ctx: Ctx): Promise<void> {
+  const parsed = await readBody(req, res, PendingActionRequestSchema);
+  if (!parsed) return;
+  const result = ctx.room.sendNowPending(parsed.topic, parsed.messageId);
+  send(req, res, 200, result);
 }
 
 async function transcribeVoice({ req, res }: Req, ctx: Ctx): Promise<void> {

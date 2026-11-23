@@ -1,4 +1,4 @@
-import type { InboundMessage, MessageRef, SteerOutcome } from '../types.js';
+import type { InboundMessage, MessageRef, PendingQueueItem, SteerOutcome } from '../types.js';
 import { addressOf } from './conversation.js';
 import type { Locale } from './i18n/index.js';
 import { tRuntime } from './i18n/runtime.js';
@@ -41,6 +41,11 @@ export interface InboundMergerOptions {
    * above, which stay frozen in EXPERIENCE.
    */
   reactionsEnabled?: boolean;
+  /**
+   * Hold window before offering a mid-turn message when no tool is running.
+   * Absent or 0 = offer immediately when no tool is active (keeps existing unit tests synchronous).
+   */
+  steerDelayMs?: number;
 }
 
 export interface MergerDeps {
@@ -58,11 +63,17 @@ export interface MergerDeps {
    * take input mid-turn, which reads exactly like `refused`: the messages wait for the turn to end.
    */
   steer?(batch: InboundMessage[]): Promise<SteerOutcome>;
+  /** Whether the running turn currently supports mid-turn steering (controls `canSendNow`). */
+  canSteer?(): boolean;
   addReaction(ref: MessageRef, emoji: string): Promise<void>;
   /** Cancel the running turn (`/stop`); no-op if absent. */
   abortTurn?(): void;
   /** Called when the turn ends with no backlog and returns to idle; drives idle reclaim. */
   onIdle?(): void;
+  /** Called synchronously whenever the list of recallable pending messages changes. */
+  onPendingChange?(items: PendingQueueItem[]): void;
+  /** Called when held pending messages are actually handed to the agent (steer or next turn). */
+  onPendingDeliver?(msgs: InboundMessage[]): void;
 }
 
 type Phase = 'idle' | 'collecting' | 'running';
@@ -125,7 +136,7 @@ export function stopInputNote(
 }
 
 /** One `> …` line per message, cut to a glance; attachments counted, since a quote cannot show them. */
-function quoteMessages(msgs: readonly InboundMessage[], locale: Locale = 'en'): string[] {
+export function quoteMessages(msgs: readonly InboundMessage[], locale: Locale = 'en'): string[] {
   const lines = msgs.slice(0, STOP_QUOTE_MAX).map((m) => {
     const flat = m.content.replace(/\s+/g, ' ').trim();
     const text = flat.length > STOP_QUOTE_CHARS ? `${flat.slice(0, STOP_QUOTE_CHARS - 1)}…` : flat;
@@ -147,7 +158,10 @@ function quoteMessages(msgs: readonly InboundMessage[], locale: Locale = 'en'): 
 export class InboundMerger {
   private phase: Phase = 'idle';
   private buffer: InboundMessage[] = [];      // batch being collected
+  private pendingSteer: InboundMessage[] = []; // arrived mid-turn, held until tool boundary or steerDelayMs
   private queued: InboundMessage[] = [];      // arrived mid-turn and the turn could not take them: they start the next one
+  private steerTimer: (() => void) | null = null;
+  private activeTools = 0;
   /**
    * What a `/stop` kept (see interrupt): messages that never reached the agent, waiting to go in
    * FRONT of the next batch the person starts. Not a turn of their own — only a person's next message
@@ -250,10 +264,15 @@ export class InboundMerger {
   interrupt(): StopReport {
     if (this.phase === 'running') {
       this.interrupted = true; // dispatch then skips ✅: the turn did not finish, it was stopped
-      this.held.push(...this.queued);
+      this.clearSteerTimer();
+      this.activeTools = 0;
+      const hadPending = this.pendingSteer.length > 0 || this.queued.length > 0;
+      this.held.push(...this.pendingSteer, ...this.queued);
+      this.pendingSteer = [];
       this.queued = [];
       this.stops++;
       this.stopping = true;
+      if (hadPending) this.emitPending();
       // Both halves: trip the turn's signal (the runner finalizes the partial reply cleanly — no
       // footer) *and* cancel the agent itself.
       this.activeAbort?.abort();
@@ -324,11 +343,148 @@ export class InboundMerger {
     void this.safeReaction(refOf(msg), this.opts.reactions.received);
 
     if (this.phase === 'running') {
-      // Busy: offer it to the running turn, or queue it behind (never drop, never cancel).
-      this.offer(msg);
+      this.ingestMidTurn(msg);
       return;
     }
     this.collect(msg);
+  }
+
+  /**
+   * Update the running turn's active tool count. A finishing tool flushes any messages held in
+   * `pendingSteer` right at the tool boundary; a starting tool pauses the short delay timer so
+   * pending messages wait for the tool instead of firing mid-tool.
+   */
+  setActiveTools(count: number, toolFinished = false): void {
+    if (this.phase !== 'running') return;
+    const prev = this.activeTools;
+    this.activeTools = Math.max(0, count);
+    if (toolFinished && this.pendingSteer.length > 0) {
+      this.flushPendingSteer();
+      return;
+    }
+    if (this.pendingSteer.length === 0) return;
+    if (this.activeTools > 0 && this.steerTimer) {
+      this.clearSteerTimer();
+    } else if (this.activeTools === 0 && !this.steerTimer) {
+      this.armSteerTimer();
+    }
+    if ((prev > 0) !== (this.activeTools > 0)) this.emitPending();
+  }
+
+  /** Snapshot of messages currently held by the gateway and still recallable. */
+  pendingItems(): PendingQueueItem[] {
+    const canSend = this.canSteerNow();
+    const steerReason: 'tool' | 'delay' = this.activeTools > 0 ? 'tool' : 'delay';
+    const out: PendingQueueItem[] = [];
+    for (const m of this.pendingSteer) out.push(toPendingItem(m, canSend, steerReason));
+    for (const m of this.queued) out.push(toPendingItem(m, false, 'turn'));
+    return out;
+  }
+
+  /**
+   * Withdraw recallable message(s) that have not yet been handed to the agent.
+   * Returns the removed messages in arrival order (empty when nothing matched).
+   */
+  recall(opts: { messageId?: string; all?: boolean } = {}): InboundMessage[] {
+    const removed = opts.messageId
+      ? this.removeById(opts.messageId)
+      : opts.all
+        ? this.removeAllPending()
+        : this.removeLastPending();
+    if (removed.length === 0) return [];
+    if (this.pendingSteer.length === 0) this.clearSteerTimer();
+    this.emitPending();
+    return removed;
+  }
+
+  /**
+   * Immediately offer held message(s) to the running turn, bypassing tool/delay waiting.
+   * Returns the promoted messages (empty when nothing can be steered right now).
+   */
+  sendNow(messageId?: string): InboundMessage[] {
+    if (this.phase !== 'running' || this.stopping || !this.canSteerNow()) return [];
+    const promoted = messageId ? spliceById(this.pendingSteer, messageId) : this.pendingSteer.splice(0);
+    if (promoted.length === 0) return [];
+    if (this.pendingSteer.length === 0) this.clearSteerTimer();
+    this.emitPending();
+    this.offer(promoted);
+    return promoted;
+  }
+
+  private ingestMidTurn(msg: InboundMessage): void {
+    if (msg.immediate) {
+      this.offer([msg]);
+      return;
+    }
+    if (!this.canSteerNow() || this.stopping || this.queued.length > 0) {
+      this.queued.push(msg);
+      this.emitPending();
+      return;
+    }
+    const delay = this.opts.steerDelayMs ?? 0;
+    if (this.activeTools > 0 || delay > 0) {
+      this.pendingSteer.push(msg);
+      if (this.activeTools === 0) this.armSteerTimer();
+      this.emitPending();
+      return;
+    }
+    this.offer([msg]);
+  }
+
+  private canSteerNow(): boolean {
+    if (!this.deps.steer) return false;
+    return this.deps.canSteer ? this.deps.canSteer() : true;
+  }
+
+  private armSteerTimer(): void {
+    this.clearSteerTimer();
+    const delay = this.opts.steerDelayMs ?? 0;
+    if (delay <= 0) {
+      this.flushPendingSteer();
+      return;
+    }
+    this.steerTimer = this.deps.schedule(() => {
+      this.steerTimer = null;
+      this.flushPendingSteer();
+    }, delay);
+  }
+
+  private clearSteerTimer(): void {
+    this.steerTimer?.();
+    this.steerTimer = null;
+  }
+
+  private flushPendingSteer(): void {
+    this.clearSteerTimer();
+    if (this.pendingSteer.length === 0) return;
+    const batch = this.pendingSteer;
+    this.pendingSteer = [];
+    this.emitPending();
+    this.offer(batch);
+  }
+
+  private removeById(id: string): InboundMessage[] {
+    const fromSteer = spliceById(this.pendingSteer, id);
+    if (fromSteer.length > 0) return fromSteer;
+    return spliceById(this.queued, id);
+  }
+
+  private removeAllPending(): InboundMessage[] {
+    const removed = [...this.pendingSteer, ...this.queued];
+    this.pendingSteer = [];
+    this.queued = [];
+    return removed;
+  }
+
+  private removeLastPending(): InboundMessage[] {
+    const lastQueued = this.queued.pop();
+    if (lastQueued) return [lastQueued];
+    const lastSteer = this.pendingSteer.pop();
+    return lastSteer ? [lastSteer] : [];
+  }
+
+  private emitPending(): void {
+    this.deps.onPendingChange?.(this.pendingItems());
   }
 
   /**
@@ -347,15 +503,15 @@ export class InboundMerger {
   }
 
   /**
-   * A message arrived while a turn runs: offer it to that turn, else queue it behind. Chained, so
-   * offers are decided strictly in arrival order (see `offers`).
+   * Messages arrived while a turn runs: offer them to that turn, else queue them behind. Chained,
+   * so offers are decided strictly in arrival order (see `offers`).
    */
-  private offer(msg: InboundMessage): void {
+  private offer(batch: InboundMessage[]): void {
     const stops = this.stops;
     this.offering++;
-    this.offeringMsgs.push(msg);
+    this.offeringMsgs.push(...batch);
     this.offers = this.offers
-      .then(() => this.decideOffer(msg, stops))
+      .then(() => this.decideOffer(batch, stops))
       .catch((e) =>
         // decideOffer swallows the steer's own failure; this is the last resort that keeps one bad
         // offer from breaking the chain every later message waits on.
@@ -363,15 +519,17 @@ export class InboundMerger {
       )
       .finally(() => {
         this.offering--;
-        const i = this.offeringMsgs.indexOf(msg);
-        if (i >= 0) this.offeringMsgs.splice(i, 1);
+        for (const m of batch) {
+          const i = this.offeringMsgs.indexOf(m);
+          if (i >= 0) this.offeringMsgs.splice(i, 1);
+        }
       });
   }
 
-  private async decideOffer(msg: InboundMessage, stops: number): Promise<void> {
+  private async decideOffer(batch: InboundMessage[], stops: number): Promise<void> {
     // A `/stop` since it arrived kept it with the rest of the backlog (see interrupt).
     if (stops !== this.stops) {
-      this.held.push(msg);
+      this.held.push(...batch);
       return;
     }
     // Straight into the turn only while nothing is queued ahead of it: a message the turn refused is
@@ -380,7 +538,7 @@ export class InboundMerger {
     if (this.phase === 'running' && !this.stopping && this.queued.length === 0 && this.deps.steer) {
       let outcome: SteerOutcome = 'refused';
       try {
-        outcome = await this.deps.steer([msg]);
+        outcome = await this.deps.steer(batch);
       } catch (e) {
         // Treated as refused: the message is still ours, and the queue is a correct place for it.
         console.warn('[dispatch] offering a message to the running turn failed; queueing it instead:', e instanceof Error ? e.message : e);
@@ -391,20 +549,26 @@ export class InboundMerger {
       // — see agent-acp.ts endChildAfterStop), so it was never answered. The stop's report already
       // listed it as kept.
       if (stops !== this.stops) {
-        this.held.push(msg);
+        this.held.push(...batch);
         return;
       }
       if (outcome !== 'refused') {
         console.log(`[dispatch] a message that arrived mid-turn was taken by the agent (${outcome})`);
+        this.deps.onPendingDeliver?.(batch);
         // Marked with the turn it joined. Normally that turn is still running — a turn waits for
         // what joined it — and if it has already ended there is no outcome left to wait for.
-        if (this.phase === 'running') this.joined.push(msg);
-        else void this.safeReaction(refOf(msg), this.opts.reactions.done);
+        if (this.phase === 'running') this.joined.push(...batch);
+        else for (const m of batch) void this.safeReaction(refOf(m), this.opts.reactions.done);
         return;
       }
     }
-    if (this.phase === 'running') this.queued.push(msg);
-    else this.collect(msg); // the turn ended while this was being offered: start the next one
+    if (this.phase === 'running') {
+      this.queued.push(...batch);
+      this.emitPending();
+    } else {
+      this.deps.onPendingDeliver?.(batch);
+      for (const m of batch) this.collect(m); // the turn ended while this was being offered: start the next one
+    }
   }
 
   /**
@@ -418,8 +582,12 @@ export class InboundMerger {
    */
   queueBehind(msg: InboundMessage): void {
     void this.safeReaction(refOf(msg), this.opts.reactions.received);
-    if (this.phase === 'running' || this.phase === 'collecting') this.queued.push(msg);
-    else this.collect(msg);
+    if (this.phase === 'running' || this.phase === 'collecting') {
+      this.queued.push(msg);
+      if (this.phase === 'running') this.emitPending();
+    } else {
+      this.collect(msg);
+    }
   }
 
   /** Merge window elapsed: hand the batch to the agent, behind whatever a `/stop` kept. */
@@ -448,6 +616,7 @@ export class InboundMerger {
   private async runBatch(batch: InboundMessage[], opts: { solo?: boolean } = {}): Promise<SoloOutcome> {
     this.phase = 'running';
     this.interrupted = false;
+    this.activeTools = 0;
     this.runStartedAt = this.deps.now();
     // Fresh per-turn abort: `/stop` trips it so the runner finalizes the partial reply cleanly.
     // Cleared in finally so a late abort can never bleed into the next turn.
@@ -478,6 +647,8 @@ export class InboundMerger {
     } finally {
       this.activeAbort = null;
       this.stopping = false;
+      this.activeTools = 0;
+      this.clearSteerTimer();
     }
   }
 
@@ -486,10 +657,17 @@ export class InboundMerger {
    * idle. The user's own backlog first — see enqueueSolo for why a clock waits behind a person.
    */
   private async drainQueue(): Promise<void> {
+    if (this.pendingSteer.length > 0) {
+      this.clearSteerTimer();
+      this.queued.unshift(...this.pendingSteer);
+      this.pendingSteer = [];
+    }
     if (this.queued.length > 0) {
       this.buffer = this.queued;
       this.queued = [];
       this.phase = 'collecting';
+      this.emitPending();
+      this.deps.onPendingDeliver?.(this.buffer);
       // Queued messages start immediately (already waited, no second merge window).
       await this.dispatch();
       return;
@@ -530,4 +708,22 @@ export class InboundMerger {
       // Reaction failure (network/rate-limit/deleted/permission) must not escape dispatch.
     }
   }
+}
+
+function toPendingItem(msg: InboundMessage, canSendNow: boolean, reason: 'tool' | 'delay' | 'turn'): PendingQueueItem {
+  const files = msg.attachments?.length ?? 0;
+  return {
+    id: msg.messageId,
+    content: msg.content,
+    at: msg.timestamp,
+    ...(files > 0 ? { attachments: files } : {}),
+    canSendNow,
+    reason,
+  };
+}
+
+function spliceById(list: InboundMessage[], id: string): InboundMessage[] {
+  const idx = list.findIndex((m) => m.messageId === id);
+  if (idx < 0) return [];
+  return list.splice(idx, 1);
 }

@@ -55,6 +55,8 @@ const CONTEXT_CLEAR_RE = /^\/(new|clear)(@\S+)?$/;
 const HELP_RE = /^\/help(@\S+)?$/;
 const STOP_RE = /^\/stop(@\S+)?$/;
 const KILL_RE = /^\/kill(@\S+)?$/;
+const RECALL_RE = /^\/(recall|unqueue)(@\S+)?(?:\s+(all))?$/i;
+const SENDNOW_RE = /^\/sendnow(@\S+)?$/i;
 const RELOAD_RE = /^\/reload(@\S+)?$/;
 const FORK_RE = /^\/fork(@\S+)?$/;
 
@@ -148,6 +150,8 @@ export class ConversationCommands {
       return true;
     }
 
+    if (this.answerQueueCommand(key, text, conv, ack)) return true;
+
     // Before the merger: a /fork queued behind a turn would copy whatever that turn left.
     if (FORK_RE.test(text)) {
       void this.controls.forkAndReport(key, msg, address, fallbackAgent).then((body) => ack('/fork', body));
@@ -177,6 +181,24 @@ export class ConversationCommands {
       return true;
     }
 
+    return false;
+  }
+
+  private answerQueueCommand(
+    key: ConversationId,
+    text: string,
+    conv: ConversationRef,
+    ack: (what: string, body: string) => void
+  ): boolean {
+    const recallMatch = RECALL_RE.exec(text);
+    if (recallMatch) {
+      ack('/recall', this.turns.recallAndReport(key, conv, recallMatch[3]?.toLowerCase() === 'all'));
+      return true;
+    }
+    if (SENDNOW_RE.test(text)) {
+      ack('/sendnow', this.turns.sendNowAndReport(key, conv));
+      return true;
+    }
     return false;
   }
 

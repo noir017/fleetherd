@@ -260,6 +260,8 @@ export interface AgentSession {
    * Optional: a runtime with no notion of it omits it, which reads as `refused` every time.
    */
   steer?(input: Pick<RunTurnInput, 'prompt' | 'images'>): Promise<SteerOutcome>;
+  /** Whether this session can currently take a message mid-turn (false for `steeringMode === 'none'`). */
+  canSteer?(): boolean;
   /** Interrupt the current turn (`/stop`). */
   abort(): void;
   /**

@@ -389,6 +389,7 @@ export class ConversationDelegation {
       messageId: posted.messageId,
       content: [text, opts.forward ? `${opts.forward.heading}\n\n${opts.forward.text}` : ''].filter(Boolean).join('\n\n'),
       timestamp: this.ctx.clock.now(),
+      immediate: !opts.queue,
     };
     if (opts.queue) state.merger.queueBehind(msg);
     else void state.merger.ingest(msg);

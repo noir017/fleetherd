@@ -81,7 +81,8 @@ import {
       taskPage=$('task-page'), taskTitle=$('task-title'), taskSub=$('task-sub'), taskClose=$('task-close'),
       taskNote=$('task-note'), taskView=$('task-view'),
       settingsClose=$('settings-close'), settingsOpenBtn=$('settings-open'),
-      copyRefBtn=$('copy-ref'), killBtn=$('kill-agent'), stopBtn=$('stop-turn'), statusEl=$('status'), machineNoteEl=$('machine-note'),
+      copyRefBtn=$('copy-ref'), killBtn=$('kill-agent'), stopBtn=$('stop-turn'), sendNowBtn=$('send-now'),
+      pendingQueueEl=$('pending-queue'), statusEl=$('status'), machineNoteEl=$('machine-note'),
       updateEl=$('update'),
       modelPop=$('model-pop'), mpList=$('mp-list'), mpFilter=$('mp-filter'), mpAgent=$('mp-agent'),
       mpHeading=$('mp-heading'), mpFoot=$('mp-foot');
@@ -4059,6 +4060,7 @@ import {
     // usual state of a /super job, and the one where there was nothing to press: /stop there stops
     // them too (Delegation.stopOpened).
     stopBtn.hidden = !(cur && (cur.running || cur.asking || below));
+    if(sendNowBtn) sendNowBtn.hidden = !(cur && cur.running);
     stopBtn.title = below
       ? tr('composer.stopSubTitle')
       : tr('composer.stopTitle');
@@ -4524,6 +4526,7 @@ import {
     closeModelPop();
     closeBtw(false);
     setStatus(null);
+    setPending([]);
     entering=true;
     synced=false;
     view = views[id] || null;
@@ -4642,6 +4645,92 @@ import {
     agentStatus = s || null;
     paintStatus();
     armStatusTick();
+  }
+
+  var pendingItems = [];
+
+  function retireLocalNonce(nonce){
+    if(!nonce) return;
+    var pk = 'p:' + nonce;
+    delete outbox[nonce];
+    var r = unsent[nonce];
+    dropUnsent(nonce);
+    if(r) settleAdopted(r.t, r.x);
+    if(els[pk]){ els[pk].remove(); delete els[pk]; }
+    delete sig[pk];
+    delete data[pk];
+  }
+
+  function pendingReasonText(reason){
+    if(reason === 'tool') return tr('pending.reasonTool');
+    if(reason === 'turn') return tr('pending.reasonTurn');
+    return tr('pending.reasonDelay');
+  }
+
+  function paintPending(){
+    if(!pendingQueueEl) return;
+    if(!pendingItems.length){
+      pendingQueueEl.hidden = true;
+      pendingQueueEl.innerHTML = '';
+      return;
+    }
+    var html = '<div class="pq-head">'+IC.icon.clock+'<span>'+text(tr('pending.header', { count: pendingItems.length }))+'</span></div>';
+    for(var i=0;i<pendingItems.length;i++){
+      var it = pendingItems[i];
+      var files = it.attachments ? '<span class="pq-files">'+text(it.attachments === 1 ? tr('pending.attachmentsOne') : tr('pending.attachmentsMany', { count: it.attachments }))+'</span>' : '';
+      var sendBtn = it.canSendNow
+        ? '<button type="button" class="pq-btn pq-send" data-pq-send="'+text(it.id)+'" title="'+text(tr('pending.sendNowTitle'))+'">'+IC.icon.bolt+'<span>'+text(tr('pending.sendNow'))+'</span></button>'
+        : '';
+      var recallBtn = '<button type="button" class="pq-btn pq-recall" data-pq-recall="'+text(it.id)+'" title="'+text(tr('pending.recallTitle'))+'">'+IC.icon.undo+'<span>'+text(tr('pending.recall'))+'</span></button>';
+      html += '<div class="pq-item" data-pq-id="'+text(it.id)+'">'
+        + '<div class="pq-main">'
+        + '<div class="pq-meta"><span class="pq-badge">'+text(tr('pending.badge'))+'</span><span class="pq-reason">'+text(pendingReasonText(it.reason))+'</span>'+files+'</div>'
+        + '<div class="pq-text">'+text(it.content || '')+'</div>'
+        + '</div>'
+        + '<div class="pq-acts">'+sendBtn+recallBtn+'</div>'
+        + '</div>';
+    }
+    pendingQueueEl.innerHTML = html;
+    pendingQueueEl.hidden = false;
+  }
+
+  function setPending(items){
+    pendingItems = Array.isArray(items) ? items : [];
+    for(var i=0;i<pendingItems.length;i++){
+      if(pendingItems[i] && pendingItems[i].nonce) retireLocalNonce(pendingItems[i].nonce);
+    }
+    paintPending();
+  }
+
+  if(pendingQueueEl){
+    pendingQueueEl.addEventListener('click', function(e){
+      var t = e.target;
+      if(!t || !t.closest || !topic) return;
+      var sendEl = t.closest('[data-pq-send]');
+      if(sendEl){
+        var sid = sendEl.getAttribute('data-pq-send');
+        if(!sid) return;
+        sendEl.disabled = true;
+        post('api/pending/send-now', { topic: topic, messageId: sid }, 1).catch(function(){ sendEl.disabled = false; });
+        return;
+      }
+      var recEl = t.closest('[data-pq-recall]');
+      if(recEl){
+        var rid = recEl.getAttribute('data-pq-recall');
+        if(!rid) return;
+        recEl.disabled = true;
+        post('api/pending/recall', { topic: topic, messageId: rid }, 1)
+          .then(function(r){ return r && r.ok ? r.json() : null; })
+          .then(function(j){
+            if(j && j.ok && typeof j.content === 'string' && !input.value.trim()){
+              input.value = j.content;
+              grow();
+              stashDraft(topic);
+              input.focus();
+            }
+          }, function(){ recEl.disabled = false; });
+      }
+    });
   }
 
   function hasCountdown(s){
@@ -5113,6 +5202,7 @@ import {
       // Absent when the topic's agent has reported nothing since the daemon started, which clears
       // whatever a previous connection had put up.
       setStatus(ev.status);
+      setPending(ev.pending || []);
       note.textContent='';
       if(arriving) land(); else if(stick) toBottom();
       view = null;
@@ -5178,6 +5268,7 @@ import {
     }
     else if(ev.t==='commands'){ commands = ev.commands || []; }
     else if(ev.t==='status'){ setStatus(ev.status); }
+    else if(ev.t==='pending'){ setPending(ev.items || []); }
     else if(ev.t==='machines'){ setMachines(ev.offline || []); }
     else if(ev.t==='topics' || ev.t==='topic-rows'){
       if(ev.t==='topics') topics = ev.topics || [];
@@ -7402,7 +7493,7 @@ import {
    * bubble is the message until the echo claims it, and if nothing ever claims it, it stays and
    * says so.
    */
-  function send(){
+  function send(immediate){
     // A picture still being shrunk in THIS topic is not in files yet, so a send now would leave
     // it out — or wait for nothing and look broken. The tap is remembered for this topic and
     // happens when its last picture lands; #note says why nothing moved yet, unless it is
@@ -7419,7 +7510,7 @@ import {
     // Dispatched first, because dispatch is what writes the message down as unsent. Only then is
     // the stored draft of this topic cleared — left on disk, a reload would put it back in the
     // composer to be sent again.
-    dispatch(typed, attached);
+    dispatch(typed, attached, immediate === true);
     stashDraft(topic);
   }
 
@@ -7435,9 +7526,10 @@ import {
     if(topic) dispatch(text, []);
   }
 
-  function dispatch(typed, attached){
+  function dispatch(typed, attached, immediate){
     var nonce = Math.random().toString(36).slice(2)+Date.now().toString(36);
     var body = {topic:topic, text:typed, nonce:nonce};
+    if(immediate) body.immediate = true;
     var names = [];
     for(var i=0;i<attached.length;i++) names.push(attached[i].name);
     if(attached.length) body.files = attached;
@@ -7645,6 +7737,7 @@ import {
   });
   killBtn.addEventListener('click', function(){ command('/kill'); });
   stopBtn.addEventListener('click', function(){ command('/stop'); });
+  if(sendNowBtn) sendNowBtn.addEventListener('click', function(){ send(true); });
 
   /**
    * Retire the local bubble this message is the echo of.

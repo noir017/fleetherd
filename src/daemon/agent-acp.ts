@@ -1175,6 +1175,10 @@ class AcpSession implements AgentSession {
     return this.joinTurn(this.blocksOf(input));
   }
 
+  canSteer(): boolean {
+    return this.steeringMode !== 'none' || !this.active;
+  }
+
   setFollowUpSink(sink: FollowUpSink): void {
     this.followUpSink = sink;
   }

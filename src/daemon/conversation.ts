@@ -787,6 +787,16 @@ export class ConversationRegistry {
     return this.turns.interruptConversation(id);
   }
 
+  recallPendingForRef(ref: ConversationRef, messageId?: string): { ok: boolean; recalled: number; content?: string } {
+    const key = this.idForRef(ref);
+    return this.turns.recallPending(key, messageId);
+  }
+
+  sendNowPendingForRef(ref: ConversationRef, messageId?: string): { ok: boolean; sent: number } {
+    const key = this.idForRef(ref);
+    return this.turns.sendNowPending(key, messageId);
+  }
+
   killConversation(id: ConversationId): KillOutcome {
     return this.turns.killConversation(id);
   }

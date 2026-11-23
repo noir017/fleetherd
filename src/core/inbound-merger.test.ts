@@ -672,3 +672,147 @@ describe('InboundMerger: queueBehind (task-send --interrupt)', () => {
     expect(h.batches).toEqual([['m1']]);
   });
 });
+
+describe('InboundMerger: gateway pending-steer queue, recall, and immediate send', () => {
+  function pendingHarness(opts: { steerDelayMs?: number; canSteer?: () => boolean } = {}) {
+    const clock = makeClock();
+    const batches: string[][] = [];
+    const steered: string[][] = [];
+    const delivered: string[][] = [];
+    const snapshots: Array<Array<{ id: string; reason: string; canSendNow: boolean }>> = [];
+    let resolveFirst: () => void = () => {};
+    const steer = vi.fn(async (batch: InboundMessage[]): Promise<SteerOutcome> => {
+      steered.push(batch.map((m) => m.messageId));
+      return 'joined';
+    });
+    const merger = new InboundMerger(
+      {
+        mergeWindowMs: 1500,
+        maxMergeWindowMs: 5000,
+        reactions,
+        steerDelayMs: opts.steerDelayMs ?? 3000,
+      },
+      {
+        now: clock.now,
+        schedule: clock.schedule,
+        addReaction: vi.fn().mockResolvedValue(undefined),
+        runTurn: vi.fn((batch: InboundMessage[]) => {
+          batches.push(batch.map((m) => m.messageId));
+          if (batches.length === 1) return new Promise<void>((r) => (resolveFirst = r));
+          return Promise.resolve();
+        }),
+        steer,
+        canSteer: opts.canSteer,
+        onPendingChange: (items) => {
+          snapshots.push(items.map((i) => ({ id: i.id, reason: i.reason, canSendNow: i.canSendNow })));
+        },
+        onPendingDeliver: (msgs) => {
+          delivered.push(msgs.map((m) => m.messageId));
+        },
+      }
+    );
+    return { clock, merger, batches, steered, delivered, snapshots, resolveFirst: () => resolveFirst() };
+  }
+
+  it('holds mid-turn messages during active tools and flushes them as one batch at tool finish', async () => {
+    const h = pendingHarness();
+    await h.merger.ingest(msg('m1'));
+    h.clock.advance(1500);
+    await tick();
+    h.merger.setActiveTools(1, false);
+
+    await h.merger.ingest(msg('m2'));
+    await h.merger.ingest(msg('m3'));
+    h.clock.advance(10_000);
+    await tick();
+    expect(h.steered).toEqual([]);
+    expect(h.merger.pendingItems().map((i) => [i.id, i.reason, i.canSendNow])).toEqual([
+      ['m2', 'tool', true],
+      ['m3', 'tool', true],
+    ]);
+
+    h.merger.setActiveTools(0, true);
+    await tick();
+    expect(h.steered).toEqual([['m2', 'm3']]);
+    expect(h.delivered).toEqual([['m2', 'm3']]);
+    expect(h.merger.pendingItems()).toEqual([]);
+  });
+
+  it('waits steerDelayMs when no tool is active, pauses if a tool starts, and supports recall before delivery', async () => {
+    const h = pendingHarness({ steerDelayMs: 3000 });
+    await h.merger.ingest(msg('m1'));
+    h.clock.advance(1500);
+    await tick();
+
+    await h.merger.ingest(msg('m2'));
+    await h.merger.ingest(msg('m3'));
+    expect(h.merger.pendingItems().map((i) => [i.id, i.reason])).toEqual([
+      ['m2', 'delay'],
+      ['m3', 'delay'],
+    ]);
+
+    // Recall m2 by id; m3 remains queued.
+    const recalled = h.merger.recall({ messageId: 'm2' });
+    expect(recalled.map((m) => m.messageId)).toEqual(['m2']);
+    expect(h.merger.pendingItems().map((i) => i.id)).toEqual(['m3']);
+
+    // A tool starts before the 3s timer fires -> switches from delay to tool wait.
+    h.clock.advance(1000);
+    h.merger.setActiveTools(1, false);
+    h.clock.advance(5000);
+    await tick();
+    expect(h.steered).toEqual([]);
+    expect(h.merger.pendingItems().map((i) => i.reason)).toEqual(['tool']);
+
+    // Tool finishes -> only m3 is steered.
+    h.merger.setActiveTools(0, true);
+    await tick();
+    expect(h.steered).toEqual([['m3']]);
+  });
+
+  it('supports immediate: true on ingest and sendNow() on queued items', async () => {
+    const h = pendingHarness({ steerDelayMs: 3000 });
+    await h.merger.ingest(msg('m1'));
+    h.clock.advance(1500);
+    await tick();
+    h.merger.setActiveTools(1, false);
+
+    // Immediate message bypasses the pending queue.
+    await h.merger.ingest({ ...msg('fast'), immediate: true });
+    await tick();
+    expect(h.steered).toEqual([['fast']]);
+
+    // Normal mid-turn message waits; sendNow promotes it immediately.
+    await h.merger.ingest(msg('m2'));
+    await h.merger.ingest(msg('m3'));
+    expect(h.merger.pendingItems().map((i) => i.id)).toEqual(['m2', 'm3']);
+
+    const sent = h.merger.sendNow('m2');
+    expect(sent.map((m) => m.messageId)).toEqual(['m2']);
+    await tick();
+    expect(h.steered).toEqual([['fast'], ['m2']]);
+    expect(h.merger.pendingItems().map((i) => i.id)).toEqual(['m3']);
+
+    // Recall all clears remaining pending messages.
+    expect(h.merger.recall({ all: true }).map((m) => m.messageId)).toEqual(['m3']);
+    expect(h.merger.pendingItems()).toEqual([]);
+  });
+
+  it('keeps non-steerable mid-turn messages in queued (reason: turn, canSendNow: false) and allows recalling them', async () => {
+    const h = pendingHarness({ steerDelayMs: 3000, canSteer: () => false });
+    await h.merger.ingest(msg('m1'));
+    h.clock.advance(1500);
+    await tick();
+
+    await h.merger.ingest(msg('m2'));
+    expect(h.merger.pendingItems()).toEqual([
+      expect.objectContaining({ id: 'm2', reason: 'turn', canSendNow: false }),
+    ]);
+    expect(h.merger.sendNow('m2')).toEqual([]);
+    expect(h.merger.recall().map((m) => m.messageId)).toEqual(['m2']);
+
+    h.resolveFirst();
+    await tick();
+    expect(h.batches).toEqual([['m1']]);
+  });
+});

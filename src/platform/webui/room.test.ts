@@ -3132,3 +3132,70 @@ describe('room: a turn’s changes', () => {
     expect(await room.turnChangesFile('ffffffff', 1, 'a')).toMatchObject({ ok: false });
   });
 });
+
+describe('WebRoom: pending mid-turn queue', () => {
+  it('holds a pending message out of stored, syncs it with nonce, and promotes it on delivery or drops on recall', () => {
+    const { room, topic, seen } = attached();
+    let heldId = '';
+    room.onMessage((m) => {
+      heldId = m.messageId;
+      room.setPendingQueue(topic, [
+        { id: m.messageId, content: m.content, at: m.timestamp, canSendNow: true, reason: 'tool' },
+      ]);
+    });
+
+    expect(room.submit({ topic, text: 'wait for tool', nonce: 'n-pending-1' })).toBe('accepted');
+    // Not posted into stored yet; emitted as pending state with nonce attached.
+    expect(seen.some((e) => e.ev.t === 'msg' && e.ev.msg.id === heldId)).toBe(false);
+    expect(seen.at(-1)?.ev).toEqual({
+      t: 'pending',
+      items: [expect.objectContaining({ id: heldId, content: 'wait for tool', nonce: 'n-pending-1', reason: 'tool' })],
+    });
+
+    // A fresh subscriber sees the pending item in sync.
+    const fresh: WebEvent[] = [];
+    const unsub = room.subscribe(topic, (_id, ev) => {
+      fresh.push(ev);
+    });
+    const syncEv = fresh.find((e) => e.t === 'sync');
+    expect(syncEv && syncEv.t === 'sync' && syncEv.pending).toEqual([
+      expect.objectContaining({ id: heldId, content: 'wait for tool', nonce: 'n-pending-1' }),
+    ]);
+    unsub();
+
+    // Promoting on delivery posts it into stored with the same id and nonce.
+    room.markPendingDelivered(topic, [heldId]);
+    room.setPendingQueue(topic, []);
+    expect(seen.some((e) => e.ev.t === 'msg' && e.ev.msg.id === heldId && e.ev.msg.nonce === 'n-pending-1')).toBe(true);
+    expect(seen.at(-1)?.ev).toEqual({ t: 'pending', items: [] });
+  });
+
+  it('forwards recall and send-now actions and never records a recalled message in stored', () => {
+    const { room, topic, seen } = attached();
+    let heldId = '';
+    const actions: string[] = [];
+    room.onMessage((m) => {
+      heldId = m.messageId;
+      room.setPendingQueue(topic, [
+        { id: m.messageId, content: m.content, at: m.timestamp, canSendNow: true, reason: 'delay' },
+      ]);
+    });
+    room.usePendingQueueActions({
+      recall: (_ref, id) => {
+        actions.push(`recall:${id ?? ''}`);
+        room.setPendingQueue(topic, []);
+        return { ok: true, recalled: 1, content: 'never mind' };
+      },
+      sendNow: (_ref, id) => {
+        actions.push(`sendNow:${id ?? ''}`);
+        return { ok: true, sent: 1 };
+      },
+    });
+
+    room.submit({ topic, text: 'never mind', nonce: 'n-recall' });
+    expect(room.sendNowPending(topic, heldId)).toEqual({ ok: true, sent: 1 });
+    expect(room.recallPending(topic, heldId)).toEqual({ ok: true, recalled: 1, content: 'never mind' });
+    expect(actions).toEqual([`sendNow:${heldId}`, `recall:${heldId}`]);
+    expect(seen.some((e) => e.ev.t === 'msg' && e.ev.msg.id === heldId)).toBe(false);
+  });
+});

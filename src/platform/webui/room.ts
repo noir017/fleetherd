@@ -58,6 +58,7 @@ import type {
   ButtonInteraction,
   InboundMessage,
   OfflineMachine,
+  PendingQueueItem,
   SettingsScreen,
   SlashCommandSpec,
   StatusOption,
@@ -76,6 +77,7 @@ import type {
   GitMode,
   GitPanel,
   GitStatusResult,
+  PendingQueueActions,
   FilesPanel,
   FilesPanelCreateResult,
   FilesPanelListResult,
@@ -123,7 +125,16 @@ import type {
 import type { WebuiPlatformConfig } from '../config-schemas.js';
 import { escapeHtml, renderWebMarkdown, renderWebToolLines } from '../web-markdown.js';
 import { toolGlyph } from './icons.js';
-import type { ClickRequest, ReviewOpRequest, ScheduleTargetRequest, SendRequest, TopicSnapshot, WebEvent, WebMessage } from './protocol.js';
+import type {
+  ClickRequest,
+  ReviewOpRequest,
+  ScheduleTargetRequest,
+  SendRequest,
+  TopicSnapshot,
+  WebEvent,
+  WebMessage,
+  WebPendingItem,
+} from './protocol.js';
 import type { TerminalSessions } from './terminal-sessions.js';
 import { MAX_TOPICS, TopicStore, type Topic } from './topics.js';
 
@@ -466,6 +477,17 @@ interface Room {
    */
   status?: AgentStatus;
   statusKey?: string;
+  /** Recallable mid-turn messages held by the gateway for this topic (STATE, never sequenced). */
+  pending: WebPendingItem[];
+  /** Draft send payloads held out of `stored` while the message sits in `pending`. */
+  pendingDrafts: Map<
+    string,
+    {
+      req: SendRequest;
+      attachments: Array<NonNullable<InboundMessage['attachments']>[number]>;
+      at: number;
+    }
+  >;
 }
 
 export class WebRoom {
@@ -509,6 +531,7 @@ export class WebRoom {
   private locale: Locale = 'en';
   private onMsg: ((m: InboundMessage) => void) | null = null;
   private onBtn: ((ev: ButtonInteraction) => void) | null = null;
+  private pendingActions: PendingQueueActions | null = null;
   /** Injected by the daemon; absent in a deployment (or a test) that never offered one. */
   private workdir: ((ref: ConversationRef) => ConversationWorkdir | undefined) | null = null;
   /** Likewise, and read the same way — see `useLivenessLookup`. */
@@ -1640,6 +1663,7 @@ export class WebRoom {
         // Status is state and is not in the backlog (see the `status` event), so a resumed stream
         // is told the current one outright — it may have changed, or been cleared, during the gap.
         this.deliver(client, { t: 'status', ...(room.status ? { status: room.status } : {}) }) &&
+        this.deliver(client, { t: 'pending', items: room.pending }) &&
         // The machine list likewise, for the same reason: a machine can come or go in the gap.
         this.deliver(client, { t: 'machines', offline: [...this.offline] }) &&
         // And the topic list, which is in no backlog either. A blip's gap is short, but a page put
@@ -1728,6 +1752,7 @@ export class WebRoom {
       topics,
       tv: this.topicsVer,
       ...(room.status ? { status: room.status } : {}),
+      ...(room.pending.length > 0 ? { pending: room.pending } : {}),
       ...(agents ? { agents } : {}),
       ...(this.offline.length > 0 ? { offline: [...this.offline] } : {}),
     };
@@ -1870,7 +1895,8 @@ export class WebRoom {
   post(
     topicId: string,
     part: Omit<WebMessage, 'id' | 'at' | 'buttons' | 'reactions'> & { buttons?: ButtonSpec[] },
-    text: string
+    text: string,
+    explicitId?: string
   ): WebMessage {
     const room = this.roomOf(topicId);
     this.flush(room, topicId);
@@ -1879,7 +1905,7 @@ export class WebRoom {
       // Ids are global and never reused, not per topic: the outbound pacer coalesces edits
       // into `edit:<channel>:<messageId>`, and every topic shares the one channel, so an id
       // restarting per topic would let one topic's edits supersede another's.
-      id: this.nextId(),
+      id: explicitId ?? this.nextId(),
       at: Date.now(),
       buttons: part.buttons ?? [],
       reactions: [],
@@ -2044,6 +2070,58 @@ export class WebRoom {
     for (const client of [...this.clients]) {
       if (client.topic === topicId) this.deliver(client, ev, undefined, data);
     }
+  }
+
+  setPendingQueue(topicId: string, items: readonly PendingQueueItem[]): void {
+    const room = this.roomOf(topicId);
+    const next: WebPendingItem[] = items.map((item) => {
+      const nonce = room.pendingDrafts.get(item.id)?.req.nonce;
+      return nonce !== undefined ? { ...item, nonce } : { ...item };
+    });
+    const keepIds = new Set(next.map((item) => item.id));
+    for (const id of room.pendingDrafts.keys()) {
+      if (!keepIds.has(id)) room.pendingDrafts.delete(id);
+    }
+    room.pending = next;
+    const ev: WebEvent = { t: 'pending', items: next };
+    const data = JSON.stringify(ev);
+    for (const client of [...this.clients]) {
+      if (client.topic === topicId) this.deliver(client, ev, undefined, data);
+    }
+  }
+
+  markPendingDelivered(topicId: string, messageIds: readonly string[]): void {
+    const room = this.roomOf(topicId);
+    for (const id of messageIds) {
+      const draft = room.pendingDrafts.get(id);
+      if (!draft) continue;
+      room.pendingDrafts.delete(id);
+      if (this.topics.seed(topicId, draft.req.text)) this.announceTopics();
+      this.post(
+        topicId,
+        {
+          own: true,
+          html: renderBody(draft.req.text, draft.attachments, this.keepPictures(draft.req.files ?? [])),
+          ...(draft.req.nonce !== undefined ? { nonce: draft.req.nonce } : {}),
+        },
+        draft.req.text,
+        id
+      );
+    }
+  }
+
+  usePendingQueueActions(actions: PendingQueueActions): void {
+    this.pendingActions = actions;
+  }
+
+  recallPending(topicId: string, messageId?: string): { ok: boolean; recalled: number; content?: string } {
+    if (!this.topics.has(topicId) || !this.pendingActions) return { ok: false, recalled: 0 };
+    return this.pendingActions.recall(this.conversation(topicId), messageId);
+  }
+
+  sendNowPending(topicId: string, messageId?: string): { ok: boolean; sent: number } {
+    if (!this.topics.has(topicId) || !this.pendingActions) return { ok: false, sent: 0 };
+    return this.pendingActions.sendNow(this.conversation(topicId), messageId);
   }
 
   /**
@@ -2249,80 +2327,79 @@ export class WebRoom {
   submit(req: SendRequest, locale?: string): 'accepted' | 'duplicate' | 'unknown-topic' {
     if (!this.topics.has(req.topic)) return 'unknown-topic';
     if (locale) this.locale = normalizeLocale(locale) ?? this.locale;
-    if (req.nonce !== undefined) {
-      if (this.nonces.has(req.nonce)) return 'duplicate';
-      if (this.nonces.size >= MAX_NONCES) {
-        const oldest = this.nonces.values().next().value;
-        if (oldest !== undefined) this.nonces.delete(oldest);
-      }
-      this.nonces.add(req.nonce);
-    }
+    if (this.claimNonce(req.nonce)) return 'duplicate';
     const attachments = (req.files ?? []).map(toAttachment);
     const text = req.text.trim();
     // The inbound gate drops an empty message anyway; stopping here keeps an accidental Enter
     // from appearing in the transcript as a blank bubble the agent never saw.
     if (!text && attachments.length === 0) return 'accepted';
-    const msg = this.record(req, attachments);
-    const inbound: InboundMessage = {
-      conversation: this.conversation(req.topic),
-      platformType: 'webui',
-      messageId: msg.id,
-      content: req.text,
-      timestamp: msg.at,
-      ...(attachments.length > 0 ? { attachments } : {}),
-      authorIsBot: false,
-      ...(locale ? { locale } : {}),
-    };
-    // The listen allowlist, which `satori-core` applies for every other platform and this
-    // adapter therefore has to apply for itself. `main` covers every topic, `main/<id>` names
-    // one — the matching `addressSelects` already implements.
-    if (!this.channelAllowed(inbound.conversation)) {
-      console.log(`[webui] "${this.instance.id}": dropped a message — chat.channels does not list ${CHANNEL}/${req.topic}`);
-      return 'accepted';
-    }
-    // The attachment count is in the line because this is where "did it arrive with its file" gets
-    // answered: the preview is the first 50 characters of the text, which says nothing of what
-    // rode along, and a file sent alone would otherwise log an empty line.
-    const files = attachments.length > 0 ? ` (+${attachments.length} file${attachments.length === 1 ? '' : 's'})` : '';
-    console.log(`[in] ${describeConversation(inbound.conversation)} @${OWNER}: ${text.slice(0, 50).replace(/\n/g, ' ')}${files}`);
-    this.onMsg?.(inbound);
-    // What the operator says is what moves a topic — `/agent`, `/cd`, `/new`, a bare `/cc` — so the
-    // memoised directory label is let go here, and the announcement the daemon's answer makes reads
-    // the new one. Without this a new topic's first choice was answered under a row still naming the
-    // default agent's machine for the rest of the TTL, and nothing announced the list after it.
-    this.dirCache.delete(req.topic);
+    this.deliverSubmit(req, attachments, text, locale);
     return 'accepted';
   }
 
-  /**
-   * Put the operator's message into the topic, or — for the one request that is allowed to be
-   * quiet — hand back an id without one.
-   *
-   * A quiet request is the page asking the daemon for the settings screen it draws itself: the
-   * daemon still needs a message id for the inbound, but the conversation gets no row, no echo,
-   * and no title seeded from a command nobody typed. It is deliberately narrow — a bare
-   * `/setting` with no attachments. Any other text that carries the flag is delivered as an
-   * ordinary message: a client must not be able to make something it sent disappear from the
-   * conversation by asking.
-   */
-  private record(
+  private claimNonce(nonce: string | undefined): boolean {
+    if (nonce === undefined) return false;
+    if (this.nonces.has(nonce)) return true;
+    if (this.nonces.size >= MAX_NONCES) {
+      const oldest = this.nonces.values().next().value;
+      if (oldest !== undefined) this.nonces.delete(oldest);
+    }
+    this.nonces.add(nonce);
+    return false;
+  }
+
+  private deliverSubmit(
+    req: SendRequest,
+    attachments: Array<NonNullable<InboundMessage['attachments']>[number]>,
+    text: string,
+    locale?: string
+  ): void {
+    const quiet = req.quiet === true && attachments.length === 0 && req.text.trim() === '/setting';
+    const id = this.nextId();
+    const at = Date.now();
+    const inbound: InboundMessage = {
+      conversation: this.conversation(req.topic),
+      platformType: 'webui',
+      messageId: id,
+      content: req.text,
+      timestamp: at,
+      ...(attachments.length > 0 ? { attachments } : {}),
+      authorIsBot: false,
+      ...(locale ? { locale } : {}),
+      ...(req.immediate ? { immediate: true } : {}),
+    };
+    if (!this.channelAllowed(inbound.conversation)) {
+      if (!quiet) this.recordWithId(id, req, attachments);
+      console.log(`[webui] "${this.instance.id}": dropped a message — chat.channels does not list ${CHANNEL}/${req.topic}`);
+      return;
+    }
+    const room = this.roomOf(req.topic);
+    if (!quiet) room.pendingDrafts.set(id, { req, attachments, at });
+    const files = attachments.length > 0 ? ` (+${attachments.length} file${attachments.length === 1 ? '' : 's'})` : '';
+    console.log(`[in] ${describeConversation(inbound.conversation)} @${OWNER}: ${text.slice(0, 50).replace(/\n/g, ' ')}${files}`);
+    this.onMsg?.(inbound);
+    const heldInPending = !quiet && room.pending.some((p) => p.id === id);
+    if (!quiet && !heldInPending && room.pendingDrafts.delete(id)) {
+      this.recordWithId(id, req, attachments);
+    }
+    this.dirCache.delete(req.topic);
+  }
+
+  private recordWithId(
+    id: string,
     req: SendRequest,
     attachments: Array<NonNullable<InboundMessage['attachments']>[number]>
-  ): { id: string; at: number } {
-    const quiet = req.quiet === true && attachments.length === 0 && req.text.trim() === '/setting';
-    if (quiet) return { id: this.nextId(), at: Date.now() };
+  ): void {
     if (this.topics.seed(req.topic, req.text)) this.announceTopics();
-    // The nonce rides back out on the echo: the page has already shown this message locally, and
-    // that placeholder is retired by the echo that claims it. Absent when the client did not send
-    // one, in which case the page had no placeholder to retire either.
-    return this.post(
+    this.post(
       req.topic,
       {
         own: true,
         html: renderBody(req.text, attachments, this.keepPictures(req.files ?? [])),
         ...(req.nonce !== undefined ? { nonce: req.nonce } : {}),
       },
-      req.text
+      req.text,
+      id
     );
   }
 
@@ -2400,6 +2477,8 @@ export class WebRoom {
         holdUntil: 0,
         msgCount: 0,
         awaiting: new Set(),
+        pending: [],
+        pendingDrafts: new Map(),
       };
       this.rooms.set(topicId, room);
     }

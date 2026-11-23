@@ -78,6 +78,8 @@ const PATHS = {
   // A code block's line-wrap switch: a line running on, turning back under itself.
   wrap: '<path d="M4 6h16M4 12h13a3 3 0 0 1 0 6h-4M4 18h5"/><path d="m15 15.5-2.5 2.5 2.5 2.5"/>',
   trash: '<path d="M4 6.5h16M9.5 6.5v-2a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v2M6 6.5l.9 12.6a1.5 1.5 0 0 0 1.5 1.4h7.2a1.5 1.5 0 0 0 1.5-1.4L18 6.5M10 10.5v6M14 10.5v6"/>',
+  undo: '<path d="M9 6 4 11l5 5"/><path d="M4 11h10.5a5 5 0 0 1 0 10H11"/>',
+  bolt: '<path d="M13 2 4.5 13H12l-1 9 8.5-11H12l1-9z"/>',
   tag: '<path d="M3.5 4.5v7.3l9 9a1.5 1.5 0 0 0 2.1 0l6.2-6.2a1.5 1.5 0 0 0 0-2.1l-9-9H4.5a1 1 0 0 0-1 1z"/><circle cx="8" cy="8" r="1.6"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   searchWeb:

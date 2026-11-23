@@ -21,6 +21,7 @@ import type {
   AgentCatalog,
   AgentStatus,
   OfflineMachine,
+  PendingQueueItem,
   SettingsScreen,
   SlashCommandSpec,
   WorkdirScreen,
@@ -94,6 +95,16 @@ export const SendRequestSchema = z
      * must not be able to make something it sent vanish from the conversation by asking.
      */
     quiet: z.boolean().optional(),
+    /** Bypass mid-turn pending-steer holding and offer to the running turn immediately. */
+    immediate: z.boolean().optional(),
+  })
+  .strict();
+
+/** Recall or immediately send one (or all/latest) pending mid-turn message(s) in a topic. */
+export const PendingActionRequestSchema = z
+  .object({
+    topic: TopicId,
+    messageId: z.string().min(1).max(100).optional(),
   })
   .strict();
 
@@ -436,6 +447,12 @@ export type EndTerminalRequest = z.infer<typeof EndTerminalRequestSchema>;
 export type ClearTopicsRequest = z.infer<typeof ClearTopicsRequestSchema>;
 export type CloseIdleRequest = z.infer<typeof CloseIdleRequestSchema>;
 export type KillTopicRequest = z.infer<typeof KillTopicRequestSchema>;
+export type PendingActionRequest = z.infer<typeof PendingActionRequestSchema>;
+
+/** Pending mid-turn queue item as sent to the WebUI client (carries client nonce to retire optimistic bubble). */
+export interface WebPendingItem extends PendingQueueItem {
+  nonce?: string;
+}
 export type ScheduleOpRequest = z.infer<typeof ScheduleOpRequestSchema>;
 export type ScheduleEditRequest = z.infer<typeof ScheduleEditRequestSchema>;
 export type ModelChooseRequest = z.infer<typeof ModelChooseRequestSchema>;
@@ -615,6 +632,8 @@ export type WebEvent =
       agents?: AgentCatalog;
       /** Machines the daemon cannot reach right now (`machines` below); absent when there are none. */
       offline?: OfflineMachine[];
+      /** Messages currently held in the gateway's mid-turn pending queue for this topic. */
+      pending?: WebPendingItem[];
     }
   | { t: 'msg'; msg: WebMessage }
   | { t: 'del'; id: string }
@@ -628,6 +647,7 @@ export type WebEvent =
    * the current one after its replay instead (see `WebRoom.subscribe`) — the only one it needs.
    */
   | { t: 'status'; status?: AgentStatus }
+  | { t: 'pending'; items: WebPendingItem[] }
   | { t: 'commands'; commands: SlashCommandSpec[] }
   /**
    * The whole topic list, at version `tv`: in a sync, and to a resumed stream whose list is older.
