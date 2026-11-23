@@ -157,4 +157,23 @@ describe('a message sent while the agent is working', () => {
     await r.send('/stop');
     expect(r.aborts()).toBe(1);
   });
+
+  it('supports /recall to withdraw a queued message before the turn ends (non-steerable harness)', async () => {
+    const r = rig(); // cannot steer mid-turn -> queued behind turn
+    await r.send('run the full suite');
+    await r.send('actually skip this');
+    await r.send('/recall');
+
+    await r.finish();
+    expect(r.prompts).toEqual(['run the full suite']);
+  });
+
+  it('supports immediate: true to steer immediately without waiting', async () => {
+    const r = rig('joined');
+    await r.send('run the full suite');
+    await r.send('urgent fix', { immediate: true });
+    expect(r.steered).toEqual(['urgent fix']);
+    await r.finish();
+    expect(r.prompts).toEqual(['run the full suite']);
+  });
 });

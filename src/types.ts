@@ -74,6 +74,8 @@ export interface InboundMessage {
   quotedAuthor?: string;
   /** Locale requested by the client (e.g. from an HTTP header or user preference). */
   locale?: string;
+  /** Bypass mid-turn pending-steer holding and offer to the running turn immediately. */
+  immediate?: boolean;
 }
 
 /**
@@ -300,6 +302,18 @@ export type ConversationId = string;
  *                must not (a slash command). The caller still holds it and sends it after the turn.
  */
 export type SteerOutcome = 'joined' | 'detached' | 'refused';
+
+/** One message held in the gateway's mid-turn queue, not yet handed to the agent (recallable). */
+export interface PendingQueueItem {
+  id: string;
+  content: string;
+  at: number;
+  attachments?: number;
+  /** Whether the running turn can accept this item via immediate send (steer). */
+  canSendNow: boolean;
+  /** Why it is waiting: 'tool' (tool running), 'delay' (short window), or 'turn' (waiting for turn end). */
+  reason: 'tool' | 'delay' | 'turn';
+}
 
 /**
  * Tool-bubble render mode (domain concept shared by the core renderer and config schema).

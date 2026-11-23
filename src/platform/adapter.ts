@@ -7,6 +7,7 @@ import type {
   InboundMessage,
   MessageRef,
   OfflineMachine,
+  PendingQueueItem,
   SessionOption,
   SettingsScreen,
   SlashCommandSpec,
@@ -154,6 +155,14 @@ export type ModelPickerResult = { ok: true; model: string; text: string } | { ok
 export interface ModelPicker {
   list(ref: ConversationRef): Promise<ModelPickerList>;
   choose(ref: ConversationRef, value: string): Promise<ModelPickerResult>;
+}
+
+/** Actions a platform (WebUI) can invoke on a conversation's pending mid-turn message queue. */
+export interface PendingQueueActions {
+  /** Recall one pending message by id, or the most recent one when `messageId` is omitted. */
+  recall(ref: ConversationRef, messageId?: string): { ok: boolean; recalled: number; content?: string };
+  /** Immediately steer one pending message by id, or all pending messages when omitted. */
+  sendNow(ref: ConversationRef, messageId?: string): { ok: boolean; sent: number };
 }
 
 /**
@@ -1476,6 +1485,21 @@ export interface PlatformAdapter {
    * it having been shown.
    */
   setStatus?(address: ConversationAddress, status: AgentStatus | undefined): void;
+
+  /**
+   * Push the current list of recallable mid-turn pending messages for a conversation (empty clears).
+   * Optional and web-UI-only; synchronous and best-effort like `setStatus`.
+   */
+  setPendingQueue?(address: ConversationAddress, items: readonly PendingQueueItem[]): void;
+
+  /**
+   * Notify the platform that previously held pending message(s) were handed to the agent and should
+   * now appear in the regular transcript at the current position.
+   */
+  markPendingDelivered?(address: ConversationAddress, messageIds: readonly string[]): void;
+
+  /** Wire recall / send-now actions from the platform (WebUI) into the daemon's merger. */
+  usePendingQueueActions?(actions: PendingQueueActions): void;
 
   /**
    * Tell the platform how the conversation at an address last ended, and whether a turn is about to

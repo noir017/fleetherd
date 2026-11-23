@@ -119,6 +119,13 @@ const en = {
   stopAckIdle: 'Nothing is running here.',
   stopAckQuestion: '⏹ Called off the question above. Nothing else was running.',
   stopAckVoice: '⏹ Called off the voice transcript — nothing was sent. Nothing else was running.',
+  recallEmpty: 'No pending messages to recall.',
+  recallSingle: '↩ Recalled this message before it reached the agent:',
+  recallMultiple: '↩ Recalled these {count} messages before they reached the agent:',
+  sendNowEmpty: 'No pending messages waiting to be sent.',
+  sendNowUnsupported: 'This agent cannot accept mid-turn messages — pending messages will run after the current turn.',
+  sendNowSentSingle: '⚡ Sent 1 pending message to the running turn.',
+  sendNowSentMultiple: '⚡ Sent {count} pending messages to the running turn.',
 };
 
 const zhCN: DictOf<typeof en> = {
@@ -234,6 +241,13 @@ const zhCN: DictOf<typeof en> = {
   stopAckIdle: '当前没有运行中的任务。',
   stopAckQuestion: '⏹ 已取消上方的提问。没有其他正在运行的任务。',
   stopAckVoice: '⏹ 已取消语音转写 — 未发送任何内容。没有其他正在运行的任务。',
+  recallEmpty: '当前没有可撤回的排队消息。',
+  recallSingle: '↩ 已撤回此条尚未送达 Agent 的消息：',
+  recallMultiple: '↩ 已撤回这 {count} 条尚未送达 Agent 的消息：',
+  sendNowEmpty: '当前没有等待发送的排队消息。',
+  sendNowUnsupported: '当前 Agent 不支持中途插入 — 排队消息将在本轮结束后发送。',
+  sendNowSentSingle: '⚡ 已立即发送 1 条排队消息给运行中的任务。',
+  sendNowSentMultiple: '⚡ 已立即发送 {count} 条排队消息给运行中的任务。',
 };
 
 export type RuntimeMessageKey = keyof typeof en;

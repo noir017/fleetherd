@@ -330,6 +330,7 @@ export const PAGE_BODY = `<main id="app" hidden>
     <div id="typing" hidden>...</div>
     <div id="note"></div>
     <div id="bar">
+      <div id="pending-queue" hidden aria-label="Queued messages" data-i18n-aria="pending.aria"></div>
       <!-- The agent's live status. Inside #bar rather than above it so it reads as part of the
            place you type. -->
       <!-- The topic's machine cannot be reached (paintMachineNote). Beside the status line, for
@@ -376,6 +377,7 @@ export const PAGE_BODY = `<main id="app" hidden>
                still sends mid-turn (into the running turn, or queued behind it) — neither of
                which is "stop". -->
           <button type="button" id="stop-turn" title="Stop what the agent is doing — the conversation is kept (/stop)" data-i18n-title="composer.stopTitle" data-i18n="composer.stop" hidden>Stop</button>
+          <button type="button" id="send-now" title="Send immediately into the running turn" data-i18n-title="composer.sendNowTitle" data-i18n="composer.sendNow" hidden>Send now</button>
           <!-- A tooltip is a pointer's affordance, so it names the pointer's shortcut: under the
                narrow-screen layout Enter writes a newline, but nothing there can hover to read
                this. Ctrl-Enter sends on both and is what that layout's users are left with. -->

@@ -306,6 +306,8 @@ export interface TurnRunnerDeps {
    * rendering chain — a status read must not queue behind a rate-limited chat.
    */
   recordTool?(id: ConversationId, evt: ToolEvent): void;
+  /** Synchronous tool-activity count for mid-turn pending queue flushing at tool boundaries. */
+  onToolActivity?(id: ConversationId, activeCount: number, finished: boolean): void;
   /**
    * Record what the harness reported about the session that is not usage — the serving model, its
    * effort, its quota pools — for a surface that shows them between replies (the web UI's status
@@ -1185,7 +1187,9 @@ export class TurnRunner {
    * the turn, so reporting it as joined would tell the agent something the sub-agent never saw.
    */
   canSteer(conversationId: ConversationId): boolean {
-    return this.running.get(conversationId)?.agent.steer !== undefined;
+    const agent = this.running.get(conversationId)?.agent;
+    if (!agent?.steer) return false;
+    return agent.canSteer ? agent.canSteer() : true;
   }
 
   /**
@@ -1216,6 +1220,7 @@ export class TurnRunner {
   ): AgentStreamHandlers {
     /** The latest start of each call by id, so its finish can rewrite the row with the same line. */
     const toolStarts = new Map<string, ToolEvent>();
+    let unkeyedTools = 0;
     /** Pictures this render was sent, numbering the ones the agent did not name (image-1.png, …). */
     let pictures = 0;
     const recordTool = (evt: ToolEvent, input: unknown): void => {
@@ -1242,6 +1247,8 @@ export class TurnRunner {
         // A start is re-emitted whenever the bubble's line changes (agent-acp.ts upgradeToolRow);
         // with the call's id the library rewrites one row rather than adding one per emission.
         if (evt.id !== undefined) toolStarts.set(evt.id, evt);
+        else unkeyedTools++;
+        this.deps.onToolActivity?.(conversationId, toolStarts.size + unkeyedTools, false);
         recordTool(evt, evt.input);
         rollSegment(ref);
         // Before a tool: finish the current text as its own bubble (no footer: not the last segment), then
@@ -1265,6 +1272,8 @@ export class TurnRunner {
         // filed with half its content.
         const start = evt.id !== undefined ? toolStarts.get(evt.id) : undefined;
         if (evt.id !== undefined) toolStarts.delete(evt.id);
+        else if (unkeyedTools > 0) unkeyedTools--;
+        this.deps.onToolActivity?.(conversationId, toolStarts.size + unkeyedTools, true);
         if (start && evt.input !== undefined && evt.input !== start.input) recordTool(start, evt.input);
         enqueue(() => tools.onToolFinish(evt));
       },

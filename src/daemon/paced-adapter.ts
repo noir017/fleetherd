@@ -94,6 +94,9 @@ const PACING = {
   // already throttles it. Queueing a status behind a platform's flood pause would only show a
   // stale one later.
   setStatus: 'unpaced',
+  setPendingQueue: 'unpaced',
+  markPendingDelivered: 'unpaced',
+  usePendingQueueActions: 'unpaced',
   // Same: state drawn in the page's own topic list, pushed only at a turn's start and end.
   setActivity: 'unpaced',
   // Same: state drawn in the page's own lists, pushed only when a machine comes or goes.

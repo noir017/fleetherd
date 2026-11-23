@@ -2,10 +2,10 @@ import { agentDisplayName, findAgent } from '../config/schema.js';
 import { localeOf, type Locale } from '../core/i18n/index.js';
 import { tRuntime } from '../core/i18n/runtime.js';
 import { addressOf, type ConversationAddress, type ConversationRef } from '../core/conversation.js';
-import { InboundMerger, stopInputNote } from '../core/inbound-merger.js';
+import { InboundMerger, quoteMessages, stopInputNote } from '../core/inbound-merger.js';
 import { fallbackTitle } from '../core/title-namer.js';
 import type { PlatformAdapter } from '../platform/adapter.js';
-import type { ConversationId, InboundMessage, ToolEvent } from '../types.js';
+import type { ConversationId, InboundMessage, PendingQueueItem, ToolEvent } from '../types.js';
 import { resolveAgentCwd } from './agent-common.js';
 import type { RespawnCounts } from './config-reload.js';
 import type { ConversationContext, ConversationLane, ConversationState } from './conversation-context.js';
@@ -174,6 +174,9 @@ export class ConversationTurns {
       recordOptions: (id, options) => ctx.status.options(id, options),
       recordQuota: (id, pools) => ctx.status.quota(id, pools),
       recordTool: (id, evt) => this.recordTool(id, evt),
+      onToolActivity: (id, activeCount, finished) => {
+        ctx.conversations.get(id)?.merger.setActiveTools(activeCount, finished);
+      },
       recordTurnComplete: (id) => {
         const state = ctx.conversations.get(id);
         if (state) state.turnCompleted = true;
@@ -229,6 +232,7 @@ export class ConversationTurns {
         maxMergeWindowMs: ctx.config.inbound.maxMergeWindowMs,
         reactions: ctx.config.inbound.reactions,
         reactionsEnabled: ctx.config.display.reactions.enabled,
+        steerDelayMs: Math.min(3_000, ctx.config.inbound.mergeWindowMs * 2),
       },
       {
         now: ctx.clock.now,
@@ -240,6 +244,9 @@ export class ConversationTurns {
           return this.runner.runTurn(conversationId, batch, signal);
         },
         steer: (batch) => this.runner.steer(conversationId, batch),
+        canSteer: () => this.runner.canSteer(conversationId),
+        onPendingChange: (items) => this.pushPendingQueue(conversationId, items),
+        onPendingDeliver: (msgs) => this.notifyPendingDelivered(conversationId, msgs),
         abortTurn: () => {
           // Every cancel passes here: a question left on screen would pin the child and read the next message as its answer.
           ctx.hooks?.cancelPendingAsks?.(conversationId, 'interrupted');
@@ -274,6 +281,28 @@ export class ConversationTurns {
       throw new Error(`cannot resolve a platform adapter for conversation ${id} (platform=${pid ?? 'unknown'})`);
     }
     return adapter;
+  }
+
+  private pushPendingQueue(id: ConversationId, items: readonly PendingQueueItem[]): void {
+    const lane = this.ctx.laneOf(id);
+    if (!lane) return;
+    try {
+      this.ctx.platforms.get(lane.platformId)?.setPendingQueue?.(lane.address, items);
+    } catch (e) {
+      console.warn('[conversation] failed to push pending queue:', e instanceof Error ? e.message : e);
+    }
+  }
+
+  private notifyPendingDelivered(id: ConversationId, msgs: readonly InboundMessage[]): void {
+    const lane = this.ctx.laneOf(id);
+    if (!lane || msgs.length === 0) return;
+    const ids = msgs.map((m) => m.messageId).filter(Boolean);
+    if (ids.length === 0) return;
+    try {
+      this.ctx.platforms.get(lane.platformId)?.markPendingDelivered?.(lane.address, ids);
+    } catch (e) {
+      console.warn('[conversation] failed to mark pending delivered:', e instanceof Error ? e.message : e);
+    }
   }
 
   // ───────────────────────────── delivery ─────────────────────────────
@@ -314,6 +343,50 @@ export class ConversationTurns {
       .get(msg.conversation.platform)
       ?.sendMessage(addressOf(msg.conversation), `🤖 ${name}`)
       .catch((e) => console.warn('[conversation] failed to send header:', e instanceof Error ? e.message : e));
+  }
+
+  // ───────────────────────────── `/recall` and `/sendnow` ─────────────────────────────
+
+  recallAndReport(key: ConversationId, conv: ConversationRef, all: boolean): string {
+    const state = this.ctx.conversations.get(key);
+    const recalled = state ? state.merger.recall({ all }) : [];
+    if (recalled.length === 0) return tRuntime(this.locale, 'recallEmpty');
+    console.log(`[conversation] ${key} /recall by ${conv.platform}:${conv.user} → ${recalled.length} message(s)`);
+    const head =
+      recalled.length === 1
+        ? tRuntime(this.locale, 'recallSingle')
+        : tRuntime(this.locale, 'recallMultiple', { count: recalled.length });
+    return [head, ...quoteMessages(recalled, this.locale)].join('\n');
+  }
+
+  sendNowAndReport(key: ConversationId, conv: ConversationRef): string {
+    const state = this.ctx.conversations.get(key);
+    if (!state) return tRuntime(this.locale, 'sendNowEmpty');
+    const pending = state.merger.pendingItems();
+    if (pending.length === 0) return tRuntime(this.locale, 'sendNowEmpty');
+    if (!this.runner.canSteer(key)) return tRuntime(this.locale, 'sendNowUnsupported');
+    const sent = state.merger.sendNow();
+    if (sent.length === 0) return tRuntime(this.locale, 'sendNowUnsupported');
+    console.log(`[conversation] ${key} /sendnow by ${conv.platform}:${conv.user} → ${sent.length} message(s)`);
+    return sent.length === 1
+      ? tRuntime(this.locale, 'sendNowSentSingle')
+      : tRuntime(this.locale, 'sendNowSentMultiple', { count: sent.length });
+  }
+
+  recallPending(key: ConversationId, messageId?: string): { ok: boolean; recalled: number; content?: string } {
+    const state = this.ctx.conversations.get(key);
+    if (!state) return { ok: false, recalled: 0 };
+    const removed = state.merger.recall(messageId ? { messageId } : {});
+    if (removed.length === 0) return { ok: false, recalled: 0 };
+    const content = removed.length === 1 ? removed[0]!.content : undefined;
+    return { ok: true, recalled: removed.length, ...(content !== undefined ? { content } : {}) };
+  }
+
+  sendNowPending(key: ConversationId, messageId?: string): { ok: boolean; sent: number } {
+    const state = this.ctx.conversations.get(key);
+    if (!state) return { ok: false, sent: 0 };
+    const promoted = state.merger.sendNow(messageId);
+    return { ok: promoted.length > 0, sent: promoted.length };
   }
 
   // ───────────────────────────── `/stop` and `/kill` ─────────────────────────────

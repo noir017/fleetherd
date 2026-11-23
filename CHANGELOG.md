@@ -5,6 +5,17 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **Recallable mid-turn message queue and immediate send.** Messages sent while a turn is running
+  are now held in the gateway until the active tool finishes (or a 3-second grace window when no
+  tool is active) instead of being pushed to the harness immediately — making them recallable
+  across all harnesses before they reach the agent. Added `/recall` (`/unqueue`) and `/sendnow`
+  slash commands for all platforms, plus an immediate-send option (`immediate: true` / composer
+  **Send now** button) that matches the previous instant-steer behavior. In the Web UI, queued
+  messages stay pinned at the bottom above the composer in a visually distinct tray with per-item
+  **Send now** and **Recall** actions (refilling an empty composer on recall).
+
 ## [3.36.1] - 2026-11-23
 
 ### Added

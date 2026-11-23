@@ -1498,3 +1498,55 @@ describe('webui page: attachments in the composer', () => {
   });
 });
 
+describe('webui page: pending mid-turn queue and immediate send', () => {
+  it('renders queued messages pinned in #pending-queue, supports recall and send-now, and exposes #send-now while running', async () => {
+    const T = 'a1b2c3d4';
+    const h = await open({
+      replies: {
+        'api/pending/recall': { ok: true, recalled: 1, content: 'wait a sec' },
+        'api/pending/send-now': { ok: true, sent: 1 },
+      },
+    });
+    await h.emit(sync(T, [], [T]));
+    await h.emit({ t: 'typing', on: true });
+
+    // #send-now is visible while running and posts immediate: true.
+    const sendNowBtn = h.el('send-now') as HTMLButtonElement;
+    expect(sendNowBtn.hidden).toBe(false);
+    (h.el('input') as HTMLTextAreaElement).value = 'urgent now';
+    await h.click('#send-now');
+    expect(h.calls.find((c) => c.path === 'api/send')?.body).toMatchObject({
+      topic: T,
+      text: 'urgent now',
+      immediate: true,
+    });
+
+    // Pending event renders distinct pinned cards inside #bar > #pending-queue.
+    await h.emit({
+      t: 'pending',
+      items: [
+        { id: 'm99', content: 'wait a sec', at: Date.now(), canSendNow: true, reason: 'tool' },
+      ],
+    });
+    const tray = h.el('pending-queue');
+    expect(tray.hidden).toBe(false);
+    expect(tray.parentElement?.id).toBe('bar');
+    expect(tray.querySelectorAll('.pq-item')).toHaveLength(1);
+    expect(tray.textContent).toContain('wait a sec');
+
+    // Clicking Send now on the queued item posts to api/pending/send-now.
+    await h.click('[data-pq-send="m99"]');
+    expect(h.calls.find((c) => c.path === 'api/pending/send-now')?.body).toEqual({
+      topic: T,
+      messageId: 'm99',
+    });
+
+    // Clicking Recall posts to api/pending/recall and restores content into the empty composer.
+    await h.click('[data-pq-recall="m99"]');
+    await until('recalled text restored to composer', () => (h.el('input') as HTMLTextAreaElement).value === 'wait a sec');
+    expect(h.calls.find((c) => c.path === 'api/pending/recall')?.body).toEqual({
+      topic: T,
+      messageId: 'm99',
+    });
+  });
+});

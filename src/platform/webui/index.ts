@@ -508,6 +508,8 @@ type Outbound = Pick<
   | 'startTyping'
   | 'stopTyping'
   | 'setStatus'
+  | 'setPendingQueue'
+  | 'markPendingDelivered'
   | 'setActivity'
   | 'setOfflineMachines'
   | 'seenAt'
@@ -683,14 +685,11 @@ function outbound(room: WebRoom, instance: WebuiInstance): Outbound {
     setStatus(address, status) {
       room.setStatus(topicOf(address, 'setStatus'), status);
     },
+    setPendingQueue: (address, items) => room.setPendingQueue(topicOf(address, 'setPendingQueue'), items),
+    markPendingDelivered: (address, messageIds) => room.markPendingDelivered(topicOf(address, 'markPendingDelivered'), messageIds),
     /** How a topic's last turn ended: what its row and the Needs-you list say about it. */
-    setActivity(address, activity) {
-      room.setActivity(topicOf(address, 'setActivity'), activity);
-    },
-    /** Machines that cannot be reached: marked in the topic list, the agent cards and the composer. */
-    setOfflineMachines(machines) {
-      room.setOfflineMachines(machines);
-    },
+    setActivity: (address, activity) => room.setActivity(topicOf(address, 'setActivity'), activity),
+    setOfflineMachines: (machines) => room.setOfflineMachines(machines),
     /** Read, so a topic that is gone answers "never seen" rather than throwing. */
     seenAt(address) {
       return address.channel === CHANNEL && address.thread ? room.seenAt(address.thread) : undefined;
@@ -766,6 +765,7 @@ function lifecycle(
   | 'useTopicKill'
   | 'useAgentCatalog'
   | 'useModelPicker'
+  | 'usePendingQueueActions'
   | 'useOptionPicker'
   | 'useTurnChanges'
   | 'useVoiceTranscriber'
@@ -848,6 +848,7 @@ function lifecycle(
      * in: a chat app has `/model` and its menu, which is a message.
      */
     useModelPicker: (picker) => room.useModelPicker(picker),
+    usePendingQueueActions: (actions) => room.usePendingQueueActions(actions),
     useOptionPicker: (picker) => room.useOptionPicker(picker),
     /**
      * The only implementor because it is the only platform with a window to put a diff in: a chat
