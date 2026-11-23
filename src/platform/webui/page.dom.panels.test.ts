@@ -881,6 +881,16 @@ describe('webui page: the scheduled-task panel', () => {
     expect(h.el('task-view').textContent).toContain('has expired');
   });
 
+  it('keeps Edit enabled while a task is running, while keeping Run now disabled', async () => {
+    const running = detail({ task: task({ running: true }) });
+    const h = await open({ replies: { 'api/schedules': listReply([task({ running: true })]), [TASK_URL]: pageReply(running) } });
+    await openTaskPage(h);
+    const editBtn = h.doc.querySelector('[data-tp-act="edit"]') as HTMLButtonElement;
+    const runBtn = h.doc.querySelector('[data-tp-act="run"]') as HTMLButtonElement;
+    expect(editBtn.disabled).toBe(false);
+    expect(runBtn.disabled).toBe(true);
+  });
+
   it('opens on the form from the row menu, and asks before throwing away changes', async () => {
     const h = await open({ replies: { 'api/schedules': listReply([task()]), [TASK_URL]: pageReply(detail()) }, confirm: false });
     await h.emit(sync(A, [], [A]));

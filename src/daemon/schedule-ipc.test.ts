@@ -854,17 +854,18 @@ describe('schedule edit over IPC', () => {
     expect(r.turns.at(-1)!.conversation).toBe(first);
   });
 
-  it('refuses while a run of that task is in flight', async () => {
+  it('allows editing while a run of that task is in flight without losing its completion record', async () => {
     const r = await rig();
     await r.inbound(WEB, 'hello');
     const task = await added(r, { kind: 'schedule-add', cron: '0 8 * * *', bash: 'sleep 1' });
     await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
     const resp = await r.call({ kind: 'schedule-edit', id: task.id, name: 'renamed' });
-    expect(resp).toMatchObject({ ok: false, error: `#${task.id} is running right now; edit it once that run finishes` });
+    expect(resp).toMatchObject({ ok: true, data: { task: { id: task.id, name: 'renamed' } } });
     await settle(1_200);
+    expect(saved(r)[0]).toMatchObject({ name: 'renamed', runs: 1, lastRun: { status: 'ok' } });
   });
 
-  it('a run that finishes while the model list is being read is not overwritten by the edit', async () => {
+  it('a run that finishes while the model list is being read is preserved when the edit commits', async () => {
     const r = await rig(undefined, undefined, { holdProbe: true });
     await r.inbound(WEB, 'hello');
     const task = await added(r, { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'brief', session: 'new', agent: 'cc' });
@@ -879,10 +880,10 @@ describe('schedule edit over IPC', () => {
     r.sent.length = 0;
     r.openProbe();
     const resp = await pending;
-    expect((resp as { error: string }).error).toMatch(/#\S+ changed while this edit was being checked.*run the edit again/);
-    // The edit was not applied over the run's record, and no card said it was.
-    expect(saved(r)[0]).toMatchObject({ runs: 1, run: { agent: 'cc', prompt: 'brief' } });
-    expect(r.sent.some((s) => s.text.includes('Scheduled task updated'))).toBe(false);
+    expect(resp).toMatchObject({ ok: true, data: { task: { id: task.id, count: 1 } } });
+    // Both the run's record and the edited config survive.
+    expect(saved(r)[0]).toMatchObject({ runs: 1, lastRun: { status: 'ok' }, run: { agent: 'lazy', model: 'fast-model', prompt: 'brief' } });
+    expect(r.sent.some((s) => s.text.includes('Scheduled task updated'))).toBe(true);
   });
 
   it('a task removed while the model list is being read is not brought back', async () => {

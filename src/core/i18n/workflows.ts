@@ -81,7 +81,6 @@ const en = {
   // Schedule Service
   'schedule.service.failedNotice': '⏰ `#{id}` **{name}** failed — {why}.',
   'schedule.service.missedNotice': '⏰ `#{id}` **{name}** {verb} at {time} — {why}.',
-  'schedule.service.runningNow': '#{id} is running right now; edit it once that run finishes',
 
   // Voice
   'voice.card.header': '🎙️ Voice transcript · {model} · {seconds}s',
@@ -244,7 +243,6 @@ const zhCN: DictOf<typeof en> = {
   // Schedule Service
   'schedule.service.failedNotice': '⏰ `#{id}` **{name}** 执行失败 — {why}。',
   'schedule.service.missedNotice': '⏰ `#{id}` **{name}** 于 {time} {verb} — {why}。',
-  'schedule.service.runningNow': '#{id} 当前正在运行；请在该轮运行结束后再编辑',
 
   // Voice
   'voice.card.header': '🎙️ 语音转写 · {model} · {seconds}s',

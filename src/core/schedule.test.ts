@@ -14,6 +14,7 @@ import {
   nextRunOf,
   normalizeTags,
   parseAt,
+  rebaseEdit,
   SHAPE_SETTINGS,
   shapeOf,
   taskCardText,
@@ -623,6 +624,50 @@ describe('editTask: kind, session and target', () => {
     expect(edited(onBox, { name: 'renamed' }, c).run).toMatchObject({ host: 'box', cwd: '/srv' });
     expect(edited(onBox, { host: null }, c).run).toEqual({ kind: 'bash', command: 'ls', timeoutMs: 600_000, cwd: '/srv' });
     expect(edited(onBox, { host: 'box2', cwd: '/data' }, c).run).toMatchObject({ host: 'box2', cwd: '/data' });
+  });
+});
+
+describe('rebaseEdit', () => {
+  it('preserves runtime updates from current while applying edited config fields', () => {
+    const before = built({ cron: '0 8 * * *', prompt: 'old', session: 'daily' });
+    const editRes = editTask(before, { prompt: 'new', name: 'renamed' }, ctx());
+    expect(editRes.ok).toBe(true);
+    if (!editRes.ok) throw new Error(editRes.error);
+    const day = { day: '2026-09-30', conversation: 'web#main#d1', address: { channel: 'main', thread: 'd1' } };
+    const current: ScheduleTask = {
+      ...before,
+      runs: 2,
+      lastPlannedAt: NOW + 60_000,
+      lastRun: { at: NOW + 60_000, status: 'ok', durationMs: 500 },
+      history: [{ at: NOW + 60_000, status: 'ok', durationMs: 500 }],
+      daySession: day,
+    };
+    const rebased = rebaseEdit(before, editRes.task, current);
+    expect(rebased.ok).toBe(true);
+    if (!rebased.ok) throw new Error(rebased.error);
+    expect(rebased.task).toMatchObject({
+      name: 'renamed',
+      run: { kind: 'agent', prompt: 'new', session: 'daily' },
+      runs: 2,
+      lastPlannedAt: NOW + 60_000,
+      lastRun: { status: 'ok' },
+      daySession: day,
+    });
+    expect(rebased.task.history).toHaveLength(1);
+  });
+
+  it('drops current daySession when the edit changes daily scope and refuses once current is done', () => {
+    const before = built({ cron: '0 8 * * *', prompt: 'old', session: 'daily' });
+    const editRes = editTask(before, { agent: 'oc' }, ctx());
+    expect(editRes.ok).toBe(true);
+    if (!editRes.ok) throw new Error(editRes.error);
+    const day = { day: '2026-09-30', conversation: 'web#main#d1', address: { channel: 'main', thread: 'd1' } };
+    const rebased = rebaseEdit(before, editRes.task, { ...before, daySession: day });
+    expect(rebased.ok).toBe(true);
+    if (rebased.ok) expect(rebased.task).not.toHaveProperty('daySession');
+
+    const finished = rebaseEdit(before, editRes.task, { ...before, state: 'done' });
+    expect(finished.ok).toBe(false);
   });
 });
 

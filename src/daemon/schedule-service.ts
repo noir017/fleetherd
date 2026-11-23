@@ -16,8 +16,10 @@ import {
   formatInZone,
   nextRunOf,
   normalizeTags,
+  rebaseEdit,
   runNoticeText,
   runView,
+  sameDailyTopicScope,
   targetId,
   taskCardText,
   taskExpiredText,
@@ -233,8 +235,8 @@ export class ScheduleService {
     if (cwdProblem) throw new Error(cwdProblem);
     const dirProblem = await this.dirOnHostProblem(input.host, cwd);
     if (dirProblem) throw new Error(dirProblem);
-    await this.commitEdit(task, built.task, input, caller);
-    return taskView(built.task, this.clock.now(), { detail: true, here: caller });
+    const saved = await this.commitEdit(task, built.task, input, caller);
+    return taskView(saved, this.clock.now(), { detail: true, here: caller });
   }
 
   /**
@@ -257,8 +259,7 @@ export class ScheduleService {
     if (hostProblem) throw new Error(hostProblem);
     const dirProblem = await this.panelDirProblem(task, built.task, input.cwd);
     if (dirProblem) throw new Error(dirProblem);
-    await this.commitEdit(task, built.task, input, undefined);
-    return built.task;
+    return await this.commitEdit(task, built.task, input, undefined);
   }
 
   /**
@@ -275,13 +276,6 @@ export class ScheduleService {
   private editableTask(id: string): ScheduleTask {
     const task = this.scheduler.get(id);
     if (!task) throw new Error(`no scheduled task #${id}; \`fleetherd schedule list\` shows them all`);
-    // The run in flight is using the values as they were when it started, and a daily run writes
-    // its day's topic back when it opens one — both would race the edit. Editing is quick to retry;
-    // a run is not.
-    if (this.scheduler.isRunning(id)) {
-      const locale = localeOf(this.config);
-      throw new Error(tWorkflows(locale, 'schedule.service.runningNow', { id }));
-    }
     return task;
   }
 
@@ -299,23 +293,24 @@ export class ScheduleService {
     next: ScheduleTask,
     input: Pick<EditTaskInput, 'model' | 'agent'>,
     caller: ConversationId | undefined
-  ): Promise<void> {
+  ): Promise<ScheduleTask> {
     this.assertNotCoordinationTopic(next);
     const named = input.model !== undefined || input.agent !== undefined;
     if (named && next.run.kind === 'agent' && next.run.model !== undefined) {
       const why = await this.registry.scheduledModelProblem(next.run.agent, next.run.model, caller);
       if (why) throw new Error(why);
     }
-    // Nothing above writes. While the model list was being read (a cold session, an ssh round trip
-    // for a remote agent), a run may have finished — the scheduler writes runs, lastRun and
-    // lastPlannedAt — or the task may have been removed. Writing `next` then would put the old
-    // snapshot back: a planned time already run would run again, or a deleted task would come back
-    // and post a second card. Every write replaces the stored object, so identity is the test.
-    this.assertUnchanged(task);
-    if (!this.scheduler.update(next)) {
+    const current = this.scheduler.get(task.id);
+    if (current === undefined) {
       throw new Error(`#${task.id} was removed while this edit was being checked; nothing was changed`);
     }
-    this.card(caller, next, 'updated', task.target);
+    const rebased = rebaseEdit(task, next, current);
+    if (!rebased.ok) throw new Error(rebased.error);
+    if (!this.scheduler.update(rebased.task)) {
+      throw new Error(`#${task.id} was removed while this edit was being checked; nothing was changed`);
+    }
+    this.card(caller, rebased.task, 'updated', task.target);
+    return rebased.task;
   }
 
   /**
@@ -363,20 +358,6 @@ export class ScheduleService {
       return { key: task.conversation, ...(bound !== undefined ? { agent: bound } : {}) };
     }
     return this.registry.conversationAt(target.platform, target.address);
-  }
-
-  /**
-   * The task must still be the one the edit was built from. A run that started or finished replaces
-   * the stored object (runs, lastRun, lastPlannedAt, daySession), and a removal leaves nothing.
-   */
-  private assertUnchanged(task: ScheduleTask): void {
-    const current = this.scheduler.get(task.id);
-    if (current === undefined) {
-      throw new Error(`#${task.id} was removed while this edit was being checked; nothing was changed`);
-    }
-    if (current !== task || this.scheduler.isRunning(task.id)) {
-      throw new Error(`#${task.id} changed while this edit was being checked (a run started or finished); run the edit again`);
-    }
   }
 
   /**
@@ -836,7 +817,7 @@ export class ScheduleService {
       }
       key = opened.key;
       address = opened.address;
-      this.rememberDay(task.id, { day, conversation: key, address });
+      this.rememberDay(task, { day, conversation: key, address });
     }
 
     const modelWhy = await this.applyDailyModel(task, run, platform, key, address, reuse, planned);
@@ -981,11 +962,10 @@ export class ScheduleService {
   }
 
   /** Record which topic today's daily runs join — before the turn, so a crash mid-run keeps it. */
-  private rememberDay(id: string, day: ScheduleDaySession): void {
-    const current = this.store.get(id);
-    // Removed while the topic was being opened: nothing to remember, and putting it back would
-    // resurrect a task the user just deleted.
-    if (current) this.store.put({ ...current, daySession: day });
+  private rememberDay(task: ScheduleTask, day: ScheduleDaySession): void {
+    const current = this.store.get(task.id);
+    // Removed or edited off this daily topic's scope while opening: do not attach a stale topic.
+    if (current && sameDailyTopicScope(task, current)) this.store.put({ ...current, daySession: day });
   }
 
   /** Forget today's topic, so the next run opens a new one: the one it names is gone or unwritable. */

@@ -1554,7 +1554,7 @@ function taskActionButtonsHtml(d: SchedulePanelTaskDetail, ic: Record<string, st
   const taskState = t.state || 'active';
   const busyNote = ' disabled title="' + tr('sched.runNowBusyTitle') + '"';
   let h = '<div class="tp-acts">';
-  if (!d.locked) h += '<button type="button" data-tp-act="edit"' + (t.running ? busyNote : '') + '>' + (ic.pencil || '') + tr('common.edit') + '</button>';
+  if (!d.locked) h += '<button type="button" data-tp-act="edit">' + (ic.pencil || '') + tr('common.edit') + '</button>';
   if (taskState === 'active') h += '<button type="button" data-tp-act="pause">' + (ic.pause || '') + tr('sched.pause') + '</button>';
   if (taskState === 'paused') h += '<button type="button" data-tp-act="resume">' + (ic.play || '') + tr('sched.resume') + '</button>';
   if (taskState === 'active' || taskState === 'paused') {

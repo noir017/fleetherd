@@ -820,6 +820,31 @@ export function editTask(task: ScheduleTask, input: EditTaskInput, ctx: NewTaskC
 }
 
 /**
+ * Rebase an edit onto the task's latest runtime state (runs, history, lastRun, lastPlannedAt,
+ * state, daySession) so edits while a run is in flight or finishing never clobber run records.
+ */
+export function rebaseEdit(before: ScheduleTask, edited: ScheduleTask, current: ScheduleTask): Built {
+  const locked = editLockOf(current);
+  if (locked) return fail(locked);
+  const lastPlannedAt = sameWhen(before.when, edited.when)
+    ? current.lastPlannedAt
+    : current.lastPlannedAt !== undefined && edited.lastPlannedAt !== undefined
+      ? Math.max(edited.lastPlannedAt, current.lastPlannedAt)
+      : (edited.lastPlannedAt ?? current.lastPlannedAt);
+  const { lastRun: _lr, history: _h, lastPlannedAt: _lp, daySession: _ds, ...config } = edited;
+  const merged: ScheduleTask = {
+    ...config,
+    state: current.state,
+    runs: current.runs,
+    ...(current.lastRun !== undefined ? { lastRun: current.lastRun } : {}),
+    ...(current.history !== undefined ? { history: current.history } : {}),
+    ...(lastPlannedAt !== undefined ? { lastPlannedAt } : {}),
+    ...(current.daySession !== undefined ? { daySession: current.daySession } : {}),
+  };
+  return { ok: true, task: withoutStaleDayTopic(current, merged) };
+}
+
+/**
  * Why no edit of this task can succeed, whatever it changes: the task is over. Exported for the web
  * UI's task page, which says so instead of offering a form every save of which would be refused.
  */
@@ -894,16 +919,21 @@ function fixedWindowProblem(task: ScheduleTask, now: number): string | undefined
  * topic: the day's context survives, and a model is applied per run anyway (unless a person set it
  * by hand — see personModel).
  */
+export function sameDailyTopicScope(a: ScheduleTask, b: ScheduleTask): boolean {
+  return (
+    a.run.kind === 'agent' &&
+    b.run.kind === 'agent' &&
+    a.run.session === 'daily' &&
+    b.run.session === 'daily' &&
+    a.run.agent === b.run.agent &&
+    a.run.cwd === b.run.cwd &&
+    sameTarget(a.target, b.target)
+  );
+}
+
 function withoutStaleDayTopic(task: ScheduleTask, next: ScheduleTask): ScheduleTask {
   if (next.daySession === undefined) return next;
-  const stays =
-    task.run.kind === 'agent' &&
-    next.run.kind === 'agent' &&
-    next.run.session === 'daily' &&
-    next.run.agent === task.run.agent &&
-    next.run.cwd === task.run.cwd &&
-    sameTarget(task.target, next.target);
-  if (stays) return next;
+  if (sameDailyTopicScope(task, next)) return next;
   const { daySession: _oldDay, ...rest } = next;
   return rest;
 }

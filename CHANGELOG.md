@@ -5,6 +5,15 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **Allow editing scheduled tasks while a run is in flight.** `schedule edit` and the Web UI task
+  page no longer block edits while the task is currently running. Before writing, `ScheduleService`
+  rebases the edited configuration onto the task's latest runtime state (`runs`, `lastRun`,
+  `history`, `lastPlannedAt`, `state`, and `daySession`), and `rememberDay` checks that the task
+  still shares the same daily topic scope before attaching a newly opened topic — so in-flight runs
+  keep their completion records and updated prompts/schedules take effect cleanly on the next run.
+
 ## [3.35.0] - 2026-11-22
 
 ### Added

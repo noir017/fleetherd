@@ -149,7 +149,6 @@ describe('core/i18n/workflows', () => {
       'schedule.menu.deleteConfirm',
       'schedule.service.failedNotice',
       'schedule.service.missedNotice',
-      'schedule.service.runningNow',
       'voice.card.header',
       'voice.card.notCleaned',
       'voice.card.previewMore',
