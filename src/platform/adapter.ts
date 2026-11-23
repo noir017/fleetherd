@@ -13,6 +13,7 @@ import type {
   StatusOption,
   TopicActivity,
   TopicKillResult,
+  WorkdirScreen,
 } from '../types.js';
 
 /**
@@ -1577,7 +1578,8 @@ export interface PlatformAdapter {
     ref: MessageRef,
     text: string,
     buttons: ButtonSpec[],
-    screen?: SettingsScreen
+    screen?: SettingsScreen,
+    opts?: SendOptions
   ): Promise<void>;
 
   /**
@@ -1630,6 +1632,7 @@ export const MESSAGE_KINDS = ['tools', 'dispatch', 'report', 'aside'] as const s
 
 export interface SendOptions {
   kind?: MessageKind;
+  workdir?: WorkdirScreen;
 }
 
 export interface PlatformCapabilities {
@@ -1716,6 +1719,8 @@ export interface PlatformCapabilities {
    * only implementation to draw. Absent/undefined treated as false.
    */
   settingsScreen?: boolean;
+  /** Whether `/cd` is drawn as an interactive directory browser (`WorkdirScreen`) instead of flat buttons. */
+  workdirScreen?: boolean;
   /**
    * How many items one page of a button menu may hold here (`/cd`, `/model`, `/setting`).
    *

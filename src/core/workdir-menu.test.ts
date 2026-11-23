@@ -2,16 +2,24 @@ import { describe, expect, it } from 'vitest';
 import {
   WORKDIR_PAGE_SIZE,
   buildWorkdirMenu,
+  buildWorkdirScreen,
   matchWorkdirs,
   parseWorkdirButtonId,
   workdirAmbiguousText,
+  workdirBaseName,
+  workdirBreadcrumbs,
   workdirChoiceText,
+  workdirCrumbButtonId,
+  workdirEnterButtonId,
+  workdirHomeButtonId,
   workdirIndexOf,
   workdirMenuSurface,
   workdirNoMatchText,
   workdirPageCount,
   workdirPageOf,
+  workdirParentOf,
   workdirSummaryText,
+  workdirUpButtonId,
   type WorkdirOption,
 } from './workdir-menu.js';
 
@@ -177,6 +185,10 @@ describe('surface choice', () => {
   it('falls back to text when the only option is the directory already in use', () => {
     expect(workdirMenuSurface({ buttons: true, editButtons: true }, 1)).toBe('text');
   });
+
+  it('keeps the menu open for a single option when the platform supports workdirScreen', () => {
+    expect(workdirMenuSurface({ buttons: true, editButtons: true, workdirScreen: true }, 1)).toBe('menu');
+  });
 });
 
 describe('the text surface', () => {
@@ -205,5 +217,71 @@ describe('choice outcomes', () => {
     expect(workdirChoiceText({ kind: 'missing', path: '/gone' })).toContain('no longer exists');
     expect(workdirChoiceText({ kind: 'rebound', agent: 'opencode' })).toContain('opencode');
     expect(workdirChoiceText({ kind: 'failed', reason: 'no store' })).toContain('no store');
+  });
+});
+
+describe('directory browser helpers and WorkdirScreen', () => {
+  it('parses enter, up, breadcrumb, and home button ids', () => {
+    expect(parseWorkdirButtonId(workdirEnterButtonId('ab12cd34', 2))).toEqual({ kind: 'enter', reqId: 'ab12cd34', index: 2 });
+    expect(parseWorkdirButtonId(workdirUpButtonId('ab12cd34'))).toEqual({ kind: 'up', reqId: 'ab12cd34' });
+    expect(parseWorkdirButtonId(workdirCrumbButtonId('ab12cd34', 1))).toEqual({ kind: 'crumb', reqId: 'ab12cd34', index: 1 });
+    expect(parseWorkdirButtonId(workdirHomeButtonId('ab12cd34'))).toEqual({ kind: 'home', reqId: 'ab12cd34' });
+  });
+
+  it('computes parent, basename, and breadcrumbs for POSIX and Windows paths', () => {
+    expect(workdirParentOf('/home/u/workspace', true)).toBe('/home/u');
+    expect(workdirParentOf('/home', true)).toBe('/');
+    expect(workdirParentOf('/', true)).toBeUndefined();
+    expect(workdirBaseName('/', true)).toBe('/');
+    expect(workdirBaseName('/home/u/workspace/', true)).toBe('workspace');
+    expect(workdirBreadcrumbs('/home/u/workspace', true)).toEqual([
+      { name: '/', path: '/' },
+      { name: 'home', path: '/home' },
+      { name: 'u', path: '/home/u' },
+      { name: 'workspace', path: '/home/u/workspace' },
+    ]);
+
+    expect(workdirParentOf('C:\\Users\\dev\\proj', false)).toBe('C:\\Users\\dev');
+    expect(workdirParentOf('C:\\Users', false)).toBe('C:\\');
+    expect(workdirParentOf('C:\\', false)).toBeUndefined();
+    expect(workdirBreadcrumbs('C:\\Users\\dev', false)).toEqual([
+      { name: 'C:\\', path: 'C:\\' },
+      { name: 'Users', path: 'C:\\Users' },
+      { name: 'dev', path: 'C:\\Users\\dev' },
+    ]);
+  });
+
+  it('builds a structured WorkdirScreen with parent, home, breadcrumbs, and dual-action entries', () => {
+    const screen = buildWorkdirScreen({
+      reqId: 'ab12cd34',
+      agentId: 'cc',
+      host: 'uniagent',
+      root: '/home/u/workspace',
+      current: '/home/u/workspace/shop-api',
+      browsing: '/home/u/workspace/shop-api',
+      options: [
+        { path: '/home/u/workspace/shop-api', name: 'shop-api' },
+        { path: '/home/u/workspace/shop-api/packages', name: 'packages' },
+      ],
+      truncated: 0,
+      posixPaths: true,
+    });
+    expect(screen.parent).toEqual({ path: '/home/u/workspace', buttonId: 'wdu:ab12cd34:0' });
+    expect(screen.home).toEqual({ path: '/home/u/workspace', name: 'workspace', buttonId: 'wdh:ab12cd34:0' });
+    expect(screen.selectCurrent).toEqual({
+      path: '/home/u/workspace/shop-api',
+      buttonId: 'wdr:ab12cd34:0',
+      current: true,
+      root: false,
+    });
+    expect(screen.breadcrumbs.map((b) => b.name)).toEqual(['/', 'home', 'u', 'workspace', 'shop-api']);
+    expect(screen.entries).toEqual([
+      {
+        name: 'packages',
+        path: '/home/u/workspace/shop-api/packages',
+        pickId: 'wdr:ab12cd34:1',
+        enterId: 'wde:ab12cd34:1',
+      },
+    ]);
   });
 });

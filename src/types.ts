@@ -821,6 +821,37 @@ export type SettingsScreen =
       notice?: SettingsScreenNotice;
     };
 
+export interface WorkdirBreadcrumb {
+  name: string;
+  path: string;
+  buttonId: string;
+}
+
+export interface WorkdirScreenEntry {
+  name: string;
+  path: string;
+  current?: boolean;
+  root?: boolean;
+  pickId: string;
+  enterId: string;
+}
+
+/** Structured `/cd` directory browser payload for platforms declaring `capabilities.workdirScreen`. */
+export interface WorkdirScreen {
+  agentId: string;
+  host?: string;
+  root: string;
+  current: string;
+  browsing: string;
+  breadcrumbs: WorkdirBreadcrumb[];
+  parent?: { path: string; buttonId: string };
+  home?: { path: string; name: string; buttonId: string };
+  selectCurrent: { path: string; buttonId: string; current: boolean; root: boolean };
+  entries: WorkdirScreenEntry[];
+  truncated: number;
+  error?: string;
+}
+
 /**
  * One topic in an "end this topic and everything under it" answer, from
  * `PlatformAdapter.useTopicKill` (the web UI's row menu).

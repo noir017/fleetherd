@@ -242,6 +242,25 @@ export const en = {
   'chat.machineOfflineTitle': '{name} has been offline since {when}: the gateway cannot reach it, so its agents cannot answer until it is back.',
   'chat.machineOfflineNote': '{name} is offline since {when} — its agents cannot answer until it is back.',
 
+  // Workdir browser
+  'workdir.title': 'Choose working directory',
+  'workdir.hint': 'Click a folder to open subdirectories, or choose directly.',
+  'workdir.up': 'Up',
+  'workdir.upTitle': 'Parent folder: {path}',
+  'workdir.root': 'Default',
+  'workdir.rootTitle': 'Back to default root: {path}',
+  'workdir.useCurrent': 'Use this folder',
+  'workdir.keepCurrent': 'Keep current',
+  'workdir.choose': 'Select',
+  'workdir.chooseTitle': 'Select {path}',
+  'workdir.openTitle': 'Open subfolder {name}',
+  'workdir.currentTag': 'current',
+  'workdir.rootTag': 'default',
+  'workdir.empty': 'No subfolders in this directory.',
+  'workdir.filterPlaceholder': 'Filter subfolders…',
+  'workdir.noMatch': 'No matching subfolders.',
+  'workdir.truncated': '+{count} more subfolders not shown.',
+
   // Messages, bubbles, code blocks, btw
   'msg.dispatch': 'Sub-agent task',
   'msg.report': 'Sub-agent report',

@@ -1826,33 +1826,37 @@ import {
     // The tag, not the text, is what makes the kinds tell apart before the body is read.
     if(tag) h += '<div class="sub-k">'+tag+'</div>';
     if(m.quote && m.quote.html) h += '<div class="q">'+m.quote.html+'</div>';
-    h += '<div class="b">'+(folded ? foldLines(key, m.html) : m.html)+'</div>';
-    if(m.file){
-      // An image is drawn, not just named — a screenshot the agent took is about to be looked
-      // at, and a round trip through the downloads folder to do that is the friction this
-      // exists to remove. The link stays underneath either way: it is still the only way to
-      // get the bytes onto disk, and it is what a picture that fails to load degrades to.
-      if(m.file.image) h += '<img class="shot" src="'+text(m.file.url)+'" alt="'+text(m.file.name)+'" loading="lazy">';
-      h += '<div class="files"><a href="'+text(m.file.url)+'" download'
-        + (m.file.view && !hist ? ' data-view="'+text(m.file.view)+'"' : '')
-        + '>'+text(m.file.name)+'</a>';
-      // A report or a log is read by tapping its name (openReader); Download beside it is the
-      // way to the bytes, which is what the name used to be. Not offered on history, for the
-      // reason its buttons are dropped below: the token died with the process that minted it, so
-      // the reader could only ever open onto "no longer here".
-      if(m.file.view && !hist) h += '<a class="view" href="'+text(m.file.url)+'" download>'+text(tr('common.download'))+'</a>';
-      h += '</div>';
+    if(!hist && m.workdir){
+      h += workdirPicker(m);
+    } else {
+      h += '<div class="b">'+(folded ? foldLines(key, m.html) : m.html)+'</div>';
+      if(m.file){
+        // An image is drawn, not just named — a screenshot the agent took is about to be looked
+        // at, and a round trip through the downloads folder to do that is the friction this
+        // exists to remove. The link stays underneath either way: it is still the only way to
+        // get the bytes onto disk, and it is what a picture that fails to load degrades to.
+        if(m.file.image) h += '<img class="shot" src="'+text(m.file.url)+'" alt="'+text(m.file.name)+'" loading="lazy">';
+        h += '<div class="files"><a href="'+text(m.file.url)+'" download'
+          + (m.file.view && !hist ? ' data-view="'+text(m.file.view)+'"' : '')
+          + '>'+text(m.file.name)+'</a>';
+        // A report or a log is read by tapping its name (openReader); Download beside it is the
+        // way to the bytes, which is what the name used to be. Not offered on history, for the
+        // reason its buttons are dropped below: the token died with the process that minted it, so
+        // the reader could only ever open onto "no longer here".
+        if(m.file.view && !hist) h += '<a class="view" href="'+text(m.file.url)+'" download>'+text(tr('common.download'))+'</a>';
+        h += '</div>';
+      }
+      // What the turn changed, when the daemon recorded it. Not gated on a message being history:
+      // the records outlive the run that took the snapshots, so the entry still opens its window for
+      // a reply restored from a previous run. (A message from the History tab never carries one —
+      // that transcript has no turn records behind it.) Nothing is drawn unless the page has a
+      // window to open (see turnChangeRow).
+      if(m.turnChanges) h += turnChangeRow(m);
+      // Buttons are dropped from a message that came out of the cache: the process that would
+      // answer them is gone, and the id they name now means a different message or nothing at
+      // all. A control that cannot act is worse than no control.
+      if(!hist && m.buttons && m.buttons.length) h += menu(m);
     }
-    // What the turn changed, when the daemon recorded it. Not gated on a message being history:
-    // the records outlive the run that took the snapshots, so the entry still opens its window for
-    // a reply restored from a previous run. (A message from the History tab never carries one —
-    // that transcript has no turn records behind it.) Nothing is drawn unless the page has a
-    // window to open (see turnChangeRow).
-    if(m.turnChanges) h += turnChangeRow(m);
-    // Buttons are dropped from a message that came out of the cache: the process that would
-    // answer them is gone, and the id they name now means a different message or nothing at
-    // all. A control that cannot act is worse than no control.
-    if(!hist && m.buttons && m.buttons.length) h += menu(m);
     if(stuck(m)) h += failedActions(m);
     var meta = text(clock(m.at)) + (m.reactions && m.reactions.length ? '  '+m.reactions.map(reactionMark).join(' ') : '');
     h += '<div class="t">'+meta+(folded ? allToggle(key) : '')+'</div>';
@@ -1949,6 +1953,68 @@ import {
     // difference — a whole column more took the /cd menu on a phone from three columns to two.
     return '<div class="btns" style="--cw:'+Math.min(widest, 40)+'ch'+(marked ? ';--mk:1' : '')+'">' + items
       + (nav ? '<div class="nav">'+nav+'</div>' : '') + '</div>';
+  }
+
+  function workdirPicker(m){
+    var w = m.workdir, msg = text(m.id);
+    var crumbs = '';
+    var list = w.breadcrumbs || [];
+    for(var i=0;i<list.length;i++){
+      var c = list[i], isLast = i === list.length - 1;
+      if(i > 0 && list[i-1].name !== '/' && !/\\$/.test(list[i-1].name)) crumbs += '<span class="wd-sep" aria-hidden="true">/</span>';
+      if(isLast){
+        crumbs += '<span class="wd-crumb cur" title="'+text(c.path)+'">'+text(c.name)+'</span>';
+      } else {
+        crumbs += '<button type="button" class="wd-crumb" data-msg="'+msg+'" data-btn="'+text(c.buttonId)+'" title="'+text(c.path)+'">'+text(c.name)+'</button>';
+      }
+    }
+    var upBtn = w.parent
+      ? '<button type="button" class="wd-act wd-up" data-msg="'+msg+'" data-btn="'+text(w.parent.buttonId)+'" title="'+text(tr('workdir.upTitle', { path: w.parent.path }))+'">'+IC.icon.arrowUp+'<span>'+text(tr('workdir.up'))+'</span></button>'
+      : '<button type="button" class="wd-act wd-up" disabled>'+IC.icon.arrowUp+'<span>'+text(tr('workdir.up'))+'</span></button>';
+    var homeBtn = w.home
+      ? '<button type="button" class="wd-act wd-home" data-msg="'+msg+'" data-btn="'+text(w.home.buttonId)+'" title="'+text(tr('workdir.rootTitle', { path: w.home.path }))+'">'+IC.icon.home+'<span>'+text(tr('workdir.root'))+'</span></button>'
+      : '';
+    var sc = w.selectCurrent;
+    var curTags = (sc.current ? '<span class="wd-tag on">'+text(tr('workdir.currentTag'))+'</span>' : '')
+      + (sc.root ? '<span class="wd-tag">'+text(tr('workdir.rootTag'))+'</span>' : '');
+    var entries = w.entries || [];
+    var rows = '';
+    for(var j=0;j<entries.length;j++){
+      var e = entries[j];
+      var rowTag = e.current
+        ? '<span class="wd-tag on">'+text(tr('workdir.currentTag'))+'</span>'
+        : (e.root ? '<span class="wd-tag">'+text(tr('workdir.rootTag'))+'</span>' : '');
+      rows += '<div class="wd-row'+(e.current ? ' on' : '')+'" data-wd-name="'+text(String(e.name).toLowerCase())+'">'
+        + '<button type="button" class="wd-open" data-msg="'+msg+'" data-btn="'+text(e.enterId)+'" title="'+text(tr('workdir.openTitle', { name: e.name }))+'">'
+        + '<span class="wd-ic">'+(e.root ? IC.icon.home : IC.icon.folder)+'</span>'
+        + '<span class="wd-name">'+text(e.name)+'</span>'
+        + rowTag
+        + '<span class="wd-go" aria-hidden="true">'+IC.icon.chevronRight+'</span>'
+        + '</button>'
+        + '<button type="button" class="wd-choose'+(e.current ? ' on' : '')+'" data-msg="'+msg+'" data-btn="'+text(e.pickId)+'" title="'+text(tr('workdir.chooseTitle', { path: e.path }))+'">'
+        + IC.icon.check+'<span>'+text(tr('workdir.choose'))+'</span>'
+        + '</button>'
+        + '</div>';
+    }
+    var filterHtml = entries.length >= 6
+      ? '<div class="wd-filter">'+IC.icon.search+'<input type="search" class="wd-q" placeholder="'+text(tr('workdir.filterPlaceholder'))+'" aria-label="'+text(tr('workdir.filterPlaceholder'))+'" autocomplete="off" spellcheck="false"></div>'
+      : '';
+    var bodyHtml = entries.length
+      ? '<div class="wd-list">'+rows+'<div class="wd-empty wd-filter-empty" hidden>'+text(tr('workdir.noMatch'))+'</div></div>'
+      : '<div class="wd-empty">'+text(tr('workdir.empty'))+'</div>';
+    var hostPill = w.host ? '<span class="wd-meta">'+text(w.host)+'</span>' : '';
+    return '<div class="wd-picker" data-browsing="'+text(w.browsing)+'">'
+      + '<div class="wd-head"><div class="wd-title-row"><span class="wd-title">'+IC.icon.folder+'<span>'+text(tr('workdir.title'))+'</span></span>'
+      + '<span class="wd-badges"><span class="wd-meta">'+text(w.agentId)+'</span>'+hostPill+'</span></div>'
+      + '<div class="wd-hint">'+text(tr('workdir.hint'))+'</div></div>'
+      + '<div class="wd-bar"><div class="wd-acts">'+upBtn+homeBtn+'</div><nav class="wd-crumbs" aria-label="Path">'+crumbs+'</nav></div>'
+      + (w.error ? '<div class="wd-err" role="alert">'+text(w.error)+'</div>' : '')
+      + '<div class="wd-cur"><div class="wd-cur-info"><code class="wd-path" title="'+text(sc.path)+'">'+text(sc.path)+'</code>'+curTags+'</div>'
+      + '<button type="button" class="wd-pick-cur'+(sc.current ? ' on' : '')+'" data-msg="'+msg+'" data-btn="'+text(sc.buttonId)+'">'+IC.icon.check+'<span>'+text(tr(sc.current ? 'workdir.keepCurrent' : 'workdir.useCurrent'))+'</span></button></div>'
+      + filterHtml
+      + bodyHtml
+      + (w.truncated > 0 ? '<div class="wd-more">'+text(tr('workdir.truncated', { count: w.truncated }))+'</div>' : '')
+      + '</div>';
   }
 
   /**
@@ -6119,6 +6185,21 @@ import {
     var b = e.target.closest ? e.target.closest('button[data-btn]') : null;
     if(!b) return;
     postButton(b, topic);
+  });
+  log.addEventListener('input', function(e){
+    var q = e.target && e.target.classList && e.target.classList.contains('wd-q') ? e.target : null;
+    if(!q) return;
+    var box = q.closest ? q.closest('.wd-picker') : null;
+    if(!box) return;
+    var needle = String(q.value || '').trim().toLowerCase();
+    var rows = box.querySelectorAll('.wd-row'), shown = 0;
+    for(var i=0;i<rows.length;i++){
+      var match = !needle || String(rows[i].getAttribute('data-wd-name') || '').indexOf(needle) !== -1;
+      rows[i].hidden = !match;
+      if(match) shown++;
+    }
+    var empty = box.querySelector('.wd-filter-empty');
+    if(empty) empty.hidden = shown > 0;
   });
 
   // The settings page's rows and values are the same buttons the transcript's menus carry, so
