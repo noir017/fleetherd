@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.37.2] - 2026-11-23
+
 ### Changed
 
 - **Web UI queued-message UX: card-only Send now with interrupt confirmation, and direct optimistic queuing.**
