@@ -437,7 +437,7 @@ export class Daemon {
       adapter.useScheduleLookup?.((ref) => this.schedules?.targets(ref) ?? false);
       adapter.usePendingQueueActions?.({
         recall: (ref, messageId) => this.registry.recallPendingForRef(ref, messageId),
-        sendNow: (ref, messageId) => this.registry.sendNowPendingForRef(ref, messageId),
+        sendNow: (ref, messageId, opts) => this.registry.sendNowPendingForRef(ref, messageId, opts),
       });
       this.wirePanels(adapter, id);
       await adapter.start();

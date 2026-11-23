@@ -184,7 +184,7 @@ describe('webui page: the narrow-screen stylesheet', () => {
     expect(css).toContain('#input{width:100%;flex:0 0 100%}');
     expect(css).toContain('#row button[type="submit"]{margin-left:auto}');
     expect(css).toContain('#row #stop-turn:not([hidden]){margin-left:auto}');
-    expect(css).toContain('#row #stop-turn:not([hidden])~button[type="submit"]{margin-left:0}');
+    expect(css).toContain('#row #stop-turn:not([hidden])+button[type="submit"]{margin-left:0}');
   });
 
   it('splits the composer by its own width, not the window, when the sidebar leaves it narrow', () => {
@@ -202,7 +202,7 @@ describe('webui page: the narrow-screen stylesheet', () => {
     expect(css).toContain('#input{width:100%;flex:0 0 100%}');
     expect(css).toContain('#row button[type="submit"]{margin-left:auto}');
     expect(css).toContain('#row #stop-turn:not([hidden]){margin-left:auto}');
-    expect(css).toContain('#row #stop-turn:not([hidden])~button[type="submit"]{margin-left:0}');
+    expect(css).toContain('#row #stop-turn:not([hidden])+button[type="submit"]{margin-left:0}');
     // And it stands on its own: nested inside the phone block it would still match every
     // assertion above, while a 641–752px window lost the rule entirely and went back to one
     // squeezed row. The phone block is a viewport query; this one is the composer's.

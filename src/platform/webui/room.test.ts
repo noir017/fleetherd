@@ -3186,16 +3186,17 @@ describe('WebRoom: pending mid-turn queue', () => {
         room.setPendingQueue(topic, []);
         return { ok: true, recalled: 1, content: 'never mind' };
       },
-      sendNow: (_ref, id) => {
-        actions.push(`sendNow:${id ?? ''}`);
+      sendNow: (_ref, id, opts) => {
+        actions.push(`sendNow:${id ?? ''}${opts?.interrupt ? ':interrupt' : ''}`);
         return { ok: true, sent: 1 };
       },
     });
 
     room.submit({ topic, text: 'never mind', nonce: 'n-recall' });
     expect(room.sendNowPending(topic, heldId)).toEqual({ ok: true, sent: 1 });
+    expect(room.sendNowPending(topic, heldId, { interrupt: true })).toEqual({ ok: true, sent: 1 });
     expect(room.recallPending(topic, heldId)).toEqual({ ok: true, recalled: 1, content: 'never mind' });
-    expect(actions).toEqual([`sendNow:${heldId}`, `recall:${heldId}`]);
+    expect(actions).toEqual([`sendNow:${heldId}`, `sendNow:${heldId}:interrupt`, `recall:${heldId}`]);
     expect(seen.some((e) => e.ev.t === 'msg' && e.ev.msg.id === heldId)).toBe(false);
   });
 });

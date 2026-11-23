@@ -81,7 +81,7 @@ import {
       taskPage=$('task-page'), taskTitle=$('task-title'), taskSub=$('task-sub'), taskClose=$('task-close'),
       taskNote=$('task-note'), taskView=$('task-view'),
       settingsClose=$('settings-close'), settingsOpenBtn=$('settings-open'),
-      copyRefBtn=$('copy-ref'), killBtn=$('kill-agent'), stopBtn=$('stop-turn'), sendNowBtn=$('send-now'),
+      copyRefBtn=$('copy-ref'), killBtn=$('kill-agent'), stopBtn=$('stop-turn'),
       pendingQueueEl=$('pending-queue'), statusEl=$('status'), machineNoteEl=$('machine-note'),
       updateEl=$('update'),
       modelPop=$('model-pop'), mpList=$('mp-list'), mpFilter=$('mp-filter'), mpAgent=$('mp-agent'),
@@ -4060,7 +4060,6 @@ import {
     // usual state of a /super job, and the one where there was nothing to press: /stop there stops
     // them too (Delegation.stopOpened).
     stopBtn.hidden = !(cur && (cur.running || cur.asking || below));
-    if(sendNowBtn) sendNowBtn.hidden = !(cur && cur.running);
     stopBtn.title = below
       ? tr('composer.stopSubTitle')
       : tr('composer.stopTitle');
@@ -4648,9 +4647,12 @@ import {
   }
 
   var pendingItems = [];
+  var localPending = {};
+  var pendingConfirmId = null;
 
   function retireLocalNonce(nonce){
     if(!nonce) return;
+    delete localPending[nonce];
     var pk = 'p:' + nonce;
     delete outbox[nonce];
     var r = unsent[nonce];
@@ -4662,6 +4664,7 @@ import {
   }
 
   function pendingReasonText(reason){
+    if(reason === 'sending') return tr('pending.reasonSending');
     if(reason === 'tool') return tr('pending.reasonTool');
     if(reason === 'turn') return tr('pending.reasonTurn');
     return tr('pending.reasonDelay');
@@ -4669,25 +4672,55 @@ import {
 
   function paintPending(){
     if(!pendingQueueEl) return;
-    if(!pendingItems.length){
+    var seen = {}, confirmAlive = false;
+    for(var s=0;s<pendingItems.length;s++){
+      if(pendingItems[s] && pendingItems[s].nonce) seen[pendingItems[s].nonce] = 1;
+      if(pendingConfirmId && pendingItems[s] && pendingItems[s].id === pendingConfirmId) confirmAlive = true;
+    }
+    if(!confirmAlive) pendingConfirmId = null;
+    var locals = [];
+    for(var n in localPending){
+      if(Object.prototype.hasOwnProperty.call(localPending, n) && localPending[n].topic === topic && !seen[n]){
+        locals.push(localPending[n]);
+      }
+    }
+    locals.sort(function(a, b){ return a.at - b.at; });
+    var total = pendingItems.length + locals.length;
+    if(!total){
       pendingQueueEl.hidden = true;
       pendingQueueEl.innerHTML = '';
       return;
     }
-    var html = '<div class="pq-head">'+IC.icon.clock+'<span>'+text(tr('pending.header', { count: pendingItems.length }))+'</span></div>';
+    var html = '<div class="pq-head">'+IC.icon.clock+'<span>'+text(tr('pending.header', { count: total }))+'</span></div>';
     for(var i=0;i<pendingItems.length;i++){
       var it = pendingItems[i];
       var files = it.attachments ? '<span class="pq-files">'+text(it.attachments === 1 ? tr('pending.attachmentsOne') : tr('pending.attachmentsMany', { count: it.attachments }))+'</span>' : '';
-      var sendBtn = it.canSendNow
-        ? '<button type="button" class="pq-btn pq-send" data-pq-send="'+text(it.id)+'" title="'+text(tr('pending.sendNowTitle'))+'">'+IC.icon.bolt+'<span>'+text(tr('pending.sendNow'))+'</span></button>'
-        : '';
-      var recallBtn = '<button type="button" class="pq-btn pq-recall" data-pq-recall="'+text(it.id)+'" title="'+text(tr('pending.recallTitle'))+'">'+IC.icon.undo+'<span>'+text(tr('pending.recall'))+'</span></button>';
+      var acts;
+      if(pendingConfirmId === it.id){
+        acts = '<button type="button" class="pq-btn pq-confirm" data-pq-confirm="'+text(it.id)+'" title="'+text(tr('pending.sendNowInterruptTitle'))+'">'+IC.icon.bolt+'<span>'+text(tr('pending.confirmInterrupt'))+'</span></button>'
+          + '<button type="button" class="pq-btn pq-cancel" data-pq-cancel="'+text(it.id)+'"><span>'+text(tr('pending.cancel'))+'</span></button>';
+      } else {
+        var sendTitle = it.canSendNow ? tr('pending.sendNowTitle') : tr('pending.sendNowInterruptTitle');
+        var sendBtn = '<button type="button" class="pq-btn pq-send" data-pq-send="'+text(it.id)+'" data-pq-interrupt="'+(it.canSendNow ? '0' : '1')+'" title="'+text(sendTitle)+'">'+IC.icon.bolt+'<span>'+text(tr('pending.sendNow'))+'</span></button>';
+        var recallBtn = '<button type="button" class="pq-btn pq-recall" data-pq-recall="'+text(it.id)+'" title="'+text(tr('pending.recallTitle'))+'">'+IC.icon.undo+'<span>'+text(tr('pending.recall'))+'</span></button>';
+        acts = sendBtn + recallBtn;
+      }
       html += '<div class="pq-item" data-pq-id="'+text(it.id)+'">'
         + '<div class="pq-main">'
         + '<div class="pq-meta"><span class="pq-badge">'+text(tr('pending.badge'))+'</span><span class="pq-reason">'+text(pendingReasonText(it.reason))+'</span>'+files+'</div>'
         + '<div class="pq-text">'+text(it.content || '')+'</div>'
         + '</div>'
-        + '<div class="pq-acts">'+sendBtn+recallBtn+'</div>'
+        + '<div class="pq-acts">'+acts+'</div>'
+        + '</div>';
+    }
+    for(var j=0;j<locals.length;j++){
+      var lp = locals[j];
+      var lfiles = lp.attachments ? '<span class="pq-files">'+text(lp.attachments === 1 ? tr('pending.attachmentsOne') : tr('pending.attachmentsMany', { count: lp.attachments }))+'</span>' : '';
+      html += '<div class="pq-item pq-local" data-pq-nonce="'+text(lp.nonce)+'">'
+        + '<div class="pq-main">'
+        + '<div class="pq-meta"><span class="pq-badge">'+text(tr('pending.badge'))+'</span><span class="pq-reason">'+text(pendingReasonText('sending'))+'</span>'+lfiles+'</div>'
+        + '<div class="pq-text">'+text(lp.content || '')+'</div>'
+        + '</div>'
         + '</div>';
     }
     pendingQueueEl.innerHTML = html;
@@ -4710,8 +4743,27 @@ import {
       if(sendEl){
         var sid = sendEl.getAttribute('data-pq-send');
         if(!sid) return;
+        if(sendEl.getAttribute('data-pq-interrupt') === '1'){
+          pendingConfirmId = sid;
+          paintPending();
+          return;
+        }
         sendEl.disabled = true;
         post('api/pending/send-now', { topic: topic, messageId: sid }, 1).catch(function(){ sendEl.disabled = false; });
+        return;
+      }
+      var confirmEl = t.closest('[data-pq-confirm]');
+      if(confirmEl){
+        var cid = confirmEl.getAttribute('data-pq-confirm');
+        if(!cid) return;
+        confirmEl.disabled = true;
+        pendingConfirmId = null;
+        post('api/pending/send-now', { topic: topic, messageId: cid, interrupt: true }, 1).catch(function(){ paintPending(); });
+        return;
+      }
+      if(t.closest('[data-pq-cancel]')){
+        pendingConfirmId = null;
+        paintPending();
         return;
       }
       var recEl = t.closest('[data-pq-recall]');
@@ -7424,7 +7476,7 @@ import {
   function showUnsent(tId){
     var list=[];
     for(var n in unsent){
-      if(Object.prototype.hasOwnProperty.call(unsent, n) && unsent[n].t === tId && !data['p:'+n]) list.push(n);
+      if(Object.prototype.hasOwnProperty.call(unsent, n) && unsent[n].t === tId && !data['p:'+n] && !localPending[n]) list.push(n);
     }
     if(!list.length) return;
     list.sort(function(a, b){ return unsent[a].at - unsent[b].at; });
@@ -7493,7 +7545,15 @@ import {
    * bubble is the message until the echo claims it, and if nothing ever claims it, it stays and
    * says so.
    */
-  function send(immediate){
+  function shouldQueueOptimistically(typed){
+    var cur = null;
+    for(var i=0;i<topics.length;i++){ if(topics[i].id===topic){ cur=topics[i]; break; } }
+    if(!cur || !cur.running || cur.asking) return false;
+    if(/^\s*\//.test(typed)) return false;
+    return true;
+  }
+
+  function send(){
     // A picture still being shrunk in THIS topic is not in files yet, so a send now would leave
     // it out — or wait for nothing and look broken. The tap is remembered for this topic and
     // happens when its last picture lands; #note says why nothing moved yet, unless it is
@@ -7510,7 +7570,7 @@ import {
     // Dispatched first, because dispatch is what writes the message down as unsent. Only then is
     // the stored draft of this topic cleared — left on disk, a reload would put it back in the
     // composer to be sent again.
-    dispatch(typed, attached, immediate === true);
+    dispatch(typed, attached);
     stashDraft(topic);
   }
 
@@ -7526,25 +7586,29 @@ import {
     if(topic) dispatch(text, []);
   }
 
-  function dispatch(typed, attached, immediate){
+  function dispatch(typed, attached){
     var nonce = Math.random().toString(36).slice(2)+Date.now().toString(36);
     var body = {topic:topic, text:typed, nonce:nonce};
-    if(immediate) body.immediate = true;
     var names = [];
     for(var i=0;i<attached.length;i++) names.push(attached[i].name);
     if(attached.length) body.files = attached;
     outbox[nonce] = body;
     unsent[nonce] = {t:topic, x:typed, n:names, at:Date.now(), s:'sending', g:epoch};
     writeUnsent(nonce);
-    data['p:'+nonce] = localMsg(nonce, unsent[nonce]);
-    paint('p:'+nonce);
-    // A side question opens its card at once, saying it is being asked: the answer can take a
-    // while to start, and the line alone would not say anything was happening.
-    if(btwAsked('p:'+nonce, data['p:'+nonce]) !== null) openBtw('p:'+nonce);
-    syncEmptyNote();
-    // Unconditionally, unlike an arriving message: you have just written this one, so wherever
-    // you were in the history is not where you want to be now.
-    toBottom();
+    if(shouldQueueOptimistically(typed)){
+      localPending[nonce] = { topic: topic, nonce: nonce, content: typed, attachments: names.length, at: unsent[nonce].at };
+      paintPending();
+    } else {
+      data['p:'+nonce] = localMsg(nonce, unsent[nonce]);
+      paint('p:'+nonce);
+      // A side question opens its card at once, saying it is being asked: the answer can take a
+      // while to start, and the line alone would not say anything was happening.
+      if(btwAsked('p:'+nonce, data['p:'+nonce]) !== null) openBtw('p:'+nonce);
+      syncEmptyNote();
+      // Unconditionally, unlike an arriving message: you have just written this one, so wherever
+      // you were in the history is not where you want to be now.
+      toBottom();
+    }
     deliver(nonce);
   }
 
@@ -7587,6 +7651,19 @@ import {
         settleAdopted(r.t, r.x);
       } else r.s = state;
       writeUnsent(nonce);
+    }
+    if(localPending[nonce]){
+      if(state === 'failed'){
+        delete localPending[nonce];
+        paintPending();
+        if(r && r.t === topic){
+          data['p:'+nonce] = localMsg(nonce, r);
+          paint('p:'+nonce);
+          syncEmptyNote();
+          toBottom();
+        }
+      }
+      return;
     }
     var key='p:'+nonce, m=data[key];
     if(!m) return;
@@ -7737,7 +7814,6 @@ import {
   });
   killBtn.addEventListener('click', function(){ command('/kill'); });
   stopBtn.addEventListener('click', function(){ command('/stop'); });
-  if(sendNowBtn) sendNowBtn.addEventListener('click', function(){ send(true); });
 
   /**
    * Retire the local bubble this message is the echo of.
@@ -7748,6 +7824,10 @@ import {
    */
   function claim(m){
     if(!m.nonce) return;
+    if(localPending[m.nonce]){
+      delete localPending[m.nonce];
+      paintPending();
+    }
     var pk = 'p:' + m.nonce;
     delete outbox[m.nonce];
     // The echo can beat the 2xx: the daemon emits it before it answers the POST. The message has

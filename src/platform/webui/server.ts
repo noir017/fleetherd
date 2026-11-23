@@ -968,7 +968,7 @@ async function recallPending({ req, res }: Req, ctx: Ctx): Promise<void> {
 async function sendNowPending({ req, res }: Req, ctx: Ctx): Promise<void> {
   const parsed = await readBody(req, res, PendingActionRequestSchema);
   if (!parsed) return;
-  const result = ctx.room.sendNowPending(parsed.topic, parsed.messageId);
+  const result = ctx.room.sendNowPending(parsed.topic, parsed.messageId, parsed.interrupt ? { interrupt: true } : undefined);
   send(req, res, 200, result);
 }
 

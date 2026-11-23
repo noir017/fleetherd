@@ -386,10 +386,14 @@ export class ConversationTurns {
     return { ok: true, recalled: removed.length, ...(content !== undefined ? { content } : {}) };
   }
 
-  sendNowPending(key: ConversationId, messageId?: string): { ok: boolean; sent: number } {
+  sendNowPending(key: ConversationId, messageId?: string, opts?: { interrupt?: boolean }): { ok: boolean; sent: number } {
     const state = this.ctx.conversations.get(key);
     if (!state) return { ok: false, sent: 0 };
-    const promoted = state.merger.sendNow(messageId);
+    const promoted = state.merger.sendNow(messageId, opts);
+    if (opts?.interrupt && promoted.length > 0) {
+      this.outcomes.personActed(key);
+      this.ctx.hooks?.cancelPendingAsks?.(key, 'interrupted');
+    }
     return { ok: promoted.length > 0, sent: promoted.length };
   }
 

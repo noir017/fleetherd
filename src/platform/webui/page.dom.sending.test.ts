@@ -1498,8 +1498,8 @@ describe('webui page: attachments in the composer', () => {
   });
 });
 
-describe('webui page: pending mid-turn queue and immediate send', () => {
-  it('renders queued messages pinned in #pending-queue, supports recall and send-now, and exposes #send-now while running', async () => {
+describe('webui page: pending mid-turn queue and card send-now', () => {
+  it('optimistically renders mid-turn sends directly into #pending-queue without flashing a transcript bubble, and replaces on pending event', async () => {
     const T = 'a1b2c3d4';
     const h = await open({
       replies: {
@@ -1510,31 +1510,33 @@ describe('webui page: pending mid-turn queue and immediate send', () => {
     await h.emit(sync(T, [], [T]));
     await h.emit({ t: 'typing', on: true });
 
-    // #send-now is visible while running and posts immediate: true.
-    const sendNowBtn = h.el('send-now') as HTMLButtonElement;
-    expect(sendNowBtn.hidden).toBe(false);
-    (h.el('input') as HTMLTextAreaElement).value = 'urgent now';
-    await h.click('#send-now');
-    expect(h.calls.find((c) => c.path === 'api/send')?.body).toMatchObject({
-      topic: T,
-      text: 'urgent now',
-      immediate: true,
-    });
+    // No #send-now button in the bottom composer bar.
+    expect(h.doc.querySelector('#send-now')).toBeNull();
 
-    // Pending event renders distinct pinned cards inside #bar > #pending-queue.
-    await h.emit({
-      t: 'pending',
-      items: [
-        { id: 'm99', content: 'wait a sec', at: Date.now(), canSendNow: true, reason: 'tool' },
-      ],
-    });
+    // Sending while running goes straight into #pending-queue as a local card, not into #log.
+    (h.el('input') as HTMLTextAreaElement).value = 'wait a sec';
+    await h.click('#composer button[type="submit"]');
+    const sentBody = h.calls.find((c) => c.path === 'api/send')?.body as { topic: string; text: string; nonce: string };
+    expect(sentBody).toMatchObject({ topic: T, text: 'wait a sec' });
+    expect(h.doc.querySelectorAll('#log .m')).toHaveLength(0);
     const tray = h.el('pending-queue');
     expect(tray.hidden).toBe(false);
     expect(tray.parentElement?.id).toBe('bar');
+    expect(tray.querySelectorAll('.pq-item.pq-local')).toHaveLength(1);
+    expect(tray.textContent).toContain('wait a sec');
+
+    // Pending event with matching nonce seamlessly replaces the local card with the server card.
+    await h.emit({
+      t: 'pending',
+      items: [
+        { id: 'm99', content: 'wait a sec', at: Date.now(), nonce: sentBody.nonce, canSendNow: true, reason: 'tool' },
+      ],
+    });
+    expect(tray.querySelectorAll('.pq-item.pq-local')).toHaveLength(0);
     expect(tray.querySelectorAll('.pq-item')).toHaveLength(1);
     expect(tray.textContent).toContain('wait a sec');
 
-    // Clicking Send now on the queued item posts to api/pending/send-now.
+    // Clicking Send now on a steerable item posts directly to api/pending/send-now without interrupt.
     await h.click('[data-pq-send="m99"]');
     expect(h.calls.find((c) => c.path === 'api/pending/send-now')?.body).toEqual({
       topic: T,
@@ -1548,5 +1550,59 @@ describe('webui page: pending mid-turn queue and immediate send', () => {
       topic: T,
       messageId: 'm99',
     });
+  });
+
+  it('shows inline secondary confirmation before interrupting on non-steerable queued cards', async () => {
+    const T = 'a1b2c3d4';
+    const h = await open({
+      replies: {
+        'api/pending/send-now': { ok: true, sent: 1 },
+      },
+    });
+    await h.emit(sync(T, [], [T]));
+    await h.emit({ t: 'typing', on: true });
+    await h.emit({
+      t: 'pending',
+      items: [
+        { id: 'm100', content: 'stop and do this', at: Date.now(), canSendNow: false, reason: 'turn' },
+      ],
+    });
+
+    const tray = h.el('pending-queue');
+    expect(tray.querySelector('[data-pq-send="m100"]')).not.toBeNull();
+
+    // First click opens inline confirmation instead of firing the request immediately.
+    await h.click('[data-pq-send="m100"]');
+    expect(h.calls.filter((c) => c.path === 'api/pending/send-now')).toHaveLength(0);
+    expect(tray.querySelector('[data-pq-confirm="m100"]')).not.toBeNull();
+    expect(tray.querySelector('[data-pq-cancel="m100"]')).not.toBeNull();
+
+    // Cancelling restores the normal buttons without posting.
+    await h.click('[data-pq-cancel="m100"]');
+    expect(tray.querySelector('[data-pq-send="m100"]')).not.toBeNull();
+    expect(tray.querySelector('[data-pq-confirm="m100"]')).toBeNull();
+
+    // Confirming posts api/pending/send-now with interrupt: true.
+    await h.click('[data-pq-send="m100"]');
+    await h.click('[data-pq-confirm="m100"]');
+    expect(h.calls.find((c) => c.path === 'api/pending/send-now')?.body).toEqual({
+      topic: T,
+      messageId: 'm100',
+      interrupt: true,
+    });
+  });
+
+  it('falls back to a failed local bubble if an optimistic mid-turn send fails', async () => {
+    const T = 'a1b2c3d4';
+    const h = await open({ status: { 'api/send': 400 } });
+    await h.emit(sync(T, [], [T]));
+    await h.emit({ t: 'typing', on: true });
+
+    (h.el('input') as HTMLTextAreaElement).value = 'lost connection';
+    await h.click('#composer button[type="submit"]');
+
+    await until('failed bubble rendered after send error', () => h.doc.querySelectorAll('#log .m.failed').length === 1);
+    expect(h.el('pending-queue').hidden).toBe(true);
+    expect(h.doc.querySelector('#log .m.failed')?.textContent).toContain('lost connection');
   });
 });

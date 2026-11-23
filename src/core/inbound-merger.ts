@@ -399,15 +399,34 @@ export class InboundMerger {
 
   /**
    * Immediately offer held message(s) to the running turn, bypassing tool/delay waiting.
-   * Returns the promoted messages (empty when nothing can be steered right now).
+   * When `opts.interrupt` is true and mid-turn steering is unavailable, aborts the running turn
+   * and puts the promoted message(s) at the front of `queued` so `drainQueue()` starts them next.
    */
-  sendNow(messageId?: string): InboundMessage[] {
-    if (this.phase !== 'running' || this.stopping || !this.canSteerNow()) return [];
-    const promoted = messageId ? spliceById(this.pendingSteer, messageId) : this.pendingSteer.splice(0);
+  sendNow(messageId?: string, opts?: { interrupt?: boolean }): InboundMessage[] {
+    if (this.phase !== 'running' || this.stopping) return [];
+    if (this.canSteerNow()) {
+      const promoted = messageId ? spliceById(this.pendingSteer, messageId) : this.pendingSteer.splice(0);
+      if (promoted.length > 0) {
+        if (this.pendingSteer.length === 0) this.clearSteerTimer();
+        this.emitPending();
+        this.offer(promoted);
+        return promoted;
+      }
+    }
+    if (!opts?.interrupt) return [];
+    const promoted = messageId
+      ? [...spliceById(this.queued, messageId), ...spliceById(this.pendingSteer, messageId)]
+      : [...this.pendingSteer.splice(0), ...this.queued.splice(0)];
     if (promoted.length === 0) return [];
-    if (this.pendingSteer.length === 0) this.clearSteerTimer();
+    this.queued.unshift(...promoted);
+    this.interrupted = true;
+    this.clearSteerTimer();
+    this.activeTools = 0;
+    this.stops++;
+    this.stopping = true;
     this.emitPending();
-    this.offer(promoted);
+    this.activeAbort?.abort();
+    this.deps.abortTurn?.();
     return promoted;
   }
 

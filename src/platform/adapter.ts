@@ -162,7 +162,7 @@ export interface PendingQueueActions {
   /** Recall one pending message by id, or the most recent one when `messageId` is omitted. */
   recall(ref: ConversationRef, messageId?: string): { ok: boolean; recalled: number; content?: string };
   /** Immediately steer one pending message by id, or all pending messages when omitted. */
-  sendNow(ref: ConversationRef, messageId?: string): { ok: boolean; sent: number };
+  sendNow(ref: ConversationRef, messageId?: string, opts?: { interrupt?: boolean }): { ok: boolean; sent: number };
 }
 
 /**

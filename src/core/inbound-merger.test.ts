@@ -815,4 +815,20 @@ describe('InboundMerger: gateway pending-steer queue, recall, and immediate send
     await tick();
     expect(h.batches).toEqual([['m1']]);
   });
+
+  it('aborts the running turn and immediately dispatches a queued message when sendNow is called with interrupt: true', async () => {
+    const h = pendingHarness({ steerDelayMs: 3000, canSteer: () => false });
+    await h.merger.ingest(msg('m1'));
+    h.clock.advance(1500);
+    await tick();
+
+    await h.merger.ingest(msg('m2'));
+    await h.merger.ingest(msg('m3'));
+    expect(h.merger.sendNow('m3', { interrupt: true }).map((m) => m.messageId)).toEqual(['m3']);
+
+    h.resolveFirst();
+    await tick();
+    expect(h.batches).toEqual([['m1'], ['m3', 'm2']]);
+    expect(h.merger.pendingItems()).toEqual([]);
+  });
 });

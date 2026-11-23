@@ -2119,9 +2119,9 @@ export class WebRoom {
     return this.pendingActions.recall(this.conversation(topicId), messageId);
   }
 
-  sendNowPending(topicId: string, messageId?: string): { ok: boolean; sent: number } {
+  sendNowPending(topicId: string, messageId?: string, opts?: { interrupt?: boolean }): { ok: boolean; sent: number } {
     if (!this.topics.has(topicId) || !this.pendingActions) return { ok: false, sent: 0 };
-    return this.pendingActions.sendNow(this.conversation(topicId), messageId);
+    return this.pendingActions.sendNow(this.conversation(topicId), messageId, opts);
   }
 
   /**

@@ -793,9 +793,9 @@ export class ConversationRegistry {
     return this.turns.recallPending(key, messageId);
   }
 
-  sendNowPendingForRef(ref: ConversationRef, messageId?: string): { ok: boolean; sent: number } {
+  sendNowPendingForRef(ref: ConversationRef, messageId?: string, opts?: { interrupt?: boolean }): { ok: boolean; sent: number } {
     const key = this.idForRef(ref);
-    return this.turns.sendNowPending(key, messageId);
+    return this.turns.sendNowPending(key, messageId, opts);
   }
 
   killConversation(id: ConversationId): KillOutcome {

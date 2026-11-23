@@ -5,6 +5,16 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **Web UI queued-message UX: card-only Send now with interrupt confirmation, and direct optimistic queuing.**
+  Removed the bottom composer **Send now** button so immediate send lives exclusively on each queued
+  message card. For non-steerable turns (`reason: 'turn'`), clicking **Send now** on a card now opens
+  an inline secondary confirmation (**Stop turn & send** / **Cancel**) that aborts the running turn
+  and dispatches the queued message next. Messages sent while a turn is running now render directly
+  into the pending queue tray instead of flashing as a normal transcript bubble before moving to the
+  queue (falling back to a failed bubble only if the request errors).
+
 ## [3.37.1] - 2026-11-23
 
 ### Fixed

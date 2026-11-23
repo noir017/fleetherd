@@ -105,6 +105,7 @@ export const PendingActionRequestSchema = z
   .object({
     topic: TopicId,
     messageId: z.string().min(1).max(100).optional(),
+    interrupt: z.boolean().optional(),
   })
   .strict();
 
