@@ -64,6 +64,7 @@ import type {
   TopicActivity,
   TopicKillResult,
   TopicStage,
+  WorkdirScreen,
 } from '../../types.js';
 import type {
   ButtonSpec,
@@ -1935,7 +1936,8 @@ export class WebRoom {
     id: string,
     text: string,
     buttons?: ButtonSpec[],
-    screen?: SettingsScreen
+    screen?: SettingsScreen,
+    workdir?: WorkdirScreen
   ): void {
     const room = this.roomOf(topicId);
     const rec = this.mustFind(room, id, 'edit');
@@ -1954,6 +1956,11 @@ export class WebRoom {
       // into the transcript.
       if (rec.msg.settings && (!buttons || buttons.length === 0)) rec.msg.wasSettings = true;
       delete rec.msg.settings;
+    }
+    if (workdir) {
+      rec.msg.workdir = workdir;
+    } else {
+      delete rec.msg.workdir;
     }
     room.stored.set(id, rec);
     this.enqueue(room, topicId, id);
@@ -2151,7 +2158,8 @@ export class WebRoom {
       }
       const room = this.roomOf(topicId);
       for (const k of kept.slice(-MAX_MESSAGES)) {
-        room.stored.set(k.msg.id, { text: k.text, msg: { ...k.msg, buttons: [] } });
+        const { workdir: _dropped, ...rest } = k.msg;
+        room.stored.set(k.msg.id, { text: k.text, msg: { ...rest, buttons: [] } });
         const n = /^w(\d+)$/.exec(k.msg.id);
         if (n) top = Math.max(top, Number(n[1]));
       }
@@ -2484,7 +2492,7 @@ export function isControlMenuButton(id: string): boolean {
  * even on a settings screen message. An ask or unrecognized button treats the message as a question.
  */
 export function isControlMenu(msg: WebMessage): boolean {
-  if (msg.buttons.length === 0) return msg.settings !== undefined;
+  if (msg.buttons.length === 0) return msg.settings !== undefined || msg.workdir !== undefined;
   return msg.buttons.every((b) => isControlMenuButton(b.id));
 }
 

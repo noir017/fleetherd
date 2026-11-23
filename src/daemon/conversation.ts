@@ -18,6 +18,7 @@ import type { SoloOutcome } from '../core/inbound-merger.js';
 import type { ModelChoiceResult } from '../core/model-menu.js';
 import type { SettingApplyResult, SettingOption, SettingRow } from '../core/settings.js';
 import type { WorkdirChoiceResult } from '../core/workdir-menu.js';
+import type { WorkdirScan } from './workdir-scan.js';
 import type { HistoryStore } from '../history/store.js';
 import type { ListChannelsResult } from '../ipc/protocol.js';
 import type {
@@ -742,6 +743,10 @@ export class ConversationRegistry {
 
   applyWorkdirChoice(id: ConversationId, expectAgentId: string, path: string): WorkdirChoiceResult {
     return this.controls.applyWorkdirChoice(id, expectAgentId, path);
+  }
+
+  scanWorkdirAt(agentId: string, dir: string): Promise<WorkdirScan> {
+    return this.controls.scanWorkdirAt(agentId, dir);
   }
 
   workdirChoices(agentId: string): { root: string; dirs: string[] } | undefined {

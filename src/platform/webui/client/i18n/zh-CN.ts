@@ -244,6 +244,25 @@ export const zhCN = {
   'chat.machineOfflineTitle': '{name} 自 {when} 起离线：网关无法连接，恢复前其 Agent 无法回复。',
   'chat.machineOfflineNote': '{name} 自 {when} 起离线 — 恢复前其 Agent 无法回复。',
 
+  // Workdir browser
+  'workdir.title': '选择工作目录',
+  'workdir.hint': '点击文件夹进入子目录，或直接选择目录。',
+  'workdir.up': '上一级',
+  'workdir.upTitle': '上级目录：{path}',
+  'workdir.root': '默认目录',
+  'workdir.rootTitle': '回到默认根目录：{path}',
+  'workdir.useCurrent': '选择当前目录',
+  'workdir.keepCurrent': '保持当前目录',
+  'workdir.choose': '选择',
+  'workdir.chooseTitle': '选择目录 {path}',
+  'workdir.openTitle': '进入子文件夹 {name}',
+  'workdir.currentTag': '当前',
+  'workdir.rootTag': '默认',
+  'workdir.empty': '当前目录下没有子文件夹。',
+  'workdir.filterPlaceholder': '筛选子文件夹…',
+  'workdir.noMatch': '没有匹配的子文件夹。',
+  'workdir.truncated': '另有 {count} 个子文件夹未展示。',
+
   // Messages, bubbles, code blocks, btw
   'msg.dispatch': '子 Agent 任务',
   'msg.report': '子 Agent 报告',

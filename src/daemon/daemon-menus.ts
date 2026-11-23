@@ -69,12 +69,16 @@ import {
 import { parseRetryButtonId, type RetryButtonClick } from '../core/turn-retry.js';
 import {
   buildWorkdirMenu,
+  buildWorkdirScreen,
   parseWorkdirButtonId,
+  workdirBreadcrumbs,
   workdirChoiceText,
   workdirIndexOf,
   workdirMenuExpiredText,
   workdirMenuSupersededText,
   workdirPageOf,
+  workdirParentOf,
+  workdirUnreadableText,
   type WorkdirButtonClick,
   type WorkdirOption,
 } from '../core/workdir-menu.js';
@@ -99,6 +103,7 @@ import type {
   PermissionAnswer,
   SettingsScreen,
   SlashCommandSpec,
+  WorkdirScreen,
 } from '../types.js';
 import type { AskButtonsOptions, AskOutcome, DaemonContext } from './daemon-context.js';
 
@@ -271,6 +276,12 @@ interface PendingWorkdirMenu {
   conversation: ConversationRef;
   options: WorkdirOption[];
   current: string;
+  root: string;
+  browsing: string;
+  host?: string;
+  truncated: number;
+  posixPaths: boolean;
+  supportsScreen: boolean;
   pageSize: number;
   ref?: MessageRef;
 }
@@ -1038,7 +1049,15 @@ export class DaemonMenus {
     conversationId: ConversationId,
     agentId: string,
     conv: ConversationRef,
-    menu: { options: WorkdirOption[]; current: string; truncated: number }
+    menu: {
+      options: WorkdirOption[];
+      current: string;
+      truncated: number;
+      root?: string;
+      browsing?: string;
+      host?: string;
+      posixPaths?: boolean;
+    }
   ): void {
     const adapter = this.ctx.platforms.get(conv.platform);
     if (!adapter) return;
@@ -1050,32 +1069,40 @@ export class DaemonMenus {
       adapter.capabilities.workdirPageSize ?? adapter.capabilities.menuPageSize,
       WORKDIR_PAGE_SIZE_MAX
     );
+    const root = menu.root ?? options[0]?.path ?? menu.current;
+    const browsing = menu.browsing ?? root;
     const pending: PendingWorkdirMenu = {
       conversationId,
       agentId,
       conversation: conv,
       options,
       current: menu.current,
+      root,
+      browsing,
+      ...(menu.host ? { host: menu.host } : {}),
+      truncated: menu.truncated,
+      posixPaths: Boolean(menu.posixPaths),
+      supportsScreen: Boolean(adapter.capabilities.workdirScreen),
       pageSize,
     };
     this.pendingWorkdirMenus.set(reqId, pending);
 
     const locale = localeOf(this.ctx.config);
     const index = workdirIndexOf(options, menu.current);
-    const view = buildWorkdirMenu({
+    const rendered = this.renderWorkdirView(
       reqId,
-      options,
-      current: menu.current,
-      page: index >= 0 ? workdirPageOf(index, pageSize) : 0,
-      pageSize,
-      locale,
-    });
-    const text =
-      menu.truncated > 0
-        ? `${view.text}\n${tMenus(locale, 'workdir_summary_more', { truncated: menu.truncated })}`
-        : view.text;
+      pending,
+      index >= 0 ? workdirPageOf(index, pageSize) : 0,
+      locale
+    );
     void adapter
-      .sendButtons(addressOf(conv), text, view.buttons)
+      .sendButtons(
+        addressOf(conv),
+        rendered.text,
+        rendered.buttons,
+        undefined,
+        rendered.screen ? { workdir: rendered.screen } : undefined
+      )
       .then((ref) => {
         pending.ref = ref;
       })
@@ -1083,6 +1110,68 @@ export class DaemonMenus {
         this.pendingWorkdirMenus.delete(reqId);
         console.error('[workdir] failed to post the menu:', e instanceof Error ? e.message : e);
       });
+  }
+
+  private renderWorkdirView(
+    reqId: string,
+    menu: PendingWorkdirMenu,
+    page: number,
+    locale: Locale,
+    error?: string
+  ): { text: string; buttons: Array<{ id: string; label: string }>; screen?: WorkdirScreen } {
+    const view = buildWorkdirMenu({
+      reqId,
+      options: menu.options,
+      current: menu.current,
+      page,
+      pageSize: menu.pageSize,
+      locale,
+    });
+    const baseText =
+      menu.truncated > 0
+        ? `${view.text}\n${tMenus(locale, 'workdir_summary_more', { truncated: menu.truncated })}`
+        : view.text;
+    const text = error ? `${baseText}\n\n${error}` : baseText;
+    const screen = menu.supportsScreen
+      ? buildWorkdirScreen({
+          reqId,
+          agentId: menu.agentId,
+          ...(menu.host ? { host: menu.host } : {}),
+          root: menu.root,
+          current: menu.current,
+          browsing: menu.browsing,
+          options: menu.options,
+          truncated: menu.truncated,
+          posixPaths: menu.posixPaths,
+          ...(error ? { error } : {}),
+        })
+      : undefined;
+    return { text, buttons: view.buttons, ...(screen ? { screen } : {}) };
+  }
+
+  private resolveBrowseTarget(menu: PendingWorkdirMenu, click: WorkdirButtonClick): string | undefined {
+    if (click.kind === 'up') return workdirParentOf(menu.browsing, menu.posixPaths);
+    if (click.kind === 'home') return menu.root;
+    if (click.kind === 'crumb') return workdirBreadcrumbs(menu.browsing, menu.posixPaths)[click.index]?.path;
+    if (click.kind === 'enter') return menu.options[click.index]?.path;
+    return undefined;
+  }
+
+  private async browseWorkdir(menu: PendingWorkdirMenu, reqId: string, targetDir: string): Promise<void> {
+    const locale = localeOf(this.ctx.config);
+    const scan = await this.ctx.registry.scanWorkdirAt(menu.agentId, targetDir);
+    if (this.pendingWorkdirMenus.get(reqId) !== menu) return;
+    if (!scan.ok) {
+      const errText = workdirUnreadableText(targetDir, scan.reason, locale);
+      const rendered = this.renderWorkdirView(reqId, menu, 0, locale, errText);
+      this.editWorkdirMenu(menu, rendered.text, rendered.buttons, rendered.screen);
+      return;
+    }
+    menu.browsing = targetDir;
+    menu.options = [...scan.options];
+    menu.truncated = scan.truncated;
+    const rendered = this.renderWorkdirView(reqId, menu, 0, locale);
+    this.editWorkdirMenu(menu, rendered.text, rendered.buttons, rendered.screen);
   }
 
   private retireWorkdirMenusFor(conversationId: ConversationId): void {
@@ -1097,7 +1186,8 @@ export class DaemonMenus {
   private editWorkdirMenu(
     menu: PendingWorkdirMenu,
     text: string,
-    buttons: Array<{ id: string; label: string }>
+    buttons: Array<{ id: string; label: string }>,
+    screen?: WorkdirScreen
   ): void {
     const adapter = this.ctx.platforms.get(menu.conversation.platform);
     if (!adapter) return;
@@ -1106,7 +1196,7 @@ export class DaemonMenus {
       return;
     }
     void adapter
-      .editButtons(menu.ref, text, buttons)
+      .editButtons(menu.ref, text, buttons, undefined, screen ? { workdir: screen } : undefined)
       .catch((e) => console.warn('[workdir] menu edit failed:', e instanceof Error ? e.message : e));
   }
 
@@ -1128,15 +1218,14 @@ export class DaemonMenus {
     }
 
     if (click.kind === 'page') {
-      const view = buildWorkdirMenu({
-        reqId: click.reqId,
-        options: menu.options,
-        current: menu.current,
-        page: click.page,
-        pageSize: menu.pageSize,
-        locale,
-      });
-      this.editWorkdirMenu(menu, view.text, view.buttons);
+      const rendered = this.renderWorkdirView(click.reqId, menu, click.page, locale);
+      this.editWorkdirMenu(menu, rendered.text, rendered.buttons, rendered.screen);
+      return;
+    }
+
+    if (click.kind !== 'pick') {
+      const target = this.resolveBrowseTarget(menu, click);
+      if (target) void this.browseWorkdir(menu, click.reqId, target);
       return;
     }
 
@@ -1152,15 +1241,14 @@ export class DaemonMenus {
     console.log(`[workdir] ${menu.conversationId}: ${option.path} → ${result.kind}`);
 
     if (result.kind === 'failed') {
-      const view = buildWorkdirMenu({
-        reqId: click.reqId,
-        options: menu.options,
-        current: menu.current,
-        page: workdirPageOf(click.index, menu.pageSize),
-        pageSize: menu.pageSize,
+      const rendered = this.renderWorkdirView(
+        click.reqId,
+        menu,
+        workdirPageOf(click.index, menu.pageSize),
         locale,
-      });
-      this.editWorkdirMenu(menu, `${view.text}\n\n${text}`, view.buttons);
+        text
+      );
+      this.editWorkdirMenu(menu, rendered.text, rendered.buttons, rendered.screen);
       return;
     }
     this.pendingWorkdirMenus.delete(click.reqId);

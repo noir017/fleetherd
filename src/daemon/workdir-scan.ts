@@ -49,10 +49,10 @@ const SKIP_NAMES = new Set(['node_modules', '__pycache__', 'venv', '.venv', 'tar
  * menu quietly incomplete on exactly the machines this gateway runs on. A broken link fails its
  * stat and is skipped.
  */
-export function scanWorkdirs(root: string): WorkdirScan {
+export function scanWorkdirs(dir: string, rootDir?: string): WorkdirScan {
   let entries: string[];
   try {
-    entries = readdirSync(root);
+    entries = readdirSync(dir);
   } catch (e) {
     return { ok: false, reason: e instanceof Error ? e.message : String(e) };
   }
@@ -60,12 +60,12 @@ export function scanWorkdirs(root: string): WorkdirScan {
     .filter((name) => !name.startsWith('.') && !SKIP_NAMES.has(name))
     .map((name) => {
       try {
-        return { name, dir: statSync(join(root, name)).isDirectory() };
+        return { name, dir: statSync(join(dir, name)).isDirectory() };
       } catch {
         return { name, dir: false }; // broken symlink, or vanished between readdir and stat
       }
     });
-  return workdirScanFrom(root, listed);
+  return workdirScanFrom(dir, listed, false, rootDir);
 }
 
 /**
@@ -73,20 +73,29 @@ export function scanWorkdirs(root: string): WorkdirScan {
  * listed over there (remote/ops.go opListDir, which follows symlinks the same way). POSIX joins,
  * because a remote host is Linux whatever this machine is.
  */
-export function workdirScanFrom(root: string, entries: ReadonlyArray<{ name: string; dir: boolean }>, posixPaths = false): WorkdirScan {
+export function workdirScanFrom(
+  dir: string,
+  entries: ReadonlyArray<{ name: string; dir: boolean }>,
+  posixPaths = false,
+  rootDir?: string
+): WorkdirScan {
   const dirs = entries
     .filter((e) => e.dir && !e.name.startsWith('.') && !SKIP_NAMES.has(e.name))
     .map((e) => e.name)
     .sort((a, b) => a.localeCompare(b));
   const joinPath = posixPaths ? posix.join : join;
   const base = posixPaths ? posix.basename : basename;
+  const home = rootDir ?? dir;
 
   const shown = dirs.slice(0, WORKDIR_SCAN_MAX);
   return {
     ok: true,
     options: [
-      { path: root, name: base(root) || root, root: true },
-      ...shown.map((name) => ({ path: joinPath(root, name), name })),
+      { path: dir, name: base(dir) || dir, ...(dir === home ? { root: true } : {}) },
+      ...shown.map((name) => {
+        const full = joinPath(dir, name);
+        return { path: full, name, ...(full === home ? { root: true } : {}) };
+      }),
     ],
     truncated: dirs.length - shown.length,
   };

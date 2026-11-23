@@ -688,3 +688,37 @@ describe('the directory question for an agent on a host', () => {
     expect(menus[0]!.options.map((o) => o.name)).toContain('proj');
   });
 });
+
+describe('scanWorkdirAt (parent and subfolder browsing)', () => {
+  it('scans nested subdirectories and parent directories while marking the agent root', async () => {
+    const parentDir = mkdtempSync(join(tmpdir(), 'workdir-parent-'));
+    try {
+      const agentRoot = join(parentDir, 'workspace');
+      const shopApi = join(agentRoot, 'shop-api');
+      const nested = join(shopApi, 'packages');
+      mkdirSync(nested, { recursive: true });
+      const cfg = parseConfig({
+        platforms: { discord: { type: 'discord', token: 't' } },
+        agents: [{ id: 'cc', harness: 'claude', cwd: agentRoot }],
+        routing: { default: 'cc' },
+      });
+      const { reg } = rig({ config: cfg });
+
+      const sub = await reg.scanWorkdirAt('cc', shopApi);
+      expect(sub.ok).toBe(true);
+      if (sub.ok) {
+        expect(sub.options[0]).toEqual({ path: shopApi, name: 'shop-api' });
+        expect(sub.options.slice(1).map((o) => o.path)).toEqual([nested]);
+      }
+
+      const up = await reg.scanWorkdirAt('cc', parentDir);
+      expect(up.ok).toBe(true);
+      if (up.ok) {
+        const rootEntry = up.options.find((o) => o.path === agentRoot);
+        expect(rootEntry?.root).toBe(true);
+      }
+    } finally {
+      rmSync(parentDir, { recursive: true, force: true });
+    }
+  });
+});

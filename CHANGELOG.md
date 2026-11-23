@@ -5,6 +5,16 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **Interactive Web UI directory browser with parent & subfolder navigation.** Replaced the flat
+  button grid shown after selecting an agent (or running `/cd`) in the Web UI with a dedicated
+  structured directory picker (`WorkdirScreen`). Users can now climb to parent directories,
+  drill into arbitrary nested subdirectories, jump via clickable path breadcrumbs or back to the
+  agent's default root, filter long folder lists locally, and either enter a subfolder or select
+  it in one click — on both local and remote hosts. Chat platforms keep the existing flat button
+  menu unchanged.
+
 ## [3.35.1] - 2026-11-23
 
 ### Changed

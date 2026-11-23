@@ -734,6 +734,10 @@ export class ConversationControls {
   /** The `/cd` options: the root keeps the first slot (the way back out), the rest by frecency. */
   private rankedWorkdirs(def: AgentDef, root: string): WorkdirScan {
     const scan = def.host ? this.remoteScanOf(def, root) : scanWorkdirs(root);
+    return this.rankWorkdirScan(scan);
+  }
+
+  private rankWorkdirScan(scan: WorkdirScan): WorkdirScan {
     if (!scan.ok || !this.ctx.workdirUsage) return scan;
     const sort = this.ctx.config.workdir?.sort ?? 'name';
     if (sort === 'name') return scan;
@@ -746,6 +750,23 @@ export class ConversationControls {
         ...rankByFrecency(rest, (o) => o.path, this.ctx.workdirUsage.statOf, this.ctx.clock.now()),
       ],
     };
+  }
+
+  /** Scan an arbitrary directory for an agent (used when browsing parent or subdirectories). */
+  async scanWorkdirAt(agentId: string, dir: string): Promise<WorkdirScan> {
+    const def = findAgent(this.ctx.config, agentId);
+    if (!def) return { ok: false, reason: `agent "${agentId}" is not configured` };
+    const root = resolveAgentCwd(def);
+    if (!def.host) return this.rankWorkdirScan(scanWorkdirs(dir, root));
+    const host = remoteHosts.hostFor(def);
+    if (!host) return { ok: false, reason: `host "${def.host}" is not connected` };
+    try {
+      await host.ready();
+      const scan = workdirScanFrom(dir, await host.listDir(dir, 15_000), true, resolveAgentCwd(def));
+      return this.rankWorkdirScan(scan);
+    } catch (e) {
+      return { ok: false, reason: e instanceof Error ? e.message : String(e) };
+    }
   }
 
   /** Post a directory menu; false (silently) whenever there is nothing to ask, so the caller falls through. */
@@ -767,6 +788,9 @@ export class ConversationControls {
       options: scan.options,
       current: this.ctx.workdirOf(id, agentId) ?? scan.options[0]!.path,
       truncated: scan.truncated,
+      root,
+      browsing: root,
+      ...(def.host ? { host: def.host, posixPaths: true } : {}),
     });
     return true;
   }

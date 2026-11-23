@@ -17,7 +17,14 @@
 import { z } from 'zod';
 
 import type { ButtonSpec, MessageKind, TurnChangeEntry } from '../adapter.js';
-import type { AgentCatalog, AgentStatus, OfflineMachine, SettingsScreen, SlashCommandSpec } from '../../types.js';
+import type {
+  AgentCatalog,
+  AgentStatus,
+  OfflineMachine,
+  SettingsScreen,
+  SlashCommandSpec,
+  WorkdirScreen,
+} from '../../types.js';
 import { MAX_TOPICS, type Topic } from './topics.js';
 
 /**
@@ -729,6 +736,8 @@ export interface WebMessage {
    * keeps its buttons and IS a menu again, so it is not marked and does show.
    */
   wasSettings?: boolean;
+  /** Structured directory browser payload for live `/cd` and post-`/agent` placement menus. */
+  workdir?: WorkdirScreen;
   /** Lifecycle reactions currently on this message (👀 / ✅ / ❌). Empty, never absent, for the same reason. */
   reactions: string[];
   /**

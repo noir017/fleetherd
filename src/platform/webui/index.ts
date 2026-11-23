@@ -27,7 +27,7 @@ import path from 'node:path';
 import { configDir } from '../../config/load.js';
 import type { ConversationAddress } from '../../core/conversation.js';
 import { WORKDIR_PAGE_SIZE_MAX } from '../../core/paging.js';
-import type { MessageRef, SettingsScreen, SlashCommandSpec } from '../../types.js';
+import type { MessageRef, SettingsScreen, SlashCommandSpec, WorkdirScreen } from '../../types.js';
 import { MESSAGE_KINDS, type MessageKind, type PlatformAdapter, type SendOptions } from '../adapter.js';
 import { renderWebMarkdown } from '../web-markdown.js';
 import { WebAuth, fileSessionStore } from './auth.js';
@@ -92,6 +92,7 @@ const CAPABILITIES: PlatformAdapter['capabilities'] = {
    * `settingsScreen`); every chat platform keeps the button grid it has always had.
    */
   settingsScreen: true,
+  workdirScreen: true,
   /**
    * The most core allows, and twice what the chat platforms declare. It was their 12, so that
    * which client someone read from did not change how many models `/model` offered — until the
@@ -641,6 +642,7 @@ function outbound(room: WebRoom, instance: WebuiInstance): Outbound {
     async sendButtons(address, text, buttons, screen?: SettingsScreen, opts?: SendOptions) {
       const topic = topicOf(address, 'sendButtons');
       const kind = opts?.kind;
+      const workdir = opts?.workdir;
       return ref(
         topic,
         room.post(
@@ -652,14 +654,15 @@ function outbound(room: WebRoom, instance: WebuiInstance): Outbound {
             html: webMessageHtml(kind, text),
             buttons,
             ...(screen ? { settings: screen } : {}),
+            ...(workdir ? { workdir } : {}),
             ...(kind ? { kind } : {}),
           },
           text
         ).id
       );
     },
-    async editButtons(r, text, buttons, screen?: SettingsScreen) {
-      room.revise(topicOf(r.address, 'editButtons'), r.messageId, text, buttons, screen);
+    async editButtons(r, text, buttons, screen?: SettingsScreen, opts?: { workdir?: WorkdirScreen }) {
+      room.revise(topicOf(r.address, 'editButtons'), r.messageId, text, buttons, screen, opts?.workdir);
     },
     async addReaction(r, emoji) {
       room.react(topicOf(r.address, 'addReaction'), r.messageId, emoji, true);

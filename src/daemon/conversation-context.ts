@@ -101,7 +101,15 @@ export interface ConversationHooks {
     id: ConversationId,
     agentId: string,
     conv: ConversationRef,
-    menu: { options: WorkdirOption[]; current: string; truncated: number }
+    menu: {
+      options: WorkdirOption[];
+      current: string;
+      truncated: number;
+      root?: string;
+      browsing?: string;
+      host?: string;
+      posixPaths?: boolean;
+    }
   ): void;
   onAgentMenuRequest?(id: ConversationId, msg: InboundMessage, menu: { groups: AgentGroup[]; current: string | undefined }): void;
   offlinePlaces?(): ReadonlySet<string>;

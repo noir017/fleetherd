@@ -1456,3 +1456,109 @@ describe('webui page: the sidebar width', () => {
   });
 });
 
+describe('webui page: workdir browser', () => {
+  const workdirMsg = (overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
+    ...message('m1', '<p>Working dir</p>'),
+    buttons: [{ id: 'wdr:r1:0', label: '⌂ workspace' }],
+    workdir: {
+      agentId: 'cc',
+      host: 'uniagent',
+      root: '/home/u/workspace',
+      current: '/home/u/workspace/fleetherd',
+      browsing: '/home/u/workspace',
+      breadcrumbs: [
+        { name: '/', path: '/', buttonId: 'wdb:r1:0' },
+        { name: 'home', path: '/home', buttonId: 'wdb:r1:1' },
+        { name: 'u', path: '/home/u', buttonId: 'wdb:r1:2' },
+        { name: 'workspace', path: '/home/u/workspace', buttonId: 'wdb:r1:3' },
+      ],
+      parent: { path: '/home/u', buttonId: 'wdu:r1:0' },
+      selectCurrent: { path: '/home/u/workspace', buttonId: 'wdr:r1:0', current: false, root: true },
+      entries: [
+        { name: 'alpha', path: '/home/u/workspace/alpha', pickId: 'wdr:r1:1', enterId: 'wde:r1:1' },
+        { name: 'beta', path: '/home/u/workspace/beta', pickId: 'wdr:r1:2', enterId: 'wde:r1:2' },
+        { name: 'fleetherd', path: '/home/u/workspace/fleetherd', current: true, pickId: 'wdr:r1:3', enterId: 'wde:r1:3' },
+        { name: 'gamma', path: '/home/u/workspace/gamma', pickId: 'wdr:r1:4', enterId: 'wde:r1:4' },
+        { name: 'delta', path: '/home/u/workspace/delta', pickId: 'wdr:r1:5', enterId: 'wde:r1:5' },
+        { name: 'uniagent', path: '/home/u/workspace/uniagent', pickId: 'wdr:r1:6', enterId: 'wde:r1:6' },
+      ],
+      truncated: 0,
+      ...overrides,
+    },
+  });
+
+  it('renders breadcrumbs, up button, current-folder action, and subfolder enter/select buttons', async () => {
+    const h = await open();
+    await h.emit(sync('a1b2c3d4', [workdirMsg()], ['a1b2c3d4']));
+
+    expect(h.doc.querySelector('.wd-picker')).not.toBeNull();
+    expect(h.doc.querySelector('.btns')).toBeNull();
+    expect(h.doc.querySelector('.wd-up')?.getAttribute('data-btn')).toBe('wdu:r1:0');
+    expect(h.doc.querySelector('.wd-pick-cur')?.getAttribute('data-btn')).toBe('wdr:r1:0');
+    expect(h.doc.querySelectorAll('.wd-row')).toHaveLength(6);
+
+    // Clicking folder name opens subfolder (wde:); clicking Select picks it directly (wdr:).
+    await h.click('button.wd-open[data-btn="wde:r1:3"]');
+    expect(h.calls.find((c) => c.path === 'api/click')?.body).toEqual({
+      topic: 'a1b2c3d4',
+      messageId: 'm1',
+      buttonId: 'wde:r1:3',
+    });
+
+    // Clicking Up posts wdu:.
+    await h.emit({ t: 'msg', msg: workdirMsg() });
+    await h.click('button.wd-up');
+    expect(h.calls.filter((c) => c.path === 'api/click').at(-1)?.body).toEqual({
+      topic: 'a1b2c3d4',
+      messageId: 'm1',
+      buttonId: 'wdu:r1:0',
+    });
+  });
+
+  it('filters subfolders locally and retires cleanly when workdir is cleared', async () => {
+    const h = await open();
+    await h.emit(sync('a1b2c3d4', [workdirMsg()], ['a1b2c3d4']));
+
+    const q = h.doc.querySelector<HTMLInputElement>('.wd-q');
+    expect(q).not.toBeNull();
+    q!.value = 'fleet';
+    q!.dispatchEvent(new h.window.Event('input', { bubbles: true }));
+    const visible = Array.from(h.doc.querySelectorAll<HTMLElement>('.wd-row')).filter((r) => !r.hidden);
+    expect(visible.map((r) => r.getAttribute('data-wd-name'))).toEqual(['fleetherd']);
+    expect(h.doc.querySelector<HTMLElement>('.wd-filter-empty')?.hidden).toBe(true);
+
+    q!.value = 'zzz-no-match';
+    q!.dispatchEvent(new h.window.Event('input', { bubbles: true }));
+    expect(h.doc.querySelector<HTMLElement>('.wd-filter-empty')?.hidden).toBe(false);
+
+    // Retiring the menu clears workdir and shows the plain confirmation text.
+    await h.emit({ t: 'msg', msg: { ...message('m1', '<p>Working dir set</p>'), buttons: [] } });
+    expect(h.doc.querySelector('.wd-picker')).toBeNull();
+    expect(h.doc.querySelector('.m .b')?.textContent).toContain('Working dir set');
+  });
+
+  it('disables Up at filesystem root, shows empty state and inline error banner', async () => {
+    const h = await open();
+    await h.emit(
+      sync(
+        'a1b2c3d4',
+        [
+          workdirMsg({
+            browsing: '/',
+            parent: undefined,
+            home: { path: '/home/u/workspace', name: 'workspace', buttonId: 'wdh:r1:0' },
+            breadcrumbs: [{ name: '/', path: '/', buttonId: 'wdb:r1:0' }],
+            entries: [],
+            error: 'Permission denied',
+          }),
+        ],
+        ['a1b2c3d4']
+      )
+    );
+
+    expect(h.doc.querySelector<HTMLButtonElement>('.wd-up')?.disabled).toBe(true);
+    expect(h.doc.querySelector('.wd-home')?.getAttribute('data-btn')).toBe('wdh:r1:0');
+    expect(h.doc.querySelector('.wd-empty')?.textContent).toContain('No subfolders');
+    expect(h.doc.querySelector('.wd-err')?.textContent).toBe('Permission denied');
+  });
+});

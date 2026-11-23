@@ -1,6 +1,7 @@
 import { formatButtonId, parseButtonId } from './button-id.js';
 import { type Locale, tMenus } from './i18n/menus.js';
 import { PAGE_SIZE, pageCount, pageOf, pageSlice, truncateLabel, wrapPage } from './paging.js';
+import type { WorkdirBreadcrumb, WorkdirScreen } from '../types.js';
 
 /**
  * `/cd` as data: page math, labels, button ids, matching, and every string either surface says.
@@ -57,11 +58,23 @@ export const WORKDIR_MATCH_MAX = 12;
 export const WORKDIR_PICK_PREFIX = 'wdr:';
 /** Turn-the-page button: `wdp:<reqId>:<absolute page number>`. */
 export const WORKDIR_PAGE_PREFIX = 'wdp:';
+/** Enter-subdirectory button: `wde:<reqId>:<index into the menu's option list>`. */
+export const WORKDIR_ENTER_PREFIX = 'wde:';
+/** Navigate-to-parent button: `wdu:<reqId>:0`. */
+export const WORKDIR_UP_PREFIX = 'wdu:';
+/** Breadcrumb-jump button: `wdb:<reqId>:<breadcrumb index>`. */
+export const WORKDIR_CRUMB_PREFIX = 'wdb:';
+/** Return-to-agent-root button: `wdh:<reqId>:0`. */
+export const WORKDIR_HOME_PREFIX = 'wdh:';
 
 /** A click on a workdir menu, once its id has been decoded. */
 export type WorkdirButtonClick =
   | { kind: 'pick'; reqId: string; index: number }
-  | { kind: 'page'; reqId: string; page: number };
+  | { kind: 'page'; reqId: string; page: number }
+  | { kind: 'enter'; reqId: string; index: number }
+  | { kind: 'up'; reqId: string }
+  | { kind: 'crumb'; reqId: string; index: number }
+  | { kind: 'home'; reqId: string };
 
 /** One rendered page: what to say, and what to offer. */
 export interface WorkdirMenuView {
@@ -98,10 +111,11 @@ export function workdirIndexOf(options: WorkdirOption[], path: string | undefine
  * menu whose single button re-picks the status quo is a tap that does nothing.
  */
 export function workdirMenuSurface(
-  caps: { buttons?: boolean; editButtons?: boolean },
+  caps: { buttons?: boolean; editButtons?: boolean; workdirScreen?: boolean },
   optionCount: number
 ): 'menu' | 'text' {
-  return Boolean(caps.buttons) && Boolean(caps.editButtons) && optionCount >= 2 ? 'menu' : 'text';
+  const minOptions = caps.workdirScreen ? 1 : 2;
+  return Boolean(caps.buttons) && Boolean(caps.editButtons) && optionCount >= minOptions ? 'menu' : 'text';
 }
 
 /** Build a pick button's id (index is into the menu's frozen list, not into the page). */
@@ -114,13 +128,159 @@ export function workdirPageButtonId(reqId: string, page: number): string {
   return formatButtonId(WORKDIR_PAGE_PREFIX, reqId, page);
 }
 
+export function workdirEnterButtonId(reqId: string, index: number): string {
+  return formatButtonId(WORKDIR_ENTER_PREFIX, reqId, index);
+}
+
+export function workdirUpButtonId(reqId: string): string {
+  return formatButtonId(WORKDIR_UP_PREFIX, reqId, 0);
+}
+
+export function workdirCrumbButtonId(reqId: string, index: number): string {
+  return formatButtonId(WORKDIR_CRUMB_PREFIX, reqId, index);
+}
+
+export function workdirHomeButtonId(reqId: string): string {
+  return formatButtonId(WORKDIR_HOME_PREFIX, reqId, 0);
+}
+
 /** Decode a workdir-menu button id, or null when it is some other menu's (or malformed). */
 export function parseWorkdirButtonId(buttonId: string): WorkdirButtonClick | null {
   const pick = parseButtonId(buttonId, WORKDIR_PICK_PREFIX);
   if (pick) return { kind: 'pick', reqId: pick.reqId, index: pick.n };
   const page = parseButtonId(buttonId, WORKDIR_PAGE_PREFIX);
   if (page) return { kind: 'page', reqId: page.reqId, page: page.n };
+  const enter = parseButtonId(buttonId, WORKDIR_ENTER_PREFIX);
+  if (enter) return { kind: 'enter', reqId: enter.reqId, index: enter.n };
+  const up = parseButtonId(buttonId, WORKDIR_UP_PREFIX);
+  if (up) return { kind: 'up', reqId: up.reqId };
+  const crumb = parseButtonId(buttonId, WORKDIR_CRUMB_PREFIX);
+  if (crumb) return { kind: 'crumb', reqId: crumb.reqId, index: crumb.n };
+  const home = parseButtonId(buttonId, WORKDIR_HOME_PREFIX);
+  if (home) return { kind: 'home', reqId: home.reqId };
   return null;
+}
+
+function isWindowsPath(p: string, posixPaths: boolean): boolean {
+  return !posixPaths && (/^[A-Za-z]:[\\/]/.test(p) || p.includes('\\'));
+}
+
+/** Parent directory of `dir`, or undefined when already at filesystem root. */
+export function workdirParentOf(dir: string, posixPaths = false): string | undefined {
+  if (isWindowsPath(dir, posixPaths)) {
+    const norm = dir.replace(/\//g, '\\');
+    const trimmed = norm.length > 3 ? norm.replace(/\\+$/, '') : norm;
+    if (/^[A-Za-z]:\\?$/.test(trimmed)) return undefined;
+    const idx = trimmed.lastIndexOf('\\');
+    if (idx < 0) return undefined;
+    return idx <= 2 ? `${trimmed.slice(0, 2)}\\` : trimmed.slice(0, idx);
+  }
+  const trimmed = dir.length > 1 ? dir.replace(/\/+$/, '') : dir;
+  if (trimmed === '/' || trimmed === '') return undefined;
+  const idx = trimmed.lastIndexOf('/');
+  if (idx < 0) return undefined;
+  return idx === 0 ? '/' : trimmed.slice(0, idx);
+}
+
+/** Last path segment for display (keeps `/` or `C:\` at root). */
+export function workdirBaseName(dir: string, posixPaths = false): string {
+  if (isWindowsPath(dir, posixPaths)) {
+    const norm = dir.replace(/\//g, '\\');
+    const trimmed = norm.length > 3 ? norm.replace(/\\+$/, '') : norm;
+    if (/^[A-Za-z]:\\?$/.test(trimmed)) return trimmed.endsWith('\\') ? trimmed : `${trimmed}\\`;
+    const idx = trimmed.lastIndexOf('\\');
+    return idx >= 0 ? trimmed.slice(idx + 1) : trimmed;
+  }
+  const trimmed = dir.length > 1 ? dir.replace(/\/+$/, '') : dir;
+  if (trimmed === '/') return '/';
+  const idx = trimmed.lastIndexOf('/');
+  return idx >= 0 ? trimmed.slice(idx + 1) : trimmed;
+}
+
+/** Ancestor segments from filesystem root down to `dir` (inclusive). */
+export function workdirBreadcrumbs(dir: string, posixPaths = false): Array<{ name: string; path: string }> {
+  if (isWindowsPath(dir, posixPaths)) {
+    const norm = dir.replace(/\//g, '\\');
+    const m = /^([A-Za-z]:)\\?(.*)$/.exec(norm);
+    if (!m) return [{ name: norm, path: norm }];
+    const drive = `${m[1]}\\`;
+    const crumbs: Array<{ name: string; path: string }> = [{ name: drive, path: drive }];
+    const parts = (m[2] ?? '').split('\\').filter(Boolean);
+    let acc = drive;
+    for (const part of parts) {
+      acc = acc.endsWith('\\') ? `${acc}${part}` : `${acc}\\${part}`;
+      crumbs.push({ name: part, path: acc });
+    }
+    return crumbs;
+  }
+  const trimmed = dir.length > 1 ? dir.replace(/\/+$/, '') : dir;
+  if (!trimmed.startsWith('/')) return [{ name: trimmed, path: trimmed }];
+  const crumbs: Array<{ name: string; path: string }> = [{ name: '/', path: '/' }];
+  const parts = trimmed.split('/').filter(Boolean);
+  let acc = '';
+  for (const part of parts) {
+    acc += `/${part}`;
+    crumbs.push({ name: part, path: acc });
+  }
+  return crumbs;
+}
+
+/** Build the structured `WorkdirScreen` for WebUI's interactive directory browser. */
+export function buildWorkdirScreen(input: {
+  reqId: string;
+  agentId: string;
+  host?: string;
+  root: string;
+  current: string;
+  browsing: string;
+  options: WorkdirOption[];
+  truncated: number;
+  posixPaths?: boolean;
+  error?: string;
+}): WorkdirScreen {
+  const posixPaths = Boolean(input.posixPaths);
+  const rawCrumbs = workdirBreadcrumbs(input.browsing, posixPaths);
+  const breadcrumbs: WorkdirBreadcrumb[] = rawCrumbs.map((c, i) => ({
+    name: c.name,
+    path: c.path,
+    buttonId: workdirCrumbButtonId(input.reqId, i),
+  }));
+  const parentPath = workdirParentOf(input.browsing, posixPaths);
+  const entries = input.options.slice(1).map((o, i) => ({
+    name: o.name,
+    path: o.path,
+    ...(o.path === input.current ? { current: true } : {}),
+    ...(o.path === input.root ? { root: true } : {}),
+    pickId: workdirPickButtonId(input.reqId, i + 1),
+    enterId: workdirEnterButtonId(input.reqId, i + 1),
+  }));
+  return {
+    agentId: input.agentId,
+    ...(input.host ? { host: input.host } : {}),
+    root: input.root,
+    current: input.current,
+    browsing: input.browsing,
+    breadcrumbs,
+    ...(parentPath ? { parent: { path: parentPath, buttonId: workdirUpButtonId(input.reqId) } } : {}),
+    ...(input.browsing !== input.root
+      ? {
+          home: {
+            path: input.root,
+            name: workdirBaseName(input.root, posixPaths),
+            buttonId: workdirHomeButtonId(input.reqId),
+          },
+        }
+      : {}),
+    selectCurrent: {
+      path: input.browsing,
+      buttonId: workdirPickButtonId(input.reqId, 0),
+      current: input.browsing === input.current,
+      root: input.browsing === input.root,
+    },
+    entries,
+    truncated: input.truncated,
+    ...(input.error ? { error: input.error } : {}),
+  };
 }
 
 /**
