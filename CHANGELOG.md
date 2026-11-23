@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.35.1] - 2026-11-23
+
 ### Changed
 
 - **Allow editing scheduled tasks while a run is in flight.** `schedule edit` and the Web UI task
