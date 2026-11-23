@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.36.0] - 2026-11-23
+
 ### Changed
 
 - **Interactive Web UI directory browser with parent & subfolder navigation.** Replaced the flat
