@@ -47,6 +47,9 @@ import type { AgentFactory } from './agent.js';
 /** How long an agent may take to come up before the answer is "it did not". */
 export const PROBE_TIMEOUT_MS = 60_000;
 
+/** Cooldown before an unprompted `learnOptions` retries a failed probe. */
+export const FAILED_PROBE_COOLDOWN_MS = 60_000;
+
 /** A setting an agent has, by id and label: what a status line can draw before any session exists. */
 export interface OptionKind {
   id: string;
@@ -73,6 +76,8 @@ export interface ModelCatalogDeps {
   tokenFor(sessionId: string): string;
   /** Forget what that session left behind: its store entry, its token. */
   forget(sessionId: string): void;
+  /** Clock for failed-probe cooldown; defaults to `Date.now`. */
+  now?: () => number;
 }
 
 export class ModelCatalog {
@@ -82,9 +87,13 @@ export class ModelCatalog {
   private readonly knownDefaultModel = new WeakMap<AgentDef, string>();
   private readonly knownCanFork = new WeakMap<AgentDef, boolean>();
   private readonly probed = new WeakSet<AgentDef>();
+  private readonly failedAt = new WeakMap<AgentDef, number>();
   private readonly asking = new WeakMap<AgentDef, Promise<AgentModelList>>();
+  private readonly now: () => number;
 
-  constructor(private readonly deps: ModelCatalogDeps) {}
+  constructor(private readonly deps: ModelCatalogDeps) {
+    this.now = deps.now ?? Date.now;
+  }
 
   /** What is known now, without asking: undefined when nothing is. */
   get(agentId: string): AgentModelList | undefined {
@@ -187,6 +196,7 @@ export class ModelCatalog {
     if (this.probed.has(def)) return this.knownOptions.get(def);
     const live = this.deps.liveOptions?.(agentId);
     if (live) {
+      this.failedAt.delete(def);
       const kinds = optionKinds(live, false);
       this.knownOptions.set(def, kinds);
       return kinds;
@@ -220,6 +230,8 @@ export class ModelCatalog {
     // A live session from another conversation may have locked its own setting (single choice) and
     // therefore carries no fresh-session default; probe once so a new topic sees the real defaults.
     if (known && (known.length === 0 || known.every((k) => k.defaultValue !== undefined))) return known;
+    const failed = this.failedAt.get(def);
+    if (failed !== undefined && this.now() - failed < FAILED_PROBE_COOLDOWN_MS) return known ?? [];
     await this.ask(agentId);
     return this.knownOptions.get(def) ?? [];
   }
@@ -233,11 +245,15 @@ export class ModelCatalog {
     const p = this.probe(def).then(({ models, modes, options, defaultModel, canFork }) => {
       this.known.set(def, models);
       this.knownModes.set(def, modes);
-      // Keep live-learned options if a probe failed or returned nothing.
-      if (options.length > 0 || !this.knownOptions.has(def)) this.knownOptions.set(def, options);
-      if (defaultModel) this.knownDefaultModel.set(def, defaultModel);
-      if (canFork !== undefined) this.knownCanFork.set(def, canFork);
-      this.probed.add(def);
+      if (models.kind === 'error') {
+        this.failedAt.set(def, this.now());
+      } else {
+        this.failedAt.delete(def);
+        if (options.length > 0 || !this.knownOptions.has(def)) this.knownOptions.set(def, options);
+        if (defaultModel) this.knownDefaultModel.set(def, defaultModel);
+        if (canFork !== undefined) this.knownCanFork.set(def, canFork);
+        this.probed.add(def);
+      }
       this.asking.delete(def);
       return models;
     });

@@ -5,6 +5,14 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **Recover custom session options (such as multi-account pickers) after a failed probe.** Previously,
+  if an agent's initial `ModelCatalog` probe failed (e.g. a remote host was offline or its daemon had
+  not started yet), the empty option list was permanently cached for that agent definition and ignored
+  subsequent live sessions until a reload replaced the definition. Failed probes now back off for 60s
+  instead of locking out permanently, and recover immediately once a live session reports options.
+
 ## [3.37.2] - 2026-11-23
 
 ### Changed

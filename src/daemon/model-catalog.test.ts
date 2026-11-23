@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { parseConfig, type AgentDef } from '../config/schema.js';
 import type { AgentFactory, AgentSession } from './agent.js';
 import type { ModelSelector, SessionModeSelector, SessionOption } from '../types.js';
-import { ModelCatalog } from './model-catalog.js';
+import { FAILED_PROBE_COOLDOWN_MS, ModelCatalog } from './model-catalog.js';
 
 /**
  * Any agent's model list, for the settings screen: from a live session if one has it, from what was
@@ -21,6 +21,7 @@ function setup(
     options?: SessionOption[];
     canFork?: boolean;
     ensure?: () => Promise<void>;
+    now?: () => number;
   } = {}
 ) {
   const cfg = parseConfig({
@@ -72,6 +73,7 @@ function setup(
     liveCanFork: () => liveCanFork,
     tokenFor: (sid) => `tok-${sid}`,
     forget: (sid) => forgotten.push(sid),
+    now: opts.now,
   });
   return {
     cfg,
@@ -228,10 +230,37 @@ describe('ModelCatalog: the agent’s own settings', () => {
     expect(await t.catalog.learnOptions('oc')).toEqual([{ id: 'account', name: 'Account', defaultValue: 'Home' }]);
   });
 
-  it('counts an agent that could not be asked as having none, and does not ask again', async () => {
+  it('backs off after a failed probe, then recovers via live session or once the cooldown elapses', async () => {
+    let clock = 1_000;
+    let offline = true;
+    const t = setup({
+      options: [ACCOUNT],
+      now: () => clock,
+      ensure: async () => {
+        if (offline) throw new Error('host offline');
+      },
+    });
+    expect(await t.catalog.learnOptions('oc')).toEqual([]);
+    // Within the cooldown window, unprompted status peeks do not hammer the offline agent.
+    expect(await t.catalog.learnOptions('oc')).toEqual([]);
+    expect(t.created).toEqual(['models:oc→oc']);
+
+    // Once the cooldown passes and the agent is reachable again, probing succeeds and caches options.
+    offline = false;
+    clock += FAILED_PROBE_COOLDOWN_MS;
+    expect(await t.catalog.learnOptions('oc')).toEqual([{ id: 'account', name: 'Account', defaultValue: 'Work' }]);
+    expect(t.created).toEqual(['models:oc→oc', 'models:oc→oc']);
+    // Subsequent peeks use the cached result without probing again.
+    expect(await t.catalog.learnOptions('oc')).toEqual([{ id: 'account', name: 'Account', defaultValue: 'Work' }]);
+    expect(t.created).toEqual(['models:oc→oc', 'models:oc→oc']);
+  });
+
+  it('recovers immediately from a failed probe when a live session reports options', async () => {
     const t = setup({ ensure: async () => Promise.reject(new Error('host offline')) });
     expect(await t.catalog.learnOptions('oc')).toEqual([]);
-    expect(await t.catalog.learnOptions('oc')).toEqual([]);
+    t.setLiveOptions([ACCOUNT]);
+    expect(t.catalog.options('oc')).toEqual([{ id: 'account', name: 'Account', defaultValue: 'Work' }]);
+    expect(await t.catalog.learnOptions('oc')).toEqual([{ id: 'account', name: 'Account', defaultValue: 'Work' }]);
     expect(t.created).toEqual(['models:oc→oc']);
   });
 
