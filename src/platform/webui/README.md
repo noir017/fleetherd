@@ -56,7 +56,7 @@ naming it, and they are all of them:
 | `assets.ts` | Where the built assets are, and the three names the page links: its script, its stylesheet, the code view's entry |
 | `page.ts` | The page's HTML shell: head, gate, the `boot-config` JSON, and the links to its script and stylesheet |
 | `page-body.ts` | The page's markup — every element the script finds by id — as a template |
-| `client/legacy-app.ts` | The client script, bundled into `dist/webui-assets/app-<hash>.js` — see below |
+| `client/main.ts` | Typed client entrypoint (DOM lookups, module wiring, SSE event dispatch, startup order), bundled into `dist/webui-assets/app-<hash>.js` — see below |
 | `client/base/` | Typed foundation primitives: `lifecycle.ts` (`DisposableStore`, `MutableDisposable`), `event.ts` (`Emitter`), `html.ts` (`lit-html` re-exports + `escapeHtml`), `dom.ts` (disposable listeners, focus/class/attr/ResizeObserver helpers) |
 | `client/services/` | Typed client services: `boot.ts`, `storage.ts`, `store.ts`, `commands.ts`, `keybindings.ts`, `overlays.ts` (LIFO Esc stack), `api.ts` (`post`/`text`/`wait`/`sendLimit`), `stream.ts` (SSE lifecycle, backoff, parking, watchdog, `applyTopicRows`), `cache.ts` (two-layer memory + IndexedDB transcript cache wrapping `CACHE_CORE`), `reads.ts` (unread watermarks, `aa_reads` persistence/merging, `markAllRead`, `reportSeen`) |
 | `client/workbench/contracts.ts` | Frozen `DockEngine`, `PanelComponent`, `PanelRef`, and `LayoutState` (v1) contracts |
@@ -91,7 +91,7 @@ a port — which is what `room.test.ts` and `index.test.ts` do.
 **The client script and stylesheet were inline in `page.ts` until Phase 1 Step 1A of
 [the refactor plan](../../../docs/refactor-plan.md)**, and were moved to `client/` as they were.
 So wherever this README names a script function or a CSS rule as `page.ts`'s — `codeView()`,
-`menu()`, `.b .raw` — read `client/legacy-app.ts` or `client/styles/` (imported by `main.css`). Both are bundled by
+`menu()`, `.b .raw` — read `client/main.ts` (and the typed modules it wires under `client/`) or `client/styles/` (imported by `main.css`). Both are bundled by
 `scripts/webui-client.mjs` (called by `scripts/build-webui-assets.mjs`, and by the tests), linked
 from the page by content-hashed name, and served by `GET /assets/<file>`. What the server decides
 per deployment reaches the script as `<script type="application/json" id="boot-config">` — read
@@ -2436,16 +2436,14 @@ without it. `page.test.ts` pins the viewport tag so this does not get added by r
   that promise's `finally`.
 - **A reverse proxy must not buffer**, and must not strip `Content-Encoding` without
   re-adding it. `proxy_buffering off;` in nginx.
-- **The client script is invisible to the toolchain.** `client/legacy-app.ts` is left out of
-  `tsconfig.json` and `eslint.config.js` until the refactor plan's later steps split it into typed
-  modules. So the script is kept stupid, and any change that needs a new *decision* belongs on the
-  other side of the wire. It still uses string concatenation rather than template literals, a
-  habit from when it was itself a template — the trap now applies only to `page.ts` and
-  `page-body.ts`, where a literal `` ` `` or `${` is eaten by the surrounding template and becomes
-  a module-load error. It is not untested: `page.dom.*.test.ts` runs it in jsdom, and a behavioural
-  change in there should arrive with a test, because nothing else in the repo can see it. And after
-  editing it, `npm run build:assets` before trying a source checkout: the daemon serves the bundle,
-  not the file.
+- **The client script is strictly typechecked and linted.** The entire `client/` tree — including
+  the entrypoint `client/main.ts` — is covered by `client/tsconfig.json` and `eslint.config.js`.
+  Server-side decisions still belong on the daemon side of the wire, and template-literal escaping
+  still applies to `page.ts` and `page-body.ts`, where a literal `` ` `` or `${` is eaten by
+  the surrounding template and becomes a module-load error. Behavioural changes in `client/` should
+  arrive with unit or `page.dom.*.test.ts` coverage, and after editing anything under `client/`,
+  run `npm run build:assets` before trying a source checkout: the daemon serves the bundle, not the
+  source file.
 - **The page can render nothing while the event stream is perfectly healthy**, and this has
   already shipped once. A client that names no topic sends `GET /api/events` with no `?t=`,
   and `stream()` answers for `topics.current()` — so the sync that comes back carries a topic

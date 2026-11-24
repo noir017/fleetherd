@@ -29,11 +29,9 @@ const COMPOSER_UNSENT_SOURCE = fs.readFileSync(
 );
 
 /**
- * The client script is the one artifact in this repo the toolchain cannot see: it is not
- * typechecked and not linted (client/legacy-app.ts is left out of both until the refactor plan's
- * later steps). These assertions are the substitute — they will not catch a logic error, but they
- * catch what would otherwise reach a browser: a syntax error, a build marker left unfilled, and a
- * page that can no longer run under its own CSP.
+ * Contract assertions on the assembled web UI page and client entrypoint (`client/main.ts`).
+ * Together with `client/tsconfig.json` and ESLint, these guard against a syntax error in the
+ * bundled IIFE, a build marker left unfilled, and a page that can no longer run under its own CSP.
  *
  * `html` is the page with its script and stylesheet inline as they are written (page.test-helpers.ts),
  * which is what the text assertions below read; `shell` is the document the server actually sends.
@@ -109,7 +107,7 @@ describe('webui page', () => {
     expect(bootOf(shell)).toMatchObject({ terminal: false, terminalEnd: false, files: false, instructions: false, password: true, instance: 'web' });
     const custom = serveShell('Chat', false, true, false, testAssets(), false, false, 'portal').html;
     expect(bootOf(custom).instance).toBe('portal');
-   expect(APP_SOURCE).toContain('var BOOT = readBootConfig(document);');
+   expect(APP_SOURCE).toContain('const BOOT = readBootConfig(document);');
    expect(BOOT_SOURCE).toContain("getElementById('boot-config')");
  });
 
@@ -343,7 +341,7 @@ describe('webui page', () => {
     // for the client — so a bare `ev.topic !== topic` drops the only sync that visit will ever
     // get and the page stays an empty shell with a healthy event stream behind it. The guard
     // must only fire once we are actually on a topic.
-    expect(html).toContain('if(topic && ev.topic !== topic) return;');
+    expect(html).toContain('if (topic && ev.topic !== topic) return;');
   });
 
   it('adapts to a screen held upright', () => {

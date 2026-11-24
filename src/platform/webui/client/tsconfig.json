@@ -5,16 +5,7 @@
     "noEmit": true
   },
   "include": [
-    "./base/**/*.ts",
-    "./services/**/*.ts",
-    "./workbench/**/*.ts",
-    "./plugins/**/*.ts",
-    "./features/**/*.ts",
-    "./i18n/**/*.ts",
-    "./features/**/*.ts",
-    "./panels/**/*.ts",
-    "./theme.ts",
-    "./theme-boot.ts"
+    "./**/*.ts"
   ],
-  "exclude": ["./legacy-app.ts"]
+  "exclude": []
 }
