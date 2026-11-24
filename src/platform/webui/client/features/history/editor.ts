@@ -9,7 +9,7 @@ import {
   type ActionItem,
   type NoticeController,
 } from '../../components/index.js';
-import { t as tr } from '../../i18n/index.js';
+import { getLocale, t as tr } from '../../i18n/index.js';
 import type { PluginContext } from '../../plugins/api.js';
 import { text } from '../../services/api.js';
 import {
@@ -36,8 +36,11 @@ export interface HistoryEditorInstance extends HistoryEditorComponent {
   repaintMessage(key: string): void;
 }
 
+const SEARCH_HIT_CLASS = 'fh-search-hit';
+const SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'MARK']);
+
 function clearMarks(container: HTMLElement): void {
-  const marks = container.querySelectorAll('mark.wb-history-mark');
+  const marks = container.querySelectorAll(`mark.${SEARCH_HIT_CLASS}`);
   for (const mark of marks) {
     const parent = mark.parentNode;
     if (!parent) continue;
@@ -46,19 +49,27 @@ function clearMarks(container: HTMLElement): void {
   }
 }
 
+function collectHighlightRoots(container: HTMLElement): HTMLElement[] {
+  const msgs = Array.from(container.querySelectorAll<HTMLElement>('[data-k]'));
+  return msgs.length > 0 ? msgs : [container];
+}
+
 function highlightMatches(container: HTMLElement, query: string): HTMLElement[] {
   clearMarks(container);
   const needle = query.trim().toLowerCase();
   if (!needle) return [];
   const doc = container.ownerDocument;
-  const walker = doc.createTreeWalker(container, 4 /* NodeFilter.SHOW_TEXT */);
   const textNodes: Text[] = [];
-  let node = walker.nextNode();
-  while (node) {
-    if (node.nodeValue && node.nodeValue.toLowerCase().includes(needle)) {
-      textNodes.push(node as Text);
+  for (const root of collectHighlightRoots(container)) {
+    const walker = doc.createTreeWalker(root, 4 /* NodeFilter.SHOW_TEXT */);
+    let node = walker.nextNode();
+    while (node) {
+      const parentTag = node.parentElement?.tagName;
+      if ((!parentTag || !SKIP_TAGS.has(parentTag)) && node.nodeValue && node.nodeValue.toLowerCase().includes(needle)) {
+        textNodes.push(node as Text);
+      }
+      node = walker.nextNode();
     }
-    node = walker.nextNode();
   }
   const marks: HTMLElement[] = [];
   for (const textNode of textNodes) {
@@ -74,7 +85,7 @@ function highlightMatches(container: HTMLElement, query: string): HTMLElement[] 
       }
       if (idx > pos) frag.appendChild(doc.createTextNode(raw.slice(pos, idx)));
       const mark = doc.createElement('mark');
-      mark.className = 'wb-history-mark';
+      mark.className = SEARCH_HIT_CLASS;
       mark.textContent = raw.slice(idx, idx + needle.length);
       frag.appendChild(mark);
       marks.push(mark);
@@ -83,6 +94,15 @@ function highlightMatches(container: HTMLElement, query: string): HTMLElement[] 
     textNode.parentNode?.replaceChild(frag, textNode);
   }
   return marks;
+}
+
+function formatMatchCount(current: number, total: number, hasQuery: boolean): string {
+  const zh = getLocale() === 'zh-CN';
+  if (total === 0) {
+    if (!hasQuery) return '';
+    return zh ? '0/0 处' : '0 / 0';
+  }
+  return zh ? `第 ${current}/${total} 处` : `${current} / ${total}`;
 }
 
 class HistoryEditorPanel implements HistoryEditorInstance {
@@ -210,6 +230,15 @@ class HistoryEditorPanel implements HistoryEditorInstance {
         this.findInput.focus();
       }),
     );
+    this.listeners.add(
+      addDisposableListener(this.element, 'keydown', (e) => {
+        if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'f') {
+          e.preventDefault();
+          this.findInput.focus();
+          this.findInput.select();
+        }
+      }),
+    );
     this.listeners.add(addDisposableListener(this.logEl, 'click', (e) => this.handleLogClick(e)));
   }
 
@@ -316,7 +345,7 @@ class HistoryEditorPanel implements HistoryEditorInstance {
     for (const m of this.matches) m.classList.remove('is-current');
     if (this.matches.length === 0) {
       this.matchIndex = -1;
-      this.findCount.textContent = this.findInput.value.trim() ? '0 / 0' : '';
+      this.findCount.textContent = formatMatchCount(0, 0, Boolean(this.findInput.value.trim()));
       this.prevBtn.disabled = true;
       this.nextBtn.disabled = true;
       return;
@@ -327,7 +356,7 @@ class HistoryEditorPanel implements HistoryEditorInstance {
       target.classList.add('is-current');
       if (typeof target.scrollIntoView === 'function') target.scrollIntoView({ block: 'center' });
     }
-    this.findCount.textContent = `${this.matchIndex + 1} / ${this.matches.length}`;
+    this.findCount.textContent = formatMatchCount(this.matchIndex + 1, this.matches.length, true);
     this.prevBtn.disabled = false;
     this.nextBtn.disabled = false;
   }
@@ -468,8 +497,16 @@ class HistoryEditorPanel implements HistoryEditorInstance {
     this.findInput.placeholder = tr('common.search');
     this.findInput.setAttribute('aria-label', tr('common.search'));
     this.prevBtn.title = tr('common.prev');
+    this.prevBtn.setAttribute('aria-label', tr('common.prev'));
     this.nextBtn.title = tr('common.next');
+    this.nextBtn.setAttribute('aria-label', tr('common.next'));
     this.clearFindBtn.title = tr('common.clearSearch');
+    this.clearFindBtn.setAttribute('aria-label', tr('common.clearSearch'));
+    this.findCount.textContent = formatMatchCount(
+      this.matchIndex >= 0 ? this.matchIndex + 1 : 0,
+      this.matches.length,
+      Boolean(this.findInput.value.trim()),
+    );
     this.refreshReadOnly();
   }
 
@@ -486,6 +523,11 @@ class HistoryEditorPanel implements HistoryEditorInstance {
     el.className = out.cls;
     el.innerHTML = out.h;
     this.deps.codeBlocks?.(el);
+    if (this.findInput.value.trim()) {
+      const prevIdx = Math.max(0, this.matchIndex);
+      this.matches = highlightMatches(this.logEl, this.findInput.value);
+      this.focusMatch(prevIdx);
+    }
   }
 
   dispose(): void {

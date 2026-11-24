@@ -286,13 +286,17 @@ describe('history built-in plugin', () => {
     expect(editor.element.querySelector('.wb-history-note')?.textContent).toContain('Showing latest 2 messages.');
 
     // Initial query highlighted both occurrences of "pipeline"
-    const marks = editor.element.querySelectorAll('mark.wb-history-mark');
+    const marks = editor.element.querySelectorAll('mark.fh-search-hit');
     expect(marks.length).toBe(2);
     expect(editor.element.querySelector('.wb-history-find-count')?.textContent).toBe('1 / 2');
+    expect(marks[0]?.classList.contains('is-current')).toBe(true);
 
-    // Navigate to next match
+    // Navigate to next match and wrap back via prev
     editor.element.querySelector<HTMLButtonElement>('.wb-history-find-next')!.click();
     expect(editor.element.querySelector('.wb-history-find-count')?.textContent).toBe('2 / 2');
+    expect(marks[1]?.classList.contains('is-current')).toBe(true);
+    editor.element.querySelector<HTMLButtonElement>('.wb-history-find-prev')!.click();
+    expect(editor.element.querySelector('.wb-history-find-count')?.textContent).toBe('1 / 2');
 
     // Copy reference button
     editor.element.querySelector<HTMLButtonElement>('[data-action-id="copy-ref"]')!.click();
@@ -317,8 +321,112 @@ describe('history built-in plugin', () => {
     setLocale('zh-CN');
     h.events.emit('locale.change', { locale: 'zh-CN' });
     expect(editor.element.querySelector<HTMLInputElement>('.wb-history-find-input')!.placeholder).toBe('搜索');
+    expect(editor.element.querySelector('.wb-history-find-count')?.textContent).toBe('第 1/2 处');
 
     editor.dispose();
+    h.cleanup();
+  });
+
+  it('highlights matches safely without XSS and scrolls active hit into view', async () => {
+    const h = setupHistoryHarness({
+      '/api/history/read?id=20': {
+        session: {
+          id: 20,
+          key: 'web#main#t20',
+          title: 'XSS check',
+          agent: 'alpha',
+          platform: 'web',
+          lastAt: 1_700_000_000_000,
+          messages: 1,
+        },
+        messages: [
+          {
+            id: 'm1',
+            own: false,
+            html: '<p>Literal &lt;img src=x onerror=alert(1)&gt; and &lt;img src=x onerror=alert(1)&gt;</p>',
+            at: 1_700_000_000_000,
+            buttons: [],
+          },
+        ],
+      },
+    });
+
+    await h.manager.activate('history');
+    setLocale('zh-CN');
+    const editor = h.registry.getEditor('history')!.component();
+    h.doc.getElementById('mount')!.appendChild(editor.element);
+    const panel = makePanelInitCtx('history:20');
+    editor.init({ id: '20', query: '<img src=x onerror=alert(1)>' }, panel.ctx);
+    await flushPromises();
+
+    const marks = editor.element.querySelectorAll<HTMLElement>('mark.fh-search-hit');
+    expect(marks.length).toBe(2);
+    expect(editor.element.querySelector('img')).toBeNull();
+    expect(marks[0]?.textContent).toBe('<img src=x onerror=alert(1)>');
+    expect(editor.element.querySelector('.wb-history-find-count')?.textContent).toBe('第 1/2 处');
+
+    const scrollSpy = vi.fn();
+    marks[1]!.scrollIntoView = scrollSpy;
+    editor.element.querySelector<HTMLButtonElement>('.wb-history-find-next')!.click();
+    expect(scrollSpy).toHaveBeenCalledWith({ block: 'center' });
+    expect(editor.element.querySelector('.wb-history-find-count')?.textContent).toBe('第 2/2 处');
+
+    editor.dispose();
+    h.cleanup();
+  });
+
+  it('supports unified keyboard navigation and batch open/export in history view', async () => {
+    const onExportSessions = vi.fn();
+    const h = setupHistoryHarness(
+      {
+        '/api/history': {
+          enabled: true,
+          sessions: [
+            { id: 10, key: 'web#main#t1', title: 'Session A', agent: 'alpha', platform: 'web', lastAt: 1_700_000_000_000, messages: 2 },
+            { id: 11, key: 'web#main#t2', title: 'Session B', agent: 'alpha', platform: 'web', lastAt: 1_700_000_010_000, messages: 3 },
+            { id: 12, key: 'web#main#t3', title: 'Session C', agent: 'beta', platform: 'web', lastAt: 1_700_000_020_000, messages: 1 },
+          ],
+        },
+      },
+      [],
+      { onExportSessions },
+    );
+
+    await h.manager.activate('history');
+    const view = h.registry.getView('history')!.component();
+    h.doc.getElementById('mount')!.appendChild(view.element);
+    view.init(undefined, makePanelInitCtx('history').ctx);
+    await flushPromises();
+
+    const rows = Array.from(view.element.querySelectorAll<HTMLElement>('[data-hist]'));
+    expect(rows.length).toBe(3);
+
+    // ArrowDown moves focus
+    rows[0]!.focus();
+    rows[0]!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    expect(h.doc.activeElement).toBe(rows[1]);
+
+    // Space selects row 1, Shift+Click row 2 selects range [11, 12]
+    rows[1]!.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+    rows[2]!.dispatchEvent(new MouseEvent('click', { bubbles: true, shiftKey: true }));
+    expect(view.element.querySelector('.fh-list-batch-count')?.textContent).toBe('2 selected');
+
+    // Batch Export
+    view.element.querySelector<HTMLButtonElement>('[data-batch-action="export"]')!.click();
+    await flushPromises();
+    expect(onExportSessions).toHaveBeenCalledWith([
+      { id: '11', title: 'Session B', query: undefined },
+      { id: '12', title: 'Session C', query: undefined },
+    ]);
+    expect(view.element.querySelector('.fh-list-batch')).toBeNull();
+
+    // Mod+A selects all 3, Batch Open opens all 3
+    rows[0]!.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', ctrlKey: true, bubbles: true }));
+    expect(view.element.querySelector('.fh-list-batch-count')?.textContent).toBe('3 selected');
+    view.element.querySelector<HTMLButtonElement>('[data-batch-action="open"]')!.click();
+    expect(h.openEditor).toHaveBeenCalledTimes(3);
+
+    view.dispose();
     h.cleanup();
   });
 });

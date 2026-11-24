@@ -77,7 +77,7 @@
    are all "a dot, a name, a line under it, and a ⋯". Only #topics' own decorations (the needs
    block, the sub-agent staircase, the star) stay scoped to it below.
    The row's colour is a variable because the hover buttons' fade (.topic-acts) has to end in exactly
-   it: a fade into any other colour shows as a band across the title. #171717 is both panels' own. */
+   it: a fade into any other colour shows as a band across the title. --fh-bg-side (#181818) is both panels' own. */
 .topic-item{--row-bg:var(--bg-panel);display:flex;align-items:center;gap:8px;width:100%;padding:7px 9px;border:1px solid transparent;border-radius:5px;background:var(--row-bg);text-align:left;font:inherit;font-size:13px;cursor:pointer;transition:background .15s;position:relative}
 .topic-item:hover{--row-bg:var(--hover-2)}
 .topic-item.on{--row-bg:var(--active);border-color:var(--line)}
@@ -111,7 +111,7 @@
    above each (#topics, .sess-group-rows, .tp-topics). A task's row has no agent to name and keeps
    the plain shape.
    The legend's background is split at the frame's line: what is behind the row above it (--behind,
-   the panel's #171717 unless the list says otherwise) and the row's own colour below it. That is
+   the panel's --fh-bg-side (#181818) unless the list says otherwise) and the row's own colour below it. That is
    what makes the line look broken by the name rather than covered by a box, and why it follows
    --row-bg through hover, the selected row and the green needs-you rows without rules of its own.
    The colour is the agent's harness, the palette the agent cards use (.h-* below); a custom harness

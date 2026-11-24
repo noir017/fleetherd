@@ -581,6 +581,45 @@
   color: var(--fh-fg-hi);
 }
 
+/* List Batch Action Bar & Multi-Select State */
+.fh-list-batch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 10px;
+  background: var(--fh-bg-widget);
+  border-bottom: 1px solid var(--fh-line);
+  color: var(--fh-fg);
+  font-size: 12px;
+}
+
+.fh-list-batch-count {
+  font-weight: 600;
+  color: var(--fh-fg-hi);
+  white-space: nowrap;
+}
+
+.fh-list-batch-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.fh-list-batch-btn {
+  min-height: 24px;
+  padding: 2px 8px;
+  font-size: 11.5px;
+}
+
+.is-batch-selected {
+  background: var(--fh-sel);
+  border-color: var(--fh-accent);
+}
+
 /* FilterBar */
 .fh-filterbar {
   display: flex;

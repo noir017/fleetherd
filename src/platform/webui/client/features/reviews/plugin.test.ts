@@ -246,4 +246,63 @@ describe('features/reviews plugin', () => {
     events.dispose();
     registry.dispose();
   });
+
+  it('supports unified keyboard navigation, multi-select, and batch mark-read/archive', async () => {
+    const { registry, events, manager, getJson } = makeHarness();
+    const twoReviews: ReviewPanelList = {
+      ...structuredClone(SAMPLE_REVIEWS),
+      pending: [],
+      reviews: [
+        SAMPLE_REVIEWS.reviews[0]!,
+        {
+          id: 'rev-2',
+          title: 'Second review',
+          at: 1700000050000,
+          outcome: 'changed',
+          summary: 'No changes needed',
+          changes: [],
+          preferences: [],
+          invalid: [],
+        },
+      ],
+    };
+    getJson.mockImplementation(async () => structuredClone(twoReviews));
+
+    manager.register(createReviewsPlugin({ now: () => 1700000100000 }), { builtin: true });
+    await manager.activateAll();
+
+    const view = registry.getView('reviews')!.component();
+    document.body.appendChild(view.element);
+    view.init(undefined, makePanelInitContext('reviews'));
+    await flushMicrotasks();
+
+    const rows = Array.from(view.element.querySelectorAll<HTMLElement>('[data-rev]'));
+    expect(rows.length).toBe(2);
+
+    // ArrowDown moves focus from rev-1 to rev-2
+    rows[0]!.focus();
+    rows[0]!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    expect(document.activeElement).toBe(rows[1]);
+
+    // Mod+A selects both reviews
+    rows[1]!.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', ctrlKey: true, bubbles: true }));
+    expect(view.element.querySelector('.fh-list-batch-count')?.textContent).toBe('2 selected');
+
+    // Batch Mark Read marks both as read
+    view.element.querySelector<HTMLButtonElement>('[data-batch-action="mark-read"]')!.click();
+    const updatedRows = Array.from(view.element.querySelectorAll<HTMLElement>('[data-rev]'));
+    expect(updatedRows.every((r) => r.getAttribute('data-rev-read') === 'true')).toBe(true);
+    expect(view.element.querySelector('.fh-list-batch')).toBeNull();
+
+    // Space selects rev-1, Batch Archive hides rev-1 leaving only rev-2
+    updatedRows[0]!.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+    view.element.querySelector<HTMLButtonElement>('[data-batch-action="archive"]')!.click();
+    const remaining = Array.from(view.element.querySelectorAll<HTMLElement>('[data-rev]'));
+    expect(remaining.map((r) => r.getAttribute('data-rev'))).toEqual(['rev-2']);
+
+    view.dispose();
+    manager.dispose();
+    events.dispose();
+    registry.dispose();
+  });
 });

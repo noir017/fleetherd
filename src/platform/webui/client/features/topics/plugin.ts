@@ -14,7 +14,12 @@ import {
   type MenuEntry,
   type SegmentedController,
 } from '../../components/index.js';
-import { t as tr } from '../../i18n/index.js';
+import {
+  attachListNavigation,
+  type DomListBatchAction,
+  type DomListNavigationController,
+} from '../../components/list/index.js';
+import { getLocale, t as tr } from '../../i18n/index.js';
 import {
   definePlugin,
   type MenuItem,
@@ -340,8 +345,110 @@ function renderTopicRowsHtml(
   };
 }
 
+async function starTopicById(rt: TopicsRuntime, id: string, nextStarred: boolean): Promise<void> {
+  if (rt.deps.onStarTopic) {
+    await rt.deps.onStarTopic(id, nextStarred);
+    return;
+  }
+  await rt.ctx.api.post('/api/topics/star', { topic: id, starred: nextStarred });
+}
+
+async function endTopicById(rt: TopicsRuntime, id: string): Promise<void> {
+  if (rt.deps.onEndTopic) {
+    await rt.deps.onEndTopic(id);
+    return;
+  }
+  const ids = subtreeOf(id, rt.getTopics())
+    .filter((t) => Boolean(t.live))
+    .map((t) => t.id);
+  if (ids.length === 0) return;
+  await rt.ctx.api.post('/api/topics/kill', { topic: id, topics: ids });
+}
+
+function buildTopicsBatchActions(
+  rt: TopicsRuntime,
+  selectedIds: ReadonlySet<string>,
+  clearSelection: () => void,
+): DomListBatchAction[] {
+  const icons = rt.getIcons();
+  const selected: Topic[] = [];
+  for (const id of selectedIds) {
+    const found = rt.topicById(id);
+    if (found) selected.push(found);
+  }
+  const hasUnstarred = selected.some((t) => !t.starred);
+  const hasStarred = selected.some((t) => Boolean(t.starred));
+  const liveTargets = selected.filter((t) =>
+    subtreeOf(t.id, rt.getTopics()).some((s) => Boolean(s.live)),
+  );
+  const actions: DomListBatchAction[] = [];
+  if (hasUnstarred) {
+    actions.push({
+      id: 'star',
+      label: tr('topic.star'),
+      icon: icons.star,
+      variant: 'secondary',
+      onAction: async () => {
+        for (const t of selected) {
+          if (!t.starred) await starTopicById(rt, t.id, true);
+        }
+        clearSelection();
+      },
+    });
+  }
+  if (hasStarred) {
+    actions.push({
+      id: 'unstar',
+      label: tr('topic.unstar'),
+      icon: icons.star,
+      variant: 'secondary',
+      onAction: async () => {
+        for (const t of selected) {
+          if (t.starred) await starTopicById(rt, t.id, false);
+        }
+        clearSelection();
+      },
+    });
+  }
+  actions.push({
+    id: 'end',
+    label: tr('topic.endAgent'),
+    icon: icons.power,
+    variant: 'secondary',
+    disabled: liveTargets.length === 0,
+    onAction: async () => {
+      for (const t of liveTargets) await endTopicById(rt, t.id);
+      clearSelection();
+    },
+  });
+  actions.push({
+    id: 'delete',
+    label: tr('topic.deleteTopic'),
+    icon: icons.trash,
+    variant: 'danger',
+    onAction: async () => {
+      if (rt.deps.onDeleteTopic) {
+        for (const t of selected) await rt.deps.onDeleteTopic(t.id);
+        clearSelection();
+        return;
+      }
+      const zh = getLocale() === 'zh-CN';
+      const msg = zh
+        ? `确定删除已选的 ${selected.length} 个话题？`
+        : `Delete ${selected.length} selected topics?`;
+      if (!rt.confirmFn(msg)) return;
+      for (const t of selected) {
+        await rt.ctx.api.post('/api/topics/delete', { topic: t.id });
+      }
+      clearSelection();
+    },
+  });
+  return actions;
+}
+
 class TopicsViewPanel implements TopicsViewInstance {
   readonly element: HTMLElement;
+  private readonly batchBarHost: HTMLElement;
   private readonly listEl: HTMLElement;
   private readonly listeners = new DisposableStore();
   private readonly ageTicker: ReturnType<typeof createAgeTicker>;
@@ -349,6 +456,7 @@ class TopicsViewPanel implements TopicsViewInstance {
   private readonly actionBar: ActionBarController;
   private readonly filterBar: FilterBarController;
   private readonly menu: MenuController;
+  private readonly listNav: DomListNavigationController;
   private menuKey: string | null = null;
   private disposed = false;
 
@@ -364,14 +472,19 @@ class TopicsViewPanel implements TopicsViewInstance {
     const filterHost = doc.createElement('div');
     filterHost.className = 'wb-topics-filter';
     if (!doc.getElementById('topics-filter')) filterHost.id = 'topics-filter';
+    this.batchBarHost = doc.createElement('div');
+    this.batchBarHost.className = 'wb-topics-batch';
+    this.batchBarHost.hidden = true;
     this.listEl = doc.createElement('div');
     this.listEl.className = 'wb-topics-list';
     if (!doc.getElementById('topics')) this.listEl.id = 'topics';
     this.listEl.setAttribute('role', 'list');
+    this.listEl.setAttribute('aria-multiselectable', 'true');
 
     this.element.appendChild(headerEl);
     this.element.appendChild(segWrap);
     this.element.appendChild(filterHost);
+    this.element.appendChild(this.batchBarHost);
     this.element.appendChild(this.listEl);
 
     this.ageTicker = createAgeTicker(doc, rt.nowFn);
@@ -424,6 +537,15 @@ class TopicsViewPanel implements TopicsViewInstance {
       align: 'end',
       className: 'wb-topic-row-menu',
     });
+    this.listNav = attachListNavigation({
+      container: this.listEl,
+      batchBarHost: this.batchBarHost,
+      rowSelector: '[data-topic]',
+      getRowId: (row) => row.getAttribute('data-topic'),
+      ignoreSelector: '[data-rm],[data-fold],[data-filter-clear]',
+      getBatchActions: (ids) => buildTopicsBatchActions(this.rt, ids, () => this.listNav.clearSelection()),
+      onActivate: (id) => this.rt.openTopic(id),
+    });
     this.bindEvents();
   }
 
@@ -431,7 +553,6 @@ class TopicsViewPanel implements TopicsViewInstance {
     this.listeners.add(this.ageTicker.attach());
     this.listeners.add(addDisposableListener(this.listEl, 'click', (e) => this.handleListClick(e)));
     this.listeners.add(addDisposableListener(this.listEl, 'contextmenu', (e) => this.handleContextMenu(e)));
-    this.listeners.add(addDisposableListener(this.listEl, 'keydown', (e) => this.handleListKeydown(e)));
   }
 
   private handleListClick(e: MouseEvent): void {
@@ -457,8 +578,6 @@ class TopicsViewPanel implements TopicsViewInstance {
       if (foldId) this.rt.toggleFold(foldId);
       return;
     }
-    const id = el.closest('[data-topic]')?.getAttribute('data-topic');
-    if (id) this.rt.openTopic(id);
   }
 
   private handleContextMenu(e: MouseEvent): void {
@@ -466,16 +585,6 @@ class TopicsViewPanel implements TopicsViewInstance {
     if (!id) return;
     e.preventDefault();
     this.openContextMenu(id, { x: e.clientX, y: e.clientY });
-  }
-
-  private handleListKeydown(e: KeyboardEvent): void {
-    if (e.key !== 'Enter' && e.key !== ' ') return;
-    const el = asElement(e.target);
-    if (!el || el.closest('[data-rm],[data-fold]')) return;
-    const id = el.closest('[data-topic]')?.getAttribute('data-topic');
-    if (!id) return;
-    e.preventDefault();
-    this.rt.openTopic(id);
   }
 
   private openContextMenu(
@@ -542,6 +651,7 @@ class TopicsViewPanel implements TopicsViewInstance {
     );
     this.filterBar.setCounts(rendered.matched, rendered.total);
     this.listEl.innerHTML = rendered.html;
+    this.listNav.sync();
     this.ageTicker.armAgeTick();
     if (this.menu.isOpen()) this.menu.reposition();
   }
@@ -557,6 +667,7 @@ class TopicsViewPanel implements TopicsViewInstance {
     if (this.disposed) return;
     this.disposed = true;
     this.rt.views.delete(this);
+    this.listNav.dispose();
     this.menu.dispose();
     this.filterBar.dispose();
     this.actionBar.dispose();
