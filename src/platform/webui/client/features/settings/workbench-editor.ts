@@ -1,12 +1,18 @@
 import { addDisposableListener, focusSafely } from '../../base/dom.js';
 import { DisposableStore } from '../../base/lifecycle.js';
 import { icon } from '../../../icons.js';
-import type { FilesPanel, FilesSource } from '../../panels/files.js';
-import { createInstructionsPanel, type InstructionsPanel } from '../../panels/instructions.js';
+import { createInstructionsController, type InstructionsController } from './instructions-source.js';
 import type { PluginContext, SettingsSectionContribution } from '../../plugins/api.js';
 import { post as defaultPost, text } from '../../services/api.js';
 import { createSettingsFeature } from './controller.js';
 import { inlineCodeHtml } from './render.js';
+import {
+  applyModifiedIndicators,
+  applySettingsFilter,
+  captureBaseline,
+  computeModifiedMap,
+  type SettingBaselineEntry,
+} from './search-modified.js';
 import type { SettingsFeature, SettingsWebMessage } from './types.js';
 import {
   isSettingsEditorInput,
@@ -28,6 +34,12 @@ interface SettingsEditorDom {
   readonly titleEl: HTMLElement;
   readonly topicEl: HTMLElement;
   readonly refreshBtn: HTMLButtonElement;
+  readonly toolbarEl: HTMLElement;
+  readonly searchInput: HTMLInputElement;
+  readonly searchClearBtn: HTMLButtonElement;
+  readonly searchCountEl: HTMLElement;
+  readonly modFilterBtn: HTMLButtonElement;
+  readonly searchEmptyEl: HTMLElement;
   readonly pageEl: HTMLElement;
   readonly gatewayPageEl: HTMLElement;
   readonly gatewayBodyEl: HTMLElement;
@@ -65,6 +77,29 @@ function buildSettingsEditorDom(doc: Document, ctx: PluginContext): SettingsEdit
   const pageEl = doc.createElement('div');
   pageEl.className = 'wb-set-page';
 
+  const toolbarEl = doc.createElement('div');
+  toolbarEl.className = 'wb-set-toolbar';
+  toolbarEl.innerHTML =
+    '<div class="wb-set-search-box">' +
+    '<span class="wb-set-search-icon" aria-hidden="true">' +
+    icon('search') +
+    '</span>' +
+    '<input type="search" class="wb-set-search-input" placeholder="' +
+    text(ctx.i18n.t('wb.settings.searchPlaceholder')) +
+    '" aria-label="' +
+    text(ctx.i18n.t('wb.settings.searchPlaceholder')) +
+    '">' +
+    '<button type="button" class="wb-set-search-clear" hidden title="' +
+    text(ctx.i18n.t('wb.settings.clearSearch')) +
+    '" aria-label="' +
+    text(ctx.i18n.t('wb.settings.clearSearch')) +
+    '">' +
+    icon('cross') +
+    '</button>' +
+    '</div>' +
+    '<span class="wb-set-search-count" role="status" hidden></span>' +
+    '<button type="button" class="fh-btn fh-btn--secondary wb-set-mod-filter" aria-pressed="false" hidden></button>';
+
   const gatewayPageEl = doc.createElement('div');
   gatewayPageEl.className = 'wb-set-gateway';
   gatewayPageEl.hidden = true;
@@ -88,9 +123,14 @@ function buildSettingsEditorDom(doc: Document, ctx: PluginContext): SettingsEdit
   const deviceListEl = doc.createElement('div');
   deviceListEl.className = 'wb-set-device-list';
 
+  const searchEmptyEl = doc.createElement('div');
+  searchEmptyEl.className = 'wb-set-search-empty';
+  searchEmptyEl.textContent = ctx.i18n.t('wb.settings.noMatch');
+  searchEmptyEl.hidden = true;
+
   deviceWrapEl.append(deviceHeadingEl, deviceListEl);
-  pageEl.append(gatewayPageEl, emptyGatewayEl, deviceWrapEl);
-  root.append(head, pageEl);
+  pageEl.append(gatewayPageEl, emptyGatewayEl, deviceWrapEl, searchEmptyEl);
+  root.append(head, toolbarEl, pageEl);
 
   const hiddenCloseBtn = doc.createElement('button');
   const hiddenOpenBtn = doc.createElement('button');
@@ -100,6 +140,12 @@ function buildSettingsEditorDom(doc: Document, ctx: PluginContext): SettingsEdit
     titleEl: head.querySelector<HTMLElement>('.wb-set-title')!,
     topicEl: head.querySelector<HTMLElement>('.wb-set-topic')!,
     refreshBtn: head.querySelector<HTMLButtonElement>('.wb-set-refresh')!,
+    toolbarEl,
+    searchInput: toolbarEl.querySelector<HTMLInputElement>('.wb-set-search-input')!,
+    searchClearBtn: toolbarEl.querySelector<HTMLButtonElement>('.wb-set-search-clear')!,
+    searchCountEl: toolbarEl.querySelector<HTMLElement>('.wb-set-search-count')!,
+    modFilterBtn: toolbarEl.querySelector<HTMLButtonElement>('.wb-set-mod-filter')!,
+    searchEmptyEl,
     pageEl,
     gatewayPageEl,
     gatewayBodyEl,
@@ -111,41 +157,6 @@ function buildSettingsEditorDom(doc: Document, ctx: PluginContext): SettingsEdit
     hiddenOpenBtn,
   };
 }
-
-function createInstructionBridgeFilesPanel(
-  doc: Document,
-  runtime: SettingsRuntime,
-  getLastClicked: () => { agent?: string; orphans?: boolean },
-): FilesPanel {
-  let activeSource: FilesSource | null = null;
-  const dummyPreview = doc.createElement('div');
-  return {
-    open(_topic: string, path?: string, src?: FilesSource | null): void {
-      activeSource = src ?? null;
-      const meta = getLastClicked();
-      runtime.openInstruction({
-        agent: meta.agent,
-        orphans: meta.orphans,
-        fileId: path || undefined,
-        title: src?.title,
-        source: src ?? undefined,
-      });
-    },
-    openEditor(): void {},
-    close(): void {
-      activeSource = null;
-    },
-    isOpen: () => activeSource !== null,
-    isCustomOpen: () => activeSource !== null,
-    paintTree(): void {
-      if (activeSource) runtime.notifyTreePaint(activeSource);
-    },
-    currentSource: () => activeSource,
-    previewEl: () => dummyPreview,
-    repaint(): void {},
-  };
-}
-
 function scrollTargetIntoView(el: HTMLElement | null): void {
   if (!el) return;
   if (typeof el.scrollIntoView === 'function') {
@@ -242,32 +253,15 @@ export function resolveSettingsEditorTitle(
   return ctx.i18n.t('settings.title');
 }
 
-function bindInstructionClickTracker(
-  bodyEl: HTMLElement,
-  onPick: (meta: { agent?: string; orphans?: boolean }) => void,
-): ReturnType<typeof addDisposableListener> {
-  return addDisposableListener(bodyEl, 'click', (e) => {
-    const target = e.target instanceof Element ? e.target : null;
-    if (!target) return;
-    if (target.closest('[data-instr-orphans]')) {
-      onPick({ orphans: true });
-      return;
-    }
-    const btn = target.closest('[data-instr-agent]');
-    const agent = btn?.getAttribute('data-instr-agent');
-    if (agent) onPick({ agent });
-  });
-}
-
 function createSettingsPair(
   doc: Document,
   dom: SettingsEditorDom,
   runtime: SettingsRuntime,
   deps: SettingsPluginDeps,
-  filesBridge: FilesPanel,
-): { readonly feature: SettingsFeature; readonly instrPanel: InstructionsPanel } {
+  onAfterRender: () => void,
+): { readonly feature: SettingsFeature; readonly instrPanel: InstructionsController } {
   const postFn = deps.post ?? defaultPost;
-  let instrPanelRef: InstructionsPanel | null = null;
+  let instrPanelRef: InstructionsController | null = null;
   const feature = createSettingsFeature({
     settingsPage: dom.gatewayPageEl,
     settingsBody: dom.gatewayBodyEl,
@@ -289,21 +283,107 @@ function createSettingsPair(
     fadeMs: deps.fadeMs,
     waitMs: deps.waitMs,
   });
-  const instrPanel = createInstructionsPanel({
+  const instrPanel = createInstructionsController({
     instrOk: runtime.instrOk,
     settingsPage: dom.gatewayPageEl,
     settingsBody: dom.gatewayBodyEl,
-    filesPanel: filesBridge,
+    onOpen: (ev) => {
+      runtime.openInstruction({
+        agent: ev.agent,
+        orphans: ev.orphans,
+        fileId: ev.fileId,
+        title: ev.title,
+        source: ev.source,
+      });
+    },
+    onPaintTree: (src) => runtime.notifyTreePaint(src),
     getSettingsMsg: () => feature.getMessage(),
-    getSettingsTopic: () => feature.getTopic() || '',
-    getTopic: () => runtime.getTopic(),
-    renderSettings: () => feature.render(),
+    renderSettings: () => {
+      feature.render();
+      onAfterRender();
+    },
     text,
     inl: inlineCodeHtml,
     post: (path, body, tries) => postFn(path, body, tries),
   });
   instrPanelRef = instrPanel;
   return { feature, instrPanel };
+}
+
+function syncSearchAndModified(
+  doc: Document,
+  ctx: PluginContext,
+  dom: SettingsEditorDom,
+  feature: SettingsFeature,
+  baseline: Map<string, SettingBaselineEntry>,
+  modifiedOnly: boolean,
+): { modifiedCount: number; modifiedOnly: boolean } {
+  const msg = feature.getMessage();
+  const screen = msg?.settings;
+  const isValues = screen?.level === 'values';
+  dom.toolbarEl.hidden = isValues;
+  if (isValues) {
+    dom.searchEmptyEl.hidden = true;
+    return { modifiedCount: 0, modifiedOnly };
+  }
+  let modifiedCount = 0;
+  if (screen && screen.level === 'list') {
+    captureBaseline(screen, baseline);
+    const modified = computeModifiedMap(screen, baseline);
+    modifiedCount = modified.size;
+    applyModifiedIndicators(doc, dom.gatewayBodyEl, screen, modified, {
+      modifiedBadge: ctx.i18n.t('wb.settings.modified'),
+      resetLabel: ctx.i18n.t('wb.settings.reset'),
+      initialTitle: (v) => ctx.i18n.t('wb.settings.initialValue', { value: v || ctx.i18n.t('settings.notSet') }),
+    });
+  }
+  const nextModifiedOnly = modifiedCount > 0 ? modifiedOnly : false;
+  dom.modFilterBtn.hidden = modifiedCount === 0;
+  dom.modFilterBtn.textContent = ctx.i18n.t('wb.settings.modifiedFilter', { count: modifiedCount });
+  dom.modFilterBtn.setAttribute('aria-pressed', nextModifiedOnly ? 'true' : 'false');
+  dom.modFilterBtn.classList.toggle('is-active', nextModifiedOnly);
+
+  const query = dom.searchInput.value;
+  const hasQuery = query.trim().length > 0;
+  dom.searchClearBtn.hidden = !hasQuery && !nextModifiedOnly;
+  const counts = applySettingsFilter(dom.gatewayBodyEl, dom.deviceWrapEl, dom.deviceListEl, query, nextModifiedOnly);
+  const filtering = hasQuery || nextModifiedOnly;
+  dom.searchCountEl.hidden = !filtering;
+  if (filtering) {
+    dom.searchCountEl.textContent = ctx.i18n.t('wb.settings.matchCount', {
+      matched: counts.matched,
+      total: counts.total,
+    });
+  }
+  dom.searchEmptyEl.hidden = !(filtering && counts.matched === 0);
+  return { modifiedCount, modifiedOnly: nextModifiedOnly };
+}
+
+function bindResetClickHandler(
+  bodyEl: HTMLElement,
+  feature: SettingsFeature,
+  runtime: SettingsRuntime,
+  postFn: NonNullable<SettingsPluginDeps['post']>,
+  waitMs?: number,
+): ReturnType<typeof addDisposableListener> {
+  return addDisposableListener(
+    bodyEl,
+    'click',
+    (e) => {
+      const target = e.target instanceof Element ? e.target : null;
+      const resetBtn = target?.closest<HTMLButtonElement>('[data-reset-btn]');
+      if (!resetBtn || resetBtn.disabled) return;
+      e.stopPropagation();
+      const buttonId = resetBtn.getAttribute('data-reset-btn');
+      const msg = feature.getMessage();
+      const topic = feature.getTopic() || runtime.getTopic();
+      if (!buttonId || !msg || !topic) return;
+      resetBtn.disabled = true;
+      resetBtn.classList.add('busy');
+      void postFn('api/click', { topic, messageId: msg.id, buttonId }, 2, waitMs);
+    },
+    true,
+  );
 }
 
 export function createSettingsEditorComponent(
@@ -315,23 +395,22 @@ export function createSettingsEditorComponent(
   const dom = buildSettingsEditorDom(doc, ctx);
   const disposables = new DisposableStore();
   const mountedDevice = new Map<string, MountedDeviceSection>();
+  const baseline = new Map<string, SettingBaselineEntry>();
+  const postFn = deps.post ?? defaultPost;
 
   let panelCtx: WorkbenchPanelInitContext | null = null;
   let pendingTarget: SettingsEditorInput | undefined;
-  let lastClickedInstr: { agent?: string; orphans?: boolean } = {};
+  let modifiedOnly = false;
+  let featureRef: SettingsFeature | null = null;
 
-  const filesBridge = createInstructionBridgeFilesPanel(doc, runtime, () => lastClickedInstr);
+  const refreshSearchState = (): void => {
+    if (!featureRef) return;
+    const res = syncSearchAndModified(doc, ctx, dom, featureRef, baseline, modifiedOnly);
+    modifiedOnly = res.modifiedOnly;
+  };
 
-  // Track which agent/orphans button was clicked so the instruction editor receives full metadata.
-  if (runtime.instrOk) {
-    disposables.add(
-      bindInstructionClickTracker(dom.gatewayBodyEl, (meta) => {
-        lastClickedInstr = meta;
-      }),
-    );
-  }
-
-  const { feature } = createSettingsPair(doc, dom, runtime, deps, filesBridge);
+  const { feature } = createSettingsPair(doc, dom, runtime, deps, refreshSearchState);
+  featureRef = feature;
   disposables.add(feature);
 
   const applyTarget = (input: SettingsEditorInput | undefined): void => {
@@ -346,6 +425,7 @@ export function createSettingsEditorComponent(
 
   const syncDeviceSections = (): void => {
     reconcileDeviceSections(doc, dom, mountedDevice, runtime.listDeviceSections(), panelCtx);
+    refreshSearchState();
     if (pendingTarget?.scope === 'device') applyTarget(pendingTarget);
   };
 
@@ -365,6 +445,7 @@ export function createSettingsEditorComponent(
     if (handled) {
       dom.emptyGatewayEl.hidden = true;
       runtime.setGatewayMessage(feature.getMessage());
+      refreshSearchState();
       if (pendingTarget?.scope === 'gateway') applyTarget(pendingTarget);
     }
     return handled;
@@ -372,6 +453,22 @@ export function createSettingsEditorComponent(
 
   disposables.add(runtime.registerEditor({ handleMessage, refresh: requestGateway, focusSection: applyTarget }));
   disposables.add(addDisposableListener(dom.refreshBtn, 'click', requestGateway));
+  disposables.add(addDisposableListener(dom.searchInput, 'input', refreshSearchState));
+  disposables.add(
+    addDisposableListener(dom.searchClearBtn, 'click', () => {
+      dom.searchInput.value = '';
+      modifiedOnly = false;
+      refreshSearchState();
+      focusSafely(dom.searchInput);
+    }),
+  );
+  disposables.add(
+    addDisposableListener(dom.modFilterBtn, 'click', () => {
+      modifiedOnly = !modifiedOnly;
+      refreshSearchState();
+    }),
+  );
+  disposables.add(bindResetClickHandler(dom.gatewayBodyEl, feature, runtime, postFn, deps.waitMs));
   if (runtime.onDidChangeDeviceSections) {
     disposables.add(runtime.onDidChangeDeviceSections(() => syncDeviceSections()));
   }
@@ -381,7 +478,13 @@ export function createSettingsEditorComponent(
       dom.deviceHeadingEl.textContent = ctx.i18n.t('wb.settings.deviceGroup');
       dom.refreshBtn.title = ctx.i18n.t('common.refresh');
       dom.refreshBtn.setAttribute('aria-label', ctx.i18n.t('common.refresh'));
+      dom.searchInput.placeholder = ctx.i18n.t('wb.settings.searchPlaceholder');
+      dom.searchInput.setAttribute('aria-label', ctx.i18n.t('wb.settings.searchPlaceholder'));
+      dom.searchClearBtn.title = ctx.i18n.t('wb.settings.clearSearch');
+      dom.searchClearBtn.setAttribute('aria-label', ctx.i18n.t('wb.settings.clearSearch'));
+      dom.searchEmptyEl.textContent = ctx.i18n.t('wb.settings.noMatch');
       feature.onLocaleChange();
+      refreshSearchState();
     }),
   );
 
@@ -395,6 +498,7 @@ export function createSettingsEditorComponent(
       if (cached) {
         dom.emptyGatewayEl.hidden = true;
         feature.take(cached);
+        refreshSearchState();
       } else {
         requestGateway();
       }

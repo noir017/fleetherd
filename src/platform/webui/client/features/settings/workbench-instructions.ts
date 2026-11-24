@@ -1,7 +1,7 @@
 import { addDisposableListener, focusSafely } from '../../base/dom.js';
 import { DisposableStore } from '../../base/lifecycle.js';
 import { icon } from '../../../icons.js';
-import type { FilesHttpResult, FilesSource } from '../../panels/files.js';
+import type { FilesHttpResult, FilesSource } from './instructions-source.js';
 import type { PluginContext } from '../../plugins/api.js';
 import { text } from '../../services/api.js';
 import {

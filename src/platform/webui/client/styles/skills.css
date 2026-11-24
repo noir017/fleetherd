@@ -88,3 +88,32 @@
 .skill-hist-main{flex:1 1 260px;min-width:0}
 .skill-hist-action{font-weight:600}
 .skill-hist-meta{font-size:11.5px;color:var(--dim);overflow-wrap:anywhere}
+/* ── Workbench skills history diff ────────────────────────────────────────── */
+.fh-skill-hist-row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 8px;border-bottom:1px solid var(--fh-line,var(--line));transition:background .12s}
+.fh-skill-hist-row:hover{background:var(--fh-hover,var(--hover))}
+.fh-skill-hist-row.is-selected{background:var(--fh-sel,var(--surface-2));box-shadow:inset 2px 0 0 var(--fh-accent,var(--accent))}
+.fh-skill-hist-main{flex:1 1 auto;min-width:0;cursor:pointer}
+.fh-skill-hist-actions{flex:none;display:flex;align-items:center;gap:6px}
+.fh-skill-hist-diff-btn.is-active{color:var(--fh-accent,var(--accent));background:var(--fh-toggle,var(--accent-tint-2))}
+.fh-skill-diff-panel{margin-top:10px;border:1px solid var(--fh-line,var(--line));border-radius:4px;background:var(--fh-bg-code,var(--bg-code));overflow:hidden}
+.fh-skill-diff-head{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;padding:6px 10px;border-bottom:1px solid var(--fh-line,var(--line));background:var(--fh-bg-widget,var(--surface));font-size:12px}
+.fh-skill-diff-title{display:flex;align-items:center;flex-wrap:wrap;gap:6px;min-width:0}
+.fh-skill-diff-ref{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px;color:var(--fh-fg-hi,var(--fg))}
+.fh-skill-diff-arrow{color:var(--fh-fg-dim,var(--dim))}
+.fh-skill-diff-stats{display:inline-flex;align-items:center;gap:6px;margin-left:4px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px;font-weight:600}
+.fh-skill-diff-stat--add{color:var(--fh-ok,var(--ok))}
+.fh-skill-diff-stat--del{color:var(--fh-err,var(--err))}
+.fh-skill-diff-actions{display:flex;align-items:center;gap:6px}
+.fh-skill-diff-note{padding:6px 10px;border-bottom:1px solid var(--fh-line,var(--line));font-size:11.5px;color:var(--fh-fg-dim,var(--dim));background:var(--fh-bg-side,var(--bg))}
+.fh-skill-diff-empty{padding:14px 10px;text-align:center;font-size:12px;color:var(--fh-fg-dim,var(--dim))}
+.fh-skill-diff-body{max-height:360px;overflow:auto;font-family:"Cascadia Code","JetBrains Mono",Consolas,monospace;font-size:12px;line-height:1.5}
+.fh-skill-diff-line{display:grid;grid-template-columns:40px 40px 18px minmax(0,1fr);align-items:baseline;padding:0 8px;white-space:pre}
+.fh-skill-diff-line--add{background:var(--fh-diff-add);color:var(--fh-fg-hi,var(--fg))}
+.fh-skill-diff-line--del{background:var(--fh-diff-del);color:var(--fh-fg-hi,var(--fg))}
+.fh-skill-diff-line--ctx{color:var(--fh-fg-dim,var(--dim))}
+.fh-skill-diff-line--hunk{display:block;padding:2px 10px;background:var(--fh-bg-side,var(--surface));color:var(--fh-link,var(--accent));font-size:11px;border-top:1px solid var(--fh-line,var(--line));border-bottom:1px solid var(--fh-line,var(--line))}
+.fh-skill-diff-ln{text-align:right;padding-right:8px;color:var(--fh-fg-dim,var(--dim));user-select:none;font-variant-numeric:tabular-nums}
+.fh-skill-diff-sign{text-align:center;user-select:none;font-weight:600}
+.fh-skill-diff-line--add .fh-skill-diff-sign{color:var(--fh-ok,var(--ok))}
+.fh-skill-diff-line--del .fh-skill-diff-sign{color:var(--fh-err,var(--err))}
+.fh-skill-diff-code{overflow-wrap:normal}

@@ -15,6 +15,30 @@ import { SchedulesStore } from './store.js';
 import type { ScheduleEditorInput, SchedulesPluginDeps } from './types.js';
 import { createSchedulesViewComponent, type SchedulesViewController } from './view.js';
 
+const SCHEDULES_EN_STRINGS: Record<string, string> = {
+  'wb.sched.runsAll': 'All',
+  'wb.sched.colTime': 'Time',
+  'wb.sched.colStatus': 'Status',
+  'wb.sched.colDuration': 'Duration',
+  'wb.sched.colSummary': 'Summary',
+  'wb.sched.colSession': 'Session',
+  'wb.sched.noMatchingRuns': 'No runs match this status.',
+  'wb.sched.showAllRuns': 'Show all',
+  'wb.sched.summaryOk': 'Completed',
+};
+
+const SCHEDULES_ZH_STRINGS: Record<string, string> = {
+  'wb.sched.runsAll': '全部',
+  'wb.sched.colTime': '时间',
+  'wb.sched.colStatus': '状态',
+  'wb.sched.colDuration': '耗时',
+  'wb.sched.colSummary': '结果 / 摘要',
+  'wb.sched.colSession': '会话',
+  'wb.sched.noMatchingRuns': '当前状态下没有运行记录。',
+  'wb.sched.showAllRuns': '查看全部',
+  'wb.sched.summaryOk': '正常完成',
+};
+
 function isScheduleTask(value: unknown): value is SchedulePanelTask {
   return Boolean(value && typeof value === 'object' && typeof (value as SchedulePanelTask).id === 'string');
 }
@@ -138,6 +162,8 @@ export function createSchedulesPlugin(deps: SchedulesPluginDeps = {}): WebuiPlug
   return definePlugin({
     id: 'schedules',
     activate(ctx) {
+      ctx.i18n.add('en', SCHEDULES_EN_STRINGS);
+      ctx.i18n.add('zh-CN', SCHEDULES_ZH_STRINGS);
       const store = new SchedulesStore(ctx, deps);
       activeStore = store;
       ctx.subscriptions.add(store);

@@ -1,6 +1,6 @@
 import type { Event } from '../../base/event.js';
 import type { Disposable } from '../../base/lifecycle.js';
-import type { FilesSource } from '../../panels/files.js';
+import type { FilesSource } from './instructions-source.js';
 import type {
   SettingsSectionContribution,
   ViewContribution,
