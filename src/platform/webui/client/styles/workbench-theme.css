@@ -1,277 +1,7 @@
-/* VS Code Dark Modern / Light Modern theme tokens & control visual spec (docs/webui-workbench-plan.md §4.1–§4.2, P1-4).
-   Scoped under html[data-workbench="1"] during P1 (§8.6) so the default legacy UI stays unchanged
-   until P1-13 removes the old palette defaults and promotes these values to :root. */
-
-html[data-workbench="1"]{
-  /* §4.1 Semantic color tokens — VS Code Dark Modern */
-  --fh-bg:#1f1f1f;
-  --fh-bg-side:#181818;
-  --fh-bg-widget:#252526;
-  --fh-bg-code:#2b2b2b;
-  --fh-line:#2b2b2b;
-  --fh-fg:#cccccc;
-  --fh-fg-hi:#e7e7e7;
-  --fh-fg-dim:#9d9d9d;
-  --fh-fg-inactive:#868686;
-  --fh-accent:#0078d4;
-  --fh-accent-hover:#026ec1;
-  --fh-link:#4daafc;
-  --fh-input:#313131;
-  --fh-input-line:#3c3c3c;
-  --fh-placeholder:#989898;
-  --fh-btn2:#313131;
-  --fh-btn2-hover:#3c3c3c;
-  --fh-hover:#2a2d2e;
-  --fh-sel:#04395e;
-  --fh-sel-inactive:#37373d;
-  --fh-toggle:rgba(36,137,219,.51);
-  --fh-toggle-line:#2488db;
-  --fh-own:rgba(0,120,212,.10);
-  --fh-own-edge:#0078d4;
-  --fh-ok:#89d185;
-  --fh-warn:#cca700;
-  --fh-err:#f14c4c;
-  --fh-idle:#6e7681;
-  --fh-git-mod:#e2c08d;
-  --fh-git-add:#81b88b;
-  --fh-git-new:#73c991;
-  --fh-git-del:#e06c6c;
-  --fh-diff-add:rgba(155,185,85,.2);
-  --fh-diff-del:rgba(255,0,0,.2);
-  --fh-hc-claude:#e0805f;
-  --fh-hc-claude-bg:rgba(224,128,95,.15);
-  --fh-hc-codex:#3fb68b;
-  --fh-hc-codex-bg:rgba(63,182,139,.15);
-  --fh-hc-opencode:#e2e2e2;
-  --fh-hc-opencode-bg:rgba(226,226,226,.15);
-  --fh-hc-agy:#4f8ff7;
-  --fh-hc-agy-bg:rgba(79,143,247,.15);
-  --fh-hc-gemini:#a78bfa;
-  --fh-hc-gemini-bg:rgba(167,139,250,.15);
-  --fh-hc-dsh:#5b7cfa;
-  --fh-hc-dsh-bg:rgba(91,124,250,.15);
-
-  /* Supporting workbench tokens */
-  --fh-on-accent:#ffffff;
-  --fh-card:#181818;
-  --fh-act-hover:rgba(90,93,94,.31);
-  --fh-ok-bg:rgba(137,209,133,.14);
-  --fh-scroll-thumb:rgba(121,121,121,.4);
-  --fh-scroll-thumb-hover:rgba(121,121,121,.6);
-
-  /* §4.2 Shape, typography & icon tokens */
-  --fh-radius-ctrl:2px;
-  --fh-radius-card:4px;
-  --fh-radius-row:0px;
-  --fh-radius-pill:999px;
-  --fh-font-ui:-apple-system,BlinkMacSystemFont,"Segoe WPC","Segoe UI",system-ui,"Noto Sans CJK SC",sans-serif;
-  --fh-font-mono:"Cascadia Code","JetBrains Mono",Consolas,monospace;
-  --fh-icon-stroke:1.5;
-
-  /* Transitional legacy variable mappings so unrewritten panels adopt VS Code Modern */
-  --bg:var(--fh-bg);
-  --panel:var(--fh-bg-side);
-  --bg-panel:var(--fh-bg-side);
-  --bg-tree:var(--fh-bg-side);
-  --bg-editor:var(--fh-bg);
-  --bg-code:var(--fh-bg-code);
-  --bg-bar:var(--fh-bg-side);
-  --field:var(--fh-input);
-  --surface:var(--fh-card);
-  --surface-2:var(--fh-bg-widget);
-  --surface-pop:var(--fh-bg-widget);
-  --surface-tag:var(--fh-bg-widget);
-  --surface-skel:var(--fh-bg-code);
-  --hover:var(--fh-hover);
-  --hover-1:var(--fh-hover);
-  --hover-2:var(--fh-hover);
-  --hover-3:var(--fh-btn2-hover);
-  --active:var(--fh-sel);
-  --active-2:var(--fh-sel-inactive);
-  --active-3:var(--fh-btn2-hover);
-  --fg:var(--fh-fg);
-  --fg-hi:var(--fh-fg-hi);
-  --fg-2:var(--fh-fg);
-  --fg-3:var(--fh-fg);
-  --fg-own:var(--fh-fg-hi);
-  --fg-muted:var(--fh-fg-dim);
-  --fg-soft:var(--fh-fg-dim);
-  --fg-mid:var(--fh-fg-dim);
-  --dim:var(--fh-fg-dim);
-  --fg-slate:var(--fh-placeholder);
-  --fg-slate-2:var(--fh-fg-inactive);
-  --fg-slate-hi:var(--fh-fg-dim);
-  --fg-subtle:var(--fh-fg-inactive);
-  --fg-faint:var(--fh-fg-inactive);
-  --fg-on-accent:var(--fh-on-accent);
-  --fg-bright:var(--fh-fg-hi);
-  --fg-head:var(--fh-fg);
-  --fg-sub:var(--fh-fg-dim);
-  --fg-kind:var(--fh-fg-dim);
-  --fg-model:var(--fh-fg-dim);
-  --line:var(--fh-line);
-  --line-2:var(--fh-input-line);
-  --line-3:var(--fh-input-line);
-  --line-focus:var(--fh-accent);
-  --line-hi:var(--fh-input-line);
-  --line-strong:var(--fh-input-line);
-  --dot-idle:var(--fh-idle);
-  --accent:var(--fh-accent);
-  --accent-soft:var(--fh-link);
-  --accent-link:var(--fh-link);
-  --accent-back:var(--fh-link);
-  --accent-back-hi:var(--fh-accent);
-  --accent-crumb:var(--fh-link);
-  --accent-tab-bg:var(--fh-accent);
-  --accent-tab-fg:var(--fh-on-accent);
-  --accent-chip-bg:var(--fh-toggle);
-  --accent-chip-edge:var(--fh-toggle-line);
-  --accent-chip-fg:var(--fh-fg-hi);
-  --accent-opt-on:var(--fh-sel);
-  --primary:var(--fh-accent);
-  --primary-edge:var(--fh-accent);
-  --primary-hover:var(--fh-accent-hover);
-  --primary-hover-edge:var(--fh-accent-hover);
-  --badge-bg:var(--fh-accent);
-  --ok:var(--fh-ok);
-  --ok-bg:var(--fh-ok-bg);
-  --warn:var(--fh-warn);
-  --err:var(--fh-err);
-  --own:var(--fh-own);
-  --own-edge:var(--fh-own-edge);
-  --hc-claude:var(--fh-hc-claude);
-  --hc-codex:var(--fh-hc-codex);
-  --hc-opencode:var(--fh-hc-opencode);
-  --hc-agy:var(--fh-hc-agy);
-  --hc-gemini:var(--fh-hc-gemini);
-  --hc-dsh:var(--fh-hc-dsh);
-  --scroll-thumb:var(--fh-scroll-thumb);
-  --scroll-thumb-hover:var(--fh-scroll-thumb-hover);
-  --scroll-ff:var(--fh-scroll-thumb);
-  --mono:var(--fh-font-mono);
-  color-scheme:dark;
-}
-
-@media (prefers-color-scheme: light){html[data-workbench="1"]:not([data-theme="dark"]){
-  /* §4.1 Semantic color tokens — VS Code Light Modern */
-  --fh-bg:#ffffff;
-  --fh-bg-side:#f8f8f8;
-  --fh-bg-widget:#f8f8f8;
-  --fh-bg-code:#f2f2f2;
-  --fh-line:#e5e5e5;
-  --fh-fg:#3b3b3b;
-  --fh-fg-hi:#1f1f1f;
-  --fh-fg-dim:#717171;
-  --fh-fg-inactive:#616161;
-  --fh-accent:#005fb8;
-  --fh-accent-hover:#0258a8;
-  --fh-link:#005fb8;
-  --fh-input:#ffffff;
-  --fh-input-line:#cecece;
-  --fh-placeholder:#767676;
-  --fh-btn2:#e5e5e5;
-  --fh-btn2-hover:#cccccc;
-  --fh-hover:#f2f2f2;
-  --fh-sel:#e8e8e8;
-  --fh-sel-inactive:#e4e6f1;
-  --fh-toggle:rgba(0,95,184,.12);
-  --fh-toggle-line:#005fb8;
-  --fh-own:rgba(0,95,184,.06);
-  --fh-own-edge:#005fb8;
-  --fh-ok:#388a34;
-  --fh-warn:#bf8803;
-  --fh-err:#e51400;
-  --fh-idle:#8b949e;
-  --fh-git-mod:#895503;
-  --fh-git-add:#587c0c;
-  --fh-git-new:#007100;
-  --fh-git-del:#ad0707;
-  --fh-diff-add:rgba(155,185,85,.2);
-  --fh-diff-del:rgba(255,0,0,.12);
-  --fh-hc-claude:#b5532f;
-  --fh-hc-claude-bg:rgba(181,83,47,.10);
-  --fh-hc-codex:#0d8a6a;
-  --fh-hc-codex-bg:rgba(13,138,106,.10);
-  --fh-hc-opencode:#475569;
-  --fh-hc-opencode-bg:rgba(71,85,105,.10);
-  --fh-hc-agy:#2563eb;
-  --fh-hc-agy-bg:rgba(37,99,235,.10);
-  --fh-hc-gemini:#7c3aed;
-  --fh-hc-gemini-bg:rgba(124,58,237,.10);
-  --fh-hc-dsh:#4338ca;
-  --fh-hc-dsh-bg:rgba(67,56,202,.10);
-
-  /* Supporting workbench tokens */
-  --fh-on-accent:#ffffff;
-  --fh-card:#ffffff;
-  --fh-act-hover:rgba(184,184,184,.31);
-  --fh-ok-bg:rgba(56,138,52,.10);
-  --fh-scroll-thumb:rgba(121,121,121,.4);
-  --fh-scroll-thumb-hover:rgba(121,121,121,.6);
-  color-scheme:light;
-}}
-
-html[data-workbench="1"][data-theme="light"]{
-  /* §4.1 Semantic color tokens — VS Code Light Modern */
-  --fh-bg:#ffffff;
-  --fh-bg-side:#f8f8f8;
-  --fh-bg-widget:#f8f8f8;
-  --fh-bg-code:#f2f2f2;
-  --fh-line:#e5e5e5;
-  --fh-fg:#3b3b3b;
-  --fh-fg-hi:#1f1f1f;
-  --fh-fg-dim:#717171;
-  --fh-fg-inactive:#616161;
-  --fh-accent:#005fb8;
-  --fh-accent-hover:#0258a8;
-  --fh-link:#005fb8;
-  --fh-input:#ffffff;
-  --fh-input-line:#cecece;
-  --fh-placeholder:#767676;
-  --fh-btn2:#e5e5e5;
-  --fh-btn2-hover:#cccccc;
-  --fh-hover:#f2f2f2;
-  --fh-sel:#e8e8e8;
-  --fh-sel-inactive:#e4e6f1;
-  --fh-toggle:rgba(0,95,184,.12);
-  --fh-toggle-line:#005fb8;
-  --fh-own:rgba(0,95,184,.06);
-  --fh-own-edge:#005fb8;
-  --fh-ok:#388a34;
-  --fh-warn:#bf8803;
-  --fh-err:#e51400;
-  --fh-idle:#8b949e;
-  --fh-git-mod:#895503;
-  --fh-git-add:#587c0c;
-  --fh-git-new:#007100;
-  --fh-git-del:#ad0707;
-  --fh-diff-add:rgba(155,185,85,.2);
-  --fh-diff-del:rgba(255,0,0,.12);
-  --fh-hc-claude:#b5532f;
-  --fh-hc-claude-bg:rgba(181,83,47,.10);
-  --fh-hc-codex:#0d8a6a;
-  --fh-hc-codex-bg:rgba(13,138,106,.10);
-  --fh-hc-opencode:#475569;
-  --fh-hc-opencode-bg:rgba(71,85,105,.10);
-  --fh-hc-agy:#2563eb;
-  --fh-hc-agy-bg:rgba(37,99,235,.10);
-  --fh-hc-gemini:#7c3aed;
-  --fh-hc-gemini-bg:rgba(124,58,237,.10);
-  --fh-hc-dsh:#4338ca;
-  --fh-hc-dsh-bg:rgba(67,56,202,.10);
-
-  /* Supporting workbench tokens */
-  --fh-on-accent:#ffffff;
-  --fh-card:#ffffff;
-  --fh-act-hover:rgba(184,184,184,.31);
-  --fh-ok-bg:rgba(56,138,52,.10);
-  --fh-scroll-thumb:rgba(121,121,121,.4);
-  --fh-scroll-thumb-hover:rgba(121,121,121,.6);
-  color-scheme:light;
-}
+/* VS Code Dark Modern / Light Modern control visual spec (docs/webui-workbench-plan.md §4.2). */
 
 /* ── §4.2 Typography & Icons ─────────────────────────────────────────────── */
-html[data-workbench="1"] body{
+body{
   font-family:var(--fh-font-ui);
   font-size:13px;
   line-height:1.45;
@@ -280,44 +10,44 @@ html[data-workbench="1"] body{
   -webkit-font-smoothing:antialiased;
 }
 
-html[data-workbench="1"] code,
-html[data-workbench="1"] pre,
-html[data-workbench="1"] kbd,
-html[data-workbench="1"] .fh-mono,
-html[data-workbench="1"] .b code,
-html[data-workbench="1"] .cb-lang,
-html[data-workbench="1"] .gf-path,
-html[data-workbench="1"] .gf-status,
-html[data-workbench="1"] .gf-stat,
-html[data-workbench="1"] .git-patch,
-html[data-workbench="1"] .ag-mono,
-html[data-workbench="1"] .ag-fixed,
-html[data-workbench="1"] .ag-fname,
-html[data-workbench="1"] .set-v,
-html[data-workbench="1"] .mp-v,
-html[data-workbench="1"] .tp-mono,
-html[data-workbench="1"] .tp-body,
-html[data-workbench="1"] .tp-text,
-html[data-workbench="1"] .skill-file,
-html[data-workbench="1"] .skill-text,
-html[data-workbench="1"] .term-name,
-html[data-workbench="1"] .topic-term,
-html[data-workbench="1"] .hist-key,
-html[data-workbench="1"] #git-branch,
-html[data-workbench="1"] #files-where,
-html[data-workbench="1"] #files-editor .fx-text{
+code,
+pre,
+kbd,
+.fh-mono,
+.b code,
+.cb-lang,
+.gf-path,
+.gf-status,
+.gf-stat,
+.git-patch,
+.ag-mono,
+.ag-fixed,
+.ag-fname,
+.set-v,
+.mp-v,
+.tp-mono,
+.tp-body,
+.tp-text,
+.skill-file,
+.skill-text,
+.term-name,
+.topic-term,
+.hist-key,
+#git-branch,
+#files-where,
+#files-editor .fx-text{
   font-family:var(--fh-font-mono);
 }
 
-html[data-workbench="1"] .fh-group-head,
-html[data-workbench="1"] .panel-title,
-html[data-workbench="1"] .set-group,
-html[data-workbench="1"] .fb-label,
-html[data-workbench="1"] .launch-host,
-html[data-workbench="1"] .tp-label,
-html[data-workbench="1"] .skill-section,
-html[data-workbench="1"] .rev-label,
-html[data-workbench="1"] .fx-sec{
+.fh-group-head,
+.panel-title,
+.set-group,
+.fb-label,
+.launch-host,
+.tp-label,
+.skill-section,
+.rev-label,
+.fx-sec{
   font-size:11px;
   font-weight:600;
   text-transform:uppercase;
@@ -325,251 +55,250 @@ html[data-workbench="1"] .fx-sec{
   color:var(--fh-fg-dim);
 }
 
-html[data-workbench="1"] svg.ic{
+svg.ic{
   stroke-width:var(--fh-icon-stroke);
 }
 
 /* ── §4.2 Scrollbar (10px, rgba(121,121,121,.4)) ─────────────────────────── */
-html[data-workbench="1"],
-html[data-workbench="1"] *{
+*{
   scrollbar-width:auto;
   scrollbar-color:var(--fh-scroll-thumb) transparent;
 }
-html[data-workbench="1"] ::-webkit-scrollbar{width:10px;height:10px}
-html[data-workbench="1"] ::-webkit-scrollbar-track{background:transparent}
-html[data-workbench="1"] ::-webkit-scrollbar-thumb{background:var(--fh-scroll-thumb);border-radius:0}
-html[data-workbench="1"] ::-webkit-scrollbar-thumb:hover{background:var(--fh-scroll-thumb-hover)}
-html[data-workbench="1"] ::-webkit-scrollbar-corner{background:transparent}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--fh-scroll-thumb);border-radius:0}
+::-webkit-scrollbar-thumb:hover{background:var(--fh-scroll-thumb-hover)}
+::-webkit-scrollbar-corner{background:transparent}
 
 /* ── §4.2 Shape Tokens — Controls (2px), Cards/Bubbles/Overlays (4px), Rows/Tabs (0px), Badges (pill) ── */
-html[data-workbench="1"] .fh-input,
-html[data-workbench="1"] .fh-select,
-html[data-workbench="1"] .fh-textarea,
-html[data-workbench="1"] .fh-btn,
-html[data-workbench="1"] .fh-chip,
-html[data-workbench="1"] .fh-seg,
-html[data-workbench="1"] .fh-seg button,
-html[data-workbench="1"] #login input,
-html[data-workbench="1"] #input,
-html[data-workbench="1"] .fb-search,
-html[data-workbench="1"] .fb-btn,
-html[data-workbench="1"] .fb-sort,
-html[data-workbench="1"] .fb-chip,
-html[data-workbench="1"] .chip,
-html[data-workbench="1"] .set-seg,
-html[data-workbench="1"] .set-seg button,
-html[data-workbench="1"] .set-select,
-html[data-workbench="1"] .set-type,
-html[data-workbench="1"] .set-use,
-html[data-workbench="1"] .set-nav button,
-html[data-workbench="1"] .ag-open,
-html[data-workbench="1"] #git-modes,
-html[data-workbench="1"] .git-mode,
-html[data-workbench="1"] #git-base,
-html[data-workbench="1"] #git-layout,
-html[data-workbench="1"] #git-comment-text,
-html[data-workbench="1"] #git-comment-acts button,
-html[data-workbench="1"] #files-q,
-html[data-workbench="1"] #files-q-go,
-html[data-workbench="1"] #files-new-row input,
-html[data-workbench="1"] #files-rename-row input,
-html[data-workbench="1"] #files-new-row button,
-html[data-workbench="1"] #files-rename-row button,
-html[data-workbench="1"] #files-tree-head button,
-html[data-workbench="1"] #files-actions button,
-html[data-workbench="1"] #skills-new,
-html[data-workbench="1"] .skill-seg,
-html[data-workbench="1"] .skill-seg button,
-html[data-workbench="1"] .skill-acts button,
-html[data-workbench="1"] .tp-acts button,
-html[data-workbench="1"] .skill-field,
-html[data-workbench="1"] .skill-text,
-html[data-workbench="1"] .tp-text,
-html[data-workbench="1"] .sched-subtab,
-html[data-workbench="1"] .skill-tab,
-html[data-workbench="1"] #mp-filter,
-html[data-workbench="1"] .btns button,
-html[data-workbench="1"] .pq-btn,
-html[data-workbench="1"] .wd-act,
-html[data-workbench="1"] .wd-pick-cur,
-html[data-workbench="1"] .wd-choose,
-html[data-workbench="1"] .rev-open,
-html[data-workbench="1"] .rev-adopt,
-html[data-workbench="1"] .rev-dismiss,
-html[data-workbench="1"] #history-more,
-html[data-workbench="1"] .tc button,
-html[data-workbench="1"] button{
+.fh-input,
+.fh-select,
+.fh-textarea,
+.fh-btn,
+.fh-chip,
+.fh-seg,
+.fh-seg button,
+#login input,
+#input,
+.fb-search,
+.fb-btn,
+.fb-sort,
+.fb-chip,
+.chip,
+.set-seg,
+.set-seg button,
+.set-select,
+.set-type,
+.set-use,
+.set-nav button,
+.ag-open,
+#git-modes,
+.git-mode,
+#git-base,
+#git-layout,
+#git-comment-text,
+#git-comment-acts button,
+#files-q,
+#files-q-go,
+#files-new-row input,
+#files-rename-row input,
+#files-new-row button,
+#files-rename-row button,
+#files-tree-head button,
+#files-actions button,
+#skills-new,
+.skill-seg,
+.skill-seg button,
+.skill-acts button,
+.tp-acts button,
+.skill-field,
+.skill-text,
+.tp-text,
+.sched-subtab,
+.skill-tab,
+#mp-filter,
+.btns button,
+.pq-btn,
+.wd-act,
+.wd-pick-cur,
+.wd-choose,
+.rev-open,
+.rev-adopt,
+.rev-dismiss,
+#history-more,
+.tc button,
+button{
   border-radius:var(--fh-radius-ctrl);
 }
 
-html[data-workbench="1"] .fh-card,
-html[data-workbench="1"] .fh-bubble,
-html[data-workbench="1"] .fh-overlay,
-html[data-workbench="1"] .fh-dialog,
-html[data-workbench="1"] .fh-menu,
-html[data-workbench="1"] .fh-popover,
-html[data-workbench="1"] .fh-comment-box,
-html[data-workbench="1"] .set-card,
-html[data-workbench="1"] .ag-card,
-html[data-workbench="1"] .skill-item,
-html[data-workbench="1"] .rev-item,
-html[data-workbench="1"] .rev-pending,
-html[data-workbench="1"] .agent-card,
-html[data-workbench="1"] .wd-picker,
-html[data-workbench="1"] .pq-item,
-html[data-workbench="1"] .b pre,
-html[data-workbench="1"] .b .cb,
-html[data-workbench="1"] .btw-chip,
-html[data-workbench="1"] #btw,
-html[data-workbench="1"] #model-pop,
-html[data-workbench="1"] #row-menu,
-html[data-workbench="1"] .panel-menu,
-html[data-workbench="1"] #idle-box,
-html[data-workbench="1"] #settings-box,
-html[data-workbench="1"] #reader-box,
-html[data-workbench="1"] #git-box,
-html[data-workbench="1"] #files-box,
-html[data-workbench="1"] #skills-box,
-html[data-workbench="1"] #task-box,
-html[data-workbench="1"] #git-comment,
-html[data-workbench="1"] .set-notice,
-html[data-workbench="1"] #task-note,
-html[data-workbench="1"] #git-note,
-html[data-workbench="1"] #files-note,
-html[data-workbench="1"] #files-eol,
-html[data-workbench="1"] #files-conflict,
-html[data-workbench="1"] .hist-note{
+.fh-card,
+.fh-bubble,
+.fh-overlay,
+.fh-dialog,
+.fh-menu,
+.fh-popover,
+.fh-comment-box,
+.set-card,
+.ag-card,
+.skill-item,
+.rev-item,
+.rev-pending,
+.agent-card,
+.wd-picker,
+.pq-item,
+.b pre,
+.b .cb,
+.btw-chip,
+#btw,
+#model-pop,
+#row-menu,
+.panel-menu,
+#idle-box,
+#settings-box,
+#reader-box,
+#git-box,
+#files-box,
+#skills-box,
+#task-box,
+#git-comment,
+.set-notice,
+#task-note,
+#git-note,
+#files-note,
+#files-eol,
+#files-conflict,
+.hist-note{
   border-radius:var(--fh-radius-card);
 }
 
-html[data-workbench="1"] .m.own,
-html[data-workbench="1"] .m.dispatch,
-html[data-workbench="1"] .m.report,
-html[data-workbench="1"] .m.aside,
-html[data-workbench="1"] .sk.own{
+.m.own,
+.m.dispatch,
+.m.report,
+.m.aside,
+.sk.own{
   border-radius:0 var(--fh-radius-card) var(--fh-radius-card) 0;
 }
 
-html[data-workbench="1"] .fh-row,
-html[data-workbench="1"] .fh-list-row,
-html[data-workbench="1"] .fh-tab,
-html[data-workbench="1"] .topic-item,
-html[data-workbench="1"] .topic-item.framed,
-html[data-workbench="1"] .hist-item,
-html[data-workbench="1"] .git-file,
-html[data-workbench="1"] .git-commit,
-html[data-workbench="1"] .fx-row,
-html[data-workbench="1"] .mp-opt,
-html[data-workbench="1"] .set-opt,
-html[data-workbench="1"] .tp-run,
-html[data-workbench="1"] .sb-tab,
-html[data-workbench="1"] .wd-row{
+.fh-row,
+.fh-list-row,
+.fh-tab,
+.topic-item,
+.topic-item.framed,
+.hist-item,
+.git-file,
+.git-commit,
+.fx-row,
+.mp-opt,
+.set-opt,
+.tp-run,
+.sb-tab,
+.wd-row{
   border-radius:var(--fh-radius-row);
 }
 
-html[data-workbench="1"] .fh-badge,
-html[data-workbench="1"] .fh-count-badge,
-html[data-workbench="1"] .topic-badge,
-html[data-workbench="1"] .set-badge,
-html[data-workbench="1"] .pq-badge,
-html[data-workbench="1"] .rev-badge,
-html[data-workbench="1"] .skill-state,
-html[data-workbench="1"] .mp-tag,
-html[data-workbench="1"] .set-vnote,
-html[data-workbench="1"] .topic-fold,
-html[data-workbench="1"] .ac-tag,
-html[data-workbench="1"] .sub-k,
-html[data-workbench="1"] .btw-tag{
+.fh-badge,
+.fh-count-badge,
+.topic-badge,
+.set-badge,
+.pq-badge,
+.rev-badge,
+.skill-state,
+.mp-tag,
+.set-vnote,
+.topic-fold,
+.ac-tag,
+.sub-k,
+.btw-tag{
   border-radius:var(--fh-radius-pill);
 }
 
 /* ── §4.2 Inputs & Filter Chips ──────────────────────────────────────────── */
-html[data-workbench="1"] .fh-input,
-html[data-workbench="1"] .fh-select,
-html[data-workbench="1"] .fh-textarea,
-html[data-workbench="1"] #login input,
-html[data-workbench="1"] #input,
-html[data-workbench="1"] .fb-search,
-html[data-workbench="1"] .set-select,
-html[data-workbench="1"] .set-type,
-html[data-workbench="1"] #mp-filter,
-html[data-workbench="1"] #git-base,
-html[data-workbench="1"] #git-comment-text,
-html[data-workbench="1"] #files-q,
-html[data-workbench="1"] #files-new-row input,
-html[data-workbench="1"] #files-rename-row input,
-html[data-workbench="1"] .skill-field{
+.fh-input,
+.fh-select,
+.fh-textarea,
+#login input,
+#input,
+.fb-search,
+.set-select,
+.set-type,
+#mp-filter,
+#git-base,
+#git-comment-text,
+#files-q,
+#files-new-row input,
+#files-rename-row input,
+.skill-field{
   background:var(--fh-input);
   border:1px solid var(--fh-input-line);
   color:var(--fh-fg);
 }
 
-html[data-workbench="1"] .fh-input::placeholder,
-html[data-workbench="1"] .fh-textarea::placeholder,
-html[data-workbench="1"] #input::placeholder,
-html[data-workbench="1"] .fb-q::placeholder{
+.fh-input::placeholder,
+.fh-textarea::placeholder,
+#input::placeholder,
+.fb-q::placeholder{
   color:var(--fh-placeholder);
 }
 
-html[data-workbench="1"] .fh-input:focus,
-html[data-workbench="1"] .fh-textarea:focus,
-html[data-workbench="1"] .fh-select:focus,
-html[data-workbench="1"] .fb-search:focus-within,
-html[data-workbench="1"] #input:focus,
-html[data-workbench="1"] #login input:focus,
-html[data-workbench="1"] #mp-filter:focus,
-html[data-workbench="1"] #git-comment-text:focus{
+.fh-input:focus,
+.fh-textarea:focus,
+.fh-select:focus,
+.fb-search:focus-within,
+#input:focus,
+#login input:focus,
+#mp-filter:focus,
+#git-comment-text:focus{
   outline:none;
   border-color:var(--fh-accent);
 }
 
-html[data-workbench="1"] .fh-chip,
-html[data-workbench="1"] .fb-chip{
+.fh-chip,
+.fb-chip{
   background:transparent;
   border:1px solid var(--fh-input-line);
   color:var(--fh-fg-dim);
 }
 
-html[data-workbench="1"] .fh-chip.on,
-html[data-workbench="1"] .fh-chip[aria-pressed="true"],
-html[data-workbench="1"] .fb-chip.on{
+.fh-chip.on,
+.fh-chip[aria-pressed="true"],
+.fb-chip.on{
   background:var(--fh-toggle);
   border-color:var(--fh-toggle-line);
   color:var(--fh-fg-hi);
 }
 
 /* ── §4.2 List Rows: hover + selection (sel bg + 1px accent border) ──────── */
-html[data-workbench="1"] .fh-row,
-html[data-workbench="1"] .fh-list-row,
-html[data-workbench="1"] .topic-item,
-html[data-workbench="1"] .hist-item,
-html[data-workbench="1"] .git-file,
-html[data-workbench="1"] .git-commit,
-html[data-workbench="1"] .fx-row{
+.fh-row,
+.fh-list-row,
+.topic-item,
+.hist-item,
+.git-file,
+.git-commit,
+.fx-row{
   border:1px solid transparent;
 }
 
-html[data-workbench="1"] .fh-row:hover,
-html[data-workbench="1"] .fh-list-row:hover,
-html[data-workbench="1"] .topic-item:hover,
-html[data-workbench="1"] .hist-item:hover,
-html[data-workbench="1"] .git-file:hover,
-html[data-workbench="1"] .git-commit:hover,
-html[data-workbench="1"] .fx-row:hover{
+.fh-row:hover,
+.fh-list-row:hover,
+.topic-item:hover,
+.hist-item:hover,
+.git-file:hover,
+.git-commit:hover,
+.fx-row:hover{
   background:var(--fh-hover);
   --row-bg:var(--fh-hover);
 }
 
-html[data-workbench="1"] .fh-row.on,
-html[data-workbench="1"] .fh-row[aria-selected="true"],
-html[data-workbench="1"] .fh-list-row.on,
-html[data-workbench="1"] .fh-list-row[aria-selected="true"],
-html[data-workbench="1"] .topic-item.on,
-html[data-workbench="1"] .topic-item.framed.on,
-html[data-workbench="1"] .hist-item.on,
-html[data-workbench="1"] .git-file.on,
-html[data-workbench="1"] .git-commit.on,
-html[data-workbench="1"] .fx-row.on{
+.fh-row.on,
+.fh-row[aria-selected="true"],
+.fh-list-row.on,
+.fh-list-row[aria-selected="true"],
+.topic-item.on,
+.topic-item.framed.on,
+.hist-item.on,
+.git-file.on,
+.git-commit.on,
+.fx-row.on{
   background:var(--fh-sel);
   --row-bg:var(--fh-sel);
   border:1px solid var(--fh-accent);
@@ -577,66 +306,66 @@ html[data-workbench="1"] .fx-row.on{
 }
 
 /* ── §4.2 Buttons: primary (accent + white), secondary (btn2), zero shadow ── */
-html[data-workbench="1"] button,
-html[data-workbench="1"] .fh-btn{
+button,
+.fh-btn{
   box-shadow:none;
 }
 
-html[data-workbench="1"] .fh-btn,
-html[data-workbench="1"] .fh-btn-secondary,
-html[data-workbench="1"] #git-comment-acts button,
-html[data-workbench="1"] #files-actions button,
-html[data-workbench="1"] #skills-new,
-html[data-workbench="1"] .skill-acts button,
-html[data-workbench="1"] .tp-acts button,
-html[data-workbench="1"] .set-nav button{
+.fh-btn,
+.fh-btn-secondary,
+#git-comment-acts button,
+#files-actions button,
+#skills-new,
+.skill-acts button,
+.tp-acts button,
+.set-nav button{
   background:var(--fh-btn2);
   border:1px solid var(--fh-input-line);
   color:var(--fh-fg);
   box-shadow:none;
 }
 
-html[data-workbench="1"] .fh-btn:hover:not(:disabled),
-html[data-workbench="1"] .fh-btn-secondary:hover:not(:disabled),
-html[data-workbench="1"] #git-comment-acts button:hover:not(:disabled),
-html[data-workbench="1"] #files-actions button:hover:not(:disabled),
-html[data-workbench="1"] #skills-new:hover:not(:disabled),
-html[data-workbench="1"] .skill-acts button:hover:not(:disabled),
-html[data-workbench="1"] .tp-acts button:hover:not(:disabled),
-html[data-workbench="1"] .set-nav button:hover:not(:disabled){
+.fh-btn:hover:not(:disabled),
+.fh-btn-secondary:hover:not(:disabled),
+#git-comment-acts button:hover:not(:disabled),
+#files-actions button:hover:not(:disabled),
+#skills-new:hover:not(:disabled),
+.skill-acts button:hover:not(:disabled),
+.tp-acts button:hover:not(:disabled),
+.set-nav button:hover:not(:disabled){
   background:var(--fh-btn2-hover);
 }
 
-html[data-workbench="1"] .fh-btn-primary,
-html[data-workbench="1"] .fh-btn.primary,
-html[data-workbench="1"] button.primary,
-html[data-workbench="1"] #row button[type="submit"],
-html[data-workbench="1"] #login button[type="submit"],
-html[data-workbench="1"] #git-comment-acts button.primary,
-html[data-workbench="1"] .tp-acts button.primary{
+.fh-btn-primary,
+.fh-btn.primary,
+button.primary,
+#row button[type="submit"],
+#login button[type="submit"],
+#git-comment-acts button.primary,
+.tp-acts button.primary{
   background:var(--fh-accent);
   border:1px solid var(--fh-accent);
   color:var(--fh-on-accent);
   box-shadow:none;
 }
 
-html[data-workbench="1"] .fh-btn-primary:hover:not(:disabled),
-html[data-workbench="1"] .fh-btn.primary:hover:not(:disabled),
-html[data-workbench="1"] button.primary:hover:not(:disabled),
-html[data-workbench="1"] #row button[type="submit"]:hover:not(:disabled),
-html[data-workbench="1"] #login button[type="submit"]:hover:not(:disabled),
-html[data-workbench="1"] #git-comment-acts button.primary:hover:not(:disabled),
-html[data-workbench="1"] .tp-acts button.primary:hover:not(:disabled){
+.fh-btn-primary:hover:not(:disabled),
+.fh-btn.primary:hover:not(:disabled),
+button.primary:hover:not(:disabled),
+#row button[type="submit"]:hover:not(:disabled),
+#login button[type="submit"]:hover:not(:disabled),
+#git-comment-acts button.primary:hover:not(:disabled),
+.tp-acts button.primary:hover:not(:disabled){
   background:var(--fh-accent-hover);
   border-color:var(--fh-accent-hover);
 }
 
 /* ── §4.2 Segmented Controls (nav -> sel-inactive, value -> accent) ──────── */
-html[data-workbench="1"] .fh-seg,
-html[data-workbench="1"] .set-seg,
-html[data-workbench="1"] #git-modes,
-html[data-workbench="1"] .skill-seg,
-html[data-workbench="1"] .sched-subnav{
+.fh-seg,
+.set-seg,
+#git-modes,
+.skill-seg,
+.sched-subnav{
   background:var(--fh-bg-widget);
   border:1px solid var(--fh-input-line);
   border-radius:var(--fh-radius-ctrl);
@@ -644,69 +373,69 @@ html[data-workbench="1"] .sched-subnav{
   gap:2px;
 }
 
-html[data-workbench="1"] .fh-seg button,
-html[data-workbench="1"] .set-seg button,
-html[data-workbench="1"] .git-mode,
-html[data-workbench="1"] .skill-seg button,
-html[data-workbench="1"] .sched-subtab{
+.fh-seg button,
+.set-seg button,
+.git-mode,
+.skill-seg button,
+.sched-subtab{
   background:transparent;
   border:0;
   color:var(--fh-fg-dim);
   box-shadow:none;
 }
 
-html[data-workbench="1"] .fh-seg button:hover:not(:disabled),
-html[data-workbench="1"] .set-seg button:hover:not(:disabled),
-html[data-workbench="1"] .git-mode:hover:not(:disabled),
-html[data-workbench="1"] .skill-seg button:hover:not(:disabled),
-html[data-workbench="1"] .sched-subtab:hover:not(:disabled){
+.fh-seg button:hover:not(:disabled),
+.set-seg button:hover:not(:disabled),
+.git-mode:hover:not(:disabled),
+.skill-seg button:hover:not(:disabled),
+.sched-subtab:hover:not(:disabled){
   color:var(--fh-fg-hi);
 }
 
 /* Navigation segmented controls (All/Starred, tool buttons, git modes, subtabs) */
-html[data-workbench="1"] .fh-seg-nav button.on,
-html[data-workbench="1"] .fh-seg-nav button[aria-selected="true"],
-html[data-workbench="1"] .fh-seg-nav button[aria-pressed="true"],
-html[data-workbench="1"] .fh-seg[data-variant="nav"] button.on,
-html[data-workbench="1"] .fh-seg[data-variant="nav"] button[aria-selected="true"],
-html[data-workbench="1"] .fh-seg[data-variant="nav"] button[aria-pressed="true"],
-html[data-workbench="1"] .git-mode.on,
-html[data-workbench="1"] .sched-subtab.on{
+.fh-seg-nav button.on,
+.fh-seg-nav button[aria-selected="true"],
+.fh-seg-nav button[aria-pressed="true"],
+.fh-seg[data-variant="nav"] button.on,
+.fh-seg[data-variant="nav"] button[aria-selected="true"],
+.fh-seg[data-variant="nav"] button[aria-pressed="true"],
+.git-mode.on,
+.sched-subtab.on{
   background:var(--fh-sel-inactive);
   color:var(--fh-fg-hi);
   border-color:transparent;
 }
 
 /* Value segmented controls (settings options, skill tier) */
-html[data-workbench="1"] .fh-seg-value button.on,
-html[data-workbench="1"] .fh-seg-value button[aria-checked="true"],
-html[data-workbench="1"] .fh-seg-value button[aria-pressed="true"],
-html[data-workbench="1"] .fh-seg[data-variant="value"] button.on,
-html[data-workbench="1"] .fh-seg[data-variant="value"] button[aria-checked="true"],
-html[data-workbench="1"] .fh-seg[data-variant="value"] button[aria-pressed="true"],
-html[data-workbench="1"] .set-seg button[aria-checked="true"],
-html[data-workbench="1"] .skill-seg button[aria-pressed="true"]{
+.fh-seg-value button.on,
+.fh-seg-value button[aria-checked="true"],
+.fh-seg-value button[aria-pressed="true"],
+.fh-seg[data-variant="value"] button.on,
+.fh-seg[data-variant="value"] button[aria-checked="true"],
+.fh-seg[data-variant="value"] button[aria-pressed="true"],
+.set-seg button[aria-checked="true"],
+.skill-seg button[aria-pressed="true"]{
   background:var(--fh-accent);
   color:var(--fh-on-accent);
   border-color:transparent;
 }
 
 /* ── §4.2 Comment Box & Git Status Colours ───────────────────────────────── */
-html[data-workbench="1"] .fh-comment-box,
-html[data-workbench="1"] #git-comment{
+.fh-comment-box,
+#git-comment{
   background:var(--fh-bg-widget);
   border:1px solid var(--fh-line);
   border-top:2px solid var(--fh-accent);
 }
 
-html[data-workbench="1"] .gf-status.modified{color:var(--fh-git-mod)}
-html[data-workbench="1"] .gf-status.added{color:var(--fh-git-new)}
-html[data-workbench="1"] .gf-status.deleted{color:var(--fh-git-del)}
-html[data-workbench="1"] .gf-add,
-html[data-workbench="1"] .tc .add{color:var(--fh-git-add)}
-html[data-workbench="1"] .gf-del,
-html[data-workbench="1"] .tc .del{color:var(--fh-git-del)}
-html[data-workbench="1"] .git-patch .pa,
-html[data-workbench="1"] .cb .pa{background:var(--fh-diff-add)}
-html[data-workbench="1"] .git-patch .pd,
-html[data-workbench="1"] .cb .pd{background:var(--fh-diff-del)}
+.gf-status.modified{color:var(--fh-git-mod)}
+.gf-status.added{color:var(--fh-git-new)}
+.gf-status.deleted{color:var(--fh-git-del)}
+.gf-add,
+.tc .add{color:var(--fh-git-add)}
+.gf-del,
+.tc .del{color:var(--fh-git-del)}
+.git-patch .pa,
+.cb .pa{background:var(--fh-diff-add)}
+.git-patch .pd,
+.cb .pd{background:var(--fh-diff-del)}

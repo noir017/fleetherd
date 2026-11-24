@@ -63,6 +63,6 @@ export async function loginViaUi(page: Page, baseUrl: string, secret: string): P
   await expect(page.locator('#gate')).toBeVisible();
   await page.locator('#secret').fill(secret);
   await page.locator('#gate button[type="submit"]').click();
-  await expect(page.locator('#app')).toBeVisible();
+  await expect(page.locator('#workbench-root')).toBeVisible();
   await expect(page.locator('#gate')).toBeHidden();
 }

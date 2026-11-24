@@ -13,61 +13,61 @@ describe('webui page: theme system', () => {
   const T = 'a1b2c3d4';
   const themeColor = (h: Harness): string | null =>
     h.doc.querySelector('meta[name="theme-color"]')?.getAttribute('content') ?? null;
+  const themeBtn = (h: Harness): HTMLButtonElement => {
+    const el = h.doc.querySelector<HTMLButtonElement>('[data-status-id="status.theme"]');
+    if (!el) throw new Error('status.theme button not found');
+    return el;
+  };
 
   it('defaults to system mode and follows OS prefers-color-scheme', async () => {
     const dark = await open({ colorScheme: 'dark' });
     await dark.emit(sync(T, [], [T]));
     expect(dark.doc.documentElement.dataset.theme).toBe('dark');
-    expect(themeColor(dark)).toBe('#131313');
-    expect(dark.el('theme-state').textContent).toBe('System');
-    expect(dark.el('theme-toggle').getAttribute('aria-label')).toBe('Theme: System');
+    expect(themeColor(dark)).toBe('#1f1f1f');
+    expect(themeBtn(dark).textContent).toContain('System');
 
     const light = await open({ colorScheme: 'light' });
     await light.emit(sync(T, [], [T]));
     expect(light.doc.documentElement.dataset.theme).toBe('light');
     expect(themeColor(light)).toBe('#ffffff');
-    expect(light.el('theme-state').textContent).toBe('System');
+    expect(themeBtn(light).textContent).toContain('System');
   });
 
   it('cycles System -> Dark -> Light -> System, persists to fh_theme, and updates theme-color', async () => {
     const h = await open({ colorScheme: 'dark' });
     await h.emit(sync(T, [], [T]));
 
-    await h.click('#opts-toggle');
-    expect(h.el('opts-menu').hidden).toBe(false);
-
-    await h.click('#theme-toggle');
+    await h.click('[data-status-id="status.theme"]');
     expect(h.window.localStorage.getItem('fh_theme')).toBe('dark');
     expect(h.doc.documentElement.dataset.theme).toBe('dark');
-    expect(themeColor(h)).toBe('#131313');
-    expect(h.el('theme-state').textContent).toBe('Dark');
-    expect(h.el('theme-toggle').getAttribute('aria-label')).toBe('Theme: Dark');
-    expect(h.el('opts-menu').hidden).toBe(false);
+    expect(themeColor(h)).toBe('#1f1f1f');
+    expect(themeBtn(h).textContent).toContain('Dark');
 
-    await h.click('#theme-toggle');
+    await h.click('[data-status-id="status.theme"]');
     expect(h.window.localStorage.getItem('fh_theme')).toBe('light');
     expect(h.doc.documentElement.dataset.theme).toBe('light');
     expect(themeColor(h)).toBe('#ffffff');
-    expect(h.el('theme-state').textContent).toBe('Light');
-    expect(h.el('theme-toggle').getAttribute('aria-label')).toBe('Theme: Light');
+    expect(themeBtn(h).textContent).toContain('Light');
 
-    await h.click('#theme-toggle');
+    await h.click('[data-status-id="status.theme"]');
     expect(h.window.localStorage.getItem('fh_theme')).toBe('system');
     expect(h.doc.documentElement.dataset.theme).toBe('dark');
-    expect(themeColor(h)).toBe('#131313');
-    expect(h.el('theme-state').textContent).toBe('System');
+    expect(themeColor(h)).toBe('#1f1f1f');
+    expect(themeBtn(h).textContent).toContain('System');
   });
 
   it('restores persisted theme from localStorage via boot script on reload', async () => {
     const light = await open({ colorScheme: 'dark', storage: { fh_theme: 'light' } });
+    await light.emit(sync(T, [], [T]));
     expect(light.doc.documentElement.dataset.theme).toBe('light');
     expect(themeColor(light)).toBe('#ffffff');
-    expect(light.el('theme-state').textContent).toBe('Light');
+    expect(themeBtn(light).textContent).toContain('Light');
 
     const dark = await open({ colorScheme: 'light', storage: { fh_theme: 'dark' } });
+    await dark.emit(sync(T, [], [T]));
     expect(dark.doc.documentElement.dataset.theme).toBe('dark');
-    expect(themeColor(dark)).toBe('#131313');
-    expect(dark.el('theme-state').textContent).toBe('Dark');
+    expect(themeColor(dark)).toBe('#1f1f1f');
+    expect(themeBtn(dark).textContent).toContain('Dark');
   });
 
   it('reacts to OS prefers-color-scheme changes only when set to system', async () => {
@@ -81,14 +81,14 @@ describe('webui page: theme system', () => {
 
     h.setColorScheme('dark');
     expect(h.doc.documentElement.dataset.theme).toBe('dark');
-    expect(themeColor(h)).toBe('#131313');
+    expect(themeColor(h)).toBe('#1f1f1f');
 
     // Explicit dark ignores OS switch to light.
-    await h.click('#theme-toggle');
+    await h.click('[data-status-id="status.theme"]');
     expect(h.window.localStorage.getItem('fh_theme')).toBe('dark');
     h.setColorScheme('light');
     expect(h.doc.documentElement.dataset.theme).toBe('dark');
-    expect(themeColor(h)).toBe('#131313');
+    expect(themeColor(h)).toBe('#1f1f1f');
   });
 
   it('keeps main.css free of hardcoded hex and rgb/rgba colors outside theme token blocks', () => {
@@ -96,10 +96,7 @@ describe('webui page: theme system', () => {
     const withoutTokens = noComments
       .replace(/:root,\[data-theme="dark"\]\{[^}]*\}/g, '')
       .replace(/@media \(prefers-color-scheme: light\)\{:root:not\(\[data-theme="dark"\]\)\{[^}]*\}\}/g, '')
-      .replace(/\[data-theme="light"\]\{[^}]*\}/g, '')
-      .replace(/html\[data-workbench="1"\]\{[^}]*\}/g, '')
-      .replace(/@media \(prefers-color-scheme: light\)\{html\[data-workbench="1"\]:not\(\[data-theme="dark"\]\)\{[^}]*\}\}/g, '')
-      .replace(/html\[data-workbench="1"\]\[data-theme="light"\]\{[^}]*\}/g, '');
+      .replace(/\[data-theme="light"\]\{[^}]*\}/g, '');
     expect(withoutTokens.match(/#[0-9a-fA-F]{3,8}\b/g)).toBeNull();
     expect(withoutTokens.match(/rgba?\([^)]+\)/gi)).toBeNull();
   });
@@ -148,12 +145,12 @@ describe('webui page: theme system', () => {
     }
   });
 
-  it('defines all 46 VS Code Dark Modern and Light Modern --fh-* tokens under html[data-workbench="1"]', () => {
+  it('defines all 46 VS Code Dark Modern and Light Modern --fh-* tokens as default palettes', () => {
     const noComments = STYLE_SOURCE.replace(/\/\*[\s\S]*?\*\//g, '');
-    const wbDark = noComments.match(/html\[data-workbench="1"\]\{([^}]*)\}/)?.[1] ?? '';
+    const wbDark = noComments.match(/:root,\[data-theme="dark"\]\{([^}]*)\}/)?.[1] ?? '';
     const wbMediaLight =
-      noComments.match(/@media \(prefers-color-scheme: light\)\{html\[data-workbench="1"\]:not\(\[data-theme="dark"\]\)\{([^}]*)\}\}/)?.[1] ?? '';
-    const wbDataLight = noComments.match(/html\[data-workbench="1"\]\[data-theme="light"\]\{([^}]*)\}/)?.[1] ?? '';
+      noComments.match(/@media \(prefers-color-scheme: light\)\{:root:not\(\[data-theme="dark"\]\)\{([^}]*)\}\}/)?.[1] ?? '';
+    const wbDataLight = noComments.match(/\[data-theme="light"\]\{([^}]*)\}/)?.[1] ?? '';
 
     const parseVars = (block: string): Map<string, string> => {
       const map = new Map<string, string>();
@@ -280,8 +277,8 @@ describe('webui page: theme system', () => {
     }
   });
 
-  it('applies §4.2 shape, control, typography, scrollbar, and icon rules under html[data-workbench="1"]', () => {
-    const wbDark = STYLE_SOURCE.match(/html\[data-workbench="1"\]\{([^}]*)\}/)?.[1] ?? '';
+  it('applies §4.2 shape, control, typography, scrollbar, and icon rules globally by default', () => {
+    const wbDark = STYLE_SOURCE.match(/:root,\[data-theme="dark"\]\{([^}]*)\}/)?.[1] ?? '';
     expect(wbDark).toContain('--fh-radius-ctrl:2px');
     expect(wbDark).toContain('--fh-radius-card:4px');
     expect(wbDark).toContain('--fh-radius-row:0px');
@@ -289,9 +286,10 @@ describe('webui page: theme system', () => {
     expect(wbDark).toContain('--fh-font-mono:"Cascadia Code","JetBrains Mono",Consolas,monospace');
     expect(wbDark).toContain('--fh-scroll-thumb:rgba(121,121,121,.4)');
     expect(wbDark).toContain('--fh-icon-stroke:1.5');
-    expect(STYLE_SOURCE).toContain('html[data-workbench="1"] ::-webkit-scrollbar{width:10px;height:10px}');
-    expect(STYLE_SOURCE).toContain('html[data-workbench="1"] svg.ic{\n  stroke-width:var(--fh-icon-stroke);');
+    expect(STYLE_SOURCE).toContain('::-webkit-scrollbar{width:10px;height:10px}');
+    expect(STYLE_SOURCE).toContain('svg.ic{\n  stroke-width:var(--fh-icon-stroke);');
     expect(STYLE_SOURCE).toContain('letter-spacing:0.05em');
+    expect(STYLE_SOURCE).not.toContain('data-workbench="1"');
   });
 
   it('uses CSS custom properties for CodeMirror theme and syntax highlighting', () => {

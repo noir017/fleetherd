@@ -82,7 +82,7 @@
 
 .fh-btn--primary {
   background: var(--fh-accent);
-  color: #fff;
+  color: var(--fh-on-accent);
 }
 
 .fh-btn--primary:hover:not(:disabled) {
@@ -111,7 +111,7 @@
 
 .fh-btn--danger {
   background: var(--fh-err);
-  color: #fff;
+  color: var(--fh-on-accent);
 }
 
 .fh-btn--danger:hover:not(:disabled) {
@@ -146,11 +146,11 @@
   white-space: nowrap;
 }
 
-.fh-badge--accent { background: var(--fh-accent); color: #fff; }
+.fh-badge--accent { background: var(--fh-accent); color: var(--fh-on-accent); }
 .fh-badge--neutral { background: var(--fh-btn2-hover); color: var(--fh-fg); }
-.fh-badge--ok { background: var(--fh-ok); color: #111; }
-.fh-badge--warn { background: var(--fh-warn); color: #111; }
-.fh-badge--err { background: var(--fh-err); color: #fff; }
+.fh-badge--ok { background: var(--fh-ok); color: var(--fh-bg); }
+.fh-badge--warn { background: var(--fh-warn); color: var(--fh-bg); }
+.fh-badge--err { background: var(--fh-err); color: var(--fh-on-accent); }
 
 .fh-badge--dot {
   min-width: 8px;
@@ -172,9 +172,9 @@
 
 .fh-tag--neutral { background: var(--fh-btn2); color: var(--fh-fg-dim); }
 .fh-tag--accent { background: var(--fh-toggle); color: var(--fh-fg-hi); }
-.fh-tag--ok { background: rgba(137, 209, 133, 0.14); color: var(--fh-ok); }
-.fh-tag--warn { background: rgba(204, 167, 0, 0.15); color: var(--fh-warn); }
-.fh-tag--err { background: rgba(241, 76, 76, 0.15); color: var(--fh-err); }
+.fh-tag--ok { background: var(--fh-ok-bg); color: var(--fh-ok); }
+.fh-tag--warn { background: var(--warn-tint-2); color: var(--fh-warn); }
+.fh-tag--err { background: var(--err-tint-2); color: var(--fh-err); }
 
 .fh-tag--hc-claude { background: var(--fh-hc-claude-bg); color: var(--fh-hc-claude); }
 .fh-tag--hc-codex { background: var(--fh-hc-codex-bg); color: var(--fh-hc-codex); }
@@ -470,7 +470,7 @@
 
 .fh-seg--value .fh-seg-item.is-active {
   background: var(--fh-accent);
-  color: #fff;
+  color: var(--fh-on-accent);
 }
 
 /* Grouped List (square rows, sel + 1px accent outline, 11px uppercase group headers) */
@@ -844,7 +844,7 @@
   align-items: center;
   justify-content: center;
   padding: 16px;
-  background: rgba(0, 0, 0, 0.55);
+  background: var(--scrim-2);
 }
 
 .fh-dialog {
@@ -904,7 +904,7 @@
   align-items: flex-start;
   justify-content: center;
   padding: 12vh 16px 16px;
-  background: rgba(0, 0, 0, 0.45);
+  background: var(--scrim);
 }
 
 .fh-qp {
@@ -1138,7 +1138,7 @@
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  background: #fff;
+  background: var(--fh-on-accent);
   transform: translateX(0);
   transition: transform 0.12s ease;
 }

@@ -27,21 +27,22 @@ test.describe('Web UI smoke suite', () => {
   test('login gate rejects wrong secret and admits valid secret', async ({ page }) => {
     await page.goto(gateway.baseUrl);
     await expect(page.locator('#gate')).toBeVisible();
-    await expect(page.locator('#app')).toBeHidden();
+    await expect(page.locator('#workbench-root')).toBeHidden();
 
     await page.locator('#secret').fill('wrong-secret-value');
     await page.locator('#gate button[type="submit"]').click();
 
     await expect(page.locator('#err')).not.toBeEmpty();
     await expect(page.locator('#gate')).toBeVisible();
-    await expect(page.locator('#app')).toBeHidden();
+    await expect(page.locator('#workbench-root')).toBeHidden();
 
     await page.locator('#secret').fill(gateway.secret);
     await page.locator('#gate button[type="submit"]').click();
 
     await expect(page.locator('#gate')).toBeHidden();
-    await expect(page.locator('#app')).toBeVisible();
-    await expect(page.locator('#sidebar')).toBeVisible();
+    await expect(page.locator('#workbench-root')).toBeVisible();
+    await expect(page.locator('.wb-activity-bar')).toBeVisible();
+    await expect(page.locator('.wb-sidebar')).toBeVisible();
     await expect(page.locator('#topics')).toBeVisible();
     await expect(page.locator('#input')).toBeVisible();
   });
@@ -49,7 +50,7 @@ test.describe('Web UI smoke suite', () => {
   test('sending a message streams fake ACP agent reply into transcript', async ({ page }) => {
     await loginViaUi(page, gateway.baseUrl, gateway.secret);
 
-    await page.locator('#new-topic').click();
+    await page.locator('[data-action-id="topics.new"]').click();
     const promptText = `hello e2e stream ${Date.now()}`;
     await page.locator('#input').fill(promptText);
     await page.locator('#composer button[type="submit"]').click();
@@ -88,7 +89,7 @@ test.describe('Web UI smoke suite', () => {
     await expect(page.locator('#log')).toContainText(`echo(alpha): ${BETA_MSG}`);
     await expect(page.locator('#log')).not.toContainText(ALPHA_MSG);
 
-    await page.locator('#new-topic').click();
+    await page.locator('[data-action-id="topics.new"]').click();
     await expect(alphaRow).not.toHaveClass(/\bon\b/);
     await expect(betaRow).not.toHaveClass(/\bon\b/);
     await expect(page.locator('#topics .topic-item.on')).toHaveCount(1);
@@ -96,37 +97,32 @@ test.describe('Web UI smoke suite', () => {
     await expect(page.locator('#log')).not.toContainText(BETA_MSG);
   });
 
-  test('mobile viewport (390x844) has no horizontal overflow and toggles sidebar drawer', async ({
+  test('mobile viewport (390x844) has no horizontal overflow and navigates StackShell list/detail', async ({
     page,
   }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await loginViaUi(page, gateway.baseUrl, gateway.secret);
 
-    const sidebar = page.locator('#sidebar');
-    const expandBtn = page.locator('#expand-sidebar');
-    const collapseBtn = page.locator('#collapse-sidebar');
-    const input = page.locator('#input');
-    const sendBtn = page.locator('#composer button[type="submit"]');
-
-    await expect(expandBtn).toBeVisible();
-    await expect(sidebar).toHaveClass(/\bcollapsed\b/);
-    await expect(input).toBeVisible();
-    await expect(sendBtn).toBeVisible();
+    const stack = page.locator('.wb-stack');
+    await expect(page.locator('#workbench-root')).toHaveAttribute('data-wb-mode', 'mobile');
+    await expect(stack).toBeVisible();
+    await expect(stack).toHaveAttribute('data-stack-mode', 'list');
+    await expect(page.locator('.wb-stack-tabbar')).toBeVisible();
 
     const hasOverflow = await page.evaluate(
       () => document.documentElement.scrollWidth > window.innerWidth
     );
     expect(hasOverflow).toBe(false);
 
-    await expandBtn.click();
-    await expect(sidebar).not.toHaveClass(/\bcollapsed\b/);
-    await expect(page.locator(`#topics .topic-item[data-topic="${seededIds[TOPIC_ALPHA]}"]`)).toBeVisible();
+    const alphaRow = page.locator(`.wb-stack-list-body .topic-item[data-topic="${seededIds[TOPIC_ALPHA]}"]`);
+    await expect(alphaRow).toBeVisible();
+    await alphaRow.click();
 
-    await collapseBtn.click();
-    await expect(sidebar).toHaveClass(/\bcollapsed\b/);
-    await expect(expandBtn).toBeVisible();
+    await expect(stack).toHaveAttribute('data-stack-mode', 'detail');
+    await expect(page.locator('.wb-stack-title')).toContainText(TOPIC_ALPHA);
+    await expect(page.locator('#input')).toBeVisible();
 
-    await input.click();
-    await expect(input).toBeFocused();
+    await page.locator('.wb-stack-back').click();
+    await expect(stack).toHaveAttribute('data-stack-mode', 'list');
   });
 });

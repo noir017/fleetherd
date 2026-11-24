@@ -8,7 +8,12 @@ import type {
 import type { WebMessage } from '../../protocol.js';
 import { icon } from '../../icons.js';
 import { t } from '../i18n/index.js';
-import { fxBase, type FilesHttpResult, type FilesPanel, type FilesSource } from './files.js';
+import type { FilesHttpResult, FilesPanel, FilesSource } from './files.js';
+
+function fxBase(p: string): string {
+  const at = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'));
+  return at < 0 ? p : p.slice(at + 1);
+}
 
 export interface InstructionsAgentRow {
   target?: string;

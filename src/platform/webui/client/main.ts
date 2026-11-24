@@ -1,18 +1,33 @@
-// Web UI client entrypoint: DOM lookups, module wiring, SSE event dispatch, and startup order.
+// Web UI client entrypoint: services, WorkbenchShell, ContributionRegistry, 12 built-in plugins,
+// SSE stream dispatch, login gate, and startup sequence.
 // Bundled by `scripts/webui-client.mjs` into `dist/webui-assets/app-<hash>.js` with two build-time
 // markers replaced before bundling with `clientIcons()` (`icons.ts`) and `CACHE_CORE` (`cache-script.ts`).
 
 import type { WebEvent, WebMessage } from '../protocol.js';
 import type { Topic } from '../topics.js';
-import { createFilesPanel, type FilesPanel } from './panels/files.js';
-import { createGitPanel, type GitPanel } from './panels/git.js';
-import { createHistoryPanel, type HistoryPanel, type SidebarTab } from './panels/history.js';
-import { createInstructionsPanel, type InstructionsPanel } from './panels/instructions.js';
-import { createReviewsPanel, type ReviewsPanel } from './panels/reviews.js';
-import { createSchedulesPanel, type SchedulesPanel } from './panels/schedules.js';
-import { createSkillsPanel, type SkillsPanel } from './panels/skills.js';
+import { Emitter } from './base/event.js';
+import type { ClientIconsBundle } from './build-markers.d.ts';
+import { createCodeViewLoader } from './features/reader/index.js';
+import { READER_OPEN_COMMAND, READER_OPEN_IMAGE_COMMAND } from './features/reader/plugin.js';
+import { inlineCodeHtml as inl } from './features/settings/render.js';
+import type { SettingsPluginBridge } from './features/settings/plugin.js';
+import { TERMINAL_TOGGLE_COMMAND } from './features/terminal/plugin.js';
+import type { LocalBubbleMessage } from './features/topic/composer/index.js';
+import type { ComposerTopicStatusBridge } from './features/topic/composer/types.js';
+import type { TopicEditorElements, TopicEditorHandle } from './features/topic/editor/index.js';
+import { stClock } from './features/topic/status/index.js';
+import type { LaunchChoice, TranscriptMessage } from './features/topic/transcript/index.js';
+import type { TopicSnapshotPayload } from './features/topics/index.js';
 import { applyDomI18n, initLocale, onLocaleChange, t as tr } from './i18n/index.js';
-import { post, text } from './services/api.js';
+import type { TopicInfo } from './plugins/api.js';
+import {
+  createDefaultBuiltinPluginFactories,
+  registerBuiltinPlugins,
+  type BuiltinPluginsDeps,
+} from './plugins/builtin.js';
+import { PluginManager } from './plugins/host.js';
+import { ContributionRegistry, WebuiEventBus } from './plugins/registry.js';
+import { createApiClient, post, type ApiClient } from './services/api.js';
 import { readBootConfig, type BootConfig } from './services/boot.js';
 import {
   collectCacheableMessages,
@@ -21,211 +36,23 @@ import {
   type CacheMessage,
   type CacheService,
 } from './services/cache.js';
+import { CommandRegistry } from './services/commands.js';
+import { KeybindingService } from './services/keybindings.js';
 import { OverlayManager } from './services/overlays.js';
 import { createReadsService, type ReadsService } from './services/reads.js';
+import { StorageService } from './services/storage.js';
 import {
   applyTopicRows,
   createStreamClient,
   type StreamClient,
   type StreamEventPayload,
 } from './services/stream.js';
-import { createNotifyController, type NotifyController } from './features/notify/index.js';
-import {
-  createCodeViewLoader,
-  createLightbox,
-  createReader,
-  formatByteSize,
-  type LightboxController,
-  type ReaderController,
-} from './features/reader/index.js';
-import {
-  createSettingsFeature,
-  inlineCodeHtml as inl,
-  type SettingsFeature,
-} from './features/settings/index.js';
-import { createTerminalController, type TerminalController } from './features/terminal/index.js';
-import { mountWorkbenchIfEnabled } from './workbench/shell.js';
-import {
-  createComposerController,
-  type ComposerController,
-  type LocalBubbleMessage,
-} from './features/topic/composer/index.js';
-import {
-  createTopicStatusController,
-  stClock,
-  stLeft,
-  type TopicStatusController,
-} from './features/topic/status/index.js';
-import {
-  createTranscriptController,
-  type LaunchChoice,
-  type TranscriptController,
-  type TranscriptMessage,
-} from './features/topic/transcript/index.js';
-import {
-  createTopicsFeature,
-  type TopicsFeature,
-  type TopicSnapshotPayload,
-} from './features/topics/index.js';
-import { createLegacyShell, type LegacyShell } from './workbench/legacy-shell.js';
-import type { ClientIconsBundle } from './build-markers.d.ts';
+import type { StackToolItem } from './workbench/stack-shell.js';
+import type { PanelComponent } from './workbench/contracts.js';
+import { mountWorkbench, type WorkbenchShell } from './workbench/shell.js';
 
 interface CacheCoreBundle extends CacheCore {
   readonly snapshotMsgs: (d: TopicSnapshotPayload) => CacheMessage[];
-}
-
-interface AppDom {
-  readonly log: HTMLElement;
-  readonly app: HTMLElement;
-  readonly gate: HTMLElement;
-  readonly err: HTMLElement;
-  readonly input: HTMLTextAreaElement;
-  readonly chips: HTMLElement;
-  readonly hints: HTMLElement;
-  readonly typing: HTMLElement;
-  readonly note: HTMLElement;
-  readonly picker: HTMLInputElement;
-  readonly bar: HTMLElement;
-  readonly sidebar: HTMLElement;
-  readonly sidebarResize: HTMLElement;
-  readonly collapseBtn: HTMLElement;
-  readonly expandBtn: HTMLElement;
-  readonly newTopicBtn: HTMLElement;
-  readonly backdrop: HTMLElement;
-  readonly clearBtn: HTMLElement;
-  readonly readBtn: HTMLButtonElement;
-  readonly idleBtn: HTMLElement;
-  readonly noIdleBtn: HTMLElement;
-  readonly idleCount: HTMLElement;
-  readonly notifyBtn: HTMLButtonElement;
-  readonly notifyState: HTMLElement;
-  readonly idleDialog: HTMLElement;
-  readonly idleTitle: HTMLElement;
-  readonly idleWhy: HTMLElement;
-  readonly idleList: HTMLElement;
-  readonly idleGo: HTMLButtonElement;
-  readonly idleCancel: HTMLButtonElement;
-  readonly rowMenu: HTMLElement;
-  readonly optsBtn: HTMLElement;
-  readonly optsMenu: HTMLElement;
-  readonly manageBtn: HTMLElement;
-  readonly manageMenu: HTMLElement;
-  readonly calmBtn: HTMLElement;
-  readonly calmState: HTMLElement;
-  readonly themeBtn: HTMLElement;
-  readonly themeState: HTMLElement;
-  readonly langBtn: HTMLElement;
-  readonly langState: HTMLElement;
-  readonly chatTitle: HTMLElement;
-  readonly chatStatus: HTMLElement;
-  readonly forkNote: HTMLElement;
-  readonly chat: HTMLElement;
-  readonly chatHead: HTMLElement;
-  readonly composer: HTMLElement;
-  readonly termBtn: HTMLButtonElement;
-  readonly termHost: HTMLElement;
-  readonly termEl: HTMLElement;
-  readonly termGrip: HTMLElement;
-  readonly termName: HTMLElement;
-  readonly termMinBtn: HTMLButtonElement;
-  readonly termEndBtn: HTMLButtonElement;
-  readonly schedToggle: HTMLElement;
-  readonly schedAlert: HTMLElement;
-  readonly schedList: HTMLElement;
-  readonly schedSummary: HTMLElement;
-  readonly schedReadBtn: HTMLButtonElement;
-  readonly schedFilterHost: HTMLElement;
-  readonly schedNewBtn: HTMLElement;
-  readonly schedClose: HTMLElement;
-  readonly schedNote: HTMLElement;
-  readonly schedPanel: HTMLElement;
-  readonly schedSessionList: HTMLElement;
-  readonly schedResize: HTMLElement;
-  readonly schedSubnav: HTMLElement;
-  readonly schedTabScheduled: HTMLElement;
-  readonly schedTabScheduledN: HTMLElement;
-  readonly schedTabScheduledAlert: HTMLElement;
-  readonly schedTabReviews: HTMLElement;
-  readonly schedTabReviewsN: HTMLElement;
-  readonly schedTabTasks: HTMLElement;
-  readonly schedTabTasksN: HTMLElement;
-  readonly schedTabSessions: HTMLElement;
-  readonly schedTabSessionsN: HTMLElement;
-  readonly schedSessionsAlert: HTMLElement;
-  readonly revPane: HTMLElement;
-  readonly revList: HTMLElement;
-  readonly lightbox: HTMLElement;
-  readonly lightboxImg: HTMLImageElement;
-  readonly reader: HTMLElement;
-  readonly readerName: HTMLElement;
-  readonly readerGet: HTMLElement;
-  readonly readerBody: HTMLElement;
-  readonly readerClose: HTMLElement;
-  readonly skillsWin: HTMLElement;
-  readonly skillsToggle: HTMLElement;
-  readonly skillsBack: HTMLElement;
-  readonly skillsTitle: HTMLElement;
-  readonly skillsCount: HTMLElement;
-  readonly skillsNewBtn: HTMLElement;
-  readonly skillsRefreshBtn: HTMLButtonElement;
-  readonly skillsClose: HTMLElement;
-  readonly skillsBody: HTMLElement;
-  readonly skillsNote: HTMLElement;
-  readonly skillsListEl: HTMLElement;
-  readonly skillsDetailEl: HTMLElement;
-  readonly sbTabTopics: HTMLElement;
-  readonly sbTabStarred: HTMLElement;
-  readonly sbTabHistory: HTMLElement;
-  readonly topicsFilterHost: HTMLElement;
-  readonly historyPane: HTMLElement;
-  readonly historyCountEl: HTMLElement;
-  readonly historyBody: HTMLElement;
-  readonly historyQ: HTMLInputElement;
-  readonly historyGo: HTMLButtonElement;
-  readonly historyErr: HTMLElement;
-  readonly historyListEl: HTMLElement;
-  readonly historyMore: HTMLButtonElement;
-  readonly libLog: HTMLElement;
-  readonly libTitle: HTMLElement;
-  readonly libNote: HTMLElement;
-  readonly libWhy: HTMLElement;
-  readonly libTopicBtn: HTMLButtonElement;
-  readonly libCloseBtn: HTMLButtonElement;
-  readonly settingsPage: HTMLElement;
-  readonly settingsBody: HTMLElement;
-  readonly settingsTopicEl: HTMLElement;
-  readonly settingsClose: HTMLElement;
-  readonly settingsOpenBtn: HTMLElement;
-  readonly taskPage: HTMLElement;
-  readonly taskTitle: HTMLElement;
-  readonly taskSub: HTMLElement;
-  readonly taskClose: HTMLElement;
-  readonly taskNote: HTMLElement;
-  readonly taskView: HTMLElement;
-  readonly copyRefBtn: HTMLButtonElement | null;
-  readonly killBtn: HTMLElement;
-  readonly stopBtn: HTMLElement;
-  readonly pendingQueueEl: HTMLElement | null;
-  readonly statusEl: HTMLElement | null;
-  readonly machineNoteEl: HTMLElement;
-  readonly updateEl: HTMLElement;
-  readonly updateReloadBtn: HTMLElement | null;
-  readonly gateForm: HTMLFormElement | null;
-  readonly secretInput: HTMLInputElement | null;
-  readonly modelPop: HTMLElement;
-  readonly mpList: HTMLElement;
-  readonly mpFilter: HTMLInputElement;
-  readonly mpAgent: HTMLElement;
-  readonly mpHeading: HTMLElement;
-  readonly mpFoot: HTMLElement;
-  readonly mpClose: HTMLElement | null;
-  readonly btwBox: HTMLElement;
-  readonly btwQ: HTMLElement;
-  readonly btwBody: HTMLElement;
-  readonly btwClose: HTMLElement | null;
-  readonly attachBtn: HTMLElement | null;
-  readonly micBtn: HTMLButtonElement | null;
-  readonly composerForm: HTMLFormElement | null;
 }
 
 interface AppState {
@@ -239,207 +66,36 @@ interface AppState {
   stale: boolean;
   launch: LaunchChoice | null;
   settleOnResume: boolean;
+  activeEditor: TopicEditorHandle | null;
+  insertHandler: ((topicId: string, text: string) => boolean) | null;
+  settingsBridge: SettingsPluginBridge | null;
+  mobileViewId: string;
 }
 
-interface AppControllers {
+interface AppRuntime {
   readonly boot: BootConfig;
   readonly icons: ClientIconsBundle;
-  readonly dom: AppDom;
-  readonly state: AppState;
+  readonly storage: StorageService;
   readonly overlays: OverlayManager;
+  readonly commands: CommandRegistry;
+  readonly keybindings: KeybindingService;
+  readonly api: ApiClient;
+  readonly events: WebuiEventBus;
+  readonly registry: ContributionRegistry;
+  readonly shell: WorkbenchShell;
+  readonly pluginManager: PluginManager;
   readonly cacheCore: CacheCoreBundle;
   readonly codeView: ReturnType<typeof createCodeViewLoader>;
+  readonly updateEmitter: Emitter<boolean>;
+  readonly state: AppState;
+  readonly gate: HTMLElement | null;
+  readonly gateForm: HTMLFormElement | null;
+  readonly secretInput: HTMLInputElement | null;
+  readonly errEl: HTMLElement | null;
+  readonly workbenchRoot: HTMLElement;
   streamClient: StreamClient;
   cacheService: CacheService;
   readsService: ReadsService;
-  settingsFeature: SettingsFeature;
-  topicStatus: TopicStatusController;
-  legacyShell: LegacyShell;
-  notifyController: NotifyController;
-  terminalController: TerminalController;
-  lightbox: LightboxController;
-  reader: ReaderController;
-  transcript: TranscriptController;
-  topicsFeature: TopicsFeature;
-  composerController: ComposerController;
-  reviewsPanel: ReviewsPanel;
-  historyPanel: HistoryPanel;
-  schedulesPanel: SchedulesPanel;
-  skillsPanel: SkillsPanel;
-  gitPanel: GitPanel;
-  filesPanel: FilesPanel;
-  instructionsPanel: InstructionsPanel;
-}
-
-function reqEl<T extends HTMLElement = HTMLElement>(doc: Document, id: string): T {
-  const el = doc.getElementById(id);
-  if (!el) throw new Error(`Missing required element #${id}`);
-  return el as T;
-}
-
-function optEl<T extends HTMLElement = HTMLElement>(doc: Document, id: string): T | null {
-  return doc.getElementById(id) as T | null;
-}
-
-function collectChatAndShellDom(doc: Document) {
-  return {
-    log: reqEl(doc, 'log'),
-    app: reqEl(doc, 'app'),
-    gate: reqEl(doc, 'login'),
-    err: reqEl(doc, 'err'),
-    input: reqEl<HTMLTextAreaElement>(doc, 'input'),
-    chips: reqEl(doc, 'chips'),
-    hints: reqEl(doc, 'hints'),
-    typing: reqEl(doc, 'typing'),
-    note: reqEl(doc, 'note'),
-    picker: reqEl<HTMLInputElement>(doc, 'picker'),
-    bar: reqEl(doc, 'topics'),
-    sidebar: reqEl(doc, 'sidebar'),
-    sidebarResize: reqEl(doc, 'sidebar-resize'),
-    collapseBtn: reqEl(doc, 'collapse-sidebar'),
-    expandBtn: reqEl(doc, 'expand-sidebar'),
-    newTopicBtn: reqEl(doc, 'new-topic'),
-    backdrop: reqEl(doc, 'backdrop'),
-    clearBtn: reqEl(doc, 'clear-topics'),
-    readBtn: reqEl<HTMLButtonElement>(doc, 'read-topics'),
-    idleBtn: reqEl(doc, 'close-idle'),
-    noIdleBtn: reqEl(doc, 'no-idle'),
-    idleCount: reqEl(doc, 'idle-count'),
-    notifyBtn: reqEl<HTMLButtonElement>(doc, 'notify-toggle'),
-    notifyState: reqEl(doc, 'notify-state'),
-    idleDialog: reqEl(doc, 'idle-dialog'),
-    idleTitle: reqEl(doc, 'idle-title'),
-    idleWhy: reqEl(doc, 'idle-why'),
-    idleList: reqEl(doc, 'idle-list'),
-    idleGo: reqEl<HTMLButtonElement>(doc, 'idle-go'),
-    idleCancel: reqEl<HTMLButtonElement>(doc, 'idle-cancel'),
-    rowMenu: reqEl(doc, 'row-menu'),
-    optsBtn: reqEl(doc, 'opts-toggle'),
-    optsMenu: reqEl(doc, 'opts-menu'),
-    manageBtn: reqEl(doc, 'manage-toggle'),
-    manageMenu: reqEl(doc, 'manage-menu'),
-    calmBtn: reqEl(doc, 'calm-toggle'),
-    calmState: reqEl(doc, 'calm-state'),
-    themeBtn: reqEl(doc, 'theme-toggle'),
-    themeState: reqEl(doc, 'theme-state'),
-    langBtn: reqEl(doc, 'lang-toggle'),
-    langState: reqEl(doc, 'lang-state'),
-    chatTitle: reqEl(doc, 'topic-title'),
-    chatStatus: reqEl(doc, 'topic-status'),
-    forkNote: reqEl(doc, 'fork-note'),
-    chat: reqEl(doc, 'chat'),
-    chatHead: reqEl(doc, 'chat-header'),
-    composer: reqEl(doc, 'bar'),
-    termBtn: reqEl<HTMLButtonElement>(doc, 'term-toggle'),
-    termHost: reqEl(doc, 'term-frames'),
-    termEl: reqEl(doc, 'term'),
-    termGrip: reqEl(doc, 'term-grip'),
-    termName: reqEl(doc, 'term-name'),
-    termMinBtn: reqEl<HTMLButtonElement>(doc, 'term-min'),
-    termEndBtn: reqEl<HTMLButtonElement>(doc, 'term-end'),
-    copyRefBtn: optEl<HTMLButtonElement>(doc, 'copy-ref'),
-    killBtn: reqEl(doc, 'kill-agent'),
-    stopBtn: reqEl(doc, 'stop-turn'),
-    pendingQueueEl: optEl(doc, 'pending-queue'),
-    statusEl: optEl(doc, 'status'),
-    machineNoteEl: reqEl(doc, 'machine-note'),
-    updateEl: reqEl(doc, 'update'),
-    updateReloadBtn: optEl(doc, 'update-reload'),
-    gateForm: optEl<HTMLFormElement>(doc, 'gate'),
-    secretInput: optEl<HTMLInputElement>(doc, 'secret'),
-    modelPop: reqEl(doc, 'model-pop'),
-    mpList: reqEl(doc, 'mp-list'),
-    mpFilter: reqEl<HTMLInputElement>(doc, 'mp-filter'),
-    mpAgent: reqEl(doc, 'mp-agent'),
-    mpHeading: reqEl(doc, 'mp-heading'),
-    mpFoot: reqEl(doc, 'mp-foot'),
-    mpClose: optEl(doc, 'mp-close'),
-    btwBox: reqEl(doc, 'btw'),
-    btwQ: reqEl(doc, 'btw-q'),
-    btwBody: reqEl(doc, 'btw-body'),
-    btwClose: optEl(doc, 'btw-close'),
-    attachBtn: optEl(doc, 'attach'),
-    micBtn: optEl<HTMLButtonElement>(doc, 'mic'),
-    composerForm: optEl<HTMLFormElement>(doc, 'composer'),
-  };
-}
-
-function collectPanelsDom(doc: Document) {
-  return {
-    schedToggle: reqEl(doc, 'schedules-toggle'),
-    schedAlert: reqEl(doc, 'sched-alert'),
-    schedList: reqEl(doc, 'schedules-list'),
-    schedSummary: reqEl(doc, 'schedules-summary'),
-    schedReadBtn: reqEl<HTMLButtonElement>(doc, 'sched-read'),
-    schedFilterHost: reqEl(doc, 'sched-filter'),
-    schedNewBtn: reqEl(doc, 'sched-new'),
-    schedClose: reqEl(doc, 'schedules-close'),
-    schedNote: reqEl(doc, 'schedules-note'),
-    schedPanel: reqEl(doc, 'schedules'),
-    schedSessionList: reqEl(doc, 'sched-sessions'),
-    schedResize: reqEl(doc, 'sched-resize'),
-    schedSubnav: reqEl(doc, 'sched-subnav'),
-    schedTabScheduled: reqEl(doc, 'sched-tab-scheduled'),
-    schedTabScheduledN: reqEl(doc, 'sched-tab-scheduled-n'),
-    schedTabScheduledAlert: reqEl(doc, 'sched-tab-alert'),
-    schedTabReviews: reqEl(doc, 'sched-tab-reviews'),
-    schedTabReviewsN: reqEl(doc, 'sched-tab-reviews-n'),
-    schedTabTasks: reqEl(doc, 'sched-tab-tasks'),
-    schedTabTasksN: reqEl(doc, 'sched-tab-tasks-n'),
-    schedTabSessions: reqEl(doc, 'sched-tab-sessions'),
-    schedTabSessionsN: reqEl(doc, 'sched-tab-sessions-n'),
-    schedSessionsAlert: reqEl(doc, 'sched-sessions-alert'),
-    revPane: reqEl(doc, 'sched-reviews'),
-    revList: reqEl(doc, 'sched-reviews-list'),
-    lightbox: reqEl(doc, 'lightbox'),
-    lightboxImg: reqEl<HTMLImageElement>(doc, 'lightbox-img'),
-    reader: reqEl(doc, 'reader'),
-    readerName: reqEl(doc, 'reader-name'),
-    readerGet: reqEl(doc, 'reader-get'),
-    readerBody: reqEl(doc, 'reader-body'),
-    readerClose: reqEl(doc, 'reader-close'),
-    skillsWin: reqEl(doc, 'skills'),
-    skillsToggle: reqEl(doc, 'skills-toggle'),
-    skillsBack: reqEl(doc, 'skills-back'),
-    skillsTitle: reqEl(doc, 'skills-title'),
-    skillsCount: reqEl(doc, 'skills-count'),
-    skillsNewBtn: reqEl(doc, 'skills-new'),
-    skillsRefreshBtn: reqEl<HTMLButtonElement>(doc, 'skills-refresh'),
-    skillsClose: reqEl(doc, 'skills-close'),
-    skillsBody: reqEl(doc, 'skills-body'),
-    skillsNote: reqEl(doc, 'skills-note'),
-    skillsListEl: reqEl(doc, 'skills-list'),
-    skillsDetailEl: reqEl(doc, 'skills-detail'),
-    sbTabTopics: reqEl(doc, 'sb-tab-topics'),
-    sbTabStarred: reqEl(doc, 'sb-tab-starred'),
-    sbTabHistory: reqEl(doc, 'sb-tab-history'),
-    topicsFilterHost: reqEl(doc, 'topics-filter'),
-    historyPane: reqEl(doc, 'history-pane'),
-    historyCountEl: reqEl(doc, 'history-count'),
-    historyBody: reqEl(doc, 'history-body'),
-    historyQ: reqEl<HTMLInputElement>(doc, 'history-q'),
-    historyGo: reqEl<HTMLButtonElement>(doc, 'history-go'),
-    historyErr: reqEl(doc, 'history-err'),
-    historyListEl: reqEl(doc, 'history-list'),
-    historyMore: reqEl<HTMLButtonElement>(doc, 'history-more'),
-    libLog: reqEl(doc, 'lib-log'),
-    libTitle: reqEl(doc, 'lib-title'),
-    libNote: reqEl(doc, 'lib-note'),
-    libWhy: reqEl(doc, 'lib-why'),
-    libTopicBtn: reqEl<HTMLButtonElement>(doc, 'lib-topic'),
-    libCloseBtn: reqEl<HTMLButtonElement>(doc, 'lib-close'),
-    settingsPage: reqEl(doc, 'settings-page'),
-    settingsBody: reqEl(doc, 'settings-body'),
-    settingsTopicEl: reqEl(doc, 'settings-topic'),
-    settingsClose: reqEl(doc, 'settings-close'),
-    settingsOpenBtn: reqEl(doc, 'settings-open'),
-    taskPage: reqEl(doc, 'task-page'),
-    taskTitle: reqEl(doc, 'task-title'),
-    taskSub: reqEl(doc, 'task-sub'),
-    taskClose: reqEl(doc, 'task-close'),
-    taskNote: reqEl(doc, 'task-note'),
-    taskView: reqEl(doc, 'task-view'),
-  };
 }
 
 function loadCacheCore(): CacheCoreBundle {
@@ -456,969 +112,821 @@ function isHistory(state: AppState, m: TranscriptMessage | undefined): boolean {
   return Boolean(m) && !m?._local && state.epoch !== 0 && m?._g !== state.epoch;
 }
 
-function forgetTopicState(ctrl: AppControllers, id: string): void {
-  ctrl.transcript.scroll.forgetView(id);
-  ctrl.cacheService.forget(id);
-  ctrl.topicsFeature.forgetPrefetch(id);
-  ctrl.composerController.forgetTopic(id);
+function toTopicInfos(topics: readonly Topic[]): readonly TopicInfo[] {
+  return topics as unknown as readonly TopicInfo[];
 }
 
-function keepOnlyTopicState(ctrl: AppControllers, keep: Readonly<Record<string, unknown>>): void {
-  ctrl.cacheService.keepOnly(keep);
-  ctrl.readsService.keepOnly(keep);
-  ctrl.transcript.scroll.pruneViews(keep);
-  ctrl.composerController.keepOnly(keep);
-  ctrl.terminalController.pruneFrames(keep);
+function topicById(state: AppState, id: string): Topic | undefined {
+  return state.topics.find((t) => t.id === id);
 }
 
-function pruneTopicState(ctrl: AppControllers): void {
-  if (!ctrl.state.topics.length) return;
-  const known: Record<string, number> = {};
-  for (const t of ctrl.state.topics) known[t.id] = 1;
-  ctrl.transcript.scroll.pruneViews(known);
-  ctrl.cacheService.prune(known);
-  ctrl.topicsFeature.prunePrefetch(known);
-  ctrl.composerController.pruneTopics(known);
+function currentTopicUrl(topicId: string): string {
+  const url = new URL(location.href);
+  if (topicId) url.searchParams.set('t', topicId);
+  else url.searchParams.delete('t');
+  return `${url.pathname}${url.search}${url.hash}`;
 }
 
-function wireCoreServices(ctrl: AppControllers): void {
-  const { dom, state, boot, cacheCore } = ctrl;
-  ctrl.streamClient = createStreamClient({
-    getTopic: () => state.topic,
-    isLoggedOut: () => dom.app.hidden && !dom.gate.hidden,
-    getBuild: () => boot.build,
-    onBeforeConnect: () => ctrl.transcript.banners.showSkeleton(),
-    onOpen: (info) => {
-      const fresh = dom.app.hidden || !info.quiet;
-      dom.gate.hidden = true;
-      dom.app.hidden = false;
-      dom.note.textContent = '';
-      if (fresh && !ctrl.legacyShell.narrow()) dom.input.focus();
-      void ctrl.notifyController.init();
-      ctrl.topicsFeature.schedulePrefetch();
-      if (fresh && ctrl.legacyShell.schedPane.isOpen()) ctrl.schedulesPanel.onStreamOpen();
-    },
-    onReconnecting: () => {
-      dom.note.textContent = tr('chat.reconnecting');
-    },
-    onRestarting: () => {
-      dom.note.textContent = tr('chat.restarting');
-    },
-    onAuthExpired: () => {
-      dom.app.hidden = true;
-      dom.gate.hidden = false;
-    },
-    onBuildOutdated: () => {
-      dom.updateEl.hidden = false;
-    },
-    onVisibilityResume: () => ctrl.topicsFeature.schedulePrefetch(),
-  });
-  ctrl.streamClient.onEvent((ev) => handleStreamEvent(ctrl, ev));
-  ctrl.streamClient.attachWindowEvents(document, window);
-
-  ctrl.cacheService = createCacheService({
-    core: cacheCore,
-    getIndexedDB: () => window.indexedDB,
-    getTopic: () => state.topic,
-    getEpoch: () => state.epoch,
-    isSynced: () => state.synced,
-    isStale: () => state.stale,
-    getLastEventId: () => ctrl.streamClient.getLastEventId(),
-    collectScreenMessages: () =>
-      collectCacheableMessages(dom.log, state.data as Record<string, CacheMessage | undefined>),
-  });
-
-  ctrl.readsService = createReadsService({
-    getActiveTopic: () => state.topic,
-    getTopics: () => state.topics,
-    isOverlayBlocking: () => ctrl.historyPanel.isOpen(),
-    postSeen: (topicId) => post('api/seen', { topic: topicId }, 0),
-    onChanged: () => ctrl.topicsFeature.paintTopics(),
-  });
-  ctrl.readsService.attachWindowEvents(document, window);
+function ensureTopicEditorOpen(rt: AppRuntime, topicId: string): void {
+  const existing = rt.state.activeEditor;
+  if (existing) {
+    existing.update?.({ topicId });
+    return;
+  }
+  rt.shell.editors.open('topic', { topicId }, { id: 'topic:active' });
 }
 
-function wireShellAndDevices(ctrl: AppControllers): void {
-  const { dom, state, boot, icons } = ctrl;
-  ctrl.settingsFeature = createSettingsFeature({
-    settingsPage: dom.settingsPage,
-    settingsBody: dom.settingsBody,
-    settingsTopicEl: dom.settingsTopicEl,
-    settingsClose: dom.settingsClose,
-    settingsOpenBtn: dom.settingsOpenBtn,
-    instrOk: Boolean(boot.instructions),
-    getTopic: () => state.topic,
-    getTopics: () => state.topics,
-    getEpoch: () => state.epoch,
-    closeMenus: () => ctrl.legacyShell.setMenu(null, false),
-    instructions: {
-      ensure: () => ctrl.instructionsPanel.ensure(),
-      renderOrphans: () => ctrl.instructionsPanel.renderOrphans(),
-      renderAgent: (row, index) => ctrl.instructionsPanel.renderAgent(row, index),
-    },
-  });
-
-  ctrl.topicStatus = createTopicStatusController({
-    statusEl: dom.statusEl,
-    pendingQueueEl: dom.pendingQueueEl,
-    modelPopEls: {
-      modelPop: dom.modelPop,
-      mpList: dom.mpList,
-      mpFilter: dom.mpFilter,
-      mpAgent: dom.mpAgent,
-      mpHeading: dom.mpHeading,
-      mpFoot: dom.mpFoot,
-      mpClose: dom.mpClose,
-    },
-    getTopic: () => state.topic,
-    isSynced: () => state.synced,
-    hasLauncher: () => ctrl.transcript.banners.hasLaunch(),
-    hasMessages: () => Boolean(dom.log.querySelector('.m')),
-    narrow: () => ctrl.legacyShell.narrow(),
-    getIcons: () => icons.icon,
-    inl,
-    setNote: (msg) => {
-      dom.note.textContent = msg;
-    },
-    onRetireLocalNonce: (nonce) => ctrl.composerController.retireLocalNonce(nonce),
-    onRecallContent: (content) => ctrl.composerController.recallContent(content),
-  });
-  ctrl.topicStatus.attach();
-
-  ctrl.legacyShell = createLegacyShell({
-    app: dom.app,
-    sidebar: dom.sidebar,
-    sidebarResize: dom.sidebarResize,
-    collapseBtn: dom.collapseBtn,
-    expandBtn: dom.expandBtn,
-    schedPanel: dom.schedPanel,
-    schedResize: dom.schedResize,
-    schedToggle: dom.schedToggle,
-    backdrop: dom.backdrop,
-    optsBtn: dom.optsBtn,
-    optsMenu: dom.optsMenu,
-    manageBtn: dom.manageBtn,
-    manageMenu: dom.manageMenu,
-    calmBtn: dom.calmBtn,
-    calmState: dom.calmState,
-    themeBtn: dom.themeBtn,
-    themeState: dom.themeState,
-    langBtn: dom.langBtn,
-    langState: dom.langState,
-    onSchedPaint: () => {
-      if (ctrl.schedulesPanel) ctrl.schedulesPanel.paintTab();
-    },
-    onSchedOpen: () => ctrl.schedulesPanel.onPanelOpen(),
-    onSchedClose: () => ctrl.schedulesPanel.disarm(),
-    onCloseSchedules: () => ctrl.schedulesPanel.setOpen(false),
-  });
-
-  ctrl.notifyController = createNotifyController({
-    notifyBtn: dom.notifyBtn,
-    notifyState: dom.notifyState,
-    post,
-    onCachedMessage: (tId, last, ep) => ctrl.cacheService.noteVersion(tId, last, ep),
-    onGotoTopic: (goId) => {
-      if (goId && goId !== state.topic && state.topics.some((t) => t.id === goId)) {
-        ctrl.topicsFeature.switchTopic(goId);
-        if (ctrl.legacyShell.narrow()) ctrl.legacyShell.setSidebar(false);
-      }
-    },
-  });
-
-  ctrl.terminalController = createTerminalController({
-    enabled: Boolean(boot.terminal),
-    canEnd: Boolean(boot.terminalEnd),
-    chat: dom.chat,
-    chatHead: dom.chatHead,
-    composer: dom.composer,
-    termBtn: dom.termBtn,
-    termHost: dom.termHost,
-    termEl: dom.termEl,
-    termGrip: dom.termGrip,
-    termName: dom.termName,
-    termMinBtn: dom.termMinBtn,
-    termEndBtn: dom.termEndBtn,
-    getTopic: () => state.topic,
-    getTopicTitle: (id) => state.topics.find((t) => t.id === id)?.title,
-    isOverlayCovering: () => ctrl.historyPanel.isOpen(),
-    atBottom: () => ctrl.transcript.scroll.atBottom(),
-    toBottom: () => ctrl.transcript.scroll.toBottom(),
-    post,
-  });
-
-  ctrl.lightbox = createLightbox({ lightbox: dom.lightbox, lightboxImg: dom.lightboxImg });
-  ctrl.reader = createReader({
-    reader: dom.reader,
-    readerName: dom.readerName,
-    readerGet: dom.readerGet,
-    readerBody: dom.readerBody,
-    readerClose: dom.readerClose,
-    codeView: ctrl.codeView,
-    codeBlocks: (root) => ctrl.transcript.codeBlocks.enhance(root),
-  });
+function openMobileTopicDetail(rt: AppRuntime, topicId: string): void {
+  if (rt.shell.getMode() !== 'mobile') return;
+  const topic = topicById(rt.state, topicId);
+  const title = topic?.title || tr('common.untitled');
+  const tools: StackToolItem[] = [];
+  if (rt.state.activeEditor) {
+    tools.push({ id: 'chat', title: tr('sidebar.topics'), component: rt.state.activeEditor });
+  }
+  if (topic) {
+    const avail = rt.registry.listAvailableTopicTools(topic as unknown as TopicInfo);
+    for (const t of avail) {
+      tools.push({ id: t.id, title: t.title, component: t.component(), params: { topicId } });
+    }
+  }
+  if (tools.length > 0) {
+    rt.shell.openMobileDetail(title, tools, 'chat');
+  }
 }
 
-function wireTranscriptFeature(ctrl: AppControllers): void {
-  const { dom, state, icons } = ctrl;
-  ctrl.transcript = createTranscriptController({
-    log: dom.log,
-    btwBox: dom.btwBox,
-    btwQ: dom.btwQ,
-    btwBody: dom.btwBody,
-    btwClose: dom.btwClose,
-    machineNoteEl: dom.machineNoteEl,
-    forkNote: dom.forkNote,
-    getExtraCodeRoots: () => [dom.libLog, dom.readerBody, ctrl.filesPanel.previewEl()],
+function resetTopicView(rt: AppRuntime, id: string): void {
+  const editor = rt.state.activeEditor;
+  rt.state.topic = id;
+  rt.state.data = {};
+  rt.state.els = {};
+  rt.state.stale = false;
+  rt.state.entering = true;
+  rt.state.synced = false;
+  if (editor) {
+    editor.els.log.replaceChildren();
+    editor.status?.closeModelPop();
+    editor.status?.setStatus(null);
+    editor.status?.setPending([]);
+  }
+}
+
+function switchTopic(rt: AppRuntime, id: string, opts?: { readonly openDetail?: boolean }): void {
+  if (!id) return;
+  const prev = rt.state.topic;
+  if (prev && prev !== id) {
+    rt.state.activeEditor?.transcript?.scroll.saveView(prev, rt.state.entering);
+    rt.state.activeEditor?.composer?.stashDraft(prev);
+  }
+  if (prev !== id) {
+    resetTopicView(rt, id);
+    history.replaceState(null, '', currentTopicUrl(id));
+    ensureTopicEditorOpen(rt, id);
+    const active = topicById(rt.state, id);
+    rt.events.emit('topic.active', { id, topic: active as unknown as TopicInfo | undefined });
+    rt.streamClient.close();
+    rt.streamClient.connect(false);
+  } else {
+    ensureTopicEditorOpen(rt, id);
+  }
+  if (opts?.openDetail !== false && rt.shell.getMode() === 'mobile') {
+    openMobileTopicDetail(rt, id);
+  }
+}
+
+async function createTopic(rt: AppRuntime, seed?: { readonly text?: string; readonly draft?: string }): Promise<boolean> {
+  try {
+    const res = await post('api/topics', {}, 0);
+    if (!res.ok) return false;
+    const data = (await res.json()) as { id?: string; topic?: { id?: string } };
+    const id = data.topic?.id ?? data.id;
+    if (!id) return false;
+    switchTopic(rt, id);
+    if (seed?.draft) {
+      rt.state.activeEditor?.insertIntoComposer(seed.draft);
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function deleteTopic(rt: AppRuntime, id: string): Promise<void> {
+  await post('api/topics/delete', { topic: id }, 0);
+}
+
+async function forkTopic(rt: AppRuntime, id: string): Promise<void> {
+  const nonce = Math.random().toString(36).slice(2) + Date.now().toString(36);
+  await post('api/send', { topic: id, text: '/fork', nonce }, 0);
+}
+
+function buildTopicEditorDeps(rt: AppRuntime) {
+  return {
+    transcriptDeps: (els: TopicEditorElements, getTopicId: () => string) =>
+      buildTranscriptDeps(rt, els, getTopicId),
+    statusDeps: (els: TopicEditorElements, getTopicId: () => string) =>
+      buildStatusDeps(rt, els, getTopicId),
+    composerDeps: (els: TopicEditorElements, getTopicId: () => string) =>
+      buildComposerDeps(rt, els, getTopicId),
+  };
+}
+
+function buildTranscriptDeps(rt: AppRuntime, els: TopicEditorElements, getTopicId: () => string) {
+  const { state, icons, codeView } = rt;
+  return {
+    log: els.log,
+    btwBox: els.btwBox,
+    btwQ: els.btwQ,
+    btwBody: els.btwBody,
+    btwClose: els.btwClose,
+    machineNoteEl: els.machineNoteEl,
+    forkNote: els.forkNote,
+    getExtraCodeRoots: () => Array.from(document.querySelectorAll<HTMLElement>('.wb-reader-editor')),
     getData: () => state.data,
     getEls: () => state.els,
-    getTopic: () => state.topic,
+    getTopic: getTopicId,
     getTopics: () => state.topics,
-    topicById: (id) => ctrl.topicsFeature.topicById(id),
+    topicById: (id: string) => topicById(state, id) ?? null,
     getEpoch: () => state.epoch,
     isSynced: () => state.synced,
     isStale: () => state.stale,
     isEntering: () => state.entering,
     getLaunch: () => state.launch,
     keyOf,
-    isHistory: (m) => isHistory(state, m),
+    isHistory: (m: TranscriptMessage | undefined) => isHistory(state, m),
     getIcons: () => icons,
     formatStatusClock: stClock,
-    codeView: ctrl.codeView,
-    copyText: (s, cb) => ctrl.composerController.copyText(s, cb),
-    hasOutbox: (nonce) => ctrl.composerController.hasOutbox(nonce),
-    claim: (m) => ctrl.composerController.claim(m),
-    adoptLegacy: (m) => ctrl.composerController.adoptLegacy(m),
-    showUnsent: (tId) => ctrl.composerController.showUnsent(tId),
-    cacheSave: () => ctrl.cacheService.scheduleSave(),
-    getHistoryMessage: (k) => ctrl.historyPanel.getMessage(k),
-    repaintHistoryMessage: (k) => ctrl.historyPanel.repaintMessage(k),
-    paintTopics: () => ctrl.topicsFeature.paintTopics(),
-    paintStatus: () => ctrl.topicStatus.paintStatus(),
-    switchTopic: (id) => ctrl.topicsFeature.switchTopic(id),
-    isNarrow: () => ctrl.legacyShell.narrow(),
-    setSidebar: (open) => ctrl.legacyShell.setSidebar(open),
-    openShot: (img) => ctrl.lightbox.open(img),
-    sendCommand: (cmd) => ctrl.composerController.command(cmd),
-    openReader: (link) => ctrl.reader.open(link),
-    deliverLocal: (nonce) => ctrl.composerController.deliver(nonce),
-    copyLocal: (nonce, btn) => ctrl.composerController.copyLocal(nonce, btn),
-    discardLocal: (nonce) => ctrl.composerController.discardLocal(nonce),
-  });
-  ctrl.transcript.attachEvents(document);
+    codeView,
+    copyText: (s: string, cb: (ok: boolean) => void) => state.activeEditor?.composer?.copyText(s, cb),
+    hasOutbox: (nonce: string) => Boolean(state.activeEditor?.composer?.hasOutbox(nonce)),
+    claim: (m: TranscriptMessage) => Boolean(state.activeEditor?.composer?.claim(m as unknown as WebMessage)),
+    adoptLegacy: (m: TranscriptMessage) => Boolean(state.activeEditor?.composer?.adoptLegacy(m as unknown as WebMessage)),
+    showUnsent: (tId: string) => state.activeEditor?.composer?.showUnsent(tId),
+    cacheSave: () => rt.cacheService.scheduleSave(),
+    getHistoryMessage: () => undefined,
+    repaintHistoryMessage: () => {},
+    paintTopics: () => rt.events.emit('topic.list', { topics: toTopicInfos(state.topics) }),
+    paintStatus: () => state.activeEditor?.status?.paintStatus(),
+    switchTopic: (id: string) => switchTopic(rt, id),
+    isNarrow: () => rt.shell.getMode() !== 'desktop',
+    setSidebar: (open: boolean) => rt.shell.setPartVisible('sidebar', open),
+    openShot: (img: HTMLImageElement) => {
+      void rt.commands.execute(READER_OPEN_IMAGE_COMMAND, { src: img.src, alt: img.alt, restoreFocus: img });
+    },
+    sendCommand: (cmd: string) => state.activeEditor?.composer?.command(cmd),
+    openReader: (link: Element) => {
+      void rt.commands.execute(READER_OPEN_COMMAND, link);
+    },
+    deliverLocal: (nonce: string) => state.activeEditor?.composer?.deliver(nonce),
+    copyLocal: (nonce: string, btn: Element) => {
+      if (btn instanceof HTMLElement) state.activeEditor?.composer?.copyLocal(nonce, btn);
+    },
+    discardLocal: (nonce: string) => state.activeEditor?.composer?.discardLocal(nonce),
+  };
 }
 
-function wireTopicsFeature(ctrl: AppControllers): void {
-  const { dom, state, boot, icons, cacheCore } = ctrl;
-  ctrl.topicsFeature = createTopicsFeature({
-    els: {
-      bar: dom.bar,
-      topicsFilterHost: dom.topicsFilterHost,
-      rowMenu: dom.rowMenu,
-      newTopicBtn: dom.newTopicBtn,
-      readBtn: dom.readBtn,
-      clearBtn: dom.clearBtn,
-      idleBtn: dom.idleBtn,
-      noIdleBtn: dom.noIdleBtn,
-      idleCount: dom.idleCount,
-      idleDialog: dom.idleDialog,
-      idleTitle: dom.idleTitle,
-      idleWhy: dom.idleWhy,
-      idleList: dom.idleList,
-      idleGo: dom.idleGo,
-      idleCancel: dom.idleCancel,
-      chatTitle: dom.chatTitle,
-      chatStatus: dom.chatStatus,
-      killBtn: dom.killBtn,
-      stopBtn: dom.stopBtn,
-      note: dom.note,
+function buildStatusDeps(rt: AppRuntime, els: TopicEditorElements, getTopicId: () => string) {
+  const { state, icons } = rt;
+  return {
+    statusEl: els.statusEl,
+    pendingQueueEl: els.pendingQueueEl,
+    modelPopEls: {
+      modelPop: els.modelPop,
+      mpList: els.mpList,
+      mpFilter: els.mpFilter,
+      mpAgent: els.mpAgent,
+      mpHeading: els.mpHeading,
+      mpFoot: els.mpFoot,
+      mpClose: els.mpClose,
     },
-    instanceId: boot.instance || 'web',
-    termOk: Boolean(boot.terminal),
+    getTopic: getTopicId,
+    isSynced: () => state.synced,
+    hasLauncher: () => Boolean(state.activeEditor?.transcript?.banners.hasLaunch()),
+    hasMessages: () => Boolean(els.log.querySelector('.m')),
+    narrow: () => rt.shell.getMode() !== 'desktop',
     getIcons: () => icons.icon,
-    getTopics: () => state.topics,
-    setTopics: (next) => {
-      state.topics = next;
+    inl,
+    setNote: (msg: string) => {
+      els.noteEl.textContent = msg;
     },
-    getTopic: () => state.topic,
-    setTopic: (id) => {
-      state.topic = id;
-    },
-    getEpoch: () => state.epoch,
-    narrow: () => ctrl.legacyShell.narrow(),
-    setSidebar: (open) => ctrl.legacyShell.setSidebar(open),
-    setSbTab: (tab) => ctrl.historyPanel.setTab(tab as SidebarTab),
-    getSbTab: () => ctrl.historyPanel.getTab(),
-    closeMenus: () => ctrl.legacyShell.setMenu(null, false),
-    closeLib: () => ctrl.historyPanel.close(),
-    refreshHistoryReadOnly: () => ctrl.historyPanel.refreshReadOnly(),
-    closeSettings: () => ctrl.settingsFeature.close(),
-    closeGit: () => ctrl.gitPanel.close(),
-    closeTransientSchedules: () => {
-      if (ctrl.legacyShell.schedPane.isOpen() && !ctrl.legacyShell.schedPane.docked()) {
-        ctrl.schedulesPanel.setOpen(false, true);
-      }
-    },
-    onSchedulesTopicsUpdated: () => ctrl.schedulesPanel.onTopicsUpdated(),
-    getScheduleTask: (id) => ctrl.schedulesPanel.getTask(id),
-    openTaskPage: (id, edit) => ctrl.schedulesPanel.openTaskPage(id, edit),
-    scheduleOp: (id, action, btn) =>
-      ctrl.schedulesPanel.op(
-        id,
-        action as Parameters<SchedulesPanel['op']>[1],
-        btn instanceof HTMLButtonElement ? btn : null,
-      ),
-    rememberAdoptedReview: (topicId, reviewText) =>
-      ctrl.reviewsPanel.rememberAdopted(topicId, reviewText),
-    unreadOf: (t) => ctrl.readsService.unreadOf(t),
-    needsRead: (t) => ctrl.readsService.needsRead(t),
-    syncReads: (list, activeId) => ctrl.readsService.syncTopics(list, activeId),
-    markTopicReadFromList: (id, list) => ctrl.readsService.markTopicFromList(id, list),
-    removeRead: (id) => ctrl.readsService.remove(id),
-    markAllRead: (list, noun, say) => {
-      void ctrl.readsService.markAllRead(list, noun, say);
-    },
-    reportSeen: () => ctrl.readsService.reportSeen(),
-    offSince: (host) => ctrl.transcript.banners.offSince(host),
-    offTitle: (host) => ctrl.transcript.banners.offTitle(host),
-    paintMachineNote: () => ctrl.transcript.banners.paintMachineNote(),
-    paintForkNote: (cur) => ctrl.transcript.banners.paintForkNote(cur),
-    syncCopyRef: () => ctrl.composerController.syncCopyRef(),
-    copyTopicRef: (id) => ctrl.composerController.copyTopicRef(id),
-    applyTerm: () => ctrl.terminalController.apply(),
-    paintFrames: () => ctrl.terminalController.paintFrames(),
-    dropTerm: (id) => ctrl.terminalController.drop(id),
-    urlNow: () => ctrl.terminalController.urlNow(),
-    command: (cmd) => ctrl.composerController.command(cmd),
-    saveView: (id) => ctrl.transcript.scroll.saveView(id, state.entering),
-    stashDraft: (id) => ctrl.composerController.stashDraft(id),
-    loadDraft: (id) => ctrl.composerController.loadDraft(id),
-    seedDraft: (topicId, draftText) => ctrl.composerController.seedDraft(topicId, draftText),
-    forgetTopic: (id) => forgetTopicState(ctrl, id),
-    keepOnlyTopics: (keep) => keepOnlyTopicState(ctrl, keep),
-    resetForSwitch: (nextId) => {
-      dom.log.innerHTML = '';
-      state.data = {};
-      state.els = {};
-      state.stale = false;
-      ctrl.topicStatus.closeModelPop();
-      ctrl.transcript.resetForTopicSwitch(nextId);
-      ctrl.topicStatus.setStatus(null);
-      ctrl.topicStatus.setPending([]);
-      state.entering = true;
-      state.synced = false;
-    },
-    showSkeleton: () => ctrl.transcript.banners.showSkeleton(),
-    setStale: (v) => {
-      state.stale = v;
-    },
-    setSettleOnResume: (v) => {
-      state.settleOnResume = v;
-    },
-    claimMessage: (m) => ctrl.composerController.claim(m as unknown as TranscriptMessage),
-    adoptMessages: (list, current) =>
-      ctrl.transcript.adopt(list as unknown as readonly TranscriptMessage[], current),
-    showUnsent: (tId) => ctrl.composerController.showUnsent(tId),
-    isDbAvailable: () => ctrl.cacheService.isDbAvailable(),
-    getCacheVersion: (id) => ctrl.cacheService.getVersion(id),
-    setCacheVersion: (id, ver) => ctrl.cacheService.setVersion(id, ver),
-    isNewer: cacheCore.newer,
-    memCopy: (id) => ctrl.cacheService.memCopy(id),
-    getCache: (id) => ctrl.cacheService.get(id),
-    peekCache: (id) => ctrl.cacheService.peek(id),
-    putCache: (id, msgs, meta) => ctrl.cacheService.put(id, msgs, meta),
-    dropCache: (id) => ctrl.cacheService.drop(id),
-    leaveCache: () => ctrl.cacheService.leave(),
-    snapshotMsgs: cacheCore.snapshotMsgs,
-    isStreamParked: () => ctrl.streamClient.isParked(),
-    isStreamOpen: () => ctrl.streamClient.isOpen(),
-    closeStream: () => ctrl.streamClient.close(),
-    setStreamLastEventId: (last) => ctrl.streamClient.setLastEventId(last),
-    connectStream: (resume) => ctrl.streamClient.connect(resume),
-  });
+    onRetireLocalNonce: (nonce: string) => state.activeEditor?.composer?.retireLocalNonce(nonce),
+    onRecallContent: (content: string) => state.activeEditor?.composer?.recallContent(content),
+  };
 }
 
-function wireComposerFeature(ctrl: AppControllers): void {
-  const { dom, state, boot, icons, overlays } = ctrl;
-  ctrl.composerController = createComposerController({
+function buildComposerDeps(rt: AppRuntime, els: TopicEditorElements, getTopicId: () => string) {
+  const { state, icons, boot, overlays } = rt;
+  return {
     els: {
-      input: dom.input,
-      chips: dom.chips,
-      hints: dom.hints,
-      note: dom.note,
-      picker: dom.picker,
-      attachBtn: dom.attachBtn,
-      micBtn: dom.micBtn,
-      composerForm: dom.composerForm,
-      copyRefBtn: dom.copyRefBtn,
-      killBtn: dom.killBtn,
-      stopBtn: dom.stopBtn,
+      input: els.input,
+      chips: els.chips,
+      hints: els.hints,
+      note: els.noteEl,
+      picker: els.picker,
+      attachBtn: els.attachBtn,
+      micBtn: els.micBtn,
+      composerForm: els.composerForm,
+      copyRefBtn: null,
+      killBtn: document.createElement('button'),
+      stopBtn: els.stopBtn,
     },
     overlays,
     instanceId: boot.instance || 'web',
-    getTopic: () => state.topic,
+    getTopic: getTopicId,
     getTopics: () => state.topics,
-    topicById: (id) => ctrl.topicsFeature.topicById(id) ?? undefined,
+    topicById: (id: string) => topicById(state, id),
     getEpoch: () => state.epoch,
-    isNarrow: () => ctrl.legacyShell.narrow(),
-    isHistoryOpen: () => ctrl.historyPanel.isOpen(),
-    getHistoryRef: () => ctrl.historyPanel.currentRef(),
+    isNarrow: () => rt.shell.getMode() !== 'desktop',
+    isHistoryOpen: () => false,
+    getHistoryRef: () => null,
     getIcons: () => icons.icon,
-    openShot: (img) => ctrl.lightbox.open(img),
-    settleAdopted: (id, typed) => ctrl.reviewsPanel.settleAdopted(id, typed),
-    cacheSave: () => ctrl.cacheService.scheduleSave(),
-    topicStatus: ctrl.topicStatus,
+    openShot: (img: HTMLImageElement) => {
+      void rt.commands.execute(READER_OPEN_IMAGE_COMMAND, { src: img.src, alt: img.alt, restoreFocus: img });
+    },
+    settleAdopted: () => {},
+    cacheSave: () => rt.cacheService.scheduleSave(),
+    topicStatus: ({
+      addLocalPending: (item) => state.activeEditor?.status?.addLocalPending(item),
+      removeLocalPending: (nonce) => state.activeEditor?.status?.removeLocalPending(nonce) ?? false,
+      hasLocalPending: (nonce) => state.activeEditor?.status?.hasLocalPending(nonce) ?? false,
+    }) satisfies ComposerTopicStatusBridge,
     transcript: {
-      getMessage: (key) => state.data[key] as unknown as LocalBubbleMessage | undefined,
-      setMessage: (key, msg) => {
+      getMessage: (key: string) => state.data[key] as unknown as LocalBubbleMessage | undefined,
+      setMessage: (key: string, msg: LocalBubbleMessage) => {
         state.data[key] = msg as unknown as TranscriptMessage;
       },
-      deleteMessage: (key) => ctrl.transcript.retireLocalKey(key),
-      hasElement: (key) => Boolean(state.els[key]),
-      removeElement: (key) => {
+      deleteMessage: (key: string) => state.activeEditor?.transcript?.retireLocalKey(key),
+      hasElement: (key: string) => Boolean(state.els[key]),
+      removeElement: (key: string) => {
         const el = state.els[key];
         if (el) {
           el.remove();
           delete state.els[key];
         }
       },
-      adoptElement: (fromKey, toKey) => ctrl.transcript.transferLocalKey(fromKey, toKey),
-      paint: (key) => ctrl.transcript.paint(key),
-      drop: (key) => ctrl.transcript.drop(key),
-      sinkLocals: () => ctrl.transcript.sinkLocals(),
-      syncEmptyNote: () => ctrl.transcript.banners.syncEmptyNote(),
-      atBottom: () => ctrl.transcript.scroll.atBottom(),
-      toBottom: () => ctrl.transcript.scroll.toBottom(),
-      onBtwAsked: (key, msg) => {
-        if (ctrl.transcript.btwAsked(key, msg as unknown as TranscriptMessage) !== null) {
-          ctrl.transcript.btw.open(key);
+      adoptElement: (fromKey: string, toKey: string) => state.activeEditor?.transcript?.transferLocalKey(fromKey, toKey),
+      paint: (key: string) => state.activeEditor?.transcript?.paint(key),
+      drop: (key: string) => state.activeEditor?.transcript?.drop(key),
+      sinkLocals: () => state.activeEditor?.transcript?.sinkLocals(),
+      syncEmptyNote: () => state.activeEditor?.transcript?.banners.syncEmptyNote(),
+      atBottom: () => Boolean(state.activeEditor?.transcript?.scroll.atBottom()),
+      toBottom: () => state.activeEditor?.transcript?.scroll.toBottom(),
+      onBtwAsked: (key: string, msg: LocalBubbleMessage) => {
+        const trCtrl = state.activeEditor?.transcript;
+        if (trCtrl && trCtrl.btwAsked(key, msg as unknown as TranscriptMessage) !== null) {
+          trCtrl.btw.open(key);
         }
       },
-      onClaimKeyMoved: (fromKey, toKey) => ctrl.transcript.btw.transferKey(fromKey, toKey),
+      onClaimKeyMoved: (fromKey: string, toKey: string) => state.activeEditor?.transcript?.btw.transferKey(fromKey, toKey),
     },
-  });
-  ctrl.composerController.attach();
+  };
 }
 
-function wireReviewsAndHistoryPanels(ctrl: AppControllers): void {
-  const { dom, state, icons } = ctrl;
-  ctrl.reviewsPanel = createReviewsPanel({
-    app: dom.app,
-    revList: dom.revList,
-    text,
-    schedAgo: (at) => ctrl.topicsFeature.schedAgo(at),
-    post,
-    showNote: (msg) => ctrl.schedulesPanel.showNote(msg),
-    paintCounts: () => ctrl.schedulesPanel.paintCounts(),
-    paintSummary: () => ctrl.schedulesPanel.paintSummary(),
-    topicExists: (id) => ctrl.topicsFeature.topicExists(id),
-    switchTopic: (id) => ctrl.topicsFeature.switchTopic(id),
-    createTopic: (seed) => ctrl.topicsFeature.createTopic(seed),
-    beforeSkillArchive: () => ctrl.skillsPanel.beforeExternalWrite(),
-    afterSkillArchive: (refreshPending) => ctrl.skillsPanel.afterExternalWrite(refreshPending),
-  });
-
-  ctrl.historyPanel = createHistoryPanel({
-    sidebar: dom.sidebar,
-    bar: dom.bar,
-    topicsFilterHost: dom.topicsFilterHost,
-    sbTabTopics: dom.sbTabTopics,
-    sbTabStarred: dom.sbTabStarred,
-    sbTabHistory: dom.sbTabHistory,
-    historyPane: dom.historyPane,
-    historyCountEl: dom.historyCountEl,
-    historyBody: dom.historyBody,
-    historyQ: dom.historyQ,
-    historyGo: dom.historyGo,
-    historyErr: dom.historyErr,
-    historyListEl: dom.historyListEl,
-    historyMore: dom.historyMore,
-    chat: dom.chat,
-    log: dom.log,
-    hints: dom.hints,
-    libLog: dom.libLog,
-    libTitle: dom.libTitle,
-    libNote: dom.libNote,
-    libWhy: dom.libWhy,
-    libTopicBtn: dom.libTopicBtn,
-    libCloseBtn: dom.libCloseBtn,
-    text,
-    atBottom: () => ctrl.transcript.scroll.atBottom(),
-    firstVisible: () => ctrl.transcript.scroll.firstVisible(),
-    toBottom: () => ctrl.transcript.scroll.toBottom(),
-    getLogEl: (key) => state.els[key],
-    closeModelPop: () => ctrl.topicStatus.closeModelPop(),
-    paintFrames: () => ctrl.terminalController.paintFrames(),
-    paintTermHeightIfOpen: () => ctrl.terminalController.paintHeightIfOpen(),
-    reportSeen: () => ctrl.readsService.reportSeen(),
-    topicExists: (id) => ctrl.topicsFeature.topicExists(id),
-    switchTopic: (id) => ctrl.topicsFeature.switchTopic(id),
-    narrow: () => ctrl.legacyShell.narrow(),
-    setSidebar: (open) => ctrl.legacyShell.setSidebar(open),
-    msgMarkup: (key, msg, hist) => ctrl.transcript.msgMarkup(key, msg, hist),
-    codeBlocks: (root) => ctrl.transcript.codeBlocks.enhance(root),
-    forgetOpenedPrefix: (prefix) => ctrl.transcript.forgetOpenedPrefix(prefix),
-    openShot: (img) => {
-      if (img instanceof HTMLImageElement) ctrl.lightbox.open(img);
+function buildTopicPluginDeps(rt: AppRuntime): Pick<BuiltinPluginsDeps, 'topics' | 'topic'> {
+  const { boot, icons, overlays, registry, shell, state } = rt;
+  return {
+    topics: {
+      instanceId: boot.instance || 'web',
+      overlays,
+      registry,
+      getIcons: () => icons.icon,
+      getTopics: () => state.topics,
+      getActiveTopicId: () => state.topic,
+      unreadOf: (t) => rt.readsService.unreadOf(t),
+      needsRead: (t) => rt.readsService.needsRead(t),
+      onSelectTopic: (id) => switchTopic(rt, id),
+      onCreateTopic: () => createTopic(rt),
+      onStarTopic: async (id, nextStarred) => {
+        await post('api/topics/star', { topic: id, starred: nextStarred }, 0);
+      },
+      onForkTopic: (id) => forkTopic(rt, id),
+      onEndTopic: async (id) => {
+        await post('api/send', { topic: id, text: '/kill' }, 0);
+      },
+      onDeleteTopic: (id) => deleteTopic(rt, id),
+      onMarkAllRead: (visible) => {
+        void rt.readsService.markAllRead(visible, 'topics', () => {});
+      },
+      onClearUnstarred: async () => {
+        await post('api/topics/clear', {}, 0);
+      },
     },
-    toggleAll: (key) => {
-      if (key) ctrl.transcript.toggleAll(key);
+    topic: {
+      registry,
+      overlays,
+      instanceId: boot.instance || 'web',
+      resolveIcon: (name) => icons.icon[name] ?? '',
+      getTopicTools: (topic) =>
+        registry.listAvailableTopicTools(topic).map((tool) => ({
+          id: tool.id,
+          title: tool.title,
+          icon: tool.icon,
+          active:
+            shell.isPartVisible(tool.defaultPart) &&
+            shell.dock.getActivePartPanel(tool.defaultPart) === `tool:${tool.id}`,
+        })),
+      onToggleTopicTool: (toolId, topicId) => {
+        shell.tools.toggle(toolId, { topicId });
+        state.activeEditor?.refreshHeader();
+      },
+      onForkTopic: (id) => void forkTopic(rt, id),
+      onDeleteTopic: (id) => void deleteTopic(rt, id),
+      onCloseIdle: () => void rt.commands.execute('status.closeIdle'),
+      onEditorCreated: (handle) => {
+        state.activeEditor = handle;
+      },
+      onRegisterInsertHandler: (handler) => {
+        state.insertHandler = handler;
+      },
+      ...buildTopicEditorDeps(rt),
     },
-    toggleLine: (line) => {
-      if (line instanceof HTMLElement) ctrl.transcript.toggleLine(line);
-    },
-    icons: () => icons.icon,
-    copyText: (s, done) => ctrl.composerController.copyText(s, done),
-    onLibStateChange: () => ctrl.composerController.syncCopyRef(),
-    onTopicTabChange: () => ctrl.topicsFeature.paintTopics(),
-  });
+  };
 }
 
-function wireSchedulesPanel(ctrl: AppControllers): void {
-  const { dom, state, icons } = ctrl;
-  ctrl.schedulesPanel = createSchedulesPanel({
-    app: dom.app,
-    schedToggle: dom.schedToggle,
-    schedAlert: dom.schedAlert,
-    schedList: dom.schedList,
-    schedSummary: dom.schedSummary,
-    schedReadBtn: dom.schedReadBtn,
-    schedFilterHost: dom.schedFilterHost,
-    schedNewBtn: dom.schedNewBtn,
-    schedClose: dom.schedClose,
-    schedNote: dom.schedNote,
-    schedSessionList: dom.schedSessionList,
-    schedSubnav: dom.schedSubnav,
-    schedTabScheduled: dom.schedTabScheduled,
-    schedTabScheduledN: dom.schedTabScheduledN,
-    schedTabScheduledAlert: dom.schedTabScheduledAlert,
-    schedTabReviews: dom.schedTabReviews,
-    schedTabReviewsN: dom.schedTabReviewsN,
-    schedTabTasks: dom.schedTabTasks,
-    schedTabTasksN: dom.schedTabTasksN,
-    schedTabSessions: dom.schedTabSessions,
-    schedTabSessionsN: dom.schedTabSessionsN,
-    schedSessionsAlert: dom.schedSessionsAlert,
-    revPane: dom.revPane,
-    rowMenu: dom.rowMenu,
-    taskPage: dom.taskPage,
-    taskTitle: dom.taskTitle,
-    taskSub: dom.taskSub,
-    taskClose: dom.taskClose,
-    taskNote: dom.taskNote,
-    taskView: dom.taskView,
-    icons: () => icons.icon,
-    getTopics: () => state.topics,
-    getTopic: () => state.topic,
-    topicById: (id) => ctrl.topicsFeature.topicById(id),
-    runOwners: () => ctrl.topicsFeature.runOwners(),
-    rowRunning: (t) => ctrl.topicsFeature.rowRunning(t),
-    unreadOf: (t) => ctrl.readsService.unreadOf(t),
-    needsRead: (t) => ctrl.readsService.needsRead(t),
-    topicTree: (list) => ctrl.topicsFeature.topicTree(list),
-    treeWalker: (tree) => ctrl.topicsFeature.treeWalker({ ...tree, forks: tree.forks ?? {} }),
-    treeRowHtml: (row, o) => ctrl.topicsFeature.treeRowHtml(row, o),
-    rowHtml: (o) => ctrl.topicsFeature.rowHtml(o),
-    agentTagHtml: (t) => ctrl.topicsFeature.agentTagHtml(t),
-    splitTitle: (title) => ctrl.topicsFeature.splitTitle(title),
-    text,
-    schedAgo: (at) => ctrl.topicsFeature.schedAgo(at),
-    ageClock: (at) => ctrl.topicsFeature.ageClock(at),
-    ageText: (ms, done) => ctrl.topicsFeature.ageText(ms, done),
-    stLeft,
-    atBottom: () => ctrl.transcript.scroll.atBottom(),
-    toBottom: () => ctrl.transcript.scroll.toBottom(),
-    armAgeTick: () => ctrl.topicsFeature.armAgeTick(),
-    markAllRead: (list, noun, say) => {
-      void ctrl.readsService.markAllRead(list, noun, say);
+function buildBuiltinDeps(rt: AppRuntime): BuiltinPluginsDeps {
+  const { boot, icons, overlays, registry, shell, storage, state, codeView, api } = rt;
+  return {
+    ...buildTopicPluginDeps(rt),
+    history: {
+      getIcons: () => icons.icon,
+      codeBlocks: (root) => {
+        state.activeEditor?.transcript?.codeBlocks.enhance(root);
+      },
+      openShot: (img) => {
+        if (img instanceof HTMLImageElement) {
+          void rt.commands.execute(READER_OPEN_IMAGE_COMMAND, {
+            src: img.src,
+            alt: img.alt,
+            restoreFocus: img,
+          });
+        }
+      },
     },
-    switchTopic: (id) => ctrl.topicsFeature.switchTopic(id),
-    foldClick: (e) => ctrl.topicsFeature.foldClick(e),
-    rowMenuFollow: () => ctrl.topicsFeature.rowMenuFollow(),
-    closeRowMenu: (focusBack) => ctrl.topicsFeature.closeRowMenu(focusBack),
-    getRowMenuKey: () => ctrl.topicsFeature.getRowMenuKey(),
-    openRowMenuFor: (btn) => {
-      if (btn instanceof HTMLElement) ctrl.topicsFeature.openRowMenuFor(btn);
+    schedules: {
+      overlays,
+      unreadOf: (t) => rt.readsService.unreadOf(t as unknown as Topic),
+      onBadgeChange: () => registry.refreshActivityBadges(),
     },
-    makeFilterBar: (opts) => ctrl.topicsFeature.makeFilterBar(opts),
-    paneIsOpen: () => ctrl.legacyShell.schedPane.isOpen(),
-    paneDocked: () => ctrl.legacyShell.schedPane.docked(),
-    paneSetOpen: (open, opts) => ctrl.legacyShell.schedPane.setOpen(open, opts),
-    reviewsCount: () => ctrl.reviewsPanel.count(),
-    loadReviews: () => ctrl.reviewsPanel.load(),
-    paintReviews: () => ctrl.reviewsPanel.paint(),
-  });
+    reviews: {
+      overlays,
+      createTopic: (seed) => createTopic(rt, seed),
+      onBadgeChange: () => registry.refreshActivityBadges(),
+    },
+    skills: {
+      icons: () => icons.icon,
+      codeView,
+      overlays,
+    },
+    settings: {
+      instrOk: Boolean(boot.instructions),
+      listDeviceSections: () => registry.listSettingsSections(),
+      onDidChangeDeviceSections: registry.onDidChangeSettings,
+      getEpoch: () => state.epoch,
+      getTopic: () => state.topic,
+      getTopics: () => state.topics,
+      post,
+      onReady: (bridge) => {
+        state.settingsBridge = bridge;
+      },
+    },
+    changes: {
+      api,
+      codeView,
+      filesEnabled: Boolean(boot.files),
+      narrow: () => shell.getMode() !== 'desktop',
+    },
+    files: {
+      filesEnabled: Boolean(boot.files),
+      api,
+      codeView,
+      codeBlocks: (root) => {
+        state.activeEditor?.transcript?.codeBlocks.enhance(root);
+      },
+      overlays,
+    },
+    terminal: {
+      boot,
+      toggleTool: (topicId) => shell.tools.toggle('terminal', { topicId }),
+      minimizePanel: () => shell.setPartVisible('panel', false),
+      post,
+      storage,
+      resolveIcon: (name) => icons.icon[name] ?? '',
+    },
+    reader: {
+      boot,
+      overlays,
+      codeView,
+      codeBlocks: (root) => {
+        state.activeEditor?.transcript?.codeBlocks.enhance(root);
+      },
+    },
+    status: {
+      storage,
+      overlays,
+      appElement: rt.workbenchRoot,
+      version: boot.build ? boot.build.slice(0, 7) : '',
+      getPluginErrors: () => rt.pluginManager.getErrors(),
+      onPluginError: (cb) => rt.pluginManager.onDidError(cb),
+      onUpdateAvailable: (cb) => rt.updateEmitter.event(cb),
+      onBeforeReload: () => {
+        if (state.topic) state.activeEditor?.composer?.stashDraft(state.topic);
+      },
+      onResetLayout: () => shell.resetLayout(),
+      onRefreshStatusBar: (id) => shell.statusBarApi.refresh(id),
+      emitEvent: (key, payload) => rt.events.emit(key, payload),
+      postFn: post,
+    },
+  };
 }
 
-function wireWorkspacePanels(ctrl: AppControllers): void {
-  const { dom, state, boot, icons } = ctrl;
-  ctrl.skillsPanel = createSkillsPanel({
-    app: dom.app,
-    skillsWin: dom.skillsWin,
-    skillsToggle: dom.skillsToggle,
-    skillsBack: dom.skillsBack,
-    skillsTitle: dom.skillsTitle,
-    skillsCount: dom.skillsCount,
-    skillsNewBtn: dom.skillsNewBtn,
-    skillsRefreshBtn: dom.skillsRefreshBtn,
-    skillsClose: dom.skillsClose,
-    skillsBody: dom.skillsBody,
-    skillsNote: dom.skillsNote,
-    skillsListEl: dom.skillsListEl,
-    skillsDetailEl: dom.skillsDetailEl,
-    icons: () => icons.icon,
-    text,
-    schedAgo: (at) => ctrl.topicsFeature.schedAgo(at),
-    byteSize: formatByteSize,
-    copyText: (s, done) => ctrl.composerController.copyText(s, done),
-    post,
-    closeMenus: () => ctrl.legacyShell.setMenu(null, false),
-  });
-
-  ctrl.gitPanel = createGitPanel({
-    getTopic: () => state.topic,
-    input: dom.input,
-    text,
-    schedAgo: (at) => ctrl.topicsFeature.schedAgo(at),
-    narrow: () => ctrl.legacyShell.narrow(),
-    codeView: ctrl.codeView,
-    closeMenus: () => ctrl.legacyShell.setMenu(null, false),
-  });
-
-  ctrl.filesPanel = createFilesPanel({
-    filesOk: Boolean(boot.files),
-    instrOk: Boolean(boot.instructions),
-    getTopic: () => state.topic,
-    text,
-    post,
-    codeView: ctrl.codeView,
-    codeBlocks: (root) => ctrl.transcript.codeBlocks.enhance(root),
-    closeMenus: () => ctrl.legacyShell.setMenu(null, false),
-  });
-
-  ctrl.instructionsPanel = createInstructionsPanel({
-    instrOk: Boolean(boot.instructions),
-    settingsPage: dom.settingsPage,
-    settingsBody: dom.settingsBody,
-    filesPanel: ctrl.filesPanel,
-    getSettingsMsg: () => ctrl.settingsFeature.getMessage(),
-    getSettingsTopic: () => ctrl.settingsFeature.getTopic() || '',
-    getTopic: () => state.topic,
-    renderSettings: () => ctrl.settingsFeature.render(),
-    text,
-    inl,
-    post,
-  });
-
-  ctrl.schedulesPanel.paintTab();
-  ctrl.schedulesPanel.init();
-}
-
-function handleSyncEvent(
-  ctrl: AppControllers,
-  ev: Extract<WebEvent, { t: 'sync' }>,
-): void {
-  const { dom, state } = ctrl;
-  const { topic } = state;
-  if (topic && ev.topic !== topic) return;
-  const named = !topic;
+function handleSyncEvent(rt: AppRuntime, ev: Extract<WebEvent, { t: 'sync' }>): void {
+  const { state } = rt;
+  if (state.topic && ev.topic !== state.topic) return;
+  const named = !state.topic;
   state.topic = ev.topic;
-  if (named) ctrl.composerController.loadDraftIfEmpty(state.topic);
-  history.replaceState(null, '', ctrl.terminalController.urlNow());
-  ctrl.terminalController.apply();
+  ensureTopicEditorOpen(rt, state.topic);
+  const editor = state.activeEditor;
+  history.replaceState(null, '', currentTopicUrl(state.topic));
 
-  const arriving = ctrl.transcript.scroll.isArriving(state.entering);
-  const stick = ctrl.transcript.scroll.atBottom();
+  const scroll = editor?.transcript?.scroll;
+  const arriving = scroll ? scroll.isArriving(state.entering) : false;
+  const stick = scroll ? scroll.atBottom() : false;
   state.entering = false;
-
-  if (state.epoch && ev.epoch && ev.epoch !== state.epoch) {
-    ctrl.streamClient.checkBuild();
-    ctrl.topicsFeature.clearPrefetchTried();
-  }
+  if (state.epoch && ev.epoch && ev.epoch !== state.epoch) rt.streamClient.checkBuild();
   state.settleOnResume = false;
   state.epoch = ev.epoch || 0;
   state.synced = true;
   state.stale = Boolean(ev.stale);
   state.launch = ev.agents || null;
 
-  ctrl.transcript.takeMachines(ev.offline || []);
-  ctrl.transcript.repaintHistory();
-  ctrl.composerController.showUnsent(state.topic);
-  ctrl.transcript.reconcile(ev.messages);
-  ctrl.composerController.settleUnsure();
-  ctrl.transcript.banners.placeDivider();
-  ctrl.transcript.banners.syncEmptyNote();
-  if (ctrl.transcript.btw.isOpen()) ctrl.transcript.btw.render(false);
-  ctrl.cacheService.scheduleSave();
-
-  if (named) {
-    void ctrl.cacheService.get(state.topic).then((c) => {
-      if (c && c.msgs.length && ev.topic === state.topic) {
-        ctrl.transcript.adopt(c.msgs as unknown as readonly TranscriptMessage[]);
-      }
-    });
-  }
-  ctrl.readsService.setCount(state.topic, ev.messages.length);
-  ctrl.composerController.setCommands(ev.commands || []);
+  applySyncToEditor(rt, editor, ev, named, arriving, stick);
+  if (named) adoptCachedTopicMessages(rt, ev.topic);
+  rt.readsService.setCount(state.topic, ev.messages.length);
   state.topics = ev.topics || [];
-  ctrl.streamClient.setTopicsVersion(ev.tv || 0);
-  ctrl.topicsFeature.paintTopics();
-  pruneTopicState(ctrl);
-  ctrl.topicStatus.setStatus(ev.status);
-  ctrl.topicStatus.setPending(ev.pending || []);
-  dom.note.textContent = '';
-  if (arriving) ctrl.transcript.scroll.land(state.els);
-  else if (stick) ctrl.transcript.scroll.toBottom();
-  ctrl.transcript.scroll.clearView();
-  ctrl.topicsFeature.schedulePrefetch();
+  rt.streamClient.setTopicsVersion(ev.tv || 0);
+  const active = topicById(state, state.topic);
+  rt.events.emit('topic.list', { topics: toTopicInfos(state.topics) });
+  rt.events.emit('topic.active', { id: state.topic, topic: active as unknown as TopicInfo | undefined });
+  rt.registry.refreshActivityBadges();
 }
 
-function handleMessageEvent(ctrl: AppControllers, msg: WebMessage): void {
-  const { state } = ctrl;
-  if (ctrl.settingsFeature.handleMessage(msg)) return;
-  ctrl.composerController.claim(msg);
-  ctrl.transcript.upsert(msg);
-  ctrl.transcript.btw.onArrived(msg);
-  ctrl.cacheService.scheduleSave();
-  ctrl.topicStatus.onMessageArrived();
-  ctrl.readsService.increment(state.topic);
-  const cur = state.topics.find((t) => t.id === state.topic);
-  if (cur) cur.msgCount = (cur.msgCount || 0) + 1;
-  ctrl.topicsFeature.paintTopics();
-}
-
-function handleReactEvent(
-  ctrl: AppControllers,
-  ev: Extract<WebEvent, { t: 'react' }>,
+function applySyncToEditor(
+  rt: AppRuntime,
+  editor: TopicEditorHandle | null,
+  ev: Extract<WebEvent, { t: 'sync' }>,
+  named: boolean,
+  arriving: boolean,
+  stick: boolean,
 ): void {
-  const rk = `${ctrl.state.epoch}:${ev.id}`;
-  const m = ctrl.state.data[rk];
-  if (!m) return;
-  const kept = (m.reactions || []).filter((e) => e !== ev.emoji);
-  m.reactions = ev.on ? kept.concat([ev.emoji]) : kept;
-  ctrl.transcript.paint(rk);
-  ctrl.cacheService.scheduleSave();
+  if (!editor) return;
+  const { transcript, composer, status } = editor;
+  if (named && composer) composer.loadDraftIfEmpty(rt.state.topic);
+  if (transcript) {
+    transcript.takeMachines(ev.offline || []);
+    transcript.repaintHistory();
+  }
+  if (composer) composer.showUnsent(rt.state.topic);
+  if (transcript) transcript.reconcile(ev.messages);
+  if (composer) {
+    composer.settleUnsure();
+    composer.setCommands(ev.commands || []);
+  }
+  if (transcript) {
+    transcript.banners.placeDivider();
+    transcript.banners.syncEmptyNote();
+    if (transcript.btw.isOpen()) transcript.btw.render(false);
+  }
+  rt.cacheService.scheduleSave();
+  if (status) {
+    status.setStatus(ev.status);
+    status.setPending(ev.pending || []);
+  }
+  editor.els.noteEl.textContent = '';
+  if (transcript) {
+    if (arriving) transcript.scroll.land(rt.state.els);
+    else if (stick) transcript.scroll.toBottom();
+    transcript.scroll.clearView();
+  }
+  editor.refreshHeader();
 }
 
-function handleTypingEvent(ctrl: AppControllers, on: boolean): void {
-  ctrl.dom.typing.hidden = !on;
-  const cur = ctrl.state.topics.find((t) => t.id === ctrl.state.topic);
-  if (cur) cur.running = on;
-  ctrl.topicsFeature.paintTopics();
-  if (!on) {
-    ctrl.transcript.codeBlocks.sweep();
-    ctrl.gitPanel.onTurnEnd();
-  }
+function adoptCachedTopicMessages(rt: AppRuntime, topicId: string): void {
+  void rt.cacheService.get(topicId).then((c) => {
+    if (c && c.msgs.length && topicId === rt.state.topic) {
+      rt.state.activeEditor?.transcript?.adopt(c.msgs as unknown as readonly TranscriptMessage[]);
+    }
+  });
+}
+
+function handleMessageEvent(rt: AppRuntime, msg: WebMessage): void {
+  const { state } = rt;
+  if (state.settingsBridge?.handleMessage(msg)) return;
+  const editor = state.activeEditor;
+  editor?.composer?.claim(msg);
+  editor?.transcript?.upsert(msg);
+  editor?.transcript?.btw.onArrived(msg);
+  rt.cacheService.scheduleSave();
+  editor?.status?.onMessageArrived();
+  rt.readsService.increment(state.topic);
+  const cur = topicById(state, state.topic);
+  if (cur) cur.msgCount = (cur.msgCount || 0) + 1;
+  rt.events.emit('topic.message', { topicId: state.topic, message: msg });
+  rt.events.emit('topic.list', { topics: toTopicInfos(state.topics) });
+  rt.registry.refreshActivityBadges();
 }
 
 function handleTopicsEvent(
-  ctrl: AppControllers,
+  rt: AppRuntime,
   ev: Extract<WebEvent, { t: 'topics' | 'topic-rows' }>,
 ): void {
-  const { state } = ctrl;
+  const { state } = rt;
   state.topics = ev.t === 'topics' ? ev.topics || [] : applyTopicRows(state.topics, ev);
-  ctrl.streamClient.setTopicsVersion(ev.tv || 0);
-  ctrl.topicsFeature.paintTopics();
-  ctrl.readsService.reportSeen();
+  rt.streamClient.setTopicsVersion(ev.tv || 0);
+  rt.events.emit('topic.list', { topics: toTopicInfos(state.topics) });
+  rt.readsService.reportSeen();
   if (state.topic && !state.topics.some((t) => t.id === state.topic)) {
     const first = state.topics[0];
-    if (first) ctrl.topicsFeature.switchTopic(first.id);
-    else void ctrl.topicsFeature.createTopic();
+    if (first) switchTopic(rt, first.id);
+    else void createTopic(rt);
   }
-  pruneTopicState(ctrl);
-  ctrl.topicsFeature.schedulePrefetch();
+  rt.registry.refreshActivityBadges();
+  state.activeEditor?.refreshHeader();
+  syncActiveStopButton(rt);
 }
 
-function handleResumedEvent(ctrl: AppControllers): void {
-  const { state, dom } = ctrl;
-  if (state.synced) return;
-  state.synced = true;
-  state.entering = false;
-  if (state.settleOnResume) {
-    state.settleOnResume = false;
-    ctrl.composerController.settleUnsure();
+function syncActiveStopButton(rt: AppRuntime): void {
+  const editor = rt.state.activeEditor;
+  if (!editor || !rt.state.topic) return;
+  const cur = topicById(rt.state, rt.state.topic);
+  const childRunning = hasRunningDescendant(rt.state.topics, rt.state.topic);
+  const showStop = Boolean(cur?.running || childRunning);
+  editor.els.stopBtn.hidden = !showStop;
+  if (childRunning && !cur?.running) {
+    editor.els.stopBtn.title = tr('composer.stopSubTitle');
+  } else {
+    editor.els.stopBtn.title = tr('composer.stopTitle');
   }
-  ctrl.transcript.banners.clearSyncing();
-  ctrl.transcript.banners.placeDivider();
-  ctrl.transcript.banners.syncEmptyNote();
-  ctrl.cacheService.scheduleSave();
-  dom.note.textContent = '';
 }
 
-function handleStreamEvent(ctrl: AppControllers, raw: StreamEventPayload): void {
+function hasRunningDescendant(topics: readonly Topic[], rootId: string): boolean {
+  const seen = new Set<string>([rootId]);
+  let added = true;
+  while (added) {
+    added = false;
+    for (const t of topics) {
+      if (t.parent && seen.has(t.parent) && !seen.has(t.id)) {
+        if (t.running) return true;
+        seen.add(t.id);
+        added = true;
+      }
+    }
+  }
+  return false;
+}
+
+function handleReactEvent(rt: AppRuntime, ev: Extract<WebEvent, { t: 'react' }>): void {
+  const rk = `${rt.state.epoch}:${ev.id}`;
+  const m = rt.state.data[rk];
+  if (!m) return;
+  const kept = (m.reactions || []).filter((e) => e !== ev.emoji);
+  m.reactions = ev.on ? kept.concat([ev.emoji]) : kept;
+  rt.state.activeEditor?.transcript?.paint(rk);
+  rt.cacheService.scheduleSave();
+}
+
+function handleTypingEvent(rt: AppRuntime, on: boolean): void {
+  const editor = rt.state.activeEditor;
+  if (editor) editor.els.typingEl.hidden = !on;
+  const cur = topicById(rt.state, rt.state.topic);
+  if (cur) cur.running = on;
+  rt.events.emit('topic.list', { topics: toTopicInfos(rt.state.topics) });
+  if (!on) {
+    editor?.transcript?.codeBlocks.sweep();
+    rt.events.emit('topic.turnEnd', { topicId: rt.state.topic });
+  }
+  editor?.refreshHeader();
+}
+
+function handleResumedEvent(rt: AppRuntime): void {
+  if (rt.state.synced) return;
+  const editor = rt.state.activeEditor;
+  rt.state.synced = true;
+  rt.state.entering = false;
+  if (rt.state.settleOnResume) {
+    rt.state.settleOnResume = false;
+    editor?.composer?.settleUnsure();
+  }
+  editor?.transcript?.banners.clearSyncing();
+  editor?.transcript?.banners.placeDivider();
+  editor?.transcript?.banners.syncEmptyNote();
+  rt.cacheService.scheduleSave();
+  if (editor) editor.els.noteEl.textContent = '';
+}
+
+function handleStreamEvent(rt: AppRuntime, raw: StreamEventPayload): void {
   const ev = raw as unknown as WebEvent;
-  switch (ev.t) {
-    case 'sync':
-      handleSyncEvent(ctrl, ev);
-      return;
-    case 'msg':
-      handleMessageEvent(ctrl, ev.msg);
-      return;
-    case 'del':
-      ctrl.transcript.drop(`${ctrl.state.epoch}:${ev.id}`);
-      ctrl.cacheService.scheduleSave();
-      return;
-    case 'react':
-      handleReactEvent(ctrl, ev);
-      return;
-    case 'typing':
-      handleTypingEvent(ctrl, ev.on);
-      return;
-    case 'commands':
-      ctrl.composerController.setCommands(ev.commands || []);
-      return;
-    case 'status':
-      ctrl.topicStatus.setStatus(ev.status);
-      return;
-    case 'pending':
-      ctrl.topicStatus.setPending(ev.items || []);
-      return;
-    case 'machines':
-      ctrl.transcript.setMachines(ev.offline || []);
-      return;
-    case 'topics':
-    case 'topic-rows':
-      handleTopicsEvent(ctrl, ev);
-      return;
-    case 'resumed':
-      handleResumedEvent(ctrl);
-      return;
-    case 'bye':
-      return;
-  }
+  const editor = rt.state.activeEditor;
+  const trCtrl = editor ? editor.transcript : null;
+  const stCtrl = editor ? editor.status : null;
+  const cpCtrl = editor ? editor.composer : null;
+  const handlers: Record<WebEvent['t'], () => void> = {
+    sync: () => handleSyncEvent(rt, ev as Extract<WebEvent, { t: 'sync' }>),
+    msg: () => handleMessageEvent(rt, (ev as Extract<WebEvent, { t: 'msg' }>).msg),
+    del: () => {
+      trCtrl?.drop(`${rt.state.epoch}:${(ev as Extract<WebEvent, { t: 'del' }>).id}`);
+      rt.cacheService.scheduleSave();
+    },
+    react: () => handleReactEvent(rt, ev as Extract<WebEvent, { t: 'react' }>),
+    typing: () => handleTypingEvent(rt, (ev as Extract<WebEvent, { t: 'typing' }>).on),
+    commands: () => cpCtrl?.setCommands((ev as Extract<WebEvent, { t: 'commands' }>).commands || []),
+    status: () => stCtrl?.setStatus((ev as Extract<WebEvent, { t: 'status' }>).status),
+    pending: () => stCtrl?.setPending((ev as Extract<WebEvent, { t: 'pending' }>).items || []),
+    machines: () => trCtrl?.setMachines((ev as Extract<WebEvent, { t: 'machines' }>).offline || []),
+    topics: () => handleTopicsEvent(rt, ev as Extract<WebEvent, { t: 'topics' }>),
+    'topic-rows': () => handleTopicsEvent(rt, ev as Extract<WebEvent, { t: 'topic-rows' }>),
+    resumed: () => handleResumedEvent(rt),
+    bye: () => {},
+  };
+  handlers[ev.t]?.();
 }
 
-function wireOverlaysAndGlobalEvents(ctrl: AppControllers): void {
-  const { dom, state, boot, overlays } = ctrl;
+function wireStreamAndCache(rt: AppRuntime): void {
+  const { state, boot, cacheCore } = rt;
+  rt.streamClient = createStreamClient({
+    getTopic: () => state.topic,
+    isLoggedOut: () => rt.workbenchRoot.hidden && Boolean(rt.gateForm && !rt.gateForm.hidden),
+    getBuild: () => boot.build,
+    onBeforeConnect: () => {
+      rt.events.emit('stream.state', { state: 'connecting' });
+      state.activeEditor?.transcript?.banners.showSkeleton();
+    },
+    onOpen: (info) => {
+      const fresh = rt.workbenchRoot.hidden || !info.quiet;
+      if (rt.gateForm) rt.gateForm.hidden = true;
+      if (rt.gate) rt.gate.hidden = true;
+      rt.workbenchRoot.hidden = false;
+      if (state.activeEditor) state.activeEditor.els.noteEl.textContent = '';
+      rt.events.emit('stream.state', { state: 'open' });
+      if (fresh && rt.shell.getMode() === 'desktop') {
+        state.activeEditor?.focus?.();
+      }
+    },
+    onReconnecting: () => {
+      rt.events.emit('stream.state', { state: 'reconnecting' });
+      if (state.activeEditor) state.activeEditor.els.noteEl.textContent = tr('chat.reconnecting');
+    },
+    onRestarting: () => {
+      rt.events.emit('stream.state', { state: 'reconnecting' });
+      if (state.activeEditor) state.activeEditor.els.noteEl.textContent = tr('chat.restarting');
+    },
+    onAuthExpired: () => {
+      rt.workbenchRoot.hidden = true;
+      if (rt.gateForm) rt.gateForm.hidden = false;
+      if (rt.gate) rt.gate.hidden = false;
+      rt.events.emit('stream.state', { state: 'closed' });
+    },
+    onBuildOutdated: () => {
+      rt.updateEmitter.fire(true);
+    },
+    onVisibilityResume: () => {},
+  });
+  rt.streamClient.onEvent((ev) => handleStreamEvent(rt, ev));
+  rt.streamClient.attachWindowEvents(document, window);
 
-  dom.updateReloadBtn?.addEventListener('click', () => {
-    ctrl.composerController.stashDraft(state.topic);
-    location.reload();
+  rt.cacheService = createCacheService({
+    core: cacheCore,
+    getIndexedDB: () => window.indexedDB,
+    getTopic: () => state.topic,
+    getEpoch: () => state.epoch,
+    isSynced: () => state.synced,
+    isStale: () => state.stale,
+    getLastEventId: () => rt.streamClient.getLastEventId(),
+    collectScreenMessages: () => {
+      const log = state.activeEditor?.els.log;
+      if (!log) return [];
+      return collectCacheableMessages(log, state.data as Record<string, CacheMessage | undefined>);
+    },
   });
 
-  dom.gateForm?.addEventListener('submit', (e) => {
+  rt.readsService = createReadsService({
+    getActiveTopic: () => state.topic,
+    getTopics: () => state.topics,
+    isOverlayBlocking: () => false,
+    postSeen: (topicId) => post('api/seen', { topic: topicId }, 0),
+    onChanged: () => {
+      rt.events.emit('topic.list', { topics: toTopicInfos(state.topics) });
+      rt.registry.refreshActivityBadges();
+    },
+  });
+  rt.readsService.attachWindowEvents(document, window);
+}
+
+function wireMobileShell(rt: AppRuntime): void {
+  const mountedViews = new Map<string, PanelComponent>();
+  const showMobileListView = (viewId: string): void => {
+    const view = rt.registry.getView(viewId);
+    if (!view) return;
+    rt.state.mobileViewId = viewId;
+    const stack = rt.shell.getStackShell();
+    let comp = mountedViews.get(viewId);
+    if (!comp) {
+      comp = view.component();
+      mountedViews.set(viewId, comp);
+    }
+    stack.mountListView(viewId, comp);
+  };
+
+  const syncMobileMode = (): void => {
+    if (rt.shell.getMode() !== 'mobile') return;
+    const stack = rt.shell.getStackShell();
+    const activities = rt.registry.listActivities();
+    if (activities.length > 0) {
+      const primary = activities.slice(0, 3).map((a) => ({
+        id: a.id,
+        title: a.title,
+        icon: a.icon,
+        view: a.view,
+        badge: a.badge,
+      }));
+      const extra = activities[3];
+      stack.setTabs(
+        extra
+          ? [...primary, { id: extra.id, title: extra.title, icon: extra.icon, view: extra.view, badge: extra.badge }]
+          : primary,
+      );
+    }
+    showMobileListView(rt.state.mobileViewId || 'topics');
+  };
+
+  rt.shell.onDidModeChange((mode) => {
+    if (mode === 'mobile') syncMobileMode();
+  });
+
+  if (rt.shell.getMode() === 'mobile') {
+    syncMobileMode();
+  }
+
+  rt.shell.getStackShell().onDidSelectTab((tab) => {
+    showMobileListView(tab.view);
+  });
+}
+
+function wireLoginGate(rt: AppRuntime): void {
+  rt.gateForm?.addEventListener('submit', (e) => {
     e.preventDefault();
-    if (!boot.password) {
+    if (!rt.boot.password) {
       location.reload();
       return;
     }
-    dom.err.textContent = '';
-    const secretEl = dom.secretInput;
-    const token = secretEl ? secretEl.value : '';
+    if (rt.errEl) rt.errEl.textContent = '';
+    const token = rt.secretInput ? rt.secretInput.value : '';
     void post('api/login', { token }, 0)
       .then((r) => {
         if (r.ok) {
-          if (secretEl) secretEl.value = '';
-          ctrl.streamClient.connect();
+          if (rt.secretInput) rt.secretInput.value = '';
+          rt.streamClient.connect();
           return;
         }
-        dom.err.textContent =
-          r.status === 429 ? tr('gate.tooManyAttempts') : tr('gate.wrongToken');
+        if (rt.errEl) {
+          rt.errEl.textContent =
+            r.status === 429 ? tr('gate.tooManyAttempts') : tr('gate.wrongToken');
+        }
       })
       .catch(() => {
-        dom.err.textContent = tr('common.reachServerError');
+        if (rt.errEl) rt.errEl.textContent = tr('common.reachServerError');
       });
-  });
-
-  overlays.registerFallback(() => {
-    if (ctrl.filesPanel.isCustomOpen()) {
-      ctrl.filesPanel.close();
-      return true;
-    }
-    return false;
-  });
-
-  overlays.registerFallback(() => {
-    const hintsOpen = ctrl.composerController.isHintsOpen();
-    const openMenu = ctrl.legacyShell.openMenu();
-    const hadOverlay =
-      hintsOpen ||
-      !dom.lightbox.hidden ||
-      !dom.reader.hidden ||
-      !dom.idleDialog.hidden ||
-      !dom.rowMenu.hidden ||
-      Boolean(openMenu) ||
-      !dom.skillsWin.hidden ||
-      !dom.settingsPage.hidden ||
-      !dom.taskPage.hidden ||
-      ctrl.filesPanel.isOpen() ||
-      ctrl.gitPanel.isOpen();
-    ctrl.lightbox.close();
-    ctrl.reader.close();
-    ctrl.topicsFeature.closeIdle();
-    ctrl.skillsPanel.close();
-    ctrl.settingsFeature.close();
-    ctrl.filesPanel.close();
-    ctrl.gitPanel.close();
-    ctrl.schedulesPanel.closeTaskPage(false);
-    ctrl.topicsFeature.closeRowMenu(true);
-    if (hintsOpen) ctrl.composerController.closeHints();
-    const activeMenu = ctrl.legacyShell.openMenu();
-    if (activeMenu) {
-      ctrl.legacyShell.setMenu(null, false);
-      activeMenu.btn.focus();
-    }
-    return hadOverlay;
-  });
-
-  overlays.registerFallback(() => {
-    if (ctrl.transcript.btw.isOpen()) {
-      ctrl.transcript.btw.close(true);
-      return true;
-    }
-    if (ctrl.legacyShell.schedPane.isOpen()) {
-      ctrl.schedulesPanel.setOpen(false);
-      return true;
-    }
-    if (ctrl.legacyShell.sbPane.isOpen()) {
-      ctrl.legacyShell.setSidebar(false);
-      return true;
-    }
-    return false;
-  });
-
-  onLocaleChange(() => {
-    applyDomI18n(document);
-    ctrl.legacyShell.paintLang();
-    ctrl.legacyShell.paintTheme();
-    ctrl.legacyShell.paintCalm();
-    ctrl.notifyController.paint();
-    ctrl.composerController.onLocaleChange();
-    ctrl.transcript.refreshI18n();
-    ctrl.topicsFeature.onLocaleChange();
-    ctrl.topicStatus.onLocaleChange();
-    for (const mk of Object.keys(state.els)) {
-      if (state.data[mk]) ctrl.transcript.paint(mk);
-    }
-    if (ctrl.transcript.btw.isOpen()) ctrl.transcript.btw.render(false);
-    ctrl.settingsFeature.onLocaleChange();
-    ctrl.schedulesPanel.repaint();
-    ctrl.reviewsPanel.paint();
-    ctrl.historyPanel.repaint();
-    ctrl.skillsPanel.repaint();
-    ctrl.gitPanel.repaint();
-    ctrl.filesPanel.repaint();
-    if (boot.terminal) ctrl.terminalController.paintFrames();
   });
 }
 
 function bootstrap(): void {
-  const dom: AppDom = {
-    ...collectChatAndShellDom(document),
-    ...collectPanelsDom(document),
-  };
-
   initLocale();
-  const schedTitleEl = document.querySelector('#schedules-head .panel-title');
-  if (schedTitleEl) schedTitleEl.setAttribute('data-i18n', 'sideTasks.title');
   applyDomI18n(document);
 
-  const BOOT = readBootConfig(document);
+  const boot = readBootConfig(document);
   const icons = __FH_ICONS__;
   const cacheCore = loadCacheCore();
-  const codeView = createCodeViewLoader(BOOT.codeview);
+  const codeView = createCodeViewLoader(boot.codeview);
+  const storage = new StorageService();
   const overlays = new OverlayManager();
   overlays.attach(document);
+  const commands = new CommandRegistry();
+  const keybindings = new KeybindingService({
+    executeCommand: (id, ...a) => commands.execute(id, ...a),
+  });
+  keybindings.attach(document);
+  const api = createApiClient();
+  const events = new WebuiEventBus();
+  const registry = new ContributionRegistry({ commands, keybindings });
+
+  const workbenchRoot = document.getElementById('workbench-root');
+  if (!workbenchRoot) throw new Error('Missing required element #workbench-root');
+
+  const shell = mountWorkbench(document, {
+    storage,
+    registry,
+    resolveIcon: (name) => icons.icon[name] ?? '',
+  });
+  if (!shell) throw new Error('Failed to mount WorkbenchShell');
 
   const state: AppState = {
     data: {},
@@ -1431,37 +939,93 @@ function bootstrap(): void {
     stale: false,
     launch: null,
     settleOnResume: false,
+    activeEditor: null,
+    insertHandler: null,
+    settingsBridge: null,
+    mobileViewId: 'topics',
   };
 
-  const ctrl = {
-    boot: BOOT,
+  const rt = {
+    boot,
     icons,
-    dom,
-    state,
+    storage,
     overlays,
+    commands,
+    keybindings,
+    api,
+    events,
+    registry,
+    shell,
     cacheCore,
     codeView,
-  } as AppControllers;
+    updateEmitter: new Emitter<boolean>(),
+    state,
+    gate: document.getElementById('login'),
+    gateForm: document.getElementById('gate') as HTMLFormElement | null,
+    secretInput: document.getElementById('secret') as HTMLInputElement | null,
+    errEl: document.getElementById('err'),
+    workbenchRoot,
+  } as AppRuntime;
 
-  wireCoreServices(ctrl);
-  wireShellAndDevices(ctrl);
-  wireTranscriptFeature(ctrl);
-  wireTopicsFeature(ctrl);
-  wireComposerFeature(ctrl);
-  wireReviewsAndHistoryPanels(ctrl);
-  wireSchedulesPanel(ctrl);
-  wireWorkspacePanels(ctrl);
-  ctrl.topicsFeature.attach();
-  wireOverlaysAndGlobalEvents(ctrl);
+  wireStreamAndCache(rt);
 
-  if (state.topic && ctrl.composerController.hasDraft(state.topic)) {
-    ctrl.composerController.loadDraft(state.topic);
-  }
-  ctrl.terminalController.apply();
-  ctrl.topicsFeature.enter(state.topic);
-  mountWorkbenchIfEnabled(document, {
-    resolveIcon: (name) => icons.icon[name] ?? '',
+  const pluginManager = new PluginManager({
+    registry,
+    events,
+    topics: {
+      list: () => toTopicInfos(state.topics),
+      active: () => topicById(state, state.topic) as unknown as TopicInfo | undefined,
+      open: (id) => switchTopic(rt, id),
+      insertIntoComposer: (id, text) => {
+        if (state.insertHandler?.(id, text)) return;
+        if (id && id !== state.topic) switchTopic(rt, id);
+        state.activeEditor?.insertIntoComposer(text);
+      },
+    },
+    api,
+    storage,
   });
+  (rt as { pluginManager: PluginManager }).pluginManager = pluginManager;
+
+  registerBuiltinPlugins(pluginManager, createDefaultBuiltinPluginFactories(buildBuiltinDeps(rt)));
+  void pluginManager.activateAll().then(() => {
+    shell.views.reveal('topics');
+    ensureTopicEditorOpen(rt, state.topic);
+    wireMobileShell(rt);
+    if (state.topic) {
+      state.activeEditor?.composer?.loadDraftIfEmpty(state.topic);
+      adoptCachedTopicMessages(rt, state.topic);
+    }
+    rt.streamClient.connect();
+  });
+
+  onLocaleChange((locale) => {
+    applyDomI18n(document);
+    events.emit('locale.change', { locale });
+    state.activeEditor?.transcript?.refreshI18n();
+    state.activeEditor?.composer?.onLocaleChange();
+    state.activeEditor?.status?.onLocaleChange();
+    state.activeEditor?.refreshHeader();
+    shell.statusBarApi.refresh();
+  });
+
+  commands.register('workbench.resetLayout', () => shell.resetLayout(), { title: 'Reset Layout' });
+  commands.register('workbench.toggleTerminal', () => void commands.execute(TERMINAL_TOGGLE_COMMAND));
+
+  overlays.registerFallback(() => {
+    const editor = state.activeEditor;
+    if (editor?.composer?.isHintsOpen()) {
+      editor.composer.closeHints();
+      return true;
+    }
+    if (editor?.transcript?.btw.isOpen()) {
+      editor.transcript.btw.close(true);
+      return true;
+    }
+    return false;
+  });
+
+  wireLoginGate(rt);
 }
 
 bootstrap();

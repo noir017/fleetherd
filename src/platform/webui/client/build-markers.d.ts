@@ -60,4 +60,8 @@ declare global {
   function cachePut(store: IDBObjectStore, rec: CacheStoredRecord): CachePutResult;
   function cacheEvict(store: IDBObjectStore, keep: string, all: boolean): void;
   function snapshotMsgs(d: TopicSnapshotPayload): CacheMessage[];
+  interface Window {
+    openGitWindow?: (opts?: { title?: string; statusUrl?: string; fileUrl?: string }) => void;
+    openFileEditor?: (path: string) => void;
+  }
 }

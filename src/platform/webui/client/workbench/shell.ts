@@ -7,6 +7,7 @@ import type {
   TopicToolContribution,
   ViewContribution,
 } from '../plugins/api.js';
+import type { ContributionRegistry } from '../plugins/registry.js';
 import { StorageService } from '../services/storage.js';
 import type { DockEngine, LayoutState, PanelRef, PartId } from './contracts.js';
 import { SplitView } from './dock/splitview.js';
@@ -18,7 +19,6 @@ import { SidebarPart } from './parts/sidebar-part.js';
 import { StatusBarPart, type StatusBarItem } from './parts/status-bar.js';
 import { StackShell, type StackNavTab, type StackToolItem } from './stack-shell.js';
 
-export const WORKBENCH_FLAG_KEY = 'aa_workbench';
 export const LAYOUT_STORAGE_KEY = 'aa_layout';
 export const SPLIT_STORAGE_KEY = 'aa_split_sizes';
 
@@ -36,16 +36,12 @@ export function resolveShellMode(width: number): ShellMode {
   return 'desktop';
 }
 
-export function isWorkbenchEnabled(storage?: StorageService): boolean {
-  const store = storage ?? new StorageService();
-  return store.getRaw(WORKBENCH_FLAG_KEY) === '1';
-}
-
 export interface WorkbenchShellOptions {
   readonly root: HTMLElement;
   readonly doc?: Document;
   readonly win?: Window;
   readonly storage?: StorageService;
+  readonly registry?: ContributionRegistry;
   readonly resolveIcon?: (name: string) => string;
   readonly initialWidth?: number;
   readonly initialHeight?: number;
@@ -232,7 +228,100 @@ export class WorkbenchShell implements Disposable {
     this._disposables.add(this._splitView);
     this._disposables.add(this.dock);
 
+    if (options.registry) {
+      this._disposables.add(this.attachRegistry(options.registry));
+    }
+
     this.layout(this._width, this._height);
+  }
+
+  attachRegistry(registry: ContributionRegistry): Disposable {
+    const store = new DisposableStore();
+    const activitySubs = new DisposableStore();
+    const viewSubs = new DisposableStore();
+    const editorSubs = new DisposableStore();
+    const toolSubs = new DisposableStore();
+    const statusSubs = new DisposableStore();
+    store.add(activitySubs);
+    store.add(viewSubs);
+    store.add(editorSubs);
+    store.add(toolSubs);
+    store.add(statusSubs);
+
+    const syncActivities = (): void => {
+      activitySubs.clear();
+      const items = registry.listActivities();
+      for (const item of items) {
+        activitySubs.add(
+          this.activityBar.registerItem({
+            id: item.id,
+            title: item.title,
+            icon: item.icon,
+            view: item.view,
+            badge: item.badge,
+            order: item.order,
+            section: (item.order ?? 0) >= 100 ? 'bottom' : 'top',
+          }),
+        );
+      }
+      this._syncMobileTabs(items);
+    };
+
+    const syncViews = (): void => {
+      viewSubs.clear();
+      for (const view of registry.listViews()) {
+        viewSubs.add(this._registerView(view));
+      }
+    };
+
+    const syncEditors = (): void => {
+      editorSubs.clear();
+      for (const editor of registry.listEditors()) {
+        editorSubs.add(this._registerEditor(editor));
+      }
+    };
+
+    const syncTools = (): void => {
+      toolSubs.clear();
+      for (const tool of registry.listTopicTools()) {
+        toolSubs.add(this._registerTool(tool));
+      }
+    };
+
+    const syncStatusBar = (): void => {
+      statusSubs.clear();
+      for (const item of registry.listStatusBar()) {
+        statusSubs.add(this.statusBar.registerItem(item));
+      }
+    };
+
+    registry.setEditorOpener((kind, input, opts) => {
+      this._openEditor(kind, input, opts);
+    });
+    store.add(
+      toDisposable(() => {
+        registry.setEditorOpener(undefined);
+      }),
+    );
+
+    syncActivities();
+    syncViews();
+    syncEditors();
+    syncTools();
+    syncStatusBar();
+
+    store.add(registry.onDidChangeActivity(syncActivities));
+    store.add(
+      registry.onDidChangeActivityBadges(() => {
+        this.activity.refreshBadges();
+      }),
+    );
+    store.add(registry.onDidChangeViews(syncViews));
+    store.add(registry.onDidChangeEditors(syncEditors));
+    store.add(registry.onDidChangeTopicTools(syncTools));
+    store.add(registry.onDidChangeStatusBar(syncStatusBar));
+
+    return store;
   }
 
   getDock(): DockEngine {
@@ -451,6 +540,24 @@ export class WorkbenchShell implements Disposable {
     return this._stackShell;
   }
 
+  private _syncMobileTabs(
+    activities: readonly { readonly id: string; readonly title: string; readonly icon: string; readonly view: string; readonly badge?: () => number | 'dot' | null }[],
+  ): void {
+    if (!this._stackShell || activities.length === 0) return;
+    const primary = activities.slice(0, 3).map((a) => ({
+      id: a.id,
+      title: a.title,
+      icon: a.icon,
+      view: a.view,
+      badge: a.badge,
+    }));
+    const extra = activities.slice(3);
+    const tabs: StackNavTab[] = extra.length > 0
+      ? [...primary, { id: extra[0]!.id, title: extra[0]!.title, icon: extra[0]!.icon, view: extra[0]!.view, badge: extra[0]!.badge }]
+      : primary;
+    this._stackShell.setTabs(tabs);
+  }
+
   private _maybeAutoCollapseSidebar(): void {
     if (this._mode !== 'desktop') return;
     if (!this.dock.isPartVisible('sidebar')) return;
@@ -611,16 +718,11 @@ export class WorkbenchShell implements Disposable {
   }
 }
 
-export function mountWorkbenchIfEnabled(
+export function mountWorkbench(
   doc: Document = document,
   options: Omit<WorkbenchShellOptions, 'root' | 'doc'> = {},
 ): WorkbenchShell | null {
-  if (!isWorkbenchEnabled(options.storage)) return null;
   const root = doc.getElementById('workbench-root');
   if (!root) return null;
-  doc.documentElement.dataset.workbench = '1';
-  root.hidden = false;
-  const legacyApp = doc.getElementById('app');
-  if (legacyApp) legacyApp.hidden = true;
   return new WorkbenchShell({ ...options, root, doc });
 }
