@@ -46,7 +46,7 @@ describe('webui page: the topic filter bar', () => {
       live: true,
       dir: { name: 'uniagent', path: '/srv/uniagent', host: 'devbox' },
     },
-    { id: C, title: '[cc] release notes', lastAt: 998, msgCount: 0, starred: true },
+    { id: C, title: '[cc] release notes', lastAt: 998, msgCount: 0 },
     { id: P, title: '[cc] split the refactor', lastAt: 997, msgCount: 0, live: true },
     { id: K, title: '[cbc] parser part one', lastAt: 996, msgCount: 0, parent: P, live: true },
     {
@@ -716,7 +716,7 @@ describe('webui page: a full topic list, and the topics worth keeping', () => {
     await opens(h, `api/events?t=${A}`);
   });
 
-  it('stars a topic from its row without opening it, and lists it first', async () => {
+  it('stars a topic from its row without opening it, and moves an offline one to the Starred tab', async () => {
     const h = await open({ url: `http://localhost:8787/?t=${A}` });
     await h.emit(sync(A, [], [A, B, C]));
     expect(h.el('clear-topics').getAttribute('title')).toBe('Clear all topics');
@@ -726,19 +726,20 @@ describe('webui page: a full topic list, and the topics worth keeping', () => {
     await h.click('[data-rmk="star"]');
 
     expect(h.calls.find((c) => c.path === 'api/topics/star')?.body).toEqual({ topic: C, starred: true });
-    // Drawn at once rather than on the broadcast, so a tap on a slow link does not look ignored.
-    expect(order(h)).toEqual([C, A, B]);
-    // The lit star is a marker on the row now, not a button: starring happens in the menu.
-    expect(h.doc.querySelector(`[data-topic="${C}"] .topic-star-mark`)).not.toBeNull();
+    // Offline starred topics move out of Topics into the Starred tab at once.
+    expect(order(h)).toEqual([A, B]);
     expect(h.doc.querySelector(`[data-topic="${A}"] .topic-star-mark`)).toBeNull();
-    expect(h.doc.querySelector(`[data-topic="${C}"] .topic-more`)).not.toBeNull();
-    // A star leads its peers inside its state; it is not a group of its own, so no divider.
-    expect(h.doc.querySelector('#topics .after-needs')).toBeNull();
     // Starring is not a reason to switch to it.
     await opens(h, `api/events?t=${A}`);
     // And the sweep now says it spares what was starred.
     expect(h.el('clear-topics').getAttribute('title')).toBe('Clear unstarred topics');
     expect(h.el('clear-topics').getAttribute('aria-label')).toBe('Clear unstarred topics');
+
+    await h.click('#sb-tab-starred');
+    expect(order(h)).toEqual([C]);
+    expect(h.doc.querySelector(`[data-topic="${C}"] .topic-star-mark`)).not.toBeNull();
+    expect(h.doc.querySelector(`[data-topic="${C}"] .topic-more`)).not.toBeNull();
+    expect(h.doc.querySelector('#topics .after-needs')).toBeNull();
 
     // The daemon's order is still the page's order underneath: when the topic on screen goes, the
     // page lands in the most RECENT one, not in whatever is starred at the top.
@@ -807,12 +808,14 @@ describe('webui page: a full topic list, and the topics worth keeping', () => {
 
     expect(h.confirms.at(-1)).toBe('Delete 1 topic? The 1 starred one is kept. This cannot be undone.');
     await opens(h, 'api/events?t=deadbeef');
-    expect(h.rows()).toBe(2);
+    expect(h.rows()).toBe(1);
     await untilAsync('the cleared topic' + "'s cache is gone", async () => (await h.cached(A)) === null);
     expect(await h.cached(B)).toHaveLength(1);
     expect(JSON.parse(h.window.localStorage.getItem('aa_drafts') ?? 'null')).toEqual({ [B]: 'half-written in B' });
 
-    // And the draft is still THERE, not just on disk.
+    // And the draft is still THERE on the Starred tab, not just on disk.
+    await h.click('#sb-tab-starred');
+    expect(h.rows()).toBe(1);
     await h.click(`[data-topic="${B}"]`);
     expect(field(h).value).toBe('half-written in B');
   });
@@ -840,6 +843,7 @@ describe('webui page: a full topic list, and the topics worth keeping', () => {
       ],
     });
 
+    await h.click('#sb-tab-starred');
     await rowMenu(h, B);
     await h.click('[data-rmk="delete"]');
 
@@ -862,13 +866,18 @@ describe('webui page: a full topic list, and the topics worth keeping', () => {
     expect(btn.getAttribute('aria-label')).toBe('Clear all topics');
   });
 
-  it('puts Topics | History in the panel-title as two tabs, with #clear-topics after them', async () => {
+  it('puts Topics | Starred | History in the panel-title as three tabs, with #clear-topics after them', async () => {
     const h = await open();
     await h.emit(sync(A, [], [A]));
     const headerTitle = h.doc.querySelector('#sidebar-header .panel-title')!;
     const tabs = headerTitle.querySelector('[role="tablist"]')!;
-    expect([...tabs.querySelectorAll('[role="tab"]')].map((t) => t.id)).toEqual(['sb-tab-topics', 'sb-tab-history']);
+    expect([...tabs.querySelectorAll('[role="tab"]')].map((t) => t.id)).toEqual([
+      'sb-tab-topics',
+      'sb-tab-starred',
+      'sb-tab-history',
+    ]);
     expect(h.el('sb-tab-topics').getAttribute('aria-controls')).toBe('topics');
+    expect(h.el('sb-tab-starred').getAttribute('aria-controls')).toBe('topics');
     expect(h.el('sb-tab-history').getAttribute('aria-controls')).toBe('history-pane');
     expect(tabs.nextElementSibling).toBe(h.el('clear-topics'));
     expect(h.el('clear-topics').nextElementSibling).toBe(h.el('read-topics'));
@@ -891,11 +900,49 @@ describe('webui page: a full topic list, and the topics worth keeping', () => {
     expect(h.el('clear-topics').textContent).toBe('');
 
     // Unstar: title/aria-label revert to all topics
+    await h.click('#sb-tab-starred');
     await rowMenu(h, B);
     await h.click('[data-rmk="star"]');
+    await h.click('#sb-tab-topics');
     expect(h.el('clear-topics').getAttribute('title')).toBe('Clear all topics');
     expect(h.el('clear-topics').getAttribute('aria-label')).toBe('Clear all topics');
     expect(h.el('clear-topics').textContent).toBe('');
+  });
+
+  it('splits starred topics into the Starred tab while keeping active and idle starred topics in both tabs', async () => {
+    const D = 'd4e5f6a7';
+    const E = 'e5f6a7b8';
+    const h = await open({ url: `http://localhost:8787/?t=${A}` });
+    await h.emit(sync(A, [], [A]));
+    await h.emit({
+      t: 'topics',
+      topics: [
+        { id: A, title: 'plain offline', lastAt: 1000, msgCount: 0 },
+        { id: B, title: 'starred offline', lastAt: 999, msgCount: 0, starred: true },
+        { id: C, title: 'starred idle', lastAt: 998, msgCount: 0, live: true, starred: true },
+        { id: D, title: 'starred running', lastAt: 997, msgCount: 0, running: true, live: true, starred: true },
+        { id: E, title: 'starred needs', lastAt: 996, msgCount: 0, stage: 'answer', live: true, starred: true },
+      ],
+    });
+
+    // Topics tab: plain + active/idle starred (E, D, C, A); offline starred (B) is moved out.
+    expect(order(h)).toEqual([E, D, C, A]);
+    expect(h.el('sidebar').classList.contains('on-starred')).toBe(false);
+
+    // Starred tab: all starred topics (E, D, C, B), plain (A) excluded.
+    await h.click('#sb-tab-starred');
+    expect(h.el('sb-tab-starred').getAttribute('aria-selected')).toBe('true');
+    expect(h.el('sb-tab-topics').getAttribute('aria-selected')).toBe('false');
+    expect(h.el('sidebar').classList.contains('on-starred')).toBe(true);
+    expect(h.el('topics').getAttribute('aria-labelledby')).toBe('sb-tab-starred');
+    expect(order(h)).toEqual([E, D, C, B]);
+    // Starred filter group is omitted on the Starred tab.
+    expect(h.doc.querySelector('.fb-chip[data-fb-group="starred"]')).toBeNull();
+
+    // Empty state when no topics are starred.
+    await h.emit({ t: 'topics', topics: [{ id: A, title: 'plain only', lastAt: 1000, msgCount: 0 }] });
+    expect(order(h)).toEqual([]);
+    expect(h.doc.querySelector('#topics .topics-empty')?.textContent).toBe('No starred topics');
   });
 
   it('still asks for confirmation before clearing topics from the header button', async () => {
@@ -2148,4 +2195,3 @@ describe('webui page: a machine the gateway cannot reach', () => {
     expect(h.el('machine-note').textContent).toContain(odd);
   });
 });
-

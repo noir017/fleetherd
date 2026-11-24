@@ -7,11 +7,14 @@ import type { WebMessage } from '../../protocol.js';
 import type { WebHistoryRead } from '../../room.js';
 import { t } from '../i18n/index.js';
 
+export type SidebarTab = 'topics' | 'starred' | 'history';
+
 export interface HistoryPanelDeps {
   sidebar: HTMLElement;
   bar: HTMLElement;
   topicsFilterHost: HTMLElement;
   sbTabTopics: HTMLElement;
+  sbTabStarred: HTMLElement;
   sbTabHistory: HTMLElement;
   historyPane: HTMLElement;
   historyCountEl: HTMLElement;
@@ -52,10 +55,12 @@ export interface HistoryPanelDeps {
   icons: () => Record<string, string>;
   copyText: (s: string, done: (ok: boolean) => void) => void;
   onLibStateChange: () => void;
+  onTopicTabChange: () => void;
 }
 
 export interface HistoryPanel {
-  setTab: (tab: 'topics' | 'history') => void;
+  setTab: (tab: SidebarTab) => void;
+  getTab: () => SidebarTab;
   isOpen: () => boolean;
   close: () => void;
   currentRef: () => string | null;
@@ -173,7 +178,7 @@ interface HistoryState {
   next: string | null;
   query: string;
   seq: number;
-  tab: 'topics' | 'history';
+  tab: SidebarTab;
   libId: string | null;
   libSession: HistoryPanelSession | null;
   libData: Record<string, WebMessage>;
@@ -432,21 +437,28 @@ function closeLib(state: HistoryState, deps: HistoryPanelDeps): void {
   deps.reportSeen();
 }
 
-function setHistoryTab(state: HistoryState, deps: HistoryPanelDeps, tab: 'topics' | 'history'): void {
-  const hist = tab === 'history';
+function setHistoryTab(state: HistoryState, deps: HistoryPanelDeps, tab: SidebarTab): void {
+  const next: SidebarTab = tab === 'history' || tab === 'starred' ? tab : 'topics';
+  const hist = next === 'history';
+  const starred = next === 'starred';
   const was = state.tab;
-  state.tab = hist ? 'history' : 'topics';
-  deps.sbTabTopics.classList.toggle('on', !hist);
+  state.tab = next;
+  deps.sbTabTopics.classList.toggle('on', next === 'topics');
+  deps.sbTabStarred.classList.toggle('on', starred);
   deps.sbTabHistory.classList.toggle('on', hist);
-  deps.sbTabTopics.setAttribute('aria-selected', hist ? 'false' : 'true');
+  deps.sbTabTopics.setAttribute('aria-selected', next === 'topics' ? 'true' : 'false');
+  deps.sbTabStarred.setAttribute('aria-selected', starred ? 'true' : 'false');
   deps.sbTabHistory.setAttribute('aria-selected', hist ? 'true' : 'false');
   deps.sidebar.classList.toggle('on-history', hist);
+  deps.sidebar.classList.toggle('on-starred', starred);
   deps.bar.hidden = hist;
   deps.topicsFilterHost.hidden = hist;
   deps.historyPane.hidden = !hist;
   if (!hist) {
+    deps.bar.setAttribute('aria-labelledby', starred ? 'sb-tab-starred' : 'sb-tab-topics');
     state.seq++;
     closeLib(state, deps);
+    if (was !== next) deps.onTopicTabChange();
     return;
   }
   if (was === 'history') return;
@@ -486,6 +498,7 @@ function bindHistoryEvents(state: HistoryState, deps: HistoryPanelDeps): void {
   };
 
   deps.sbTabTopics.addEventListener('click', () => setHistoryTab(state, deps, 'topics'));
+  deps.sbTabStarred.addEventListener('click', () => setHistoryTab(state, deps, 'starred'));
   deps.sbTabHistory.addEventListener('click', () => setHistoryTab(state, deps, 'history'));
   deps.historyGo.addEventListener('click', () => runHistorySearch(state, deps));
   deps.historyMore.addEventListener('click', () => {
@@ -579,6 +592,7 @@ export function createHistoryPanel(deps: HistoryPanelDeps): HistoryPanel {
 
   return {
     setTab: (tab) => setHistoryTab(state, deps, tab),
+    getTab: () => state.tab,
     isOpen: () => isLibOpen(deps),
     close: () => closeLib(state, deps),
     currentRef: () => (state.libSession ? historyRef(state.libSession.title, state.libSession.id) : null),

@@ -60,9 +60,11 @@ export const en = {
   'update.available': 'fleetherd was updated while this page was open.',
 
   // Sidebar & navigation
-  'sidebar.tabsAria': 'Topics and history',
+  'sidebar.tabsAria': 'Topics, starred and history',
   'sidebar.topics': 'Topics',
   'sidebar.topicsTitle': 'Topics on this page',
+  'sidebar.starred': 'Starred',
+  'sidebar.starredTitle': 'Starred topics',
   'sidebar.history': 'History',
   'sidebar.historyTitle': 'Every conversation the gateway recorded',
   'sidebar.clearAllTopics': 'Clear all topics',
@@ -76,6 +78,7 @@ export const en = {
   'sidebar.resizeTitle': 'Drag to resize · double-click for the default width',
   'sidebar.searchTopics': 'Search topics',
   'sidebar.noMatchingTopics': 'No matching topics',
+  'sidebar.noStarredTopics': 'No starred topics',
 
   // Sidebar footer menus
   'menu.menu': 'Menu',

@@ -319,7 +319,7 @@ describe('webui page: the row control that only a pointer can reveal', () => {
       t: 'topics',
       topics: [
         { id: A, title: 'plain', lastAt: 1000, msgCount: 0 },
-        { id: B, title: 'kept', lastAt: 999, msgCount: 0, starred: true },
+        { id: B, title: 'kept', lastAt: 999, msgCount: 0, live: true, starred: true },
       ],
     });
 
@@ -340,6 +340,7 @@ describe('webui page: the row control that only a pointer can reveal', () => {
     // broadcast; the control that did it was the menu's item.
     await rowMenu(h, A);
     await h.click('[data-rmk="star"]');
+    await h.click('#sb-tab-starred');
     expect(h.doc.querySelector(`[data-topic="${A}"]`)?.classList.contains('starred')).toBe(true);
     expect(h.doc.querySelector(`[data-topic="${A}"] .topic-star-mark`)).not.toBeNull();
   });
@@ -435,6 +436,7 @@ describe('webui page: a topic row' + "'s ⋯ menu", () => {
     await h.click('[data-rmk="star"]');
     expect(h.calls.find((c) => c.path === 'api/topics/star')?.body).toEqual({ topic: D, starred: true });
     expect(h.el('row-menu').hidden).toBe(true);
+    await h.click('#sb-tab-starred');
     expect(h.doc.querySelector(`[data-topic="${D}"] .topic-star-mark`)).not.toBeNull();
 
     // The same item reads Unstar while the topic is starred.

@@ -71,7 +71,7 @@ import {
       skillsRefreshBtn=$('skills-refresh'),
       skillsClose=$('skills-close'), skillsBody=$('skills-body'), skillsNote=$('skills-note'),
       skillsListEl=$('skills-list'), skillsDetailEl=$('skills-detail'),
-      sbTabTopics=$('sb-tab-topics'), sbTabHistory=$('sb-tab-history'), topicsFilterHost=$('topics-filter'),
+      sbTabTopics=$('sb-tab-topics'), sbTabStarred=$('sb-tab-starred'), sbTabHistory=$('sb-tab-history'), topicsFilterHost=$('topics-filter'),
       historyPane=$('history-pane'), historyCountEl=$('history-count'),
       historyBody=$('history-body'), historyQ=$('history-q'), historyGo=$('history-go'),
       historyErr=$('history-err'), historyListEl=$('history-list'), historyMore=$('history-more'),
@@ -116,6 +116,7 @@ import {
     bar: bar,
     topicsFilterHost: topicsFilterHost,
     sbTabTopics: sbTabTopics,
+    sbTabStarred: sbTabStarred,
     sbTabHistory: sbTabHistory,
     historyPane: historyPane,
     historyCountEl: historyCountEl,
@@ -158,6 +159,7 @@ import {
     icons: function(){ return IC.icon; },
     copyText: copyText,
     onLibStateChange: syncCopyRef,
+    onTopicTabChange: function(){ paintTopics(); },
   });
   var schedulesPanel = createSchedulesPanel({
     app: app,
@@ -3273,6 +3275,31 @@ import {
     return tree;
   }
 
+  function tabForest(full, tab){
+    var isStarredTab = tab === 'starred';
+    var convs={}, convOrder=[], keepId={}, byId={}, i, m;
+    for(i=0;i<full.convOrder.length;i++){
+      var cid = full.convOrder[i];
+      var c = full.convs[cid];
+      if(isStarredTab ? !c.starred : (c.starred && c.rank >= 3)) continue;
+      convs[cid] = c;
+      convOrder.push(cid);
+      for(m=0;m<c.members.length;m++){
+        keepId[c.members[m].id] = true;
+        byId[c.members[m].id] = c.members[m];
+      }
+    }
+    return {
+      visible: full.visible.filter(function(t){ return Boolean(keepId[t.id]); }),
+      byId: byId,
+      roots: full.roots.filter(function(t){ return Boolean(keepId[t.id]); }),
+      kids: full.kids,
+      forks: full.forks,
+      convs: convs,
+      convOrder: convOrder
+    };
+  }
+
   /**
    * The rows in the order they are painted: what needs a decision first (needsYou, most pressing
    * first), then every root by state — a topic with no title yet (Untitled) ahead of every
@@ -3869,7 +3896,7 @@ import {
    * out — they are not rows in this list. Takes the forest paintTopics already built, so the
    * chips and the rows cannot disagree about what a conversation is.
    */
-  function topicFilterGroups(forest){
+  function topicFilterGroups(forest, tab){
     var stateOpts = [
       {value:'needs', label:tr('filter.needsYou'), short:tr('filter.needsShort'), icon:'bell', count:0},
       {value:'running', label:tr('filter.running'), short:tr('filter.runShort'), icon:'play', count:0},
@@ -3912,9 +3939,9 @@ import {
       hostOpts.push({value:hv, label:hv === '__local' ? tr('filter.local') : hv, icon:'globe', count:hosts[hv]});
     }
     var groups = [
-      {id:'state', label:tr('filter.state'), pinned:true, options:stateOpts},
-      {id:'starred', label:tr('filter.starred'), options:starredOpts}
+      {id:'state', label:tr('filter.state'), pinned:true, options:stateOpts}
     ];
+    if(tab !== 'starred') groups.push({id:'starred', label:tr('filter.starred'), options:starredOpts});
     if(agentOpts.length) groups.push({id:'agent', label:tr('filter.agent'), options:agentOpts});
     groups.push({id:'host', label:tr('filter.host'), options:hostOpts});
     return {groups:groups, total:forest.convOrder.length};
@@ -3974,10 +4001,12 @@ import {
     historyPanel.refreshReadOnly();
     // One tree for the whole paint: the chips and the rows must count and draw the same
     // conversations, and neither the groups nor the rows change the tree itself.
-    var forest = topicForest();
+    var fullForest = topicForest();
+    var sbTab = historyPanel.getTab();
+    var forest = tabForest(fullForest, sbTab);
     // Before the rows, so a selected agent or host that has just disappeared is dropped from the
     // bar's state first and the list below is filtered by what the panel actually shows.
-    var fg = topicFilterGroups(forest);
+    var fg = topicFilterGroups(forest, sbTab);
     if(topicFilter) topicFilter.setGroups(fg.groups);
     var painted=topicRows(forest);
     if(topicFilter) topicFilter.setCounts(painted.matched, painted.total);
@@ -3990,7 +4019,8 @@ import {
       if(readCounts[seed.id]===undefined){ readCounts[seed.id]=seed.msgCount||0; saveReads(); }
       if(seed.id===topic){ cur=seed; readCounts[seed.id]=seed.msgCount||0; saveReads(); }
     }
-    var stars=painted.stars;
+    var stars=0;
+    for(i=0;i<fullForest.visible.length;i++) if(fullForest.visible[i].starred) stars++;
     for(i=0;i<painted.rows.length;i++){
       var t=painted.rows[i].t;
       // What the Needs-you block used to say on a second line, now on hover: the row keeps its shape.
@@ -4011,6 +4041,8 @@ import {
     if(!h && painted.filtering){
       bar.innerHTML='<div class="topics-empty"><span>'+text(tr('sidebar.noMatchingTopics'))+'</span>'
         + '<button type="button" class="fb-clear" data-filter-clear="1">'+text(tr('common.clear'))+'</button></div>';
+    } else if(!h && sbTab === 'starred'){
+      bar.innerHTML='<div class="topics-empty"><span>'+text(tr('sidebar.noStarredTopics'))+'</span></div>';
     }
     // The rows above replaced every age element, so the timer is re-armed against the new ones
     // (and stopped when none is left).
@@ -4021,7 +4053,7 @@ import {
     // Greyed while there is nothing in the list to mark, as the Sessions tab's is. The whole list,
     // not the filtered rows, like Clear: a search narrows what is shown, not what is unread.
     var toRead=0;
-    for(i=0;i<forest.visible.length;i++) if(needsRead(forest.visible[i])) toRead++;
+    for(i=0;i<fullForest.visible.length;i++) if(needsRead(fullForest.visible[i])) toRead++;
     readBtn.disabled = !toRead;
     readBtn.title = toRead ? tr(toRead===1?'sidebar.markAllReadTopics':'sidebar.markAllReadTopicsPlural', { count: toRead }) : tr('sidebar.markAllReadNone');
     // Says what it will do: with stars in the list it no longer clears all of them.

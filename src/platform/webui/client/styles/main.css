@@ -801,7 +801,8 @@ select.skill-field{appearance:auto}
 .sb-tab.on{color:var(--fg);box-shadow:inset 0 -2px 0 var(--accent)}
 .sb-tab .ic{display:none;width:15px;height:15px}
 #sidebar-header{container-type:inline-size}
-@container (max-width:210px){ .sb-tab .ic{display:block} .sb-word{display:none} .sb-tab{padding:0 9px} .sb-tab:first-child{margin-left:-9px} }
+@container (max-width:255px){ .sb-tab .ic{display:block} .sb-word{display:none} .sb-tab{padding:0 7px} .sb-tab:first-child{margin-left:-7px} }
+#sidebar.on-starred #clear-topics{display:none}
 #sidebar.on-history #clear-topics{display:none}
 #sidebar.on-history #read-topics{display:none}
 #history-pane{flex:1;min-height:0;display:flex;flex-direction:column}

@@ -62,9 +62,11 @@ export const zhCN = {
   'update.available': 'fleetherd 在此页面打开期间已更新。',
 
   // Sidebar & navigation
-  'sidebar.tabsAria': '话题与历史',
+  'sidebar.tabsAria': '话题、收藏与历史',
   'sidebar.topics': '话题',
   'sidebar.topicsTitle': '当前页面的话题',
+  'sidebar.starred': '收藏',
+  'sidebar.starredTitle': '已收藏的话题',
   'sidebar.history': '历史',
   'sidebar.historyTitle': '网关记录的所有对话',
   'sidebar.clearAllTopics': '清空所有话题',
@@ -78,6 +80,7 @@ export const zhCN = {
   'sidebar.resizeTitle': '拖动调整宽度 · 双击恢复默认宽度',
   'sidebar.searchTopics': '搜索话题',
   'sidebar.noMatchingTopics': '没有匹配的话题',
+  'sidebar.noStarredTopics': '暂无收藏话题',
 
   // Sidebar footer menus
   'menu.menu': '菜单',

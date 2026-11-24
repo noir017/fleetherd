@@ -1062,7 +1062,7 @@ describe('webui page: the History tab', () => {
     await h.emit(sync(A, [], [A]));
     const title = h.doc.querySelector('#sidebar-header .panel-title')!;
     const tabs = [...title.querySelectorAll('[role="tab"]')].map((t) => t.textContent);
-    expect(tabs).toEqual(['Topics', 'History']);
+    expect(tabs).toEqual(['Topics', 'Starred', 'History']);
     expect(h.el('sb-tab-topics').getAttribute('aria-selected')).toBe('true');
     expect(h.el('history-pane').hidden).toBe(true);
     // The page never asks the library for anything until the tab is chosen.

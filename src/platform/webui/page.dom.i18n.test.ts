@@ -23,6 +23,7 @@ describe('webui page: i18n switching', () => {
     expect(h.doc.documentElement.lang).toBe('en');
     expect(h.el('lang-state').textContent).toBe('English');
     expect(h.el('sb-tab-topics').textContent).toBe(en['sidebar.topics']);
+    expect(h.el('sb-tab-starred').textContent).toBe(en['sidebar.starred']);
     expect(h.el('sb-tab-history').textContent).toBe(en['sidebar.history']);
     expect((h.el('input') as HTMLTextAreaElement).placeholder).toBe(en['composer.placeholder']);
     expect(h.el('new-topic').getAttribute('title')).toBe(en['sidebar.newTopic']);
@@ -37,6 +38,7 @@ describe('webui page: i18n switching', () => {
     expect(h.doc.defaultView?.localStorage.getItem(STORAGE_KEY)).toBe('zh-CN');
     expect(h.el('lang-state').textContent).toBe('简体中文');
     expect(h.el('sb-tab-topics').textContent).toBe(zhCN['sidebar.topics']);
+    expect(h.el('sb-tab-starred').textContent).toBe(zhCN['sidebar.starred']);
     expect(h.el('sb-tab-history').textContent).toBe(zhCN['sidebar.history']);
     expect((h.el('input') as HTMLTextAreaElement).placeholder).toBe(zhCN['composer.placeholder']);
     expect(h.el('new-topic').getAttribute('title')).toBe(zhCN['sidebar.newTopic']);

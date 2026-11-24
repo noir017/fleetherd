@@ -1247,7 +1247,7 @@ describe('webui page: what needs you, and sub-agent topics', () => {
   it('nests a sub-agent’s topic under the one that opened it, folded a level at a time', async () => {
     const h = await open({ url: `http://localhost:8787/?t=${A}` });
     await h.emit(sync(A, [], [A]));
-    await h.emit({ t: 'topics', topics: list({ [B]: { parent: D }, [C]: { parent: B }, [D]: { starred: true } }) });
+    await h.emit({ t: 'topics', topics: list({ [B]: { parent: D }, [C]: { parent: B }, [D]: { starred: true, live: true } }) });
     // Folded on first sight: the column lists conversations, not the working detail behind one.
     expect(rows(h)).toEqual([D, A]);
     expect(face(h.doc.querySelector(`#topics [data-fold="${D}"]`))).toBe('[chevronRight] 1');

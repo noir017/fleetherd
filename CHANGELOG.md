@@ -5,6 +5,14 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **Web UI Starred tab (`Topics | Starred | History`).** Added a dedicated **Starred** tab to the
+  sidebar header so offline starred topics move out of the main **Topics** list into **Starred**,
+  keeping the main switcher focused on current work while preserving quick access to saved
+  conversations. Starred conversations that are active (needs attention or running) or have a
+  resident idle agent continue to appear in both **Topics** and **Starred**.
+
 ## [3.37.3] - 2026-11-23
 
 ### Fixed
