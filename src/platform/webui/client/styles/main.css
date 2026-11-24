@@ -23,3 +23,22 @@
 @import './responsive.css';
 @import './workbench.css';
 @import './workbench-theme.css';
+@import './palette.css';
+
+.wb-lazy-host {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+}
+.wb-lazy-host[hidden] {
+  display: none;
+}
+.wb-lazy-host > * {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}

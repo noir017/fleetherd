@@ -243,7 +243,7 @@ describe('PluginManager', () => {
 });
 
 describe('builtin plugins manifest', () => {
-  it('defines all 12 built-in plugin IDs and supports partial factory overrides', async () => {
+  it('defines all 13 built-in plugin IDs and supports partial factory overrides', async () => {
     expect(BUILTIN_PLUGIN_IDS).toEqual([
       'topics',
       'topic',
@@ -257,6 +257,7 @@ describe('builtin plugins manifest', () => {
       'terminal',
       'reader',
       'status',
+      'palette',
     ]);
     expect(isBuiltinPluginId('topics')).toBe(true);
     expect(isBuiltinPluginId('custom-ext')).toBe(false);

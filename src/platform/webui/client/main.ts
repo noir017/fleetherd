@@ -450,7 +450,7 @@ function buildTopicPluginDeps(rt: AppRuntime): Pick<BuiltinPluginsDeps, 'topics'
 }
 
 function buildBuiltinDeps(rt: AppRuntime): BuiltinPluginsDeps {
-  const { boot, icons, overlays, registry, shell, storage, state, codeView, api } = rt;
+  const { boot, icons, overlays, commands, keybindings, registry, shell, storage, state, codeView, api } = rt;
   return {
     ...buildTopicPluginDeps(rt),
     history: {
@@ -550,6 +550,11 @@ function buildBuiltinDeps(rt: AppRuntime): BuiltinPluginsDeps {
       onRefreshStatusBar: (id) => shell.statusBarApi.refresh(id),
       emitEvent: (key, payload) => rt.events.emit(key, payload),
       postFn: post,
+    },
+    palette: {
+      commands,
+      keybindings,
+      overlays,
     },
   };
 }

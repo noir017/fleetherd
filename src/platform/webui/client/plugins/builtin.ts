@@ -1,18 +1,31 @@
 import { combineDisposables, type Disposable } from '../base/lifecycle.js';
-import { createChangesPlugin, type ChangesPluginDeps } from '../features/changes/index.js';
-import { createFilesPlugin, type FilesPluginDeps } from '../features/files/index.js';
-import { createHistoryPlugin, type HistoryPluginDeps } from '../features/history/index.js';
+import type { ChangesPluginDeps } from '../features/changes/types.js';
+import type { FilesPluginDeps } from '../features/files/types.js';
+import type { HistoryPluginDeps } from '../features/history/helpers.js';
+import type { PalettePluginDeps } from '../features/palette/types.js';
 import { createReaderPlugin, type ReaderPluginDeps } from '../features/reader/plugin.js';
-import { createReviewsPlugin, type ReviewsPluginDeps } from '../features/reviews/index.js';
-import { createSchedulesPlugin, type SchedulesPluginDeps } from '../features/schedules/index.js';
-import { createSettingsPlugin, type SettingsPluginDeps } from '../features/settings/plugin.js';
-import { createSkillsPlugin, type SkillsPluginDeps } from '../features/skills/index.js';
+import type { ReviewsPluginDeps } from '../features/reviews/types.js';
+import type { SchedulesPluginDeps } from '../features/schedules/types.js';
+import type { SettingsPluginDeps } from '../features/settings/workbench-types.js';
+import type { SkillsPluginDeps } from '../features/skills/types.js';
 import { createStatusPlugin, type StatusPluginDeps } from '../features/status/index.js';
 import { createTerminalPlugin, type TerminalPluginDeps } from '../features/terminal/plugin.js';
 import { createTopicPlugin, type TopicPluginDeps } from '../features/topic/plugin.js';
 import { createTopicsPlugin, type TopicsPluginDeps } from '../features/topics/plugin.js';
 import { definePlugin, type WebuiPlugin } from './api.js';
 import type { PluginManager } from './host.js';
+import {
+  createExtrasLoader,
+  createLazyChangesPlugin,
+  createLazyFilesPlugin,
+  createLazyHistoryPlugin,
+  createLazyPalettePlugin,
+  createLazyReviewsPlugin,
+  createLazySchedulesPlugin,
+  createLazySettingsPlugin,
+  createLazySkillsPlugin,
+  type ExtrasLoader,
+} from './lazy-extras.js';
 
 export const BUILTIN_PLUGIN_IDS = [
   'topics',
@@ -27,6 +40,7 @@ export const BUILTIN_PLUGIN_IDS = [
   'terminal',
   'reader',
   'status',
+  'palette',
 ] as const;
 
 export type BuiltinPluginId = (typeof BUILTIN_PLUGIN_IDS)[number];
@@ -52,24 +66,28 @@ export interface BuiltinPluginsDeps {
   readonly terminal?: TerminalPluginDeps;
   readonly reader?: ReaderPluginDeps;
   readonly status?: StatusPluginDeps;
+  readonly palette?: PalettePluginDeps;
+  readonly extrasLoader?: ExtrasLoader;
 }
 
 export function createDefaultBuiltinPluginFactories(
   deps: BuiltinPluginsDeps,
 ): Required<BuiltinPluginFactories> {
+  const loader = deps.extrasLoader ?? createExtrasLoader();
   return {
     topics: () => createTopicsPlugin(deps.topics),
     topic: () => createTopicPlugin(deps.topic),
-    history: () => createHistoryPlugin(deps.history),
-    schedules: () => createSchedulesPlugin(deps.schedules),
-    reviews: () => createReviewsPlugin(deps.reviews),
-    skills: () => createSkillsPlugin(deps.skills),
-    settings: () => createSettingsPlugin(deps.settings),
-    changes: () => createChangesPlugin(deps.changes),
-    files: () => createFilesPlugin(deps.files),
+    history: () => createLazyHistoryPlugin(loader, deps.history),
+    schedules: () => createLazySchedulesPlugin(loader, deps.schedules),
+    reviews: () => createLazyReviewsPlugin(loader, deps.reviews),
+    skills: () => createLazySkillsPlugin(loader, deps.skills),
+    settings: () => createLazySettingsPlugin(loader, deps.settings),
+    changes: () => createLazyChangesPlugin(loader, deps.changes),
+    files: () => createLazyFilesPlugin(loader, deps.files),
     terminal: () => createTerminalPlugin(deps.terminal),
     reader: () => createReaderPlugin(deps.reader),
     status: () => createStatusPlugin(deps.status),
+    palette: () => createLazyPalettePlugin(loader, deps.palette),
   };
 }
 
