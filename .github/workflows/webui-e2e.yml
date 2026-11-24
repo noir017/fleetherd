@@ -1,0 +1,44 @@
+name: Web UI E2E
+
+on:
+  push:
+    paths:
+      - 'src/platform/webui/**'
+      - 'test/e2e/webui/**'
+      - '.github/workflows/webui-e2e.yml'
+      - 'scripts/webui-client.mjs'
+      - 'scripts/build-webui-assets.mjs'
+  pull_request:
+    paths:
+      - 'src/platform/webui/**'
+      - 'test/e2e/webui/**'
+      - '.github/workflows/webui-e2e.yml'
+      - 'scripts/webui-client.mjs'
+      - 'scripts/build-webui-assets.mjs'
+  workflow_dispatch:
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Build web UI assets
+        run: npm run build:assets
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Run Web UI e2e tests
+        run: npm run test:e2e
+      - name: Upload e2e artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: webui-e2e-artifacts
+          path: |
+            test-results/webui-e2e/
+            playwright-report/webui-e2e/
+          if-no-files-found: ignore

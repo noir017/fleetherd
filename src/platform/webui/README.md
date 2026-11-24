@@ -2632,6 +2632,32 @@ real server behind a proxy that played the four failures (an Access 302 to anoth
 swallowed, an answer lost, the browser offline); the same run against the code before it lost the
 draft and put the restored failure at the top.
 
+### Real-browser E2E (`test/e2e/webui/`)
+
+Layout, responsive breakpoints, drawers, and real SSE/login flows are covered by Playwright tests
+under `test/e2e/webui/` (`smoke.spec.ts` plus reusable `harness.ts`, `fake-agent.mjs`, `seed.ts`,
+and `fixtures.ts`). Each test run starts an isolated gateway in a temporary `HOME` on a random
+loopback port with `FLEETHERD_*` and `TALKCODE_*` stripped from the child environment, backed by a
+fake ACP stdio agent.
+
+Build the web UI assets first, then run the suite:
+
+```bash
+npm run build:assets
+npx playwright install chromium   # once, if using local Chromium
+npm run test:e2e
+```
+
+To run against a remote Chromium instance over CDP instead of launching a local browser, set
+`PW_CDP_URL` (and optionally `PW_CDP_HEADERS` as `Key: Value` lines or a JSON object):
+
+```bash
+PW_CDP_URL=http://127.0.0.1:9222 npm run test:e2e
+```
+
+Failure screenshots, traces, and videos (local/CI) are written under `test-results/webui-e2e/`.
+In GitHub Actions, `.github/workflows/webui-e2e.yml` runs independently from `release.yml`.
+
 ## Icons
 
 Nothing on this page is an emoji or a symbol glyph any more: every mark the page draws itself is a
