@@ -212,7 +212,7 @@ describe('features/changes plugin', () => {
     expect(openEditor).toHaveBeenCalledWith(
       'diff',
       expect.objectContaining({ topicId: 'topic-alpha', path: 'src/app.ts', ref: 'working', mode: 'working' }),
-      undefined,
+      expect.objectContaining({ id: 'diff:topic-alpha:working:src%2Fapp.ts' }),
     );
 
     // Click file row to preview inline diff, select lines, and submit comment directly to composer

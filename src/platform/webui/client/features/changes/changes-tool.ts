@@ -24,8 +24,10 @@ import {
   isFilesEnabled,
   isNoRepoError,
   joinRepoPath,
+  openDiffEditor,
   resolveChangesApi,
 } from './diff-helpers.js';
+import type { CommentDraftStore } from './comment-queue.js';
 import { createDiffViewer, type DiffViewerController } from './diff-view.js';
 import type {
   ChangesMode,
@@ -159,9 +161,11 @@ function renderFileRow(ct: ChangesToolCtx, file: GitStatusFile, allowEdit: boole
       class="fh-changes-file-main"
       @click=${() => {
         if (!state.topicId) return;
+        const diffInput = buildDiffInput(state, file.path);
         state.selectedPath = file.path;
         paintList(ct);
-        void ct.viewer.load(buildDiffInput(state, file.path));
+        openDiffEditor(ctx, diffInput);
+        void ct.viewer.load(diffInput);
       }}
     >
       <span class="fh-changes-badge" style=${`color:${colorVar}`}>${gitStatusLetter(file.status)}</span>
@@ -177,7 +181,7 @@ function renderFileRow(ct: ChangesToolCtx, file: GitStatusFile, allowEdit: boole
         aria-label=${ctx.i18n.t('changes.openInEditor')}
         @click=${(ev: MouseEvent) => {
           ev.stopPropagation();
-          if (state.topicId) ctx.editors.open('diff', buildDiffInput(state, file.path));
+          if (state.topicId) openDiffEditor(ctx, buildDiffInput(state, file.path));
         }}
       >${renderIcon(icon('diff'), 'fh-icon')}</button>
       ${allowEdit && isFilesEnabled(deps)
@@ -565,6 +569,7 @@ function bindTopic(ct: ChangesToolCtx, topic: TopicInfo | undefined): void {
 export function createChangesToolPanel(
   ctx: PluginContext,
   deps: ChangesPluginDeps,
+  commentQueue?: CommentDraftStore,
 ): FeaturePanelComponent {
   const doc = deps.doc ?? document;
   const store = new DisposableStore();
@@ -588,6 +593,7 @@ export function createChangesToolPanel(
       codeView: deps.codeView ?? (async () => null),
       initialLayout: 'unified',
       doc,
+      commentQueue,
     }),
   );
   previewHost.appendChild(viewer.el);

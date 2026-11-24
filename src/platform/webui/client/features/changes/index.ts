@@ -5,5 +5,19 @@ export {
   createChangesPlugin,
   isChangesAvailable,
 } from './plugin.js';
-export { buildDiffCommentBlock, diffEditorTitle, gitStatusColorVar } from './diff-helpers.js';
+export {
+  buildDiffCommentBlock,
+  diffEditorPanelId,
+  diffEditorTitle,
+  gitStatusColorVar,
+  openDiffEditor,
+} from './diff-helpers.js';
+export { CommentDraftStore, formatMergedDiffComments, type StagedDiffComment } from './comment-queue.js';
+export {
+  computeTextHunks,
+  extractPatchHunks,
+  resolveNextHunkIndex,
+  type DiffHunk,
+  type HunkNavState,
+} from './hunk-nav.js';
 export type { ChangesMode, ChangesPluginDeps, DiffEditorInput } from './types.js';

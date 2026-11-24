@@ -1,4 +1,5 @@
 import type { GitMode, GitStatusFile } from '../../../../adapter.js';
+import type { OpenEditorOptions, PluginContext } from '../../plugins/api.js';
 import { createApiClient, type ApiClient } from '../../services/api.js';
 import type {
   ChangesMode,
@@ -7,6 +8,10 @@ import type {
   DiffEditorInput,
   GitErrorPayload,
 } from './types.js';
+
+interface DiffOpenEditorOptions extends OpenEditorOptions {
+  readonly id?: string;
+}
 
 export interface PatchLine {
   readonly text: string;
@@ -127,6 +132,29 @@ export function diffEditorTitle(input: unknown, fallbackTitle: string): string {
   const base = pathBasename(input.path) || input.path;
   const refLabel = input.commitShort || (input.sha ? input.sha.slice(0, 7) : input.ref);
   return refLabel ? `${base} (${refLabel})` : `${base} (diff)`;
+}
+
+export function diffEditorPanelId(input: DiffEditorInput): string {
+  let scope = 'working';
+  if (input.source?.fileUrl) {
+    scope = `source:${input.source.fileUrl}`;
+  } else if (input.sha) {
+    scope = `sha:${input.sha}`;
+  } else if (input.mode === 'branch' || input.mode === 'committed') {
+    scope = `${input.mode}:${input.base ?? ''}`;
+  } else if (input.ref && !isGitMode(input.ref)) {
+    scope = `ref:${input.ref}`;
+  }
+  return `diff:${encodeURIComponent(input.topicId)}:${encodeURIComponent(scope)}:${encodeURIComponent(input.path)}`;
+}
+
+export function openDiffEditor(ctx: PluginContext, input: unknown, opts?: OpenEditorOptions): void {
+  if (isDiffEditorInput(input)) {
+    const openOpts: DiffOpenEditorOptions = { ...opts, id: diffEditorPanelId(input) };
+    ctx.editors.open('diff', input, openOpts);
+    return;
+  }
+  ctx.editors.open('diff', input, opts);
 }
 
 export function isDiffEditorInput(value: unknown): value is DiffEditorInput {
