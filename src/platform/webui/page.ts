@@ -59,6 +59,8 @@ export interface PageAssets {
   style: string | null;
   /** The code view's entry module, imported on demand by the script's `codeView()`. */
   codeview: string | null;
+  /** On-demand workbench extras ESM chunk (secondary plugins + command palette). */
+  extras?: string | null;
 }
 
 /** A daemon whose assets were never built (a source checkout without `npm run build:assets`). */
@@ -117,6 +119,7 @@ export function servePage(
     instructions,
     password,
     codeview: assets.codeview,
+    ...(assets.extras !== undefined ? { extras: assets.extras } : {}),
     instance,
     build: '__BUILD__',
     plugins,

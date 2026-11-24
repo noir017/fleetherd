@@ -78,7 +78,7 @@ const client = await buildClient({ outdir: out });
 
 fs.writeFileSync(
   path.join(out, 'manifest.json'),
-  `${JSON.stringify({ app: client.app.file, boot: client.boot.file, style: client.style.file, codeview: entryName }, null, 2)}\n`,
+  `${JSON.stringify({ app: client.app.file, boot: client.boot.file, style: client.style.file, codeview: entryName, extras: client.extras.file }, null, 2)}\n`,
   'utf8'
 );
 
@@ -113,6 +113,7 @@ const files = [
   path.join(out, client.app.file),
   path.join(out, client.boot.file),
   path.join(out, client.style.file),
+  path.join(out, client.extras.file),
 ];
 for (const file of files) {
   const bytes = fs.readFileSync(file);
@@ -125,7 +126,7 @@ for (const file of files) {
   }
 }
 console.log(
-  `build-webui-assets: ${files.length} files, ${kib(raw)} (gzip ${kib(packed)}); the page loads ${client.boot.file}, ${client.app.file} and ${client.style.file}, and ${entryName} only when it shows code`
+  `build-webui-assets: ${files.length} files, ${kib(raw)} (gzip ${kib(packed)}); the page loads ${client.boot.file}, ${client.app.file} and ${client.style.file}, ${client.extras.file} on demand, and ${entryName} only when it shows code`
 );
 console.log(`build-webui-assets: ${licenses.length} third-party licences in licenses.txt (${kib(fs.statSync(licensesFile).size)})`);
 

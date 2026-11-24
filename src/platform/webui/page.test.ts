@@ -136,6 +136,15 @@ describe('webui page', () => {
     expect(bootOf(built).codeview).toBe('assets/codeview-abc123.js');
   });
 
+  it('carries the optional extras chunk URL in boot-config when provided and escapes it safely', () => {
+    const withExtras = serveShell('Chat', false, true, false, {
+      ...testAssets(),
+      extras: 'assets/workbench-extras-abc123.js',
+    }).html;
+    expect(bootOf(withExtras).extras).toBe('assets/workbench-extras-abc123.js');
+    expect(withExtras).not.toContain('<script src="assets/workbench-extras-abc123.js">');
+  });
+
   it('says it was not built, instead of serving a login form that does nothing', () => {
     // A source checkout without `npm run build:assets`: no script, so nothing on the page works.
     const bare = serveShell('Chat', false, true, false, NO_ASSETS).html;
@@ -224,8 +233,9 @@ describe('webui page', () => {
     // Schedules is a built-in workbench plugin contributing a sidebar view, activity item, and task editor.
     expect(SCHEDULES_PLUGIN_SOURCE).toContain("id: 'schedules'");
     expect(SCHEDULES_PLUGIN_SOURCE).toContain("kind: 'schedule'");
-    expect(CLIENT.app.text).toContain('api/schedules');
-    expect(CLIENT.app.text).toContain('api/schedules/op');
+    expect(CLIENT.extras.file).toMatch(/^workbench-extras-[A-Za-z0-9_-]+\.js$/);
+    expect(CLIENT.extras.text).toContain('api/schedules');
+    expect(CLIENT.extras.text).toContain('api/schedules/op');
     expect(SHELL_SOURCE).toContain('aa_split_sizes');
   });
 
