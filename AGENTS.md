@@ -508,6 +508,31 @@ Do not weaken these without saying so explicitly in the PR:
    writes, sends into a running turn, or starts anything without the card; do not let it share a
    credential or a port with the web UI.
 
+12. **Web UI plugins run as the gateway's own code with no sandbox, and are off by default.**
+    `platforms.<id>.plugins` is the sixth security decision in `WebuiConfigSchema` (default empty,
+    `docs/webui-plugins.md`). What holds it:
+    - **No sandbox.** Server plugin modules (`plugins/host.ts`) execute in-process inside the
+      gateway daemon with its full OS and runtime privileges; client plugin modules
+      (`client/plugins/loader.ts`) execute same-origin in the browser with the signed-in session.
+    - **Only `config.yaml` can install or enable plugins.** No HTTP route, reverse command, MCP
+      tool, skill, or web UI control may install, enable, or write plugin code.
+    - **Forbidden directories are rejected at load.** Any plugin directory inside `files.roots` or
+      inside any configured agent working directory is refused (`plugins/loader.ts`
+      `assertSafePluginDir`, checking both resolved paths and `realpath` against symlink escapes).
+      This is best-effort: a local agent running as the same OS user as the gateway still falls
+      under invariant 1's boundary.
+    - **Plugin messages are always visible and attributed.** Text sent into a topic via
+      `PluginHost.topics.send` is prefixed visibly with `[plugin:<id>]` in the conversation
+      transcript; plugins cannot inject hidden text into an agent's prompt (enforcing "Nothing of
+      the gateway's in the agent's prompt").
+    - **`doctor` lists every configured plugin** (`commands/doctor.ts` `inspectWebuiPlugins`) and
+      warns explicitly that plugins execute with full gateway/session privileges and no sandbox.
+    Plugin static files (`GET /plugins/<id>/<file>`) and API routes (`GET`/`POST /api/plugins/<id>/`)
+    sit behind the `GUARDED` session/SSO gate and same-origin POST check; static files serve only
+    manifest-whitelisted entries with `realpath` containment re-checks, and `/api/plugins/` is
+    matched last so plugins can never shadow built-in routes. Do not add an in-UI installer, relax
+    the directory/manifest allowlist checks, or strip the `[plugin:<id>]` prefix.
+
 ## Adding things
 
 - **A platform** → `platform/config-schemas.ts` (schema) + `platform/profiles/<name>.ts`

@@ -11,6 +11,7 @@ import { createCodeViewLoader } from './features/reader/index.js';
 import { READER_OPEN_COMMAND, READER_OPEN_IMAGE_COMMAND } from './features/reader/plugin.js';
 import { inlineCodeHtml as inl } from './features/settings/render.js';
 import type { SettingsPluginBridge } from './features/settings/plugin.js';
+import type { StatusPluginError } from './features/status/types.js';
 import { TERMINAL_TOGGLE_COMMAND } from './features/terminal/plugin.js';
 import type { LocalBubbleMessage } from './features/topic/composer/index.js';
 import type { ComposerTopicStatusBridge } from './features/topic/composer/types.js';
@@ -26,6 +27,7 @@ import {
   type BuiltinPluginsDeps,
 } from './plugins/builtin.js';
 import { PluginManager } from './plugins/host.js';
+import { ExternalPluginLoader, type PluginLoadFailure } from './plugins/loader.js';
 import { ContributionRegistry, WebuiEventBus } from './plugins/registry.js';
 import { createApiClient, post, type ApiClient } from './services/api.js';
 import { readBootConfig, type BootConfig } from './services/boot.js';
@@ -87,6 +89,8 @@ interface AppRuntime {
   readonly cacheCore: CacheCoreBundle;
   readonly codeView: ReturnType<typeof createCodeViewLoader>;
   readonly updateEmitter: Emitter<boolean>;
+  readonly externalPluginErrors: StatusPluginError[];
+  readonly externalPluginErrorEmitter: Emitter<StatusPluginError>;
   readonly state: AppState;
   readonly gate: HTMLElement | null;
   readonly gateForm: HTMLFormElement | null;
@@ -96,6 +100,8 @@ interface AppRuntime {
   streamClient: StreamClient;
   cacheService: CacheService;
   readsService: ReadsService;
+  externalPluginsStarted: boolean;
+  externalPluginLoader?: ExternalPluginLoader;
 }
 
 function loadCacheCore(): CacheCoreBundle {
@@ -525,8 +531,17 @@ function buildBuiltinDeps(rt: AppRuntime): BuiltinPluginsDeps {
       overlays,
       appElement: rt.workbenchRoot,
       version: boot.build ? boot.build.slice(0, 7) : '',
-      getPluginErrors: () => rt.pluginManager.getErrors(),
-      onPluginError: (cb) => rt.pluginManager.onDidError(cb),
+      getPluginErrors: () => [...rt.pluginManager.getErrors(), ...rt.externalPluginErrors],
+      onPluginError: (cb) => {
+        const sub1 = rt.pluginManager.onDidError(cb);
+        const sub2 = rt.externalPluginErrorEmitter.event(cb);
+        return {
+          dispose: () => {
+            sub1.dispose();
+            sub2.dispose();
+          },
+        };
+      },
       onUpdateAvailable: (cb) => rt.updateEmitter.event(cb),
       onBeforeReload: () => {
         if (state.topic) state.activeEditor?.composer?.stashDraft(state.topic);
@@ -725,6 +740,10 @@ function handleResumedEvent(rt: AppRuntime): void {
 
 function handleStreamEvent(rt: AppRuntime, raw: StreamEventPayload): void {
   const ev = raw as unknown as WebEvent;
+  if (typeof ev.t === 'string' && ev.t.startsWith('plugin:')) {
+    rt.events.emit(ev.t as `plugin:${string}:${string}`, (ev as { readonly data?: unknown }).data);
+    return;
+  }
   const editor = rt.state.activeEditor;
   const trCtrl = editor ? editor.transcript : null;
   const stCtrl = editor ? editor.status : null;
@@ -767,6 +786,7 @@ function wireStreamAndCache(rt: AppRuntime): void {
       rt.workbenchRoot.hidden = false;
       if (state.activeEditor) state.activeEditor.els.noteEl.textContent = '';
       rt.events.emit('stream.state', { state: 'open' });
+      startExternalPlugins(rt);
       if (fresh && rt.shell.getMode() === 'desktop') {
         state.activeEditor?.focus?.();
       }
@@ -898,6 +918,34 @@ function wireLoginGate(rt: AppRuntime): void {
   });
 }
 
+function startExternalPlugins(rt: AppRuntime): void {
+  if (rt.externalPluginsStarted || rt.boot.plugins.length === 0) return;
+  rt.externalPluginsStarted = true;
+  const basePath = new URL('.', location.href).pathname;
+  const loader = new ExternalPluginLoader({
+    manager: rt.pluginManager,
+    doc: document,
+    basePath,
+    onError: (failure: PluginLoadFailure) => {
+      console.warn(`[webui:plugin:${failure.pluginId}] failed during ${failure.phase}: ${failure.message}`);
+      // Activation errors are already recorded by PluginManager.onDidError.
+      if (failure.phase === 'activate') return;
+      const record: StatusPluginError = {
+        pluginId: failure.pluginId,
+        phase: failure.phase,
+        message: failure.message,
+        timestamp: failure.timestamp,
+      };
+      rt.externalPluginErrors.push(record);
+      rt.externalPluginErrorEmitter.fire(record);
+    },
+  });
+  rt.externalPluginLoader = loader;
+  void loader.load(rt.boot.plugins).catch((err: unknown) => {
+    console.warn('[webui] external plugin loader failed:', err);
+  });
+}
+
 function bootstrap(): void {
   initLocale();
   applyDomI18n(document);
@@ -959,13 +1007,16 @@ function bootstrap(): void {
     cacheCore,
     codeView,
     updateEmitter: new Emitter<boolean>(),
+    externalPluginErrors: [] as StatusPluginError[],
+    externalPluginErrorEmitter: new Emitter<StatusPluginError>(),
+    externalPluginsStarted: false,
     state,
     gate: document.getElementById('login'),
     gateForm: document.getElementById('gate') as HTMLFormElement | null,
     secretInput: document.getElementById('secret') as HTMLInputElement | null,
     errEl: document.getElementById('err'),
     workbenchRoot,
-  } as AppRuntime;
+  } as unknown as AppRuntime;
 
   wireStreamAndCache(rt);
 
