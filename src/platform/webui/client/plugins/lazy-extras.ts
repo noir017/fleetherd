@@ -586,9 +586,21 @@ export function createLazyPalettePlugin(loader: ExtrasLoader, deps?: PalettePlug
     id: 'palette',
     loadPlugin: async () => (await loader())?.createPalettePlugin(realDeps) ?? null,
     commands: [
-      { id: 'palette.quickOpenTopic', title: 'Palette: Go to Topic...', keybinding: 'Mod+K' },
-      { id: 'palette.commands', title: 'Palette: Show All Commands', keybinding: 'Mod+Shift+P' },
-      { id: 'palette.keybindings', title: 'Palette: Keyboard Shortcuts', keybinding: 'Mod+/' },
+      {
+        id: 'palette.quickOpenTopic',
+        title: getLocale() === 'zh-CN' ? '命令面板：跳转到话题…' : 'Palette: Go to Topic...',
+        keybinding: 'Mod+K',
+      },
+      {
+        id: 'palette.commands',
+        title: getLocale() === 'zh-CN' ? '命令面板：显示所有命令' : 'Palette: Show All Commands',
+        keybinding: 'Mod+Shift+P',
+      },
+      {
+        id: 'palette.keybindings',
+        title: getLocale() === 'zh-CN' ? '命令面板：快捷键一览' : 'Palette: Keyboard Shortcuts',
+        keybinding: 'Mod+/',
+      },
     ],
     onActivateShell(ctx) {
       if (!deps?.keybindings) return;

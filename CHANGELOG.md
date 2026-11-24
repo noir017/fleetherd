@@ -5,14 +5,37 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **Web UI dockable workbench, VS Code Modern themes, and multi-window workflows.** Rebuilt the
+  browser UI as a modular workbench with a primary sidebar, secondary topic-tools sidebar, bottom
+  panel, status bar, and draggable multi-group editor grid (`DynamicDockEngine`) with four-way
+  splits, tab reordering, cross-part view moves, `aa_layout` persistence/reset, keyboard layout
+  commands (`Mod+\`, `Mod+1/2/3`, `Mod+B`, `Mod+Alt+B`, `Mod+J`), responsive desktop/tablet/mobile
+  breakpoints (preserving single-column `StackShell` on phones), and VS Code Dark Modern / Light
+  Modern `--fh-*` color tokens.
+- **Command palette and window polish across built-in tools.** Added `Mod+K` topic quick-open,
+  `Mod+Shift+P` command palette, and `Mod+/` keyboard shortcuts overview; message action bars and
+  one-click side-by-side turn diff; per-file diff tabs with hunk navigation and multi-comment
+  staging; multi-file editor tabs with dirty indicators, 409 conflict banners, and reveal-in-tree;
+  multi-tab terminals with rename and move-to-secondary/editor actions; settings search and
+  modified-item markers, skill history diffs, scheduled task run tables, unified list keyboard/batch
+  operations, and highlighted search inside read-only history transcripts.
+- **External Web UI plugin system (`platforms.web.plugins`).** Added opt-in external plugins
+  configured strictly via `config.yaml` (default `[]`), with manifest validation, safe directory
+  containment checks (rejecting `files.roots` and agent workdirs), GUARDED `/plugins/<id>/` static
+  asset allowlisting and `/api/plugins/<id>/` server routes, `PluginHost` (topics, events, SSE push,
+  isolated 0600 storage, and mandatory `[plugin:<id>]` attribution prefix), error-isolated frontend
+  loading, `fleetherd doctor` warnings, `dist/webui-plugin.d.ts` type generation, an example plugin
+  (`examples/webui-plugin-hello/`), and English/Chinese plugin documentation (`docs/webui-plugins.md`).
+
 ### Changed
 
-- **Web UI client modularization (workbench redesign P0, no user-visible change).** Split the
-  monolithic `client/legacy-app.ts` script into typed `base/`, `services/`, `workbench/`,
-  `plugins/`, and `features/` modules with a strict `main.ts` entrypoint, modularized
-  `client/styles/` around `--fh-*` semantic tokens (keeping existing theme colors identical),
-  enabled full TypeScript and ESLint enforcement across `src/platform/webui/client/`, and added a
-  standalone Playwright E2E harness (`test/e2e/webui/`, `.github/workflows/webui-e2e.yml`).
+- **Web UI client architecture and on-demand bundling.** Replaced the monolithic `legacy-app.ts`
+  and legacy `panels/` with 13 typed built-in plugins under `src/platform/webui/client/`, enabled
+  full TypeScript and ESLint enforcement across the client, split lower-frequency built-in plugins
+  into an on-demand `workbench-extras-*.js` chunk keeping `app-*.js` gzip under the 160 KiB budget,
+  and added a Playwright E2E suite (`smoke`, `workbench`, `dock`, `plugins`) in `test/e2e/webui/`.
 
 ## [3.38.0] - 2026-11-24
 

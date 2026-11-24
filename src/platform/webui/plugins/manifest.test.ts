@@ -129,6 +129,7 @@ describe('PluginManifestSchema', () => {
       'terminal',
       'reader',
       'status',
+      'palette',
     ];
     expect([...RESERVED_PLUGIN_IDS].sort()).toEqual([...expectedBuiltins].sort());
     for (const id of expectedBuiltins) {

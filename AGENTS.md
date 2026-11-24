@@ -579,7 +579,7 @@ touches one of these places keeps both names working.
 | Config directory | `~/.config/talkcode` used as it is when `~/.config/fleetherd` does not exist, logged once; never moved (a bind mount, absolute paths in config.yaml) | `defaultConfigDir`, `config/load.ts` |
 | Host directory | `~/.talkcode` moved to `~/.fleetherd` with a link left at the old name: on every host by the bootstrap, on the gateway's own machine at start; links that name the old path count as the gateway's own | `remote/connection.ts`, `migrateHostDir`, `isUnderEitherName`, `remote/ops.go` `under` |
 | Skill metadata | `talkcode-resident` / `-category` / `-hosts` / `-harnesses` read; the resident guard (invariant 8) treats both spellings as one key, either `"true"` meaning resident | `skills-store.ts` `metaValue` / `residentOf` |
-| Skills repository | commits authored `talkcode*` are the gateway's; `Talkcode-` trailers read like `Fleetherd-` ones | `skills-git.ts`, `webui/client/panels/skills.ts` skillHistRow |
+| Skills repository | commits authored `talkcode*` are the gateway's; `Talkcode-` trailers read like `Fleetherd-` ones | `skills-git.ts`, `webui/client/features/skills/editor.ts` |
 | Skill links | the bundled skill's old `talkcode` link is taken back where `fleetherd` is linked; `talkcode` stays a reserved skill name | `skill-link.ts`, `remote-hosts.ts`, `skills-store.ts` |
 | Transcripts | `talkcode skills …` and `~/.talkcode/skills/…` count as skill use and administration | `skill-usage.ts`, `review-prompt.ts` |
 | Remote host | a `talkcode-remote` daemon or version directory is retired like a `fleetherd-remote` one | `remote/attach.go` |

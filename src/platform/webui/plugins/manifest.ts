@@ -14,6 +14,7 @@ export const RESERVED_PLUGIN_IDS: ReadonlySet<string> = new Set([
   'terminal',
   'reader',
   'status',
+  'palette',
 ]);
 
 export const PLUGIN_ID_RE = /^[a-z][a-z0-9-]{1,40}$/;
