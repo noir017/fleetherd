@@ -1,0 +1,47 @@
+/* ── The Reviews tab ─────────────────────────────────────────────────────────
+   A review is a background event, not a control: one line per review, and the rest behind a tap. */
+#sched-reviews-list{display:flex;flex-direction:column;gap:6px}
+.rev-item{border:1px solid var(--line);border-radius:6px;padding:9px 10px;background:var(--surface-2);cursor:pointer;display:flex;flex-direction:column;gap:3px}
+.rev-item:hover{background:var(--surface-pop)}
+.rev-item.open{background:var(--hover-1);border-color:var(--line-3)}
+.rev-row{display:flex;align-items:center;gap:6px;min-width:0}
+.rev-dot{width:8px;height:8px;border-radius:50%;background:var(--dot-rev);flex:none}
+.rev-item.changed .rev-dot{background:var(--ok)}
+.rev-item.preferences .rev-dot{background:var(--accent)}
+.rev-item.refused .rev-dot{background:var(--warn)}
+.rev-item.proposed .rev-dot{background:var(--fg-mid)}
+.rev-item.failed .rev-dot{background:var(--err)}
+.rev-topic{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;font-weight:600}
+.rev-when{flex:none;font-size:11px;color:var(--dim)}
+.rev-badge{flex:none;font-size:9.5px;font-weight:600;text-transform:uppercase;letter-spacing:.02em;padding:1px 4px;border-radius:999px;background:var(--hover-3);color:var(--fg-muted)}
+.rev-result{font-size:11.5px;color:var(--fg-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rev-item.failed .rev-result{color:var(--err)}
+.rev-detail{margin-top:6px;padding-top:8px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:6px}
+.rev-label{font-size:10.5px;color:var(--dim);text-transform:uppercase;letter-spacing:.05em}
+.rev-change{font-size:12px;color:var(--fg-2);line-height:1.5;overflow-wrap:anywhere}
+.rev-change .rev-name{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--fg-hi)}
+.rev-reason{color:var(--dim)}
+.rev-status{font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;margin-left:5px}
+.rev-status.ok{color:var(--ok)}
+.rev-status.bad{color:var(--warn)}
+.rev-status.unknown{color:var(--fg-mid)}
+.rev-undo{display:block;margin-top:2px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;color:var(--fg-mid);overflow-wrap:anywhere;user-select:all}
+.rev-pref{font-size:12px;color:var(--fg-2);line-height:1.5;overflow-wrap:anywhere}
+.rev-note{font-size:11.5px;color:var(--dim);line-height:1.5;overflow-wrap:anywhere}
+.rev-note.bad{color:var(--err)}
+.rev-open{background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:inherit;font-size:12px;padding:5px 10px;cursor:pointer;align-self:flex-start}
+.rev-open:hover{border-color:var(--line-3);background:var(--hover-3)}
+.rev-pending{border:1px solid var(--pending-edge);border-radius:6px;padding:9px 10px;background:var(--pending-bg);display:flex;flex-direction:column;gap:7px}
+/* The two answers go under the suggestion, not beside it: the panel is never wider than 380px,
+   and at 240px two buttons in the row would leave the text about 90px. */
+.rev-pitem{display:flex;flex-wrap:wrap;align-items:flex-start;gap:8px}
+.rev-pbody{flex:1 1 100%;min-width:0;display:flex;flex-direction:column;gap:2px}
+.rev-ptext{font-size:12.5px;color:var(--fg-bright);line-height:1.5;overflow-wrap:anywhere}
+.rev-pmeta{font-size:11px;color:var(--dim);overflow-wrap:anywhere}
+.rev-pacts{display:flex;flex:none;gap:6px;margin-left:auto}
+.rev-adopt{flex:none;background:var(--hover-3);border:1px solid var(--line-3);border-radius:5px;color:var(--fg);font:inherit;font-size:11.5px;padding:3px 8px;cursor:pointer}
+.rev-adopt:hover:not(:disabled){background:var(--line-2);border-color:var(--line-hi)}
+.rev-adopt:disabled{opacity:.5;cursor:default}
+.rev-dismiss{flex:none;background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--dim);font:inherit;font-size:11.5px;padding:3px 8px;cursor:pointer}
+.rev-dismiss:hover:not(:disabled){color:var(--fg);border-color:var(--line-3)}
+.rev-dismiss:disabled{opacity:.5;cursor:default}

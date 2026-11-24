@@ -1,0 +1,177 @@
+/* /setting as a page of its own, opened from the Menu or by typing the command, rather
+   than a screen inserted into the transcript. A window over the conversation like the reader and
+   the skills page, and drawn from the same message the daemon already sends (settingsScreen): the
+   rows, the values, the validation and the write all stay on the daemon's side. The bar says where
+   these settings live — config.yaml, so every topic — because the old one named the topic it was
+   opened in, which read as though they were that topic's (2026-11-05). */
+#settings-page{position:fixed;inset:0;z-index:20;background:var(--scrim-2);display:flex;align-items:center;justify-content:center;padding:24px}
+#settings-page[hidden]{display:none}
+#settings-box{display:flex;flex-direction:column;width:min(900px,100%);max-height:100%;overflow:hidden;background:var(--bg);border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 30px var(--shadow)}
+#settings-bar{display:flex;align-items:center;gap:8px;padding:6px 10px 6px 16px;border-bottom:1px solid var(--line);min-height:var(--headh)}
+.set-heading{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px;line-height:1.25}
+#settings-title{font-size:13px;font-weight:600}
+#settings-topic{font-size:11.5px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#settings-close{font-size:18px;padding:6px 10px}
+#settings-body{flex:1;min-height:0;overflow-y:auto;padding:14px 18px calc(18px + env(safe-area-inset-bottom,0px))}
+#settings-body .set-loading{padding:8px 2px;font-size:12.5px;color:var(--dim)}
+/* The settings screen, drawn in the settings page (see settingsScreen()). A chat app can only offer
+   buttons, so /setting arrives there as a grid of labels with the value squeezed into the same
+   string. The page draws the same data the way a settings page is read: one column of sections,
+   each a card of rows; a row is its name and one line on what it decides on the left, and the
+   control on the right — a switch for on/off, a segmented control or a select for a short list,
+   a value and a chevron for one with a screen of its own. The control kind comes from the daemon
+   (SettingsScreenControl), so on/off, a short list and a model id no longer all look like the same
+   blue text with a ›. One column at every width: the two-column grid this replaces read in a zig-
+   zag, and nobody could tell which row came next (2026-11-05). Every control is at least 44px
+   tall on a touch screen. */
+.set-about{margin:0 0 14px;font-size:12.5px;line-height:1.5;color:var(--dim)}
+.set-about code,.set-notice code,.set-gnote code,.set-desc code,.set-hintbox code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.95em;background:var(--field);padding:0 4px;border-radius:3px}
+/* Sticky, because the control that caused it may be a screen further down: an answer at the top
+   of a page scrolled past it was an answer nobody saw (Chromium, 2026-11-05). A good one fades
+   after a few seconds — the control already shows the new state — and an error stays. */
+.set-notice{position:sticky;top:-14px;z-index:1;margin:0 0 14px;padding:9px 12px;border-radius:6px;border:1px solid var(--line);border-left-width:3px;font-size:12.5px;line-height:1.5;white-space:pre-line;overflow-wrap:anywhere;box-shadow:0 4px 14px var(--shadow-sm);transition:opacity .4s}
+.set-notice.faded{opacity:0;pointer-events:none}
+.set-notice.ok{border-color:var(--ok-border);border-left-color:var(--ok);background:var(--ok-bg)}
+.set-notice.info{border-left-color:var(--dim);background:var(--surface-2)}
+.set-notice.error{border-color:var(--err-border-2);border-left-color:var(--err);background:var(--err-bg);color:var(--err-soft)}
+.set-sec{margin:0 0 18px}
+.set-sec:last-child{margin-bottom:0}
+.set-group{margin:0 2px 6px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--fg-soft)}
+.set-gnote{margin:-2px 2px 8px;font-size:12px;line-height:1.5;color:var(--dim)}
+.set-card{border:1px solid var(--line);border-radius:8px;background:var(--surface);overflow:hidden}
+.set-item{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:4px 16px;min-height:48px;padding:9px 14px;border-bottom:1px solid var(--line)}
+.set-item:last-child{border-bottom:0}
+.set-item.sw{cursor:pointer}
+.set-tx{min-width:0;display:flex;flex-direction:column;gap:2px}
+.set-label{display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;font-size:13.5px;line-height:1.35;color:var(--fg)}
+.set-hint{font-size:12px;line-height:1.45;color:var(--dim)}
+.set-kind{font-size:11.5px;color:var(--dim)}
+.set-badge{display:inline-block;padding:0 7px;border-radius:999px;font-size:10.5px;font-weight:600;line-height:18px;letter-spacing:.02em}
+.set-badge.restart{color:var(--warn);background:var(--warn-tint-2)}
+.set-badge.here{color:var(--accent-soft);background:var(--accent-tint-2)}
+.set-ctl{justify-self:end;display:flex;align-items:center;min-width:0}
+/* The switch: a 36×20 track in a 44px-tall hit area. aria-checked is the state, so the page's
+   optimistic flip and the daemon's answer are drawn by the same rule. */
+.set-switch{position:relative;flex:none;width:44px;height:32px;padding:0;margin:-6px -4px;background:none;border:0;cursor:pointer}
+.set-switch::before{content:"";position:absolute;left:4px;top:6px;width:36px;height:20px;border-radius:10px;background:var(--line-3);transition:background .15s}
+.set-switch::after{content:"";position:absolute;left:7px;top:9px;width:14px;height:14px;border-radius:50%;background:var(--fg-head);transition:transform .15s,background .15s}
+.set-switch[aria-checked="true"]::before{background:var(--accent-solid)}
+.set-switch[aria-checked="true"]::after{transform:translateX(16px);background:var(--fg-on-accent)}
+.set-switch:focus-visible{outline:2px solid var(--own-edge);outline-offset:0;border-radius:12px}
+.set-seg{display:inline-flex;border:1px solid var(--line);border-radius:6px;background:var(--field);padding:2px;gap:2px}
+.set-seg button{min-width:44px;min-height:30px;padding:3px 10px;border:0;border-radius:4px;background:none;color:var(--dim);font:inherit;font-size:12.5px;cursor:pointer;font-variant-numeric:tabular-nums}
+.set-seg button:hover{color:var(--fg)}
+.set-seg button[aria-checked="true"]{background:var(--accent-tab-bg);color:var(--accent-tab-fg);font-weight:600}
+.set-select{max-width:260px;min-height:32px;padding:4px 28px 4px 10px;border:1px solid var(--line);border-radius:6px;background:var(--field) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%239a9a9a' stroke-width='1.5'/%3E%3C/svg%3E") no-repeat right 10px center;color:var(--fg);font:inherit;font-size:13px;text-overflow:ellipsis;-webkit-appearance:none;appearance:none;cursor:pointer}
+.set-select:focus-visible,.set-seg button:focus-visible{outline:2px solid var(--own-edge);outline-offset:1px}
+/* The Agents section is a stack of cards, one per agent, under a heading per machine when there is
+   more than one. A card is a summary — name, harness, model, permission level — and opens in place
+   on a tap to the agent's settings and the instruction files it reads. One table row per agent
+   (until 3.15.0) put twelve agents' controls on the page at once: on a phone each was a three-line
+   card under the last with only a hairline between them, 3,800px of near-identical rows to scroll
+   past before the next section, and a column of "Edit files" that told one agent from another by
+   nothing. So: a gap between cards, the harness's own colour down each card's edge and on its name
+   (--ag-h, a hue the page picks from the harness's name), and only one card open at a time. */
+.ag-list{display:flex;flex-direction:column;gap:8px;margin-top:8px}
+.ag-place{display:flex;align-items:baseline;gap:6px;margin:6px 2px -2px;font-size:11.5px;font-weight:600;color:var(--fg-sub)}
+.ag-place:first-child{margin-top:0}
+.ag-count{font-weight:400;color:var(--dim)}
+.ag-card{--ag:hsl(var(--ag-h,0) 55% var(--ag-l));border:1px solid var(--line);border-left:3px solid var(--ag);border-radius:8px;background:var(--surface);overflow:hidden;transition:border-color .12s,background .12s}
+.ag-card.open{background:var(--surface-2);border-color:var(--line-3);border-left-color:var(--ag)}
+.ag-top{display:flex;align-items:center;gap:10px;width:100%;min-height:52px;padding:8px 12px 8px 12px;border:0;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer;transition:background .12s}
+.ag-top:hover{background:var(--hover)}
+.ag-top:focus-visible{outline:2px solid var(--own-edge);outline-offset:-2px}
+.ag-who{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:3px}
+.ag-id{display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;font-size:13.5px;line-height:1.35;color:var(--fg);overflow-wrap:anywhere}
+.ag-name{font-weight:600}
+.ag-sum{display:flex;align-items:center;flex-wrap:wrap;gap:2px 6px;min-width:0;font-size:12px;line-height:1.4;color:var(--fg-muted)}
+.ag-sum>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ag-sum>.ag-sep{color:var(--line-hi)}
+.ag-kind{flex:none;padding:0 7px;border-radius:999px;font-size:11px;font-weight:600;line-height:18px;color:hsl(var(--ag-h,0) 70% var(--ag-kind-l));background:hsl(var(--ag-h,0) 50% 50% / var(--ag-kind-bg-a))}
+.ag-mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px;color:var(--fg-cool)}
+.ag-sum .unset{font-style:italic;font-family:inherit;color:var(--dim)}
+.ag-chev{flex:none;display:inline-flex;color:var(--dim);transition:transform .15s}
+.ag-card.open .ag-chev{transform:rotate(180deg)}
+.set-badge.def{color:var(--def-badge-fg);background:var(--def-badge-bg)}
+/* The open card: a label column and a value column, every setting on a line of its own. */
+.ag-body{display:flex;flex-direction:column;gap:12px;padding:12px 14px 14px;border-top:1px solid var(--line)}
+.ag-body[hidden]{display:none}
+.ag-field{display:grid;grid-template-columns:104px minmax(0,1fr);align-items:start;column-gap:14px}
+.ag-lab{padding-top:7px;font-size:12px;color:var(--dim)}
+.ag-val{display:flex;flex-direction:column;align-items:flex-start;gap:4px;min-width:0}
+.ag-val>.set-select{width:100%;max-width:320px}
+.ag-open{display:flex;align-items:center;gap:6px;width:100%;max-width:420px;min-width:0;min-height:32px;padding:3px 8px;border:1px solid var(--line);border-radius:6px;background:var(--field);color:inherit;font:inherit;text-align:left;cursor:pointer;transition:background .12s}
+.ag-open:hover{background:var(--surface-skel)}
+.ag-open:focus-visible{outline:2px solid var(--own-edge);outline-offset:1px}
+.ag-open .set-v{flex:1 1 auto}
+.ag-fixed{display:flex;align-items:center;min-height:32px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;color:var(--fg-cool)}
+.ag-fixed.unset{font-family:inherit;font-style:italic;color:var(--dim)}
+.set-select.unset{font-style:italic;color:var(--dim)}
+.set-select.unset option{font-style:normal;color:var(--fg)}
+/* What a value cannot say by itself — what the chosen level does, that it is not set, where it comes
+   from, when it lands — on a line under it. */
+.ag-note{display:flex;flex-wrap:wrap;align-items:center;gap:4px;font-size:11.5px;line-height:1.4;color:var(--dim)}
+/* The instruction files the agent reads: the shared ones first, then its machine's own. */
+.ag-files{display:flex;flex-direction:column;width:100%;max-width:520px;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.ag-file{display:grid;grid-template-columns:minmax(0,max-content) minmax(0,1fr) auto;align-items:center;column-gap:10px;min-height:36px;padding:5px 8px 5px 10px;border:0;border-bottom:1px solid var(--line);background:var(--field);color:inherit;font:inherit;text-align:left;cursor:pointer;transition:background .12s}
+.ag-file:last-child{border-bottom:0}
+.ag-file:hover{background:var(--surface-skel)}
+.ag-file:focus-visible{outline:2px solid var(--own-edge);outline-offset:-2px}
+.ag-fname{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;color:var(--fg-cool);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ag-fname.own{font-family:inherit;font-size:12.5px;color:var(--fg)}
+.ag-fsub{min-width:0;font-size:11.5px;line-height:1.4;color:var(--dim);overflow-wrap:anywhere}
+.ag-fsub code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.95em}
+.ag-fsub .fx-tag{margin-left:6px}
+.ag-file .set-chev{color:var(--dim)}
+.ag-wait,.ag-none{padding-top:7px;font-size:12px;color:var(--dim)}
+.ag-err{padding-top:7px;font-size:12px;color:var(--err-soft-2)}
+/* A row with a screen of its own (a model) or a way to another menu: the whole row is the target. */
+.set-open{width:100%;border:0;border-radius:0;background:none;text-align:left;font:inherit;color:inherit;cursor:pointer;transition:background .12s}
+.set-open:hover{background:var(--hover)}
+.set-open:focus-visible{outline:2px solid var(--own-edge);outline-offset:-2px}
+.set-open{grid-template-columns:minmax(0,1fr) minmax(0,max-content) auto;gap:4px 12px}
+.set-vv{display:flex;align-items:baseline;justify-content:flex-end;gap:6px;min-width:0;max-width:340px}
+.set-vnote{flex:none;font-size:10.5px;color:var(--dim);border:1px solid var(--line-2);border-radius:999px;padding:0 6px;line-height:16px}
+.set-v{min-width:0;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;color:var(--fg-cool);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.set-v.unset{font-family:inherit;font-style:italic;color:var(--dim)}
+.set-chev{flex:none;color:var(--fg-subtle);font-size:17px;line-height:1}
+/* The value level: which setting, what it holds, then its values. */
+.set-back{display:inline-flex;align-items:center;gap:4px;margin:0 0 12px -6px;min-height:32px;padding:4px 8px;border:0;background:none;color:var(--accent-back);font:inherit;font-size:13px;cursor:pointer}
+.set-back:hover{color:var(--accent-back-hi)}
+.set-head{margin:0 0 14px}
+.set-head h3{margin:0;display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 8px;font-size:15px;font-weight:600}
+.set-head .set-tgt{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px;font-weight:500;color:var(--fg-cool)}
+.set-now{margin:6px 0 0;font-size:12.5px;color:var(--dim)}
+.set-now .set-v{display:inline;white-space:normal;overflow-wrap:anywhere}
+.set-src{margin:4px 0 0;font-size:12.5px;line-height:1.5;color:var(--fg-muted)}
+.set-desc{margin:8px 0 0;font-size:12.5px;line-height:1.55;color:var(--fg-muted)}
+.set-typed{display:flex;gap:6px;margin:0 0 10px}
+.set-type{flex:1;min-width:0;min-height:36px;padding:6px 10px;border:1px solid var(--line);border-radius:6px;background:var(--field);color:var(--fg);font:inherit;font-size:13px}
+.set-type:focus{outline:none;border-color:var(--own-edge)}
+.set-use{flex:none;min-height:36px;padding:0 14px;border-radius:6px}
+.set-nomatch{margin:8px 2px 0;font-size:12px;color:var(--dim)}
+.set-hintbox.loading{display:flex;align-items:center;gap:8px;border-style:solid}
+.set-spin{flex:none;width:12px;height:12px;border:2px solid var(--dot-idle);border-top-color:var(--accent-back);border-radius:50%;animation:set-spin .8s linear infinite}
+@keyframes set-spin{to{transform:rotate(360deg)}}
+.set-when{margin:4px 0 0;font-size:12px;color:var(--dim)}
+.set-hintbox{margin:0 0 10px;padding:9px 12px;border:1px dashed var(--line-2);border-radius:6px;font-size:12.5px;line-height:1.5;color:var(--fg-muted)}
+.set-opt{display:flex;align-items:flex-start;gap:10px;width:100%;min-height:44px;padding:10px 14px;background:none;border:0;border-bottom:1px solid var(--line);border-radius:0;color:var(--fg);font:inherit;text-align:left;cursor:pointer;transition:background .12s}
+.set-opt:last-child{border-bottom:0}
+.set-opt[hidden]{display:none}
+.set-opt:hover{background:var(--hover)}
+.set-opt.on{background:var(--accent-opt-on)}
+.set-check{flex:none;width:16px;color:var(--accent);font-size:14px;line-height:1.5;text-align:center}
+.set-opt-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.set-opt-label{font-size:13.5px;line-height:1.35;overflow-wrap:anywhere}
+.set-opt-detail{font-size:12px;line-height:1.4;color:var(--dim)}
+.set-opt.on .set-opt-label{color:var(--fg-hi);font-weight:600}
+.set-opt:focus-visible,.set-nav button:focus-visible{outline:2px solid var(--own-edge);outline-offset:-2px}
+.set-nav{display:flex;align-items:center;gap:6px;margin-top:10px}
+.set-nav button{min-height:44px;padding:6px 14px;background:var(--field);color:var(--dim);border:1px solid var(--line);border-radius:6px;font:inherit;font-size:12.5px;cursor:pointer}
+.set-nav button:hover{color:var(--fg);border-color:var(--line-3)}
+.set-page{flex:1;min-width:0;text-align:center;font-size:11.5px;color:var(--dim);font-variant-numeric:tabular-nums}
+/* Tapped and waiting on the daemon. A switch has already moved; the rest are lit, so the control
+   just pressed is the brightest thing on the screen rather than the faintest. */
+.set-open.busy,.set-opt.busy{opacity:1;background:var(--own);box-shadow:inset 2px 0 0 var(--own-edge)}
+.set-seg button.busy{opacity:1;background:var(--own);color:var(--fg-hi)}
+.set-switch.busy,.set-select.busy{opacity:.7}

@@ -1,0 +1,274 @@
+/* ── The filter bar ───────────────────────────────────────────────────────────
+   One component for every list that grows a search box (the topic sidebar first,
+   the scheduled panel's task list next): a row of search + Filter + optional sort,
+   a panel of chip groups that folds under it, and the "Showing N of M" line while
+   either is in use. It sits between the header and the scrolling list, so it costs
+   the column one row rather than scrolling out of reach with the rows it filters.
+
+   The search field is 12.5px on a desktop and 16px under 640px: Safari zooms the
+   whole page in on a focused field under 16px and does not zoom back out, the same
+   rule the composer follows. */
+#topics-filter{flex:0 0 auto}
+.filterbar{flex:0 0 auto;display:flex;flex-direction:column;gap:6px;padding:8px;border-bottom:1px solid var(--line);container-type:inline-size}
+.fb-row{display:flex;align-items:center;gap:5px;min-width:0}
+.fb-search{flex:1;min-width:0;display:flex;align-items:center;gap:4px;height:28px;padding:0 4px 0 7px;background:var(--field);border:1px solid transparent;border-radius:5px}
+.fb-search:focus-within{border-color:var(--line-focus)}
+.fb-search .ic{width:12px;height:12px;color:var(--dim)}
+.fb-q{flex:1;min-width:0;height:100%;padding:0;background:none;border:0;outline:0;color:var(--fg);font:inherit;font-size:12.5px}
+.fb-q::placeholder{color:var(--fg-slate)}
+.fb-qclear{display:inline-flex;align-items:center;justify-content:center;background:none;border:0;color:var(--dim);cursor:pointer;padding:2px;border-radius:3px;line-height:1}
+.fb-qclear:hover{color:var(--fg);background:var(--hover-3)}
+.fb-btn{display:inline-flex;align-items:center;justify-content:center;gap:4px;height:28px;padding:0 7px;background:none;border:1px solid var(--line);border-radius:5px;color:var(--dim);font:inherit;font-size:12px;line-height:1;cursor:pointer;white-space:nowrap}
+.fb-btn:hover{color:var(--fg);border-color:var(--line-strong)}
+.fb-btn[aria-expanded="true"],.fb-btn.on{color:var(--fg);background:var(--field)}
+.fb-btn .ic{width:12px;height:12px}
+/* A selection is a state, not a label: the dot on Filter says one exists with the
+   panel shut. Same blue as a running row, the only other "something is on" mark. */
+.fb-filter{position:relative}
+.fb-dot{position:absolute;top:3px;right:3px;width:5px;height:5px;border-radius:50%;background:var(--accent)}
+.fb-tools{display:flex;align-items:center;gap:5px;flex:none;margin-left:auto}
+/* The panel this bar next goes into is 240–320px, where search + Filter + a sort field on one
+   line leaves the search a sliver. Under 360px of bar the sort pair moves to a line of its own,
+   right-aligned under Filter; the search keeps the whole first line. */
+@container (max-width:360px){
+  .fb-row{flex-wrap:wrap}
+  .fb-tools{flex-basis:100%;justify-content:flex-end}
+}
+.fb-sort{display:inline-flex;align-items:center;gap:3px;height:28px;padding:0 6px;border:1px solid var(--line);border-radius:5px;color:var(--dim);min-width:0}
+.fb-sort:focus-within{border-color:var(--line-strong);color:var(--fg)}
+.fb-sort .ic{width:12px;height:12px;flex:none}
+.fb-sort select{appearance:none;background:none;border:0;outline:0;color:inherit;font:inherit;font-size:12px;line-height:1;padding:0;max-width:88px;cursor:pointer}
+.fb-sort option{background:var(--surface-pop);color:var(--fg)}
+.fb-dir{padding:0;width:28px;flex:none}
+.fb-sum{display:flex;align-items:center;gap:4px;font-size:11px;color:var(--dim);line-height:1.4}
+.fb-sum .fb-clear{margin-left:auto;background:none;border:0;color:var(--accent);font:inherit;font-size:11px;cursor:pointer;padding:1px 3px;border-radius:3px}
+.fb-sum .fb-clear:hover{text-decoration:underline}
+.fb-panel{display:flex;flex-direction:column;gap:7px;max-height:min(42vh,320px);overflow-y:auto;border-top:1px solid var(--line);padding-top:7px}
+.fb-group{display:flex;flex-direction:column;gap:4px}
+.fb-label{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--dim)}
+.fb-chips{display:flex;flex-wrap:wrap;gap:4px}
+.fb-chip{display:inline-flex;align-items:center;gap:3px;padding:2px 7px;background:none;border:1px solid var(--line);border-radius:11px;color:var(--dim);font:inherit;font-size:11.5px;line-height:1.5;cursor:pointer;white-space:nowrap}
+.fb-chip:hover{color:var(--fg);border-color:var(--line-strong)}
+.fb-chip.on{color:var(--accent-chip-fg);background:var(--accent-chip-bg);border-color:var(--accent-chip-edge)}
+.fb-chip .ic{width:10px;height:10px}
+.fb-count{opacity:.65;font-size:10px}
+/* A group the bar keeps on screen rather than folding into the panel: the state filter of both
+   lists, always one row under the search. Four chips share the row's width equally and never
+   wrap — the sidebar's 180px and the panel's 220px cannot hold four words and four counts, and
+   a second row of chips would push the list down for a filter that is mostly left alone. Under
+   the width where the words fit, the label goes and the icon and count carry the chip; the full
+   name stays in its title and aria-label, so nothing is lost to a pointer or a reader. */
+.fb-pins{display:flex;flex-direction:column;gap:4px}
+.fb-pin-row{flex-wrap:nowrap;gap:4px}
+.fb-pin{flex:1 1 0;min-width:0;justify-content:center;padding:2px 5px}
+.fb-pin .fb-chip-label{overflow:hidden;text-overflow:ellipsis}
+@container (max-width:308px){
+  .fb-pin .fb-chip-label{display:none}
+}
+/* What the list says instead of rows when a search or a filter matches nothing. */
+.topics-empty{display:flex;align-items:center;gap:8px;padding:14px 4px;color:var(--dim);font-size:12px}
+.topics-empty .fb-clear{margin-left:auto;background:none;border:0;color:var(--accent);font:inherit;font-size:12px;cursor:pointer;padding:2px 4px;border-radius:3px}
+.topics-empty .fb-clear:hover{text-decoration:underline}
+
+/* 6px between rows, and 10px above the first, because a topic row's agent legend (.agent-tag) stands
+   6px proud of the row's top edge: 6px clears the row above without overlapping it. */
+#topics{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:6px;padding:10px 8px 8px}
+/* One row shape for every list on the page: the topic list, a scheduled task and a scheduled run
+   are all "a dot, a name, a line under it, and a ⋯". Only #topics' own decorations (the needs
+   block, the sub-agent staircase, the star) stay scoped to it below.
+   The row's colour is a variable because the hover buttons' fade (.topic-acts) has to end in exactly
+   it: a fade into any other colour shows as a band across the title. #171717 is both panels' own. */
+.topic-item{--row-bg:var(--bg-panel);display:flex;align-items:center;gap:8px;width:100%;padding:7px 9px;border:1px solid transparent;border-radius:5px;background:var(--row-bg);text-align:left;font:inherit;font-size:13px;cursor:pointer;transition:background .15s;position:relative}
+.topic-item:hover{--row-bg:var(--hover-2)}
+.topic-item.on{--row-bg:var(--active);border-color:var(--line)}
+/* The selected row's title is the brightest thing in the column. The state rules below are more
+   specific and win where they apply (a selected idle row stays grey); this is what a selected row
+   with no running/idle class gets. */
+.topic-item.on .topic-title{color:var(--fg-hi)}
+/* Four states, and the dot is the only thing that carries all four. Read as one sentence: the
+   colour says whether the agent is there, the pulse says whether it is busy.
+     grey     — nothing resident. History, or a topic that will have to resume from a session id.
+     dim blue — an agent child is up and idle. Same blue, not doing anything.
+     blue     — the agent is working: a turn, or background work reporting in after one.
+     amber    — a question is on screen and nothing moves until it is answered. Wins over running,
+                because during an ask the turn IS still open and would otherwise paint over it. */
+.topic-dot{width:7px;height:7px;border-radius:50%;flex:0 0 7px;background:var(--dot-idle)}
+.topic-dot.live{background:var(--dot-live)}
+.topic-dot.running{background:var(--accent);box-shadow:0 0 6px var(--accent-glow);animation:pulse 1.5s infinite}
+.topic-dot.asking{background:var(--warn);box-shadow:0 0 6px var(--warn-glow);animation:pulse 1.5s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+/* Two lines in one row, so the second can hold the directory. min-width:0 is what lets either
+   line actually ellipsis — without it a flex item refuses to shrink below its content and a
+   long title pushes the delete button out of the column instead of being cut. */
+.topic-main{flex:1;min-width:0;display:flex;flex-direction:column}
+.topic-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* A topic's row is framed, and the agent answering in it sits on the frame's top-left edge like a
+   fieldset's legend. It used to open the title as "[cc] ", which took its width out of the one
+   ellipsised line: "[gemini-task] " left a subject of a few characters in a 240px column. On the
+   edge it takes none of either line.
+   The frame is what the legend sits on, so it is drawn on every topic row — faint at rest, a step
+   up on the row on screen — and the lists of topic rows open their gaps to make room for the legend
+   above each (#topics, .sess-group-rows, .tp-topics). A task's row has no agent to name and keeps
+   the plain shape.
+   The legend's background is split at the frame's line: what is behind the row above it (--behind,
+   the panel's #171717 unless the list says otherwise) and the row's own colour below it. That is
+   what makes the line look broken by the name rather than covered by a box, and why it follows
+   --row-bg through hover, the selected row and the green needs-you rows without rules of its own.
+   The colour is the agent's harness, the palette the agent cards use (.h-* below); a custom harness
+   has none of its own and stays grey. max-width keeps a long id clear of the row's right end. */
+.topic-item.framed{border-color:var(--line-frame);border-radius:6px;padding-top:9px}
+.topic-item.framed.on{border-color:var(--line-frame-on)}
+.agent-tag{position:absolute;top:-7px;left:7px;max-width:calc(100% - 50px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0 4px;font-size:10px;line-height:13px;letter-spacing:.02em;color:var(--hc,var(--hc-fallback));background:linear-gradient(to bottom,var(--behind,var(--bg-panel)) 50%,var(--row-bg) 50%);border-radius:3px}
+/* A step brighter on the row on screen, as its title and frame are. Mixed toward white rather than a
+   second palette, so a harness added to the palette needs one colour, not two. */
+.topic-item.on .agent-tag{color:color-mix(in srgb,var(--hc,var(--hc-fallback)) 72%,var(--mix-hi))}
+/* Which project this topic is in. Dimmer than an idle title on purpose: it is what you scan
+   for when several topics are open, not what you read. */
+.topic-dir{font-size:11px;line-height:1.35;color:var(--fg-slate);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.topic-item.on .topic-dir{color:var(--fg-slate-hi)}
+/* The line under a title: the directory on the left, how long the topic has been working or how
+   long since it stopped on the right. A flex row so the age keeps its width while a long path is
+   ellipsised — the time is the thing being scanned, and cutting it to "1d…" would say nothing.
+   margin-left:auto right-aligns it even when it is the only child, which is a row with no
+   directory to show. */
+.topic-sub{display:flex;align-items:baseline;gap:6px;min-width:0}
+.topic-sub .topic-line{flex:1 1 auto;min-width:0}
+.topic-age{flex:0 0 auto;margin-left:auto;font-size:11px;line-height:1.35;color:var(--fg-slate);white-space:nowrap;font-variant-numeric:tabular-nums}
+/* Working is the one state the row is watched in, so the age takes the running blue. Waiting on
+   an answer keeps its own amber elsewhere; the age still says how long the turn has been open. */
+.topic-age.run{color:var(--accent)}
+/* A machine the gateway cannot reach (OfflineMachine, the machines event): its name in a topic's
+   line, the heading over its agents on a new topic, and a line above the composer. A muted red of
+   its own, because amber already means "waiting for you" on this page, and this is not something to
+   act on in the topic — it is why nothing there will answer. */
+.topic-off{color:var(--offline)}
+.topic-off .ic{width:11px;height:11px;margin-right:3px;vertical-align:-.15em}
+.topic-item.running .topic-title{color:var(--fg)}
+.topic-item.on.running .topic-title{color:var(--fg-hi)}
+.topic-item.idle .topic-title{color:var(--dim)}
+.topic-item.on.idle .topic-title{color:var(--fg-idle-on)}
+/* Quiet but not finished: half a step back from a running title, half a step ahead of a topic
+   with nothing behind it. The dot says which; this is so the eye finds the right row first. */
+.topic-item.idle.live .topic-title{color:var(--fg-soft)}
+.topic-item.on.idle.live .topic-title{color:var(--fg-live-on)}
+.topic-badge{background:var(--badge-bg);color:var(--fg-on-accent);border-radius:9px;padding:1px 6px;font-size:11px;font-weight:600;line-height:1.3;margin-left:4px;flex-shrink:0}
+/* A terminal is attached to this topic. Deliberately not a fifth colour on .topic-dot: that dot
+   is about the agent — whether one is resident, busy, or waiting on an answer — and a terminal is
+   an unrelated state that can be true alongside any of them.
+   A prompt-shaped glyph says which of the two it is without a legend. */
+.topic-term{flex-shrink:0;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:9.5px;line-height:1;color:var(--ok);border:1px solid var(--ok-border);border-radius:3px;padding:2px 3px;margin-left:4px}
+/* The row's one control: a ⋯ that opens the topic's menu (Star/Unstar, End agent, Delete). The
+   star and the × it replaced were two buttons competing for a 240px column's tail; the menu is
+   one target the pointer reveals, and the rest live inside it.
+   A starred row keeps a lit star at rest, as it always did: it is the one thing in the list the
+   operator asked to be able to find, and a marker that only appears under the pointer finds
+   nothing. That star is a MARKER now — not a button — because starring moved into the menu, and a
+   decorative glyph that looks pressable but is not would be worse than either. Amber like the
+   waiting dot, but still: a star is a standing decision, not something happening. */
+.topic-more{background:none;border:0;color:var(--dim);font:inherit;line-height:1;padding:1px 5px;cursor:pointer;border-radius:3px;flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;transition:color .15s,background .15s}
+.topic-more .ic{width:15px;height:15px}
+.topic-more:hover,.topic-more[aria-expanded="true"]{color:var(--fg);background:var(--field)}
+.topic-star-mark{display:inline-flex;align-items:center;justify-content:center;color:var(--warn);flex-shrink:0;padding:0 2px}
+.topic-star-mark .ic{width:13px;height:13px;fill:currentColor}
+/* A topic forked from another (/fork): its mark leads the title, in the title's own colour and a
+   step dimmer — it says what the row is, and the source is the row right above it. Inside the one
+   ellipsised line, so it never pushes the title out of the column. */
+.topic-fork-mark{display:inline-flex;vertical-align:-1px;margin-right:3px;opacity:.85}
+.topic-fork-mark .ic{width:12px;height:12px}
+@media(hover:none){.topic-more{opacity:.55}}
+/* The ⋯ in a box, so it can leave the row's layout exactly as the two buttons did.
+   On a pointer device it is invisible until hovered — but opacity:0 hides a box without removing
+   it, so reserving room for it would stop every title ~40px short of the column's edge, in front
+   of a control nobody can see (reported 2026-10-30, fixed the same way for the ☆/× pair). There it
+   floats over the row's right end, on a fade into the row's own colour that covers the title's tail
+   rather than reflowing it. Two cases keep it in the row: a touch screen, which has no hover and
+   shows the control all the time, and a starred row at rest, whose lit star is content a title must
+   not run under — its ⋯ is dropped from the layout there instead of being kept as a gap. */
+.topic-acts{display:flex;align-items:center;gap:4px;flex-shrink:0}
+@media(hover:hover){
+  .topic-acts{position:absolute;top:0;bottom:0;right:9px;padding-left:22px;background:linear-gradient(90deg,transparent,var(--row-bg) 18px);opacity:0;pointer-events:none;transition:opacity .15s}
+  .topic-item:hover .topic-acts,.topic-item:focus-within .topic-acts{opacity:1;pointer-events:auto}
+  #topics .topic-item.starred:not(:hover):not(:focus-within) .topic-acts{position:static;padding-left:0;background:none;opacity:1;pointer-events:none}
+  #topics .topic-item.starred:not(:hover):not(:focus-within) .topic-more{display:none}
+}
+/* A list row's menu, drawn at the body rather than inside the list: every list here is rebuilt
+   with innerHTML on a poll or on every message a running agent posts, and a menu that lived in it
+   would vanish mid-tap. Fixed, so it can sit beside the button that opened it and stay there while
+   the list scrolls; above the sidebar's own z-index (20 on a phone) so it works inside the drawer. */
+#row-menu{position:fixed;z-index:21;min-width:210px;background:var(--surface-pop);border:1px solid var(--line);border-radius:6px;box-shadow:0 6px 20px var(--shadow);padding:4px}
+#row-menu button{display:flex;align-items:center;gap:9px;width:100%;background:none;border:0;padding:8px 10px;border-radius:4px;color:var(--fg);font:inherit;font-size:12.5px;text-align:left;cursor:pointer;white-space:nowrap}
+#row-menu button:hover:not(:disabled){background:var(--field)}
+#row-menu button:disabled{color:var(--dim);cursor:default}
+#row-menu .ic{width:14px;height:14px;flex:none}
+#row-menu .rm-del{color:var(--err)}
+#row-menu .rm-del:hover{background:var(--err-tint-2)}
+#row-menu .rm-sep{border-top:1px solid var(--line);margin:4px 2px}
+/* Where the group that needs the person ends. A pseudo-element on the first row after it rather
+   than a node of its own, so #topics holds rows and nothing else. */
+/* A topic another topic's agent opened (Topic.parent — daemon/delegation.ts), under the one that
+   opened it — in the switcher, and in the Sessions tab under the scheduled run that opened it, so
+   not scoped to #topics. Classes rather than a --depth custom property in a style attribute, which
+   the page's CSP would refuse; deeper than three is drawn at three, since a 240px column has no room
+   for a staircase. The elbow is ::before, which is free on these rows: only a depth-0 row draws the
+   after-needs rule. */
+.topic-item.sub{width:auto}
+.topic-item.d1{margin-left:14px}
+.topic-item.d2{margin-left:28px}
+.topic-item.d3{margin-left:42px}
+.topic-item.sub::before{content:'';position:absolute;left:-9px;top:50%;width:6px;border-top:1px solid var(--line-3)}
+/* How many topics this one opened, and the switch that folds them away. Folded, it takes the colour
+   of the most pressing state among them — a question, a failure, work — so folding hides the rows
+   and not the fact that one of them wants you. At the START of the row's second line, before the
+   directory: anywhere on the right, the star and × that float in on hover (.topic-acts) cover it,
+   and a click meant to fold lands on delete — which the first end-to-end run did. */
+.topic-line{display:flex;align-items:center;gap:6px;min-width:0}
+.topic-fold{flex-shrink:0;border:1px solid var(--line);background:none;color:var(--dim);border-radius:9px;padding:0 5px;font:inherit;font-size:10px;line-height:1.4;cursor:pointer;transition:color .15s,border-color .15s}
+.topic-fold:hover{color:var(--fg);border-color:var(--line-strong)}
+.topic-fold.asking{color:var(--warn);border-color:var(--warn-border-2)}
+.topic-fold.failed{color:var(--err);border-color:var(--err-border-4)}
+.topic-fold.running{color:var(--accent);border-color:var(--accent-border-2)}
+/* A failed last turn, when nothing else is going on: the one state that stays until something runs
+   again, so the dot keeps saying it after the reply has been read. */
+.topic-dot.failed{background:var(--err)}
+/* What needs the person — a question waiting, a failure, a reply not yet read — is the topic's own
+   row, first in the list and green (page script: needsYou). The dot still says which of the three. */
+#topics .topic-item.needs{--row-bg:var(--needs-bg)}
+#topics .topic-item.needs:hover{--row-bg:var(--needs-hover)}
+/* :not(.on) for the weight, not the meaning (a topic on screen is never one of these): the idle and
+   live greys above are four classes deep, and a lighter rule lost to them on an idle agent. */
+#topics .topic-item.needs:not(.on) .topic-title{color:var(--ok)}
+/* An unread reply, on a topic the person is expected to read. A sub-agent's row never takes this
+   one: its finished turn is the news of the agent that opened it (see the dot class in
+   paintTopics), so the row stays the ordinary idle/online grey. */
+.topic-dot.review{background:var(--ok)}
+/* Low attention (the Menu, per device: calmBtn). With several agents working at once the
+   list never stops moving — a pulsing dot per running topic, and an unread count in a bright pill
+   that climbs with every message a running turn posts — and none of that is anything to act on.
+   Here work is shown and not announced: the running dot keeps its colour and halo and stops
+   pulsing, and the count goes grey. What needs the person is left exactly as it is — the amber
+   dot still pulses, and a question, a failure and an unread reply still move up in green — so it
+   is the only thing on the list that moves or stands out. */
+#app.calm .topic-dot.running{animation:none}
+#app.calm .topic-badge{background:var(--hover-3);color:var(--fg-mid);font-weight:500}
+/* The rule midway between the last row that needs you and the agent legend standing above the next
+   row: the gap is 6px plus this margin (13px total), and the legend's top is 6px above the row's
+   edge, leaving 3px on each side of the 1px rule. */
+#topics .topic-item.after-needs{margin-top:7px}
+#topics .topic-item.after-needs::before{content:'';position:absolute;left:9px;right:9px;top:-11px;border-top:1px solid var(--line)}
+/* The confirmation for it: names every topic whose agent is about to go, because "close 7 agents"
+   does not say whether the one you were about to come back to is among them. A dialog of the page's
+   own rather than confirm(), which cannot hold a list a phone can scroll. The list scrolls inside
+   the box, so a long one never pushes the buttons off screen. */
+#idle-dialog{position:fixed;inset:0;z-index:20;background:var(--scrim-2);display:flex;align-items:center;justify-content:center;padding:16px}
+#idle-box{background:var(--bg);border:1px solid var(--line);border-radius:8px;width:min(440px,100%);max-height:80vh;max-height:80dvh;display:flex;flex-direction:column;gap:10px;padding:16px;box-shadow:0 8px 30px var(--shadow)}
+#idle-title{font-weight:600}
+#idle-why{margin:0;color:var(--dim);font-size:12.5px}
+#idle-list{list-style:none;margin:0;padding:0;overflow-y:auto;min-height:0;border-top:1px solid var(--line)}
+#idle-list li{display:flex;align-items:center;gap:10px;padding:7px 2px;border-bottom:1px solid var(--line)}
+.idle-main{flex:1;min-width:0;display:flex;flex-direction:column}
+.idle-name,.idle-dir{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.idle-dir{color:var(--dim);font-size:12px}
+.idle-out{flex:none;font-size:12px;color:var(--dim)}
+.idle-out.kept{color:var(--warn)}
+.idle-acts{display:flex;justify-content:flex-end;gap:8px}
+#idle-go{color:var(--err);border-color:var(--err-border-3)}
