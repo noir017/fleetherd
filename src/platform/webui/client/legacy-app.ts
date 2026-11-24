@@ -40,6 +40,8 @@ import { readBootConfig } from './services/boot.js';
 import { text, wait, post, sendLimit } from './services/api.js';
 import { OverlayManager } from './services/overlays.js';
 import { applyTopicRows, createStreamClient } from './services/stream.js';
+import { collectCacheableMessages, createCacheService } from './services/cache.js';
+import { createReadsService } from './services/reads.js';
 
 (function(){
   var $ = function(id){ return document.getElementById(id); };
@@ -126,6 +128,47 @@ import { applyTopicRows, createStreamClient } from './services/stream.js';
   });
   streamClient.onEvent(function(ev){ handle(ev); });
   streamClient.attachWindowEvents(document, window);
+  __FH_CACHE_CORE__;
+  var cacheService = createCacheService({
+    core: {
+      STORE: STORE,
+      cacheOpen: cacheOpen,
+      newer: newer,
+      cacheRecord: cacheRecord,
+      cachePut: cachePut,
+      cacheEvict: cacheEvict,
+    },
+    getIndexedDB: function(){ return window.indexedDB; },
+    getTopic: function(){ return topic; },
+    getEpoch: function(){ return epoch; },
+    isSynced: function(){ return synced; },
+    isStale: function(){ return stale; },
+    getLastEventId: function(){ return streamClient.getLastEventId(); },
+    collectScreenMessages: function(){ return collectCacheableMessages(log, data); },
+  });
+  function dbOn(){ return cacheService.isDbAvailable(); }
+  function noteVer(id, last, ep){ cacheService.noteVersion(id, last, ep); }
+  function put(id, msgs, meta){ return cacheService.put(id, msgs, meta); }
+  function memCopy(id){ return cacheService.memCopy(id); }
+  function get(id){ return cacheService.get(id); }
+  function cachePeek(tId){ return cacheService.peek(tId); }
+  function cacheDrop(tId){ cacheService.drop(tId); }
+  function cacheKeep(keep){ cacheService.keepOnly(keep); }
+  function cacheSave(){ cacheService.scheduleSave(); }
+  function leave(){ cacheService.leave(); }
+  var readsService = createReadsService({
+    getActiveTopic: function(){ return topic; },
+    getTopics: function(){ return topics; },
+    isOverlayBlocking: function(){ return libOn(); },
+    postSeen: function(topicId){ return post('api/seen', { topic: topicId }, 0); },
+    onChanged: function(){ paintTopics(); },
+  });
+  readsService.attachWindowEvents(document, window);
+  function unreadOf(t){ return readsService.unreadOf(t); }
+  function unseenReply(t){ return readsService.unseenReply(t); }
+  function needsRead(t){ return readsService.needsRead(t); }
+  function markAllRead(list, noun, say){ return readsService.markAllRead(list, noun, say); }
+  function reportSeen(){ readsService.reportSeen(); }
   // END WIRING
   // Panels instantiated before makePanel(), which calls paintSchedTab() synchronously on setup.
   var reviewsPanel = createReviewsPanel({
@@ -382,8 +425,6 @@ import { applyTopicRows, createStreamClient } from './services/stream.js';
   // this is spent there rather than here.
   var termBoot = TERM_OK && new URLSearchParams(location.search).get('v')==='term';
   var topics = [];
-  var readCounts = {};
-  try { readCounts = JSON.parse(localStorage.getItem('aa_reads') || '{}'); } catch(x){}
   // The /setting page: the live settings message it draws, the topic it was opened in, and the
   // one message whose page the operator closed. A settings message is never a row in the
   // transcript, and the daemon marks a retired one (wasSettings) so it cannot become one later.
@@ -407,10 +448,6 @@ import { applyTopicRows, createStreamClient } from './services/stream.js';
   // How long the page waits for the screen before saying the daemon did not answer. The send
   // itself gives up after fifteen seconds on one attempt, so this is the same patience.
   var SETTINGS_WAIT_MS=15000;
-
-  function saveReads(){
-    try { localStorage.setItem('aa_reads', JSON.stringify(readCounts)); } catch(x){}
-  }
 
   /**
    * Parents whose sub-agent topics are folded away (paintTopics), per browser. Folded by default:
@@ -438,219 +475,6 @@ import { applyTopicRows, createStreamClient } from './services/stream.js';
 
   /** A cached message from a daemon that is no longer the one on the other end of the stream. */
   function isHistory(m){ return Boolean(m) && !m._local && epoch !== 0 && m._g !== epoch; }
-
-  // ── Each topic's copy ───────────────────────────────────────────────────────
-  // What lets a topic paint before its stream has answered, lets the stream resume rather than send
-  // the whole topic again, and makes a daemon restart cost the conversation its liveness rather than
-  // its contents.
-  //
-  // One copy per topic, behind one put and one get, in two layers: memory (copies: the topics most
-  // recently put, COPY_TOPICS of them and COPY_MSGS messages between them — no database read, and
-  // all a browser without IndexedDB has) and IndexedDB (cache-script.ts's records, shared with the
-  // service worker, which writes the topic a push is about). Every copy says what it is a copy of,
-  // the id of the last event it reflects, and one rule says which of two copies is newer (newer):
-  // neither layer takes an older copy over a newer one. vers is the newest copy this page knows of
-  // for each topic, {last, epoch} — from every put, read and peek, and from the service worker — so
-  // deciding how to open a topic and what to fetch reads no database. Absent: not looked at since
-  // the page loaded.
-  //
-  // Through 3.13 a topic could be on the page three times — held in memory when it was left, a
-  // record in the database, a copy fetched before it was opened — each with its own idea of new,
-  // and entering a topic took them in a fixed order rather than the newest. A topic left mid-turn
-  // came back as it was left, never fetched, and the finished turn arrived a second or two later.
-  __FH_CACHE_CORE__;
-  // How long the copy of the topic on screen waits to be put: a streamed reply upserts the same
-  // message every second or so, and each would otherwise re-serialise the whole topic.
-  var SAVE_MS=400, COPY_TOPICS=8, COPY_MSGS=4000;
-  // copySeq orders memory's copies by when they were put: two puts can share a millisecond.
-  var db=null, dbOff=false, saveTimer=null, copies={}, vers={}, copySeq=0;
-
-  function cacheOff(why){
-    if(dbOff) return;
-    dbOff=true; db=null;
-    // Once, and only once. The page works without the cache, and a line per attempted write
-    // would be the loudest thing in the console for a feature nobody can see failing.
-    try { console.warn('[webui] local transcript cache disabled:', (why && why.message) || why || 'unavailable'); } catch(x){}
-  }
-
-  function dbOn(){ return !dbOff && Boolean(window.indexedDB); }
-
-  function idb(){
-    if(db) return Promise.resolve(db);
-    if(!dbOn()) return Promise.resolve(null);
-    return cacheOpen(window.indexedDB).then(function(r){
-      if(r.db){ db = r.db; return db; }
-      cacheOff(r.error);
-      return null;
-    });
-  }
-
-  /** One transaction. Resolves {ok:true, value} with whatever body asked for, or {ok:false}. */
-  function cacheTx(mode, body){
-    return idb().then(function(d){
-      if(!d) return {ok:false};
-      return new Promise(function(res){
-        var t, out=null;
-        try { t = d.transaction(STORE, mode); } catch(x){ cacheOff(x); return res({ok:false}); }
-        var rq = body(t.objectStore(STORE));
-        if(rq) rq.onsuccess = function(){ out = rq.result; };
-        t.oncomplete = function(){ res({ok:true, value:out}); };
-        t.onabort = function(){ res({ok:false, error:t.error}); };
-        t.onerror = function(){ res({ok:false, error:t.error}); };
-      });
-    });
-  }
-
-  /** That a copy of a topic as new as last, of run ep, is somewhere ('' : one with nothing to resume from). */
-  function noteVer(id, last, ep){
-    var v = vers[id];
-    if(!v || newer(last, v.last, ep, v.epoch)) vers[id] = {last:last || '', epoch:ep || 0};
-  }
-
-  /**
-   * Keep a copy of a topic: msgs in the order they are read, meta {epoch, last, stale} saying what
-   * they are a copy of. Into memory now and into the database under cachePut's rule; neither takes
-   * it over a newer copy. Resolves whether the database now holds this copy or a newer one.
-   */
-  function put(id, msgs, meta){
-    var c = {topic:id, msgs:msgs, epoch:meta.epoch, last:meta.last || '', stale:Boolean(meta.stale), at:++copySeq};
-    var m = copies[id];
-    if(!m || !newer(m.last, c.last, m.epoch, c.epoch)){ copies[id] = c; trimCopies(); }
-    noteVer(id, c.last, c.epoch);
-    return dbOn() ? cacheWrite(id, msgs, meta, false) : Promise.resolve(false);
-  }
-
-  /** Memory keeps the topics most recently put, least recent out first; the database keeps the rest. */
-  function trimCopies(){
-    var ids = Object.keys(copies).sort(function(a, b){ return copies[b].at - copies[a].at; }), total = 0;
-    for(var i=0;i<ids.length;i++){
-      total += copies[ids[i]].msgs.length;
-      if(i < COPY_TOPICS && (i === 0 || total <= COPY_MSGS)) continue;
-      delete copies[ids[i]];
-      // Without a database that was the only copy.
-      if(!dbOn()) delete vers[ids[i]];
-    }
-  }
-
-  /** The copy in memory, unless the database is known to hold a newer one (the service worker's). */
-  function memCopy(id){
-    var m = copies[id], v = vers[id];
-    return m && !(v && newer(v.last, m.last, v.epoch, m.epoch)) ? m : null;
-  }
-
-  /** A topic's newest copy the page can find, {msgs, epoch, last, stale}, or null. */
-  function get(id){
-    var m = memCopy(id);
-    if(m || !dbOn()) return Promise.resolve(m || copies[id] || null);
-    return cacheRead(id).then(function(r){
-      var o = copies[id];
-      return o && (!r || newer(o.last, r.last, o.epoch, r.epoch)) ? o : r;
-    });
-  }
-
-  /** Write a topic's record under cachePut's rule. Resolves whether it, or a newer one, is there. */
-  function cacheWrite(tId, msgs, meta, retried){
-    var rec = cacheRecord(tId, msgs, meta), w = null;
-    return cacheTx('readwrite', function(store){ w = cachePut(store, rec); return null; })
-      .then(function(r){
-        if(r.ok){ if(w && w.stood) noteVer(tId, w.stood.last, w.stood.epoch); return true; }
-        if(dbOff) return false;
-        if(retried){ cacheOff(r.error || 'the write was refused twice'); return false; }
-        // Out of room, most likely. Everything except the topic being read goes, and the write
-        // is tried once more before the cache is written off for this session.
-        return cacheTx('readwrite', function(store){ cacheEvict(store, tId, true); return null; })
-          .then(function(){ return cacheWrite(tId, msgs, meta, true); });
-      });
-  }
-
-  /** A topic's record as {msgs, epoch, last, stale}, or null when there is none; noted in vers. */
-  function cacheRead(tId){
-    return cacheTx('readonly', function(store){ return store.get(tId); }).then(function(r){
-      var v = r.ok ? r.value : null, list = null;
-      if(v && v.json) try { list = JSON.parse(v.json); } catch(x){ list = null; }
-      if(!v || !Array.isArray(list)){ if(r.ok) noteVer(tId, '', 0); return null; }
-      noteVer(tId, v.last, v.epoch);
-      return {msgs:list, epoch:v.epoch || 0, last:v.last || '', stale:Boolean(v.stale)};
-    });
-  }
-
-  /**
-   * Learn what a topic's record is a copy of without parsing it: the prefetch asks this of every
-   * topic it has not looked at, and a whole topic is up to 2M characters of JSON.
-   */
-  function cachePeek(tId){
-    return cacheTx('readonly', function(store){ return store.get(tId); }).then(function(r){
-      var v = r.ok && r.value && r.value.json ? r.value : null;
-      noteVer(tId, v ? v.last : '', v ? v.epoch : 0);
-    });
-  }
-
-  function cacheDrop(tId){ cacheTx('readwrite', function(store){ store.delete(tId); return null; }); }
-  /** Drop every cached topic not in keep — over KEYS, for the same reason evict walks keys. */
-  function cacheKeep(keep){
-    cacheTx('readwrite', function(store){
-      var cur = store.index('at').openKeyCursor();
-      cur.onsuccess = function(){
-        var at = cur.result;
-        if(!at) return;
-        if(!keep[at.primaryKey]) store.delete(at.primaryKey);
-        at.continue();
-      };
-      return null;
-    });
-  }
-
-  /**
-   * What is on screen, in the order it is on screen, as the cache should hold it.
-   *
-   * Read off #log rather than from a list of our own, because here the DOM IS the order — and
-   * what it holds is already the union of cached history and what the daemon has since sent,
-   * which is exactly what the next reload should get back.
-   *
-   * A local message is never included. Everything this page has sent and not had acknowledged is
-   * written to localStorage the moment it is sent (see unsent), which a write coalesced into a
-   * 400ms window of an asynchronous database could not promise: a reload in that window used to
-   * lose a send still in flight outright.
-   */
-  function cacheable(){
-    var out=[];
-    for(var n=log.firstChild; n; n=n.nextSibling){
-      var k = n.getAttribute ? n.getAttribute('data-k') : null;
-      var m = k ? data[k] : null;
-      if(!m || m._local) continue;
-      out.push(m);
-    }
-    return out;
-  }
-
-  /**
-   * What the topic on screen is a copy of, or null while it is nothing a copy did not already say:
-   * before its sync, or before it was put up from a copy. Resumable from lastEv when lastEv names
-   * this topic — the screen is then every message the room had as of that event.
-   */
-  function liveMeta(){
-    var lastEv = streamClient.getLastEventId();
-    var last = (lastEv && lastEv.indexOf(topic+'.') === 0) ? lastEv : '';
-    return topic && epoch && (synced || last) ? {epoch:epoch, stale:stale, last:last} : null;
-  }
-
-  /** Put the topic on screen into the store as it stands. */
-  function keepScreen(){
-    var meta = liveMeta();
-    if(meta) put(topic, cacheable(), meta);
-  }
-
-  /** Keep the topic on screen, at most once every SAVE_MS. */
-  function cacheSave(){
-    if(!topic || saveTimer) return;
-    saveTimer = setTimeout(function(){ saveTimer = null; keepScreen(); }, SAVE_MS);
-  }
-
-  /** The way out of a topic: kept now, since in a moment nothing on screen belongs to it. */
-  function leave(){
-    clearTimeout(saveTimer); saveTimer = null;
-    keepScreen();
-  }
 
   // The one place the narrow-screen breakpoint lives on this side of the wire. It has to stay
   // the same number as the @media rule above: the CSS turns the sidebar into an overlay, and
@@ -1023,28 +847,6 @@ import { applyTopicRows, createStreamClient } from './services/stream.js';
   var MONTH_KEYS=['age.month0','age.month1','age.month2','age.month3','age.month4','age.month5','age.month6','age.month7','age.month8','age.month9','age.month10','age.month11'];
 
   /**
-   * A topic's unread messages, as its row's badge counts them. The topic on screen is read by
-   * definition: opening it stamps readCounts.
-   */
-  function unreadOf(t){
-    var count=t.msgCount||0;
-    return t.id===topic?0:Math.max(0, count-(readCounts[t.id]||0));
-  }
-
-  /** Whether a topic has anything a Mark all read would clear: a badge, or a reply the daemon
-   *  still counts as unseen (stage review). The topic on screen is excluded: reportSeen is
-   *  already clearing it. A sub-agent has only its badge to clear: its finished turn is the news
-   *  of the agent that opened it, not the person's, and its row has no green dot to take away. */
-  function needsRead(t){
-    return t.id!==topic && (unreadOf(t)>0 || unseenReply(t));
-  }
-
-  /** A reply the daemon still counts as unseen — the green dot, cleared by api/seen. */
-  function unseenReply(t){
-    return t.stage==='review' && !t.parent;
-  }
-
-  /**
    * One row of any list: a state dot, a title, a quiet second line, an optional badge and mark,
    * and the ⋯ that opens the row's menu.
    *
@@ -1173,46 +975,6 @@ import { applyTopicRows, createStreamClient } from './services/stream.js';
       ? (offAt ? '<span class="topic-off" title="'+text(offTitle(t.dir.host))+'">'+IC.icon.offline+text(t.dir.host)+'</span> · ' : text(t.dir.host+' · '))
       : '';
     return '<span class="topic-dir" title="'+text((t.dir.host?t.dir.host+':':'')+t.dir.path)+'">'+where+text(t.dir.name)+'</span>';
-  }
-
-  /**
-   * Mark a list's topics read: the Sessions tab's Mark all read (every run and the sub-agents under
-   * them) and the topic list's (every topic in it). noun names them in the failure, and say is
-   * where that list reports one.
-   *
-   * Two kinds of unread live in a list and both have to go: the badge is this page's own
-   * count (readCounts in localStorage), while the green dot is the daemon's stage: review,
-   * which clears only when the server is told the topic was seen. api/seen takes one topic
-   * and has no bulk form, so this posts once per topic that still has a reply to clear — a
-   * handful of requests on a tap, not a poll.
-   *
-   * One at a time, not all at once: every markSeen announces the topic list to every open page,
-   * and N parallel posts would be N announcements racing each other. And a 4xx/5xx is a
-   * resolved response, not a rejection — post() only rejects on a dead link — so r.ok has to be
-   * checked or a refused mark would leave the badge gone here and the topic still finished there,
-   * with nothing said.
-   */
-  function markAllRead(list, noun, say){
-    var wrote=false, queue=[];
-    for(var i=0;i<list.length;i++){
-      var count=list[i].msgCount||0;
-      if((readCounts[list[i].id]||0)!==count){ readCounts[list[i].id]=count; wrote=true; }
-      if(unseenReply(list[i])) queue.push(list[i].id);
-    }
-    if(wrote) saveReads();
-    // Both lists, and the button that started this: paintTopics repaints the Sessions tab too.
-    paintTopics();
-    var failed=0;
-    function markOneAt(n){
-      if(n>=queue.length){
-        if(failed) say(tr(failed===1?'topic.markReadFailedOne':'topic.markReadFailedMany', { count: failed, noun: noun }));
-        return;
-      }
-      post('api/seen',{topic:queue[n]},0).then(function(r){
-        if(!r.ok) failed++;
-      }, function(){ failed++; }).then(function(){ markOneAt(n+1); });
-    }
-    markOneAt(0);
   }
 
   // ── Reviews (client/panels/reviews.ts) ─────────────────────────────────────
@@ -3975,11 +3737,8 @@ import { applyTopicRows, createStreamClient } from './services/stream.js';
     // header, Stop/power and the read marks still belong to it, so find it in the full list —
     // and seed a mark for every topic, hidden ones included, or the Sessions tab would count a
     // run's whole history as unread the first time it was opened.
-    for(var i=0;i<topics.length;i++){
-      var seed=topics[i];
-      if(readCounts[seed.id]===undefined){ readCounts[seed.id]=seed.msgCount||0; saveReads(); }
-      if(seed.id===topic){ cur=seed; readCounts[seed.id]=seed.msgCount||0; saveReads(); }
-    }
+    readsService.syncTopics(topics, topic);
+    for(var i=0;i<topics.length;i++){ if(topics[i].id===topic){ cur=topics[i]; break; } }
     var stars=0;
     for(i=0;i<fullForest.visible.length;i++) if(fullForest.visible[i].starred) stars++;
     for(i=0;i<painted.rows.length;i++){
@@ -4061,26 +3820,6 @@ import { applyTopicRows, createStreamClient } from './services/stream.js';
     if(TERM_OK) paintFrames();
     schedulesPanel.onTopicsUpdated();
   }
-
-  /**
-   * Tell the daemon the operator is looking at the topic on screen, when that changes something: a
-   * reply it has not been told was read (stage review). It stamps its own clock (WebRoom.markSeen),
-   * and the stage — here and in the Needs-you list — moves on.
-   * Only while the page is actually visible, and at most every two seconds per topic.
-   */
-  var seenPosted={};
-  function reportSeen(){
-    // A conversation from History covers the topic: it is underneath, not being read.
-    if(!topic || document.visibilityState==='hidden' || libOn()) return;
-    var cur=null;
-    for(var i=0;i<topics.length;i++){ if(topics[i].id===topic){ cur=topics[i]; break; } }
-    if(!cur || cur.stage!=='review') return;
-    var now=Date.now();
-    if(seenPosted[topic] && now-seenPosted[topic]<2000) return;
-    seenPosted[topic]=now;
-    post('api/seen',{topic:topic},0).catch(function(){});
-  }
-  document.addEventListener('visibilitychange', reportSeen);
 
   // ── Notifications ─────────────────────────────────────────────────────────
   // Web Push (webpush.ts on the server, sw.ts the worker): what reaches this device when the page is
@@ -4384,7 +4123,7 @@ import { applyTopicRows, createStreamClient } from './services/stream.js';
     // to be tapped next.
     rows.sort(function(a, b){ return NEEDS_ORDER[a.stage]-NEEDS_ORDER[b.stage] || (b.lastAt||0)-(a.lastAt||0); });
     return rows.slice(0, PRE_TOPICS).filter(function(t){
-      var v = vers[t.id], tried = preTried[t.id];
+      var v = cacheService.getVersion(t.id), tried = preTried[t.id];
       if(!t.last || preBusy[t.id] || current(t, v && v.last)) return false;
       // Once per version of the row: a failure is asked again a minute later, at the next list
       // event; an answer that came in, not until the row moves — even one that is not the row's
@@ -4437,9 +4176,9 @@ import { applyTopicRows, createStreamClient } from './services/stream.js';
     // A topic not looked at since the page loaded may be in the database already — written by an
     // earlier page, or by the service worker when its push came — and reading that is cheaper than
     // asking the daemon for it again.
-    (vers[t.id] === undefined ? cachePeek(t.id) : Promise.resolve()).then(function(){
+    (cacheService.getVersion(t.id) === undefined ? cachePeek(t.id) : Promise.resolve()).then(function(){
       if(done) return;
-      var v = vers[t.id];
+      var v = cacheService.getVersion(t.id);
       if(t.id === topic || current(t, v && v.last)) return finish(true);
       fetch('api/topic?t='+encodeURIComponent(t.id), {credentials:'same-origin', cache:'no-store', signal:ctl ? ctl.signal : undefined})
         .then(function(r){ return r.ok ? r.json() : null; })
@@ -4489,13 +4228,7 @@ import { applyTopicRows, createStreamClient } from './services/stream.js';
     // Before the transcript work below, so the terminal follows the topic in the same frame
     // the title does rather than a repaint later.
     applyTerm();
-    for(var i=0;i<topics.length;i++){
-      if(topics[i].id===id){
-        readCounts[id]=topics[i].msgCount || 0;
-        saveReads();
-        break;
-      }
-    }
+    readsService.markTopicFromList(id, topics);
     paintTopics();
     reportSeen();
     log.innerHTML='';
@@ -4555,7 +4288,7 @@ import { applyTopicRows, createStreamClient } from './services/stream.js';
    * send it does not carry is left for the end of the replay to judge, never failed on the copy.
    */
   function enter(id){
-    var mine = ++enterToken, used = false, v = vers[id];
+    var mine = ++enterToken, used = false, v = cacheService.getVersion(id);
     // The topic being left has to stop talking now, not when the read comes back: everything its
     // stream delivered in between would be drawn into this topic. Its handlers check es !== stream.
     streamClient.close();
@@ -4607,8 +4340,7 @@ import { applyTopicRows, createStreamClient } from './services/stream.js';
       // — the session on the far side outlives this exactly as it outlives a closed tab, which
       // is why deleting a topic is not offered as a way to end one.
       dropTerm(delId);
-      delete readCounts[delId];
-      saveReads();
+      readsService.remove(delId);
       if(topic === delId){
         var remaining = topics.filter(function(t){ return t.id !== delId; });
         if(remaining.length > 0){
@@ -5237,8 +4969,7 @@ import { applyTopicRows, createStreamClient } from './services/stream.js';
       // A visit that named no topic is only told which room it is in here, so this is also where
       // that room's copy is asked for — painted as history above what the sync carried.
       if(named) get(topic).then(function(c){ if(c && c.msgs.length && ev.topic === topic) adopt(c.msgs); });
-      readCounts[topic] = ev.messages.length;
-      saveReads();
+      readsService.setCount(topic, ev.messages.length);
       commands = ev.commands || [];
       topics = ev.topics || [];
       streamClient.setTopicsVersion(ev.tv || 0);
@@ -5273,8 +5004,7 @@ import { applyTopicRows, createStreamClient } from './services/stream.js';
       // Without a status, the settings drawn came from a peek, and what just happened may have
       // ended the session it described (a /cd, a /new): ask again.
       if(!agentStatus){ paintStatus(); schedulePeek(); }
-      readCounts[topic] = (readCounts[topic] || 0) + 1;
-      saveReads();
+      readsService.increment(topic);
       for(var i=0;i<topics.length;i++){
         if(topics[i].id===topic){
           topics[i].msgCount = (topics[i].msgCount || 0) + 1;
@@ -5678,7 +5408,7 @@ import { applyTopicRows, createStreamClient } from './services/stream.js';
       if(d && d.error){ alert(tr('topic.createFailed', { err: d.error })); return false; }
       if(!d || !d.topic) return false;
       // Just made, so there is no copy of it to look for: entered at once (enter).
-      vers[d.topic.id] = {last:'', epoch:0};
+      cacheService.setVersion(d.topic.id, {last:'', epoch:0});
       switchTopic(d.topic.id);
       if(narrow()) setSidebar(false);
       if(seed){
@@ -5839,7 +5569,7 @@ import { applyTopicRows, createStreamClient } from './services/stream.js';
       // case where switchTopic would do nothing and leave a wiped transcript on screen. A starred
       // topic on screen is left alone, so its view and draft are saved like any other switch.
       if(!keep[topic]) topic='';
-      vers[d.topic.id] = {last:'', epoch:0};
+      cacheService.setVersion(d.topic.id, {last:'', epoch:0});
       switchTopic(d.topic.id);
       if(narrow()) setSidebar(false);
     });
@@ -5977,10 +5707,7 @@ import { applyTopicRows, createStreamClient } from './services/stream.js';
   function keepOnly(keep){
     var id;
     cacheKeep(keep);
-    for(id in copies) if(!keep[id]) delete copies[id];
-    for(id in vers) if(!keep[id]) delete vers[id];
-    for(id in readCounts) if(!keep[id]) delete readCounts[id];
-    saveReads();
+    readsService.keepOnly(keep);
     for(id in views) if(!keep[id]) delete views[id];
     for(id in drafts) if(!keep[id]) delete drafts[id];
     // One read-modify-write of the stored drafts, for the same reason writeDraft is one: a second
@@ -6468,8 +6195,7 @@ import { applyTopicRows, createStreamClient } from './services/stream.js';
   /** Everything this page remembers about one topic, for a topic that no longer exists. */
   function forget(id){
     delete views[id];
-    delete copies[id];
-    delete vers[id];
+    cacheService.forget(id);
     delete preTried[id];
     for(var n in unsent) if(Object.prototype.hasOwnProperty.call(unsent, n) && unsent[n].t === id) dropUnsent(n);
     if(!drafts[id]) return;
@@ -6488,8 +6214,7 @@ import { applyTopicRows, createStreamClient } from './services/stream.js';
     var known={}, id;
     for(var i=0;i<topics.length;i++) known[topics[i].id]=1;
     for(id in views) if(!known[id]) delete views[id];
-    for(id in copies) if(!known[id]) delete copies[id];
-    for(id in vers) if(!known[id]) delete vers[id];
+    cacheService.prune(known);
     for(id in preTried) if(!known[id]) delete preTried[id];
     for(id in drafts) if(!known[id]) forget(id);
     for(id in unsent) if(Object.prototype.hasOwnProperty.call(unsent, id) && !known[unsent[id].t]) dropUnsent(id);

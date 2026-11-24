@@ -58,7 +58,7 @@ naming it, and they are all of them:
 | `page-body.ts` | The page's markup — every element the script finds by id — as a template |
 | `client/legacy-app.ts` | The client script, bundled into `dist/webui-assets/app-<hash>.js` — see below |
 | `client/base/` | Typed foundation primitives: `lifecycle.ts` (`DisposableStore`, `MutableDisposable`), `event.ts` (`Emitter`), `html.ts` (`lit-html` re-exports + `escapeHtml`), `dom.ts` (disposable listeners, focus/class/attr/ResizeObserver helpers) |
-| `client/services/` | Typed client services: `boot.ts`, `storage.ts`, `store.ts`, `commands.ts`, `keybindings.ts`, `overlays.ts` (LIFO Esc stack), `api.ts` (`post`/`text`/`wait`/`sendLimit`), `stream.ts` (SSE lifecycle, backoff, parking, watchdog, `applyTopicRows`) |
+| `client/services/` | Typed client services: `boot.ts`, `storage.ts`, `store.ts`, `commands.ts`, `keybindings.ts`, `overlays.ts` (LIFO Esc stack), `api.ts` (`post`/`text`/`wait`/`sendLimit`), `stream.ts` (SSE lifecycle, backoff, parking, watchdog, `applyTopicRows`), `cache.ts` (two-layer memory + IndexedDB transcript cache wrapping `CACHE_CORE`), `reads.ts` (unread watermarks, `aa_reads` persistence/merging, `markAllRead`, `reportSeen`) |
 | `client/workbench/contracts.ts` | Frozen `DockEngine`, `PanelComponent`, `PanelRef`, and `LayoutState` (v1) contracts |
 | `client/plugins/api.ts` | Frozen `WebuiPlugin`, `definePlugin`, `PluginContext`, `MenuItem`, `TopicInfo`, and `WebuiEvents` contracts |
 | `client/panels/reviews.ts` | Typed Reviews tab module (`createReviewsPanel`), bundled into `app-<hash>.js` and checked by `client/tsconfig.json` and eslint |
