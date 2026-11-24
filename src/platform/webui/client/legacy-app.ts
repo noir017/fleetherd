@@ -25,15 +25,11 @@ import { createFilesPanel } from './panels/files.js';
 import { createInstructionsPanel } from './panels/instructions.js';
 import { createSchedulesPanel } from './panels/schedules.js';
 import { createSkillsPanel } from './panels/skills.js';
-import { THEMES, getTheme, setTheme, nextTheme, initTheme, themeLabel } from './theme.js';
 import {
   applyDomI18n,
   getLocale,
   initLocale,
-  localeLabel,
-  nextLocale,
   onLocaleChange,
-  setLocale,
   t as tr,
 } from './i18n/index.js';
 import { readBootConfig } from './services/boot.js';
@@ -44,6 +40,15 @@ import { collectCacheableMessages, createCacheService } from './services/cache.j
 import { createReadsService } from './services/reads.js';
 import { createSettingsFeature, inlineCodeHtml as inl } from './features/settings/index.js';
 import { createTopicStatusController, stClock, stLeft } from './features/topic/status/index.js';
+import { createNotifyController } from './features/notify/index.js';
+import { createTerminalController } from './features/terminal/index.js';
+import {
+  createCodeViewLoader,
+  createLightbox,
+  createReader,
+  formatByteSize,
+} from './features/reader/index.js';
+import { createLegacyShell } from './workbench/legacy-shell.js';
 
 (function(){
   var $ = function(id){ return document.getElementById(id); };
@@ -228,6 +233,97 @@ import { createTopicStatusController, stClock, stLeft } from './features/topic/s
     },
   });
   topicStatus.attach();
+  var legacyShell = createLegacyShell({
+    app: app,
+    sidebar: sidebar,
+    sidebarResize: $('sidebar-resize'),
+    collapseBtn: collapseBtn,
+    expandBtn: expandBtn,
+    schedPanel: schedPanel,
+    schedResize: schedResize,
+    schedToggle: schedToggle,
+    backdrop: backdrop,
+    optsBtn: optsBtn,
+    optsMenu: optsMenu,
+    manageBtn: manageBtn,
+    manageMenu: manageMenu,
+    calmBtn: calmBtn,
+    calmState: calmState,
+    themeBtn: themeBtn,
+    themeState: themeState,
+    langBtn: langBtn,
+    langState: langState,
+    onSchedPaint: function(){ if(schedulesPanel) paintSchedTab(); },
+    onSchedOpen: function(){ schedulesPanel.onPanelOpen(); },
+    onSchedClose: function(){ schedulesPanel.disarm(); },
+    onCloseSchedules: function(){ setSchedules(false); },
+  });
+  var sbPane = legacyShell.sbPane;
+  var schedPane = legacyShell.schedPane;
+  function narrow(){ return legacyShell.narrow(); }
+  function setSidebar(open){ legacyShell.setSidebar(open); }
+  function setMenu(entry, open){ legacyShell.setMenu(entry, open); }
+  function openMenu(){ return legacyShell.openMenu(); }
+  function paintCalm(){ legacyShell.paintCalm(); }
+  function paintTheme(){ legacyShell.paintTheme(); }
+  function paintLang(){ legacyShell.paintLang(); }
+  var notifyController = createNotifyController({
+    notifyBtn: notifyBtn,
+    notifyState: notifyState,
+    post: post,
+    onCachedMessage: function(tId, last, ep){ cacheService.noteVersion(tId, last, ep); },
+    onGotoTopic: function(goId){
+      if(goId && goId !== topic && topics.some(function(t){ return t.id === goId; })){
+        switchTopic(goId);
+        if(narrow()) setSidebar(false);
+      }
+    },
+  });
+  function initNotify(){ void notifyController.init(); }
+  function paintNotify(){ notifyController.paint(); }
+  var terminalController = createTerminalController({
+    enabled: Boolean(BOOT.terminal),
+    canEnd: Boolean(BOOT.terminalEnd),
+    chat: chat,
+    chatHead: chatHead,
+    composer: composer,
+    termBtn: termBtn,
+    termHost: termHost,
+    termEl: termEl,
+    termGrip: termGrip,
+    termName: termName,
+    termMinBtn: termMinBtn,
+    termEndBtn: termEndBtn,
+    getTopic: function(){ return topic; },
+    getTopicTitle: function(id){
+      for(var i=0;i<topics.length;i++){ if(topics[i].id === id) return topics[i].title; }
+      return undefined;
+    },
+    isOverlayCovering: function(){ return libOn(); },
+    atBottom: atBottom,
+    toBottom: toBottom,
+    post: post,
+  });
+  function urlNow(){ return terminalController.urlNow(); }
+  function applyTerm(){ terminalController.apply(); }
+  function paintFrames(){ terminalController.paintFrames(); }
+  function dropTerm(id){ terminalController.drop(id); }
+  var codeView = createCodeViewLoader(BOOT.codeview);
+  var lightboxController = createLightbox({ lightbox: lightbox, lightboxImg: lightboxImg });
+  function openShot(img){ lightboxController.open(img); }
+  function closeShot(){ lightboxController.close(); }
+  var readerController = createReader({
+    reader: reader,
+    readerName: readerName,
+    readerGet: readerGet,
+    readerBody: readerBody,
+    readerClose: $('reader-close'),
+    codeView: codeView,
+    codeBlocks: codeBlocks,
+  });
+  function openReader(link){ readerController.open(link); }
+  function closeReader(){ readerController.close(); }
+  var byteSize = formatByteSize;
   // END WIRING
   // Panels instantiated before makePanel(), which calls paintSchedTab() synchronously on setup.
   var reviewsPanel = createReviewsPanel({
@@ -276,7 +372,7 @@ import { createTopicStatusController, stClock, stLeft } from './features/topic/s
     getLogEl: function(key){ return els[key]; },
     closeModelPop: function(){ topicStatus.closeModelPop(); },
     paintFrames: paintFrames,
-    paintTermHeightIfOpen: function(){ if(topic && termState[topic]==='open') paintTermHeight(); },
+    paintTermHeightIfOpen: function(){ terminalController.paintHeightIfOpen(); },
     reportSeen: reportSeen,
     topicExists: topicExists,
     switchTopic: switchTopic,
@@ -417,7 +513,6 @@ import { createTopicStatusController, stClock, stLeft } from './features/topic/s
   // draws as icons, keyed by the glyph core and config write. Anything not in a table stays text.
   var IC = __FH_ICONS__;
   var TERM_OK = BOOT.terminal;
-  var TERM_END = BOOT.terminalEnd;
   var INSTANCE_ID = BOOT.instance || 'web';
   // Whether this daemon has the file window (platforms.<id>.files.enabled). False hides the
   // header button; the routes behind it answer 404, exactly as the terminal's do.
@@ -461,25 +556,11 @@ import { createTopicStatusController, stClock, stLeft } from './features/topic/s
   // Compared with the daemon's after a restart (checkBuild), since the script on screen is the one
   // the old process served.
   var BUILD = BOOT.build;
-  // The code view's bundle, relative to this page (assets/codeview-<hash>.js), or null when the
-  // daemon was built without the asset build. Read only by codeView(), which every caller goes
-  // through. Relative for the same reason every other URL here is: a sub-path mount.
-  var CODEVIEW = BOOT.codeview;
   // Whether the shared secret is still a way in. False means the gate above has no field and
   // the only thing that can sign anyone in is the proxy in front (sso.password: false).
   var PASSWORD_LOGIN = BOOT.password;
-  // A terminal panel belongs to a TOPIC, not to the page: 'open' is shown, 'min' is hidden and
-  // still connected, absent is no window at all. Keyed this way because the alternative — one
-  // window that follows whichever topic is on screen — would tear down the connection to the
-  // topic being left, which is both a surprise (the pane you minimized is gone) and the end of
-  // the switcher's marker ever meaning anything: at most one topic could ever be lit.
-  var termState = {};
-  var termFrames = {};
-  // A reload asked for the pane, before any topic is known. "Asked for" is separate from
-  // "shown": there is nothing to point a terminal at until the first sync names a topic, so
-  // this is spent there rather than here.
-  var termBoot = TERM_OK && new URLSearchParams(location.search).get('v')==='term';
   var topics = [];
+  paintSchedTab();
 
   /**
    * Parents whose sub-agent topics are folded away (paintTopics), per browser. Folded by default:
@@ -507,253 +588,6 @@ import { createTopicStatusController, stClock, stLeft } from './features/topic/s
 
   /** A cached message from a daemon that is no longer the one on the other end of the stream. */
   function isHistory(m){ return Boolean(m) && !m._local && epoch !== 0 && m._g !== epoch; }
-
-  // The one place the narrow-screen breakpoint lives on this side of the wire. It has to stay
-  // the same number as the @media rule above: the CSS turns the sidebar into an overlay, and
-  // this decides whether opening a topic should then get it back out of the way.
-  var NARROW = 640;
-  function narrow(){ return window.innerWidth <= NARROW; }
-
-  /**
-   * One side panel, used on both edges of the page: the topic list on the left and the
-   * scheduled work on the right. Everything about the way a panel behaves is here once — the
-   * width and its drag handle, the open/close animation, the drawer it becomes under its
-   * breakpoint, the inert state that keeps Tab out of a panel nobody can see, and the storage
-   * that remembers both choices. What the two sides do not share is passed in: which edge it
-   * is on, how wide it starts and may get, and how narrow the screen has to be before a column
-   * has no room and it slides over the chat instead.
-   *
-   * Closed, a panel keeps its width and is moved off-screen with a negative margin (a column)
-   * or a transform (a drawer) — never display:none, because a hidden element has nothing to
-   * animate. --pw is the dragged width, inline and kept per browser; the stylesheet's
-   * --pw-default is the fallback, and the two must agree with width() below.
-   */
-  function makePanel(cfg){
-    var el=cfg.el, handle=cfg.handle, open=false, drag=null;
-    function docked(){ return window.innerWidth >= cfg.dockAt; }
-    function width(){
-      var w=parseFloat(el.style.getPropertyValue('--pw'));
-      if(w > 0) return w;
-      return typeof cfg.width === 'function' ? cfg.width() : cfg.width;
-    }
-    function maxWidth(){
-      return Math.max(cfg.min, Math.min(cfg.max, cfg.maxWidth ? cfg.maxWidth() : cfg.max));
-    }
-    function setWidth(w, keep){
-      if(w == null){
-        el.style.removeProperty('--pw');
-        try { localStorage.removeItem(cfg.widthKey); } catch(x){}
-        return;
-      }
-      w = Math.round(Math.max(cfg.min, Math.min(maxWidth(), w)));
-      el.style.setProperty('--pw', w+'px');
-      if(keep) try { localStorage.setItem(cfg.widthKey, String(w)); } catch(x){}
-    }
-    function paint(){
-      el.classList.toggle('collapsed', !open);
-      // A panel moved off-screen is still in the tab order: without this, Tab walks into a
-      // column nobody can see. Removed as soon as it is open, and harmless on a docked column.
-      if(open) el.removeAttribute('inert'); else el.setAttribute('inert', '');
-      if(cfg.onPaint) cfg.onPaint(open);
-    }
-    function setOpen(next, opts){
-      opts = opts || {};
-      if(next === open){ if(opts.force) paint(); return; }
-      open = next;
-      // A close nobody asked for — following a session on an overlay, where the panel would
-      // cover the chat it just opened — is not a preference, so it leaves storage alone.
-      if(!opts.transient && cfg.storeKey){
-        try { if(open) localStorage.setItem(cfg.storeKey,'1'); else localStorage.removeItem(cfg.storeKey); } catch(x){}
-      }
-      paint();
-      if(cfg.onChange) cfg.onChange(open);
-    }
-    // The drag listens on the document rather than the 8px handle, because the pointer leaves
-    // the handle on the first fast move. The edge it measures from is the one the panel is
-    // anchored to: the left panel grows to the right, the right panel to the left.
-    handle.addEventListener('pointerdown', function(e){
-      if(!docked()) return;
-      e.preventDefault();
-      drag = {edge: cfg.side === 'left' ? el.getBoundingClientRect().left : el.getBoundingClientRect().right};
-      handle.className = 'panel-resize dragging';
-      document.body.style.userSelect = 'none';
-    });
-    document.addEventListener('pointermove', function(e){
-      if(drag) setWidth(cfg.side === 'left' ? e.clientX - drag.edge : drag.edge - e.clientX, false);
-    });
-    document.addEventListener('pointerup', function(){
-      if(!drag) return;
-      drag = null;
-      handle.className = 'panel-resize';
-      document.body.style.userSelect = '';
-      var w = parseFloat(el.style.getPropertyValue('--pw'));
-      if(w > 0) setWidth(w, true);
-    });
-    handle.addEventListener('dblclick', function(){ setWidth(null); });
-    // The saved width is applied before the first paint, so a reload does not flash the default
-    // column and then jump to the operator's.
-    var saved = 0;
-    try { saved = Number(localStorage.getItem(cfg.widthKey)); } catch(x){}
-    if(saved > 0) setWidth(saved, false);
-    paint();
-    return {el:el, isOpen:function(){ return open; }, setOpen:setOpen, toggle:function(){ setOpen(!open); },
-            width:width, setWidth:setWidth, docked:docked};
-  }
-
-  // The two panels. The left starts open on a wide screen and closed on a phone; the right is
-  // closed until asked for, and only restored where it can be docked (below 1024px it would come
-  // back as a drawer over the chat nobody asked it to cover).
-  var sbPane = makePanel({
-    el: sidebar, handle: $('sidebar-resize'), side:'left',
-    min:180, max:640, width:240, storeKey:'aa_sb_open', widthKey:'aa_sb_w',
-    dockAt: NARROW + 1,
-    // The cap leaves the chat 360px with the right panel docked: that panel's width comes off
-    // the top, and the sidebar may take the rest up to 640.
-    maxWidth: function(){
-      return window.innerWidth - 360 - (schedPane && schedPane.isOpen() && schedPane.docked() ? schedPane.width() : 0);
-    },
-    onPaint: function(open){
-      app.classList.toggle('sb-open', open);
-      expandBtn.hidden = open;
-    }
-  });
-  var schedPane = makePanel({
-    el: schedPanel, handle: schedResize, side:'right',
-    min:220, max:640,
-    // The stylesheet's clamp(240px,20vw,320px), as the number the caps and the drag need.
-    width: function(){ return Math.min(320, Math.max(240, Math.round(window.innerWidth * 0.20))); },
-    storeKey:'aa_sched_open', widthKey:'aa_sched_w',
-    dockAt: 1024,
-    // The sidebar's stored width, not its current on-screen one: that is the width the chat
-    // loses whenever the sidebar is open, which is what this cap has to keep room for.
-    maxWidth: function(){ return window.innerWidth - sbPane.width() - 360; },
-    onPaint: function(open){
-      app.classList.toggle('sched-open', open);
-      schedToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
-      schedToggle.classList.toggle('on', open);
-      paintSchedTab();
-    },
-    onChange: function(open){
-      if(open) schedulesPanel.onPanelOpen();
-      else schedulesPanel.disarm();
-      clampPanels();
-    }
-  });
-
-  /**
-   * Both widths are capped against the other column, so opening or closing one can leave the
-   * other past its maximum. The clamp rewrites --pw, not storage: the narrower width stays until
-   * the page is reloaded, when the stored one is applied again.
-   */
-  function clampPanels(){
-    // Only a column has a width of its own; in drawer mode the screen decides it, and a clamp
-    // here would shrink the saved width of a window that is merely narrow at the moment.
-    if(!sbPane.docked()) return;
-    var w = parseFloat(sidebar.style.getPropertyValue('--pw'));
-    if(w > 0) sbPane.setWidth(w, false);
-    if(schedPane.docked()){
-      var sw = parseFloat(schedPanel.style.getPropertyValue('--pw'));
-      if(sw > 0) schedPane.setWidth(sw, false);
-    }
-  }
-
-  function setSidebar(open){ sbPane.setOpen(open); }
-  collapseBtn.addEventListener('click', function(){ setSidebar(false); });
-  expandBtn.addEventListener('click', function(){ setSidebar(true); });
-
-  // Restored on the next visit. A first visit on a phone starts with the topic list out of the
-  // way; a wide one starts with it open. Neither writes the default back to storage.
-  var savedSbOpen = null;
-  try { savedSbOpen = localStorage.getItem('aa_sb_open'); } catch(x){}
-  if(savedSbOpen === null) savedSbOpen = narrow() ? '0' : '1';
-  if(savedSbOpen !== '0') sbPane.setOpen(true, {transient:true});
-
-  /**
-   * The two menus at the foot of the sidebar — Menu (all settings, notifications, low attention,
-   * skills) and Manage (close idle). One open at a time, one box in one place;
-   * a click anywhere else puts it away, and Escape puts it away and gives the focus back to the
-   * button that opened it. A disclosure rather than an ARIA menu: role=menu promises arrow-key
-   * navigation, and these are reached with Tab like any other buttons.
-   */
-  var menus = [];
-  function setMenu(entry, open){
-    for(var i=0;i<menus.length;i++){
-      var e=menus[i], on = open && e === entry;
-      e.menu.hidden = !on;
-      e.btn.setAttribute('aria-expanded', on ? 'true' : 'false');
-    }
-  }
-  function openMenu(){
-    for(var i=0;i<menus.length;i++) if(!menus[i].menu.hidden) return menus[i];
-    return null;
-  }
-  function addMenu(btn, menu){
-    var entry={btn:btn, menu:menu};
-    menus.push(entry);
-    btn.addEventListener('click', function(){ setMenu(entry, menu.hidden); });
-  }
-  addMenu(optsBtn, optsMenu);
-  addMenu(manageBtn, manageMenu);
-  document.addEventListener('click', function(e){
-    var m=openMenu();
-    if(!m || m.menu.contains(e.target) || m.btn.contains(e.target)) return;
-    setMenu(null, false);
-  });
-
-  // One sheet dismisses whichever drawer is over the chat. Both are put away if a narrow screen
-  // has somehow got both open — a tap outside means "show me the chat".
-  backdrop.addEventListener('click', function(){
-    if(schedPane.isOpen()) setSchedules(false);
-    if(sbPane.isOpen()) setSidebar(false);
-  });
-
-  /**
-   * Low attention (#app.calm in the stylesheet, which says what it changes and why). Per device,
-   * like the sidebar's width: the phone in a pocket and the desktop with five agents on it are not
-   * asking for the same list. Absent means off, so nothing changes until someone asks for it.
-   */
-  var calm = false;
-  try { calm = localStorage.getItem('aa_calm') === '1'; } catch(x){}
-  function paintCalm(){
-    app.classList.toggle('calm', calm);
-    calmBtn.setAttribute('aria-pressed', calm ? 'true' : 'false');
-    calmState.textContent = calm ? tr('common.on') : tr('common.off');
-  }
-  calmBtn.addEventListener('click', function(){
-    calm = !calm;
-    try { if(calm) localStorage.setItem('aa_calm', '1'); else localStorage.removeItem('aa_calm'); } catch(x){}
-    paintCalm();
-  });
-  paintCalm();
-
-  var THEME_I18N_KEYS = { system: 'menu.themeSystem', dark: 'menu.themeDark', light: 'menu.themeLight' };
-  function localizedThemeLabel(id){
-    var key = THEME_I18N_KEYS[id];
-    return key ? tr(key) : themeLabel(id);
-  }
-  function paintTheme(){
-    var current = getTheme();
-    var label = localizedThemeLabel(current);
-    var options = THEMES.map(function(entry){ return localizedThemeLabel(entry.id); }).join(' / ');
-    themeState.textContent = label;
-    themeBtn.setAttribute('aria-label', tr('menu.themeAria', { label: label }));
-    themeBtn.title = tr('menu.themeTitle', { label: label, options: options });
-  }
-  themeBtn.addEventListener('click', function(){
-    setTheme(nextTheme());
-    paintTheme();
-  });
-  initTheme(paintTheme);
-  paintTheme();
-  function paintLang(){
-    if(langState) langState.textContent = localeLabel(getLocale());
-  }
-  if(langBtn){
-    langBtn.addEventListener('click', function(){
-      setLocale(nextLocale(getLocale()));
-    });
-  }
-  paintLang();
 
   function schedAgo(at){
     if(!at) return '';
@@ -3290,268 +3124,6 @@ import { createTopicStatusController, stClock, stLeft } from './features/topic/s
   // browser asks for permission, and a permission prompt nobody asked for is the fastest way to a
   // "block". Only offered where the browser can do it at all: Chrome, Firefox, Edge, and Safari on
   // iOS only once the page is installed as an app.
-  var PUSH_OK = Boolean(window.isSecureContext && navigator.serviceWorker && window.PushManager && window.Notification);
-  var pushKey = null, pushSub = null, notifyInit = false;
-  function keyBytes(s){
-    var b = atob((s + '==='.slice((s.length + 3) % 4)).replace(/-/g,'+').replace(/_/g,'/'));
-    var out = new Uint8Array(b.length);
-    for(var i=0;i<b.length;i++) out[i]=b.charCodeAt(i);
-    return out;
-  }
-  function paintNotify(){
-    if(!PUSH_OK || !pushKey){ notifyBtn.hidden=true; return; }
-    notifyBtn.hidden=false;
-    if(window.Notification.permission==='denied'){
-      notifyBtn.disabled=true;
-      notifyBtn.setAttribute('aria-pressed','false');
-      notifyState.textContent=tr('menu.notificationsBlocked');
-      notifyBtn.title=tr('menu.notificationsBlockedTitle');
-      return;
-    }
-    notifyBtn.disabled=false;
-    notifyBtn.setAttribute('aria-pressed', pushSub ? 'true' : 'false');
-    notifyState.textContent = pushSub ? tr('common.on') : tr('common.off');
-    notifyBtn.title = pushSub
-      ? tr('menu.notificationsOnTitle')
-      : tr('menu.notificationsOffTitle');
-  }
-  // Once the stream is open, i.e. once signed in: api/push is behind the session like every route.
-  function initNotify(){
-    if(!PUSH_OK || notifyInit) return;
-    notifyInit = true;
-    fetch('api/push', {credentials:'same-origin'}).then(function(r){ return r.json(); }).then(function(d){
-      if(!d || !d.enabled || !d.key) return;
-      pushKey = d.key;
-      return navigator.serviceWorker.getRegistration('sw.js').then(function(reg){
-        return reg ? reg.pushManager.getSubscription() : null;
-      }).then(function(sub){ pushSub = sub; paintNotify(); });
-    }).catch(function(){});
-  }
-  notifyBtn.addEventListener('click', function(){
-    if(!pushKey) return;
-    notifyBtn.disabled = true;
-    if(pushSub){
-      var endpoint = pushSub.endpoint;
-      pushSub.unsubscribe().catch(function(){}).then(function(){
-        pushSub = null;
-        return post('api/push/unsubscribe', {endpoint:endpoint}, 1);
-      }).catch(function(){}).then(paintNotify);
-      return;
-    }
-    window.Notification.requestPermission().then(function(permission){
-      if(permission !== 'granted') return;
-      return navigator.serviceWorker.register('sw.js').then(function(){ return navigator.serviceWorker.ready; }).then(function(reg){
-        return reg.pushManager.getSubscription().then(function(old){
-          return old || reg.pushManager.subscribe({userVisibleOnly:true, applicationServerKey:keyBytes(pushKey)});
-        });
-      }).then(function(sub){
-        return post('api/push/subscribe', sub.toJSON(), 1).then(function(r){
-          if(r.ok){ pushSub = sub; return; }
-          return r.json().then(function(d){ throw new Error((d && d.error) || ('HTTP '+r.status)); });
-        });
-      });
-    }).catch(function(e){
-      alert(tr('menu.notificationsError', { err: (e && e.message) || e }));
-    }).then(paintNotify);
-  });
-  // A notification tapped while this page is open: the worker asks it to show the topic. And a
-  // topic the worker has just written to the cache (sw.ts keepTopic), noted so the prefetch does not
-  // fetch it a second time and an older copy in memory is not put up in its place.
-  if(PUSH_OK) navigator.serviceWorker.addEventListener('message', function(e){
-    var kept = e.data && e.data.cached;
-    if(kept && typeof kept === 'object' && typeof kept.topic === 'string'){ noteVer(kept.topic, kept.last, kept.epoch); return; }
-    var goId = e.data && e.data.goto;
-    if(goId && goId!==topic && topics.some(function(t){ return t.id===goId; })){
-      switchTopic(goId);
-      if(narrow()) setSidebar(false);
-    }
-  });
-
-
-  // ── Terminal ───────────────────────────────────────────────────────────────
-  // A panel at the bottom of the conversation, one per topic. The iframe holds ttyd's own
-  // terminal, which is why this is a hundred lines instead of a terminal emulator. Nothing here
-  // speaks to the agent — the two share a topic id and nothing else.
-
-  // How tall the panel is, in pixels, once the divider has been dragged. 0 means "half the
-  // chat": recomputed rather than frozen, so a phone and a desktop each get half of their own
-  // screen, and a panel that was never resized follows a window that changes size.
-  var TERM_H_KEY = 'aa_term_h', TERM_MIN = 120, TERM_MIN_LOG = 120;
-  var termH = 0;
-  try { var storedTermH = parseInt(localStorage.getItem(TERM_H_KEY) || '', 10); if(storedTermH > 0) termH = storedTermH; } catch(x){}
-
-  /**
-   * What the panel may be: never taller than the chat it sits in, and never so tall that the
-   * transcript has no lines left. What is above it is measured rather than guessed — a phone's
-   * header and two-row composer are most of the chat, and a fixed allowance sized for a desktop
-   * would leave the log 20px tall there. On a window too short for both, the chat wins.
-   */
-  function termLimits(){
-    var room = chat.clientHeight;
-    if(!room) return {min:TERM_MIN, max:TERM_MIN + 40};
-    var fixed = chatHead.clientHeight + composer.clientHeight + (termGrip.offsetHeight || 12) + TERM_MIN_LOG;
-    var max = Math.min(room, Math.max(TERM_MIN, room - fixed));
-    return {min:Math.min(TERM_MIN, max), max:max};
-  }
-  function termHeight(){
-    var lim = termLimits();
-    return Math.max(lim.min, Math.min(lim.max, termH || Math.round(chat.clientHeight * 0.5)));
-  }
-  // Set as a pixel height rather than a percentage: a closed panel is parked at this size, and
-  // it must not change under a hidden iframe — a resize there is a redraw the reader never asked
-  // for, and on some backends a detach.
-  function paintTermHeight(){
-    // While a record from History is up, #bar and the divider are display:none and measure 0 —
-    // a ceiling worked out from those would be ~100px too generous, and the panel would come
-    // back from the record too tall. closeLib paints again once they are back on screen.
-    if(libOn()) return;
-    var lim = termLimits(), h = termHeight();
-    termEl.style.height = h + 'px';
-    termGrip.setAttribute('aria-valuenow', String(h));
-    termGrip.setAttribute('aria-valuemin', String(lim.min));
-    termGrip.setAttribute('aria-valuemax', String(lim.max));
-  }
-  function setTermHeight(h){
-    var lim = termLimits();
-    termH = Math.max(lim.min, Math.min(lim.max, Math.round(h)));
-    paintTermHeight();
-  }
-  function saveTermHeight(){
-    try { if(termH) localStorage.setItem(TERM_H_KEY, String(termH)); else localStorage.removeItem(TERM_H_KEY); } catch(x){}
-  }
-
-  // What the address bar should say now. The topic and the pane are both worth surviving a
-  // reload, and both are written the same way so neither can silently drop the other.
-  function urlNow(){
-    return '?t='+encodeURIComponent(topic) + (termState[topic]==='open' ? '&v=term' : '');
-  }
-
-  // Mounted on first use, so a page that never opens a terminal never connects to ttyd, and
-  // dropped only when the window is CLOSED — never when it is minimized and never when the
-  // topic changes. What survives a drop is the session itself, on the far side, which is the
-  // operator's arrangement (ttyd hangs up its child; their wrapper holds the session open) and
-  // the reason closing needs a server round trip while minimizing does not.
-  function applyTerm(){
-    if(!TERM_OK) return;
-    if(termBoot && topic){
-      termBoot = false;
-      if(!termState[topic]) termState[topic]='open';
-    }
-    var state = topic ? termState[topic] : undefined;
-    var on = state === 'open';
-    chat.classList.toggle('term', on);
-    // After the class, so the divider the panel is measured against is on screen and has its
-    // height — and only while it is on screen: painting a closed panel would resize the parked
-    // iframe for nothing, which is the redraw this design exists to avoid. Before mountTerm, so
-    // a window opened for the first time is born at the height it will keep.
-    if(on) paintTermHeight();
-    termBtn.classList.toggle('on', Boolean(state));
-    termBtn.title = on ? tr('term.minBtnTitle') : (state ? tr('term.showRunningTitle') : tr('term.title'));
-    // Only ever rendered where a session can actually be ended; see TERM_END.
-    termEndBtn.hidden = !TERM_END;
-    if(state && topic) mountTerm(topic);
-    paintFrames();
-  }
-
-  function mountTerm(id){
-    if(termFrames[id]) return;
-    var frame = document.createElement('iframe');
-    frame.setAttribute('title','Terminal');
-    // Relative, for the same reason every fetch here is: a reverse proxy may mount the daemon
-    // under a sub-path, and an absolute "/" walks out of it.
-    frame.setAttribute('src','term/?arg='+encodeURIComponent(id));
-    termFrames[id] = frame;
-    termHost.appendChild(frame);
-  }
-
-  /**
-   * Exactly one mounted terminal is visible: the current topic's, and only while it is open and
-   * nothing else covers the chat.
-   *
-   * A record from History is why the second half is here rather than in the stylesheet. The
-   * panel's own visibility is inherited, and an iframe's rule saying visible wins over it — so a
-   * parent rule alone leaves the terminal painted over the record, visible and unclickable. The
-   * frame's on class is the one thing that decides, and openLib/closeLib repaint through here.
-   */
-  function paintFrames(){
-    var on = Boolean(topic && termState[topic]==='open' && !libOn());
-    for(var id in termFrames){
-      if(!Object.prototype.hasOwnProperty.call(termFrames, id)) continue;
-      var live = on && id===topic;
-      termFrames[id].classList.toggle('on', live);
-      // Per frame, not only on the panel: with one topic's terminal open, another topic's frame
-      // is still mounted and hidden, and inert is what keeps it out of reach from script.
-      termFrames[id].toggleAttribute('inert', !live);
-    }
-    // Inert as well as invisible: visibility keeps the keyboard out, but an iframe can still be
-    // focused from script — and a terminal that grabs focus while it is parked is typing going
-    // somewhere the person cannot see. This one covers the panel's own two buttons.
-    termEl.toggleAttribute('inert', !on);
-    var cur = null;
-    for(var i=0;i<topics.length;i++){ if(topics[i].id===topic){ cur=topics[i]; break; } }
-    termName.textContent = cur && cur.title ? cur.title : 'Untitled';
-  }
-
-  /** Unmount one topic's terminal. Ends a connection, never a session — see endTerm. */
-  function dropTerm(id){
-    var frame = termFrames[id];
-    if(frame){
-      if(frame.parentNode) frame.parentNode.removeChild(frame);
-      delete termFrames[id];
-    }
-    delete termState[id];
-  }
-
-  function showTerm(){
-    if(!TERM_OK || !topic) return;
-    // Opening the panel takes height from the transcript, and a reader who was at the bottom
-    // would otherwise find the newest message pushed under the divider.
-    var stick = atBottom();
-    termState[topic] = 'open';
-    history.replaceState(null,'',urlNow());
-    applyTerm();
-    if(stick) toBottom();
-  }
-
-  // Hidden, not unmounted: the point of minimizing is that whatever is running in there keeps
-  // running AND stays connected, so coming back is a repaint rather than a reconnect and a
-  // redraw.
-  function minTerm(){
-    if(!TERM_OK || !topic || !termState[topic]) return;
-    termState[topic] = 'min';
-    history.replaceState(null,'',urlNow());
-    applyTerm();
-  }
-
-  /**
-   * End the session, which is a different act from closing the window and is why it asks first.
-   *
-   * Dropping the iframe would only hang up on a shell that carries on without us. What actually
-   * ends it is a command the operator configured, so this is a request; the window is taken down
-   * only once the server says it worked, because a window closed over a session that is still
-   * alive is the one outcome nobody could explain from the screen.
-   */
-  function endTerm(){
-    if(!TERM_OK || !TERM_END || !topic || !termState[topic]) return;
-    var cur = null;
-    for(var i=0;i<topics.length;i++){ if(topics[i].id===topic){ cur=topics[i]; break; } }
-    var title = (cur && cur.title) ? cur.title : tr('common.untitled');
-    if(!confirm(tr('term.confirmEnd', { title: title }))) return;
-    var id = topic;
-    // Not retried, unlike a send. A 500 here means the operator's command ran and failed, and
-    // running it again 700ms later answers the same way while spawning a second process; the
-    // retry in post() is for a link that dropped a request, which is not this.
-    post('api/terminal/end',{topic:id},0).then(function(r){
-      return r.ok ? {ok:true} : r.json().then(function(d){ return {ok:false, error:(d&&d.error)||tr('term.endFailed')}; }, function(){ return {ok:false, error:tr('term.endFailed')}; });
-    }).then(function(d){
-      if(!d.ok){ alert(d.error); return; }
-      dropTerm(id);
-      if(id===topic){ history.replaceState(null,'',urlNow()); applyTerm(); }
-    }, function(){
-      alert(tr('term.endReachErr'));
-    });
-  }
-
   // ── Topics fetched before they are opened ───────────────────────────────────
   // A topic in "needs you" is one the person is about to open, and opening it used to cost a full
   // sync. The row says what the reply is; the transcript behind it can be fetched while the person
@@ -4408,67 +3980,6 @@ import { createTopicStatusController, stClock, stLeft } from './features/topic/s
   // A new topic is a row in the Topics list, so that is the tab it is created into.
   newTopicBtn.addEventListener('click', function(){ setSbTab('topics'); createTopic(); });
 
-  // Revealed only where there is something behind it. When the daemon serves no terminal the
-  // button stays hidden and these listeners never have anything to toggle.
-  if(TERM_OK){
-    termBtn.hidden = false;
-    // One button, three states: no window opens one, a shown window is minimized, a minimized
-    // one comes back. Minimizing from here as well as from the title bar because the header
-    // button is where the hand already is on a phone, and because it is what this button did
-    // before there was a window to minimize.
-    termBtn.addEventListener('click', function(){
-      if(termState[topic]==='open') minTerm(); else showTerm();
-    });
-    termMinBtn.addEventListener('click', minTerm);
-    termEndBtn.addEventListener('click', endTerm);
-
-    // Dragging the divider. The new height comes from the POINTER's travel rather than from the
-    // panel's box: a drag grabbed anywhere on the strip must not jump on the first move, and the
-    // panel's own bottom edge is the window's, which does not move.
-    var termDrag = null;
-    termGrip.addEventListener('pointerdown', function(e){
-      if(!topic || !termState[topic]) return;
-      e.preventDefault();
-      termDrag = {y:e.clientY, h:termHeight()};
-      termGrip.classList.add('drag');
-      if(termGrip.setPointerCapture) try { termGrip.setPointerCapture(e.pointerId); } catch(x){}
-    });
-    termGrip.addEventListener('pointermove', function(e){
-      if(termDrag) setTermHeight(termDrag.h - (e.clientY - termDrag.y));
-    });
-    var endTermDrag = function(){
-      if(!termDrag) return;
-      termDrag = null;
-      termGrip.classList.remove('drag');
-      saveTermHeight();
-    };
-    // On the window, not the strip: when the capture fails the pointerup can land anywhere, and
-    // a drag that never ends leaves the next pointermove still resizing the panel.
-    window.addEventListener('pointerup', endTermDrag);
-    window.addEventListener('pointercancel', endTermDrag);
-    termGrip.addEventListener('lostpointercapture', endTermDrag);
-    // Back to half the chat, the same gesture the two side panels offer for their width.
-    termGrip.addEventListener('dblclick', function(){
-      termH = 0;
-      paintTermHeight();
-      saveTermHeight();
-    });
-    // A divider is a control, so it answers the keyboard as well as the pointer.
-    termGrip.addEventListener('keydown', function(e){
-      if(e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
-      e.preventDefault();
-      setTermHeight(termHeight() + (e.key === 'ArrowUp' ? 24 : -24));
-      saveTermHeight();
-    });
-    // A shorter window may leave a stored height taller than the chat; the transcript keeps its
-    // lines. Not while the panel is closed (the parked iframe must not be resized for nothing),
-    // and not while a record is up — its composer is hidden, so there is nothing to measure
-    // against; closeLib does it when the record goes.
-    window.addEventListener('resize', function(){
-      if(topic && termState[topic]==='open' && !libOn()) paintTermHeight();
-    });
-  }
-
   readBtn.addEventListener('click', function(){
     setMenu(null, false);
     markAllRead(topicForest().visible, 'topic', function(msg){ note.textContent=msg; });
@@ -4665,9 +4176,7 @@ import { createTopicStatusController, stClock, stLeft } from './features/topic/s
       for(n in out){ if(!(out[n] && keep[out[n].t])) delete out[n]; else kept++; }
       if(kept) localStorage.setItem(UNSENT, JSON.stringify(out)); else localStorage.removeItem(UNSENT);
     } catch(x){}
-    for(id in termFrames){
-      if(Object.prototype.hasOwnProperty.call(termFrames, id) && !keep[id]) dropTerm(id);
-    }
+    terminalController.pruneFrames(keep);
   }
 
   // The draft first: a reload is a way out of the page, and the composer is the one thing here a
@@ -4778,20 +4287,6 @@ import { createTopicStatusController, stClock, stLeft } from './features/topic/s
     if(t && t.classList && t.classList.contains('shot')) t.style.display='none';
   }, true);
 
-  function openShot(img){
-    lightboxImg.src = img.src;
-    lightboxImg.alt = img.alt;
-    lightbox.hidden = false;
-  }
-  function closeShot(){
-    if(lightbox.hidden) return;
-    lightbox.hidden = true;
-    // Dropped rather than left behind: a full-resolution screenshot held decoded by an overlay
-    // nobody is looking at is the kind of thing a daemon running for weeks pays for.
-    lightboxImg.removeAttribute('src');
-  }
-  lightbox.addEventListener('click', closeShot);
-
   // ── History (client/panels/history.ts) ──────────────────────────────────────
   function setSbTab(tab){ historyPanel.setTab(tab); }
   function libOn(){ return historyPanel.isOpen(); }
@@ -4820,118 +4315,6 @@ import { createTopicStatusController, stClock, stLeft } from './features/topic/s
     if(sbPane.isOpen()){ setSidebar(false); return true; }
     return false;
   });
-
-  /**
-   * The code view — CodeMirror, bundled into assets/ and loaded the first time a file needs it.
-   *
-   *   editor(parent, {doc, name, readOnly?, onChange?(doc), onSave?()})
-   *     → {getDoc(), setDoc(doc), focus(), destroy()}
-   *   diff(parent, {name, original, modified, layout: 'unified'|'split', onSelect?(sel|null)})
-   *     → {setLayout(layout), destroy()}     sel = {side: 'old'|'new', from, to, text}, lines from 1
-   *   highlighter(lang) → Promise<null | (code) → [[from, to, classes], ...]>   (a fence's colours)
-   *
-   * window.__fhCodeView is the seam, and it is checked first: page.dom.test.ts puts a fake there.
-   *
-   * Resolves null when there is nothing to load or the import failed. That is not an error the
-   * caller reports: the reader already has the server's pre element, which is a complete answer,
-   * and the page is built to work with no bundle at all (a source checkout that never ran the
-   * asset build). The warning is once per page, not once per file.
-   */
-  var codeViewP = null, codeViewWarned = false;
-  function codeView(){
-    if(window.__fhCodeView) return Promise.resolve(window.__fhCodeView);
-    if(!CODEVIEW) return Promise.resolve(null);
-    if(codeViewP) return codeViewP;
-    // Absolute, because a relative specifier in an INLINE classic script does not resolve:
-    // Chromium answers "Failed to resolve module specifier" — measured 2026-11-18, and the bundle
-    // is next to the page in its own directory. document.baseURI keeps a sub-path mount working
-    // (a proxy prefix is part of the page's own URL), and the URL is same-origin, which is what
-    // the CSP's script-src 'self' admits.
-    codeViewP = import(new URL(CODEVIEW, document.baseURI).href).then(function(m){
-      return (m && m.default) || m || null;
-    }).catch(function(e){
-      if(!codeViewWarned){ codeViewWarned = true; console.warn('code view unavailable, showing plain text:', e); }
-      return null;
-    });
-    return codeViewP;
-  }
-
-  /**
-   * Read a file the agent sent without downloading it. The server renders it (reading.ts) and the
-   * answer fills a window over the transcript. The name and the download link are on the file's
-   * own link, so a slow link shows which file is coming rather than an empty frame.
-   *
-   * A text file also arrives as its own bytes (text), and when the code view is available it is
-   * shown in that instead of the server's pre element; markdown keeps the rendered HTML. The pre
-   * is the fallback rather than a second mode, because it is what the server would have shown.
-   *
-   * readSeq is which opening an answer belongs to. Close one file and open another before the first
-   * has answered, and without it the first file's text would land under the second one's name.
-   */
-  var readSeq = 0, readerEditor = null;
-  function readerDoc(note, html){
-    readerBody.innerHTML = note + '<div class="b">' + html + '</div>';
-    codeBlocks(readerBody);
-    readerBody.scrollTop = 0;
-  }
-  function readerDropEditor(){
-    if(readerEditor){ readerEditor.destroy(); readerEditor = null; }
-    readerBody.classList.remove('cv');
-  }
-  function openReader(link){
-    readerDropEditor();
-    readerName.textContent = link.textContent;
-    readerName.title = readerName.textContent;
-    readerGet.setAttribute('href', link.getAttribute('href'));
-    readerSay(tr('common.loading'));
-    reader.hidden = false;
-    readerBody.focus();
-    var mine = ++readSeq;
-    fetch(link.getAttribute('data-view'), {credentials:'same-origin'}).then(function(r){
-      return r.json().then(function(j){ return {ok:r.ok, status:r.status, body:j}; });
-    }).then(function(res){
-      if(mine !== readSeq) return;
-      if(!res.ok) return readerSay(res.status === 404
-        ? tr('reader.gone')
-        : (res.body && res.body.error) || tr('reader.cannotShow'));
-      var j = res.body, note = '';
-      if(j.shown < j.size) note = '<div class="reader-note">'+text(tr('reader.partial', { shown: byteSize(j.shown), size: byteSize(j.size) }))+'</div>';
-      if(typeof j.text !== 'string') return readerDoc(note, j.html);
-      codeView().then(function(cv){
-        if(mine !== readSeq) return;
-        if(!cv) return readerDoc(note, j.html);
-        readerBody.classList.add('cv');
-        readerBody.innerHTML = note;
-        var host = document.createElement('div');
-        host.className = 'cv-host';
-        readerBody.appendChild(host);
-        try {
-          readerEditor = cv.editor(host, {doc:j.text, name:j.name, readOnly:true});
-        } catch(e) {
-          // A bundle that loaded but cannot build an editor is the same answer as no bundle:
-          // the plain text the server sent, rather than an empty window.
-          console.warn('code view failed, showing plain text:', e);
-          readerDropEditor();
-          readerDoc(note, j.html);
-        }
-      });
-    }).catch(function(){ if(mine === readSeq) readerSay(tr('common.reachServerError')); });
-  }
-  function readerSay(s){ readerBody.innerHTML = '<div class="empty">'+text(s)+'</div>'; }
-  function closeReader(){
-    if(reader.hidden) return;
-    reader.hidden = true;
-    readSeq++;
-    readerDropEditor();
-    // Emptied, not kept: half a megabyte of rendered document is a lot of DOM to leave behind an
-    // overlay nobody is looking at — the lightbox drops its picture for the same reason.
-    readerBody.textContent = '';
-  }
-  function byteSize(n){ return n < 1048576 ? Math.max(1, Math.round(n/1024)) + ' KB' : (n/1048576).toFixed(1) + ' MB'; }
-  $('reader-close').addEventListener('click', closeReader);
-  // The dimmed page behind the window is a way out too, as it is for the lightbox — but only the
-  // backdrop itself: a click that lands in the document must not close what is being read.
-  reader.addEventListener('click', function(e){ if(e.target === reader) closeReader(); });
 
   // ── The git window (client/panels/git.ts) ──────────────────────────────────
 
