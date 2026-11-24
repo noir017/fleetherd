@@ -1,0 +1,197 @@
+import type {
+  HistoryPanelHit,
+  HistoryPanelPage,
+  HistoryPanelSession,
+} from '../../../../adapter.js';
+import type { WebMessage } from '../../../protocol.js';
+import type { WebHistoryRead } from '../../../room.js';
+import type { FilterBarGroup, FilterBarOption, FilterBarState } from '../../components/index.js';
+import { t as tr } from '../../i18n/index.js';
+import type { EditorContribution, ViewContribution } from '../../plugins/api.js';
+
+export type HistoryPanelComponent = ReturnType<ViewContribution['component']>;
+export type HistoryEditorComponent = ReturnType<EditorContribution['component']>;
+export type HistoryPanelInitContext = Parameters<HistoryEditorComponent['init']>[1];
+
+export interface HistoryEditorInput {
+  readonly id: string;
+  readonly title?: string;
+  readonly query?: string;
+}
+
+export interface HistoryIcons {
+  readonly copy: string;
+  readonly check: string;
+  readonly cross: string;
+  readonly search: string;
+  readonly filter: string;
+  readonly arrowUp: string;
+  readonly arrowDown: string;
+  readonly chevronLeft: string;
+  readonly globe: string;
+  readonly [key: string]: string | undefined;
+}
+
+export interface HistoryPluginDeps {
+  readonly doc?: Document;
+  readonly win?: Window;
+  readonly getIcons?: () => Partial<HistoryIcons>;
+  readonly msgMarkup?: (key: string, msg: WebMessage, isHist: boolean) => { cls: string; h: string };
+  readonly codeBlocks?: (root: Element) => void;
+  readonly forgetOpenedPrefix?: (prefix: string) => void;
+  readonly openShot?: (img: Element) => void;
+  readonly toggleAll?: (key: string | null) => void;
+  readonly toggleLine?: (line: Element) => void;
+  readonly copyText?: (s: string, done: (ok: boolean) => void) => void;
+  readonly onOpenSession?: (input: HistoryEditorInput) => void;
+  readonly onCloseEditor?: (id: string) => void;
+}
+
+export interface HistorySearchResponse {
+  readonly enabled?: boolean;
+  readonly hits?: HistoryPanelHit[];
+  readonly more?: boolean;
+  readonly error?: string;
+}
+
+export type HistoryPageResponse = Partial<HistoryPanelPage> & { readonly error?: string };
+export type HistoryReadResponse = Partial<WebHistoryRead> & { readonly error?: string };
+
+export const DEFAULT_HISTORY_ICONS: HistoryIcons = {
+  copy: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15h-.5A1.5 1.5 0 0 1 3 13.5v-9A1.5 1.5 0 0 1 4.5 3h9A1.5 1.5 0 0 1 15 4.5V5"/></svg>',
+  check: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m4.5 12.5 5 5L19.5 7"/></svg>',
+  cross: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>',
+  search: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5"/></svg>',
+  filter: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3.5 5h17l-6.5 7.5V19l-4 1.5v-8z"/></svg>',
+  arrowUp: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6"/></svg>',
+  arrowDown: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 5v14M6 13l6 6 6-6"/></svg>',
+  chevronLeft: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M15 5.5 8.5 12l6.5 6.5"/></svg>',
+  globe: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/></svg>',
+};
+
+export function resolveHistoryIcons(deps: HistoryPluginDeps): HistoryIcons {
+  const custom = deps.getIcons?.();
+  return custom ? { ...DEFAULT_HISTORY_ICONS, ...custom } : DEFAULT_HISTORY_ICONS;
+}
+
+export function errorMessage(err: unknown): string {
+  if (err && typeof err === 'object' && 'message' in err && typeof err.message === 'string' && err.message) {
+    return err.message;
+  }
+  return tr('common.networkError');
+}
+
+export function formatHistoryTime(at: number): string {
+  try {
+    const d = new Date(at);
+    const o: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' };
+    if (d.getFullYear() !== new Date().getFullYear()) o.year = 'numeric';
+    return d.toLocaleString(undefined, o);
+  } catch {
+    return '';
+  }
+}
+
+export function formatHistoryRef(title: string | undefined, id: string | number): string {
+  return `${title || tr('history.untitled')} (#${id})`;
+}
+
+export function readOnlySentence(session: HistoryPanelSession, topicHere: boolean): string {
+  if (topicHere) return tr('history.roHere');
+  if (session.topic) return tr('history.roCleared');
+  return tr('history.roOther', { platform: session.platform || tr('history.anotherPlatform') });
+}
+
+export function normalizeHistoryEditorInput(input: unknown): HistoryEditorInput | null {
+  if (typeof input === 'string' || typeof input === 'number') {
+    const id = String(input).trim();
+    return id ? { id } : null;
+  }
+  if (!input || typeof input !== 'object') return null;
+  const rec = input as Record<string, unknown>;
+  const rawId = rec.id ?? rec.session;
+  if (typeof rawId !== 'string' && typeof rawId !== 'number') return null;
+  const id = String(rawId).trim();
+  if (!id) return null;
+  return {
+    id,
+    title: typeof rec.title === 'string' ? rec.title : undefined,
+    query: typeof rec.query === 'string' ? rec.query : undefined,
+  };
+}
+
+export function historyEditorTitle(input: unknown): string {
+  const parsed = normalizeHistoryEditorInput(input);
+  if (!parsed) return tr('sidebar.history');
+  return parsed.title || `${tr('sidebar.history')} #${parsed.id}`;
+}
+
+export function defaultMsgMarkup(_key: string, msg: WebMessage): { cls: string; h: string } {
+  const cls = msg.own ? 'msg own' : 'msg';
+  return { cls, h: `<div class="msg-body">${msg.html || ''}</div>` };
+}
+
+export function copyWithFallback(
+  value: string,
+  deps: HistoryPluginDeps,
+  done: (ok: boolean) => void,
+): void {
+  if (deps.copyText) {
+    deps.copyText(value, done);
+    return;
+  }
+  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+    void navigator.clipboard.writeText(value).then(
+      () => done(true),
+      () => done(false),
+    );
+    return;
+  }
+  done(false);
+}
+
+export function buildHistoryFilterGroups(
+  items: ReadonlyArray<{ readonly agent?: string; readonly platform?: string }>,
+  icons: HistoryIcons,
+): FilterBarGroup[] {
+  const agents = new Map<string, number>();
+  const platforms = new Map<string, number>();
+  for (const item of items) {
+    const agent = item.agent || tr('history.noAgent');
+    const platform = item.platform || tr('history.unknown');
+    agents.set(agent, (agents.get(agent) ?? 0) + 1);
+    platforms.set(platform, (platforms.get(platform) ?? 0) + 1);
+  }
+  const groups: FilterBarGroup[] = [];
+  if (platforms.size > 1) {
+    const options: FilterBarOption[] = [...platforms.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([value, count]) => ({ value, label: value, icon: icons.globe, count }));
+    groups.push({ id: 'platform', label: tr('filter.host'), options });
+  }
+  if (agents.size > 1) {
+    const options: FilterBarOption[] = [...agents.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([value, count]) => ({ value, label: value, count }));
+    groups.push({ id: 'agent', label: tr('filter.agent'), options });
+  }
+  return groups;
+}
+
+export function filterHistoryRecords<T extends { readonly agent?: string; readonly platform?: string }>(
+  items: readonly T[],
+  state: FilterBarState,
+): T[] {
+  const platSel = state.sel.platform;
+  const agentSel = state.sel.agent;
+  if ((!platSel || platSel.length === 0) && (!agentSel || agentSel.length === 0)) {
+    return [...items];
+  }
+  return items.filter((item) => {
+    const platform = item.platform || tr('history.unknown');
+    const agent = item.agent || tr('history.noAgent');
+    if (platSel && platSel.length > 0 && !platSel.includes(platform)) return false;
+    if (agentSel && agentSel.length > 0 && !agentSel.includes(agent)) return false;
+    return true;
+  });
+}
