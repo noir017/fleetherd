@@ -731,6 +731,20 @@ export async function open(
         }
       }
       (w as any).EventSource = FakeEventSource;
+      if (typeof (w as any).ResizeObserver !== 'function') {
+        class FakeResizeObserver {
+          observe(): void {
+            // jsdom has no layout engine; tests drive resize via window events or shell.layout().
+          }
+          unobserve(): void {
+            // noop
+          }
+          disconnect(): void {
+            // noop
+          }
+        }
+        (w as any).ResizeObserver = FakeResizeObserver;
+      }
       (w as any).confirm = (s: string) => {
         confirms.push(String(s));
         return confirm;
