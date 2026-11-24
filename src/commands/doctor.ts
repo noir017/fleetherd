@@ -18,6 +18,7 @@ import { remoteAgentEnv } from '../daemon/agent-common.js';
 import { hostProbeScript, readHostProbe, type HostProbe } from '../daemon/host-probe.js';
 import { OWNER } from '../platform/webui/room.js';
 import { loadJwks } from '../platform/webui/sso.js';
+import { loadSinglePlugin } from '../platform/webui/plugins/loader.js';
 import { detectEnvLocale, type Locale } from '../core/i18n/index.js';
 import { tCli } from '../core/i18n/cli.js';
 
@@ -317,6 +318,33 @@ function buildConfigChecks(ctx: DoctorContext): Check[] {
   ];
 }
 
+function inspectWebuiPlugins(
+  id: string,
+  plugins: readonly { path: string; config?: unknown }[],
+  filesRoots: readonly string[],
+  cfg: Config,
+  locale: Locale
+): string {
+  const agentRoots = cfg.agents
+    .filter((a) => !a.host)
+    .flatMap((a) => [a.cwd, path.join(os.homedir(), '.fleetherd', 'agents', a.id)].filter((x): x is string => Boolean(x)));
+  const forbiddenRoots = [...filesRoots, ...agentRoots];
+  const seenIds = new Set<string>();
+  const items = plugins.map((entry) => {
+    const result = loadSinglePlugin(entry, forbiddenRoots, seenIds);
+    if (result.ok) {
+      seenIds.add(result.plugin.id);
+      return `${entry.path} (${result.plugin.id}@${result.plugin.version} ✓)`;
+    }
+    return `${entry.path} (✗ ${result.reason})`;
+  });
+  return tCli(locale, 'doctor.detail.webuiPlugins', {
+    id,
+    count: plugins.length,
+    list: items.join(', '),
+  });
+}
+
 function buildRuntimeChecks(ctx: DoctorContext): Check[] {
   const { cfg, locale } = ctx;
   return [
@@ -385,6 +413,10 @@ function buildRuntimeChecks(ctx: DoctorContext): Check[] {
             if (p.sso.password) {
               lines.push(tCli(locale, 'doctor.detail.webuiSsoPassword', { id }));
             }
+          }
+          if (p.plugins.length > 0) {
+            warn = true;
+            lines.push(inspectWebuiPlugins(id, p.plugins, p.files.roots, cfg, locale));
           }
         }
         return { ok: true, ...(warn ? { level: 'warn' as const } : {}), detail: lines.join('; ') };

@@ -104,6 +104,7 @@ export const en = {
   'doctor.detail.webuiSsoKeys': '{id}: sso reads {header} from {from}, verified against {count} key(s) at {url}',
   'doctor.detail.webuiSsoError': '{id}: sso cannot read {url} ({error}) — nobody gets in this way until that URL answers',
   'doctor.detail.webuiSsoPassword': '{id}: the shared token is still a second way in; set sso.password: false once sso works',
+  'doctor.detail.webuiPlugins': '{id}: plugins ({count}) — {list}. Security: plugins run in the gateway process with full permissions and in the signed-in browser session with no sandbox',
 
   'doctor.check.acpSdk': 'ACP SDK installed',
   'doctor.detail.acpSdkOk': '{sdk} loads successfully',
@@ -261,6 +262,7 @@ export const zhCN: DictOf<typeof en> = {
   'doctor.detail.webuiSsoKeys': '{id}：SSO 从 {from} 读取 {header}，通过 {url} 的 {count} 个密钥进行验证',
   'doctor.detail.webuiSsoError': '{id}：SSO 无法读取 {url}（{error}）— 在该 URL 正常响应前，任何人都无法通过此方式登录',
   'doctor.detail.webuiSsoPassword': '{id}：共享 Token 仍作为备用登录入口；SSO 验证正常后建议设置 sso.password: false',
+  'doctor.detail.webuiPlugins': '{id}：插件（{count} 个）— {list}。安全提示：插件与网关同进程、同登录会话权限运行，无沙箱隔离',
 
   'doctor.check.acpSdk': 'ACP SDK 安装状态',
   'doctor.detail.acpSdkOk': '{sdk} 加载成功',

@@ -39,7 +39,7 @@
  * leak a socket; it hangs Ctrl-C forever.
  */
 import { createReadStream } from 'node:fs';
-import { open, readFile, stat } from 'node:fs/promises';
+import { open, readFile, realpath, stat } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { Socket } from 'node:net';
 import path from 'node:path';
@@ -49,7 +49,8 @@ import type { InstructionsPanel, InstructionsTarget } from '../adapter.js';
 import { ASSET_FILE, loadAssets, type WebAssets } from './assets.js';
 import { SESSION_COOKIE, readCookie, sessionCookie, type WebAuth } from './auth.js';
 import { ICON_PNG, ICON_SVG, renderManifest } from './manifest.js';
-import { servePage, type PageAssets } from './page.js';
+import { servePage, type BootPluginEntry, type PageAssets } from './page.js';
+import { isPathWithin, pluginMimeType, type LoadedPluginEntry } from './plugins/loader.js';
 import {
   ClickRequestSchema,
   CreateTopicRequestSchema,
@@ -174,12 +175,28 @@ export function createWebServer(
   terminal: TerminalSettings,
   sso?: WebSso,
   push?: WebPush,
-  assets: WebAssets = loadAssets()
+  assets: WebAssets = loadAssets(),
+  plugins: readonly LoadedPluginEntry[] = []
 ): WebServer {
   const sockets = new Set<Socket>();
   const streams = new Set<Stream>();
   const upstreams: UpstreamSet = new Set<Socket>();
-  const ctx: Ctx = { room, auth, instance, streams, terminal, upstreams, sso, push, assets, warned: new Map() };
+  const pluginMap = new Map<string, LoadedPluginEntry>(plugins.map((p) => [p.id, p]));
+  const bootPlugins: BootPluginEntry[] = plugins.flatMap((p) => (p.bootEntry ? [p.bootEntry] : []));
+  const ctx: Ctx = {
+    room,
+    auth,
+    instance,
+    streams,
+    terminal,
+    upstreams,
+    sso,
+    push,
+    assets,
+    plugins: pluginMap,
+    bootPlugins,
+    warned: new Map(),
+  };
 
   const server = createServer((req, res) => {
     void route(req, res, ctx).catch((e: unknown) => {
@@ -329,6 +346,10 @@ interface Ctx {
   push?: WebPush;
   /** The built code view, if a build ever ran — see `assets.ts`. */
   assets: WebAssets;
+  /** Loaded external plugins keyed by plugin id, serving only manifest-whitelisted files. */
+  plugins: ReadonlyMap<string, LoadedPluginEntry>;
+  /** Frontend plugin entries included in boot-config. */
+  bootPlugins: readonly BootPluginEntry[];
   /** The page as last served — see `servedPage`. */
   page?: ServedPage;
 }
@@ -498,6 +519,9 @@ const GUARDED: Route[] = [
   // own script and stylesheet (also reachable before sign-in, see OPEN). The one route that serves
   // a script off disk — see `asset`, and the security note beside the page's CSP.
   { method: 'GET', path: '/assets/', prefix: true, run: ({ req, res, rest }, ctx) => asset(req, res, ctx.assets, rest) },
+  // External plugin static files: guarded behind login/SSO, strictly serving only files explicitly
+  // whitelisted in each plugin's `fleetherd-plugin.json` manifest (never arbitrary disk reads).
+  { method: 'GET', path: '/plugins/', prefix: true, run: ({ req, res, rest }, ctx) => pluginFile(req, res, ctx.plugins, rest) },
   // The terminal pane's backend. Listed unconditionally even though the feature is usually
   // off, so this table stays the complete answer to "what is reachable"; `terminalPage`
   // answers 404 when it is off, which is the truth about the route either way.
@@ -676,6 +700,7 @@ function servedPage(ctx: Ctx): ServedPage {
     filesOn(ctx),
     instructionsOn(ctx),
     ctx.instance.id,
+    ctx.bootPlugins,
   ] as const;
   const key = JSON.stringify(args);
   if (ctx.page?.key === key) return ctx.page;
@@ -1512,6 +1537,45 @@ async function asset(req: IncomingMessage, res: ServerResponse, assets: WebAsset
   body(req, res, 200, bytes, {
     ...type,
     'Cache-Control': 'public, max-age=31536000, immutable',
+    'X-Content-Type-Options': 'nosniff',
+  });
+}
+
+/**
+ * Serve a manifest-whitelisted file from a loaded plugin (`GET /plugins/<id>/<file>`).
+ * Re-checks realpath containment before reading to defend against post-startup symlink swaps.
+ */
+async function pluginFile(
+  req: IncomingMessage,
+  res: ServerResponse,
+  plugins: ReadonlyMap<string, LoadedPluginEntry>,
+  rest: string
+): Promise<void> {
+  const slash = rest.indexOf('/');
+  if (slash <= 0 || slash === rest.length - 1) return send(req, res, 404, { error: 'no such plugin file' });
+  const rawId = rest.slice(0, slash);
+  const rawRel = rest.slice(slash + 1);
+  let id: string;
+  let relPath: string;
+  try {
+    id = decodeURIComponent(rawId);
+    relPath = decodeURIComponent(rawRel);
+  } catch {
+    return send(req, res, 404, { error: 'no such plugin file' });
+  }
+  if (relPath.includes('\0') || relPath.includes('\\') || relPath.split('/').some((s) => s === '..' || s === '.')) {
+    return send(req, res, 404, { error: 'no such plugin file' });
+  }
+  const entry = plugins.get(id);
+  const allowedPath = entry?.allowedFiles.get(relPath);
+  if (!entry || !allowedPath) return send(req, res, 404, { error: 'no such plugin file' });
+  const real = await realpath(allowedPath).catch(() => undefined);
+  if (!real || !isPathWithin(real, entry.dir)) return send(req, res, 404, { error: 'no such plugin file' });
+  const bytes = await readFile(real).catch(() => undefined);
+  if (!bytes) return send(req, res, 404, { error: 'no such plugin file' });
+  body(req, res, 200, bytes, {
+    'Content-Type': pluginMimeType(relPath),
+    'Cache-Control': 'no-cache',
     'X-Content-Type-Options': 'nosniff',
   });
 }

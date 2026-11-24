@@ -31,6 +31,8 @@ import type { MessageRef, SettingsScreen, SlashCommandSpec, WorkdirScreen } from
 import { MESSAGE_KINDS, type MessageKind, type PlatformAdapter, type SendOptions } from '../adapter.js';
 import { renderWebMarkdown } from '../web-markdown.js';
 import { WebAuth, fileSessionStore } from './auth.js';
+import { loadAssets } from './assets.js';
+import { loadPlugins } from './plugins/loader.js';
 import type { WebMessage } from './protocol.js';
 import { readableKind } from './reading.js';
 import {
@@ -157,7 +159,12 @@ const CAPABILITIES: PlatformAdapter['capabilities'] = {
  * listening from the factory would accept a message in that window and drop it into a null
  * handler with nothing logged.
  */
-export function createWebuiAdapter(instance: WebuiInstance): PlatformAdapter {
+export interface WebuiAdapterOptions {
+  /** Additional directories (e.g. agent working dirs) forbidden from hosting plugins. */
+  readonly forbiddenPluginRoots?: readonly string[];
+}
+
+export function createWebuiAdapter(instance: WebuiInstance, opts?: WebuiAdapterOptions): PlatformAdapter {
   // Per instance rather than one shared file: two web UIs on two ports are two deployments,
   // and merging their topic lists would put one's rooms in the other's switcher.
   const topics = new TopicStore(path.join(configDir(), `webui-topics-${instance.id}.json`));
@@ -179,6 +186,8 @@ export function createWebuiAdapter(instance: WebuiInstance): PlatformAdapter {
   room.useNotifier((notice) => {
     if (push.count > 0) void push.notifyAll(notice);
   });
+  const forbiddenRoots = [...(instance.files?.roots ?? []), ...(opts?.forbiddenPluginRoots ?? [])];
+  const plugins = loadPlugins(instance.plugins ?? [], { forbiddenRoots });
   const server = createWebServer(
     room,
     // Beside the topic file, per instance for the same reason. Persisted so that an upgrade —
@@ -199,7 +208,9 @@ export function createWebuiAdapter(instance: WebuiInstance): PlatformAdapter {
     // Absent unless configured, and that absence is the whole of "SSO is off": the server has
     // no fallback path that half-trusts a header when there is nothing to verify it against.
     instance.sso ? new WebSso(instance.sso) : undefined,
-    push
+    push,
+    loadAssets(),
+    plugins
   );
   return { ...describe(instance), ...outbound(room, instance), forkThread: forkTopicThread(room), ...lifecycle(room, server) };
 }
