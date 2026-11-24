@@ -9,8 +9,15 @@ import { createApiClient } from '../../services/api.js';
 import { StorageService } from '../../services/storage.js';
 import {
   createTerminalPlugin,
+  TERMINAL_CLOSE_TAB_COMMAND,
+  TERMINAL_EDITOR_KIND,
   TERMINAL_END_SESSION_COMMAND,
+  TERMINAL_MOVE_TO_PANEL_COMMAND,
+  TERMINAL_MOVE_TO_SECONDARY_COMMAND,
+  TERMINAL_NEW_TAB_COMMAND,
+  TERMINAL_OPEN_IN_EDITOR_COMMAND,
   TERMINAL_PLUGIN_ID,
+  TERMINAL_RENAME_TAB_COMMAND,
   TERMINAL_TOGGLE_COMMAND,
   TERMINAL_TOOL_ID,
   type TerminalPluginDeps,
@@ -33,21 +40,30 @@ function makeMemoryStorage(): StorageService {
   });
 }
 
-function makePanelContext(id = 'tool:terminal'): {
+function makePanelContext(
+  id = 'tool:terminal',
+  initialGroup: string = 'panel',
+): {
   readonly ctx: PanelInitContext;
   readonly close: ReturnType<typeof vi.fn>;
+  readonly setTitle: ReturnType<typeof vi.fn>;
   readonly setVisibility: (visible: boolean) => void;
+  readonly setGroup: (group: string) => void;
 } {
   const visibility = new Emitter<boolean>();
   const dimensions = new Emitter<{ readonly width: number; readonly height: number }>();
   const close = vi.fn();
+  const setTitle = vi.fn();
+  let group = initialGroup;
   const api: PanelRef = {
     id,
-    group: 'panel',
+    get group() {
+      return group;
+    },
     params: undefined,
     onDidVisibilityChange: visibility.event,
     onDidDimensionsChange: dimensions.event,
-    setTitle: vi.fn(),
+    setTitle,
     setBadge: vi.fn(),
     focus: vi.fn(),
     close,
@@ -55,7 +71,12 @@ function makePanelContext(id = 'tool:terminal'): {
   return {
     ctx: { id, api },
     close,
+    setTitle,
     setVisibility: (visible: boolean) => visibility.fire(visible),
+    setGroup: (nextGroup: string) => {
+      group = nextGroup;
+      dimensions.fire({ width: 320, height: 600 });
+    },
   };
 }
 
@@ -240,5 +261,192 @@ describe('features/terminal/plugin', () => {
 
     comp.dispose();
     h.manager.dispose();
+  });
+
+  it('supports creating, switching, and closing multiple terminal tabs per topic with iframe cleanup', async () => {
+    const h = makeHarness();
+    await h.manager.activate(TERMINAL_PLUGIN_ID);
+
+    const tool = h.registry.getTopicTool(TERMINAL_TOOL_ID)!;
+    const comp = tool.component();
+    comp.init(undefined, makePanelContext().ctx);
+
+    // Initial primary tab mounted.
+    expect(comp.element.querySelectorAll('[role="tab"]')).toHaveLength(1);
+    expect(comp.element.querySelectorAll('iframe')).toHaveLength(1);
+
+    // Create a second tab via toolbar "+" button and a third via command.
+    comp.element.querySelector<HTMLButtonElement>('.wb-term-new')!.click();
+    expect(comp.element.querySelectorAll('[role="tab"]')).toHaveLength(2);
+    const frames2 = comp.element.querySelectorAll('iframe');
+    expect(frames2).toHaveLength(2);
+    expect(frames2[0]?.getAttribute('src')).toBe('term/?arg=t1');
+    expect(frames2[0]?.classList.contains('on')).toBe(false);
+    expect(frames2[0]?.hasAttribute('inert')).toBe(true);
+    expect(frames2[1]?.getAttribute('src')).toBe('term/?arg=t1&tab=t1%3A2');
+    expect(frames2[1]?.classList.contains('on')).toBe(true);
+
+    await h.registry.executeCommand(TERMINAL_NEW_TAB_COMMAND);
+    expect(comp.element.querySelectorAll('[role="tab"]')).toHaveLength(3);
+    expect(comp.element.querySelectorAll('iframe')).toHaveLength(3);
+
+    // Switch back to first tab by clicking its tab button.
+    const firstTabBtn = comp.element.querySelector<HTMLButtonElement>('[data-tab-id="t1:1"]')!;
+    firstTabBtn.click();
+    expect(firstTabBtn.getAttribute('aria-selected')).toBe('true');
+    expect(comp.element.querySelector<HTMLIFrameElement>('iframe[data-tab-id="t1:1"]')?.classList.contains('on')).toBe(true);
+    expect(comp.element.querySelector<HTMLIFrameElement>('iframe[data-tab-id="t1:2"]')?.classList.contains('on')).toBe(false);
+
+    // Close second tab via its close button -> its iframe is removed.
+    const closeBtns = comp.element.querySelectorAll<HTMLButtonElement>('.fh-tab-close');
+    closeBtns[1]!.click();
+    expect(comp.element.querySelectorAll('[role="tab"]')).toHaveLength(2);
+    expect(comp.element.querySelector('iframe[data-tab-id="t1:2"]')).toBeNull();
+    expect(comp.element.querySelectorAll('iframe')).toHaveLength(2);
+
+    // Close remaining tabs via command -> empty state shown, zero iframes left.
+    expect(await h.registry.executeCommand(TERMINAL_CLOSE_TAB_COMMAND, 't1:1')).toBe(true);
+    expect(await h.registry.executeCommand(TERMINAL_CLOSE_TAB_COMMAND)).toBe(true);
+    expect(comp.element.querySelectorAll('iframe')).toHaveLength(0);
+    expect(comp.element.querySelector<HTMLElement>('.wb-term-empty')?.hidden).toBe(false);
+
+    // Clicking empty-state button opens a fresh terminal tab.
+    comp.element.querySelector<HTMLButtonElement>('.wb-term-empty-new')!.click();
+    expect(comp.element.querySelectorAll('iframe')).toHaveLength(1);
+    expect(comp.element.querySelector<HTMLElement>('.wb-term-empty')?.hidden).toBe(true);
+
+    comp.dispose();
+    h.manager.dispose();
+  });
+
+  it('renames terminal tabs via double-click and context menu, supporting Enter to save and Esc to cancel', async () => {
+    const h = makeHarness();
+    await h.manager.activate(TERMINAL_PLUGIN_ID);
+
+    const tool = h.registry.getTopicTool(TERMINAL_TOOL_ID)!;
+    const comp = tool.component();
+    document.body.appendChild(comp.element);
+    comp.init(undefined, makePanelContext().ctx);
+
+    // Double-click tab to start inline rename and save with Enter.
+    const tabBtn = comp.element.querySelector<HTMLButtonElement>('[data-tab-id="t1:1"]')!;
+    tabBtn.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    const input1 = comp.element.querySelector<HTMLInputElement>('.wb-term-rename-input')!;
+    expect(input1).not.toBeNull();
+    expect(input1.value).toBe('Alpha Topic');
+    input1.value = 'Server Logs';
+    input1.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+
+    expect(comp.element.querySelector('.wb-term-rename-input')).toBeNull();
+    expect(comp.element.querySelector('[data-tab-id="t1:1"] .fh-tab-label')?.textContent).toBe('Server Logs');
+    expect(comp.element.querySelector('.term-name')?.textContent).toBe('Server Logs');
+    expect(comp.element.querySelector('iframe[data-tab-id="t1:1"]')?.getAttribute('title')).toBe('Server Logs');
+
+    // Double-click again and cancel with Escape -> original name preserved.
+    comp.element
+      .querySelector<HTMLButtonElement>('[data-tab-id="t1:1"]')!
+      .dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    const input2 = comp.element.querySelector<HTMLInputElement>('.wb-term-rename-input')!;
+    input2.value = 'Should Not Save';
+    input2.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+
+    expect(comp.element.querySelector('.wb-term-rename-input')).toBeNull();
+    expect(comp.element.querySelector('[data-tab-id="t1:1"] .fh-tab-label')?.textContent).toBe('Server Logs');
+
+    // Right-click opens context menu and Rename item starts inline edit.
+    comp.element
+      .querySelector<HTMLButtonElement>('[data-tab-id="t1:1"]')!
+      .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 50, clientY: 50 }));
+    const renameMenuItem = document.body.querySelector<HTMLButtonElement>('.wb-term-menu [data-menu-id="rename"]')!;
+    expect(renameMenuItem).not.toBeNull();
+    renameMenuItem.click();
+    expect(comp.element.querySelector('.wb-term-rename-input')).not.toBeNull();
+
+    // Command-based rename updates immediately.
+    expect(await h.registry.executeCommand(TERMINAL_RENAME_TAB_COMMAND, 't1:1', 'Build Watcher')).toBe(true);
+    expect(comp.element.querySelector('[data-tab-id="t1:1"] .fh-tab-label')?.textContent).toBe('Build Watcher');
+
+    comp.dispose();
+    comp.element.remove();
+    h.manager.dispose();
+  });
+
+  it('moves terminal between bottom panel and secondary sidebar and opens in right split editor', async () => {
+    const h = makeHarness();
+    const moveToSecondary = vi.fn(() => true);
+    const moveToPanel = vi.fn(() => true);
+    const openEditor = vi.fn();
+
+    h.registry.registerCommand('workbench.action.moveViewToSecondary', moveToSecondary);
+    h.registry.registerCommand('workbench.action.moveViewToPanel', moveToPanel);
+    h.registry.setEditorOpener(openEditor);
+
+    await h.manager.activate(TERMINAL_PLUGIN_ID);
+
+    const tool = h.registry.getTopicTool(TERMINAL_TOOL_ID)!;
+    const comp = tool.component();
+    const panel = makePanelContext('tool:terminal', 'panel');
+    comp.init(undefined, panel.ctx);
+
+    // Click move-right button -> executes workbench.action.moveViewToSecondary.
+    comp.element.querySelector<HTMLButtonElement>('.wb-term-move-right')!.click();
+    await Promise.resolve();
+    expect(moveToSecondary).toHaveBeenCalledWith('tool:terminal');
+
+    // Simulate DockEngine moving panel to secondary sidebar.
+    panel.setGroup('secondary');
+    expect(comp.element.getAttribute('data-dock-part')).toBe('secondary');
+
+    // Clicking move button again moves back to bottom panel.
+    comp.element.querySelector<HTMLButtonElement>('.wb-term-move-right')!.click();
+    await Promise.resolve();
+    expect(moveToPanel).toHaveBeenCalledWith('tool:terminal');
+
+    // Direct commands work as well.
+    expect(await h.registry.executeCommand(TERMINAL_MOVE_TO_SECONDARY_COMMAND)).toBe(true);
+    expect(await h.registry.executeCommand(TERMINAL_MOVE_TO_PANEL_COMMAND)).toBe(true);
+
+    // Open in editor (split right) via toolbar button and command.
+    comp.element.querySelector<HTMLButtonElement>('.wb-term-open-editor')!.click();
+    expect(openEditor).toHaveBeenCalledWith(
+      TERMINAL_EDITOR_KIND,
+      { topicId: 't1', tabId: 't1:1', title: 'Alpha Topic', primary: true },
+      { position: { group: 'main', direction: 'right' } },
+    );
+
+    expect(await h.registry.executeCommand(TERMINAL_OPEN_IN_EDITOR_COMMAND)).toBe(true);
+    expect(openEditor).toHaveBeenCalledTimes(2);
+
+    // Verify registered terminal editor component mounts, renames, and disposes cleanly.
+    const editorContrib = h.registry.getEditor(TERMINAL_EDITOR_KIND)!;
+    expect(editorContrib).toBeDefined();
+    expect(editorContrib.title({ topicId: 't1', title: 'Custom Term' })).toBe('Custom Term');
+    const editorComp = editorContrib.component();
+    const editorPanel = makePanelContext('editor:terminal:1', 'group-2');
+    editorComp.init({ topicId: 't1', tabId: 't1:1', title: 'Alpha Topic', primary: true }, editorPanel.ctx);
+
+    const editorFrame = editorComp.element.querySelector('iframe');
+    expect(editorFrame?.getAttribute('src')).toBe('term/?arg=t1');
+    expect(editorFrame?.classList.contains('on')).toBe(true);
+
+    // Inline rename inside editor updates panel title and syncs back to tab store.
+    editorComp.element.querySelector<HTMLButtonElement>('.wb-term-editor-rename')!.click();
+    const editorInput = editorComp.element.querySelector<HTMLInputElement>('.wb-term-rename-input')!;
+    editorInput.value = 'Split Shell';
+    editorInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    expect(editorPanel.setTitle).toHaveBeenCalledWith('Split Shell');
+    expect(comp.element.querySelector('[data-tab-id="t1:1"] .fh-tab-label')?.textContent).toBe('Split Shell');
+
+    // Visibility toggle and dispose clean up editor iframe.
+    editorPanel.setVisibility(false);
+    expect(editorFrame?.classList.contains('on')).toBe(false);
+    editorComp.dispose();
+    expect(editorComp.element.querySelectorAll('iframe')).toHaveLength(0);
+
+    // Plugin dispose cleans up all DOM, menus, and iframes.
+    comp.dispose();
+    h.manager.dispose();
+    expect(document.body.querySelector('.wb-term-menu')).toBeNull();
+    expect(comp.element.querySelectorAll('iframe')).toHaveLength(0);
   });
 });
