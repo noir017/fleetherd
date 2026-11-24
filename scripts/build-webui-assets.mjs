@@ -30,6 +30,7 @@ import { gzipSync } from 'node:zlib';
 import { build } from 'esbuild';
 
 import { collectLicenses, licenseFailure, renderLicenses } from './third-party-licenses.mjs';
+import { buildWebuiPluginTypes } from './build-webui-plugin-types.mjs';
 import { buildClient } from './webui-client.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -127,3 +128,8 @@ console.log(
   `build-webui-assets: ${files.length} files, ${kib(raw)} (gzip ${kib(packed)}); the page loads ${client.boot.file}, ${client.app.file} and ${client.style.file}, and ${entryName} only when it shows code`
 );
 console.log(`build-webui-assets: ${licenses.length} third-party licences in licenses.txt (${kib(fs.statSync(licensesFile).size)})`);
+
+const pluginTypes = buildWebuiPluginTypes({ root });
+console.log(
+  `build-webui-assets: ${path.relative(root, pluginTypes.outFile)} (${pluginTypes.lines} lines, ${kib(pluginTypes.bytes)})`
+);
