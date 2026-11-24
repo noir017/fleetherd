@@ -1,7 +1,14 @@
 import { describe, it, expect } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { NO_ASSETS, servePage as serveShell } from './page.js';
 import { APP_SOURCE, CLIENT, renderPage, testAssets } from './page.test-helpers.js';
+
+const clientDir = path.join(path.dirname(fileURLToPath(import.meta.url)), 'client');
+const BOOT_SOURCE = fs.readFileSync(path.join(clientDir, 'services', 'boot.ts'), 'utf8');
+const STREAM_SOURCE = fs.readFileSync(path.join(clientDir, 'services', 'stream.ts'), 'utf8');
 
 /**
  * The client script is the one artifact in this repo the toolchain cannot see: it is not
@@ -84,7 +91,8 @@ describe('webui page', () => {
     expect(bootOf(shell)).toMatchObject({ terminal: false, terminalEnd: false, files: false, instructions: false, password: true, instance: 'web' });
     const custom = serveShell('Chat', false, true, false, testAssets(), false, false, 'portal').html;
     expect(bootOf(custom).instance).toBe('portal');
-   expect(APP_SOURCE).toContain('var BOOT = JSON.parse($(\'boot-config\').textContent);');
+   expect(APP_SOURCE).toContain('var BOOT = readBootConfig(document);');
+   expect(BOOT_SOURCE).toContain("getElementById('boot-config')");
  });
 
   it('cannot be broken out of through the boot config', () => {
@@ -127,7 +135,8 @@ describe('webui page', () => {
   });
 
   it('asks for everything by a relative path, so a reverse proxy sub-path just works', () => {
-    expect(html).toContain("EventSource('api/events'");
+    expect(STREAM_SOURCE).toContain('`api/events');
+    expect(STREAM_SOURCE).toContain('new EventSource(url)');
     expect(html).not.toMatch(/fetch\('\//);
     expect(html).toContain("post('api/send'");
     // The app-install tags are subject to the same rule — an absolute href walks out of a
