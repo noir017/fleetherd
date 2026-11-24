@@ -11,6 +11,8 @@ const BOOT_SOURCE = fs.readFileSync(path.join(clientDir, 'services', 'boot.ts'),
 const STREAM_SOURCE = fs.readFileSync(path.join(clientDir, 'services', 'stream.ts'), 'utf8');
 const CACHE_SOURCE = fs.readFileSync(path.join(clientDir, 'services', 'cache.ts'), 'utf8');
 const READS_SOURCE = fs.readFileSync(path.join(clientDir, 'services', 'reads.ts'), 'utf8');
+const READER_SOURCE = fs.readFileSync(path.join(clientDir, 'features', 'reader', 'index.ts'), 'utf8');
+const LEGACY_SHELL_SOURCE = fs.readFileSync(path.join(clientDir, 'workbench', 'legacy-shell.ts'), 'utf8');
 
 /**
  * The client script is the one artifact in this repo the toolchain cannot see: it is not
@@ -109,9 +111,9 @@ describe('webui page', () => {
     // The bundle is an ES module under assets/, imported the first time a file needs it — never a
     // script element of the page's, so a page that never shows code never downloads the editor, and
     // a build with no code view (null) still has a complete page.
-    expect(APP_SOURCE).toContain('window.__fhCodeView');
-    expect(APP_SOURCE).toContain('import(new URL(CODEVIEW, document.baseURI).href)');
-    expect(APP_SOURCE).toContain('var CODEVIEW = BOOT.codeview;');
+    expect(READER_SOURCE).toContain('__fhCodeView');
+    expect(READER_SOURCE).toContain('new URL(bundleUrl, doc.baseURI).href');
+    expect(APP_SOURCE).toContain('createCodeViewLoader(BOOT.codeview)');
     expect(shell).not.toContain('codeview-');
   });
 
@@ -215,7 +217,7 @@ describe('webui page', () => {
     expect(html).toContain('id="schedules-toggle"');
     expect(CLIENT.app.text).toContain('api/schedules');
     expect(CLIENT.app.text).toContain('api/schedules/op');
-    expect(html).toContain('aa_sched_open');
+    expect(LEGACY_SHELL_SOURCE).toContain('aa_sched_open');
     expect(html).not.toContain('aa_sched_pin');
     expect(html).not.toContain('schedules-pin');
     // The same panel component as the sidebar, on the right: one set of rules, not two.
@@ -240,7 +242,7 @@ describe('webui page', () => {
     // Narrower than the old fixed column, and the operator can drag it.
     expect(html).toContain('clamp(240px,20vw,320px)');
     expect(html).toContain('id="sched-resize"');
-    expect(html).toContain('aa_sched_w');
+    expect(LEGACY_SHELL_SOURCE).toContain('aa_sched_w');
   });
 
   it('sends a nonce, without which its own retry would double-post', () => {
