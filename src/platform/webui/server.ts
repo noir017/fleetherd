@@ -105,6 +105,10 @@ export interface WebServer {
   stop(): Promise<void>;
 }
 
+export interface PluginRouteDispatcher {
+  dispatchRoute(req: IncomingMessage, res: ServerResponse, pluginId: string, subpath: string): Promise<boolean>;
+}
+
 /** Where the terminal pane's ttyd is, whether the pane exists, and its session bookkeeping. */
 export interface TerminalSettings {
   enabled: boolean;
@@ -176,7 +180,8 @@ export function createWebServer(
   sso?: WebSso,
   push?: WebPush,
   assets: WebAssets = loadAssets(),
-  plugins: readonly LoadedPluginEntry[] = []
+  plugins: readonly LoadedPluginEntry[] = [],
+  pluginHost?: PluginRouteDispatcher
 ): WebServer {
   const sockets = new Set<Socket>();
   const streams = new Set<Stream>();
@@ -195,6 +200,7 @@ export function createWebServer(
     assets,
     plugins: pluginMap,
     bootPlugins,
+    pluginHost,
     warned: new Map(),
   };
 
@@ -350,6 +356,8 @@ interface Ctx {
   plugins: ReadonlyMap<string, LoadedPluginEntry>;
   /** Frontend plugin entries included in boot-config. */
   bootPlugins: readonly BootPluginEntry[];
+  /** Server-side plugin HTTP route dispatcher mounted under `/api/plugins/<id>/`. */
+  pluginHost?: PluginRouteDispatcher;
   /** The page as last served — see `servedPage`. */
   page?: ServedPage;
 }
@@ -549,6 +557,10 @@ const GUARDED: Route[] = [
   { method: 'GET', path: '/api/instructions/refs', run: instructionsRefs },
   { method: 'GET', path: '/api/instructions/read', run: instructionsRead },
   { method: 'POST', path: '/api/instructions/write', run: instructionsWrite },
+  // Server-side plugin API routes: strictly namespaced under `/api/plugins/<id>/` behind
+  // GUARDED auth + same-origin checks, listed last so plugins can never shadow built-in routes.
+  { method: 'GET', path: '/api/plugins/', prefix: true, run: pluginApi },
+  { method: 'POST', path: '/api/plugins/', prefix: true, run: pluginApi },
 ];
 
 /**
@@ -1578,6 +1590,26 @@ async function pluginFile(
     'Cache-Control': 'no-cache',
     'X-Content-Type-Options': 'nosniff',
   });
+}
+
+async function pluginApi({ req, res, rest }: Req, ctx: Ctx): Promise<void> {
+  if (!ctx.pluginHost || !rest) return send(req, res, 404, { error: 'no such plugin route' });
+  const slash = rest.indexOf('/');
+  const rawId = slash === -1 ? rest : rest.slice(0, slash);
+  const rawSub = slash === -1 ? '' : rest.slice(slash + 1);
+  if (!rawId) return send(req, res, 404, { error: 'no such plugin route' });
+  let pluginId: string;
+  let subpath: string;
+  try {
+    pluginId = decodeURIComponent(rawId);
+    subpath = decodeURIComponent(rawSub);
+  } catch {
+    return send(req, res, 404, { error: 'no such plugin route' });
+  }
+  const handled = await ctx.pluginHost.dispatchRoute(req, res, pluginId, subpath);
+  if (!handled && !res.headersSent) {
+    send(req, res, 404, { error: 'no such plugin route' });
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

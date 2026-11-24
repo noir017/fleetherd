@@ -681,6 +681,11 @@ export type WebEvent =
    */
   | { t: 'machines'; offline: OfflineMachine[] }
   /**
+   * Server-side plugin broadcast event (`PluginHost.events.push`), fanned out to all connected
+   * SSE clients without sequence numbering or backlog retention.
+   */
+  | { t: `plugin:${string}:${string}`; plugin: string; type: string; data: unknown }
+  /**
    * The daemon is going away; stop this stream.
    *
    * `EventSource` reconnects after ANY close, including a clean one, so without this a tab left

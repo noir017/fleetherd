@@ -33,6 +33,7 @@ import { renderWebMarkdown } from '../web-markdown.js';
 import { WebAuth, fileSessionStore } from './auth.js';
 import { loadAssets } from './assets.js';
 import { loadPlugins } from './plugins/loader.js';
+import { PluginHostManager } from './plugins/host.js';
 import type { WebMessage } from './protocol.js';
 import { readableKind } from './reading.js';
 import {
@@ -188,6 +189,11 @@ export function createWebuiAdapter(instance: WebuiInstance, opts?: WebuiAdapterO
   });
   const forbiddenRoots = [...(instance.files?.roots ?? []), ...(opts?.forbiddenPluginRoots ?? [])];
   const plugins = loadPlugins(instance.plugins ?? [], { forbiddenRoots });
+  const pluginHost = new PluginHostManager({
+    room,
+    plugins,
+    storageDir: path.join(configDir(), 'plugins'),
+  });
   const server = createWebServer(
     room,
     // Beside the topic file, per instance for the same reason. Persisted so that an upgrade —
@@ -210,9 +216,15 @@ export function createWebuiAdapter(instance: WebuiInstance, opts?: WebuiAdapterO
     instance.sso ? new WebSso(instance.sso) : undefined,
     push,
     loadAssets(),
-    plugins
+    plugins,
+    pluginHost
   );
-  return { ...describe(instance), ...outbound(room, instance), forkThread: forkTopicThread(room), ...lifecycle(room, server) };
+  return {
+    ...describe(instance),
+    ...outbound(room, instance),
+    forkThread: forkTopicThread(room),
+    ...lifecycle(room, server, pluginHost),
+  };
 }
 
 function describe(instance: WebuiInstance): Pick<PlatformAdapter, 'platform' | 'platformType' | 'capabilities'> {
@@ -756,7 +768,8 @@ function outbound(room: WebRoom, instance: WebuiInstance): Outbound {
 
 function lifecycle(
   room: WebRoom,
-  server: WebServer
+  server: WebServer,
+  pluginHost: PluginHostManager
 ): Pick<
   PlatformAdapter,
   | 'onMessage'
@@ -885,10 +898,14 @@ function lifecycle(
     async registerCommands(cmds: SlashCommandSpec[]) {
       room.setCommands(cmds);
     },
-    start: () => server.start(),
+    start: async () => {
+      await pluginHost.activateAll();
+      await server.start();
+    },
     stop: async () => {
       // Send whatever is being held before the sockets go, so a turn that ended just as the
       // daemon was asked to stop is not left with its last edit in a queue nobody will run.
+      await pluginHost.dispose();
       room.dispose();
       await server.stop();
     },
