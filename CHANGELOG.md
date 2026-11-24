@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.38.0] - 2026-11-24
+
 ### Added
 
 - **Web UI Starred tab (`Topics | Starred | History`).** Added a dedicated **Starred** tab to the
