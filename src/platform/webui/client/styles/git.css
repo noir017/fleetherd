@@ -1,0 +1,118 @@
+/* ── The git window ──────────────────────────────────────────────────────────
+   What changed in the repository the topic's directory sits in: the file list, one file's diff,
+   and line comments that go back into the composer. A window over the transcript like Skills',
+   because a diff needs width a message never had. It reads through the daemon on whichever
+   machine the agent runs; nothing here runs a command. Read-only: there is no stage or commit. */
+#git{position:fixed;inset:0;z-index:20;background:var(--scrim-2);display:flex;align-items:center;justify-content:center;padding:24px}
+#git[hidden]{display:none}
+#git-box{display:flex;flex-direction:column;width:min(1180px,100%);height:100%;max-height:100%;overflow:hidden;background:var(--bg);border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 30px var(--shadow)}
+#git-bar{display:flex;align-items:center;flex-wrap:wrap;gap:6px 8px;padding:6px 10px 6px 16px;border-bottom:1px solid var(--line);min-height:var(--headh);font-size:13px}
+#git-title{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:34ch}
+#git-branch{font-size:11.5px;color:var(--dim);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:26ch}
+#git-modes{display:flex;gap:2px;background:var(--bg-bar);border:1px solid var(--line);border-radius:6px;padding:2px}
+#git-modes[hidden]{display:none}
+.git-mode{background:none;border:0;border-radius:4px;color:var(--dim);font:inherit;font-size:12px;padding:4px 9px;cursor:pointer}
+.git-mode:hover{color:var(--fg)}
+.git-mode.on{background:var(--hover-3);color:var(--fg)}
+#git-base{appearance:auto;max-width:22ch;background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:inherit;font-size:12px;padding:4px 6px}
+#git-base[hidden]{display:none}
+#git-spacer{flex:1;min-width:8px}
+#git-layout{background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:inherit;font-size:12px;padding:4px 9px;cursor:pointer}
+#git-layout:hover{border-color:var(--line-3);background:var(--hover-3)}
+#git-layout[hidden]{display:none}
+#git-refresh,#git-close{font-size:18px;padding:6px 10px}
+#git-refresh:disabled{opacity:.45;cursor:default}
+#git-body{flex:1;min-height:0;display:flex}
+#git-files{width:300px;flex:none;min-height:0;overflow-y:auto;border-right:1px solid var(--line);padding:6px}
+.git-empty{padding:10px 4px;font-size:12.5px;line-height:1.6;color:var(--dim);overflow-wrap:anywhere}
+.git-file{display:flex;align-items:center;gap:7px;padding:5px 7px;border-radius:5px;cursor:pointer;font-size:12px}
+.git-file:hover{background:var(--surface-pop)}
+.git-file.on{background:var(--active)}
+.gf-status{flex:none;width:17px;text-align:center;font-weight:600;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.gf-status.added{color:var(--ok)}
+.gf-status.deleted{color:var(--err)}
+.gf-status.modified{color:var(--warn)}
+.gf-path{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px}
+.gf-stat{flex:none;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;color:var(--dim)}
+.gf-nostat{flex:none;font-size:10.5px;font-style:italic;color:var(--dim);white-space:nowrap}
+.gf-add{color:var(--ok)}
+.gf-del{color:var(--err)}
+.gf-edit{flex:none;background:none;border:1px solid var(--line);border-radius:4px;color:var(--accent-soft);font:inherit;font-size:10.5px;padding:1px 6px;cursor:pointer}
+.gf-edit:hover{border-color:var(--accent);background:var(--accent-tint)}
+/* Commits: the same left column, listing history instead of changed files, and one commit opened
+   in place — the way back, its header, then its files. */
+.git-commit{display:flex;flex-direction:column;gap:2px;padding:5px 7px;border-radius:5px;cursor:pointer}
+.git-commit:hover{background:var(--surface-pop)}
+.git-commit.on{background:var(--active)}
+.gc-subject{font-size:12px;line-height:1.45;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.gc-meta{display:flex;gap:8px;font-size:10.5px;color:var(--dim);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:nowrap}
+.gc-sha{flex:none;color:var(--accent-soft)}
+.gc-author{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.gc-when{flex:none;margin-left:auto}
+.git-more{display:block;width:100%;margin:4px 0 2px;background:none;border:1px dashed var(--line);border-radius:5px;color:var(--dim);font:inherit;font-size:11.5px;padding:5px;cursor:pointer}
+.git-more:hover{color:var(--fg);border-color:var(--line-3)}
+.git-more:disabled{opacity:.45;cursor:default}
+.git-back{display:flex;align-items:center;gap:3px;padding:4px 7px;border-radius:5px;color:var(--accent-soft);font-size:11.5px;cursor:pointer}
+.git-back:hover{background:var(--surface-pop)}
+.git-back .ic{width:13px;height:13px}
+.git-commit-head{padding:6px 7px 8px;border-bottom:1px solid var(--line);margin-bottom:6px}
+.gch-subject{font-size:12.5px;line-height:1.45;overflow-wrap:anywhere}
+.gch-meta{display:flex;flex-wrap:wrap;gap:2px 8px;margin-top:3px;font-size:10.5px;color:var(--dim);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.gch-sha{color:var(--accent-soft)}
+.gch-toggle{margin-top:6px;background:none;border:0;padding:0;color:var(--accent-soft);font:inherit;font-size:11px;cursor:pointer}
+.gch-body{margin:6px 0 0;padding:6px 8px;max-height:180px;overflow:auto;background:var(--bg-bar);border-radius:5px;white-space:pre-wrap;overflow-wrap:anywhere;font-size:11.5px;line-height:1.5;color:var(--fg-3)}
+/* The pane's own empty state, in the middle of the space the diff would use: one small line in
+   the list beside a blank half-window said neither which comparison was empty nor why. */
+.git-blank{height:100%;box-sizing:border-box;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:24px;text-align:center}
+.gb-title{font-size:13px;color:var(--fg)}
+.gb-sub{max-width:48ch;font-size:12px;line-height:1.6;color:var(--dim);overflow-wrap:anywhere}
+.git-blank button{background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:inherit;font-size:12px;padding:5px 12px;cursor:pointer}
+.git-blank button:hover{border-color:var(--line-3);background:var(--hover-3)}
+#git-pane{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column}
+#git-note{margin:8px 10px 0;padding:7px 10px;border-radius:6px;border:1px solid var(--line);font-size:12px;line-height:1.5;overflow-wrap:anywhere;color:var(--dim)}
+#git-note[hidden]{display:none}
+#git-note.bad{color:var(--err-soft-2);border-color:var(--err-border-2);background:var(--err-bg)}
+#git-sel{display:flex;align-items:center;gap:8px;padding:6px 10px;border-bottom:1px solid var(--line);font-size:12px;color:var(--accent-sel)}
+#git-sel[hidden]{display:none}
+#git-sel span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#git-sel button{flex:none;background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:inherit;font-size:12px;padding:4px 10px;cursor:pointer}
+#git-sel button:hover{border-color:var(--line-3);background:var(--hover-3)}
+#git-diff{flex:1;min-height:0;overflow:auto;padding:8px}
+.git-patch{margin:0;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;line-height:1.5;white-space:pre;color:var(--fg-3)}
+/* A patch's lines, as text: the panel's fallback and a diff fence in a reply alike, in the code
+   view's own added and removed colours (codeview/app.ts), so the three read as one thing. */
+.git-patch .pa,.cb .pa{color:var(--ok);background:var(--ok-tint)}
+.git-patch .pd,.cb .pd{color:var(--err);background:var(--err-tint)}
+.git-patch .ph,.cb .ph{color:var(--accent-soft)}
+#git-comment{flex:none;border-top:1px solid var(--line);padding:8px 10px calc(8px + env(safe-area-inset-bottom,0px));display:flex;flex-direction:column;gap:6px}
+#git-comment[hidden]{display:none}
+#git-comment-what{font-size:11.5px;color:var(--dim);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;overflow-wrap:anywhere}
+#git-comment-text{width:100%;box-sizing:border-box;min-height:72px;resize:vertical;background:var(--bg-code);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:inherit;font-size:13px;line-height:1.5;padding:8px 10px}
+#git-comment-acts{display:flex;justify-content:flex-end;gap:8px}
+#git-comment-acts button{background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:inherit;font-size:12px;padding:5px 12px;cursor:pointer}
+#git-comment-acts button.primary{background:var(--primary);border-color:var(--primary-edge);color:var(--fg-on-accent)}
+#git-comment-acts button.primary:hover{background:var(--primary-hover);border-color:var(--primary-hover-edge)}
+@media (max-width:640px){
+  #git{padding:0}
+  #git-box{border:0;border-radius:0}
+  #git-bar{padding:4px 6px 4px 12px;gap:4px 6px}
+  /* Two rows by intent rather than by shrinking: the name and the way out first, the comparison
+     and its controls under them. The spacer becomes a zero-height full-width item, which is a
+     line break in a wrapping flex row. */
+  #git-title{order:1;flex:1;max-width:none}
+  #git-close{order:2}
+  #git-spacer{display:block;order:3;flex:0 0 100%;height:0;min-width:0}
+  #git-modes{order:4}
+  #git-branch{order:5;max-width:18ch}
+  #git-base{order:6}
+  #git-body{flex-direction:column}
+  #git-files{width:auto;max-height:36%;border-right:0;border-bottom:1px solid var(--line)}
+  #git-close,#git-refresh{display:inline-flex;align-items:center;justify-content:center;min-width:44px;height:44px}
+  .git-mode{min-height:36px;padding:4px 8px}
+  #git-layout{min-height:36px}
+  .git-file{padding:8px 7px}
+  .git-commit{padding:8px 7px}
+  .git-more{min-height:36px}
+  .gf-edit{min-height:32px}
+  #git-comment-text{font-size:16px}
+}

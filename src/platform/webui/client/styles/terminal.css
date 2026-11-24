@@ -1,0 +1,21 @@
+#term-toggle{margin-left:0}
+/* The size of its neighbours' icons (the power button, the clock), which are 14px SVGs. */
+#term-toggle .ic{width:14px;height:14px}
+#term-toggle.on{color:var(--ok)}
+#term-grip{display:none;flex:0 0 auto;height:9px;position:relative;cursor:row-resize;touch-action:none;background:transparent}
+#chat.term #term-grip{display:block}
+#term-grip::after{content:'';position:absolute;left:50%;top:4px;width:48px;height:2px;margin-left:-24px;border-radius:1px;background:var(--line-2)}
+#term-grip:hover::after,#term-grip:focus-visible::after,#term-grip.drag::after{background:var(--line-strong)}
+#term-grip:focus-visible{outline:1px solid var(--accent-solid);outline-offset:-2px}
+#term{display:flex;flex:0 0 auto;flex-direction:column;height:50%;min-height:0;background:var(--term-bg)}
+#chat:not(.term) #term{position:absolute;left:0;right:0;bottom:0;visibility:hidden;pointer-events:none}
+#term-bar{display:flex;align-items:center;gap:4px;padding:4px 6px 4px 12px;background:var(--bg-bar);border-bottom:1px solid var(--line);flex:0 0 auto}
+.term-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dim);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px}
+#term-end:hover{color:var(--err);background:var(--err-tint-3)}
+/* One host for every mounted terminal, of which exactly one is visible. Every frame is laid out
+   in the same box, so showing another one is not a resize: a hidden frame that is display:none
+   has no box at all, and a browser may then discard it — taking its WebSocket with it. Visibility
+   is a class on a frame that keeps its size. */
+#term-frames{position:relative;flex:1;min-height:0}
+#term-frames iframe{position:absolute;inset:0;width:100%;height:100%;border:0;visibility:hidden}
+#term-frames iframe.on{visibility:visible}

@@ -248,14 +248,16 @@ describe('webui page', () => {
     expect(html).toContain('@media (prefers-color-scheme: light){:root:not([data-theme="dark"]){');
     expect(html).toContain('color-scheme:dark');
     expect(html).toContain('color-scheme:light');
-    expect(html).toMatch(/--bg:#1[0-9a-f]{5}/);
+    expect(html).toMatch(/--fh-bg:#1[0-9a-f]{5}/);
+    expect(html).toContain('--bg:var(--fh-bg)');
     expect(html).toContain('id="theme-toggle"');
   });
 
   it('gives your own messages a tinted panel the agent does not get', () => {
     // Asserted as text: jsdom resolves no custom property, so the CSSOM would report an empty
     // background for a rule that is perfectly correct in a browser.
-    expect(html).toMatch(/--own:#[0-9a-f]{6}/);
+    expect(html).toMatch(/--fh-own:#[0-9a-f]{6}/);
+    expect(html).toContain('--own:var(--fh-own)');
     expect(html).toContain('.m.own{background:var(--own)');
     // One side marked is what makes the boundary findable; marking both moves the problem.
     expect(html).not.toContain('.m:not(.own){background:');

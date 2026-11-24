@@ -957,8 +957,10 @@ describe('webui page: sub-agent bubbles', () => {
     const html = renderPage('Chat', false, true, false);
     expect(html).toContain('.m.dispatch{background:var(--disp);border-left:3px solid var(--disp-edge)');
     expect(html).toContain('.m.report{background:var(--rep);border-left:3px solid var(--rep-edge)');
-    expect(html).toContain('--disp:#1a1622;--disp-edge:#8b6cc1;');
-    expect(html).toContain('--rep:#14201a;--rep-edge:#3f8f6b;');
+    expect(html).toContain('--disp:#1a1622;');
+    expect(html).toContain('--disp-edge:#8b6cc1;');
+    expect(html).toContain('--rep:#14201a;');
+    expect(html).toContain('--rep-edge:#3f8f6b;');
     expect(html).toContain('.sub-k{');
   });
 

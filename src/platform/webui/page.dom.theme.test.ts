@@ -101,6 +101,50 @@ describe('webui page: theme system', () => {
     expect(withoutTokens.match(/rgba?\([^)]+\)/gi)).toBeNull();
   });
 
+  it('defines all semantic --fh-* tokens in dark and light palettes and keeps legacy aliases resolvable', () => {
+    const noComments = STYLE_SOURCE.replace(/\/\*[\s\S]*?\*\//g, '');
+    const darkBlock = noComments.match(/:root,\[data-theme="dark"\]\{([^}]*)\}/)?.[1] ?? '';
+    const mediaLightBlock =
+      noComments.match(/@media \(prefers-color-scheme: light\)\{:root:not\(\[data-theme="dark"\]\)\{([^}]*)\}\}/)?.[1] ?? '';
+    const dataLightBlock = noComments.match(/\[data-theme="light"\]\{([^}]*)\}/)?.[1] ?? '';
+
+    const requiredTokens = [
+      '--fh-bg', '--fh-bg-side', '--fh-bg-widget', '--fh-bg-code', '--fh-line',
+      '--fh-fg', '--fh-fg-hi', '--fh-fg-dim', '--fh-fg-inactive',
+      '--fh-accent', '--fh-accent-hover', '--fh-link',
+      '--fh-input', '--fh-input-line', '--fh-placeholder',
+      '--fh-btn2', '--fh-btn2-hover',
+      '--fh-hover', '--fh-sel', '--fh-sel-inactive',
+      '--fh-toggle', '--fh-toggle-line',
+      '--fh-own', '--fh-own-edge',
+      '--fh-ok', '--fh-warn', '--fh-err', '--fh-idle',
+      '--fh-git-mod', '--fh-git-add', '--fh-git-new', '--fh-git-del',
+      '--fh-diff-add', '--fh-diff-del',
+      '--fh-hc-claude', '--fh-hc-claude-bg',
+      '--fh-hc-codex', '--fh-hc-codex-bg',
+      '--fh-hc-opencode', '--fh-hc-opencode-bg',
+      '--fh-hc-agy', '--fh-hc-agy-bg',
+      '--fh-hc-gemini', '--fh-hc-gemini-bg',
+      '--fh-hc-dsh', '--fh-hc-dsh-bg',
+    ];
+
+    for (const block of [darkBlock, mediaLightBlock, dataLightBlock]) {
+      const defined = new Map<string, string>();
+      for (const m of block.matchAll(/(--[a-z0-9-]+)\s*:\s*([^;]+);/gi)) {
+        defined.set(m[1]!, m[2]!.trim());
+      }
+      for (const token of requiredTokens) {
+        expect(defined.has(token), `missing ${token}`).toBe(true);
+      }
+      for (const [name, value] of defined) {
+        const alias = value.match(/^var\((--fh-[a-z0-9-]+)\)$/);
+        if (alias) {
+          expect(defined.has(alias[1]!), `dangling alias ${name} -> ${alias[1]}`).toBe(true);
+        }
+      }
+    }
+  });
+
   it('uses CSS custom properties for CodeMirror theme and syntax highlighting', () => {
     const themeBlock = CODEVIEW_SOURCE.slice(
       CODEVIEW_SOURCE.indexOf('const theme = EditorView.theme('),

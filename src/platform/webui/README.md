@@ -64,7 +64,7 @@ naming it, and they are all of them:
 | `client/panels/instructions.ts` | Typed Instructions settings cards and editor source (`createInstructionsPanel`), bundled into `app-<hash>.js` and checked by `client/tsconfig.json` and eslint |
 | `client/panels/schedules.ts` | Typed Scheduled side panel (Tasks, Sessions, and task detail/edit/add page; `createSchedulesPanel`), bundled into `app-<hash>.js` and checked by `client/tsconfig.json` and eslint |
 | `client/panels/skills.ts` | Typed Skills management window (`createSkillsPanel`), bundled into `app-<hash>.js` and checked by `client/tsconfig.json` and eslint |
-| `client/styles/main.css` | The stylesheet, bundled into `dist/webui-assets/style-<hash>.css` |
+| `client/styles/main.css` | Stylesheet entrypoint importing `tokens.css` (`--fh-*` semantic tokens and legacy aliases) and 16 modular CSS files (`base`, `layout`, `topics`, `terminal`, `schedules`, `reviews`, `git`, `history`, `skills`, `transcript`, `settings`, `composer`, `overlays`, `status`, `files`, `responsive`) in cascade order, bundled into `dist/webui-assets/style-<hash>.css` |
 | `manifest.ts` | The web app manifest and the icon, as strings, for the same reason `page.ts` is a module |
 | `icons.ts` | The page's icons, hand-drawn inline SVG, and which emoji each one replaces — see [Icons](#icons) |
 | `webpush.ts` | Web Push, server half: the VAPID key, the subscribed devices, RFC 8291 encryption, the endpoint allowlist |
@@ -78,7 +78,7 @@ a port — which is what `room.test.ts` and `index.test.ts` do.
 **The client script and stylesheet were inline in `page.ts` until Phase 1 Step 1A of
 [the refactor plan](../../../docs/refactor-plan.md)**, and were moved to `client/` as they were.
 So wherever this README names a script function or a CSS rule as `page.ts`'s — `codeView()`,
-`menu()`, `.b .raw` — read `client/legacy-app.ts` or `client/styles/main.css`. Both are bundled by
+`menu()`, `.b .raw` — read `client/legacy-app.ts` or `client/styles/` (imported by `main.css`). Both are bundled by
 `scripts/webui-client.mjs` (called by `scripts/build-webui-assets.mjs`, and by the tests), linked
 from the page by content-hashed name, and served by `GET /assets/<file>`. What the server decides
 per deployment reaches the script as `<script type="application/json" id="boot-config">` — read

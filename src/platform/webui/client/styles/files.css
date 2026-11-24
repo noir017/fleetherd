@@ -1,0 +1,83 @@
+/* ── The file window ─────────────────────────────────────────────────────────
+   A tree on the left, breadcrumbs and an editor on the right. Full height rather than a fixed
+   box: an editor is read in lines and a tree is only a way of getting to one. On a phone the
+   tree becomes a drawer (the 640px block below), which is why the header carries a toggle for
+   it that a desktop never shows. */
+#files{position:fixed;inset:0;z-index:22;background:var(--scrim-2);display:flex;align-items:center;justify-content:center;padding:16px}
+#files[hidden]{display:none}
+#files-box{display:flex;flex-direction:column;width:100%;height:100%;max-width:1400px;overflow:hidden;background:var(--bg);border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 30px var(--shadow)}
+#files-bar{display:flex;align-items:center;gap:8px;padding:6px 10px 6px 16px;border-bottom:1px solid var(--line);min-height:var(--headh);font-size:13px}
+#files-title{font-weight:600;white-space:nowrap}
+#files-where{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11.5px;color:var(--dim);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+#files-tree-toggle{display:none}
+#files-close{font-size:18px;padding:6px 10px}
+#files-body{flex:1;min-height:0;display:flex;position:relative}
+#files-tree{width:250px;flex:none;min-height:0;display:flex;flex-direction:column;border-right:1px solid var(--line);background:var(--bg-tree)}
+#files-tree-head{display:flex;gap:6px;padding:8px;border-bottom:1px solid var(--line)}
+#files-tree-head button{flex:1;font:inherit;font-size:11.5px;padding:5px 6px;background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);cursor:pointer}
+#files-tree-head button:hover{border-color:var(--line-3);background:var(--hover-3)}
+#files-new-row{display:flex;gap:6px;padding:8px;border-bottom:1px solid var(--line)}
+#files-new-row input,#files-rename-row input{flex:1;min-width:0;background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:inherit;font-size:12.5px;padding:5px 7px}
+#files-new-row button,#files-rename-row button{flex:none;font:inherit;font-size:11.5px;padding:5px 8px;background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);cursor:pointer}
+#files-tree-list{flex:1;min-height:0;overflow:auto;padding:4px 0 12px}
+#files-hits{border-top:1px solid var(--line);max-height:40%;overflow:auto;padding:4px 0}
+#files-hits .fx-hit-head{padding:4px 10px;font-size:11px;color:var(--dim)}
+.fx-row{display:flex;align-items:center;gap:3px;width:100%;padding:3px 8px;background:none;border:0;color:var(--fg);font:inherit;font-size:12.5px;text-align:left;cursor:pointer;white-space:nowrap}
+.fx-row:hover{background:var(--hover-2)}
+.fx-row.on{background:var(--active)}
+/* A folder row is a box holding its expand button and two actions, so the actions are reachable
+   without turning the row into a second kind of selection. They stay out of the way until the
+   pointer is on the row; a finger gets them always (the 640px block below). */
+.fx-dirrow{padding:0;gap:0}
+.fx-dirrow:hover{background:var(--hover-2)}
+.fx-main{flex:1;min-width:0;display:flex;align-items:center;gap:3px;padding:3px 4px;background:none;border:0;color:var(--fg);font:inherit;font-size:12.5px;text-align:left;cursor:pointer;white-space:nowrap;overflow:hidden}
+.fx-act{flex:none;display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;padding:0;background:none;border:0;border-radius:4px;color:var(--dim);cursor:pointer;opacity:0;transition:opacity .12s}
+.fx-dirrow:hover .fx-act,.fx-act:focus-visible{opacity:1}
+.fx-act:hover{background:var(--active-3);color:var(--fg)}
+.fx-act .ic{width:12px;height:12px}
+#files-rename-what{flex:none;font-size:11px;color:var(--dim);white-space:nowrap}
+.fx-caret{flex:none;width:14px;height:14px;display:inline-flex;align-items:center;justify-content:center;color:var(--dim)}
+.fx-caret .ic{width:11px;height:11px}
+.fx-caret.blank{visibility:hidden}
+.fx-row .ic{width:13px;height:13px;flex:none;color:var(--dim)}
+.fx-name{overflow:hidden;text-overflow:ellipsis}
+/* The instruction editor's tree (page.ts instrTree): what a file is for, beside its name; a file
+   not written yet; and a referenced file that is listed but edited elsewhere. */
+.fx-sub{margin-left:6px;color:var(--dim);font-size:11.5px;overflow:hidden;text-overflow:ellipsis}
+.fx-tag{margin-left:6px;padding:0 5px;border:1px solid var(--line);border-radius:4px;color:var(--dim);font-size:10.5px}
+.fx-row.fx-off{cursor:default;color:var(--dim)}
+/* In an agent's instruction list the name is what a row is picked by: it keeps its width, and the
+   line beside it gives way (a shared file's "every Claude Code agent" cut common.md to "comm…"). */
+#files.instr .fx-name{flex:none;max-width:70%}
+#files.instr .fx-sub{min-width:0}
+/* An agent's instruction files in two parts — the gateway's shared files, then its machine's own —
+   each under a heading that says where its files live. */
+.fx-sec{padding:10px 10px 2px;font-size:10.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--fg-soft)}
+.fx-head{padding:2px 10px 8px;font-size:11.5px;color:var(--dim);white-space:normal;line-height:1.4;border-bottom:1px solid var(--line)}
+#files-main{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column}
+#files-crumbs{display:flex;flex-wrap:wrap;align-items:center;gap:2px;padding:5px 12px;border-bottom:1px solid var(--line);font-size:12px;color:var(--dim)}
+#files-crumbs button{background:none;border:0;color:var(--accent-crumb);font:inherit;font-size:12px;padding:2px 3px;cursor:pointer;border-radius:4px}
+#files-crumbs button:hover{background:var(--hover-2)}
+#files-crumbs .fx-sep{opacity:.5}
+#files-crumbs .fx-crumb-file{color:var(--fg);padding:2px 3px;overflow:hidden;text-overflow:ellipsis}
+#files-search-row{display:flex;gap:6px;padding:6px 12px;border-bottom:1px solid var(--line)}
+#files-q{flex:1;min-width:0;background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:inherit;font-size:12.5px;padding:6px 8px}
+#files-q-go{display:inline-flex;align-items:center;justify-content:center;width:30px;flex:none;background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);cursor:pointer}
+#files-q-go .ic{width:14px;height:14px}
+#files-note{margin:8px 12px 0;padding:7px 9px;border-radius:5px;background:var(--warn-tint);border:1px solid var(--warn-border);color:var(--warn);font-size:12px;line-height:1.45;overflow-wrap:anywhere}
+#files-eol{margin:8px 12px 0;padding:7px 9px;border-radius:5px;background:var(--accent-tint);border:1px solid var(--accent-border);color:var(--accent-crumb);font-size:12px;line-height:1.45;overflow-wrap:anywhere}
+#files-editor{flex:1;min-height:0;overflow:auto;background:var(--bg-editor)}
+#files-editor .fx-text{display:block;width:100%;height:100%;min-height:100%;resize:none;border:0;outline:0;background:var(--bg-editor);color:var(--fg);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px;line-height:1.55;padding:12px 14px;tab-size:4}
+#files-preview{flex:1;min-height:0;overflow:auto;padding:16px 22px;max-width:860px;width:100%;margin:0 auto;font-size:14px;line-height:1.6}
+#files-preview img{max-width:100%}
+#files-image{display:flex;align-items:center;justify-content:center;flex:1;min-height:0;overflow:auto;padding:16px}
+#files-image img{max-width:100%;max-height:100%}
+#files-conflict{margin:10px 12px 0;padding:10px 12px;border-radius:6px;background:var(--err-tint);border:1px solid var(--err-border-1);font-size:12.5px;line-height:1.5;color:var(--err)}
+.fx-acts{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+#files-actions{display:flex;align-items:center;gap:8px;padding:8px 12px;border-top:1px solid var(--line)}
+#files-actions button{background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:inherit;font-size:12px;padding:6px 12px;cursor:pointer;white-space:nowrap}
+#files-actions button:hover:not(:disabled){border-color:var(--line-3);background:var(--hover-3)}
+#files-actions button:disabled{opacity:.45;cursor:default}
+#files-actions #files-delete{color:var(--err)}
+#files-dirty{font-size:11.5px;color:var(--warn);margin-left:auto}
+#files-rename-row{display:flex;gap:6px;padding:8px 12px;border-top:1px solid var(--line)}

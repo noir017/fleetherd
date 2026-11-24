@@ -1,0 +1,325 @@
+#log{flex:1;overflow-y:auto;padding:20px 16px 8px;max-width:860px;width:100%;margin:0 auto}
+.m{margin:0 0 18px;max-width:100%;overflow-wrap:anywhere;animation:fade .18s ease-out}
+/* Only on the element's first appearance, which is the whole reason messages are now reconciled
+   rather than rebuilt: an animation restarts every time a node is created, so under the old
+   empty-and-repaint sync this would have flickered the entire transcript on every reconnect. */
+@keyframes fade{from{opacity:0}to{opacity:1}}
+/* Message-shaped placeholders, held in the transcript while a topic's first sync is in flight.
+   Entering a topic was a blank panel followed by the whole conversation arriving in one frame;
+   the point of these is that the panel already has the SHAPE of what is coming, so the real
+   messages replace something instead of landing in an empty box. Widths are uneven on purpose —
+   four identical bars read as a broken layout rather than as text that has not arrived. */
+.sk{margin:0 0 18px}
+.sk.own{background:var(--own);border-left:2px solid var(--own-edge);border-radius:0 6px 6px 0;padding:9px 12px}
+.sk i{display:block;height:11px;margin-bottom:7px;border-radius:3px;background:var(--surface-skel);animation:breathe 1.6s ease-in-out infinite}
+/* Inside the tinted panel a neutral grey bar disappears, the same way --line borders do there. */
+.sk.own i{background:var(--surface-skel-own)}
+.sk i:last-child{margin-bottom:0}
+/* Its own swing rather than the running-topic dot's pulse: that one fades to .3, which on a 6px
+   dot reads as blinking and on an 11px bar over this background reads as gone. Half opacity is
+   the point where the bar still breathes and never stops being a bar. */
+@keyframes breathe{0%,100%{opacity:1}50%{opacity:.45}}
+/* The other half of the same wait, for a topic that came back out of the local cache. There the
+   transcript is already on screen, so there is nothing to hold a place in FRONT of — what is
+   still unknown is whether anything was said while you were elsewhere, and that lands at the
+   bottom. Sized and centred like .divider rather than like a message, for the ordinary case
+   where nothing was missed: a message-shaped placeholder would have promised one. */
+.syncing{display:flex;align-items:center;justify-content:center;gap:7px;margin:2px auto 18px;font-size:11.5px;color:var(--dim)}
+.syncing .dots{display:inline-flex;gap:3px}
+.syncing i{width:5px;height:5px;border-radius:50%;background:var(--dim);animation:blip 1.2s ease-in-out infinite}
+.syncing i:nth-child(2){animation-delay:.2s}
+.syncing i:nth-child(3){animation-delay:.4s}
+/* Never all the way out, for the reason breathe does not either: three dots that vanish in turn
+   read as a rendering fault on a 5px circle, where three that dim read as a wait. */
+@keyframes blip{0%,100%{opacity:.3}50%{opacity:1}}
+/* All three of the above are decoration over content that is arriving anyway, which is exactly
+   what this query is for: without motion the skeleton is still a placeholder, the dots still say
+   the page is waiting on something, and a message still appears — instantly. */
+@media(prefers-reduced-motion:reduce){.m,.sk i,.syncing i,.launch{animation:none}.agent-card,.agent-card:hover{transition:none;transform:none}}
+/* Why an empty room is empty. A transcript lives in memory only while the topic LIST is
+   persisted, so every restart leaves rows that open onto nothing — and an empty panel rendered
+   faithfully is indistinguishable from a page that failed to load, which is how it was reported.
+   Sized and centred like a system note rather than a message: it is about the room, not in it. */
+.empty{margin:28px auto;max-width:46ch;text-align:center;font-size:12.5px;line-height:1.6;color:var(--dim)}
+/* A new topic: every agent it could be given to, by machine, in place of a blank transcript (see
+   paintLaunch). A choice laid out rather than a message, so it is not in the transcript and leaves
+   the moment anything is — typing straight away is still an answer, and the card marked default is
+   who it reaches. Cards rather than menu cells: each says what the agent IS (the harness, its model)
+   as well as its id, which a one-line button cannot without truncating. The default is drawn in the
+   blue of a menu's current choice, the one other place this page marks "this is what you get". */
+.launch{max-width:720px;margin:7vh auto 24px;animation:fade .18s ease-out}
+.launch-head{text-align:center;margin-bottom:26px}
+.launch-title{font-size:19px;font-weight:600;color:var(--fg);letter-spacing:-.01em}
+.launch-sub{margin-top:5px;font-size:13px;color:var(--dim)}
+.launch-sub b{color:var(--fg-muted);font-weight:600}
+.launch-group+.launch-group{margin-top:20px}
+/* The machine, as a rule with its name on it: the heading groups the cards without boxing them. */
+.launch-host{display:flex;align-items:center;gap:10px;margin:0 2px 9px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.07em;color:var(--dim)}
+.launch-host::after{content:'';flex:1;border-top:1px solid var(--line)}
+.launch-host .n{font-weight:400;color:var(--fg-faint);letter-spacing:0}
+.launch-host .off{display:inline-flex;align-items:center;gap:4px;font-weight:500;letter-spacing:0;text-transform:none;color:var(--offline)}
+.launch-host .off .ic{width:11px;height:11px}
+/* Dimmed, not disabled: the machine may be back before anyone writes, and the choice is kept. */
+.launch-group.off .agent-card{opacity:.55}
+.launch-group.off .agent-card:hover,.launch-group.off .agent-card:focus-visible{opacity:.85}
+.launch-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(148px,1fr));gap:8px}
+.agent-card{display:flex;flex-direction:column;align-items:stretch;gap:3px;min-width:0;min-height:68px;padding:11px 13px 10px;background:var(--surface);border:1px solid var(--line);border-radius:8px;text-align:left;line-height:1.3;transition:background .12s,border-color .12s,transform .12s}
+.agent-card:hover{background:var(--surface-pop);border-color:var(--line-3);transform:translateY(-1px)}
+.agent-card:active{transform:none;background:var(--surface-tag)}
+.agent-card:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.agent-card.def{background:var(--own);border-color:var(--own-edge)}
+.agent-card.def:hover{background:var(--own-hover);border-color:var(--own-hover-edge)}
+.ac-top{display:flex;align-items:center;gap:8px}
+.ac-id{flex:1;min-width:0;font-size:15px;font-weight:600;color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ac-tag{flex:none;font-size:10.5px;line-height:1;padding:3px 6px;border-radius:9px;color:var(--accent-tag);background:var(--accent-tint-1);border:1px solid var(--accent-border-1)}
+.ac-kind{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--fg-kind);overflow:hidden;white-space:nowrap}
+.ac-kind span{overflow:hidden;text-overflow:ellipsis}
+/* Which harness, at a glance, in a colour of its own: the eye finds "the Codex one" by colour
+   before it has read a word. Keyed on the configured harness, not the label, which is prose.
+   One palette for the two places that draw it — the dot on an agent card here and a topic row's
+   agent legend (.agent-tag) — set as --hc so a colour is written once; each falls back to its own
+   grey for a harness with none (custom). Set on the element carrying the class and never on a
+   container: a custom property inherits, and a custom agent is grey only while nothing above sets one. */
+.ac-dot{flex:none;width:7px;height:7px;border-radius:50%;background:var(--hc,var(--hc-dot-fallback))}
+.ac-dot.h-claude,.agent-tag.h-claude{--hc:var(--hc-claude)}
+.ac-dot.h-codex,.agent-tag.h-codex{--hc:var(--hc-codex)}
+.ac-dot.h-opencode,.agent-tag.h-opencode{--hc:var(--hc-opencode)}
+.ac-dot.h-agy,.agent-tag.h-agy{--hc:var(--hc-agy)}
+.ac-dot.h-gemini,.agent-tag.h-gemini{--hc:var(--hc-gemini)}
+.ac-dot.h-dsh,.agent-tag.h-dsh{--hc:var(--hc-dsh)}
+/* The UI face rather than monospace, and 720px for the launcher rather than less: measured in
+   Chromium, "deepseek-v4.1-flash-free" is 159px in 11px monospace and 143px here, and a desktop card
+   at four to a row leaves 148px for it. A longer name still ends in an ellipsis, whole on hover. */
+.ac-model{font-size:11.5px;color:var(--fg-model);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* A rule and an indent were all that separated the two sides of the conversation, and at a
+   glance down a long transcript that is not enough to find where your own question ended and
+   the answer began. Own messages get a tinted panel instead — cool where the page is neutral,
+   so it reads as "mine" without becoming a second theme. The agent's side stays flat on the
+   background: one side marked is what makes the boundary visible, and marking both would just
+   move the problem. */
+.m.own{background:var(--own);border-left:2px solid var(--own-edge);border-radius:0 6px 6px 0;padding:9px 12px;color:var(--fg-own)}
+/* Inside the panel the neutral --line borders disappear into the tint, so the quote rail and
+   any code block it carries are lifted a step. */
+.m.own .q{border-left-color:var(--own-quote-edge);color:var(--own-quote-fg)}
+.m.own .b pre,.m.own .b :not(pre)>code{background:var(--own-code-bg);border-color:var(--own-code-edge)}
+/* A bubble that is about a sub-agent rather than something the agent said to the reader: a task
+   handed to one (dispatch), and what one reported back (report). A rail and a tag, not a tint
+   alone — a tint is the first thing lost in a screenshot at phone width, and the tag also says
+   which of the two this is. Both colours are variables beside the rest, so a second palette
+   moves four values instead of this rule. Dispatch is violet (blue is already "mine", amber is
+   "waiting on you"); report is green, the colour a finished thing has everywhere else here. */
+.m.dispatch{background:var(--disp);border-left:3px solid var(--disp-edge);border-radius:0 6px 6px 0;padding:9px 12px}
+.m.report{background:var(--rep);border-left:3px solid var(--rep-edge);border-radius:0 6px 6px 0;padding:9px 12px}
+.sub-k{display:inline-block;margin:0 0 6px;padding:1px 8px;border:1px solid;border-radius:9px;font-size:10.5px;line-height:1.6;font-weight:600;letter-spacing:.03em;text-transform:uppercase}
+.m.dispatch .sub-k{color:var(--disp-tag-fg);background:var(--disp-tag-bg);border-color:var(--disp-tag-edge)}
+.m.report .sub-k{color:var(--rep-tag-fg);background:var(--rep-tag-bg);border-color:var(--rep-tag-edge)}
+/* The answer to a side question (/btw): asked of a copy of the conversation and kept out of it, so
+   it must not read as the next step of the reply it may land in the middle of. The same rail and
+   tag as the two above, dashed and slate-teal — none of mine, waiting, dispatch or done. Only an
+   answer that cannot be paired with its question is drawn this way now (one kept from before
+   answers were replies, or whose question has aged out); the rest are read in #btw. */
+.m.aside{background:var(--aside);border-left:3px dashed var(--aside-edge);border-radius:0 6px 6px 0;padding:9px 12px}
+.m.aside .sub-k{color:var(--aside-tag-fg);background:var(--aside-tag-bg);border-color:var(--aside-tag-edge)}
+/* A side question and its answer, out of the transcript (openBtw). The question stays where it was
+   asked, as one line that opens the answer; the answer's own node stays in #log but empty and of no
+   height, because the cache and the reading position are both read off #log's children (cacheable,
+   firstVisible) and a node taken out would be lost to both. */
+.m.aside-held{margin:0;animation:none}
+.btw-chip{display:flex;align-items:center;gap:8px;width:100%;min-height:34px;padding:5px 10px;border:1px dashed var(--aside-border);border-radius:6px;background:var(--aside);color:var(--fg);font:inherit;font-size:13px;text-align:left;cursor:pointer}
+.btw-chip:hover,.btw-chip[aria-expanded="true"]{border-style:solid;background:var(--aside-hover)}
+.btw-chip:focus-visible{outline:2px solid var(--aside-edge);outline-offset:1px}
+.btw-tag{flex:none;padding:0 7px;border:1px solid var(--aside-tag-edge);border-radius:9px;background:var(--aside-tag-bg);color:var(--aside-tag-fg);font-size:10.5px;font-weight:600;line-height:1.6;letter-spacing:.03em;text-transform:uppercase}
+.btw-text{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--fg-own)}
+.btw-state{flex:none;display:inline-flex;align-items:center;gap:2px;color:var(--dim);font-size:11.5px}
+.btw-state.ready{color:var(--aside-tag-fg)}
+.btw-when{flex:none;color:var(--dim);font-size:11.5px}
+/* The card the answer is read in: over the composer, inside #bar so it moves with it, like the model
+   list. Not closed by a click elsewhere, unlike that list — the transcript under it is still being
+   read, and scrolling it must not take the answer away. */
+#btw{position:absolute;left:16px;right:16px;bottom:calc(100% + 6px);z-index:14;display:flex;flex-direction:column;max-height:min(46vh,440px);background:var(--aside);border:1px solid var(--aside-border);border-radius:8px;box-shadow:0 10px 30px var(--shadow-lg);overflow:hidden}
+.btw-head{display:flex;align-items:center;gap:8px;padding:6px 6px 6px 12px;border-bottom:1px solid var(--aside-sep)}
+#btw-q{flex:1;min-width:0;font-weight:600;font-size:13px;line-height:1.4;overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow-wrap:anywhere}
+#btw-close{flex:none;font-size:17px;padding:4px 10px}
+#btw-body{flex:1;min-height:0;overflow-y:auto;padding:10px 12px 4px;overflow-wrap:anywhere}
+#btw-body>.b{margin-bottom:.6em}
+#btw-body .btw-foot{margin:.8em 0 0;color:var(--dim);font-size:12px}
+.btw-wait{display:flex;align-items:center;gap:8px;color:var(--dim);font-size:12.5px;padding-bottom:8px}
+/* A message that is on screen because it was typed here, not because the daemon sent it back.
+   Dimmed while the request is in flight; edged red and given something to do about it once the
+   request has failed, since the text in it is the only copy left. */
+.m.pending{opacity:.6}
+.m.failed{border-left-color:var(--err-edge)}
+.m .warn{color:var(--err-warn);font-size:12px;margin-top:7px}
+.m .acts{margin-top:7px;display:flex;flex-wrap:wrap;gap:6px}
+.m .acts button{font-size:12px;padding:4px 10px}
+/* Cached from a daemon that is no longer running. Legible, just half a step back: it is real
+   conversation, it is only no longer anything the process on the other end can be asked about. */
+.m.hist{opacity:.9}
+/* Says so, once, between the cached messages and the live ones. Sized like .empty rather than
+   like a message, because it is about the room and not in it. */
+.divider{margin:2px auto 20px;max-width:46ch;padding-top:10px;border-top:1px solid var(--line);text-align:center;font-size:11.5px;line-height:1.6;color:var(--dim)}
+.b>:first-child{margin-top:0}
+.b>:last-child{margin-bottom:0}
+/* The operator's own message, which renderBody escapes and does not render (see room.ts).
+   pre-wrap is what makes "not rendered" legible rather than a single run-on line: their
+   newlines and indentation are the structure, since nothing turned them into tags. The break
+   rules are for the other half of a pasted prompt — a URL or a path with no spaces in it,
+   which would otherwise widen the bubble past the viewport. */
+.b .raw{white-space:pre-wrap;overflow-wrap:break-word;word-break:break-word}
+.b p{margin:0 0 .6em}
+.b pre{background:var(--field);border:1px solid var(--line);border-radius:4px;padding:10px;overflow-x:auto;margin:.6em 0}
+.b code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px}
+.b pre code{font-size:12.5px}
+.b :not(pre)>code{background:var(--field);padding:1px 4px;border-radius:3px}
+.b h1,.b h2,.b h3,.b h4,.b h5,.b h6{font-size:1em;font-weight:600;margin:.9em 0 .4em}
+.b blockquote{margin:.6em 0;padding-left:10px;border-left:2px solid var(--line);color:var(--dim)}
+.b ul,.b ol{margin:.4em 0;padding-left:1.4em}
+/* A task item (web-markdown.ts itemOpen): its box stands where the bullet was, so the text lines up
+   with the items around it. Ticked is the green a finished thing has everywhere else here. */
+.b li.task{list-style:none}
+.b .task-box{display:inline-block;width:1.4em;margin-left:-1.4em;color:var(--dim)}
+.b li.task.done>.task-box{color:var(--ok)}
+/* A table scrolls sideways inside its frame (web-markdown.ts renderTable) rather than widening the
+   bubble on a phone. Its cells wrap at spaces only: a bubble breaks anywhere (.m), which in a
+   390px-wide table split "Before" and every path a letter at a time to make it fit, and the frame
+   is there so that it need not fit. A bare table is what a reply rendered before the frame existed
+   still carries, from the transcript on disk and the browser's cache: it keeps the block display
+   that made it scroll then. */
+.b .tbl{overflow-x:auto;margin:.6em 0;max-width:100%;overflow-wrap:normal}
+.b table{border-collapse:collapse;margin:.6em 0;font-size:13.5px;display:block;overflow-x:auto}
+.b .tbl>table{display:table;margin:0}
+.b th,.b td{border:1px solid var(--line);padding:4px 8px;text-align:left}
+/* A code block's frame (web-markdown.ts codeBlock): the bar and the pre share one border, and the
+   pre inside drops its own. The pre takes the code's own size: left at the bubble's 15px, its line
+   box is 24px around 12.5px text, which spread every block out and left a gap between the bands
+   of a patch's lines. The bar's buttons are dim until pointed at, like the rest of a reply's
+   chrome; 26px is a mouse target, and a phone gets more below. */
+.b .cb{margin:.6em 0;background:var(--field);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.b .cb pre{margin:0;border:0;border-radius:0;background:none;font-size:12.5px}
+.cb-h{display:flex;align-items:center;gap:2px;min-height:26px;padding:0 3px 0 10px;border-bottom:1px solid var(--line);color:var(--dim);font-size:11.5px}
+.cb-lang{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.cb-b{flex:none;display:inline-flex;align-items:center;justify-content:center;width:26px;height:24px;padding:0;border:0;border-radius:3px;background:none;color:var(--dim);font-size:14px;cursor:pointer}
+.cb-b:hover{color:var(--fg);background:var(--surface-subtle)}
+.cb-b[aria-pressed="true"]{color:var(--fg);background:var(--surface-subtle-2)}
+/* Wrap: long lines break inside the frame, anywhere, since a path or a minified line has no spaces. */
+.b .cb.wrap pre{white-space:pre-wrap;overflow-wrap:anywhere}
+/* A patch's lines (web-markdown.ts diffLines) take the whole width of the block, so an added or a
+   removed line reads as a band like the git panel's rather than as tinted words. */
+.cb .pa,.cb .pd{display:inline-block;min-width:100%;vertical-align:top}
+.b hr{border:0;border-top:1px solid var(--line);margin:1em 0}
+.b a{color:var(--accent-link)}
+.q{margin:0 0 6px;padding-left:10px;border-left:2px solid var(--line);color:var(--dim);font-size:13px;max-height:4.8em;overflow:hidden}
+.t{color:var(--dim);font-size:11.5px;margin-top:4px}
+/* A tool-progress bubble: one row per tool call, cut at the bubble's edge rather than at a
+   character count, so a wide screen shows as much of each command as fits and a phone still
+   reads one row per tool. Only the command (.tl-c) is cut: the ✓/✗ and duration after it (.tl-s)
+   stay in view, since they are what says the tool is done. pre on the mark keeps its leading
+   space, which a flex item would otherwise drop — and which a copied line needs. A click opens
+   the row (toggleLine); open, it wraps anywhere, because to a browser a long command or path is
+   one unbreakable word that would widen the bubble. */
+.tl{display:flex;cursor:pointer}
+.tl-c{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tl-s{flex:none;white-space:pre}
+.tl.open{display:block;white-space:pre-wrap;overflow-wrap:anywhere}
+.tl.open .tl-c{white-space:inherit}
+/* "Show all" / "Collapse", sitting in the timestamp row: a control on every tool bubble, so it is
+   dressed as dim text rather than as one of the message's buttons, which are things to answer. */
+.t .tl-all{background:none;border:0;padding:0 2px;margin-left:10px;font-size:inherit;color:var(--dim);text-decoration:underline;cursor:pointer}
+.t .tl-all:hover{color:var(--fg)}
+/* A message's buttons, drawn as a menu — see menu() in the script for why a grid, and why sized
+   from the widest label. The 50% term is the two-column floor, and it gives up a whole gap rather
+   than half of one: two halves plus a gap is a pixel over the row, and the floor quietly becomes
+   one column (it did, on the touch gap below). auto-fill rather than auto-fit, so a
+   two-button question keeps two cells' width instead of being stretched across the bubble. 22px is
+   a cell's padding and border, which --cw (the label alone) does not count. A label that does wrap
+   is balanced, or a model id breaks at its last hyphen and leaves one character on a line. */
+.btns{--gap:4px;margin-top:8px;display:grid;grid-template-columns:repeat(auto-fill,minmax(min(calc(var(--cw,8ch) + var(--mk,0) * (1em - 1ch) + 22px),calc(50% - var(--gap))),1fr));gap:var(--gap);font-size:13px}
+.btns button{min-width:0;padding:5px 10px;border-radius:5px;text-align:left;line-height:1.35;overflow-wrap:anywhere;text-wrap:balance;transition:background .12s,border-color .12s}
+.btns button:not(.on):hover:not(:disabled){background:var(--hover-1)}
+/* The current choice, in the blue of the operator's own messages: it is the one they made. */
+.btns button.on{background:var(--own);border-color:var(--own-edge)}
+.btns .mk{color:var(--dim)}
+.btns .on .mk{color:var(--accent)}
+/* Pressed, then tapped and waiting on the daemon: full opacity over button:disabled's half, so the
+   choice just made is the brightest thing in the menu rather than the faintest. */
+.btns button:active:not(:disabled){background:var(--active-2)}
+.btns button.busy{opacity:1;border-color:var(--own-edge);background:var(--own)}
+/* Paging and the way back: under the items, spanning the grid, and quieter than they are. */
+.btns .nav{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:4px}
+.btns .nav button{background:none;color:var(--dim);padding:3px 10px}
+.btns .nav button:hover:not(:disabled){color:var(--fg);background:var(--field)}
+/* A finger, not a pointer: the cells keep roughly the height they had as loose buttons, and the
+   gap between two choices is what a near miss lands in. */
+@media(hover:none){.btns{--gap:6px}.btns button{padding:8px 10px}.btns .nav button{padding:7px 14px}}
+/* Interactive directory browser for `/cd` and post-`/agent` placement (`WorkdirScreen`). */
+.wd-picker{margin-top:4px;border:1px solid var(--line);border-radius:10px;background:var(--panel);overflow:hidden;font-size:13px}
+.wd-head{padding:11px 14px 9px;border-bottom:1px solid var(--line)}
+.wd-title-row{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.wd-title{display:inline-flex;align-items:center;gap:7px;font-size:14px;font-weight:600;color:var(--fg)}
+.wd-title .ic{width:15px;height:15px;color:var(--accent)}
+.wd-badges{display:inline-flex;align-items:center;gap:5px;flex-wrap:wrap}
+.wd-meta{padding:1px 7px;border:1px solid var(--line);border-radius:9px;font-size:11px;color:var(--dim);background:var(--field)}
+.wd-hint{margin-top:3px;font-size:12px;color:var(--dim)}
+.wd-bar{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--line);background:var(--field);flex-wrap:wrap}
+.wd-acts{display:inline-flex;align-items:center;gap:5px;flex:none}
+.wd-act{display:inline-flex;align-items:center;gap:4px;padding:4px 9px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--fg);font-size:12px;line-height:1.3;cursor:pointer;transition:background .12s,border-color .12s}
+.wd-act .ic{width:13px;height:13px}
+.wd-act:hover:not(:disabled){background:var(--hover-1);border-color:var(--own-edge)}
+.wd-act:disabled{opacity:.45;cursor:default}
+.wd-crumbs{display:flex;align-items:center;gap:2px;flex:1;min-width:0;overflow-x:auto;scrollbar-width:thin;font-family:var(--mono);font-size:12px;padding:2px 0}
+.wd-crumb{flex:none;padding:2px 6px;border:none;border-radius:5px;background:transparent;color:var(--dim);font:inherit;cursor:pointer;white-space:nowrap}
+.wd-crumb:hover:not(:disabled){color:var(--fg);background:var(--hover-1)}
+.wd-crumb.cur{color:var(--fg);font-weight:600;cursor:default}
+.wd-sep{color:var(--fg-faint);user-select:none;flex:none}
+.wd-err{padding:8px 14px;border-bottom:1px solid var(--line);color:var(--err);font-size:12.5px;background:var(--panel)}
+.wd-cur{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 14px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.wd-cur-info{display:flex;align-items:center;gap:6px;min-width:0;flex:1;flex-wrap:wrap}
+.wd-path{font-family:var(--mono);font-size:12px;color:var(--fg-muted);overflow-wrap:anywhere;background:none;border:none;padding:0}
+.wd-pick-cur{display:inline-flex;align-items:center;gap:5px;flex:none;padding:5px 11px;border:1px solid var(--own-edge);border-radius:6px;background:var(--own);color:var(--fg-own);font-size:12.5px;font-weight:500;cursor:pointer;transition:background .12s,border-color .12s}
+.wd-pick-cur .ic{width:13px;height:13px}
+.wd-pick-cur:hover:not(:disabled){filter:brightness(1.06)}
+.wd-filter{display:flex;align-items:center;gap:7px;padding:7px 12px;border-bottom:1px solid var(--line)}
+.wd-filter .ic{width:13px;height:13px;color:var(--dim);flex:none}
+.wd-q{flex:1;min-width:0;border:none;background:transparent;color:var(--fg);font:inherit;font-size:12.5px;outline:none}
+.wd-list{max-height:320px;overflow-y:auto;padding:6px}
+.wd-row{display:flex;align-items:center;gap:6px;padding:2px;border-radius:7px}
+.wd-row:hover{background:var(--hover-1)}
+.wd-row.on{background:var(--own)}
+.wd-open{display:flex;align-items:center;gap:8px;flex:1;min-width:0;padding:6px 8px;border:none;border-radius:6px;background:transparent;color:var(--fg);font:inherit;text-align:left;cursor:pointer}
+.wd-ic{display:inline-flex;color:var(--dim);flex:none}
+.wd-ic .ic{width:15px;height:15px}
+.wd-row.on .wd-ic{color:var(--accent)}
+.wd-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wd-go{display:inline-flex;color:var(--fg-faint);flex:none}
+.wd-go .ic{width:13px;height:13px}
+.wd-open:hover .wd-go{color:var(--fg)}
+.wd-tag{flex:none;padding:0 6px;border:1px solid var(--line);border-radius:8px;font-size:10.5px;line-height:1.6;color:var(--dim)}
+.wd-tag.on{border-color:var(--own-edge);color:var(--accent)}
+.wd-choose{display:inline-flex;align-items:center;gap:4px;flex:none;padding:4px 9px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--fg-muted);font-size:12px;cursor:pointer;transition:background .12s,border-color .12s,color .12s}
+.wd-choose .ic{width:12px;height:12px}
+.wd-choose:hover:not(:disabled),.wd-choose.on{border-color:var(--own-edge);background:var(--own);color:var(--fg-own)}
+.wd-empty{padding:18px 14px;text-align:center;color:var(--dim);font-size:12.5px}
+.wd-more{padding:6px 14px 9px;border-top:1px solid var(--line);font-size:11.5px;color:var(--dim)}
+.wd-picker button.busy{opacity:.85;border-color:var(--own-edge);background:var(--own)}
+@media(hover:none){.wd-act{padding:6px 10px}.wd-open{padding:9px 8px}.wd-choose{padding:7px 10px}.wd-pick-cur{padding:7px 12px}}
+.files{margin-top:6px;display:flex;flex-wrap:wrap;gap:6px}
+/* What a turn changed, under its reply (the daemon's turn-changes): a quiet footnote rather than
+   a control in the flow of the answer, and one line even on a phone — the counts are what is read
+   at a glance, the file count is what says how much. */
+.tc{margin-top:8px}
+.tc button{display:inline-flex;align-items:center;gap:6px;max-width:100%;padding:2px 8px;font:inherit;font-size:12px;color:var(--dim);background:none;border:1px solid var(--line);border-radius:3px;cursor:pointer}
+.tc button:hover{color:var(--fg);border-color:var(--dim)}
+.tc .add{color:var(--ok)}
+.tc .del{color:var(--err)}
+/* A picture the agent sent, drawn in the bubble. Capped in both directions: a screenshot of a
+   4K display would otherwise push the timestamp and everything after it off the fold, and the
+   point of showing it here is to recognise it, not to read it — that is what tapping is for. */
+.shot{display:block;margin-top:6px;max-width:100%;max-height:340px;border:1px solid var(--line);border-radius:4px;cursor:zoom-in}
+/* The pictures in your own message: in a row and smaller than one the agent sent, because you saw
+   them while pasting and they are here to say which pictures this message was about. A tap still
+   opens one full-screen. flex-start, not the default stretch, or a short picture beside a tall one
+   is stretched to its height and distorted; flex:none for the same reason across its width. A
+   quote is text, so a reply quoting this message leaves the pictures out. */
+.shots{display:flex;flex-wrap:wrap;align-items:flex-start;gap:6px}
+.shots .shot{flex:none;max-height:160px}
+.q .shots{display:none}

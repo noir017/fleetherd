@@ -1,0 +1,151 @@
+/* ── The side panel ──────────────────────────────────────────────────────────
+   A panel of its own on the right, not a section of the topic list: a task is not a
+   conversation, and the sidebar is where conversations live. It is the same component as
+   the sidebar (.panel above), on the other edge; what it does not share is the width it
+   starts at — deliberately narrower, because this is a glance at background work rather
+   than a place to read a transcript — and the screen width below which it stops being a
+   column (1023px, where a 240px list plus a 240–320px panel leave too little chat; the
+   topic list itself is still usable as a column down to 640px).
+
+   Closed on a first visit, then open until the operator closes it: the choice is kept in
+   localStorage (aa_sched_open, like the sidebar's), so opening a session from the panel
+   leaves the panel where it was. --pw is set inline by the drag handle; the clamp is both
+   the default and the fallback when the operator has never dragged it. Keep the 20vw
+   arithmetic in the panel's width() in step with this line. */
+#schedules{--pw-default:clamp(240px,20vw,320px)}
+/* The heading is two lines in the same bar the sidebar gives one: the title and the summary
+   are what the panel says at a glance, and neither can go. The leading is tightened to 1.25
+   so the pair still fits inside --headh. */
+.sched-heading{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px;line-height:1.25}
+/* The shared title takes the row's free space on the left; here the heading around it does,
+   and a flex:1 title inside a column would grow down over the summary instead. */
+.sched-heading .panel-title{flex:none}
+.sched-summary{font-size:11.5px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* Two top-level tabs, one panel: Scheduled background work and automatic Reviews.
+   Inside Scheduled, Tasks (definitions) and Sessions (run topics) form sub-tabs so that a run
+   is not confused with a task definition, while keeping the footer clean with two tabs that
+   match the sidebar's footer row. */
+.panel-foot>.sched-tab{flex:1;min-width:0;text-align:center;padding-left:6px;padding-right:6px;font-size:12px;overflow:hidden;text-overflow:ellipsis;display:inline-flex;align-items:center;justify-content:center}
+.sched-count{font-weight:500;color:var(--fg-slate);margin-left:2px}
+.sched-tab.on .sched-count{color:var(--fg-mid)}
+.sched-tab-alert{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--warn);box-shadow:0 0 5px var(--warn-glow);margin-left:5px;flex:none}
+.sched-subnav{padding:6px 8px;display:flex;border-bottom:1px solid var(--line);background:var(--bg);gap:4px;flex:none}
+.sched-subtab{flex:1;min-width:0;display:inline-flex;align-items:center;justify-content:center;padding:5px 8px;border:1px solid var(--line);border-radius:5px;background:var(--field);color:var(--dim);font:inherit;font-size:12px;cursor:pointer;text-align:center;transition:color .15s,background .15s,border-color .15s;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sched-subtab:hover{color:var(--fg);border-color:var(--line-3)}
+.sched-subtab.on{background:var(--accent-tab-bg);color:var(--accent-tab-fg);font-weight:600;border-color:var(--accent)}
+.sched-subtab .sched-count{margin-left:4px;font-weight:500;color:var(--fg-slate)}
+.sched-subtab.on .sched-count{color:var(--accent-tab-count)}
+#schedules-body{flex:1;min-height:0;overflow-y:auto;padding:8px}
+/* The task list's bar sits between the sub-tabs and the scrolling body, outside #schedules-list:
+   that list is redrawn with innerHTML on every poll, and the bar's caret and panel live in the
+   DOM it would otherwise replace. Its own border-bottom would double the sub-nav's line. */
+#sched-filter{flex:0 0 auto}
+#sched-filter .filterbar{padding:8px;border-bottom:0}
+#schedules-list{display:flex;flex-direction:column;gap:2px}
+/* A scheduled run, as the Sessions tab draws it: one line per topic, because there can be many
+   and the thing being scanned for is which one is still working or waiting. It is the row the
+   topic list draws (treeRowHtml), with the sub-agents the run opened folded under it the same way:
+   dot, name, a quiet line under it, and a ⋯ that holds the same Star / End agent / Delete. */
+#sched-sessions{display:flex;flex-direction:column;gap:2px}
+/* The period headers that keep a long run history scannable. A folded header carries what its rows
+   would: the unread count and any run still working or waiting. The list's one bulk action is in
+   the panel's title (#sched-read). */
+.sess-group{display:flex;flex-direction:column;margin-top:2px}
+.sess-group-head{display:flex;align-items:center;gap:5px;width:100%;padding:5px 6px;border:0;border-radius:5px;background:none;color:var(--dim);font:inherit;font-size:11.5px;cursor:pointer;text-align:left}
+.sess-group-head:hover{background:var(--hover-1);color:var(--fg)}
+.sess-group-caret{display:inline-flex;flex:none;color:var(--fg-slate-2)}
+.sess-group-name{font-weight:600;color:var(--fg-cool-soft);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sess-group-count{flex:none;color:var(--fg-slate)}
+.sess-group-flag{margin-left:auto;flex:none;color:var(--fg-cool-soft)}
+.sess-group-flag+.sess-group-flag{margin-left:6px}
+.sess-group-flag.unread{color:var(--accent-unread)}
+.sess-group-flag.asking{color:var(--warn)}
+.sess-group-flag.running{color:var(--accent)}
+/* Topic rows, so the same room for their agent legends as #topics, under the header too. */
+.sess-group-rows{display:flex;flex-direction:column;gap:6px;padding:8px 0 4px}
+/* A task, as the Tasks tab draws it: the same row every list uses, with the schedule on its hover
+   card and on the task's page rather than on the row, because a cron expression is the one thing
+   on a task nobody reads at a glance. A tap opens that page (#task-page). */
+.sched-item{display:flex;flex-direction:column}
+/* The row's second line: what it is doing (a countdown, a state word), where it posts, how last
+   time went, its tags — one line, ellipsised as a whole by .topic-dir. */
+.sched-next{color:var(--fg-muted)}
+.topic-item.running .sched-next{color:var(--accent)}
+.sched-last.bad{color:var(--err)}
+.sched-row-tag{color:var(--fg-mid)}
+/* A task's labels, in its page's editor: the same chip the filter panel's Tags group draws, so a
+   tag reads as one thing in both places. */
+.sched-tag{display:inline-flex;align-items:center;gap:3px;max-width:100%;padding:0 6px;border:1px solid var(--line);border-radius:9px;font-size:10.5px;color:var(--fg-muted);background:var(--surface-tag);line-height:1.55}
+.sched-tag .ic{width:9px;height:9px;flex:none;opacity:.8}
+.sched-tag>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sched-tag-x{display:inline-flex;align-items:center;background:none;border:0;color:inherit;cursor:pointer;padding:0 0 0 1px;line-height:1}
+.sched-tag-x:hover{color:var(--err)}
+.sched-tag-x .ic{width:9px;height:9px;opacity:1}
+.sched-tag-edit{display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin-top:4px}
+.sched-tag-add{display:inline-flex;align-items:center;gap:3px;padding:0 6px;border:1px dashed var(--line-3);border-radius:9px;color:var(--dim);line-height:1.55}
+.sched-tag-add .ic{width:9px;height:9px;flex:none}
+.sched-tag-add input{width:64px;background:none;border:0;outline:0;color:var(--fg);font:inherit;font-size:10.5px;padding:0}
+.sched-tag-add:focus-within{border-color:var(--line-strong);color:var(--fg)}
+#schedules-note{margin:0 2px 8px;font-size:12px;color:var(--warn);overflow-wrap:anywhere}
+.sched-empty{padding:8px 2px;font-size:12.5px;line-height:1.6;color:var(--dim)}
+.sched-none{display:flex;align-items:center;gap:8px}
+.sched-none .fb-clear{margin-left:auto;background:none;border:0;color:var(--accent);font:inherit;font-size:12px;cursor:pointer;padding:2px 4px;border-radius:3px}
+.sched-none .fb-clear:hover{text-decoration:underline}
+/* ── The skills page ─────────────────────────────────────────────────────────
+   A window over the transcript rather than a column: an editor needs width, and a history row
+   needs more than a sidebar's 240px. The backdrop dims the chat for the same reason the reader's
+   does — this is a surface of its own, not a third column competing with the conversation. */
+/* A task's own page (openTaskPage): its detail, the topics its runs opened, its runs, and the form
+   that changes it. A window like Skills' rather than the inline fold it replaced, because the side
+   panel is 240–320px wide: that had room to show a prompt, not to edit one. One layer above the
+   other windows: it is opened FROM the panel, and on a phone the panel is a drawer at z-index 20
+   that comes later in the document — at 20 the drawer covered the page and took its taps. */
+#task-page{position:fixed;inset:0;z-index:21;background:var(--scrim-2);display:flex;align-items:center;justify-content:center;padding:24px}
+#task-page[hidden]{display:none}
+#task-box{display:flex;flex-direction:column;width:min(760px,100%);max-height:100%;overflow:hidden;background:var(--bg);border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 30px var(--shadow)}
+#task-bar{display:flex;align-items:center;gap:8px;padding:6px 10px 6px 16px;border-bottom:1px solid var(--line);min-height:var(--headh)}
+#task-title{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#task-sub{font-size:11.5px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#task-close{font-size:18px;padding:6px 10px}
+#task-body{flex:1;min-height:0;overflow-y:auto;padding:12px 16px calc(16px + env(safe-area-inset-bottom,0px))}
+#task-note{margin:0 0 12px;padding:8px 12px;border-radius:6px;border:1px solid var(--line);border-left-width:3px;font-size:12.5px;line-height:1.5;white-space:pre-line;overflow-wrap:anywhere}
+#task-note.error{border-color:var(--err-border-2);border-left-color:var(--err);background:var(--err-bg);color:var(--err-soft)}
+#task-note.ok{border-color:var(--ok-border);border-left-color:var(--ok);background:var(--ok-bg)}
+.tp-empty{padding:6px 0;font-size:12.5px;color:var(--dim)}
+.tp-label{display:block;margin-top:16px;font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.05em}
+.tp-label .tp-n{margin-left:6px;color:var(--fg-slate)}
+.tp-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:0 18px}
+.tp-val{margin-top:4px;font-size:12.5px;color:var(--fg-2);overflow-wrap:anywhere}
+/* Also on a .skill-field, whose font:inherit comes later in this sheet at the same weight. */
+.tp-mono,.skill-field.tp-mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px}
+.tp-body{margin-top:6px;max-height:320px;overflow-y:auto;white-space:pre-wrap;overflow-wrap:anywhere;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;line-height:1.5;color:var(--fg-3);background:var(--bg-code);border:1px solid var(--line);border-radius:5px;padding:8px 10px}
+.tp-meta{margin-top:12px;font-size:11.5px;color:var(--dim);overflow-wrap:anywhere}
+.tp-locked{margin-top:10px;font-size:12px;color:var(--warn);overflow-wrap:anywhere}
+.tp-list{margin-top:6px;display:flex;flex-direction:column;gap:2px}
+/* The task's sessions are topic rows, legends and all, on the window's own background. */
+.tp-list.tp-topics{margin-top:10px;gap:6px;--behind:var(--bg)}
+.tp-run{display:flex;align-items:flex-start;gap:8px;padding:6px 9px;border-radius:5px;font-size:12px;line-height:1.45}
+.tp-run:hover{background:var(--surface-pop)}
+.tp-run>.topic-dot{margin-top:5px}
+.tp-run-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.tp-run-head{color:var(--fg-head);overflow-wrap:anywhere}
+.tp-run-status{font-weight:600;color:var(--fg-2)}
+.tp-run-status.bad{color:var(--err)}
+.tp-run-err{color:var(--err-soft-3);overflow-wrap:anywhere}
+.tp-run-where{flex:none;max-width:45%;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tp-run-open{flex:none;background:none;border:1px solid var(--line);border-radius:5px;color:var(--accent-soft);font:inherit;font-size:11.5px;padding:2px 9px;cursor:pointer}
+.tp-run-open:hover{border-color:var(--accent);background:var(--accent-tint)}
+.tp-hint{margin-top:4px;font-size:11.5px;line-height:1.45;color:var(--dim)}
+.tp-row2{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr);gap:0 10px}
+.tp-when{margin-top:8px}
+.tp-text{display:block;width:100%;box-sizing:border-box;margin-top:8px;min-height:180px;resize:vertical;background:var(--bg-code);border:1px solid var(--line);border-radius:5px;color:var(--fg);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;line-height:1.5;padding:10px;white-space:pre-wrap;overflow-wrap:anywhere}
+select.skill-field{appearance:auto}
+/* The form's two segmented choices — what it runs, and the session — and the id field "Another
+   chat…" opens under "Posts to". */
+.tp-seg{margin-top:8px;max-width:100%}
+#tp-target-other{margin-top:6px}
+.tp-acts{margin-bottom:4px}
+.tp-acts.editor{margin-top:16px}
+.tp-acts button .ic{margin-right:4px}
+.tp-acts button.primary{background:var(--primary);border-color:var(--primary-edge);color:var(--fg-on-accent)}
+.tp-acts button.primary:hover:not(:disabled){background:var(--primary-hover);border-color:var(--primary-hover-edge)}
