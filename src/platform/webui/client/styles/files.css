@@ -81,3 +81,44 @@
 #files-actions #files-delete{color:var(--err)}
 #files-dirty{font-size:11.5px;color:var(--warn);margin-left:auto}
 #files-rename-row{display:flex;gap:6px;padding:8px 12px;border-top:1px solid var(--line)}
+
+/* ── Workbench files tool & file editor (P3-4) ─────────────────────────────── */
+.fh-files-tool{display:flex;flex-direction:column;height:100%;min-height:0;background:var(--fh-bg-side);color:var(--fh-fg)}
+.fh-files-header{display:flex;flex-direction:column;gap:6px;padding:8px;border-bottom:1px solid var(--fh-line)}
+.fh-files-head-top{display:flex;align-items:center;justify-content:space-between;gap:6px;min-width:0}
+.fh-files-root{font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--fh-fg-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fh-files-search-input,.fh-files-create-input{width:100%;box-sizing:border-box}
+.fh-files-create-row{display:flex;align-items:center;gap:6px}
+.fh-files-notice{padding:0 8px}
+.fh-files-notice:empty{display:none}
+.fh-files-tree-wrap,.fh-files-hits{flex:1;min-height:0;overflow:auto}
+.fh-files-tree-empty{padding:16px 12px}
+.fh-files-hits-head{padding:6px 10px;font-size:11px;color:var(--fh-fg-dim);border-bottom:1px solid var(--fh-line)}
+.fh-files-hit-row{display:flex;align-items:center;gap:6px;width:100%;padding:5px 10px;border:0;background:none;color:var(--fh-fg);font:inherit;font-size:12px;text-align:left;cursor:pointer}
+.fh-files-hit-row:hover{background:var(--fh-hover)}
+.fh-files-open-btn{margin-left:auto;opacity:0;transition:opacity .12s}
+.fh-tree-row:hover .fh-files-open-btn,.fh-tree-row:focus-within .fh-files-open-btn,.fh-files-open-btn:focus-visible{opacity:1}
+.fh-tree-row.is-revealed{background:var(--fh-sel);box-shadow:inset 2px 0 0 var(--fh-accent);color:var(--fh-fg-hi)}
+.fh-files-preview{border-top:1px solid var(--fh-line);max-height:36%;overflow:auto;display:flex;flex-direction:column}
+.fh-files-preview:empty{display:none;border-top:0}
+.fh-files-preview-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 10px;border-bottom:1px solid var(--fh-line);background:var(--fh-bg-widget)}
+.fh-files-preview-name{font-size:12px;font-family:var(--fh-font-mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fh-files-preview-code{margin:0;padding:8px 10px;font-family:var(--fh-font-mono);font-size:12px;line-height:1.5;overflow:auto;background:var(--fh-bg)}
+.fh-files-preview-img{max-width:100%;max-height:220px;object-fit:contain;padding:8px}
+
+.fh-file-editor{display:flex;flex-direction:column;height:100%;min-height:0;background:var(--fh-bg);color:var(--fh-fg)}
+.fh-file-editor-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 12px;border-bottom:1px solid var(--fh-line);background:var(--fh-bg-side);min-height:34px}
+.fh-file-editor-meta{display:flex;align-items:center;gap:6px;min-width:0;flex:1}
+.fh-file-editor-path{font-family:var(--fh-font-mono);font-size:12px;color:var(--fh-fg-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fh-file-dirty-dot{width:7px;height:7px;border-radius:50%;background:var(--fh-warn);flex:none;display:inline-block}
+.fh-file-dirty{font-size:11px;color:var(--fh-warn);white-space:nowrap;flex:none}
+.fh-file-editor-banners{display:flex;flex-direction:column;gap:6px;padding:8px 12px 0}
+.fh-file-editor-banners:empty{display:none;padding:0}
+.fh-file-conflict-wrap{width:100%}
+.fh-file-conflict-banner{border-left:3px solid var(--fh-warn)}
+.fh-file-editor-empty{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;padding:20px}
+.fh-file-editor-empty[hidden],.fh-file-editor-body[hidden],.fh-file-editor-preview[hidden]{display:none}
+.fh-file-editor-body{flex:1;min-height:0;overflow:auto;background:var(--fh-bg)}
+.fh-file-textarea{display:block;width:100%;height:100%;min-height:100%;box-sizing:border-box;resize:none;border:0;outline:0;background:var(--fh-bg);color:var(--fh-fg);font-family:var(--fh-font-mono);font-size:13px;line-height:1.55;padding:12px 14px;tab-size:4}
+.fh-file-image{display:block;max-width:100%;max-height:100%;margin:16px auto}
+.fh-file-editor-preview{flex:1;min-height:0;overflow:auto;padding:16px 22px;max-width:860px;width:100%;margin:0 auto;box-sizing:border-box}

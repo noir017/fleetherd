@@ -2,7 +2,7 @@ import type { EditorHandle } from '../../../codeview/app.js';
 import { icon } from '../../../icons.js';
 import { addDisposableListener } from '../../base/dom.js';
 import { html, nothing, render } from '../../base/html.js';
-import { DisposableStore } from '../../base/lifecycle.js';
+import { type Disposable, DisposableStore } from '../../base/lifecycle.js';
 import {
   openConfirmDialog,
   renderActionBar,
@@ -13,6 +13,7 @@ import {
 import type { PluginContext } from '../../plugins/api.js';
 import {
   baseName,
+  canonicalFileKey,
   createFilesHttpClient,
   dirOf,
   eolWarningText,
@@ -22,10 +23,12 @@ import {
   isFileEditorInput,
   isFilesFeatureEnabled,
   isMarkdownFilename,
+  relativePath,
   resolveFilesApi,
   toEditorDoc,
   type FilesHttpClient,
 } from './helpers.js';
+import type { FileTabStore } from './tab-store.js';
 import type {
   FeaturePanelComponent,
   FeaturePanelInitContext,
@@ -38,6 +41,7 @@ import type {
 
 interface EditorState {
   input: FileEditorInput | null;
+  tabKey: string;
   path: string;
   rel: string;
   name: string;
@@ -51,7 +55,7 @@ interface EditorState {
   busy: boolean;
   previewing: boolean;
   previewHtml: string;
-  conflict: { deleted: boolean } | null;
+  conflict: { deleted: boolean; mtimeMs?: number; size?: number } | null;
   notice: { text: string; tone: 'info' | 'ok' | 'warn' | 'err' } | null;
   view: EditorHandle | null;
   seq: number;
@@ -61,6 +65,7 @@ interface EditorState {
 interface EditorContext {
   readonly ctx: PluginContext;
   readonly deps: FilesPluginDeps;
+  readonly tabStore?: FileTabStore;
   readonly http: FilesHttpClient;
   readonly doc: Document;
   readonly state: EditorState;
@@ -70,10 +75,13 @@ interface EditorContext {
   readonly editorEl: HTMLElement;
   readonly previewEl: HTMLElement;
   panelApi: FeaturePanelRef | null;
+  panelId: string;
   paintAll: () => void;
   loadFile: (input: FileEditorInput) => Promise<void>;
   save: (force: boolean) => Promise<boolean>;
   togglePreview: () => Promise<void>;
+  requestClose: () => Promise<boolean>;
+  confirmReloadIfDirty: () => Promise<void>;
 }
 
 function buildSaveBody(state: EditorState, docText: string, force: boolean): Record<string, unknown> {
@@ -125,18 +133,42 @@ function paintEditorHeader(ec: EditorContext): void {
   }
   if (state.input) {
     items.push({
+      id: 'reveal-in-tree',
+      icon: icon('folder'),
+      title: ctx.i18n.t('files.revealInTree'),
+      onClick: () => {
+        if (!state.input) return;
+        void ctx.commands.execute('files.revealInTree', {
+          topicId: state.input.topicId,
+          path: state.path || state.input.path,
+        });
+      },
+    });
+    items.push({
       id: 'reload',
       icon: icon('refresh'),
       title: ctx.i18n.t('files.reloadDisk'),
       disabled: state.busy,
       onClick: () => {
-        if (state.input) void ec.loadFile(state.input);
+        void ec.confirmReloadIfDirty();
+      },
+    });
+    items.push({
+      id: 'close',
+      icon: icon('cross'),
+      title: ctx.i18n.t('files.closeTab'),
+      disabled: state.busy,
+      onClick: () => {
+        void ec.requestClose();
       },
     });
   }
 
   render(
     html`<div class="fh-file-editor-meta">
+        ${state.dirty
+          ? html`<span class="fh-file-dirty-dot" data-file-dirty-dot aria-label=${ctx.i18n.t('files.unsavedDotAria')}></span>`
+          : nothing}
         <span class="fh-file-editor-path" title=${state.rel || state.path}>${state.rel || state.path}</span>
         ${state.dirty ? html`<span class="fh-file-dirty" data-file-dirty>${ctx.i18n.t('files.unsavedChanges')}</span>` : nothing}
       </div>
@@ -148,48 +180,53 @@ function paintEditorHeader(ec: EditorContext): void {
 function paintEditorBanners(ec: EditorContext): void {
   const { ctx, deps, state, bannersEl } = ec;
   const conflictBanner = state.conflict
-    ? renderNotice({
-        tone: 'warn',
-        message: state.conflict.deleted
-          ? ctx.i18n.t('files.conflictDeleted')
-          : ctx.i18n.t('files.conflictChanged'),
-        actions: html`<button
-            type="button"
-            class="fh-btn fh-btn--secondary"
-            data-conflict-reload
-            @click=${() => {
-              state.conflict = null;
-              if (state.input) void ec.loadFile(state.input);
-            }}
-          >${ctx.i18n.t('files.reloadDisk')}</button>
-          <button
-            type="button"
-            class="fh-btn fh-btn--danger"
-            data-conflict-overwrite
-            @click=${async () => {
-              const ok = await openConfirmDialog({
-                title: ctx.i18n.t('files.overwrite'),
-                body: ctx.i18n.t('files.confirmOverwrite', { name: state.rel || state.name }),
-                confirmLabel: ctx.i18n.t('files.overwrite'),
-                danger: true,
-                overlays: deps.overlays,
-                doc: ec.doc,
-              });
-              if (!ok || state.disposed) return;
-              state.conflict = null;
-              await ec.save(true);
-            }}
-          >${ctx.i18n.t('files.overwrite')}</button>
-          <button
-            type="button"
-            class="fh-btn fh-btn--ghost"
-            data-conflict-cancel
-            @click=${() => {
-              state.conflict = null;
-              ec.paintAll();
-            }}
-          >${ctx.i18n.t('common.cancel')}</button>`,
-      })
+    ? html`<div class="fh-file-conflict-wrap" data-file-conflict>
+        ${renderNotice({
+          tone: 'warn',
+          role: 'alert',
+          className: 'fh-file-conflict-banner',
+          title: ctx.i18n.t('files.conflictTitle'),
+          message: state.conflict.deleted
+            ? ctx.i18n.t('files.conflictDeleted')
+            : ctx.i18n.t('files.conflictChanged'),
+          actions: html`<button
+              type="button"
+              class="fh-btn fh-btn--secondary"
+              data-conflict-reload
+              @click=${() => {
+                state.conflict = null;
+                if (state.input) void ec.loadFile(state.input);
+              }}
+            >${ctx.i18n.t('files.reloadDisk')}</button>
+            <button
+              type="button"
+              class="fh-btn fh-btn--danger"
+              data-conflict-overwrite
+              @click=${async () => {
+                const ok = await openConfirmDialog({
+                  title: ctx.i18n.t('files.overwrite'),
+                  body: ctx.i18n.t('files.confirmOverwrite', { name: state.rel || state.name }),
+                  confirmLabel: ctx.i18n.t('files.overwrite'),
+                  danger: true,
+                  overlays: deps.overlays,
+                  doc: ec.doc,
+                });
+                if (!ok || state.disposed) return;
+                state.conflict = null;
+                await ec.save(true);
+              }}
+            >${ctx.i18n.t('files.keepLocalOverwrite')}</button>
+            <button
+              type="button"
+              class="fh-btn fh-btn--ghost"
+              data-conflict-cancel
+              @click=${() => {
+                state.conflict = null;
+                ec.paintAll();
+              }}
+            >${ctx.i18n.t('common.cancel')}</button>`,
+        })}
+      </div>`
     : nothing;
 
   const eolBanner = state.eolWarning
@@ -271,7 +308,45 @@ async function mountTextEditor(ec: EditorContext, initialDoc: string, seq: numbe
 
 function updatePanelTitle(ec: EditorContext): void {
   const base = fileEditorTitle(ec.state.input, ec.ctx.i18n.t('files.title'));
-  ec.panelApi?.setTitle(ec.state.dirty ? `${base} *` : base);
+  ec.panelApi?.setTitle(ec.state.dirty ? `● ${base}` : base);
+  if (ec.tabStore && ec.state.tabKey) {
+    ec.tabStore.setDirty(ec.state.tabKey, ec.state.dirty);
+  }
+}
+
+function handleSaveResponse(
+  ec: EditorContext,
+  res: { ok: boolean; status: number; body: Record<string, unknown> },
+  sentDoc: string,
+): boolean {
+  const { state, ctx } = ec;
+  if (res.ok) {
+    state.base = { mtimeMs: Number(res.body.mtimeMs), size: Number(res.body.size) };
+    if (typeof res.body.sha256 === 'string' && res.body.sha256) {
+      state.sha256 = res.body.sha256;
+    }
+    if (state.view && state.view.getDoc() === sentDoc) {
+      state.savedDoc = sentDoc;
+      state.dirty = false;
+      updatePanelTitle(ec);
+    }
+    state.conflict = null;
+    state.notice = { text: ctx.i18n.t('files.saved', { name: state.rel || state.name, extra: '' }), tone: 'ok' };
+    ec.paintAll();
+    return true;
+  }
+  if (res.status === 409 || Boolean(res.body?.conflict)) {
+    state.conflict = {
+      deleted: res.body?.exists === false,
+      mtimeMs: typeof res.body?.mtimeMs === 'number' ? res.body.mtimeMs : undefined,
+      size: typeof res.body?.size === 'number' ? res.body.size : undefined,
+    };
+    ec.paintAll();
+    return false;
+  }
+  state.notice = { text: fileErrorMessage(ctx, res, res.body), tone: 'err' };
+  ec.paintAll();
+  return false;
 }
 
 async function saveEditorFile(ec: EditorContext, force: boolean): Promise<boolean> {
@@ -292,29 +367,7 @@ async function saveEditorFile(ec: EditorContext, force: boolean): Promise<boolea
     const res = await http.post('write', body);
     if (state.disposed) return false;
     state.busy = false;
-    if (res.ok) {
-      state.base = { mtimeMs: Number(res.body.mtimeMs), size: Number(res.body.size) };
-      if (typeof res.body.sha256 === 'string' && res.body.sha256) {
-        state.sha256 = res.body.sha256;
-      }
-      if (state.view && state.view.getDoc() === sentDoc) {
-        state.savedDoc = sentDoc;
-        state.dirty = false;
-        updatePanelTitle(ec);
-      }
-      state.conflict = null;
-      state.notice = { text: ctx.i18n.t('files.saved', { name: state.rel || state.name, extra: '' }), tone: 'ok' };
-      ec.paintAll();
-      return true;
-    }
-    if (res.body && res.body.conflict) {
-      state.conflict = { deleted: res.body.exists === false };
-      ec.paintAll();
-      return false;
-    }
-    state.notice = { text: fileErrorMessage(ctx, res, res.body), tone: 'err' };
-    ec.paintAll();
-    return false;
+    return handleSaveResponse(ec, res, sentDoc);
   } catch {
     if (state.disposed) return false;
     state.busy = false;
@@ -440,32 +493,10 @@ async function runToggleMarkdownPreview(ec: EditorContext): Promise<void> {
   }
 }
 
-export function createFileEditorPanel(
-  ctx: PluginContext,
-  deps: FilesPluginDeps,
-): FeaturePanelComponent {
-  const doc = deps.doc ?? document;
-  const http = createFilesHttpClient(resolveFilesApi(deps));
-  const store = new DisposableStore();
-
-  const element = doc.createElement('div');
-  element.className = 'fh-file-editor';
-  const headerEl = doc.createElement('div');
-  headerEl.className = 'fh-file-editor-head';
-  const bannersEl = doc.createElement('div');
-  bannersEl.className = 'fh-file-editor-banners';
-  const emptyEl = doc.createElement('div');
-  emptyEl.className = 'fh-file-editor-empty';
-  const editorEl = doc.createElement('div');
-  editorEl.className = 'fh-file-editor-body';
-  editorEl.hidden = true;
-  const previewEl = doc.createElement('div');
-  previewEl.className = 'fh-file-editor-preview';
-  previewEl.hidden = true;
-  element.append(headerEl, bannersEl, emptyEl, editorEl, previewEl);
-
-  const state: EditorState = {
+function createInitialEditorState(): EditorState {
+  return {
     input: null,
+    tabKey: '',
     path: '',
     rel: '',
     name: '',
@@ -485,10 +516,91 @@ export function createFileEditorPanel(
     seq: 0,
     disposed: false,
   };
+}
+
+async function requestEditorClose(ec: EditorContext): Promise<boolean> {
+  const { state, ctx, deps, doc } = ec;
+  if (state.disposed) return false;
+  if (state.dirty) {
+    const confirmed = await openConfirmDialog({
+      title: ctx.i18n.t('files.closeTab'),
+      body: ctx.i18n.t('files.confirmDiscard', {
+        name: state.rel || state.name || ctx.i18n.t('files.thisFile'),
+      }),
+      confirmLabel: ctx.i18n.t('files.discardAndClose'),
+      danger: true,
+      overlays: deps.overlays,
+      doc,
+    });
+    if (!confirmed || state.disposed) return false;
+  }
+  ec.panelApi?.close();
+  return true;
+}
+
+async function confirmReloadEditorIfDirty(ec: EditorContext): Promise<void> {
+  const { state, ctx, deps, doc } = ec;
+  if (!state.input || state.busy) return;
+  if (state.dirty && !state.conflict) {
+    const confirmed = await openConfirmDialog({
+      title: ctx.i18n.t('files.reloadDisk'),
+      body: ctx.i18n.t('files.confirmDiscard', {
+        name: state.rel || state.name || ctx.i18n.t('files.thisFile'),
+      }),
+      confirmLabel: ctx.i18n.t('files.reloadDisk'),
+      danger: true,
+      overlays: deps.overlays,
+      doc,
+    });
+    if (!confirmed || state.disposed) return;
+  }
+  await ec.loadFile(state.input);
+}
+
+function createEditorDom(doc: Document): {
+  element: HTMLElement;
+  headerEl: HTMLElement;
+  bannersEl: HTMLElement;
+  emptyEl: HTMLElement;
+  editorEl: HTMLElement;
+  previewEl: HTMLElement;
+} {
+  const element = doc.createElement('div');
+  element.className = 'fh-file-editor';
+  const headerEl = doc.createElement('div');
+  headerEl.className = 'fh-file-editor-head';
+  const bannersEl = doc.createElement('div');
+  bannersEl.className = 'fh-file-editor-banners';
+  const emptyEl = doc.createElement('div');
+  emptyEl.className = 'fh-file-editor-empty';
+  const editorEl = doc.createElement('div');
+  editorEl.className = 'fh-file-editor-body';
+  editorEl.hidden = true;
+  const previewEl = doc.createElement('div');
+  previewEl.className = 'fh-file-editor-preview';
+  previewEl.hidden = true;
+  element.append(headerEl, bannersEl, emptyEl, editorEl, previewEl);
+  return { element, headerEl, bannersEl, emptyEl, editorEl, previewEl };
+}
+
+export function createFileEditorPanel(
+  ctx: PluginContext,
+  deps: FilesPluginDeps,
+  tabStore?: FileTabStore,
+): FeaturePanelComponent {
+  const doc = deps.doc ?? document;
+  const http = createFilesHttpClient(resolveFilesApi(deps));
+  const store = new DisposableStore();
+  let tabSub: Disposable | null = null;
+
+  const { element, headerEl, bannersEl, emptyEl, editorEl, previewEl } = createEditorDom(doc);
+
+  const state = createInitialEditorState();
 
   const ec: EditorContext = {
     ctx,
     deps,
+    tabStore,
     http,
     doc,
     state,
@@ -498,6 +610,7 @@ export function createFileEditorPanel(
     editorEl,
     previewEl,
     panelApi: null,
+    panelId: '',
     paintAll: () => {
       if (state.disposed) return;
       paintEditorHeader(ec);
@@ -506,6 +619,8 @@ export function createFileEditorPanel(
     loadFile: (input: FileEditorInput) => runLoadEditorFile(ec, input),
     save: (force: boolean) => saveEditorFile(ec, force),
     togglePreview: () => runToggleMarkdownPreview(ec),
+    requestClose: () => requestEditorClose(ec),
+    confirmReloadIfDirty: () => confirmReloadEditorIfDirty(ec),
   };
 
   store.add(
@@ -519,6 +634,9 @@ export function createFileEditorPanel(
 
   const applyParams = (params: unknown): void => {
     if (!isFileEditorInput(params)) {
+      tabSub?.dispose();
+      tabSub = null;
+      state.tabKey = '';
       state.input = null;
       destroyEditorView(state);
       editorEl.textContent = '';
@@ -528,11 +646,37 @@ export function createFileEditorPanel(
       ec.paintAll();
       return;
     }
+    const rel = params.rel ?? (params.root ? relativePath(params.root, params.path) : undefined) ?? (dirOf(params.path) ? params.path : params.path);
     const cleanInput: FileEditorInput = {
       ...params,
       name: params.name ?? baseName(params.path),
-      rel: params.rel ?? (dirOf(params.path) ? params.path : params.path),
+      rel,
     };
+    const nextKey = canonicalFileKey(cleanInput);
+    if (state.tabKey === nextKey && state.dirty) {
+      tabStore?.setActive(nextKey);
+      state.view?.focus();
+      return;
+    }
+    if (state.tabKey !== nextKey) {
+      tabSub?.dispose();
+      state.tabKey = nextKey;
+      if (tabStore) {
+        tabSub = tabStore.register({
+          key: nextKey,
+          panelId: ec.panelId,
+          input: cleanInput,
+          title: cleanInput.name ?? baseName(cleanInput.path),
+          dirty: false,
+          panelApi: ec.panelApi,
+          focus: () => {
+            ec.panelApi?.focus();
+            state.view?.focus();
+          },
+          requestClose: () => ec.requestClose(),
+        });
+      }
+    }
     void ec.loadFile(cleanInput);
   };
 
@@ -540,18 +684,27 @@ export function createFileEditorPanel(
     element,
     init(params: unknown, initCtx: FeaturePanelInitContext): void {
       ec.panelApi = initCtx.api;
+      ec.panelId = initCtx.id;
+      store.add(
+        initCtx.api.onDidVisibilityChange((visible) => {
+          if (visible && state.tabKey) tabStore?.setActive(state.tabKey);
+        }),
+      );
       applyParams(params);
     },
     update(params: unknown): void {
       applyParams(params);
     },
     focus(): void {
+      if (state.tabKey) tabStore?.setActive(state.tabKey);
       state.view?.focus();
     },
     dispose(): void {
       if (state.disposed) return;
       state.disposed = true;
       state.seq += 1;
+      tabSub?.dispose();
+      tabSub = null;
       destroyEditorView(state);
       store.dispose();
       render(nothing, headerEl);

@@ -78,6 +78,59 @@ export function baseName(filePath: string): string {
   return at < 0 ? filePath : filePath.slice(at + 1);
 }
 
+export function normalizePathSlashes(rawPath: string): string {
+  const unified = rawPath.replace(/\\/g, '/').replace(/\/+/g, '/');
+  if (unified.length > 1 && unified.endsWith('/') && !/^[A-Za-z]:\/$/.test(unified)) {
+    return unified.slice(0, -1);
+  }
+  return unified;
+}
+
+export function relativePath(root: string, targetPath: string): string {
+  if (!root || !targetPath) return '';
+  const normRoot = normalizePathSlashes(root);
+  const normTarget = normalizePathSlashes(targetPath);
+  if (normTarget === normRoot) return '';
+  const prefix = normRoot.endsWith('/') ? normRoot : `${normRoot}/`;
+  if (normTarget.startsWith(prefix)) {
+    return normTarget.slice(prefix.length);
+  }
+  return '';
+}
+
+export function canonicalFileKey(input: Pick<FileEditorInput, 'topicId' | 'root' | 'path' | 'rel'>): string {
+  const topic = input.topicId.trim();
+  const normRoot = input.root ? normalizePathSlashes(input.root) : '';
+  const normRel = input.rel ? normalizePathSlashes(input.rel).replace(/^\/+/, '') : '';
+  if (normRoot && normRel) {
+    const joined = normRoot.endsWith('/') ? `${normRoot}${normRel}` : `${normRoot}/${normRel}`;
+    return `${topic}\0${joined}`;
+  }
+  const normPath = normalizePathSlashes(input.path);
+  if (normRoot) {
+    const rel = relativePath(normRoot, normPath);
+    if (rel) {
+      const joined = normRoot.endsWith('/') ? `${normRoot}${rel}` : `${normRoot}/${rel}`;
+      return `${topic}\0${joined}`;
+    }
+  }
+  return `${topic}\0${normPath}`;
+}
+
+export function ancestorDirs(root: string, targetPath: string, sep: '/' | '\\'): string[] {
+  const rel = relativePath(root, targetPath);
+  if (!rel) return [];
+  const segments = rel.split('/').filter(Boolean);
+  if (segments.length <= 1) return [];
+  const dirs: string[] = [];
+  let current = root;
+  for (let i = 0; i < segments.length - 1; i++) {
+    current = joinPath(current, segments[i]!, sep);
+    dirs.push(current);
+  }
+  return dirs;
+}
+
 export function isValidSegment(name: string): boolean {
   return Boolean(name) && name !== '.' && name !== '..' && !name.includes('/') && !name.includes('\\');
 }
@@ -112,18 +165,21 @@ export function buildTreeNodes(
   cache: Readonly<Record<string, FilesTreeCacheEntry>>,
   key: string,
   sep: '/' | '\\',
+  revealedPath?: string,
 ): TreeNode<FileTreeItemData>[] {
   const entry = cache[key];
   if (!entry) return [];
   return entry.entries.map((item: FilesPanelEntry): TreeNode<FileTreeItemData> => {
     const abs = joinPath(entry.path, item.name, sep);
-    const children = item.dir && cache[abs] ? buildTreeNodes(cache, abs, sep) : undefined;
+    const children = item.dir && cache[abs] ? buildTreeNodes(cache, abs, sep, revealedPath) : undefined;
+    const isRevealed = Boolean(revealedPath && normalizePathSlashes(abs) === normalizePathSlashes(revealedPath));
     return {
       id: abs,
       label: item.name,
       icon: item.dir ? icon('folder') : icon('note'),
       hasChildren: item.dir,
       children,
+      className: isRevealed ? 'is-revealed' : undefined,
       data: { path: abs, name: item.name, dir: item.dir },
     };
   });

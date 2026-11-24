@@ -17,8 +17,14 @@ export interface FilesHttpResult {
 export interface FileEditorInput {
   readonly topicId: string;
   readonly path: string;
+  readonly root?: string;
   readonly name?: string;
   readonly rel?: string;
+}
+
+export interface RevealInTreeRequest {
+  readonly topicId: string;
+  readonly path: string;
 }
 
 export interface FileTreeItemData {
