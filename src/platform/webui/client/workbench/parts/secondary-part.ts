@@ -1,7 +1,8 @@
 import { addDisposableListener } from '../../base/dom.js';
 import { Emitter, type Event } from '../../base/event.js';
 import { type Disposable, DisposableStore } from '../../base/lifecycle.js';
-import type { StaticDockPartHost, StaticTabInfo } from '../dock/static.js';
+import type { DockPartHost, DockTabInfo } from '../dock/engine.js';
+import type { PartMoveMenuRequest } from './sidebar-part.js';
 
 export interface SecondaryPartOptions {
   readonly doc?: Document;
@@ -12,21 +13,25 @@ function defaultResolveIcon(_name: string): string {
   return '';
 }
 
-export class SecondaryPart implements StaticDockPartHost, Disposable {
+export class SecondaryPart implements DockPartHost, Disposable {
   readonly element: HTMLElement;
   readonly header: HTMLElement;
   readonly body: HTMLElement;
 
   private readonly _doc: Document;
   private readonly _tabsEl: HTMLElement;
+  private readonly _moreBtn: HTMLButtonElement;
   private readonly _closeBtn: HTMLButtonElement;
+  private _activePanelId: string | undefined;
   private readonly _disposables = new DisposableStore();
   private readonly _tabDisposables = new DisposableStore();
   private readonly _onDidSelectTab = new Emitter<string>();
   private readonly _onDidRequestClose = new Emitter<void>();
+  private readonly _onDidRequestMoveMenu = new Emitter<PartMoveMenuRequest>();
 
   readonly onDidSelectTab: Event<string> = this._onDidSelectTab.event;
   readonly onDidRequestClose: Event<void> = this._onDidRequestClose.event;
+  readonly onDidRequestMoveMenu: Event<PartMoveMenuRequest> = this._onDidRequestMoveMenu.event;
 
   constructor(options: SecondaryPartOptions = {}) {
     this._doc = options.doc ?? document;
@@ -49,6 +54,19 @@ export class SecondaryPart implements StaticDockPartHost, Disposable {
     spacer.className = 'wb-spacer';
     this.header.appendChild(spacer);
 
+    this._moreBtn = this._doc.createElement('button');
+    this._moreBtn.type = 'button';
+    this._moreBtn.className = 'wb-icon-btn wb-part-more';
+    this._moreBtn.dataset.dndIgnore = '1';
+    this._moreBtn.setAttribute('aria-label', 'Move view');
+    this._moreBtn.setAttribute('aria-haspopup', 'menu');
+    this._moreBtn.setAttribute('aria-expanded', 'false');
+    this._moreBtn.hidden = true;
+    const moreSvg = resolveIcon('more');
+    if (moreSvg) this._moreBtn.innerHTML = moreSvg;
+    else this._moreBtn.textContent = '⋯';
+    this.header.appendChild(this._moreBtn);
+
     this._closeBtn = this._doc.createElement('button');
     this._closeBtn.type = 'button';
     this._closeBtn.className = 'wb-icon-btn wb-part-close';
@@ -65,7 +83,15 @@ export class SecondaryPart implements StaticDockPartHost, Disposable {
 
     this._disposables.add(this._onDidSelectTab);
     this._disposables.add(this._onDidRequestClose);
+    this._disposables.add(this._onDidRequestMoveMenu);
     this._disposables.add(this._tabDisposables);
+    this._disposables.add(
+      addDisposableListener(this._moreBtn, 'click', () => {
+        if (this._activePanelId) {
+          this._onDidRequestMoveMenu.fire({ anchor: this._moreBtn, panelId: this._activePanelId });
+        }
+      }),
+    );
     this._disposables.add(
       addDisposableListener(this._closeBtn, 'click', () => {
         this._onDidRequestClose.fire();
@@ -78,8 +104,11 @@ export class SecondaryPart implements StaticDockPartHost, Disposable {
     this.element.classList.toggle('is-open', visible);
   }
 
-  setTabs(tabs: readonly StaticTabInfo[], activeId: string | undefined): void {
+  setTabs(tabs: readonly DockTabInfo[], activeId: string | undefined): void {
     this._tabDisposables.clear();
+    const active = tabs.find((t) => t.id === activeId) ?? tabs[0];
+    this._activePanelId = active?.id;
+    this._moreBtn.hidden = !active;
     this._tabsEl.replaceChildren();
     for (const tab of tabs) {
       const btn = this._doc.createElement('button');
@@ -98,6 +127,12 @@ export class SecondaryPart implements StaticDockPartHost, Disposable {
       this._tabDisposables.add(
         addDisposableListener(btn, 'click', () => {
           this._onDidSelectTab.fire(tab.id);
+        }),
+      );
+      this._tabDisposables.add(
+        addDisposableListener(btn, 'contextmenu', (ev) => {
+          ev.preventDefault();
+          this._onDidRequestMoveMenu.fire({ anchor: btn, panelId: tab.id });
         }),
       );
       this._tabsEl.appendChild(btn);

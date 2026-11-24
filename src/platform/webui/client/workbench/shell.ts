@@ -1,6 +1,7 @@
 import { addDisposableListener, observeResize } from '../base/dom.js';
 import { Emitter, type Event } from '../base/event.js';
 import { type Disposable, DisposableStore, toDisposable } from '../base/lifecycle.js';
+import { createMenu, type MenuController } from '../components/menu/index.js';
 import type {
   EditorContribution,
   OpenEditorOptions,
@@ -8,10 +9,22 @@ import type {
   ViewContribution,
 } from '../plugins/api.js';
 import type { ContributionRegistry } from '../plugins/registry.js';
+import type { CommandRegistry } from '../services/commands.js';
+import type { KeybindingService } from '../services/keybindings.js';
+import type { OverlayManager } from '../services/overlays.js';
 import { StorageService } from '../services/storage.js';
 import type { DockEngine, LayoutState, PanelRef, PartId } from './contracts.js';
+import { DynamicDockEngine, MAIN_GROUP_ID } from './dock/engine.js';
+import {
+  buildMoveViewMenuItems,
+  registerLayoutCommands,
+} from './dock/layout-commands.js';
+import {
+  LAYOUT_STORAGE_KEY as SERIALIZE_LAYOUT_KEY,
+  loadSavedLayout,
+  resetSavedLayout,
+} from './dock/serialize.js';
 import { SplitView } from './dock/splitview.js';
-import { MAIN_GROUP_ID, StaticDockEngine } from './dock/static.js';
 import { ActivityBarPart, type ActivityBarItem } from './parts/activity-bar.js';
 import { PanelPart } from './parts/panel-part.js';
 import { SecondaryPart } from './parts/secondary-part.js';
@@ -19,7 +32,7 @@ import { SidebarPart } from './parts/sidebar-part.js';
 import { StatusBarPart, type StatusBarItem } from './parts/status-bar.js';
 import { StackShell, type StackNavTab, type StackToolItem } from './stack-shell.js';
 
-export const LAYOUT_STORAGE_KEY = 'aa_layout';
+export const LAYOUT_STORAGE_KEY = SERIALIZE_LAYOUT_KEY;
 export const SPLIT_STORAGE_KEY = 'aa_split_sizes';
 
 export const DESKTOP_BREAKPOINT = 1024;
@@ -36,12 +49,33 @@ export function resolveShellMode(width: number): ShellMode {
   return 'desktop';
 }
 
+function isPartId(value: string): value is PartId {
+  return value === 'sidebar' || value === 'secondary' || value === 'panel';
+}
+
+function createRegistryCommandAdapter(registry: ContributionRegistry): CommandRegistry {
+  return {
+    register: (id, run, meta) => registry.registerCommand(id, run, meta),
+    has: (id) => registry.commands.has(id),
+    get: (id) => registry.commands.get(id),
+    list: () => registry.commands.list(),
+    execute: (id, ...args) => registry.executeCommand(id, ...args),
+    onDidChange: registry.commands.onDidChange,
+    dispose: () => {},
+  } as CommandRegistry;
+}
+
 export interface WorkbenchShellOptions {
   readonly root: HTMLElement;
   readonly doc?: Document;
   readonly win?: Window;
   readonly storage?: StorageService;
   readonly registry?: ContributionRegistry;
+  readonly commands?: CommandRegistry;
+  readonly keybindings?: KeybindingService;
+  readonly overlays?: OverlayManager;
+  readonly notify?: (message: string) => void;
+  readonly autoSaveLayout?: boolean;
   readonly resolveIcon?: (name: string) => string;
   readonly initialWidth?: number;
   readonly initialHeight?: number;
@@ -58,11 +92,14 @@ export class WorkbenchShell implements Disposable {
   readonly secondary: SecondaryPart;
   readonly panel: PanelPart;
   readonly statusBar: StatusBarPart;
-  readonly dock: StaticDockEngine;
+  readonly dock: DynamicDockEngine;
 
   private readonly _doc: Document;
   private readonly _win: Window | null;
   private readonly _storage: StorageService;
+  private readonly _overlays?: OverlayManager;
+  private readonly _notifyCallback?: (message: string) => void;
+  private readonly _autoSaveLayout: boolean;
   private readonly _resolveIcon?: (name: string) => string;
   private readonly _desktopShell: HTMLElement;
   private readonly _workspaceEl: HTMLElement;
@@ -70,7 +107,12 @@ export class WorkbenchShell implements Disposable {
   private readonly _editorContainer: HTMLElement;
   private readonly _backdrop: HTMLElement;
   private readonly _splitView: SplitView;
+  private readonly _moveMenu: MenuController;
   private _stackShell: StackShell | undefined;
+  private _commands: CommandRegistry | undefined;
+  private _layoutCommandsRegistered = false;
+  private _toastEl: HTMLElement | undefined;
+  private _toastTimer: ReturnType<typeof setTimeout> | undefined;
 
   private readonly _views = new Map<string, ViewContribution>();
   private readonly _editors = new Map<string, EditorContribution>();
@@ -78,13 +120,18 @@ export class WorkbenchShell implements Disposable {
 
   private readonly _disposables = new DisposableStore();
   private readonly _onDidModeChange = new Emitter<ShellMode>();
+  private readonly _onDidActiveTopicChange = new Emitter<string | undefined>();
   private _mode: ShellMode;
   private _width: number;
   private _height: number;
   private _sidebarAutoCollapsed = false;
   private _editorSeq = 0;
+  private _pendingSavedLayout: LayoutState | null = null;
+  private _suppressAutoSave = true;
+  private _syncingLayout = false;
 
   readonly onDidModeChange: Event<ShellMode> = this._onDidModeChange.event;
+  readonly onDidActiveTopicChange: Event<string | undefined> = this._onDidActiveTopicChange.event;
 
   readonly editors = {
     register: (e: EditorContribution): Disposable => this._registerEditor(e),
@@ -130,7 +177,11 @@ export class WorkbenchShell implements Disposable {
     this._doc = options.doc ?? options.root.ownerDocument;
     this._win = options.win ?? this._doc.defaultView;
     this._storage = options.storage ?? new StorageService();
+    this._overlays = options.overlays;
+    this._notifyCallback = options.notify;
+    this._autoSaveLayout = options.autoSaveLayout ?? true;
     this._resolveIcon = options.resolveIcon;
+    this._commands = options.commands;
 
     this._width = options.initialWidth ?? this._win?.innerWidth ?? DESKTOP_BREAKPOINT;
     this._height = options.initialHeight ?? this._win?.innerHeight ?? 800;
@@ -194,9 +245,16 @@ export class WorkbenchShell implements Disposable {
       ],
     });
 
-    this.dock = new StaticDockEngine({
+    this.dock = new DynamicDockEngine({
       doc: this._doc,
       editorContainer: this._editorContainer,
+      dndHost: this._desktopShell,
+      overlays: this._overlays,
+      splitView: this._splitView,
+      storage: this._storage,
+      storageKey: LAYOUT_STORAGE_KEY,
+      allowSplit: this._mode === 'desktop',
+      resolveIcon: this._resolveIcon,
       parts: {
         sidebar: this.sidebar,
         secondary: this.secondary,
@@ -209,6 +267,13 @@ export class WorkbenchShell implements Disposable {
       },
     });
 
+    this._moveMenu = createMenu({
+      doc: this._doc,
+      win: this._win ?? undefined,
+      overlays: this._overlays,
+      className: 'wb-view-move-menu',
+    });
+
     this._desktopShell.append(
       this.activityBar.element,
       this._workspaceEl,
@@ -218,8 +283,10 @@ export class WorkbenchShell implements Disposable {
     this.root.classList.add('wb-root');
     this.root.replaceChildren(this._desktopShell);
 
+    this._loadInitialSavedLayout();
     this._wireEvents();
     this._disposables.add(this._onDidModeChange);
+    this._disposables.add(this._onDidActiveTopicChange);
     this._disposables.add(this.activityBar);
     this._disposables.add(this.sidebar);
     this._disposables.add(this.secondary);
@@ -227,16 +294,28 @@ export class WorkbenchShell implements Disposable {
     this._disposables.add(this.statusBar);
     this._disposables.add(this._splitView);
     this._disposables.add(this.dock);
+    this._disposables.add(this._moveMenu);
+
+    if (options.commands) {
+      this._disposables.add(this._attachLayoutCommands(options.commands, options.keybindings));
+    }
 
     if (options.registry) {
       this._disposables.add(this.attachRegistry(options.registry));
     }
 
     this.layout(this._width, this._height);
+    this._suppressAutoSave = false;
   }
 
   attachRegistry(registry: ContributionRegistry): Disposable {
     const store = new DisposableStore();
+    if (!this._commands) {
+      this._commands = registry.commands;
+    }
+    if (!this._layoutCommandsRegistered) {
+      store.add(this._attachLayoutCommands(createRegistryCommandAdapter(registry)));
+    }
     const activitySubs = new DisposableStore();
     const viewSubs = new DisposableStore();
     const editorSubs = new DisposableStore();
@@ -328,6 +407,10 @@ export class WorkbenchShell implements Disposable {
     return this.dock;
   }
 
+  getActiveTopicId(): string | undefined {
+    return this.dock.getActiveTopicId();
+  }
+
   getMode(): ShellMode {
     return this._mode;
   }
@@ -380,6 +463,7 @@ export class WorkbenchShell implements Disposable {
     this._height = nextH;
     this._mode = nextMode;
     this.root.dataset.wbMode = nextMode;
+    this.dock.setAllowSplit(nextMode === 'desktop');
 
     if (nextMode === 'mobile') {
       this._desktopShell.hidden = true;
@@ -389,6 +473,9 @@ export class WorkbenchShell implements Disposable {
     } else {
       this._desktopShell.hidden = false;
       if (this._stackShell) this._stackShell.element.hidden = true;
+      if (nextMode === 'tablet' && this.dock.getGroups().length > 1) {
+        this._collapseExtraGroups();
+      }
       if (nextMode === 'desktop' && this.dock.isPartVisible('secondary')) {
         this._maybeAutoCollapseSidebar();
       }
@@ -401,27 +488,43 @@ export class WorkbenchShell implements Disposable {
   }
 
   saveLayout(): void {
-    this._storage.setJson(LAYOUT_STORAGE_KEY, this.dock.toJSON());
+    this.dock.saveToStorage(this._storage);
   }
 
   restoreLayout(): boolean {
-    const saved = this._storage.getJson<LayoutState>(LAYOUT_STORAGE_KEY);
-    if (!saved || saved.v !== 1) return false;
-    this.dock.fromJSON(saved);
-    this._syncLayout();
+    if (this._pendingSavedLayout) {
+      return this._applyPendingSavedLayout();
+    }
+    const raw = this._storage.getRaw(LAYOUT_STORAGE_KEY);
+    if (raw === null) return false;
+    const saved = loadSavedLayout(this._storage, undefined, LAYOUT_STORAGE_KEY);
+    if (!saved) {
+      resetSavedLayout(this._storage, LAYOUT_STORAGE_KEY);
+      return false;
+    }
+    this._applySavedLayout(saved);
     return true;
   }
 
   resetLayout(): void {
-    this._storage.remove(LAYOUT_STORAGE_KEY);
-    this._storage.remove(SPLIT_STORAGE_KEY);
-    this._sidebarAutoCollapsed = false;
-    this._splitView.resetSizes();
-    this.dock.exitMaximized();
-    this.dock.setPartVisible('sidebar', true);
-    this.dock.setPartVisible('secondary', false);
-    this.dock.setPartVisible('panel', false);
-    this._syncLayout();
+    this._pendingSavedLayout = null;
+    const prevSuppress = this._suppressAutoSave;
+    this._suppressAutoSave = true;
+    try {
+      resetSavedLayout(this._storage, LAYOUT_STORAGE_KEY);
+      this._storage.remove(SPLIT_STORAGE_KEY);
+      this._sidebarAutoCollapsed = false;
+      this._splitView.resetSizes();
+      this.dock.exitMaximized();
+      this._collapseExtraGroups();
+      this._restoreDefaultViewParts();
+      this.dock.setPartVisible('sidebar', true);
+      this.dock.setPartVisible('secondary', false);
+      this.dock.setPartVisible('panel', false);
+      this._syncLayout();
+    } finally {
+      this._suppressAutoSave = prevSuppress;
+    }
   }
 
   openMobileDetail(title: string, tools: readonly StackToolItem[], activeToolId?: string): void {
@@ -434,6 +537,12 @@ export class WorkbenchShell implements Disposable {
   }
 
   dispose(): void {
+    if (this._toastTimer) {
+      clearTimeout(this._toastTimer);
+      this._toastTimer = undefined;
+    }
+    this._toastEl?.remove();
+    this._toastEl = undefined;
     this._stackShell?.dispose();
     this._views.clear();
     this._editors.clear();
@@ -441,7 +550,136 @@ export class WorkbenchShell implements Disposable {
     this._disposables.dispose();
   }
 
+  private _loadInitialSavedLayout(): void {
+    const raw = this._storage.getRaw(LAYOUT_STORAGE_KEY);
+    if (raw === null) return;
+    const saved = loadSavedLayout(this._storage, undefined, LAYOUT_STORAGE_KEY);
+    if (!saved) {
+      resetSavedLayout(this._storage, LAYOUT_STORAGE_KEY);
+      return;
+    }
+    this._pendingSavedLayout = saved;
+  }
+
+  private _applyPendingSavedLayout(): boolean {
+    const saved = this._pendingSavedLayout;
+    if (!saved) return false;
+    this._pendingSavedLayout = null;
+    this._applySavedLayout(saved);
+    return true;
+  }
+
+  private _applySavedLayout(saved: LayoutState): void {
+    const prevSuppress = this._suppressAutoSave;
+    this._suppressAutoSave = true;
+    try {
+      this.dock.fromJSON(saved);
+      const panelHeight = this.dock.getPartSize('panel');
+      if (panelHeight > 0) this.panel.setHeight(panelHeight);
+      if (this._mode === 'tablet' && this.dock.getGroups().length > 1) {
+        this._collapseExtraGroups();
+      }
+      this._syncLayout();
+    } finally {
+      this._suppressAutoSave = prevSuppress;
+    }
+  }
+
+  private _attachLayoutCommands(
+    commands: CommandRegistry,
+    keybindings?: KeybindingService,
+  ): Disposable {
+    this._layoutCommandsRegistered = true;
+    const reg = registerLayoutCommands({
+      engine: this.dock,
+      commands,
+      keybindings,
+      storage: this._storage,
+      storageKey: LAYOUT_STORAGE_KEY,
+      isSplitAllowed: () => this._mode === 'desktop' && this.dock.getAllowSplit(),
+      notify: (msg) => this._notify(msg),
+      setPartVisible: (part, visible) => this.setPartVisible(part, visible),
+      onResetLayout: () => this.resetLayout(),
+      getActiveViewId: () => this._getActiveViewId(),
+    });
+    return toDisposable(() => {
+      reg.dispose();
+      this._layoutCommandsRegistered = false;
+    });
+  }
+
+  private _getActiveViewId(): string | undefined {
+    for (const part of ['sidebar', 'secondary', 'panel'] as const) {
+      if (!this.dock.isPartVisible(part)) continue;
+      const active = this.dock.getActivePartPanel(part);
+      if (active) return active;
+    }
+    return undefined;
+  }
+
+  private _openMoveViewMenu(part: PartId, anchor: HTMLElement, panelId: string): void {
+    const items = buildMoveViewMenuItems(panelId, part, this.dock, {
+      commands: this._commands,
+      setPartVisible: (targetPart, visible) => this.setPartVisible(targetPart, visible),
+    });
+    if (items.length === 0) return;
+    this._moveMenu.open(anchor, items);
+  }
+
+  private _notify(message: string): void {
+    if (this._notifyCallback) {
+      this._notifyCallback(message);
+      return;
+    }
+    if (!this._toastEl) {
+      this._toastEl = this._doc.createElement('div');
+      this._toastEl.className = 'wb-toast';
+      this._toastEl.setAttribute('role', 'status');
+      this._toastEl.setAttribute('aria-live', 'polite');
+      this._desktopShell.appendChild(this._toastEl);
+    }
+    this._toastEl.textContent = message;
+    this._toastEl.hidden = false;
+    if (this._toastTimer) clearTimeout(this._toastTimer);
+    this._toastTimer = setTimeout(() => {
+      if (this._toastEl) this._toastEl.hidden = true;
+    }, 2500);
+  }
+
+  private _collapseExtraGroups(): void {
+    const groups = this.dock.getGroups();
+    if (groups.length <= 1) return;
+    const targetId = this.dock.getActiveGroupId() ?? groups[0]!.id;
+    for (const group of groups) {
+      if (group.id === targetId) continue;
+      for (const panelId of [...group.getPanelIds()]) {
+        this.dock.movePanel(panelId, { group: targetId, direction: 'within' });
+      }
+    }
+  }
+
+  private _restoreDefaultViewParts(): void {
+    for (const view of this._views.values()) {
+      const panel = this.dock.getPanel(view.id);
+      if (panel && panel.group !== view.part) {
+        this.dock.movePanel(view.id, { part: view.part });
+      }
+    }
+    for (const tool of this._tools.values()) {
+      const panelId = `tool:${tool.id}`;
+      const panel = this.dock.getPanel(panelId);
+      if (panel && panel.group !== tool.defaultPart) {
+        this.dock.movePanel(panelId, { part: tool.defaultPart });
+      }
+    }
+  }
+
   private _wireEvents(): void {
+    this._wirePartEvents();
+    this._wireDockAndViewportEvents();
+  }
+
+  private _wirePartEvents(): void {
     this._disposables.add(
       this.activityBar.onDidSelect((item) => {
         const isCurrent =
@@ -455,41 +693,49 @@ export class WorkbenchShell implements Disposable {
       }),
     );
 
-    this._disposables.add(
-      this.sidebar.onDidSelectTab((panelId) => {
-        this.dock.getPanel(panelId)?.focus();
-      }),
-    );
-    this._disposables.add(
-      this.sidebar.onDidRequestClose(() => {
-        this.setPartVisible('sidebar', false);
-      }),
-    );
+    const partPairs: readonly [PartId, SidebarPart | SecondaryPart | PanelPart][] = [
+      ['sidebar', this.sidebar],
+      ['secondary', this.secondary],
+      ['panel', this.panel],
+    ];
+    for (const [partId, host] of partPairs) {
+      this._disposables.add(
+        host.onDidSelectTab((panelId) => {
+          this.dock.getPanel(panelId)?.focus();
+        }),
+      );
+      this._disposables.add(
+        host.onDidRequestClose(() => {
+          this.setPartVisible(partId, false);
+        }),
+      );
+      this._disposables.add(
+        host.onDidRequestMoveMenu(({ anchor, panelId }) => {
+          this._openMoveViewMenu(partId, anchor, panelId);
+        }),
+      );
+    }
 
-    this._disposables.add(
-      this.secondary.onDidSelectTab((panelId) => {
-        this.dock.getPanel(panelId)?.focus();
-      }),
-    );
-    this._disposables.add(
-      this.secondary.onDidRequestClose(() => {
-        this.setPartVisible('secondary', false);
-      }),
-    );
-
-    this._disposables.add(
-      this.panel.onDidSelectTab((panelId) => {
-        this.dock.getPanel(panelId)?.focus();
-      }),
-    );
-    this._disposables.add(
-      this.panel.onDidRequestClose(() => {
-        this.setPartVisible('panel', false);
-      }),
-    );
     this._disposables.add(
       this.panel.onDidResize((h) => {
         this.dock.setPartSize('panel', h);
+      }),
+    );
+  }
+
+  private _wireDockAndViewportEvents(): void {
+    this._disposables.add(
+      this.dock.onDidActiveTopicChange((topicId) => {
+        this._onDidActiveTopicChange.fire(topicId);
+      }),
+    );
+
+    this._disposables.add(
+      this.dock.onDidLayoutChange(() => {
+        this._syncLayout();
+        if (this._autoSaveLayout && !this._suppressAutoSave && !this._pendingSavedLayout) {
+          this.saveLayout();
+        }
       }),
     );
 
@@ -527,7 +773,6 @@ export class WorkbenchShell implements Disposable {
       }),
     );
   }
-
   private _ensureStackShell(): StackShell {
     if (!this._stackShell) {
       this._stackShell = new StackShell({
@@ -580,26 +825,32 @@ export class WorkbenchShell implements Disposable {
   }
 
   private _syncLayout(): void {
-    const sbVisible = this.dock.isPartVisible('sidebar');
-    const secVisible = this.dock.isPartVisible('secondary');
+    if (this._syncingLayout) return;
+    this._syncingLayout = true;
+    try {
+      const sbVisible = this.dock.isPartVisible('sidebar');
+      const secVisible = this.dock.isPartVisible('secondary');
 
-    if (this._mode === 'tablet') {
-      this._splitView.setPaneVisible('sidebar', false);
-      this._splitView.setPaneVisible('secondary', false);
-      this.sidebar.setVisible(sbVisible);
-      this.secondary.setVisible(secVisible);
-      this._backdrop.hidden = !(sbVisible || secVisible);
-      this._splitView.layout(Math.max(0, this._width - ACTIVITY_BAR_WIDTH));
-    } else {
-      this._backdrop.hidden = true;
-      this._splitView.setPaneVisible('sidebar', sbVisible);
-      this._splitView.setPaneVisible('secondary', secVisible);
-      this._splitView.layout(Math.max(0, this._width - ACTIVITY_BAR_WIDTH));
+      if (this._mode === 'tablet') {
+        this._splitView.setPaneVisible('sidebar', false);
+        this._splitView.setPaneVisible('secondary', false);
+        this.sidebar.setVisible(sbVisible);
+        this.secondary.setVisible(secVisible);
+        this._backdrop.hidden = !(sbVisible || secVisible);
+        this._splitView.layout(Math.max(0, this._width - ACTIVITY_BAR_WIDTH));
+      } else {
+        this._backdrop.hidden = true;
+        this._splitView.setPaneVisible('sidebar', sbVisible);
+        this._splitView.setPaneVisible('secondary', secVisible);
+        this._splitView.layout(Math.max(0, this._width - ACTIVITY_BAR_WIDTH));
+      }
+
+      const workW = Math.max(0, this._width - ACTIVITY_BAR_WIDTH);
+      const workH = Math.max(0, this._height - STATUS_BAR_HEIGHT);
+      this.dock.layout(workW, workH);
+    } finally {
+      this._syncingLayout = false;
     }
-
-    const workW = Math.max(0, this._width - ACTIVITY_BAR_WIDTH);
-    const workH = Math.max(0, this._height - STATUS_BAR_HEIGHT);
-    this.dock.layout(workW, workH);
   }
 
   private _registerView(v: ViewContribution): Disposable {
@@ -614,17 +865,19 @@ export class WorkbenchShell implements Disposable {
   }
 
   private _revealView(id: string): PanelRef | undefined {
+    this._applyPendingSavedLayout();
     const existing = this.dock.getPanel(id);
     const view = this._views.get(id);
     if (!view && !existing) return undefined;
 
-    const part = view?.part ?? 'sidebar';
     if (existing) {
-      this.setPartVisible(part, true);
+      const targetPart = isPartId(existing.group) ? existing.group : (view?.part ?? 'sidebar');
+      this.setPartVisible(targetPart, true);
       existing.focus();
       return existing;
     }
 
+    const part = view!.part;
     this.setPartVisible(part, true);
     const ref = this.dock.addPanel({
       id: view!.id,
@@ -651,15 +904,17 @@ export class WorkbenchShell implements Disposable {
     input: unknown,
     opts?: OpenEditorRequest,
   ): PanelRef | undefined {
+    this._applyPendingSavedLayout();
     const editor = this._editors.get(kind);
     if (!editor) return undefined;
     const id = opts?.id ?? `editor:${kind}:${++this._editorSeq}`;
+    const activeGroup = this.dock.getActiveGroupId() ?? MAIN_GROUP_ID;
     return this.dock.addPanel({
       id,
       component: `editor:${kind}`,
       title: editor.title(input),
       params: input,
-      position: opts?.position ?? { group: MAIN_GROUP_ID },
+      position: opts?.position ?? { group: activeGroup },
     });
   }
 
@@ -675,15 +930,18 @@ export class WorkbenchShell implements Disposable {
   }
 
   private _openTool(id: string, params?: unknown): PanelRef | undefined {
+    this._applyPendingSavedLayout();
     const tool = this._tools.get(id);
     if (!tool) return undefined;
     const panelId = `tool:${tool.id}`;
-    this.setPartVisible(tool.defaultPart, true);
     const existing = this.dock.getPanel(panelId);
     if (existing) {
+      const part = isPartId(existing.group) ? existing.group : tool.defaultPart;
+      this.setPartVisible(part, true);
       existing.focus();
       return existing;
     }
+    this.setPartVisible(tool.defaultPart, true);
     return this.dock.addPanel({
       id: panelId,
       component: `tool:${tool.id}`,
@@ -697,20 +955,25 @@ export class WorkbenchShell implements Disposable {
     const tool = this._tools.get(id);
     if (!tool) return;
     const panelId = `tool:${tool.id}`;
+    const existing = this.dock.getPanel(panelId);
+    const part = existing && isPartId(existing.group) ? existing.group : tool.defaultPart;
     this.dock.removePanel(panelId);
-    if (this.dock.getPartPanels(tool.defaultPart).length === 0) {
-      this.setPartVisible(tool.defaultPart, false);
+    if (this.dock.getPartPanels(part).length === 0) {
+      this.setPartVisible(part, false);
     }
   }
 
   private _toggleTool(id: string, params?: unknown): boolean {
+    this._applyPendingSavedLayout();
     const tool = this._tools.get(id);
     if (!tool) return false;
     const panelId = `tool:${tool.id}`;
-    const partVisible = this.dock.isPartVisible(tool.defaultPart);
-    const isActive = partVisible && this.dock.getActivePartPanel(tool.defaultPart) === panelId;
+    const existing = this.dock.getPanel(panelId);
+    const part = existing && isPartId(existing.group) ? existing.group : tool.defaultPart;
+    const partVisible = this.dock.isPartVisible(part);
+    const isActive = partVisible && this.dock.getActivePartPanel(part) === panelId;
     if (isActive) {
-      this.setPartVisible(tool.defaultPart, false);
+      this.setPartVisible(part, false);
       return false;
     }
     this._openTool(id, params);
