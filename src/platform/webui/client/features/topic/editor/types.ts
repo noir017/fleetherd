@@ -128,6 +128,8 @@ export interface TopicEditorDeps {
   readonly onToggleTopicTool?: (toolId: string, topicId: string) => void;
   readonly getTitleMenuGroups?: (topic: TopicInfo) => readonly (readonly TopicEditorMenuEntry[])[];
   readonly getMessageMenuGroups?: (target: MessageMenuTarget) => readonly (readonly TopicEditorMenuEntry[])[];
+  readonly onOpenTurnDiffSideBySide?: (topicId: string, turn: number, panelId?: string) => Promise<void> | void;
+  readonly canOpenSideDiff?: () => boolean;
   readonly onBack?: () => void;
   readonly onTopicChange?: (nextTopicId: string, prevTopicId: string) => void;
   readonly onMount?: (handle: TopicEditorHandle) => void;
@@ -151,6 +153,7 @@ export interface TopicEditorHandle extends TopicPanelComponent {
   readonly status: TopicStatusController | null;
   readonly composer: ComposerController | null;
   getTopicId(): string;
+  getPanelId(): string | undefined;
   refreshHeader(): void;
   setStreamState(state: TopicStreamState): void;
   openTitleMenu(): void;

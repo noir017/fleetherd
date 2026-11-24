@@ -14,6 +14,9 @@ const ICONS: TranscriptIcons = {
     check: '<C>',
     cross: '<X>',
     copy: '<CP>',
+    undo: '<UN>',
+    chat: '<CH>',
+    more: '<MR>',
     search: '<S>',
     offline: '<O>',
     fork: '<FK>',
@@ -54,6 +57,10 @@ function makeHarness() {
   const deliverLocal = vi.fn();
   const copyLocal = vi.fn();
   const discardLocal = vi.fn();
+  const copied: string[] = [];
+  const quoteToComposer = vi.fn();
+  const openMessageMenu = vi.fn();
+  const openTurnDiffSideBySide = vi.fn(async () => {});
 
   const controller = createTranscriptController({
     log,
@@ -79,7 +86,10 @@ function makeHarness() {
     getIcons: () => ICONS,
     formatStatusClock: () => '12:00',
     codeView: () => Promise.resolve(null),
-    copyText: (_s, cb) => cb(true),
+    copyText: (s, cb) => {
+      copied.push(s);
+      cb(true);
+    },
     hasOutbox: () => true,
     claim: () => {},
     adoptLegacy: () => false,
@@ -98,6 +108,9 @@ function makeHarness() {
     deliverLocal,
     copyLocal,
     discardLocal,
+    quoteToComposer,
+    openMessageMenu,
+    openTurnDiffSideBySide,
   });
 
   return {
@@ -129,6 +142,10 @@ function makeHarness() {
       deliverLocal,
       copyLocal,
       discardLocal,
+      copied,
+      quoteToComposer,
+      openMessageMenu,
+      openTurnDiffSideBySide,
     },
   };
 }
@@ -221,6 +238,120 @@ describe('createTranscriptController', () => {
     const img = h.log.querySelector<HTMLImageElement>('img.shot')!;
     img.dispatchEvent(new Event('error'));
     expect(img.style.display).toBe('none');
+
+    h.controller.dispose();
+  });
+
+  it('handles message action bar copy, quote, /btw, more menu, and keyboard navigation', () => {
+    const h = makeHarness();
+    h.controller.attachEvents(document);
+    h.controller.upsert({
+      id: 'a1',
+      html: '<p>Run <code>npm run lint</code> first.</p>',
+      at: 100,
+    });
+
+    const toolbar = h.log.querySelector<HTMLElement>('[data-k="2:a1"] .msg-actions')!;
+    expect(toolbar).not.toBeNull();
+    expect(toolbar.getAttribute('role')).toBe('toolbar');
+
+    const copyBtn = toolbar.querySelector<HTMLButtonElement>('[data-msg-act="copy"]')!;
+    copyBtn.click();
+    expect(h.spies.copied).toEqual(['Run `npm run lint` first.']);
+    expect(copyBtn.classList.contains('is-done')).toBe(true);
+
+    toolbar.querySelector<HTMLButtonElement>('[data-msg-act="quote"]')!.click();
+    expect(h.spies.quoteToComposer).toHaveBeenCalledWith('> Run `npm run lint` first.\n\n');
+
+    toolbar.querySelector<HTMLButtonElement>('[data-msg-act="btw"]')!.click();
+    expect(h.spies.quoteToComposer).toHaveBeenCalledWith('/btw ');
+
+    const moreBtn = toolbar.querySelector<HTMLButtonElement>('[data-msg-act="more"]')!;
+    moreBtn.click();
+    expect(h.spies.openMessageMenu).toHaveBeenCalledWith('2:a1', moreBtn);
+
+    copyBtn.focus();
+    copyBtn.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }));
+    expect(document.activeElement).toBe(toolbar.querySelector('[data-msg-act="quote"]'));
+
+    h.controller.dispose();
+  });
+
+  it('renders turn-changes side-by-side diff button and toggles busy state on click', async () => {
+    const h = makeHarness();
+    let resolveDiff!: () => void;
+    h.spies.openTurnDiffSideBySide.mockImplementationOnce(
+      () =>
+        new Promise<void>((r) => {
+          resolveDiff = r;
+        }),
+    );
+    h.controller.attachEvents(document);
+    h.controller.upsert({
+      id: 'tc1',
+      html: '<p>Edited files</p>',
+      turnChanges: { turn: 4, files: 2, additions: 9, deletions: 3 },
+      at: 200,
+    });
+
+    const splitBtn = h.log.querySelector<HTMLButtonElement>('button[data-turns-split="4"]')!;
+    expect(splitBtn).not.toBeNull();
+    splitBtn.click();
+    expect(h.spies.openTurnDiffSideBySide).toHaveBeenCalledWith(4);
+    expect(splitBtn.disabled).toBe(true);
+    expect(splitBtn.classList.contains('busy')).toBe(true);
+
+    resolveDiff();
+    await Promise.resolve();
+    expect(splitBtn.disabled).toBe(false);
+    expect(splitBtn.classList.contains('busy')).toBe(false);
+
+    h.controller.dispose();
+  });
+
+  it('preserves incremental rendering on long conversations (220+ messages) when updating only the tail', () => {
+    const h = makeHarness();
+    const total = 220;
+    const initial: TranscriptMessage[] = Array.from({ length: total }, (_, i) => ({
+      id: `m${i}`,
+      own: i % 2 === 0,
+      html: `<p>message ${i}</p>`,
+      at: 1000 + i,
+    }));
+    h.controller.reconcile(initial);
+    expect(h.log.children.length).toBe(total);
+
+    const elRefs = initial.map((_, i) => h.els[`2:m${i}`]!);
+    const pRefs = elRefs.map((el) => el.querySelector('p')!);
+
+    const appendSpy = vi.spyOn(h.log, 'appendChild');
+    const enhanceSpy = vi.spyOn(h.controller.codeBlocks, 'enhance');
+
+    // Stream-update only the last message via upsert & repaintKey.
+    h.controller.upsert({
+      id: `m${total - 1}`,
+      own: false,
+      html: `<p>message ${total - 1} streaming…</p>`,
+      at: 1000 + total - 1,
+    });
+    expect(enhanceSpy).toHaveBeenCalledTimes(1);
+    expect(appendSpy).not.toHaveBeenCalled();
+    expect(h.els[`2:m${total - 1}`]?.querySelector('p')?.textContent).toBe(`message ${total - 1} streaming…`);
+
+    // Reconcile the entire 220-message list with only the final message updated.
+    const nextList = initial.map((m, i) =>
+      i === total - 1 ? { ...m, html: `<p>message ${total - 1} final</p>` } : m,
+    );
+    h.controller.reconcile(nextList);
+
+    // Every earlier message (0..218) kept its exact DOM wrapper and inner <p> node without re-appending.
+    for (let i = 0; i < total - 1; i++) {
+      expect(h.els[`2:m${i}`]).toBe(elRefs[i]);
+      expect(h.els[`2:m${i}`]?.querySelector('p')).toBe(pRefs[i]);
+    }
+    expect(enhanceSpy).toHaveBeenCalledTimes(2);
+    expect(appendSpy).not.toHaveBeenCalled();
+    expect(h.els[`2:m${total - 1}`]?.querySelector('p')?.textContent).toBe(`message ${total - 1} final`);
 
     h.controller.dispose();
   });
