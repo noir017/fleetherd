@@ -44,6 +44,7 @@ import {
   type SettingsFeature,
 } from './features/settings/index.js';
 import { createTerminalController, type TerminalController } from './features/terminal/index.js';
+import { mountWorkbenchIfEnabled } from './workbench/shell.js';
 import {
   createComposerController,
   type ComposerController,
@@ -1458,6 +1459,9 @@ function bootstrap(): void {
   }
   ctrl.terminalController.apply();
   ctrl.topicsFeature.enter(state.topic);
+  mountWorkbenchIfEnabled(document, {
+    resolveIcon: (name) => icons.icon[name] ?? '',
+  });
 }
 
 bootstrap();

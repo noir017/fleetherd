@@ -447,4 +447,5 @@ export const PAGE_BODY = `<main id="app" hidden>
     </div>
   </aside>
 </main>
+<div id="workbench-root" hidden></div>
 `;
