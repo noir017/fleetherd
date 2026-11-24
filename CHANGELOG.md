@@ -5,6 +5,15 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **Web UI client modularization (workbench redesign P0, no user-visible change).** Split the
+  monolithic `client/legacy-app.ts` script into typed `base/`, `services/`, `workbench/`,
+  `plugins/`, and `features/` modules with a strict `main.ts` entrypoint, modularized
+  `client/styles/` around `--fh-*` semantic tokens (keeping existing theme colors identical),
+  enabled full TypeScript and ESLint enforcement across `src/platform/webui/client/`, and added a
+  standalone Playwright E2E harness (`test/e2e/webui/`, `.github/workflows/webui-e2e.yml`).
+
 ## [3.38.0] - 2026-11-24
 
 ### Added

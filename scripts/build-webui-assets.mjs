@@ -104,6 +104,7 @@ if (!written.includes('@codemirror/state') || !/MIT/.test(written)) {
 }
 
 const kib = (n) => `${(n / 1024).toFixed(1)} KiB`;
+const APP_GZIP_BUDGET_BYTES = 160 * 1024;
 let raw = 0;
 let packed = 0;
 const files = [
@@ -118,6 +119,9 @@ for (const file of files) {
   raw += bytes.length;
   packed += packedBytes;
   console.log(`build-webui-assets: ${path.basename(file)} ${kib(bytes.length)} (gzip ${kib(packedBytes)})`);
+  if (path.basename(file) === client.app.file && packedBytes > APP_GZIP_BUDGET_BYTES) {
+    console.warn(`build-webui-assets: WARNING ${client.app.file} gzip ${kib(packedBytes)} exceeds ${kib(APP_GZIP_BUDGET_BYTES)} budget`);
+  }
 }
 console.log(
   `build-webui-assets: ${files.length} files, ${kib(raw)} (gzip ${kib(packed)}); the page loads ${client.boot.file}, ${client.app.file} and ${client.style.file}, and ${entryName} only when it shows code`

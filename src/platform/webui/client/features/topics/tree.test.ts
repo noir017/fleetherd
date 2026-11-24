@@ -41,20 +41,20 @@ describe('topics/tree', () => {
     const bound = makeTopic({
       id: 't1',
       title: '[old] Subject',
-      agent: { id: 'cbc@uniagent', harness: 'claude' },
-      dir: { name: 'repo', path: '/repo', host: 'uniagent' },
+      agent: { id: 'bot@box', harness: 'claude' },
+      dir: { name: 'repo', path: '/repo', host: 'box' },
     });
-    expect(agentOf(bound)).toEqual({ id: 'cbc@uniagent', label: 'cbc', harness: 'claude' });
+    expect(agentOf(bound)).toEqual({ id: 'bot@box', label: 'bot', harness: 'claude' });
     expect(agentTagHtml(bound)).toContain('class="agent-tag h-claude"');
-    expect(agentTagHtml(bound)).toContain('title="Agent: cbc@uniagent"');
-    expect(agentTagHtml(bound)).toContain('>cbc</span>');
+    expect(agentTagHtml(bound)).toContain('title="Agent: bot@box"');
+    expect(agentTagHtml(bound)).toContain('>bot</span>');
 
     const differentHost = makeTopic({
       id: 't2',
-      agent: { id: 'cbc@uniagent', harness: 'claude' },
+      agent: { id: 'bot@box', harness: 'claude' },
       dir: { name: 'repo', path: '/repo', host: 'other' },
     });
-    expect(agentOf(differentHost)?.label).toBe('cbc@uniagent');
+    expect(agentOf(differentHost)?.label).toBe('bot@box');
 
     const fallback = makeTopic({ id: 't3', title: '[codex] Fallback' });
     expect(agentOf(fallback)).toEqual({ id: 'codex', label: 'codex', harness: '' });

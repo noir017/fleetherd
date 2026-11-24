@@ -29,5 +29,21 @@ export default tseslint.config(
       '@typescript-eslint/no-explicit-any': 'off',
       'max-lines-per-function': 'off',
     },
+  },
+  {
+    files: ['src/platform/webui/client/features/**/*.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['**/workbench/*', '../workbench/*', '../../workbench/*', '../../../workbench/*'],
+              message: 'Web UI features must not import workbench internals directly; use PluginContext or services.',
+            },
+          ],
+        },
+      ],
+    },
   }
 );
