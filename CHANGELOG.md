@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.39.0-beta.1] - 2026-11-25
+
 ### Added
 
 - **Web UI dockable workbench, VS Code Modern themes, and multi-window workflows.** Rebuilt the
