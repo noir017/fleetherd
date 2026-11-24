@@ -1,6 +1,5 @@
 import type {
   SchedulePanelAction,
-  SchedulePanelRun,
   SchedulePanelSetting,
   SchedulePanelShape,
   SchedulePanelTask,
@@ -24,7 +23,6 @@ import {
   buildTaskEditDiff,
   formatClock,
   formatDueIn,
-  formatDuration,
   formatLastRun,
   formatRelativeAge,
   initialFormValues,
@@ -33,11 +31,11 @@ import {
   parseTagList,
   resolveFormShape,
   resolveTargetShort,
-  runStatusWord,
   taskAssociatedSessions,
   type TaskFormValues,
   taskTags,
 } from './helpers.js';
+import { renderRunsTableSection, type RunStatusFilter } from './runs-table.js';
 import type { SchedulesStore } from './store.js';
 import type {
   ScheduleEditorInput,
@@ -86,37 +84,6 @@ function targetHintText(other: boolean, shape: SchedulePanelShape): string {
   if (shape === 'bash') return tr('taskPage.targetBashHint');
   if (shape === 'fixed') return tr('taskPage.targetFixedHint');
   return tr('taskPage.targetNewHint');
-}
-
-function renderRunRow(r: SchedulePanelRun, topics: readonly TopicInfo[], onOpenTopic: (id: string) => void): TemplateResult {
-  const bits = [r.atText];
-  if (r.durationMs != null) bits.push(formatDuration(r.durationMs));
-  if (r.exitCode != null) bits.push(tr('taskPage.exitCode', { code: r.exitCode }));
-  const topic = r.topic ? topics.find((item) => item.id === r.topic) : undefined;
-
-  return html`<div class="tp-run">
-    ${renderStatusDot({ status: r.status === 'ok' ? 'ok' : 'err' })}
-    <span class="tp-run-main">
-      <span class="tp-run-head">
-        <span class=${`tp-run-status${r.status === 'ok' ? '' : ' bad'}`}>${runStatusWord(r.status)}</span>
-        ${` \u00b7 ${bits.join(' \u00b7 ')}`}
-      </span>
-      ${r.error ? html`<span class="tp-run-err">${r.error}</span>` : nothing}
-    </span>
-    ${r.topic
-      ? topic
-        ? html`<button
-            type="button"
-            class="tp-run-open"
-            data-tp-topic=${r.topic}
-            title=${topic.title}
-            @click=${() => onOpenTopic(r.topic!)}
-          >${tr('common.open')}</button>`
-        : html`<span class="tp-run-where" title=${tr('taskPage.topicGoneTitle')}>${tr('taskPage.topicGone')}</span>`
-      : r.where
-        ? html`<span class="tp-run-where" title=${r.where}>${r.where}</span>`
-        : nothing}
-  </div>`;
 }
 
 function renderViewActions(
@@ -240,10 +207,13 @@ function renderViewSessions(
 }
 
 function renderViewContent(
+  ctx: PluginContext,
   detail: SchedulePanelTaskDetail,
   topics: readonly TopicInfo[],
   nowMs: number,
   busy: boolean,
+  runFilter: RunStatusFilter,
+  onRunFilterChange: (next: RunStatusFilter) => void,
   onAction: (action: 'edit' | 'pause' | 'resume' | 'run' | 'remove') => void,
   onRemoveTag: (tag: string) => void,
   onAddTags: (raw: string, input: HTMLInputElement) => void,
@@ -286,12 +256,14 @@ function renderViewContent(
     ${renderViewTags(t, onRemoveTag, onAddTags)}
     <div class="tp-meta">${metaBits.join(' \u00b7 ')}</div>
     ${renderViewSessions(detail, topics, nowMs, onOpenTopic)}
-    <div class="tp-label">${tr('taskPage.runs')}<span class="tp-n">${detail.runs.length}</span></div>
-    <div class="tp-list">
-      ${detail.runs.length === 0
-        ? html`<div class="tp-empty">${tr('taskPage.noRuns')}</div>`
-        : detail.runs.map((r) => renderRunRow(r, topics, onOpenTopic))}
-    </div>
+    ${renderRunsTableSection({
+      ctx,
+      runs: detail.runs,
+      filter: runFilter,
+      topics,
+      onFilterChange: onRunFilterChange,
+      onOpenTopic,
+    })}
   </div>`;
 }
 
@@ -620,6 +592,7 @@ class ScheduleEditor implements ScheduleEditorController {
   private _detail: TaskPageDetail | null = null;
   private _formValues: TaskFormValues | null = null;
   private _notice: EditorNotice | null = null;
+  private _runFilter: RunStatusFilter = 'all';
   private _saving = false;
   private _seq = 0;
   private _disposed = false;
@@ -684,6 +657,7 @@ class ScheduleEditor implements ScheduleEditorController {
     if (!sameId) {
       this._detail = null;
       this._formValues = null;
+      this._runFilter = 'all';
     }
     this._paint();
     if (this._mode === 'new') void this._loadNewForm();
@@ -888,10 +862,16 @@ class ScheduleEditor implements ScheduleEditorController {
     }
     if (!this._detail.task) return nothing;
     return renderViewContent(
+      this._ctx,
       this._detail as SchedulePanelTaskDetail,
       topics,
       nowMs,
       this._store.snapshot().busy,
+      this._runFilter,
+      (next) => {
+        this._runFilter = next;
+        this._paint();
+      },
       (act) => this._handleViewAction(act),
       (tag) => {
         const task = this._detail?.task;

@@ -1,10 +1,8 @@
 import { Emitter } from '../../base/event.js';
 import { type Disposable, DisposableStore, toDisposable } from '../../base/lifecycle.js';
-import type { FilesPanel, FilesSource } from '../../panels/files.js';
-import { createInstructionsPanel } from '../../panels/instructions.js';
+import { buildInstructionSource, type FilesSource } from './instructions-source.js';
 import { definePlugin, type PluginContext, type SettingsSectionContribution, type WebuiPlugin } from '../../plugins/api.js';
 import { post as defaultPost, text } from '../../services/api.js';
-import { inlineCodeHtml } from './render.js';
 import type { SettingsTopicRef, SettingsWebMessage } from './types.js';
 import { createSettingsCatalogComponent } from './workbench-catalog.js';
 import { createSettingsEditorComponent, resolveSettingsEditorTitle } from './workbench-editor.js';
@@ -33,6 +31,13 @@ const SETTINGS_EN_STRINGS: Record<string, string> = {
   'wb.settings.deviceGroup': 'This device',
   'wb.settings.searchPlaceholder': 'Search settings',
   'wb.settings.noTopic': 'Select a topic to load gateway settings.',
+  'wb.settings.clearSearch': 'Clear search',
+  'wb.settings.matchCount': '{matched} / {total} matches',
+  'wb.settings.noMatch': 'No settings match your filter.',
+  'wb.settings.modified': 'Modified',
+  'wb.settings.modifiedFilter': 'Modified ({count})',
+  'wb.settings.reset': 'Reset',
+  'wb.settings.initialValue': 'Initial: {value}',
 };
 
 const SETTINGS_ZH_STRINGS: Record<string, string> = {
@@ -40,6 +45,13 @@ const SETTINGS_ZH_STRINGS: Record<string, string> = {
   'wb.settings.deviceGroup': '本设备',
   'wb.settings.searchPlaceholder': '搜索设置',
   'wb.settings.noTopic': '请先选择一个话题以加载网关设置。',
+  'wb.settings.clearSearch': '清除搜索',
+  'wb.settings.matchCount': '匹配 {matched} / {total} 项',
+  'wb.settings.noMatch': '没有匹配的设置项。',
+  'wb.settings.modified': '已修改',
+  'wb.settings.modifiedFilter': '已修改 ({count})',
+  'wb.settings.reset': '重置',
+  'wb.settings.initialValue': '初始值：{value}',
 };
 
 function deriveGatewaySections(msg: SettingsWebMessage | null): GatewayCatalogSection[] {
@@ -77,7 +89,6 @@ function isSettingsWebMessage(value: unknown): value is SettingsWebMessage {
 
 function createSettingsRuntime(ctx: PluginContext, deps: SettingsPluginDeps): SettingsRuntime {
   const instrOk = deps.instrOk === true;
-  const doc = deps.doc ?? document;
   const postFn = deps.post ?? defaultPost;
   const onDidChangeGateway = new Emitter<void>();
   const onDidChangeSelection = new Emitter<SettingsEditorInput | undefined>();
@@ -124,41 +135,20 @@ function createSettingsRuntime(ctx: PluginContext, deps: SettingsPluginDeps): Se
 
   const createInstructionSource = (input: InstructionEditorInput, onRefresh?: () => void): FilesSource | null => {
     if (!instrOk) return null;
-    let captured: FilesSource | null = null;
-    const dummyPage = doc.createElement('div');
-    const dummyBody = doc.createElement('div');
-    const dummyPreview = doc.createElement('div');
-    const capturePanel: FilesPanel = {
-      open(_topic, _path, src) {
-        captured = src ?? null;
-      },
-      openEditor() {},
-      close() {},
-      isOpen: () => false,
-      isCustomOpen: () => false,
-      paintTree() {
-        if (captured) treePainters.get(captured)?.();
-      },
-      currentSource: () => captured,
-      previewEl: () => dummyPreview,
-      repaint() {},
-    };
-    const panel = createInstructionsPanel({
-      instrOk: true,
-      settingsPage: dummyPage,
-      settingsBody: dummyBody,
-      filesPanel: capturePanel,
-      getSettingsMsg: () => gatewayMsg,
-      getSettingsTopic: () => getTopic(),
-      getTopic,
-      renderSettings: () => onRefresh?.(),
+    if (!input.orphans && !input.agent) return null;
+    const title = input.title
+      ?? (input.orphans
+        ? ctx.i18n.t('instr.orphansTitle')
+        : ctx.i18n.t('instr.agentTitle', { agent: input.agent ?? '' }));
+    return buildInstructionSource({
+      agent: input.orphans ? '' : (input.agent ?? ''),
+      orphans: input.orphans,
+      title,
       text,
-      inl: inlineCodeHtml,
       post: (path, body, tries) => postFn(path, body, tries),
+      onPaintTree: (src) => treePainters.get(src)?.(),
+      onClose: onRefresh,
     });
-    if (input.orphans) panel.openOrphans();
-    else if (input.agent) panel.open(input.agent, input.fileId);
-    return captured;
   };
 
   const bridge: SettingsPluginBridge = {

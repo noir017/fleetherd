@@ -17,6 +17,13 @@ import {
   renderTextInput,
 } from '../../components/index.js';
 import { t as tr } from '../../i18n/index.js';
+import type { PluginContext } from '../../plugins/api.js';
+import {
+  buildMetadataDiff,
+  computeLineDiff,
+  type DiffResult,
+  extractEmbeddedHistoryContent,
+} from './history-diff.js';
 import type { SkillsStore } from './store.js';
 import {
   formatIsoAgo,
@@ -40,6 +47,9 @@ interface SkillEditorState {
   draftContent: string;
   copied: boolean;
   usingCodeMirror: boolean;
+  selectedHistoryId: string | null;
+  historyDiffLoading: boolean;
+  historyDiff: DiffResult | null;
 }
 
 function detailMetaText(skill: SkillPanelEntry, formatAgo: (at: number) => string): string {
@@ -87,6 +97,8 @@ interface EditorCallbacks {
   readonly onSave: () => void;
   readonly onRemoveFile: () => void;
   readonly onRevert: (id: string) => void;
+  readonly onSelectHistory: (entry: SkillPanelHistoryEntry) => void;
+  readonly onCloseHistoryDiff: () => void;
   readonly onDismissError: () => void;
 }
 
@@ -211,32 +223,138 @@ function renderHistorySection(
   st: SkillEditorState,
   deps: ResolvedSkillsDeps,
   cb: EditorCallbacks,
+  tSkill: (key: string, fallback: string) => string,
 ): TemplateResult {
   const history = st.detail!.history;
+  const selectedEntry = st.selectedHistoryId
+    ? history.find((item) => item.id === st.selectedHistoryId) ?? null
+    : null;
   return html`
     <div class="fh-skill-ed-section">${tr('skills.history')}</div>
     <div class="fh-skill-ed-history">
       ${history.length === 0
         ? html`<div class="fh-skill-ed-empty">${tr('skills.noHistory')}</div>`
         : history.map(
-            (entry) => html`<div class="fh-skill-hist-row">
-              <div class="fh-skill-hist-main">
-                <div class="fh-skill-hist-action">${entry.action}</div>
-                <div class="fh-skill-hist-meta">${historyMetaText(entry, deps.formatAgo)}</div>
-              </div>
-              ${entry.beforeVersion || entry.action === 'commit'
-                ? html`<button
+            (entry) => {
+              const isSelected = st.selectedHistoryId === entry.id;
+              const canRevert = Boolean(entry.beforeVersion || entry.action === 'commit');
+              return html`<div class=${`fh-skill-hist-row${isSelected ? ' is-selected' : ''}`} data-history-id=${entry.id}>
+                <div
+                  class="fh-skill-hist-main"
+                  role="button"
+                  tabindex="0"
+                  aria-expanded=${isSelected ? 'true' : 'false'}
+                  @click=${() => cb.onSelectHistory(entry)}
+                  @keydown=${(ev: KeyboardEvent) => {
+                    if (ev.key === 'Enter' || ev.key === ' ') {
+                      ev.preventDefault();
+                      cb.onSelectHistory(entry);
+                    }
+                  }}
+                >
+                  <div class="fh-skill-hist-action">${entry.action}</div>
+                  <div class="fh-skill-hist-meta">${historyMetaText(entry, deps.formatAgo)}</div>
+                </div>
+                <div class="fh-skill-hist-actions">
+                  <button
                     type="button"
-                    class="fh-btn fh-btn--secondary"
-                    data-revert=${entry.id}
-                    ?disabled=${st.saving}
-                    @click=${() => cb.onRevert(entry.id)}
-                  >${tr('skills.restoreVersion')}</button>`
-                : nothing}
-            </div>`,
+                    class=${`fh-btn fh-btn--ghost fh-skill-hist-diff-btn${isSelected ? ' is-active' : ''}`}
+                    data-history-diff=${entry.id}
+                    aria-pressed=${isSelected ? 'true' : 'false'}
+                    @click=${() => cb.onSelectHistory(entry)}
+                  >${isSelected ? tSkill('wb.skills.hideDiff', 'Hide diff') : tSkill('wb.skills.diff', 'Diff')}</button>
+                  ${canRevert
+                    ? html`<button
+                        type="button"
+                        class="fh-btn fh-btn--secondary"
+                        data-revert=${entry.id}
+                        ?disabled=${st.saving}
+                        @click=${() => cb.onRevert(entry.id)}
+                      >${tr('skills.restoreVersion')}</button>`
+                    : nothing}
+                </div>
+              </div>`;
+            },
           )}
     </div>
+    ${selectedEntry ? renderHistoryDiffPanel(st, selectedEntry, cb, tSkill) : nothing}
   `;
+}
+
+function renderHistoryDiffPanel(
+  st: SkillEditorState,
+  entry: SkillPanelHistoryEntry,
+  cb: EditorCallbacks,
+  tSkill: (key: string, fallback: string) => string,
+): TemplateResult {
+  const detail = st.detail!;
+  const fromLabel = entry.beforeVersion || entry.id.slice(0, 7);
+  const toLabel = `${tSkill('wb.skills.diffCurrent', 'Current')} (v${detail.skill.version})`;
+  const canRevert = Boolean(entry.beforeVersion || entry.action === 'commit');
+  const diff = st.historyDiff;
+
+  return html`<div class="fh-skill-diff-panel" data-diff-entry=${entry.id}>
+    <div class="fh-skill-diff-head">
+      <div class="fh-skill-diff-title">
+        <span class="fh-skill-diff-ref">${fromLabel}</span>
+        <span class="fh-skill-diff-arrow" aria-hidden="true">\u2192</span>
+        <span class="fh-skill-diff-ref">${toLabel}</span>
+        ${diff
+          ? html`<span class="fh-skill-diff-stats">
+              <span class="fh-skill-diff-stat fh-skill-diff-stat--add">+${diff.added}</span>
+              <span class="fh-skill-diff-stat fh-skill-diff-stat--del">-${diff.removed}</span>
+            </span>`
+          : nothing}
+      </div>
+      <div class="fh-skill-diff-actions">
+        ${canRevert
+          ? html`<button
+              type="button"
+              class="fh-btn fh-btn--secondary"
+              data-diff-revert=${entry.id}
+              ?disabled=${st.saving}
+              @click=${() => cb.onRevert(entry.id)}
+            >${tr('skills.restoreVersion')}</button>`
+          : nothing}
+        <button
+          type="button"
+          class="fh-btn fh-btn--ghost"
+          data-diff-close="1"
+          @click=${cb.onCloseHistoryDiff}
+        >${tSkill('wb.skills.diffClose', 'Close diff')}</button>
+      </div>
+    </div>
+    ${st.historyDiffLoading
+      ? html`<div class="fh-skill-diff-empty">${tSkill('wb.skills.diffLoading', 'Loading diff\u2026')}</div>`
+      : !diff || !diff.hasChanges
+        ? html`<div class="fh-skill-diff-empty">${tSkill('wb.skills.diffNoChanges', 'No differences from current content.')}</div>`
+        : html`${diff.source === 'metadata'
+            ? html`<div class="fh-skill-diff-note">${tSkill(
+                'wb.skills.diffMetadataNote',
+                'Full snapshot for this older commit is not cached locally; showing version metadata diff.',
+              )}</div>`
+            : nothing}
+          <div class="fh-skill-diff-body" role="region" aria-label=${`${fromLabel} -> ${toLabel}`}>
+            ${diff.lines.map((line) => {
+              if (line.kind === 'hunk') {
+                return html`<div class="fh-skill-diff-line fh-skill-diff-line--hunk">${line.text}</div>`;
+              }
+              const cls =
+                line.kind === 'add'
+                  ? 'fh-skill-diff-line--add'
+                  : line.kind === 'del'
+                    ? 'fh-skill-diff-line--del'
+                    : 'fh-skill-diff-line--ctx';
+              const sign = line.kind === 'add' ? '+' : line.kind === 'del' ? '-' : ' ';
+              return html`<div class=${`fh-skill-diff-line ${cls}`}>
+                <span class="fh-skill-diff-ln">${line.oldLine ?? ''}</span>
+                <span class="fh-skill-diff-ln">${line.newLine ?? ''}</span>
+                <span class="fh-skill-diff-sign">${sign}</span>
+                <span class="fh-skill-diff-code">${line.text}</span>
+              </div>`;
+            })}
+          </div>`}
+  </div>`;
 }
 
 function renderInlineSvg(markup: string): TemplateResult | typeof nothing {
@@ -249,14 +367,16 @@ function renderInlineSvg(markup: string): TemplateResult | typeof nothing {
 export function createSkillEditorPanel(
   store: SkillsStore,
   deps: ResolvedSkillsDeps,
+  ctx?: PluginContext,
 ): SkillPanelComponent {
-  return new SkillEditorPanel(store, deps);
+  return new SkillEditorPanel(store, deps, ctx);
 }
 
 class SkillEditorPanel implements SkillPanelComponent {
   readonly element: HTMLElement;
   private readonly _store: SkillsStore;
   private readonly _deps: ResolvedSkillsDeps;
+  private readonly _ctx?: PluginContext;
   private readonly _chromeHost: HTMLElement;
   private readonly _surfaceHost: HTMLElement;
   private readonly _cmHost: HTMLElement;
@@ -274,18 +394,24 @@ class SkillEditorPanel implements SkillPanelComponent {
     draftContent: '',
     copied: false,
     usingCodeMirror: false,
+    selectedHistoryId: null,
+    historyDiffLoading: false,
+    historyDiff: null,
   };
   private _panelCtx: SkillPanelInitContext | null = null;
   private _cmHandle: EditorHandle | null = null;
   private _copyTimer: ReturnType<typeof setTimeout> | undefined;
   private _loadSeq = 0;
   private _mountSeq = 0;
+  private _diffSeq = 0;
+  private _selectedHistoryContent: string | null = null;
   private _disposed = false;
   private readonly _cb: EditorCallbacks;
 
-  constructor(store: SkillsStore, deps: ResolvedSkillsDeps) {
+  constructor(store: SkillsStore, deps: ResolvedSkillsDeps, ctx?: PluginContext) {
     this._store = store;
     this._deps = deps;
+    this._ctx = ctx;
     const doc = deps.doc;
 
     this.element = doc.createElement('div');
@@ -363,6 +489,12 @@ class SkillEditorPanel implements SkillPanelComponent {
     this.element.remove();
   }
 
+  private _tSkill(key: string, fallback: string): string {
+    if (!this._ctx) return fallback;
+    const translated = this._ctx.i18n.t(key);
+    return translated === key ? fallback : translated;
+  }
+
   private _updateTitle(): void {
     if (!this._panelCtx) return;
     const base = this._st.name || tr('skills.title');
@@ -398,6 +530,7 @@ class SkillEditorPanel implements SkillPanelComponent {
             onChange: (nextDoc) => {
               this._st.draftContent = nextDoc;
               this._updateTitle();
+              this._refreshActiveDiff();
             },
             onSave: () => {
               void this._saveCurrentFile();
@@ -453,7 +586,16 @@ class SkillEditorPanel implements SkillPanelComponent {
     this._st.newFileMode = false;
     this._st.draftPath = outcome.detail.file.path;
     this._st.draftContent = outcome.detail.file.content;
+    this._st.selectedHistoryId = null;
+    this._st.historyDiffLoading = false;
+    this._st.historyDiff = null;
+    this._selectedHistoryContent = null;
     this._st.error = null;
+    this._store.recordSnapshot(name, outcome.detail.file.path, outcome.detail.file.version, outcome.detail.file.content);
+    const latestHist = outcome.detail.history[0];
+    if (latestHist) {
+      this._store.recordSnapshot(name, outcome.detail.file.path, `id:${latestHist.id}`, outcome.detail.file.content);
+    }
     this._updateTitle();
     this._paint();
     this._syncEditorContent(this._st.draftPath, this._st.draftContent);
@@ -530,6 +672,65 @@ class SkillEditorPanel implements SkillPanelComponent {
       return;
     }
     await this._loadSkill(skillName, this._st.detail.file.path);
+  }
+
+  private _refreshActiveDiff(): void {
+    if (!this._st.selectedHistoryId || !this._st.detail || this._st.historyDiffLoading) return;
+    const entry = this._st.detail.history.find((h) => h.id === this._st.selectedHistoryId);
+    if (!entry) return;
+    const currentDoc = this._currentDocText();
+    this._st.historyDiff =
+      this._selectedHistoryContent !== null
+        ? computeLineDiff(this._selectedHistoryContent, currentDoc)
+        : buildMetadataDiff(entry, this._st.detail.skill, this._st.detail.file.content, currentDoc);
+    this._paint();
+  }
+
+  private async _selectHistoryEntry(entry: SkillPanelHistoryEntry): Promise<void> {
+    if (this._disposed || !this._st.detail) return;
+    if (this._st.selectedHistoryId === entry.id) {
+      this._diffSeq++;
+      this._st.selectedHistoryId = null;
+      this._st.historyDiffLoading = false;
+      this._st.historyDiff = null;
+      this._selectedHistoryContent = null;
+      this._paint();
+      return;
+    }
+    const myDiff = ++this._diffSeq;
+    const detail = this._st.detail;
+    const skillName = detail.skill.name;
+    const filePath = detail.file.path;
+    this._st.selectedHistoryId = entry.id;
+    this._st.historyDiffLoading = true;
+    this._st.historyDiff = null;
+    this._selectedHistoryContent = null;
+    this._paint();
+
+    let historicalText: string | null = extractEmbeddedHistoryContent(entry);
+    if (historicalText === null && this._deps.loadHistoryContent) {
+      try {
+        historicalText = (await this._deps.loadHistoryContent(skillName, entry, filePath)) ?? null;
+      } catch {
+        historicalText = null;
+      }
+    }
+    if (this._disposed || myDiff !== this._diffSeq || !this._st.detail) return;
+    if (historicalText === null && entry.beforeVersion) {
+      historicalText = this._store.getSnapshot(skillName, filePath, entry.beforeVersion) ?? null;
+    }
+    if (historicalText === null) {
+      historicalText = this._store.getSnapshot(skillName, filePath, `id:${entry.id}`) ?? null;
+    }
+
+    this._st.historyDiffLoading = false;
+    this._selectedHistoryContent = historicalText;
+    const currentDoc = this._currentDocText();
+    this._st.historyDiff =
+      historicalText !== null
+        ? computeLineDiff(historicalText, currentDoc)
+        : buildMetadataDiff(entry, this._st.detail.skill, this._st.detail.file.content, currentDoc);
+    this._paint();
   }
 
   private _handleCopyName(): void {
@@ -633,6 +834,7 @@ class SkillEditorPanel implements SkillPanelComponent {
       onContentInput: (content) => {
         this._st.draftContent = content;
         this._updateTitle();
+        this._refreshActiveDiff();
       },
       onSave: () => {
         void this._saveCurrentFile();
@@ -642,6 +844,17 @@ class SkillEditorPanel implements SkillPanelComponent {
       },
       onRevert: (id) => {
         void this._revertEntry(id);
+      },
+      onSelectHistory: (entry) => {
+        void this._selectHistoryEntry(entry);
+      },
+      onCloseHistoryDiff: () => {
+        this._diffSeq++;
+        this._st.selectedHistoryId = null;
+        this._st.historyDiffLoading = false;
+        this._st.historyDiff = null;
+        this._selectedHistoryContent = null;
+        this._paint();
       },
       onDismissError: () => {
         this._st.error = null;
@@ -726,7 +939,7 @@ class SkillEditorPanel implements SkillPanelComponent {
               >${tr('skills.removeFile')}</button>`
             : nothing}
         </div>
-        ${renderHistorySection(this._st, this._deps, this._cb)}
+        ${renderHistorySection(this._st, this._deps, this._cb, (k, fb) => this._tSkill(k, fb))}
       `,
       this._footerHost,
     );

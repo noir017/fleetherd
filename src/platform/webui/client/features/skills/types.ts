@@ -1,6 +1,7 @@
 import type {
   SkillPanelDetail,
   SkillPanelEntry,
+  SkillPanelHistoryEntry,
   SkillPanelSearches,
 } from '../../../../adapter.js';
 import type { CodeViewApi } from '../../../codeview/app.js';
@@ -39,6 +40,11 @@ export interface SkillsPluginDeps {
   readonly overlays?: OverlayManager;
   readonly enabled?: () => boolean;
   readonly activityOrder?: number;
+  readonly loadHistoryContent?: (
+    skillName: string,
+    entry: SkillPanelHistoryEntry,
+    filePath: string,
+  ) => Promise<string | null> | string | null;
 }
 
 export interface ResolvedSkillsDeps {
@@ -52,6 +58,11 @@ export interface ResolvedSkillsDeps {
   readonly overlays?: OverlayManager;
   readonly enabled?: () => boolean;
   readonly activityOrder: number;
+  readonly loadHistoryContent?: (
+    skillName: string,
+    entry: SkillPanelHistoryEntry,
+    filePath: string,
+  ) => Promise<string | null> | string | null;
 }
 
 const FALLBACK_SVG_PATHS: Readonly<Record<string, string>> = {
@@ -129,6 +140,7 @@ export function resolveSkillsDeps(deps: SkillsPluginDeps = {}): ResolvedSkillsDe
     overlays: deps.overlays,
     enabled: deps.enabled,
     activityOrder: deps.activityOrder ?? 50,
+    loadHistoryContent: deps.loadHistoryContent,
   };
 }
 

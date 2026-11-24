@@ -86,6 +86,7 @@ export class SkillsStore implements Disposable {
   private _refreshPendingManual = false;
   private _inFlightRefresh: Promise<void> | null = null;
   private readonly _queue: Record<string, SkillQueueEntry> = {};
+  private readonly _snapshots = new Map<string, string>();
   private _disposed = false;
 
   readonly onDidChange: Event<void> = this._onDidChange.event;
@@ -109,6 +110,16 @@ export class SkillsStore implements Disposable {
 
   find(name: string): SkillPanelEntry | undefined {
     return this._list.find((s) => s.name === name);
+  }
+
+  recordSnapshot(name: string, filePath: string, versionOrId: string, content: string): void {
+    if (!name || !filePath || !versionOrId) return;
+    this._snapshots.set(`${name}\0${filePath}\0${versionOrId}`, content);
+  }
+
+  getSnapshot(name: string, filePath: string, versionOrId: string): string | undefined {
+    if (!name || !filePath || !versionOrId) return undefined;
+    return this._snapshots.get(`${name}\0${filePath}\0${versionOrId}`);
   }
 
   hasPendingWrites(): boolean {

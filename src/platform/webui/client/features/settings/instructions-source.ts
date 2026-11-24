@@ -4,15 +4,24 @@ import type {
   InstructionsGlobalFile,
   InstructionsPanelList,
   InstructionsRef,
-} from '../../../adapter.js';
-import type { WebMessage } from '../../protocol.js';
-import { icon } from '../../icons.js';
-import { t } from '../i18n/index.js';
-import type { FilesHttpResult, FilesPanel, FilesSource } from './files.js';
+} from '../../../../adapter.js';
+import { icon } from '../../../icons.js';
+import type { WebMessage } from '../../../protocol.js';
+import { t } from '../../i18n/index.js';
 
-function fxBase(p: string): string {
-  const at = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'));
-  return at < 0 ? p : p.slice(at + 1);
+export interface FilesHttpResult {
+  ok: boolean;
+  status: number;
+  body: Record<string, unknown>;
+}
+
+export interface FilesSource {
+  title: string;
+  get: (route: string, params: Record<string, string | undefined>) => Promise<FilesHttpResult>;
+  post: (route: string, body: Record<string, unknown>) => Promise<FilesHttpResult>;
+  renderTree: (activePath: string) => string;
+  said: () => string;
+  onClose?: () => void;
 }
 
 export interface InstructionsAgentRow {
@@ -20,27 +29,40 @@ export interface InstructionsAgentRow {
   label: string;
 }
 
-export interface InstructionsPanelDeps {
-  instrOk: boolean;
-  settingsPage: HTMLElement;
-  settingsBody: HTMLElement;
-  filesPanel: FilesPanel;
-  getSettingsMsg: () => WebMessage | null;
-  getSettingsTopic: () => string;
-  getTopic: () => string;
-  renderSettings: () => void;
-  text: (s: unknown) => string;
-  inl: (s: unknown) => string;
-  post: (path: string, body: unknown, tries: number) => Promise<Response>;
+export interface InstructionsSourceOpenEvent {
+  readonly agent?: string;
+  readonly fileId?: string;
+  readonly orphans?: boolean;
+  readonly title: string;
+  readonly source: FilesSource;
 }
 
-export interface InstructionsPanel {
-  load: (force?: boolean) => void;
-  ensure: () => void;
-  renderOrphans: () => string;
-  renderAgent: (row: InstructionsAgentRow, index: number) => string;
-  open: (agent: string, file?: string) => void;
-  openOrphans: () => void;
+export interface InstructionsControllerDeps {
+  readonly instrOk: boolean;
+  readonly settingsPage: HTMLElement;
+  readonly settingsBody: HTMLElement;
+  readonly onOpen: (ev: InstructionsSourceOpenEvent) => void;
+  readonly onPaintTree: (source: FilesSource) => void;
+  readonly getSettingsMsg: () => WebMessage | null;
+  readonly renderSettings: () => void;
+  readonly text: (s: unknown) => string;
+  readonly inl: (s: unknown) => string;
+  readonly post: (path: string, body: unknown, tries: number) => Promise<Response>;
+}
+
+export interface InstructionsController {
+  load(force?: boolean): void;
+  ensure(): void;
+  renderOrphans(): string;
+  renderAgent(row: InstructionsAgentRow, index: number): string;
+  open(agent: string, file?: string): void;
+  openOrphans(): void;
+  createSource(opts: {
+    agent: string;
+    orphans?: boolean;
+    title: string;
+    onClose?: () => void;
+  }): FilesSource;
 }
 
 type InstrListData = (Partial<InstructionsPanelList> & { error?: string }) | null;
@@ -93,12 +115,17 @@ interface InstrState {
   forMsgId: string | null;
 }
 
+function fxBase(p: string): string {
+  const at = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'));
+  return at < 0 ? p : p.slice(at + 1);
+}
+
 function instrFetch(url: string): Promise<FilesHttpResult> {
   return fetch(url, { credentials: 'same-origin' }).then((r) =>
     r
       .json()
       .catch(() => ({}))
-      .then((d: Record<string, unknown>) => ({ ok: r.ok, status: r.status, body: d }))
+      .then((d: Record<string, unknown>) => ({ ok: r.ok, status: r.status, body: d })),
   );
 }
 
@@ -158,7 +185,11 @@ function formatDeliveryOutcome(d: InstructionsDelivery, who: string): string {
   return who + ': ' + d.outcome + (d.detail ? ' (' + d.detail + ')' : '') + '.';
 }
 
-function instrDelivery(list: readonly InstructionsDelivery[] | undefined, f: InstrFileEntry, src: InstrSourceState): string {
+function instrDelivery(
+  list: readonly InstructionsDelivery[] | undefined,
+  f: InstrFileEntry,
+  src: InstrSourceState,
+): string {
   if (f.scope !== 'global') return t('instr.agentNextSession', { agent: src.agent });
   const items = list || [];
   if (!items.length) return t('instr.noConfiguredAgent');
@@ -248,7 +279,9 @@ function renderInstrTree(src: InstrSourceState, activePath: string, text: (s: un
   }
   const head = (key: 'shared' | 'own'): string => {
     const s = src.secs[key];
-    return s ? '<div class="fx-sec">' + text(s.title) + '</div>' + (s.note ? '<div class="fx-head">' + text(s.note) + '</div>' : '') : '';
+    return s
+      ? '<div class="fx-sec">' + text(s.title) + '</div>' + (s.note ? '<div class="fx-head">' + text(s.note) + '</div>' : '')
+      : '';
   };
   let h = '';
   let sec: 'shared' | 'own' | null = null;
@@ -284,7 +317,7 @@ function renderInstrTree(src: InstrSourceState, activePath: string, text: (s: un
       '" data-fx-file="' +
       text(id) +
       '" title="' +
-      text(f.shown + (f.via ? ' ← ' + f.via : '')) +
+      text(f.shown + (f.via ? ' \u2190 ' + f.via : '')) +
       '" style="padding-left:' +
       pad +
       'px"><span class="fx-caret blank"></span>' +
@@ -302,11 +335,26 @@ function renderInstrTree(src: InstrSourceState, activePath: string, text: (s: un
 }
 
 // Security invariant 10: files are addressed by daemon-indexed ids (g:<name>, a:<path>), never free paths.
-function makeInstrSource(
-  src: InstrSourceState,
-  deps: InstructionsPanelDeps,
-  onClose: () => void
-): FilesSource {
+export function buildInstructionSource(opts: {
+  agent: string;
+  orphans?: boolean;
+  title: string;
+  text: (s: unknown) => string;
+  post: (path: string, body: unknown, tries: number) => Promise<Response>;
+  onPaintTree?: (source: FilesSource) => void;
+  onClose?: () => void;
+}): FilesSource {
+  const src: InstrSourceState = {
+    agent: opts.agent,
+    orphans: opts.orphans,
+    title: opts.title,
+    root: '',
+    said: '',
+    files: {},
+    order: [],
+    secs: {},
+  };
+
   const source: FilesSource = {
     title: src.title,
     get: (route, params) => {
@@ -330,7 +378,7 @@ function makeInstrSource(
             () => {
               instrIndex(src, d, { error: t('instr.ownListReachErr') });
               return listed();
-            }
+            },
           );
         });
       }
@@ -363,6 +411,7 @@ function makeInstrSource(
           ? { scope: 'global', name: f.name }
           : { scope: 'agent', agent: src.agent, path: f.path };
       req.text = body.text;
+      // Security invariant 10: preserve version checks (mtimeMs/size/sha256) unless explicit force is passed.
       if (body.force) {
         req.force = true;
       } else if (f.missing) {
@@ -373,7 +422,7 @@ function makeInstrSource(
         if (body.sha256) req.sha256 = body.sha256;
       }
       src.said = '';
-      return deps.post('api/instructions/write', req, 1).then((r) =>
+      return opts.post('api/instructions/write', req, 1).then((r) =>
         r
           .json()
           .catch(() => ({}))
@@ -382,20 +431,20 @@ function makeInstrSource(
               f.missing = false;
               f.exists = true;
               src.said = instrDelivery(d.delivery as InstructionsDelivery[] | undefined, f, src);
-              if (deps.filesPanel.currentSource() === source) deps.filesPanel.paintTree();
+              opts.onPaintTree?.(source);
             }
             return { ok: r.ok, status: r.status, body: d };
-          })
+          }),
       );
     },
-    renderTree: (activePath) => renderInstrTree(src, activePath, deps.text),
+    renderTree: (activePath) => renderInstrTree(src, activePath, opts.text),
     said: () => (src.said ? ' ' + src.said : ''),
-    onClose,
+    onClose: opts.onClose,
   };
   return source;
 }
 
-function instrArrived(deps: InstructionsPanelDeps): void {
+function instrArrived(deps: InstructionsControllerDeps): void {
   const msg = deps.getSettingsMsg();
   if (!deps.instrOk || !msg || deps.settingsPage.hidden) return;
   if (!msg.settings || msg.settings.level !== 'list') return;
@@ -404,7 +453,7 @@ function instrArrived(deps: InstructionsPanelDeps): void {
   deps.renderSettings();
 }
 
-function loadInstructions(state: InstrState, deps: InstructionsPanelDeps, force?: boolean): void {
+function loadInstructions(state: InstrState, deps: InstructionsControllerDeps, force?: boolean): void {
   if (!deps.instrOk || state.busy || (state.data && !force)) return;
   state.busy = true;
   instrFetch('api/instructions').then(
@@ -419,11 +468,11 @@ function loadInstructions(state: InstrState, deps: InstructionsPanelDeps, force?
       state.busy = false;
       state.data = { error: t('common.reachDaemonError') };
       instrArrived(deps);
-    }
+    },
   );
 }
 
-function renderOrphansHtml(state: InstrState, deps: InstructionsPanelDeps): string {
+function renderOrphansHtml(state: InstrState, deps: InstructionsControllerDeps): string {
   if (!deps.instrOk || !state.data || state.data.error) return '';
   const o = instrOrphans(state.data);
   if (!o.length) return '';
@@ -442,7 +491,12 @@ function renderOrphansHtml(state: InstrState, deps: InstructionsPanelDeps): stri
   );
 }
 
-function renderAgentHtml(state: InstrState, deps: InstructionsPanelDeps, r: InstructionsAgentRow, i: number): string {
+function renderAgentHtml(
+  state: InstrState,
+  deps: InstructionsControllerDeps,
+  r: InstructionsAgentRow,
+  i: number,
+): string {
   if (!deps.instrOk) return '';
   const id = String(r.target || r.label);
   const d = state.data;
@@ -472,7 +526,7 @@ function renderAgentHtml(state: InstrState, deps: InstructionsPanelDeps, r: Inst
       '" data-instr-file="' +
       deps.text('g:' + f.name) +
       '" aria-label="' +
-      deps.text(r.label + ' · ' + f.name) +
+      deps.text(r.label + ' \u00b7 ' + f.name) +
       '" title="' +
       deps.text((f.agents || []).join(', ')) +
       '">' +
@@ -503,7 +557,7 @@ function renderAgentHtml(state: InstrState, deps: InstructionsPanelDeps, r: Inst
       '</span>' +
       '<span class="ag-fsub">' +
       deps.inl(own.own) +
-      ' · ' +
+      ' \u00b7 ' +
       deps.text(instrHost(own.host)) +
       '</span>' +
       '<span class="set-chev" aria-hidden="true">' +
@@ -513,34 +567,36 @@ function renderAgentHtml(state: InstrState, deps: InstructionsPanelDeps, r: Inst
   return h + (files ? '<div class="ag-files">' + files + '</div>' : '') + '</div></div>';
 }
 
-function openInstrWindow(
-  state: InstrState,
-  deps: InstructionsPanelDeps,
-  opts: { agent: string; file?: string; orphans?: boolean; title: string }
-): void {
-  const srcState: InstrSourceState = {
-    agent: opts.agent,
-    orphans: opts.orphans,
-    title: opts.title,
-    root: '',
-    said: '',
-    files: {},
-    order: [],
-    secs: {},
-  };
-  deps.filesPanel.open(
-    deps.getSettingsTopic() || deps.getTopic(),
-    opts.file || '',
-    makeInstrSource(srcState, deps, () => loadInstructions(state, deps, true))
-  );
-}
-
-export function createInstructionsPanel(deps: InstructionsPanelDeps): InstructionsPanel {
+export function createInstructionsController(deps: InstructionsControllerDeps): InstructionsController {
   const state: InstrState = { data: null, busy: false, forMsgId: null };
-  const open = (agent: string, file?: string): void =>
-    openInstrWindow(state, deps, { agent, file, title: t('instr.agentTitle', { agent }) });
-  const openOrphans = (): void =>
-    openInstrWindow(state, deps, { agent: '', orphans: true, title: t('instr.orphansTitle') });
+
+  const createSource = (opts: {
+    agent: string;
+    orphans?: boolean;
+    title: string;
+    onClose?: () => void;
+  }): FilesSource =>
+    buildInstructionSource({
+      agent: opts.agent,
+      orphans: opts.orphans,
+      title: opts.title,
+      text: deps.text,
+      post: deps.post,
+      onPaintTree: deps.onPaintTree,
+      onClose: opts.onClose ?? (() => loadInstructions(state, deps, true)),
+    });
+
+  const open = (agent: string, file?: string): void => {
+    const title = t('instr.agentTitle', { agent });
+    const source = createSource({ agent, title });
+    deps.onOpen({ agent, fileId: file || undefined, title, source });
+  };
+
+  const openOrphans = (): void => {
+    const title = t('instr.orphansTitle');
+    const source = createSource({ agent: '', orphans: true, title });
+    deps.onOpen({ orphans: true, title, source });
+  };
 
   // Security invariant 10: bind no entry handlers when instructions.enabled is off.
   if (deps.instrOk) {
@@ -569,5 +625,6 @@ export function createInstructionsPanel(deps: InstructionsPanelDeps): Instructio
     renderAgent: (row, index) => renderAgentHtml(state, deps, row, index),
     open,
     openOrphans,
+    createSource,
   };
 }

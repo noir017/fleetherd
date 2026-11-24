@@ -7,6 +7,14 @@ export {
   type SkillGroupId,
 } from './filtering.js';
 export { createSkillEditorPanel } from './editor.js';
+export {
+  buildMetadataDiff,
+  computeLineDiff,
+  extractEmbeddedHistoryContent,
+  type DiffLine,
+  type DiffLineKind,
+  type DiffResult,
+} from './history-diff.js';
 export { openNewSkillDialog } from './new-dialog.js';
 export {
   CMD_SKILLS_NEW,
