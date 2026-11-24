@@ -103,6 +103,7 @@ describe('webui page', () => {
      codeview: null,
       instance: 'web',
      build,
+     plugins: [],
    });
     expect(bootOf(shell)).toMatchObject({ terminal: false, terminalEnd: false, files: false, instructions: false, password: true, instance: 'web' });
     const custom = serveShell('Chat', false, true, false, testAssets(), false, false, 'portal').html;

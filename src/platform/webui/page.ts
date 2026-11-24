@@ -39,6 +39,9 @@ import { createHash } from 'node:crypto';
 
 import { escapeHtml } from '../web-markdown.js';
 import { PAGE_BODY } from './page-body.js';
+import type { BootPluginEntry } from './plugins/manifest.js';
+
+export type { BootPluginEntry } from './plugins/manifest.js';
 
 /**
  * What the page links, each relative to the page (`assets/<file>`) or null when this daemon has no
@@ -77,9 +80,10 @@ export function renderPage(
   assets: PageAssets = NO_ASSETS,
   files = false,
   instructions = false,
-  instance = 'web'
+  instance = 'web',
+  plugins: readonly BootPluginEntry[] = []
 ): string {
-  return servePage(title, terminal, password, terminalEnd, assets, files, instructions, instance).html;
+  return servePage(title, terminal, password, terminalEnd, assets, files, instructions, instance, plugins).html;
 }
 
 /**
@@ -102,7 +106,9 @@ export function servePage(
   /** Whether the settings page offers the instruction editor (`platforms.<id>.instructions`). */
   instructions = false,
   /** This web UI's platform instance id (`platforms.<id>`), used to format `<id>:main/<topic>` refs. */
-  instance = 'web'
+  instance = 'web',
+  /** Loaded frontend plugins exposed to the client loader (empty by default). */
+  plugins: readonly BootPluginEntry[] = []
 ): { html: string; build: string } {
   const boot = bootConfig({
     terminal,
@@ -113,6 +119,7 @@ export function servePage(
     codeview: assets.codeview,
     instance,
     build: '__BUILD__',
+    plugins,
   });
   const html = page({
     title: escapeHtml(title),

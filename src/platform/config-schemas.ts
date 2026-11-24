@@ -401,6 +401,24 @@ export const WebuiConfigSchema = z.object({
       enabled: z.boolean().default(false),
     })
     .default({}),
+  /**
+   * External Web UI plugins loaded from local directories (each containing `fleetherd-plugin.json`).
+   *
+   * Empty by default, and the sixth security decision in this schema. A plugin's server module runs
+   * in the gateway process with its full permissions, and its client module runs in the signed-in
+   * browser session — there is no sandbox. Only config.yaml may configure plugins; no HTTP route,
+   * reverse command, or MCP tool can install or modify them.
+   */
+  plugins: z
+    .array(
+      z
+        .object({
+          path: z.string().min(1),
+          config: z.unknown().optional(),
+        })
+        .strict()
+    )
+    .default([]),
   ...common,
 });
 
@@ -447,3 +465,4 @@ export type LinePlatformConfig = z.infer<typeof LineConfigSchema>;
 export type WecomPlatformConfig = z.infer<typeof WecomConfigSchema>;
 export type DingtalkPlatformConfig = z.infer<typeof DingtalkConfigSchema>;
 export type WebuiPlatformConfig = z.infer<typeof WebuiConfigSchema>;
+export type WebuiPluginConfig = WebuiPlatformConfig['plugins'][number];
