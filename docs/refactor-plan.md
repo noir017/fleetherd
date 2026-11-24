@@ -88,6 +88,8 @@ src/platform/webui/
 
 **验收标准**：`page.ts` < 250 行；`client/` 全量通过 `tsc` 与 `eslint`；`script-src` 移除 `'unsafe-inline'`；所有 DOM 测试与真浏览器回归通过。
 
+> 2026-11-24：Step 1C 并入 [Web UI 工作台改版开发方案](webui-workbench-plan.md)，作为该方案的 P0，按那里的工作包和并行规则执行。
+
 ---
 
 ### Phase 2：Daemon 三大巨型文件按职责拆分（预计 4–6 天，中风险）

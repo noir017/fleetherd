@@ -1,0 +1,248 @@
+<!doctype html>
+<!-- Static wireframe of the web UI workbench (docs/webui-workbench-plan.md, design v3 + status bar,
+     2026-11-24): VS Code Dark Modern / Light Modern colours, corners and control styles. Not product code.
+     Views by hash: #topic (default), #tasks, #settings; phone layout below 640px (#plist / #topic); ?light. -->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>fleetherd — layout mockup v3</title>
+<style>
+:root{--bg:#1f1f1f;--panel:#181818;--rail:#181818;--line:#2b2b2b;--fg:#cccccc;--fg-hi:#e7e7e7;--dim:#9d9d9d;--soft:#868686;
+  --accent:#0078d4;--accent-hov:#026ec1;--link:#4daafc;--focus:#0078d4;
+  --field:#313131;--field-line:#3c3c3c;--ph:#989898;--btn2:#313131;--btn2-hov:#3c3c3c;--hover:#2a2d2e;--act-hov:rgba(90,93,94,.31);
+  --sel:#04395e;--sel-in:#37373d;--toggle:rgba(36,137,219,.51);--toggle-line:#2488db;--widget:#252526;--code:#2b2b2b;--card:#181818;
+  --own:rgba(0,120,212,.10);--own-edge:#0078d4;
+  --ok:#89d185;--ok-bg:rgba(137,209,133,.14);--warn:#cca700;--err:#f14c4c;--idle:#6e7681;
+  --g-mod:#e2c08d;--g-add:#81b88b;--g-new:#73c991;--g-del:#e06c6c;--add:rgba(155,185,85,.2);--del:rgba(255,0,0,.2);--ln:#6e7681;--hunk:#4daafc;
+  --hc1:#e0805f;--hc1-bg:rgba(224,128,95,.15);--hc2:#3fb68b;--hc2-bg:rgba(63,182,139,.15);--scroll:rgba(121,121,121,.4)}
+html[data-theme=light]{--bg:#ffffff;--panel:#f8f8f8;--rail:#f8f8f8;--line:#e5e5e5;--fg:#3b3b3b;--fg-hi:#1f1f1f;--dim:#717171;--soft:#616161;
+  --accent:#005fb8;--accent-hov:#0258a8;--link:#005fb8;--focus:#005fb8;
+  --field:#ffffff;--field-line:#cecece;--ph:#767676;--btn2:#e5e5e5;--btn2-hov:#cccccc;--hover:#f2f2f2;--act-hov:rgba(184,184,184,.31);
+  --sel:#e8e8e8;--sel-in:#e4e6f1;--toggle:rgba(0,95,184,.12);--toggle-line:#005fb8;--widget:#f8f8f8;--code:#f2f2f2;--card:#ffffff;
+  --own:rgba(0,95,184,.06);--own-edge:#005fb8;
+  --ok:#388a34;--ok-bg:rgba(56,138,52,.10);--warn:#bf8803;--err:#e51400;--idle:#8b949e;
+  --g-mod:#895503;--g-add:#587c0c;--g-new:#007100;--g-del:#ad0707;--add:rgba(155,185,85,.2);--del:rgba(255,0,0,.12);--ln:#8b949e;--hunk:#005fb8;
+  --hc1:#b5532f;--hc1-bg:rgba(181,83,47,.10);--hc2:#0d8a6a;--hc2-bg:rgba(13,138,106,.10);--scroll:rgba(100,100,100,.4)}
+*{box-sizing:border-box}html,body{margin:0;height:100%}
+body{font:13px/1.45 -apple-system,BlinkMacSystemFont,"Segoe WPC","Segoe UI",system-ui,"Noto Sans CJK SC",sans-serif;color:var(--fg);background:var(--bg);-webkit-font-smoothing:antialiased}
+svg.i{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;flex:none}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+::-webkit-scrollbar{width:10px;height:10px}::-webkit-scrollbar-thumb{background:var(--scroll)}::-webkit-scrollbar-track{background:transparent}
+.shell{display:grid;grid-template-columns:52px 264px minmax(0,1fr) auto;grid-template-rows:minmax(0,1fr) 22px;height:100%}
+.rail,.list,.main,.pane{grid-row:1;min-height:0}
+.sb{grid-column:1/-1;grid-row:2;display:flex;align-items:stretch;background:var(--rail);border-top:1px solid var(--line);font-size:12px;color:var(--fg)}
+.sb .it{display:flex;align-items:center;gap:4px;padding:0 8px;cursor:pointer}.sb .it:hover{background:var(--act-hov)}
+.sb .it svg.i{width:14px;height:14px}.sb .rm{background:var(--accent);color:#fff;padding:0 10px}.sb .sp{flex:1}.sb .okc{color:var(--ok);display:flex}
+/* rail */
+.rail{background:var(--rail);border-right:1px solid var(--line);display:flex;flex-direction:column;align-items:center;padding:8px 0;gap:4px}
+.rail .logo{width:30px;height:30px;border-radius:4px;background:var(--accent);color:#fff;display:grid;place-items:center;font-weight:700;margin-bottom:8px}
+.ri{position:relative;width:44px;height:44px;border-radius:4px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;color:var(--soft);font-size:10px}
+.ri:hover{color:var(--fg-hi)}.ri.on{color:var(--fg-hi)}
+.ri.on::before{content:"";position:absolute;left:-4px;top:6px;bottom:6px;width:2px;background:var(--accent)}
+.badge{position:absolute;top:3px;right:4px;min-width:16px;height:16px;padding:0 4px;border-radius:8px;background:var(--accent);color:#fff;font-size:10px;font-weight:600;line-height:16px;text-align:center}
+.badge.dot{min-width:8px;width:8px;height:8px;padding:0;top:7px;right:10px;background:var(--warn)}
+.rail .sp{flex:1}
+/* list pane */
+.list{background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;min-width:0}
+.lh{display:flex;align-items:center;gap:6px;height:48px;padding:0 8px 0 14px;border-bottom:1px solid var(--line)}
+.lh b{font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;flex:1;color:var(--fg)}
+.ib{width:28px;height:28px;border-radius:5px;display:grid;place-items:center;color:var(--fg)}.ib:hover{background:var(--act-hov)}
+.ib svg.i{width:16px;height:16px}
+.seg{display:flex;background:var(--widget);border:1px solid var(--field-line);border-radius:2px;padding:2px;gap:2px;margin:10px 10px 0}
+.seg button{flex:1;padding:4px 0;border-radius:2px;color:var(--dim);font-size:12px}.seg button.on{background:var(--sel-in);color:var(--fg-hi)}
+.search{margin:8px 10px;display:flex;align-items:center;gap:6px;background:var(--field);border:1px solid var(--field-line);border-radius:2px;padding:5px 8px;color:var(--ph)}
+.search svg.i{width:15px;height:15px}
+.chips{display:flex;gap:4px;margin:0 10px 6px;flex-wrap:wrap}
+.chip{font-size:11px;padding:1px 7px;border-radius:2px;background:transparent;border:1px solid var(--field-line);color:var(--dim)}
+.chip.on{border-color:var(--toggle-line);color:var(--fg-hi);background:var(--toggle)}
+.rows{flex:1;overflow:auto;padding:2px 0 8px}
+.grp{font-size:11px;font-weight:600;color:var(--dim);padding:10px 14px 4px;text-transform:uppercase;letter-spacing:.05em}
+.row{display:grid;grid-template-columns:10px minmax(0,1fr) auto;gap:2px 8px;align-items:center;padding:7px 14px;border:1px solid transparent}
+.row:hover{background:var(--hover)}.row.on{background:var(--sel);border-color:var(--focus);color:var(--fg-hi)}
+.row .d{width:8px;height:8px;border-radius:50%;background:var(--idle)}.d.run{background:var(--ok)}.d.ask{background:var(--warn)}.d.bad{background:var(--err)}
+.row .t{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.row .m{grid-column:2;color:var(--dim);font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .a{font-size:11px;color:var(--dim)}
+.row.sub{padding-left:32px}
+.hc{display:inline-block;font-size:10.5px;padding:0 5px;border-radius:2px;background:var(--hc1-bg);color:var(--hc1);margin-right:4px}.hc.cx{background:var(--hc2-bg);color:var(--hc2)}
+/* main */
+.main{display:flex;flex-direction:column;min-width:0;background:var(--bg)}
+.th{display:flex;align-items:center;gap:10px;height:48px;padding:0 10px 0 18px;border-bottom:1px solid var(--line)}
+.th .tt{font-weight:600;font-size:14px;color:var(--fg-hi);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.pill{font-size:11px;padding:1px 7px;border-radius:3px;background:var(--ok-bg);color:var(--ok);white-space:nowrap}
+.th .sp{flex:1}
+.tools{display:flex;gap:2px;background:var(--widget);border:1px solid var(--field-line);border-radius:2px;padding:2px}
+.tools button{display:flex;align-items:center;gap:5px;padding:3px 10px;border-radius:2px;color:var(--dim);font-size:12px;white-space:nowrap}
+.tools button svg.i{width:15px;height:15px}.tools button:hover{color:var(--fg-hi)}.tools button.on{background:var(--sel-in);color:var(--fg-hi)}
+.tools .k{font-size:10px;min-width:16px;padding:0 4px;border-radius:8px;background:var(--accent);color:#fff;line-height:15px;text-align:center}
+.log{flex:1;overflow:auto;padding:22px 0}
+.col{max-width:760px;margin:0 auto;padding:0 24px}
+.msg{margin:0 0 16px}.msg.me{background:var(--own);border-left:2px solid var(--own-edge);border-radius:0 4px 4px 0;padding:10px 14px;color:var(--fg-hi)}
+.msg .ts{font-size:11px;color:var(--dim);margin-top:4px}
+.tool{border:1px solid var(--line);border-radius:4px;padding:5px 10px;color:var(--dim);font-size:12px;margin:6px 0;display:flex;gap:8px;align-items:center;background:var(--panel)}
+.tool svg.i{width:15px;height:15px}
+.chg{border:1px solid var(--line);border-radius:4px;padding:7px 10px;font-size:12px;display:flex;gap:10px;align-items:center;margin-top:8px;background:var(--panel)}
+.chg svg.i{width:15px;height:15px}.chg span:last-child{color:var(--link)!important}
+.chg .add{color:var(--g-add)}.chg .del{color:var(--g-del)}
+code{font:12px "Cascadia Code","JetBrains Mono",Consolas,"DejaVu Sans Mono",monospace;background:var(--code);padding:1px 4px;border-radius:3px}
+.bar{border-top:1px solid var(--line);padding:8px 0 14px}
+.status{display:flex;gap:8px;align-items:center;font-size:12px;color:var(--dim);margin-bottom:8px}
+.status a{color:var(--link);text-decoration:none}.status svg.i{width:15px;height:15px}
+.cmt{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}.cmt span{font-size:11.5px;background:var(--toggle);border:1px solid var(--toggle-line);color:var(--fg-hi);border-radius:2px;padding:1px 7px}
+.comp{display:flex;align-items:flex-end;gap:6px;border:1px solid var(--field-line);border-radius:4px;padding:7px 7px 7px 12px;background:var(--field);color:var(--dim)}
+.comp .in{flex:1;color:var(--ph);padding:4px 0;min-height:22px}
+.send{background:var(--accent);color:#fff;border-radius:2px;padding:5px 14px}.send:hover{background:var(--accent-hov)}
+/* tool pane */
+.pane{width:520px;border-left:1px solid var(--line);display:flex;flex-direction:column;background:var(--bg);position:relative}
+.pane .grip{position:absolute;left:-4px;top:0;bottom:0;width:8px;cursor:col-resize}
+.ph{display:flex;align-items:center;gap:8px;height:48px;padding:0 8px 0 14px;border-bottom:1px solid var(--line);background:var(--panel)}
+.ph b{font-size:13px;color:var(--fg-hi)}.ph .br{font:11.5px "Cascadia Code",Consolas,monospace;color:var(--dim)}
+.modes{display:flex;gap:2px;margin:8px 12px 0;font-size:12px}.modes button{padding:3px 10px;border-radius:2px;color:var(--dim)}.modes button:hover{color:var(--fg-hi)}.modes button.on{background:var(--sel-in);color:var(--fg-hi)}
+.files{border-bottom:1px solid var(--line);padding:6px 0}
+.fr{display:flex;gap:8px;align-items:center;padding:4px 14px;font:12px "Cascadia Code",Consolas,monospace;border:1px solid transparent}.fr.on{background:var(--sel);border-color:var(--focus);color:var(--fg-hi)}
+.fr .s{color:var(--g-mod);font-weight:700}.fr .s.a{color:var(--g-new)}.fr .x{margin-left:auto;font-size:11px}.fr .x i{font-style:normal;color:var(--g-add)}.fr .x u{text-decoration:none;color:var(--g-del);margin-left:4px}
+.diff{flex:1;overflow:auto;font:12px/1.6 "Cascadia Code","JetBrains Mono",Consolas,"DejaVu Sans Mono",monospace;padding:6px 0}
+.dl{display:grid;grid-template-columns:36px 1fr;padding:0 10px 0 0;white-space:pre}.dl .no{color:var(--ln);text-align:right;padding-right:10px}
+.dl.h{color:var(--hunk);background:var(--widget)}.dl.p{background:var(--add)}.dl.m{background:var(--del)}.dl.sel{box-shadow:inset 2px 0 0 var(--accent)}
+.cbox{margin:6px 12px 12px;border:1px solid var(--line);border-top:2px solid var(--accent);border-radius:0 0 4px 4px;padding:8px;background:var(--widget)}
+.cbox .q{font-size:11.5px;color:var(--dim);margin-bottom:6px}.cbox .ta{background:var(--field);border:1px solid var(--focus);border-radius:2px;padding:6px 8px;min-height:44px;color:var(--fg-hi)}
+.cbox .acts{display:flex;justify-content:flex-end;gap:6px;margin-top:8px}
+.btn{border:0;border-radius:2px;padding:4px 12px;background:var(--btn2);color:var(--fg)}.btn:hover{background:var(--btn2-hov)}.btn.p{background:var(--accent);color:#fff}.btn.p:hover{background:var(--accent-hov)}
+/* page views (settings / task) */
+.page{flex:1;overflow:auto}.pcol{max-width:820px;margin:0 auto;padding:22px 28px}
+.ptitle{font-size:18px;font-weight:600;margin:0 0 2px;color:var(--fg-hi)}.psub{color:var(--dim);font-size:12px;margin-bottom:18px}
+.card{border:1px solid var(--line);border-radius:4px;margin-bottom:14px;overflow:hidden;background:var(--card)}
+.ci{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 16px;align-items:center;padding:10px 14px;border-bottom:1px solid var(--line)}.ci:last-child{border-bottom:0}.ci:hover{background:var(--hover)}
+.ci .l{font-weight:500;color:var(--fg-hi)}.ci .h{grid-column:1;color:var(--dim);font-size:12px}
+.sg{display:flex;background:var(--field);border:1px solid var(--field-line);border-radius:2px;padding:2px;gap:2px;grid-row:span 2}.sg span{padding:2px 10px;border-radius:2px;font-size:12px;color:var(--dim)}.sg span.on{background:var(--accent);color:#fff}
+.sh{font-size:11px;font-weight:600;color:var(--dim);text-transform:uppercase;letter-spacing:.05em;margin:20px 2px 8px}
+.kv{display:grid;grid-template-columns:110px 1fr;gap:6px 14px;font-size:12.5px}.kv dt{color:var(--dim)}.kv dd{margin:0}
+.nav{padding:6px 0}.nv{display:flex;align-items:center;gap:8px;padding:6px 14px;color:var(--fg);border:1px solid transparent}.nv:hover{background:var(--hover)}.nv.on{background:var(--sel);border-color:var(--focus);color:var(--fg-hi)}.nv .c{margin-left:auto;font-size:10.5px;min-width:16px;padding:0 5px;border-radius:8px;background:var(--btn2-hov);color:var(--fg);text-align:center}
+.nvh{font-size:11px;font-weight:600;color:var(--dim);padding:12px 14px 4px;text-transform:uppercase;letter-spacing:.05em}
+/* phone */
+.tabbar,.back,.ptools{display:none}
+.only-narrow{display:none!important}.ri.ph{display:none}body.narrow .only-narrow{display:flex!important}
+@media (max-width:640px){
+  .shell{grid-template-columns:1fr;grid-template-rows:1fr auto}
+  .rail{flex-direction:row;justify-content:space-around;grid-row:2;border-right:0;border-top:1px solid var(--line);padding:4px 0 10px;background:var(--panel)}
+  .rail .logo,.rail .sp,.ri.desk{display:none}.ri{flex:1;width:auto}.ri.ph{display:flex}
+  .ri.on::before{left:30%;right:30%;top:-4px;bottom:auto;width:auto;height:2px}
+  .pane,.th .tools,.sb{display:none}
+  body.v-plist .main{display:none}
+  body.v-topic .list{display:none}body.v-topic .rail{display:none}
+  .back{display:grid}.th{padding-left:4px}
+  .ptools{display:flex;gap:4px;padding:6px 10px;border-bottom:1px solid var(--line);overflow-x:auto}
+  .ptools button{padding:3px 12px;border-radius:2px;background:var(--btn2);color:var(--dim);font-size:12px;white-space:nowrap}.ptools button.on{background:var(--accent);color:#fff}
+  .col{padding:0 12px}.row{padding:10px 14px}
+}
+</style>
+</head>
+<body>
+<div class="shell">
+  <nav class="rail" id="rail"></nav>
+  <aside class="list" id="list"></aside>
+  <section class="main" id="main"></section>
+  <aside class="pane" id="pane"></aside>
+  <footer class="sb" id="sb"></footer>
+</div>
+<script>
+if(new URLSearchParams(location.search).has('light'))document.documentElement.dataset.theme='light';
+const P={chat:'<path d="M5 4.5h14A1.5 1.5 0 0 1 20.5 6v9a1.5 1.5 0 0 1-1.5 1.5h-8.5L6 20v-3.5H5A1.5 1.5 0 0 1 3.5 15V6A1.5 1.5 0 0 1 5 4.5z"/>',history:'<path d="M3.5 12a8.5 8.5 0 1 0 8.5-8.5 9.2 9.2 0 0 0-6.36 2.59L3.5 8"/><path d="M3.5 3.5V8h4.5"/><path d="M12 7.5V12l3 1.8"/>',clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5.2l3.2 2"/>',eye:'<path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',book:'<path d="M12 6.5C10 5 7 4.6 3 5v13c4-.4 7 0 9 1.5 2-1.5 5-1.9 9-1.5V5c-4-.4-7 0-9 1.5zM12 6.5v13"/>',gear:'<circle cx="12" cy="12" r="6.6"/><circle cx="12" cy="12" r="2.4"/><path stroke-width="2.6" stroke-linecap="butt" d="M18.6 12h3M16.67 16.67l2.12 2.12M12 18.6v3M7.33 16.67l-2.12 2.12M5.4 12h-3M7.33 7.33 5.21 5.21M12 5.4v-3M16.67 7.33l2.12-2.12"/>',bell:'<path d="M6 9a6 6 0 0 1 12 0c0 3.6 1.2 5.2 2.2 6.3H3.8C4.8 14.2 6 12.6 6 9z"/><path d="M10 19a2 2 0 0 0 4 0"/>',plus:'<path d="M12 5v14M5 12h14"/>',more:'<circle cx="5.5" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="18.5" cy="12" r="1.6" fill="currentColor" stroke="none"/>',search:'<circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5"/>',git:'<circle cx="6.5" cy="6" r="2.5"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="8" r="2.5"/><path d="M6.5 8.5v7M17.5 10.5c0 3.5-3.5 4.5-8 4.5"/>',folder:'<path d="M3 6.5A1.5 1.5 0 0 1 4.5 5H9l2 2.5h8.5A1.5 1.5 0 0 1 21 9v9.5a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5z"/>',terminal:'<rect x="3" y="4.5" width="18" height="15" rx="2"/><path d="m7 9.5 3 2.5-3 2.5M12.5 15H17"/>',cross:'<path d="M6 6l12 12M18 6 6 18"/>',left:'<path d="M15 5.5 8.5 12l6.5 6.5"/>',expand:'<path d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7"/>',mic:'<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21M8.5 21h7"/>',filter:'<path d="M3.5 5h17l-6.5 7.5V19l-4 1.5v-8z"/>',star:'<path d="M12 3l2.53 6.12 6.6.51-5.04 4.3 1.55 6.44L12 16.9l-5.64 3.47 1.55-6.44-5.04-4.3 6.6-.51z"/>',power:'<path d="M12 3v8M6.3 6.8a8 8 0 1 0 11.4 0"/>',remote:'<path d="m4 9 4-4 4 4M8 5v9M20 15l-4 4-4-4M16 19v-9"/>',check:'<path d="m4.5 12.5 5 5L19.5 7"/>',play:'<path d="M8 5.5v13l10-6.5z"/>',pause:'<path d="M9 5.5v13M15 5.5v13"/>',globe:'<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.6 3.7 5.6 3.7 9s-1.2 6.4-3.7 9c-2.5-2.6-3.7-5.6-3.7-9S9.5 5.6 12 3z"/>',moon:'<path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z"/>'};
+const I=(n)=>`<svg class="i" viewBox="0 0 24 24">${P[n]}</svg>`;
+const view=(location.hash.slice(1)||'topic');
+const phone=matchMedia('(max-width:640px)').matches;
+document.body.className='v-'+(phone&&view==='plist'?'plist':view==='plist'?'topic':view);
+const active=view==='tasks'?'tasks':view==='settings'?'settings':'topics';
+const railItems=[['topics','chat','话题','<span class="badge">2</span>'],['history','history','历史',''],['tasks','clock','定时','<span class="badge dot"></span>'],['reviews','eye','复盘',''],['skills','book','技能','']];
+document.getElementById('rail').innerHTML='<div class="logo">f</div>'+railItems.map(([k,ic,l,b])=>`<button class="ri ${k===active?'on':''} ${k==='reviews'||k==='skills'?'desk':''}">${I(ic)}<span>${l}</span>${b}</button>`).join('')+'<div class="sp"></div>'+`<button class="ri desk ${active==='settings'?'on':''}">${I('gear')}<span>设置</span></button><button class="ri ph">${I('more')}<span>更多</span></button>`;
+const row=(d,t,m,a,extra='',cls='')=>`<div class="row ${cls}"><span class="d ${d}"></span><span class="t">${t}</span><span class="a">${a}</span><span class="m">${m}</span>${extra}</div>`;
+const topicList=`<div class="lh"><b>话题</b><button class="ib" title="批量">${I('more')}</button><button class="ib" title="新话题">${I('plus')}</button></div>
+<div class="seg"><button class="on">全部 9</button><button>收藏 2</button></div>
+<div class="search">${I('search')}<span>搜索话题 / Ctrl K</span></div>
+<div class="chips"><span class="chip on">需要处理 2</span><span class="chip">运行中 3</span><span class="chip">未读 1</span></div>
+<div class="rows">
+<div class="grp">需要处理</div>
+${row('ask','Deploy notes for 3.38','<span class="hc">claude</span>等你确认：开 2 个子任务','2m')}
+${row('bad','Flaky CI on arm64','<span class="hc cx">codex</span>失败：upstream busy','14m')}
+<div class="grp">进行中</div>
+${row('run','Refactor webui panels','<span class="hc">claude</span>正在编辑 page-body.ts','now','',"on")}
+${row('run','拆分 sidebar 模块','<span class="hc cx">codex</span>子任务 · 运行 3m','now','','sub')}
+${row('run','Slow cart API','<span class="hc">claude</span>work · 读日志','1m')}
+<div class="grp">今天</div>
+${row('','Review PR #42','<span class="hc">claude</span>已完成 · 3 个文件','1h')}
+${row('','Node 22 upgrade','<span class="hc cx">codex</span>已完成','3h')}
+${row('','Fix slugify tests','<span class="hc">claude</span>已完成','5h')}
+</div>`;
+const taskList=`<div class="lh"><b>定时</b><button class="ib">${I('plus')}</button></div>
+<div class="seg"><button class="on">任务 3</button><button>会话 5</button></div>
+<div class="search">${I('search')}<span>搜索任务</span></div>
+<div class="chips"><span class="chip">运行中 1</span><span class="chip on">启用 3</span><span class="chip">暂停 0</span></div>
+<div class="rows">
+${row('run','nightly-ci-report','每天 02:00 · → Node 22 upgrade','运行中','','on')}
+${row('','weekly-deps','每周一 09:00 · 下次 5d 22h','')}
+${row('','disk-check','每 30 分钟 · 下次 21m','')}
+</div>`;
+const setNav=`<div class="lh"><b>设置</b></div><div class="search">${I('search')}<span>搜索设置</span></div><div class="nav">
+<div class="nvh">网关 · config.yaml</div>
+<div class="nv on">智能体<span class="c">5</span></div><div class="nv">子代理</div><div class="nv">会话</div><div class="nv">回复</div><div class="nv">复盘</div><div class="nv">指令文件</div>
+<div class="nvh">本设备</div><div class="nv">通知</div><div class="nv">外观与语言</div><div class="nv">低打扰模式</div></div>`;
+document.getElementById('list').innerHTML=active==='tasks'?taskList:active==='settings'?setNav:topicList;
+const toolsBar=`<div class="tools"><button class="only-narrow">${I('chat')}对话</button><button class="on">${I('git')}更改 <span class="k">2</span></button><button>${I('folder')}文件</button><button>${I('terminal')}终端</button></div>`;
+const chat=`<div class="th"><button class="ib back">${I('left')}</button><span class="tt">Refactor webui panels</span><span class="pill">运行中</span><span class="sp"></span>${toolsBar}<button class="ib">${I('more')}</button></div>
+<div class="ptools"><button class="on">对话</button><button>更改 2</button><button>文件</button><button>终端</button></div>
+<div class="log"><div class="col">
+<div class="msg me">把右侧后台任务面板并进左边，git 和文件改成对话旁边的分栏。<div class="ts">10:02</div></div>
+<div class="msg">先看了一遍现有结构：<code>page-body.ts</code> 里有 8 个浮层，各自一套标题栏。
+<div class="tool">${I('search')} 读取 main.css · 1,945 行</div><div class="tool">${I('folder')} 编辑 page-body.ts</div>
+<div class="chg">${I('git')} 本轮改动 2 个文件 <span class="add">+48</span><span class="del">−31</span><span style="margin-left:auto;color:var(--accent)">在分栏中查看</span></div>
+<div class="ts">10:04</div></div>
+</div></div>
+<div class="bar"><div class="col">
+<div class="status"><span class="hc">claude</span><a>sonnet-5.5 ▾</a> · <a>权限 auto ▾</a> · ~/work/fleetherd <span style="margin-left:auto">${I('power')}</span></div>
+<div class="cmt"><span>page-body.ts L19–L21：这三个图标改成文字</span></div>
+<div class="comp"><span class="in">输入消息</span>${I('plus')}${I('mic')}<button class="send">发送</button></div>
+</div></div>`;
+const taskPage=`<div class="th"><span class="tt">nightly-ci-report</span><span class="pill">运行中</span><span class="sp"></span><button class="btn">暂停</button><button class="btn">立即运行</button><button class="btn p">编辑</button><button class="ib">${I('more')}</button></div>
+<div class="page"><div class="pcol">
+<div class="psub">每天 02:00（UTC）· claude · 每次新会话 · 发到「Node 22 upgrade」</div>
+<div class="sh">提示词</div><div class="card" style="padding:12px 14px"><code style="background:none;padding:0">run nightly-ci-report and post the failing jobs with links</code></div>
+<div class="sh">最近运行</div><div class="card">
+<div class="ci"><span class="l">今天 02:00 · 运行中</span><span class="h">会话 3a91f0c2 · 已 4m</span></div>
+<div class="ci"><span class="l">昨天 02:00 · 成功</span><span class="h">会话 77b0e1d4 · 6m 12s</span></div>
+<div class="ci"><span class="l">11-22 02:00 · 失败</span><span class="h">upstream busy · 重试 1 次</span></div></div>
+</div></div>`;
+const settings=`<div class="th"><span class="tt">智能体</span><span class="sp"></span><span style="color:var(--dim);font-size:12px">保存到 config.yaml · 对所有话题生效</span></div>
+<div class="page"><div class="pcol">
+<div class="card"><div class="ci"><span class="l">默认智能体</span><span class="sg"><span class="on">claude</span><span>codex</span><span>agy</span></span><span class="h">没有路由规则认领的新会话由它回答</span></div></div>
+<div class="sh">本机 · gateway</div>
+<div class="card"><div class="ci"><span class="l"><span class="hc">claude</span> claude</span><span class="sg"><span>plan</span><span>ask</span><span class="on">auto</span></span><span class="h">sonnet-5.5 · 指令 CLAUDE.md + 2 个引用</span></div>
+<div class="ci"><span class="l"><span class="hc cx">codex</span> codex</span><span class="sg"><span>ask</span><span class="on">auto</span></span><span class="h">harness 默认 · 指令 AGENTS.md</span></div></div>
+<div class="sh">远程主机 · host-a</div>
+<div class="card"><div class="ci"><span class="l"><span class="hc">claude</span> cc@host-a</span><span class="sg"><span>ask</span><span class="on">auto</span></span><span class="h">opus-5.5 · 在线</span></div>
+<div class="ci"><span class="l">ag@host-a</span><span class="sg"><span class="on">auto</span></span><span class="h">gemini-3.8-flash · 空闲</span></div></div>
+</div></div>`;
+document.getElementById('main').innerHTML=active==='tasks'?taskPage:active==='settings'?settings:chat;
+const diff=`<div class="ph"><b>更改</b><span class="br">main · 工作区</span><span class="sp" style="flex:1"></span><button class="ib" title="铺满">${I('expand')}</button><button class="ib" title="关闭">${I('cross')}</button></div>
+<div class="modes"><button class="on">工作区</button><button>分支</button><button>已提交</button><button>提交历史</button></div>
+<div class="files"><div class="fr on"><span class="s">M</span>src/platform/webui/page-body.ts<span class="x"><i>+41</i><u>−29</u></span></div><div class="fr"><span class="s a">A</span>client/shell/rail.ts<span class="x"><i>+7</i></span></div></div>
+<div class="diff">
+<div class="dl h"><span class="no"></span>@@ -14,9 +14,9 @@ export const PAGE_BODY</div>
+<div class="dl"><span class="no">14</span> &lt;main id="app" hidden&gt;</div>
+<div class="dl m"><span class="no">15</span>-  &lt;aside id="sidebar" class="panel panel-left"&gt;</div>
+<div class="dl p"><span class="no">15</span>+  &lt;nav id="rail" class="rail"&gt;&lt;/nav&gt;</div>
+<div class="dl p"><span class="no">16</span>+  &lt;aside id="list" class="pane-list"&gt;</div>
+<div class="dl"><span class="no">17</span>     &lt;div id="sidebar-header" class="panel-head"&gt;</div>
+<div class="dl m sel"><span class="no">19</span>-      &lt;span class="sb-tabs"&gt;…Topics…Starred…History…</div>
+<div class="dl p sel"><span class="no">19</span>+      &lt;span class="pane-title"&gt;话题&lt;/span&gt;</div>
+<div class="dl m sel"><span class="no">20</span>-      &lt;button id="clear-topics"&gt;…&lt;button id="read-topics"&gt;</div>
+<div class="dl p"><span class="no">20</span>+      &lt;button id="list-bulk"&gt;⋯&lt;/button&gt;</div>
+<div class="dl"><span class="no">21</span>     &lt;/div&gt;</div>
+</div>
+<div class="cbox"><div class="q">评论 L19–L21 · 加到下方输入框，对话一直可见</div><div class="ta">这三个图标改成文字</div><div class="acts"><button class="btn">取消</button><button class="btn p">添加到消息</button></div></div>`;
+const pane=document.getElementById('pane');
+if(active==='topics'&&!phone){pane.innerHTML='<div class="grip"></div>'+diff;}else pane.remove();
+document.getElementById('sb').innerHTML=`<span class="it rm">${I('remote')}fleetherd</span><span class="it">${I('check')}已连接</span><span class="it"><span class="okc">${I('play')}</span>运行中 3</span><span class="it">${I('pause')}空闲 7</span><span class="sp"></span><span class="it">${I('bell')}通知 开</span><span class="it">${I('moon')}低打扰 关</span><span class="it">${I('globe')}中文</span><span class="it">v3.38.0</span>`;
+if(!phone&&active==='topics'&&innerWidth<1360){document.querySelector('.shell').style.gridTemplateColumns='52px minmax(0,1fr) auto';document.getElementById('list').style.display='none';document.body.classList.add('narrow');}
+</script>
+</body>
+</html>
