@@ -44,6 +44,20 @@ Reader, and Status):
   auto-collapses the primary sidebar when the editor becomes narrow; tablet (`640–1023px`) turns
   sidebars into slide-over drawers; mobile (`< 640px`) switches to a stack-style page shell with a
   bottom tab bar and in-topic tool tabs.
+- **Drag-and-drop splits, view movement, and layout persistence**: on desktop (`≥ 1024px`), drag
+  any editor tab onto the left, right, top, or bottom edge of an editor group to split side by
+  side, or drag tabs within a strip to reorder them (press `Esc` to cancel a drag); a group with a
+  single tab renders as a clean title bar, and switches to a tab strip when two or more tabs are
+  open. Views in the primary sidebar, secondary sidebar, and bottom panel can be dragged between
+  parts or moved via the **⋯** (**Move view**) button in each part header. Layout state is saved
+  automatically in this browser (`localStorage['aa_layout']`) and restored on reload (corrupt state
+  falls back to the default layout). On tablet widths (`640–1023px`), editor splitting is disabled
+  while tab reordering stays enabled.
+- **Layout keyboard shortcuts**: `Ctrl/Cmd+\` splits the active editor right; `Ctrl/Cmd+1`,
+  `Ctrl/Cmd+2`, and `Ctrl/Cmd+3` focus editor groups 1–3; `Ctrl/Cmd+B` toggles the primary sidebar;
+  `Ctrl/Cmd+Alt+B` toggles the secondary sidebar; `Ctrl/Cmd+J` toggles the bottom panel. The
+  **Reset Layout** command (`workbench.action.resetLayout`) clears saved layout state and restores
+  the default arrangement.
 
 `/setting` is a page of its own rather than a message in the transcript: the **Settings** icon at
 the bottom of the activity bar opens it, and typing `/setting` does the same.
