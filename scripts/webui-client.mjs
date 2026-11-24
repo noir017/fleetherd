@@ -3,16 +3,14 @@
 // (`src/platform/webui/page.test-helpers.ts`, which runs the same bytes in jsdom). One function for
 // both, so a page that works in the tests is the page the build ships.
 //
-// Neither output is minified. The script and the stylesheet were moved out of page.ts as they were
-// (Phase 1 Step 1A of docs/refactor-plan.md), and a change that only moves code should not also
-// rewrite every identifier in it: a stack from a failing DOM test, or from an operator's console,
-// still names the function it came from. esbuild still reprints both (comments dropped, its own
-// formatting), which is why tests that assert on source text read the source, not this output.
+// Identifiers are never minified (`minifyIdentifiers` stays false) so a stack from a failing DOM
+// test or an operator's console still names the function it came from. Whitespace and syntax are
+// compacted on `app` to stay within the gzip bundle budget while keeping stacks readable. Tests
+// that assert on source text read the source, not this output.
 //
 // No `target` either: nothing is lowered or prefixed, so what runs is what was written. The script
-// is classic, not a module (`format: 'iife'`), because it was a classic inline script — sloppy
-// mode, `var` hoisting and all — and `tsconfigRaw: {}` keeps esbuild from reading the repo's
-// `strict: true` as `alwaysStrict` and changing that.
+// is bundled as a classic IIFE (`format: 'iife'`), and `tsconfigRaw: {}` keeps esbuild from forcing
+// `alwaysStrict` over the injected `CACHE_CORE` snippet.
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -24,7 +22,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const webui = path.join(root, 'src', 'platform', 'webui');
 
 /** The client script's source, with its two build-time markers still in it. */
-export const APP_ENTRY = path.join(webui, 'client', 'legacy-app.ts');
+export const APP_ENTRY = path.join(webui, 'client', 'main.ts');
 /** The synchronous theme boot script linked in <head> before first paint. */
 export const BOOT_ENTRY = path.join(webui, 'client', 'theme-boot.ts');
 /** The stylesheet's source. */
@@ -91,6 +89,8 @@ export async function buildClient({ outdir } = {}) {
     ...common,
     stdin: { contents: source, loader: 'ts', resolveDir: path.dirname(APP_ENTRY), sourcefile: path.basename(APP_ENTRY) },
     format: 'iife',
+    minifyWhitespace: true,
+    minifySyntax: true,
   });
   const boot = await build({
     ...common,

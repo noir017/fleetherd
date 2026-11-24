@@ -10,7 +10,7 @@
  *
  * ── Where the script and the stylesheet went ─────────────────────────────────
  * Until Phase 1 Step 1A (docs/refactor-plan.md) both were inline here. They now live in
- * `client/` — `legacy-app.ts` and `styles/main.css`, moved as they were — and are bundled by
+ * `client/` — `main.ts` (wiring typed modules) and `styles/main.css` — and are bundled by
  * `scripts/build-webui-assets.mjs` into `dist/webui-assets/` with content-hashed names, which this
  * page links by the names `assets.ts` read from the build's manifest. With no inline script left,
  * the CSP's `script-src` is `'self'` alone (server.ts PAGE_HEADERS).
@@ -20,8 +20,8 @@
  * document in `<script type="application/json" id="boot-config">`, which no browser executes and
  * so no CSP has to allow, read once by the script.
  *
- * The script is still the part of this repo the toolchain cannot see — not typechecked, not
- * linted — so it is still kept deliberately stupid. Every decision that could live in TypeScript
+ * Business decisions still live on the server side of the wire where possible. Every decision
+ * that belongs on the daemon stays in TypeScript there:
  * does: markdown becomes HTML in `web-markdown.ts`, the message shape is fixed in `protocol.ts`,
  * button ids are formed in `core/button-id.ts`. If a change there needs a new *decision*, that
  * decision belongs on this side of the wire.

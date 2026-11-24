@@ -1122,7 +1122,7 @@ export function createGitPanel(deps: GitPanelDeps): GitPanel {
   const ctx: GitCtx = { state, dom, deps };
 
   const open = (source?: GitCustomSource): void => openWindow(ctx, source);
-  // Cross-file contract: turn-changes view in legacy-app.ts checks and calls window.openGitWindow.
+  // Cross-file contract: turn-changes view in features/topic/transcript/markup.ts checks and calls window.openGitWindow.
   window.openGitWindow = open;
   bindControlEvents(ctx);
   bindFileListEvents(ctx);

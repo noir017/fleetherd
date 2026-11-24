@@ -36,7 +36,7 @@ function readStyleSource(entry: string): string {
 
 /** The script and stylesheet as the asset build makes them. */
 export const CLIENT = await buildClient();
-/** The script as written in `client/legacy-app.ts`, with its build-time markers filled. */
+/** The script as written in `client/main.ts`, with its build-time markers filled. */
 export const APP_SOURCE = await appSource();
 /** The stylesheet as written under `client/styles/`, with `@import`s expanded in cascade order. */
 export const STYLE_SOURCE = readStyleSource(STYLE_ENTRY);
