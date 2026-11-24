@@ -27,6 +27,7 @@ const CONTRACTS_EXPORTS = new Set([
   'PanelRef',
 ]);
 const MANIFEST_EXPORTS = new Set(['BootPluginEntry']);
+const SERVER_HOST_EXPORTS = new Set(['PluginHost', 'ServerPluginModule']);
 
 const LIT_HTML_TYPES = `export interface TemplateResult {
   readonly _$litType$: unknown;
@@ -72,7 +73,7 @@ const MANIFEST_DECLARATION = `export interface PluginManifest {
   readonly assets?: readonly string[];
 }`;
 
-const FALLBACK_SERVER_HOST_TYPES = `export interface PluginRouteRequest {
+const SERVER_HOST_SUPPORT_TYPES = `export interface PluginRouteRequest {
   readonly method?: string;
   readonly url?: string;
   readonly headers: Readonly<Record<string, string | readonly string[] | undefined>>;
@@ -104,6 +105,10 @@ export interface TopicSnapshot extends TopicInfo {
 }
 
 export type PluginHostEvent = 'topic' | 'message' | 'turn';
+export type PluginEventKind = PluginHostEvent;
+export type PluginTopicSnapshot = TopicSnapshot;`;
+
+const FALLBACK_SERVER_HOST_TYPES = `${SERVER_HOST_SUPPORT_TYPES}
 
 export interface PluginHost {
   readonly id: string;
@@ -176,6 +181,13 @@ function rewriteClientApi(text) {
     .replace(/typeof import\(["']lit-html["']\)\.render/g, 'HtmlRenderFn');
 }
 
+function rewriteServerHostApi(text) {
+  return text
+    .replace(/\bIncomingMessage\b/g, 'PluginRouteRequest')
+    .replace(/\bServerResponse\b/g, 'PluginRouteResponse')
+    .replace(/\bTopic\[\]/g, 'TopicInfo[]');
+}
+
 function emitDeclarationsInMemory(files) {
   const options = {
     declaration: true,
@@ -232,9 +244,9 @@ export function buildWebuiPluginTypes({ root = DEFAULT_ROOT, outFile = path.join
 
   let serverHostDecls = FALLBACK_SERVER_HOST_TYPES;
   if (hasServerHost) {
-    const extracted = extractDeclarations(requireDts(serverHostTs), undefined);
+    const extracted = extractDeclarations(requireDts(serverHostTs), SERVER_HOST_EXPORTS, rewriteServerHostApi);
     if (extracted.includes('interface PluginHost')) {
-      serverHostDecls = extracted;
+      serverHostDecls = `${SERVER_HOST_SUPPORT_TYPES}\n\n${extracted}`;
     }
   }
 
