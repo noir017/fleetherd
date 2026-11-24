@@ -9,6 +9,7 @@
     "./services/**/*.ts",
     "./workbench/**/*.ts",
     "./plugins/**/*.ts",
+    "./features/**/*.ts",
     "./i18n/**/*.ts",
     "./panels/**/*.ts",
     "./theme.ts",

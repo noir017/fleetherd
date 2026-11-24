@@ -42,6 +42,7 @@ import { OverlayManager } from './services/overlays.js';
 import { applyTopicRows, createStreamClient } from './services/stream.js';
 import { collectCacheableMessages, createCacheService } from './services/cache.js';
 import { createReadsService } from './services/reads.js';
+import { createSettingsFeature, inlineCodeHtml as inl } from './features/settings/index.js';
 
 (function(){
   var $ = function(id){ return document.getElementById(id); };
@@ -169,6 +170,23 @@ import { createReadsService } from './services/reads.js';
   function needsRead(t){ return readsService.needsRead(t); }
   function markAllRead(list, noun, say){ return readsService.markAllRead(list, noun, say); }
   function reportSeen(){ readsService.reportSeen(); }
+  var settingsFeature = createSettingsFeature({
+    settingsPage: settingsPage,
+    settingsBody: settingsBody,
+    settingsTopicEl: settingsTopicEl,
+    settingsClose: settingsClose,
+    settingsOpenBtn: settingsOpenBtn,
+    instrOk: Boolean(BOOT.instructions),
+    getTopic: function(){ return topic; },
+    getTopics: function(){ return topics; },
+    getEpoch: function(){ return epoch; },
+    closeMenus: function(){ setMenu(null, false); },
+    instructions: {
+      ensure: function(){ instructionsPanel.ensure(); },
+      renderOrphans: function(){ return instructionsPanel.renderOrphans(); },
+      renderAgent: function(row, index){ return instructionsPanel.renderAgent(row, index); },
+    },
+  });
   // END WIRING
   // Panels instantiated before makePanel(), which calls paintSchedTab() synchronously on setup.
   var reviewsPanel = createReviewsPanel({
@@ -394,10 +412,10 @@ import { createReadsService } from './services/reads.js';
     settingsPage: settingsPage,
     settingsBody: settingsBody,
     filesPanel: filesPanel,
-    getSettingsMsg: function(){ return settingsMsg; },
-    getSettingsTopic: function(){ return settingsTopic; },
+    getSettingsMsg: function(){ return settingsFeature.getMessage(); },
+    getSettingsTopic: function(){ return settingsFeature.getTopic() || ''; },
     getTopic: function(){ return topic; },
-    renderSettings: renderSettings,
+    renderSettings: function(){ settingsFeature.render(); },
     text: text,
     inl: inl,
     post: post,
@@ -425,29 +443,6 @@ import { createReadsService } from './services/reads.js';
   // this is spent there rather than here.
   var termBoot = TERM_OK && new URLSearchParams(location.search).get('v')==='term';
   var topics = [];
-  // The /setting page: the live settings message it draws, the topic it was opened in, and the
-  // one message whose page the operator closed. A settings message is never a row in the
-  // transcript, and the daemon marks a retired one (wasSettings) so it cannot become one later.
-  // settingsClosed is per message id, so an edit to the page that was put away does not reopen
-  // it — a new /setting is a new message, and that does open.
-  //
-  // A request made from the menu has no message id yet, so closing it while it is still Loading
-  // cannot be remembered that way. It gets a token (settingsReq); the answers are matched to the
-  // tokens by order, since the daemon answers one /setting with one screen, and closing cancels
-  // every token issued so far (settingsClosedUpTo). An answer to a cancelled request is dropped;
-  // a later request has a later token and still opens. A token is also tagged with the topic it
-  // was asked in: an answer arriving after a topic switch belongs to that topic's queue, not the
-  // one on screen.
-  // settingsNote: the page's own line when a control's request failed (cleared by the next screen);
-  // settingsLevel: which level is drawn, so a move between them starts at the top.
-  // settingsListFk: the list's control that last posted, which a move back to the list lands on.
-  var settingsMsg=null, settingsTopic=null, settingsClosed={}, settingsNote=null, settingsLevel='', settingsFade=0, settingsQuery='';
-  var settingsListFk=null;
-  var SETTINGS_FADE_MS=5000;
-  var settingsReq=0, settingsPending=[], settingsClosedUpTo=0, settingsTimer=0;
-  // How long the page waits for the screen before saying the daemon did not answer. The send
-  // itself gives up after fifteen seconds on one attempt, so this is the same patience.
-  var SETTINGS_WAIT_MS=15000;
 
   /**
    * Parents whose sub-agent topics are folded away (paintTopics), per browser. Folded by default:
@@ -674,25 +669,6 @@ import { createReadsService } from './services/reads.js';
     if(schedPane.isOpen()) setSchedules(false);
     if(sbPane.isOpen()) setSidebar(false);
   });
-
-  /**
-   * The gateway's settings page, from the Menu. The command is sent quietly — the daemon
-   * has to build the screen from the live config, and it answers with a message of its own, but a
-   * page opening must not leave a /setting bubble in the transcript.
-   */
-  settingsOpenBtn.addEventListener('click', function(){
-    setMenu(null, false);
-    var token = openSettingsLoading();
-    var t = settingsTopic;
-    if(!token || !t) return;
-    quietCommand('/setting', t).then(function(ok){
-      if(ok) return;
-      forgetSettingsRequest(token);
-      if(!settingsMsg && !settingsPage.hidden) settingsSay(tr('settings.reachErr'));
-    });
-  });
-  settingsClose.addEventListener('click', closeSettings);
-  settingsPage.addEventListener('click', function(e){ if(e.target === settingsPage) closeSettings(); });
 
   /**
    * Low attention (#app.calm in the stylesheet, which says what it changes and why). Per device,
@@ -1741,556 +1717,6 @@ import { createReadsService } from './services/reads.js';
       + bodyHtml
       + (w.truncated > 0 ? '<div class="wd-more">'+text(tr('workdir.truncated', { count: w.truncated }))+'</div>' : '')
       + '</div>';
-  }
-
-  /**
-   * A /setting screen as markup, for the settings page rather than for the transcript.
-   *
-   * The daemon sends the screen as data (WebMessage.settings): groups, rows, values, what control
-   * each row is changed with, and the button id every control posts. Nothing here parses a label
-   * or decides a value — the grid did, because a label was all it had. What IS decided here is
-   * presentation: a choice of up to five short values is drawn as a segmented control (one tap,
-   * every option visible), a longer one as a select, and a per-agent row puts one labelled
-   * control per setting beside the agent's name.
-   *
-   * Every interactive element carries data-fk, a key that survives a redraw (the row's index and
-   * the part of it), so focus can be put back after the daemon's answer replaces the markup.
-   */
-  function settingsScreen(m){
-    var s = m.settings;
-    if(!s) return '';
-    return s.level === 'values' ? settingsValues(s) : settingsList(s);
-  }
-
-  // Escaped text with code spans kept: what the daemon writes in its sentences. Escaping comes
-  // first, so the only markup that can come out is the <code> put in here.
-  function inl(s){
-    return text(s == null ? '' : s).replace(/\x60([^\x60]+)\x60/g, '<code>$1</code>');
-  }
-
-  function settingsNotice(n){
-    if(!n) return '';
-    var tone = n.tone === 'ok' || n.tone === 'error' ? n.tone : 'info';
-    return '<div class="set-notice '+tone+'" role="'+(tone === 'error' ? 'alert' : 'status')+'">'+inl(n.text)+'</div>';
-  }
-
-  /**
-   * The list screen. A group's own rows sit in one card, and its agents — the Agents group's rows
-   * whose control is an agent — follow it as cards of their own (settingsAgents). The daemon puts the
-   * default agent first in that group, so drawing a group's plain rows before its agents keeps the
-   * order it sent.
-   */
-  function settingsList(s){
-    var h = '';
-    if(s.about) h += '<p class="set-about">'+inl(s.about)+'</p>';
-    if(settingsNote) h += settingsNotice({ tone: 'error', text: settingsNote });
-    h += settingsNotice(s.notice);
-    var notes = {}, groups = s.groups || [];
-    for(var g=0;g<groups.length;g++) notes[groups[g].name] = groups[g].note;
-    var rows = s.rows || [], secs = [], agentsShown = false;
-    for(var i=0;i<rows.length;i++){
-      var name = String(rows[i].group == null ? '' : rows[i].group), sec = secs[secs.length-1];
-      if(!sec || sec.name !== name){ sec = { name: name, plain: [], agents: [] }; secs.push(sec); }
-      (rows[i].control && rows[i].control.kind === 'agent' ? sec.agents : sec.plain).push(i);
-    }
-    for(var k=0;k<secs.length;k++){
-      var x = secs[k];
-      h += '<section class="set-sec">'+(x.name ? '<h3 class="set-group">'+text(x.name)+'</h3>' : '')
-        + (notes[x.name] ? '<p class="set-gnote">'+inl(notes[x.name])+'</p>' : '');
-      if(x.plain.length){
-        h += '<div class="set-card">';
-        for(var p=0;p<x.plain.length;p++) h += settingsItem(rows[x.plain[p]], x.plain[p]);
-        h += '</div>';
-      }
-      if(x.agents.length) h += settingsAgents(rows, x.agents);
-      // The gateway's files no agent reads have no card of their own; the Agents section is where
-      // a person looks for them (settingsOrphans). With no Agents section at all, they follow the
-      // last one so they are still reachable.
-      if(x.name === 'Agents' || x.name === '代理设置'){ h += instructionsPanel.renderOrphans(); agentsShown = true; }
-      h += '</section>';
-    }
-    if(!agentsShown) h += instructionsPanel.renderOrphans();
-    return h;
-  }
-
-  /** A row's name, its badges and its one line: the left half of every kind of row. */
-  function settingsText(r){
-    var badges = '';
-    if(r.here) badges += '<span class="set-badge here" title="'+text(tr('settings.thisTopicTitle', { title: settingsTopicName(settingsTopic) }))+'">'+text(tr('settings.thisTopic'))+'</span>';
-    if(r.effectLabel) badges += '<span class="set-badge restart"'+(r.effectDetail ? ' title="'+text(r.effectDetail)+'"' : '')+'>'+text(r.effectLabel)+'</span>';
-    return '<div class="set-tx"><div class="set-label">'+settingsLabel(r.label)
-      + (r.targetKind ? '<span class="set-kind">'+text(r.targetKind)+'</span>' : '') + badges + '</div>'
-      + (r.hint ? '<div class="set-hint">'+inl(r.hint)+'</div>' : '') + '</div>';
-  }
-
-  /**
-   * A row's name. The scheduled tasks' row is named the way a chat button is, \u23f0 first (core
-   * schedule-menu.ts), and a glyph is the reader's font's to draw — an empty box where it has none
-   * (Chromium without an emoji font, 2026-11-19). The page draws its own clock instead.
-   */
-  function settingsLabel(label){
-    var s = String(label == null ? '' : label), m = /^\u23f0\uFE0F? */.exec(s);
-    return '<span>'+(m ? IC.icon.clock+' '+text(s.slice(m[0].length)) : text(s))+'</span>';
-  }
-
-  function settingsItem(r, i){
-    var c = r.control || { kind: 'list' };
-    if(c.kind === 'switch'){
-      return '<div class="set-item sw">' + settingsText(r)
-        + '<div class="set-ctl"><button type="button" class="set-switch" role="switch" aria-checked="'+(c.on ? 'true' : 'false')+'"'
-        + ' aria-label="'+text(r.label)+'" data-fk="r'+i+'" data-btn="'+text(c.set)+'"></button></div></div>';
-    }
-    if(c.kind === 'choice') return '<div class="set-item">' + settingsText(r) + '<div class="set-ctl">'+settingsChoice(r.label, c.options || [], 'r'+i, r.value)+'</div></div>';
-    // A row with a screen of its own, or a way to another menu: the whole row is the button.
-    var value = '';
-    if(c.kind !== 'link' && r.value != null){
-      value = '<span class="set-vv"><span class="set-v'+(r.unset ? ' unset' : '')+'" title="'+text(r.value)+'">'+text(r.value)+'</span>'
-        + (r.valueNote ? '<span class="set-vnote">'+text(r.valueNote)+'</span>' : '') + '</span>';
-    }
-    return '<button type="button" class="set-item set-open" data-fk="r'+i+'" data-btn="'+text(r.buttonId)+'">'
-      + settingsText(r) + value + '<span class="set-chev" aria-hidden="true">'+IC.icon.chevronRight+'</span></button>';
-  }
-
-  /**
-   * The agent cards, under a heading per machine (the row's place, which the daemon names as the
-   * /agent menu does) when they run on more than one. Machines in the order their first agent
-   * comes in config.yaml, and agents in config order within each: the order a person already knows
-   * them in from that menu.
-   */
-  function settingsAgents(rows, idx){
-    var places = [], by = new Map();
-    for(var k=0;k<idx.length;k++){
-      var p = String(rows[idx[k]].place || '');
-      if(!by.has(p)){ by.set(p, []); places.push(p); }
-      by.get(p).push(idx[k]);
-    }
-    var h = '<div class="ag-list">', heads = places.length > 1;
-    for(var j=0;j<places.length;j++){
-      var list = by.get(places[j]);
-      if(heads) h += '<h4 class="ag-place"><span>'+text(places[j] || tr('settings.elsewhere'))+'</span><span class="ag-count">'+list.length+'</span></h4>';
-      for(var n=0;n<list.length;n++) h += settingsAgent(rows[list[n]], list[n]);
-    }
-    return h + '</div>';
-  }
-
-  /**
-   * Which agent's card is open, by its id: the page's alone, never posted. It survives every redraw
-   * — the daemon's answer to a change in it, the instruction list arriving, a model screen and back —
-   * and goes when the page is closed.
-   */
-  var agOpen = null;
-
-  /**
-   * The hue a harness is drawn in, from its name: the same harness the same colour on every card
-   * and every page, with nothing to keep in step with the list of harnesses. The palette is ordered
-   * so the names this project's harnesses hash to land far apart — Claude Code orange, Codex green,
-   * OpenCode blue, Antigravity violet, codebuddy yellow — and the six built-in names on six different
-   * hues (page.dom.test.ts pins that).
-   */
-  var AG_HUES = [0, 52, 245, 24, 188, 330, 100, 210, 280, 158];
-  function agHue(kind){
-    var s = String(kind || ''), x = 0;
-    for(var i=0;i<s.length;i++) x = (x * 31 + s.charCodeAt(i)) >>> 0;
-    return AG_HUES[x % AG_HUES.length];
-  }
-
-  function agentFieldOf(fields, label){
-    for(var k=0;k<fields.length;k++) if(fields[k].label === label) return fields[k];
-    return null;
-  }
-
-  /**
-   * One agent's card. Shut, it is a summary a person reads down a list by: the name and its badges,
-   * the harness in its colour, the model and the level, unset ones in italics. Open, it is every
-   * setting the daemon sent for the agent (settingsField), and then the instruction files it reads
-   * (agentInstr). The fields carry the daemon's button ids; the page decides only layout.
-   */
-  function settingsAgent(r, i){
-    var fields = (r.control && r.control.fields) || [], id = String(r.target || r.label), open = agOpen === id;
-    var badges = (r.here ? '<span class="set-badge here" title="'+text(tr('settings.thisTopicTitle', { title: settingsTopicName(settingsTopic) }))+'">'+text(tr('settings.thisTopic'))+'</span>' : '')
-      + (r.defaultAgent ? '<span class="set-badge def" title="'+text(tr('settings.defaultBadgeTitle'))+'">'+text(tr('chat.defaultTag'))+'</span>' : '');
-    var sum = r.targetKind ? ['<span class="ag-kind">'+text(r.targetKind)+'</span>'] : [];
-    for(var k=0;k<fields.length;k++){
-      var f = fields[k], v = f.value == null ? '' : String(f.value);
-      sum.push('<span class="'+(f.label === 'Model' || f.label === '模型' ? 'ag-mono' : 'ag-lvl')+(f.unset ? ' unset' : '')+'" title="'+text(f.label+': '+v+(f.unset ? tr('settings.notSetParen') : ''))+'">'+text(v)+'</span>');
-    }
-    var body = '';
-    for(var n=0;n<fields.length;n++){
-      body += '<div class="ag-field"><span class="ag-lab">'+text(fields[n].label)+'</span><div class="ag-val">'
-        + settingsField(r.label, fields[n], 'r'+i+'f'+n) + '</div></div>';
-    }
-    body += instructionsPanel.renderAgent(r, i);
-    return '<div class="ag-card'+(open ? ' open' : '')+'" style="--ag-h:'+agHue(r.targetKind)+'" role="group" aria-label="'+text(r.label)+'" data-ag="'+text(id)+'">'
-      + '<button type="button" class="ag-top" data-fk="r'+i+'x" aria-expanded="'+(open ? 'true' : 'false')+'" aria-controls="ag-b'+i+'">'
-      + '<span class="ag-who"><span class="ag-id"><span class="ag-name">'+text(r.label)+'</span>'+badges+'</span>'
-      + '<span class="ag-sum">'+sum.join('<span class="ag-sep" aria-hidden="true">\u00b7</span>')+'</span></span>'
-      + '<span class="ag-chev" aria-hidden="true">'+IC.icon.chevronDown+'</span></button>'
-      + '<div class="ag-body" id="ag-b'+i+'"'+(open ? '' : ' hidden')+'>'+body+'</div></div>';
-  }
-
-  /** Open one agent's card, or shut it; any other open card shuts. Drawn here, never posted. */
-  function toggleAgent(top){
-    var card = top.closest('.ag-card');
-    if(!card) return;
-    var open = top.getAttribute('aria-expanded') !== 'true', cards = settingsBody.querySelectorAll('.ag-card');
-    for(var i=0;i<cards.length;i++){
-      var on = open && cards[i] === card, t = cards[i].querySelector('.ag-top'), b = cards[i].querySelector('.ag-body');
-      cards[i].classList.toggle('open', on);
-      if(t) t.setAttribute('aria-expanded', on ? 'true' : 'false');
-      if(b) b.hidden = !on;
-    }
-    agOpen = open ? card.getAttribute('data-ag') : null;
-  }
-
-  // agent is the row's name, carried into every control's accessible name: several agents' cards
-  // sit on one page, so a reader that hears only "Model" cannot tell whose it is.
-  function settingsField(agent, f, key){
-    var c = f.control || { kind: 'list' }, v = f.value == null ? '' : String(f.value);
-    var unset = f.unset ? ' unset' : '', tip = f.unset ? text(v + tr('settings.notSetParen')) : text(v);
-    var badge = f.effectLabel ? '<span class="set-badge restart"'+(f.effectDetail ? ' title="'+text(f.effectDetail)+'"' : '')+'>'+text(f.effectLabel)+'</span>' : '';
-    // Under a value, what it cannot say by itself: where it comes from (a pinned mode, a running
-    // session's, a pod's file), and for a level the chosen level's meaning — the levels are five
-    // short words, and what each one asks is the whole point of picking one. A level that was never
-    // set says so: the control shows what applies, and a selected button cannot say it was a default.
-    var note = f.valueNote ? String(f.valueNote) : (f.unset && c.kind === 'choice' ? tr('settings.notSet') : '');
-    var foot = function(extra){
-      var parts = [];
-      if(extra) parts.push('<span>'+text(extra)+'</span>');
-      if(note) parts.push('<span>'+text(note)+'</span>');
-      return parts.length || badge ? '<div class="ag-note">'+parts.join('<span aria-hidden="true">\u00b7</span>')+badge+'</div>' : '';
-    };
-    if(c.kind === 'choice'){
-      var opts = c.options || [], now = null;
-      for(var k=0;k<opts.length;k++) if(opts[k].current) now = opts[k];
-      // One level on offer (an API agent asks about nothing) is a fact, not a control: a control
-      // with a single option invites a tap that cannot change anything.
-      if(opts.length < 2){
-        var only = opts[0];
-        return '<span class="ag-fixed'+unset+'" title="'+(only && only.detail ? text(only.detail) : tip)+'">'+text(only ? only.label : v)+'</span>' + foot(only && only.detail);
-      }
-      // The levels side by side where they fit (five short words do), a select where one is long:
-      // an open card has the width a table column did not.
-      return settingsChoice(agent + ' \u00b7 ' + f.label, opts, key, v, false, f.unset ? 'unset' : '') + foot(now && now.detail);
-    }
-    return '<button type="button" class="ag-open" data-fk="' + key + '" data-btn="' + text(f.buttonId) + '"'
-      + ' aria-label="' + text(agent + ' \u00b7 ' + f.label + ': ' + v) + '">'
-      + '<span class="set-v' + unset + '" title="' + tip + '">' + text(v) + '</span>'
-      + '<span class="set-chev" aria-hidden="true">' + IC.icon.chevronRight + '</span></button>' + foot('');
-  }
-
-  // key is what its controls' data-fk is built from: a row's ("r3"), or one field of an agent's
-  // row ("r3f1"), so a redraw can put focus back on the exact control that was used.
-  function settingsChoice(label, opts, key, value, select, cls){
-    var short = !select && opts.length > 0 && opts.length <= 5;
-    for(var k=0;k<opts.length;k++) if(String(opts[k].label).length > 6) short = false;
-    var h = '', any = false;
-    if(short){
-      for(var j=0;j<opts.length;j++){
-        var o = opts[j];
-        h += '<button type="button" role="radio" aria-checked="'+(o.current ? 'true' : 'false')+'" data-fk="'+key+'o'+j+'" data-btn="'+text(o.buttonId)+'"'
-          + (o.detail ? ' title="'+text(o.detail)+'"' : '')+'>'+text(o.label)+'</button>';
-      }
-      return '<div class="set-seg" role="radiogroup" aria-label="'+text(label)+'">'+h+'</div>';
-    }
-    for(var n=0;n<opts.length;n++){
-      var p = opts[n];
-      if(p.current) any = true;
-      // The value alone: a closed select shows its option's whole text, and a value with its
-      // explanation was cut mid-sentence at 390px. The row's hint says what the values mean.
-      h += '<option value="'+text(p.buttonId)+'"'+(p.current ? ' selected' : '')+(p.detail ? ' title="'+text(p.detail)+'"' : '')+'>'+text(p.label)+'</option>';
-    }
-    // A value none of the options names (a window typed by hand, 90m) is still shown as what it is.
-    if(!any) h = '<option value="" selected disabled>'+text(value == null ? '' : value)+'</option>' + h;
-    return '<select class="set-select'+(cls ? ' '+cls : '')+'" data-fk="'+key+'" aria-label="'+text(label)+'">'+h+'</select>';
-  }
-
-  function settingsValues(s){
-    var h = '', hd = s.head, n = s.nav || {};
-    if(n.back) h += '<button type="button" class="set-back" data-fk="back" data-btn="'+text(n.back)+'">'+IC.icon.chevronLeft+' '+text(tr('menu.allSettings'))+'</button>';
-    if(hd){
-      h += '<div class="set-head"><h3><span>'+text(hd.label)+'</span>'
-        + (hd.target ? '<span class="set-tgt">'+text(hd.target)+'</span>' : '')
-        + (hd.targetKind ? '<span class="set-kind">'+text(hd.targetKind)+'</span>' : '') + '</h3>'
-        + '<p class="set-now">'+text(tr('settings.now'))+'<span class="set-v'+(hd.unset ? ' unset' : '')+'">'+text(hd.value)+'</span></p>'
-        + (hd.source ? '<p class="set-src">'+inl(hd.source)+'</p>' : '')
-        + '<p class="set-desc">'+inl(hd.description)+'</p>'
-        + (hd.effect ? '<p class="set-when">'+inl(hd.effect)+'</p>' : '') + '</div>';
-    }
-    if(settingsNote) h += settingsNotice({ tone: 'error', text: settingsNote });
-    h += settingsNotice(s.notice);
-    var opts = s.options || [];
-    // One field for both: it filters a long list as it is typed into, and Use (or Enter) takes
-    // what is typed as the value — a harness takes model names its list never offers.
-    if(s.typed){
-      h += '<div class="set-typed"><input type="text" class="set-type" data-fk="typed" data-btn="'+text(s.typed.buttonId)+'"'
-        + ' placeholder="'+text(opts.length > 8 ? tr('settings.filterOrType') : s.typed.placeholder)+'" aria-label="'+text(s.typed.placeholder)+'"'
-        + ' autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="done">'
-        + '<button type="button" class="set-use" data-fk="use">'+text(tr('common.use'))+'</button></div>';
-    }
-    if(s.loading || (hd && hd.hint)) h += '<div class="set-hintbox'+(s.loading ? ' loading' : '')+'">'+(s.loading ? '<span class="set-spin" aria-hidden="true"></span>' : '')+inl(hd && hd.hint ? hd.hint : tr('common.loading'))+'</div>';
-    if(opts.length){
-      h += '<div class="set-card set-list">';
-      for(var i=0;i<opts.length;i++) h += settingsOption(opts[i], i);
-      h += '</div><p class="set-nomatch" hidden>'+text(tr('settings.noModelMatch'))+'</p>';
-    }
-    if(n.pageCount > 1){
-      h += '<div class="set-nav">'
-        + (n.prev ? '<button type="button" data-fk="prev" data-btn="'+text(n.prev)+'">'+IC.icon.chevronLeft+' '+text(tr('common.prev'))+'</button>' : '')
-        + '<span class="set-page">'+text(n.page)+' / '+text(n.pageCount)+'</span>'
-        + (n.next ? '<button type="button" data-fk="next" data-btn="'+text(n.next)+'">'+text(tr('common.next'))+' '+IC.icon.chevronRight+'</button>' : '')
-        + '</div>';
-    }
-    return h;
-  }
-
-  function settingsOption(o, i){
-    return '<button type="button" class="set-opt'+(o.current ? ' on' : '')+'" data-fk="o'+i+'" data-btn="'+text(o.buttonId)+'"'
-      + (o.current ? ' aria-current="true"' : '')+' data-q="'+text(String(o.label+' '+(o.detail || '')).toLowerCase())+'">'
-      + '<span class="set-check" aria-hidden="true">'+(o.current ? IC.icon.check : '')+'</span>'
-      + '<span class="set-opt-main"><span class="set-opt-label">'+text(o.label)+'</span>'
-      + (o.detail ? '<span class="set-opt-detail">'+text(o.detail)+'</span>' : '')
-      + '</span></button>';
-  }
-
-  // ── The settings page ────────────────────────────────────────────────────────
-  /**
-   * /setting as a page of its own, not a message in the transcript.
-   *
-   * The daemon already answers /setting with one message carrying the structured screen
-   * (SettingsScreen) and the button ids that write config.yaml. That is still the only source of
-   * the rows, the values and the writes — this page never parses a label or builds a value. It
-   * only moves the drawing out of the transcript and into a window: the message is taken out of
-   * the log before it is painted, and its updates (the daemon edits the same message when a row is
-   * tapped) are painted into this page instead. Closing the page is remembered per message id, so
-   * a late edit does not reopen what the operator put away.
-   *
-   * It is bound to the topic it was opened in, though what it sets is not that topic's: every row
-   * is config.yaml, for every conversation. The binding is mechanical — the buttons carry that
-   * conversation's message id, and "this topic" marks the agent answering it — so switching topics
-   * closes the page rather than leaving it pointing at the old one.
-   */
-  function settingsKey(m){ return (m._g || m.g || epoch) + ':' + m.id; }
-
-  function settingsTopicName(id){
-    for(var i=0;i<topics.length;i++) if(topics[i].id===id) return topics[i].title || tr('common.untitled');
-    return tr('common.untitled');
-  }
-
-  // Where these settings live, which is the same for every topic. The bar used to name the topic
-  // the page was opened in, and that read as "these are this topic's settings" — they never were.
-  function paintSettingsTopic(){
-    settingsTopicEl.textContent = tr('settings.savedWhere');
-    settingsTopicEl.title = tr('settings.openedFrom', { title: settingsTopicName(settingsTopic) });
-  }
-
-  /**
-   * Draw the page from the message it holds. Focus goes back to the control that had it — the
-   * daemon's answer to a switch replaces the markup, and a keyboard user would otherwise be sent
-   * back to the top of the page after every toggle. A move to a value screen starts at the top; a
-   * move back to the list lands on the control that left it (settingsListFk), whose card is still
-   * open — the top of the page was three screens of agents away from the one being set.
-   */
-  function renderSettings(){
-    if(!settingsMsg) return;
-    var a = document.activeElement, fk = a && settingsBody.contains(a) ? a.getAttribute('data-fk') : null;
-    var level = settingsMsg.settings ? settingsMsg.settings.level : '';
-    var typed = settingsBody.querySelector('.set-type');
-    if(typed) settingsQuery = typed.value;
-    settingsBody.innerHTML = settingsScreen(settingsMsg);
-    if(INSTR_OK && level === 'list') instructionsPanel.ensure();
-    if(level !== settingsLevel){
-      var back = level === 'list' && settingsLevel === 'values' ? settingsListFk : null;
-      settingsBody.scrollTop = 0; fk = back; settingsQuery = '';
-    }
-    settingsLevel = level;
-    // What was typed survives the redraw — the list arriving after "asking" is one — and so does
-    // the filter it applies.
-    var field = settingsBody.querySelector('.set-type');
-    if(field && settingsQuery){ field.value = settingsQuery; filterSettings(); }
-    // A notice that is good news fades once it has been seen; an error stays until the next screen.
-    clearTimeout(settingsFade);
-    var note = settingsBody.querySelector('.set-notice.ok, .set-notice.info');
-    if(note) settingsFade = setTimeout(function(){ note.classList.add('faded'); }, SETTINGS_FADE_MS);
-    if(fk){
-      var to = settingsBody.querySelector('[data-fk="'+fk+'"]');
-      if(to && to.focus) to.focus();
-    }
-  }
-
-  /**
-   * A live settings screen arrived: draw it, or update the page already drawing it.
-   *
-   * An edit of a page the operator closed is dropped; a new message is a new page. That is the
-   * whole rule, and it is why the id is remembered rather than a boolean. An answer that belongs
-   * to a request the operator closed while it was still Loading is dropped too — the request is
-   * identified by its token, and the answers come back in the order they were asked for.
-   */
-  function takeSettings(m){
-    m._g = m.g || epoch;
-    var k = settingsKey(m);
-    // An edit of the screen already on the page: update it in place, and do not consume a
-    // pending request — this answer belongs to the message, not to a new question.
-    if(!settingsPage.hidden && settingsMsg && settingsMsg.id === m.id){
-      settingsMsg = m;
-      settingsNote = null;
-      renderSettings();
-      return;
-    }
-    var wasHidden = settingsPage.hidden;
-    if(wasHidden && settingsClosed[k]) return;
-    if(!topic) return;
-    var token = 0;
-    for(var i=0;i<settingsPending.length;i++){
-      if(settingsPending[i].t !== topic) continue;
-      token = settingsPending[i].n;
-      settingsPending.splice(i, 1);
-      break;
-    }
-    if(wasHidden && token && token <= settingsClosedUpTo) return;
-    settingsMsg = m;
-    settingsNote = null;
-    settingsLevel = '';
-    settingsTopic = topic;
-    paintSettingsTopic();
-    renderSettings();
-    settingsPage.hidden = false;
-    settingsBody.scrollTop = 0;
-    disarmSettingsWait();
-  }
-
-  /** The page, before the daemon has answered: it says which topic it is about at once. */
-  function openSettingsLoading(){
-    if(!topic) return 0;
-    settingsMsg = null;
-    settingsTopic = topic;
-    settingsBody.innerHTML = '<div class="set-loading">'+text(tr('settings.loading'))+'</div>';
-    paintSettingsTopic();
-    settingsPage.hidden = false;
-    settingsBody.scrollTop = 0;
-    var token = ++settingsReq;
-    settingsPending.push({ t: topic, n: token });
-    armSettingsWait();
-    return token;
-  }
-
-  /** Stop waiting for an answer: the page is open, closed, or the request failed. */
-  function disarmSettingsWait(){
-    if(settingsTimer){ clearTimeout(settingsTimer); settingsTimer = 0; }
-  }
-
-  /**
-   * Say so rather than sitting on Loading for ever: the daemon may have dropped the request, or
-   * answered with something that is not a screen at all. The page stays up, so the operator can
-   * close it and try again.
-   */
-  function armSettingsWait(){
-    disarmSettingsWait();
-    settingsTimer = setTimeout(function(){
-      settingsTimer = 0;
-      if(settingsPage.hidden || settingsMsg) return;
-      settingsSay(tr('settings.noAnswer'));
-    }, SETTINGS_WAIT_MS);
-  }
-
-  /** The answer to a request that failed on the way out will never arrive; let its token go. */
-  function forgetSettingsRequest(token){
-    for(var i=0;i<settingsPending.length;i++){
-      if(settingsPending[i].n !== token) continue;
-      settingsPending.splice(i, 1);
-      return;
-    }
-  }
-
-  function settingsSay(s){
-    settingsBody.innerHTML = '<div class="set-loading">'+text(s)+'</div>';
-  }
-
-  function closeSettings(){
-    if(settingsPage.hidden) return;
-    if(settingsMsg) settingsClosed[settingsKey(settingsMsg)] = 1;
-    // Every request issued so far is cancelled, including one still in flight while Loading —
-    // otherwise its answer would reopen the page the operator just put away.
-    if(settingsReq) settingsClosedUpTo = Math.max(settingsClosedUpTo, settingsReq);
-    disarmSettingsWait();
-    settingsPage.hidden = true;
-    settingsMsg = null;
-    settingsNote = null;
-    settingsTopic = null;
-    settingsListFk = null;
-    agOpen = null;
-    settingsBody.textContent = '';
-  }
-
-  /**
-   * A control on the settings page was used. Posted like any menu button, with the page's own
-   * message and topic. A switch or a segment shows its new state at once — the round trip is the
-   * daemon writing config.yaml, and a control that sits unmoved for it reads as broken — and the
-   * daemon's answer redraws the page from what was actually written. When the answer cannot come
-   * (the request failed, or the message is gone), the page is redrawn from what it last had, which
-   * puts the control back, with a line saying why.
-   */
-  /** Show only the values whose name or meaning holds what is typed, and say so when none does. */
-  function filterSettings(){
-    var field = settingsBody.querySelector('.set-type');
-    var q = field ? field.value.trim().toLowerCase() : '';
-    var opts = settingsBody.querySelectorAll('.set-list .set-opt'), shown = 0;
-    for(var i=0;i<opts.length;i++){
-      var hit = !q || (opts[i].getAttribute('data-q') || '').indexOf(q) >= 0;
-      opts[i].hidden = !hit;
-      if(hit) shown++;
-    }
-    var none = settingsBody.querySelector('.set-nomatch');
-    if(none) none.hidden = !(q && opts.length && !shown);
-  }
-
-  /** Use what is typed: the click carries it as its value (ButtonInteraction.value). */
-  function useTyped(){
-    var field = settingsBody.querySelector('.set-type');
-    if(!field) return;
-    var v = field.value.trim();
-    if(!v){ field.focus(); return; }
-    postSetting(field, field.getAttribute('data-btn'), v);
-  }
-
-  function postSetting(el, id, value){
-    if(!settingsMsg || !settingsTopic || !id) return;
-    var msgId = settingsMsg.id;
-    if(settingsLevel === 'list') settingsListFk = el.getAttribute('data-fk');
-    if(el.getAttribute('role') === 'switch') el.setAttribute('aria-checked', el.getAttribute('aria-checked') === 'true' ? 'false' : 'true');
-    if(el.getAttribute('role') === 'radio'){
-      var peers = el.parentNode ? el.parentNode.children : [];
-      for(var i=0;i<peers.length;i++) peers[i].setAttribute('aria-checked', peers[i] === el ? 'true' : 'false');
-    }
-    el.disabled = true;
-    el.classList.add('busy');
-    var fail = function(why){
-      if(!settingsMsg || settingsMsg.id !== msgId) return;
-      settingsNote = why;
-      renderSettings();
-    };
-    // A limit, unlike a transcript menu's tap: a request that goes quiet would leave the control
-    // half-moved for ever, with nothing on the page to say the change never happened.
-    var body = {topic:settingsTopic,messageId:msgId,buttonId:id};
-    if(value) body.value = value;
-    post('api/click',body,2,SETTINGS_WAIT_MS)
-      .then(function(r){
-        if(r.ok) return;
-        fail(r.status === 409 || r.status === 404
-          ? tr('settings.outOfDate')
-          : tr('settings.httpErr', { status: r.status }));
-      }, function(){ fail(tr('settings.reachChangeErr')); });
-  }
-
-  /**
-   * Send a command the operator did not type — the Menu asking the daemon for its own
-   * settings screen. quiet tells the room not to write it into the conversation: a page opening
-   * must not leave a /setting bubble in the transcript, and nothing on the daemon's side needs
-   * the echo (the answer is a new message of its own).
-   */
-  function quietCommand(cmd, t){
-    var nonce = Math.random().toString(36).slice(2)+Date.now().toString(36);
-    return post('api/send', {topic:t, text:cmd, nonce:nonce, quiet:true}, 2)
-      .then(function(r){ return r.ok; }, function(){ return false; });
   }
 
   /**
@@ -4210,7 +3636,7 @@ import { createReadsService } from './services/reads.js';
     // The settings page is bound to the topic it was opened in: its rows write that conversation's
     // agent and model, and its buttons name a message that topic holds. Following another topic
     // puts it away rather than leaving it pointing at the one being left.
-    closeSettings();
+    settingsFeature.close();
     // The git window reads the directory of the topic it was opened on; following another topic
     // puts it away rather than leaving it pointing at the one being left.
     gitPanel.close();
@@ -4991,10 +4417,7 @@ import { createReadsService } from './services/reads.js';
       // one (wasSettings) stays out of the transcript for good. Anything else that edits the
       // message the page is drawing — the scheduled-task handover does — puts the page away and
       // is drawn as the menu it has become.
-      var sm = ev.msg;
-      if(sm && sm.settings){ takeSettings(sm); return; }
-      if(sm && sm.wasSettings) return;
-      if(sm && settingsMsg && sm.id === settingsMsg.id) closeSettings();
+      if(settingsFeature.handleMessage(ev.msg)) return;
       // Before the upsert: if this is the echo of something typed here, it takes over the node
       // that local message is already occupying rather than appearing underneath it.
       claim(ev.msg);
@@ -5825,38 +5248,6 @@ import { createReadsService } from './services/reads.js';
     if(empty) empty.hidden = shown > 0;
   });
 
-  // The settings page's rows and values are the same buttons the transcript's menus carry, so
-  // they post through the same function — with the topic the page was opened in, not whichever
-  // one is on screen (the page is closed when that changes, but the two are not the same fact).
-  settingsBody.addEventListener('click', function(e){
-    if(!e.target.closest || !settingsMsg || !settingsTopic) return;
-    if(e.target.closest('.set-use')){ useTyped(); return; }
-    var top = e.target.closest('.ag-top');
-    if(top){ toggleAgent(top); return; }
-    var b = e.target.closest('button[data-btn]');
-    // A switch row is a target as a whole, as a settings row is anywhere: the label is the bigger
-    // half of it, and on a phone the one a thumb lands on.
-    if(!b){
-      var row = e.target.closest('.set-item.sw');
-      b = row ? row.querySelector('.set-switch') : null;
-    }
-    if(!b || b.disabled) return;
-    postSetting(b, b.getAttribute('data-btn'));
-  });
-  settingsBody.addEventListener('input', function(e){
-    if(e.target && e.target.classList && e.target.classList.contains('set-type')) filterSettings();
-  });
-  settingsBody.addEventListener('keydown', function(e){
-    if(e.key !== 'Enter' || !e.target || !e.target.classList || !e.target.classList.contains('set-type')) return;
-    e.preventDefault();
-    useTyped();
-  });
-  settingsBody.addEventListener('change', function(e){
-    var sel = e.target;
-    if(!sel || !sel.classList || !sel.classList.contains('set-select')) return;
-    postSetting(sel, sel.value);
-  });
-
   /**
    * A file the download table has since evicted, or one deleted off disk, answers 404 — and an
    * <img> says so with a broken frame that reads like a bug in the page. Hide it and the link
@@ -5899,7 +5290,7 @@ import { createReadsService } from './services/reads.js';
     var hintsOpen = !hints.hidden;
     var overlay = hintsOpen || !lightbox.hidden || !reader.hidden || !idleDialog.hidden || !rowMenu.hidden
       || openMenu() || !skillsWin.hidden || !settingsPage.hidden || !taskPage.hidden || filesPanel.isOpen() || gitPanel.isOpen();
-    closeShot(); closeReader(); closeIdle(); closeSkills(); closeSettings(); filesPanel.close(); gitPanel.close();
+    closeShot(); closeReader(); closeIdle(); closeSkills(); settingsFeature.close(); filesPanel.close(); gitPanel.close();
     closeTaskPage(false);
     closeRowMenu(true);
     if(hintsOpen){ hints.hidden = true; hints.innerHTML = ''; }
@@ -7357,19 +6748,7 @@ import { createReadsService } from './services/reads.js';
       if(Object.prototype.hasOwnProperty.call(els, mk) && data[mk]) paint(mk);
     }
     if(!btwBox.hidden) renderBtw(false);
-    if(!settingsPage.hidden){
-      paintSettingsTopic();
-      var token = openSettingsLoading();
-      var t = settingsTopic;
-      if(token && t){
-        quietCommand('/setting', t).then(function(ok){
-          if(!ok){
-            forgetSettingsRequest(token);
-            if(!settingsMsg && !settingsPage.hidden) settingsSay(tr('settings.reachErr'));
-          }
-        });
-      }
-    }
+    settingsFeature.onLocaleChange();
     if(!modelPop.hidden){
       mpHeading.textContent = mp.opt ? tr('modelPop.headingOpt', { name: optName(mp.opt) }) : tr('modelPop.headingModel');
       mpFilter.placeholder = mp.opt ? tr('common.filter') : tr('modelPop.filterModels');
