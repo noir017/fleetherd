@@ -43,6 +43,7 @@ import { applyTopicRows, createStreamClient } from './services/stream.js';
 import { collectCacheableMessages, createCacheService } from './services/cache.js';
 import { createReadsService } from './services/reads.js';
 import { createSettingsFeature, inlineCodeHtml as inl } from './features/settings/index.js';
+import { createTopicStatusController, stClock, stLeft } from './features/topic/status/index.js';
 
 (function(){
   var $ = function(id){ return document.getElementById(id); };
@@ -187,6 +188,46 @@ import { createSettingsFeature, inlineCodeHtml as inl } from './features/setting
       renderAgent: function(row, index){ return instructionsPanel.renderAgent(row, index); },
     },
   });
+  var topicStatus = createTopicStatusController({
+    statusEl: statusEl,
+    pendingQueueEl: pendingQueueEl,
+    modelPopEls: {
+      modelPop: modelPop,
+      mpList: mpList,
+      mpFilter: mpFilter,
+      mpAgent: mpAgent,
+      mpHeading: mpHeading,
+      mpFoot: mpFoot,
+      mpClose: $('mp-close'),
+    },
+    getTopic: function(){ return topic; },
+    isSynced: function(){ return synced; },
+    hasLauncher: function(){ return Boolean(launchEl); },
+    hasMessages: function(){ return Boolean(log.querySelector('.m')); },
+    narrow: narrow,
+    getIcons: function(){ return IC.icon; },
+    inl: inl,
+    setNote: function(msg){ note.textContent = msg; },
+    onRetireLocalNonce: function(nonce){
+      var pk = 'p:' + nonce;
+      delete outbox[nonce];
+      var r = unsent[nonce];
+      dropUnsent(nonce);
+      if(r) settleAdopted(r.t, r.x);
+      if(els[pk]){ els[pk].remove(); delete els[pk]; }
+      delete sig[pk];
+      delete data[pk];
+    },
+    onRecallContent: function(content){
+      if(!input.value.trim()){
+        input.value = content;
+        grow();
+        stashDraft(topic);
+        input.focus();
+      }
+    },
+  });
+  topicStatus.attach();
   // END WIRING
   // Panels instantiated before makePanel(), which calls paintSchedTab() synchronously on setup.
   var reviewsPanel = createReviewsPanel({
@@ -233,7 +274,7 @@ import { createSettingsFeature, inlineCodeHtml as inl } from './features/setting
     firstVisible: firstVisible,
     toBottom: toBottom,
     getLogEl: function(key){ return els[key]; },
-    closeModelPop: closeModelPop,
+    closeModelPop: function(){ topicStatus.closeModelPop(); },
     paintFrames: paintFrames,
     paintTermHeightIfOpen: function(){ if(topic && termState[topic]==='open') paintTermHeight(); },
     reportSeen: reportSeen,
@@ -361,10 +402,6 @@ import { createSettingsFeature, inlineCodeHtml as inl } from './features/setting
   // The agents the last sync said this topic could still be given to (null once it cannot, or
   // when the daemon offered none), the element laying them out, and what it was drawn from.
   var launch=null, launchEl=null, launchSig='';
-  // Which of the agent's own settings to draw for a topic with no status yet (see "The agent's own
-  // settings"). Up here because paintStatus reads it, and the launcher repaints the status line
-  // while the script is still setting up.
-  var opk={ topic: null, agent: '', model: '', options: [], seq: 0, timer: null };
   // The machines the daemon cannot reach, by the name the topic list and the agent cards use →
   // since when (OfflineMachine), and what the list was drawn from. Replaced whole on every push.
   var offlineMachines={}, offlineSig='[]';
@@ -2059,7 +2096,7 @@ import { createSettingsFeature, inlineCodeHtml as inl } from './features/setting
     }
     // The model switch waits on the launcher (paintStatus), so it follows it at once: up the moment
     // an agent is chosen, gone again if a failed send empties the room and the choice comes back.
-    paintStatus();
+    topicStatus.paintStatus();
     paintMachineNote();
   }
 
@@ -3674,10 +3711,10 @@ import { createSettingsFeature, inlineCodeHtml as inl } from './features/setting
     dividerEl=null;
     syncingEl=null;
     // The strip describes the topic being left; the incoming sync says what the new one's is.
-    closeModelPop();
+    topicStatus.closeModelPop();
     closeBtw(false);
-    setStatus(null);
-    setPending([]);
+    topicStatus.setStatus(null);
+    topicStatus.setPending([]);
     entering=true;
     synced=false;
     view = views[id] || null;
@@ -3782,174 +3819,6 @@ import { createSettingsFeature, inlineCodeHtml as inl } from './features/setting
     });
   }
 
-  // ── The status strip ─────────────────────────────────────────────────────────
-  // What the daemon last pushed about this topic's agent (see status-board.ts), or null. Every time
-  // in it is absolute, so a countdown is worked out here against the clock rather than re-sent:
-  // the server says when a cache expires once, and this page counts to it.
-  var agentStatus = null, statusTimer = null, statusHtml = '';
-  // How often a countdown on screen is redrawn. Minutes are its finest unit, so twice a minute is
-  // as often as it can visibly change; and only while one is on screen and the tab is visible.
-  var STATUS_TICK_MS = 30000;
-
-  function setStatus(s){
-    agentStatus = s || null;
-    paintStatus();
-    armStatusTick();
-  }
-
-  var pendingItems = [];
-  var localPending = {};
-  var pendingConfirmId = null;
-
-  function retireLocalNonce(nonce){
-    if(!nonce) return;
-    delete localPending[nonce];
-    var pk = 'p:' + nonce;
-    delete outbox[nonce];
-    var r = unsent[nonce];
-    dropUnsent(nonce);
-    if(r) settleAdopted(r.t, r.x);
-    if(els[pk]){ els[pk].remove(); delete els[pk]; }
-    delete sig[pk];
-    delete data[pk];
-  }
-
-  function pendingReasonText(reason){
-    if(reason === 'sending') return tr('pending.reasonSending');
-    if(reason === 'tool') return tr('pending.reasonTool');
-    if(reason === 'turn') return tr('pending.reasonTurn');
-    return tr('pending.reasonDelay');
-  }
-
-  function paintPending(){
-    if(!pendingQueueEl) return;
-    var seen = {}, confirmAlive = false;
-    for(var s=0;s<pendingItems.length;s++){
-      if(pendingItems[s] && pendingItems[s].nonce) seen[pendingItems[s].nonce] = 1;
-      if(pendingConfirmId && pendingItems[s] && pendingItems[s].id === pendingConfirmId) confirmAlive = true;
-    }
-    if(!confirmAlive) pendingConfirmId = null;
-    var locals = [];
-    for(var n in localPending){
-      if(Object.prototype.hasOwnProperty.call(localPending, n) && localPending[n].topic === topic && !seen[n]){
-        locals.push(localPending[n]);
-      }
-    }
-    locals.sort(function(a, b){ return a.at - b.at; });
-    var total = pendingItems.length + locals.length;
-    if(!total){
-      pendingQueueEl.hidden = true;
-      pendingQueueEl.innerHTML = '';
-      return;
-    }
-    var html = '<div class="pq-head">'+IC.icon.clock+'<span>'+text(tr('pending.header', { count: total }))+'</span></div>';
-    for(var i=0;i<pendingItems.length;i++){
-      var it = pendingItems[i];
-      var files = it.attachments ? '<span class="pq-files">'+text(it.attachments === 1 ? tr('pending.attachmentsOne') : tr('pending.attachmentsMany', { count: it.attachments }))+'</span>' : '';
-      var acts;
-      if(pendingConfirmId === it.id){
-        acts = '<button type="button" class="pq-btn pq-confirm" data-pq-confirm="'+text(it.id)+'" title="'+text(tr('pending.sendNowInterruptTitle'))+'">'+IC.icon.bolt+'<span>'+text(tr('pending.confirmInterrupt'))+'</span></button>'
-          + '<button type="button" class="pq-btn pq-cancel" data-pq-cancel="'+text(it.id)+'"><span>'+text(tr('pending.cancel'))+'</span></button>';
-      } else {
-        var sendTitle = it.canSendNow ? tr('pending.sendNowTitle') : tr('pending.sendNowInterruptTitle');
-        var sendBtn = '<button type="button" class="pq-btn pq-send" data-pq-send="'+text(it.id)+'" data-pq-interrupt="'+(it.canSendNow ? '0' : '1')+'" title="'+text(sendTitle)+'">'+IC.icon.bolt+'<span>'+text(tr('pending.sendNow'))+'</span></button>';
-        var recallBtn = '<button type="button" class="pq-btn pq-recall" data-pq-recall="'+text(it.id)+'" title="'+text(tr('pending.recallTitle'))+'">'+IC.icon.undo+'<span>'+text(tr('pending.recall'))+'</span></button>';
-        acts = sendBtn + recallBtn;
-      }
-      html += '<div class="pq-item" data-pq-id="'+text(it.id)+'">'
-        + '<div class="pq-main">'
-        + '<div class="pq-meta"><span class="pq-badge">'+text(tr('pending.badge'))+'</span><span class="pq-reason">'+text(pendingReasonText(it.reason))+'</span>'+files+'</div>'
-        + '<div class="pq-text">'+text(it.content || '')+'</div>'
-        + '</div>'
-        + '<div class="pq-acts">'+acts+'</div>'
-        + '</div>';
-    }
-    for(var j=0;j<locals.length;j++){
-      var lp = locals[j];
-      var lfiles = lp.attachments ? '<span class="pq-files">'+text(lp.attachments === 1 ? tr('pending.attachmentsOne') : tr('pending.attachmentsMany', { count: lp.attachments }))+'</span>' : '';
-      html += '<div class="pq-item pq-local" data-pq-nonce="'+text(lp.nonce)+'">'
-        + '<div class="pq-main">'
-        + '<div class="pq-meta"><span class="pq-badge">'+text(tr('pending.badge'))+'</span><span class="pq-reason">'+text(pendingReasonText('sending'))+'</span>'+lfiles+'</div>'
-        + '<div class="pq-text">'+text(lp.content || '')+'</div>'
-        + '</div>'
-        + '</div>';
-    }
-    pendingQueueEl.innerHTML = html;
-    pendingQueueEl.hidden = false;
-  }
-
-  function setPending(items){
-    pendingItems = Array.isArray(items) ? items : [];
-    for(var i=0;i<pendingItems.length;i++){
-      if(pendingItems[i] && pendingItems[i].nonce) retireLocalNonce(pendingItems[i].nonce);
-    }
-    paintPending();
-  }
-
-  if(pendingQueueEl){
-    pendingQueueEl.addEventListener('click', function(e){
-      var t = e.target;
-      if(!t || !t.closest || !topic) return;
-      var sendEl = t.closest('[data-pq-send]');
-      if(sendEl){
-        var sid = sendEl.getAttribute('data-pq-send');
-        if(!sid) return;
-        if(sendEl.getAttribute('data-pq-interrupt') === '1'){
-          pendingConfirmId = sid;
-          paintPending();
-          return;
-        }
-        sendEl.disabled = true;
-        post('api/pending/send-now', { topic: topic, messageId: sid }, 1).catch(function(){ sendEl.disabled = false; });
-        return;
-      }
-      var confirmEl = t.closest('[data-pq-confirm]');
-      if(confirmEl){
-        var cid = confirmEl.getAttribute('data-pq-confirm');
-        if(!cid) return;
-        confirmEl.disabled = true;
-        pendingConfirmId = null;
-        post('api/pending/send-now', { topic: topic, messageId: cid, interrupt: true }, 1).catch(function(){ paintPending(); });
-        return;
-      }
-      if(t.closest('[data-pq-cancel]')){
-        pendingConfirmId = null;
-        paintPending();
-        return;
-      }
-      var recEl = t.closest('[data-pq-recall]');
-      if(recEl){
-        var rid = recEl.getAttribute('data-pq-recall');
-        if(!rid) return;
-        recEl.disabled = true;
-        post('api/pending/recall', { topic: topic, messageId: rid }, 1)
-          .then(function(r){ return r && r.ok ? r.json() : null; })
-          .then(function(j){
-            if(j && j.ok && typeof j.content === 'string' && !input.value.trim()){
-              input.value = j.content;
-              grow();
-              stashDraft(topic);
-              input.focus();
-            }
-          }, function(){ recEl.disabled = false; });
-      }
-    });
-  }
-
-  function hasCountdown(s){
-    if(!s) return false;
-    if(s.cacheExpiresAt) return true;
-    var q = s.quota || [];
-    for(var i=0;i<q.length;i++) if(q[i].resetsAt) return true;
-    return false;
-  }
-
-  function armStatusTick(){
-    var want = hasCountdown(agentStatus) && document.visibilityState !== 'hidden';
-    if(want && !statusTimer) statusTimer = setInterval(paintStatus, STATUS_TICK_MS);
-    else if(!want && statusTimer){ clearInterval(statusTimer); statusTimer = null; }
-  }
-
   // ── The ages on the topic rows ──────────────────────────────────────────────
   // A row's age is derived from a stamp the server sent, so it goes stale on its own. Rewritten
   // in place rather than by repainting the list: paintTopics replaces every row's markup, which
@@ -3981,359 +3850,6 @@ import { createSettingsFeature, inlineCodeHtml as inl } from './features/setting
   document.addEventListener('visibilitychange', function(){
     if(document.visibilityState !== 'hidden') paintAges();
     armAgeTick();
-  });
-
-  // The same units as the footer (core/runtime-footer.ts formatTokens / formatWindow), so a number
-  // read here and one read under a reply can be compared.
-  function stTokens(n){
-    return n >= 1e6 ? (n/1e6).toFixed(1).replace(/\.0$/,'')+'M' : Math.round(n/1000)+'k';
-  }
-  function stWindow(n){
-    return n >= 1e6 ? (Math.floor(n/1e5)/10).toFixed(1).replace(/\.0$/,'')+'M' : Math.floor(n/1000)+'k';
-  }
-  function stLeft(ms){
-    var m = Math.floor(ms/60000);
-    if(m < 1) return '<1m';
-    var d = Math.floor(m/1440), h = Math.floor((m%1440)/60), mm = m%60;
-    if(d > 0) return d+'d'+(h ? ' '+h+'h' : '');
-    if(h > 0) return h+'h'+(mm ? ' '+mm+'m' : '');
-    return m+'m';
-  }
-  function stClock(at){
-    var t = new Date(at);
-    return (t.getHours()<10?'0':'')+t.getHours()+':'+(t.getMinutes()<10?'0':'')+t.getMinutes();
-  }
-  // agy's pool ids, made readable: gemini-5h → Gemini 5h, 3p-weekly → 3P wk. An id of any other
-  // shape is shown as it came, rather than dropped for not being one of the four known today.
-  function poolLabel(id){
-    var cut = id.lastIndexOf('-');
-    var fam = cut > 0 ? id.slice(0, cut) : id, win = cut > 0 ? id.slice(cut+1) : '';
-    fam = fam === '3p' ? '3P' : (fam === 'gemini' ? 'Gemini' : fam);
-    win = win === 'weekly' ? 'wk' : (win === 'daily' ? 'day' : win);
-    return win ? fam+' '+win : fam;
-  }
-  function seg(cls, title, html){
-    return '<span class="st'+(cls ? ' '+cls : '')+'"'+(title ? ' title="'+text(title)+'"' : '')+'>'+html+'</span>';
-  }
-
-  function statusSegments(s, now, open){
-    var out = [];
-    out.push(seg('st-who', '', text(s.agent)+' \u00b7 '+modelChip(s.model || tr('status.model'))+(s.effort ? ' \u00b7 '+text(s.effort) : '')
-      +optChips(s.options || opkFor(topic))));
-    if(s.context && s.context.size > 0){
-      var pct = Math.min(100, Math.max(0, Math.round(s.context.used / s.context.size * 100)));
-      out.push(seg(pct >= 80 ? 'bad' : (pct >= 50 ? 'warn' : ''),
-        tr('status.contextTip', { used: s.context.used.toLocaleString(), size: s.context.size.toLocaleString() }),
-        '<i class="st-meter"><i style="width:'+pct+'%"></i></i>'+pct+'%'
-          +'<span class="st-x">'+stTokens(s.context.used)+'/'+stWindow(s.context.size)+'</span>'));
-    }
-    if(s.cost){
-      var c = s.cost;
-      out.push(seg('', tr('status.costTip', { amount: c.amount.toFixed(4), currency: c.currency }),
-        c.currency === 'USD' ? '$'+c.amount.toFixed(2) : text(c.amount.toFixed(2)+' '+c.currency)));
-    }
-    if(s.cacheExpiresAt){
-      var left = s.cacheExpiresAt - now;
-      out.push(left > 0
-        ? seg(left < 5*60000 ? 'warn' : '', tr('status.cacheTip', { clock: stClock(s.cacheExpiresAt) }), text(tr('status.cacheLeft', { left: stLeft(left) })))
-        : seg('', tr('status.cacheExpiredTip', { clock: stClock(s.cacheExpiresAt) }), text(tr('status.cacheExpired'))));
-    }
-    var pools = s.quota || [], anyActive = false;
-    for(var i=0;i<pools.length;i++) if(pools[i].active) anyActive = true;
-    var qAccts = {};
-    for(var a=0;a<pools.length;a++) if(pools[a].account) qAccts[pools[a].account] = 1;
-    var multiAcct = Object.keys(qAccts).length > 1;
-    for(var j=0;j<pools.length;j++){
-      var p = pools[j], off = anyActive && !p.active;
-      // Closed, only the pools being spent from: the others are context, and the line is short.
-      if(off && !open) continue;
-      var rp = Math.round(p.remaining * 100);
-      // A reset time is only worth the room while something has been spent.
-      var reset = p.resetsAt && rp < 100 ? ' ('+stLeft(p.resetsAt - now)+')' : '';
-      var acctTag = multiAcct && p.account ? p.account.split('@')[0]+' ' : '';
-      var tip = (p.account ? p.account+(p.resetsAt ? ' \u00b7 ' : '') : '')
-        + (p.resetsAt ? tr('status.refills', { when: new Date(p.resetsAt).toLocaleString() }) : '');
-      out.push(seg((rp <= 15 ? 'bad' : (rp <= 40 ? 'warn' : ''))+(off ? ' off' : ''),
-        tip,
-        text(acctTag+poolLabel(p.id)+' '+rp+'%'+reset)));
-    }
-    return out.join('');
-  }
-
-  function paintStatus(){
-    var s = agentStatus;
-    // With no status yet (a restart, a conversation that has not reported), the line still offers
-    // the switch once the topic has a conversation in it — not in a new one, where the agent
-    // launcher is the choice to make first. Asked of the launcher on screen, not of launch: that
-    // is the last sync's snapshot of the empty room and stays set until the next sync, so testing it
-    // hid the switch from the moment an agent was chosen until the first reply reported a status —
-    // exactly when someone wants to pick the model the first message goes to.
-    var bare = !s && topic && synced && !launchEl && log.querySelector('.m');
-    var opkSame = opk.topic === topic;
-    var bareWho = (opkSame && opk.agent ? text(opk.agent)+' \u00b7 ' : '')
-      + modelChip((opkSame && opk.model) || tr('status.model'))
-      + optChips(opkFor(topic));
-    var html = s ? statusSegments(s, Date.now(), statusEl.classList.contains('open'))
-      : (bare ? seg('st-who', '', bareWho) : '');
-    // The agent's own settings have no status to come from yet either, so ask which to draw.
-    if(bare && opk.topic !== topic) schedulePeek();
-    // Compared before writing: the tick redraws twice a minute, and most of those change nothing.
-    if(html === statusHtml) return;
-    statusHtml = html;
-    statusEl.innerHTML = html;
-    statusEl.hidden = !html;
-  }
-
-  statusEl.addEventListener('click', function(e){
-    // A setting first: its switch is an .st-model too, for the look.
-    var ob = e.target.closest ? e.target.closest('.st-opt') : null;
-    if(ob){
-      if(ob.disabled) return;
-      var oid = ob.getAttribute('data-opt');
-      if(!modelPop.hidden && mp.opt === oid) closeModelPop(); else openOptPop(oid);
-      return;
-    }
-    if(e.target.closest && e.target.closest('.st-model')){
-      if(!modelPop.hidden && !mp.opt) closeModelPop(); else openModelPop();
-      return;
-    }
-    statusEl.classList.toggle('open');
-    paintStatus();
-  });
-
-  // ── The model switch ─────────────────────────────────────────────────────────
-  // /model as a control: the list the topic's agent offers (GET api/models, which starts a cold
-  // agent the way /model does — hence "Asking…"), and the switch (POST api/models), which is
-  // /model's own: a runtime override for this topic, config untouched. mp.seq drops an answer that
-  // belongs to a list closed or reopened since.
-  // The same list serves one of the agent's own settings (openOptPop): mp.opt is that setting's id,
-  // null for the model.
-  var mp = { topic: null, opt: null, data: null, err: '', loading: false, busy: false, seq: 0 };
-  var MODEL_WAIT_MS = 45000;
-
-  function modelChip(label){
-    return '<button type="button" class="st-model" aria-haspopup="dialog" aria-expanded="'+(modelPop.hidden || (mp && mp.opt) ? 'false' : 'true')+'"'
-      + ' title="'+text(tr('status.switchModelTitle'))+'"><span class="st-mtext">'+text(label)+'</span></button>';
-  }
-
-  // ── The agent's own settings ─────────────────────────────────────────────────
-  // Settings an agent defines itself (an ACP select option in an underscore category — an account a web
-  // agent runs on, say), each drawn beside the model as a switch of the same kind. Their state is
-  // the agent's: the status carries it once a turn has reported, and before that — a new topic,
-  // the one time a setting like an account may still be changed — GET api/options?peek=1 says which
-  // to draw without starting the agent, and what it knows of them. opk is that answer for the topic
-  // on screen, asked again when a message arrives there (a /cd or /new ends the session it
-  // described) and after a pick. One with a single choice is one the agent will not change now.
-  // (opk is declared with the page's early state, for the reason given there.)
-
-  function opkFor(t){ return opk.topic === t ? opk.options : []; }
-
-  function optChips(list){
-    var h = '';
-    for(var i=0;i<(list||[]).length;i++) h += ' \u00b7 '+optChip(list[i]);
-    return h;
-  }
-
-  function optChip(o){
-    var val = o.value !== undefined && o.value !== null ? String(o.value) : '';
-    var body = '<span class="st-olabel">'+text(o.name)+'</span>'+(val ? ' <span class="st-mtext">'+text(val)+'</span>' : '');
-    var note = o.note ? '\n'+o.note : '';
-    if(o.fixed){
-      return '<button type="button" class="st-model st-opt fixed" disabled data-opt="'+text(o.id)+'"'
-        + ' title="'+text(tr('status.optFixedTitle', { name: o.name, val: val, note: note }))+'">'+body+'</button>';
-    }
-    var open = !modelPop.hidden && mp.opt === o.id;
-    return '<button type="button" class="st-model st-opt" data-opt="'+text(o.id)+'" aria-haspopup="dialog" aria-expanded="'+(open ? 'true' : 'false')+'"'
-      + ' title="'+text(tr('status.optSwitchTitle', { name: o.name, note: note }))+'">'+body+'</button>';
-  }
-
-  /** Ask which settings to draw, a moment from now: a burst of messages, or an agent being chosen, is one ask. */
-  function schedulePeek(){
-    if(opk.timer) clearTimeout(opk.timer);
-    opk.timer = setTimeout(function(){ opk.timer = null; peekOptions(); }, 400);
-  }
-
-  function peekOptions(){
-    // A status that has arrived since says it all, and is kept current by the daemon.
-    if(!topic || agentStatus) return;
-    var n = ++opk.seq, t = topic;
-    // Claimed now, so the repaints while it is asked do not ask again.
-    if(opk.topic !== t){ opk.topic = t; opk.agent = ''; opk.model = ''; opk.options = []; }
-    fetch('api/options?peek=1&t='+encodeURIComponent(t), {credentials:'same-origin'})
-      .then(function(r){ return r.ok ? r.json() : null; })
-      .then(function(j){
-        if(n !== opk.seq || t !== opk.topic || !j) return;
-        opk.agent = j.agent || '';
-        opk.model = j.model || '';
-        opk.options = j.options || [];
-        paintStatus();
-      }, function(){});
-  }
-
-  /** The setting's name, from what the line is drawn from — for the list's heading. */
-  function optName(id){
-    var list = (agentStatus && agentStatus.options) || opkFor(topic);
-    for(var i=0;i<list.length;i++) if(list[i].id === id) return list[i].name;
-    return tr('modelPop.settingFallback');
-  }
-
-  function openModelPop(){ openPop(null); }
-  function openOptPop(id){ openPop(id); }
-
-  function openPop(opt){
-    if(!topic) return;
-    var n = ++mp.seq, t = topic;
-    mp.topic = t; mp.opt = opt; mp.data = null; mp.err = ''; mp.loading = true; mp.busy = false;
-    mpFilter.value = '';
-    mpHeading.textContent = opt ? tr('modelPop.headingOpt', { name: optName(opt) }) : tr('modelPop.headingModel');
-    mpFilter.placeholder = opt ? tr('common.filter') : tr('modelPop.filterModels');
-    mpFoot.innerHTML = opt ? tr('modelPop.footOpt') : tr('modelPop.footModel');
-    modelPop.hidden = false;
-    paintStatus();
-    renderModelPop();
-    // Not on a phone: the keyboard would take half the screen before the list was read.
-    if(!narrow()) mpFilter.focus();
-    var ctl = typeof AbortController === 'function' ? new AbortController() : null;
-    var timer = setTimeout(function(){ if(ctl) ctl.abort(); }, MODEL_WAIT_MS);
-    fetch((opt ? 'api/options?t=' : 'api/models?t=')+encodeURIComponent(t), ctl ? {credentials:'same-origin', signal: ctl.signal} : {credentials:'same-origin'})
-      .then(function(r){ return r.json().then(function(j){ return { r: r, j: j }; }); })
-      .then(function(x){
-        clearTimeout(timer);
-        if(n !== mp.seq) return;
-        mp.loading = false;
-        if(!x.r.ok) mp.err = tr('modelPop.httpErr', { status: x.r.status });
-        else mp.data = x.j;
-        renderModelPop();
-        // Either list started the agent if it had to, so its settings are known now: draw them.
-        if(x.r.ok && x.j && x.j.ok && t === topic && !agentStatus) peekOptions();
-      }, function(){
-        clearTimeout(timer);
-        if(n !== mp.seq) return;
-        mp.loading = false;
-        mp.err = tr('modelPop.reachErr');
-        renderModelPop();
-      });
-  }
-
-  function closeModelPop(){
-    if(modelPop.hidden) return;
-    mp.seq++;
-    modelPop.hidden = true;
-    mpList.innerHTML = '';
-    paintStatus();
-  }
-
-  /** The list, or what stands in for it: asking, why there is none, or what went wrong. */
-  function renderModelPop(){
-    var d = mp.data;
-    mpAgent.textContent = d && d.agent ? d.agent : '';
-    mpFilter.hidden = !(d && d.ok && (mp.opt ? optChoices(d).length : d.options.length) > 8);
-    if(mp.loading){ mpList.innerHTML = '<div class="mp-msg mp-wait"><span class="set-spin" aria-hidden="true"></span>'+text(mp.opt ? tr('modelPop.askingSettings') : tr('modelPop.askingModels'))+'</div>'; return; }
-    if(mp.err){ mpList.innerHTML = '<div class="mp-msg err">'+inl(mp.err)+'</div>'; return; }
-    if(!d || !d.ok){ mpList.innerHTML = '<div class="mp-msg">'+inl(d ? d.text : '')+'</div>'; return; }
-    if(mp.opt){ renderOptList(d); return; }
-    var h = '';
-    for(var i=0;i<d.options.length;i++){
-      var o = d.options[i], on = o.value === d.current, def = d.configured && o.value === d.configured;
-      var name = o.name && o.name !== o.value ? o.name : '';
-      h += '<button type="button" class="mp-opt'+(on ? ' on' : '')+'" role="option" aria-selected="'+(on ? 'true' : 'false')+'" data-v="'+text(o.value)+'"'
-        + ' data-q="'+text((o.value+' '+name).toLowerCase())+'">'
-        + '<span class="mp-check" aria-hidden="true">'+(on ? IC.icon.check : '')+'</span>'
-        + '<span class="mp-main"><span class="mp-v">'+text(o.value)+'</span>'+(name ? '<span class="mp-n">'+text(name)+'</span>' : '')+'</span>'
-        + (def ? '<span class="mp-tag" title="'+text(tr('modelPop.defaultTitle'))+'">'+text(tr('chat.defaultTag'))+'</span>' : '')
-        + '</button>';
-    }
-    mpList.innerHTML = h;
-    filterModels();
-  }
-
-  /** The setting the list is open on, out of the agent's answer. */
-  function optOf(d){
-    var list = (d && d.options) || [];
-    for(var i=0;i<list.length;i++) if(list[i].id === mp.opt) return list[i];
-    return null;
-  }
-  function optChoices(d){ var o = optOf(d); return o ? o.options : []; }
-
-  /**
-   * One setting's choices, each with the agent's description of it as a second line (an account's
-   * used-up quota). A single choice is listed and not offered: the agent will not change it now.
-   */
-  function renderOptList(d){
-    var o = optOf(d);
-    if(!o){ mpList.innerHTML = '<div class="mp-msg">'+text(tr('modelPop.optGone'))+'</div>'; return; }
-    var fixed = o.options.length <= 1, h = '';
-    if(fixed) h += '<div class="mp-msg">'+text(tr('modelPop.optFixed', { name: o.name }))+'</div>';
-    for(var i=0;i<o.options.length;i++){
-      var c = o.options[i], on = c.value === o.current;
-      h += '<button type="button" class="mp-opt'+(on ? ' on' : '')+'" role="option" aria-selected="'+(on ? 'true' : 'false')+'" data-v="'+text(c.value)+'"'
-        + ' data-q="'+text((c.name+' '+c.value+' '+(c.description || '')).toLowerCase())+'"'+(fixed ? ' disabled' : '')+'>'
-        + '<span class="mp-check" aria-hidden="true">'+(on ? IC.icon.check : '')+'</span>'
-        + '<span class="mp-main"><span class="mp-o">'+text(c.name)+'</span>'+(c.description ? '<span class="mp-n">'+text(c.description)+'</span>' : '')+'</span>'
-        + '</button>';
-    }
-    mpList.innerHTML = h;
-    filterModels();
-  }
-
-  function filterModels(){
-    var q = mpFilter.value.trim().toLowerCase();
-    var opts = mpList.querySelectorAll('.mp-opt');
-    for(var i=0;i<opts.length;i++) opts[i].hidden = !!q && (opts[i].getAttribute('data-q') || '').indexOf(q) < 0;
-  }
-
-  /**
-   * Switch to one, as /model would — or set the agent's setting, which the agent may refuse. Either
-   * refusal is shown in the list in its own words.
-   */
-  function chooseModel(b){
-    if(mp.busy || !mp.topic || b.disabled) return;
-    var n = mp.seq, t = mp.topic, v = b.getAttribute('data-v'), opt = mp.opt;
-    mp.busy = true;
-    b.classList.add('busy');
-    post(opt ? 'api/options' : 'api/models', opt ? {topic: t, id: opt, value: v} : {topic: t, value: v}, 1, MODEL_WAIT_MS)
-      .then(function(r){ return r.json().then(function(j){ return { r: r, j: j }; }); })
-      .then(function(x){
-        mp.busy = false;
-        if(n !== mp.seq) return;
-        if(x.r.ok && x.j.ok){
-          if(!opt && t === topic && agentStatus) agentStatus = Object.assign({}, agentStatus, { model: x.j.model });
-          closeModelPop();
-          note.textContent = String(x.j.text || '').replace(/\x60/g, '');
-          // A status the daemon pushes says it too once there is one; until then this is how.
-          if(opt && t === topic) peekOptions();
-          return;
-        }
-        mp.err = x.j && x.j.text ? x.j.text : tr('modelPop.refused', { status: x.r.status });
-        renderModelPop();
-      }, function(){
-        mp.busy = false;
-        if(n !== mp.seq) return;
-        mp.err = opt ? tr('modelPop.reachChangeOpt') : tr('modelPop.reachChangeModel');
-        renderModelPop();
-      });
-  }
-
-  mpList.addEventListener('click', function(e){
-    var b = e.target.closest ? e.target.closest('.mp-opt') : null;
-    if(b) chooseModel(b);
-  });
-  mpFilter.addEventListener('input', filterModels);
-  $('mp-close').addEventListener('click', closeModelPop);
-  // Its own Escape and outside click, ahead of nothing else: the list is not a window over the
-  // page, so it does not join the overlays the page-wide Escape closes.
-  document.addEventListener('keydown', function(e){
-    if(e.key === 'Escape' && !modelPop.hidden){ closeModelPop(); e.stopPropagation(); }
-  }, true);
-  document.addEventListener('click', function(e){
-    if(modelPop.hidden || !e.target.closest) return;
-    if(e.target.closest('#model-pop') || e.target.closest('.st-model')) return;
-    closeModelPop();
-  });
-  // A countdown is redrawn the moment the page is looked at again, rather than up to a tick late.
-  document.addEventListener('visibilitychange', function(){
-    if(document.visibilityState !== 'hidden') paintStatus();
-    armStatusTick();
   });
 
   function handle(ev){
@@ -4403,8 +3919,8 @@ import { createSettingsFeature, inlineCodeHtml as inl } from './features/setting
       prune();
       // Absent when the topic's agent has reported nothing since the daemon started, which clears
       // whatever a previous connection had put up.
-      setStatus(ev.status);
-      setPending(ev.pending || []);
+      topicStatus.setStatus(ev.status);
+      topicStatus.setPending(ev.pending || []);
       note.textContent='';
       if(arriving) land(); else if(stick) toBottom();
       view = null;
@@ -4426,7 +3942,7 @@ import { createSettingsFeature, inlineCodeHtml as inl } from './features/setting
       cacheSave();
       // Without a status, the settings drawn came from a peek, and what just happened may have
       // ended the session it described (a /cd, a /new): ask again.
-      if(!agentStatus){ paintStatus(); schedulePeek(); }
+      topicStatus.onMessageArrived();
       readsService.increment(topic);
       for(var i=0;i<topics.length;i++){
         if(topics[i].id===topic){
@@ -4465,8 +3981,8 @@ import { createSettingsFeature, inlineCodeHtml as inl } from './features/setting
       if(!ev.on) gitPanel.onTurnEnd();
     }
     else if(ev.t==='commands'){ commands = ev.commands || []; }
-    else if(ev.t==='status'){ setStatus(ev.status); }
-    else if(ev.t==='pending'){ setPending(ev.items || []); }
+    else if(ev.t==='status'){ topicStatus.setStatus(ev.status); }
+    else if(ev.t==='pending'){ topicStatus.setPending(ev.items || []); }
     else if(ev.t==='machines'){ setMachines(ev.offline || []); }
     else if(ev.t==='topics' || ev.t==='topic-rows'){
       if(ev.t==='topics') topics = ev.topics || [];
@@ -6334,7 +5850,7 @@ import { createSettingsFeature, inlineCodeHtml as inl } from './features/setting
   function showUnsent(tId){
     var list=[];
     for(var n in unsent){
-      if(Object.prototype.hasOwnProperty.call(unsent, n) && unsent[n].t === tId && !data['p:'+n] && !localPending[n]) list.push(n);
+      if(Object.prototype.hasOwnProperty.call(unsent, n) && unsent[n].t === tId && !data['p:'+n] && !topicStatus.hasLocalPending(n)) list.push(n);
     }
     if(!list.length) return;
     list.sort(function(a, b){ return unsent[a].at - unsent[b].at; });
@@ -6454,8 +5970,7 @@ import { createSettingsFeature, inlineCodeHtml as inl } from './features/setting
     unsent[nonce] = {t:topic, x:typed, n:names, at:Date.now(), s:'sending', g:epoch};
     writeUnsent(nonce);
     if(shouldQueueOptimistically(typed)){
-      localPending[nonce] = { topic: topic, nonce: nonce, content: typed, attachments: names.length, at: unsent[nonce].at };
-      paintPending();
+      topicStatus.addLocalPending({ topic: topic, nonce: nonce, content: typed, attachments: names.length, at: unsent[nonce].at });
     } else {
       data['p:'+nonce] = localMsg(nonce, unsent[nonce]);
       paint('p:'+nonce);
@@ -6510,10 +6025,9 @@ import { createSettingsFeature, inlineCodeHtml as inl } from './features/setting
       } else r.s = state;
       writeUnsent(nonce);
     }
-    if(localPending[nonce]){
+    if(topicStatus.hasLocalPending(nonce)){
       if(state === 'failed'){
-        delete localPending[nonce];
-        paintPending();
+        topicStatus.removeLocalPending(nonce);
         if(r && r.t === topic){
           data['p:'+nonce] = localMsg(nonce, r);
           paint('p:'+nonce);
@@ -6682,10 +6196,7 @@ import { createSettingsFeature, inlineCodeHtml as inl } from './features/setting
    */
   function claim(m){
     if(!m.nonce) return;
-    if(localPending[m.nonce]){
-      delete localPending[m.nonce];
-      paintPending();
-    }
+    topicStatus.removeLocalPending(m.nonce);
     var pk = 'p:' + m.nonce;
     delete outbox[m.nonce];
     // The echo can beat the 2xx: the daemon emits it before it answers the POST. The message has
@@ -6732,10 +6243,9 @@ import { createSettingsFeature, inlineCodeHtml as inl } from './features/setting
     if(typeof micLabel === 'function' && $('mic')) micLabel();
     if(topicFilter && topicFilter.refreshI18n) topicFilter.refreshI18n(tr('sidebar.searchTopics'));
     forkNoteKey = '';
-    statusHtml = '';
     launchSig = '';
     paintTopics();
-    paintStatus();
+    topicStatus.onLocaleChange();
     paintAges();
     if(launchEl) syncLaunch(true);
     if(emptyEl) emptyEl.textContent = tr('chat.emptyNote');
@@ -6749,12 +6259,6 @@ import { createSettingsFeature, inlineCodeHtml as inl } from './features/setting
     }
     if(!btwBox.hidden) renderBtw(false);
     settingsFeature.onLocaleChange();
-    if(!modelPop.hidden){
-      mpHeading.textContent = mp.opt ? tr('modelPop.headingOpt', { name: optName(mp.opt) }) : tr('modelPop.headingModel');
-      mpFilter.placeholder = mp.opt ? tr('common.filter') : tr('modelPop.filterModels');
-      mpFoot.innerHTML = mp.opt ? tr('modelPop.footOpt') : tr('modelPop.footModel');
-      renderModelPop();
-    }
     schedulesPanel.repaint();
     reviewsPanel.paint();
     historyPanel.repaint();

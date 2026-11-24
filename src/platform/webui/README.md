@@ -62,6 +62,7 @@ naming it, and they are all of them:
 | `client/workbench/contracts.ts` | Frozen `DockEngine`, `PanelComponent`, `PanelRef`, and `LayoutState` (v1) contracts |
 | `client/plugins/api.ts` | Frozen `WebuiPlugin`, `definePlugin`, `PluginContext`, `MenuItem`, `TopicInfo`, and `WebuiEvents` contracts |
 | `client/features/settings/` | Typed `/setting` page feature (`createSettingsFeature`, `renderSettingsScreen`, `inlineCodeHtml`, `agHue` in `index.ts`, `controller.ts`, `render.ts`, `types.ts`), bundled into `app-<hash>.js` and checked by `client/tsconfig.json` and eslint |
+| `client/features/topic/status/` | Typed status strip, countdown ticker, pending-message queue, and model/custom-option popover modules (`createTopicStatusController`, `format.ts`, `pending-queue.ts`, `model-pop.ts`, `types.ts`), bundled into `app-<hash>.js` and checked by `client/tsconfig.json` and eslint |
 | `client/panels/reviews.ts` | Typed Reviews tab module (`createReviewsPanel`), bundled into `app-<hash>.js` and checked by `client/tsconfig.json` and eslint |
 | `client/panels/history.ts` | Typed History tab and read-only transcript viewer (`createHistoryPanel`), bundled into `app-<hash>.js` and checked by `client/tsconfig.json` and eslint |
 | `client/panels/git.ts` | Typed Git and Commits diff window (`createGitPanel`), bundled into `app-<hash>.js` and checked by `client/tsconfig.json` and eslint |
