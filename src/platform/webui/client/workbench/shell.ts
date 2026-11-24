@@ -266,6 +266,7 @@ export class WorkbenchShell implements Disposable {
         panel: this.panel.getHeight(),
       },
     });
+    this.dock.getDndController().setEnabled(this._mode !== 'mobile');
 
     this._moveMenu = createMenu({
       doc: this._doc,
@@ -464,6 +465,7 @@ export class WorkbenchShell implements Disposable {
     this._mode = nextMode;
     this.root.dataset.wbMode = nextMode;
     this.dock.setAllowSplit(nextMode === 'desktop');
+    this.dock.getDndController().setEnabled(nextMode !== 'mobile');
 
     if (nextMode === 'mobile') {
       this._desktopShell.hidden = true;

@@ -439,7 +439,7 @@ export class DockDndController implements Disposable {
     element: HTMLElement,
     payloadOrGetter: DragPayload | (() => DragPayload | null),
   ): Disposable {
-    if (this._disposed || !this._enabled) return NOOP_DISPOSABLE;
+    if (this._disposed) return NOOP_DISPOSABLE;
 
     const sub = addDisposableListener(element, 'pointerdown', (ev) => {
       this._onPointerDown(element, payloadOrGetter, ev);
@@ -560,10 +560,13 @@ export class DockDndController implements Disposable {
     }
 
     const point: DndPoint = { x: ev.clientX, y: ev.clientY };
-    const finalTarget = this._evaluateTarget(point, session.payload) ?? session.target;
     const payload = session.payload;
-
-    this._cleanupSession();
+    let finalTarget: DropTarget | null = null;
+    try {
+      finalTarget = this._evaluateTarget(point, payload) ?? session.target;
+    } finally {
+      this._cleanupSession();
+    }
 
     if (finalTarget) {
       this._options.onDrop?.(payload, finalTarget);

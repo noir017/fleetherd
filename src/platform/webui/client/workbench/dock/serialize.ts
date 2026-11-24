@@ -79,7 +79,7 @@ function validatePanelIdList(
   const ids: string[] = [];
   for (const item of raw) {
     if (!isNonEmptyString(item)) return null;
-    if (!(item in panels) || usedPanelIds.has(item)) return null;
+    if (!Object.hasOwn(panels, item) || usedPanelIds.has(item)) return null;
     usedPanelIds.add(item);
     ids.push(item);
   }

@@ -457,7 +457,7 @@ describe('workbench/dock/dnd DockDndController (jsdom pointer lifecycle)', () =>
     closeBtn.setAttribute('data-dnd-ignore', '');
     source.appendChild(closeBtn);
 
-    // Mobile mode: enabled=false does not attach listeners at all.
+    // Mobile mode: enabled=false ignores pointer starts while allowing later re-enable.
     const mobileOnStart = vi.fn();
     const mobile = new DockDndController({
       doc: document,
@@ -465,10 +465,11 @@ describe('workbench/dock/dnd DockDndController (jsdom pointer lifecycle)', () =>
       enabled: false,
       onDragStart: mobileOnStart,
     });
-    const addSpy = vi.spyOn(source, 'addEventListener');
     mobile.attachSource(source, samplePayload);
-    expect(addSpy).not.toHaveBeenCalled();
-    addSpy.mockRestore();
+    dispatchPointer(source, 'pointerdown', { clientX: 210, clientY: 50, button: 0, pointerId: 9 });
+    dispatchPointer(window, 'pointermove', { clientX: 230, clientY: 50, pointerId: 9 });
+    dispatchPointer(window, 'pointerup', { clientX: 230, clientY: 50, pointerId: 9 });
+    expect(mobileOnStart).not.toHaveBeenCalled();
     mobile.dispose();
 
     // Tablet mode: allowSplit=false keeps group drops as 'within'.

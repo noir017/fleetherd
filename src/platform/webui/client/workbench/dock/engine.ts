@@ -1260,6 +1260,9 @@ export class DynamicDockEngine implements DockEngine {
         group.setActivePanel(wantedActive, false);
       }
     }
+    if (state.activeGroup && this._gridView.getGroup(state.activeGroup)) {
+      this._gridView.setActiveGroup(state.activeGroup);
+    }
   }
 
   private _applyDefaultLayout(): void {

@@ -265,7 +265,7 @@
 
 .wb-dnd-overlay {
   z-index: 999;
-  background: rgba(0, 120, 212, 0.22);
+  background: var(--fh-toggle);
   border: 1px solid var(--fh-accent);
   box-sizing: border-box;
   transition: left 60ms ease, top 60ms ease, width 60ms ease, height 60ms ease;
