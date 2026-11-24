@@ -50,6 +50,7 @@ import {
 } from './features/reader/index.js';
 import { createLegacyShell } from './workbench/legacy-shell.js';
 import { createTranscriptController } from './features/topic/transcript/index.js';
+import { createTopicsFeature } from './features/topics/index.js';
 
 (function(){
   var $ = function(id){ return document.getElementById(id); };
@@ -100,14 +101,10 @@ import { createTranscriptController } from './features/topic/transcript/index.js
       updateEl=$('update'),
       modelPop=$('model-pop'), mpList=$('mp-list'), mpFilter=$('mp-filter'), mpAgent=$('mp-agent'),
       mpHeading=$('mp-heading'), mpFoot=$('mp-foot');
-  // The 30-second tick that keeps the ages current (see paintAges). Declared here, not beside
-  // its functions, because paintSessions can arm it while the script is still setting up — and a
-  // var initialised after that would overwrite the timer's handle with null and leak the timer.
   initLocale();
   var schedTitleEl = document.querySelector('#schedules-head .panel-title');
   if(schedTitleEl) schedTitleEl.setAttribute('data-i18n', 'sideTasks.title');
   applyDomI18n(document);
-  var AGE_TICK_MS=30000, ageTimer=null;
   var data={}, els={}, files=[], commands=[];
   // WIRING
   var BOOT = readBootConfig(document);
@@ -220,9 +217,7 @@ import { createTranscriptController } from './features/topic/transcript/index.js
       var r = unsent[nonce];
       dropUnsent(nonce);
       if(r) settleAdopted(r.t, r.x);
-      if(els[pk]){ els[pk].remove(); delete els[pk]; }
-      delete sig[pk];
-      delete data[pk];
+      transcript.drop(pk);
     },
     onRecallContent: function(content){
       if(!input.value.trim()){
@@ -358,7 +353,7 @@ import { createTranscriptController } from './features/topic/transcript/index.js
     getHistoryMessage: function(k){ return historyPanel.getMessage(k); },
     repaintHistoryMessage: function(k){ historyPanel.repaintMessage(k); },
     paintTopics: paintTopics,
-    paintStatus: paintStatus,
+    paintStatus: function(){ topicStatus.paintStatus(); },
     switchTopic: switchTopic,
     isNarrow: narrow,
     setSidebar: setSidebar,
@@ -408,6 +403,144 @@ import { createTranscriptController } from './features/topic/transcript/index.js
   function repaintHistory(){ transcript.repaintHistory(); }
   function adopt(list, current){ transcript.adopt(list, current); }
   function postButton(b, t){ transcript.postButton(b, t); }
+  var topicsFeature = createTopicsFeature({
+    els: {
+      bar: bar,
+      topicsFilterHost: topicsFilterHost,
+      rowMenu: rowMenu,
+      newTopicBtn: newTopicBtn,
+      readBtn: readBtn,
+      clearBtn: clearBtn,
+      idleBtn: idleBtn,
+      noIdleBtn: noIdleBtn,
+      idleCount: idleCount,
+      idleDialog: idleDialog,
+      idleTitle: idleTitle,
+      idleWhy: idleWhy,
+      idleList: idleList,
+      idleGo: idleGo,
+      idleCancel: idleCancel,
+      chatTitle: chatTitle,
+      chatStatus: chatStatus,
+      killBtn: killBtn,
+      stopBtn: stopBtn,
+      note: note,
+    },
+    instanceId: BOOT.instance || 'web',
+    termOk: Boolean(BOOT.terminal),
+    getIcons: function(){ return IC.icon; },
+    getTopics: function(){ return topics; },
+    setTopics: function(next){ topics = next; },
+    getTopic: function(){ return topic; },
+    setTopic: function(id){ topic = id; },
+    getEpoch: function(){ return epoch; },
+    narrow: narrow,
+    setSidebar: setSidebar,
+    setSbTab: setSbTab,
+    getSbTab: function(){ return historyPanel.getTab(); },
+    closeMenus: function(){ setMenu(null, false); },
+    closeLib: closeLib,
+    refreshHistoryReadOnly: function(){ historyPanel.refreshReadOnly(); },
+    closeSettings: function(){ settingsFeature.close(); },
+    closeGit: function(){ gitPanel.close(); },
+    closeTransientSchedules: function(){
+      if(schedPane.isOpen() && !schedPane.docked()) setSchedules(false, true);
+    },
+    onSchedulesTopicsUpdated: function(){ schedulesPanel.onTopicsUpdated(); },
+    getScheduleTask: schedTask,
+    openTaskPage: openTaskPage,
+    scheduleOp: schedOp,
+    rememberAdoptedReview: function(topicId, reviewText){ reviewsPanel.rememberAdopted(topicId, reviewText); },
+    unreadOf: unreadOf,
+    needsRead: needsRead,
+    syncReads: function(list, activeId){ readsService.syncTopics(list, activeId); },
+    markTopicReadFromList: function(id, list){ readsService.markTopicFromList(id, list); },
+    removeRead: function(id){ readsService.remove(id); },
+    markAllRead: markAllRead,
+    reportSeen: reportSeen,
+    offSince: offSince,
+    offTitle: offTitle,
+    paintMachineNote: paintMachineNote,
+    paintForkNote: paintForkNote,
+    syncCopyRef: syncCopyRef,
+    copyTopicRef: copyTopicRef,
+    applyTerm: applyTerm,
+    paintFrames: paintFrames,
+    dropTerm: dropTerm,
+    urlNow: urlNow,
+    command: command,
+    saveView: saveView,
+    stashDraft: stashDraft,
+    loadDraft: loadDraft,
+    seedDraft: function(topicId, draftText){
+      drafts[topicId] = { text: draftText, s: draftText.length, e: draftText.length, files: [] };
+      writeDraft(topicId);
+      loadDraft(topicId);
+    },
+    forgetTopic: forget,
+    keepOnlyTopics: keepOnly,
+    resetForSwitch: function(nextId){
+      log.innerHTML = '';
+      data = {};
+      els = {};
+      stale = false;
+      topicStatus.closeModelPop();
+      transcript.resetForTopicSwitch(nextId);
+      topicStatus.setStatus(null);
+      topicStatus.setPending([]);
+      entering = true;
+      synced = false;
+    },
+    showSkeleton: showSkeleton,
+    setStale: function(v){ stale = v; },
+    setSettleOnResume: function(v){ settleOnResume = v; },
+    claimMessage: claim,
+    adoptMessages: adopt,
+    showUnsent: showUnsent,
+    isDbAvailable: dbOn,
+    getCacheVersion: function(id){ return cacheService.getVersion(id); },
+    setCacheVersion: function(id, ver){ cacheService.setVersion(id, ver); },
+    isNewer: newer,
+    memCopy: memCopy,
+    getCache: get,
+    peekCache: cachePeek,
+    putCache: put,
+    dropCache: cacheDrop,
+    leaveCache: leave,
+    snapshotMsgs: snapshotMsgs,
+    isStreamParked: function(){ return streamClient.isParked(); },
+    isStreamOpen: function(){ return streamClient.isOpen(); },
+    closeStream: function(){ streamClient.close(); },
+    setStreamLastEventId: function(last){ streamClient.setLastEventId(last); },
+    connectStream: function(resume){ streamClient.connect(resume); },
+  });
+  function schedAgo(at){ return topicsFeature.schedAgo(at); }
+  function ageText(ms, done){ return topicsFeature.ageText(ms, done); }
+  function ageClock(at){ return topicsFeature.ageClock(at); }
+  function rowHtml(o){ return topicsFeature.rowHtml(o); }
+  function treeRowHtml(row, o){ return topicsFeature.treeRowHtml(row, o); }
+  function forkFromText(t){ return topicsFeature.forkFromText(t); }
+  function topicExists(id){ return topicsFeature.topicExists(id); }
+  function topicById(id){ return topicsFeature.topicById(id); }
+  function runOwners(){ return topicsFeature.runOwners(); }
+  function topicTree(list){ return topicsFeature.topicTree(list); }
+  function treeWalker(tree){ return topicsFeature.treeWalker(tree); }
+  function rowRunning(t){ return topicsFeature.rowRunning(t); }
+  function splitTitle(title){ return topicsFeature.splitTitle(title); }
+  function agentTagHtml(t){ return topicsFeature.agentTagHtml(t); }
+  function makeFilterBar(opts){ return topicsFeature.makeFilterBar(opts); }
+  function paintTopics(){ topicsFeature.paintTopics(); }
+  function schedulePrefetch(){ topicsFeature.schedulePrefetch(); }
+  function switchTopic(id){ topicsFeature.switchTopic(id); }
+  function enter(id){ topicsFeature.enter(id); }
+  function paintAges(){ topicsFeature.paintAges(); }
+  function armAgeTick(){ topicsFeature.armAgeTick(); }
+  function foldClick(e){ return topicsFeature.foldClick(e); }
+  function closeRowMenu(focusBack){ topicsFeature.closeRowMenu(focusBack); }
+  function rowMenuFollow(){ topicsFeature.rowMenuFollow(); }
+  function openRowMenuFor(btn){ topicsFeature.openRowMenuFor(btn); }
+  function createTopic(seed){ return topicsFeature.createTopic(seed); }
+  function closeIdle(){ topicsFeature.closeIdle(); }
   // END WIRING
   // Panels instantiated before makePanel(), which calls paintSchedTab() synchronously on setup.
   var reviewsPanel = createReviewsPanel({
@@ -533,7 +666,7 @@ import { createTranscriptController } from './features/topic/transcript/index.js
     foldClick: foldClick,
     rowMenuFollow: rowMenuFollow,
     closeRowMenu: closeRowMenu,
-    getRowMenuKey: function(){ return rowMenuKey; },
+    getRowMenuKey: function(){ return topicsFeature.getRowMenuKey(); },
     openRowMenuFor: openRowMenuFor,
     makeFilterBar: makeFilterBar,
     paneIsOpen: function(){ return schedPane.isOpen(); },
@@ -565,14 +698,12 @@ import { createTranscriptController } from './features/topic/transcript/index.js
     post: post,
     closeMenus: function(){ setMenu(null, false); },
   });
-  // The row menu: which row it belongs to (a key like "topic:<id>", "sess:<id>", "task:<id>"),
-  // the button that opened it, and what a pick calls. The button is re-found after every repaint
-  // (rowMenuFollow), because the row it lives in is replaced while the menu stays open.
-  var rowMenuKey=null, rowMenuBtn=null, rowMenuPick=null;
   // Whether the next sync is the one that opens a topic.
   var entering=true;
   // What the last sync said about this topic being older than the daemon.
   var stale=false;
+  var launch=null;
+  var settleOnResume=false;
   // Which run of the daemon the live stream belongs to, and whether this topic's first sync has
   // landed. 0 until one has: every message below is qualified by the generation it came from,
   // and before the first sync the only generations known are the ones out of the cache.
@@ -635,18 +766,6 @@ import { createTranscriptController } from './features/topic/transcript/index.js
   paintSchedTab();
 
   /**
-   * Parents whose sub-agent topics are folded away (paintTopics), per browser. Folded by default:
-   * a /super job's children are the working detail behind one conversation, and a dispatcher that
-   * opens five of them would otherwise push five rows into a column read as a list of conversations.
-   * An entry of false is an operator who opened one, and it stays open on this browser.
-   */
-  var folded = {};
-  try { folded = JSON.parse(localStorage.getItem('aa_folded') || '{}') || {}; } catch(x){}
-  function saveFolded(){
-    try { localStorage.setItem('aa_folded', JSON.stringify(folded)); } catch(x){}
-  }
-
-  /**
    * How a message is identified ON THIS PAGE, which is deliberately not its server id.
    *
    * Server ids are 'w1', 'w2'..., counted per PROCESS — so a restarted daemon hands the same
@@ -661,250 +780,11 @@ import { createTranscriptController } from './features/topic/transcript/index.js
   /** A cached message from a daemon that is no longer the one on the other end of the stream. */
   function isHistory(m){ return Boolean(m) && !m._local && epoch !== 0 && m._g !== epoch; }
 
-  function schedAgo(at){
-    if(!at) return '';
-    var s=Math.max(0, Math.round((Date.now()-at)/1000));
-    if(s<60) return tr('age.secAgo', { n: s });
-    if(s<3600) return tr('age.minAgo', { n: Math.round(s/60) });
-    if(s<86400) return tr('age.hourAgo', { n: Math.round(s/3600) });
-    return tr('age.dayAgo', { n: Math.round(s/86400) });
-  }
-
-  /**
-   * How long a span lasted, in the one format every age on this page uses: under a minute is
-   * "<1m", under an hour Nm, under a day Nh (no minutes — "23h" is as precise as a row needs),
-   * then Nd, or NdNh when the hours are not zero ("1d10h").
-   *
-   * Rounded down, so a row never claims a minute it has not reached. A negative span — the
-   * server's clock ahead of this browser's — counts as zero rather than rendering "-1m".
-   */
-  function durText(ms){
-    var m=Math.floor(Math.max(0, ms)/60000);
-    if(m<1) return '<1m';
-    if(m<60) return m+'m';
-    var h=Math.floor(m/60);
-    if(h<24) return h+'h';
-    var d=Math.floor(h/24), rh=h%24;
-    return d+'d'+(rh?rh+'h':'');
-  }
-
-  /** A span as an age: the same units, with " ago" only for something that has ended. */
-  function ageText(ms, done){
-    var d = durText(ms);
-    return done ? tr('age.ago', { dur: d }) : d;
-  }
-
-  /** HH:MM, with the date in front when it was not today — the tooltip's "started/ended at". */
-  function ageClock(at){
-    var d=new Date(at), now=new Date();
-    var hm=(d.getHours()<10?'0':'')+d.getHours()+':'+(d.getMinutes()<10?'0':'')+d.getMinutes();
-    if(d.getFullYear()===now.getFullYear() && d.getMonth()===now.getMonth() && d.getDate()===now.getDate()) return hm;
-    var mn=tr(MONTH_KEYS[d.getMonth()]);
-    var day=(getLocale()==='zh-CN'?mn:mn.slice(0,3))+' '+d.getDate();
-    return (d.getFullYear()===now.getFullYear()?day:day+', '+d.getFullYear())+' '+hm;
-  }
-
-  /**
-   * One walk of a topic's subtree: whether anything under it is working, and the earliest start
-   * among the ones that are — 0 when none carries one.
-   *
-   * A /super dispatcher's own turn ends between jobs while its sub-agents keep working, and
-   * rowRunning draws it as running; its age has to be the job's, not a start it does not have.
-   * Earliest, because that is when the work the row is standing for began. Both answers come out
-   * of the same walk, so painting one row does not walk its subtree twice for them.
-   */
-  function subtreeRun(id){
-    var busy=false, since=0, stack=[id], seenB={}, n=0;
-    while(stack.length && n++<256){
-      var p=stack.pop();
-      if(seenB[p]) continue;
-      seenB[p]=true;
-      for(var i=0;i<topics.length;i++){
-        var t=topics[i];
-        if(t.parent!==p) continue;
-        if(t.running){
-          busy=true;
-          if(t.runningSince && (!since || t.runningSince<since)) since=t.runningSince;
-        }
-        stack.push(t.id);
-      }
-    }
-    return {busy:busy, since:since};
-  }
-
-  /**
-   * What a row's age counts from, and whether it is still running: its own start while it works
-   * (or the earliest start below a dispatcher), else when its last turn ended — the outcome's
-   * own timestamp, or the last message when the daemon sent no outcome. Null when there is
-   * nothing to count: a topic nothing has been said in yet, or a running one from a daemon
-   * older than runningSince.
-   */
-  function topicAge(t){
-    if(t.running) return t.runningSince ? {at:t.runningSince, run:true} : null;
-    // A dispatcher is drawn as running while its sub-agents work, so it has no "ended" to count
-    // from: with no start anywhere below (a daemon older than runningSince) it shows nothing.
-    var below=subtreeRun(t.id);
-    if(below.busy) return below.since ? {at:below.since, run:true} : null;
-    var at=(t.outcome && t.outcome.at) ? t.outcome.at : (t.msgCount ? t.lastAt : 0);
-    return at ? {at:at, run:false} : null;
-  }
-
-  /**
-   * The age element of a row, stamped so the 30-second tick can rewrite it without repainting
-   * the list (see paintAges): data-age is the instant counted from, data-age-run says which
-   * wording it takes.
-   */
-  function ageHtml(t){
-    var a=topicAge(t);
-    if(!a) return '';
-    return '<span class="topic-age'+(a.run?' run':'')+'" data-age="'+text(a.at)+'"'
-      + ' data-age-run="'+(a.run?'1':'0')+'"'
-      + ' title="'+text(tr(a.run?'age.started':'age.ended', { when: ageClock(a.at) }))+'">'
-      + text(ageText(Date.now()-a.at, !a.run))+'</span>';
-  }
-
-  var MONTH_KEYS=['age.month0','age.month1','age.month2','age.month3','age.month4','age.month5','age.month6','age.month7','age.month8','age.month9','age.month10','age.month11'];
-
-  /**
-   * One row of any list: a state dot, a title, a quiet second line, an optional badge and mark,
-   * and the ⋯ that opens the row's menu.
-   *
-   * The topic list, a scheduled task and a scheduled run all draw this, because they are the
-   * same thing to read: what is it, what is it doing, and one control. The callers own what goes
-   * in each slot; this owns the shape, and the key that ties the row to an open menu across the
-   * innerHTML repaint every one of these lists does.
-   *
-   * The "time" slot is the right end of that second line, for the one row that carries a clock.
-   * It is a slot of its own rather than part of "sub" because it must not be ellipsised with it.
-   * The "legend" slot is a topic row's agent name on its frame (agentTagHtml); it is positioned
-   * out of the flex row, so it is first only to be painted under the row's controls, never over.
-   */
-  function rowHtml(o){
-    var key=o.key||'';
-    var more='<button type="button" class="btn-icon topic-more" data-rm="'+text(key)+'"'
-      + ' aria-haspopup="menu" aria-expanded="'+(rowMenuKey===key?'true':'false')+'"'
-      + ' title="'+text(o.moreTitle||tr('topic.rowActions'))+'" aria-label="'+text(o.moreTitle||tr('topic.rowActions'))+'">'+IC.icon.more+'</button>';
-    var sub=(o.sub||o.time)?'<span class="topic-sub">'+(o.sub||'')+(o.time||'')+'</span>':'';
-    return '<div class="topic-item'+(o.cls?' '+o.cls:'')+'"'+o.attrs+'>'
-      + (o.legend||'')
-      + '<span class="'+(o.dot||'topic-dot')+'"></span>'
-      + '<span class="topic-main">'+(o.title||'')+sub+'</span>'
-      + (o.badge||'')
-      + '<span class="topic-acts">'+(o.mark||'')+more+'</span>'
-      + '</div>';
-  }
-
-  /**
-   * One topic's row, in whichever list draws it: the switcher, and the Sessions tab — a scheduled
-   * run and the sub-agents under it. row is a treeWalker row, so the depth, the fold pill and what
-   * it hides come with it; the list decides the rest:
-   *   attr     the attribute its click handler reads the id from (data-topic, data-sess)
-   *   menu     the prefix of the ⋯'s key, which openRowMenuFor routes on (topic, sess)
-   *   cls/tail classes before / after the depth ones (after-needs, needs)
-   *   attrs    more attributes for the row
-   *   sub/time in place of the directory line and the age: a run's own row says when it ran, how
-   *            many messages and in what state instead
-   * Everything else — the agent legend, the dot, the title, the badge, the terminal and star marks —
-   * is one answer for every list, so a topic looks the same wherever it is found.
-   */
-  function treeRowHtml(row, o){
-    var t=row.t;
-    var isCur=(t.id===topic);
-    var isRunning=rowRunning(t);
-    // A question on screen holds its turn open, so t.running is true at the same time. Asked
-    // first everywhere below: "waiting for you" is the state you can act on, and the one the
-    // running blue would otherwise hide.
-    var isAsking=Boolean(t.asking);
-    var isLive=Boolean(t.live);
-    var unread=unreadOf(t);
-    var cls=(isCur?'on ':'')+(isRunning?'running':'idle')+(isLive?' live':'')
-      +(t.starred?' starred':'')+' framed'+(o.cls||'')
-      +(row.depth?' sub d'+Math.min(row.depth,3):'')
-      +(o.tail||'');
-    var isFailed=t.stage==='failed';
-    // A sub-agent's finished turn is news for the agent that opened it, not for the person
-    // (needsYou says the same): its row keeps the ordinary idle/online grey instead of the
-    // green "unread reply" dot, and the parent turns green when the report is waiting to be
-    // read. Work and a question are still its own — blue and amber — because both are states a
-    // person acts on, or watches, in that topic.
-    var dotCls='topic-dot'+(isAsking?' asking':(isRunning?' running':(isFailed?' failed':(t.stage==='review'&&!t.parent?' review':(isLive?' live':'')))));
-    var badge=unread>0?'<span class="topic-badge">'+(unread>99?'99+':unread)+'</span>':'';
-    // Not "a shell is alive over there" — the daemon only sees the connection, so this says a
-    // page has that topic's terminal open (shown or minimized). See terminal-sessions.ts.
-    var term=t.term?'<span class="topic-term" title="'+text(tr('topic.termAttached'))+'">&gt;_</span>':'';
-    var line=o.sub!==undefined ? o.sub : topicDirHtml(t);
-    // The subject alone: who answers is the legend on the row's frame, not the "[cc] " the stored
-    // name opens with (which the chat platforms still need, and which a later /agent leaves stale).
-    var title='<span class="topic-title">'
-       + forkMarkHtml(t)
-       + text(splitTitle(t.title || tr('common.untitled')).rest)+'</span>';
-    // A lit star on a starred row is a marker, not a button: Star/Unstar lives in the menu now.
-    var starMark=t.starred
-      ? '<span class="topic-star-mark" title="'+text(tr('topic.starredTitle'))+'" aria-hidden="true">'+IC.icon.star+'</span>'
-      : '';
-    // Its own button, like the star: folding a parent is not a reason to switch to it.
-    var fold=row.kids?'<button type="button" class="topic-fold'+(row.shut?' folded':'')+(row.under?' '+row.under:'')+'"'
-       + ' data-fold="'+text(t.id)+'" aria-expanded="'+(row.shut?'false':'true')+'"'
-       + ' title="'+text(tr(row.shut?(row.kids>1?'topic.foldShowPlural':'topic.foldShow'):(row.kids>1?'topic.foldHidePlural':'topic.foldHide'), { count: row.kids }))+'">'
-       + (row.shut?IC.icon.chevronRight:IC.icon.chevronDown)+' '+row.kids+'</button>':'';
-    return rowHtml({
-      cls:cls,
-      attrs:' '+o.attr+'="'+text(t.id)+'" role="button" tabindex="0"'+(o.attrs||''),
-      key:o.menu+':'+t.id,
-      legend:agentTagHtml(t),
-      dot:dotCls,
-      title:title,
-      sub:fold ? '<span class="topic-line">'+fold+line+'</span>' : line,
-      time:o.time!==undefined ? o.time : ageHtml(t),
-      badge:term+badge,
-      mark:starMark,
-      moreTitle:o.moreTitle
-    });
-  }
-
-  /**
-   * The mark a forked topic's row leads with (Topic.forkOf), saying where it came from on hover; empty
-   * for every other row. The source is named as the list shows it, so the hover and the row above
-   * read the same.
-   */
-  function forkMarkHtml(t){
-    if(!t.forkOf) return '';
-    return '<span class="topic-fork-mark" title="'+text(forkFromText(t))+'">'+IC.icon.fork+'</span>';
-  }
-  /** "Forked from <source> · turn N", for a fork's mark and the line at the top of its page. */
-  function forkFromText(t){
-    var src=topicById(t.forkOf);
-    var source = src ? (src.title || tr('common.untitled')) : tr('topic.anotherTopic');
-    return t.forkTurn ? tr('topic.forkedFromTurn', { source: source, turn: t.forkTurn }) : tr('topic.forkedFrom', { source: source });
-  }
-
-  /**
-   * Where a topic works, as its row's second line says it: the machine, then the directory's name.
-   *
-   * The full path on the title attribute rather than in the row: two checkouts of one project have
-   * the same last segment, and the column is 240px wide. The machine goes first: it is the short
-   * word, and the one that tells apart two agents of one harness on two hosts — whose directories
-   * usually share a name too — so it is what the ellipsis spares. An offline machine keeps its name
-   * and gains a mark: the line still says where the topic is.
-   */
-  function topicDirHtml(t){
-    if(!t.dir) return '';
-    var offAt=t.dir.host?offSince(t.dir.host):0;
-    var where=t.dir.host
-      ? (offAt ? '<span class="topic-off" title="'+text(offTitle(t.dir.host))+'">'+IC.icon.offline+text(t.dir.host)+'</span> · ' : text(t.dir.host+' · '))
-      : '';
-    return '<span class="topic-dir" title="'+text((t.dir.host?t.dir.host+':':'')+t.dir.path)+'">'+where+text(t.dir.name)+'</span>';
-  }
 
   // ── Reviews (client/panels/reviews.ts) ─────────────────────────────────────
   function loadReviews(){ reviewsPanel.load(); }
   function paintReviews(){ reviewsPanel.paint(); }
   function settleAdopted(id, typed){ reviewsPanel.settleAdopted(id, typed); }
-
-  function topicExists(id){
-    for(var i=0;i<topics.length;i++) if(topics[i].id === id) return true;
-    return false;
-  }
 
   // ── Schedules (client/panels/schedules.ts) ──────────────────────────────────
   function paintSchedCounts(){ schedulesPanel.paintCounts(); }
@@ -949,1284 +829,12 @@ import { createTranscriptController } from './features/topic/transcript/index.js
   }
 
 
-  /**
-   * The scheduled run each topic belongs to, by id: a run is its own, and a topic its agent opened —
-   * or one opened under that, any depth — is the run's. A topic in no run has no entry.
-   *
-   * The two lists split the topics on this: the switcher (topicForest) draws what is in no run, and
-   * the Sessions tab (paintSessions) draws every run with the topics under it. Before this, a
-   * sub-agent a scheduled run opened was not a run itself, so the switcher drew it — as a root,
-   * because its parent was not in that list — while the run it belonged to sat in the panel
-   * (reported 2026-11-13). A parent chain that loops, or runs past 32, belongs to no run.
-   */
-  function runOwners(){
-    var byId={}, out={}, i;
-    for(i=0;i<topics.length;i++) byId[topics[i].id]=topics[i];
-    for(i=0;i<topics.length;i++){
-      var t=topics[i], hops=0;
-      while(t && hops++<32){
-        if(t.scheduled){ out[topics[i].id]=t.id; break; }
-        if(!t.parent || t.parent===t.id) break;
-        t=byId[t.parent];
-      }
-    }
-    return out;
-  }
-
-  /**
-   * A list's tree: each topic under the one its agent opened it from (Topic.parent), when that one
-   * is in the same list, and a root otherwise. visible keeps the list's order — the daemon's, most
-   * recently active first — and so does each topic's kids.
-   */
-  function topicTree(list){
-    var byId={}, kids={}, forks={}, roots=[], i;
-    for(i=0;i<list.length;i++) byId[list[i].id]=list[i];
-    for(i=0;i<list.length;i++){
-      var p=list[i].parent, f=list[i].forkOf;
-      if(p && p!==list[i].id && byId[p]) (kids[p]=kids[p]||[]).push(list[i]);
-      // A fork (Topic.forkOf) is drawn right after its source, at its depth — beside it, not under
-      // it: it is the person's own conversation, which no agent opened. A root when its source is
-      // not in this list (a scheduled run's, or one the filter left out).
-      else if(f && f!==list[i].id && byId[f]) (forks[f]=forks[f]||[]).push(list[i]);
-      else roots.push(list[i]);
-    }
-    return {visible:list, byId:byId, kids:kids, forks:forks, roots:roots};
-  }
-
-  /** Who a row hangs off in the drawn list: its parent, else the source it was forked from. */
-  function hangsOff(t, byId){
-    if(t.parent && byId[t.parent]) return t.parent;
-    if(t.forkOf && byId[t.forkOf]) return t.forkOf;
-    return null;
-  }
-
-  /**
-   * A tree's rows, depth-first: walk(t) adds t and, unless it is folded, the topics its agent
-   * opened under it, a level deeper. The one way a sub-agent is nested, in both lists that draw
-   * one: the switcher (topicRows) and the Sessions tab (paintSessions), which choose the roots and
-   * their order and leave the rest to this.
-   *
-   * folded is per browser and keyed by the parent's id, so a run folds the same way a topic does.
-   * The topic on screen is never folded away: its ancestors are drawn open, without that being
-   * saved, so a link into a sub-agent's topic lands on a row you can see. A folded row carries
-   * under, the most pressing state among the topics it hides, for the pill's colour.
-   *
-   * rest(keep) adds whatever no walk reached and no fold hides — only a parent field that loops
-   * (a hand-edited file) leaves one: with no root to start from, the first topic of the loop in the
-   * list's order is drawn as one and the rest under it, rather than lost. keep, when given, limits
-   * it to those ids.
-   */
-  function treeWalker(tree){
-    var byId=tree.byId, kids=tree.kids, forks=tree.forks||{};
-    // Up through sources as well as parents: a fork is drawn where its source is, so the topic on
-    // screen being a fork of a sub-agent's topic still opens the parent that topic is under.
-    var open={}, up=byId[topic], hops=0, next;
-    while(up && (next=hangsOff(up, byId)) && hops++<32){ if(up.parent===next) open[next]=true; up=byId[next]; }
-    var rows=[], seen={};
-    function state(t, depth){
-      var ch=kids[t.id]||[], s='';
-      for(var k=0;k<ch.length && depth<32;k++){
-        var c=ch[k];
-        var mine=c.asking?'asking':(c.stage==='failed'?'failed':(c.running?'running':''));
-        var deeper=state(c, depth+1);
-        var pick=[mine, deeper, s];
-        s=pick.indexOf('asking')>=0?'asking':(pick.indexOf('failed')>=0?'failed':(pick.indexOf('running')>=0?'running':''));
-      }
-      return s;
-    }
-    function walk(t, depth){
-      if(seen[t.id]) return;
-      seen[t.id]=true;
-      var ch=kids[t.id]||[];
-      var shut=ch.length>0 && folded[t.id]!==false && !open[t.id];
-      rows.push({t:t, depth:depth, kids:ch.length, shut:shut, under:shut?state(t, 0):''});
-      if(!shut) for(var k=0;k<ch.length;k++) walk(ch[k], depth+1);
-      // Its forks after it and everything under it, at its own depth, whether or not it is folded:
-      // folding hides what its agent opened, and a fork is not that.
-      var fk=forks[t.id]||[];
-      for(var j=0;j<fk.length;j++) walk(fk[j], depth);
-    }
-    function rest(keep){
-      var list=tree.visible;
-      for(var i=0;i<list.length;i++){
-        if(keep && !keep[list[i].id]) continue;
-        // Hidden under a folded parent is seen-by-design; only a loop leaves one unseen.
-        var hidden=false, a=list[i], n=0, by;
-        while(a && (by=hangsOff(a, byId)) && n++<32){
-          if(a.parent===by && seen[by] && folded[by]!==false && !open[by]){ hidden=true; break; }
-          a=byId[by];
-        }
-        if(!seen[list[i].id] && !hidden) walk(list[i], 0);
-      }
-    }
-    return {rows:rows, walk:walk, rest:rest};
-  }
-
-  /**
-   * The list's tree and its conversations, built from the topics in hand. A conversation is a
-   * root and everything its agent opened under it — the unit the filter keeps or drops whole
-   * (topicRows) and the unit the chips count (topicFilterGroups), so one tree is one result in
-   * both places. A parent that loops (only a hand-edited file could) gives the loop no root, so
-   * the first topic of it met in the list starts the conversation and the rest hang under it the
-   * way the walk reaches them — a two-topic loop is drawn as the first root with the second folded
-   * under it, and the conversation is exactly that pair. Scheduled runs are conversations, but not
-   * ones the person opened: the panel's Sessions tab is where they live, with the sub-agents they
-   * opened (runOwners), and leaving them out here also keeps their unread badges and "needs you"
-   * rows out of the switcher.
-   *
-   * Each conversation carries what the filter decides on: its most pressing state, whether any
-   * topic in it is starred, and every agent and host it touches. State and star are whole-tree
-   * properties, so the four state chips partition the conversations; agents and hosts are a
-   * union, because a root and a sub-agent may well run on different ones.
-   */
-  function topicForest(){
-    var runs=runOwners(), list=[], i;
-    for(i=0;i<topics.length;i++) if(!runs[topics[i].id]) list.push(topics[i]);
-    var tree=topicTree(list), visible=tree.visible, kids=tree.kids, roots=tree.roots;
-    var convs={}, convOrder=[], seenC={};
-    function mark(t, id){
-      if(seenC[t.id]) return;
-      seenC[t.id]=true;
-      var c=convs[id], rank=stateRank(t);
-      c.members.push(t);
-      if(rank<c.rank) c.rank=rank;
-      if(t.starred) c.starred=true;
-      // By the legend's own words, so a chip names an agent the way the rows do.
-      var agent=agentOf(t);
-      if(agent) c.agents[agent.label]=true;
-      c.hosts[t.dir && t.dir.host ? t.dir.host : '__local']=true;
-      // A fork belongs to its source's conversation here, as it is drawn beside it: a filter that
-      // keeps the source keeps the forks next to it.
-      var ch=(kids[t.id]||[]).concat(tree.forks[t.id]||[]);
-      for(var k=0;k<ch.length;k++) mark(ch[k], id);
-    }
-    function start(t){
-      if(seenC[t.id]) return;
-      convs[t.id]={members:[], rank:3, starred:false, agents:{}, hosts:{}};
-      convOrder.push(t.id);
-      mark(t, t.id);
-    }
-    for(i=0;i<roots.length;i++) start(roots[i]);
-    for(i=0;i<visible.length;i++) start(visible[i]);
-    tree.convs=convs;
-    tree.convOrder=convOrder;
-    return tree;
-  }
-
-  function tabForest(full, tab){
-    var isStarredTab = tab === 'starred';
-    var convs={}, convOrder=[], keepId={}, byId={}, i, m;
-    for(i=0;i<full.convOrder.length;i++){
-      var cid = full.convOrder[i];
-      var c = full.convs[cid];
-      if(isStarredTab ? !c.starred : (c.starred && c.rank >= 3)) continue;
-      convs[cid] = c;
-      convOrder.push(cid);
-      for(m=0;m<c.members.length;m++){
-        keepId[c.members[m].id] = true;
-        byId[c.members[m].id] = c.members[m];
-      }
-    }
-    return {
-      visible: full.visible.filter(function(t){ return Boolean(keepId[t.id]); }),
-      byId: byId,
-      roots: full.roots.filter(function(t){ return Boolean(keepId[t.id]); }),
-      kids: full.kids,
-      forks: full.forks,
-      convs: convs,
-      convOrder: convOrder
-    };
-  }
-
-  /**
-   * The rows in the order they are painted: what needs a decision first (needsYou, most pressing
-   * first), then every root by state — a topic with no title yet (Untitled) ahead of every
-   * state, then working, resident and idle, no agent — with a starred row ahead of its unstarred
-   * peers inside a state and the daemon's order (most recently active first) underneath. Every
-   * topic is followed by the ones its agent opened (Topic.parent),
-   * depth-first — unless it is folded. Only the painting is reordered: topics itself keeps the
-   * daemon's order, because topics[0] is read elsewhere as "the most recent topic" — where to land
-   * when the one on screen goes away.
-   *
-   * A filter picks conversations, not rows: one survives when the conversation as a whole
-   * matches (convMatch), and is then drawn by this same order, with its own fold state, its own
-   * fold count and the needs-you block — there is no second way of drawing a result.
-   *
-   * The nesting and folding are treeWalker's, the walk the Sessions tab draws its runs with too.
-   */
-  function topicRows(forest){
-    var visible=forest.visible, roots=forest.roots, i;
-    // The bar's state, read once: which conversations match. A match keeps the whole tree, so
-    // every row under a surviving root is drawn exactly as it is without a filter — nothing is
-    // dimmed, and no child is dropped for failing a search its parent answered.
-    var fs = topicFilter ? topicFilter.state() : null;
-    var keep=null, matched=forest.convOrder.length, words=[], filtering=false;
-    if(fs){
-      var anySel=false;
-      for(var gk in fs.sel) if(fs.sel[gk] && fs.sel[gk].length){ anySel=true; break; }
-      if(fs.q.trim() || anySel){
-        filtering=true;
-        words=fs.q.trim().toLowerCase().split(/\s+/);
-        keep={}; matched=0;
-        for(i=0;i<forest.convOrder.length;i++){
-          var conv=forest.convs[forest.convOrder[i]];
-          if(!convMatch(conv, words, fs.sel)) continue;
-          matched++;
-          for(var m=0;m<conv.members.length;m++) keep[conv.members[m].id]=1;
-        }
-      }
-    }
-    // Folded means folded with a filter on as well: the pill and its count are how the whole
-    // conversation is browsed, and a result must not open a tree the person keeps shut.
-    var w=treeWalker(forest), walk=w.walk, rows=w.rows, dividers={};
-    // What needs the person first (needsYou), most pressing first, each with the topics it
-    // opened. A filtered list keeps the block: a conversation that waits on an answer belongs
-    // at the top of the list whether or not the bar is in use.
-    var pinned=visible.filter(function(t){ return (!keep || keep[t.id]) && needsYou(t); })
-      .sort(function(a,b){ return NEEDS_ORDER[a.stage]-NEEDS_ORDER[b.stage] || (b.lastAt||0)-(a.lastAt||0); });
-    for(i=0;i<pinned.length;i++) walk(pinned[i], 0);
-    var afterPinned=rows.length;
-    var candidates = keep ? roots.filter(function(r){ return Boolean(keep[r.id]); }) : roots;
-    // Then everything else in the order the list is read: a topic with no title yet, working, a
-    // resident agent with nothing to do, and no agent at all (the decision group is already drawn
-    // above). The daemon's order — most recently active first — holds inside a state, and a
-    // starred row leads its unstarred peers there: a star is a promise not to forget a topic, not
-    // a claim on the top of the column.
-    var ordered=candidates.slice().sort(function(a,b){
-      var ra=listRank(a), rb=listRank(b), d=ra-rb;
-      if(d) return d;
-      if(ra===0) d=NEEDS_ORDER[a.stage]-NEEDS_ORDER[b.stage];
-      return d || (b.starred?1:0)-(a.starred?1:0);
-    });
-    for(i=0;i<ordered.length;i++) walk(ordered[i], 0);
-    w.rest(keep);
-    if(afterPinned && afterPinned<rows.length) dividers[afterPinned]=true;
-    // Any starred topic counts, not just a starred root: the label decides whether Clear would
-    // spare anything, and the daemon spares a starred sub-agent too.
-    var stars=0;
-    for(i=0;i<visible.length;i++) if(visible[i].starred) stars++;
-    // matched and total are conversations, not topics: one tree is one result, which is what
-    // the chips count and what "Showing N of M" has to agree with.
-    return {rows:rows, dividers:dividers, stars:stars, matched:matched, total:forest.convOrder.length, filtering:filtering};
-  }
-
-  /** Whether a topic this one opened, or one of theirs, is working. */
-  function busyBelow(id){
-    return subtreeRun(id).busy;
-  }
-
-  /**
-   * Whether a row is drawn as working: its own turn, or a sub-agent's.
-   *
-   * A /super dispatcher hands its work to topics of its own and then sits idle between turns, so
-   * drawn from its own flag alone it was the one row that looked dead while the agents under it
-   * worked (reported 2026-11-04). A sub-agent holding a question is running too — the daemon sends
-   * both flags — so busyBelow counts it, and the fold pill is what says which of the two it is.
-   */
-  function rowRunning(t){
-    return Boolean(t.running) || busyBelow(t.id);
-  }
-
-  var NEEDS_ORDER = {answer:0, failed:1, review:2};
-  var NEEDS_WHAT = {answer:'topic.needsAnswer', failed:'topic.needsFailed', review:'topic.needsReview'};
-  // stateRank's four values in its own order, as the filter chips name them.
-  var STATE_KEYS = ['needs', 'running', 'idle', 'none'];
-  /**
-   * What needs the person: every topic but the one on screen whose stage is a question, a failure,
-   * or a reply not yet read — the daemon decides the stage (core/topic-stage.ts) and sends it with
-   * the list. Drawn as the topic's own row, first in the list and green (paintTopics). It was a
-   * separate "Needs you" block above the list through 2.19.1, which put every such topic on screen
-   * twice — the same title, two rows — and read as two conversations.
-   *
-   * A sub-agent's topic (one with a parent) counts only for a question of its own: its replies and
-   * failures go to the agent that opened it, which says what comes of them (room.ts operatorStage,
-   * the same rule for notifications).
-   */
-  function needsYou(t){
-    if(t.id===topic || NEEDS_ORDER[t.stage]===undefined) return false;
-    return !t.parent || t.stage==='answer';
-  }
-
-  /**
-   * The four states the list is ordered by, most pressing first: a decision to make, work under
-   * way, a resident agent with nothing to do, and no agent at all. stage already says the first,
-   * rowRunning the second (a /super dispatcher is working while its sub-agents are), and live
-   * splits the last two — the same facts the dot and the row's colours are drawn from, so the order
-   * cannot disagree with what the rows say. The filter bar reads this too: its chips are these
-   * four, so it must keep meaning the row's state.
-   */
-  function stateRank(t){
-    if(needsYou(t)) return 0;
-    if(rowRunning(t)) return 1;
-    return t.live ? 2 : 3;
-  }
-
-  /**
-   * The rank the list is painted by: needsYou 0, a topic that has no title yet 1, and stateRank's
-   * other three states shifted up to 2–4. A topic is named by its first message (topics.ts seed),
-   * so an empty title means nothing has been said in it yet — the conversation the person has just
-   * opened and is about to work in, which the state order otherwise left at the bottom among the
-   * topics with no agent behind them. Only roots are ordered by this, which is why the untitled
-   * lift needs no "is this a child" guard: a sub-agent's empty title never reaches a sort.
-   *
-   * It is a rank of the list, not a fifth state: the dot is drawn from the same facts and the
-   * filter bar still counts by stateRank, so "No agent" keeps counting the new topic it is.
-   */
-  function listRank(t){
-    var r=stateRank(t);
-    return r===0 ? 0 : (!t.title ? 1 : r+1);
-  }
-
-  /**
-   * Split a topic's "[agent] subject" name into the agent id it opens with and its subject.
-   *
-   * Only ever reads a leading bracketed group, which formatLaneTitle guarantees: an untagged
-   * name (a topic seeded from its first message before any turn) has no tag and is shown as it is.
-   * The rows draw only the subject (the agent is their legend, agentTagHtml); the tag is read only
-   * where the daemon did not say which agent is bound (agentOf).
-   */
-  function splitTitle(title){
-    var m=/^\[([^\]]+)\]\s*([\s\S]*)$/.exec(title);
-    if(!m) return {tag:'', rest:title};
-    return {tag:m[1], rest:m[2]};
-  }
-
-  /**
-   * Which agent answers in a topic, for its row's legend, the Agent filter and the search:
-   *   id       the whole agent id, as config names it (cbc@uniagent)
-   *   label    what the legend says
-   *   harness  the configured harness, which picks the legend's colour; '' when not known
-   *
-   * The daemon's answer first (Topic.agent: the binding, with its harness). Failing that the title's
-   * own "[agent]" — a topic whose agent is gone from config, a daemon that offered no lookup — which
-   * says who answered when the topic was named and carries no harness, so its legend is grey.
-   *
-   * The label drops "@host" when the line under it already names that machine: an agent on a host is
-   * "cbc@uniagent", 15 characters spent on a machine the directory line repeats, and the part before
-   * the @ is what the operator types to bind it (reported 2026-11-03, against the title's tag). A host
-   * the line does not name — no directory known yet, or a group standing in for the host — keeps it,
-   * since dropping it would take the only place on the row that says which machine the agent is on.
-   * The whole id is on the legend's tooltip either way. null when nothing names an agent.
-   */
-  function agentOf(t){
-    var id='', harness='';
-    if(t.agent && t.agent.id){ id=t.agent.id; harness=t.agent.harness || ''; }
-    else id=splitTitle(t.title || '').tag;
-    if(!id) return null;
-    var host=t.dir && t.dir.host, at=id.indexOf('@');
-    var label=(at>0 && host && id.slice(at+1)===host) ? id.slice(0, at) : id;
-    return {id:id, label:label, harness:harness};
-  }
-
-  /** A topic row's agent legend, on its frame's top-left edge; empty for a row with no agent. */
-  function agentTagHtml(t){
-    var a=agentOf(t);
-    if(!a) return '';
-    return '<span class="agent-tag'+(a.harness?' h-'+text(a.harness):'')+'" title="'+text('Agent: '+a.id)+'">'+text(a.label)+'</span>';
-  }
-
-  // The topic list's bar, built with the rest of the page. paintTopics keeps its option lists and
-  // counts in step; the rows are filtered from the same state in topicRows.
-  var topicFilter = null;
-
-  /**
-   * The filter bar a list uses when it has outgrown a plain column: one row of search + Filter
-   * (+ an optional sort), a panel of chip groups under it, and a "Showing N of M" line while
-   * either is in use.
-   *
-   * The component owns the state and the widgets, not the data. groups are the options the
-   * caller has right now, and onChange is the caller's cue to re-filter and re-paint its own
-   * rows; it then reports how many survived with setCounts(shown, total), because only the
-   * caller knows that. setGroups is how a live list keeps the chips honest — agents and hosts
-   * appear and disappear — and a selected value that is no longer offered is dropped, so a chip
-   * cannot filter the list to nothing for a reason the panel no longer shows.
-   *
-   * The keyword, the selected values, the sort field and its direction, and whether the panel is
-   * open are persisted under key; a reload lands on the same view. The option lists and the
-   * counts are not: they describe the data, which the caller re-states on every paint.
-   *
-   * opts: {
-   *   key, placeholder,
-   *   groups: [{id, label, pinned?, options: [{value, label, short?, icon?, count?}]}],
-   *   sort?: {options: [{value, label}], value?, dir?: 'asc' | 'desc'},
-   *   onChange: (state) => void
-   * }
-   * A pinned group is drawn as one always-visible row under the search instead of folding into
-   * the panel — the state filter of both lists, which is what a person reaches for most and
-   * should not cost a click to see. short is its label in that row; the full label stays on the
-   * chip's title and aria-label, because the row hides the word when four chips cannot share the
-   * width (see .fb-pin in the stylesheet). The Filter dot counts the panel's groups only: a
-   * pinned chip is never hidden state.
-   * setGroups(null) is for the first frame only, before the caller's data has arrived: it offers
-   * nothing and prunes nothing. A refresh is not this — keep the last options by passing them
-   * again (or leave them alone until the new ones are in hand), because a reload that lands
-   * empty would prune a selection exactly as a genuinely empty list would.
-   * Returns {el, state, active, setGroups, setCounts, clear, destroy}. el is appended by the
-   * caller; destroy removes the document listener and the node.
-   */
-  function makeFilterBar(opts){
-    var key = opts.key;
-    var groups = opts.groups || [];
-    var sortDef = opts.sort || null;
-    var counts = null;
-    var st = {q:'', sel:{}, sort:'', dir:'', open:false};
-    try {
-      var saved = JSON.parse(localStorage.getItem(key) || 'null');
-      if(saved && typeof saved === 'object'){
-        if(typeof saved.q === 'string') st.q = saved.q;
-        if(saved.sel && typeof saved.sel === 'object' && !Array.isArray(saved.sel)){
-          var keys0 = Object.keys(saved.sel);
-          for(var k0=0;k0<keys0.length;k0++){
-            var sv = saved.sel[keys0[k0]];
-            if(!Array.isArray(sv)) continue;
-            var vals = [];
-            for(var v0=0;v0<sv.length;v0++) if(typeof sv[v0] === 'string') vals.push(sv[v0]);
-            if(vals.length) st.sel[keys0[k0]] = vals;
-          }
-        }
-        if(typeof saved.sort === 'string') st.sort = saved.sort;
-        if(saved.dir === 'asc' || saved.dir === 'desc') st.dir = saved.dir;
-        st.open = saved.open === true;
-      }
-    } catch(x){}
-    if(sortDef){
-      var offered = [];
-      for(var s0=0;s0<sortDef.options.length;s0++) offered.push(sortDef.options[s0].value);
-      if(offered.indexOf(st.sort) < 0){
-        st.sort = sortDef.value && offered.indexOf(sortDef.value) >= 0 ? sortDef.value : (offered[0] || '');
-      }
-      if(!st.dir) st.dir = sortDef.dir === 'desc' ? 'desc' : 'asc';
-    } else { st.sort = ''; st.dir = ''; }
-
-    var root = document.createElement('div');
-    root.className = 'filterbar';
-    var html = '<div class="fb-row">'
-      + '<div class="fb-search">' + IC.icon.search
-      + '<input class="fb-q" type="text" autocomplete="off" spellcheck="false"'
-      + ' placeholder="' + text(opts.placeholder || tr('common.search')) + '" aria-label="' + text(opts.placeholder || tr('common.search')) + '">'
-      + '<button type="button" class="fb-qclear" title="' + text(tr('common.clearSearch')) + '" aria-label="' + text(tr('common.clearSearch')) + '" hidden>' + IC.icon.cross + '</button>'
-      + '</div>'
-      + '<button type="button" class="fb-filter fb-btn" aria-expanded="false" title="' + text(tr('common.filter')) + '">'
-      + IC.icon.filter + '<span>' + text(tr('common.filter')) + '</span><span class="fb-dot" hidden></span></button>';
-    if(sortDef){
-      html += '<span class="fb-tools"><span class="fb-sort" title="' + text(tr('common.sort')) + '">' + IC.icon.sort
-        + '<select class="fb-sortsel" aria-label="' + text(tr('common.sort')) + '"></select></span>'
-        + '<button type="button" class="fb-dir fb-btn" aria-label="' + text(tr('common.ascending')) + '" title="' + text(tr('common.ascending')) + '"></button></span>';
-    }
-    html += '</div>'
-      + '<div class="fb-pins" hidden></div>'
-      + '<div class="fb-sum" hidden><span class="fb-sumtext"></span><button type="button" class="fb-clear">' + text(tr('common.clear')) + '</button></div>'
-      + '<div class="fb-panel" hidden></div>';
-    root.innerHTML = html;
-
-    var q = root.querySelector('.fb-q');
-    var qClear = root.querySelector('.fb-qclear');
-    var fBtn = root.querySelector('.fb-filter');
-    var dot = root.querySelector('.fb-dot');
-    var pins = root.querySelector('.fb-pins');
-    var panel = root.querySelector('.fb-panel');
-    var sum = root.querySelector('.fb-sum');
-    var sumText = root.querySelector('.fb-sumtext');
-    var clearBtn = root.querySelector('.fb-clear');
-    var sortSel = root.querySelector('.fb-sortsel');
-    var dirBtn = root.querySelector('.fb-dir');
-
-    function hasSel(){
-      for(var i=0;i<groups.length;i++){
-        var v = st.sel[groups[i].id];
-        if(v && v.length) return true;
-      }
-      return false;
-    }
-    /** A selection in a group that lives in the panel. A pinned group is always on screen, so
-        selecting one is not hidden state: the dot on Filter says "the panel holds a choice you
-        cannot see", and lighting it for a chip in the row would point at nothing. */
-    function panelHasSel(){
-      for(var i=0;i<groups.length;i++){
-        if(groups[i].pinned) continue;
-        var v = st.sel[groups[i].id];
-        if(v && v.length) return true;
-      }
-      return false;
-    }
-    function active(){ return st.q.trim() !== '' || hasSel(); }
-    function save(){ try { localStorage.setItem(key, JSON.stringify(st)); } catch(x){} }
-
-    function state(){
-      var sel = {};
-      for(var i=0;i<groups.length;i++){
-        var id = groups[i].id, v = st.sel[id];
-        if(v && v.length) sel[id] = v.slice();
-      }
-      return {q:st.q, sel:sel, sort:st.sort, dir:st.dir, open:st.open};
-    }
-
-    /** Drop selections whose group or value the caller no longer offers. */
-    function prune(){
-      var changed = false, keys = Object.keys(st.sel);
-      for(var i=0;i<keys.length;i++){
-        var id = keys[i], group = null;
-        for(var g=0;g<groups.length;g++) if(groups[g].id === id){ group = groups[g]; break; }
-        if(!group){ delete st.sel[id]; changed = true; continue; }
-        var kept = [], v = st.sel[id];
-        for(var k=0;k<v.length;k++){
-          var found = false;
-          for(var o=0;o<group.options.length;o++) if(group.options[o].value === v[k]){ found = true; break; }
-          if(found) kept.push(v[k]); else changed = true;
-        }
-        if(kept.length) st.sel[id] = kept; else { delete st.sel[id]; changed = true; }
-      }
-      return changed;
-    }
-
-    var panelSig = '';
-
-    function paintChips(){
-      var chips = root.querySelectorAll('[data-fb-value]');
-      for(var i=0;i<chips.length;i++){
-        var c = chips[i], id = c.getAttribute('data-fb-group'), v = c.getAttribute('data-fb-value');
-        var on = (st.sel[id] || []).indexOf(v) >= 0;
-        c.classList.toggle('on', on);
-        c.setAttribute('aria-pressed', on ? 'true' : 'false');
-      }
-    }
-
-    /** Only the numbers move between paints, so they are written in place rather than rebuilt. */
-    function paintCounts(){
-      var chips = root.querySelectorAll('[data-fb-value]');
-      for(var i=0;i<chips.length;i++){
-        var c = chips[i], id = c.getAttribute('data-fb-group'), v = c.getAttribute('data-fb-value'), o = null;
-        for(var g=0;g<groups.length;g++) if(groups[g].id === id){
-          for(var k=0;k<groups[g].options.length;k++) if(groups[g].options[k].value === v) o = groups[g].options[k];
-          break;
-        }
-        var n = c.querySelector('.fb-count');
-        if(o && n && typeof o.count === 'number') n.textContent = String(o.count);
-        // The pinned row's word may be hidden, so its full name is the accessible one — and the
-        // number is the half of the chip a reader cannot infer from the icon.
-        if(o && c.hasAttribute('aria-label')){
-          c.setAttribute('aria-label', o.label + (typeof o.count === 'number' ? ' ' + o.count : ''));
-        }
-      }
-    }
-
-    function paintPanel(){
-      // Counts move with every message; the chips themselves only when an agent or host appears
-      // or goes. Rebuilding on a count would replace the chip mid-click and lose its event path.
-      var shape = [];
-      for(var i=0;i<groups.length;i++){
-        var g = groups[i], row = [g.id, g.label, g.pinned ? 1 : 0];
-        for(var k=0;k<g.options.length;k++){
-          var o = g.options[k];
-          row.push([o.value, o.label, o.short || '', o.icon || '', typeof o.count === 'number' ? 1 : 0]);
-        }
-        shape.push(row);
-      }
-      var sig = JSON.stringify(shape);
-      if(sig === panelSig){ paintCounts(); paintChips(); return; }
-      panelSig = sig;
-      // A pinned group goes into its own always-visible row under the search; the rest keep the
-      // panel, label and all. Both are built here so one signature still guards both hosts.
-      var ph = '', h = '';
-      for(i=0;i<groups.length;i++){
-        var gg = groups[i], chips = '';
-        for(k=0;k<gg.options.length;k++){
-          var oo = gg.options[k];
-          chips += '<button type="button" class="fb-chip' + (gg.pinned ? ' fb-pin' : '') + '"'
-            + ' data-fb-group="' + text(gg.id) + '" data-fb-value="' + text(oo.value) + '"'
-            + ' aria-pressed="false" title="' + text(oo.label) + '"'
-            + (gg.pinned ? ' aria-label="' + text(oo.label + (typeof oo.count === 'number' ? ' ' + oo.count : '')) + '"' : '') + '>'
-            + (oo.icon && IC.icon[oo.icon] ? IC.icon[oo.icon] : '')
-            + '<span class="fb-chip-label">' + text(gg.pinned ? (oo.short || oo.label) : oo.label) + '</span>'
-            + (typeof oo.count === 'number' ? '<span class="fb-count">' + oo.count + '</span>' : '')
-            + '</button>';
-        }
-        if(gg.pinned){
-          ph += '<div class="fb-chips fb-pin-row" role="group" aria-label="' + text(gg.label) + '">' + chips + '</div>';
-        } else {
-          h += '<div class="fb-group"><div class="fb-label">' + text(gg.label) + '</div>'
-            + '<div class="fb-chips">' + chips + '</div></div>';
-        }
-      }
-      pins.innerHTML = ph;
-      pins.hidden = !ph;
-      panel.innerHTML = h;
-      paintChips();
-    }
-
-    function paintSummary(){
-      if(!active() || !counts){ sum.hidden = true; return; }
-      sum.hidden = false;
-      sumText.textContent = tr('common.showingOf', { shown: counts.shown, total: counts.total });
-    }
-
-    function paintChrome(){
-      qClear.hidden = !st.q;
-      dot.hidden = !panelHasSel();
-      fBtn.classList.toggle('on', panelHasSel());
-      fBtn.setAttribute('aria-expanded', st.open ? 'true' : 'false');
-      panel.hidden = !st.open;
-      if(st.q && q.value !== st.q) q.value = st.q;
-      paintSummary();
-    }
-
-    function emit(){
-      save();
-      paintChrome();
-      // The pressed state of a chip lives here, not in the caller's repaint: the task list
-      // redraws its rows on every change but does not restate its groups, so without this a
-      // click would filter the list while the chip still read unpressed.
-      paintChips();
-      if(opts.onChange) opts.onChange(state());
-    }
-
-    function paintDir(){
-      if(!dirBtn) return;
-      var up = st.dir !== 'desc';
-      dirBtn.innerHTML = up ? IC.icon.arrowUp : IC.icon.arrowDown;
-      dirBtn.title = up ? tr('common.ascending') : tr('common.descending');
-      dirBtn.setAttribute('aria-label', dirBtn.title);
-    }
-
-    function clear(){
-      st.q = ''; st.sel = {}; q.value = '';
-      emit();
-    }
-
-    q.addEventListener('input', function(){ st.q = q.value; emit(); });
-    qClear.addEventListener('click', function(){ q.value = ''; st.q = ''; emit(); q.focus(); });
-    // Escape is handled on the whole bar, not just the field: with the keyboard on Filter or a
-    // chip, Escape has to put the panel away — and in either case the keystroke must not bubble
-    // to the page-wide handler, which would close the whole sidebar drawer behind the panel.
-    // An IME uses Escape to cancel its candidate list; that Escape belongs to the composition.
-    root.addEventListener('keydown', function(e){
-      if(e.isComposing) return;
-      if(e.key !== 'Escape') return;
-      if(st.q && e.target === q){
-        q.value = ''; st.q = ''; emit(); e.preventDefault(); e.stopPropagation();
-        return;
-      }
-      if(st.open){
-        st.open = false; save(); paintChrome();
-        // A chip in the panel had focus and is hidden with it; leave the keyboard on the control
-        // that opens it rather than nowhere. A chip in the pinned row is still on screen, so
-        // there is nothing to move away from.
-        if(panel.contains(e.target)) fBtn.focus();
-        e.preventDefault(); e.stopPropagation();
-      } else if(e.target.closest && e.target.closest('[data-fb-value]')){
-        // A chip is in the bar whether the panel is open or not, and Escape on it is the person
-        // dismissing nothing. Let it through and the page-wide handler closes the whole drawer
-        // behind a filter that did not move.
-        e.stopPropagation();
-      }
-    });
-    fBtn.addEventListener('click', function(){ st.open = !st.open; save(); paintChrome(); });
-    clearBtn.addEventListener('click', clear);
-    if(sortSel) sortSel.addEventListener('change', function(){ st.sort = sortSel.value; emit(); });
-    if(dirBtn) dirBtn.addEventListener('click', function(){ st.dir = st.dir === 'desc' ? 'asc' : 'desc'; paintDir(); emit(); });
-    root.addEventListener('click', function(e){
-      var chip = e.target.closest ? e.target.closest('[data-fb-value]') : null;
-      if(!chip) return;
-      var id = chip.getAttribute('data-fb-group'), val = chip.getAttribute('data-fb-value');
-      if(!id || !val) return;
-      var arr = st.sel[id] || (st.sel[id] = []);
-      var at = arr.indexOf(val);
-      if(at >= 0) arr.splice(at, 1); else arr.push(val);
-      if(!arr.length) delete st.sel[id];
-      emit();
-    });
-    // A panel left open over the list is furniture while it filters; a click anywhere else is
-    // the person moving on, so it folds away like the footer menus do.
-    function onDocClick(e){
-      if(!st.open) return;
-      // The path, not contains(): a chip's own click repaints the panel in place (setGroups), so
-      // by the time the event reaches here its target can be a node that is no longer in root.
-      var path = e.composedPath ? e.composedPath() : [];
-      if(path.indexOf(root) >= 0 || root.contains(e.target)) return;
-      st.open = false; save(); paintChrome();
-    }
-    document.addEventListener('click', onDocClick);
-
-    /**
-     * Replace the option lists. null is only for the first frame, before the caller's data has
-     * arrived: an empty array here would be read as "every value is gone", and a saved selection
-     * would be pruned by a list that had not arrived (the scheduled panel's first frame is
-     * exactly this). Not a refresh signal: while reloading, pass the options still on screen
-     * again rather than null, or the same pruning waits one step later.
-     */
-    function setGroups(next){
-      if(next == null) return;
-      groups = next;
-      if(prune()) save();
-      paintPanel();
-      paintChrome();
-    }
-    function setCounts(shown, total){
-      counts = {shown: Math.max(0, shown | 0), total: Math.max(0, total | 0)};
-      paintSummary();
-    }
-
-    /**
-     * Let the caller take the bar down. It must be mounted outside any container the caller
-     * redraws with innerHTML — the keyword's caret, the panel's open state and the chip nodes
-     * live in this DOM, and replacing the container under them loses all three. destroy()
-     * removes the document listener and the node; a caller whose own redraw already removed the
-     * node can ignore it.
-     */
-    function destroy(){
-      document.removeEventListener('click', onDocClick);
-      if(root.parentNode) root.parentNode.removeChild(root);
-    }
-
-    function refreshI18n(placeholder, sortOptions){
-      var ph = placeholder || tr('common.search');
-      q.placeholder = ph;
-      q.setAttribute('aria-label', ph);
-      var cs = tr('common.clearSearch');
-      qClear.title = cs;
-      qClear.setAttribute('aria-label', cs);
-      var fl = tr('common.filter');
-      fBtn.title = fl;
-      var fSpan = fBtn.querySelector('span');
-      if(fSpan) fSpan.textContent = fl;
-      clearBtn.textContent = tr('common.clear');
-      if(sortSel){
-        var sortLabel = tr('common.sort');
-        if(sortSel.parentNode) sortSel.parentNode.title = sortLabel;
-        sortSel.setAttribute('aria-label', sortLabel);
-        if(sortOptions){
-          var h2 = '';
-          for(var i2=0;i2<sortOptions.length;i2++){
-            h2 += '<option value="' + text(sortOptions[i2].value) + '">' + text(sortOptions[i2].label) + '</option>';
-          }
-          sortSel.innerHTML = h2;
-          sortSel.value = st.sort;
-        }
-        paintDir();
-      }
-      paintSummary();
-    }
-
-    // No prune yet: the caller supplies the live option lists with setGroups on its first paint,
-    // and pruning against the empty list here would drop a selection restored from storage.
-    paintPanel();
-    paintChrome();
-    if(sortDef){
-      var optsHtml = '';
-      for(var s1=0;s1<sortDef.options.length;s1++){
-        var so = sortDef.options[s1];
-        optsHtml += '<option value="' + text(so.value) + '">' + text(so.label) + '</option>';
-      }
-      sortSel.innerHTML = optsHtml;
-      sortSel.value = st.sort;
-      paintDir();
-    }
-
-    return {el:root, state:state, active:active, setGroups:setGroups, setCounts:setCounts, clear:clear, destroy:destroy, refreshI18n:refreshI18n};
-  }
-
-  /**
-   * The topic list's filter groups, rebuilt from the topics in hand on every paint: agents and
-   * hosts come and go, and a chip whose value is gone would filter the list to nothing with no
-   * way to see why. Counted by conversation, because that is what the chips filter: a tree whose
-   * sub-agent is the cbc one counts once under cbc, and the four state chips add up to the number
-   * of trees in the list. Scheduled runs are left out for the same reason topicRows leaves them
-   * out — they are not rows in this list. Takes the forest paintTopics already built, so the
-   * chips and the rows cannot disagree about what a conversation is.
-   */
-  function topicFilterGroups(forest, tab){
-    var stateOpts = [
-      {value:'needs', label:tr('filter.needsYou'), short:tr('filter.needsShort'), icon:'bell', count:0},
-      {value:'running', label:tr('filter.running'), short:tr('filter.runShort'), icon:'play', count:0},
-      {value:'idle', label:tr('filter.idle'), short:tr('filter.idle'), icon:'dot', count:0},
-      {value:'none', label:tr('filter.noAgent'), short:tr('filter.noneShort'), icon:'offline', count:0}
-    ];
-    var starredOpts = [
-      {value:'starred', label:tr('filter.starred'), icon:'star', count:0},
-      {value:'plain', label:tr('filter.unstarred'), count:0}
-    ];
-    var agents = {}, agentOrder = [], hosts = {}, hostOrder = [], i;
-    for(i=0;i<forest.visible.length;i++){
-      var t = forest.visible[i];
-      var who = agentOf(t);
-      if(who){
-        var agent = who.label;
-        if(agents[agent] === undefined){ agents[agent] = 0; agentOrder.push(agent); }
-      }
-      var host = t.dir && t.dir.host ? t.dir.host : '__local';
-      if(hosts[host] === undefined){ hosts[host] = 0; hostOrder.push(host); }
-    }
-    // One pass per conversation, not per topic: every value it carries gets one, however many
-    // of its topics carry it.
-    for(i=0;i<forest.convOrder.length;i++){
-      var c = forest.convs[forest.convOrder[i]];
-      stateOpts[c.rank].count++;
-      if(c.starred) starredOpts[0].count++; else starredOpts[1].count++;
-      for(var a in c.agents) agents[a]++;
-      for(var h in c.hosts) hosts[h]++;
-    }
-    agentOrder.sort(function(a,b){ return a < b ? -1 : a > b ? 1 : 0; });
-    hostOrder.sort(function(a,b){ return a < b ? -1 : a > b ? 1 : 0; });
-    var agentOpts = [], hostOpts = [];
-    for(i=0;i<agentOrder.length;i++){
-      // No tag icon here: a tag means a task label in the scheduled list this bar also serves.
-      agentOpts.push({value:agentOrder[i], label:agentOrder[i], count:agents[agentOrder[i]]});
-    }
-    for(i=0;i<hostOrder.length;i++){
-      var hv = hostOrder[i];
-      hostOpts.push({value:hv, label:hv === '__local' ? tr('filter.local') : hv, icon:'globe', count:hosts[hv]});
-    }
-    var groups = [
-      {id:'state', label:tr('filter.state'), pinned:true, options:stateOpts}
-    ];
-    if(tab !== 'starred') groups.push({id:'starred', label:tr('filter.starred'), options:starredOpts});
-    if(agentOpts.length) groups.push({id:'agent', label:tr('filter.agent'), options:agentOpts});
-    groups.push({id:'host', label:tr('filter.host'), options:hostOpts});
-    return {groups:groups, total:forest.convOrder.length};
-  }
-
-  /** Everything a keyword is matched against on one topic: its title (with the "[agent]" it was
-      named under), the agent answering it now, and the second line — directory name, full path and
-      host. */
-  function topicHay(t){
-    var agent = agentOf(t);
-    var hay = (t.title || '') + ' ' + (agent ? agent.id : '');
-    if(t.dir) hay += ' ' + (t.dir.name || '') + ' ' + (t.dir.path || '') + ' ' + (t.dir.host || '');
-    return hay.toLowerCase();
-  }
-
-  /**
-   * Whether a conversation survives the bar. The unit is the conversation, not the row: the
-   * keyword, an agent and a host match when any topic in the tree carries them — the person is
-   * looking for the conversation that talks about this, and the sub-agents are part of it. State
-   * and star are whole-tree properties (the most pressing state among its topics, and whether any
-   * topic in it is starred), so the state chips partition the conversations and each chip's number
-   * is the number of conversations a tap on it leaves. Inside a group the values are a union,
-   * across groups an intersection. The keyword is split on whitespace and every word has to hit
-   * one topic, so "cbc parse" finds the parser topic of the cbc agent in either order.
-   */
-  function convMatch(conv, words, sel){
-    var v = sel.state;
-    if(v && v.length && v.indexOf(STATE_KEYS[conv.rank]) < 0) return false;
-    v = sel.starred;
-    if(v && v.length && v.indexOf(conv.starred ? 'starred' : 'plain') < 0) return false;
-    if(sel.agent && sel.agent.length){
-      var hitAgent = false;
-      for(var a in conv.agents) if(sel.agent.indexOf(a) >= 0){ hitAgent = true; break; }
-      if(!hitAgent) return false;
-    }
-    if(sel.host && sel.host.length){
-      var hitHost = false;
-      for(var h in conv.hosts) if(sel.host.indexOf(h) >= 0){ hitHost = true; break; }
-      if(!hitHost) return false;
-    }
-    if(words.length){
-      for(var i=0;i<conv.members.length;i++){
-        var hay = topicHay(conv.members[i]), all = true;
-        for(var w=0;w<words.length;w++) if(hay.indexOf(words[w]) < 0){ all = false; break; }
-        if(all) return true;
-      }
-      return false;
-    }
-    return true;
-  }
-
-  function paintTopics(){
-    var h='';
-    var cur=null;
-    // The way into a topic from a conversation opened in History is offered only while the topic is
-    // in this list, and the list just changed.
-    historyPanel.refreshReadOnly();
-    // One tree for the whole paint: the chips and the rows must count and draw the same
-    // conversations, and neither the groups nor the rows change the tree itself.
-    var fullForest = topicForest();
-    var sbTab = historyPanel.getTab();
-    var forest = tabForest(fullForest, sbTab);
-    // Before the rows, so a selected agent or host that has just disappeared is dropped from the
-    // bar's state first and the list below is filtered by what the panel actually shows.
-    var fg = topicFilterGroups(forest, sbTab);
-    if(topicFilter) topicFilter.setGroups(fg.groups);
-    var painted=topicRows(forest);
-    if(topicFilter) topicFilter.setCounts(painted.matched, painted.total);
-    // The topic on screen may be a scheduled run, which topicRows leaves out of the list. The
-    // header, Stop/power and the read marks still belong to it, so find it in the full list —
-    // and seed a mark for every topic, hidden ones included, or the Sessions tab would count a
-    // run's whole history as unread the first time it was opened.
-    readsService.syncTopics(topics, topic);
-    for(var i=0;i<topics.length;i++){ if(topics[i].id===topic){ cur=topics[i]; break; } }
-    var stars=0;
-    for(i=0;i<fullForest.visible.length;i++) if(fullForest.visible[i].starred) stars++;
-    for(i=0;i<painted.rows.length;i++){
-      var t=painted.rows[i].t;
-      // What the Needs-you block used to say on a second line, now on hover: the row keeps its shape.
-      h += treeRowHtml(painted.rows[i], {
-        attr:'data-topic',
-        menu:'topic',
-        cls:(painted.dividers[i]?' after-needs':''),
-        tail:(needsYou(t)?' needs':''),
-        attrs:needsYou(t)?' title="'+text(tr(NEEDS_WHAT[t.stage])+(t.line?': '+t.line:''))+'"':'',
-        moreTitle:tr('topic.topicActions')
-      });
-    }
-    bar.innerHTML=h;
-    // From the same list the rows were drawn from, so the line and the row cannot disagree.
-    paintMachineNote();
-    // A filtered list with nothing left says so where the rows would be, rather than looking like
-    // a topic list that failed to load. Clear is the way back without hunting for the field.
-    if(!h && painted.filtering){
-      bar.innerHTML='<div class="topics-empty"><span>'+text(tr('sidebar.noMatchingTopics'))+'</span>'
-        + '<button type="button" class="fb-clear" data-filter-clear="1">'+text(tr('common.clear'))+'</button></div>';
-    } else if(!h && sbTab === 'starred'){
-      bar.innerHTML='<div class="topics-empty"><span>'+text(tr('sidebar.noStarredTopics'))+'</span></div>';
-    }
-    // The rows above replaced every age element, so the timer is re-armed against the new ones
-    // (and stopped when none is left).
-    armAgeTick();
-    // The row menu lives at the body, so the innerHTML above cannot take it with it. Follow the
-    // button's replacement, and close the menu only if its row is gone from the list.
-    rowMenuFollow();
-    // Greyed while there is nothing in the list to mark, as the Sessions tab's is. The whole list,
-    // not the filtered rows, like Clear: a search narrows what is shown, not what is unread.
-    var toRead=0;
-    for(i=0;i<fullForest.visible.length;i++) if(needsRead(fullForest.visible[i])) toRead++;
-    readBtn.disabled = !toRead;
-    readBtn.title = toRead ? tr(toRead===1?'sidebar.markAllReadTopics':'sidebar.markAllReadTopicsPlural', { count: toRead }) : tr('sidebar.markAllReadNone');
-    // Says what it will do: with stars in the list it no longer clears all of them.
-    var clearLabel = stars ? tr('sidebar.clearUnstarredTopics') : tr('sidebar.clearAllTopics');
-    clearBtn.title = clearLabel;
-    clearBtn.setAttribute('aria-label', clearLabel);
-    // The count sits on Manage's face, so it is read without opening the menu; the item inside
-    // says what closing would do, or shows a disabled explanation when there is nothing to close.
-    var idle=idleTopics().length;
-    idleBtn.hidden = !idle;
-    noIdleBtn.hidden = Boolean(idle);
-    idleBtn.textContent = tr('menu.closeIdleCount', { count: idle });
-    idleCount.textContent = idle ? '('+idle+')' : '';
-    var below = cur ? busyBelow(cur.id) : false;
-    paintForkNote(cur);
-    if(cur){
-      chatTitle.textContent=cur.title || tr('common.untitled');
-      // Same order as the dot, and the same reason: during an ask the turn is still open, so
-      // "running" is true and is the less useful of the two things to say. A dispatcher whose
-      // sub-agents work is running too: its own turn ended, the job did not.
-      var curRunning=Boolean(cur.running) || below;
-      var state=cur.asking?tr('topic.awaitingYou'):(curRunning?tr('topic.running'):'');
-      chatStatus.textContent=state;
-      chatStatus.className='chat-status'+(cur.asking?' asking':(curRunning?' running':''));
-    } else {
-      chatTitle.textContent='';
-      chatStatus.textContent='';
-    }
-    // Each control exists only while its command has something to act on, read off the same flags
-    // as the dot: Stop while a turn is open (a question holds one open, so asking implies it), and
-    // the power button while a process is resident. Hiding beats disabling — a greyed-out control
-    // asks to be explained, and "nothing is running" is already what an unlit dot says.
-    killBtn.hidden = !(cur && cur.live);
-    syncCopyRef();
-    // Also over a topic whose own turn is over while the sub-agents it started still work — the
-    // usual state of a /super job, and the one where there was nothing to press: /stop there stops
-    // them too (Delegation.stopOpened).
-    stopBtn.hidden = !(cur && (cur.running || cur.asking || below));
-    stopBtn.title = below
-      ? tr('composer.stopSubTitle')
-      : tr('composer.stopTitle');
-    // The window's title bar names the same topic this row does, so a rename lands on both in
-    // the same frame rather than leaving the bar holding the old name until the next switch.
-    if(TERM_OK) paintFrames();
-    schedulesPanel.onTopicsUpdated();
-  }
-
   // ── Notifications ─────────────────────────────────────────────────────────
   // Web Push (webpush.ts on the server, sw.ts the worker): what reaches this device when the page is
   // closed or the phone is in a pocket. Off until the operator turns it on here, per device — the
   // browser asks for permission, and a permission prompt nobody asked for is the fastest way to a
   // "block". Only offered where the browser can do it at all: Chrome, Firefox, Edge, and Safari on
   // iOS only once the page is installed as an app.
-  // ── Topics fetched before they are opened ───────────────────────────────────
-  // A topic in "needs you" is one the person is about to open, and opening it used to cost a full
-  // sync. The row says what the reply is; the transcript behind it can be fetched while the person
-  // is still deciding and put in the store, so tapping the row paints the reply at once and the
-  // stream only replays what came after (enter).
-  //
-  // One rule says what to fetch: a topic whose stage is in NEEDS_ORDER — a scheduled run's and a
-  // sub-agent's too, since each is opened from its own green row or its notification — that is not
-  // on screen and whose copy is not its row's latest (current). A topic this page left is no
-  // exception: left mid-turn, its copy is the turn half done. Nearest the top of the list first,
-  // three at a time, only while the tab is visible and its stream is up. Without IndexedDB memory
-  // holds eight topics, and fetching twenty into it would push them out and fetch them again for
-  // ever, so nothing is fetched.
-  var PRE_TOPICS=20, PRE_PARALLEL=3, PRE_DEBOUNCE_MS=400, PRE_RETRY_MS=60000, PRE_TIMEOUT_MS=60000;
-  // preTried: by topic, the row's last a fetch was made for, when, and whether it came in.
-  var preTimer=0, preBusy={}, preCount=0, preTried={};
-
-  /**
-   * Whether a copy as of last is its row's latest: the row's own last, or past it — a row reports
-   * its topic's events up to 300ms after them. A row without last has nothing to be matched against.
-   */
-  function current(row, last){
-    return Boolean(row && row.last && last) && !newer(row.last, last);
-  }
-
-  /** The topics worth fetching now, in the order the needs-you rows are drawn (topicRows). */
-  function prefetchWanted(){
-    if(!dbOn() || document.visibilityState === 'hidden' || streamClient.isParked() || !epoch) return [];
-    if(!streamClient.isOpen()) return [];
-    var rows = topics.filter(function(t){ return t.id !== topic && NEEDS_ORDER[t.stage] !== undefined; });
-    // What needs a decision first, then most recent: the row nearest the top is the one most likely
-    // to be tapped next.
-    rows.sort(function(a, b){ return NEEDS_ORDER[a.stage]-NEEDS_ORDER[b.stage] || (b.lastAt||0)-(a.lastAt||0); });
-    return rows.slice(0, PRE_TOPICS).filter(function(t){
-      var v = cacheService.getVersion(t.id), tried = preTried[t.id];
-      if(!t.last || preBusy[t.id] || current(t, v && v.last)) return false;
-      // Once per version of the row: a failure is asked again a minute later, at the next list
-      // event; an answer that came in, not until the row moves — even one that is not the row's
-      // version, which would otherwise be fetched again the moment it landed.
-      return !(tried && tried.last === t.last && (tried.ok || Date.now() - tried.at < PRE_RETRY_MS));
-    });
-  }
-
-  /** Look again once a burst of list events has settled; a message posts one row per topic. */
-  function schedulePrefetch(){
-    if(preTimer) return;
-    preTimer = setTimeout(pumpPrefetch, PRE_DEBOUNCE_MS);
-  }
-
-  /**
-   * Start what is wanted, up to PRE_PARALLEL at once. Not one at a time, as through 3.9.0: the
-   * median topic is 11 KB gzipped (measured on the live gateway, 2026-11-17), so on a slow link
-   * each fetch is mostly round trip, and one at a time a sixth topic waited out five of them.
-   */
-  function pumpPrefetch(){
-    preTimer=0;
-    var want=prefetchWanted();
-    for(var i=0;i<want.length && preCount < PRE_PARALLEL;i++) prefetchOne(want[i]);
-  }
-
-  /**
-   * Fetch one topic into the store. Every way this can end goes through finish — an answer, a
-   * refusal, a body that does not parse, and a request that never comes back, which is aborted
-   * after PRE_TIMEOUT_MS. A rejected r.json() once skipped the only line that freed the slot, and
-   * one such answer stopped the page prefetching for the rest of its life.
-   */
-  function prefetchOne(t){
-    var done=false;
-    var ctl = typeof AbortController === 'function' ? new AbortController() : null;
-    preBusy[t.id]=true;
-    preCount++;
-    function finish(ok){
-      if(done) return;
-      done=true;
-      clearTimeout(timer);
-      delete preBusy[t.id];
-      preCount--;
-      preTried[t.id]={last:t.last, at:Date.now(), ok:ok};
-      pumpPrefetch();
-    }
-    var timer = setTimeout(function(){
-      if(ctl){ try{ ctl.abort(); }catch(x){} }
-      finish(false);
-    }, PRE_TIMEOUT_MS);
-    // A topic not looked at since the page loaded may be in the database already — written by an
-    // earlier page, or by the service worker when its push came — and reading that is cheaper than
-    // asking the daemon for it again.
-    (cacheService.getVersion(t.id) === undefined ? cachePeek(t.id) : Promise.resolve()).then(function(){
-      if(done) return;
-      var v = cacheService.getVersion(t.id);
-      if(t.id === topic || current(t, v && v.last)) return finish(true);
-      fetch('api/topic?t='+encodeURIComponent(t.id), {credentials:'same-origin', cache:'no-store', signal:ctl ? ctl.signal : undefined})
-        .then(function(r){ return r.ok ? r.json() : null; })
-        .then(function(d){ return takePrefetched(t, d); })
-        .then(finish, function(){ finish(false); });
-    });
-  }
-
-  /** Whether the answer was kept — or was not needed. May be a promise of it. */
-  function takePrefetched(t, d){
-    if(!d || d.topic !== t.id) return false;
-    // Opened while this was on the wire: the screen keeps its own copy. Gone: nothing to keep.
-    if(t.id === topic || !topicById(t.id)) return true;
-    // Another run of the daemon: these ids name something else. Not retried at once — a page
-    // whose epoch is a restart behind would otherwise ask again the moment this came back — and
-    // the sync that brings the new epoch clears preTried, so the next pass fetches it properly.
-    if(!epoch || d.epoch !== epoch) return false;
-    // An answer older than a copy the page has since put (the topic opened and left while this was
-    // in flight, a push the service worker kept) is refused by put, in both layers.
-    return put(t.id, snapshotMsgs(d), {epoch:d.epoch, last:d.last, stale:Boolean(d.stale)});
-  }
-
-  function switchTopic(id){
-    if(!id) return;
-    // Any way into a topic — a row, a link, the side panel, a notification — is a way out of a
-    // conversation opened from History, including into the very topic it covers.
-    closeLib();
-    if(id===topic) return;
-    // The settings page is bound to the topic it was opened in: its rows write that conversation's
-    // agent and model, and its buttons name a message that topic holds. Following another topic
-    // puts it away rather than leaving it pointing at the one being left.
-    settingsFeature.close();
-    // The git window reads the directory of the topic it was opened on; following another topic
-    // puts it away rather than leaving it pointing at the one being left.
-    gitPanel.close();
-    // The panel stays where it is: it is part of the workspace, and following a run out of it
-    // should leave the list of runs beside the transcript. The one exception is the overlay under
-    // 1024px, which covers the chat it just opened — there is nothing to keep it beside there.
-    if(schedPane.isOpen() && !schedPane.docked()) setSchedules(false, true);
-    // All three read off the topic being left — its copy, where it was being read, its draft — so
-    // all before anything below takes it off screen.
-    leave();
-    saveView(topic);
-    stashDraft(topic);
-    topic = id;
-    history.replaceState(null,'',urlNow());
-    // Before the transcript work below, so the terminal follows the topic in the same frame
-    // the title does rather than a repaint later.
-    applyTerm();
-    readsService.markTopicFromList(id, topics);
-    paintTopics();
-    reportSeen();
-    data={};
-    els={};
-    stale=false;
-    launch=null;
-    // The strip describes the topic being left; the incoming sync says what the new one's is.
-    topicStatus.closeModelPop();
-    transcript.resetForTopicSwitch(id);
-    topicStatus.setStatus(null);
-    topicStatus.setPending([]);
-    entering=true;
-    synced=false;
-    loadDraft(id);
-    // The shape of a transcript while both its copy and the stream are outstanding. A copy in
-    // memory replaces it at once and one in the database normally answers first; nothing about
-    // that is guaranteed, which is why the placeholders go in regardless.
-    showSkeleton();
-    settleOnResume = false;
-    enter(id);
-  }
-
-  // How long entering a topic waits for the database to say whether it has a copy to resume from,
-  // before opening the stream with a sync instead. A read is a few milliseconds; this is for a
-  // database that hangs, which mobile Safari's has been known to do.
-  var LOCAL_WAIT_MS=300;
-  // Set when a topic is entered from a copy: the copy and what the resumed stream replays after it
-  // are the whole room, so the end of the replay can judge the previous page's unsure sends the way
-  // a sync does (see resumed). enterToken is which entry is the latest.
-  var settleOnResume=false, enterToken=0;
-
-  /**
-   * Into a topic, on a switch and on loading the page: its copy (get) put up, and its stream resumed
-   * from the copy's last event — the daemon replays what came after, or sends the whole topic when
-   * its backlog no longer reaches. A copy that is its row's latest is the topic as it stands, so
-   * nothing says more may be coming. Without a copy to resume from — none, one of another run, one
-   * cut to fit, an empty room (whose choice of agents only a sync carries), a page that has not had
-   * its first sync — the stream asks for a sync and whatever copy there is is painted as it comes.
-   *
-   * A copy in memory goes up at once; the database is waited on only when it may hold one to resume
-   * from, and for at most LOCAL_WAIT_MS. The copy may be older than the person's last page — a send
-   * that page left "Not confirmed" can postdate it — so the echoes in it are claimed here, and a
-   * send it does not carry is left for the end of the replay to judge, never failed on the copy.
-   */
-  function enter(id){
-    var mine = ++enterToken, used = false, v = cacheService.getVersion(id);
-    // The topic being left has to stop talking now, not when the read comes back: everything its
-    // stream delivered in between would be drawn into this topic. Its handlers check es !== stream.
-    streamClient.close();
-    function here(){ return mine === enterToken && id === topic; }
-    function go(c){
-      if(used) return;
-      used = true;
-      if(!here()) return;
-      var resume = Boolean(c && c.msgs.length && c.last && epoch && c.epoch === epoch);
-      if(c){
-        // Before the unsent bubbles go up, as a sync would: an echo settles its record instead of
-        // leaving a bubble behind for the messages below to skip.
-        for(var i=0;i<c.msgs.length;i++) claim(c.msgs[i]);
-        if(resume) stale = c.stale;
-        if(c.msgs.length) adopt(c.msgs, resume && current(topicById(id), c.last));
-      }
-      // What was sent into this topic and not acknowledged — including a send still in flight from
-      // before a switch, whose bubble went with the transcript it was in.
-      showUnsent(id);
-      if(resume){ streamClient.setLastEventId(c.last); settleOnResume = true; }
-      streamClient.connect(resume);
-    }
-    var m = id ? memCopy(id) : null;
-    if(m || !id) return go(m);
-    get(id).then(function(c){
-      if(!used) return go(c);
-      // Too late to choose how the stream opens; still worth painting.
-      if(c && c.msgs.length && here()) adopt(c.msgs);
-    });
-    if(epoch && dbOn() && (!v || (v.last && v.epoch === epoch))) setTimeout(function(){ go(null); }, LOCAL_WAIT_MS);
-    else go(null);
-  }
-
-  function deleteTopic(delId){
-    var target = null;
-    for(var i=0;i<topics.length;i++){
-      if(topics[i].id===delId){ target=topics[i]; break; }
-    }
-    var title = (target && target.title) ? target.title : tr('common.untitled');
-    // A star protects a topic from everything automatic, not from this: the × is the operator
-    // deciding about one row, which is exactly what a star defers to. The question says so.
-    if(!confirm(tr(target && target.starred ? 'topic.confirmDeleteStarred' : 'topic.confirmDelete', { title: title }))) return;
-    post('api/topics/delete',{topic:delId},1).then(function(r){
-      return r.ok ? r.json() : null;
-    }).then(function(d){
-      if(!d) return;
-      cacheDrop(delId);
-      // The row is gone, so its terminal window has nothing left to belong to. Only the window
-      // — the session on the far side outlives this exactly as it outlives a closed tab, which
-      // is why deleting a topic is not offered as a way to end one.
-      dropTerm(delId);
-      readsService.remove(delId);
-      if(topic === delId){
-        var remaining = topics.filter(function(t){ return t.id !== delId; });
-        if(remaining.length > 0){
-          switchTopic(remaining[0].id);
-        } else {
-          createTopic();
-        }
-      }
-      // After the switch, which is what writes down the view and the draft of the topic being
-      // left — this one, when it was the one on screen. The broadcast that is also on its way
-      // prunes the same entries; this is so a draft of a deleted topic is not waiting on it.
-      forget(delId);
-    });
-  }
-
-  // ── The ages on the topic rows ──────────────────────────────────────────────
-  // A row's age is derived from a stamp the server sent, so it goes stale on its own. Rewritten
-  // in place rather than by repainting the list: paintTopics replaces every row's markup, which
-  // would throw away the hover state and any menu open over a row, twice a minute, for a string
-  // that changed by one character. Minutes are the finest unit a row shows, so twice a minute is
-  // as often as it can visibly move — and only while one is on screen and the tab is visible.
-  // AGE_TICK_MS and ageTimer are declared near the top of the script; see there.
-
-  function paintAges(){
-    // Both lists carry one: a topic row in the switcher, a scheduled run in the panel.
-    var nodes=document.querySelectorAll('.topic-age'), now=Date.now();
-    for(var i=0;i<nodes.length;i++){
-      var n=nodes[i], at=Number(n.getAttribute('data-age')) || 0;
-      if(!at) continue;
-      var run=n.getAttribute('data-age-run')==='1';
-      n.textContent=ageText(now-at, !run);
-      n.title=tr(run?'age.started':'age.ended', { when: ageClock(at) });
-    }
-  }
-
-  function armAgeTick(){
-    var want=Boolean(document.querySelector('.topic-age')) && document.visibilityState !== 'hidden';
-    if(want && !ageTimer) ageTimer=setInterval(paintAges, AGE_TICK_MS);
-    else if(!want && ageTimer){ clearInterval(ageTimer); ageTimer=null; }
-  }
-
-  // A tab looked at again shows the age it should have had, at once, rather than up to half a
-  // minute late; and one put away stops the timer until it is back.
-  document.addEventListener('visibilitychange', function(){
-    if(document.visibilityState !== 'hidden') paintAges();
-    armAgeTick();
-  });
 
   function handle(ev){
     if(ev.t==='sync'){
@@ -2261,7 +869,7 @@ import { createTranscriptController } from './features/topic/transcript/index.js
       if(epoch && ev.epoch && ev.epoch !== epoch) streamClient.checkBuild();
       // Whatever was fetched from the daemon that went away is about ids this one hands out
       // again for different messages; what was tried goes with it.
-      if(ev.epoch && epoch && ev.epoch !== epoch) preTried={};
+      if(ev.epoch && epoch && ev.epoch !== epoch) topicsFeature.clearPrefetchTried();
       // A sync settles the previous page's sends itself, below.
       settleOnResume = false;
       epoch = ev.epoch || 0;
@@ -2398,560 +1006,8 @@ import { createTranscriptController } from './features/topic/transcript/index.js
     }
   }
 
-  /**
-   * The topic list's filter bar (makeFilterBar above). It only says what the options are and
-   * re-paints the list when one changes; the keyword and the chips are applied in topicRows.
-   */
-  topicFilter = makeFilterBar({
-    key: 'aa_topic_filter',
-    placeholder: tr('sidebar.searchTopics'),
-    groups: [],
-    onChange: function(){ paintTopics(); }
-  });
-  $('topics-filter').appendChild(topicFilter.el);
-  // The first frame, before the first list arrives: null says "nothing to offer yet", so a
-  // selection restored from storage is not pruned as if its option had gone.
-  topicFilter.setGroups(null);
+  topicsFeature.attach();
 
-  bar.addEventListener('click', function(e){
-    // The empty state's Clear. The summary line's own Clear is a listener on the bar itself.
-    var fc = e.target.closest ? e.target.closest('[data-filter-clear]') : null;
-    if(fc){
-      e.stopPropagation();
-      if(topicFilter) topicFilter.clear();
-      return;
-    }
-    // The row's one control. Opening the menu is not opening the topic, like the star and the ×
-    // before it: the act is about the row, not about switching to it.
-    var more = e.target.closest ? e.target.closest('[data-rm]') : null;
-    if(more){
-      e.stopPropagation();
-      if(rowMenuKey && rowMenuKey===more.getAttribute('data-rm') && !rowMenu.hidden) closeRowMenu(true);
-      else openRowMenuFor(more);
-      return;
-    }
-    if(foldClick(e)) return;
-    var b = e.target.closest ? e.target.closest('[data-topic]') : null;
-    if(!b) return;
-    var id = b.getAttribute('data-topic');
-    if(!id || id===topic) return;
-    switchTopic(id);
-    if(narrow()) setSidebar(false);
-  });
-
-  /**
-   * A tap on a fold pill, in either list that draws one (treeRowHtml): flip it and repaint. Not a
-   * tap on the row — folding a parent is not a reason to switch to it. paintTopics repaints the
-   * Sessions tab too when it is on screen, so one call covers a pill in either.
-   */
-  function foldClick(e){
-    var fold = e.target.closest ? e.target.closest('[data-fold]') : null;
-    if(!fold) return false;
-    e.stopPropagation();
-    var foldId = fold.getAttribute('data-fold');
-    if(foldId){
-      // Folded is the default (an absent entry), so both choices are written down: false is
-      // "I opened this one", true is "I put it back".
-      folded[foldId] = folded[foldId] === false;
-      saveFolded();
-      paintTopics();
-    }
-    return true;
-  }
-
-  bar.addEventListener('keydown', function(e){
-    if(e.key==='Enter' || e.key===' '){
-      if(e.target.closest && e.target.closest('[data-rm],[data-fold]')) return;
-      var b = e.target.closest ? e.target.closest('[data-topic]') : null;
-      if(!b) return;
-      e.preventDefault();
-      var id = b.getAttribute('data-topic');
-      if(!id || id===topic) return;
-      switchTopic(id);
-    }
-  });
-
-  // ── A row's ⋯ menu ──────────────────────────────────────────────────────────
-  // One menu for every list on the page: a topic row, a scheduled run and a scheduled task all
-  // open it, with their own items. The box lives at the body, so a list's innerHTML repaint (every
-  // message a running agent posts, every poll of the task list) cannot take it away, and it is
-  // fixed so it stays beside the button that opened it. What ties it to a row is a key on the
-  // button — "topic:<id>", "sess:<id>", "task:<id>" — re-found after each repaint by rowMenuFollow,
-  // which closes the menu when the row it acts on has gone.
-  var ROW_MENU_ITEMS = '[role="menuitem"]';
-  function rowMenuButtons(){
-    return Array.prototype.filter.call(rowMenu.querySelectorAll(ROW_MENU_ITEMS), function(b){ return !b.disabled; });
-  }
-  /** Place the menu under its button, above it when the viewport runs out, inside both edges. */
-  function positionRowMenu(btn){
-    if(!btn) return;
-    var r=btn.getBoundingClientRect();
-    var w=rowMenu.offsetWidth || 210, h=rowMenu.offsetHeight || 0;
-    var left=Math.max(8, Math.min(r.right-w, window.innerWidth-8-w));
-    var top=r.bottom+4;
-    if(top+h+8>window.innerHeight) top=Math.max(8, r.top-4-h);
-    rowMenu.style.left=left+'px';
-    rowMenu.style.top=top+'px';
-  }
-  /**
-   * Draw the menu for one row and put it beside its button.
-   *
-   * items: {key, icon, label, title, disabled, danger} for an action, {sep:true} for a divider.
-   * onPick(key) runs after the menu has closed, so a handler may repaint the list it came from.
-   */
-  function openRowMenu(btn, key, items, onPick){
-    var h='';
-    for(var i=0;i<items.length;i++){
-      var it=items[i];
-      if(it.sep){ h+='<div class="rm-sep" role="separator"></div>'; continue; }
-      h+='<button type="button" role="menuitem" data-rmk="'+text(it.key)+'"'
-        +(it.disabled?' disabled':'')+(it.danger?' class="rm-del"':'')
-        +(it.title?' title="'+text(it.title)+'"':'')+'>'
-        +(it.icon||'')+'<span>'+text(it.label)+'</span></button>';
-    }
-    rowMenu.innerHTML=h;
-    // The composer's command list is another overlay; only one is ever up.
-    setMenu(null, false);
-    // The box moves to this row: the row it was on must stop saying its menu is open.
-    if(rowMenuBtn && rowMenuBtn!==btn) rowMenuBtn.setAttribute('aria-expanded','false');
-    rowMenuKey=key;
-    rowMenuBtn=btn;
-    rowMenuPick=onPick;
-    rowMenu.hidden=false;
-    btn.setAttribute('aria-expanded','true');
-    // Measured only once it is on screen; jsdom reports zeroes, hence the fallback width.
-    positionRowMenu(btn);
-    var first=rowMenuButtons()[0];
-    if(first) first.focus();
-  }
-  function closeRowMenu(focusBack){
-    if(rowMenu.hidden) return;
-    var btn=rowMenuBtn;
-    rowMenu.hidden=true;
-    rowMenuKey=null;
-    rowMenuBtn=null;
-    rowMenuPick=null;
-    if(btn) btn.setAttribute('aria-expanded','false');
-    if(focusBack && btn && btn.focus) btn.focus();
-  }
-  /**
-   * Keep an open menu beside the button that opened it, after the list was rebuilt with innerHTML,
-   * and close it when that row is gone — the task list is repainted on a 5s/30s poll, so a menu
-   * whose row vanished would otherwise act on something no longer on screen.
-   */
-  function rowMenuFollow(){
-    if(!rowMenuKey) return;
-    var anchor=document.querySelector('[data-rm="'+rowMenuKey+'"]');
-    if(!anchor){ closeRowMenu(false); return; }
-    rowMenuBtn=anchor;
-    anchor.setAttribute('aria-expanded','true');
-    positionRowMenu(anchor);
-  }
-  /** The topic and every topic under it, in the list's order — the ones End agent reaches. */
-  function subtreeOf(id){
-    var out=[], seen={}, stack=[id];
-    while(stack.length){
-      var cur=stack.pop();
-      if(seen[cur]) continue;
-      seen[cur]=1;
-      var t=topicById(cur);
-      if(t) out.push(t);
-      var kids=[];
-      for(var i=0;i<topics.length;i++) if(topics[i].parent===cur) kids.push(topics[i].id);
-      for(var j=kids.length-1;j>=0;j--) stack.push(kids[j]);
-    }
-    return out;
-  }
-  /** A topic's menu, shared by its sidebar row and its Sessions row: Star / End agent / Delete. */
-  function openTopicMenu(id, btn){
-    var t=topicById(id);
-    if(!t) return;
-    // How many sub-agent topics under this one have a process to end. The label says what the
-    // item reaches, not what the row's dot says: a child that is resident and idle is still a
-    // process, and the confirmation lists exactly the ones with one.
-    var under=subtreeOf(id).slice(1);
-    var alive=0;
-    for(var i=0;i<under.length;i++) if(under[i].live) alive++;
-    var able=Boolean(t.live) || alive>0;
-    // Fork is offered while nothing is running here, which is the only time the daemon makes one
-    // (a copy taken mid-turn would hold half of that turn); greyed with that reason otherwise.
-    var busy=Boolean(t.running || t.asking);
-    var canFork=!(t.agent && t.agent.canFork===false);
-    var items=[
-      {key:'star', icon:IC.icon.star, label:t.starred?tr('topic.unstar'):tr('topic.star'),
-       title:t.starred?tr('topic.unstarTitle'):tr('topic.starTitle')}
-    ];
-    items.push({key:'copy', icon:IC.icon.copy, label:tr('topic.copyRef'),
-      title:tr('topic.copyRefTitle', { ref: INSTANCE_ID+':main/'+id })});
-    if(canFork){
-      items.push({key:'fork', icon:IC.icon.fork, label:tr('topic.fork'), disabled:busy,
-       title:busy
-         ? tr('topic.forkBusyTitle')
-         : tr('topic.forkTitle')});
-    }
-    items.push(
-      {key:'end', icon:IC.icon.power,
-       label:alive ? tr(alive===1?'topic.endAgentSub':'topic.endAgentSubs', { count: alive }) : tr('topic.endAgent'),
-       disabled:!able,
-       // The reason, when there is nothing to end: a greyed item with no explanation asks.
-       title:able
-         ? (alive ? tr(alive===1?'topic.endAgentSubTitle':'topic.endAgentSubsTitle', { count: alive }) : tr('topic.endAgentTitle'))
-         : tr('topic.endAgentNoneTitle')},
-      {sep:true},
-      {key:'delete', icon:IC.icon.trash, label:tr('topic.deleteTopic'), danger:true}
-    );
-    openRowMenu(btn, btn.getAttribute('data-rm')||('topic:'+id), items, function(what){
-      if(what==='star') starTopic(id);
-      else if(what==='copy') copyTopicRef(id);
-      else if(what==='fork') forkTopic(id);
-      else if(what==='delete') deleteTopic(id);
-      else if(what==='end') endTopic(id);
-    });
-  }
-  /**
-   * A task's menu: its state changes, then Delete. Run now is greyed while a run is in flight and
-   * says so — the item a person reaches for is the one that would be wrong to allow, so it stays
-   * visible with the reason rather than disappearing.
-   */
-  function openTaskMenu(id, btn){
-    var t=schedTask(id);
-    if(!t) return;
-    var state=t.state||'active';
-    var items=[];
-    if(state==='active') items.push({key:'pause', icon:IC.icon.pause, label:tr('sched.pause'), title:tr('sched.pauseTitle')});
-    if(state==='paused') items.push({key:'resume', icon:IC.icon.play, label:tr('sched.resume'), title:tr('sched.resumeTitle')});
-    if(state==='active'||state==='paused') items.push({key:'run', icon:IC.icon.clock, label:tr('sched.runNow'), disabled:Boolean(t.running),
-      title:t.running?tr('sched.runNowBusyTitle'):tr('sched.runNowTitle')});
-    // Edit opens the task's page on its form. Greyed rather than hidden while a run is in flight,
-    // like Run now; absent on a task that is over, which no edit can change.
-    if(state==='active'||state==='paused') items.push({key:'edit', icon:IC.icon.pencil, label:tr('common.edit'), disabled:Boolean(t.running),
-      title:t.running?tr('sched.editBusyTitle'):tr('sched.editTitle')});
-    // Delete is below a divider only when there is something above it: an expired or done task
-    // has no state change to offer, and a menu that opens with a line is a menu that looks cut.
-    if(items.length) items.push({sep:true});
-    items.push({key:'remove', icon:IC.icon.trash, label:tr('common.delete'), danger:true});
-    openRowMenu(btn, btn.getAttribute('data-rm')||('task:'+id), items, function(what){
-      if(what==='edit'){ openTaskPage(id, true); return; }
-      if(what==='remove'){
-        // One question, like deleting a topic: the task is gone for good, and a tap that opened
-        // the menu is not a decision to remove it.
-        if(!confirm(tr('sched.confirmDeleteTask', { name: t.name||t.id }))) return;
-        schedOp(id,'remove',null);
-        return;
-      }
-      schedOp(id, what, null);
-    });
-  }
-  /** Open the menu a row's ⋯ belongs to. The key's prefix is what the row is. */
-  function openRowMenuFor(btn){
-    var key=btn.getAttribute('data-rm')||'';
-    var cut=key.indexOf(':');
-    if(cut<0) return;
-    var kind=key.slice(0,cut), id=key.slice(cut+1);
-    if(!id) return;
-    if(kind==='task') openTaskMenu(id, btn);
-    else openTopicMenu(id, btn);
-  }
-  rowMenu.addEventListener('click', function(e){
-    var item=e.target.closest ? e.target.closest('[data-rmk]') : null;
-    if(!item || item.disabled) return;
-    var pick=rowMenuPick, what=item.getAttribute('data-rmk');
-    if(!pick || !what) return;
-    closeRowMenu(false);
-    pick(what);
-  });
-  // Arrow keys move between the enabled items, as role=menu promises. Tab leaves the menu like any
-  // other focus trip; Escape is the page-wide handler's, which also puts the focus back.
-  rowMenu.addEventListener('keydown', function(e){
-    if(e.key!=='ArrowDown' && e.key!=='ArrowUp' && e.key!=='Home' && e.key!=='End') return;
-    var items=rowMenuButtons();
-    if(!items.length) return;
-    e.preventDefault();
-    var at=items.indexOf(document.activeElement);
-    var next;
-    if(e.key==='Home') next=0;
-    else if(e.key==='End') next=items.length-1;
-    else if(e.key==='ArrowDown') next=at<0 ? 0 : (at+1)%items.length;
-    else next=at<0 ? items.length-1 : (at+items.length-1)%items.length;
-    items[next].focus();
-  });
-  // Tab — or any other way the focus leaves — puts the menu away, and the ⋯ stops saying it is
-  // open. A move onto the ⋯ itself is left to its own click, which toggles: closing here would
-  // make the second tap close and reopen in one gesture. A focusout with NO relatedTarget is
-  // left to the document click below: iOS Safari does not focus a button on tap, so it reports
-  // one before the click that the tap is about to deliver, and closing here would swallow the
-  // action the person just hit.
-  rowMenu.addEventListener('focusout', function(e){
-    if(rowMenu.hidden) return;
-    var to=e.relatedTarget;
-    if(!to || rowMenu.contains(to) || (rowMenuBtn && rowMenuBtn.contains(to))) return;
-    closeRowMenu(false);
-  });
-  // A click anywhere else puts it away. The ⋯ itself is excluded: its own handler toggles, and
-  // closing it here too would make the second tap open and close in the same gesture.
-  document.addEventListener('click', function(e){
-    if(rowMenu.hidden) return;
-    if(rowMenu.contains(e.target) || (rowMenuBtn && rowMenuBtn.contains(e.target))) return;
-    closeRowMenu(false);
-  });
-  // Any list scrolls under the fixed menu — the sidebar's, the panel's — so follow the button
-  // rather than leave the box at a stale pixel.
-  document.addEventListener('scroll', function(){ if(rowMenuKey) positionRowMenu(rowMenuBtn); }, true);
-  window.addEventListener('resize', function(){ if(rowMenuKey) positionRowMenu(rowMenuBtn); });
-
-  /**
-   * Open a new topic, as the + does.
-   *
-   * seed is what an Adopt starts one with: the suggestion and the draft asking an agent to add
-   * it to the person's instructions. The draft goes into the composer and is never sent, and the
-   * topic is remembered against the suggestion in memory (revAdopted) so a message that really
-   * goes out from it can take the suggestion off the pending list. A refusal says why and leaves
-   * the suggestion alone. Answers whether a topic was opened.
-   */
-  function createTopic(seed){
-    return post('api/topics',{},1).then(function(r){
-      if(r.ok) return r.json();
-      // Never swallowed again. A refusal used to vanish here, so the + simply did nothing and the
-      // only trace was a 409 in the network panel. The daemon now gives up its oldest topic to
-      // make room by itself, which leaves one reason to refuse — every topic is starred or busy —
-      // and its own sentence says which and what to do about it.
-      return r.json().then(function(d){ return {error:(d && d.error) || ('HTTP '+r.status)}; },
-        function(){ return {error:'HTTP '+r.status}; });
-    }, function(){
-      return {error:tr('topic.createReachErr')};
-    }).then(function(d){
-      if(d && d.error){ alert(tr('topic.createFailed', { err: d.error })); return false; }
-      if(!d || !d.topic) return false;
-      // Just made, so there is no copy of it to look for: entered at once (enter).
-      cacheService.setVersion(d.topic.id, {last:'', epoch:0});
-      switchTopic(d.topic.id);
-      if(narrow()) setSidebar(false);
-      if(seed){
-        // After the switch, which has just put an empty composer up for this topic. Written down
-        // like any draft, so a reload keeps the text even though it loses what it was for. The
-        // caret goes at the end, where someone about to edit or send it expects it.
-        drafts[d.topic.id] = {text:seed.draft, s:seed.draft.length, e:seed.draft.length, files:[]};
-        writeDraft(d.topic.id);
-        loadDraft(d.topic.id);
-        reviewsPanel.rememberAdopted(d.topic.id, seed.text);
-      }
-      return true;
-    });
-  }
-
-  /**
-   * Star or unstar a topic. Drawn at once rather than on the broadcast that confirms it — a tap
-   * on a slow link should not look ignored — and put back if the daemon refused, in which case
-   * the broadcast that would have corrected it is not coming.
-   */
-  function starTopic(id){
-    var t = topicById(id);
-    if(!t) return;
-    var on = !t.starred;
-    t.starred = on;
-    paintTopics();
-    post('api/topics/star',{topic:id, starred:on},1).then(function(r){ return r.ok; }, function(){ return false; }).then(function(ok){
-      if(ok) return;
-      // Looked up again: a broadcast in between replaces the array, and the object held above
-      // would no longer be the one on screen.
-      var now = topicById(id);
-      if(now){ now.starred = !on; paintTopics(); }
-      alert(on ? tr('topic.starFailed') : tr('topic.unstarFailed'));
-    });
-  }
-
-  function topicById(id){
-    for(var i=0;i<topics.length;i++){ if(topics[i].id===id) return topics[i]; }
-    return null;
-  }
-
-  /**
-   * The menu's Fork: /fork, typed into that topic, so the daemon has one way to be told and the
-   * topic's transcript records it like any command. Into the topic on screen it goes through
-   * command(), bubble and all; into another it is posted with no bubble here — there is no transcript
-   * of that topic on screen to put one in — and its answer is in that topic, while the fork itself
-   * appears beside it in the list.
-   */
-  function forkTopic(id){
-    if(id===topic){ command('/fork'); return; }
-    var nonce=Math.random().toString(36).slice(2)+Date.now().toString(36);
-    post('api/send',{topic:id, text:'/fork', nonce:nonce},1).then(function(r){
-      if(!r.ok) alert(tr('topic.forkRefused'));
-    }, function(){ alert(tr('topic.forkReachErr')); });
-  }
-
-  // Not createTopic itself: a listener is handed the MouseEvent, which would arrive as a seed.
-  // A new topic is a row in the Topics list, so that is the tab it is created into.
-  newTopicBtn.addEventListener('click', function(){ setSbTab('topics'); createTopic(); });
-
-  readBtn.addEventListener('click', function(){
-    setMenu(null, false);
-    markAllRead(topicForest().visible, 'topic', function(msg){ note.textContent=msg; });
-  });
-
-  clearBtn.addEventListener('click', function(){
-    setMenu(null, false);
-    var stars = topics.filter(function(t){ return t.starred; }).length;
-    var gone = topics.length - stars;
-    if(stars && !gone){ alert(tr('topic.allStarredAlert')); return; }
-    // The button clears the whole list, not the filtered rows — say that where a search or a
-    // filter is on screen, or it reads as "clear these three".
-    var scope = topicFilter && topicFilter.active() ? tr('topic.clearScopeNote') : '';
-    if(!confirm(stars
-      ? tr('topic.confirmClearStarred', { gone: gone, goneWord: gone===1?tr('topic.nounSingular'):tr('topic.nounPlural'), stars: stars, starsWord: stars===1?tr('topic.starredOneIs'):tr('topic.starredManyAre'), scope: scope })
-      : tr('topic.confirmClearAll', { total: topics.length, scope: scope }))) return;
-    post('api/topics/clear',{},1).then(function(r){ return r.ok ? r.json() : null; }).then(function(d){
-      if(!d || !d.topic) return;
-      // What the daemon kept: the starred topics and the fresh one. Read from its answer rather
-      // than from the stars on this page, which another tab may have changed since they were drawn.
-      var list = d.topics || [d.topic];
-      var keep = {};
-      for(var i=0;i<list.length;i++) keep[list[i].id] = 1;
-      // Every local record of the rooms that went goes with them. Leaving the caches would put
-      // messages on screen for ids the daemon has forgotten, leaving the read marks would badge
-      // the replacement topic against a count from a room that no longer exists, and a draft or a
-      // terminal window would belong to nothing. The kept topics keep all of theirs.
-      keepOnly(keep);
-      // The list is replaced with what the server just told us rather than left to the broadcast
-      // that is also on its way: paintTopics re-seeds a read mark for every topic it renders, so
-      // painting the OLD list once more would write the ids we are here to forget straight back
-      // into storage.
-      topics=list;
-      // Cleared rather than handed straight to switchTopic when the topic on screen went too:
-      // nothing of a deleted room should be written back on the way out of it, and the
-      // replacement id is four random bytes and may repeat the one being read — a one-in-4-billion
-      // case where switchTopic would do nothing and leave a wiped transcript on screen. A starred
-      // topic on screen is left alone, so its view and draft are saved like any other switch.
-      if(!keep[topic]) topic='';
-      cacheService.setVersion(d.topic.id, {last:'', epoch:0});
-      switchTopic(d.topic.id);
-      if(narrow()) setSidebar(false);
-    });
-  });
-
-  // ── Closing idle agents ────────────────────────────────────────────────────
-  /**
-   * The topics whose agent is up and doing nothing — the dim dot, read off the same flags it is
-   * drawn from, so the button's count and the dots cannot disagree. A dispatcher whose sub-agents
-   * are still working is not one of them: its row is drawn as running (rowRunning), and offering
-   * to close it under that row would be the list contradicting itself. In the sidebar's order:
-   * starred first, so the dialog lists them where the eye already knows to find them.
-   */
-  function idleTopics(){
-    var on=[], rest=[];
-    for(var i=0;i<topics.length;i++){
-      var t=topics[i];
-      if(!t.live || t.running || t.asking || busyBelow(t.id)) continue;
-      (t.starred ? on : rest).push(t);
-    }
-    return on.concat(rest);
-  }
-
-  /**
-   * What the dialog was opened on: the ids it lists, which are the ids it posts. Not re-read from the
-   * topic list at the click — a topic that went idle while the dialog was open was not shown, and
-   * nothing is closed that the operator did not see. idleSeq drops an answer for a dialog since closed.
-   */
-  var idleIds=[], idleSeq=0;
-  function openIdle(){
-    var list=idleTopics();
-    if(!list.length) return;
-    idleIds=[];
-    var h='';
-    for(var i=0;i<list.length;i++){
-      var t=list[i];
-      idleIds.push(t.id);
-      var where=t.dir?(t.dir.host?t.dir.host+' · ':'')+t.dir.name:'';
-      h += '<li data-idle="'+text(t.id)+'"><span class="idle-main"><span class="idle-name">'+text(t.title || tr('common.untitled'))+'</span>'
-         + (where?'<span class="idle-dir">'+text(where)+'</span>':'')+'</span><span class="idle-out"></span></li>';
-    }
-    idleList.innerHTML=h;
-    idleTitle.textContent=tr(list.length===1?'idle.confirmTitleOne':'idle.confirmTitleMany', { count: list.length });
-    idleWhy.hidden=false;
-    idleGo.hidden=false;
-    idleGo.disabled=false;
-    idleGo.textContent=tr('idle.closeAgents');
-    idleCancel.textContent=tr('common.cancel');
-    idleDialog.hidden=false;
-    // Cancel, not Close: an Enter pressed out of habit should be the answer that changes nothing.
-    idleCancel.focus();
-  }
-  /**
-   * A row menu's "End agent": end the process behind this topic and every topic under it at
-   * once. The item's label already says how far it reaches ("End agent + 2 sub-agents"), so the
-   * reach was on screen when it was clicked — there is no second question. /kill is one tap
-   * away in the header and does the same without asking, and a running turn is interrupted here
-   * on purpose.
-   *
-   * The request carries the list as the page drew it: the daemon walks the subtree from its own
-   * parent record and ends only the intersection, so a sub-agent opened since is left alone.
-   * Posted once, not retried: a retry after a lost answer would find every agent already ended.
-   */
-  function endTopic(id){
-    var list=subtreeOf(id).filter(function(t){ return Boolean(t.live); });
-    if(!list.length) return;
-    var ids=[];
-    for(var i=0;i<list.length;i++) ids.push(list[i].id);
-    post('api/topics/kill',{topic:id, topics:ids},0).then(function(r){
-      return r.ok ? r.json() : null;
-    }).then(function(d){
-      if(!d) return alert(ids.length===1 ? tr('topic.endRefusedOne') : tr('topic.endRefusedMany'));
-      // Nothing to say for a clean end — the dots go grey from the daemon's own broadcast. A
-      // process the runtime cannot resume is the one refusal that leaves a row looking untouched,
-      // and nothing else on the page would say why it is still lit.
-      var results=d.results || [], stuck=0;
-      for(var i=0;i<results.length;i++) if(results[i].outcome==='unresumable') stuck++;
-      if(stuck) alert(tr(stuck===1?'topic.endUnresumableOne':'topic.endUnresumableMany', { count: stuck }));
-    }, function(){
-      alert(ids.length===1 ? tr('topic.endReachErrOne') : tr('topic.endReachErrMany'));
-    });
-  }
-  function closeIdle(){
-    if(idleDialog.hidden) return;
-    idleDialog.hidden=true;
-    idleSeq++;
-    idleList.textContent='';
-  }
-  /**
-   * The result, in the dialog rather than under the transcript: on a phone the sidebar is a drawer
-   * over the transcript, and the status line there is behind it. Each row says what became of it,
-   * because a topic that started working since the list was drawn is left alone (room.ts closeIdle),
-   * and "5 of 6" alone would not say which one.
-   *
-   * Posted once, not retried: a retry after an answer that was lost would find every agent already
-   * ended and report them all as left running.
-   */
-  function goIdle(){
-    idleGo.disabled=true;
-    var mine=++idleSeq;
-    post('api/topics/close-idle',{topics:idleIds},0).then(function(r){ return r.ok ? r.json() : null; }).then(function(d){
-      if(mine!==idleSeq) return;
-      if(!d) return idleFailed(tr('idle.refused'));
-      var rows=idleList.querySelectorAll('li'), i;
-      var closed={};
-      for(i=0;i<d.closed.length;i++) closed[d.closed[i]]=1;
-      for(i=0;i<rows.length;i++){
-        var out=rows[i].querySelector('.idle-out'), ok=closed[rows[i].getAttribute('data-idle')];
-        out.textContent = ok ? tr('idle.closed') : tr('idle.leftRunning');
-        out.className = 'idle-out' + (ok ? '' : ' kept');
-      }
-      var n=d.closed.length, k=d.kept.length;
-      idleTitle.textContent=tr(n===1?'idle.closedTitleOne':'idle.closedTitleMany', { count: n })
-        + (k ? tr('idle.keptSuffix', { count: k }) : '');
-      idleWhy.hidden=true;
-      idleGo.hidden=true;
-      idleCancel.textContent=tr('common.done');
-      idleCancel.focus();
-    }, function(){ if(mine===idleSeq) idleFailed(tr('common.reachServerError')); });
-  }
-  function idleFailed(why){
-    idleTitle.textContent=why;
-    idleGo.disabled=false;
-  }
-  idleBtn.addEventListener('click', function(){ setMenu(null, false); openIdle(); });
-  idleGo.addEventListener('click', goIdle);
-  idleCancel.addEventListener('click', closeIdle);
-  idleDialog.addEventListener('click', function(e){ if(e.target===idleDialog) closeIdle(); });
 
   /**
    * Forget everything local about every topic NOT in keep: cached transcript, read mark, reading
@@ -3199,7 +1255,7 @@ import { createTranscriptController } from './features/topic/transcript/index.js
   function forget(id){
     transcript.scroll.forgetView(id);
     cacheService.forget(id);
-    delete preTried[id];
+    topicsFeature.forgetPrefetch(id);
     for(var n in unsent) if(Object.prototype.hasOwnProperty.call(unsent, n) && unsent[n].t === id) dropUnsent(n);
     if(!drafts[id]) return;
     delete drafts[id];
@@ -3218,7 +1274,7 @@ import { createTranscriptController } from './features/topic/transcript/index.js
     for(var i=0;i<topics.length;i++) known[topics[i].id]=1;
     transcript.scroll.pruneViews(known);
     cacheService.prune(known);
-    for(id in preTried) if(!known[id]) delete preTried[id];
+    topicsFeature.prunePrefetch(known);
     for(id in drafts) if(!known[id]) forget(id);
     for(id in unsent) if(Object.prototype.hasOwnProperty.call(unsent, id) && !known[unsent[id].t]) dropUnsent(id);
   }
@@ -4324,11 +2380,9 @@ import { createTranscriptController } from './features/topic/transcript/index.js
     paintCalm();
     paintNotify();
     if(typeof micLabel === 'function' && $('mic')) micLabel();
-    if(topicFilter && topicFilter.refreshI18n) topicFilter.refreshI18n(tr('sidebar.searchTopics'));
     transcript.refreshI18n();
-    paintTopics();
+    topicsFeature.onLocaleChange();
     topicStatus.onLocaleChange();
-    paintAges();
     for(var mk in els){
       if(Object.prototype.hasOwnProperty.call(els, mk) && data[mk]) paint(mk);
     }

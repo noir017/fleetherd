@@ -17,6 +17,8 @@ const TRANSCRIPT_MARKUP_SOURCE = fs.readFileSync(
   path.join(clientDir, 'features', 'topic', 'transcript', 'markup.ts'),
   'utf8',
 );
+const TOPICS_SOURCE = fs.readFileSync(path.join(clientDir, 'features', 'topics', 'index.ts'), 'utf8');
+const ROW_MENU_SOURCE = fs.readFileSync(path.join(clientDir, 'features', 'topics', 'row-menu.ts'), 'utf8');
 
 /**
  * The client script is the one artifact in this repo the toolchain cannot see: it is not
@@ -190,7 +192,7 @@ describe('webui page', () => {
     expect(html).toContain('id="collapse-sidebar"');
     expect(html).toContain('id="expand-sidebar"');
     // The rows' attribute is a parameter of the shared row (treeRowHtml); the handlers read it.
-    expect(html).toContain("closest('[data-topic]')");
+    expect(TOPICS_SOURCE).toContain("closest('[data-topic]')");
     expect(html).toContain('data-new=');
     expect(html).toContain('topic-badge');
     expect(html).toContain('topic-dot');
@@ -303,8 +305,8 @@ describe('webui page', () => {
 
   it('allows deleting topics from the row menu, with its confirmation', () => {
     expect(html).toContain('row-menu');
-    expect(html).toContain("key:'delete'");
-    expect(html).toContain('api/topics/delete');
+    expect(ROW_MENU_SOURCE).toContain("key: 'delete'");
+    expect(TOPICS_SOURCE).toContain('api/topics/delete');
   });
 
   it('caches topic messages in browser storage for instant switching', () => {
