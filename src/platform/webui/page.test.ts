@@ -9,6 +9,8 @@ import { APP_SOURCE, CLIENT, renderPage, testAssets } from './page.test-helpers.
 const clientDir = path.join(path.dirname(fileURLToPath(import.meta.url)), 'client');
 const BOOT_SOURCE = fs.readFileSync(path.join(clientDir, 'services', 'boot.ts'), 'utf8');
 const STREAM_SOURCE = fs.readFileSync(path.join(clientDir, 'services', 'stream.ts'), 'utf8');
+const CACHE_SOURCE = fs.readFileSync(path.join(clientDir, 'services', 'cache.ts'), 'utf8');
+const READS_SOURCE = fs.readFileSync(path.join(clientDir, 'services', 'reads.ts'), 'utf8');
 
 /**
  * The client script is the one artifact in this repo the toolchain cannot see: it is not
@@ -304,9 +306,11 @@ describe('webui page', () => {
     // IndexedDB, not localStorage: a transcript with code blocks in it runs to hundreds of
     // kilobytes and the ~5MB there is shared with everything else this origin keeps.
     expect(html).toContain('indexedDB');
+    expect(CACHE_SOURCE).toContain('indexedDB');
     expect(html).toContain('MAX_CACHE_TOPICS');
     expect(html).toContain('MAX_CACHE_MSGS');
     expect(html).toContain('MAX_CACHE_BYTES');
+    expect(READS_SOURCE).toContain('aa_reads');
   });
 
   it('shows a message the moment it is typed, and keeps one that failed to send', () => {
