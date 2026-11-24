@@ -5,6 +5,7 @@ import { btwAsked, createBtwController, type BtwController } from './btw.js';
 import { createCodeBlocksController, type CodeBlocksController } from './code-blocks.js';
 import { attachLogEvents, postButton } from './events.js';
 import { clock, failedActions, renderMsgMarkup, stuck } from './markup.js';
+import { extractMessageMarkdown, formatQuoteReply, polishLabel } from './message-actions.js';
 import { createScrollManager, type ScrollManager } from './scroll.js';
 import type {
   CodeViewModule,
@@ -24,6 +25,8 @@ export * from './btw.js';
 export * from './markup.js';
 export * from './banners.js';
 export * from './events.js';
+export * from './message-actions.js';
+export * from './turn-diff.js';
 
 export interface TranscriptDeps {
   readonly log: HTMLElement;
@@ -68,6 +71,10 @@ export interface TranscriptDeps {
   readonly deliverLocal: (nonce: string) => void;
   readonly copyLocal: (nonce: string, btn: HTMLElement) => void;
   readonly discardLocal: (nonce: string) => void;
+  readonly quoteToComposer?: (text: string) => void;
+  readonly openMessageMenu?: (key: string, anchor: HTMLElement) => void;
+  readonly openTurnDiffSideBySide?: (turn: number) => Promise<void> | void;
+  readonly canOpenSideDiff?: () => boolean;
 }
 
 export interface TranscriptController extends Disposable {
@@ -75,6 +82,7 @@ export interface TranscriptController extends Disposable {
   readonly codeBlocks: CodeBlocksController;
   readonly btw: BtwController;
   readonly banners: BannersController;
+  getMessage(key: string): TranscriptMessage | undefined;
   paint(key: string, before?: Node | null): void;
   msgMarkup(key: string, m: TranscriptMessage, hist: boolean): MsgMarkupResult;
   toggleAll(key: string): void;
@@ -88,6 +96,7 @@ export interface TranscriptController extends Disposable {
   repaintHistory(): void;
   adopt(list: readonly TranscriptMessage[], current?: boolean): void;
   openTurnChanges(turn: number): void;
+  openTurnDiffSideBySide(turn: number, btn?: HTMLButtonElement): Promise<void>;
   postButton(btn: HTMLButtonElement, topicId: string): void;
   resetForTopicSwitch(nextTopicId: string): void;
   transferLocalKey(pk: string, key: string): void;
@@ -102,6 +111,16 @@ export interface TranscriptController extends Disposable {
 function getOpenGitWindow(): Window['openGitWindow'] {
   if (typeof window === 'undefined') return undefined;
   return typeof window.openGitWindow === 'function' ? window.openGitWindow : undefined;
+}
+
+function areNodesContiguousInParent(parent: Node, nodes: readonly HTMLElement[]): boolean {
+  if (nodes.length === 0) return true;
+  const first = nodes[0];
+  if (!first || first.parentNode !== parent) return false;
+  for (let i = 1; i < nodes.length; i++) {
+    if (nodes[i - 1]?.nextSibling !== nodes[i]) return false;
+  }
+  return true;
 }
 
 class TranscriptControllerImpl implements TranscriptController {
@@ -165,14 +184,22 @@ class TranscriptControllerImpl implements TranscriptController {
   }
 
   msgMarkup(key: string, m: TranscriptMessage, hist: boolean): MsgMarkupResult {
+    const canOpenSideDiff = this._deps.canOpenSideDiff
+      ? this._deps.canOpenSideDiff()
+      : Boolean(this._deps.openTurnDiffSideBySide);
     return renderMsgMarkup(key, m, hist, {
       icons: this._deps.getIcons(),
       opened: this._opened,
       canOpenGit: Boolean(getOpenGitWindow()),
+      canOpenSideDiff,
       hasOutbox: this._deps.hasOutbox,
       isBtwHeld: (k, msg) => this.btw.isHeld(k, msg),
       btwLineMarkup: (k, msg, asked, h) => this.btw.lineMarkup(k, msg, asked, h),
     });
+  }
+
+  getMessage(key: string): TranscriptMessage | undefined {
+    return this._msgAt(key);
   }
 
   paint(key: string, before?: Node | null): void {
@@ -293,6 +320,7 @@ class TranscriptControllerImpl implements TranscriptController {
     const els = this._deps.getEls();
     const epoch = this._deps.getEpoch();
     const keep: Record<string, 1> = {};
+    const orderedEls: HTMLElement[] = [];
     for (let i = 0; i < list.length; i++) {
       const m = list[i];
       if (!m) continue;
@@ -304,7 +332,7 @@ class TranscriptControllerImpl implements TranscriptController {
       data[key] = m;
       this.paint(key);
       const el = els[key];
-      if (el) this._deps.log.appendChild(el);
+      if (el) orderedEls.push(el);
     }
     const gone: string[] = [];
     for (const k of Object.keys(els)) {
@@ -316,6 +344,12 @@ class TranscriptControllerImpl implements TranscriptController {
     for (let j = 0; j < gone.length; j++) {
       const k = gone[j];
       if (k) this.drop(k);
+    }
+    if (!areNodesContiguousInParent(this._deps.log, orderedEls)) {
+      for (let i = 0; i < orderedEls.length; i++) {
+        const el = orderedEls[i];
+        if (el) this._deps.log.appendChild(el);
+      }
     }
     this.sinkLocals();
   }
@@ -380,6 +414,63 @@ class TranscriptControllerImpl implements TranscriptController {
       statusUrl: `api/turn-changes/status${q}`,
       fileUrl: `api/turn-changes/file${q}`,
     });
+  }
+
+  async openTurnDiffSideBySide(turn: number, btn?: HTMLButtonElement): Promise<void> {
+    const openSideDiff = this._deps.openTurnDiffSideBySide;
+    if (!openSideDiff || !Number.isFinite(turn) || turn <= 0) return;
+    if (btn) {
+      btn.disabled = true;
+      btn.classList.add('busy');
+    }
+    try {
+      await openSideDiff(turn);
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.classList.remove('busy');
+      }
+    }
+  }
+
+  private _handleMessageAction(action: string, key: string, btn: HTMLButtonElement): void {
+    const m = this._msgAt(key);
+    const el = this._deps.getEls()[key] ?? btn.closest<HTMLElement>('[data-k]');
+    if (action === 'copy') {
+      const md = extractMessageMarkdown(m, el);
+      if (!md) return;
+      const icons = this._deps.getIcons().icon;
+      this._deps.copyText(md, (ok) => {
+        if (!ok) return;
+        const doneLabel = tr('common.copied');
+        btn.classList.add('is-done');
+        btn.setAttribute('aria-label', doneLabel);
+        btn.title = doneLabel;
+        if (icons.check) btn.innerHTML = icons.check;
+        setTimeout(() => {
+          if (!btn.isConnected) return;
+          const origLabel = polishLabel('msg.copyMarkdown');
+          btn.classList.remove('is-done');
+          btn.setAttribute('aria-label', origLabel);
+          btn.title = origLabel;
+          if (icons.copy) btn.innerHTML = icons.copy;
+        }, 1500);
+      });
+      return;
+    }
+    if (action === 'quote') {
+      const md = extractMessageMarkdown(m, el);
+      const quoted = formatQuoteReply(md);
+      if (quoted) this._deps.quoteToComposer?.(quoted);
+      return;
+    }
+    if (action === 'btw') {
+      this._deps.quoteToComposer?.('/btw ');
+      return;
+    }
+    if (action === 'more') {
+      this._deps.openMessageMenu?.(key, btn);
+    }
   }
 
   postButton(btn: HTMLButtonElement, topicId: string): void {
@@ -448,6 +539,10 @@ class TranscriptControllerImpl implements TranscriptController {
         toggleAll: (key) => this.toggleAll(key),
         toggleLine: (line) => this.toggleLine(line),
         openTurnChanges: (turn) => this.openTurnChanges(turn),
+        openTurnDiffSideBySide: (turn, btn) => {
+          void this.openTurnDiffSideBySide(turn, btn);
+        },
+        onMessageAction: (action, key, btn) => this._handleMessageAction(action, key, btn),
       }),
     );
     this._disposables.add(store);

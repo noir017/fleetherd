@@ -14,7 +14,7 @@ import { createComposerController } from '../composer/index.js';
 import type { TopicStatusController } from '../status/index.js';
 import { createTopicStatusController } from '../status/index.js';
 import type { TranscriptController } from '../transcript/index.js';
-import { createTranscriptController } from '../transcript/index.js';
+import { createTranscriptController, extractMessageMarkdown } from '../transcript/index.js';
 import { buildTopicEditorDom, resolveTopicEditorIcons } from './dom.js';
 import { createTopicHeaderController, type TopicHeaderController } from './header.js';
 import {
@@ -103,6 +103,10 @@ export class TopicEditorPanel implements TopicEditorHandle {
 
   getTopicId(): string {
     return this._topicId;
+  }
+
+  getPanelId(): string | undefined {
+    return this._panelCtx?.id;
   }
 
   init(params: unknown, ctx: TopicPanelInitContext): void {
@@ -301,7 +305,18 @@ export class TopicEditorPanel implements TopicEditorHandle {
     if (factories?.createTranscript) {
       this._transcript = factories.createTranscript(this.els, getTopicId);
     } else if (this._deps.transcriptDeps) {
-      this._transcript = createTranscriptController(this._deps.transcriptDeps(this.els, getTopicId));
+      const baseDeps = this._deps.transcriptDeps(this.els, getTopicId);
+      this._transcript = createTranscriptController({
+        ...baseDeps,
+        quoteToComposer: baseDeps.quoteToComposer ?? ((text) => this.insertIntoComposer(text)),
+        openMessageMenu: baseDeps.openMessageMenu ?? ((key, anchor) => this._openMessageMenuFromAnchor(key, anchor)),
+        openTurnDiffSideBySide:
+          baseDeps.openTurnDiffSideBySide ??
+          (this._deps.onOpenTurnDiffSideBySide
+            ? (turn) => this._deps.onOpenTurnDiffSideBySide!(this._topicId, turn, this._panelCtx?.id)
+            : undefined),
+        canOpenSideDiff: baseDeps.canOpenSideDiff ?? this._deps.canOpenSideDiff,
+      });
       this._transcript.attachEvents(this._doc);
     }
 
@@ -363,21 +378,46 @@ export class TopicEditorPanel implements TopicEditorHandle {
         const target = ev.target;
         if (!(target instanceof Element)) return;
         const msgEl = target.closest<HTMLElement>('[data-k]');
-        if (!msgEl || !this._deps.getMessageMenuGroups || !this._messageMenu) return;
-        const messageKey = msgEl.getAttribute('data-k') ?? '';
-        const payload: MessageMenuTarget = {
-          topicId: this._topicId,
-          messageKey,
-          text: (msgEl.textContent ?? '').trim(),
-          element: msgEl,
-        };
-        const groups = this._deps.getMessageMenuGroups(payload);
-        const entries = buildMessageMenuEntries(groups, payload, (name) => this._resolveIcon(name));
-        if (entries.length === 0) return;
-        ev.preventDefault();
-        this._messageMenu.open({ x: ev.clientX, y: ev.clientY }, entries);
+        if (!msgEl) return;
+        if (this._openMessageMenuForElement(msgEl, { x: ev.clientX, y: ev.clientY })) {
+          ev.preventDefault();
+        }
       }),
     );
+  }
+
+  private _openMessageMenuFromAnchor(key: string, anchor: HTMLElement): void {
+    const msgEl =
+      anchor.closest<HTMLElement>('[data-k]') ??
+      Array.from(this.els.log.children).find(
+        (c): c is HTMLElement => c instanceof HTMLElement && c.getAttribute('data-k') === key,
+      ) ??
+      null;
+    if (!msgEl) return;
+    this._openMessageMenuForElement(msgEl, anchor);
+  }
+
+  private _openMessageMenuForElement(
+    msgEl: HTMLElement,
+    anchor: HTMLElement | { readonly x: number; readonly y: number },
+  ): boolean {
+    if (!this._deps.getMessageMenuGroups || !this._messageMenu) return false;
+    const messageKey = msgEl.getAttribute('data-k') ?? '';
+    const msg =
+      messageKey && typeof this._transcript?.getMessage === 'function'
+        ? this._transcript.getMessage(messageKey)
+        : undefined;
+    const payload: MessageMenuTarget = {
+      topicId: this._topicId,
+      messageKey,
+      text: msg ? extractMessageMarkdown(msg, msgEl) : (msgEl.textContent ?? '').trim(),
+      element: msgEl,
+    };
+    const groups = this._deps.getMessageMenuGroups(payload);
+    const entries = buildMessageMenuEntries(groups, payload, (name) => this._resolveIcon(name));
+    if (entries.length === 0) return false;
+    this._messageMenu.open(anchor, entries);
+    return true;
   }
 
   private _closeQuickPick(): void {

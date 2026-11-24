@@ -1,5 +1,5 @@
 #log{flex:1;overflow-y:auto;padding:20px 16px 8px;max-width:860px;width:100%;margin:0 auto}
-.m{margin:0 0 18px;max-width:100%;overflow-wrap:anywhere;animation:fade .18s ease-out}
+.m{position:relative;margin:0 0 18px;max-width:100%;overflow-wrap:anywhere;animation:fade .18s ease-out}
 /* Only on the element's first appearance, which is the whole reason messages are now reconciled
    rather than rebuilt: an animation restarts every time a node is created, so under the old
    empty-and-repaint sync this would have flickered the entire transcript on every reconnect. */
@@ -35,7 +35,7 @@
 /* All three of the above are decoration over content that is arriving anyway, which is exactly
    what this query is for: without motion the skeleton is still a placeholder, the dots still say
    the page is waiting on something, and a message still appears — instantly. */
-@media(prefers-reduced-motion:reduce){.m,.sk i,.syncing i,.launch{animation:none}.agent-card,.agent-card:hover{transition:none;transform:none}}
+@media(prefers-reduced-motion:reduce){.m,.sk i,.syncing i,.launch{animation:none}.agent-card,.agent-card:hover,.msg-actions,.msg-act-btn{transition:none;transform:none}}
 /* Why an empty room is empty. A transcript lives in memory only while the topic LIST is
    persisted, so every restart leaves rows that open onto nothing — and an empty panel rendered
    faithfully is indistinguishable from a page that failed to load, which is how it was reported.
@@ -306,11 +306,25 @@
 /* What a turn changed, under its reply (the daemon's turn-changes): a quiet footnote rather than
    a control in the flow of the answer, and one line even on a phone — the counts are what is read
    at a glance, the file count is what says how much. */
-.tc{margin-top:8px}
-.tc button{display:inline-flex;align-items:center;gap:6px;max-width:100%;padding:2px 8px;font:inherit;font-size:12px;color:var(--dim);background:none;border:1px solid var(--line);border-radius:3px;cursor:pointer}
-.tc button:hover{color:var(--fg);border-color:var(--dim)}
+.tc{margin-top:8px;display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.tc button,.tc .tc-summary{display:inline-flex;align-items:center;gap:6px;max-width:100%;padding:2px 8px;font:inherit;font-size:12px;color:var(--fh-fg-dim);background:none;border:1px solid var(--fh-line);border-radius:var(--fh-radius-ctrl)}
+.tc button{cursor:pointer}
+.tc button:hover:not(:disabled){color:var(--fh-fg-hi);background:var(--fh-hover);border-color:var(--fh-fg-dim)}
+.tc button:focus-visible{outline:1px solid var(--fh-accent);outline-offset:1px}
+.tc .tc-split{background:var(--fh-bg-widget);color:var(--fh-fg)}
+.tc .tc-split:hover:not(:disabled){border-color:var(--fh-accent);color:var(--fh-fg-hi)}
+.tc .tc-split.busy{opacity:.65;cursor:wait}
 .tc .add{color:var(--ok)}
 .tc .del{color:var(--err)}
+/* Lightweight hover/focus message action bar, anchored above the top-right edge so it never covers body text. */
+.msg-actions{position:absolute;top:-13px;right:6px;z-index:2;display:inline-flex;align-items:center;gap:2px;padding:2px;background:var(--fh-bg-widget);border:1px solid var(--fh-line);border-radius:var(--fh-radius-card);opacity:0;pointer-events:none;transition:opacity .12s ease}
+.m:hover>.msg-actions,.m:focus-within>.msg-actions,.msg-actions:focus-within{opacity:1;pointer-events:auto}
+.msg-act-btn{display:inline-flex;align-items:center;justify-content:center;width:24px;height:22px;padding:0;border:0;border-radius:var(--fh-radius-ctrl);background:transparent;color:var(--fh-fg-dim);cursor:pointer;transition:background .1s ease,color .1s ease}
+.msg-act-btn .ic{width:14px;height:14px}
+.msg-act-btn:hover{background:var(--fh-hover);color:var(--fh-fg-hi)}
+.msg-act-btn:focus-visible{outline:1px solid var(--fh-accent);outline-offset:1px;color:var(--fh-fg-hi)}
+.msg-act-btn.is-done{color:var(--fh-ok)}
+@media(hover:none){.msg-actions{position:static;margin-top:6px;opacity:.9;pointer-events:auto}}
 /* A picture the agent sent, drawn in the bubble. Capped in both directions: a screenshot of a
    4K display would otherwise push the timestamp and everything after it off the fold, and the
    point of showing it here is to recognise it, not to read it — that is what tapping is for. */

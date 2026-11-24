@@ -114,15 +114,19 @@ interface TestHarness {
   activeId: string;
   insertHandler: ((topicId: string, text: string) => boolean) | null;
   topicsBridge: PluginTopicsBridge;
+  openEditor: ReturnType<typeof vi.fn>;
+  getJson: ReturnType<typeof vi.fn>;
 }
 
 function makeHarness(initialTopics: TopicInfo[]): TestHarness {
-  const registry = new ContributionRegistry();
+  const openEditor = vi.fn();
+  const registry = new ContributionRegistry({ openEditor });
   const events = new WebuiEventBus();
   const overlays = new OverlayManager();
   const storage = new StorageService('', makeMemoryStorage());
+  const getJson = vi.fn();
   const api = {
-    getJson: vi.fn(),
+    getJson,
     postJson: vi.fn(),
   } as unknown as ApiClient;
 
@@ -133,6 +137,8 @@ function makeHarness(initialTopics: TopicInfo[]): TestHarness {
     topics: [...initialTopics],
     activeId: initialTopics[0]?.id ?? '',
     insertHandler: null,
+    openEditor,
+    getJson,
     topicsBridge: {
       list: () => state.topics,
       active: () => state.topics.find((t) => t.id === state.activeId),
@@ -504,6 +510,82 @@ describe('features/topic/plugin', () => {
     expect(h.registry.listMenuItems('topic.title', t1)).toHaveLength(0);
     expect(h.registry.listMenuItems('message', { topicId: 't-main', messageKey: 'm-1', text: 'x', element: msgNode })).toHaveLength(0);
 
+    h.manager.dispose();
+    h.registry.dispose();
+    h.events.dispose();
+    h.overlays.dispose();
+  });
+
+  it('opens turn-changes side-by-side diff via command (single & multi-file) and supports quote menu item', async () => {
+    const t1: TopicInfo = { id: 't-diff', title: 'Diff topic', lastAt: 1000, live: true };
+    const h = makeHarness([t1]);
+    h.registry.registerEditor({
+      kind: 'diff',
+      title: () => 'Diff',
+      component: () => ({ element: document.createElement('div'), init() {}, dispose() {} }),
+    });
+
+    h.manager.register(
+      createTopicPlugin({
+        registry: h.registry,
+        overlays: h.overlays,
+        onRegisterInsertHandler: (fn) => {
+          h.insertHandler = fn;
+        },
+      }),
+      { builtin: true },
+    );
+    await h.manager.activate(TOPIC_PLUGIN_ID);
+
+    const panel = h.registry.getEditor(TOPIC_EDITOR_KIND)!.component() as TopicEditorHandle;
+    document.body.appendChild(panel.element);
+    panel.init({ topicId: 't-diff' }, makePanelInitContext('topic-ed-42').ctx);
+
+    // Multi-file turn change opens first file to the right of topic-ed-42 and second in that right group.
+    h.getJson.mockResolvedValueOnce({
+      ok: true,
+      files: [
+        { path: 'src/one.ts', status: 'modified' },
+        { path: 'src/two.ts', status: 'added' },
+      ],
+    });
+    const openedCount = await h.registry.executeCommand(TOPIC_COMMANDS.openTurnDiff, { topicId: 't-diff', turn: 5 });
+    expect(openedCount).toBe(2);
+    expect(h.getJson).toHaveBeenCalledWith('/api/turn-changes/status?t=t-diff&turn=5');
+    expect(h.openEditor).toHaveBeenNthCalledWith(
+      1,
+      'diff',
+      {
+        topicId: 't-diff',
+        path: 'src/one.ts',
+        ref: 'turn 5',
+        source: { title: 'Turn 5 changes', fileUrl: '/api/turn-changes/file?t=t-diff&turn=5' },
+      },
+      { position: { referencePanel: 'topic-ed-42', direction: 'right' }, preview: false },
+    );
+    expect(h.openEditor).toHaveBeenNthCalledWith(
+      2,
+      'diff',
+      {
+        topicId: 't-diff',
+        path: 'src/two.ts',
+        ref: 'turn 5',
+        source: { title: 'Turn 5 changes', fileUrl: '/api/turn-changes/file?t=t-diff&turn=5' },
+      },
+      { preview: false },
+    );
+
+    // Message context menu includes Quote reply and writes blockquote to composer.
+    const msgNode = document.createElement('div');
+    msgNode.setAttribute('data-k', 'm-q');
+    msgNode.textContent = 'Quoted body';
+    panel.els.log.appendChild(msgNode);
+    msgNode.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }));
+    const msgMenu = document.querySelector<HTMLElement>('.wb-topic-message-menu')!;
+    msgMenu.querySelector<HTMLButtonElement>('[data-menu-id="topic.message.quote"]')?.click();
+    expect(panel.els.input.value).toBe('> Quoted body\n\n');
+
+    panel.dispose();
     h.manager.dispose();
     h.registry.dispose();
     h.events.dispose();

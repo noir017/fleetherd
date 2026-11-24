@@ -1,6 +1,7 @@
 import { t as tr } from '../../../i18n/index.js';
 import { text } from '../../../services/api.js';
 import { btwAsked } from './btw.js';
+import { messageActionsMarkup, polishLabel } from './message-actions.js';
 import type {
   MsgMarkupResult,
   ToolOpenState,
@@ -101,18 +102,25 @@ export function turnChangeRow(
   m: TranscriptMessage,
   icons: TranscriptIcons,
   canOpenGit: boolean,
+  canOpenSideDiff = false,
 ): string {
-  if (!canOpenGit || !m.turnChanges) return '';
+  if ((!canOpenGit && !canOpenSideDiff) || !m.turnChanges) return '';
   const c = m.turnChanges;
   const files = c.files === 1 ? tr('msg.turnFilesOne') : tr('msg.turnFilesMany', { count: c.files });
-  return (
-    `<div class="tc"><button type="button" data-turns="${text(String(c.turn))}">` +
+  const turnStr = text(String(c.turn));
+  const summaryInner =
     (icons.icon.diff ?? '') +
     `<span>${text(files)}</span>` +
     `<span class="add">+${text(String(c.additions))}</span>` +
-    `<span class="del">-${text(String(c.deletions) + (c.truncated ? '+' : ''))}</span>` +
-    '</button></div>'
-  );
+    `<span class="del">-${text(String(c.deletions) + (c.truncated ? '+' : ''))}</span>`;
+  const summary = canOpenGit
+    ? `<button type="button" data-turns="${turnStr}">${summaryInner}</button>`
+    : `<span class="tc-summary">${summaryInner}</span>`;
+  const splitLabel = text(polishLabel('msg.openDiffSideBySide'));
+  const splitBtn = canOpenSideDiff
+    ? `<button type="button" class="tc-split" data-turns-split="${turnStr}" title="${splitLabel}" aria-label="${splitLabel}">${icons.icon.diff ?? ''}<span>${splitLabel}</span></button>`
+    : '';
+  return `<div class="tc">${summary}${splitBtn}</div>`;
 }
 
 export function renderMenu(m: TranscriptMessage, icons: TranscriptIcons): string {
@@ -279,6 +287,8 @@ export interface MsgMarkupContext {
   readonly icons: TranscriptIcons;
   readonly opened: Readonly<Record<string, ToolOpenState | undefined>>;
   readonly canOpenGit: boolean;
+  readonly canOpenSideDiff?: boolean;
+  readonly showMessageActions?: boolean;
   readonly hasOutbox: (nonce: string) => boolean;
   readonly isBtwHeld: (key: string, m: TranscriptMessage) => boolean;
   readonly btwLineMarkup: (
@@ -310,7 +320,7 @@ function msgBodyHtml(
   if (!hist && m.workdir) return workdirPicker(m, ctx.icons);
   let h = `<div class="b">${folded ? foldLines(key, m.html, ctx.opened) : m.html}</div>`;
   if (m.file) h += renderFileAttachment(m, hist);
-  if (m.turnChanges) h += turnChangeRow(m, ctx.icons, ctx.canOpenGit);
+  if (m.turnChanges) h += turnChangeRow(m, ctx.icons, ctx.canOpenGit, Boolean(ctx.canOpenSideDiff));
   if (!hist && m.buttons && m.buttons.length) h += renderMenu(m, ctx.icons);
   return h;
 }
@@ -341,5 +351,8 @@ export function renderMsgMarkup(
       ? '  ' + m.reactions.map((e) => reactionMark(e, ctx.icons)).join(' ')
       : '';
   h += `<div class="t">${text(clock(m.at))}${reactions}${folded ? allToggle(key, ctx.opened) : ''}</div>`;
+  if (ctx.showMessageActions !== false && !(!hist && m.workdir)) {
+    h += messageActionsMarkup(key, m, ctx.icons, hist);
+  }
   return { cls, h };
 }

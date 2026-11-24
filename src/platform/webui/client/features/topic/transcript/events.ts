@@ -1,6 +1,7 @@
 import { addDisposableListener } from '../../../base/dom.js';
 import { type Disposable, DisposableStore } from '../../../base/lifecycle.js';
 import { post } from '../../../services/api.js';
+import { handleToolbarKeydown } from './message-actions.js';
 import type { TranscriptTopicLike } from './types.js';
 
 export type PostClickFn = (
@@ -69,6 +70,8 @@ export interface LogEventsDeps {
   readonly toggleAll: (key: string) => void;
   readonly toggleLine: (line: HTMLElement) => void;
   readonly openTurnChanges: (turn: number) => void;
+  readonly openTurnDiffSideBySide?: (turn: number, btn: HTMLButtonElement) => void;
+  readonly onMessageAction?: (action: string, key: string, btn: HTMLButtonElement) => void;
   readonly postButton?: (btn: HTMLButtonElement, topicId: string) => void;
 }
 
@@ -126,6 +129,13 @@ function handleNavClick(target: Element, e: MouseEvent, deps: LogEventsDeps): bo
 }
 
 function handleActionClick(target: Element, deps: LogEventsDeps): void {
+  const msgAct = target.closest<HTMLButtonElement>('button[data-msg-act]');
+  if (msgAct) {
+    const action = msgAct.getAttribute('data-msg-act');
+    const key = msgAct.getAttribute('data-msg-k');
+    if (action && key) deps.onMessageAction?.(action, key, msgAct);
+    return;
+  }
   const act = target.closest('[data-retry],[data-copy],[data-discard]');
   if (act) {
     handleLocalAction(act as HTMLElement, deps);
@@ -147,6 +157,11 @@ function handleActionClick(target: Element, deps: LogEventsDeps): void {
     deps.openTurnChanges(Number(turns.getAttribute('data-turns')));
     return;
   }
+  const splitTurns = target.closest<HTMLButtonElement>('button[data-turns-split]');
+  if (splitTurns) {
+    deps.openTurnDiffSideBySide?.(Number(splitTurns.getAttribute('data-turns-split')), splitTurns);
+    return;
+  }
   const btn = target.closest('button[data-btn]');
   if (btn) {
     const runPost = deps.postButton ?? ((el, t) => postButton(el, t));
@@ -162,6 +177,13 @@ export function attachLogEvents(log: HTMLElement, deps: LogEventsDeps): Disposab
       if (!target) return;
       if (handleNavClick(target, e, deps)) return;
       handleActionClick(target, deps);
+    }),
+  );
+  store.add(
+    addDisposableListener(log, 'keydown', (e) => {
+      const target = e.target instanceof Element ? e.target : null;
+      const toolbar = target?.closest<HTMLElement>('.msg-actions');
+      if (toolbar) handleToolbarKeydown(e, toolbar);
     }),
   );
   store.add(

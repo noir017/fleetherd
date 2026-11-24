@@ -17,6 +17,15 @@ import {
   type TopicEditorToolDescriptor,
   type TopicStreamState,
 } from './editor/index.js';
+import {
+  DIFF_EDITOR_KIND,
+  formatQuoteReply,
+  openTurnDiffSideBySide,
+  polishLabel,
+  TOPIC_POLISH_EN,
+  TOPIC_POLISH_ZH,
+  type TurnChangesStatusResponse,
+} from './transcript/index.js';
 
 export const TOPIC_PLUGIN_ID = 'topic';
 export const TOPIC_EDITOR_KIND = 'topic';
@@ -26,6 +35,7 @@ export const TOPIC_COMMANDS = {
   stopTurn: 'topic.stopTurn',
   killAgent: 'topic.killAgent',
   copyRef: 'topic.copyRef',
+  openTurnDiff: 'topic.openTurnDiff',
 } as const;
 
 export interface TopicPluginDeps {
@@ -47,6 +57,7 @@ export interface TopicPluginDeps {
   readonly onStopTurn?: (topicId: string) => void;
   readonly onCloseIdle?: () => void;
   readonly onDeleteTopic?: (topicId: string) => void;
+  readonly onOpenTurnDiff?: (topicId: string, turn: number, panelId?: string) => Promise<number | void> | number | void;
   readonly hasIdleAgents?: () => boolean;
   readonly copyText?: (text: string) => void;
   readonly onBack?: () => void;
@@ -188,6 +199,21 @@ function registerTopicMenus(ctx: PluginContext, deps: TopicPluginDeps, instanceI
     },
   });
 
+  ctx.menus.register('message', {
+    id: 'topic.message.quote',
+    label: polishLabel('msg.quoteReply'),
+    icon: 'undo',
+    group: '1_clipboard',
+    order: 20,
+    when: (target) => Boolean(asMessageTarget(target)?.text),
+    run: (target) => {
+      const msg = asMessageTarget(target);
+      if (!msg?.text) return;
+      const quoted = formatQuoteReply(msg.text);
+      if (quoted) ctx.topics.insertIntoComposer(msg.topicId, quoted);
+    },
+  });
+
   void instanceId;
 }
 
@@ -196,6 +222,7 @@ function registerTopicCommands(
   deps: TopicPluginDeps,
   instanceId: string,
   findEditor: (topicId?: string) => TopicEditorHandle | undefined,
+  openTurnDiff: (topicId: string, turn: number, panelId?: string) => Promise<number>,
 ): void {
   ctx.commands.register(
     TOPIC_COMMANDS.focusComposer,
@@ -272,12 +299,36 @@ function registerTopicCommands(
     },
     { title: tr('topic.copyRef') },
   );
+
+  ctx.commands.register(
+    TOPIC_COMMANDS.openTurnDiff,
+    async (arg?: unknown, maybeTopicId?: unknown) => {
+      let topicId = ctx.topics.active()?.id ?? '';
+      let turn = 0;
+      let panelId: string | undefined;
+      if (typeof arg === 'number') {
+        turn = arg;
+        if (typeof maybeTopicId === 'string' && maybeTopicId) topicId = maybeTopicId;
+      } else if (arg && typeof arg === 'object') {
+        const rec = arg as { readonly topicId?: unknown; readonly turn?: unknown; readonly panelId?: unknown };
+        if (typeof rec.topicId === 'string' && rec.topicId) topicId = rec.topicId;
+        if (typeof rec.turn === 'number') turn = rec.turn;
+        if (typeof rec.panelId === 'string' && rec.panelId) panelId = rec.panelId;
+      }
+      if (!topicId || !turn) return 0;
+      const editor = findEditor(topicId);
+      return openTurnDiff(topicId, turn, panelId ?? editor?.getPanelId());
+    },
+    { title: polishLabel('msg.openDiffSideBySide') },
+  );
 }
 
 export function createTopicPlugin(deps: TopicPluginDeps = {}): WebuiPlugin {
   return definePlugin({
     id: TOPIC_PLUGIN_ID,
     activate(ctx: PluginContext): void {
+      ctx.i18n.add('en', TOPIC_POLISH_EN);
+      ctx.i18n.add('zh-CN', TOPIC_POLISH_ZH);
       const instanceId = deps.instanceId ?? 'web';
       const mountedEditors = new Set<TopicEditorHandle>();
       let lastFocusedEditor: TopicEditorHandle | null = null;
@@ -316,6 +367,24 @@ export function createTopicPlugin(deps: TopicPluginDeps = {}): WebuiPlugin {
         return deps.registry ? deps.registry.listMenuGroups('message', target) : [];
       };
 
+      const openTurnDiff = async (topicId: string, turn: number, panelId?: string): Promise<number> => {
+        if (deps.onOpenTurnDiff) {
+          const res = await deps.onOpenTurnDiff(topicId, turn, panelId);
+          return typeof res === 'number' ? res : 1;
+        }
+        return openTurnDiffSideBySide({
+          topicId,
+          turn,
+          panelId,
+          fetchStatus: (url) => ctx.api.get<TurnChangesStatusResponse>(url),
+          openDiffEditor: (input, opts) => ctx.editors.open(DIFF_EDITOR_KIND, input, opts),
+          fallbackCommand: (input, opts) => ctx.commands.execute('changes.openDiff', input, opts),
+        });
+      };
+
+      const canOpenSideDiff = (): boolean =>
+        Boolean(deps.onOpenTurnDiff || deps.registry?.getEditor(DIFF_EDITOR_KIND));
+
       ctx.editors.register({
         kind: TOPIC_EDITOR_KIND,
         title: (input) => {
@@ -331,6 +400,10 @@ export function createTopicPlugin(deps: TopicPluginDeps = {}): WebuiPlugin {
             onToggleTopicTool: deps.onToggleTopicTool,
             getTitleMenuGroups: resolveTitleMenus,
             getMessageMenuGroups: resolveMessageMenus,
+            onOpenTurnDiffSideBySide: async (topicId, turn, panelId) => {
+              await openTurnDiff(topicId, turn, panelId);
+            },
+            canOpenSideDiff,
             onBack: deps.onBack,
             onTopicChange: deps.onTopicChange,
             onMount: (handle) => {
@@ -359,7 +432,7 @@ export function createTopicPlugin(deps: TopicPluginDeps = {}): WebuiPlugin {
       });
 
       registerTopicMenus(ctx, deps, instanceId);
-      registerTopicCommands(ctx, deps, instanceId, findEditor);
+      registerTopicCommands(ctx, deps, instanceId, findEditor, openTurnDiff);
 
       if (deps.onRegisterInsertHandler) {
         deps.onRegisterInsertHandler((topicId: string, text: string) => {
