@@ -10,6 +10,7 @@
     "./workbench/**/*.ts",
     "./plugins/**/*.ts",
     "./i18n/**/*.ts",
+    "./features/**/*.ts",
     "./panels/**/*.ts",
     "./theme.ts",
     "./theme-boot.ts"

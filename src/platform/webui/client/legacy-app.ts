@@ -42,6 +42,7 @@ import { OverlayManager } from './services/overlays.js';
 import { applyTopicRows, createStreamClient } from './services/stream.js';
 import { collectCacheableMessages, createCacheService } from './services/cache.js';
 import { createReadsService } from './services/reads.js';
+import { createTranscriptController } from './features/topic/transcript/index.js';
 
 (function(){
   var $ = function(id){ return document.getElementById(id); };
@@ -169,6 +170,89 @@ import { createReadsService } from './services/reads.js';
   function needsRead(t){ return readsService.needsRead(t); }
   function markAllRead(list, noun, say){ return readsService.markAllRead(list, noun, say); }
   function reportSeen(){ readsService.reportSeen(); }
+  var transcript = createTranscriptController({
+    log: log,
+    btwBox: $('btw'),
+    btwQ: $('btw-q'),
+    btwBody: $('btw-body'),
+    btwClose: $('btw-close'),
+    machineNoteEl: machineNoteEl,
+    forkNote: forkNote,
+    getExtraCodeRoots: function(){ return [libLog, readerBody, filesPanel.previewEl()]; },
+    getData: function(){ return data; },
+    getEls: function(){ return els; },
+    getTopic: function(){ return topic; },
+    getTopics: function(){ return topics; },
+    topicById: topicById,
+    getEpoch: function(){ return epoch; },
+    isSynced: function(){ return synced; },
+    isStale: function(){ return stale; },
+    isEntering: function(){ return entering; },
+    getLaunch: function(){ return launch; },
+    keyOf: keyOf,
+    isHistory: isHistory,
+    getIcons: function(){ return IC; },
+    formatStatusClock: stClock,
+    codeView: codeView,
+    copyText: copyText,
+    hasOutbox: function(nonce){ return Boolean(outbox[nonce]); },
+    claim: claim,
+    adoptLegacy: adoptLegacy,
+    showUnsent: showUnsent,
+    cacheSave: cacheSave,
+    getHistoryMessage: function(k){ return historyPanel.getMessage(k); },
+    repaintHistoryMessage: function(k){ historyPanel.repaintMessage(k); },
+    paintTopics: paintTopics,
+    paintStatus: paintStatus,
+    switchTopic: switchTopic,
+    isNarrow: narrow,
+    setSidebar: setSidebar,
+    openShot: openShot,
+    sendCommand: command,
+    openReader: openReader,
+    deliverLocal: deliver,
+    copyLocal: copyLocal,
+    discardLocal: discardLocal,
+  });
+  transcript.attachEvents(document);
+  function atBottom(){ return transcript.scroll.atBottom(); }
+  function toBottom(){ transcript.scroll.toBottom(); }
+  function firstVisible(){ return transcript.scroll.firstVisible(); }
+  function saveView(id){ transcript.scroll.saveView(id, entering); }
+  function land(){ transcript.scroll.land(els); }
+  function paint(key, before){ transcript.paint(key, before); }
+  function codeBlocks(root){ transcript.codeBlocks.enhance(root); }
+  function hlSweep(){ transcript.codeBlocks.sweep(); }
+  function btwAsked(key, m){ return transcript.btwAsked(key, m); }
+  function openBtw(qk){ transcript.btw.open(qk); }
+  function closeBtw(byHand){ transcript.btw.close(byHand); }
+  function renderBtw(top){ transcript.btw.render(top); }
+  function btwArrived(m){ transcript.btw.onArrived(m); }
+  function msgMarkup(key, m, hist){ return transcript.msgMarkup(key, m, hist); }
+  function toggleAll(key){ transcript.toggleAll(key); }
+  function toggleLine(line){ transcript.toggleLine(line); }
+  function repaintKey(key){ transcript.repaintKey(key); }
+  function upsert(m){ transcript.upsert(m); }
+  function drop(key){ transcript.drop(key); }
+  function reconcile(list){ transcript.reconcile(list); }
+  function sinkLocals(){ transcript.sinkLocals(); }
+  function showSkeleton(){ transcript.banners.showSkeleton(); }
+  function clearSkeleton(){ transcript.banners.clearSkeleton(); }
+  function syncEmptyNote(){ transcript.banners.syncEmptyNote(); }
+  function syncLaunch(want){ transcript.banners.syncLaunch(want); }
+  function takeMachines(list){ return transcript.takeMachines(list); }
+  function setMachines(list){ transcript.setMachines(list); }
+  function offSince(name){ return transcript.banners.offSince(name); }
+  function offWhen(at){ return transcript.banners.offWhen(at); }
+  function offTitle(name){ return transcript.banners.offTitle(name); }
+  function paintMachineNote(){ transcript.banners.paintMachineNote(); }
+  function paintForkNote(cur){ transcript.banners.paintForkNote(cur); }
+  function placeDivider(){ transcript.banners.placeDivider(); }
+  function showSyncing(){ transcript.banners.showSyncing(); }
+  function clearSyncing(){ transcript.banners.clearSyncing(); }
+  function repaintHistory(){ transcript.repaintHistory(); }
+  function adopt(list, current){ transcript.adopt(list, current); }
+  function postButton(b, t){ transcript.postButton(b, t); }
   // END WIRING
   // Panels instantiated before makePanel(), which calls paintSchedTab() synchronously on setup.
   var reviewsPanel = createReviewsPanel({
@@ -226,7 +310,7 @@ import { createReadsService } from './services/reads.js';
     msgMarkup: msgMarkup,
     codeBlocks: codeBlocks,
     forgetOpenedPrefix: function(prefix){
-      for(var k in opened){ if(Object.prototype.hasOwnProperty.call(opened, k) && k.indexOf(prefix) === 0) delete opened[k]; }
+      transcript.forgetOpenedPrefix(prefix);
     },
     openShot: openShot,
     toggleAll: toggleAll,
@@ -330,26 +414,16 @@ import { createReadsService } from './services/reads.js';
   // the button that opened it, and what a pick calls. The button is re-found after every repaint
   // (rowMenuFollow), because the row it lives in is replaced while the menu stays open.
   var rowMenuKey=null, rowMenuBtn=null, rowMenuPick=null;
-  // Last markup written per message, so a sync that re-sends an unchanged message touches no DOM.
-  var sig={};
-  // The tool-bubble lines a reader has opened, per message key. See lineOpen.
-  var opened={};
-  // Whether #log currently holds placeholders rather than messages, and whether the next sync is
-  // the one that opens a topic (which lands at the bottom no matter where the old one was read).
-  var skeleton=false, entering=true;
-  // What the last sync said about this topic being older than the daemon, and the notice element
-  // that says so. Both are per topic, so both are reset on the way into one.
-  var stale=false, emptyEl=null;
-  // The agents the last sync said this topic could still be given to (null once it cannot, or
-  // when the daemon offered none), the element laying them out, and what it was drawn from.
-  var launch=null, launchEl=null, launchSig='';
+  // Whether the next sync is the one that opens a topic.
+  var entering=true;
+  // What the last sync said about this topic being older than the daemon.
+  var stale=false;
+  // The agents the last sync said this topic could still be given to (null once it cannot).
+  var launch=null;
   // Which of the agent's own settings to draw for a topic with no status yet (see "The agent's own
   // settings"). Up here because paintStatus reads it, and the launcher repaints the status line
   // while the script is still setting up.
   var opk={ topic: null, agent: '', model: '', options: [], seq: 0, timer: null };
-  // The machines the daemon cannot reach, by the name the topic list and the agent cards use →
-  // since when (OfflineMachine), and what the list was drawn from. Replaced whole on every push.
-  var offlineMachines={}, offlineSig='[]';
   // Which run of the daemon the live stream belongs to, and whether this topic's first sync has
   // landed. 0 until one has: every message below is qualified by the generation it came from,
   // and before the first sync the only generations known are the ones out of the cache.
@@ -1029,720 +1103,6 @@ import { createReadsService } from './services/reads.js';
     return out;
   }
 
-  function atBottom(){ return log.scrollHeight - log.scrollTop - log.clientHeight < 80; }
-  function toBottom(){ log.scrollTop = log.scrollHeight; }
-
-  // ── Where each topic was being read ────────────────────────────────────────
-  /**
-   * The place in a topic to come back to: the first message on screen when it was left, and how
-   * far its top sat from the top of the viewport. No entry means the bottom — which is where a
-   * reader who was following along wants to be, and where whatever was said while they were away
-   * is going to land.
-   *
-   * A message rather than a scrollTop, because the transcript a topic comes back to is not the one
-   * it was left with: it is rebuilt from its copy — from the database, only the tail of a topic too
-   * large for its budget — and then reconciled against a ring of 1000, so the sync can put older
-   * messages above the one being read. A pixel offset would land in the middle of those; a message
-   * does not move.
-   *
-   * In memory only, and with no scroll listener. The whole cost is one measurement on the way out
-   * of a topic, and one or two on the way back in (see land).
-   */
-  var views = {};
-  // The view being restored on the way into the current topic, until its first sync has landed;
-  // and the scrollTop that landing left behind, which is how a reader who has scrolled since is
-  // told apart from one who has not. -1 until something has been landed.
-  var view = null, landedAt = -1;
-
-  /**
-   * The first message whose bottom edge is below the top of the viewport. A binary search, since
-   * the children are in vertical order and a topic can hold 1000 of them: every rect after the
-   * first is read off a layout that is already up to date, so this forces one layout, not one per
-   * message.
-   */
-  function firstVisible(){
-    var kids = log.children, top = log.getBoundingClientRect().top;
-    var lo = 0, hi = kids.length;
-    while(lo < hi){
-      var mid = (lo + hi) >> 1;
-      if(kids[mid].getBoundingClientRect().bottom <= top) lo = mid + 1; else hi = mid;
-    }
-    // Past the divider, the waiting line and the placeholders: only a message has a key to find
-    // again.
-    for(var i=lo; i<kids.length; i++){ if(kids[i].getAttribute('data-k')) return kids[i]; }
-    return null;
-  }
-
-  /** Remember where the topic being left was being read. */
-  function saveView(id){
-    if(!id) return;
-    // Still on the way in: nothing on screen yet says more than the view being restored does, so
-    // flicking through a topic before it has loaded must not forget where it was being read. A
-    // reader who has scrolled the cached transcript since it was landed has answered for themselves.
-    if(entering && (landedAt < 0 || log.scrollTop === landedAt)){
-      if(view) views[id] = view; else delete views[id];
-      return;
-    }
-    // No box to measure (the page is still laying out), or at the bottom, which is what no entry
-    // already means.
-    var el = (log.clientHeight && !atBottom()) ? firstVisible() : null;
-    if(!el){ delete views[id]; return; }
-    views[id] = { key: el.getAttribute('data-k'),
-      off: el.getBoundingClientRect().top - log.getBoundingClientRect().top };
-  }
-
-  /**
-   * Put the reader back where they left this topic, or at the bottom when there is nowhere to put
-   * them: it was left there, it was never read, or the message they were on is no longer held.
-   */
-  function land(){
-    var el = view && els[view.key];
-    if(el) log.scrollTop += el.getBoundingClientRect().top - log.getBoundingClientRect().top - view.off;
-    else toBottom();
-    landedAt = log.scrollTop;
-  }
-
-  function clock(ms){
-    var d=new Date(ms), p=function(n){ return (n<10?'0':'')+n; };
-    return p(d.getHours())+':'+p(d.getMinutes());
-  }
-
-  /**
-   * Draw one message, creating its element if this is the first sight of it.
-   *
-   * before is how cached history gets ABOVE a transcript the daemon has already sent: the node
-   * is inserted in front of the first live message instead of appended after the last one.
-   */
-  function paint(key, before){
-    var m=data[key]; if(!m) return;
-    // A settings screen is drawn in the settings page, never in the transcript (see takeSettings).
-    // The guard is here as well as at every call site because paint is the one funnel: an edit
-    // that arrives through a path nobody thought of must not put the screen back in the log.
-    if(m.settings || m.wasSettings) return;
-    var el=els[key];
-    if(!el){
-      clearSkeleton();
-      el=document.createElement('div');
-      // The page's own key, on the node, so the order on screen can be read back off #log —
-      // which is what the cache writes and what places the history divider.
-      el.setAttribute('data-k', key);
-      // before is where cached history goes; the waiting line, when one is up, is the last thing
-      // in the log and has to stay there, so anything painted under it goes above it instead.
-      var at = (before && before.parentNode === log) ? before : syncingEl;
-      if(at) log.insertBefore(el, at); else log.appendChild(el);
-      els[key]=el;
-    }
-    var out = msgMarkup(key, m, isHistory(m));
-    // A side question's line says whether its answer has come, and an answer is held out of the
-    // transcript only while its question is on the page: each repaints the other (btwLink).
-    if(!btwNest) btwLink(key, m);
-    // Write nothing when nothing changed. A sync re-paints every message it carries, and most of
-    // them are messages already on screen unchanged — rewriting innerHTML for those would drop
-    // the caret out of a selection, restart any <img> decode, and undo the enabled state of a
-    // button the click handler just disabled, all for identical markup.
-    if(sig[key]===out.h && el.className===out.cls) return;
-    el.className = out.cls;
-    el.innerHTML = out.h;
-    sig[key] = out.h;
-    codeBlocks(el);
-  }
-
-  // ── Code blocks (web-markdown.ts codeBlock) ────────────────────────────────
-  // A fence arrives as a frame: a bar with its language, Wrap and Copy, over the plain pre. The two
-  // buttons are answered here, and the colours are put on here, after the HTML has landed — the
-  // server sends no colours, because it has no grammar and the code view's are in the bundle.
-
-  /** Colouring a block longer than this would hold the page up for one block nobody reads whole. */
-  var HL_MAX = 20000;
-  /** How long after the last write the blocks still waiting are looked at again (hlSweep). */
-  var HL_IDLE_MS = 250;
-  /**
-   * Coloured code, by language and text, so the same fence drawn again — a reply re-rendered around a
-   * block that did not change, a topic opened again, the History tab — is coloured in the same task
-   * as its HTML is written, before the browser paints, instead of flashing plain while the grammar is
-   * asked again. Bounded, the least recently used out first (a Map keeps insertion order).
-   */
-  var hlCache = new Map(), HL_CACHE_MAX = 300;
-  /** Per language: the highlight function, null while its grammar loads, false for none. */
-  var hlFns = Object.create(null), hlWarned = false, hlTimer = 0;
-  /** Which code blocks have Wrap on, by message key and position, so a re-render keeps the choice. */
-  var cbWrapped = Object.create(null);
-
-  /** The language a code element was fenced as, from the class web-markdown.ts gives it; '' for none. */
-  function codeLang(code){
-    var m = /(?:^|\s)language-(\S+)/.exec(code.className || '');
-    return m ? m[1].toLowerCase() : '';
-  }
-
-  /**
-   * The message a running turn may still be writing: the newest in the transcript, while the topic's
-   * turn is running. Read off the topic's row (kept by the list and by typing events alike) rather
-   * than the typing line, which nothing resets when another topic is opened.
-   */
-  function liveEl(){
-    var running = false;
-    for(var i=0;i<topics.length;i++) if(topics[i].id===topic){ running = Boolean(topics[i].running); break; }
-    if(!running) return null;
-    for(var n = log.lastElementChild; n; n = n.previousElementSibling) if(n.hasAttribute('data-k')) return n;
-    return null;
-  }
-
-  /**
-   * Restore Wrap and colour the code blocks under root, right after its HTML was written.
-   *
-   * What can be done now is done now, in the same task as the write, so nothing flashes: a block
-   * coloured before (hlCache), and — once its grammar has loaded — any block in a message that has
-   * stopped changing. The rest waits for hlSweep: a grammar still loading, and the message a running
-   * turn is still writing. That one stays plain until the turn ends or a newer message takes its
-   * place, so a block being streamed is not re-coloured under the reader at every edit; the edits
-   * themselves already arrive settled (room.ts SETTLE_MS), never per token.
-   */
-  function codeBlocks(root){
-    if(!root || !root.querySelectorAll) return;
-    // Every write, code or not: a message arriving under the live one is what ends that one's turn
-    // to stay plain, and the sweep is what notices.
-    hlLater();
-    var frames = root.querySelectorAll('.cb'), i;
-    for(i=0;i<frames.length;i++){
-      var k = cbKey(frames[i]);
-      if(k && cbWrapped[k]) cbWrapSet(frames[i], true);
-    }
-    var codes = root.querySelectorAll('.cb pre>code[class*="language-"]');
-    if(!codes.length) return;
-    var live = liveEl();
-    for(i=0;i<codes.length;i++){
-      var host = codes[i].closest('[data-k]');
-      hlApply(codes[i], Boolean(live) && host === live);
-    }
-  }
-
-  /** Colour one code element if that can be done now. */
-  function hlApply(code, live){
-    if(code.hasAttribute('data-hl') || code.firstElementChild) return;
-    var lang = codeLang(code), src = code.textContent;
-    if(!lang || !src || src.length > HL_MAX) return;
-    var key = lang + '\n' + src, spans = hlCache.get(key);
-    if(spans){
-      hlCache.delete(key);
-      hlCache.set(key, spans);
-      return hlPaint(code, src, spans);
-    }
-    if(live) return;
-    var fn = hlFns[lang];
-    if(fn === false) return;
-    if(!fn) return hlLoad(lang);
-    try { spans = fn(src); }
-    catch(e){ hlFns[lang] = false; return hlWarn(e); }
-    hlCache.set(key, spans);
-    if(hlCache.size > HL_CACHE_MAX) hlCache.delete(hlCache.keys().next().value);
-    hlPaint(code, src, spans);
-  }
-
-  /**
-   * The coloured text, built as text nodes and spans — never through innerHTML. The spans are offsets
-   * into the code's own text, so the element's text, and what Copy takes, is unchanged.
-   */
-  function hlPaint(code, src, spans){
-    var frag = document.createDocumentFragment(), at = 0;
-    for(var i=0;i<spans.length;i++){
-      var from = spans[i][0], to = spans[i][1];
-      if(!(from >= at && to > from && to <= src.length)) continue;
-      if(from > at) frag.appendChild(document.createTextNode(src.slice(at, from)));
-      var span = document.createElement('span');
-      span.className = String(spans[i][2]);
-      span.textContent = src.slice(from, to);
-      frag.appendChild(span);
-      at = to;
-    }
-    if(at < src.length) frag.appendChild(document.createTextNode(src.slice(at)));
-    code.textContent = '';
-    code.appendChild(frag);
-    code.setAttribute('data-hl', '');
-  }
-
-  /**
-   * Ask the code view for a language's grammar, once. No bundle, no grammar by that name, or a chunk
-   * that would not load all leave the block as it already is — plain, which is a complete answer —
-   * and only the last says so in the console, once per page.
-   */
-  function hlLoad(lang){
-    if(lang in hlFns) return;
-    hlFns[lang] = null;
-    codeView().then(function(cv){
-      return cv && typeof cv.highlighter === 'function' ? cv.highlighter(lang) : null;
-    }).then(function(fn){
-      hlFns[lang] = typeof fn === 'function' ? fn : false;
-      if(fn) hlSweep();
-    }, function(e){
-      hlFns[lang] = false;
-      hlWarn(e);
-    });
-  }
-  function hlWarn(e){
-    if(hlWarned) return;
-    hlWarned = true;
-    console.warn('a code language failed to load, showing plain text:', e);
-  }
-
-  /** Look at every waiting block again once the writes have stopped for a moment. */
-  function hlLater(){
-    clearTimeout(hlTimer);
-    hlTimer = setTimeout(hlSweep, HL_IDLE_MS);
-  }
-
-  /**
-   * Every place a reply's HTML is shown, looked at again: after a grammar has loaded, after a turn
-   * has ended, and a moment after the last write — which is when the message a newer one has just
-   * followed stops being the live one.
-   */
-  function hlSweep(){
-    clearTimeout(hlTimer);
-    var live = liveEl(), roots = [log, libLog, btwBody, readerBody, filesPanel.previewEl()];
-    for(var r=0;r<roots.length;r++){
-      if(!roots[r]) continue;
-      var codes = roots[r].querySelectorAll('.cb pre>code[class*="language-"]:not([data-hl])');
-      for(var i=0;i<codes.length;i++){
-        var host = codes[i].closest('[data-k]');
-        hlApply(codes[i], Boolean(live) && host === live);
-      }
-    }
-  }
-
-  /** Where a code block's Wrap is remembered: its message's key and its place in that message. */
-  function cbKey(frame){
-    var host = frame.closest('[data-k]');
-    if(!host) return null;
-    var all = host.querySelectorAll('.cb');
-    for(var i=0;i<all.length;i++) if(all[i] === frame) return host.getAttribute('data-k') + '#' + i;
-    return null;
-  }
-  function cbWrapSet(frame, on){
-    frame.classList.toggle('wrap', on);
-    var b = frame.querySelector('.cb-b[data-cb="wrap"]');
-    if(b) b.setAttribute('aria-pressed', on ? 'true' : 'false');
-  }
-
-  /**
-   * Copy the code — the code element's text, which the colouring never changes — and say so on the
-   * button for a moment: a copy that only changed the clipboard looks like a tap that did nothing.
-   */
-  function cbCopy(btn, s){
-    copyText(s, function(ok){
-      var say = ok ? tr('common.copied') : tr('msg.copyCodeFailed');
-      btn.innerHTML = ok ? IC.icon.check : IC.icon.cross;
-      btn.title = say;
-      btn.setAttribute('aria-label', say);
-      clearTimeout(btn._copyTimer);
-      btn._copyTimer = setTimeout(function(){
-        btn.innerHTML = IC.icon.copy;
-        btn.title = tr('common.copy');
-        btn.setAttribute('aria-label', tr('msg.copyCodeAria'));
-      }, 1500);
-    });
-  }
-
-  // Delegated on the document: a code block can be in the transcript, the History tab, a side
-  // answer's card, the file reader or the file window's preview, and its markup is the same in all.
-  document.addEventListener('click', function(e){
-    var b = e.target && e.target.closest ? e.target.closest('.cb-b[data-cb]') : null;
-    var frame = b ? b.closest('.cb') : null;
-    var code = frame ? frame.querySelector('pre>code') : null;
-    if(!code) return;
-    if(b.getAttribute('data-cb') === 'copy') return cbCopy(b, code.textContent);
-    var on = !frame.classList.contains('wrap'), k = cbKey(frame);
-    cbWrapSet(frame, on);
-    if(k){ if(on) cbWrapped[k] = 1; else delete cbWrapped[k]; }
-  });
-
-  /**
-   * The kinds drawn as a marked bubble — a rail, and this tag — rather than as the agent talking:
-   * a task handed to a sub-agent, what sub-agents reported, and the answer to a side question.
-   */
-  var SUB_K = {dispatch:'msg.dispatch', report:'msg.report', aside:'msg.aside'};
-
-  // ── Side questions (/btw) ──────────────────────────────────────────────────
-  // A /btw is asked of a copy of the conversation and kept out of it, and its answer often lands in
-  // the middle of a reply still streaming — where, drawn as a message, it read as that reply's next
-  // paragraph. So neither half is drawn as a message: the question stays where it was asked as one
-  // line, and the answer is read in a card over the composer (#btw) that the line opens again. The
-  // daemon sends every message of an answer, and a refusal, as a reply to the /btw (turn-runner.ts
-  // sendAside), whose quote names the question's id: the id, not the text, is what pairs them.
-  var btwBox=$('btw'), btwQ=$('btw-q'), btwBody=$('btw-body');
-  // The question the card shows, by its key in data; what the card last drew; the questions whose
-  // card was closed by hand, so an answer still arriving for one updates its line rather than
-  // opening the card again; and the guard that stops a question and its answer repainting each
-  // other for ever (btwLink).
-  var btwKey=null, btwSig='', btwShut={}, btwNest=false;
-  // What the daemon takes for a /btw (daemon/routing.ts parseTextCommand): the name exactly, then
-  // the question after whitespace, or nothing.
-  var BTW_RE=/^\s*\/btw(?:\s+([\s\S]*))?$/;
-  // The answer's first line names its question again, for a chat app (turn-runner.ts asideHeader).
-  // The card has the question for a title, so there it goes.
-  var BTW_HEAD_RE=/^<p>\u21aa btw: [\s\S]*?<\/p>\s*/;
-  // And its last says it was kept out of the conversation (asideFooter): small print, drawn as such.
-  var BTW_FOOT_RE=/<p>((?:side question|\u65c1\u767d\u63d0\u95ee) \u2014 [^<]*)<\/p>\s*$/;
-
-  /** The text of a message typed here, as the daemon was given it; null when there is none. */
-  function ownText(m){
-    if(m._local) return m._text;
-    // room.ts renderBody: the text escaped, whole, in the first element.
-    var x = /^<div class="raw">([^<]*)<\/div>/.exec(m.html || '');
-    if(!x) return null;
-    return x[1].replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
-  }
-
-  /**
-   * What a message typed here asked on the side — '' for a bare /btw — or null when it is not a
-   * /btw. Never in a conversation opened from History ('h:' keys): the library keeps no side
-   * question, and a card opened from one would be over a topic that is not on screen.
-   */
-  function btwAsked(key, m){
-    if(!m || !m.own || String(key).indexOf('h:') === 0) return null;
-    var raw = ownText(m);
-    var x = raw == null ? null : BTW_RE.exec(raw);
-    return x ? (x[1] || '').trim() : null;
-  }
-
-  /** The key of the question a side answer replies to; null for anything else, and for an answer kept from before answers named it. */
-  function btwOf(m){
-    return m && m.kind === 'aside' && m.quote && m.quote.id ? (m._g || epoch) + ':' + m.quote.id : null;
-  }
-
-  /**
-   * Whether an answer is kept out of the transcript. Only while its question is on the page to stand
-   * for it: an answer whose question has aged out of the ring or the cache is drawn as a bubble, as
-   * every answer was before, rather than becoming unreachable.
-   */
-  function btwHeld(key, m){
-    if(String(key).indexOf('h:') === 0) return false;
-    var q = btwOf(m);
-    return Boolean(q && data[q] && btwAsked(q, data[q]) !== null);
-  }
-
-  /** Every message of the answer to the question under qk, in the order they were sent. */
-  function btwParts(qk){
-    var out=[];
-    for(var k in data){
-      if(Object.prototype.hasOwnProperty.call(data, k) && btwOf(data[k]) === qk) out.push(k);
-    }
-    out.sort(function(a, b){ return (data[a].at - data[b].at) || (seqOf(data[a].id) - seqOf(data[b].id)); });
-    return out;
-  }
-  function seqOf(id){ var n = parseInt(String(id).slice(1), 10); return isNaN(n) ? 0 : n; }
-
-  /** A side question in the transcript: one line that opens its answer, in place of the question's bubble. */
-  function btwLine(key, m, asked, hist){
-    var answered = !m._local && btwParts(key).length > 0;
-    var state = answered ? tr('btw.answer') + IC.icon.chevronRight
-      : stuck(m) ? '' : hist ? tr('btw.noAnswer') : tr('btw.waiting');
-    var shown = btwKey === key && !btwBox.hidden;
-    var cls = 'm btw-q' + (hist ? ' hist' : '')
-      + (m._local && m._state === 'sending' ? ' pending' : '')
-      + (stuck(m) ? ' failed' : '');
-    var h = '<button type="button" class="btw-chip" aria-haspopup="dialog" aria-controls="btw"'
-      + ' aria-expanded="'+(shown ? 'true' : 'false')+'" title="'+text(asked ? tr('btw.titleWith', { asked: asked }) : tr('btw.title'))+'">'
-      + '<span class="btw-tag">btw</span>'
-      + '<span class="btw-text">'+text(asked || '/btw')+'</span>'
-      + (state ? '<span class="btw-state'+(answered ? ' ready' : '')+'">'+state+'</span>' : '')
-      + '<span class="btw-when">'+text(clock(m.at))+'</span>'
-      + '</button>';
-    if(stuck(m)) h += failedActions(m);
-    return { cls: cls, h: h };
-  }
-
-  /** Repaint the other half of a side question — an answer's question, or a question's answers — where it is on screen. */
-  function btwLink(key, m){
-    var qk = btwOf(m), list = qk ? [qk] : btwAsked(key, m) !== null ? btwParts(key) : [];
-    if(!list.length) return;
-    btwNest = true;
-    try { for(var i=0;i<list.length;i++) if(els[list[i]] && data[list[i]]) paint(list[i]); }
-    finally { btwNest = false; }
-  }
-
-  /** Show the answer to the question under qk, from its start. */
-  function openBtw(qk){
-    if(!data[qk]) return;
-    var was = btwKey;
-    btwKey = qk;
-    delete btwShut[qk];
-    btwBox.hidden = false;
-    btwSig = '';
-    renderBtw(true);
-    if(was && was !== qk && els[was] && data[was]) paint(was);
-    if(els[qk]) paint(qk);
-  }
-
-  /**
-   * Put the card away. byHand is the person closing it, which keeps it shut while the rest of that
-   * answer arrives; the page closing it (a topic switch, the question gone) does not.
-   */
-  function closeBtw(byHand){
-    if(btwBox.hidden) return;
-    var k = btwKey;
-    btwBox.hidden = true;
-    btwKey = null;
-    btwSig = '';
-    btwBody.innerHTML = '';
-    if(!k) return;
-    if(byHand) btwShut[k] = 1;
-    if(els[k] && data[k]) paint(k);
-  }
-
-  /**
-   * Draw the card for the question it is on. top puts the reader at the start of the answer; any
-   * other redraw keeps a reader at the bottom of a growing answer there, and leaves one who has
-   * scrolled up where they are.
-   */
-  function renderBtw(top){
-    var m = btwKey ? data[btwKey] : null;
-    var asked = m ? btwAsked(btwKey, m) : null;
-    if(asked === null){ closeBtw(false); return; }
-    btwQ.textContent = asked || '/btw';
-    btwQ.title = asked;
-    var parts = m._local ? [] : btwParts(btwKey), h = '';
-    for(var i=0;i<parts.length;i++){
-      var body = String(data[parts[i]].html || '').replace(BTW_HEAD_RE, '').replace(BTW_FOOT_RE, '<p class="btw-foot">$1</p>');
-      if(body) h += '<div class="b">'+body+'</div>';
-    }
-    if(!h){
-      h = '<div class="btw-wait">' + (stuck(m) ? text(tr('btw.notSent'))
-        : isHistory(m) ? text(tr('btw.restarted'))
-        : '<span class="set-spin" aria-hidden="true"></span>'+text(tr('btw.asking'))) + '</div>';
-    }
-    var stick = btwBody.scrollHeight - btwBody.scrollTop - btwBody.clientHeight < 40;
-    if(h !== btwSig){ btwBody.innerHTML = h; btwSig = h; codeBlocks(btwBody); }
-    if(top) btwBody.scrollTop = 0;
-    else if(stick) btwBody.scrollTop = btwBody.scrollHeight;
-  }
-
-  /**
-   * A message of a side answer arrived, or grew. The card follows it when it is on that question,
-   * and opens on it when it is shut and was not shut by hand on this question: the answer is what
-   * the person asked for a moment ago, and a line under a reply still streaming is easy to miss.
-   */
-  function btwArrived(m){
-    var qk = btwOf(m);
-    if(!qk || !data[qk] || btwAsked(qk, data[qk]) === null) return;
-    if(!btwBox.hidden && btwKey === qk) renderBtw(false);
-    else if(btwBox.hidden && !btwShut[qk]) openBtw(qk);
-  }
-
-  $('btw-close').addEventListener('click', function(){ closeBtw(true); });
-
-  /**
-   * One message's class and inner markup. Shared by the transcript (paint) and by a conversation
-   * opened from the History tab (paintLib), which is what makes the two look the same: one place
-   * decides what a bubble is.
-   */
-  function msgMarkup(key, m, hist){
-    // A side question and its answer are read in a card over the composer, not here (openBtw).
-    var asked = btwAsked(key, m);
-    if(asked !== null) return btwLine(key, m, asked, hist);
-    if(btwHeld(key, m)) return { cls: 'm aside-held', h: '' };
-    var kind = m.kind;
-    // A report is a line-based bubble like a tool one: fold it and offer the same control. A
-    // dispatch is prose (the card, or the task a sub-agent was handed), so it only takes the tag.
-    var folded = kind === 'tools' || kind === 'report';
-    var tag = kind && Object.prototype.hasOwnProperty.call(SUB_K, kind) ? tr(SUB_K[kind]) : '';
-    var cls = 'm' + (m.own ? ' own' : '') + (hist ? ' hist' : '')
-      + (tag ? ' '+kind : '')
-      + (m._local && m._state === 'sending' ? ' pending' : '')
-      + (stuck(m) ? ' failed' : '');
-    var h='';
-    // The tag, not the text, is what makes the kinds tell apart before the body is read.
-    if(tag) h += '<div class="sub-k">'+tag+'</div>';
-    if(m.quote && m.quote.html) h += '<div class="q">'+m.quote.html+'</div>';
-    if(!hist && m.workdir){
-      h += workdirPicker(m);
-    } else {
-      h += '<div class="b">'+(folded ? foldLines(key, m.html) : m.html)+'</div>';
-      if(m.file){
-        // An image is drawn, not just named — a screenshot the agent took is about to be looked
-        // at, and a round trip through the downloads folder to do that is the friction this
-        // exists to remove. The link stays underneath either way: it is still the only way to
-        // get the bytes onto disk, and it is what a picture that fails to load degrades to.
-        if(m.file.image) h += '<img class="shot" src="'+text(m.file.url)+'" alt="'+text(m.file.name)+'" loading="lazy">';
-        h += '<div class="files"><a href="'+text(m.file.url)+'" download'
-          + (m.file.view && !hist ? ' data-view="'+text(m.file.view)+'"' : '')
-          + '>'+text(m.file.name)+'</a>';
-        // A report or a log is read by tapping its name (openReader); Download beside it is the
-        // way to the bytes, which is what the name used to be. Not offered on history, for the
-        // reason its buttons are dropped below: the token died with the process that minted it, so
-        // the reader could only ever open onto "no longer here".
-        if(m.file.view && !hist) h += '<a class="view" href="'+text(m.file.url)+'" download>'+text(tr('common.download'))+'</a>';
-        h += '</div>';
-      }
-      // What the turn changed, when the daemon recorded it. Not gated on a message being history:
-      // the records outlive the run that took the snapshots, so the entry still opens its window for
-      // a reply restored from a previous run. (A message from the History tab never carries one —
-      // that transcript has no turn records behind it.) Nothing is drawn unless the page has a
-      // window to open (see turnChangeRow).
-      if(m.turnChanges) h += turnChangeRow(m);
-      // Buttons are dropped from a message that came out of the cache: the process that would
-      // answer them is gone, and the id they name now means a different message or nothing at
-      // all. A control that cannot act is worse than no control.
-      if(!hist && m.buttons && m.buttons.length) h += menu(m);
-    }
-    if(stuck(m)) h += failedActions(m);
-    var meta = text(clock(m.at)) + (m.reactions && m.reactions.length ? '  '+m.reactions.map(reactionMark).join(' ') : '');
-    h += '<div class="t">'+meta+(folded ? allToggle(key) : '')+'</div>';
-    return { cls: cls, h: h };
-  }
-
-  /**
-   * What one turn changed, under the reply it ended: "3 files changed +12 -4", and a tap opens the
-   * git panel's window on it.
-   *
-   * Nothing is drawn when the page has no such window (window.openGitWindow, which the git panel
-   * provides): an entry that opens nothing is worse than no entry, and a page served by a daemon
-   * built without that panel must not show a dead control. The check is at draw time rather than at
-   * click time for exactly that reason.
-   *
-   * The entry itself is part of the message (WebMessage.turnChanges), so a reload, a reconnect and
-   * a restart all bring it back with the transcript it belongs to.
-   */
-  function turnChangeRow(m){
-    if(typeof window.openGitWindow !== 'function') return '';
-    var c = m.turnChanges;
-    var files = c.files === 1 ? tr('msg.turnFilesOne') : tr('msg.turnFilesMany', { count: c.files });
-    return '<div class="tc"><button type="button" data-turns="'+text(String(c.turn))+'">'
-      + IC.icon.diff
-      + '<span>' + text(files) + '</span>'
-      + '<span class="add">+' + text(String(c.additions)) + '</span>'
-      + '<span class="del">-' + text(String(c.deletions) + (c.truncated ? '+' : '')) + '</span>'
-      + '</button></div>';
-  }
-
-  /**
-   * Open the git panel's window on one turn's changes.
-   *
-   * The two URLs answer the JSON shapes turnChangesStatusForRef / turnChangesFileForRef build;
-   * the window appends "&path=" and a URL-encoded repository-relative path to fileUrl itself, so
-   * fileUrl stops at the turn. The topic is the page's own — a transcript row is always in it.
-   */
-  function openTurnChanges(turn){
-    if(typeof window.openGitWindow !== 'function' || !turn) return;
-    var q = '?t=' + encodeURIComponent(topic) + '&turn=' + encodeURIComponent(String(turn));
-    window.openGitWindow({
-      title: tr('msg.turnChangesTitle', { turn: turn }),
-      statusUrl: 'api/turn-changes/status' + q,
-      fileUrl: 'api/turn-changes/file' + q,
-    });
-  }
-
-  /**
-   * A message's buttons, laid out as what nearly all of them are: a menu to pick one thing from.
-   *
-   * A grid rather than buttons wrapped like words, because a wrapped row is only as wide as its
-   * labels: a page of directories came out as a ragged block whose columns moved on every row, and
-   * on a phone as one or two buttons a row in no order at all. The columns are sized from the
-   * widest label (--cw, in the menu's own ch), so short names get more of them and long model ids
-   * fewer, and the stylesheet keeps at least two — a label longer than half the row wraps inside
-   * its cell rather than taking the row.
-   *
-   * Two things are read off the labels, because a label is all the daemon sends. The marks core
-   * puts in front of an item (● the current one, ☑ ☐ a multi-select's ticks, ⌂ the workspace root)
-   * become a mark the cell can colour, and the current choice is lit rather than left to be found
-   * by a dot the same grey as its text. And the controls that move around a menu rather than
-   * answer it (◀ Prev, Next ▶, ◀ Back, ‹ ›) go on a row of their own under the items, instead of
-   * reading as two more things to choose. Both are presentation only: a label that happens to
-   * match is drawn differently and still posts exactly its own id.
-   */
-  var MARK = /^([●☑☐⌂]) /, NAV = /^[◀‹]|[▶›]$/;
-  /** A nav button's label with its arrow drawn as a chevron: "◀ Back", "Next ▶", "‹", "‹ machines". */
-  function navLabel(label){
-    var back = /^[◀‹] ?/.exec(label), on = / ?[▶›]$/.exec(label);
-    if(back) return IC.icon.chevronLeft + (label.length > back[0].length ? ' '+text(label.slice(back[0].length)) : '');
-    if(on) return (on.index ? text(label.slice(0, on.index))+' ' : '') + IC.icon.chevronRight;
-    return text(label);
-  }
-  /** A lifecycle reaction as its icon; one the page has none for (a configured emoji) as itself. */
-  function reactionMark(e){
-    return IC.reaction[String(e).replace(/\uFE0F/g, '')] || text(e);
-  }
-  function menu(m){
-    var items = '', nav = '', widest = 0, marked = false, msg = text(m.id);
-    for(var i=0;i<m.buttons.length;i++){
-      var b = m.buttons[i], label = String(b.label == null ? '' : b.label), mk = MARK.exec(label);
-      var tag = '<button type="button" data-msg="'+msg+'" data-btn="'+text(b.id)+'"';
-      if(NAV.test(label)){ nav += tag+'>'+navLabel(label)+'</button>'; continue; }
-      widest = Math.max(widest, labelWidth(label));
-      if(mk) marked = true;
-      var on = mk && (mk[1] === '●' || mk[1] === '☑');
-      items += tag + (on ? ' class="on"' : '') + '>'
-        + (mk ? '<span class="mk">'+(IC.mark[mk[1]] || text(mk[1]))+'</span> '+text(label.slice(2)) : text(label)) + '</button>';
-    }
-    // 40 is core's label budget (truncateLabel); a longer one would be a column no row can hold.
-    // A mark is drawn as a 1em icon where labelWidth counted its glyph as one column, so a menu
-    // with marks asks for the difference (--mk, in the stylesheet): without it "☑ APAC" was a
-    // hair too wide for its column and the icon wrapped onto a line of its own. Only the
-    // difference — a whole column more took the /cd menu on a phone from three columns to two.
-    return '<div class="btns" style="--cw:'+Math.min(widest, 40)+'ch'+(marked ? ';--mk:1' : '')+'">' + items
-      + (nav ? '<div class="nav">'+nav+'</div>' : '') + '</div>';
-  }
-
-  function workdirPicker(m){
-    var w = m.workdir, msg = text(m.id);
-    var crumbs = '';
-    var list = w.breadcrumbs || [];
-    for(var i=0;i<list.length;i++){
-      var c = list[i], isLast = i === list.length - 1;
-      if(i > 0 && list[i-1].name !== '/' && !/\\$/.test(list[i-1].name)) crumbs += '<span class="wd-sep" aria-hidden="true">/</span>';
-      if(isLast){
-        crumbs += '<span class="wd-crumb cur" title="'+text(c.path)+'">'+text(c.name)+'</span>';
-      } else {
-        crumbs += '<button type="button" class="wd-crumb" data-msg="'+msg+'" data-btn="'+text(c.buttonId)+'" title="'+text(c.path)+'">'+text(c.name)+'</button>';
-      }
-    }
-    var upBtn = w.parent
-      ? '<button type="button" class="wd-act wd-up" data-msg="'+msg+'" data-btn="'+text(w.parent.buttonId)+'" title="'+text(tr('workdir.upTitle', { path: w.parent.path }))+'">'+IC.icon.arrowUp+'<span>'+text(tr('workdir.up'))+'</span></button>'
-      : '<button type="button" class="wd-act wd-up" disabled>'+IC.icon.arrowUp+'<span>'+text(tr('workdir.up'))+'</span></button>';
-    var homeBtn = w.home
-      ? '<button type="button" class="wd-act wd-home" data-msg="'+msg+'" data-btn="'+text(w.home.buttonId)+'" title="'+text(tr('workdir.rootTitle', { path: w.home.path }))+'">'+IC.icon.home+'<span>'+text(tr('workdir.root'))+'</span></button>'
-      : '';
-    var sc = w.selectCurrent;
-    var curTags = (sc.current ? '<span class="wd-tag on">'+text(tr('workdir.currentTag'))+'</span>' : '')
-      + (sc.root ? '<span class="wd-tag">'+text(tr('workdir.rootTag'))+'</span>' : '');
-    var entries = w.entries || [];
-    var rows = '';
-    for(var j=0;j<entries.length;j++){
-      var e = entries[j];
-      var rowTag = e.current
-        ? '<span class="wd-tag on">'+text(tr('workdir.currentTag'))+'</span>'
-        : (e.root ? '<span class="wd-tag">'+text(tr('workdir.rootTag'))+'</span>' : '');
-      rows += '<div class="wd-row'+(e.current ? ' on' : '')+'" data-wd-name="'+text(String(e.name).toLowerCase())+'">'
-        + '<button type="button" class="wd-open" data-msg="'+msg+'" data-btn="'+text(e.enterId)+'" title="'+text(tr('workdir.openTitle', { name: e.name }))+'">'
-        + '<span class="wd-ic">'+(e.root ? IC.icon.home : IC.icon.folder)+'</span>'
-        + '<span class="wd-name">'+text(e.name)+'</span>'
-        + rowTag
-        + '<span class="wd-go" aria-hidden="true">'+IC.icon.chevronRight+'</span>'
-        + '</button>'
-        + '<button type="button" class="wd-choose'+(e.current ? ' on' : '')+'" data-msg="'+msg+'" data-btn="'+text(e.pickId)+'" title="'+text(tr('workdir.chooseTitle', { path: e.path }))+'">'
-        + IC.icon.check+'<span>'+text(tr('workdir.choose'))+'</span>'
-        + '</button>'
-        + '</div>';
-    }
-    var filterHtml = entries.length >= 6
-      ? '<div class="wd-filter">'+IC.icon.search+'<input type="search" class="wd-q" placeholder="'+text(tr('workdir.filterPlaceholder'))+'" aria-label="'+text(tr('workdir.filterPlaceholder'))+'" autocomplete="off" spellcheck="false"></div>'
-      : '';
-    var bodyHtml = entries.length
-      ? '<div class="wd-list">'+rows+'<div class="wd-empty wd-filter-empty" hidden>'+text(tr('workdir.noMatch'))+'</div></div>'
-      : '<div class="wd-empty">'+text(tr('workdir.empty'))+'</div>';
-    var hostPill = w.host ? '<span class="wd-meta">'+text(w.host)+'</span>' : '';
-    return '<div class="wd-picker" data-browsing="'+text(w.browsing)+'">'
-      + '<div class="wd-head"><div class="wd-title-row"><span class="wd-title">'+IC.icon.folder+'<span>'+text(tr('workdir.title'))+'</span></span>'
-      + '<span class="wd-badges"><span class="wd-meta">'+text(w.agentId)+'</span>'+hostPill+'</span></div>'
-      + '<div class="wd-hint">'+text(tr('workdir.hint'))+'</div></div>'
-      + '<div class="wd-bar"><div class="wd-acts">'+upBtn+homeBtn+'</div><nav class="wd-crumbs" aria-label="Path">'+crumbs+'</nav></div>'
-      + (w.error ? '<div class="wd-err" role="alert">'+text(w.error)+'</div>' : '')
-      + '<div class="wd-cur"><div class="wd-cur-info"><code class="wd-path" title="'+text(sc.path)+'">'+text(sc.path)+'</code>'+curTags+'</div>'
-      + '<button type="button" class="wd-pick-cur'+(sc.current ? ' on' : '')+'" data-msg="'+msg+'" data-btn="'+text(sc.buttonId)+'">'+IC.icon.check+'<span>'+text(tr(sc.current ? 'workdir.keepCurrent' : 'workdir.useCurrent'))+'</span></button></div>'
-      + filterHtml
-      + bodyHtml
-      + (w.truncated > 0 ? '<div class="wd-more">'+text(tr('workdir.truncated', { count: w.truncated }))+'</div>' : '')
-      + '</div>';
-  }
-
   /**
    * A /setting screen as markup, for the settings page rather than for the transcript.
    *
@@ -2291,547 +1651,6 @@ import { createReadsService } from './services/reads.js';
     var nonce = Math.random().toString(36).slice(2)+Date.now().toString(36);
     return post('api/send', {topic:t, text:cmd, nonce:nonce, quiet:true}, 2)
       .then(function(r){ return r.ok; }, function(){ return false; });
-  }
-
-  /**
-   * A button in a menu or in the settings page. Disabled and lit as well as disabled: the answer
-   * is a round trip away, and a button that only greys out reads as "nothing happened" for
-   * exactly that long. A refusal (409: that message is gone) leaves it disabled, but no longer
-   * lit — nothing is coming.
-   */
-  function postButton(b, t){
-    b.disabled = true;
-    b.classList.add('busy');
-    post('api/click',{topic:t,messageId:b.getAttribute('data-msg'),buttonId:b.getAttribute('data-btn')},2)
-      .then(function(r){ if(!r.ok) b.classList.remove('busy'); })
-      .catch(function(){ b.disabled=false; b.classList.remove('busy'); });
-  }
-
-  /**
-   * A label's width in ch, near enough to size a column by: a CJK character is about two, and an
-   * agent asking in Chinese offers its choices in Chinese. Erring wide is the cheap direction — a
-   * column a little too roomy, against a label that wraps when it did not have to.
-   */
-  function labelWidth(s){
-    var n = 0;
-    for(var i=0;i<s.length;i++) n += s.charCodeAt(i) >= 0x2e80 ? 2 : 1;
-    return n;
-  }
-
-  /**
-   * Which lines of each tool bubble the reader has opened, by message key: {all, lines: {i: open}}.
-   * A line with no entry of its own follows all, which is how "Show all" also opens the lines the
-   * agent adds after it was pressed.
-   *
-   * Kept here rather than as a class on the elements, because a tool bubble is edited every time
-   * a tool starts or finishes and every edit rewrites its markup — a line opened on the old
-   * element would snap shut under the reader at the next ✓. In memory only: which line someone is
-   * reading is a reading position, not part of the conversation, and the cache does not keep it.
-   * Like a scroll position, though, it is not reset on the way out of a topic (opened is declared
-   * beside sig, and only drop() forgets an entry): coming back finds the same lines open.
-   */
-  function lineOpen(st, i){
-    if(!st) return false;
-    return st.lines[i] !== undefined ? st.lines[i] : st.all;
-  }
-
-  /**
-   * A tool bubble's markup with each line's index stamped on it and the opened ones marked.
-   *
-   * A string rewrite, not a DOM walk, so the result can be compared with what is on screen before
-   * anything is written (see sig in paint). The pattern is exact because the markup is:
-   * renderWebToolLines writes this tag and nothing else, and escapes every < inside a line.
-   */
-  function foldLines(key, html){
-    var st = opened[key], i = 0;
-    return html.replace(/<div class="tl">/g, function(){
-      var n = i++;
-      return '<div class="tl'+(lineOpen(st, n) ? ' open' : '')+'" data-i="'+n+'">';
-    });
-  }
-
-  function allToggle(key){
-    var st = opened[key];
-    return '<button type="button" class="tl-all" data-tl-all="'+text(key)+'">'
-      + text(st && st.all ? tr('msg.collapse') : tr('msg.showAll')) + '</button>';
-  }
-
-  /** Open every line of a tool bubble, or fold them all back. Either way, per-line choices go. */
-  function toggleAll(key){
-    if(!msgAt(key)) return;
-    var st = opened[key];
-    opened[key] = { all: !(st && st.all), lines: {} };
-    repaintKey(key);
-  }
-
-  /**
-   * Open or fold one line. Not when the click ended a drag-select: copying part of a command is
-   * the other thing a reader does with these lines, and repainting the bubble under the selection
-   * would throw it away and fold the line they were copying from.
-   */
-  function toggleLine(line){
-    var sel = window.getSelection ? window.getSelection() : null;
-    if(sel && String(sel)) return;
-    var host = line.closest('[data-k]');
-    var key = host ? host.getAttribute('data-k') : null;
-    if(!key || !msgAt(key)) return;
-    var i = line.getAttribute('data-i');
-    var st = opened[key] || (opened[key] = { all: false, lines: {} });
-    st.lines[i] = !lineOpen(st, i);
-    repaintKey(key);
-  }
-
-  /** A message by key, in the transcript or in the conversation opened from History. */
-  function msgAt(key){ return data[key] || historyPanel.getMessage(key); }
-  function repaintKey(key){ if(historyPanel.getMessage(key)) historyPanel.repaintMessage(key); else paint(key); }
-
-  /**
-   * What a message that never reached the daemon offers instead of silence.
-   *
-   * Retry is there whenever this page can rebuild exactly what was sent: always for a message
-   * typed in this tab, and after a reload for one that was text alone. A message that carried
-   * files offers Copy and Discard alone once the page has been reloaded — the files were base64 in
-   * a request body and deliberately never written down, and re-sending the text without the files
-   * it was written about would be a different message.
-   *
-   * 'unsure' is a message that was still on its way when the last page went away, so nothing here
-   * saw how it ended. The first sync settles it: carrying its echo, it is claimed like any other;
-   * not carrying it, from the same daemon, it never arrived. Until then — and for good, when the
-   * daemon has restarted since and its ring cannot say — it says it does not know.
-   */
-  function stuck(m){ return Boolean(m._local) && (m._state === 'failed' || m._state === 'unsure'); }
-
-  function failedActions(m){
-    var why = m._state === 'unsure'
-      ? tr('msg.notConfirmed')
-      : tr('msg.notDelivered');
-    var h = '<div class="warn">'+text(why)+'</div><div class="acts">';
-    if(outbox[m._nonce]) h += '<button type="button" data-retry="'+text(m._nonce)+'">'+text(tr('common.retry'))+'</button>';
-    return h + '<button type="button" data-copy="'+text(m._nonce)+'">'+text(tr('common.copy'))+'</button>'
-      + '<button type="button" data-discard="'+text(m._nonce)+'">'+text(tr('common.discard'))+'</button></div>';
-  }
-
-  function upsert(m){
-    m._g = m.g || epoch;
-    // The settings screen lives in its own page; it is not a message here. See takeSettings.
-    if(m.settings || m.wasSettings) return;
-    var stick=atBottom();
-    var key = keyOf(m);
-    data[key]=m; paint(key); syncEmptyNote(); if(stick) toBottom();
-  }
-
-  function drop(key){
-    var m = data[key];
-    if(els[key]) { els[key].remove(); delete els[key]; }
-    delete data[key];
-    delete sig[key];
-    delete opened[key];
-    // A side question that goes leaves its answers drawn in the transcript rather than nowhere, and
-    // takes the card with it; an answer that goes is taken out of the card.
-    if(m && btwAsked(key, m) !== null){
-      if(btwKey === key) closeBtw(false);
-      var parts = btwParts(key);
-      for(var i=0;i<parts.length;i++) paint(parts[i]);
-    }
-    var q = btwOf(m);
-    if(q && q === btwKey && !btwBox.hidden) renderBtw(false);
-    if(q && els[q] && data[q]) paint(q);
-    syncEmptyNote();
-  }
-
-  /**
-   * Bring the transcript to exactly the list given, reusing what is already on screen.
-   *
-   * The predecessor emptied #log and rebuilt every message from the sync. That is what made
-   * entering a topic jarring: the scroll container was destroyed along with its scrollTop, then
-   * refilled and snapped, so a topic whose messages were ALREADY painted from cache still flashed
-   * through blank. Here an unchanged message is left untouched (paint writes nothing when the
-   * markup matches), and appendChild MOVES a node that already exists rather than cloning it — so
-   * ordering costs no re-creation either, and nothing re-runs the fade-in animation.
-   *
-   * Only messages of the CURRENT generation are the sync's to remove. Cached history belongs to
-   * a daemon that is not on the other end of this stream, and a local message still waiting on
-   * its POST was never the server's to know about; both would otherwise vanish the moment the
-   * connection blipped.
-   *
-   * A local message whose echo the sync carries is claimed here, exactly as a msg event claims
-   * one. Only msg events used to, so an echo that arrived in a full sync instead — a reconnect the
-   * backlog no longer reached, a reload — left the local copy on screen beside it, and one restored
-   * after a reload could never be told it had arrived.
-   */
-  function reconcile(list){
-    clearSkeleton();
-    // The sync this was waiting for. Cleared before anything is painted, so the messages it
-    // carries are appended to a log whose last child is a message again.
-    clearSyncing();
-    var keep={};
-    for(var i=0;i<list.length;i++){
-      var m=list[i];
-      // A message a topic kept on disk from an earlier run says which run (g): it is that
-      // run's history, under the key this browser's cache already has it by.
-      m._g = m.g || epoch;
-      // A settings screen — live or retired — is drawn in its own page, never in the transcript.
-      // The sync is where a reload would otherwise bring one back as a plain bubble.
-      if(m.settings || m.wasSettings) continue;
-      claim(m);
-      var key=keyOf(m);
-      keep[key]=1;
-      data[key]=m;
-      paint(key);
-      log.appendChild(els[key]);
-    }
-    var gone=[];
-    for(var k in els){
-      if(keep[k]) continue;
-      var held=data[k];
-      if(!held || held._local || held._g !== epoch) continue;
-      gone.push(k);
-    }
-    for(var j=0;j<gone.length;j++) drop(gone[j]);
-    sinkLocals();
-  }
-
-  /**
-   * Put every message still waiting on the daemon under the transcript, in the order it was sent.
-   *
-   * The loop above appends each message the sync carries, which MOVES it to the end — so anything
-   * it does not carry ends up above all of them. For cached history that is the point. For a
-   * local message it put a failure restored after a reload at the head of the topic, above every
-   * message the reader lands below, which on a long topic is indistinguishable from having lost
-   * it. A message nobody has acknowledged is the newest thing in the room and waits where the
-   * composer is. Nothing moves when they are already there, so a sync with nothing pending, which
-   * is nearly all of them, re-runs no entrance animation.
-   */
-  function sinkLocals(){
-    var mine=[], tail=0, other=false;
-    for(var n=log.lastChild; n; n=n.previousSibling){
-      if(n === syncingEl) continue;
-      var k = n.getAttribute ? n.getAttribute('data-k') : null;
-      if(k && data[k] && data[k]._local){ mine.unshift(n); if(!other) tail++; }
-      else other = true;
-    }
-    if(tail === mine.length) return;
-    var at = (syncingEl && syncingEl.parentNode === log) ? syncingEl : null;
-    for(var i=0;i<mine.length;i++) log.insertBefore(mine[i], at);
-  }
-
-  /**
-   * Hold the shape of a transcript that has not arrived yet.
-   *
-   * Only ever shown into an EMPTY log: a topic painted from cache has real content to look at,
-   * and stacking placeholders under it would claim messages are still coming when the next event
-   * is going to replace what is there rather than extend it.
-   */
-  var SKELETON = '<div class="sk own"><i style="width:34%"></i></div>'
-    + '<div class="sk"><i style="width:86%"></i><i style="width:73%"></i><i style="width:41%"></i></div>'
-    + '<div class="sk own"><i style="width:52%"></i><i style="width:28%"></i></div>'
-    + '<div class="sk"><i style="width:79%"></i><i style="width:62%"></i></div>';
-
-  function showSkeleton(){
-    if(log.firstChild) return;
-    log.innerHTML = SKELETON;
-    skeleton = true;
-  }
-
-  function clearSkeleton(){
-    if(!skeleton) return;
-    skeleton = false;
-    log.innerHTML = '';
-    // Emptying #log invalidates anything held by reference into it, and these are the only
-    // things in there that are not messages.
-    emptyEl = null;
-    launchEl = null;
-    launchSig = '';
-    dividerEl = null;
-    syncingEl = null;
-  }
-
-  /**
-   * Say why an empty room is empty, when the server said this topic predates the daemon.
-   *
-   * A transcript is kept on the daemon's disk, but not by a daemon older than 2.13.0 for a topic that
-   * was not starred, nor when its file could not be read — and those topics are rows that open onto
-   * nothing. Rendered faithfully that is a blank panel, which is indistinguishable from a page that
-   * failed to load — and is exactly how it was reported.
-   */
-  function hasMessages(){
-    for(var k in els) if(els.hasOwnProperty(k)) return true;
-    return false;
-  }
-
-  function syncEmptyNote(){
-    var empty = !hasMessages();
-    // The choice of agent first, and instead of the notice: while the choice is open no agent has a
-    // session here, so "the agent still has its context" would not be true of this room.
-    syncLaunch(Boolean(launch) && empty);
-    var want = stale && empty && !launchEl;
-    if(want === Boolean(emptyEl)) return;
-    if(want){
-      clearSkeleton();
-      emptyEl = document.createElement('div');
-      emptyEl.className = 'empty';
-      emptyEl.textContent = tr('chat.emptyNote');
-      log.appendChild(emptyEl);
-    } else {
-      if(emptyEl.parentNode) emptyEl.parentNode.removeChild(emptyEl);
-      emptyEl = null;
-    }
-  }
-
-  /**
-   * A new topic: the agents it could be given to, laid out where its transcript is going to be.
-   *
-   * The daemon sends the choice on the sync of an empty room for as long as it is open — the agent
-   * that would answer has no session here yet — and it is drawn while the room stays empty. A tap
-   * sends /agent <id> the way typing it would (command), so the transcript records the choice and
-   * the daemon follows it with where that agent should work; the bubble that send paints is a
-   * message, and a message is what takes this away. Typing instead is an answer too, which is why
-   * the agent it would reach is marked. A send that fails and is discarded empties the room again,
-   * and the choice comes back with it.
-   */
-  function launchHtml(c){
-    var h = '<div class="launch-head"><div class="launch-title">'+text(tr('chat.launchTitle'))+'</div>'
-      + '<div class="launch-sub">'+text(tr('chat.launchSubPrefix'))+'<b>'+text(c.current)+'</b>'+text(tr('chat.launchSubSuffix'))+'</div></div>';
-    // One machine needs no heading: it would name the only answer to a question nobody asked —
-    // unless it is offline, which is worth saying even of the only one.
-    var many = c.groups.length > 1;
-    for(var i=0;i<c.groups.length;i++){
-      var g = c.groups[i], off = offSince(g.name);
-      h += '<section class="launch-group'+(off?' off':'')+'">';
-      if(many || off) h += '<h3 class="launch-host">'+text(g.name)+' <span class="n">'+g.agents.length+'</span>'
-        + (off ? '<span class="off" title="'+text(offTitle(g.name))+'">'+IC.icon.offline+text(tr('chat.offlineSince', { when: offWhen(off) }))+'</span>' : '')
-        + '</h3>';
-      h += '<div class="launch-grid">';
-      for(var j=0;j<g.agents.length;j++){
-        var a = g.agents[j], on = a.id === c.current;
-        h += '<button type="button" class="agent-card'+(on?' def':'')+'" data-agent="'+text(a.id)+'" title="/agent '+text(a.id)+(off?text(tr('chat.agentOffline', { name: g.name })):'')+'">'
-          + '<span class="ac-top"><span class="ac-id">'+text(a.id)+'</span>'+(on?'<span class="ac-tag">'+text(tr('chat.defaultTag'))+'</span>':'')+'</span>'
-          + '<span class="ac-kind"><i class="ac-dot h-'+text(a.harness)+'"></i><span>'+text(a.kind)+'</span></span>'
-          + (a.model ? '<span class="ac-model" title="'+text(a.model)+'">'+text(a.model)+'</span>' : '')
-          + '</button>';
-      }
-      h += '</div></section>';
-    }
-    return h;
-  }
-
-  /** Show the choice, or take it away; redrawn only when what it was drawn from changed. */
-  function syncLaunch(want){
-    // The machine list is part of what it is drawn from: an offline heading comes and goes with it.
-    var s = want ? JSON.stringify(launch)+offlineSig : '';
-    if(s === launchSig && want === Boolean(launchEl)) return;
-    if(launchEl && launchEl.parentNode) launchEl.parentNode.removeChild(launchEl);
-    launchEl = null;
-    launchSig = '';
-    if(want){
-      clearSkeleton();
-      launchEl = document.createElement('div');
-      launchEl.className = 'launch';
-      launchEl.innerHTML = launchHtml(launch);
-      log.appendChild(launchEl);
-      launchSig = s;
-    }
-    // The model switch waits on the launcher (paintStatus), so it follows it at once: up the moment
-    // an agent is chosen, gone again if a failed send empties the room and the choice comes back.
-    paintStatus();
-    paintMachineNote();
-  }
-
-  // ── Machines the gateway cannot reach ───────────────────────────────────────────
-  // The daemon measures it (daemon/host-availability.ts) and pushes the whole list on every change:
-  // the sync's offline field, then machines events. Shown where it explains something — a topic's
-  // line in the list, the heading over that machine's agents, and above the composer of a topic on
-  // it — because a message to such a machine is not refused: it waits, or fails once it is tried,
-  // and either way nothing on screen said why.
-
-  /** Take the list as state; true when it changed. The caller repaints. */
-  function takeMachines(list){
-    var sigNow = JSON.stringify(list || []);
-    if(sigNow === offlineSig) return false;
-    var next = {};
-    for(var i=0;i<(list||[]).length;i++) next[list[i].name] = list[i].since;
-    offlineMachines = next;
-    offlineSig = sigNow;
-    return true;
-  }
-
-  function setMachines(list){
-    if(!takeMachines(list)) return;
-    paintTopics();
-    if(launchEl) syncLaunch(true);
-  }
-
-  /** Since when a machine is offline (epoch ms), or 0 for one that is not. */
-  function offSince(name){
-    return name && Object.prototype.hasOwnProperty.call(offlineMachines, name) ? offlineMachines[name] : 0;
-  }
-
-  /** A time of day for an outage that began today-ish, the date as well for an older one. */
-  function offWhen(at){
-    return Date.now() - at < 20*3600000 ? stClock(at) : new Date(at).toLocaleString();
-  }
-
-  function offTitle(name){
-    return tr('chat.machineOfflineTitle', { name: name, when: offWhen(offSince(name)) });
-  }
-
-  /** The line above the composer, for the topic on screen when its machine is offline. */
-  function paintMachineNote(){
-    var cur = null;
-    for(var i=0;i<topics.length;i++) if(topics[i].id===topic){ cur = topics[i]; break; }
-    var name = cur && cur.dir ? cur.dir.host : '';
-    var off = offSince(name);
-    // Not under the agent cards, whose heading already says it.
-    if(!off || launchEl){
-      machineNoteEl.hidden = true;
-      machineNoteEl.innerHTML = '';
-      return;
-    }
-    machineNoteEl.innerHTML = IC.icon.offline+'<span>'+text(tr('chat.machineOfflineNote', { name: name, when: offWhen(off) }))+'</span>';
-    machineNoteEl.title = offTitle(name);
-    machineNoteEl.hidden = false;
-  }
-
-  /**
-   * The line at the top of a forked topic (Topic.forkOf): where it came from, at which turn, and a tap
-   * back there. Hidden on every other topic, and once the source is gone — the daemon drops forkOf
-   * with it, so the line never points at nothing. Rewritten only when what it says changes: this runs
-   * on every topic list, and a list arrives with every message.
-   */
-  var forkNoteKey='';
-  function paintForkNote(cur){
-    var src=cur && cur.forkOf ? topicById(cur.forkOf) : null;
-    var key=src ? src.id+'|'+(cur.forkTurn||'')+'|'+(src.title||'') : '';
-    if(key===forkNoteKey) return;
-    forkNoteKey=key;
-    forkNote.hidden=!src;
-    if(!src){ forkNote.innerHTML=''; forkNote.removeAttribute('data-src'); return; }
-    forkNote.innerHTML=IC.icon.fork+'<span>'+text(tr('topic.forkedFromPrefix'))+'</span><span class="fork-src">'+text(src.title||tr('common.untitled'))+'</span>'
-      +(cur.forkTurn?'<span>'+text(tr('topic.forkedTurn', { turn: cur.forkTurn }))+'</span>':'');
-    forkNote.setAttribute('data-src', src.id);
-    forkNote.title=tr('topic.backTo', { title: src.title || tr('common.untitled') });
-  }
-  forkNote.addEventListener('click', function(){
-    var id=forkNote.getAttribute('data-src');
-    if(!id || !topicById(id)) return;
-    switchTopic(id);
-    if(narrow()) setSidebar(false);
-  });
-
-  /**
-   * The line between what was said before the daemon restarted and what it is serving now.
-   *
-   * A restart does not take the conversation, which the agent still has, and it no longer takes
-   * what was on screen either. The messages above this line came back out of the daemon's own copy
-   * on disk, or out of this browser's cache: they are real, they are just no longer anything the
-   * process can be asked about, which is why nothing up there has a button on it.
-   */
-  var dividerEl=null;
-
-  /** Keep the divider immediately after the last cached message, or gone when there are none. */
-  function placeDivider(){
-    var last=null;
-    for(var n=log.firstChild; n; n=n.nextSibling){
-      var k = n.getAttribute ? n.getAttribute('data-k') : null;
-      if(k && isHistory(data[k])) last=n;
-    }
-    if(!last){
-      if(dividerEl && dividerEl.parentNode) dividerEl.parentNode.removeChild(dividerEl);
-      dividerEl=null;
-      return;
-    }
-    if(!dividerEl){
-      dividerEl=document.createElement('div');
-      dividerEl.className='divider';
-      dividerEl.textContent=tr('chat.dividerNote');
-    }
-    if(last.nextSibling !== dividerEl) log.insertBefore(dividerEl, last.nextSibling);
-  }
-
-  /**
-   * That a transcript painted out of the local cache is not the whole story yet.
-   *
-   * Entering a topic with the cache warm is instantaneous — and then, a second or two later,
-   * everything said in it while you were elsewhere appears in one frame, with nothing in between
-   * having suggested more was coming. The skeleton cannot answer that: it only ever goes into an
-   * EMPTY log, and this log is full. So the wait is marked where the missing messages are going
-   * to land, at the bottom, and it says what it is waiting FOR rather than impersonating one of
-   * them — most syncs add nothing and the line just goes away again.
-   */
-  var syncingEl=null;
-
-  function showSyncing(){
-    // Not over an empty log: the skeleton is already standing in for the whole transcript there,
-    // and two answers to one wait is one too many.
-    if(syncingEl || synced || skeleton || !log.firstChild) return;
-    syncingEl=document.createElement('div');
-    syncingEl.className='syncing';
-    syncingEl.innerHTML='<span class="dots"><i></i><i></i><i></i></span><span>'+text(tr('chat.syncNote'))+'</span>';
-    log.appendChild(syncingEl);
-  }
-
-  function clearSyncing(){
-    if(syncingEl && syncingEl.parentNode) syncingEl.parentNode.removeChild(syncingEl);
-    syncingEl=null;
-  }
-
-  /**
-   * Re-draw whatever the cache handed us once a sync has said which generation is live.
-   *
-   * Before the first sync a cached message is painted as an ordinary message, because there is
-   * nothing yet to say it is not one. The sync answers that: if the daemon has been restarted
-   * since, every one of them is history, which changes how it is drawn (no buttons) and puts a
-   * line under the lot. paint writes nothing for the messages whose markup did not change, so on
-   * the ordinary path — same daemon, cache matching the ring — this costs one loop and no DOM.
-   */
-  function repaintHistory(){
-    for(var k in els){ if(isHistory(data[k])) paint(k); }
-    placeDivider();
-  }
-
-  /**
-   * Put cached messages on screen around whatever is already there.
-   *
-   * Both orders happen and both are normal. Usually the cache wins the race against the first
-   * sync, and is then simply the transcript, painted early — its keys are the ones the sync is
-   * about to produce, so the sync reuses the nodes and writes nothing. When the sync gets there
-   * first the only cached messages still worth showing are the ones the daemon does NOT have,
-   * and those belong above what it sent. current says the copy is the topic as it stands (enter),
-   * so there is nothing for the line that says the page is still checking to wait for.
-   */
-  function adopt(list, current){
-    clearSkeleton();
-    // On the way into a topic this is usually the first real paint, so it is where the reader is
-    // put back (land, below). Otherwise the sync got here first and only someone already at the
-    // bottom is kept there.
-    var stick = !entering && atBottom();
-    // Captured once: every history node goes in front of the same first live message, which is
-    // what keeps them in the order they were said rather than reversing them.
-    var anchor = synced ? log.firstChild : null;
-    var moved = false;
-    for(var i=0;i<list.length;i++){
-      var m=list[i];
-      if(!m || !m.id) continue;
-      if(m._local){ moved = adoptLegacy(m) || moved; continue; }
-      // Never a transcript row, and not something a cached copy should bring back either.
-      if(m.settings || m.wasSettings) continue;
-      var key = keyOf(m);
-      if(data[key] || els[key]) continue;
-      if(synced && !isHistory(m)) continue;
-      data[key]=m;
-      paint(key, synced ? anchor : null);
-    }
-    // Painted only now, and the cache rewritten without them: from here on unsent is their home.
-    if(moved){ showUnsent(topic); cacheSave(); }
-    // Before the waiting line goes in. Before the first sync the cache is appended under whatever is
-    // already on screen, and that includes the messages restored from unsent, which belong under
-    // all of it.
-    sinkLocals();
-    placeDivider();
-    syncEmptyNote();
-    // Last, so it is last in the log: what the sync may still add goes under what the cache had.
-    if(!current) showSyncing();
-    if(entering) land(); else if(stick) toBottom();
   }
 
   /**
@@ -4231,31 +3050,17 @@ import { createReadsService } from './services/reads.js';
     readsService.markTopicFromList(id, topics);
     paintTopics();
     reportSeen();
-    log.innerHTML='';
     data={};
     els={};
-    sig={};
-    skeleton=false;
-    // All of these belong to the topic being left: the notice and divider elements are gone with
-    // #log's children, whether the NEXT topic predates the daemon is the incoming sync's answer
-    // to give, and its transcript has not been read back yet. epoch is NOT reset — it is a
-    // property of the daemon on the other end, not of the room being entered.
     stale=false;
-    emptyEl=null;
     launch=null;
-    launchEl=null;
-    launchSig='';
-    dividerEl=null;
-    syncingEl=null;
     // The strip describes the topic being left; the incoming sync says what the new one's is.
     closeModelPop();
-    closeBtw(false);
+    transcript.resetForTopicSwitch(id);
     setStatus(null);
     setPending([]);
     entering=true;
     synced=false;
-    view = views[id] || null;
-    landedAt = -1;
     loadDraft(id);
     // The shape of a transcript while both its copy and the stream are outstanding. A copy in
     // memory replaces it at once and one in the database normally answers first; nothing about
@@ -4383,9 +3188,7 @@ import { createReadsService } from './services/reads.js';
     var r = unsent[nonce];
     dropUnsent(nonce);
     if(r) settleAdopted(r.t, r.x);
-    if(els[pk]){ els[pk].remove(); delete els[pk]; }
-    delete sig[pk];
-    delete data[pk];
+    transcript.retireLocalKey(pk);
   }
 
   function pendingReasonText(reason){
@@ -4642,7 +3445,7 @@ import { createReadsService } from './services/reads.js';
     // is the last sync's snapshot of the empty room and stays set until the next sync, so testing it
     // hid the switch from the moment an agent was chosen until the first reply reported a status —
     // exactly when someone wants to pick the model the first message goes to.
-    var bare = !s && topic && synced && !launchEl && log.querySelector('.m');
+    var bare = !s && topic && synced && !transcript.banners.hasLaunch() && log.querySelector('.m');
     var opkSame = opk.topic === topic;
     var bareWho = (opkSame && opk.agent ? text(opk.agent)+' \u00b7 ' : '')
       + modelChip((opkSame && opk.model) || tr('status.model'))
@@ -4933,7 +3736,7 @@ import { createReadsService } from './services/reads.js';
       // topic, once the cache has put the transcript up and the reader has scrolled it — but when
       // they have not, landing again is what finds their message after the sync has put older
       // ones above it.
-      var arriving = entering && (landedAt < 0 || log.scrollTop === landedAt);
+      var arriving = transcript.scroll.isArriving(entering);
       var stick = atBottom();
       entering = false;
       // Which run of the daemon everything in this sync belongs to. Anything already on screen
@@ -4964,7 +3767,7 @@ import { createReadsService } from './services/reads.js';
       placeDivider();
       syncEmptyNote();
       // The card follows what the sync says its question and answer now are, or goes with them.
-      if(!btwBox.hidden) renderBtw(false);
+      if(transcript.btw.isOpen()) renderBtw(false);
       cacheSave();
       // A visit that named no topic is only told which room it is in here, so this is also where
       // that room's copy is asked for — painted as history above what the sync carried.
@@ -4981,7 +3784,7 @@ import { createReadsService } from './services/reads.js';
       setPending(ev.pending || []);
       note.textContent='';
       if(arriving) land(); else if(stick) toBottom();
-      view = null;
+      transcript.scroll.clearView();
       // The list this sync carried is what says which topics need a person; the debounce keeps a
       // reconnect's sync and the list events after it to one look.
       schedulePrefetch();
@@ -5708,7 +4511,7 @@ import { createReadsService } from './services/reads.js';
     var id;
     cacheKeep(keep);
     readsService.keepOnly(keep);
-    for(id in views) if(!keep[id]) delete views[id];
+    transcript.scroll.pruneViews(keep);
     for(id in drafts) if(!keep[id]) delete drafts[id];
     // One read-modify-write of the stored drafts, for the same reason writeDraft is one: a second
     // tab's drafts for the kept topics are on disk and not in this tab's map.
@@ -5747,84 +4550,6 @@ import { createReadsService } from './services/reads.js';
     }).catch(function(){ err.textContent=tr('common.reachServerError'); });
   });
 
-  log.addEventListener('click', function(e){
-    // A picture, filling the screen. Not a new tab: installed as an app this page has no tab
-    // bar to come back from, and leaving the app to look at a screenshot is the same friction
-    // as downloading it. Checked first — a picture carries none of the attributes below.
-    var shot = e.target.closest ? e.target.closest('img.shot') : null;
-    if(shot) return openShot(shot);
-    // A link to another topic (a sub-agent's, see web-markdown.ts TOPIC_LINK_RE): switched to in
-    // place, not loaded as a page — the stream, the caches and the composer all stay as they are.
-    var go = e.target.closest ? e.target.closest('a[data-goto]') : null;
-    if(go){
-      e.preventDefault();
-      var goId = go.getAttribute('data-goto');
-      if(goId && topics.some(function(t){ return t.id===goId; })){
-        switchTopic(goId);
-        if(narrow()) setSidebar(false);
-      }
-      return;
-    }
-    // A new topic's choice of agent: typed for the operator, so it is a message like any other.
-    var card = e.target.closest ? e.target.closest('button[data-agent]') : null;
-    if(card) return command('/agent '+card.getAttribute('data-agent'));
-    // A side question's line opens its answer, or puts it away when that is what the card shows.
-    var chip = e.target.closest ? e.target.closest('.btw-chip') : null;
-    if(chip){
-      var holder = chip.closest('[data-k]'), qk = holder ? holder.getAttribute('data-k') : null;
-      if(qk){
-        if(!btwBox.hidden && btwKey === qk) closeBtw(true);
-        else openBtw(qk);
-      }
-      return;
-    }
-    // The name of a file the server can render opens it (openReader); the Download link beside
-    // it, and any file the server cannot render, stays an ordinary download.
-    var view = e.target.closest ? e.target.closest('a[data-view]') : null;
-    if(view){ e.preventDefault(); return openReader(view); }
-    // What a message that failed to send offers. Checked before the ordinary buttons: these are
-    // answered here, locally, and never posted as a click on a message the daemon has no idea
-    // about.
-    var act = e.target.closest ? e.target.closest('[data-retry],[data-copy],[data-discard]') : null;
-    if(act){
-      var retry = act.getAttribute('data-retry');
-      if(retry) return deliver(retry);
-      var copy = act.getAttribute('data-copy');
-      if(copy) return copyLocal(copy, act);
-      var discard = act.getAttribute('data-discard');
-      if(discard) return discardLocal(discard);
-      return;
-    }
-    // A tool bubble's lines, opened and folded. Also answered here and never posted: which line
-    // someone is reading is nothing the daemon has a view on.
-    var all = e.target.closest ? e.target.closest('[data-tl-all]') : null;
-    if(all) return toggleAll(all.getAttribute('data-tl-all'));
-    var line = e.target.closest ? e.target.closest('.tl') : null;
-    if(line) return toggleLine(line);
-    // The entry under a reply opens what that turn changed, in the git panel's window. Answered
-    // here and never posted: opening a diff says nothing to the daemon.
-    var turns = e.target.closest ? e.target.closest('button[data-turns]') : null;
-    if(turns) return openTurnChanges(Number(turns.getAttribute('data-turns')));
-    var b = e.target.closest ? e.target.closest('button[data-btn]') : null;
-    if(!b) return;
-    postButton(b, topic);
-  });
-  log.addEventListener('input', function(e){
-    var q = e.target && e.target.classList && e.target.classList.contains('wd-q') ? e.target : null;
-    if(!q) return;
-    var box = q.closest ? q.closest('.wd-picker') : null;
-    if(!box) return;
-    var needle = String(q.value || '').trim().toLowerCase();
-    var rows = box.querySelectorAll('.wd-row'), shown = 0;
-    for(var i=0;i<rows.length;i++){
-      var match = !needle || String(rows[i].getAttribute('data-wd-name') || '').indexOf(needle) !== -1;
-      rows[i].hidden = !match;
-      if(match) shown++;
-    }
-    var empty = box.querySelector('.wd-filter-empty');
-    if(empty) empty.hidden = shown > 0;
-  });
-
   // The settings page's rows and values are the same buttons the transcript's menus carry, so
   // they post through the same function — with the topic the page was opened in, not whichever
   // one is on screen (the page is closed when that changes, but the two are not the same fact).
@@ -5856,20 +4581,6 @@ import { createReadsService } from './services/reads.js';
     if(!sel || !sel.classList || !sel.classList.contains('set-select')) return;
     postSetting(sel, sel.value);
   });
-
-  /**
-   * A file the download table has since evicted, or one deleted off disk, answers 404 — and an
-   * <img> says so with a broken frame that reads like a bug in the page. Hide it and the link
-   * underneath is left, which is what a non-image shows anyway.
-   *
-   * Capture phase, because 'error' on an <img> does not bubble and so never reaches #log on its
-   * own. The hiding survives a repaint for free: identical markup is not rewritten, and markup
-   * that IS rewritten builds an image that 404s again.
-   */
-  log.addEventListener('error', function(e){
-    var t = e.target;
-    if(t && t.classList && t.classList.contains('shot')) t.style.display='none';
-  }, true);
 
   function openShot(img){
     lightboxImg.src = img.src;
@@ -5908,7 +4619,7 @@ import { createReadsService } from './services/reads.js';
     return Boolean(overlay);
   });
   overlays.registerFallback(function(){
-    if(!btwBox.hidden){ closeBtw(true); return true; }
+    if(transcript.btw.isOpen()){ closeBtw(true); return true; }
     if(schedPane.isOpen()){ setSchedules(false); return true; }
     if(sbPane.isOpen()){ setSidebar(false); return true; }
     return false;
@@ -6194,7 +4905,7 @@ import { createReadsService } from './services/reads.js';
 
   /** Everything this page remembers about one topic, for a topic that no longer exists. */
   function forget(id){
-    delete views[id];
+    transcript.scroll.forgetView(id);
     cacheService.forget(id);
     delete preTried[id];
     for(var n in unsent) if(Object.prototype.hasOwnProperty.call(unsent, n) && unsent[n].t === id) dropUnsent(n);
@@ -6213,7 +4924,7 @@ import { createReadsService } from './services/reads.js';
     if(!topics.length) return;
     var known={}, id;
     for(var i=0;i<topics.length;i++) known[topics[i].id]=1;
-    for(id in views) if(!known[id]) delete views[id];
+    transcript.scroll.pruneViews(known);
     cacheService.prune(known);
     for(id in preTried) if(!known[id]) delete preTried[id];
     for(id in drafts) if(!known[id]) forget(id);
@@ -7303,20 +6014,7 @@ import { createReadsService } from './services/reads.js';
     var r = unsent[m.nonce];
     dropUnsent(m.nonce);
     if(r) settleAdopted(r.t, r.x);
-    if(!els[pk]) return;
-    var key = (m.g || epoch) + ':' + m.id;
-    if(els[key]){ els[pk].remove(); }
-    else {
-      els[key]=els[pk];
-      sig[key]=sig[pk];
-      els[key].setAttribute('data-k', key);
-    }
-    delete els[pk];
-    delete sig[pk];
-    delete data[pk];
-    // A side question's card follows it to the key the daemon gave it.
-    if(btwKey === pk) btwKey = key;
-    if(btwShut[pk]){ btwShut[key] = 1; delete btwShut[pk]; }
+    transcript.transferLocalKey(pk, (m.g || epoch) + ':' + m.id);
   }
 
   // What was being typed into this topic before the reload. A visit with no ?t= does not know its
@@ -7340,23 +6038,15 @@ import { createReadsService } from './services/reads.js';
     paintNotify();
     if(typeof micLabel === 'function' && $('mic')) micLabel();
     if(topicFilter && topicFilter.refreshI18n) topicFilter.refreshI18n(tr('sidebar.searchTopics'));
-    forkNoteKey = '';
+    transcript.refreshI18n();
     statusHtml = '';
-    launchSig = '';
     paintTopics();
     paintStatus();
     paintAges();
-    if(launchEl) syncLaunch(true);
-    if(emptyEl) emptyEl.textContent = tr('chat.emptyNote');
-    if(dividerEl) dividerEl.textContent = tr('chat.dividerNote');
-    if(syncingEl){
-      var sp = syncingEl.querySelectorAll('span');
-      if(sp[1]) sp[1].textContent = tr('chat.syncNote');
-    }
     for(var mk in els){
       if(Object.prototype.hasOwnProperty.call(els, mk) && data[mk]) paint(mk);
     }
-    if(!btwBox.hidden) renderBtw(false);
+    if(transcript.btw.isOpen()) renderBtw(false);
     if(!settingsPage.hidden){
       paintSettingsTopic();
       var token = openSettingsLoading();

@@ -11,6 +11,10 @@ const BOOT_SOURCE = fs.readFileSync(path.join(clientDir, 'services', 'boot.ts'),
 const STREAM_SOURCE = fs.readFileSync(path.join(clientDir, 'services', 'stream.ts'), 'utf8');
 const CACHE_SOURCE = fs.readFileSync(path.join(clientDir, 'services', 'cache.ts'), 'utf8');
 const READS_SOURCE = fs.readFileSync(path.join(clientDir, 'services', 'reads.ts'), 'utf8');
+const TRANSCRIPT_MARKUP_SOURCE = fs.readFileSync(
+  path.join(clientDir, 'features', 'topic', 'transcript', 'markup.ts'),
+  'utf8',
+);
 
 /**
  * The client script is the one artifact in this repo the toolchain cannot see: it is not
@@ -316,9 +320,9 @@ describe('webui page', () => {
   it('shows a message the moment it is typed, and keeps one that failed to send', () => {
     // The local bubble and its three ways out. `page.dom.*.test.ts` is what proves they work;
     // this only proves the markup that carries them survived the template.
-    expect(html).toContain('data-retry=');
-    expect(html).toContain('data-copy=');
-    expect(html).toContain('data-discard=');
+    expect(TRANSCRIPT_MARKUP_SOURCE).toContain('data-retry=');
+    expect(TRANSCRIPT_MARKUP_SOURCE).toContain('data-copy=');
+    expect(TRANSCRIPT_MARKUP_SOURCE).toContain('data-discard=');
     expect(CLIENT.app.text).toContain('Not delivered');
   });
 
