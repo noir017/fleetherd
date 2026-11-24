@@ -13,6 +13,14 @@ const CACHE_SOURCE = fs.readFileSync(path.join(clientDir, 'services', 'cache.ts'
 const READS_SOURCE = fs.readFileSync(path.join(clientDir, 'services', 'reads.ts'), 'utf8');
 const READER_SOURCE = fs.readFileSync(path.join(clientDir, 'features', 'reader', 'index.ts'), 'utf8');
 const LEGACY_SHELL_SOURCE = fs.readFileSync(path.join(clientDir, 'workbench', 'legacy-shell.ts'), 'utf8');
+const COMPOSER_ATTACHMENTS_SOURCE = fs.readFileSync(
+  path.join(clientDir, 'features', 'topic', 'composer', 'attachments.ts'),
+  'utf8',
+);
+const COMPOSER_UNSENT_SOURCE = fs.readFileSync(
+  path.join(clientDir, 'features', 'topic', 'composer', 'unsent.ts'),
+  'utf8',
+);
 
 /**
  * The client script is the one artifact in this repo the toolchain cannot see: it is not
@@ -142,7 +150,7 @@ describe('webui page', () => {
     expect(STREAM_SOURCE).toContain('`api/events');
     expect(STREAM_SOURCE).toContain('new EventSource(url)');
     expect(html).not.toMatch(/fetch\('\//);
-    expect(html).toContain("post('api/send'");
+    expect(COMPOSER_UNSENT_SOURCE).toContain("postFn('api/send'");
     // The app-install tags are subject to the same rule — an absolute href walks out of a
     // sub-path mount, and the symptom is an installed app that opens on the proxy's root.
     expect(html).toContain('href="manifest.webmanifest"');
@@ -246,7 +254,7 @@ describe('webui page', () => {
   });
 
   it('sends a nonce, without which its own retry would double-post', () => {
-    expect(html).toContain('nonce:');
+    expect(COMPOSER_UNSENT_SOURCE).toContain('nonce');
   });
 
   it('makes the hidden attribute actually hide', () => {
@@ -283,10 +291,10 @@ describe('webui page', () => {
   });
 
   it('takes a file off the clipboard and names it before it can collide', () => {
-    expect(html).toContain("addEventListener('paste'");
-    expect(html).toContain('getAsFile()');
+    expect(COMPOSER_ATTACHMENTS_SOURCE).toContain("'paste'");
+    expect(COMPOSER_ATTACHMENTS_SOURCE).toContain('getAsFile()');
     // Every engine calls a pasted screenshot image.png.
-    expect(html).toContain("'pasted-'");
+    expect(COMPOSER_ATTACHMENTS_SOURCE).toContain('pasted-');
   });
 
   it('styles scrollbars to blend with the dark background', () => {
