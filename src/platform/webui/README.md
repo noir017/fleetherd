@@ -57,6 +57,10 @@ naming it, and they are all of them:
 | `page.ts` | The page's HTML shell: head, gate, the `boot-config` JSON, and the links to its script and stylesheet |
 | `page-body.ts` | The page's markup — every element the script finds by id — as a template |
 | `client/legacy-app.ts` | The client script, bundled into `dist/webui-assets/app-<hash>.js` — see below |
+| `client/base/` | Typed foundation primitives: `lifecycle.ts` (`DisposableStore`, `MutableDisposable`), `event.ts` (`Emitter`), `html.ts` (`lit-html` re-exports + `escapeHtml`), `dom.ts` (disposable listeners, focus/class/attr/ResizeObserver helpers) |
+| `client/services/` | Typed client services: `boot.ts`, `storage.ts`, `store.ts`, `commands.ts`, `keybindings.ts`, `overlays.ts` (LIFO Esc stack), `api.ts` (`post`/`text`/`wait`/`sendLimit`), `stream.ts` (SSE lifecycle, backoff, parking, watchdog, `applyTopicRows`) |
+| `client/workbench/contracts.ts` | Frozen `DockEngine`, `PanelComponent`, `PanelRef`, and `LayoutState` (v1) contracts |
+| `client/plugins/api.ts` | Frozen `WebuiPlugin`, `definePlugin`, `PluginContext`, `MenuItem`, `TopicInfo`, and `WebuiEvents` contracts |
 | `client/panels/reviews.ts` | Typed Reviews tab module (`createReviewsPanel`), bundled into `app-<hash>.js` and checked by `client/tsconfig.json` and eslint |
 | `client/panels/history.ts` | Typed History tab and read-only transcript viewer (`createHistoryPanel`), bundled into `app-<hash>.js` and checked by `client/tsconfig.json` and eslint |
 | `client/panels/git.ts` | Typed Git and Commits diff window (`createGitPanel`), bundled into `app-<hash>.js` and checked by `client/tsconfig.json` and eslint |

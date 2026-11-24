@@ -36,6 +36,10 @@ import {
   setLocale,
   t as tr,
 } from './i18n/index.js';
+import { readBootConfig } from './services/boot.js';
+import { text, wait, post, sendLimit } from './services/api.js';
+import { OverlayManager } from './services/overlays.js';
+import { applyTopicRows, createStreamClient } from './services/stream.js';
 
 (function(){
   var $ = function(id){ return document.getElementById(id); };
@@ -94,7 +98,35 @@ import {
   if(schedTitleEl) schedTitleEl.setAttribute('data-i18n', 'sideTasks.title');
   applyDomI18n(document);
   var AGE_TICK_MS=30000, ageTimer=null;
-  var data={}, els={}, files=[], commands=[], stream=null;
+  var data={}, els={}, files=[], commands=[];
+  // WIRING
+  var BOOT = readBootConfig(document);
+  var overlays = new OverlayManager();
+  overlays.attach(document);
+  var streamClient = createStreamClient({
+    getTopic: function(){ return topic; },
+    isLoggedOut: function(){ return app.hidden && !gate.hidden; },
+    getBuild: function(){ return BUILD; },
+    onBeforeConnect: function(){ showSkeleton(); },
+    onOpen: function(info){
+      var fresh = app.hidden || !info.quiet;
+      gate.hidden = true;
+      app.hidden = false;
+      note.textContent = '';
+      if(fresh && !narrow()) input.focus();
+      initNotify();
+      schedulePrefetch();
+      if(fresh && schedPane.isOpen()) schedulesPanel.onStreamOpen();
+    },
+    onReconnecting: function(){ note.textContent = tr('chat.reconnecting'); },
+    onRestarting: function(){ note.textContent = tr('chat.restarting'); },
+    onAuthExpired: function(){ app.hidden = true; gate.hidden = false; },
+    onBuildOutdated: function(){ updateEl.hidden = false; },
+    onVisibilityResume: function(){ schedulePrefetch(); },
+  });
+  streamClient.onEvent(function(ev){ handle(ev); });
+  streamClient.attachWindowEvents(document, window);
+  // END WIRING
   // Panels instantiated before makePanel(), which calls paintSchedTab() synchronously on setup.
   var reviewsPanel = createReviewsPanel({
     app: app,
@@ -286,9 +318,6 @@ import {
   // The icons (icons.ts): every one by name, and the menu marks and lifecycle reactions the page
   // draws as icons, keyed by the glyph core and config write. Anything not in a table stays text.
   var IC = __FH_ICONS__;
-  // What the server decided for this deployment (page.ts bootConfig), written into the page as
-  // JSON rather than spliced into this script: the script is now one file every deployment shares.
-  var BOOT = JSON.parse($('boot-config').textContent);
   var TERM_OK = BOOT.terminal;
   var TERM_END = BOOT.terminalEnd;
   var INSTANCE_ID = BOOT.instance || 'web';
@@ -600,6 +629,7 @@ import {
    * this topic — the screen is then every message the room had as of that event.
    */
   function liveMeta(){
+    var lastEv = streamClient.getLastEventId();
     var last = (lastEv && lastEv.indexOf(topic+'.') === 0) ? lastEv : '';
     return topic && epoch && (synced || last) ? {epoch:epoch, stale:stale, last:last} : null;
   }
@@ -1206,75 +1236,6 @@ import {
   function openTaskPage(id, edit){ schedulesPanel.openTaskPage(id, edit); }
   function closeTaskPage(force){ return schedulesPanel.closeTaskPage(force); }
   schedulesPanel.init();
-
-  // Escapes for BOTH uses this page makes of it: element content, and the inside of a
-  // double-quoted attribute. textContent alone covers the first and leaves the quote, which is
-  // what the second needs — a directory whose name contains a double quote would end the title
-  // attribute early and put the rest of the path in the tag. Everything interpolated here is the
-  // (their paths, their command list), so this is a rendering bug rather than a way in; the
-  // load-bearing escaping is web-markdown.ts, which never lets agent output near a tag at all.
-  function text(s){
-    var d=document.createElement('div');
-    d.textContent=s==null?'':String(s);
-    return d.innerHTML.replace(/"/g,'&quot;');
-  }
-  function wait(ms){ return new Promise(function(r){ setTimeout(r, ms); }); }
-
-  // Retried, which is only safe because every send carries a nonce the server remembers: on a
-  // bad link a request can be accepted and still time out, and without the nonce a retry would
-  // post the same message twice.
-  //
-  // limit is how long ONE attempt may go unanswered, in ms, before it is abandoned and counted as
-  // a dropped request. fetch has no timeout of its own, so a request that never answers — a tunnel
-  // that took the body and went quiet, a socket the OS has not noticed is dead — used to leave the
-  // caller waiting for ever: for a send, a grey bubble that neither turned red nor offered Retry.
-  // Only a send passes one. The other callers' requests are short, and a stuck button is a
-  // different complaint from a message that looks sent and is not.
-  function post(path, body, tries, limit){
-    // Built first: JSON.stringify is the one thing here that can throw, and nothing is armed yet.
-    // Bytes (a send that carries files, see framed) go as they are.
-    var bytes = ArrayBuffer.isView(body);
-    var headers = {'Content-Type': bytes ? 'application/octet-stream' : 'application/json'};
-    try {
-      var loc = getLocale();
-      if(loc) headers['X-Fleetherd-Locale'] = loc;
-    } catch(e){}
-    var init = {method:'POST',headers:headers,
-      body: bytes ? body : JSON.stringify(body),credentials:'same-origin'};
-    var expired = false, timer = 0;
-    if(limit && typeof AbortController === 'function'){
-      var ctl = new AbortController();
-      init.signal = ctl.signal;
-      timer = setTimeout(function(){ expired = true; ctl.abort(); }, limit);
-    }
-    return fetch(path, init).then(function(r){
-      clearTimeout(timer);
-      if(!r.ok && r.status>=500 && tries>0) return wait(700).then(function(){ return post(path, body, tries-1, limit); });
-      return r;
-    }, function(e){
-      clearTimeout(timer);
-      // An attempt that was given a minute or more was carrying an upload, and starting one over
-      // from its first byte twice more is a quarter of an hour of grey for a link that has just
-      // shown it cannot do it. It fails once instead, and Retry is a single tap.
-      if(tries>0 && !(expired && limit > 60000)) return wait(700).then(function(){ return post(path, body, tries-1, limit); });
-      throw e;
-    });
-  }
-
-  /**
-   * How long one attempt at posting this message may take: fifteen seconds, plus one for every
-   * 64 KiB of it, up to the five minutes the server allows a request body (Node's
-   * http.Server.requestTimeout, whose default has been 300000 since v18 — nodejs.org, http docs).
-   *
-   * Scaled rather than flat because the same page sends a line of text and a 20 MB attachment: a
-   * limit short enough to catch the first would cut the second off mid-upload on any ordinary
-   * mobile uplink and call that a failure.
-   */
-  function sendLimit(body){
-    var n = (body.text || '').length, f = body.files || [];
-    for(var i=0;i<f.length;i++) n += f[i].data.length + f[i].name.length;
-    return Math.min(300000, 15000 + Math.round(n / 65.536));
-  }
 
   /**
    * A send that carries files, as bytes rather than JSON: a 4-byte big-endian length, the send as
@@ -4416,8 +4377,8 @@ import {
 
   /** The topics worth fetching now, in the order the needs-you rows are drawn (topicRows). */
   function prefetchWanted(){
-    if(!dbOn() || document.visibilityState === 'hidden' || parked || !epoch) return [];
-    if(!stream || stream.readyState !== 1) return [];
+    if(!dbOn() || document.visibilityState === 'hidden' || streamClient.isParked() || !epoch) return [];
+    if(!streamClient.isOpen()) return [];
     var rows = topics.filter(function(t){ return t.id !== topic && NEEDS_ORDER[t.stage] !== undefined; });
     // What needs a decision first, then most recent: the row nearest the top is the one most likely
     // to be tapped next.
@@ -4597,7 +4558,7 @@ import {
     var mine = ++enterToken, used = false, v = vers[id];
     // The topic being left has to stop talking now, not when the read comes back: everything its
     // stream delivered in between would be drawn into this topic. Its handlers check es !== stream.
-    if(stream){ stream.close(); stream = null; }
+    streamClient.close();
     function here(){ return mine === enterToken && id === topic; }
     function go(c){
       if(used) return;
@@ -4614,8 +4575,8 @@ import {
       // What was sent into this topic and not acknowledged — including a send still in flight from
       // before a switch, whose bubble went with the transcript it was in.
       showUnsent(id);
-      if(resume){ lastEv = c.last; settleOnResume = true; }
-      connect(resume);
+      if(resume){ streamClient.setLastEventId(c.last); settleOnResume = true; }
+      streamClient.connect(resume);
     }
     var m = id ? memCopy(id) : null;
     if(m || !id) return go(m);
@@ -5247,7 +5208,7 @@ import {
       // from another one is cached history from here on, whatever it was painted as.
       // A different run under a page that was already open is a restart, and the daemon that came
       // back may be a newer one than served this script.
-      if(epoch && ev.epoch && ev.epoch !== epoch) checkBuild();
+      if(epoch && ev.epoch && ev.epoch !== epoch) streamClient.checkBuild();
       // Whatever was fetched from the daemon that went away is about ids this one hands out
       // again for different messages; what was tried goes with it.
       if(ev.epoch && epoch && ev.epoch !== epoch) preTried={};
@@ -5280,7 +5241,7 @@ import {
       saveReads();
       commands = ev.commands || [];
       topics = ev.topics || [];
-      topicsV = ev.tv || 0;
+      streamClient.setTopicsVersion(ev.tv || 0);
       paintTopics();
       prune();
       // Absent when the topic's agent has reported nothing since the daemon started, which clears
@@ -5356,8 +5317,8 @@ import {
     else if(ev.t==='machines'){ setMachines(ev.offline || []); }
     else if(ev.t==='topics' || ev.t==='topic-rows'){
       if(ev.t==='topics') topics = ev.topics || [];
-      else applyRows(ev);
-      topicsV = ev.tv || 0;
+      else topics = applyTopicRows(topics, ev);
+      streamClient.setTopicsVersion(ev.tv || 0);
       paintTopics();
       reportSeen();
       if(topic && !topics.some(function(t){ return t.id===topic; })){
@@ -5373,15 +5334,6 @@ import {
       schedulePrefetch();
     }
     // The daemon is going away. The stream is closed here rather than left to EventSource, which
-    // would retry it every few seconds for as long as the daemon is down; this tries again on a
-    // back-off instead. The resume point it sends names the run that is going away, so the daemon
-    // that answers hands over the whole topic — which is what a page that outlived a restart needs.
-    // It used to stop for good and ask for a reload.
-    else if(ev.t==='bye'){
-      if(stream) stream.close();
-      note.textContent=tr('chat.restarting');
-      reconnectLater();
-    }
     // The end of a resumed stream's catch-up. For a blip or a tab coming back there is nothing to
     // finish; for a topic put up from its copy (enter) this is what a sync would have done: the
     // waiting line goes, and what is on screen is the room from here on.
@@ -5399,237 +5351,6 @@ import {
       cacheSave();
       note.textContent='';
     }
-  }
-
-  // The version of the topic list on this page (the daemon's tv), sent on a resume so the list is
-  // only sent again if it moved.
-  var topicsV=0;
-
-  /**
-   * What changed in the topic list (a topic-rows event): every row it carries replaces the one with
-   * its id, or joins the end; the ids it names as gone are dropped; and the list is put back in the
-   * daemon's order — sorted by lastAt, newest first, ties left as they were, which is how the store
-   * orders it — unless the event says the order outright. room.ts derivedOrder is this same
-   * algorithm on the other side, and sends the order whenever the two would disagree.
-   */
-  function applyRows(ev){
-    var gone={}, at={}, next=[], i;
-    var g=ev.gone || [], rows=ev.rows || [];
-    for(i=0;i<g.length;i++) gone[g[i]]=1;
-    for(i=0;i<topics.length;i++){
-      if(gone[topics[i].id]) continue;
-      at[topics[i].id]=next.length;
-      next.push(topics[i]);
-    }
-    for(i=0;i<rows.length;i++){
-      var r=rows[i];
-      if(Object.prototype.hasOwnProperty.call(at, r.id)) next[at[r.id]]=r;
-      else { at[r.id]=next.length; next.push(r); }
-    }
-    if(ev.order){
-      var byId={};
-      for(i=0;i<next.length;i++) byId[next[i].id]=next[i];
-      next=[];
-      for(i=0;i<ev.order.length;i++) if(byId[ev.order[i]]) next.push(byId[ev.order[i]]);
-    } else {
-      next = next.map(function(t, n){ return {t:t, n:n}; })
-        .sort(function(a, b){ return (b.t.lastAt||0) - (a.t.lastAt||0) || a.n - b.n; })
-        .map(function(x){ return x.t; });
-    }
-    topics = next;
-  }
-
-  // How long until the next attempt after a bye or a refused stream: one second, doubling to half
-  // a minute, and back to nothing once a stream opens. Every attempt is one request, so a daemon
-  // that is down for an hour costs a tab two a minute. One that falls due behind a hidden tab is
-  // left for the tab to make when it is looked at again (see park).
-  var retryMs=0, retryTimer=0;
-  function reconnectLater(){
-    if(retryTimer) return;
-    retryMs = retryMs ? Math.min(retryMs*2, 30000) : 1000;
-    retryTimer = setTimeout(function(){
-      retryTimer=0;
-      if(document.visibilityState === 'hidden'){ parked = true; return; }
-      connect(true, true);
-    }, retryMs);
-  }
-
-  // ── The stream behind a hidden tab ──────────────────────────────────────────
-  // A tab nobody is looking at still received every event: each message in the topic, and the
-  // topic list after every message posted anywhere. A phone on the table and a desktop tab behind
-  // others are most of the time the page is open. So a tab hidden for PARK_MS closes its stream,
-  // and coming back opens a new one from the last event it had (?last=, which the server treats as
-  // Last-Event-ID): what was said meanwhile is replayed from the backlog, or the whole topic comes
-  // again if the backlog no longer reaches. Nothing on the page needs the stream while hidden —
-  // the title is never changed, notifications are Web Push and go through the service worker, the
-  // seen mark is only posted while visible — so the grace is only there so that glancing at another
-  // tab does not cost a reconnect. lastEv is the newest event id this stream has delivered.
-  var PARK_MS=15000, WATCHDOG_CHECK_MS=15000, STREAM_STALE_MS=65000;
-  var parkTimer=0, parked=false, hiddenAt=0, lastEv='', lastActivityAt=0, watchdogTimer=0;
-  function armWatchdog(){
-    var want = document.visibilityState !== 'hidden' && !parked && Boolean(stream) && stream.readyState !== 2;
-    if(want && !watchdogTimer){
-      watchdogTimer = setInterval(function(){
-        if(document.visibilityState === 'hidden' || parked || !stream || stream.readyState === 2) return;
-        if(lastActivityAt && Date.now() - lastActivityAt > STREAM_STALE_MS) connect(true, true);
-      }, WATCHDOG_CHECK_MS);
-    } else if(!want && watchdogTimer){
-      clearInterval(watchdogTimer);
-      watchdogTimer = 0;
-    }
-  }
-  function park(){
-    parkTimer=0;
-    if(document.visibilityState !== 'hidden' || !stream || stream.readyState === 2) return;
-    parked=true;
-    stream.close();
-    armWatchdog();
-  }
-  // Mobile browsers freeze JS timers on backgrounding before PARK_MS can fire, leaving parked=false
-  // over a half-open TCP socket. Checking wall-clock time away (hiddenAt) and stream/retry state on
-  // return catches that without breaking the short-glance grace.
-  function resumeStream(force){
-    if(document.visibilityState === 'hidden') return;
-    if(app.hidden && !gate.hidden) return;
-    var awayMs = hiddenAt ? Date.now() - hiddenAt : 0;
-    hiddenAt = 0;
-    clearTimeout(parkTimer); parkTimer=0;
-    var stale = Boolean(lastActivityAt && Date.now() - lastActivityAt > STREAM_STALE_MS);
-    var broken = !stream || stream.readyState !== 1 || Boolean(retryTimer);
-    if(force || parked || awayMs >= PARK_MS || stale || broken){
-      parked = false;
-      retryMs = 0;
-      connect(true, true);
-    } else {
-      armWatchdog();
-    }
-  }
-  document.addEventListener('visibilitychange', function(){
-    if(document.visibilityState === 'hidden'){
-      if(!hiddenAt) hiddenAt = Date.now();
-      if(!parkTimer && !parked) parkTimer = setTimeout(park, PARK_MS);
-      armWatchdog();
-      return;
-    }
-    resumeStream(false);
-    // A tab coming back is exactly when a topic may have started needing an answer while nobody
-    // was looking; nothing else fires until the next message.
-    schedulePrefetch();
-  });
-  window.addEventListener('pageshow', function(e){
-    if(e && e.persisted){ resumeStream(true); schedulePrefetch(); }
-  });
-  window.addEventListener('online', function(){
-    resumeStream(true);
-  });
-
-  /**
-   * Whether the session is still good, asked after a stream was refused for good.
-   *
-   * EventSource gives up on any answer that is not an event stream, and two very different answers
-   * are that: the daemon's 401 when the session is gone, and a proxy's 502 while the daemon behind
-   * it is restarting (cloudflared answers that way). Only the first is a reason to show the gate.
-   * A request that cannot get through says nothing about the session, so it counts as still good.
-   */
-  function signedIn(){
-    return fetch('api/push', {credentials:'same-origin', cache:'no-store'})
-      .then(function(r){ return r.status !== 401; }, function(){ return true; });
-  }
-
-  /**
-   * After a restart: does the daemon now serve a different page from this one?
-   *
-   * A HEAD names the page's ETag, which is its build (servePage), so this is one round trip with
-   * no body. When it differs the script on screen is the old one, talking to a newer daemon; the
-   * page says so and offers the reload rather than doing it, because a reload here would throw away
-   * whatever is open — a skill half-edited, a recording, the place in a long transcript. An answer
-   * with no ETag (a proxy that stripped it) says nothing, and nothing is shown.
-   */
-  function checkBuild(){
-    fetch(location.pathname, {method:'HEAD', cache:'no-store', credentials:'same-origin'}).then(function(r){
-      var tag = (r && r.headers && r.headers.get) ? (r.headers.get('ETag') || '') : '';
-      if(tag && tag.indexOf(BUILD) < 0) updateEl.hidden = false;
-    }, function(){});
-  }
-
-  /**
-   * Open the event stream for the topic on screen.
-   *
-   * resume carries the last event this page had (lastEv): for a stream opened again on the same
-   * topic (a tab coming back, a retry after a refused stream), or on a topic put up from its copy
-   * (enter). The daemon replays what came after it, or sends the whole topic when it cannot. Without
-   * it — a new topic, a fresh visit — there is nothing to resume from. quiet is for the same topic
-   * coming back: no focus taken, no side-panel lists asked for again.
-   */
-  function connect(resume, quiet){
-    if(stream) stream.close();
-    clearTimeout(retryTimer); retryTimer=0;
-    parked=false;
-    lastActivityAt = Date.now();
-    // Placeholders for the wait that is about to start. Guarded on an empty log inside, so a
-    // reconnect after a blip — where the conversation is still on screen and only the stream went
-    // away — is not answered by replacing it with skeletons.
-    showSkeleton();
-    var from = resume ? lastEv : '';
-    lastEv = from;
-    var qs = [];
-    if(topic) qs.push('t='+encodeURIComponent(topic));
-    if(from) qs.push('last='+encodeURIComponent(from));
-    if(from && topicsV) qs.push('tv='+topicsV);
-    // EventSource resends the last id it saw on its own, so a blip is answered with the few
-    // events that were missed rather than the whole conversation.
-    var es = stream = new EventSource('api/events' + (qs.length ? '?'+qs.join('&') : ''));
-    es.onmessage = function(e){
-      if(es === stream){
-        lastActivityAt = Date.now();
-        if(e.lastEventId) lastEv = e.lastEventId;
-      }
-      try{ handle(JSON.parse(e.data)); }catch(x){}
-    };
-    if(es.addEventListener){
-      es.addEventListener('ping', function(){
-        if(es === stream) lastActivityAt = Date.now();
-      });
-    }
-    // Not focused on a phone: the keyboard would come up before a word has been read, and on
-    // a portrait screen that is half the viewport gone to reach a field nobody asked for yet.
-    // Nor when the same topic's stream comes back (quiet): a tab returning to the front
-    // reconnects, and the focus is wherever the person left it.
-    es.onopen = function(){
-      if(es !== stream) return;
-      lastActivityAt = Date.now();
-      retryMs = 0;
-      var fresh = app.hidden || !quiet;
-      gate.hidden=true; app.hidden=false; note.textContent=''; if(fresh && !narrow()) input.focus(); initNotify();
-      // The stream is the one thing that says the daemon is there to be asked; a tab that was
-      // hidden, or one that just rode out a restart, gets its prefetch from here.
-      schedulePrefetch();
-      // A panel opened (or restored from aa_sched_open) before the gate came down asked too
-      // early (loadSchedules and loadReviews refuse while #app is hidden); this is the first
-      // moment the answer can be had. The restored tab is read here too: on a reload that comes
-      // back to Reviews the panel opens before the gate does, so nothing else would ask. A tab
-      // coming back has already asked (the panel's own visibilitychange), so a resume does not.
-      if(fresh && schedPane.isOpen()) schedulesPanel.onStreamOpen();
-      armWatchdog();
-    };
-    es.onerror = function(){
-      // A stream this page has since replaced or closed has nothing left to say.
-      if(es !== stream) return;
-      if(es.readyState === 2){
-        armWatchdog();
-        // Closed for good rather than retrying: the server answered with something that is not a
-        // stream. The gate only if that was the session going; otherwise a back-off, which is what
-        // carries a page through a restart behind a proxy that answers 502 meanwhile.
-        signedIn().then(function(ok){
-          if(es !== stream) return;
-          if(ok){ note.textContent=tr('chat.reconnecting'); reconnectLater(); }
-          else { app.hidden=true; gate.hidden=false; }
-        });
-      } else {
-        note.textContent=tr('chat.reconnecting');
-      }
-    };
-    armWatchdog();
   }
 
   /**
@@ -6294,7 +6015,7 @@ import {
     if(!PASSWORD_LOGIN){ location.reload(); return; }
     err.textContent='';
     post('api/login',{token:$('secret').value},0).then(function(r){
-      if(r.ok){ $('secret').value=''; connect(); return; }
+      if(r.ok){ $('secret').value=''; streamClient.connect(); return; }
       err.textContent = r.status===429 ? tr('gate.tooManyAttempts') : tr('gate.wrongToken');
     }).catch(function(){ err.textContent=tr('common.reachServerError'); });
   });
@@ -6442,39 +6163,28 @@ import {
   function libOn(){ return historyPanel.isOpen(); }
   function closeLib(){ historyPanel.close(); }
 
-  document.addEventListener('keydown', function(e){
-    if(e.key !== 'Escape') return;
-    // An IME uses Escape to cancel its candidate list. That keystroke belongs to the composition,
-    // not to the page: dismissing a panel (and remembering the dismissal) mid-word is not
-    // something the person asked for.
-    if(e.isComposing) return;
-    // A recording is cancelled by Escape too, and the recorder's own listener below does that.
-    // The same keystroke must not also put away what is behind the composer.
-    if(rec) return;
-    // The instruction editor is opened from the settings page and sits over it: put away the
-    // editor alone, and the page it came from is still there.
-    if(filesPanel.isCustomOpen()){ filesPanel.close(); return; }
-    // Close the topmost thing first: Escape over a picture, the reader or a menu must not also
-    // put away a panel behind it. The command suggestions are the composer's own overlay.
+  overlays.addGuard(function(){ return Boolean(rec); });
+  overlays.registerFallback(function(){
+    if(filesPanel.isCustomOpen()){ filesPanel.close(); return true; }
+    return false;
+  });
+  overlays.registerFallback(function(){
     var hintsOpen = !hints.hidden;
     var overlay = hintsOpen || !lightbox.hidden || !reader.hidden || !idleDialog.hidden || !rowMenu.hidden
       || openMenu() || !skillsWin.hidden || !settingsPage.hidden || !taskPage.hidden || filesPanel.isOpen() || gitPanel.isOpen();
     closeShot(); closeReader(); closeIdle(); closeSkills(); closeSettings(); filesPanel.close(); gitPanel.close();
-    // Its own confirm when a form holds changes; a refused one leaves everything as it was.
     closeTaskPage(false);
-    // The row menu gives the focus back to its ⋯, so a keyboard user is where they left off.
     closeRowMenu(true);
     if(hintsOpen){ hints.hidden = true; hints.innerHTML = ''; }
     var m = openMenu();
     if(m){ setMenu(null, false); m.btn.focus(); }
-    // The two panels answer Escape alike: the right one first, then the left. Each is a choice
-    // the page remembers, and each has a control on screen that brings it back. A side answer's
-    // card goes before either: it is the most passing thing on the page, and over the composer.
-    if(!overlay){
-      if(!btwBox.hidden) closeBtw(true);
-      else if(schedPane.isOpen()) setSchedules(false);
-      else if(sbPane.isOpen()) setSidebar(false);
-    }
+    return Boolean(overlay);
+  });
+  overlays.registerFallback(function(){
+    if(!btwBox.hidden){ closeBtw(true); return true; }
+    if(schedPane.isOpen()){ setSchedules(false); return true; }
+    if(sbPane.isOpen()){ setSidebar(false); return true; }
+    return false;
   });
 
   /**
