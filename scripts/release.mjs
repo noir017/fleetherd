@@ -58,16 +58,23 @@ for (let i = 0; i < argv.length; i++) {
   else version = a.replace(/^v/, '');
 }
 if (!version) die('usage: npm run release -- <version> [--push] [--no-verify] [-m "body"]');
-if (!/^\d+\.\d+\.\d+$/.test(version)) die(`not a release version: ${version}`);
+if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) die(`not a release version: ${version}`);
 
 // ---- guards ----
 const pkgPath = path.join(root, 'package.json');
 const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
-const triple = (v) => v.split('.').map(Number);
+const triple = (v) => v.split('-')[0].split('.').map(Number);
 const isNewer = (a, b) => {
   const [x, y, z] = triple(a);
   const [p, q, r] = triple(b);
-  return x !== p ? x > p : y !== q ? y > q : z > r;
+  if (x !== p) return x > p;
+  if (y !== q) return y > q;
+  if (z !== r) return z > r;
+  const ap = a.includes('-') ? a.slice(a.indexOf('-') + 1) : '';
+  const bp = b.includes('-') ? b.slice(b.indexOf('-') + 1) : '';
+  if (!ap && bp) return true;
+  if (ap && bp) return ap > bp;
+  return false;
 };
 if (!isNewer(version, pkg.version)) die(`${version} is not newer than the current ${pkg.version}`);
 
