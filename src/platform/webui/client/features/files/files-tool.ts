@@ -11,9 +11,10 @@ import {
   type TreeController,
   type TreeNode,
 } from '../../components/index.js';
-import { renderIcon } from '../../components/shared.js';
+import { escapeAttrValue, renderIcon } from '../../components/shared.js';
 import type { PluginContext, TopicInfo } from '../../plugins/api.js';
 import {
+  ancestorDirs,
   baseName,
   buildTreeNodes,
   createFilesHttpClient,
@@ -22,18 +23,22 @@ import {
   isFilesFeatureEnabled,
   isValidSegment,
   joinPath,
+  relativePath,
   resolveFilesApi,
   sepOf,
   toEditorDoc,
   type FilesHttpClient,
 } from './helpers.js';
+import type { FileTabStore } from './tab-store.js';
 import type {
   FeaturePanelComponent,
   FeaturePanelInitContext,
+  FileEditorInput,
   FilesPluginDeps,
   FilesTreeCacheEntry,
   FileTreeItemData,
   PartialFilesPanelFile,
+  RevealInTreeRequest,
 } from './types.js';
 
 interface FilesToolState {
@@ -42,6 +47,7 @@ interface FilesToolState {
   sep: '/' | '\\';
   currentDir: string;
   selectedPath: string;
+  revealedPath: string;
   cache: Record<string, FilesTreeCacheEntry>;
   searchQuery: string;
   searchHits: readonly FilesPanelHit[] | null;
@@ -58,6 +64,7 @@ interface FilesToolState {
 interface FilesToolContext {
   readonly ctx: PluginContext;
   readonly deps: FilesPluginDeps;
+  readonly tabStore?: FileTabStore;
   readonly http: FilesHttpClient;
   readonly doc: Document;
   readonly state: FilesToolState;
@@ -75,6 +82,7 @@ interface FilesToolContext {
   openInEditor: (filePath: string) => void;
   runSearch: () => Promise<void>;
   submitCreate: () => Promise<void>;
+  revealFile: (req: RevealInTreeRequest) => Promise<boolean>;
 }
 
 function paintToolHeader(tc: FilesToolContext): void {
@@ -251,7 +259,7 @@ function syncTree(tc: FilesToolContext): void {
     render(renderEmptyState({ title: ctx.i18n.t('files.noActiveTopic') }), treeEmptyHost);
     return;
   }
-  const nodes = buildTreeNodes(state.cache, '', state.sep);
+  const nodes = buildTreeNodes(state.cache, '', state.sep, state.revealedPath || undefined);
   if (nodes.length === 0 && !state.loading) {
     tree.setNodes([]);
     treeWrap.hidden = true;
@@ -401,6 +409,7 @@ function bindFilesTopic(tc: FilesToolContext, topic: TopicInfo | undefined): voi
   state.root = '';
   state.currentDir = '';
   state.selectedPath = '';
+  state.revealedPath = '';
   state.cache = {};
   state.searchQuery = '';
   state.searchHits = null;
@@ -415,6 +424,52 @@ function bindFilesTopic(tc: FilesToolContext, topic: TopicInfo | undefined): voi
     return;
   }
   void tc.refreshRoot();
+}
+
+async function revealFileInTree(tc: FilesToolContext, req: RevealInTreeRequest): Promise<boolean> {
+  const { state, deps, tree, tabStore } = tc;
+  if (state.disposed || !isFilesFeatureEnabled(deps)) return false;
+  if (!req.topicId || !req.path) return false;
+
+  state.searchQuery = '';
+  state.searchHits = null;
+
+  if (state.topicId !== req.topicId) {
+    state.topicId = req.topicId;
+    state.root = '';
+    state.currentDir = '';
+    state.selectedPath = '';
+    state.revealedPath = '';
+    state.cache = {};
+    state.seq += 1;
+    await tc.loadDir('');
+  } else if (!state.cache['']) {
+    await tc.loadDir('');
+  }
+  if (state.disposed || !state.root) return false;
+
+  const ancestors = ancestorDirs(state.root, req.path, state.sep);
+  for (const dir of ancestors) {
+    if (!state.cache[dir]) {
+      await tc.loadDir(dir);
+    }
+    if (state.disposed) return false;
+    syncTree(tc);
+    tree.setExpanded(dir, true);
+  }
+
+  state.revealedPath = req.path;
+  state.selectedPath = req.path;
+  state.currentDir = dirOf(req.path) || state.root;
+  tc.paintAll();
+  tree.setSelected(req.path);
+
+  const rowEl = tree.el.querySelector<HTMLElement>(`[data-tree-id="${escapeAttrValue(req.path)}"]`);
+  if (rowEl && typeof rowEl.scrollIntoView === 'function') {
+    rowEl.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+  tabStore?.clearPendingReveal(req);
+  return rowEl !== null;
 }
 
 function createFilesTreeController(
@@ -470,9 +525,32 @@ function createFilesTreeController(
   );
 }
 
+function createInitialToolState(): FilesToolState {
+  return {
+    topicId: '',
+    root: '',
+    sep: '/',
+    currentDir: '',
+    selectedPath: '',
+    revealedPath: '',
+    cache: {},
+    searchQuery: '',
+    searchHits: null,
+    searchTruncated: false,
+    creating: null,
+    preview: null,
+    notice: null,
+    loading: false,
+    seq: 0,
+    previewSeq: 0,
+    disposed: false,
+  };
+}
+
 export function createFilesToolPanel(
   ctx: PluginContext,
   deps: FilesPluginDeps,
+  tabStore?: FileTabStore,
 ): FeaturePanelComponent {
   const doc = deps.doc ?? document;
   const http = createFilesHttpClient(resolveFilesApi(deps));
@@ -495,28 +573,23 @@ export function createFilesToolPanel(
   previewHost.className = 'fh-files-preview';
   element.append(headerHost, noticeHost, hitsHost, treeEmptyHost, treeWrap, previewHost);
 
-  const state: FilesToolState = {
-    topicId: '',
-    root: '',
-    sep: '/',
-    currentDir: '',
-    selectedPath: '',
-    cache: {},
-    searchQuery: '',
-    searchHits: null,
-    searchTruncated: false,
-    creating: null,
-    preview: null,
-    notice: null,
-    loading: false,
-    seq: 0,
-    previewSeq: 0,
-    disposed: false,
-  };
+  const state = createInitialToolState();
 
   const openInEditor = (filePath: string): void => {
     if (!state.topicId || !isFilesFeatureEnabled(deps)) return;
-    ctx.editors.open('file', { topicId: state.topicId, path: filePath, name: baseName(filePath) });
+    const rel = relativePath(state.root, filePath);
+    const input: FileEditorInput = {
+      topicId: state.topicId,
+      path: filePath,
+      name: baseName(filePath),
+      ...(state.root ? { root: state.root } : {}),
+      ...(rel ? { rel } : {}),
+    };
+    if (tabStore) {
+      tabStore.openOrFocus(input, (next) => ctx.editors.open('file', next));
+    } else {
+      ctx.editors.open('file', input);
+    }
   };
 
   const tree = store.add(
@@ -531,6 +604,7 @@ export function createFilesToolPanel(
   const tc: FilesToolContext = {
     ctx,
     deps,
+    tabStore,
     http,
     doc,
     state,
@@ -561,11 +635,16 @@ export function createFilesToolPanel(
       state.notice = null;
       tc.paintAll();
       await loadFilesDir(tc, '');
+      const pending = tabStore?.consumePendingReveal(state.topicId);
+      if (pending && !state.disposed) {
+        await revealFileInTree(tc, pending);
+      }
     },
     previewFile: (filePath: string) => loadFilePreview(tc, filePath),
     openInEditor,
     runSearch: () => runFilesSearch(tc),
     submitCreate: () => submitCreateEntry(tc),
+    revealFile: (req: RevealInTreeRequest) => revealFileInTree(tc, req),
   };
 
   return {
@@ -576,6 +655,13 @@ export function createFilesToolPanel(
           bindFilesTopic(tc, topic);
         }),
       );
+      if (tabStore) {
+        store.add(
+          tabStore.onReveal((req) => {
+            void tc.revealFile(req);
+          }),
+        );
+      }
       bindFilesTopic(tc, ctx.topics.active());
     },
     focus(): void {
