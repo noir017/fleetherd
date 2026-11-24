@@ -323,4 +323,67 @@ describe('topics built-in plugin', () => {
     view.dispose();
     h.cleanup();
   });
+
+  it('supports unified keyboard navigation, range multi-select, and batch star/end/delete', async () => {
+    const onStarTopic = vi.fn();
+    const onEndTopic = vi.fn();
+    const onDeleteTopic = vi.fn();
+    const t1 = makeTopic({ id: 't1', title: 'Alpha', live: true, starred: false });
+    const t2 = makeTopic({ id: 't2', title: 'Beta', live: false, starred: false });
+    const t3 = makeTopic({ id: 't3', title: 'Gamma', live: true, starred: false });
+    const h = setupHarness([t1, t2, t3], '', { onStarTopic, onEndTopic, onDeleteTopic });
+
+    await h.manager.activate('topics');
+    const view = h.registry.getView('topics')!.component();
+    h.doc.getElementById('mount')!.appendChild(view.element);
+    view.init(undefined, makePanelInitCtx('topics'));
+
+    const rows = Array.from(view.element.querySelectorAll<HTMLElement>('[data-topic]'));
+    expect(rows.length).toBe(3);
+
+    // Keyboard navigation: ArrowDown / End / Home
+    rows[0]!.focus();
+    rows[0]!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    expect(h.doc.activeElement).toBe(rows[1]);
+    rows[1]!.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }));
+    expect(h.doc.activeElement).toBe(rows[2]);
+    rows[2]!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }));
+    expect(h.doc.activeElement).toBe(rows[0]);
+
+    // Space selects first row, Shift+Click third row selects all 3
+    rows[0]!.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+    rows[2]!.dispatchEvent(new MouseEvent('click', { bubbles: true, shiftKey: true }));
+    expect(view.element.querySelector('.fh-list-batch-count')?.textContent).toBe('3 selected');
+
+    // Batch Star stars all 3 unstarred topics
+    view.element.querySelector<HTMLButtonElement>('[data-batch-action="star"]')!.click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(onStarTopic).toHaveBeenCalledTimes(3);
+    expect(onStarTopic).toHaveBeenCalledWith('t1', true);
+    expect(onStarTopic).toHaveBeenCalledWith('t2', true);
+    expect(onStarTopic).toHaveBeenCalledWith('t3', true);
+
+    // Mod+A selects all again; Batch End ends only live topics (t1, t3)
+    rows[0]!.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', ctrlKey: true, bubbles: true }));
+    view.element.querySelector<HTMLButtonElement>('[data-batch-action="end"]')!.click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(onEndTopic).toHaveBeenCalledTimes(2);
+    expect(onEndTopic).toHaveBeenCalledWith('t1');
+    expect(onEndTopic).toHaveBeenCalledWith('t3');
+
+    // Select all and Batch Delete
+    rows[0]!.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', ctrlKey: true, bubbles: true }));
+    view.element.querySelector<HTMLButtonElement>('[data-batch-action="delete"]')!.click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(onDeleteTopic).toHaveBeenCalledTimes(3);
+
+    // Select then Escape clears selection
+    rows[0]!.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+    expect(view.element.querySelector('.fh-list-batch')).not.toBeNull();
+    rows[0]!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(view.element.querySelector('.fh-list-batch')).toBeNull();
+
+    view.dispose();
+    h.cleanup();
+  });
 });

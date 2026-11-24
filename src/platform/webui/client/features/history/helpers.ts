@@ -45,6 +45,7 @@ export interface HistoryPluginDeps {
   readonly copyText?: (s: string, done: (ok: boolean) => void) => void;
   readonly onOpenSession?: (input: HistoryEditorInput) => void;
   readonly onCloseEditor?: (id: string) => void;
+  readonly onExportSessions?: (items: readonly HistoryEditorInput[]) => void | Promise<void>;
 }
 
 export interface HistorySearchResponse {
@@ -148,6 +149,27 @@ export function copyWithFallback(
     return;
   }
   done(false);
+}
+
+export function formatHistoryExportMarkdown(
+  records: ReadonlyArray<{
+    readonly id: string;
+    readonly title?: string;
+    readonly messages?: readonly WebMessage[];
+  }>,
+): string {
+  const sections: string[] = [];
+  for (const rec of records) {
+    const heading = `# ${rec.title || tr('history.untitled')} (#${rec.id})`;
+    const lines = [heading];
+    for (const msg of rec.messages ?? []) {
+      const who = msg.own ? 'User' : 'Assistant';
+      const body = (msg.html || '').replace(/<[^>]+>/g, '').trim();
+      lines.push(`\n## ${who}\n\n${body}`);
+    }
+    sections.push(lines.join('\n'));
+  }
+  return sections.join('\n\n---\n\n');
 }
 
 export function buildHistoryFilterGroups(

@@ -7,7 +7,12 @@ import {
   type FilterBarController,
   type NoticeController,
 } from '../../components/index.js';
-import { t as tr } from '../../i18n/index.js';
+import {
+  attachListNavigation,
+  type DomListBatchAction,
+  type DomListNavigationController,
+} from '../../components/list/index.js';
+import { getLocale, t as tr } from '../../i18n/index.js';
 import type { PluginContext } from '../../plugins/api.js';
 import { text } from '../../services/api.js';
 import {
@@ -15,6 +20,7 @@ import {
   copyWithFallback,
   errorMessage,
   filterHistoryRecords,
+  formatHistoryExportMarkdown,
   formatHistoryRef,
   formatHistoryTime,
   type HistoryEditorInput,
@@ -22,6 +28,7 @@ import {
   type HistoryPageResponse,
   type HistoryPanelComponent,
   type HistoryPluginDeps,
+  type HistoryReadResponse,
   type HistorySearchResponse,
   resolveHistoryIcons,
 } from './helpers.js';
@@ -90,9 +97,11 @@ class HistoryViewPanel implements HistoryViewInstance {
   private readonly searchBtn: HTMLButtonElement;
   private readonly countEl: HTMLElement;
   private readonly errHost: HTMLElement;
+  private readonly batchBarHost: HTMLElement;
   private readonly listEl: HTMLElement;
   private readonly moreBtn: HTMLButtonElement;
   private readonly filterBar: FilterBarController;
+  private readonly listNav: DomListNavigationController;
   private readonly listeners = new DisposableStore();
   private readonly state: HistoryViewState = {
     sessions: [],
@@ -143,12 +152,16 @@ class HistoryViewPanel implements HistoryViewInstance {
     this.errHost = this.doc.createElement('div');
     this.errHost.className = 'wb-history-err';
     this.errHost.hidden = true;
+    this.batchBarHost = this.doc.createElement('div');
+    this.batchBarHost.className = 'wb-history-batch';
+    this.batchBarHost.hidden = true;
 
     const bodyEl = this.doc.createElement('div');
     bodyEl.className = 'wb-history-body';
     this.listEl = this.doc.createElement('div');
     this.listEl.className = 'wb-history-list';
     this.listEl.setAttribute('role', 'list');
+    this.listEl.setAttribute('aria-multiselectable', 'true');
     this.moreBtn = this.doc.createElement('button');
     this.moreBtn.type = 'button';
     this.moreBtn.className = 'fh-btn fh-btn--secondary wb-history-more';
@@ -161,6 +174,7 @@ class HistoryViewPanel implements HistoryViewInstance {
     this.element.appendChild(filterHost);
     this.element.appendChild(this.countEl);
     this.element.appendChild(this.errHost);
+    this.element.appendChild(this.batchBarHost);
     this.element.appendChild(bodyEl);
 
     const icons = resolveHistoryIcons(deps);
@@ -179,6 +193,15 @@ class HistoryViewPanel implements HistoryViewInstance {
       this.doc,
     );
     filterHost.appendChild(this.filterBar.el);
+    this.listNav = attachListNavigation({
+      container: this.listEl,
+      batchBarHost: this.batchBarHost,
+      rowSelector: '[data-hist]',
+      getRowId: (row) => row.getAttribute('data-hist'),
+      ignoreSelector: '[data-hist-copy]',
+      getBatchActions: (ids) => this.buildBatchActions(ids),
+      onActivate: (_id, row) => this.openFromRow(row),
+    });
     this.bindEvents();
   }
 
@@ -212,23 +235,82 @@ class HistoryViewPanel implements HistoryViewInstance {
         if (copyBtn) {
           e.stopPropagation();
           this.copyRowRef(copyBtn);
-          return;
         }
-        const row = target?.closest('[data-hist]');
-        if (row) this.openFromRow(row);
       }),
     );
-    this.listeners.add(
-      addDisposableListener(this.listEl, 'keydown', (e) => {
-        if (e.key !== 'Enter' && e.key !== ' ') return;
-        const target = e.target instanceof Element ? e.target : null;
-        if (target?.closest('[data-hist-copy]')) return;
-        const row = target?.closest('[data-hist]');
-        if (!row) return;
-        e.preventDefault();
-        this.openFromRow(row);
-      }),
-    );
+  }
+
+  private resolveSelectedInputs(ids: ReadonlySet<string>): HistoryEditorInput[] {
+    const inputs: HistoryEditorInput[] = [];
+    const seen = new Set<string>();
+    for (const row of this.listEl.querySelectorAll<HTMLElement>('[data-hist]')) {
+      const id = row.getAttribute('data-hist');
+      if (!id || !ids.has(id) || seen.has(id)) continue;
+      seen.add(id);
+      const title = row.getAttribute('data-hist-title') || undefined;
+      inputs.push({ id, title, query: this.state.query || undefined });
+    }
+    return inputs;
+  }
+
+  private async exportSelected(ids: ReadonlySet<string>): Promise<void> {
+    const inputs = this.resolveSelectedInputs(ids);
+    if (inputs.length === 0) return;
+    if (this.deps.onExportSessions) {
+      await this.deps.onExportSessions(inputs);
+      this.listNav.clearSelection();
+      return;
+    }
+    const records: Array<{ readonly id: string; readonly title?: string; readonly messages?: HistoryReadResponse['messages'] }> = [];
+    for (const item of inputs) {
+      try {
+        const res = await this.ctx.api.get<HistoryReadResponse>(
+          `/api/history/read?id=${encodeURIComponent(item.id)}`,
+        );
+        records.push({
+          id: item.id,
+          title: res?.session?.title ?? item.title,
+          messages: res?.messages,
+        });
+      } catch {
+        records.push({ id: item.id, title: item.title });
+      }
+    }
+    const md = formatHistoryExportMarkdown(records);
+    if (typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function' && typeof Blob !== 'undefined') {
+      const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = this.doc.createElement('a');
+      a.href = url;
+      a.download = `fleetherd-history-${inputs.length}.md`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } else {
+      copyWithFallback(md, this.deps, () => {});
+    }
+    this.listNav.clearSelection();
+  }
+
+  private buildBatchActions(ids: ReadonlySet<string>): DomListBatchAction[] {
+    const zh = getLocale() === 'zh-CN';
+    return [
+      {
+        id: 'open',
+        label: zh ? '打开' : 'Open',
+        variant: 'primary',
+        onAction: () => {
+          const inputs = this.resolveSelectedInputs(ids);
+          for (const input of inputs) this.onOpen(input);
+          this.listNav.clearSelection();
+        },
+      },
+      {
+        id: 'export',
+        label: zh ? '导出' : 'Export',
+        variant: 'secondary',
+        onAction: () => this.exportSelected(ids),
+      },
+    ];
   }
 
   private setError(msg: string | null): void {
@@ -263,6 +345,7 @@ class HistoryViewPanel implements HistoryViewInstance {
       );
     }
     this.moreBtn.hidden = true;
+    this.listNav.sync();
   }
 
   private paintList(): void {
@@ -272,6 +355,7 @@ class HistoryViewPanel implements HistoryViewInstance {
       this.listEl.innerHTML = `<div class="skills-empty">${text(tr('history.noLibrary'))}</div>`;
       this.countEl.textContent = '';
       this.moreBtn.hidden = true;
+      this.listNav.sync();
       return;
     }
     if (this.state.query) {
@@ -291,6 +375,7 @@ class HistoryViewPanel implements HistoryViewInstance {
       : '';
     this.moreBtn.hidden = !this.state.next;
     this.moreBtn.disabled = false;
+    this.listNav.sync();
   }
 
   private loadSessions(before?: string): void {
@@ -444,6 +529,7 @@ class HistoryViewPanel implements HistoryViewInstance {
     for (const timer of this.state.copyTimers) clearTimeout(timer);
     this.state.copyTimers.clear();
     this.errNotice?.dispose();
+    this.listNav.dispose();
     this.filterBar.dispose();
     this.listeners.dispose();
     this.element.remove();

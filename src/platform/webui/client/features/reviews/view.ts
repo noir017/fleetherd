@@ -7,7 +7,11 @@ import { icon } from '../../../icons.js';
 import { html, nothing, render, type TemplateResult } from '../../base/html.js';
 import { DisposableStore } from '../../base/lifecycle.js';
 import { renderNotice } from '../../components/index.js';
-import { t as tr } from '../../i18n/index.js';
+import {
+  attachListNavigation,
+  type DomListBatchAction,
+} from '../../components/list/index.js';
+import { getLocale, t as tr } from '../../i18n/index.js';
 import type { PluginContext } from '../../plugins/api.js';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import type { ReviewsStore } from './store.js';
@@ -167,25 +171,18 @@ function renderEntryDetail(
 function renderReviewRow(
   r: ReviewPanelEntry,
   open: boolean,
+  isRead: boolean,
   nowMs: number,
   topicExists: (id: string) => boolean,
-  onToggle: (id: string) => void,
   onOpenTopic: (id: string) => void,
 ): TemplateResult {
   return html`<div
-    class=${`rev-item ${r.outcome}${open ? ' open' : ''}`}
+    class=${`rev-item ${r.outcome}${open ? ' open' : ''}${isRead ? ' is-read' : ''}`}
     data-rev=${r.id}
+    data-rev-read=${isRead ? 'true' : 'false'}
     role="button"
     tabindex="0"
     aria-expanded=${open ? 'true' : 'false'}
-    @click=${() => onToggle(r.id)}
-    @keydown=${(ev: KeyboardEvent) => {
-      if (ev.key !== 'Enter' && ev.key !== ' ') return;
-      const target = ev.target instanceof Element ? ev.target : null;
-      if (target?.closest('[data-rev-topic]')) return;
-      ev.preventDefault();
-      onToggle(r.id);
-    }}
   >
     <div class="rev-row">
       <span class="rev-dot"></span>
@@ -196,6 +193,88 @@ function renderReviewRow(
     <div class="rev-result">${r.summary}</div>
     ${open ? renderEntryDetail(r, topicExists, onOpenTopic) : nothing}
   </div>`;
+}
+
+function readStoredIds(ctx: PluginContext, key: string): Set<string> {
+  const raw = ctx.storage.get<unknown>(key);
+  if (!Array.isArray(raw)) return new Set();
+  return new Set(raw.filter((v): v is string => typeof v === 'string' && v.length > 0));
+}
+
+function writeStoredIds(ctx: PluginContext, key: string, ids: ReadonlySet<string>): void {
+  ctx.storage.set(key, [...ids]);
+}
+
+function renderReviewsHeader(
+  headerHost: HTMLElement,
+  count: number | null,
+  onRefresh: () => void,
+): void {
+  const summary =
+    count === null
+      ? tr('common.loadingLower')
+      : count > 0
+        ? tr(count === 1 ? 'sched.summaryReviewOne' : 'sched.summaryReviewMany', { count })
+        : tr('sched.summaryNoReviews');
+  render(
+    html`<div class="sched-heading">
+        <span class="panel-title">${tr('sideTasks.tabReviews')}</span>
+        <span class="sched-summary">${summary}</span>
+      </div>
+      <div class="fh-reviews-actions">
+        <button
+          type="button"
+          class="fh-btn fh-btn--ghost fh-btn--icon"
+          data-rev-refresh="1"
+          title=${tr('common.refresh')}
+          aria-label=${tr('common.refresh')}
+          @click=${onRefresh}
+        >${unsafeHTML(icon('refresh'))}</button>
+      </div>`,
+    headerHost,
+  );
+}
+
+function renderReviewsNotice(
+  noticeHost: HTMLElement,
+  note: string | null,
+  onDismiss: () => void,
+): void {
+  if (!note) {
+    render(nothing, noticeHost);
+    noticeHost.hidden = true;
+    return;
+  }
+  noticeHost.hidden = false;
+  render(
+    renderNotice({
+      tone: 'warn',
+      message: note,
+      dismissible: true,
+      dismissIcon: icon('cross'),
+      onDismiss,
+    }),
+    noticeHost,
+  );
+}
+
+function renderReviewsEmpty(listHost: HTMLElement, data: ReturnType<ReviewsStore['snapshot']>['data']): boolean {
+  if (data === null) {
+    render(html`<div class="sched-empty">${tr('common.loading')}</div>`, listHost);
+    return true;
+  }
+  if (!data.enabled) {
+    render(html`<div class="sched-empty">${tr('reviews.noLibrary')}</div>`, listHost);
+    return true;
+  }
+  if (data.reviews.length === 0 && (data.pending?.length ?? 0) === 0) {
+    render(
+      html`<div class="sched-empty">${data.running ? tr('reviews.emptyRunning') : tr('reviews.emptyOff')}</div>`,
+      listHost,
+    );
+    return true;
+  }
+  return false;
 }
 
 export interface ReviewsViewController extends ReviewPanelComponent {
@@ -212,6 +291,8 @@ export function createReviewsViewComponent(
   const now = deps.now ?? (() => Date.now());
   const disposables = new DisposableStore();
   const expanded = new Set<string>();
+  const readIds = readStoredIds(ctx, 'readIds');
+  const archivedIds = readStoredIds(ctx, 'archivedIds');
 
   const root = doc.createElement('div');
   root.className = 'fh-reviews-view';
@@ -222,10 +303,15 @@ export function createReviewsViewComponent(
   const noticeHost = doc.createElement('div');
   noticeHost.className = 'fh-reviews-notice';
 
+  const batchBarHost = doc.createElement('div');
+  batchBarHost.className = 'fh-reviews-batch';
+  batchBarHost.hidden = true;
+
   const listHost = doc.createElement('div');
   listHost.className = 'fh-reviews-list';
+  listHost.setAttribute('aria-multiselectable', 'true');
 
-  root.append(headerHost, noticeHost, listHost);
+  root.append(headerHost, noticeHost, batchBarHost, listHost);
 
   const topicExists = (id: string): boolean => ctx.topics.list().some((t) => t.id === id);
 
@@ -235,71 +321,59 @@ export function createReviewsViewComponent(
     paintList();
   };
 
-  const paintHeader = (): void => {
-    const count = store.reviewsCount();
-    const summary =
-      count === null
-        ? tr('common.loadingLower')
-        : count > 0
-          ? tr(count === 1 ? 'sched.summaryReviewOne' : 'sched.summaryReviewMany', { count })
-          : tr('sched.summaryNoReviews');
-    render(
-      html`<div class="sched-heading">
-          <span class="panel-title">${tr('sideTasks.tabReviews')}</span>
-          <span class="sched-summary">${summary}</span>
-        </div>
-        <div class="fh-reviews-actions">
-          <button
-            type="button"
-            class="fh-btn fh-btn--ghost fh-btn--icon"
-            data-rev-refresh="1"
-            title=${tr('common.refresh')}
-            aria-label=${tr('common.refresh')}
-            @click=${() => void ctx.commands.execute('reviews.refresh')}
-          >${unsafeHTML(icon('refresh'))}</button>
-        </div>`,
-      headerHost,
-    );
+  const buildBatchActions = (ids: ReadonlySet<string>): DomListBatchAction[] => {
+    const zh = getLocale() === 'zh-CN';
+    return [
+      {
+        id: 'mark-read',
+        label: zh ? '标记已读' : 'Mark read',
+        variant: 'secondary',
+        onAction: () => {
+          for (const id of ids) readIds.add(id);
+          writeStoredIds(ctx, 'readIds', readIds);
+          listNav.clearSelection();
+          paintList();
+        },
+      },
+      {
+        id: 'archive',
+        label: zh ? '归档' : 'Archive',
+        variant: 'secondary',
+        onAction: () => {
+          for (const id of ids) {
+            archivedIds.add(id);
+            expanded.delete(id);
+          }
+          writeStoredIds(ctx, 'archivedIds', archivedIds);
+          listNav.clearSelection();
+          paintList();
+        },
+      },
+    ];
   };
 
-  const paintNotice = (): void => {
-    const { note } = store.snapshot();
-    if (!note) {
-      render(nothing, noticeHost);
-      noticeHost.hidden = true;
-      return;
-    }
-    noticeHost.hidden = false;
-    render(
-      renderNotice({
-        tone: 'warn',
-        message: note,
-        dismissible: true,
-        dismissIcon: icon('cross'),
-        onDismiss: () => store.clearNote(),
-      }),
-      noticeHost,
-    );
-  };
+  const listNav = attachListNavigation({
+    container: listHost,
+    batchBarHost,
+    rowSelector: '[data-rev]',
+    getRowId: (row) => row.getAttribute('data-rev'),
+    ignoreSelector: '[data-rev-topic],[data-rev-adopt],[data-rev-archive],[data-rev-dismiss]',
+    getBatchActions: buildBatchActions,
+    onActivate: (id) => toggleRow(id),
+  });
+  disposables.add(listNav);
+
+  const paintHeader = (): void =>
+    renderReviewsHeader(headerHost, store.reviewsCount(), () => void ctx.commands.execute('reviews.refresh'));
+
+  const paintNotice = (): void =>
+    renderReviewsNotice(noticeHost, store.snapshot().note, () => store.clearNote());
 
   const paintList = (): void => {
     const { data, busyKeys } = store.snapshot();
-    if (data === null) {
-      render(html`<div class="sched-empty">${tr('common.loading')}</div>`, listHost);
-      return;
-    }
-    if (!data.enabled) {
-      render(html`<div class="sched-empty">${tr('reviews.noLibrary')}</div>`, listHost);
-      return;
-    }
-    if (data.reviews.length === 0 && (data.pending?.length ?? 0) === 0) {
-      render(
-        html`<div class="sched-empty">${data.running ? tr('reviews.emptyRunning') : tr('reviews.emptyOff')}</div>`,
-        listHost,
-      );
-      return;
-    }
+    if (renderReviewsEmpty(listHost, data) || !data) return;
     const nowMs = now();
+    const visibleReviews = data.reviews.filter((r) => !archivedIds.has(r.id));
     render(
       html`${renderPendingSection(
           data.pending ?? [],
@@ -308,11 +382,12 @@ export function createReviewsViewComponent(
           (pref) => void store.archiveSuggestion(pref),
           (pref) => void store.dismissSuggestion(pref.text),
         )}
-        ${data.reviews.map((r) =>
-          renderReviewRow(r, expanded.has(r.id), nowMs, topicExists, toggleRow, (tid) => ctx.topics.open(tid)),
+        ${visibleReviews.map((r) =>
+          renderReviewRow(r, expanded.has(r.id), readIds.has(r.id), nowMs, topicExists, (tid) => ctx.topics.open(tid)),
         )}`,
       listHost,
     );
+    listNav.sync();
   };
 
   const paint = (): void => {
