@@ -355,6 +355,10 @@ export function historyMessages(rows: HistoryPanelRead['messages']): WebMessage[
  */
 export type Sink = (id: string, ev: WebEvent, data: string) => void;
 
+/** Read-only lifecycle event channels exposed to server-side Web UI plugins (`PluginHost`). */
+export type RoomEventKind = 'topic' | 'message' | 'turn';
+export type RoomEventListener = (payload: unknown) => void;
+
 /**
  * Where the files this room serves from a copy of its own are kept: the operator's pictures, so the
  * message they sent can show them, and every file the agent sends (`publishCopy`).
@@ -600,6 +604,11 @@ export class WebRoom {
    * does not care — which is why `topicList` reads it through `?.` rather than requiring one.
    */
   private terminal: Pick<TerminalSessions, 'has'> | null = null;
+  private readonly roomListeners: Record<RoomEventKind, Set<RoomEventListener>> = {
+    topic: new Set(),
+    message: new Set(),
+    turn: new Set(),
+  };
 
   constructor(
     private readonly instance: WebuiInstance,
@@ -627,6 +636,7 @@ export class WebRoom {
     if (this.topics.full()) this.makeRoom();
     const topic = this.topics.create(title, parent, opts);
     this.announceTopics();
+    this.notifyRoomListeners('topic', { action: 'created', topicId: topic.id, topic });
     return topic;
   }
 
@@ -702,6 +712,7 @@ export class WebRoom {
   starTopic(id: string, on: boolean): boolean {
     if (!this.topics.star(id, on)) return false;
     this.announceTopics();
+    this.notifyRoomListeners('topic', { action: 'starred', topicId: id, starred: on });
     return true;
   }
 
@@ -709,6 +720,7 @@ export class WebRoom {
   renameTopic(id: string, title: string): boolean {
     if (!this.topics.rename(id, title)) return false;
     this.announceTopics();
+    this.notifyRoomListeners('topic', { action: 'renamed', topicId: id, title });
     return true;
   }
 
@@ -720,6 +732,7 @@ export class WebRoom {
     this.forgetTurnChanges(id);
     if (!this.topics.delete(id)) return false;
     this.announceTopics();
+    this.notifyRoomListeners('topic', { action: 'deleted', topicId: id });
     return true;
   }
 
@@ -749,6 +762,7 @@ export class WebRoom {
     this.topics.clear();
     const fresh = this.topics.full() ? this.topics.current() : this.topics.create();
     this.announceTopics();
+    this.notifyRoomListeners('topic', { action: 'cleared', topicId: fresh.id, topic: fresh });
     return fresh;
   }
 
@@ -779,6 +793,7 @@ export class WebRoom {
   setActivity(topicId: string, activity: TopicActivity | undefined): void {
     if (!this.topics.setActivity(topicId, activity?.outcome, activity?.retry)) return;
     this.announceTopics();
+    this.notifyRoomListeners('turn', { topicId, phase: 'activity', activity });
   }
 
   /**
@@ -1938,6 +1953,7 @@ export class WebRoom {
     this.topics.touch(topicId, msg.at);
     this.keep(topicId);
     this.announceTopics();
+    this.notifyRoomListeners('message', { topicId, message: msg, text });
     return msg;
   }
 
@@ -2048,6 +2064,7 @@ export class WebRoom {
     this.flush(room, topicId);
     this.emit(topicId, { t: 'typing', on });
     this.announceTopics();
+    this.notifyRoomListeners('turn', { topicId, phase: on ? 'start' : 'end' });
   }
 
   /**
@@ -2144,6 +2161,40 @@ export class WebRoom {
     const ev: WebEvent = { t: 'commands', commands };
     const data = JSON.stringify(ev);
     for (const client of this.clients) this.deliver(client, ev, undefined, data);
+  }
+
+  /** Subscribe to read-only room lifecycle events (`topic` | `message` | `turn`). */
+  onRoomEvent(kind: RoomEventKind, listener: RoomEventListener): () => void {
+    this.roomListeners[kind].add(listener);
+    return () => {
+      this.roomListeners[kind].delete(listener);
+    };
+  }
+
+  /** Fan out a server plugin SSE event (`plugin:<id>:<type>`) to every connected page. */
+  broadcastPluginEvent(pluginId: string, type: string, data: unknown): void {
+    const ev: WebEvent = { t: `plugin:${pluginId}:${type}`, plugin: pluginId, type, data };
+    let serialized: string;
+    try {
+      serialized = JSON.stringify(ev);
+    } catch (e) {
+      console.warn(
+        `[webui] plugin "${pluginId}" event "${type}" could not be serialized:`,
+        e instanceof Error ? e.message : e
+      );
+      return;
+    }
+    for (const client of [...this.clients]) this.deliver(client, ev, undefined, serialized);
+  }
+
+  private notifyRoomListeners(kind: RoomEventKind, payload: unknown): void {
+    for (const listener of [...this.roomListeners[kind]]) {
+      try {
+        listener(payload);
+      } catch (e) {
+        console.warn(`[webui] room "${kind}" listener failed:`, e instanceof Error ? e.message : e);
+      }
+    }
   }
 
   /** The rendered body of a message, for quoting it. Empty when it is no longer held. */
@@ -2305,6 +2356,9 @@ export class WebRoom {
     this.notifyTimers.clear();
     // After the flush above, which emits every held edit and so arms it again.
     this.cancelTopics();
+    this.roomListeners.topic.clear();
+    this.roomListeners.message.clear();
+    this.roomListeners.turn.clear();
   }
 
   // ── Inbound (page → daemon) ────────────────────────────────────────────────
