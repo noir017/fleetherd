@@ -1,8 +1,4 @@
-/* Design tokens & theme palettes (docs/webui-workbench-plan.md §4.1, P0-10).
-   P0 keeps every rendered dark and light value 100% identical to pre-refactor main.css:
-   the 46 --fh-* semantic tokens carry current values here, direct legacy counterparts alias
-   to var(--fh-*), and remaining legacy variables retain their exact values until P1-4
-   switches the palette to VS Code Dark Modern / Light Modern and P1-13 retires legacy vars. */
+/* Design tokens & theme palettes — VS Code Dark Modern / Light Modern (docs/webui-workbench-plan.md §4.1). */
 
 /* The three columns' header bars — topics, the topic title, the scheduled panel — are one line
    across the page and share one height; a bar taller than its neighbours makes the top edge read
@@ -10,53 +6,68 @@
    under 640px, and because a bar's own content can only make it taller, never shorter: whatever
    goes inside one has to fit this number. */
 :root,[data-theme="dark"]{
-  /* Semantic --fh-* tokens (P0-10: current values preserved; P1-4 switches to VS Code Modern) */
-  --fh-bg:#131313; /* P1-4: #1f1f1f / #ffffff */
-  --fh-bg-side:#171717; /* P1-4: #181818 / #f8f8f8 */
-  --fh-bg-widget:#1e1e1e; /* P1-4: #252526 / #f8f8f8 */
-  --fh-bg-code:#111; /* P1-4: #2b2b2b / #f2f2f2 */
-  --fh-line:#272727; /* P1-4: #2b2b2b / #e5e5e5 */
-  --fh-fg:#dcdcdc; /* P1-4: #cccccc / #3b3b3b */
-  --fh-fg-hi:#fff; /* P1-4: #e7e7e7 / #1f1f1f */
-  --fh-fg-dim:#7d7d7d; /* P1-4: #9d9d9d / #717171 */
-  --fh-fg-inactive:#666; /* P1-4: #868686 / #616161 */
-  --fh-accent:#38bdf8; /* P1-4: #0078d4 / #005fb8 */
-  --fh-accent-hover:#2563eb; /* P1-4: #026ec1 / #0258a8 */
-  --fh-link:#8fa6c0; /* P1-4: #4daafc / #005fb8 */
-  --fh-input:#1a1a1a; /* P1-4: #313131 / #ffffff */
-  --fh-input-line:#3d3d3d; /* P1-4: #3c3c3c / #cecece */
-  --fh-placeholder:#6b7683; /* P1-4: #989898 / #767676 */
-  --fh-btn2:#1a1a1a; /* P1-4: #313131 / #e5e5e5 */
-  --fh-btn2-hover:#2a2a2a; /* P1-4: #3c3c3c / #cccccc */
-  --fh-hover:#1f1f1f; /* P1-4: #2a2d2e / #f2f2f2 */
-  --fh-sel:#252525; /* P1-4: #04395e / #e8e8e8 */
-  --fh-sel-inactive:#262626; /* P1-4: #37373d / #e4e6f1 */
-  --fh-toggle:#24455a; /* P1-4: rgba(36,137,219,.51) / rgba(0,95,184,.12) */
-  --fh-toggle-line:#3a6f93; /* P1-4: #2488db / #005fb8 */
-  --fh-own:#1c222b; /* P1-4: rgba(0,120,212,.10) / rgba(0,95,184,.06) */
-  --fh-own-edge:#3a5f86; /* P1-4: #0078d4 / #005fb8 */
-  --fh-ok:#4ade80; /* P1-4: #89d185 / #388a34 */
-  --fh-warn:#fbbf24; /* P1-4: #cca700 / #bf8803 */
-  --fh-err:#f87171; /* P1-4: #f14c4c / #e51400 */
-  --fh-idle:#444; /* P1-4: #6e7681 / #8b949e */
-  --fh-git-mod:#fbbf24; /* P1-4: #e2c08d / #895503 */
-  --fh-git-add:#4ade80; /* P1-4: #81b88b / #587c0c */
-  --fh-git-new:#4ade80; /* P1-4: #73c991 / #007100 */
-  --fh-git-del:#f87171; /* P1-4: #e06c6c / #ad0707 */
-  --fh-diff-add:rgba(74,222,128,.09); /* P1-4: rgba(155,185,85,.2) / rgba(155,185,85,.2) */
-  --fh-diff-del:rgba(248,113,113,.07); /* P1-4: rgba(255,0,0,.2) / rgba(255,0,0,.12) */
-  --fh-hc-claude:#d97757; /* P1-4: #e0805f / #b5532f */
-  --fh-hc-claude-bg:rgba(217,119,87,.15); /* P1-4: rgba(224,128,95,.15) / rgba(181,83,47,.1) */
-  --fh-hc-codex:#10a37f; /* P1-4: #3fb68b / #0d8a6a */
-  --fh-hc-codex-bg:rgba(16,163,127,.15); /* P1-4: rgba(63,182,139,.15) / rgba(13,138,106,.1) */
-  --fh-hc-opencode:#e2e2e2; /* P1-4: same hue, 15% / 10% bg */
+  /* Semantic --fh-* tokens — VS Code Dark Modern (§4.1) */
+  --fh-bg:#1f1f1f;
+  --fh-bg-side:#181818;
+  --fh-bg-widget:#252526;
+  --fh-bg-code:#2b2b2b;
+  --fh-line:#2b2b2b;
+  --fh-fg:#cccccc;
+  --fh-fg-hi:#e7e7e7;
+  --fh-fg-dim:#9d9d9d;
+  --fh-fg-inactive:#868686;
+  --fh-accent:#0078d4;
+  --fh-accent-hover:#026ec1;
+  --fh-link:#4daafc;
+  --fh-input:#313131;
+  --fh-input-line:#3c3c3c;
+  --fh-placeholder:#989898;
+  --fh-btn2:#313131;
+  --fh-btn2-hover:#3c3c3c;
+  --fh-hover:#2a2d2e;
+  --fh-sel:#04395e;
+  --fh-sel-inactive:#37373d;
+  --fh-toggle:rgba(36,137,219,.51);
+  --fh-toggle-line:#2488db;
+  --fh-own:rgba(0,120,212,.10);
+  --fh-own-edge:#0078d4;
+  --fh-ok:#89d185;
+  --fh-warn:#cca700;
+  --fh-err:#f14c4c;
+  --fh-idle:#6e7681;
+  --fh-git-mod:#e2c08d;
+  --fh-git-add:#81b88b;
+  --fh-git-new:#73c991;
+  --fh-git-del:#e06c6c;
+  --fh-diff-add:rgba(155,185,85,.2);
+  --fh-diff-del:rgba(255,0,0,.2);
+  --fh-hc-claude:#e0805f;
+  --fh-hc-claude-bg:rgba(224,128,95,.15);
+  --fh-hc-codex:#3fb68b;
+  --fh-hc-codex-bg:rgba(63,182,139,.15);
+  --fh-hc-opencode:#e2e2e2;
   --fh-hc-opencode-bg:rgba(226,226,226,.15);
-  --fh-hc-agy:#4f8ff7; /* P1-4: same hue, 15% / 10% bg */
+  --fh-hc-agy:#4f8ff7;
   --fh-hc-agy-bg:rgba(79,143,247,.15);
-  --fh-hc-gemini:#a78bfa; /* P1-4: same hue, 15% / 10% bg */
+  --fh-hc-gemini:#a78bfa;
   --fh-hc-gemini-bg:rgba(167,139,250,.15);
-  --fh-hc-dsh:#5b7cfa; /* P1-4: same hue, 15% / 10% bg */
+  --fh-hc-dsh:#5b7cfa;
   --fh-hc-dsh-bg:rgba(91,124,250,.15);
+  --fh-on-accent:#ffffff;
+  --fh-card:#181818;
+  --fh-act-hover:rgba(90,93,94,.31);
+  --fh-ok-bg:rgba(137,209,133,.14);
+  --fh-scroll-thumb:rgba(121,121,121,.4);
+  --fh-scroll-thumb-hover:rgba(121,121,121,.6);
+  --fh-radius-ctrl:2px;
+  --fh-radius-card:4px;
+  --fh-radius-row:0px;
+  --fh-radius-pill:999px;
+  --fh-font-ui:-apple-system,BlinkMacSystemFont,"Segoe WPC","Segoe UI",system-ui,"Noto Sans CJK SC",sans-serif;
+  --fh-font-mono:"Cascadia Code","JetBrains Mono",Consolas,monospace;
+  --fh-icon-stroke:1.5;
+  --panel:var(--fh-bg-side);
+  --mono:var(--fh-font-mono);
   /* Legacy aliases & retained P0 values (converged/removed in P1-4 / P1-13) */
   --bg:var(--fh-bg);
   --bg-panel:var(--fh-bg-side);
@@ -255,53 +266,59 @@
 }
 
 @media (prefers-color-scheme: light){:root:not([data-theme="dark"]){
-  /* Semantic --fh-* tokens (P0-10: current values preserved; P1-4 switches to VS Code Modern) */
+  /* Semantic --fh-* tokens — VS Code Light Modern (§4.1) */
   --fh-bg:#ffffff;
-  --fh-bg-side:#f5f6f8;
-  --fh-bg-widget:#ffffff;
-  --fh-bg-code:#f4f5f7;
-  --fh-line:#e2e5ea;
-  --fh-fg:#181a1f;
-  --fh-fg-hi:#090b10;
-  --fh-fg-dim:#6b7280;
-  --fh-fg-inactive:#9ca3af;
-  --fh-accent:#0284c7;
-  --fh-accent-hover:#1d4ed8;
-  --fh-link:#1d4ed8;
-  --fh-input:#f0f2f5;
-  --fh-input-line:#94a3b8;
-  --fh-placeholder:#64748b;
-  --fh-btn2:#f0f2f5;
-  --fh-btn2-hover:#e2e6ec;
-  --fh-hover:#eef0f4;
-  --fh-sel:#e4e8f0;
-  --fh-sel-inactive:#dce1ea;
-  --fh-toggle:#dbeafe;
-  --fh-toggle-line:#3b82f6;
-  --fh-own:#eff6ff;
-  --fh-own-edge:#3b82f6;
-  --fh-ok:#16a34a;
-  --fh-warn:#b45309;
-  --fh-err:#dc2626;
-  --fh-idle:#cbd5e1;
-  --fh-git-mod:#b45309;
-  --fh-git-add:#16a34a;
-  --fh-git-new:#16a34a;
-  --fh-git-del:#dc2626;
-  --fh-diff-add:rgba(22,163,74,.1);
-  --fh-diff-del:rgba(220,38,38,.09);
-  --fh-hc-claude:#c25735;
-  --fh-hc-claude-bg:rgba(194,87,53,.1);
+  --fh-bg-side:#f8f8f8;
+  --fh-bg-widget:#f8f8f8;
+  --fh-bg-code:#f2f2f2;
+  --fh-line:#e5e5e5;
+  --fh-fg:#3b3b3b;
+  --fh-fg-hi:#1f1f1f;
+  --fh-fg-dim:#717171;
+  --fh-fg-inactive:#616161;
+  --fh-accent:#005fb8;
+  --fh-accent-hover:#0258a8;
+  --fh-link:#005fb8;
+  --fh-input:#ffffff;
+  --fh-input-line:#cecece;
+  --fh-placeholder:#767676;
+  --fh-btn2:#e5e5e5;
+  --fh-btn2-hover:#cccccc;
+  --fh-hover:#f2f2f2;
+  --fh-sel:#e8e8e8;
+  --fh-sel-inactive:#e4e6f1;
+  --fh-toggle:rgba(0,95,184,.12);
+  --fh-toggle-line:#005fb8;
+  --fh-own:rgba(0,95,184,.06);
+  --fh-own-edge:#005fb8;
+  --fh-ok:#388a34;
+  --fh-warn:#bf8803;
+  --fh-err:#e51400;
+  --fh-idle:#8b949e;
+  --fh-git-mod:#895503;
+  --fh-git-add:#587c0c;
+  --fh-git-new:#007100;
+  --fh-git-del:#ad0707;
+  --fh-diff-add:rgba(155,185,85,.2);
+  --fh-diff-del:rgba(255,0,0,.12);
+  --fh-hc-claude:#b5532f;
+  --fh-hc-claude-bg:rgba(181,83,47,.10);
   --fh-hc-codex:#0d8a6a;
-  --fh-hc-codex-bg:rgba(13,138,106,.1);
+  --fh-hc-codex-bg:rgba(13,138,106,.10);
   --fh-hc-opencode:#475569;
-  --fh-hc-opencode-bg:rgba(71,85,105,.1);
+  --fh-hc-opencode-bg:rgba(71,85,105,.10);
   --fh-hc-agy:#2563eb;
-  --fh-hc-agy-bg:rgba(37,99,235,.1);
+  --fh-hc-agy-bg:rgba(37,99,235,.10);
   --fh-hc-gemini:#7c3aed;
-  --fh-hc-gemini-bg:rgba(124,58,237,.1);
+  --fh-hc-gemini-bg:rgba(124,58,237,.10);
   --fh-hc-dsh:#4338ca;
-  --fh-hc-dsh-bg:rgba(67,56,202,.1);
+  --fh-hc-dsh-bg:rgba(67,56,202,.10);
+  --fh-on-accent:#ffffff;
+  --fh-card:#ffffff;
+  --fh-act-hover:rgba(184,184,184,.31);
+  --fh-ok-bg:rgba(56,138,52,.10);
+  --fh-scroll-thumb:rgba(121,121,121,.4);
+  --fh-scroll-thumb-hover:rgba(121,121,121,.6);
   /* Legacy aliases & retained P0 values (converged/removed in P1-4 / P1-13) */
   --bg:var(--fh-bg);
   --bg-panel:var(--fh-bg-side);
@@ -499,53 +516,59 @@
 }}
 
 [data-theme="light"]{
-  /* Semantic --fh-* tokens (P0-10: current values preserved; P1-4 switches to VS Code Modern) */
+  /* Semantic --fh-* tokens — VS Code Light Modern (§4.1) */
   --fh-bg:#ffffff;
-  --fh-bg-side:#f5f6f8;
-  --fh-bg-widget:#ffffff;
-  --fh-bg-code:#f4f5f7;
-  --fh-line:#e2e5ea;
-  --fh-fg:#181a1f;
-  --fh-fg-hi:#090b10;
-  --fh-fg-dim:#6b7280;
-  --fh-fg-inactive:#9ca3af;
-  --fh-accent:#0284c7;
-  --fh-accent-hover:#1d4ed8;
-  --fh-link:#1d4ed8;
-  --fh-input:#f0f2f5;
-  --fh-input-line:#94a3b8;
-  --fh-placeholder:#64748b;
-  --fh-btn2:#f0f2f5;
-  --fh-btn2-hover:#e2e6ec;
-  --fh-hover:#eef0f4;
-  --fh-sel:#e4e8f0;
-  --fh-sel-inactive:#dce1ea;
-  --fh-toggle:#dbeafe;
-  --fh-toggle-line:#3b82f6;
-  --fh-own:#eff6ff;
-  --fh-own-edge:#3b82f6;
-  --fh-ok:#16a34a;
-  --fh-warn:#b45309;
-  --fh-err:#dc2626;
-  --fh-idle:#cbd5e1;
-  --fh-git-mod:#b45309;
-  --fh-git-add:#16a34a;
-  --fh-git-new:#16a34a;
-  --fh-git-del:#dc2626;
-  --fh-diff-add:rgba(22,163,74,.1);
-  --fh-diff-del:rgba(220,38,38,.09);
-  --fh-hc-claude:#c25735;
-  --fh-hc-claude-bg:rgba(194,87,53,.1);
+  --fh-bg-side:#f8f8f8;
+  --fh-bg-widget:#f8f8f8;
+  --fh-bg-code:#f2f2f2;
+  --fh-line:#e5e5e5;
+  --fh-fg:#3b3b3b;
+  --fh-fg-hi:#1f1f1f;
+  --fh-fg-dim:#717171;
+  --fh-fg-inactive:#616161;
+  --fh-accent:#005fb8;
+  --fh-accent-hover:#0258a8;
+  --fh-link:#005fb8;
+  --fh-input:#ffffff;
+  --fh-input-line:#cecece;
+  --fh-placeholder:#767676;
+  --fh-btn2:#e5e5e5;
+  --fh-btn2-hover:#cccccc;
+  --fh-hover:#f2f2f2;
+  --fh-sel:#e8e8e8;
+  --fh-sel-inactive:#e4e6f1;
+  --fh-toggle:rgba(0,95,184,.12);
+  --fh-toggle-line:#005fb8;
+  --fh-own:rgba(0,95,184,.06);
+  --fh-own-edge:#005fb8;
+  --fh-ok:#388a34;
+  --fh-warn:#bf8803;
+  --fh-err:#e51400;
+  --fh-idle:#8b949e;
+  --fh-git-mod:#895503;
+  --fh-git-add:#587c0c;
+  --fh-git-new:#007100;
+  --fh-git-del:#ad0707;
+  --fh-diff-add:rgba(155,185,85,.2);
+  --fh-diff-del:rgba(255,0,0,.12);
+  --fh-hc-claude:#b5532f;
+  --fh-hc-claude-bg:rgba(181,83,47,.10);
   --fh-hc-codex:#0d8a6a;
-  --fh-hc-codex-bg:rgba(13,138,106,.1);
+  --fh-hc-codex-bg:rgba(13,138,106,.10);
   --fh-hc-opencode:#475569;
-  --fh-hc-opencode-bg:rgba(71,85,105,.1);
+  --fh-hc-opencode-bg:rgba(71,85,105,.10);
   --fh-hc-agy:#2563eb;
-  --fh-hc-agy-bg:rgba(37,99,235,.1);
+  --fh-hc-agy-bg:rgba(37,99,235,.10);
   --fh-hc-gemini:#7c3aed;
-  --fh-hc-gemini-bg:rgba(124,58,237,.1);
+  --fh-hc-gemini-bg:rgba(124,58,237,.10);
   --fh-hc-dsh:#4338ca;
-  --fh-hc-dsh-bg:rgba(67,56,202,.1);
+  --fh-hc-dsh-bg:rgba(67,56,202,.10);
+  --fh-on-accent:#ffffff;
+  --fh-card:#ffffff;
+  --fh-act-hover:rgba(184,184,184,.31);
+  --fh-ok-bg:rgba(56,138,52,.10);
+  --fh-scroll-thumb:rgba(121,121,121,.4);
+  --fh-scroll-thumb-hover:rgba(121,121,121,.6);
   /* Legacy aliases & retained P0 values (converged/removed in P1-4 / P1-13) */
   --bg:var(--fh-bg);
   --bg-panel:var(--fh-bg-side);

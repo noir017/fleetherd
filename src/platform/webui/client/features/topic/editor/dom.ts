@@ -86,6 +86,10 @@ function el<K extends keyof HTMLElementTagNameMap>(
   return node;
 }
 
+function assignIdIfAbsent(doc: Document, node: HTMLElement, id: string): void {
+  if (!doc.getElementById(id)) node.id = id;
+}
+
 function buildHeaderDom(doc: Document, icons: TopicEditorIcons) {
   const header = el(doc, 'header', 'wb-topic-header th');
   const backBtn = el(doc, 'button', 'wb-icon-btn wb-topic-back');
@@ -97,6 +101,7 @@ function buildHeaderDom(doc: Document, icons: TopicEditorIcons) {
 
   const statusDotHost = el(doc, 'span', 'wb-topic-dot');
   const titleEl = el(doc, 'span', 'wb-topic-title tt');
+  assignIdIfAbsent(doc, titleEl, 'topic-title');
   const statePillEl = el(doc, 'span', 'wb-topic-pill pill');
   statePillEl.hidden = true;
   const connPillEl = el(doc, 'span', 'wb-topic-conn');
@@ -120,31 +125,39 @@ function buildHeaderDom(doc: Document, icons: TopicEditorIcons) {
 
 function buildBtwAndModelPopDom(doc: Document, icons: TopicEditorIcons) {
   const btwBox = el(doc, 'div', 'wb-topic-btw');
+  assignIdIfAbsent(doc, btwBox, 'btw');
   btwBox.hidden = true;
   btwBox.setAttribute('role', 'dialog');
   const btwHead = el(doc, 'div', 'btw-head');
   const btwTag = el(doc, 'span', 'btw-tag');
   btwTag.textContent = 'btw';
   const btwQ = el(doc, 'div', 'wb-btw-q');
+  assignIdIfAbsent(doc, btwQ, 'btw-q');
   const btwClose = el(doc, 'button', 'wb-icon-btn wb-btw-close');
+  assignIdIfAbsent(doc, btwClose, 'btw-close');
   btwClose.type = 'button';
   btwClose.title = tr('common.closeEsc');
   btwClose.setAttribute('aria-label', tr('common.close'));
   btwClose.innerHTML = icons.cross;
   btwHead.append(btwTag, btwQ, btwClose);
   const btwBody = el(doc, 'div', 'wb-btw-body');
+  assignIdIfAbsent(doc, btwBody, 'btw-body');
   btwBox.append(btwHead, btwBody);
 
   const modelPop = el(doc, 'div', 'wb-topic-model-pop');
+  assignIdIfAbsent(doc, modelPop, 'model-pop');
   modelPop.hidden = true;
   modelPop.setAttribute('role', 'dialog');
   const mpHead = el(doc, 'div', 'mp-head');
   const mpTitle = el(doc, 'div', 'mp-title');
   const mpHeading = el(doc, 'b', 'wb-mp-heading');
+  assignIdIfAbsent(doc, mpHeading, 'mp-heading');
   mpHeading.textContent = tr('modelPop.headingModel');
   const mpAgent = el(doc, 'span', 'wb-mp-agent');
+  assignIdIfAbsent(doc, mpAgent, 'mp-agent');
   mpTitle.append(mpHeading, mpAgent);
   const mpClose = el(doc, 'button', 'wb-icon-btn wb-mp-close');
+  assignIdIfAbsent(doc, mpClose, 'mp-close');
   mpClose.type = 'button';
   mpClose.title = tr('common.closeEsc');
   mpClose.setAttribute('aria-label', tr('common.close'));
@@ -152,6 +165,7 @@ function buildBtwAndModelPopDom(doc: Document, icons: TopicEditorIcons) {
   mpHead.append(mpTitle, mpClose);
 
   const mpFilter = el(doc, 'input', 'wb-mp-filter');
+  assignIdIfAbsent(doc, mpFilter, 'mp-filter');
   mpFilter.type = 'text';
   mpFilter.placeholder = tr('modelPop.filterModels');
   mpFilter.setAttribute('aria-label', tr('modelPop.filterModels'));
@@ -159,8 +173,10 @@ function buildBtwAndModelPopDom(doc: Document, icons: TopicEditorIcons) {
   mpFilter.spellcheck = false;
 
   const mpList = el(doc, 'div', 'wb-mp-list');
+  assignIdIfAbsent(doc, mpList, 'mp-list');
   mpList.setAttribute('role', 'listbox');
   const mpFoot = el(doc, 'p', 'mp-foot');
+  assignIdIfAbsent(doc, mpFoot, 'mp-foot');
   modelPop.append(mpHead, mpFilter, mpList, mpFoot);
 
   return { btwBox, btwQ, btwBody, btwClose, modelPop, mpHeading, mpAgent, mpClose, mpFilter, mpList, mpFoot };
@@ -168,29 +184,37 @@ function buildBtwAndModelPopDom(doc: Document, icons: TopicEditorIcons) {
 
 function buildComposerDom(doc: Document, icons: TopicEditorIcons) {
   const hints = el(doc, 'div', 'wb-topic-hints');
+  assignIdIfAbsent(doc, hints, 'hints');
   hints.hidden = true;
   const chips = el(doc, 'div', 'wb-topic-chips');
+  assignIdIfAbsent(doc, chips, 'chips');
 
   const composerForm = el(doc, 'form', 'wb-topic-composer');
+  assignIdIfAbsent(doc, composerForm, 'composer');
   const row = el(doc, 'div', 'wb-topic-composer-row comp');
+  assignIdIfAbsent(doc, row, 'row');
 
   const input = el(doc, 'textarea', 'wb-topic-input');
+  assignIdIfAbsent(doc, input, 'input');
   input.rows = 1;
   input.placeholder = tr('composer.placeholder');
   input.autocomplete = 'off';
 
   const picker = el(doc, 'input', 'wb-topic-picker');
+  assignIdIfAbsent(doc, picker, 'picker');
   picker.type = 'file';
   picker.multiple = true;
   picker.hidden = true;
 
   const attachBtn = el(doc, 'button', 'wb-icon-btn wb-topic-attach');
+  assignIdIfAbsent(doc, attachBtn, 'attach');
   attachBtn.type = 'button';
   attachBtn.title = tr('composer.attachTitle');
   attachBtn.setAttribute('aria-label', tr('composer.attachTitle'));
   attachBtn.innerHTML = icons.plus;
 
   const micBtn = el(doc, 'button', 'wb-icon-btn wb-topic-mic');
+  assignIdIfAbsent(doc, micBtn, 'mic');
   micBtn.type = 'button';
   micBtn.hidden = true;
   micBtn.title = tr('composer.micTitle');
@@ -198,6 +222,7 @@ function buildComposerDom(doc: Document, icons: TopicEditorIcons) {
   micBtn.innerHTML = icons.mic;
 
   const stopBtn = el(doc, 'button', 'wb-topic-stop');
+  assignIdIfAbsent(doc, stopBtn, 'stop-turn');
   stopBtn.type = 'button';
   stopBtn.hidden = true;
   stopBtn.title = tr('composer.stopTitle');
@@ -219,25 +244,33 @@ export function buildTopicEditorDom(doc: Document, icons: TopicEditorIcons): Top
   const head = buildHeaderDom(doc, icons);
 
   const forkNote = el(doc, 'button', 'wb-topic-fork-note');
+  assignIdIfAbsent(doc, forkNote, 'fork-note');
   forkNote.type = 'button';
   forkNote.hidden = true;
 
   const log = el(doc, 'div', 'wb-topic-log log');
+  assignIdIfAbsent(doc, log, 'log');
   const typingEl = el(doc, 'div', 'wb-topic-typing');
+  assignIdIfAbsent(doc, typingEl, 'typing');
   typingEl.hidden = true;
   typingEl.textContent = '...';
   const noteEl = el(doc, 'div', 'wb-topic-note');
+  assignIdIfAbsent(doc, noteEl, 'note');
 
   const barEl = el(doc, 'div', 'wb-topic-bar bar');
+  assignIdIfAbsent(doc, barEl, 'bar');
   const pendingQueueEl = el(doc, 'div', 'wb-topic-pending-queue');
+  assignIdIfAbsent(doc, pendingQueueEl, 'pending-queue');
   pendingQueueEl.hidden = true;
   pendingQueueEl.setAttribute('aria-label', tr('pending.aria'));
 
   const machineNoteEl = el(doc, 'div', 'wb-topic-machine-note');
+  assignIdIfAbsent(doc, machineNoteEl, 'machine-note');
   machineNoteEl.setAttribute('role', 'status');
   machineNoteEl.hidden = true;
 
   const statusEl = el(doc, 'div', 'wb-topic-status status');
+  assignIdIfAbsent(doc, statusEl, 'status');
   statusEl.hidden = true;
   statusEl.title = tr('status.tapDetails');
 

@@ -196,9 +196,9 @@ function page(p: { title: string; bootScript: string; style: string; gate: strin
 <link rel="manifest" href="manifest.webmanifest">
 <!-- Android paints the status bar this colour in standalone, so the app starts at its own
      background instead of being framed in white. -->
-<meta name="theme-color" content="#131313">
+<meta name="theme-color" content="#1f1f1f">
 ${p.bootScript}
-<!-- iOS ignores the manifest for both of these. "black" is the closest opaque bar to #131313;
+<!-- iOS ignores the manifest for both of these. "black" is the closest opaque bar to #1f1f1f;
      "black-translucent" would put the clock on top of the chat header. -->
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">

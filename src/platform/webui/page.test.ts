@@ -12,13 +12,14 @@ const STREAM_SOURCE = fs.readFileSync(path.join(clientDir, 'services', 'stream.t
 const CACHE_SOURCE = fs.readFileSync(path.join(clientDir, 'services', 'cache.ts'), 'utf8');
 const READS_SOURCE = fs.readFileSync(path.join(clientDir, 'services', 'reads.ts'), 'utf8');
 const READER_SOURCE = fs.readFileSync(path.join(clientDir, 'features', 'reader', 'index.ts'), 'utf8');
-const LEGACY_SHELL_SOURCE = fs.readFileSync(path.join(clientDir, 'workbench', 'legacy-shell.ts'), 'utf8');
+const SHELL_SOURCE = fs.readFileSync(path.join(clientDir, 'workbench', 'shell.ts'), 'utf8');
 const TRANSCRIPT_MARKUP_SOURCE = fs.readFileSync(
   path.join(clientDir, 'features', 'topic', 'transcript', 'markup.ts'),
   'utf8',
 );
-const TOPICS_SOURCE = fs.readFileSync(path.join(clientDir, 'features', 'topics', 'index.ts'), 'utf8');
-const ROW_MENU_SOURCE = fs.readFileSync(path.join(clientDir, 'features', 'topics', 'row-menu.ts'), 'utf8');
+const TOPICS_PLUGIN_SOURCE = fs.readFileSync(path.join(clientDir, 'features', 'topics', 'plugin.ts'), 'utf8');
+const SCHEDULES_PLUGIN_SOURCE = fs.readFileSync(path.join(clientDir, 'features', 'schedules', 'plugin.ts'), 'utf8');
+const STATUS_PLUGIN_SOURCE = fs.readFileSync(path.join(clientDir, 'features', 'status', 'plugin.ts'), 'utf8');
 const COMPOSER_ATTACHMENTS_SOURCE = fs.readFileSync(
   path.join(clientDir, 'features', 'topic', 'composer', 'attachments.ts'),
   'utf8',
@@ -107,8 +108,8 @@ describe('webui page', () => {
    });
     expect(bootOf(shell)).toMatchObject({ terminal: false, terminalEnd: false, files: false, instructions: false, password: true, instance: 'web' });
     const custom = serveShell('Chat', false, true, false, testAssets(), false, false, 'portal').html;
-    expect(bootOf(custom).instance).toBe('portal');
-   expect(APP_SOURCE).toContain('const BOOT = readBootConfig(document);');
+   expect(bootOf(custom).instance).toBe('portal');
+   expect(APP_SOURCE).toContain('const boot = readBootConfig(document);');
    expect(BOOT_SOURCE).toContain("getElementById('boot-config')");
  });
 
@@ -126,7 +127,7 @@ describe('webui page', () => {
     // a build with no code view (null) still has a complete page.
     expect(READER_SOURCE).toContain('__fhCodeView');
     expect(READER_SOURCE).toContain('new URL(bundleUrl, doc.baseURI).href');
-    expect(APP_SOURCE).toContain('createCodeViewLoader(BOOT.codeview)');
+    expect(APP_SOURCE).toContain('createCodeViewLoader(boot.codeview)');
     expect(shell).not.toContain('codeview-');
   });
 
@@ -193,14 +194,10 @@ describe('webui page', () => {
   });
 
   it('has a collapsible topic sidebar with running indicators and unread badges', () => {
-    expect(html).toContain('id="topics"');
-    expect(html).toContain('id="sidebar"');
-    expect(html).toContain('#sidebar.collapsed');
-    expect(html).toContain('id="collapse-sidebar"');
-    expect(html).toContain('id="expand-sidebar"');
-    // The rows' attribute is a parameter of the shared row (treeRowHtml); the handlers read it.
-    expect(TOPICS_SOURCE).toContain("closest('[data-topic]')");
-    expect(html).toContain('data-new=');
+    expect(html).toContain('id="workbench-root"');
+    expect(SHELL_SOURCE).toContain('attachRegistry');
+    expect(SHELL_SOURCE).not.toContain('aa_workbench');
+    expect(TOPICS_PLUGIN_SOURCE).toContain("closest('[data-topic]')");
     expect(html).toContain('topic-badge');
     expect(html).toContain('topic-dot');
     expect(html).toContain('.topic-item.idle');
@@ -224,38 +221,12 @@ describe('webui page', () => {
   });
 
   it('has a scheduled-task panel of its own, opened from the chat header', () => {
-    // A column, not a row in the topic list: a task is not a conversation, and the sidebar is
-    // the conversation switcher. Opening it is remembered; a first visit starts closed.
-    expect(html).toContain('id="schedules"');
-    expect(html).toContain('id="schedules-toggle"');
+    // Schedules is a built-in workbench plugin contributing a sidebar view, activity item, and task editor.
+    expect(SCHEDULES_PLUGIN_SOURCE).toContain("id: 'schedules'");
+    expect(SCHEDULES_PLUGIN_SOURCE).toContain("kind: 'schedule'");
     expect(CLIENT.app.text).toContain('api/schedules');
     expect(CLIENT.app.text).toContain('api/schedules/op');
-    expect(LEGACY_SHELL_SOURCE).toContain('aa_sched_open');
-    expect(html).not.toContain('aa_sched_pin');
-    expect(html).not.toContain('schedules-pin');
-    // The same panel component as the sidebar, on the right: one set of rules, not two.
-    expect(html).toContain('class="panel panel-right"');
-    expect(html).toContain('.panel-left.collapsed{margin-left:calc(-1 * var(--pw,var(--pw-default)))}');
-    expect(html).toContain('.panel-right.collapsed{margin-right:calc(-1 * var(--pw,var(--pw-default)))}');
-    // The heading is words, not a clock glyph.
-    expect(html).toContain('<span class="panel-title" data-i18n="sideTasks.title">Side tasks</span>');
-    // Two top-level tabs at the foot (Scheduled and Reviews), with Scheduled subdivided into Tasks and Sessions.
-    expect(html).toContain('id="sched-tabs"');
-    expect(html).toContain('id="sched-tab-scheduled"');
-    expect(html).toContain('id="sched-tab-reviews"');
-    expect(html).toContain('id="sched-subnav"');
-    expect(html).toContain('id="sched-tab-tasks"');
-    expect(html).toContain('id="sched-tab-sessions"');
-    expect(html).toContain('id="sched-sessions"');
-    expect(html).toContain('id="sched-reviews"');
-    expect(html.indexOf('id="sched-subnav"')).toBeLessThan(html.indexOf('id="schedules-body"'));
-    expect(html.indexOf('id="schedules-body"')).toBeLessThan(html.indexOf('id="sched-tabs"'));
-    expect(html.indexOf('id="sched-tab-scheduled"')).toBeLessThan(html.indexOf('id="sched-tab-reviews"'));
-    expect(html.indexOf('id="sched-tab-tasks"')).toBeLessThan(html.indexOf('id="sched-tab-sessions"'));
-    // Narrower than the old fixed column, and the operator can drag it.
-    expect(html).toContain('clamp(240px,20vw,320px)');
-    expect(html).toContain('id="sched-resize"');
-    expect(LEGACY_SHELL_SOURCE).toContain('aa_sched_w');
+    expect(SHELL_SOURCE).toContain('aa_split_sizes');
   });
 
   it('sends a nonce, without which its own retry would double-post', () => {
@@ -274,15 +245,15 @@ describe('webui page', () => {
     expect(html).toContain('@media (prefers-color-scheme: light){:root:not([data-theme="dark"]){');
     expect(html).toContain('color-scheme:dark');
     expect(html).toContain('color-scheme:light');
-    expect(html).toMatch(/--fh-bg:#1[0-9a-f]{5}/);
+    expect(html).toContain('--fh-bg:#1f1f1f');
     expect(html).toContain('--bg:var(--fh-bg)');
-    expect(html).toContain('id="theme-toggle"');
+    expect(STATUS_PLUGIN_SOURCE).toContain("'status.theme'");
   });
 
   it('gives your own messages a tinted panel the agent does not get', () => {
     // Asserted as text: jsdom resolves no custom property, so the CSSOM would report an empty
     // background for a rule that is perfectly correct in a browser.
-    expect(html).toMatch(/--fh-own:#[0-9a-f]{6}/);
+    expect(html).toContain('--fh-own:rgba(0,120,212,.10)');
     expect(html).toContain('--own:var(--fh-own)');
     expect(html).toContain('.m.own{background:var(--own)');
     // One side marked is what makes the boundary findable; marking both moves the problem.
@@ -305,15 +276,14 @@ describe('webui page', () => {
   it('styles scrollbars to blend with the dark background', () => {
     expect(html).toContain('color-scheme:dark');
     expect(html).toContain('scrollbar-color:');
-    expect(html).toContain('scrollbar-width:thin');
+    expect(html).toContain('scrollbar-width:auto');
     expect(html).toContain('::-webkit-scrollbar');
     expect(html).toContain('::-webkit-scrollbar-thumb');
   });
 
   it('allows deleting topics from the row menu, with its confirmation', () => {
-    expect(html).toContain('row-menu');
-    expect(ROW_MENU_SOURCE).toContain("key: 'delete'");
-    expect(TOPICS_SOURCE).toContain('api/topics/delete');
+    expect(TOPICS_PLUGIN_SOURCE).toContain("id: 'topics.delete'");
+    expect(APP_SOURCE).toContain("post('api/topics/delete'");
   });
 
   it('caches topic messages in browser storage for instant switching', () => {
@@ -342,14 +312,13 @@ describe('webui page', () => {
     // for the client — so a bare `ev.topic !== topic` drops the only sync that visit will ever
     // get and the page stays an empty shell with a healthy event stream behind it. The guard
     // must only fire once we are actually on a topic.
-    expect(html).toContain('if (topic && ev.topic !== topic) return;');
+    expect(APP_SOURCE).toContain('if (state.topic && ev.topic !== state.topic) return;');
   });
 
   it('adapts to a screen held upright', () => {
     expect(html).toContain('@media(max-width:640px)');
-    // The drawer needs something to tap beside itself, or the only way out on a phone is the
-    // one button it covers half the screen to show.
-    expect(html).toContain('id="backdrop"');
+    expect(html).toContain('.wb-stack');
+    expect(html).toContain('.wb-drawer-backdrop');
     // dvh, not vh: the mobile URL bar is counted by the latter and not by the former, and the
     // difference is whether the composer is on screen.
     expect(html).toContain('100dvh');

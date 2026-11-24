@@ -3,10 +3,8 @@
 // (`src/platform/webui/page.test-helpers.ts`, which runs the same bytes in jsdom). One function for
 // both, so a page that works in the tests is the page the build ships.
 //
-// Identifiers are never minified (`minifyIdentifiers` stays false) so a stack from a failing DOM
-// test or an operator's console still names the function it came from. Whitespace and syntax are
-// compacted on `app` to stay within the gzip bundle budget while keeping stacks readable. Tests
-// that assert on source text read the source, not this output.
+// `app` is minified to keep the bundled client within the gzip budget; tests that assert on source
+// text read the TypeScript source files directly rather than this output.
 //
 // No `target` either: nothing is lowered or prefixed, so what runs is what was written. The script
 // is bundled as a classic IIFE (`format: 'iife'`), and `tsconfigRaw: {}` keeps esbuild from forcing
@@ -89,8 +87,7 @@ export async function buildClient({ outdir } = {}) {
     ...common,
     stdin: { contents: source, loader: 'ts', resolveDir: path.dirname(APP_ENTRY), sourcefile: path.basename(APP_ENTRY) },
     format: 'iife',
-    minifyWhitespace: true,
-    minifySyntax: true,
+    minify: true,
   });
   const boot = await build({
     ...common,

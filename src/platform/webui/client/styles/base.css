@@ -1,15 +1,15 @@
-*{box-sizing:border-box;scrollbar-width:thin;scrollbar-color:var(--scroll-ff) transparent}
-::-webkit-scrollbar{width:6px;height:6px}
+*{box-sizing:border-box;scrollbar-width:auto;scrollbar-color:var(--fh-scroll-thumb) transparent}
+::-webkit-scrollbar{width:10px;height:10px}
 ::-webkit-scrollbar-track{background:transparent}
-::-webkit-scrollbar-thumb{background:var(--scroll-thumb);border-radius:3px}
-::-webkit-scrollbar-thumb:hover{background:var(--scroll-thumb-hover)}
+::-webkit-scrollbar-thumb{background:var(--fh-scroll-thumb);border-radius:0}
+::-webkit-scrollbar-thumb:hover{background:var(--fh-scroll-thumb-hover)}
 ::-webkit-scrollbar-corner{background:transparent}
 /* An id rule with display: wins over the browser's own [hidden]{display:none}, so #app and
    #hints would both ignore the attribute and show anyway — the chat pane before login, the
    command list with nothing in it. This is the standard fix and it has to stay. */
 [hidden]{display:none!important}
 html,body{height:100%;margin:0}
-body{background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Noto Sans",sans-serif;display:flex;flex-direction:column}
+body{background:var(--fh-bg);color:var(--fh-fg);font-family:var(--fh-font-ui);font-size:13px;line-height:1.45;display:flex;flex-direction:column;-webkit-font-smoothing:antialiased}
 #gate{flex:1;display:flex}
 #login{margin:auto;padding:24px;width:100%;max-width:320px}
 #login input{width:100%;padding:9px 11px;background:var(--field);color:var(--fg);border:1px solid var(--line);border-radius:4px;font:inherit}

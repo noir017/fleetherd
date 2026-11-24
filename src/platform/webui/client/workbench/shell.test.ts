@@ -1,13 +1,12 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest';
 
+import { ContributionRegistry } from '../plugins/registry.js';
 import { StorageService } from '../services/storage.js';
 import type { PanelComponent } from './contracts.js';
 import {
-  isWorkbenchEnabled,
-  mountWorkbenchIfEnabled,
+  mountWorkbench,
   resolveShellMode,
-  WORKBENCH_FLAG_KEY,
   WorkbenchShell,
 } from './shell.js';
 
@@ -44,27 +43,52 @@ describe('workbench/shell', () => {
     expect(resolveShellMode(390)).toBe('mobile');
   });
 
-  it('respects aa_workbench dev flag and leaves DOM untouched when off', () => {
-    document.body.innerHTML = '<main id="app"></main><div id="workbench-root" hidden></div>';
-    delete document.documentElement.dataset.workbench;
-
-    const offStorage = makeMemoryStorage();
-    expect(isWorkbenchEnabled(offStorage)).toBe(false);
-    expect(mountWorkbenchIfEnabled(document, { storage: offStorage })).toBeNull();
-    expect(document.documentElement.dataset.workbench).toBeUndefined();
-    expect(document.getElementById('workbench-root')?.hidden).toBe(true);
-    expect(document.getElementById('app')?.hidden).toBe(false);
-
-    const onStorage = makeMemoryStorage({ [WORKBENCH_FLAG_KEY]: '1' });
-    expect(isWorkbenchEnabled(onStorage)).toBe(true);
-    const shell = mountWorkbenchIfEnabled(document, { storage: onStorage, initialWidth: 1400, initialHeight: 900 });
+  it('mounts workbench directly into #workbench-root without any dev flag and binds ContributionRegistry', () => {
+    document.body.innerHTML = '<div id="workbench-root"></div>';
+    const registry = new ContributionRegistry();
+    const shell = mountWorkbench(document, {
+      storage: makeMemoryStorage(),
+      registry,
+      initialWidth: 1400,
+      initialHeight: 900,
+    });
     expect(shell).not.toBeNull();
-    expect(document.documentElement.dataset.workbench).toBe('1');
-    expect(document.getElementById('workbench-root')?.hidden).toBe(false);
-    expect(document.getElementById('app')?.hidden).toBe(true);
+
+    registry.registerView({
+      id: 'topics',
+      title: 'Topics',
+      part: 'sidebar',
+      component: () => makePanel('topics-view'),
+    });
+    registry.registerActivity({
+      id: 'topics',
+      title: 'Topics',
+      icon: 'chat',
+      view: 'topics',
+      order: 10,
+      badge: () => 3,
+    });
+    registry.registerEditor({
+      kind: 'topic',
+      title: (input) => `Chat ${(input as { id: string }).id}`,
+      component: () => makePanel('topic-editor'),
+    });
+    registry.registerStatusBar({
+      id: 'conn',
+      align: 'left',
+      order: 1,
+      render: (el) => {
+        el.textContent = 'Connected';
+      },
+    });
+
+    expect(document.querySelector('.wb-activity-item .wb-badge')?.textContent).toBe('3');
+    expect(document.querySelector('[data-status-id="conn"]')?.textContent).toBe('Connected');
+    registry.openEditor('topic', { id: 't1' });
+    expect(shell?.editors.active()?.id).toContain('editor:topic:');
 
     shell?.dispose();
-    delete document.documentElement.dataset.workbench;
+    registry.dispose();
   });
 
   it('auto-collapses primary sidebar on desktop when opening secondary would leave editor < 640px and restores on close', () => {

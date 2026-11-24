@@ -10,7 +10,7 @@ export const STORAGE_KEY = 'fh_theme';
 export const MEDIA_QUERY = '(prefers-color-scheme: dark)';
 
 export const THEME_COLORS: Readonly<Record<ResolvedTheme, string>> = {
-  dark: '#131313',
+  dark: '#1f1f1f',
   light: '#ffffff',
 };
 

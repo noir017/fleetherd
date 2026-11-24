@@ -363,8 +363,10 @@ class TopicsViewPanel implements TopicsViewInstance {
     segWrap.className = 'wb-topics-seg';
     const filterHost = doc.createElement('div');
     filterHost.className = 'wb-topics-filter';
+    if (!doc.getElementById('topics-filter')) filterHost.id = 'topics-filter';
     this.listEl = doc.createElement('div');
     this.listEl.className = 'wb-topics-list';
+    if (!doc.getElementById('topics')) this.listEl.id = 'topics';
     this.listEl.setAttribute('role', 'list');
 
     this.element.appendChild(headerEl);

@@ -4,9 +4,9 @@ English | [简体中文](zh-CN/web-ui.md)
 
 ![The web UI: a topic sidebar, Claude Code's tool calls and its answer, and the status footer](images/webui.png)
 
-A plain dark chat page the daemon serves itself. No bot to register, no account,
-no upstream service — it is the fastest way to have a working gateway, and the
-only one that works with no chat platform at all.
+A VS Code-style workbench the daemon serves itself, styled in VS Code Dark Modern / Light Modern.
+No bot to register, no account, no upstream service — it is the fastest way to have a working
+gateway, and the only one that works with no chat platform at all.
 
 ```yaml
 platforms:
@@ -25,8 +25,28 @@ Open `http://<host>:8787`, enter the token, and you have the same conversation
 every other platform gets: streaming replies, tool bubbles, the `/model`, `/effort`
 and `/cd` button menus, `ask` questions, file upload and download. Menus are
 laid out as a grid with the current choice lit, and hold 24 to a page where chat apps hold 12.
-`/setting` is a page of its own rather than a message in the transcript: **All settings** in the
-**⚙ Menu** at the foot of the topic list opens it, and typing `/setting` does the same.
+
+**Workbench layout.** The page is assembled as a plugin-driven workbench (12 built-in plugins:
+Topics, Topic editor, History, Scheduled, Reviews, Skills, Settings, Changes, Files, Terminal,
+Reader, and Status):
+
+- **Activity bar** (left rail): switches the primary sidebar between **Topics**, **History**,
+  **Scheduled**, **Reviews**, **Skills**, and **Settings** (pinned at the bottom).
+- **Primary sidebar, editor area, secondary sidebar, and bottom panel**: lists live in the primary
+  sidebar, conversations and editors (settings, skills, history, files, diffs, document reader)
+  open in the center editor area, topic-scoped **Changes** and **Files** open in the secondary
+  sidebar on the right, and per-topic **Terminal** docks in the resizable bottom panel.
+- **Status bar** (bottom strip): shows connection state, running/idle agent counts (**Close idle**),
+  plugin errors, **Notifications**, **Low attention**, **Language** (`English` / `简体中文`),
+  **Theme** (`System` / `Dark` / `Light`, VS Code Dark Modern `#1f1f1f` / Light Modern `#ffffff`),
+  and daemon version.
+- **Responsive breakpoints**: desktop (`≥ 1024px`) shows the full multi-pane workbench and
+  auto-collapses the primary sidebar when the editor becomes narrow; tablet (`640–1023px`) turns
+  sidebars into slide-over drawers; mobile (`< 640px`) switches to a stack-style page shell with a
+  bottom tab bar and in-topic tool tabs.
+
+`/setting` is a page of its own rather than a message in the transcript: the **Settings** icon at
+the bottom of the activity bar opens it, and typing `/setting` does the same.
 It is one column of sections, and each setting is changed in place with the control that fits it: a
 switch for on/off, a segmented control or a dropdown for a short list, and a card per agent, grouped
 by machine, showing its harness in a colour of its own, its model and its permission level. A tap
@@ -117,10 +137,9 @@ send the command, so a draft in the composer is left where it is.
 **Narrow composer.** When the composer itself is too narrow to hold the input and the buttons side by side, it splits into two rows: the text area takes the full width across the top row, and the action buttons sit on the second row with file attachment and voice recording on the left, and Stop and Send on the right. The width that counts is the composer's own, not the window's: at 480px of composer or less it splits, which with the sidebar at its default width means a window between 641 and 752px — the case where the topic list still takes a column and the input was left with as little as 213px — and also a wider window whose sidebar has been dragged wide. On a handset (640px and below) it is always the layout.
 
 **Closing idle agents.** An agent process stays up after its turn until the daemon's idle
-timeout reclaims it (the dim blue dot). **Close idle (N)** in the **Manage** menu at the bottom
-of the topic list ends all of them at once: it lists the topics it is about to close, asks, and
-then says which were closed. The count is on Manage's own face, so you see it without opening
-anything (with no idle agents, Manage shows a disabled "No idle agents" line instead). Each conversation is kept, and the next message in a topic starts its agent again where
+timeout reclaims it (the dim blue dot). Clicking the **Idle** counter in the status bar ends all
+of them at once: it lists the topics it is about to close, asks, and then says which were closed.
+Each conversation is kept, and the next message in a topic starts its agent again where
 it left off. A topic that starts working in the meantime is left running, and starred topics are
 closed like the rest. **Clear all topics** is an icon button beside Topics in the sidebar header.
 Beside it, **Mark all read** clears every unread badge in the topic list and tells the daemon the
@@ -203,15 +222,15 @@ reply opens it in place.
 
 **Low attention.** With several agents working at once the list keeps moving: every running
 topic's dot pulses, and its unread count climbs in a bright blue pill with each message. Turn on
-**Low attention** in the **⚙ Menu** at the bottom of the topic list and that stops: a running
+**Low attention** in the status bar and that stops: a running
 topic's dot stays bright blue but holds still, and unread counts turn grey. A question waiting on
 you (its amber dot still pulses), a failed turn and a reply you have not read still move to the
 top in green, so they are the only things that stand out. The setting is kept in this browser
 only. **Theme** (`System` / `Dark` / `Light`, applied before first paint and shared with the code
 viewer and syntax highlighting) and **Language** (`English` / `简体中文`, switched in place without
-reloading) are also kept in this browser under the same menu, alongside **All settings** (the page
-above), Notifications and **Skills**;
-**Close idle** is in **Manage** beside it, and **Clear all topics** is an icon button beside Topics in the sidebar header.
+reloading) are also toggled directly in the status bar alongside **Notifications** and **Close
+idle**; **Settings** and **Skills** live in the activity bar, and **Clear all topics** is an icon
+button beside Topics in the sidebar header.
 
 **Code in a reply.** Every code block has a bar naming its language, with **Wrap** (long lines
 break inside the block instead of scrolling sideways) and **Copy** (the code exactly as written,
