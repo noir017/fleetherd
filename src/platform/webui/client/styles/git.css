@@ -116,3 +116,30 @@
   .gf-edit{min-height:32px}
   #git-comment-text{font-size:16px}
 }
+
+/* ── Workbench diff editor & staged comments (P3-3) ───────────────────────── */
+.fh-diff-editor{display:flex;flex-direction:column;height:100%;min-height:0;outline:none;background:var(--fh-bg,var(--bg))}
+.fh-diff-editor-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 10px;border-bottom:1px solid var(--fh-line,var(--line));background:var(--fh-bg-side,var(--bg-bar));font-size:12px}
+.fh-diff-editor-meta{display:flex;align-items:center;gap:6px;min-width:0;flex:1}
+.fh-diff-editor-path{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--fh-fg-hi,var(--fg))}
+.fh-diff-editor-ref{flex:none;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;padding:1px 6px;border-radius:2px;background:var(--fh-bg-widget,var(--bg-code));color:var(--fh-fg-dim,var(--dim));border:1px solid var(--fh-line,var(--line))}
+.fh-diff-editor-controls{display:flex;align-items:center;gap:6px;flex:none}
+.fh-diff-hunk-counter{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;padding:2px 6px;border-radius:999px;background:var(--fh-bg-widget,var(--bg-code));border:1px solid var(--fh-line,var(--line));color:var(--fh-fg-dim,var(--dim))}
+.fh-diff-editor-body{flex:1;min-height:0;display:flex;flex-direction:column}
+.fh-diff-viewer{flex:1;min-height:0;display:flex;flex-direction:column}
+.fh-diff-code,.fh-diff-mount{flex:1;min-height:0;overflow:auto}
+.fh-diff-line--hunk.is-hunk-active,.cm-changedLine.is-hunk-active,.cm-deletedChunk.is-hunk-active{outline:2px solid var(--fh-accent,var(--accent));outline-offset:-2px;background:var(--fh-toggle,var(--accent-tint))}
+.fh-diff-queue{border-top:1px solid var(--fh-line,var(--line));background:var(--fh-bg-widget,var(--bg-bar));font-size:12px}
+.fh-diff-queue-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 10px;border-bottom:1px solid var(--fh-line,var(--line))}
+.fh-diff-queue-toggle{display:inline-flex;align-items:center;gap:6px;background:none;border:0;padding:0;color:var(--fh-fg-hi,var(--fg));font:inherit;font-weight:600;cursor:pointer}
+.fh-diff-queue-badge{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 6px;border-radius:999px;background:var(--fh-accent,var(--accent));color:#fff;font-size:11px;font-weight:600}
+.fh-diff-queue-acts{display:flex;align-items:center;gap:6px}
+.fh-diff-queue-list{max-height:220px;overflow-y:auto;padding:6px 10px;display:flex;flex-direction:column;gap:6px}
+.fh-diff-queue-item{padding:6px 8px;border:1px solid var(--fh-line,var(--line));border-radius:4px;background:var(--fh-bg,var(--bg))}
+.fh-diff-queue-item-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px}
+.fh-diff-queue-loc{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;color:var(--fh-fg-dim,var(--dim));overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fh-diff-queue-item-acts{display:flex;align-items:center;gap:2px;flex:none}
+.fh-diff-queue-text{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.45;color:var(--fh-fg,var(--fg))}
+.fh-diff-queue-edit{display:flex;flex-direction:column;gap:6px}
+.fh-diff-queue-edit-input{width:100%;box-sizing:border-box;resize:vertical;padding:6px 8px;border-radius:2px;border:1px solid var(--fh-input-line,var(--line));background:var(--fh-input,var(--bg-code));color:var(--fh-fg,var(--fg));font:inherit}
+.fh-diff-queue-edit-acts{display:flex;justify-content:flex-end;gap:6px}
