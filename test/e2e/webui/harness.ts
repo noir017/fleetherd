@@ -9,11 +9,17 @@ export type FakeAgentMode = 'ok' | 'rich' | 'slow' | 'prompt-error' | 'refuse' |
 
 export const TEST_SECRET = 'e2e-test-secret-token';
 
+export interface GatewayPluginOption {
+  readonly path: string;
+  readonly config?: unknown;
+}
+
 export interface GatewayOptions {
   secret?: string;
   title?: string;
   initialMode?: FakeAgentMode;
   readyTimeoutMs?: number;
+  plugins?: readonly GatewayPluginOption[];
 }
 
 export interface GatewayHandle {
@@ -118,8 +124,19 @@ function buildConfigYaml(params: {
   attachmentsDir: string;
   modeFile: string;
   promptLogFile: string;
+  plugins?: readonly GatewayPluginOption[];
 }): string {
   const quote = (value: string): string => JSON.stringify(value);
+  const pluginLines: string[] = [];
+  if (params.plugins && params.plugins.length > 0) {
+    pluginLines.push('    plugins:');
+    for (const plugin of params.plugins) {
+      pluginLines.push(`      - path: ${quote(plugin.path)}`);
+      if (plugin.config !== undefined) {
+        pluginLines.push(`        config: ${JSON.stringify(plugin.config)}`);
+      }
+    }
+  }
   return [
     'version: 1',
     'platforms:',
@@ -134,6 +151,7 @@ function buildConfigYaml(params: {
     '      enabled: true',
     '    instructions:',
     '      enabled: true',
+    ...pluginLines,
     'agents:',
     '  - id: alpha',
     '    harness: custom',
@@ -233,7 +251,16 @@ export async function startGateway(options: GatewayOptions = {}): Promise<Gatewa
   fs.writeFileSync(promptLogFile, '');
   fs.writeFileSync(
     configPath,
-    buildConfigYaml({ port, secret, title, workDir, attachmentsDir, modeFile, promptLogFile })
+    buildConfigYaml({
+      port,
+      secret,
+      title,
+      workDir,
+      attachmentsDir,
+      modeFile,
+      promptLogFile,
+      plugins: options.plugins,
+    })
   );
 
   const logs: string[] = [];
