@@ -8,7 +8,7 @@ export default tseslint.config(
     // Worktrees other sessions park inside the repo, kept out of git by `.git/info/exclude`: they
     // are whole checkouts of this tree, often mid-edit, and linting them is never meant — `eslint .`
     // walking into one turns another session's work in progress into this one's errors.
-    ignores: ['dist/**', 'node_modules/**', 'coverage/**', '*.config.js', '*.config.ts', '.claude/worktrees/**', '.codebuddy/worktrees/**', '.worktrees/**'],
+    ignores: ['dist/**', 'node_modules/**', 'coverage/**', 'test-results/**', 'playwright-report/**', 'blob-report/**', '*.config.js', '*.config.ts', '.claude/worktrees/**', '.codebuddy/worktrees/**', '.worktrees/**'],
   },
   {
     // The web UI's client script as it was moved out of page.ts (refactor Phase 1 Step 1A):
@@ -19,7 +19,7 @@ export default tseslint.config(
   },
   ...tseslint.configs.recommended,
   {
-    files: ['src/**/*.ts'],
+    files: ['src/**/*.ts', 'test/e2e/**/*.ts'],
     rules: {
       '@typescript-eslint/no-unused-vars': [
         'error',
