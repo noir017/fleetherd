@@ -13,6 +13,7 @@ let seededIds: Record<string, string> = {};
 
 const ACTIVE_TOPIC = 'API workbench topic';
 const NEW_TOPIC = 'Fresh setup topic';
+const MOBILE_NEW_TOPIC = 'Fresh mobile topic';
 
 test.describe('wb2-api: 5 backend + frontend workbench integrations', () => {
   test.beforeAll(async () => {
@@ -23,6 +24,7 @@ test.describe('wb2-api: 5 backend + frontend workbench integrations', () => {
     const seeded = await seedTopics(gateway, [
       { title: ACTIVE_TOPIC, message: 'Check status permissions and file git badges', mode: 'rich' },
       { title: NEW_TOPIC },
+      { title: MOBILE_NEW_TOPIC },
     ]);
     seededIds = seeded.topics;
   });
@@ -31,7 +33,7 @@ test.describe('wb2-api: 5 backend + frontend workbench integrations', () => {
     await gateway?.stop();
   });
 
-  test('desktop: status bar version, new topic dir grid + one-step setup, file git badges, and permission switcher', async ({ page }) => {
+  test('desktop: status bar version, new topic /agent launcher + folder picker, file git badges, and permission switcher', async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await loginViaUi(page, gateway.baseUrl, gateway.secret);
 
@@ -148,7 +150,7 @@ test.describe('wb2-api: 5 backend + frontend workbench integrations', () => {
     await expect.poll(() => revertedBody).toEqual({ action: 'revert', name: 'deploy-check', id: 'abcdef1' });
   });
 
-  test('mobile: new topic dir grid and status permission chip render cleanly', async ({ page }) => {
+  test('mobile: new topic /agent launcher + folder picker and status permission chip render cleanly', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await loginViaUi(page, gateway.baseUrl, gateway.secret);
 
@@ -156,5 +158,19 @@ test.describe('wb2-api: 5 backend + frontend workbench integrations', () => {
     await expect(activeRow).toBeVisible();
     await activeRow.click();
     await expect(page.locator('.wb-stack-detail-body .wb-topic-editor #status .st-perm')).toBeVisible();
+
+    await page.goto(gateway.baseUrl);
+    const freshRow = page.locator('.wb-stack-list-body .topic-item').filter({ hasText: MOBILE_NEW_TOPIC }).first();
+    await expect(freshRow).toBeVisible();
+    await freshRow.click();
+    const mobileCard = page.locator('.wb-stack-detail-body .wb-topic-editor .launch .agent-card.def');
+    await expect(mobileCard).toBeVisible();
+    await expect(page.locator('.wb-stack-detail-body .wb-topic-editor .launch .launch-dirs')).toHaveCount(0);
+    const sendAgentReq = page.waitForRequest((req) => req.url().includes('/api/send') && req.method() === 'POST');
+    await mobileCard.click();
+    const req = await sendAgentReq;
+    expect(String((req.postDataJSON() as { text?: string }).text ?? '')).toMatch(/^\/agent \S+$/);
+    await expect(page.locator('.wb-stack-detail-body .wb-topic-editor .wd-picker')).toBeVisible();
+    await expect(page.locator('.wb-stack-detail-body .wb-topic-editor #status .st-model')).toBeVisible();
   });
 });
