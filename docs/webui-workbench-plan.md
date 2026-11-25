@@ -134,6 +134,138 @@ src/platform/webui/client/
 - 滚动条 10px，滑块 `rgba(121,121,121,.4)`。
 - 图标沿用 `icons.ts`，描边 1.5（AGENTS.md：只用内联 SVG）。
 
+### 4.3 页面一览
+
+截图取自线框稿（2026-11-25）。以线框稿为准，改了线框稿就重截这里的图。地址都是相对 `webui-workbench-mockup.html` 的。
+
+#### 宽屏（1440×900）
+
+**话题对话 + 右侧「更改」分栏，编辑区顶部是标签条** · `#topic`
+
+![话题对话 + 右侧「更改」分栏，编辑区顶部是标签条](images/workbench/desktop-01-topic.png)
+
+**文件：目录树、别处改过的提示、编辑器** · `#files`
+
+![文件：目录树、别处改过的提示、编辑器](images/workbench/desktop-02-files.png)
+
+**终端：对话下方的底部面板，多个会话用标签切换** · `#term`
+
+![终端：对话下方的底部面板，多个会话用标签切换](images/workbench/desktop-03-term.png)
+
+**命令面板（Ctrl K）** · `#palette`
+
+![命令面板（Ctrl K）](images/workbench/desktop-04-palette.png)
+
+**话题行的 ⋯ 菜单** · `#menu`
+
+![话题行的 ⋯ 菜单](images/workbench/desktop-05-menu.png)
+
+**删除确认** · `#confirm`
+
+![删除确认](images/workbench/desktop-06-confirm.png)
+
+**新话题：选智能体和目录** · `#new`
+
+![新话题：选智能体和目录](images/workbench/desktop-07-new.png)
+
+**定时任务详情** · `#tasks`
+
+![定时任务详情](images/workbench/desktop-08-tasks.png)
+
+**编辑定时任务** · `#task-edit`
+
+![编辑定时任务](images/workbench/desktop-09-task-edit.png)
+
+**定时 · 会话：每次运行开出的话题** · `#sessions`
+
+![定时 · 会话：每次运行开出的话题](images/workbench/desktop-10-sessions.png)
+
+**历史：侧栏切到历史，对话标签仍开着** · `#history`
+
+![历史：侧栏切到历史，对话标签仍开着](images/workbench/desktop-11-history.png)
+
+**复盘详情** · `#reviews`
+
+![复盘详情](images/workbench/desktop-12-reviews.png)
+
+**待处理的偏好建议** · `#prefs`
+
+![待处理的偏好建议](images/workbench/desktop-13-prefs.png)
+
+**技能页：开关、文件、编辑器、改动记录** · `#skills`
+
+![技能页：开关、文件、编辑器、改动记录](images/workbench/desktop-14-skills.png)
+
+**网关设置 · 智能体** · `#settings`
+
+![网关设置 · 智能体](images/workbench/desktop-15-settings.png)
+
+**网关设置 · 子代理、会话、回复、复盘** · `#settings-gw`
+
+![网关设置 · 子代理、会话、回复、复盘](images/workbench/desktop-16-settings-gw.png)
+
+**指令文件** · `#instr`
+
+![指令文件](images/workbench/desktop-17-instr.png)
+
+**本设备** · `#device`
+
+![本设备](images/workbench/desktop-18-device.png)
+
+**登录** · `#login`
+
+![登录](images/workbench/desktop-19-login.png)
+
+#### 640–1023px（820 宽竖屏）
+
+**侧栏收起 / 列表抽屉 / 更改抽屉** · `?t#topic`、`?t&drawer=list#topic`、`?t&drawer=pane#topic`
+
+![820 宽的三种状态](images/workbench/tablet.png)
+
+#### 手机（390×844）
+
+**话题：列表（左滑操作）、长按面板、对话、选模型、新话题** · `?gallery=1`
+
+![话题：列表（左滑操作）、长按面板、对话、选模型、新话题](images/workbench/phone-1-topics.png)
+
+**话题工具：更改、diff 评论、文件、编辑文件、终端** · `?gallery=2`
+
+![话题工具：更改、diff 评论、文件、编辑文件、终端](images/workbench/phone-2-tools.png)
+
+**定时与历史** · `?gallery=3`
+
+![定时与历史](images/workbench/phone-3-tasks-history.png)
+
+**更多、复盘、复盘详情、偏好建议** · `?gallery=4`
+
+![更多、复盘、复盘详情、偏好建议](images/workbench/phone-4-more-reviews.png)
+
+**技能、技能页、设置、设置 · 智能体** · `?gallery=5`
+
+![技能、技能页、设置、设置 · 智能体](images/workbench/phone-5-skills-settings.png)
+
+**设置细项：单选、开关、指令文件** · `?gallery=6`
+
+![设置细项：单选、开关、指令文件](images/workbench/phone-6-settings-detail.png)
+
+**外观与语言、编辑任务、定时 · 会话、删除确认、登录** · `?gallery=7`
+
+![外观与语言、编辑任务、定时 · 会话、删除确认、登录](images/workbench/phone-7-forms.png)
+
+#### 浅色示例
+
+**话题对话** · `?light#topic`
+
+![浅色话题对话](images/workbench/light-desktop-topic.png)
+
+**技能页** · `?light#skills`
+
+![浅色技能页](images/workbench/light-desktop-skills.png)
+
+**手机 · 话题** · `?gallery=1&light`
+
+![浅色手机话题](images/workbench/light-phone-1-topics.png)
+
 ## 5. 拖拽布局（自研）
 
 ### 5.1 接口（P0-1 写进 `workbench/contracts.ts`，之后冻结）
