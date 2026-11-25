@@ -93,9 +93,50 @@ class CodeBlocksControllerImpl implements CodeBlocksController {
   private _hlWarned = false;
   private _hlTimer: ReturnType<typeof setTimeout> | undefined;
   private _hlChunkTimer: ReturnType<typeof setTimeout> | undefined;
+  private _io: IntersectionObserver | null = null;
+  private readonly _observed = new WeakSet<Element>();
+  private readonly _visibleCodes = new Set<Element>();
 
   constructor(deps: CodeBlocksDeps) {
     this._deps = deps;
+    if (typeof IntersectionObserver === 'function') {
+      this._io = new IntersectionObserver(
+        (entries) => this._onIntersect(entries),
+        { root: deps.log, rootMargin: '600px 0px' },
+      );
+    }
+  }
+
+  private _onIntersect(entries: readonly IntersectionObserverEntry[]): void {
+    let live: Element | null | undefined;
+    for (let i = 0; i < entries.length; i++) {
+      const entry = entries[i];
+      if (!entry) continue;
+      const code = entry.target;
+      if (!entry.isIntersecting) {
+        this._visibleCodes.delete(code);
+        continue;
+      }
+      if (code.hasAttribute('data-hl') || !code.isConnected) {
+        this._io?.unobserve(code);
+        this._visibleCodes.delete(code);
+        continue;
+      }
+      this._visibleCodes.add(code);
+      if (live === undefined) live = this._liveEl();
+      const host = code.closest('[data-k]');
+      this._hlApply(code, Boolean(live) && host === live);
+      if (code.hasAttribute('data-hl')) {
+        this._io?.unobserve(code);
+        this._visibleCodes.delete(code);
+      }
+    }
+  }
+
+  private _observeCode(code: Element): void {
+    if (!this._io || code.hasAttribute('data-hl') || this._observed.has(code)) return;
+    this._observed.add(code);
+    this._io.observe(code);
   }
 
   private _hlWarn(e: unknown): void {
@@ -192,16 +233,29 @@ class CodeBlocksControllerImpl implements CodeBlocksController {
       this._hlChunkTimer = undefined;
     }
     const live = this._liveEl();
-    const roots: (HTMLElement | null | undefined)[] = [
-      this._deps.log,
-      ...this._deps.getExtraRoots(),
-    ];
     const pending: Element[] = [];
+    if (this._io) {
+      for (const code of this._visibleCodes) {
+        if (!code.isConnected || code.hasAttribute('data-hl')) {
+          this._visibleCodes.delete(code);
+          this._io.unobserve(code);
+          continue;
+        }
+        pending.push(code);
+      }
+      const logCodes = this._deps.log.querySelectorAll('.cb pre>code[class*="language-"]:not([data-hl])');
+      for (let i = logCodes.length - 1; i >= 0; i--) {
+        const code = logCodes[i];
+        if (code) this._observeCode(code);
+      }
+    }
+    const roots: (HTMLElement | null | undefined)[] = this._io
+      ? [...this._deps.getExtraRoots()]
+      : [this._deps.log, ...this._deps.getExtraRoots()];
     for (let r = 0; r < roots.length; r++) {
       const root = roots[r];
       if (!root) continue;
       const codes = root.querySelectorAll('.cb pre>code[class*="language-"]:not([data-hl])');
-      // Walk bottom-up so visible tail blocks in long transcripts highlight first.
       for (let i = codes.length - 1; i >= 0; i--) {
         const code = codes[i];
         if (code) pending.push(code);
@@ -221,6 +275,10 @@ class CodeBlocksControllerImpl implements CodeBlocksController {
       if (!code || !code.isConnected) continue;
       const host = code.closest('[data-k]');
       const didWork = this._hlApply(code, Boolean(live) && host === live);
+      if (code.hasAttribute('data-hl')) {
+        this._io?.unobserve(code);
+        this._visibleCodes.delete(code);
+      }
       if (didWork && i < pending.length && now() >= deadline) {
         this._hlChunkTimer = setTimeout(() => {
           this._hlChunkTimer = undefined;
@@ -310,6 +368,9 @@ class CodeBlocksControllerImpl implements CodeBlocksController {
       clearTimeout(this._hlChunkTimer);
       this._hlChunkTimer = undefined;
     }
+    this._io?.disconnect();
+    this._io = null;
+    this._visibleCodes.clear();
     this._disposables.dispose();
   }
 }

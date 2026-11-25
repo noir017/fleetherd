@@ -365,7 +365,7 @@
 .wb-topic-editor .m.own{background:var(--fh-own);border-left:2px solid var(--fh-own-edge);border-radius:0 var(--fh-radius-card) var(--fh-radius-card) 0;padding:10px 14px;color:var(--fh-fg-hi)}
 .wb-topic-editor .m .t{font-size:var(--fh-fs-xs);color:var(--fh-fg-dim);margin-top:4px}
 .wb-topic-editor .b :not(pre)>code{background:var(--fh-bg-code);font-size:var(--fh-fs-sm);padding:1px 4px;border-radius:3px}
-.wb-topic-editor .b .cb{background:var(--fh-bg-side);border:1px solid var(--fh-line);border-radius:var(--fh-radius-card)}
+.wb-topic-editor .b .cb{background:var(--fh-bg-side);border:1px solid var(--fh-line);border-radius:var(--fh-radius-card);contain:layout style}
 .wb-topic-editor .b .cb .cb-h{background:var(--fh-bg-widget);border-bottom:1px solid var(--fh-line)}
 .wb-topic-editor .tl{border:1px solid var(--fh-line);border-radius:var(--fh-radius-card);padding:5px 10px;color:var(--fh-fg-dim);font-size:var(--fh-fs-sm);margin:6px 0;gap:8px;align-items:center;background:var(--fh-bg-side)}
 .wb-topic-editor .tl:hover{background:var(--fh-hover);color:var(--fh-fg)}

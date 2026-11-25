@@ -425,4 +425,69 @@ describe('createTranscriptController', () => {
 
     h.controller.dispose();
   });
+
+  it('lazily highlights #log code blocks via IntersectionObserver only when intersecting', async () => {
+    const origIO = globalThis.IntersectionObserver;
+    const observed = new Set<Element>();
+    let ioCallback: IntersectionObserverCallback | null = null;
+    class FakeIntersectionObserver {
+      readonly root: Element | Document | null = null;
+      readonly rootMargin = '600px 0px';
+      readonly thresholds = [0];
+      constructor(cb: IntersectionObserverCallback) {
+        ioCallback = cb;
+      }
+      observe(el: Element) {
+        observed.add(el);
+      }
+      unobserve(el: Element) {
+        observed.delete(el);
+      }
+      disconnect() {
+        observed.clear();
+      }
+      takeRecords(): IntersectionObserverEntry[] {
+        return [];
+      }
+    }
+    globalThis.IntersectionObserver = FakeIntersectionObserver as unknown as typeof IntersectionObserver;
+    const hlSpy = vi.fn((src: string) => [[0, src.length, 'tok-kw'] as const]);
+    try {
+      const { createCodeBlocksController } = await import('./code-blocks.js');
+      const log = document.createElement('div');
+      document.body.append(log);
+      log.innerHTML =
+        '<div data-k="2:m0"><div class="cb"><pre><code class="language-ts">const a = 1;</code></pre></div></div>' +
+        '<div data-k="2:m1"><div class="cb"><pre><code class="language-ts">const b = 2;</code></pre></div></div>';
+      const ctrl = createCodeBlocksController({
+        log,
+        getExtraRoots: () => [],
+        getTopic: () => 't1',
+        getTopics: () => [{ id: 't1', title: 'T1' }],
+        codeView: () => Promise.resolve({ highlighter: () => Promise.resolve(hlSpy) }),
+        getIcons: () => ICONS,
+        copyText: (_s, cb) => cb(true),
+      });
+      const codes = Array.from(log.querySelectorAll('code'));
+      ctrl.sweep();
+      expect(observed.size).toBe(2);
+      expect(hlSpy).not.toHaveBeenCalled();
+
+      // Simulate only the second code block entering the viewport.
+      ioCallback!(
+        [{ target: codes[1]!, isIntersecting: true } as unknown as IntersectionObserverEntry],
+        {} as IntersectionObserver,
+      );
+      await new Promise((r) => setTimeout(r, 0));
+      expect(codes[1]!.hasAttribute('data-hl')).toBe(true);
+      expect(codes[0]!.hasAttribute('data-hl')).toBe(false);
+      expect(observed.has(codes[1]!)).toBe(false);
+      expect(observed.has(codes[0]!)).toBe(true);
+
+      ctrl.dispose();
+      log.remove();
+    } finally {
+      globalThis.IntersectionObserver = origIO;
+    }
+  });
 });
