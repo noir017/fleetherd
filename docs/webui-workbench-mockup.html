@@ -3,11 +3,15 @@
      editor tabs, the remaining pages and the phone shell (2026-11-25). VS Code Dark Modern / Light Modern colours
      and control styles. Not product code.
      One set of components (sidebar views, editors, topic tools, sheets) rendered by two shells:
-     - desktop workbench, by hash: #topic (default) #new #tasks #history #reviews #prefs #skills #settings
-     - phone stack shell, below 640px or with ?m, by hash: #topics #topic #sheet-model #sheet-row #new
-       #topic-changes #topic-diff #topic-files #topic-file #topic-term #tasks #task #history #history-rec
-       #more #reviews #review #prefs #skills #skill #settings #settings-agents
-     ?gallery lays every phone page out side by side (?gallery=N for one group). ?light for the light theme. -->
+     - desktop workbench, by hash: #topic (default) #files #term #palette #menu #confirm #new #tasks #task-edit
+       #sessions #history #reviews #prefs #skills #settings #settings-gw #instr #device #login
+     - 640–1023px (or ?t): the same workbench with the sidebar and the tool pane as drawers (?drawer=list|pane)
+     - phone stack shell, below 640px or with ?m, by hash: #topics #topic #sheet-model #sheet-row #confirm #new
+       #topic-changes #topic-diff #topic-files #topic-file #topic-term #tasks #task #task-edit #sessions #history
+       #history-rec #more #appearance #reviews #review #prefs #skills #skill #settings #settings-agents
+       #settings-delegation #settings-session #settings-reply #settings-review #settings-instr #login
+     ?gallery lays every phone page out side by side (?gallery=N for one group, ?gallery=t for the 820px drawers).
+     ?light for the light theme. -->
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
@@ -68,7 +72,7 @@ code{font:12px "Cascadia Code","JetBrains Mono",Consolas,"DejaVu Sans Mono",mono
 .rows{flex:1;overflow:auto;padding:2px 0 8px}
 .grp{font-size:11px;font-weight:600;color:var(--dim);padding:10px 14px 4px;text-transform:uppercase;letter-spacing:.05em}
 .row{display:grid;grid-template-columns:10px minmax(0,1fr) auto;gap:2px 8px;align-items:center;padding:7px 14px;border:1px solid transparent}
-.row:hover{background:var(--hover)}.row.on{background:var(--sel);border-color:var(--focus);color:var(--fg-hi)}
+.row:hover,.row.hv{background:var(--hover)}.row.on{background:var(--sel);border-color:var(--focus);color:var(--fg-hi)}
 .row .d{width:8px;height:8px;border-radius:50%;background:var(--idle)}.d.run{background:var(--ok)}.d.ask{background:var(--warn)}.d.bad{background:var(--err)}
 .row .t{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.row .m{grid-column:2;color:var(--dim);font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .row .a{font-size:11px;color:var(--dim)}
@@ -158,6 +162,62 @@ code{font:12px "Cascadia Code","JetBrains Mono",Consolas,"DejaVu Sans Mono",mono
 .dirs{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:4px}
 .dir{padding:4px 10px;border:1px solid transparent;border-radius:2px;background:var(--btn2);font:12px "Cascadia Code",Consolas,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.dir:hover{background:var(--btn2-hov)}
 .dir.on{background:var(--accent);color:#fff}.dir.more{background:none;border:1px dashed var(--field-line);color:var(--dim);font-family:inherit}
+
+/* forms, dropdowns */
+.dd{display:inline-flex;align-items:center;justify-content:flex-start;gap:8px;min-width:180px;padding:3px 6px 3px 8px;border:1px solid var(--field-line);border-radius:2px;background:var(--field);color:var(--fg);font-size:12px;grid-row:span 2;white-space:nowrap}
+.dd svg.i{width:14px;height:14px;margin-left:auto;color:var(--dim)}
+.fld{margin-bottom:16px}.fld>label{display:block;margin-bottom:6px;font-size:12px;font-weight:600;color:var(--fg-hi)}.fld .hint{margin-top:5px;font-size:11.5px;color:var(--dim)}
+.inp{display:flex;align-items:center;min-height:28px;padding:4px 8px;border:1px solid var(--field-line);border-radius:2px;background:var(--field);color:var(--fg-hi);font-size:13px}
+.inp.ta{min-height:76px;align-items:flex-start;font:12px/1.6 "Cascadia Code","JetBrains Mono",Consolas,monospace}.inp.pl{color:var(--ph)}
+.frow{display:flex;flex-wrap:wrap;align-items:center;gap:8px}.sg.inl{display:inline-flex}
+.tagx{display:inline-flex;align-items:center;gap:3px;padding:1px 3px 1px 8px;border-radius:2px;background:var(--btn2);color:var(--fg);font-size:11.5px}.tagx svg.i{width:12px;height:12px}
+.fbar{display:flex;justify-content:flex-end;gap:8px}
+.btn.dg{background:var(--err);color:#fff}
+.files.box.solo{border-radius:4px;border-bottom:1px solid var(--line);margin-bottom:6px}.files .fr .x{color:var(--dim);font-family:inherit}
+/* file tree (topic tool) */
+.tree{flex:none;max-height:40%;overflow:auto;padding:4px 0;border-bottom:1px solid var(--line)}
+.tr{display:flex;align-items:center;gap:5px;height:22px;padding-right:12px;border:1px solid transparent;font-size:12.5px;white-space:nowrap}
+.tr:hover{background:var(--hover)}.tr.on{background:var(--sel);border-color:var(--focus);color:var(--fg-hi)}
+.tr svg.i{width:15px;height:15px;color:var(--dim)}.tr svg.fd{color:var(--link)}
+.tr .tw{width:14px;display:grid;place-items:center}.tr .tw svg.i{width:12px;height:12px}
+.tr .gm{margin-left:auto;font:700 11px "Cascadia Code",Consolas,monospace;color:var(--g-mod)}
+.banner{flex:none;display:flex;align-items:center;gap:8px;padding:6px 8px 6px 12px;border-bottom:1px solid var(--line);background:rgba(204,167,0,.12);font-size:12px;color:var(--fg-hi)}
+.banner svg.i{width:15px;height:15px;color:var(--warn)}.banner span{flex:1}
+.pane .edh{flex:none}
+/* bottom panel (terminal) */
+.bp{position:relative;flex:none;height:42%;display:flex;flex-direction:column;border-top:1px solid var(--line);background:var(--bg)}
+.bp .grip{position:absolute;left:0;right:0;top:-4px;height:8px;cursor:row-resize}
+.bph{flex:none;display:flex;align-items:center;gap:2px;height:35px;padding-right:6px;background:var(--panel);box-shadow:inset 0 -1px 0 var(--line)}
+.bph .tabs{background:none;box-shadow:none}.bph .sp{flex:1}
+.bp .term{flex:1;min-height:0;overflow:auto}
+/* overlays */
+.ov{position:fixed;inset:0;z-index:20}.ov.dim{background:rgba(0,0,0,.36)}
+kbd{display:inline-block;min-width:18px;padding:0 4px;border:1px solid var(--field-line);border-bottom-width:2px;border-radius:3px;background:var(--bg);color:var(--dim);font:11px/15px "Cascadia Code",Consolas,monospace;text-align:center}
+.qp{position:absolute;top:52px;left:50%;width:620px;margin-left:-310px;overflow:hidden;background:var(--widget);border:1px solid var(--line);border-radius:6px;box-shadow:0 8px 28px rgba(0,0,0,.36)}
+.qp .qi{display:flex;align-items:center;gap:6px;margin:8px;padding:5px 8px;border:1px solid var(--focus);border-radius:2px;background:var(--field);color:var(--fg-hi)}.qp .qi svg.i{width:15px;height:15px;color:var(--dim)}
+.qp .qg{padding:8px 12px 3px;font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--dim)}
+.qp .qr{display:flex;align-items:center;gap:8px;height:28px;padding:0 12px;border:1px solid transparent;color:var(--fg)}.qp .qr svg.i{width:15px;height:15px;color:var(--dim)}
+.qp .qr.on{background:var(--sel);border-color:var(--focus);color:var(--fg-hi)}.qp .qr small{font-size:11.5px;color:var(--dim)}.qp .qr .k2{margin-left:auto;font-size:11px;color:var(--dim)}
+.qp .qf{display:flex;gap:16px;margin-top:6px;padding:7px 12px;border-top:1px solid var(--line);font-size:11px;color:var(--dim)}
+.cmenu{position:absolute;min-width:210px;padding:4px 0;background:var(--widget);border:1px solid var(--line);border-radius:5px;box-shadow:0 6px 20px rgba(0,0,0,.36)}
+.cmenu .mx{display:flex;align-items:center;gap:9px;height:26px;margin:0 4px;padding:0 10px;border-radius:3px;font-size:12.5px;color:var(--fg)}.cmenu .mx svg.i{width:15px;height:15px;color:var(--dim)}
+.cmenu .mx.on{background:var(--sel);color:var(--fg-hi)}.cmenu .mx.dg,.cmenu .mx.dg svg.i{color:var(--err)}.cmenu .mx kbd{margin-left:auto}
+.cmenu .sep{height:1px;margin:4px 0;background:var(--line)}
+.dlg{position:absolute;top:28%;left:50%;width:440px;margin-left:-220px;padding:18px 20px 16px;background:var(--widget);border:1px solid var(--line);border-radius:6px;box-shadow:0 8px 28px rgba(0,0,0,.36)}
+.dlg h3{margin:0 0 8px;font-size:14px;color:var(--fg-hi)}.dlg p{margin:0 0 16px;font-size:12.5px;color:var(--dim)}
+/* login */
+.login{min-height:100%;display:grid;place-items:center;background:var(--panel)}
+.lg{width:340px;padding:28px 28px 24px;border:1px solid var(--line);border-radius:6px;background:var(--bg)}
+.lgo{width:40px;height:40px;margin-bottom:14px;border-radius:6px;background:var(--accent);color:#fff;display:grid;place-items:center;font-weight:700;font-size:18px}
+.lg h1{margin:0 0 4px;font-size:18px;color:var(--fg-hi)}.lg p{margin:0 0 16px;font-size:12.5px;color:var(--dim)}
+.lg .inp{margin-bottom:6px;border-color:var(--err);letter-spacing:.2em}.lg .er{margin-bottom:14px;font-size:12px;color:var(--err)}
+.lg .btn{width:100%;padding:7px 0}.lg .ln{margin-top:14px;font-size:11.5px;color:var(--dim)}
+/* 640–1023px: sidebar and tool pane as drawers */
+body.tablet .shell{position:relative;grid-template-columns:52px minmax(0,1fr)}
+body.tablet .list{position:absolute;top:0;bottom:22px;left:52px;z-index:8;width:300px;display:none;box-shadow:6px 0 18px rgba(0,0,0,.3)}
+body.tablet .pane{position:absolute;top:0;bottom:22px;right:0;z-index:8;width:min(520px,88%);display:none;box-shadow:-6px 0 18px rgba(0,0,0,.3)}
+body.tablet.drw-list .list,body.tablet.drw-pane .pane{display:flex}
+.scr{position:absolute;top:0;bottom:22px;left:52px;right:0;z-index:7;background:rgba(0,0,0,.4)}
 
 /* ================= phone stack shell (portrait) ================= */
 body.phone{--safe:env(safe-area-inset-bottom,0px);font-size:15px;line-height:1.4;overflow:hidden}
@@ -297,6 +357,19 @@ body.phone .dv{overflow-x:auto}
 .sheet .q{margin:12px 16px 0;padding:8px 10px;border-radius:8px;background:var(--bg);font:12px/1.55 "Cascadia Code",Consolas,monospace;color:var(--dim);white-space:pre;overflow:hidden}
 .sheet .ta{margin:10px 16px 0;min-height:84px;padding:10px 12px;border:1px solid var(--focus);border-radius:10px;background:var(--field);font-size:15px;color:var(--fg-hi)}
 .sheet .mbtns{padding:12px 16px 0}
+/* phone forms, alert, login */
+.mi.ta{align-items:flex-start;min-height:92px;font:14px/1.6 "Cascadia Code","JetBrains Mono",Consolas,monospace;color:var(--fg-hi)}
+.mi .seg{margin:0}.mi .iv{color:var(--fg-hi);font-size:15.5px}
+.mi .tagx{padding:3px 6px 3px 11px;border-radius:13px;font-size:13px}
+.alert{position:absolute;top:50%;left:50%;z-index:6;width:280px;margin:-100px 0 0 -140px;overflow:hidden;background:var(--widget);border-radius:14px;text-align:center}
+.alert b{display:block;padding:20px 16px 6px;font-size:16.5px;color:var(--fg-hi)}.alert p{margin:0;padding:0 18px 18px;font-size:13.5px;color:var(--dim)}
+.alert .ab{display:flex;border-top:1px solid var(--line)}.alert .ab button{flex:1;height:46px;font-size:16px;color:var(--link)}.alert .ab button+button{border-left:1px solid var(--line)}.alert .ab .dg{color:var(--err);font-weight:600}
+.ms .login{flex:1;min-height:0;background:var(--bg)}
+body.phone .login{padding:0 24px}body.phone .lg{width:100%;max-width:360px;padding:0;border:0;background:none}
+body.phone .lgo{width:56px;height:56px;margin-bottom:18px;border-radius:14px;font-size:24px}
+body.phone .lg h1{font-size:26px}body.phone .lg p{font-size:15px}
+body.phone .lg .inp{height:48px;padding:0 14px;border-radius:10px;font-size:16px}body.phone .lg .er{font-size:13.5px}
+body.phone .lg .btn{height:48px;border-radius:10px;font-size:16px;font-weight:600}body.phone .lg .ln{font-size:13px}
 /* phone gallery */
 body.gal{height:auto;background:var(--panel)}
 .gl{padding:18px 24px 28px}
@@ -305,15 +378,17 @@ body.gal{height:auto;background:var(--panel)}
 .gl figure{margin:0;width:390px}
 .gl iframe{display:block;width:390px;height:844px;border:1px solid var(--line);border-radius:32px;background:var(--bg)}
 .gl figcaption{margin-top:8px;text-align:center;font-size:12.5px;color:var(--fg)}
+.gl figure.tb{width:820px}.gl figure.tb iframe{width:820px;height:1100px;border-radius:18px}
 </style>
 </head>
 <body>
 <script>
 const Q=new URLSearchParams(location.search);
 if(Q.has('light'))document.documentElement.dataset.theme='light';
-const P={chat:'<path d="M5 4.5h14A1.5 1.5 0 0 1 20.5 6v9a1.5 1.5 0 0 1-1.5 1.5h-8.5L6 20v-3.5H5A1.5 1.5 0 0 1 3.5 15V6A1.5 1.5 0 0 1 5 4.5z"/>',history:'<path d="M3.5 12a8.5 8.5 0 1 0 8.5-8.5 9.2 9.2 0 0 0-6.36 2.59L3.5 8"/><path d="M3.5 3.5V8h4.5"/><path d="M12 7.5V12l3 1.8"/>',clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5.2l3.2 2"/>',eye:'<path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',book:'<path d="M12 6.5C10 5 7 4.6 3 5v13c4-.4 7 0 9 1.5 2-1.5 5-1.9 9-1.5V5c-4-.4-7 0-9 1.5zM12 6.5v13"/>',gear:'<circle cx="12" cy="12" r="6.6"/><circle cx="12" cy="12" r="2.4"/><path stroke-width="2.6" stroke-linecap="butt" d="M18.6 12h3M16.67 16.67l2.12 2.12M12 18.6v3M7.33 16.67l-2.12 2.12M5.4 12h-3M7.33 7.33 5.21 5.21M12 5.4v-3M16.67 7.33l2.12-2.12"/>',bell:'<path d="M6 9a6 6 0 0 1 12 0c0 3.6 1.2 5.2 2.2 6.3H3.8C4.8 14.2 6 12.6 6 9z"/><path d="M10 19a2 2 0 0 0 4 0"/>',plus:'<path d="M12 5v14M5 12h14"/>',more:'<circle cx="5.5" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="18.5" cy="12" r="1.6" fill="currentColor" stroke="none"/>',search:'<circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5"/>',git:'<circle cx="6.5" cy="6" r="2.5"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="8" r="2.5"/><path d="M6.5 8.5v7M17.5 10.5c0 3.5-3.5 4.5-8 4.5"/>',folder:'<path d="M3 6.5A1.5 1.5 0 0 1 4.5 5H9l2 2.5h8.5A1.5 1.5 0 0 1 21 9v9.5a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5z"/>',terminal:'<rect x="3" y="4.5" width="18" height="15" rx="2"/><path d="m7 9.5 3 2.5-3 2.5M12.5 15H17"/>',cross:'<path d="M6 6l12 12M18 6 6 18"/>',left:'<path d="M15 5.5 8.5 12l6.5 6.5"/>',right:'<path d="M9 5.5 15.5 12 9 18.5"/>',expand:'<path d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7"/>',mic:'<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21M8.5 21h7"/>',filter:'<path d="M3.5 5h17l-6.5 7.5V19l-4 1.5v-8z"/>',star:'<path d="M12 3l2.53 6.12 6.6.51-5.04 4.3 1.55 6.44L12 16.9l-5.64 3.47 1.55-6.44-5.04-4.3 6.6-.51z"/>',power:'<path d="M12 3v8M6.3 6.8a8 8 0 1 0 11.4 0"/>',remote:'<path d="m4 9 4-4 4 4M8 5v9M20 15l-4 4-4-4M16 19v-9"/>',check:'<path d="m4.5 12.5 5 5L19.5 7"/>',play:'<path d="M8 5.5v13l10-6.5z"/>',pause:'<path d="M9 5.5v13M15 5.5v13"/>',globe:'<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.6 3.7 5.6 3.7 9s-1.2 6.4-3.7 9c-2.5-2.6-3.7-5.6-3.7-9S9.5 5.6 12 3z"/>',moon:'<path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z"/>',sun:'<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4"/>',copy:'<rect x="8.5" y="8.5" width="11" height="11" rx="1.5"/><path d="M15.5 8.5V6A1.5 1.5 0 0 0 14 4.5H6A1.5 1.5 0 0 0 4.5 6v8A1.5 1.5 0 0 0 6 15.5h2.5"/>',refresh:'<path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19.5 4.5v4.2h-4.2"/>',pin:'<path d="M9 4.5h6M10 4.5v5l-3 4h10l-3-4v-5M12 13.5V20"/>',info:'<circle cx="12" cy="12" r="9"/><path d="M12 11v5.5M12 7.6v.1"/>',bulb:'<path d="M9 17.5h6M10 21h4M12 3a6 6 0 0 0-3.6 10.8c.7.6 1.1 1.4 1.1 2.2v1.5h5V16c0-.8.4-1.6 1.1-2.2A6 6 0 0 0 12 3z"/>',file:'<path d="M6 3.5h8l4.5 4.5v12.5H6z"/><path d="M14 3.5V8h4.5"/>',fork:'<circle cx="6" cy="5.5" r="2"/><circle cx="18" cy="5.5" r="2"/><circle cx="12" cy="18.5" r="2"/><path d="M6 7.5V9a3 3 0 0 0 3 3h6a3 3 0 0 0 3-3V7.5M12 12v4.5"/>',trash:'<path d="M4.5 6.5h15M9.5 6.5v-2h5v2M6.5 6.5l1 13h9l1-13"/>',send:'<path d="M12 19V5.5M6 11l6-6 6 6"/>',stop:'<rect x="7" y="7" width="10" height="10" rx="1.5" fill="currentColor" stroke="none"/>'};
+const P={chat:'<path d="M5 4.5h14A1.5 1.5 0 0 1 20.5 6v9a1.5 1.5 0 0 1-1.5 1.5h-8.5L6 20v-3.5H5A1.5 1.5 0 0 1 3.5 15V6A1.5 1.5 0 0 1 5 4.5z"/>',history:'<path d="M3.5 12a8.5 8.5 0 1 0 8.5-8.5 9.2 9.2 0 0 0-6.36 2.59L3.5 8"/><path d="M3.5 3.5V8h4.5"/><path d="M12 7.5V12l3 1.8"/>',clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5.2l3.2 2"/>',eye:'<path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',book:'<path d="M12 6.5C10 5 7 4.6 3 5v13c4-.4 7 0 9 1.5 2-1.5 5-1.9 9-1.5V5c-4-.4-7 0-9 1.5zM12 6.5v13"/>',gear:'<circle cx="12" cy="12" r="6.6"/><circle cx="12" cy="12" r="2.4"/><path stroke-width="2.6" stroke-linecap="butt" d="M18.6 12h3M16.67 16.67l2.12 2.12M12 18.6v3M7.33 16.67l-2.12 2.12M5.4 12h-3M7.33 7.33 5.21 5.21M12 5.4v-3M16.67 7.33l2.12-2.12"/>',bell:'<path d="M6 9a6 6 0 0 1 12 0c0 3.6 1.2 5.2 2.2 6.3H3.8C4.8 14.2 6 12.6 6 9z"/><path d="M10 19a2 2 0 0 0 4 0"/>',plus:'<path d="M12 5v14M5 12h14"/>',more:'<circle cx="5.5" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="18.5" cy="12" r="1.6" fill="currentColor" stroke="none"/>',search:'<circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5"/>',git:'<circle cx="6.5" cy="6" r="2.5"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="8" r="2.5"/><path d="M6.5 8.5v7M17.5 10.5c0 3.5-3.5 4.5-8 4.5"/>',folder:'<path d="M3 6.5A1.5 1.5 0 0 1 4.5 5H9l2 2.5h8.5A1.5 1.5 0 0 1 21 9v9.5a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5z"/>',terminal:'<rect x="3" y="4.5" width="18" height="15" rx="2"/><path d="m7 9.5 3 2.5-3 2.5M12.5 15H17"/>',cross:'<path d="M6 6l12 12M18 6 6 18"/>',left:'<path d="M15 5.5 8.5 12l6.5 6.5"/>',right:'<path d="M9 5.5 15.5 12 9 18.5"/>',expand:'<path d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7"/>',mic:'<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21M8.5 21h7"/>',filter:'<path d="M3.5 5h17l-6.5 7.5V19l-4 1.5v-8z"/>',star:'<path d="M12 3l2.53 6.12 6.6.51-5.04 4.3 1.55 6.44L12 16.9l-5.64 3.47 1.55-6.44-5.04-4.3 6.6-.51z"/>',power:'<path d="M12 3v8M6.3 6.8a8 8 0 1 0 11.4 0"/>',remote:'<path d="m4 9 4-4 4 4M8 5v9M20 15l-4 4-4-4M16 19v-9"/>',check:'<path d="m4.5 12.5 5 5L19.5 7"/>',play:'<path d="M8 5.5v13l10-6.5z"/>',pause:'<path d="M9 5.5v13M15 5.5v13"/>',globe:'<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.6 3.7 5.6 3.7 9s-1.2 6.4-3.7 9c-2.5-2.6-3.7-5.6-3.7-9S9.5 5.6 12 3z"/>',moon:'<path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z"/>',sun:'<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4"/>',copy:'<rect x="8.5" y="8.5" width="11" height="11" rx="1.5"/><path d="M15.5 8.5V6A1.5 1.5 0 0 0 14 4.5H6A1.5 1.5 0 0 0 4.5 6v8A1.5 1.5 0 0 0 6 15.5h2.5"/>',refresh:'<path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19.5 4.5v4.2h-4.2"/>',pin:'<path d="M9 4.5h6M10 4.5v5l-3 4h10l-3-4v-5M12 13.5V20"/>',info:'<circle cx="12" cy="12" r="9"/><path d="M12 11v5.5M12 7.6v.1"/>',bulb:'<path d="M9 17.5h6M10 21h4M12 3a6 6 0 0 0-3.6 10.8c.7.6 1.1 1.4 1.1 2.2v1.5h5V16c0-.8.4-1.6 1.1-2.2A6 6 0 0 0 12 3z"/>',file:'<path d="M6 3.5h8l4.5 4.5v12.5H6z"/><path d="M14 3.5V8h4.5"/>',fork:'<circle cx="6" cy="5.5" r="2"/><circle cx="18" cy="5.5" r="2"/><circle cx="12" cy="18.5" r="2"/><path d="M6 7.5V9a3 3 0 0 0 3 3h6a3 3 0 0 0 3-3V7.5M12 12v4.5"/>',trash:'<path d="M4.5 6.5h15M9.5 6.5v-2h5v2M6.5 6.5l1 13h9l1-13"/>',send:'<path d="M12 19V5.5M6 11l6-6 6 6"/>',stop:'<rect x="7" y="7" width="10" height="10" rx="1.5" fill="currentColor" stroke="none"/>',down:'<path d="M5.5 9 12 15.5 18.5 9"/>'};
 const I=(n,c='')=>`<svg class="i${c?' '+c:''}" viewBox="0 0 24 24">${P[n]}</svg>`;
 const PHONE=Q.has('m')||matchMedia('(max-width:640px)').matches;
+const TABLET=!PHONE&&(Q.has('t')||innerWidth<1024);
 const view=location.hash.slice(1)||(PHONE?'topics':'topic');
 
 /* ===== shared components: one markup, styled per shell ===== */
@@ -346,7 +421,7 @@ const SIDE={
       {g:'进行中'},
       {d:'run',t:'Refactor webui panels',h:'claude',m:'正在编辑 page-body.ts',a:'now',on:s.sel==='chat'},
       {d:'run',t:'拆分 sidebar 模块',h:'codex',m:'子任务 · 运行 3m',a:'now',cls:'sub'},
-      {d:'run',t:'Slow cart API',h:'claude',m:'work · 读日志',a:'1m',swipe:s.swipe},
+      {d:'run',t:'Slow cart API',h:'claude',m:'work · 读日志',a:'1m',swipe:s.swipe,cls:s.hov?'hv':''},
       {g:'今天'},
       {d:'',t:'Review PR #42',h:'claude',m:'已完成 · 3 个文件',a:'1h'},
       {d:'',t:'Node 22 upgrade',h:'codex',m:'已完成',a:'3h'},
@@ -391,18 +466,28 @@ const SIDE={
       {g:'搜索落空'},
       {nd:1,t:'“arm64 交叉编译”',m:'没搜到 · 3 次',a:'1d'},
       {nd:1,t:'release-notes',m:'搜到 4 次，一次也没打开',a:'2d'}])}),
-  settings:()=>PHONE
-    ?{title:'设置',top:search('搜索设置'),body:mg([{t:'智能体',v:'5',go:1},{t:'子代理',go:1},{t:'会话',go:1},{t:'回复',go:1},{t:'复盘',go:1},{t:'指令文件',go:1}],'网关 · config.yaml','改动保存到 config.yaml，对所有话题生效。通知、外观、语言在「更多」里。')}
-    :{title:'设置',top:search('搜索设置'),body:`<div class="nav"><div class="nvh">网关 · config.yaml</div>
-<div class="nv on">智能体<span class="c">5</span></div><div class="nv">子代理</div><div class="nv">会话</div><div class="nv">回复</div><div class="nv">复盘</div><div class="nv">指令文件</div>
-<div class="nvh">本设备</div><div class="nv">通知</div><div class="nv">外观与语言</div><div class="nv">低打扰模式</div></div>`},
+  settings:(s)=>PHONE
+    ?{title:'设置',top:search('搜索设置'),body:mg([{t:'智能体',v:'5',go:1},{t:'子代理',v:'每次确认',go:1},{t:'会话',v:'回收 1 小时',go:1},{t:'回复',go:1},{t:'复盘',v:'ag@buildbox',go:1},{t:'指令文件',v:'5',go:1}],'网关 · config.yaml','改动保存到 config.yaml，对所有话题生效。通知、外观、语言在「更多」里。')}
+    :{title:'设置',top:search('搜索设置'),body:`<div class="nav"><div class="nvh">网关 · config.yaml</div>${[['agents','智能体','<span class="c">5</span>'],['dlg','子代理'],['session','会话'],['reply','回复'],['review','复盘'],['instr','指令文件']].map(([k,l,c])=>`<div class="nv${(s.sel||'agents')===k?' on':''}">${l}${c||''}</div>`).join('')}
+<div class="nvh">本设备</div>${[['device','通知'],['device2','外观与语言'],['device3','低打扰模式']].map(([k,l])=>`<div class="nv${s.sel===k?' on':''}">${l}</div>`).join('')}</div>`},
+  sessions:()=>({title:'定时',acts:[['check','全部标为已读'],['plus','新建任务']],
+    top:(PHONE?search('搜索会话')+seg(['任务 3','会话 5'],1):seg(['任务 3','会话 5'],1)+search('搜索会话')),
+    body:rows([{g:'今天 · 1 未读 · 1 等你'},
+      {d:'run',t:'nightly-ci-report',h:'codex',m:'02:00 这次运行 · 正在跑',a:'4m',on:1},
+      {d:'ask',t:'weekly-deps',h:'claude',m:'等你回答：要不要升 major',a:'09:00'},
+      {d:'run',t:'拆分依赖升级',h:'codex',m:'weekly-deps 派的子代理',a:'now',cls:'sub'},
+      {g:'昨天'},
+      {d:'',t:'nightly-ci-report',h:'codex',m:'02:00 这次运行 · 6 条',a:'02:06'},
+      {g:'11 月 · 18 个会话'}])}),
   more:()=>({title:'更多',body:mg([{ic:'eye',t:'复盘',v:'3 条建议',go:1},{ic:'book',t:'技能',v:'24',go:1},{ic:'gear',t:'设置',go:1}])
-    +mg([{ic:'bell',t:'通知',s:'锁屏时也推送需要你处理的话题',end:tg(1)},{ic:'moon',t:'低打扰',s:'运行中的圆点不闪，未读数变灰',end:tg(0)},{ic:'sun',t:'外观',v:'跟随系统',go:1},{ic:'globe',t:'语言',v:'中文',go:1}],'本设备','只存在这个浏览器里')
+    +mg([{ic:'bell',t:'通知',s:'锁屏时也推送需要你处理的话题',end:tg(1)},{ic:'moon',t:'低打扰',s:'运行中的圆点不闪，未读数变灰',end:tg(0)},{ic:'sun',t:'外观与语言',v:'跟随系统 · 中文',go:1}],'本设备','只存在这个浏览器里')
     +mg([{ic:'remote',t:'fleetherd',s:'<span class="sd run"></span> 已连接',v:'v3.38.0'},{ic:'play',t:'运行中 3 · 空闲 7',s:'空闲的智能体会按超时回收',end:'<button class="tb">关闭空闲</button>'}],'网关')}),
 };
 
 /* ===== editors (editor group) ===== */
-const toolsBar=`<div class="tools"><button class="only-narrow">${I('chat')}对话</button><button class="on">${I('git')}更改 <span class="k">2</span></button><button>${I('folder')}文件</button><button>${I('terminal')}终端</button></div>`;
+const toolsBar=(t='changes')=>`<div class="tools"><button class="only-narrow">${I('chat')}对话</button><button class="${t==='changes'?'on':''}">${I('git')}更改 <span class="k">2</span></button><button class="${t==='files'?'on':''}">${I('folder')}文件</button><button class="${t==='term'?'on':''}">${I('terminal')}终端</button></div>`;
+const sgb=(on)=>`<span class="sg"><span class="${on?'on':''}">开</span><span class="${on?'':'on'}">关</span></span>`;
+const dd=(v)=>`<span class="dd">${v}${I('down')}</span>`;
 const diffLines=`<div class="dl h"><span class="no"></span>@@ -14,9 +14,9 @@ export const PAGE_BODY</div>
 <div class="dl"><span class="no">14</span> &lt;main id="app" hidden&gt;</div>
 <div class="dl m"><span class="no">15</span>-  &lt;aside id="sidebar" class="panel panel-left"&gt;</div>
@@ -429,7 +514,7 @@ const prefCi=(t,h)=>`<div class="ci"><span class="l">${t}</span><span class="act
 
 const ED={
   chat:{tab:['chat','Refactor webui panels','run'],
-    head:`<span class="tt">Refactor webui panels</span><span class="pill">运行中</span><span class="sp"></span>${toolsBar}<button class="ib">${I('more')}</button>`,
+    head:(p)=>`<span class="tt">Refactor webui panels</span><span class="pill">运行中</span><span class="sp"></span>${toolsBar(p.tool)}<button class="ib">${I('more')}</button>`,
     m:{t:'Refactor webui panels',s:'<span class="sd run"></span>运行中 · claude · ~/work/fleetherd',bk:'2',acts:['more']},
     body:()=>`<div class="log"><div class="col">
 <div class="msg me">把右侧后台任务面板并进左边，git 和文件改成对话旁边的分栏。<div class="ts">10:02</div></div>
@@ -530,14 +615,15 @@ const ED={
 <div class="ci"><span class="l"><code>02ab77f</code> 创建</span><button class="btn">恢复此版本</button><span class="h">claude · Deploy notes for 3.30 · 11-12</span></div>
 </div>
 </div></div>`},
-  agents:{tab:['gear','设置 · 智能体'],
-    head:`<span class="tt">智能体</span><span class="sp"></span><span style="color:var(--dim);font-size:12px">保存到 config.yaml · 对所有话题生效</span>`,
+  agents:{tab:['gear','设置'],
+    head:`<span class="tt">网关设置</span><span class="sp"></span><span style="color:var(--dim);font-size:12px">保存到 config.yaml · 对所有话题生效</span>`,
     m:{t:'智能体',s:'config.yaml · 对所有话题生效'},
     body:()=>PHONE
       ?mg([{t:'默认智能体',s:'没有路由规则认领的新会话由它回答',v:'claude',go:1}])
         +mg([{t:`${hc('claude')}claude`,s:'sonnet-5.5 · CLAUDE.md + 2 个引用',v:'auto',go:1},{t:`${hc('codex')}codex`,s:'harness 默认 · AGENTS.md',v:'auto',go:1}],'本机 · gateway')
         +mg([{t:`${hc('claude')}cc@host-a`,s:'opus-5.5 · 在线',v:'auto',go:1},{t:'ag@host-a',s:'gemini-3.8-flash · 空闲',v:'auto',go:1}],'远程主机 · host-a','右侧是权限等级。点开一个智能体改模型、权限，看它读的指令文件。')
       :`<div class="page"><div class="pcol">
+<div class="sh" style="margin-top:0">智能体</div>
 <div class="card"><div class="ci"><span class="l">默认智能体</span><span class="sg"><span class="on">claude</span><span>codex</span><span>agy</span></span><span class="h">没有路由规则认领的新会话由它回答</span></div></div>
 <div class="sh">本机 · gateway</div>
 <div class="card"><div class="ci"><span class="l"><span class="hc">claude</span> claude</span><span class="sg"><span>plan</span><span>ask</span><span class="on">auto</span></span><span class="h">sonnet-5.5 · 指令 CLAUDE.md + 2 个引用</span></div>
@@ -545,7 +631,78 @@ const ED={
 <div class="sh">远程主机 · host-a</div>
 <div class="card"><div class="ci"><span class="l"><span class="hc">claude</span> cc@host-a</span><span class="sg"><span>ask</span><span class="on">auto</span></span><span class="h">opus-5.5 · 在线</span></div>
 <div class="ci"><span class="l">ag@host-a</span><span class="sg"><span class="on">auto</span></span><span class="h">gemini-3.8-flash · 空闲</span></div></div>
+<div class="sh" id="s-dlg">子代理</div>
+<div class="card"><div class="ci"><span class="l">确认子代理开跑</span><span class="sg"><span class="on">每次</span><span>每个对话首次</span><span>不确认</span></span><span class="h">智能体派活时先停在卡片上，等你点「开始」；子代理自己再派活时每次都确认</span></div></div>
+<div class="sh" id="s-session">会话</div>
+<div class="card"><div class="ci"><span class="l">空闲回收</span><span class="sg"><span>关闭</span><span>15 分钟</span><span class="on">1 小时</span><span>4 小时</span></span><span class="h">一轮结束后闲多久关掉智能体进程；会话保留，下一条消息接着来</span></div>
+<div class="ci"><span class="l">会话粒度 <span class="pill n">重启后生效</span></span><span class="sg"><span class="on">每个话题</span><span>每个频道</span><span>每个用户</span><span>共享</span></span><span class="h">聊天平台上，多大范围里的消息共用一个智能体会话</span></div></div>
+<div class="sh" id="s-reply">回复</div>
+<div class="card"><div class="ci"><span class="l">流式输出</span>${sgb(false)}<span class="h">聊天平台上边写边更新；关掉时整段稳定了再发</span></div>
+<div class="ci"><span class="l">确认语音识别结果</span>${sgb(true)}<span class="h">发给智能体前，先给你看识别出的文字</span></div>
+<div class="ci"><span class="l">整理语音识别结果</span>${sgb(true)}<span class="h">去掉口头禅和重复，保留原意</span></div></div>
+<div class="sh" id="s-review">复盘</div>
+<div class="card"><div class="ci"><span class="l">自动复盘</span>${dd(`${hc('')}ag@buildbox`)}<span class="h">对话闲满一小时后由它复盘、更新技能；选「关闭」停用</span></div>
+<div class="ci"><span class="l">复盘模型</span>${dd('跟随复盘者')}<span class="h">不选就用复盘者自己的模型</span></div></div>
 </div></div>`},
+  instr:{tab:['file','指令文件 · common.md','dirty'],
+    head:`<span class="tt">指令文件</span><span class="sp"></span><span style="color:var(--dim);font-size:12px">所有平台、所有主机上的智能体都读</span><button class="btn p">保存</button>`,
+    m:{t:'指令文件',s:'改动立刻对所有智能体生效'},
+    body:()=>PHONE
+      ?mg([{lead:I('file'),t:'<span class="mono">common.md</span>',s:'所有智能体 · 5 个在读',v:'<span style="color:var(--warn)">未保存</span>',go:1},{lead:I('file'),t:'<span class="mono">claude.md</span>',s:'claude、cc@host-a',go:1},{lead:I('file'),t:'<span class="mono">codex.md</span>',s:'codex',go:1}],'网关 · 发给每台机器')
+        +mg([{lead:I('file'),t:'<span class="mono">~/.claude/CLAUDE.md</span>',s:'host-a · cc@host-a 在读',go:1},{lead:I('file'),t:'<span class="mono">~/.codex/AGENTS.md</span>',s:'本机 · codex 在读',go:1}],'各机器上自己的','打开后和编辑文件一样：保存前核对版本；超过下发上限会拒绝。')
+      :`<div class="page"><div class="pcol">
+<div class="psub">改动对没人看着的会话也立刻生效。保存前核对版本；放到每台机器前先算一遍，有智能体会超过下发上限就拒绝。</div>
+<div class="sh" style="margin-top:0">网关 · 发给每台机器</div>
+<div class="files box solo"><div class="fr on">${I('file')}common.md<span class="x">所有智能体 · 5 个在读</span></div><div class="fr">${I('file')}claude.md<span class="x">claude、cc@host-a</span></div><div class="fr">${I('file')}codex.md<span class="x">codex</span></div></div>
+<div class="sh">各机器上自己的</div>
+<div class="files box solo"><div class="fr">${I('file')}host-a · ~/.claude/CLAUDE.md<span class="x">cc@host-a 在读</span></div><div class="fr">${I('file')}本机 · ~/.codex/AGENTS.md<span class="x">codex 在读</span></div></div>
+<div class="ed" style="border-radius:4px;margin-top:20px"><div class="edh"><b>common.md</b><span class="dim">有未保存的改动 · 版本 7a1c09e</span><span class="sp"></span><button class="btn">撤销</button></div>
+<div class="edb"><div class="dl"><span class="no">1</span># 工作偏好</div><div class="dl"><span class="no">2</span></div><div class="dl"><span class="no">3</span>1. 回答先给结论，再摆证据。</div><div class="dl mod"><span class="no">4</span>2. 改完代码先跑相关测试，不跑全量。</div><div class="dl"><span class="no">5</span>3. 有副作用的操作先说方案，等确认。</div></div></div>
+</div></div>`},
+  device:{tab:['gear','设置 · 本设备'],
+    head:`<span class="tt">本设备</span><span class="sp"></span><span style="color:var(--dim);font-size:12px">只存在这个浏览器里</span>`,
+    body:()=>`<div class="page"><div class="pcol"><div class="card">
+<div class="ci"><span class="l">通知</span>${sgb(true)}<span class="h">锁屏时也推送需要你处理的话题；iPhone 要先添加到主屏幕</span></div>
+<div class="ci"><span class="l">外观</span><span class="sg"><span class="on">跟随系统</span><span>深色</span><span>浅色</span></span><span class="h">首次绘制前生效，代码高亮跟着换</span></div>
+<div class="ci"><span class="l">语言</span><span class="sg"><span>English</span><span class="on">简体中文</span></span><span class="h">即时切换，不用刷新</span></div>
+<div class="ci"><span class="l">低打扰</span>${sgb(false)}<span class="h">运行中的圆点不闪，未读数变灰；等你回答的仍然醒目</span></div>
+</div></div></div>`},
+  appearance:{m:{t:'外观与语言',s:'只存在这个浏览器里'},
+    body:()=>mg([{t:'跟随系统',end:ck},{t:'深色'},{t:'浅色'}],'外观')+mg([{t:'简体中文',end:ck},{t:'English'}],'语言','即时切换，不用刷新')},
+  setDlg:{m:{t:'子代理',s:'config.yaml · 立即生效'},
+    body:()=>mg([{t:'每次确认',s:'每个子任务都停在卡片上，等你点开始',end:ck},{t:'每个对话首次',s:'同一对话里同一智能体只问第一次'},{t:'不确认',s:'直接开跑，事后列出来'}],'确认子代理开跑','选「不确认」时，智能体可以不经你同意花机器和钱。子代理自己再派活时每次都确认。')},
+  setSession:{m:{t:'会话',s:'config.yaml'},
+    body:()=>mg([{t:'关闭'},{t:'15 分钟'},{t:'1 小时',end:ck},{t:'4 小时'}],'空闲回收','一轮结束后闲多久关掉智能体进程；会话保留。')
+      +mg([{t:'每个话题',end:ck},{t:'每个频道'},{t:'每个用户'},{t:'共享'}],'会话粒度 · 重启后生效','聊天平台上，多大范围里的消息共用一个智能体会话。')},
+  setReply:{m:{t:'回复',s:'config.yaml · 下一条生效'},
+    body:()=>mg([{t:'流式输出',s:'聊天平台上边写边更新',end:tg(0)}])+mg([{t:'确认识别结果',s:'发给智能体前先给你看',end:tg(1)},{t:'整理识别结果',s:'去掉口头禅和重复',end:tg(1)}],'语音','配了语音识别才显示')},
+  setReview:{m:{t:'复盘',s:'config.yaml · 一分钟内生效'},
+    body:()=>mg([{t:'复盘者',v:'ag@buildbox',go:1},{t:'复盘模型',v:'跟随复盘者',go:1}],'自动复盘','对话闲满一小时后由复盘者复盘、更新技能；复盘者选「关闭」即停用。')},
+  taskEdit:{tab:['clock','编辑 · nightly-ci-report','dirty'],
+    head:`<span class="tt">编辑 · nightly-ci-report</span><span class="sp"></span><button class="btn">取消</button><button class="btn p">保存</button>`,
+    m:{t:'编辑任务',left:'<button class="mtx">取消</button>',right:'<button class="mtx b">保存</button>'},
+    body:()=>PHONE
+      ?mg([{t:'名称',end:'<span class="iv">nightly-ci-report</span>'}])
+        +`<div class="mgh">做什么</div><div class="mg"><div class="mi"><div class="mt">${seg(['提示词','命令'])}</div></div><div class="mi ta">run nightly-ci-report and post the failing jobs with links</div></div>`
+        +mg([{t:'频率',v:'每天',go:1},{t:'时间',v:'02:00',go:1},{t:'时区',v:'UTC',go:1}],'什么时候','下次运行：明天 02:00（10 小时后）')
+        +mg([{t:'智能体',v:'codex',go:1},{t:'运行方式',v:'每次开新会话',go:1},{t:'结果发到',v:'Node 22 upgrade',go:1}],'谁来跑')
+        +`<div class="mgh">标签</div><div class="mg"><div class="mi"><div class="mt" style="display:flex;gap:6px;flex-wrap:wrap"><span class="tagx">ci${I('cross')}</span><span class="tagx">nightly${I('cross')}</span></div><button class="tb">添加</button></div></div><div style="height:24px"></div>`
+      :`<div class="page"><div class="pcol">
+<div class="fld"><label>名称</label><div class="inp" style="max-width:360px">nightly-ci-report</div></div>
+<div class="fld"><label>做什么</label><span class="sg inl"><span class="on">提示词</span><span>命令</span></span><div class="inp ta" style="margin-top:8px">run nightly-ci-report and post the failing jobs with links</div></div>
+<div class="fld"><label>什么时候</label><div class="frow"><span class="sg inl"><span class="on">每天</span><span>每周</span><span>间隔</span><span>cron</span><span>只一次</span></span><div class="inp" style="width:80px">02:00</div>${dd('UTC')}</div><div class="hint">下次运行：明天 02:00（10 小时后）</div></div>
+<div class="fld"><label>谁来跑</label><div class="frow">${dd(`${hc('codex')}codex`)}<span class="sg inl"><span class="on">每次开新会话</span><span>在目标话题里跑</span></span></div></div>
+<div class="fld"><label>结果发到</label>${dd('话题「Node 22 upgrade」')}</div>
+<div class="fld"><label>标签</label><div class="frow"><span class="tagx">ci${I('cross')}</span><span class="tagx">nightly${I('cross')}</span><span class="inp pl" style="min-height:22px;padding:1px 8px">+ 标签，回车添加</span></div></div>
+</div></div>`},
+  run:{tab:['clock','nightly-ci-report · 02:00','run'],
+    head:`<span class="tt">nightly-ci-report · 今天 02:00</span><span class="pill">运行中</span><span class="sp"></span><button class="btn">任务详情</button><button class="ib">${I('more')}</button>`,
+    body:()=>`<div class="log"><div class="col">
+<div class="msg me">run nightly-ci-report and post the failing jobs with links<div class="ts">02:00 · 定时任务发出</div></div>
+<div class="msg">拉了昨晚 3 条流水线的结果，2 条失败，都卡在 arm64 的集成测试。
+<div class="tool">${I('search')} 4 个工具调用 · 读 CI 日志</div><div class="ts">02:04</div></div>
+</div></div>`,
+    foot:()=>composer({h:'codex',model:'gpt-5.5',dir:'~/work/fleetherd',ph:'接着问，或者让它重跑'})},
   /* phone-only pages of the topic tools */
   diff:{m:{t:'page-body.ts',s:'src/platform/webui · 工作区 · <span class="add">+41</span> <span class="del">−29</span>',acts:['more']},
     body:()=>`<div class="mdiff">${diffLines}</div>`,
@@ -575,8 +732,37 @@ const pTerm=()=>`<div class="term"><span class="p">~/work/fleetherd $</span> npm
 <span class="p">~/work/fleetherd $</span> <span class="cu"></span></div>`;
 const keys=`<div class="keys">${['Esc','Tab','Ctrl','Alt','↑','↓','←','→','|','~','/','-'].map(k=>`<span class="${k==='Ctrl'?'on':''}">${k}</span>`).join('')}</div>`;
 
+const tr=(lvl,tw,ic,name,extra='',cls='')=>`<div class="tr${cls?' '+cls:''}" style="padding-left:${8+lvl*14}px"><span class="tw">${tw?I(tw):''}</span>${ic}<span>${name}</span>${extra}</div>`;
+const filesPane=`<div class="ph"><b>文件</b><span class="br">~/work/fleetherd</span><span class="sp" style="flex:1"></span><button class="ib" title="新建文件">${I('plus')}</button><button class="ib" title="铺满">${I('expand')}</button><button class="ib" title="关闭">${I('cross')}</button></div>
+<div class="search" style="margin:8px 12px">${I('search')}<span>按文件名搜索</span></div>
+<div class="tree">${tr(0,'down',I('folder','fd'),'docs')}${tr(1,'',I('file'),'web-ui.md')}${tr(1,'',I('file'),'webui-workbench-plan.md','<span class="gm">M</span>')}${tr(0,'right',I('folder','fd'),'scripts')}${tr(0,'down',I('folder','fd'),'src')}${tr(1,'right',I('folder','fd'),'platform')}${tr(0,'',I('file'),'AGENTS.md')}${tr(0,'',I('file'),'README.md','<span class="gm">M</span>','on')}${tr(0,'',I('file'),'package.json')}</div>
+<div class="banner">${I('info')}<span>别处改过这个文件（修改时间不一致）</span><button class="btn">重新载入</button><button class="btn">强制覆盖</button></div>
+<div class="edh"><b>README.md</b><span class="dim">已改动</span><span class="sp"></span><span class="sg inl"><span class="on">源码</span><span>预览</span></span><button class="btn p">保存</button><button class="ib" title="重命名、删除、在编辑器中打开">${I('more')}</button></div>
+<div class="diff"><div class="dl"><span class="no">1</span># fleetherd</div><div class="dl"><span class="no">2</span></div><div class="dl"><span class="no">3</span>Connect chat platforms to a coding agent running on your own machine.</div><div class="dl"><span class="no">4</span></div><div class="dl"><span class="no">5</span>## Install</div><div class="dl"><span class="no">6</span></div><div class="dl mod"><span class="no">7</span>Download the release tarball and check its SHA256SUMS</div><div class="dl"><span class="no">8</span></div><div class="dl"><span class="no">9</span>## Configure</div></div>`;
+const termPanel=()=>`<div class="bp"><div class="grip"></div><div class="bph"><div class="tabs"><div class="tab on">${I('terminal')}<span>aa-refactor</span><button class="x">${I('cross')}</button></div><div class="tab">${I('terminal')}<span>aa-refactor-2</span><button class="x">${I('cross')}</button></div></div><button class="ib" title="新终端">${I('plus')}</button><span class="sp"></span><button class="ib" title="最小化：里面的程序照常跑">${I('down')}</button><button class="ib" title="结束会话">${I('trash')}</button></div>${pTerm()}</div>`;
+const OV={
+  palette:`<div class="ov dim"><div class="qp"><div class="qi">${I('search')}<span style="color:var(--ph)">搜索话题、历史、技能；输入 &gt; 只搜命令</span></div>
+<div class="qg">最近打开</div>
+<div class="qr on"><span class="sd run"></span>Refactor webui panels<small>话题 · claude</small><span class="k2">当前</span></div>
+<div class="qr"><span class="sd" style="background:var(--warn)"></span>Deploy notes for 3.38<small>话题 · 等你确认</small></div>
+<div class="qr">${I('history')}Slow cart API<small>历史 · 今天 10:24</small></div>
+<div class="qr">${I('book')}deploy-check<small>技能</small></div>
+<div class="qg">命令</div>
+<div class="qr">${I('plus')}新话题<span class="k2"><kbd>Ctrl</kbd> <kbd>N</kbd></span></div>
+<div class="qr">${I('pause')}关闭空闲智能体（7）</div>
+<div class="qr">${I('moon')}切换深色 / 浅色</div>
+<div class="qr">${I('gear')}打开设置<span class="k2"><kbd>Ctrl</kbd> <kbd>,</kbd></span></div>
+<div class="qf"><span><kbd>↑</kbd> <kbd>↓</kbd> 选择</span><span><kbd>Enter</kbd> 打开</span><span><kbd>Ctrl</kbd> + <kbd>Enter</kbd> 新标签打开</span><span><kbd>Esc</kbd> 关闭</span></div></div></div>`,
+  menu:`<div class="ov"><div class="cmenu" style="left:250px;top:474px">
+<div class="mx on">${I('star')}收藏</div><div class="mx">${I('copy')}复制引用</div><div class="mx">${I('fork')}分叉成新话题</div><div class="mx">${I('expand')}在新标签打开<kbd>Ctrl</kbd></div>
+<div class="sep"></div><div class="mx">${I('power')}结束智能体</div><div class="sep"></div><div class="mx dg">${I('trash')}删除话题</div></div></div>`,
+  confirm:`<div class="ov dim"><div class="dlg"><h3>删除话题「Slow cart API」？</h3><p>话题从本页清掉，智能体正在运行会先结束它。对话库里的记录还在，可以在「历史」里看。</p><div class="fbar"><button class="btn">取消</button><button class="btn dg">删除</button></div></div></div>`,
+};
+const loginHtml=`<div class="login"><div class="lg"><div class="lgo">f</div><h1>fleetherd</h1><p>输入登录密钥</p><div class="inp">••••••••••••</div><div class="er">密钥不对，再试一次</div><button class="btn p">登录</button><div class="ln">密钥由运维写在网关配置里</div></div></div>`;
+
 /* bottom sheets (phone) */
 const SHEETS={
+  alert:()=>`<div class="alert"><b>删除话题？</b><p>「Slow cart API」从本页清掉，正在运行的智能体会先结束。对话记录仍在「历史」里。</p><div class="ab"><button>取消</button><button class="dg">删除</button></div></div>`,
   row:()=>`<div class="sheet"><div class="grab"></div><div class="st"><b>Slow cart API</b><small>claude · ~/work/shop-api · 运行中</small></div><div class="sbd">
 <div class="op">${I('star')}收藏</div><div class="op">${I('copy')}复制引用</div><div class="op">${I('fork')}分叉成新话题</div><div class="op">${I('power')}结束智能体</div><div class="op dg">${I('trash')}删除话题</div></div><button class="cancel">取消</button></div>`,
   model:()=>`<div class="sheet"><div class="grab"></div><div class="st"><b>模型 · claude</b><small>只改这个话题；默认模型在设置里改</small></div>${search('筛选，或输入列表里没有的名字')}<div class="sbd">
@@ -595,18 +781,32 @@ const DR={
   prefs:{side:'reviews',s:{sel:'prefs'},open:['chat','review','prefs'],ed:'prefs'},
   skills:{side:'skills',open:['chat','skill'],ed:'skill'},
   settings:{side:'settings',open:['chat','agents'],ed:'agents'},
+  'settings-gw':{side:'settings',s:{sel:'dlg'},open:['chat','agents'],ed:'agents',anchor:'s-dlg'},
+  instr:{side:'settings',s:{sel:'instr'},open:['chat','agents','instr'],ed:'instr'},
+  device:{side:'settings',s:{sel:'device'},open:['chat','agents','device'],ed:'device'},
+  files:{side:'topics',s:{sel:'chat'},open:['chat','hist','skill'],ed:'chat',tool:'files',pane:'files'},
+  term:{side:'topics',s:{sel:'chat'},open:['chat','hist','skill'],ed:'chat',tool:'term',bottom:1},
+  palette:{side:'topics',s:{sel:'chat'},open:['chat','hist','skill'],ed:'chat',pane:1,ov:'palette'},
+  menu:{side:'topics',s:{sel:'chat',hov:1},open:['chat','hist','skill'],ed:'chat',pane:1,ov:'menu'},
+  confirm:{side:'topics',s:{sel:'chat'},open:['chat','hist','skill'],ed:'chat',pane:1,ov:'confirm'},
+  'task-edit':{side:'tasks',open:['chat','taskEdit'],ed:'taskEdit'},
+  sessions:{side:'sessions',open:['chat','run'],ed:'run'},
 };
 function desktop(){
-  const p=DR[view]||DR.topic, v=SIDE[p.side](p.s||{}), e=ED[p.ed];
+  if(view==='login'){document.body.innerHTML=loginHtml;return;}
+  const p=DR[view]||DR.topic, v=SIDE[p.side](p.s||{}), e=ED[p.ed], rk={sessions:'tasks'}[p.side]||p.side;
   const rail=[['topics','chat','话题','<span class="badge">2</span>'],['history','history','历史',''],['tasks','clock','定时','<span class="badge dot"></span>'],['reviews','eye','复盘',''],['skills','book','技能','']];
   const tabs=`<div class="tabs">${p.open.map(k=>{const [ic,t,mk]=ED[k].tab;return `<div class="tab${k===p.ed?' on':''}">${I(ic)}<span>${t}</span>${mk?`<i class="mk ${mk}"></i>`:''}<button class="x" title="关闭">${I('cross')}</button></div>`}).join('')}</div>`;
   document.body.innerHTML=`<div class="shell">
-<nav class="rail"><div class="logo">f</div>${rail.map(([k,ic,l,b])=>`<button class="ri${k===p.side?' on':''}">${I(ic)}<span>${l}</span>${b}</button>`).join('')}<div class="sp"></div><button class="ri${p.side==='settings'?' on':''}">${I('gear')}<span>设置</span></button></nav>
+<nav class="rail"><div class="logo">f</div>${rail.map(([k,ic,l,b])=>`<button class="ri${k===rk?' on':''}">${I(ic)}<span>${l}</span>${b}</button>`).join('')}<div class="sp"></div><button class="ri${rk==='settings'?' on':''}">${I('gear')}<span>设置</span></button></nav>
 <aside class="list"><div class="lh"><b>${v.title}</b>${(v.acts||[]).map(([ic,t])=>`<button class="ib" title="${t}">${I(ic)}</button>`).join('')}</div>${v.top||''}<div class="rows">${v.body}</div></aside>
-<section class="main">${tabs}<div class="th">${e.head}</div>${e.body()}${e.foot?e.foot():''}</section>
-${p.pane?`<aside class="pane"><div class="grip"></div>${changesPane}</aside>`:''}
+<section class="main">${tabs}<div class="th">${typeof e.head==='function'?e.head(p):e.head}</div>${e.body()}${e.foot?e.foot():''}${p.bottom?termPanel():''}</section>
+${p.pane?`<aside class="pane"><div class="grip"></div>${p.pane==='files'?filesPane:changesPane}</aside>`:''}
 <footer class="sb"><span class="it rm">${I('remote')}fleetherd</span><span class="it">${I('check')}已连接</span><span class="it"><span class="okc">${I('play')}</span>运行中 3</span><span class="it">${I('pause')}空闲 7</span><span class="sp"></span><span class="it">${I('bell')}通知 开</span><span class="it">${I('moon')}低打扰 关</span><span class="it">${I('globe')}中文</span><span class="it">v3.38.0</span></footer></div>`;
-  if(p.pane&&innerWidth<1360){document.querySelector('.shell').style.gridTemplateColumns='52px minmax(0,1fr) auto';document.querySelector('.list').style.display='none';document.body.classList.add('narrow');}
+  if(TABLET){const d=Q.get('drawer');document.body.className='tablet'+(d==='list'?' drw-list':d==='pane'?' drw-pane':'');if(d)document.querySelector('.shell').insertAdjacentHTML('beforeend','<div class="scr"></div>');}
+  else if(p.pane&&innerWidth<1360){document.querySelector('.shell').style.gridTemplateColumns='52px minmax(0,1fr) auto';document.querySelector('.list').style.display='none';document.body.classList.add('narrow');}
+  if(p.ov)document.body.insertAdjacentHTML('beforeend',OV[p.ov]);
+  if(p.anchor)document.getElementById(p.anchor).scrollIntoView();
 }
 
 /* ===== shell 2: phone stack ===== */
@@ -617,12 +817,15 @@ const MR={
   topic:{ed:'chat',tab:0}, 'sheet-model':{ed:'chat',tab:0,sheet:'model'},
   'topic-changes':{ed:'chat',tab:1,body:pChanges,foot:''}, 'topic-files':{ed:'chat',tab:2,body:pFiles,foot:''}, 'topic-term':{ed:'chat',tab:3,body:pTerm,foot:keys},
   'topic-diff':{ed:'diff',sheet:'cmt'}, 'topic-file':{ed:'file'},
+  confirm:{list:'topics',nav:0,sheet:'alert'}, sessions:{list:'sessions',nav:2}, 'task-edit':{ed:'taskEdit'}, appearance:{ed:'appearance'},
+  'settings-delegation':{ed:'setDlg'}, 'settings-session':{ed:'setSession'}, 'settings-reply':{ed:'setReply'}, 'settings-review':{ed:'setReview'}, 'settings-instr':{ed:'instr'},
   new:{ed:'new'}, task:{ed:'task'}, 'history-rec':{ed:'hist'}, review:{ed:'review'}, prefs:{ed:'prefs'}, skill:{ed:'skill'}, 'settings-agents':{ed:'agents'},
 };
 function phone(){
   const r=MR[view]||MR.topics, frame=Q.has('frame'); let h='';
   if(frame)h+='<div class="sys"><b>9:41</b><span class="r"><i class="sig"></i><i class="bat"></i></span></div>';
-  if(r.list){
+  if(view==='login')h+=loginHtml;
+  else if(r.list){
     const v=SIDE[r.list](r.s||{});
     h+=`<header class="mh"><div class="mtb">${r.back?`<button class="mib">${I('left')}<span>${r.back}</span></button>`:''}<span class="sp"></span>${(v.acts||[]).map(([ic,t])=>`<button class="mib" title="${t}">${I(ic)}</button>`).join('')}</div><div class="lt">${v.title}</div>${v.top||''}</header><main class="mb">${v.body}</main>`;
     h+=`<nav class="mnav">${[['chat','话题','<span class="badge">2</span>'],['history','历史',''],['clock','定时','<span class="badge dot"></span>'],['more','更多','']].map(([ic,l,b],i)=>`<button class="${i===r.nav?'on':''}">${I(ic)}<span>${l}</span>${b}</button>`).join('')}</nav>`;
@@ -646,10 +849,13 @@ const GAL=[
   ['定时与历史',[['tasks','定时'],['task','任务详情'],['history','历史'],['history-rec','历史记录 · 只读']]],
   ['更多 · 复盘',[['more','更多 · 设备开关和网关状态'],['reviews','复盘'],['review','复盘详情'],['prefs','偏好建议']]],
   ['更多 · 技能与设置',[['skills','技能'],['skill','技能页'],['settings','设置'],['settings-agents','设置 · 智能体']]],
+  ['设置细项',[['settings-delegation','子代理 · 单选'],['settings-session','会话'],['settings-reply','回复 · 开关'],['settings-review','复盘'],['settings-instr','指令文件']]],
+  ['表单与其他',[['appearance','外观与语言'],['task-edit','编辑定时任务'],['sessions','定时 · 会话'],['confirm','删除确认'],['login','登录']]],
 ];
 function gallery(){
   const n=Q.get('gallery'), lt=Q.has('light')?'&light':'';
   document.body.className='gal';
+  if(n==='t'){document.body.innerHTML=`<div class="gl"><h2>640–1023px · 820 宽竖屏</h2><div class="frames">${[['','侧栏收起，编辑区只有一组'],['&drawer=list','点导航条 → 列表抽屉'],['&drawer=pane','点「更改」→ 右侧抽屉']].map(([q,c])=>`<figure class="tb"><iframe src="?t${q}${lt}#topic"></iframe><figcaption>${c}</figcaption></figure>`).join('')}</div></div>`;return;}
   document.body.innerHTML=`<div class="gl">${(n?[GAL[+n-1]]:GAL).map(([h,fs])=>`<h2>${h}</h2><div class="frames">${fs.map(([k,c])=>`<figure><iframe src="?m&frame${lt}#${k}"></iframe><figcaption>${c}</figcaption></figure>`).join('')}</div>`).join('')}</div>`;
 }
 
