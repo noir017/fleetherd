@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.39.0-beta.3] - 2026-11-25
+
 ### Changed
 
 - **New topics pick their directory with the folder picker again.** beta.2 laid every directory of
