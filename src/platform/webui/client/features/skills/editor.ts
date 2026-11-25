@@ -11,9 +11,7 @@ import {
   renderEmptyState,
   renderNotice,
   renderSegmented,
-  renderStatusDot,
   renderSwitch,
-  renderTag,
   renderTextInput,
 } from '../../components/index.js';
 import { t as tr } from '../../i18n/index.js';
@@ -52,16 +50,25 @@ interface SkillEditorState {
   historyDiff: DiffResult | null;
 }
 
-function detailMetaText(skill: SkillPanelEntry, formatAgo: (at: number) => string): string {
-  const parts = [`v${skill.version}`, tr('skills.created', { ago: formatIsoAgo(skill.createdAt, formatAgo) })];
-  if (skill.status === 'expired') parts.unshift(tr('skills.expired'));
-  if (skill.pinned) parts.push(tr('skills.pinned'));
+function detailSubText(
+  skill: SkillPanelEntry,
+  formatAgo: (at: number) => string,
+  tSkill: (key: string, fallback: string, vars?: Record<string, unknown>) => string,
+): string {
+  const parts: string[] = [];
+  if (skill.description) parts.push(skill.description);
+  if (skill.category) {
+    parts.push(tSkill('wb.skills.categoryLabel', `Category ${skill.category}`, { category: skill.category }));
+  }
+  if (skill.agents && skill.agents.length > 0) {
+    parts.push(tSkill('wb.skills.agentsLabel', `Sent to ${skill.agents.join(', ')}`, { agents: skill.agents.join(', ') }));
+  }
   parts.push(
     skill.lastUsedAt
       ? tr('skills.lastUsed', { ago: formatIsoAgo(skill.lastUsedAt, formatAgo) })
       : tr('skills.neverUsed'),
   );
-  parts.push(tr(skill.uses === 1 ? 'skills.useOne' : 'skills.useMany', { count: skill.uses }));
+  parts.push(tSkill('wb.skills.versionNote', `v${skill.version}`, { version: skill.version }));
   return parts.join(' \u00b7 ');
 }
 
@@ -95,6 +102,7 @@ interface EditorCallbacks {
   readonly onPathInput: (path: string) => void;
   readonly onContentInput: (content: string) => void;
   readonly onSave: () => void;
+  readonly onDiscard: () => void;
   readonly onRemoveFile: () => void;
   readonly onRevert: (id: string) => void;
   readonly onSelectHistory: (entry: SkillPanelHistoryEntry) => void;
@@ -102,7 +110,7 @@ interface EditorCallbacks {
   readonly onDismissError: () => void;
 }
 
-function renderEditorHeader(
+function renderEditorTopBar(
   st: SkillEditorState,
   deps: ResolvedSkillsDeps,
   cb: EditorCallbacks,
@@ -110,82 +118,116 @@ function renderEditorHeader(
   const detail = st.detail!;
   const skill = detail.skill;
   const active = isSkillActive(skill);
-  const dotStatus = !active ? 'idle' : skill.status === 'expired' ? 'warn' : 'ok';
   const icons = deps.icons();
   const copyLabel = st.copied ? tr('common.copied') : tr('skills.copyName');
   const copySvg = getSkillIcon(icons, st.copied ? 'check' : 'copy');
 
   return html`
-    <div class="fh-skill-ed-head">
-      <div class="fh-skill-ed-title-row">
-        ${renderStatusDot({ status: dotStatus })}
-        <h2 class="fh-skill-ed-name">${skill.name}</h2>
-        <button
-          type="button"
-          class="fh-btn fh-btn--ghost fh-btn--icon fh-skill-copy"
-          data-copy-skill=${skill.name}
-          title=${copyLabel}
-          aria-label=${copyLabel}
-          @click=${cb.onCopyName}
-        >${renderInlineSvg(copySvg)}</button>
-        ${renderTag({ label: `v${skill.version}`, tone: 'neutral' })}
-        ${skill.status === 'expired'
-          ? renderTag({ label: tr('skills.expiredCap'), tone: 'warn', title: tr('skills.expiredTitle') })
-          : nothing}
-        ${skill.category ? renderTag({ label: skill.category, tone: 'neutral' }) : nothing}
-      </div>
-      <div class="fh-skill-ed-controls">
-        ${renderSegmented({
-          kind: 'value',
-          ariaLabel: tr('skills.tierAria'),
-          value: skill.resident ? 'resident' : 'library',
-          options: [
-            {
-              value: 'resident',
-              label: tr('skills.tabResident'),
-              title: tr('skills.tierResidentTitle'),
-              disabled: !active || st.saving,
-            },
-            {
-              value: 'library',
-              label: tr('skills.tabLibrary'),
-              title: tr('skills.tierLibraryTitle'),
-              disabled: !active || st.saving,
-            },
-          ],
-          onChange: (val) => cb.onChangeTier(val === 'resident'),
-        })}
-        ${renderSwitch({
-          checked: active,
-          label: active ? tr('common.onCap') : tr('common.offCap'),
-          ariaLabel: active ? tr('skills.onTitle') : tr('skills.offTitle'),
-          disabled: st.saving,
-          onChange: cb.onToggleEnabled,
-        })}
-        <button
-          type="button"
-          class="fh-btn fh-btn--secondary"
-          data-sop="pin"
-          ?disabled=${st.saving}
-          @click=${cb.onTogglePin}
-        >${skill.pinned ? tr('skills.unpin') : tr('skills.pin')}</button>
-        <button
-          type="button"
-          class="fh-btn fh-btn--ghost fh-btn--icon"
-          data-sop="refresh"
-          title=${tr('skills.refreshTitle')}
-          aria-label=${tr('skills.refreshTitle')}
-          ?disabled=${st.loading || st.saving}
-          @click=${cb.onRefresh}
-        >${renderInlineSvg(getSkillIcon(icons, 'refresh'))}</button>
-      </div>
+    <div class="fh-skill-ed-bar">
+      <h2 class="fh-skill-ed-name">${skill.name}</h2>
+      <span class="fh-skill-pill">${skill.resident ? tr('skills.tabResident') : tr('skills.tabLibrary')}</span>
+      ${!active ? html`<span class="fh-skill-pill">${tr('common.offCap')}</span>` : nothing}
+      ${skill.status === 'expired'
+        ? html`<span class="fh-skill-pill is-warn" title=${tr('skills.expiredTitle')}>${tr('skills.expiredCap')}</span>`
+        : nothing}
+      <span class="fh-skill-ed-sp"></span>
+      <button
+        type="button"
+        class="fh-btn fh-btn--ghost fh-btn--icon fh-skill-copy"
+        data-copy-skill=${skill.name}
+        title=${copyLabel}
+        aria-label=${copyLabel}
+        @click=${cb.onCopyName}
+      >${renderInlineSvg(copySvg)}</button>
+      <button
+        type="button"
+        class="fh-btn fh-btn--ghost fh-btn--icon"
+        data-sop="refresh"
+        title=${tr('skills.refreshTitle')}
+        aria-label=${tr('skills.refreshTitle')}
+        ?disabled=${st.loading || st.saving}
+        @click=${cb.onRefresh}
+      >${renderInlineSvg(getSkillIcon(icons, 'refresh'))}</button>
+      <button
+        type="button"
+        class="fh-btn fh-btn--primary fh-skill-save-btn"
+        data-sop="save"
+        ?disabled=${st.saving || st.loading}
+        @click=${cb.onSave}
+      >${st.saving ? tr('common.saving') : tr('common.save')}</button>
     </div>
-    <div class="fh-skill-ed-desc">${skill.description || tr('skills.noDesc')}</div>
-    <div class="fh-skill-ed-meta">${detailMetaText(skill, deps.formatAgo)}</div>
+  `;
+}
+
+function renderPropertiesCard(
+  st: SkillEditorState,
+  deps: ResolvedSkillsDeps,
+  cb: EditorCallbacks,
+  tSkill: (key: string, fallback: string, vars?: Record<string, unknown>) => string,
+): TemplateResult {
+  const skill = st.detail!.skill;
+  const active = isSkillActive(skill);
+  return html`
+    <div class="fh-skill-ed-sub">${detailSubText(skill, deps.formatAgo, tSkill)}</div>
     ${skill.warning ? renderNotice({ tone: 'warn', message: skill.warning }) : nothing}
     ${skill.problem
       ? renderNotice({ tone: 'err', message: `${tr('skills.notDelivered')}${skill.problem}` })
       : nothing}
+    <div class="fh-skill-card">
+      <div class="fh-skill-ci">
+        <span class="fh-skill-ci-l">${tSkill('wb.skills.tierLabel', 'Tier')}</span>
+        <div class="fh-skill-ci-ctl">
+          ${renderSegmented({
+            kind: 'value',
+            ariaLabel: tr('skills.tierAria'),
+            value: skill.resident ? 'resident' : 'library',
+            options: [
+              {
+                value: 'library',
+                label: tr('skills.tabLibrary'),
+                title: tr('skills.tierLibraryTitle'),
+                disabled: !active || st.saving,
+              },
+              {
+                value: 'resident',
+                label: tr('skills.tabResident'),
+                title: tr('skills.tierResidentTitle'),
+                disabled: !active || st.saving,
+              },
+            ],
+            onChange: (val) => cb.onChangeTier(val === 'resident'),
+          })}
+        </div>
+        <span class="fh-skill-ci-h">${tSkill('wb.skills.tierHint', 'Resident skills appear in every agent’s skill list.')}</span>
+      </div>
+      <div class="fh-skill-ci">
+        <span class="fh-skill-ci-l">${tSkill('wb.skills.enabledLabel', 'Enabled')}</span>
+        <div class="fh-skill-ci-ctl">
+          ${renderSwitch({
+            checked: active,
+            label: active ? tr('common.onCap') : tr('common.offCap'),
+            ariaLabel: active ? tr('skills.onTitle') : tr('skills.offTitle'),
+            disabled: st.saving,
+            onChange: cb.onToggleEnabled,
+          })}
+        </div>
+        <span class="fh-skill-ci-h">${tSkill('wb.skills.enabledHint', 'Turning off archives this skill.')}</span>
+      </div>
+      <div class="fh-skill-ci">
+        <span class="fh-skill-ci-l">${tSkill('wb.skills.pinnedLabel', 'Pinned')}</span>
+        <div class="fh-skill-ci-ctl">
+          <button
+            type="button"
+            class=${`fh-btn fh-btn--secondary fh-skill-pin-btn${skill.pinned ? ' is-pinned' : ''}`}
+            data-sop="pin"
+            aria-pressed=${skill.pinned ? 'true' : 'false'}
+            ?disabled=${st.saving}
+            @click=${cb.onTogglePin}
+          >${skill.pinned ? tr('skills.unpin') : tr('skills.pin')}</button>
+        </div>
+        <span class="fh-skill-ci-h">${tSkill('wb.skills.pinnedHint', 'Pinned skills do not expire when unused.')}</span>
+      </div>
+    </div>
   `;
 }
 
@@ -193,28 +235,86 @@ function renderFilesBar(
   st: SkillEditorState,
   deps: ResolvedSkillsDeps,
   cb: EditorCallbacks,
+  tSkill: (key: string, fallback: string, vars?: Record<string, unknown>) => string,
 ): TemplateResult {
   const detail = st.detail!;
+  const icons = deps.icons();
+  const fileSvg = getSkillIcon(icons, 'file');
+  const plusSvg = getSkillIcon(icons, 'plus');
   const currentPath = st.newFileMode ? '' : detail.file.path;
+  const dirty = isEditorDirty(st);
   return html`
     <div class="fh-skill-ed-section">${tr('skills.files')}</div>
-    <div class="fh-skill-ed-files">
+    <div class="fh-skill-files-box">
       ${detail.files.map(
-        (f) => html`<button
-          type="button"
-          class=${`fh-btn fh-btn--secondary fh-skill-file${currentPath === f.path ? ' is-active' : ''}`}
-          data-file=${f.path}
-          ?disabled=${st.loading || st.saving}
-          @click=${() => cb.onSelectFile(f.path)}
-        ><span>${f.path}</span><small>${deps.formatBytes(f.size)}</small></button>`,
+        (f) => {
+          const active = currentPath === f.path;
+          return html`<button
+            type="button"
+            class=${`fh-skill-file-row${active ? ' is-active' : ''}`}
+            data-file=${f.path}
+            ?disabled=${st.loading || st.saving}
+            @click=${() => cb.onSelectFile(f.path)}
+          >${renderInlineSvg(fileSvg)}<span class="fh-skill-file-path">${f.path}</span><span class="fh-skill-file-meta">${active && dirty ? tSkill('wb.skills.dirty', 'Modified') : deps.formatBytes(f.size)}</span></button>`;
+        },
       )}
       <button
         type="button"
-        class="fh-btn fh-btn--ghost"
+        class=${`fh-skill-file-row is-new${st.newFileMode ? ' is-active' : ''}`}
         data-sop="new-file"
         ?disabled=${st.loading || st.saving}
         @click=${cb.onStartNewFile}
-      >${tr('skills.newFile')}</button>
+      >${renderInlineSvg(plusSvg)}<span>${tr('skills.newFile')}</span></button>
+    </div>
+  `;
+}
+
+function renderEditorBoxHead(
+  st: SkillEditorState,
+  cb: EditorCallbacks,
+  tSkill: (key: string, fallback: string, vars?: Record<string, unknown>) => string,
+): TemplateResult {
+  const detail = st.detail!;
+  const isSkillMd = !st.newFileMode && detail.file.path === 'SKILL.md';
+  const dirty = isEditorDirty(st);
+  const statusText = dirty
+    ? tSkill('wb.skills.unsavedVersion', `Unsaved changes · v${detail.file.version}`, { version: detail.file.version })
+    : tSkill('wb.skills.versionNote', `v${detail.file.version}`, { version: detail.file.version });
+
+  return html`
+    <div class="fh-skill-ed-box-head">
+      ${st.newFileMode
+        ? html`<div class="fh-skill-ed-path">
+            ${renderTextInput({
+              id: 'fh-skill-ed-path',
+              value: st.draftPath,
+              placeholder: 'references/notes.md',
+              ariaLabel: tr('skills.files'),
+              disabled: st.saving,
+              onInput: cb.onPathInput,
+            })}
+          </div>`
+        : html`<b class="fh-skill-ed-box-name">${detail.file.path}</b>`}
+      <span class="fh-skill-ed-box-dim">${statusText}</span>
+      <span class="fh-skill-ed-sp"></span>
+      ${dirty
+        ? html`<button
+            type="button"
+            class="fh-btn fh-btn--secondary"
+            data-sop="discard"
+            ?disabled=${st.saving || st.loading}
+            @click=${cb.onDiscard}
+          >${tSkill('wb.skills.discard', 'Discard')}</button>`
+        : nothing}
+      ${!isSkillMd && !st.newFileMode
+        ? html`<button
+          type="button"
+          class="fh-btn fh-btn--danger"
+          data-sop="remove-file"
+          ?disabled=${st.saving || st.loading}
+          @click=${cb.onRemoveFile}
+        >${tr('skills.removeFile')}</button>`
+        : nothing}
     </div>
   `;
 }
@@ -223,7 +323,7 @@ function renderHistorySection(
   st: SkillEditorState,
   deps: ResolvedSkillsDeps,
   cb: EditorCallbacks,
-  tSkill: (key: string, fallback: string) => string,
+  tSkill: (key: string, fallback: string, vars?: Record<string, unknown>) => string,
 ): TemplateResult {
   const history = st.detail!.history;
   const selectedEntry = st.selectedHistoryId
@@ -231,13 +331,15 @@ function renderHistorySection(
     : null;
   return html`
     <div class="fh-skill-ed-section">${tr('skills.history')}</div>
-    <div class="fh-skill-ed-history">
+    <div class="fh-skill-card fh-skill-ed-history">
       ${history.length === 0
         ? html`<div class="fh-skill-ed-empty">${tr('skills.noHistory')}</div>`
         : history.map(
-            (entry) => {
+            (entry, idx) => {
               const isSelected = st.selectedHistoryId === entry.id;
               const canRevert = Boolean(entry.beforeVersion || entry.action === 'commit');
+              const shortId = entry.id.slice(0, 7);
+              const isCurrent = idx === 0 && entry.afterVersion === st.detail!.skill.version;
               return html`<div class=${`fh-skill-hist-row${isSelected ? ' is-selected' : ''}`} data-history-id=${entry.id}>
                 <div
                   class="fh-skill-hist-main"
@@ -252,10 +354,11 @@ function renderHistorySection(
                     }
                   }}
                 >
-                  <div class="fh-skill-hist-action">${entry.action}</div>
+                  <div class="fh-skill-hist-action"><code>${shortId}</code> <span>${entry.note || entry.action}</span></div>
                   <div class="fh-skill-hist-meta">${historyMetaText(entry, deps.formatAgo)}</div>
                 </div>
                 <div class="fh-skill-hist-actions">
+                  ${isCurrent ? html`<span class="fh-skill-pill">${tSkill('wb.skills.current', 'Current')}</span>` : nothing}
                   <button
                     type="button"
                     class=${`fh-btn fh-btn--ghost fh-skill-hist-diff-btn${isSelected ? ' is-active' : ''}`}
@@ -377,7 +480,12 @@ class SkillEditorPanel implements SkillPanelComponent {
   private readonly _store: SkillsStore;
   private readonly _deps: ResolvedSkillsDeps;
   private readonly _ctx?: PluginContext;
+  private readonly _headerHost: HTMLElement;
+  private readonly _pageEl: HTMLElement;
+  private readonly _colEl: HTMLElement;
   private readonly _chromeHost: HTMLElement;
+  private readonly _editorBoxEl: HTMLElement;
+  private readonly _editorBarHost: HTMLElement;
   private readonly _surfaceHost: HTMLElement;
   private readonly _cmHost: HTMLElement;
   private readonly _textarea: HTMLTextAreaElement;
@@ -416,8 +524,18 @@ class SkillEditorPanel implements SkillPanelComponent {
 
     this.element = doc.createElement('div');
     this.element.className = 'fh-skill-editor';
+    this._headerHost = doc.createElement('div');
+    this._headerHost.className = 'fh-skill-ed-bar-host';
+    this._pageEl = doc.createElement('div');
+    this._pageEl.className = 'fh-skill-ed-page';
+    this._colEl = doc.createElement('div');
+    this._colEl.className = 'fh-skill-ed-col';
     this._chromeHost = doc.createElement('div');
     this._chromeHost.className = 'fh-skill-ed-chrome';
+    this._editorBoxEl = doc.createElement('div');
+    this._editorBoxEl.className = 'fh-skill-ed-box';
+    this._editorBarHost = doc.createElement('div');
+    this._editorBarHost.className = 'fh-skill-ed-box-head-host';
     this._surfaceHost = doc.createElement('div');
     this._surfaceHost.className = 'fh-skill-ed-surface';
     this._cmHost = doc.createElement('div');
@@ -427,9 +545,12 @@ class SkillEditorPanel implements SkillPanelComponent {
     this._textarea.className = 'fh-textarea fh-skill-ed-textarea skill-text';
     this._textarea.spellcheck = false;
     this._surfaceHost.append(this._cmHost, this._textarea);
+    this._editorBoxEl.append(this._editorBarHost, this._surfaceHost);
     this._footerHost = doc.createElement('div');
     this._footerHost.className = 'fh-skill-ed-footer';
-    this.element.append(this._chromeHost, this._surfaceHost, this._footerHost);
+    this._colEl.append(this._chromeHost, this._editorBoxEl, this._footerHost);
+    this._pageEl.appendChild(this._colEl);
+    this.element.append(this._headerHost, this._pageEl);
 
     this._cb = this._buildCallbacks();
     this._textarea.addEventListener('input', () => {
@@ -484,14 +605,16 @@ class SkillEditorPanel implements SkillPanelComponent {
     this._destroyCodeMirror();
     if (this._copyTimer !== undefined) clearTimeout(this._copyTimer);
     this._disposables.dispose();
+    render(nothing, this._headerHost);
     render(nothing, this._chromeHost);
+    render(nothing, this._editorBarHost);
     render(nothing, this._footerHost);
     this.element.remove();
   }
 
-  private _tSkill(key: string, fallback: string): string {
+  private _tSkill(key: string, fallback: string, vars?: Record<string, unknown>): string {
     if (!this._ctx) return fallback;
-    const translated = this._ctx.i18n.t(key);
+    const translated = this._ctx.i18n.t(key, vars);
     return translated === key ? fallback : translated;
   }
 
@@ -530,6 +653,7 @@ class SkillEditorPanel implements SkillPanelComponent {
             onChange: (nextDoc) => {
               this._st.draftContent = nextDoc;
               this._updateTitle();
+              this._paint();
               this._refreshActiveDiff();
             },
             onSave: () => {
@@ -834,10 +958,23 @@ class SkillEditorPanel implements SkillPanelComponent {
       onContentInput: (content) => {
         this._st.draftContent = content;
         this._updateTitle();
+        this._paint();
         this._refreshActiveDiff();
       },
       onSave: () => {
         void this._saveCurrentFile();
+      },
+      onDiscard: () => {
+        if (!this._st.detail) return;
+        this._st.newFileMode = false;
+        this._st.draftPath = this._st.detail.file.path;
+        this._st.draftContent = this._st.detail.file.content;
+        this._st.error = null;
+        if (this._cmHandle) this._cmHandle.setDoc(this._st.draftContent);
+        this._textarea.value = this._st.draftContent;
+        this._updateTitle();
+        this._paint();
+        this._refreshActiveDiff();
       },
       onRemoveFile: () => {
         void this._removeCurrentFile();
@@ -866,7 +1003,9 @@ class SkillEditorPanel implements SkillPanelComponent {
   private _paint(): void {
     if (this._disposed) return;
     if (!this._st.detail) {
-      this._surfaceHost.hidden = true;
+      this._editorBoxEl.hidden = true;
+      render(nothing, this._headerHost);
+      render(nothing, this._editorBarHost);
       render(
         html`
           ${this._st.error
@@ -889,8 +1028,9 @@ class SkillEditorPanel implements SkillPanelComponent {
       return;
     }
 
-    this._surfaceHost.hidden = false;
-    const isSkillMd = !this._st.newFileMode && this._st.detail.file.path === 'SKILL.md';
+    this._editorBoxEl.hidden = false;
+    const tSkill = (k: string, fb: string, vars?: Record<string, unknown>) => this._tSkill(k, fb, vars);
+    render(renderEditorTopBar(this._st, this._deps, this._cb), this._headerHost);
     render(
       html`
         ${this._st.error
@@ -901,45 +1041,16 @@ class SkillEditorPanel implements SkillPanelComponent {
               onDismiss: this._cb.onDismissError,
             })
           : nothing}
-        ${renderEditorHeader(this._st, this._deps, this._cb)}
-        ${renderFilesBar(this._st, this._deps, this._cb)}
-        <div class="fh-skill-ed-section">${this._st.newFileMode ? tr('skills.newFile') : this._st.detail.file.path}</div>
-        <div class="fh-skill-ed-path">
-          ${renderTextInput({
-            id: 'fh-skill-ed-path',
-            value: this._st.draftPath,
-            placeholder: 'references/notes.md',
-            ariaLabel: tr('skills.files'),
-            readonly: isSkillMd,
-            disabled: this._st.saving,
-            onInput: this._cb.onPathInput,
-          })}
-        </div>
+        ${renderPropertiesCard(this._st, this._deps, this._cb, tSkill)}
+        ${renderFilesBar(this._st, this._deps, this._cb, tSkill)}
       `,
       this._chromeHost,
     );
+    render(renderEditorBoxHead(this._st, this._cb, tSkill), this._editorBarHost);
 
     render(
       html`
-        <div class="fh-skill-ed-actions">
-          <button
-            type="button"
-            class="fh-btn fh-btn--primary"
-            data-sop="save"
-            ?disabled=${this._st.saving || this._st.loading}
-            @click=${this._cb.onSave}
-          >${this._st.saving ? tr('common.saving') : tr('common.save')}</button>
-          ${!isSkillMd && !this._st.newFileMode
-            ? html`<button
-                type="button"
-                class="fh-btn fh-btn--danger"
-                data-sop="remove-file"
-                ?disabled=${this._st.saving || this._st.loading}
-                @click=${this._cb.onRemoveFile}
-              >${tr('skills.removeFile')}</button>`
-            : nothing}
-        </div>
-        ${renderHistorySection(this._st, this._deps, this._cb, (k, fb) => this._tSkill(k, fb))}
+        ${renderHistorySection(this._st, this._deps, this._cb, tSkill)}
       `,
       this._footerHost,
     );

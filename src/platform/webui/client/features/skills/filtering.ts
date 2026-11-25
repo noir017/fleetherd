@@ -3,7 +3,7 @@ import type { FilterBarGroup, FilterBarSortDef, FilterBarState } from '../../com
 import { t as tr } from '../../i18n/index.js';
 import { isSkillActive } from './types.js';
 
-export type SkillGroupId = 'resident' | 'library' | 'archived';
+export type SkillGroupId = string;
 
 export interface SkillGroupBucket {
   readonly id: SkillGroupId;
@@ -153,22 +153,35 @@ export function filterSkills(skills: readonly SkillPanelEntry[], state: FilterBa
 }
 
 export function groupSkills(skills: readonly SkillPanelEntry[]): SkillGroupBucket[] {
-  const resident: SkillPanelEntry[] = [];
-  const library: SkillPanelEntry[] = [];
+  const byCategory = new Map<string, SkillPanelEntry[]>();
+  const uncategorized: SkillPanelEntry[] = [];
   const archived: SkillPanelEntry[] = [];
 
   for (const s of skills) {
-    if (!isSkillActive(s)) archived.push(s);
-    else if (s.resident) resident.push(s);
-    else library.push(s);
+    if (!isSkillActive(s)) {
+      archived.push(s);
+      continue;
+    }
+    const cat = s.category?.trim();
+    if (cat) {
+      const list = byCategory.get(cat);
+      if (list) list.push(s);
+      else byCategory.set(cat, [s]);
+    } else {
+      uncategorized.push(s);
+    }
   }
 
   const buckets: SkillGroupBucket[] = [];
-  if (resident.length > 0) {
-    buckets.push({ id: 'resident', label: tr('skills.tabResident'), items: resident });
+  for (const [cat, items] of [...byCategory.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+    buckets.push({ id: `cat:${cat}`, label: cat, items });
   }
-  if (library.length > 0) {
-    buckets.push({ id: 'library', label: tr('skills.tabLibrary'), items: library });
+  if (uncategorized.length > 0) {
+    buckets.push({
+      id: 'uncategorized',
+      label: buckets.length > 0 ? tr('skills.tabLibrary') : tr('skills.title'),
+      items: uncategorized,
+    });
   }
   if (archived.length > 0) {
     buckets.push({

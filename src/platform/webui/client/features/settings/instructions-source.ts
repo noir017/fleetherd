@@ -70,6 +70,7 @@ type InstrListData = (Partial<InstructionsPanelList> & { error?: string }) | nul
 interface InstrFileEntry {
   scope: 'global' | 'agent';
   sec: 'shared' | 'own';
+  agent?: string;
   q: string;
   path?: string;
   name: string;
@@ -92,6 +93,7 @@ interface InstrSection {
 interface InstrSourceState {
   agent: string;
   orphans?: boolean;
+  all?: boolean;
   title: string;
   root: string;
   said: string;
@@ -204,39 +206,54 @@ function instrDelivery(
   return (placed.length ? t('instr.placedFor', { who: placed.join('; ') }) : '') + other.join(' ');
 }
 
-function indexOwnRefs(src: InstrSourceState, d: InstrListData, own: InstrOwnPayload): void {
-  const host = instrHost(own.host || instrOwnIn(d, src.agent)?.host);
-  if (own.error) {
-    src.secs.own = { title: t('instr.onHost', { host }), note: own.error };
-    return;
-  }
+function resolveOwnSectionNote(own: InstrOwnPayload): string {
   const suffix =
     own.rootState === 'managed'
       ? t('instr.rootManaged', { root: own.root || '' })
       : own.rootState === 'missing'
         ? t('instr.rootMissing', { root: own.root || '' })
         : '';
-  src.secs.own = { title: t('instr.onHost', { host }), note: String(own.summary || '').replace(/\x60/g, '') + '.' + suffix };
-  const refs = own.refs || [];
-  for (const r of refs) {
-    const id = 'a:' + r.path;
-    src.files[id] = {
-      scope: 'agent',
-      sec: 'own',
-      q: 'scope=agent&agent=' + encodeURIComponent(src.agent) + '&path=' + encodeURIComponent(r.path),
-      path: r.path,
-      name: fxBase(r.shown),
-      shown: r.shown,
-      exists: r.exists,
-      editable: r.editable,
-      note: r.note || '',
-      depth: r.depth || 1,
-      via: r.via || '',
-      sub: r.note || (r.kind === 'rule' ? t('instr.rule') : r.kind === 'listed' ? t('instr.listedInConfig') : ''),
-    };
-    src.order.push(id);
+  return String(own.summary || '').replace(/\x60/g, '') + '.' + suffix;
+}
+
+function addOwnRefEntry(src: InstrSourceState, r: InstructionsRef, agentId: string, host: string): void {
+  const id = src.all ? `a:${agentId}:${r.path}` : 'a:' + r.path;
+  const shown = src.all && host ? `${host} · ${r.shown}` : r.shown;
+  const kindNote = r.kind === 'rule' ? t('instr.rule') : r.kind === 'listed' ? t('instr.listedInConfig') : '';
+  const subBase = r.note || kindNote;
+  const sub = src.all ? (subBase ? `${agentId} · ${subBase}` : agentId) : subBase;
+  src.files[id] = {
+    scope: 'agent',
+    sec: 'own',
+    agent: agentId,
+    q: 'scope=agent&agent=' + encodeURIComponent(agentId) + '&path=' + encodeURIComponent(r.path),
+    path: r.path,
+    name: fxBase(r.shown),
+    shown,
+    exists: r.exists,
+    editable: r.editable,
+    note: r.note || '',
+    depth: r.depth || 1,
+    via: r.via || '',
+    sub,
+  };
+  src.order.push(id);
+}
+
+function indexOwnRefs(src: InstrSourceState, d: InstrListData, own: InstrOwnPayload, agentId = src.agent): void {
+  const host = instrHost(own.host || instrOwnIn(d, agentId)?.host);
+  if (own.error) {
+    if (!src.secs.own) src.secs.own = { title: t('instr.onHost', { host }), note: own.error };
+    return;
   }
-  if (!refs.length) src.secs.own.empty = t('instr.noFileRef');
+  if (!src.secs.own) {
+    src.secs.own = src.all
+      ? { title: t('instr.itsOwn') }
+      : { title: t('instr.onHost', { host }), note: resolveOwnSectionNote(own) };
+  }
+  const refs = own.refs || [];
+  for (const r of refs) addOwnRefEntry(src, r, agentId, host);
+  if (!refs.length && !src.all) src.secs.own.empty = t('instr.noFileRef');
 }
 
 function instrIndex(src: InstrSourceState, d: InstrListData, own: InstrOwnPayload | null): void {
@@ -244,7 +261,7 @@ function instrIndex(src: InstrSourceState, d: InstrListData, own: InstrOwnPayloa
   src.order = [];
   src.secs = {};
   src.root = src.agent;
-  const g = src.orphans ? instrOrphans(d) : instrSharedIn(d, src.agent);
+  const g = src.all ? (d?.global || []) : src.orphans ? instrOrphans(d) : instrSharedIn(d, src.agent);
   if (g.length) {
     src.secs.shared = {
       title: t('instr.sharedTitle'),
@@ -338,6 +355,7 @@ function renderInstrTree(src: InstrSourceState, activePath: string, text: (s: un
 export function buildInstructionSource(opts: {
   agent: string;
   orphans?: boolean;
+  all?: boolean;
   title: string;
   text: (s: unknown) => string;
   post: (path: string, body: unknown, tries: number) => Promise<Response>;
@@ -347,6 +365,7 @@ export function buildInstructionSource(opts: {
   const src: InstrSourceState = {
     agent: opts.agent,
     orphans: opts.orphans,
+    all: opts.all,
     title: opts.title,
     root: '',
     said: '',
@@ -363,6 +382,24 @@ export function buildInstructionSource(opts: {
         return instrFetch('api/instructions').then((res) => {
           if (!res.ok) return res;
           const d = res.body as InstrListData;
+          if (src.all) {
+            instrIndex(src, d, null);
+            const ownAgents = (d?.agents || []).filter((a) => Boolean(a.own));
+            if (!ownAgents.length) return listed();
+            return Promise.all(
+              ownAgents.map((a) =>
+                instrFetch('api/instructions/refs?agent=' + encodeURIComponent(a.id)).then(
+                  (rr) => ({ agent: a.id, own: rr.ok ? (rr.body as InstrOwnPayload) : null }),
+                  () => ({ agent: a.id, own: null }),
+                ),
+              ),
+            ).then((results) => {
+              for (const item of results) {
+                if (item.own) indexOwnRefs(src, d, item.own, item.agent);
+              }
+              return listed();
+            });
+          }
           if (src.orphans || !instrOwnIn(d, src.agent)) {
             instrIndex(src, d, null);
             return listed();
@@ -409,7 +446,7 @@ export function buildInstructionSource(opts: {
       const req: Record<string, unknown> =
         f.scope === 'global'
           ? { scope: 'global', name: f.name }
-          : { scope: 'agent', agent: src.agent, path: f.path };
+          : { scope: 'agent', agent: f.agent || src.agent, path: f.path };
       req.text = body.text;
       // Security invariant 10: preserve version checks (mtimeMs/size/sha256) unless explicit force is passed.
       if (body.force) {
