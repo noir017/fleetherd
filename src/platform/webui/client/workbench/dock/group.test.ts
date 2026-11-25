@@ -274,4 +274,31 @@ describe('workbench/dock/gridview (GridView DOM controller)', () => {
     grid.dispose();
     expect(c1.dispose).toHaveBeenCalledTimes(1);
   });
+
+  it('preserves split proportions across container growth and shrinkage', () => {
+    const container = document.createElement('div');
+    const grid = new GridView({ container, doc: document });
+    const main = grid.getGroup('main')!;
+    const c1 = createStubComponent('left');
+    const c2 = createStubComponent('right');
+    main.addPanel({ id: 'p1', componentName: 'chat', component: c1.component, title: 'Left' });
+    const g2 = grid.splitGroup('main', 'right', 'g2')!;
+    g2.addPanel({ id: 'p2', componentName: 'diff', component: c2.component, title: 'Right' });
+
+    grid.layout(1000, 600);
+    expect(main.element.style.width).toBe('500px');
+    expect(g2.element.style.width).toBe('500px');
+
+    // Growing parent container (e.g., collapsing sidebar) keeps 50/50 split instead of skewing.
+    grid.layout(1400, 600);
+    expect(main.element.style.width).toBe('700px');
+    expect(g2.element.style.width).toBe('700px');
+
+    // Shrinking parent container keeps 50/50 split.
+    grid.layout(800, 600);
+    expect(main.element.style.width).toBe('400px');
+    expect(g2.element.style.width).toBe('400px');
+
+    grid.dispose();
+  });
 });

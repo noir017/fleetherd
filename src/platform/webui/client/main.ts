@@ -1294,7 +1294,8 @@ function bootstrap(): void {
 
   registerBuiltinPlugins(pluginManager, createDefaultBuiltinPluginFactories(buildBuiltinDeps(rt)));
   void pluginManager.activateAll().then(() => {
-    shell.views.reveal('topics', { openPart: shell.getMode() !== 'tablet' });
+    const restored = shell.restoreLayout();
+    shell.views.reveal('topics', { openPart: !restored && shell.getMode() !== 'tablet' });
     ensureTopicEditorOpen(rt, state.topic);
     wireMobileShell(rt);
     if (state.topic) {

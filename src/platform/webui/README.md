@@ -673,7 +673,7 @@ no request of its own — the `topics` event that keeps the switcher current car
 state, message counts and unread marks, so a run that starts or finishes moves the tab as it
 happens. Its one bulk write is **Mark all read** — the check icon in the panel's title (`#sched-read`),
 shown only on this sub-tab, as the topic list's sits beside its own title — which clears this page's `aa_reads` marks and posts
-`api/seen` once for each run the daemon still counts as `stage: review` (the route takes one topic
+`api/seen` once for each run the daemon still counts as `stage: review` or `failed` (the route takes one topic
 and has no bulk form; a run list is a handful). The list is grouped by the browser's calendar —
 this month by day, older by month, `lastAt` deciding — with each group folded or opened on its own
 in `aa_sched_groups`; the newest group and the one holding the topic on screen start open, and a

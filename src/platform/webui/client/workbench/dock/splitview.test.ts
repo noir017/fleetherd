@@ -1,6 +1,7 @@
+// @vitest-environment jsdom
 import { describe, expect, it } from 'vitest';
 
-import { clampSize, layoutSplitSizes, resizeSplitAt, type SplitPaneSpec } from './splitview.js';
+import { clampSize, layoutSplitSizes, resizeSplitAt, type SplitPaneSpec, SplitView } from './splitview.js';
 
 describe('workbench/dock/splitview (pure math, node)', () => {
   it('clamps sizes within [min, max] and handles non-finite inputs', () => {
@@ -75,5 +76,46 @@ describe('workbench/dock/splitview (pure math, node)', () => {
     ];
     const next = resizeSplitAt(panes, [260, 0, 600], 0, 40);
     expect(next).toEqual([300, 0, 560]);
+  });
+});
+
+describe('workbench/dock/splitview (SplitView DOM controller)', () => {
+  it('preserves pane sizes across hide/show toggles, setPaneSize growth, and batch setPaneSizes', () => {
+    const container = document.createElement('div');
+    const sidebarEl = document.createElement('div');
+    const centerEl = document.createElement('div');
+    const secondaryEl = document.createElement('div');
+    const sv = new SplitView({
+      container,
+      orientation: 'horizontal',
+      panes: [
+        { id: 'sidebar', element: sidebarEl, minSize: 180, maxSize: 480, defaultSize: 264, visible: true, priority: 'low' },
+        { id: 'center', element: centerEl, minSize: 320, defaultSize: 640, visible: true, priority: 'high' },
+        { id: 'secondary', element: secondaryEl, minSize: 280, maxSize: 720, defaultSize: 400, visible: false, priority: 'normal' },
+      ],
+    });
+
+    expect(sv.layout(1200)).toEqual([264, 936, 0]);
+
+    // Growing low-priority sidebar reclaims space from high-priority center.
+    sv.setPaneSize('sidebar', 380);
+    expect(sv.getSizes()).toEqual([380, 820, 0]);
+
+    // Hiding and re-showing sidebar restores 380px instead of shrinking to minSize.
+    sv.setPaneVisible('sidebar', false);
+    expect(sv.getSizes()).toEqual([0, 1200, 0]);
+    sv.setPaneVisible('sidebar', true);
+    expect(sv.getSizes()).toEqual([380, 820, 0]);
+
+    // Showing secondary reclaims from center without crushing sidebar.
+    sv.setPaneVisible('secondary', true);
+    expect(sv.getSizes()).toEqual([380, 420, 400]);
+
+    // Batch setPaneSizes updates all targets without cross-pane stealing before layout.
+    sv.setPaneVisible('secondary', false);
+    sv.setPaneSizes({ sidebar: 300, center: 1100 }, false);
+    expect(sv.layout(1400)).toEqual([300, 1100, 0]);
+
+    sv.dispose();
   });
 });

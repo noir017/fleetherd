@@ -1222,8 +1222,8 @@ export class DynamicDockEngine implements DockEngine {
       this._parts[partId].visible = saved.visible;
       this._parts[partId].size = saved.size;
       if (partId === 'sidebar' || partId === 'secondary') {
-        this._splitView?.setPaneSize(partId, saved.size);
-        this._splitView?.setPaneVisible(partId, saved.visible);
+        this._splitView?.setPaneSize(partId, saved.size, false, false);
+        this._splitView?.setPaneVisible(partId, saved.visible, false);
       }
       for (const panelId of saved.panels) {
         const meta = state.panels[panelId];

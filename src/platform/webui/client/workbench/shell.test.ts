@@ -478,6 +478,13 @@ describe('workbench/shell', () => {
     const root = document.createElement('div');
     document.body.appendChild(root);
     const shell = new WorkbenchShell({ root, storage, initialWidth: 1440, initialHeight: 900 });
+    shell.views.register({
+      id: 'topics',
+      title: 'Topics',
+      part: 'sidebar',
+      component: () => makePanel('topics-view'),
+    });
+    shell.views.reveal('topics');
 
     shell.dock.setPartSize('sidebar', 380);
     expect(shell.sidebar.element.style.width).toBe('380px');
@@ -514,7 +521,15 @@ describe('workbench/shell', () => {
     const root2 = document.createElement('div');
     document.body.appendChild(root2);
     const shell2 = new WorkbenchShell({ root: root2, storage, initialWidth: 1440, initialHeight: 900 });
-    shell2.restoreLayout();
+    shell2.views.register({
+      id: 'topics',
+      title: 'Topics',
+      part: 'sidebar',
+      component: () => makePanel('topics-view-2'),
+    });
+    const restored = shell2.restoreLayout();
+    expect(restored).toBe(true);
+    shell2.views.reveal('topics', { openPart: !restored && shell2.getMode() !== 'tablet' });
     expect(shell2.isPartVisible('sidebar')).toBe(false);
     expect(shell2.panel.element.style.height).toBe('310px');
     shell2.setPartVisible('sidebar', true);

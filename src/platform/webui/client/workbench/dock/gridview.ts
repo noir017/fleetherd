@@ -752,11 +752,13 @@ export class GridView implements Disposable {
     const node = this._findBranchAtPath(this._tree, branch.path);
     if (node && span > 0) {
       const pixels = allocatePixels(node.sizes, span);
+      const nextSizes: Record<string, number> = {};
       for (let i = 0; i < branch.childNodes.length; i++) {
         const child = branch.childNodes[i]!;
         const paneId = child.type === 'leaf' ? child.groupId : `branch-${branch.path.join('-')}-${i}`;
-        branch.splitView.setPaneSize(paneId, pixels[i] ?? this._minGroupSize);
+        nextSizes[paneId] = pixels[i] ?? this._minGroupSize;
       }
+      branch.splitView.setPaneSizes(nextSizes, false);
     }
     const sizes = branch.splitView.layout(span);
     for (let i = 0; i < branch.childNodes.length; i++) {
