@@ -586,8 +586,6 @@ export const en = {
   'reviews.revertTitle': 'Revert skill “{name}”?',
   'reviews.revertBody': 'This restores {name} to before this review change, recording a new revert commit in the skill library history.',
   'reviews.revertFailed': 'Could not revert {name}: {err}',
-  'chat.launchDirsTitle': 'Working directory for {agent}',
-  'chat.launchOtherDir': 'Other folder…',
   'status.permLabel': 'Permissions',
   'status.permTitle': 'Switch permission level for this agent',
 

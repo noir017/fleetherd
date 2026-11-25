@@ -588,8 +588,6 @@ export const zhCN = {
   'reviews.revertTitle': '回滚技能「{name}」？',
   'reviews.revertBody': '这会将 {name} 恢复到此次复盘改动前的版本，并在技能库 git 历史中新增一条回滚提交。',
   'reviews.revertFailed': '无法回滚 {name}：{err}',
-  'chat.launchDirsTitle': '{agent} 的工作目录',
-  'chat.launchOtherDir': '其他目录…',
   'status.permLabel': '权限',
   'status.permTitle': '切换此智能体的权限级别',
 

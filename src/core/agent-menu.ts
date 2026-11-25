@@ -219,11 +219,7 @@ export function agentKindOf(def: AgentDef): string {
  * Not the menu's two levels: a page has room to show every machine at once, and a choice that
  * takes one tap where the menu takes two is the reason for laying it out at all.
  */
-export function agentCatalog(
-  groups: readonly AgentGroup[],
-  current: string,
-  workdirs?: (agentId: string) => { root: string; dirs: string[] } | undefined
-): AgentCatalog {
+export function agentCatalog(groups: readonly AgentGroup[], current: string): AgentCatalog {
   return {
     current,
     groups: groups.map((g) => ({
@@ -232,14 +228,7 @@ export function agentCatalog(
         // Short, as the footer and the status strip say it: on a card 150px wide the vendor prefix
         // (`opencode/`) was all that fit, and it is the one part the kind line already says.
         const model = def.model ? shortModelName(def.model) : undefined;
-        const wd = workdirs?.(def.id);
-        return {
-          id: def.id,
-          harness: def.harness,
-          kind: agentKindOf(def),
-          ...(model ? { model } : {}),
-          ...(wd ? { root: wd.root, dirs: wd.dirs } : {}),
-        };
+        return { id: def.id, harness: def.harness, kind: agentKindOf(def), ...(model ? { model } : {}) };
       }),
     })),
   };

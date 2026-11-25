@@ -62,7 +62,6 @@ export interface LogEventsDeps {
   readonly switchTopic: (id: string) => void;
   readonly openShot: (img: HTMLImageElement) => void;
   readonly sendCommand: (cmd: string) => void;
-  readonly setupTopic?: (opts: { agent?: string; cwd?: string }) => void;
   readonly toggleBtw: (qk: string) => void;
   readonly openReader: (link: HTMLAnchorElement) => void;
   readonly deliverLocal: (nonce: string) => void;
@@ -91,33 +90,6 @@ function handleLocalAction(act: HTMLElement, deps: LogEventsDeps): void {
   if (discard) deps.discardLocal(discard);
 }
 
-function handleLaunchClick(target: Element, deps: LogEventsDeps): boolean {
-  const card = target.closest('button[data-agent]');
-  if (card) {
-    const agentId = card.getAttribute('data-agent');
-    if (agentId) {
-      if (deps.setupTopic) deps.setupTopic({ agent: agentId });
-      else deps.sendCommand(`/agent ${agentId}`);
-    }
-    return true;
-  }
-  const dirBtn = target.closest('button[data-cwd]');
-  if (dirBtn) {
-    const cwd = dirBtn.getAttribute('data-cwd');
-    const agent = dirBtn.getAttribute('data-cwd-agent') || undefined;
-    if (cwd) {
-      if (deps.setupTopic) deps.setupTopic({ ...(agent ? { agent } : {}), cwd });
-      else deps.sendCommand(`/cd ${cwd}`);
-    }
-    return true;
-  }
-  if (target.closest('button[data-cwd-more]')) {
-    deps.sendCommand('/cd');
-    return true;
-  }
-  return false;
-}
-
 function handleNavClick(target: Element, e: MouseEvent, deps: LogEventsDeps): boolean {
   const shot = target.closest('img.shot');
   if (shot) {
@@ -134,7 +106,12 @@ function handleNavClick(target: Element, e: MouseEvent, deps: LogEventsDeps): bo
     }
     return true;
   }
-  if (handleLaunchClick(target, deps)) return true;
+  const card = target.closest('button[data-agent]');
+  if (card) {
+    const agentId = card.getAttribute('data-agent');
+    if (agentId) deps.sendCommand(`/agent ${agentId}`);
+    return true;
+  }
   const chip = target.closest('.btw-chip');
   if (chip) {
     const holder = chip.closest('[data-k]');

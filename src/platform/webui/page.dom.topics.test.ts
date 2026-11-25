@@ -302,20 +302,17 @@ describe('webui page: choosing an agent for a new topic', () => {
     expect(launch(h)!.querySelector('.launch-host')).toBeNull();
   });
 
-  it('a tap calls api/topics/setup for this topic and preserves the composer draft', async () => {
-    const h = await open({
-      url: 'http://localhost:8787/?t=a1b2c3d4',
-      replies: { 'api/topics/setup': { ok: true, agent: 'oc2' } },
-    });
+  it('a tap sends /agent <id> immediately, clears the launcher, and preserves the composer draft', async () => {
+    const h = await open({ url: 'http://localhost:8787/?t=a1b2c3d4' });
     await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4'], { agents }));
     (h.el('input') as HTMLTextAreaElement).value = 'a draft';
 
     await h.click('.agent-card[data-agent="oc2"]');
     await tick();
 
-    const setup = h.calls.filter((c) => c.path === 'api/topics/setup');
-    expect(setup.map((c) => [c.body.agent, c.body.topic])).toEqual([['oc2', 'a1b2c3d4']]);
-    expect(launch(h)).not.toBeNull();
+    const sent = h.calls.filter((c) => c.path === 'api/send');
+    expect(sent.map((c) => [c.body.text, c.body.topic])).toEqual([['/agent oc2', 'a1b2c3d4']]);
+    expect(launch(h)).toBeNull();
     // A control, like Stop: what was in the composer is still there.
     expect((h.el('input') as HTMLTextAreaElement).value).toBe('a draft');
   });
@@ -429,7 +426,7 @@ describe('webui page: a machine the gateway cannot reach', () => {
     expect(h.el('log').querySelector('.launch-group.off .agent-card')?.getAttribute('data-agent')).toBe('cc@laptop');
     // Dimmed, not disabled: the machine may be back by the time anyone writes.
     await h.click('.agent-card[data-agent="oc@laptop"]');
-    expect(h.calls.filter((c) => c.path === 'api/topics/setup').map((c) => c.body.agent)).toEqual(['oc@laptop']);
+    expect(h.calls.filter((c) => c.path === 'api/send').map((c) => c.body.text)).toEqual(['/agent oc@laptop']);
   });
 
   it('follows the machines event while the choice is open, both ways', async () => {

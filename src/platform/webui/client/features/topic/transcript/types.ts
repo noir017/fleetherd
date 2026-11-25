@@ -86,8 +86,6 @@ export interface LaunchAgent {
   readonly harness: string;
   readonly kind: string;
   readonly model?: string;
-  readonly root?: string;
-  readonly dirs?: readonly string[];
 }
 
 export interface LaunchGroup {

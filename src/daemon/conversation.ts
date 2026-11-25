@@ -645,7 +645,7 @@ export class ConversationRegistry {
     const id = this.idForRef(ref);
     const current = this.boundAgentFor(id, resolveAgent(this.config, routeInputFromRef(ref)).agentId);
     if (this.store?.agentSession(id, current) !== undefined) return undefined;
-    return agentCatalog(agentGroups(this.config.agents), current, (agentId) => this.workdirChoices(agentId));
+    return agentCatalog(agentGroups(this.config.agents), current);
   }
 
   /** Bind a new/empty topic's agent and working directory in one step; never adds prompt text. */

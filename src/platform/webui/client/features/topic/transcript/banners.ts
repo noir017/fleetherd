@@ -3,7 +3,6 @@ import { type Disposable, DisposableStore } from '../../../base/lifecycle.js';
 import { t as tr } from '../../../i18n/index.js';
 import { text } from '../../../services/api.js';
 import type {
-  LaunchAgent,
   LaunchChoice,
   OfflineMachine,
   TranscriptIcons,
@@ -54,48 +53,10 @@ export interface LaunchOfflineView {
   readonly offTitle: (name: string) => string;
 }
 
-function findLaunchAgent(choice: LaunchChoice, id: string): LaunchAgent | undefined {
-  for (const g of choice.groups) {
-    for (const a of g.agents) {
-      if (a.id === id) return a;
-    }
-  }
-  return undefined;
-}
-
-function launchDirsHtml(agent: LaunchAgent | undefined, activeCwd?: string): string {
-  if (!agent) return '';
-  const seen = new Set<string>();
-  const list: string[] = [];
-  if (agent.root) {
-    seen.add(agent.root);
-    list.push(agent.root);
-  }
-  for (const d of agent.dirs ?? []) {
-    if (d && !seen.has(d)) {
-      seen.add(d);
-      list.push(d);
-    }
-  }
-  if (list.length === 0) return '';
-  const chosen = activeCwd && seen.has(activeCwd) ? activeCwd : list[0];
-  let h = `<section class="launch-dirs" data-launch-dirs-for="${text(agent.id)}">`;
-  h += `<h3 class="launch-host">${text(tr('chat.launchDirsTitle', { agent: agent.id }))}</h3>`;
-  h += '<div class="launch-dir-grid">';
-  for (const d of list) {
-    const on = d === chosen;
-    h += `<button type="button" class="launch-dir${on ? ' on' : ''}" data-cwd="${text(d)}" data-cwd-agent="${text(agent.id)}" title="${text(d)}">${text(d)}</button>`;
-  }
-  h += `<button type="button" class="launch-dir more" data-cwd-more="1">${text(tr('chat.launchOtherDir'))}</button>`;
-  h += '</div></section>';
-  return h;
-}
-
 export function launchHtml(
   choice: LaunchChoice,
   icons: TranscriptIcons,
   offline: LaunchOfflineView,
-  activeCwd?: string,
 ): string {
   let h =
     `<div class="launch-head"><div class="launch-title">${text(tr('chat.launchTitle'))}</div>` +
@@ -135,7 +96,6 @@ export function launchHtml(
     }
     h += '</div></section>';
   }
-  h += launchDirsHtml(findLaunchAgent(choice, choice.current), activeCwd);
   return h;
 }
 
@@ -276,8 +236,7 @@ class BannersControllerImpl implements BannersController {
   syncLaunch(want: boolean): void {
     const launch = this._deps.getLaunch();
     const active = want && Boolean(launch);
-    const activeCwd = this._deps.topicById(this._deps.getTopic())?.dir?.path ?? '';
-    const s = active ? JSON.stringify(launch) + this._offlineSig + activeCwd : '';
+    const s = active ? JSON.stringify(launch) + this._offlineSig : '';
     if (s === this._launchSig && active === Boolean(this._launchEl)) return;
     if (this._launchEl && this._launchEl.parentNode) {
       this._launchEl.parentNode.removeChild(this._launchEl);
@@ -292,7 +251,7 @@ class BannersControllerImpl implements BannersController {
         offSince: (name) => this.offSince(name),
         offWhen: (at) => this.offWhen(at),
         offTitle: (name) => this.offTitle(name),
-      }, activeCwd);
+      });
       this._deps.log.appendChild(this._launchEl);
       this._launchSig = s;
     }

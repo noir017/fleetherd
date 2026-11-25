@@ -189,21 +189,50 @@ describe('webui page: the model switch in the status line', () => {
     // event after the tap replaces, so it stayed away until the first reply reported a status —
     // too late to choose the model that first message goes to.
     const agents = { groups: [{ name: '', agents: [{ id: 'oc@p', harness: 'opencode', kind: 'OpenCode' }] }], current: 'oc@p' };
-    const h = await open({ replies: { [URL_T]: LIST, 'api/topics/setup': { ok: true, agent: 'oc@p' } } });
+    const h = await open({
+      replies: {
+        [URL_T]: LIST,
+        [`api/options?peek=1&t=${T}`]: {
+          agent: 'oc@p',
+          model: 'm1',
+          options: [{ id: 'account', name: 'Account', value: 'work' }],
+        },
+        [`api/options?t=${T}`]: {
+          ok: true,
+          agent: 'oc@p',
+          options: [
+            {
+              id: 'account',
+              name: 'Account',
+              current: 'work',
+              options: [
+                { value: 'work', name: 'work' },
+                { value: 'home', name: 'home' },
+              ],
+            },
+          ],
+        },
+      },
+    });
     await h.emit(sync(T, [], [T], { agents }));
     expect(chip(h)).toBeNull();
 
     await h.click('.agent-card[data-agent="oc@p"]');
-    expect(h.calls.filter((c) => c.path === 'api/topics/setup').map((c) => c.body)).toEqual([
-      { topic: T, agent: 'oc@p' },
-    ]);
-    await h.emit({ t: 'msg', msg: message('m1', '<p>hi</p>') });
-    // No status has arrived and no sync followed: the model switch is up before the first status, and it works.
+    expect(h.calls.filter((c) => c.path === 'api/send').map((c) => c.body.text)).toEqual(['/agent oc@p']);
+    // No status has arrived and no sync followed: the tap alone puts it up, and it works.
     expect(chip(h)?.textContent).toBe('Model');
     await h.click('#status .st-model');
     expect(h.calls.find((c) => c.path === URL_T)).toBeTruthy();
     await tick();
     expect(rows(h)).toHaveLength(13);
+    // After the model list loads, peek populates the agent's model and custom settings (e.g. Account).
+    await tick();
+    const optBtn = h.doc.querySelector('#status .st-opt[data-opt="account"]') as HTMLButtonElement | null;
+    expect(optBtn).not.toBeNull();
+    expect(optBtn?.textContent).toContain('Account');
+    await h.click('#status .st-opt[data-opt="account"]');
+    await tick();
+    expect(rows(h).map((r) => r.getAttribute('data-v'))).toEqual(['work', 'home']);
   });
 
   it('takes the switch away again when a failed send empties the room and the choice comes back', async () => {

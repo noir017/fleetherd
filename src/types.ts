@@ -576,10 +576,6 @@ export interface AgentCatalogEntry {
   kind: string;
   /** The model configured for it, when there is one — short, as the footer says it (no vendor prefix). */
   model?: string;
-  /** The agent's configured root working directory, when known. */
-  root?: string;
-  /** Scanned subdirectories under `root`, ranked by frecency when available. */
-  dirs?: string[];
 }
 
 /**

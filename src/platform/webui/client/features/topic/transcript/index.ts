@@ -67,7 +67,6 @@ export interface TranscriptDeps {
   readonly setSidebar: (open: boolean) => void;
   readonly openShot: (img: HTMLImageElement) => void;
   readonly sendCommand: (cmd: string) => void;
-  readonly setupTopic?: (opts: { agent?: string; cwd?: string }) => void;
   readonly openReader: (link: HTMLAnchorElement) => void;
   readonly deliverLocal: (nonce: string) => void;
   readonly copyLocal: (nonce: string, btn: HTMLElement) => void;
@@ -529,7 +528,6 @@ class TranscriptControllerImpl implements TranscriptController {
         switchTopic: this._deps.switchTopic,
         openShot: this._deps.openShot,
         sendCommand: this._deps.sendCommand,
-        setupTopic: this._deps.setupTopic,
         toggleBtw: (qk) => {
           if (this.btw.isOpen() && this.btw.getKey() === qk) this.btw.close(true);
           else this.btw.open(qk);

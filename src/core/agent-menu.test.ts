@@ -166,25 +166,4 @@ describe('offline machines (daemon/host-availability.ts measures the hosts)', ()
       'uniagent (2) · offline'
     );
   });
-
-  it('includes each agent’s root and recent dirs in agentCatalog when workdirs lookup is given', () => {
-    const groups = agentGroups([agent('cc'), agent('oc', { harness: 'opencode' })]);
-    const catalog = agentCatalog(groups, 'cc', (id) =>
-      id === 'cc'
-        ? { root: '/home/u/work', dirs: ['/home/u/work/proj-a', '/home/u/work/proj-b'] }
-        : { root: '/srv/repo', dirs: [] }
-    );
-    expect(catalog.groups[0]?.agents).toEqual([
-      expect.objectContaining({
-        id: 'cc',
-        root: '/home/u/work',
-        dirs: ['/home/u/work/proj-a', '/home/u/work/proj-b'],
-      }),
-      expect.objectContaining({
-        id: 'oc',
-        root: '/srv/repo',
-        dirs: [],
-      }),
-    ]);
-  });
 });
