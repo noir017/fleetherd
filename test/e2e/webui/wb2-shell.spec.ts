@@ -17,7 +17,7 @@ test.describe('Web UI wb2-shell desktop and tablet alignment', () => {
     await gateway?.stop();
   });
 
-  test('desktop shell dimensions, permanent 35px tab bar, sidebar decoupling, and status bar items', async ({
+  test('desktop shell dimensions, permanent 38px tab bar, sidebar decoupling, and status bar items', async ({
     page,
   }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
@@ -37,9 +37,9 @@ test.describe('Web UI wb2-shell desktop and tablet alignment', () => {
     expect(metrics).toEqual({
       railW: 52,
       sidebarHeadH: 48,
-      tabBarH: 35,
+      tabBarH: 38,
       topicHeadH: 48,
-      statusBarH: 22,
+      statusBarH: 26,
     });
 
     // Status bar brand, connection check icon, and idle dialog flow.

@@ -7,7 +7,7 @@
 }
 
 .fh-palette-topic-ic.is-running {
-  color: var(--fh-ok);
+  color: var(--fh-running);
 }
 
 .fh-palette-topic-ic.is-asking {
@@ -62,7 +62,7 @@
   background: transparent;
   color: var(--fh-fg-hi);
   font: inherit;
-  font-size: 13px;
+  font-size: var(--fh-fs-ui);
 }
 
 .fh-palette-kb-input::placeholder {
@@ -71,7 +71,7 @@
 
 .fh-palette-kb-count {
   flex: none;
-  font-size: 11.5px;
+  font-size: var(--fh-fs-xs);
   color: var(--fh-fg-dim);
 }
 
@@ -83,7 +83,7 @@
 
 .fh-palette-kb-group-title {
   margin: 0 0 6px;
-  font-size: 11px;
+  font-size: var(--fh-fs-xs);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -93,12 +93,12 @@
 .fh-palette-kb-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 12.5px;
+  font-size: var(--fh-fs-sm);
 }
 
 .fh-palette-kb-table th {
   text-align: left;
-  font-size: 11px;
+  font-size: var(--fh-fs-xs);
   font-weight: 600;
   color: var(--fh-fg-dim);
   padding: 4px 8px;
@@ -133,7 +133,7 @@
 
 .fh-palette-kb-cmd-id {
   font-family: var(--fh-font-mono);
-  font-size: 11px;
+  font-size: var(--fh-fs-xs);
   color: var(--fh-fg-dim);
 }
 
@@ -160,14 +160,14 @@
   background: var(--fh-bg);
   color: var(--fh-fg-dim);
   font-family: var(--fh-font-mono);
-  font-size: 11px;
-  line-height: 15px;
+  font-size: var(--fh-fs-xs);
+  line-height: 17px;
 }
 
 .fh-palette-kb-empty {
   padding: 20px 12px;
   text-align: center;
-  font-size: 12.5px;
+  font-size: var(--fh-fs-sm);
   color: var(--fh-fg-dim);
 }
 
@@ -203,7 +203,7 @@
 }
 
 .fh-qp-backdrop .fh-qp-kbd-sep {
-  font-size: 10px;
+  font-size: var(--fh-fs-2xs);
   color: var(--fh-fg-dim);
   opacity: 0.7;
 }
@@ -220,8 +220,8 @@
   background: var(--fh-bg);
   color: var(--fh-fg-dim);
   font-family: var(--fh-font-mono);
-  font-size: 11px;
-  line-height: 15px;
+  font-size: var(--fh-fs-xs);
+  line-height: 17px;
 }
 
 .fh-qp-backdrop .fh-qp-foot {
@@ -232,7 +232,7 @@
   margin-top: 4px;
   padding: 7px 12px;
   border-top: 1px solid var(--fh-line);
-  font-size: 11px;
+  font-size: var(--fh-fs-xs);
   color: var(--fh-fg-dim);
 }
 
@@ -252,16 +252,16 @@
 
   body .fh-menu .fh-menu-item {
     width: calc(100% - 8px);
-    height: 26px;
+    height: 30px;
     margin: 0 4px;
     padding: 0 10px;
     gap: 9px;
     border-radius: 3px;
-    font-size: 12.5px;
+    font-size: var(--fh-fs-ui);
   }
 
   body .fh-menu .fh-menu-icon {
-    font-size: 15px;
+    font-size: var(--fh-fs-body);
     color: var(--fh-fg-dim);
   }
 
@@ -280,7 +280,7 @@
     border-bottom-width: 2px;
     border-radius: 3px;
     background: var(--fh-bg);
-    line-height: 15px;
+    line-height: 17px;
   }
 }
 

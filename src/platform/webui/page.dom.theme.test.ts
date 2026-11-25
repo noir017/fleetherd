@@ -303,4 +303,39 @@ describe('webui page: theme system', () => {
     expect(themeBlock.match(/#[0-9a-fA-F]{3,8}\b/g)).toBeNull();
     expect(themeBlock.match(/rgba?\([^)]+\)/gi)).toBeNull();
   });
+
+  it('uses bright blue --fh-running tokens across all running indicators in dark and light themes', () => {
+    const noComments = STYLE_SOURCE.replace(/\/\*[\s\S]*?\*\//g, '');
+    const wbDark = noComments.match(/:root,\[data-theme="dark"\]\{([^}]*)\}/)?.[1] ?? '';
+    const wbMediaLight =
+      noComments.match(/@media \(prefers-color-scheme: light\)\{:root:not\(\[data-theme="dark"\]\)\{([^}]*)\}\}/)?.[1] ?? '';
+    const wbDataLight = noComments.match(/\[data-theme="light"\]\{([^}]*)\}/)?.[1] ?? '';
+
+    expect(wbDark).toContain('--fh-running:#38bdf8;');
+    expect(wbMediaLight).toContain('--fh-running:#0284c7;');
+    expect(wbDataLight).toContain('--fh-running:#0284c7;');
+
+    expect(STYLE_SOURCE).toContain('.wb-topics-list .wb-topic-row .topic-dot.running{background:var(--fh-running)');
+    expect(STYLE_SOURCE).toContain('.wb-topics-list .wb-topic-row .topic-age.run{color:var(--fh-running)}');
+    expect(STYLE_SOURCE).toContain('.topic-fold.running{color:var(--fh-running);border-color:var(--fh-running)}');
+    expect(STYLE_SOURCE).toContain('.fh-fb-chip[data-fb-value="running"] .fh-fb-chip-icon');
+    expect(STYLE_SOURCE).toContain('[data-status-id="status.running"] .wb-status-ok-icon');
+    expect(STYLE_SOURCE).toContain('.wb-root .wb-stack-status-dot.is-running {\n    background: var(--fh-running);');
+    expect(STYLE_SOURCE).toContain('.wb-topic-editor .wb-topic-pill[data-tone="ok"]{background:var(--fh-running-bg);color:var(--fh-running)}');
+    expect(STYLE_SOURCE).toContain('.fh-schedules-view .sched-row-age.is-running{color:var(--fh-running)');
+    expect(STYLE_SOURCE).toContain('.fh-palette-topic-ic.is-running {\n  color: var(--fh-running);');
+  });
+
+  it('defines typography scale tokens with 14px UI chrome and 15px transcript/composer body text', () => {
+    const wbDark = STYLE_SOURCE.match(/:root,\[data-theme="dark"\]\{([^}]*)\}/)?.[1] ?? '';
+    expect(wbDark).toContain('--fh-fs-2xs:11px;');
+    expect(wbDark).toContain('--fh-fs-xs:12px;');
+    expect(wbDark).toContain('--fh-fs-sm:13px;');
+    expect(wbDark).toContain('--fh-fs-ui:14px;');
+    expect(wbDark).toContain('--fh-fs-body:15px;');
+    expect(wbDark).toContain('--fh-fs-lg:16px;');
+    expect(wbDark).toContain('--fh-fs-xl:18px;');
+    expect(STYLE_SOURCE).toContain('font-size:var(--fh-fs-ui);line-height:var(--fh-lh-ui)');
+    expect(STYLE_SOURCE).toContain('font-size:var(--fh-fs-body);line-height:var(--fh-lh-body)');
+  });
 });
