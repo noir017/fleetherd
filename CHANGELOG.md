@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.39.0-beta.2] - 2026-11-25
+
 ### Added
 
 - **One-step new topic setup, review revert, file tree git badges, and status-line permissions.**
