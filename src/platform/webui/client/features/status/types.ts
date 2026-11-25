@@ -45,6 +45,7 @@ export interface StatusPluginDeps {
   readonly doc?: Document;
   readonly win?: Window;
   readonly appElement?: HTMLElement | null;
+  readonly brandLabel?: string;
   readonly version?: string;
   readonly updateAvailable?: boolean;
   readonly initialConnectionState?: ConnectionState;
