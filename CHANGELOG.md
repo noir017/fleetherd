@@ -5,6 +5,39 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **New topics pick their directory with the folder picker again.** beta.2 laid every directory of
+  the chosen agent out as a grid of path buttons; with dozens of long paths it was a wall to read.
+  Tapping an agent card now sends `/agent` as before the workbench, and the gateway answers with the
+  same folder picker `/cd` uses — breadcrumbs, up, filter. The agent catalogue no longer carries
+  each agent's directory list.
+- **A failed topic leaves Needs you once you have looked at it.** A failure used to stay there until
+  the next turn, however often it was opened, so the group filled with topics already read. It now
+  clears the way a finished reply does: when the topic is seen after the failure. Sub-agent
+  tracking is unchanged — the agent waiting on a failed part has not seen it, so `fleetherd tasks`
+  still reports it until the next turn.
+- **Quieter tab counts, and one sidebar header for Topics, Skills and Schedules.** The counts beside
+  **All** / **Starred** were solid accent pills that drew the eye more than the labels; every
+  segmented control now shows them as plain secondary text. Skills' **Resident** / **Library** and
+  the Schedules header (search, filter, sort, state chips) now use the same segmented tabs and
+  filter bar as Topics, so the three sidebars line up instead of each drawing its own.
+
+### Fixed
+
+- **Choosing an agent on a new topic switches in place, and its model and settings can be picked
+  right away.** beta.2 posted each pick to the setup endpoint, waited for the answer, then rebuilt
+  the launcher and repainted the whole topic list, and the status line never offered the new agent's
+  model or account. A pick is the `/agent` command again, and the status line shows that agent's
+  switches as soon as it is chosen.
+- **Sidebars and panels reopen at the width they were closed at.** Hiding and showing the sidebar
+  (or the secondary sidebar and bottom panel) brought it back at a narrow default; a sidebar saved
+  as collapsed now also stays collapsed on reload, and split editor groups keep their proportions
+  when the window is resized.
+- **Editor tabs switch again.** The tab strip captured the pointer on every press to be ready for a
+  drag, which sent the click to the strip instead of the tab, so only the newest tab could be
+  shown; the pointer is now captured only once a drag actually starts.
+
 ## [3.39.0-beta.2] - 2026-11-25
 
 ### Added
