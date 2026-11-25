@@ -462,6 +462,7 @@ const GUARDED: Route[] = [
   { method: 'POST', path: '/api/click', run: click },
   { method: 'POST', path: '/api/topics', run: createTopic },
   { method: 'POST', path: '/api/topics/setup', run: setupTopic },
+  { method: 'GET', path: '/api/topics/workdirs', run: browseTopicWorkdirs },
   { method: 'POST', path: '/api/topics/clear', run: clearTopics },
   { method: 'POST', path: '/api/topics/delete', run: deleteTopic },
   { method: 'POST', path: '/api/topics/star', run: starTopic },
@@ -1076,6 +1077,26 @@ async function setupTopic({ req, res }: Req, ctx: Ctx): Promise<void> {
     ...(parsed.cwd !== undefined ? { cwd: parsed.cwd } : {}),
   });
   send(req, res, result.ok ? 200 : 409, result);
+}
+
+async function browseTopicWorkdirs({ req, res, url }: Req, ctx: Ctx): Promise<void> {
+  const topic = url.searchParams.get('t') ?? '';
+  if (!TOPIC_ID.test(topic)) return send(req, res, 400, { error: 'invalid topic id' });
+  const agent = url.searchParams.get('agent') ?? undefined;
+  const dir = url.searchParams.get('dir') ?? undefined;
+  const atRoot = url.searchParams.get('root') === '1';
+  if (agent !== undefined && (agent.length === 0 || agent.length > 200)) {
+    return send(req, res, 400, { error: 'invalid agent' });
+  }
+  if (dir !== undefined && (dir.length === 0 || dir.length > 4096)) {
+    return send(req, res, 400, { error: 'invalid dir' });
+  }
+  const result = await ctx.room.browseWorkdir(topic, {
+    ...(agent !== undefined ? { agent } : {}),
+    ...(dir !== undefined ? { dir } : {}),
+    ...(atRoot ? { atRoot: true } : {}),
+  });
+  send(req, res, result.ok ? 200 : 400, result.ok ? result.screen : { error: result.error });
 }
 
 async function starTopic({ req, res }: Req, ctx: Ctx): Promise<void> {

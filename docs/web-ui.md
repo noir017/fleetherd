@@ -42,10 +42,11 @@ Reader, and Status):
   and daemon version.
 - **Responsive breakpoints**: desktop (`≥ 1024px`) shows the full multi-pane workbench and
   auto-collapses the primary sidebar when the editor becomes narrow; tablet (`640–1023px`) turns
-  sidebars into slide-over drawers; mobile (`< 640px`) switches to a stack-style page shell with a
-  4-tab bottom bar (including **More** for Reviews, Preferences, Skills, Settings, device toggles,
-  and Gateway status), a topic detail header (status dot, agent, directory, unread back badge, and
-  `⋯` menu), left-swipe/long-press topic row actions, and in-topic tool tabs.
+  sidebars into slide-over drawers; mobile (`< 640px`) keeps the topic view as the main screen and
+  slides the sidebar (with the full activity rail: Topics, History, Scheduled, Reviews, Skills, and
+  Settings) in over it via the header menu button or a swipe from the left edge. Picking a topic,
+  tapping outside, swiping it back, or using the phone back gesture closes the drawer; topic tools
+  (Changes, Files, Terminal) stay reachable from the topic header.
 - **Drag-and-drop splits, view movement, and layout persistence**: on desktop (`≥ 1024px`), drag
   any editor tab onto the left, right, top, or bottom edge of an editor group to split side by
   side, or drag tabs within the permanent editor tab strip to reorder them (press `Esc` to cancel a
@@ -142,12 +143,14 @@ same header and footer rows, the same slide and the same dimmed backdrop.
 
 **Choosing an agent.** With more than one agent configured, a new topic opens on all of them,
 grouped by machine: each card shows the agent's id, what it is (Claude Code, Codex, OpenCode,
-Antigravity, or a custom agent's command) and its model if one is set. Tapping a card sends
-`/agent <id>` (leaving any draft in the composer intact) and opens the same folder picker as `/cd`
-— with breadcrumbs, parent navigation, and filtering — to choose its working directory; the status
-strip immediately offers that agent's model and settings (such as account) switches. Or just
-type — the card marked **default** is the agent that answers. The cards go away as soon as
-anything is said in the topic.
+Antigravity, or a custom agent's command) and its model if one is set. On the same page sits an
+inline folder browser for the selected agent (with `/cd`'s breadcrumbs, parent navigation, and
+filtering, showing only the current level's subfolders), plus a summary of the current agent and
+folder choice. You can pick the agent and folder in any order without leaving the page or echoing
+commands into the transcript (leaving any draft in the composer intact); switching the agent moves
+the folder browser to that agent's root, and the status strip immediately offers that agent's model
+and settings (such as account) switches. Or just type — the card marked **default** is the agent
+that answers. The launcher goes away as soon as anything is said in the topic.
 
 **Stopping it.** While a reply is streaming, **Stop** beside Send ends the turn
 (`/stop`) — and the same goes for an agent reporting back on background work after

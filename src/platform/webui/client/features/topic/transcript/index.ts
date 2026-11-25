@@ -67,6 +67,10 @@ export interface TranscriptDeps {
   readonly setSidebar: (open: boolean) => void;
   readonly openShot: (img: HTMLImageElement) => void;
   readonly sendCommand: (cmd: string) => void;
+  readonly onLaunchShown?: (agentId: string) => void;
+  readonly selectLaunchAgent?: (agentId: string) => void;
+  readonly browseLaunchWorkdir?: (dir: string) => void;
+  readonly pickLaunchWorkdir?: (cwd: string) => void;
   readonly openReader: (link: HTMLAnchorElement) => void;
   readonly deliverLocal: (nonce: string) => void;
   readonly copyLocal: (nonce: string, btn: HTMLElement) => void;
@@ -165,6 +169,7 @@ class TranscriptControllerImpl implements TranscriptController {
       switchTopic: deps.switchTopic,
       isNarrow: deps.isNarrow,
       setSidebar: deps.setSidebar,
+      onLaunchShown: deps.onLaunchShown,
     });
     this.btw = createBtwController({
       btwBox: deps.btwBox,
@@ -566,6 +571,9 @@ class TranscriptControllerImpl implements TranscriptController {
         switchTopic: this._deps.switchTopic,
         openShot: this._deps.openShot,
         sendCommand: this._deps.sendCommand,
+        selectLaunchAgent: this._deps.selectLaunchAgent,
+        browseLaunchWorkdir: this._deps.browseLaunchWorkdir,
+        pickLaunchWorkdir: this._deps.pickLaunchWorkdir,
         toggleBtw: (qk) => {
           if (this.btw.isOpen() && this.btw.getKey() === qk) this.btw.close(true);
           else this.btw.open(qk);
@@ -604,6 +612,7 @@ class TranscriptControllerImpl implements TranscriptController {
   }
 
   dispose(): void {
+    this.scroll.dispose();
     this.codeBlocks.dispose();
     this.btw.dispose();
     this.banners.dispose();

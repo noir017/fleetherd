@@ -1116,6 +1116,7 @@ export interface InstructionsPanel {
 }
 
 export type TopicSetupResult = { ok: true; agent: string; cwd: string } | { ok: false; error: string };
+export type WorkdirBrowseResult = { ok: true; screen: WorkdirScreen } | { ok: false; error: string };
 
 /**
  * Platform capability interface. One layer above Satori so the core classes depend only on
@@ -1454,6 +1455,11 @@ export interface PlatformAdapter {
   /** Bind a new/empty topic's agent and working directory in one step without adding prompt text. */
   useTopicSetup?(
     setup: (ref: ConversationRef, opts: { agent?: string; cwd?: string; dryRun?: boolean }) => TopicSetupResult
+  ): void;
+
+  /** Browse one level of directories for a topic's selected agent (inline new-topic folder picker). */
+  useWorkdirBrowser?(
+    browse: (ref: ConversationRef, opts?: { agent?: string; dir?: string; atRoot?: boolean }) => Promise<WorkdirBrowseResult>
   ): void;
 
   /**
