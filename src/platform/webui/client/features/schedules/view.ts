@@ -140,6 +140,10 @@ function sessionStateLabel(t: TopicInfo): string {
   return '';
 }
 
+function sessionRowClass(t: TopicInfo, depth: number, activeId: string | undefined): string {
+  return `topic-item sess-item${depth > 0 ? ` is-sub is-d${depth}` : ''}${t.id === activeId ? ' on' : ''}${t.running ? ' running' : ' idle'}`;
+}
+
 function renderSessionItem(
   t: TopicInfo,
   depth: number,
@@ -159,7 +163,7 @@ function renderSessionItem(
   const harnessLabel = t.agent?.harness || t.agent?.id || '';
 
   return html`<div
-    class=${`topic-item sess-item${depth > 0 ? ` is-sub is-d${depth}` : ''}${t.id === activeId ? ' on' : ''}${t.running ? ' running' : ' idle'}`}
+    class=${sessionRowClass(t, depth, activeId)}
     data-sess=${t.id}
     role="button"
     tabindex="0"

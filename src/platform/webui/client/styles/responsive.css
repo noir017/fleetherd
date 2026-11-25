@@ -448,6 +448,28 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  .wb-root .wb-stack-subtitle-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .wb-root .wb-stack-status-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex: none;
+    background: var(--fh-fg-soft);
+  }
+  .wb-root .wb-stack-status-dot.is-running {
+    background: var(--fh-ok);
+  }
+  .wb-root .wb-stack-status-dot.is-asking {
+    background: var(--fh-warn);
+  }
+  .wb-root .wb-stack-status-dot.is-live {
+    background: var(--fh-accent);
+  }
   .wb-root .wb-stack-tools {
     display: flex;
     gap: 0;

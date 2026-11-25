@@ -50,7 +50,7 @@ test.describe('Workbench topics list, row menu, confirm dialog, and mobile gestu
 
     // Delete opens confirmation dialog; Cancel preserves row
     await menu.locator('[data-menu-id="topics.delete"]').click();
-    const dlg = page.locator('.wb-topic-confirm-dialog .fh-dialog');
+    const dlg = page.locator('.fh-dialog-backdrop .fh-dialog');
     await expect(dlg).toBeVisible();
     await expect(dlg.locator('.fh-dialog-title')).toContainText(TOPIC_STARRED);
     await dlg.locator('[data-dialog-action="cancel"]').click();
@@ -90,7 +90,7 @@ test.describe('Workbench topics list, row menu, confirm dialog, and mobile gestu
 
     // Tap Delete in bottom sheet -> confirm alert -> Cancel
     await sheet.locator('[data-sheet-id="topics.delete"]').click();
-    const dlg = page.locator('.wb-topic-confirm-dialog .fh-dialog');
+    const dlg = page.locator('.fh-dialog-backdrop .fh-dialog');
     await expect(dlg).toBeVisible();
     await dlg.locator('[data-dialog-action="cancel"]').click();
     await expect(dlg).toBeHidden();

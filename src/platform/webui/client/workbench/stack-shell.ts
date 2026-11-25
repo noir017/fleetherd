@@ -35,6 +35,7 @@ export interface StackHeaderAction {
 export interface StackDetailOptions {
   readonly title: string;
   readonly subtitle?: string;
+  readonly subtitleTone?: 'running' | 'asking' | 'live' | 'idle';
   readonly backBadge?: number | null;
   readonly actions?: readonly StackHeaderAction[];
   readonly tools: readonly StackToolItem[];
@@ -400,6 +401,23 @@ export class StackShell implements Disposable {
     this._detailTitle.textContent = title;
   }
 
+  updateDetailHeader(opts: {
+    readonly title?: string;
+    readonly subtitle?: string;
+    readonly subtitleTone?: 'running' | 'asking' | 'live' | 'idle';
+    readonly backBadge?: number | null;
+  }): void {
+    if (opts.title !== undefined) {
+      this._detailTitle.textContent = opts.title;
+    }
+    if (opts.subtitle !== undefined || opts.subtitleTone !== undefined) {
+      this._renderDetailSubtitle(opts.subtitle, opts.subtitleTone);
+    }
+    if (opts.backBadge !== undefined) {
+      this._renderBackBadge(opts.backBadge);
+    }
+  }
+
   selectTool(toolId: string): void {
     if (!this._tools.some((t) => t.id === toolId)) return;
     if (this._activeToolId === toolId) return;
@@ -450,20 +468,8 @@ export class StackShell implements Disposable {
 
   private _applyDetailEntry(options: StackDetailOptions): void {
     this._detailTitle.textContent = options.title;
-    if (options.subtitle) {
-      this._detailSubtitle.textContent = options.subtitle;
-      this._detailSubtitle.hidden = false;
-    } else {
-      this._detailSubtitle.textContent = '';
-      this._detailSubtitle.hidden = true;
-    }
-    if (options.backBadge !== undefined && options.backBadge !== null && options.backBadge > 0) {
-      this._backBadge.textContent = options.backBadge > 99 ? '99+' : String(options.backBadge);
-      this._backBadge.hidden = false;
-    } else {
-      this._backBadge.textContent = '';
-      this._backBadge.hidden = true;
-    }
+    this._renderDetailSubtitle(options.subtitle, options.subtitleTone);
+    this._renderBackBadge(options.backBadge);
     this._renderHeaderActions(this._detailActions, options.actions ?? [], this._headActionDisposables);
     this._tools = [...options.tools];
     this._hideToolsBar = options.hideToolsBar === true || this._tools.length <= 1;
@@ -473,6 +479,40 @@ export class StackShell implements Disposable {
         : this._tools[0]?.id;
     this._renderTools();
     this._mountActiveTool();
+  }
+
+  private _renderDetailSubtitle(
+    subtitle: string | undefined,
+    tone: 'running' | 'asking' | 'live' | 'idle' | undefined,
+  ): void {
+    this._detailSubtitle.replaceChildren();
+    if (!subtitle && !tone) {
+      this._detailSubtitle.hidden = true;
+      return;
+    }
+    if (tone) {
+      const dot = this._doc.createElement('span');
+      dot.className = `wb-stack-status-dot is-${tone}`;
+      dot.setAttribute('aria-hidden', 'true');
+      this._detailSubtitle.appendChild(dot);
+    }
+    if (subtitle) {
+      const txt = this._doc.createElement('span');
+      txt.className = 'wb-stack-subtitle-text';
+      txt.textContent = subtitle;
+      this._detailSubtitle.appendChild(txt);
+    }
+    this._detailSubtitle.hidden = false;
+  }
+
+  private _renderBackBadge(badge: number | null | undefined): void {
+    if (badge !== undefined && badge !== null && badge > 0) {
+      this._backBadge.textContent = badge > 99 ? '99+' : String(badge);
+      this._backBadge.hidden = false;
+    } else {
+      this._backBadge.textContent = '';
+      this._backBadge.hidden = true;
+    }
   }
 
   private _renderHeaderActions(

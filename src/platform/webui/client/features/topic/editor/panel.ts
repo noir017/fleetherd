@@ -111,6 +111,12 @@ export class TopicEditorPanel implements TopicEditorHandle {
 
   init(params: unknown, ctx: TopicPanelInitContext): void {
     if (this._disposed) return;
+    if (this._panelCtx !== null) {
+      this._panelCtx = ctx;
+      if (params !== undefined) this.update(params);
+      else this.refreshHeader();
+      return;
+    }
     this._panelCtx = ctx;
     this._topicId = parseTopicEditorInput(params);
     this.els.root.dataset.topicId = this._topicId;

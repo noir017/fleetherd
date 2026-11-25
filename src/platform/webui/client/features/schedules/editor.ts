@@ -18,6 +18,13 @@ import {
 import { t as tr } from '../../i18n/index.js';
 import type { PluginContext, TopicInfo } from '../../plugins/api.js';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
+
+function scheduleStateBadge(task: SchedulePanelTask | null | undefined): { readonly label: string; readonly cls: string } {
+  const taskState = task?.state ?? 'active';
+  const label = task?.running ? tr('sched.statusRunning') : taskState;
+  const cls = task?.running || taskState === 'active' ? 'fh-pill fh-pill--ok' : 'fh-pill fh-pill--neutral';
+  return { label, cls };
+}
 import {
   buildTaskEditDiff,
   formatClock,
@@ -855,12 +862,9 @@ class ScheduleEditor implements ScheduleEditorController {
 
   private _paintHeader(nowMs: number): TemplateResult {
     const isNew = this._mode === 'new';
-    const isForm = isNew || (this._mode === 'edit' && !this._detail?.locked);
     const task = this._detail?.task ?? this._store.getTask(this._taskId);
-    if (isForm) return this._paintFormHeader(isNew, task);
-    const taskState = task?.state ?? 'active';
-    const badgeLabel = task?.running ? tr('sched.statusRunning') : taskState;
-    const pillCls = task?.running || taskState === 'active' ? 'fh-pill fh-pill--ok' : 'fh-pill fh-pill--neutral';
+    if (isNew || (this._mode === 'edit' && !this._detail?.locked)) return this._paintFormHeader(isNew, task);
+    const { label: badgeLabel, cls: pillCls } = scheduleStateBadge(task);
     const subline = formatEditorSubline(task, nowMs);
     return html`<div class="fh-schedule-editor-head">
       <div class="fh-schedule-editor-title-row">

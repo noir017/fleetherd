@@ -31,7 +31,7 @@ import { PanelPart } from './parts/panel-part.js';
 import { SecondaryPart } from './parts/secondary-part.js';
 import { SidebarPart } from './parts/sidebar-part.js';
 import { StatusBarPart, type StatusBarItem } from './parts/status-bar.js';
-import { StackShell, type StackNavTab, type StackToolItem } from './stack-shell.js';
+import { StackShell, type StackDetailOptions, type StackNavTab, type StackToolItem } from './stack-shell.js';
 
 export const LAYOUT_STORAGE_KEY = SERIALIZE_LAYOUT_KEY;
 export const SPLIT_STORAGE_KEY = 'aa_split_sizes';
@@ -541,9 +541,14 @@ export class WorkbenchShell implements Disposable {
     }
   }
 
-  openMobileDetail(title: string, tools: readonly StackToolItem[], activeToolId?: string): void {
+  openMobileDetail(
+    title: string,
+    tools: readonly StackToolItem[],
+    activeToolId?: string,
+    extra?: Pick<StackDetailOptions, 'subtitle' | 'subtitleTone' | 'backBadge' | 'actions'>,
+  ): void {
     const stack = this._ensureStackShell();
-    stack.openDetail({ title, tools, activeToolId });
+    stack.openDetail({ title, tools, activeToolId, ...extra });
   }
 
   openMobileView(viewId: string, title?: string): boolean {

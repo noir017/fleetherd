@@ -998,38 +998,6 @@
   min-height: 0;
 }
 
-.wb-term-bar {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
-  border-bottom: 1px solid var(--fh-line);
-  background: var(--fh-bg-side);
-  flex: none;
-}
-
-.wb-term-bar .term-name {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.wb-term-frames {
-  flex: 1 1 auto;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.wb-term-frames iframe {
-  flex: 1 1 auto;
-  width: 100%;
-  border: 0;
-  background: var(--term-bg);
-}
-
 .wb-reader-editor {
   display: flex;
   flex-direction: column;

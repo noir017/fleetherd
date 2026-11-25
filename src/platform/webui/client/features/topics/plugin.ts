@@ -201,8 +201,7 @@ interface TopicsRuntime {
   readonly doc: Document;
   readonly win: Window;
   readonly nowFn: () => number;
-  readonly confirmFn: (message: string) => boolean;
-  readonly hasCustomConfirm: boolean;
+  readonly confirmFn?: (message: string) => boolean;
   readonly alertFn: (message: string) => void;
   topics: Topic[];
   activeTopicId: string;
@@ -322,7 +321,7 @@ async function confirmAction(
     readonly fallbackMessage?: string;
   },
 ): Promise<boolean> {
-  if (rt.hasCustomConfirm) {
+  if (rt.confirmFn) {
     return rt.confirmFn(opts.fallbackMessage ?? opts.title);
   }
   return openConfirmDialog({
@@ -333,7 +332,6 @@ async function confirmAction(
     danger: opts.danger,
     overlays: rt.deps.overlays,
     doc: rt.doc,
-    className: 'wb-topic-confirm-dialog',
   });
 }
 
@@ -1119,8 +1117,7 @@ export function createTopicsPlugin(deps: TopicsPluginDeps = {}): WebuiPlugin {
         doc,
         win,
         nowFn,
-        confirmFn: deps.confirmFn ?? ((msg: string) => win.confirm(msg)),
-        hasCustomConfirm: typeof deps.confirmFn === 'function',
+        confirmFn: deps.confirmFn,
         alertFn: deps.alertFn ?? ((msg: string) => win.alert(msg)),
         topics: deps.getTopics ? [...deps.getTopics()] : ctx.topics.list().map(toTopic),
         activeTopicId: deps.getActiveTopicId ? deps.getActiveTopicId() : (ctx.topics.active()?.id ?? ''),

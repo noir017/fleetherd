@@ -377,6 +377,35 @@ export interface ReviewsViewController extends ReviewPanelComponent {
   refreshTopics(): void;
 }
 
+function createReviewsDom(doc: Document) {
+  const root = doc.createElement('div');
+  root.className = 'fh-reviews-view';
+  const headerHost = doc.createElement('div');
+  headerHost.className = 'fh-reviews-header';
+  const noticeHost = doc.createElement('div');
+  noticeHost.className = 'fh-reviews-notice';
+  const batchBarHost = doc.createElement('div');
+  batchBarHost.className = 'fh-reviews-batch';
+  batchBarHost.hidden = true;
+  const listHost = doc.createElement('div');
+  listHost.className = 'fh-reviews-list';
+  listHost.setAttribute('aria-multiselectable', 'true');
+  root.append(headerHost, noticeHost, batchBarHost, listHost);
+  return { root, headerHost, noticeHost, batchBarHost, listHost };
+}
+
+function buildReviewBatchActions(
+  ids: ReadonlySet<string>,
+  onMarkRead: (ids: ReadonlySet<string>) => void,
+  onArchive: (ids: ReadonlySet<string>) => void,
+): DomListBatchAction[] {
+  const zh = getLocale() === 'zh-CN';
+  return [
+    { id: 'mark-read', label: zh ? '标记已读' : 'Mark read', variant: 'secondary', onAction: () => onMarkRead(ids) },
+    { id: 'archive', label: zh ? '归档' : 'Archive', variant: 'secondary', onAction: () => onArchive(ids) },
+  ];
+}
+
 export function createReviewsViewComponent(
   ctx: PluginContext,
   store: ReviewsStore,
@@ -390,25 +419,7 @@ export function createReviewsViewComponent(
   const archivedIds = readStoredIds(ctx, 'archivedIds');
   let activeSelection: string | null = null;
   let inlinePendingOpen = false;
-
-  const root = doc.createElement('div');
-  root.className = 'fh-reviews-view';
-
-  const headerHost = doc.createElement('div');
-  headerHost.className = 'fh-reviews-header';
-
-  const noticeHost = doc.createElement('div');
-  noticeHost.className = 'fh-reviews-notice';
-
-  const batchBarHost = doc.createElement('div');
-  batchBarHost.className = 'fh-reviews-batch';
-  batchBarHost.hidden = true;
-
-  const listHost = doc.createElement('div');
-  listHost.className = 'fh-reviews-list';
-  listHost.setAttribute('aria-multiselectable', 'true');
-
-  root.append(headerHost, noticeHost, batchBarHost, listHost);
+  const { root, headerHost, noticeHost, batchBarHost, listHost } = createReviewsDom(doc);
 
   const topicExists = (id: string): boolean => ctx.topics.list().some((t) => t.id === id);
 
@@ -434,26 +445,23 @@ export function createReviewsViewComponent(
     paintList();
   };
 
-  const buildBatchActions = (ids: ReadonlySet<string>): DomListBatchAction[] => {
-    const zh = getLocale() === 'zh-CN';
-    return [
-      {
-        id: 'mark-read',
-        label: zh ? '标记已读' : 'Mark read',
-        variant: 'secondary',
-        onAction: () => {
-          for (const id of ids) readIds.add(id);
+  const listNav = attachListNavigation({
+    container: listHost,
+    batchBarHost,
+    rowSelector: '[data-rev]',
+    getRowId: (row) => row.getAttribute('data-rev'),
+    ignoreSelector: '[data-rev-topic],[data-rev-adopt],[data-rev-archive],[data-rev-dismiss]',
+    getBatchActions: (ids) =>
+      buildReviewBatchActions(
+        ids,
+        (sel) => {
+          for (const id of sel) readIds.add(id);
           writeStoredIds(ctx, 'readIds', readIds);
           listNav.clearSelection();
           paintList();
         },
-      },
-      {
-        id: 'archive',
-        label: zh ? '归档' : 'Archive',
-        variant: 'secondary',
-        onAction: () => {
-          for (const id of ids) {
+        (sel) => {
+          for (const id of sel) {
             archivedIds.add(id);
             expanded.delete(id);
           }
@@ -461,17 +469,7 @@ export function createReviewsViewComponent(
           listNav.clearSelection();
           paintList();
         },
-      },
-    ];
-  };
-
-  const listNav = attachListNavigation({
-    container: listHost,
-    batchBarHost,
-    rowSelector: '[data-rev]',
-    getRowId: (row) => row.getAttribute('data-rev'),
-    ignoreSelector: '[data-rev-topic],[data-rev-adopt],[data-rev-archive],[data-rev-dismiss]',
-    getBatchActions: buildBatchActions,
+      ),
     onActivate: (id) => openReviewOrToggle(id),
   });
   disposables.add(listNav);

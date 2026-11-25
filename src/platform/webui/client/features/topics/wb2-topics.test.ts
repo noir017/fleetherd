@@ -202,7 +202,7 @@ describe('wb2 topics alignment', () => {
     view.element.querySelector<HTMLButtonElement>('[data-rm="topic:t1"]')!.click();
     document.querySelector<HTMLButtonElement>('.wb-topic-row-menu [data-menu-id="topics.delete"]')!.click();
 
-    const dlg = document.querySelector<HTMLElement>('.wb-topic-confirm-dialog .fh-dialog')!;
+    const dlg = document.querySelector<HTMLElement>('.fh-dialog-backdrop .fh-dialog')!;
     expect(dlg).not.toBeNull();
     expect(dlg.querySelector('.fh-dialog-title')?.textContent).toBe('Delete topic "Slow cart API"?');
     expect(dlg.querySelector('.fh-dialog-body')?.textContent).toContain('History');
@@ -214,7 +214,7 @@ describe('wb2 topics alignment', () => {
     view.element.querySelector<HTMLButtonElement>('[data-rm="topic:t1"]')!.click();
     document.querySelector<HTMLButtonElement>('.wb-topic-row-menu [data-menu-id="topics.delete"]')!.click();
     document
-      .querySelector<HTMLButtonElement>('.wb-topic-confirm-dialog [data-dialog-action="confirm"]')!
+      .querySelector<HTMLButtonElement>('.fh-dialog-backdrop [data-dialog-action="confirm"]')!
       .click();
     await new Promise((r) => setTimeout(r, 0));
     expect(onDeleteTopic).toHaveBeenCalledWith('t1');

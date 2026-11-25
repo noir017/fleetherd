@@ -4,6 +4,7 @@ import type { ChangesPluginDeps } from '../features/changes/types.js';
 import type { FilesPluginDeps } from '../features/files/types.js';
 import type { HistoryPluginDeps } from '../features/history/helpers.js';
 import type { PalettePluginDeps } from '../features/palette/types.js';
+import type { ReaderPluginDeps } from '../features/reader/plugin.js';
 import type { ReviewsPluginDeps } from '../features/reviews/types.js';
 import type { SchedulesPluginDeps } from '../features/schedules/types.js';
 import type { SettingsPluginBridge, SettingsPluginDeps } from '../features/settings/workbench-types.js';
@@ -29,6 +30,7 @@ export interface WorkbenchExtrasModule {
   readonly createFilesPlugin: (deps?: FilesPluginDeps) => WebuiPlugin;
   readonly createHistoryPlugin: (deps?: HistoryPluginDeps) => WebuiPlugin;
   readonly createPalettePlugin: (deps?: PalettePluginDeps) => WebuiPlugin;
+  readonly createReaderPlugin: (deps?: ReaderPluginDeps) => WebuiPlugin;
   readonly createReviewsPlugin: (deps?: ReviewsPluginDeps) => WebuiPlugin;
   readonly createSchedulesPlugin: (deps?: SchedulesPluginDeps) => WebuiPlugin;
   readonly createSettingsPlugin: (deps: SettingsPluginDeps) => WebuiPlugin;
@@ -467,6 +469,19 @@ export function createLazyReviewsPlugin(loader: ExtrasLoader, deps?: ReviewsPlug
       { id: 'reviews', title: tr('sideTasks.tabReviews'), icon: 'eye', view: 'reviews', order: 40, hasBadge: true },
     ],
     views: [{ id: 'reviews', title: tr('sideTasks.tabReviews'), icon: 'eye', part: 'sidebar' }],
+    editors: [
+      {
+        kind: 'review',
+        title: (input) => {
+          const title = stringField(input, 'title');
+          return title ? `${tr('sideTasks.tabReviews')} · ${title}` : tr('sideTasks.tabReviews');
+        },
+      },
+      {
+        kind: 'review-prefs',
+        title: () => (getLocale() === 'zh-CN' ? '偏好建议' : 'Preference suggestions'),
+      },
+    ],
     commands: [{ id: 'reviews.refresh', title: tr('common.refresh') }],
   });
 }
@@ -576,6 +591,15 @@ export function createLazyFilesPlugin(loader: ExtrasLoader, deps?: FilesPluginDe
       { id: 'files.revealInTree', title: 'Reveal in file tree' },
       { id: 'files.closeFile', title: 'Close file' },
     ],
+  });
+}
+
+export function createLazyReaderPlugin(loader: ExtrasLoader, deps?: ReaderPluginDeps): WebuiPlugin {
+  return createLazyPluginShell({
+    id: 'reader',
+    loadPlugin: async () => (await loader())?.createReaderPlugin(deps) ?? null,
+    editors: [{ kind: 'reader', title: (input) => stringField(input, 'title') ?? stringField(input, 'viewUrl') ?? (getLocale() === 'zh-CN' ? '阅读器' : 'Reader') }],
+    commands: [{ id: 'reader.open' }, { id: 'reader.openImage' }],
   });
 }
 
