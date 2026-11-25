@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.39.0-beta.4] - 2026-11-25
+
 ### Changed
 
 - **Phones get the slide-out sidebar back.** The workbench gave phones a list screen with bottom
