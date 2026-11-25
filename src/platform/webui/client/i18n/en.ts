@@ -827,7 +827,6 @@ export const en = {
   'instr.notDelivering': 'Not delivering: its instruction file is already delivered to another agent on the same machine with a different layer.',
   'instr.itsOwnFiles': 'Its own files',
   'instr.itsOwnFilesAria': '{label} · its own files',
-<<<<<<< HEAD
   'gate.subtitle': 'Enter login secret',
   'gate.note': 'The secret is configured by the operator in the gateway config',
   'mobile.more': 'More',
@@ -855,7 +854,6 @@ export const en = {
   'mobile.themeSystem': 'System',
   'mobile.themeDark': 'Dark',
   'mobile.themeLight': 'Light',
-=======
 
   // Topics workbench view, menu, confirm, and mobile sheet
   'topics.tabAll': 'All',
@@ -878,7 +876,6 @@ export const en = {
   'topics.swipeMore': 'More',
   'topics.swipeDelete': 'Delete',
   'topics.statusIdle': 'Idle',
->>>>>>> wb2/topics
 } as const;
 
 export type MessageKey = keyof typeof en;

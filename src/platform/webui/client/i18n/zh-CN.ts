@@ -829,7 +829,6 @@ export const zhCN = {
   'instr.notDelivering': '未下发：其指令文件已下发给同机器上不同层级的另一个 Agent。',
   'instr.itsOwnFiles': '自有文件',
   'instr.itsOwnFilesAria': '{label} · 自有文件',
-<<<<<<< HEAD
   'gate.subtitle': '输入登录密钥',
   'gate.note': '密钥由运维写在网关配置里',
   'mobile.more': '更多',
@@ -857,7 +856,6 @@ export const zhCN = {
   'mobile.themeSystem': '跟随系统',
   'mobile.themeDark': '深色',
   'mobile.themeLight': '浅色',
-=======
 
   // Topics workbench view, menu, confirm, and mobile sheet
   'topics.tabAll': '全部',
@@ -880,5 +878,4 @@ export const zhCN = {
   'topics.swipeMore': '更多',
   'topics.swipeDelete': '删除',
   'topics.statusIdle': '空闲',
->>>>>>> wb2/topics
 } as const satisfies Record<MessageKey, string>;
