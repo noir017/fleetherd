@@ -188,7 +188,11 @@ export class WorkbenchShell implements Disposable {
     this._mode = resolveShellMode(this._width);
 
     this.activityBar = new ActivityBarPart({ doc: this._doc, resolveIcon: this._resolveIcon });
-    this.sidebar = new SidebarPart({ doc: this._doc, resolveIcon: this._resolveIcon });
+    this.sidebar = new SidebarPart({
+      doc: this._doc,
+      resolveIcon: this._resolveIcon,
+      isActivityView: (panelId) => this.activityBar.getItems().some((a) => a.view === panelId),
+    });
     this.secondary = new SecondaryPart({ doc: this._doc, resolveIcon: this._resolveIcon });
     this.panel = new PanelPart({ doc: this._doc, resolveIcon: this._resolveIcon });
     this.statusBar = new StatusBarPart({ doc: this._doc });
@@ -238,7 +242,7 @@ export class WorkbenchShell implements Disposable {
           element: this.secondary.element,
           minSize: 280,
           maxSize: 720,
-          defaultSize: 420,
+          defaultSize: 480,
           visible: false,
           priority: 'normal',
         },
@@ -254,6 +258,10 @@ export class WorkbenchShell implements Disposable {
       storage: this._storage,
       storageKey: LAYOUT_STORAGE_KEY,
       allowSplit: this._mode === 'desktop',
+      alwaysShowTabs: true,
+      initialVisible: {
+        sidebar: this._mode === 'desktop',
+      },
       resolveIcon: this._resolveIcon,
       parts: {
         sidebar: this.sidebar,
@@ -262,7 +270,7 @@ export class WorkbenchShell implements Disposable {
       },
       partSizes: {
         sidebar: this._splitView.getPreferredPaneSize('sidebar') || 264,
-        secondary: this._splitView.getPreferredPaneSize('secondary') || 420,
+        secondary: this._splitView.getPreferredPaneSize('secondary') || 480,
         panel: this.panel.getHeight(),
       },
     });
@@ -344,6 +352,8 @@ export class WorkbenchShell implements Disposable {
           }),
         );
       }
+      const activeSidebar = this.dock.getActivePartPanel('sidebar');
+      if (activeSidebar) this.activityBar.setActive(activeSidebar);
       this._syncMobileTabs(items);
     };
 
@@ -480,6 +490,7 @@ export class WorkbenchShell implements Disposable {
       }
       if (nextMode === 'desktop' && this.dock.isPartVisible('secondary')) {
         this._maybeAutoCollapseSidebar();
+        this._maybeRestoreSidebarIfFits();
       }
       this._syncLayout();
     }
@@ -692,6 +703,9 @@ export class WorkbenchShell implements Disposable {
         }
         this.activityBar.setActive(item.id);
         this._revealView(item.view);
+        if (this._mode === 'tablet') {
+          this.setPartVisible('sidebar', true);
+        }
       }),
     );
 
@@ -754,6 +768,18 @@ export class WorkbenchShell implements Disposable {
     this._disposables.add(
       addDisposableListener(this._backdrop, 'click', () => {
         if (this._mode === 'tablet') {
+          this.dock.setPartVisible('sidebar', false);
+          this.dock.setPartVisible('secondary', false);
+          this._syncLayout();
+        }
+      }),
+    );
+
+    this._disposables.add(
+      addDisposableListener(this._doc, 'keydown', (ev) => {
+        if (ev.key !== 'Escape' || this._mode !== 'tablet') return;
+        if (this.dock.isPartVisible('sidebar') || this.dock.isPartVisible('secondary')) {
+          ev.preventDefault();
           this.dock.setPartVisible('sidebar', false);
           this.dock.setPartVisible('secondary', false);
           this._syncLayout();
@@ -826,25 +852,46 @@ export class WorkbenchShell implements Disposable {
     }
   }
 
+  private _maybeRestoreSidebarIfFits(): void {
+    if (!this._sidebarAutoCollapsed || this._mode !== 'desktop') return;
+    const avail = Math.max(0, this._width - ACTIVITY_BAR_WIDTH);
+    const sbW = this._splitView.getPreferredPaneSize('sidebar') || this.dock.getPartSize('sidebar');
+    const secW =
+      this._splitView.getPreferredPaneSize('secondary') || this.dock.getPartSize('secondary');
+    if (avail - sbW - secW >= MIN_EDITOR_WIDTH) {
+      this._sidebarAutoCollapsed = false;
+      this.dock.setPartVisible('sidebar', true);
+    }
+  }
+
   private _syncLayout(): void {
     if (this._syncingLayout) return;
     this._syncingLayout = true;
     try {
       const sbVisible = this.dock.isPartVisible('sidebar');
       const secVisible = this.dock.isPartVisible('secondary');
+      const activeSidebar = this.dock.getActivePartPanel('sidebar');
+      if (activeSidebar) this.activityBar.setActive(activeSidebar);
 
       if (this._mode === 'tablet') {
         this._splitView.setPaneVisible('sidebar', false);
         this._splitView.setPaneVisible('secondary', false);
+        // Layout splitView before toggling drawer visibility so SplitView does not re-hide drawers.
+        this._splitView.layout(Math.max(0, this._width - ACTIVITY_BAR_WIDTH));
         this.sidebar.setVisible(sbVisible);
         this.secondary.setVisible(secVisible);
         this._backdrop.hidden = !(sbVisible || secVisible);
-        this._splitView.layout(Math.max(0, this._width - ACTIVITY_BAR_WIDTH));
       } else {
         this._backdrop.hidden = true;
         this._splitView.setPaneVisible('sidebar', sbVisible);
         this._splitView.setPaneVisible('secondary', secVisible);
-        this._splitView.layout(Math.max(0, this._width - ACTIVITY_BAR_WIDTH));
+        const workW = Math.max(0, this._width - ACTIVITY_BAR_WIDTH);
+        if (secVisible) {
+          const sbW = sbVisible ? this._splitView.getPreferredPaneSize('sidebar') || 264 : 0;
+          const secW = this._splitView.getPreferredPaneSize('secondary') || 480;
+          this._splitView.setPaneSize('center', Math.max(320, workW - sbW - secW));
+        }
+        this._splitView.layout(workW);
       }
 
       const workW = Math.max(0, this._width - ACTIVITY_BAR_WIDTH);
@@ -876,11 +923,19 @@ export class WorkbenchShell implements Disposable {
       const targetPart = isPartId(existing.group) ? existing.group : (view?.part ?? 'sidebar');
       this.setPartVisible(targetPart, true);
       existing.focus();
+      if (targetPart === 'sidebar') this.activityBar.setActive(id);
       return existing;
     }
 
     const part = view!.part;
-    this.setPartVisible(part, true);
+    const keepCollapsedOnTabletInit =
+      this._mode === 'tablet' &&
+      part === 'sidebar' &&
+      !this.dock.isPartVisible('sidebar') &&
+      this.dock.getPartPanels('sidebar').length === 0;
+    if (!keepCollapsedOnTabletInit) {
+      this.setPartVisible(part, true);
+    }
     const ref = this.dock.addPanel({
       id: view!.id,
       component: `view:${view!.id}`,

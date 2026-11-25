@@ -6,6 +6,7 @@ import type { DockPartHost, DockTabInfo } from '../dock/engine.js';
 export interface SidebarPartOptions {
   readonly doc?: Document;
   readonly resolveIcon?: (name: string) => string;
+  readonly isActivityView?: (panelId: string) => boolean;
 }
 
 export interface PartMoveMenuRequest {
@@ -24,6 +25,7 @@ export class SidebarPart implements DockPartHost, Disposable {
   readonly actionsEl: HTMLElement;
 
   private readonly _doc: Document;
+  private readonly _isActivityView?: (panelId: string) => boolean;
   private readonly _titleEl: HTMLElement;
   private readonly _tabsEl: HTMLElement;
   private readonly _moreBtn: HTMLButtonElement;
@@ -41,6 +43,7 @@ export class SidebarPart implements DockPartHost, Disposable {
 
   constructor(options: SidebarPartOptions = {}) {
     this._doc = options.doc ?? document;
+    this._isActivityView = options.isActivityView;
     const resolveIcon = options.resolveIcon ?? defaultResolveIcon;
 
     this.element = this._doc.createElement('aside');
@@ -125,8 +128,12 @@ export class SidebarPart implements DockPartHost, Disposable {
     this._moreBtn.hidden = !active;
 
     this._tabsEl.replaceChildren();
-    this._tabsEl.hidden = tabs.length < 2;
-    if (tabs.length < 2) return;
+    const allActivityViews =
+      this._isActivityView !== undefined &&
+      tabs.length > 0 &&
+      tabs.every((t) => this._isActivityView!(t.id));
+    this._tabsEl.hidden = tabs.length < 2 || allActivityViews;
+    if (this._tabsEl.hidden) return;
 
     for (const tab of tabs) {
       const btn = this._doc.createElement('button');

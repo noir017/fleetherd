@@ -39,6 +39,7 @@ export interface EditorGroupOptions {
   readonly id: string;
   readonly doc?: Document;
   readonly resolveIcon?: (name: string) => string;
+  readonly alwaysShowTabs?: boolean;
   readonly renderSingleHeader?: (
     head: HTMLElement,
     tab: EditorGroupTabInfo | undefined,
@@ -111,6 +112,32 @@ function defaultResolveIcon(name: string): string {
   return name === 'cross' ? CLOSE_SVG : '';
 }
 
+const EDITOR_TAB_ICONS: Readonly<Record<string, string>> = {
+  topic: 'chat',
+  chat: 'chat',
+  history: 'history',
+  schedule: 'clock',
+  schedules: 'clock',
+  task: 'clock',
+  review: 'eye',
+  reviews: 'eye',
+  skill: 'book',
+  skills: 'book',
+  settings: 'gear',
+  diff: 'git',
+  changes: 'git',
+  terminal: 'terminal',
+  file: 'file',
+  files: 'file',
+  instructions: 'file',
+  reader: 'file',
+};
+
+function resolveEditorTabIconName(componentName: string): string {
+  const key = componentName.startsWith('editor:') ? componentName.slice(7) : componentName;
+  return EDITOR_TAB_ICONS[key] ?? '';
+}
+
 export class EditorGroup implements Disposable {
   readonly id: string;
   readonly element: HTMLElement;
@@ -119,6 +146,7 @@ export class EditorGroup implements Disposable {
 
   private readonly _doc: Document;
   private readonly _resolveIcon: (name: string) => string;
+  private readonly _alwaysShowTabs: boolean;
   private readonly _renderSingleHeader?: EditorGroupOptions['renderSingleHeader'];
   private readonly _onTabPointerDown?: EditorGroupOptions['onTabPointerDown'];
 
@@ -150,6 +178,7 @@ export class EditorGroup implements Disposable {
     this.id = options.id;
     this._doc = options.doc ?? document;
     this._resolveIcon = options.resolveIcon ?? defaultResolveIcon;
+    this._alwaysShowTabs = options.alwaysShowTabs ?? false;
     this._renderSingleHeader = options.renderSingleHeader;
     this._onTabPointerDown = options.onTabPointerDown;
 
@@ -563,11 +592,13 @@ export class EditorGroup implements Disposable {
   private _renderHeader(): void {
     this._headerDisposables.clear();
     const multi = this._panels.length >= 2;
+    const showTabBar = multi || (this._alwaysShowTabs && this._panels.length >= 1);
     this.headerElement.classList.toggle('wb-single-tab', !multi);
     this.headerElement.classList.toggle('wb-multi-tab', multi);
+    this.headerElement.classList.toggle('wb-tab-bar', showTabBar);
     this.headerElement.replaceChildren();
 
-    if (!multi) {
+    if (!showTabBar) {
       const only = this._panels[0];
       if (this._renderSingleHeader) {
         this._renderSingleHeader(this.headerElement, only ? this._toTabInfo(only) : undefined, {
@@ -624,6 +655,15 @@ export class EditorGroup implements Disposable {
     btn.setAttribute('aria-selected', String(isActive));
     btn.dataset.panelId = panel.id;
     btn.dataset.tabIndex = String(index);
+
+    const iconName = resolveEditorTabIconName(panel.componentName);
+    const iconMarkup = iconName ? this._resolveIcon(iconName) : '';
+    if (iconMarkup) {
+      const iconEl = this._doc.createElement('span');
+      iconEl.className = 'wb-tab-icon';
+      iconEl.innerHTML = iconMarkup;
+      btn.appendChild(iconEl);
+    }
 
     const label = this._doc.createElement('span');
     label.className = 'wb-tab-label';
