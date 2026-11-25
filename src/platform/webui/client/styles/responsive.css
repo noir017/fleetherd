@@ -471,7 +471,7 @@
     background: var(--fh-warn);
   }
   .wb-root .wb-stack-status-dot.is-live {
-    background: var(--fh-accent);
+    background: var(--dot-live);
   }
   .wb-root .wb-stack-tools {
     display: flex;

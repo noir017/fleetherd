@@ -324,6 +324,8 @@ describe('webui page: theme system', () => {
     expect(STYLE_SOURCE).toContain('.wb-topic-editor .wb-topic-pill[data-tone="ok"]{background:var(--fh-running-bg);color:var(--fh-running)}');
     expect(STYLE_SOURCE).toContain('.fh-schedules-view .sched-row-age.is-running{color:var(--fh-running)');
     expect(STYLE_SOURCE).toContain('.fh-palette-topic-ic.is-running {\n  color: var(--fh-running);');
+    expect(STYLE_SOURCE).toContain('.fh-dot--live { background: var(--dot-live); }');
+    expect(STYLE_SOURCE).toContain('.wb-root .wb-stack-status-dot.is-live {\n    background: var(--dot-live);');
   });
 
   it('defines typography scale tokens with 14px UI chrome and 15px transcript/composer body text', () => {

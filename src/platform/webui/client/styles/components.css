@@ -193,6 +193,7 @@
 }
 
 .fh-dot--ok { background: var(--fh-ok); }
+.fh-dot--live { background: var(--dot-live); }
 .fh-dot--warn { background: var(--fh-warn); }
 .fh-dot--err { background: var(--fh-err); }
 .fh-dot--idle { background: var(--fh-idle); }
