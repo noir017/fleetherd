@@ -387,4 +387,52 @@ describe('topics built-in plugin', () => {
     view.dispose();
     h.cleanup();
   });
+
+  it('patches only changed topic rows in place and defers paints while hidden', async () => {
+    const topics: Topic[] = [
+      makeTopic({ id: 't1', title: 'Alpha', lastAt: 300, msgCount: 2, live: true }),
+      makeTopic({ id: 't2', title: 'Beta', lastAt: 200, msgCount: 1 }),
+      makeTopic({ id: 't3', title: 'Gamma', lastAt: 100, msgCount: 1 }),
+    ];
+    const h = setupHarness(topics, 't1');
+    await h.manager.activate('topics');
+
+    const view = h.registry.getView('topics')!.component();
+    h.doc.getElementById('mount')!.appendChild(view.element);
+    const visListeners: Array<(visible: boolean) => void> = [];
+    const baseCtx = makePanelInitCtx('topics');
+    const panelCtx = {
+      ...baseCtx,
+      api: {
+        ...baseCtx.api,
+        isVisible: true,
+        onDidVisibilityChange: (cb: (visible: boolean) => void) => {
+          visListeners.push(cb);
+          return { dispose() {} };
+        },
+      },
+    };
+    view.init(undefined, panelCtx);
+
+    const row1Before = view.element.querySelector('[data-topic="t1"]')!;
+    const row2Before = view.element.querySelector('[data-topic="t2"]')!;
+    const row3Before = view.element.querySelector('[data-topic="t3"]')!;
+
+    h.setTopics([topics[0]!, { ...topics[1]!, title: 'Beta updated' }, topics[2]!]);
+
+    expect(view.element.querySelector('[data-topic="t1"]')).toBe(row1Before);
+    expect(view.element.querySelector('[data-topic="t3"]')).toBe(row3Before);
+    expect(view.element.querySelector('[data-topic="t2"]')).not.toBe(row2Before);
+    expect(view.element.querySelector('[data-topic="t2"]')?.textContent).toContain('Beta updated');
+
+    for (const cb of visListeners) cb(false);
+    h.setTopics([topics[0]!, { ...topics[1]!, title: 'Beta updated' }, { ...topics[2]!, title: 'Gamma deferred' }]);
+    expect(view.element.querySelector('[data-topic="t3"]')?.textContent).not.toContain('Gamma deferred');
+
+    for (const cb of visListeners) cb(true);
+    expect(view.element.querySelector('[data-topic="t3"]')?.textContent).toContain('Gamma deferred');
+
+    view.dispose();
+    h.cleanup();
+  });
 });

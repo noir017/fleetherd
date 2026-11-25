@@ -13,6 +13,8 @@ const HL_MAX = 20000;
 const HL_IDLE_MS = 250;
 const HL_CACHE_MAX = 300;
 const COPY_RESET_MS = 1500;
+const HL_CHUNK_BUDGET_MS = 8;
+const HL_CHUNK_YIELD_MS = 16;
 
 export interface CodeBlocksDeps {
   readonly log: HTMLElement;
@@ -26,7 +28,10 @@ export interface CodeBlocksDeps {
 }
 
 export interface CodeBlocksController extends Disposable {
-  enhance(root: Element | null | undefined): void;
+  enhance(
+    root: Element | null | undefined,
+    opts?: { readonly defer?: boolean; readonly skipHighlight?: boolean; readonly liveEl?: Element | null },
+  ): void;
   sweep(): void;
   scheduleSweep(): void;
   attachDocumentEvents(doc?: Document): Disposable;
@@ -87,6 +92,7 @@ class CodeBlocksControllerImpl implements CodeBlocksController {
   private readonly _disposables = new DisposableStore();
   private _hlWarned = false;
   private _hlTimer: ReturnType<typeof setTimeout> | undefined;
+  private _hlChunkTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(deps: CodeBlocksDeps) {
     this._deps = deps;
@@ -135,32 +141,32 @@ class CodeBlocksControllerImpl implements CodeBlocksController {
       );
   }
 
-  private _hlApply(code: Element, live: boolean): void {
-    if (code.hasAttribute('data-hl') || code.firstElementChild) return;
+  private _hlApply(code: Element, live: boolean, cacheOnly = false): boolean {
+    if (code.hasAttribute('data-hl') || code.firstElementChild) return false;
     const lang = codeLang(code);
     const src = code.textContent ?? '';
-    if (!lang || !src || src.length > HL_MAX) return;
+    if (!lang || !src || src.length > HL_MAX) return false;
     const key = `${lang}\n${src}`;
     let spans = this._hlCache.get(key);
     if (spans) {
       this._hlCache.delete(key);
       this._hlCache.set(key, spans);
       hlPaint(code, src, spans);
-      return;
+      return true;
     }
-    if (live) return;
+    if (live || cacheOnly) return false;
     const fn = this._hlFns[lang];
-    if (fn === false) return;
+    if (fn === false) return false;
     if (!fn) {
       this._hlLoad(lang);
-      return;
+      return false;
     }
     try {
       spans = fn(src);
     } catch (e) {
       this._hlFns[lang] = false;
       this._hlWarn(e);
-      return;
+      return false;
     }
     this._hlCache.set(key, spans);
     if (this._hlCache.size > HL_CACHE_MAX) {
@@ -168,6 +174,7 @@ class CodeBlocksControllerImpl implements CodeBlocksController {
       if (oldest !== undefined) this._hlCache.delete(oldest);
     }
     hlPaint(code, src, spans);
+    return true;
   }
 
   scheduleSweep(): void {
@@ -180,27 +187,57 @@ class CodeBlocksControllerImpl implements CodeBlocksController {
       clearTimeout(this._hlTimer);
       this._hlTimer = undefined;
     }
+    if (this._hlChunkTimer !== undefined) {
+      clearTimeout(this._hlChunkTimer);
+      this._hlChunkTimer = undefined;
+    }
     const live = this._liveEl();
     const roots: (HTMLElement | null | undefined)[] = [
       this._deps.log,
       ...this._deps.getExtraRoots(),
     ];
+    const pending: Element[] = [];
     for (let r = 0; r < roots.length; r++) {
       const root = roots[r];
       if (!root) continue;
       const codes = root.querySelectorAll('.cb pre>code[class*="language-"]:not([data-hl])');
-      for (let i = 0; i < codes.length; i++) {
+      // Walk bottom-up so visible tail blocks in long transcripts highlight first.
+      for (let i = codes.length - 1; i >= 0; i--) {
         const code = codes[i];
-        if (!code) continue;
-        const host = code.closest('[data-k]');
-        this._hlApply(code, Boolean(live) && host === live);
+        if (code) pending.push(code);
+      }
+    }
+    if (!pending.length) return;
+    this._runSweepChunk(pending, 0, live);
+  }
+
+  private _runSweepChunk(pending: readonly Element[], startIndex: number, live: Element | null): void {
+    const now = typeof performance !== 'undefined' ? () => performance.now() : () => Date.now();
+    const deadline = now() + HL_CHUNK_BUDGET_MS;
+    let i = startIndex;
+    while (i < pending.length) {
+      const code = pending[i];
+      i++;
+      if (!code || !code.isConnected) continue;
+      const host = code.closest('[data-k]');
+      const didWork = this._hlApply(code, Boolean(live) && host === live);
+      if (didWork && i < pending.length && now() >= deadline) {
+        this._hlChunkTimer = setTimeout(() => {
+          this._hlChunkTimer = undefined;
+          this._runSweepChunk(pending, i, this._liveEl());
+        }, HL_CHUNK_YIELD_MS);
+        return;
       }
     }
   }
 
-  enhance(root: Element | null | undefined): void {
+  enhance(
+    root: Element | null | undefined,
+    opts?: { readonly defer?: boolean; readonly skipHighlight?: boolean; readonly liveEl?: Element | null },
+  ): void {
     if (!root || !root.querySelectorAll) return;
-    this.scheduleSweep();
+    const defer = Boolean(opts?.defer);
+    if (!defer) this.scheduleSweep();
     const frames = root.querySelectorAll('.cb');
     for (let i = 0; i < frames.length; i++) {
       const frame = frames[i];
@@ -208,14 +245,15 @@ class CodeBlocksControllerImpl implements CodeBlocksController {
       const k = cbKey(frame);
       if (k && this._cbWrapped[k]) cbWrapSet(frame, true);
     }
+    if (opts?.skipHighlight) return;
     const codes = root.querySelectorAll('.cb pre>code[class*="language-"]');
     if (!codes.length) return;
-    const live = this._liveEl();
+    const live = opts && 'liveEl' in opts ? (opts.liveEl ?? null) : this._liveEl();
     for (let i = 0; i < codes.length; i++) {
       const code = codes[i];
       if (!code) continue;
       const host = code.closest('[data-k]');
-      this._hlApply(code, Boolean(live) && host === live);
+      this._hlApply(code, Boolean(live) && host === live, defer);
     }
   }
 
@@ -267,6 +305,10 @@ class CodeBlocksControllerImpl implements CodeBlocksController {
     if (this._hlTimer !== undefined) {
       clearTimeout(this._hlTimer);
       this._hlTimer = undefined;
+    }
+    if (this._hlChunkTimer !== undefined) {
+      clearTimeout(this._hlChunkTimer);
+      this._hlChunkTimer = undefined;
     }
     this._disposables.dispose();
   }

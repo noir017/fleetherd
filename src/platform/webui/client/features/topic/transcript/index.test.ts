@@ -403,4 +403,26 @@ describe('createTranscriptController', () => {
       h.controller.dispose();
     }
   });
+
+  it('batches bulk reconcile DOM appends and defers off-screen code highlighting to sweep', async () => {
+    const h = makeHarness();
+    const codeHtml = (n: number) =>
+      `<div class="cb"><div class="cb-h"><span>ts</span></div><pre><code class="language-ts">const v${n} = ${n};</code></pre></div>`;
+    const list: TranscriptMessage[] = Array.from({ length: 20 }, (_, i) => ({
+      id: `m${i}`,
+      own: false,
+      html: codeHtml(i),
+      at: 1000 + i,
+    }));
+    const appendSpy = vi.spyOn(h.log, 'appendChild');
+    const enhanceSpy = vi.spyOn(h.controller.codeBlocks, 'enhance');
+    h.controller.reconcile(list);
+
+    expect(appendSpy).toHaveBeenCalledTimes(1);
+    expect(h.log.children.length).toBe(20);
+    expect(enhanceSpy).toHaveBeenCalledWith(h.els['2:m0'], { defer: true, skipHighlight: true, liveEl: null });
+    expect(enhanceSpy).toHaveBeenCalledWith(h.els['2:m19'], { defer: true, skipHighlight: false, liveEl: null });
+
+    h.controller.dispose();
+  });
 });
