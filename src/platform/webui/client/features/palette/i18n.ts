@@ -2,7 +2,7 @@ export const PALETTE_I18N_EN: Readonly<Record<string, string>> = {
   'palette.cmdQuickOpenTopic': 'Quick Open Topic',
   'palette.cmdCommands': 'Show All Commands',
   'palette.cmdKeybindings': 'Keyboard Shortcuts',
-  'palette.topicPlaceholder': 'Search topics by title, host, folder, or agent…',
+  'palette.topicPlaceholder': 'Search topics by title, host, folder, or agent; type > for commands',
   'palette.topicEmpty': 'No matching topics',
   'palette.commandPlaceholder': 'Type a command to run…',
   'palette.commandEmpty': 'No matching commands',
@@ -23,13 +23,18 @@ export const PALETTE_I18N_EN: Readonly<Record<string, string>> = {
   'palette.kbEmpty': 'No matching keyboard shortcuts',
   'palette.kbCount': '{count} shortcuts',
   'palette.kbClose': 'Close',
+  'palette.hintSelect': 'Select',
+  'palette.hintOpen': 'Open',
+  'palette.hintRun': 'Run',
+  'palette.hintClose': 'Close',
+  'palette.hintCommands': 'Commands only',
 };
 
 export const PALETTE_I18N_ZH_CN: Readonly<Record<string, string>> = {
   'palette.cmdQuickOpenTopic': '快速跳转到话题',
   'palette.cmdCommands': '打开命令面板',
   'palette.cmdKeybindings': '快捷键一览',
-  'palette.topicPlaceholder': '按标题、主机、目录或智能体搜索话题…',
+  'palette.topicPlaceholder': '搜索话题；输入 > 只搜命令',
   'palette.topicEmpty': '没有匹配的话题',
   'palette.commandPlaceholder': '输入要执行的命令…',
   'palette.commandEmpty': '没有匹配的命令',
@@ -50,4 +55,9 @@ export const PALETTE_I18N_ZH_CN: Readonly<Record<string, string>> = {
   'palette.kbEmpty': '没有匹配的快捷键',
   'palette.kbCount': '共 {count} 条快捷键',
   'palette.kbClose': '关闭',
+  'palette.hintSelect': '选择',
+  'palette.hintOpen': '打开',
+  'palette.hintRun': '执行',
+  'palette.hintClose': '关闭',
+  'palette.hintCommands': '只搜命令',
 };
