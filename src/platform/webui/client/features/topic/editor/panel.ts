@@ -111,6 +111,12 @@ export class TopicEditorPanel implements TopicEditorHandle {
 
   init(params: unknown, ctx: TopicPanelInitContext): void {
     if (this._disposed) return;
+    if (this._panelCtx !== null) {
+      this._panelCtx = ctx;
+      if (params !== undefined) this.update(params);
+      else this.refreshHeader();
+      return;
+    }
     this._panelCtx = ctx;
     this._topicId = parseTopicEditorInput(params);
     this.els.root.dataset.topicId = this._topicId;
@@ -130,6 +136,11 @@ export class TopicEditorPanel implements TopicEditorHandle {
     this._initSubControllers();
     this._wireQuickPickInterception();
     this._wireMessageContextMenu();
+    this._listeners.add(
+      addDisposableListener(this.els.powerBtn, 'click', () => {
+        this._composer?.command('/kill');
+      }),
+    );
 
     if (this._topicId) {
       this._composer?.loadDraft(this._topicId);
@@ -174,6 +185,25 @@ export class TopicEditorPanel implements TopicEditorHandle {
     this._panelCtx?.api.setTitle(title);
     this._header?.refresh(topic, this._streamState);
     this.els.stopBtn.hidden = !topic?.running;
+    this.els.composerForm.classList.toggle('is-running', Boolean(topic?.running));
+    this._syncStatusRow(topic?.dir, topic?.live, topic?.agent?.harness);
+  }
+
+  private _syncStatusRow(
+    dir: { readonly name?: string; readonly path?: string } | undefined,
+    live: boolean | undefined,
+    harness: string | undefined,
+  ): void {
+    const dirText = dir?.path || dir?.name || '';
+    this.els.dirEl.textContent = dirText;
+    this.els.dirEl.title = dir?.path || dirText;
+    this.els.dirEl.hidden = !dirText;
+    this.els.powerBtn.hidden = !live;
+    if (harness) {
+      this.els.statusRowEl.dataset.harness = harness;
+    } else {
+      delete this.els.statusRowEl.dataset.harness;
+    }
   }
 
   setStreamState(state: TopicStreamState): void {
@@ -344,6 +374,7 @@ export class TopicEditorPanel implements TopicEditorHandle {
         (ev: MouseEvent) => {
           const target = ev.target;
           if (!(target instanceof Element)) return;
+          if (target.closest('.st-perm')) return;
           const optBtn = target.closest<HTMLButtonElement>('.st-opt');
           if (optBtn && !optBtn.disabled && this._deps.quickPick?.listOptionChoices) {
             const oid = optBtn.getAttribute('data-opt');

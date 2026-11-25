@@ -1,7 +1,7 @@
 import { shortModelName } from '../core/runtime-footer.js';
 import type { ConversationAddress } from '../core/conversation.js';
 import type { PlatformAdapter } from '../platform/adapter.js';
-import type { AgentStatus, ConversationId, QuotaPool, SessionOption, StatusOption } from '../types.js';
+import type { AgentStatus, ConversationId, QuotaPool, SessionOption, StatusOption, StatusPermissions } from '../types.js';
 import type { AgentUsage } from './agent.js';
 import type { CacheReading } from './claude-transcript.js';
 
@@ -52,6 +52,8 @@ export interface StatusBoardDeps {
   agentOf(id: ConversationId): string;
   /** The model to name before the harness has reported one: the `/model` override, else config. */
   configuredModel(id: ConversationId): string | undefined;
+  /** Effective permission level and offered levels for this conversation's agent. */
+  permissionsOf?(id: ConversationId): StatusPermissions | undefined;
   /**
    * The conversation's prompt-cache reading, or undefined when its harness has none to give.
    * Only the claude harness answers; see claude-transcript.ts. Absent = no harness can.
@@ -132,6 +134,12 @@ export class StatusBoard {
     const e = this.entryOf(id);
     e.options = statusOptions(options);
     this.publish(id, e);
+  }
+
+  /** Re-compose and push the status for a conversation (e.g. after `/setting permissions.<agent>`). */
+  refresh(id: ConversationId): void {
+    const e = this.entryOf(id);
+    this.flush(id, e);
   }
 
   /**
@@ -243,6 +251,7 @@ export class StatusBoard {
   private compose(id: ConversationId, e: Entry): AgentStatus {
     const model = e.model ?? this.deps.configuredModel(id);
     const short = model ? shortModelName(model) : undefined;
+    const permissions = this.deps.permissionsOf?.(id);
     return {
       agent: this.deps.agentOf(id),
       ...(short ? { model: short } : {}),
@@ -252,6 +261,7 @@ export class StatusBoard {
       ...(e.cacheExpiresAt !== undefined ? { cacheExpiresAt: e.cacheExpiresAt } : {}),
       ...(e.quota?.length ? { quota: e.quota } : {}),
       ...(e.options?.length ? { options: e.options } : {}),
+      ...(permissions ? { permissions } : {}),
     };
   }
 

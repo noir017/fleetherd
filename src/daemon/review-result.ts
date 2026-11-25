@@ -17,6 +17,8 @@ export interface AppliedChange {
   file?: string;
   /** The history entry a `revert` names, when there is something to go back to. */
   revertId?: string;
+  /** Commit id in the skills repo for diff lookup (including `create` which has no parent to revert to). */
+  commitId?: string;
 }
 
 /** The command that undoes one applied change, or nothing when it cannot be undone by name. */
@@ -94,7 +96,12 @@ export function recordedChange(
     ...(change.reason ? { reason: change.reason } : {}),
   };
   if ('applied' in outcome) {
-    return { ...base, applied: true, ...(outcome.applied.revertId ? { revertId: outcome.applied.revertId } : {}) };
+    return {
+      ...base,
+      applied: true,
+      ...(outcome.applied.revertId ? { revertId: outcome.applied.revertId } : {}),
+      ...(outcome.applied.commitId ? { commitId: outcome.applied.commitId } : {}),
+    };
   }
   if ('suggested' in outcome) return { ...base, suggested: true };
   return { ...base, applied: false, error: outcome.refused };

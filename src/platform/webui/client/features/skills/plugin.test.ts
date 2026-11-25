@@ -266,7 +266,7 @@ describe('features/skills plugin', () => {
     // Clicking row opens skill editor via PluginContext
     const row = panel.element.querySelector<HTMLElement>('[data-list-id="beta-library"]')!;
     row.click();
-    expect(h.openEditor).toHaveBeenCalledWith('skill', { name: 'beta-library' }, undefined);
+    expect(h.openEditor).toHaveBeenCalledWith('skill', { name: 'beta-library' }, { id: 'skill:beta-library' });
 
     // Refresh command triggers /api/skills again
     await h.registry.executeCommand(CMD_SKILLS_REFRESH);

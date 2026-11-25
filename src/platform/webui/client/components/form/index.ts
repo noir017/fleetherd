@@ -1,4 +1,7 @@
+import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
+import { icon } from '../../../icons.js';
 import { html, nothing, type TemplateResult } from '../../base/html.js';
+import { type IconInput, renderIcon } from '../shared.js';
 import { renderSegmented, type SegmentedOption } from '../tabs/index.js';
 
 export interface FieldRowOptions {
@@ -154,4 +157,122 @@ export function renderSegmentedField(opts: SegmentedFieldOptions): TemplateResul
     className: opts.className,
     onChange: opts.onChange,
   });
+}
+
+export interface RadioOption {
+  readonly value: string;
+  readonly label: string;
+  readonly description?: string;
+  readonly disabled?: boolean;
+}
+
+export interface RadioGroupOptions {
+  readonly options: readonly RadioOption[];
+  readonly value: string;
+  readonly ariaLabel?: string;
+  readonly className?: string;
+  readonly onChange: (value: string) => void;
+}
+
+export interface GroupedListItem {
+  readonly id?: string;
+  readonly label: string | TemplateResult;
+  readonly subtitle?: string | TemplateResult;
+  readonly value?: string | TemplateResult;
+  readonly icon?: IconInput;
+  readonly iconBox?: boolean;
+  readonly trailing?: TemplateResult;
+  readonly chevron?: boolean;
+  readonly disabled?: boolean;
+  readonly danger?: boolean;
+  readonly link?: boolean;
+  readonly onClick?: () => void;
+}
+
+export interface GroupedListOptions {
+  readonly header?: string;
+  readonly footer?: string;
+  readonly items: readonly GroupedListItem[];
+  readonly className?: string;
+}
+
+function renderCheckIcon(): TemplateResult {
+  return html`${unsafeHTML(icon('check', 'fh-mgroup-check'))}`;
+}
+
+function renderChevronIcon(): TemplateResult {
+  return html`${unsafeHTML(icon('chevronRight', 'fh-mgroup-chev'))}`;
+}
+
+export function renderRadioGroup(opts: RadioGroupOptions): TemplateResult {
+  const cls = `fh-mgroup fh-radio-group${opts.className ? ` ${opts.className}` : ''}`;
+  return html`<div class=${cls} role="radiogroup" aria-label=${opts.ariaLabel ?? nothing}>
+    ${opts.options.map((opt) => {
+      const checked = opt.value === opts.value;
+      const rowCls =
+        `fh-mgroup-item fh-radio-item${checked ? ' is-selected' : ''}` +
+        `${opt.disabled ? ' is-disabled' : ''}`;
+      return html`<button
+        type="button"
+        class=${rowCls}
+        role="radio"
+        data-radio-value=${opt.value}
+        aria-checked=${checked ? 'true' : 'false'}
+        ?disabled=${Boolean(opt.disabled)}
+        @click=${() => {
+          if (!opt.disabled) opts.onChange(opt.value);
+        }}
+      >
+        <span class="fh-mgroup-main">
+          <span class="fh-mgroup-label">${opt.label}</span>
+          ${opt.description ? html`<small class="fh-mgroup-sub">${opt.description}</small>` : nothing}
+        </span>
+        ${checked ? renderCheckIcon() : nothing}
+      </button>`;
+    })}
+  </div>`;
+}
+
+export function renderGroupedList(opts: GroupedListOptions): TemplateResult {
+  const cls = `fh-mgroup-section${opts.className ? ` ${opts.className}` : ''}`;
+  return html`<section class=${cls}>
+    ${opts.header ? html`<div class="fh-mgroup-head">${opts.header}</div>` : nothing}
+    <div class="fh-mgroup">
+      ${opts.items.map((item) => {
+        const itemCls =
+          `fh-mgroup-item${item.disabled ? ' is-disabled' : ''}` +
+          `${item.danger ? ' is-danger' : ''}` +
+          `${item.link ? ' is-link' : ''}` +
+          `${item.onClick && !item.disabled ? ' is-clickable' : ''}`;
+        const iconEl = item.icon
+          ? item.iconBox
+            ? html`<span class="fh-mgroup-icbox">${renderIcon(item.icon, 'fh-icon')}</span>`
+            : renderIcon(item.icon, 'fh-mgroup-icon')
+          : nothing;
+        const content = html`
+          ${iconEl}
+          <span class="fh-mgroup-main">
+            <span class="fh-mgroup-label">${item.label}</span>
+            ${item.subtitle ? html`<small class="fh-mgroup-sub">${item.subtitle}</small>` : nothing}
+          </span>
+          ${item.value !== undefined ? html`<span class="fh-mgroup-val">${item.value}</span>` : nothing}
+          ${item.trailing ?? nothing}
+          ${item.chevron ? renderChevronIcon() : nothing}
+        `;
+        if (item.onClick) {
+          return html`<button
+            type="button"
+            class=${itemCls}
+            data-group-item=${item.id ?? nothing}
+            ?disabled=${Boolean(item.disabled)}
+            @click=${() => {
+              if (!item.disabled) item.onClick?.();
+            }}
+          >${content}</button>`;
+        }
+        return html`<div class=${itemCls} data-group-item=${item.id ?? nothing}>${content}</div>`;
+      })}
+    </div>
+    ${opts.footer ? html`<div class="fh-mgroup-foot">${opts.footer}</div>` : nothing}
+  </section>`;
 }

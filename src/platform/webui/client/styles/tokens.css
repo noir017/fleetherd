@@ -30,6 +30,7 @@
   --fh-toggle:rgba(36,137,219,.51);
   --fh-toggle-line:#2488db;
   --fh-own:rgba(0,120,212,.10);
+  --fh-own-m:rgba(0,120,212,.26);
   --fh-own-edge:#0078d4;
   --fh-ok:#89d185;
   --fh-warn:#cca700;
@@ -290,6 +291,7 @@
   --fh-toggle:rgba(0,95,184,.12);
   --fh-toggle-line:#005fb8;
   --fh-own:rgba(0,95,184,.06);
+  --fh-own-m:rgba(0,95,184,.11);
   --fh-own-edge:#005fb8;
   --fh-ok:#388a34;
   --fh-warn:#bf8803;
@@ -540,6 +542,7 @@
   --fh-toggle:rgba(0,95,184,.12);
   --fh-toggle-line:#005fb8;
   --fh-own:rgba(0,95,184,.06);
+  --fh-own-m:rgba(0,95,184,.11);
   --fh-own-edge:#005fb8;
   --fh-ok:#388a34;
   --fh-warn:#bf8803;

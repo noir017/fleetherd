@@ -569,9 +569,9 @@ describe('agentCatalogForRef (what a new topic offers)', () => {
         {
           name: 'this machine',
           agents: [
-            { id: 'cc', harness: 'claude', kind: 'Claude Code' },
-            { id: 'oc', harness: 'opencode', kind: 'OpenCode' },
-            { id: 'agy', harness: 'agy', kind: 'Antigravity' },
+            { id: 'cc', harness: 'claude', kind: 'Claude Code', root, dirs: ['gateway', 'shop-api', 'uniagent'].map((d) => join(root, d)) },
+            { id: 'oc', harness: 'opencode', kind: 'OpenCode', root, dirs: ['gateway', 'shop-api', 'uniagent'].map((d) => join(root, d)) },
+            { id: 'agy', harness: 'agy', kind: 'Antigravity', root, dirs: ['gateway', 'shop-api', 'uniagent'].map((d) => join(root, d)) },
           ],
         },
       ],
@@ -614,6 +614,51 @@ describe('agentCatalogForRef (what a new topic offers)', () => {
     });
     const { reg } = rig({ config: ruled });
     expect(reg.agentCatalogForRef(ref)?.current).toBe('oc');
+  });
+
+  it('sets up a new topic’s agent and working directory in one step without touching any prompt', async () => {
+    const { reg, send, prompts } = rig();
+    const target = join(root, 'shop-api');
+    const res = reg.setupTopicForRef(ref, { agent: 'oc', cwd: target });
+    expect(res).toEqual({ ok: true, agent: 'oc', cwd: target });
+    expect(reg.agentCatalogForRef(ref)?.current).toBe('oc');
+    expect(reg.workdirForRef(ref)?.path).toBe(target);
+    // Nothing was sent to any agent; the first real user message arrives verbatim.
+    expect(prompts).toEqual([]);
+    await send('hello');
+    expect(prompts).toEqual(['hello']);
+  });
+
+  it('rejects unknown agent, missing directory, or a topic that already has a session', async () => {
+    const { reg, store, key } = rig();
+    expect(reg.setupTopicForRef(ref, { agent: 'nope' }).ok).toBe(false);
+    expect(reg.setupTopicForRef(ref, { cwd: join(root, 'missing-dir') }).ok).toBe(false);
+    store.setAgentSession(key, 'cc', 'acp-session-1');
+    expect(reg.setupTopicForRef(ref, { agent: 'oc' }).ok).toBe(false);
+  });
+
+  it('rejects relative/traversal cwd and leaves agent binding untouched when cwd setup fails', () => {
+    const { reg, store, key } = rig();
+    expect(reg.setupTopicForRef(ref, { agent: 'oc', cwd: '.' }).ok).toBe(false);
+    expect(reg.setupTopicForRef(ref, { agent: 'oc', cwd: `${root}/../shop-api` }).ok).toBe(false);
+    expect(reg.setupTopicForRef(ref, { agent: 'oc', cwd: join(root, 'missing-dir') }).ok).toBe(false);
+    expect(store.boundAgent(key)).toBeUndefined();
+    expect(reg.agentCatalogForRef(ref)?.current).toBe('cc');
+
+    // Dry-run validates without mutating store or memory state.
+    const dry = reg.setupTopicForRef(ref, { agent: 'oc', cwd: join(root, 'shop-api'), dryRun: true });
+    expect(dry).toEqual({ ok: true, agent: 'oc', cwd: join(root, 'shop-api') });
+    expect(store.boundAgent(key)).toBeUndefined();
+
+    // Without a store, cwd cannot be remembered; agent binding must not be modified either.
+    const noStore = new ConversationRegistry(
+      cfg,
+      new Map(),
+      { create: () => { throw new Error('unused'); } } as never,
+      { now: () => 0, schedule: () => () => {} } as never
+    );
+    expect(noStore.setupTopicForRef(ref, { agent: 'oc', cwd: join(root, 'shop-api') }).ok).toBe(false);
+    expect(noStore.agentCatalogForRef(ref)?.current).toBe('cc');
   });
 });
 

@@ -151,10 +151,10 @@ describe('features/changes P3-3 polish', () => {
     toolPanel.init(undefined, makePanelInitCtx('tool:changes').ctx);
     await flushMicrotasks();
 
-    const rows = toolPanel.element.querySelectorAll<HTMLButtonElement>('.fh-changes-file-main');
-    rows[0]!.click();
-    rows[1]!.click();
-    rows[0]!.click();
+    const openBtns = toolPanel.element.querySelectorAll<HTMLButtonElement>('[data-open-diff-editor]');
+    openBtns[0]!.click();
+    openBtns[1]!.click();
+    openBtns[0]!.click();
 
     expect(openEditor).toHaveBeenNthCalledWith(
       1,

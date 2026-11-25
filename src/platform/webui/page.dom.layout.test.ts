@@ -37,6 +37,10 @@ describe('webui page: workbench responsive layout (desktop, tablet, mobile)', ()
     expect(h.el('workbench-root').dataset.wbMode).toBe('tablet');
     const backdrop = h.doc.querySelector('.wb-drawer-backdrop') as HTMLElement;
     expect(backdrop).not.toBeNull();
+    expect(backdrop.hidden).toBe(true);
+    expect((h.doc.querySelector('.wb-sidebar') as HTMLElement).hidden).toBe(true);
+
+    await h.click('.wb-activity-item[data-activity-id="topics"]');
     expect(backdrop.hidden).toBe(false);
 
     backdrop.click();
@@ -137,6 +141,10 @@ describe('webui page: topic row menu via ContributionRegistry', () => {
     expect(delBtn).toBeTruthy();
     delBtn!.click();
     await tick();
+    const confirmBtn = h.doc.querySelector<HTMLButtonElement>('.fh-dialog .fh-btn--danger');
+    expect(confirmBtn).not.toBeNull();
+    confirmBtn!.click();
+    await tick();
     expect(h.calls.some((c) => c.path === 'api/topics/delete')).toBe(true);
   });
 });
@@ -156,7 +164,7 @@ describe('webui page: terminal topic tool in bottom panel', () => {
     termBtn!.click();
     await tick();
     expect((on.doc.querySelector('.wb-panel') as HTMLElement).hidden).toBe(false);
-    expect(on.doc.querySelector('.wb-terminal-panel')).not.toBeNull();
+    expect(on.doc.querySelector('.wb-terminal-panel, .wb-panel .wb-lazy-host')).not.toBeNull();
 
     termBtn!.click();
     await tick();

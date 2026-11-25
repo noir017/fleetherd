@@ -144,6 +144,10 @@ describe('workbench/shell', () => {
     expect(shell.getMode()).toBe('tablet');
     expect(root.dataset.wbMode).toBe('tablet');
     const backdrop = root.querySelector('.wb-drawer-backdrop') as HTMLElement;
+    expect(shell.isPartVisible('sidebar')).toBe(false);
+    expect(backdrop.hidden).toBe(true);
+
+    shell.setPartVisible('sidebar', true);
     expect(backdrop.hidden).toBe(false);
 
     backdrop.click();
@@ -449,5 +453,23 @@ describe('workbench/shell', () => {
     shell.dispose();
     registry.dispose();
     commands.dispose();
+  });
+
+  it('opens secondary pane at 480px default width and escapes StackShell.setListHeader backLabel', () => {
+    const root = document.createElement('div');
+    document.body.appendChild(root);
+    const storage = makeMemoryStorage();
+    const shell = new WorkbenchShell({ root, storage, initialWidth: 1440, initialHeight: 900 });
+
+    shell.setPartVisible('secondary', true);
+    expect(shell.secondary.element.style.width).toBe('480px');
+
+    const stack = shell.getStackShell();
+    stack.setListHeader({ title: 'Reviews', backLabel: '<img src=x onerror=alert(1)>' });
+    const backBtn = stack.element.querySelector<HTMLButtonElement>('.wb-stack-list-back')!;
+    expect(backBtn.querySelector('img')).toBeNull();
+    expect(backBtn.textContent).toContain('<img src=x onerror=alert(1)>');
+
+    shell.dispose();
   });
 });

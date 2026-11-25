@@ -37,6 +37,7 @@ export { IDBFactory };
 // The page with its script and stylesheet inline, built the way the asset build builds them
 // (page.test-helpers.ts says why and how): jsdom runs what the build ships.
 import { renderPage, servePage } from './page.test-helpers.js';
+import { createReaderPlugin } from './client/features/reader/plugin.js';
 export { renderPage, servePage };
 export { renderWebMarkdown, renderWebToolLines } from '../web-markdown.js';
 export { webMessageHtml } from './room.js';
@@ -763,6 +764,7 @@ export async function open(
       if (push) installPush(w, push, pushLog);
       if (photos) installPhotos(w, photos, photoLog);
       if (codeView) (w as any).__fhCodeView = codeView;
+      (w as any).__fhWorkbenchExtras ??= { createReaderPlugin };
       if (shortenLong) {
         const real = w.setTimeout.bind(w) as (fn: () => void, ms: number) => number;
         (w as any).setTimeout = (fn: () => void, ms: number): number => {
@@ -850,7 +852,7 @@ export async function open(
       for (const fn of schemeListeners) fn({ matches: scheme === 'dark', media: '(prefers-color-scheme: dark)' });
     },
     waiting: () => doc.querySelector('#log > .syncing')?.textContent ?? null,
-    rows: () => doc.getElementById('topics')!.children.length,
+    rows: () => doc.querySelectorAll('#topics [data-topic]').length,
     notice: () => doc.querySelector('#log > .empty')?.textContent ?? null,
     click: async (selector) => {
       const target = doc.querySelector<HTMLElement>(selector);

@@ -1,6 +1,8 @@
 import { svg, type SVGTemplateResult } from '../../base/html.js';
 
 export type StatusIconName =
+  | 'remote'
+  | 'check'
   | 'play'
   | 'pause'
   | 'bell'
@@ -14,6 +16,10 @@ export type StatusIconName =
 
 function iconBody(name: StatusIconName): SVGTemplateResult {
   switch (name) {
+    case 'remote':
+      return svg`<path d="m4 9 4-4 4 4M8 5v9M20 15l-4 4-4-4M16 19v-9"/>`;
+    case 'check':
+      return svg`<path d="m4.5 12.5 5 5L19.5 7"/>`;
     case 'play':
       return svg`<path d="M8 5.5v13l10-6.5z"/>`;
     case 'pause':
@@ -44,7 +50,7 @@ export function renderStatusIcon(name: StatusIconName, extraClass?: string): SVG
     viewBox="0 0 24 24"
     fill="none"
     stroke="currentColor"
-    stroke-width="2"
+    stroke-width="1.5"
     stroke-linecap="round"
     stroke-linejoin="round"
     aria-hidden="true"

@@ -10,7 +10,6 @@ import {
   type ListGroup,
   type ListItem,
   renderBadge,
-  renderStatusDot,
   renderTag,
 } from '../../components/index.js';
 import { t as tr } from '../../i18n/index.js';
@@ -45,18 +44,6 @@ function createFilterStorageAdapter(ctx: PluginContext): FilterBarStorageAdapter
   };
 }
 
-function skillRowMeta(skill: SkillPanelEntry, formatAgo: (at: number) => string): string {
-  const parts: string[] = [];
-  parts.push(
-    skill.lastUsedAt
-      ? tr('skills.lastUsed', { ago: formatIsoAgo(skill.lastUsedAt, formatAgo) })
-      : tr('skills.neverUsed'),
-  );
-  parts.push(tr(skill.uses === 1 ? 'skills.useOne' : 'skills.useMany', { count: skill.uses }));
-  parts.push(`v${skill.version}`);
-  return parts.join(' \u00b7 ');
-}
-
 function renderSkillItemRow(
   skill: SkillPanelEntry,
   copied: boolean,
@@ -65,41 +52,38 @@ function renderSkillItemRow(
 ): TemplateResult {
   const icons = deps.icons();
   const active = isSkillActive(skill);
-  const dotStatus = !active ? 'idle' : skill.status === 'expired' ? 'warn' : 'ok';
   const copyLabel = copied ? tr('common.copied') : tr('skills.copyName');
   const copyIcon = getSkillIcon(icons, copied ? 'check' : 'copy');
+  const pinIcon = skill.pinned ? getSkillIcon(icons, 'pin') : '';
+  const age = formatIsoAgo(skill.lastUsedAt || skill.createdAt, deps.formatAgo);
 
   return html`
     <div class=${`fh-skill-row${active ? '' : ' is-archived'}`} data-skill-name=${skill.name}>
       <div class="fh-skill-row-head">
-        ${renderStatusDot({ status: dotStatus })}
-        <span class="fh-skill-row-name">${skill.name}</span>
-        <button
-          type="button"
-          class="fh-btn fh-btn--ghost fh-btn--icon fh-skill-copy"
-          data-copy-skill=${skill.name}
-          title=${copyLabel}
-          aria-label=${copyLabel}
-          @click=${(ev: MouseEvent) => {
-            ev.stopPropagation();
-            onCopy(skill.name);
-          }}
-        ><span class="fh-icon" aria-hidden="true">${html`${copyIcon ? renderSvgUnsafe(copyIcon) : nothing}`}</span></button>
-      </div>
-      <div class="fh-skill-row-tags">
-        ${renderTag({
-          label: skill.resident ? tr('skills.tabResident') : tr('skills.tabLibrary'),
-          tone: skill.resident ? 'accent' : 'neutral',
-        })}
-        ${!active ? renderTag({ label: tr('common.offCap'), tone: 'neutral' }) : nothing}
-        ${skill.status === 'expired'
-          ? renderTag({ label: tr('skills.expiredCap'), tone: 'warn', title: tr('skills.expiredTitle') })
-          : nothing}
-        ${skill.pinned ? renderTag({ label: tr('skills.pinned'), tone: 'warn' }) : nothing}
-        ${skill.category ? renderTag({ label: skill.category, tone: 'neutral' }) : nothing}
+        <span class="fh-skill-row-title">
+          ${pinIcon ? html`<span class="fh-skill-pin-icon" aria-hidden="true">${renderSvgUnsafe(pinIcon)}</span>` : nothing}
+          <span class="fh-skill-row-name">${skill.name}</span>
+          ${skill.resident ? html`<span class="fh-skill-row-tier">${tr('skills.tabResident')}</span>` : nothing}
+          ${skill.status === 'expired'
+            ? renderTag({ label: tr('skills.expiredCap'), tone: 'warn', title: tr('skills.expiredTitle') })
+            : nothing}
+        </span>
+        <span class="fh-skill-row-tail">
+          ${age ? html`<span class="fh-skill-row-age">${age}</span>` : nothing}
+          <button
+            type="button"
+            class="fh-btn fh-btn--ghost fh-btn--icon fh-skill-copy"
+            data-copy-skill=${skill.name}
+            title=${copyLabel}
+            aria-label=${copyLabel}
+            @click=${(ev: MouseEvent) => {
+              ev.stopPropagation();
+              onCopy(skill.name);
+            }}
+          ><span class="fh-icon" aria-hidden="true">${copyIcon ? renderSvgUnsafe(copyIcon) : nothing}</span></button>
+        </span>
       </div>
       <div class="fh-skill-row-desc">${skill.description || tr('skills.noDesc')}</div>
-      <div class="fh-skill-row-meta">${skillRowMeta(skill, deps.formatAgo)}</div>
       ${skill.warning ? html`<div class="fh-skill-row-warn">${skill.warning}</div>` : nothing}
       ${skill.problem
         ? html`<div class="fh-skill-row-problem">${tr('skills.notDelivered')}${skill.problem}</div>`
@@ -253,16 +237,6 @@ class SkillsViewPanel implements SkillPanelComponent {
         ariaLabel: tr('skills.title'),
         items: [
           {
-            id: 'new',
-            label: tr('common.new'),
-            icon: getSkillIcon(icons, 'plus'),
-            title: tr('skills.newTitle'),
-            variant: 'primary',
-            onClick: () => {
-              void this._ctx.commands.execute('skills.new');
-            },
-          },
-          {
             id: 'refresh',
             icon: getSkillIcon(icons, 'refresh'),
             title: tr('skills.refreshTitle'),
@@ -270,6 +244,16 @@ class SkillsViewPanel implements SkillPanelComponent {
             variant: 'ghost',
             onClick: () => {
               void this._ctx.commands.execute('skills.refresh');
+            },
+          },
+          {
+            id: 'new',
+            icon: getSkillIcon(icons, 'plus'),
+            title: tr('skills.newTitle'),
+            ariaLabel: tr('skills.newTitle'),
+            variant: 'ghost',
+            onClick: () => {
+              void this._ctx.commands.execute('skills.new');
             },
           },
         ],
@@ -282,7 +266,7 @@ class SkillsViewPanel implements SkillPanelComponent {
     return createFilterBar(
       {
         key: FILTER_STORAGE_KEY,
-        placeholder: tr('common.search'),
+        placeholder: this._ctx.i18n.t('wb.skills.searchPlaceholder') || tr('common.search'),
         groups: [],
         sort: buildSkillSortDef(),
         icons: {
@@ -320,7 +304,7 @@ class SkillsViewPanel implements SkillPanelComponent {
             ? renderSkillItemRow(item.data, this._copiedNames.has(item.id), this._deps, (n) => this._handleCopy(n))
             : html`${item.label}`,
         onActivate: (item) => {
-          this._ctx.editors.open('skill', { name: item.id });
+          this._ctx.editors.open('skill', { name: item.id }, { id: `skill:${item.id}` });
         },
       },
       doc,

@@ -9,9 +9,11 @@ import type {
   OptionListResponse,
   SessionOption,
   StatusIcons,
+  StatusPermissions,
 } from './types.js';
 
 export const MODEL_WAIT_MS = 45000;
+export const PERM_OPT_ID = '__permissions__';
 
 export interface ModelPopElements {
   readonly modelPop: HTMLElement | null;
@@ -35,6 +37,7 @@ export interface ModelPopDeps {
   readonly onListLoaded: (topic: string) => void;
   readonly onModelChosen: (topic: string, model: string | undefined) => void;
   readonly onOptionChosen: (topic: string) => void;
+  readonly onPermChosen?: (topic: string, level: string) => void;
   readonly setNote: (msg: string) => void;
   readonly fetchFn?: typeof fetch;
   readonly postFn?: (path: string, body: unknown, tries?: number, limit?: number) => Promise<Response>;
@@ -45,6 +48,7 @@ export interface ModelPopController {
   currentOpt(): string | null;
   openModel(): void;
   openOption(id: string): void;
+  openPermissions(agent: string, perms: StatusPermissions): void;
   close(): void;
   render(): void;
   filter(): void;
@@ -167,6 +171,35 @@ class ModelPopControllerImpl implements ModelPopController {
 
   openOption(id: string): void {
     this.openPop(id);
+  }
+
+  openPermissions(agent: string, perms: StatusPermissions): void {
+    const { modelPop, mpFilter } = this.deps.els;
+    const t = this.deps.getTopic();
+    if (!t || !modelPop || !agent) return;
+    this.mp.seq++;
+    this.mp.topic = t;
+    this.mp.opt = PERM_OPT_ID;
+    this.mp.err = '';
+    this.mp.loading = false;
+    this.mp.busy = false;
+    this.mp.data = {
+      ok: true,
+      agent,
+      options: [
+        {
+          id: PERM_OPT_ID,
+          name: tr('status.permLabel'),
+          current: perms.level,
+          options: perms.offered.map((v) => ({ value: v, name: v })),
+        },
+      ],
+    };
+    if (mpFilter) mpFilter.value = '';
+    this.applyChromeText(PERM_OPT_ID);
+    modelPop.hidden = false;
+    this.deps.onVisibilityChange();
+    this.render();
   }
 
   private applyChromeText(opt: string | null): void {
@@ -295,6 +328,33 @@ class ModelPopControllerImpl implements ModelPopController {
     const opt = this.mp.opt;
     this.mp.busy = true;
     button.classList.add('busy');
+    if (opt === PERM_OPT_ID) {
+      const agent = this.mp.data?.agent;
+      if (!agent || !v) {
+        this.mp.busy = false;
+        return;
+      }
+      this.postFn('api/send', { topic: t, text: `/setting permissions.${agent} ${v}` }, 1, MODEL_WAIT_MS).then(
+        (r) => {
+          this.mp.busy = false;
+          if (n !== this.mp.seq) return;
+          if (r.ok) {
+            this.close();
+            this.deps.onPermChosen?.(t, v);
+            return;
+          }
+          this.mp.err = tr('modelPop.refused', { status: r.status });
+          this.render();
+        },
+        () => {
+          this.mp.busy = false;
+          if (n !== this.mp.seq) return;
+          this.mp.err = tr('modelPop.reachChangeOpt');
+          this.render();
+        },
+      );
+      return;
+    }
     const path = opt ? 'api/options' : 'api/models';
     const body = opt ? { topic: t, id: opt, value: v } : { topic: t, value: v };
     this.postFn(path, body, 1, MODEL_WAIT_MS)
@@ -367,7 +427,7 @@ class ModelPopControllerImpl implements ModelPopController {
         if (!this.isOpen()) return;
         const target = e.target;
         if (!(target instanceof Element)) return;
-        if (target.closest('#model-pop') || target.closest('.st-model')) return;
+        if (target.closest('#model-pop, .wb-topic-model-pop') || target.closest('.st-model')) return;
         this.close();
       }),
     );

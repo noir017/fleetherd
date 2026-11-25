@@ -153,4 +153,27 @@ describe('features/topic/status/format', () => {
     expect(bare).toContain('Account');
     expect(bare).toContain('primary');
   });
+
+  it('renders permission switcher chip in both full and bare status', () => {
+    const perms = { level: 'auto' as const, offered: ['ask' as const, 'auto' as const, 'full' as const], unset: true };
+    const full = statusSegments(
+      { agent: 'cc', model: 'sonnet', permissions: perms },
+      Date.now(),
+      false,
+      { fallbackOptions: [], openModel: false, openOptId: null },
+    );
+    expect(full).toContain('data-perm="1"');
+    expect(full).toContain('auto');
+
+    const bare = renderBareStatus({
+      agent: 'cc',
+      model: 'sonnet',
+      options: [],
+      permissions: perms,
+      openModel: false,
+      openOptId: '__permissions__',
+    });
+    expect(bare).toContain('data-perm="1"');
+    expect(bare).toContain('aria-expanded="true"');
+  });
 });

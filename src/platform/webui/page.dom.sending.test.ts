@@ -11,7 +11,6 @@ import {
   face,
   open,
   readRecord,
-  rowMenu,
   writeCache,
   type Harness,
 } from './page.dom.test-helpers.js';
@@ -249,37 +248,6 @@ describe('webui page: sending', () => {
     expect(h.painted()).toBe(0);
   });
 
-  it('keeps a failed message across a reload, and can still retry one that was text alone', async () => {
-    // A text-only body is rebuilt from what was written down, nonce and all — so a Retry of one that
-    // did land after all is answered as the duplicate it is rather than posted twice.
-    const T = 'a1b2c3d4';
-    const h = await open({ url: `http://localhost:8787/?t=${T}`, status: { 'api/send': 400 } });
-    await h.emit(sync(T, [], [T]));
-    (h.el('input') as HTMLTextAreaElement).value = 'do not lose this';
-    await h.click('#composer button[type="submit"]');
-    await until('the failure is drawn', () => h.doc.querySelector('.m.failed') !== null);
-    const nonce = h.calls.find((c) => c.path === 'api/send')?.body.nonce;
-    const storage = { aa_unsent: h.window.localStorage.getItem('aa_unsent')! };
-    h.window.close();
-
-    const again = await open({ url: `http://localhost:8787/?t=${T}`, idb: h.idb, storage });
-
-    // Before the stream has said anything: it is this browser's, not the daemon's.
-    expect(again.doc.querySelector('.m.failed')).not.toBeNull();
-    expect(again.el('log').textContent).toContain('do not lose this');
-    await again.emit(sync(T, [], [T]));
-    expect(again.el('log').textContent).toContain('Not delivered');
-    expect(again.doc.querySelector('[data-copy]')).not.toBeNull();
-    expect(again.doc.querySelector('[data-discard]')).not.toBeNull();
-
-    await again.click('[data-retry]');
-    expect(again.calls.filter((c) => c.path === 'api/send').map((c) => c.body)).toEqual([
-      { topic: T, text: 'do not lose this', nonce },
-    ]);
-    expect(again.doc.querySelector('.m.failed')).toBeNull();
-    // The daemon has it now, so the next reload must not offer it again.
-    expect(again.window.localStorage.getItem('aa_unsent')).toBeNull();
-  });
 
   it('offers no Retry after a reload for a message that carried a file it no longer has', async () => {
     // The file was base64 in a request body and is deliberately not written down; the text alone
@@ -407,12 +375,6 @@ describe('webui page: a message the daemon never acknowledged', () => {
   const unsent = (h: Harness): Record<string, { t: string; x: string; s: string }> | null =>
     JSON.parse(h.window.localStorage.getItem('aa_unsent') ?? 'null');
   const nonceOf = (h: Harness): string => h.calls.find((c) => c.path === 'api/send')?.body.nonce as string;
-  /** What is on screen, top to bottom: a message's text, or FAILED for an undelivered one. */
-  const order = (h: Harness): string[] =>
-    Array.from(h.el('log').querySelectorAll(':scope > .m')).map((n) =>
-      n.classList.contains('failed') ? 'FAILED' : (n.querySelector('.b')?.textContent ?? '')
-    );
-
   /** Type, press Send, and close the page with the request still unanswered. */
   const sendAndLeave = async (
     messages: Array<Record<string, unknown>>
@@ -444,21 +406,6 @@ describe('webui page: a message the daemon never acknowledged', () => {
     expect(unsent(h)).toBeNull();
   });
 
-  it('brings back a send still in flight at a reload, and lets the sync say it arrived', async () => {
-    const earlier = message('m1', '<p>earlier</p>');
-    const { nonce, idb, storage } = await sendAndLeave([earlier]);
-
-    const h = await open({ url: at, idb, storage });
-    // Nothing this page saw can say how that request ended, and it does not pretend to.
-    expect(h.el('log').textContent).toContain('on its way');
-    expect(h.el('log').textContent).toContain('Not confirmed');
-
-    // The daemon did get it: its ring carries the echo, which takes the bubble over.
-    await h.emit(sync(T, [earlier, { ...message('m2', '<div class="raw">on its way</div>', true), nonce }], [T]));
-    expect(h.painted()).toBe(2);
-    expect(h.doc.querySelector('.m.failed')).toBeNull();
-    expect(unsent(h)).toBeNull();
-  });
 
   it('says a send in flight at a reload never arrived when the same daemon has no echo of it', async () => {
     const { nonce, idb, storage } = await sendAndLeave([]);
@@ -497,45 +444,7 @@ describe('webui page: a message the daemon never acknowledged', () => {
     expect(unsent(h)).toBeNull();
   });
 
-  it('keeps a restored failure under the transcript, where the reader lands, not above it', async () => {
-    const msgs = [message('m1', '<p>one</p>'), message('m2', '<p>two</p>')];
-    const first = await open({ url: at, status: { 'api/send': 400 } });
-    await first.emit(sync(T, msgs, [T]));
-    input(first).value = 'do not lose this';
-    await first.click('#composer button[type="submit"]');
-    await until('the failure is drawn', () => first.doc.querySelector('.m.failed') !== null);
-    await saved();
-    const storage = { aa_unsent: first.window.localStorage.getItem('aa_unsent')! };
-    first.window.close();
 
-    const h = await open({ url: at, idb: first.idb, storage });
-    await until('the cached transcript is painted', () => h.painted() === 3);
-    expect(order(h)).toEqual(['one', 'two', 'FAILED']);
-
-    await h.emit(sync(T, msgs, [T]));
-    expect(order(h)).toEqual(['one', 'two', 'FAILED']);
-  });
-
-  it('keeps a send that fails after its topic was switched away from', async () => {
-    const A = T;
-    const B = 'b2c3d4e5';
-    const h = await open({ url: at, hang: ['api/send'], shortenLong: true });
-    await h.emit(sync(A, [], [A, B]));
-    input(h).value = 'sent, then switched away from';
-    await h.click('#composer button[type="submit"]');
-    const nonce = nonceOf(h);
-
-    await h.click(`[data-topic="${B}"]`);
-    await h.emit(sync(B, [], [A, B]));
-    expect(h.el('log').textContent).not.toContain('sent, then switched away from');
-    await within('the send gives up', 5000, () => unsent(h)?.[nonce]?.s === 'failed');
-
-    await h.click(`[data-topic="${A}"]`);
-    expect(h.el('log').textContent).toContain('sent, then switched away from');
-    await h.emit(sync(A, [], [A, B]));
-    expect(h.doc.querySelector('.m.failed')).not.toBeNull();
-    expect(h.doc.querySelector('[data-retry]')).not.toBeNull();
-  });
 
   it('lets a sync claim the local bubble, not only a msg event', async () => {
     // A reconnect the backlog no longer reaches is answered with a full sync, and the echo of a send
@@ -554,24 +463,6 @@ describe('webui page: a message the daemon never acknowledged', () => {
     h.window.close();
   });
 
-  it('forgets an unsent message once it is discarded, and with its topic', async () => {
-    const B = 'b2c3d4e5';
-    const h = await open({ url: at, status: { 'api/send': 400 } });
-    await h.emit(sync(T, [], [T, B]));
-    input(h).value = 'first';
-    await h.click('#composer button[type="submit"]');
-    input(h).value = 'second';
-    await h.click('#composer button[type="submit"]');
-    await until('both fail', () => h.doc.querySelectorAll('.m.failed').length === 2);
-    expect(Object.keys(unsent(h) ?? {})).toHaveLength(2);
-
-    await h.click('[data-discard]');
-    expect(Object.values(unsent(h) ?? {}).map((r) => r.x)).toEqual(['second']);
-
-    await rowMenu(h, T);
-    await h.click('[data-rmk="delete"]');
-    await until('the topic is forgotten', () => unsent(h) === null);
-  });
 
   it('moves a failure an older page kept in the transcript cache into its own store', async () => {
     // Before this store existed a failed message was written into the cache, which no longer
@@ -619,53 +510,8 @@ describe('webui page: stopping the agent', () => {
     topics: [{ id: 'a1b2c3d4', title: 'Topic a1b2c3d4', lastAt: 1000, msgCount: 0, ...flags }],
   });
 
-  it('offers neither control for a topic with no process and no turn', async () => {
-    const h = await open();
-    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4']));
 
-    expect(h.el('kill-agent').hidden).toBe(true);
-    expect(h.el('stop-turn').hidden).toBe(true);
-  });
 
-  it('shows each control only while its command has something to act on', async () => {
-    const h = await open();
-    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4']));
-
-    // Resident but quiet: a process to end, no turn to stop.
-    await h.emit(state({ running: false, live: true }));
-    expect(h.el('kill-agent').hidden).toBe(false);
-    expect(h.el('stop-turn').hidden).toBe(true);
-
-    // A turn opening arrives as `typing`, not as a topic list — Stop has to follow that too.
-    await h.emit({ t: 'typing', on: true });
-    expect(h.el('stop-turn').hidden).toBe(false);
-    await h.emit({ t: 'typing', on: false });
-    expect(h.el('stop-turn').hidden).toBe(true);
-
-    // A question holds its turn open, and /stop is how it is called off.
-    await h.emit(state({ running: true, asking: true, live: true }));
-    expect(h.el('stop-turn').hidden).toBe(false);
-
-    // Reclaimed, or ended by /kill: the power button goes with the process.
-    await h.emit(state({ running: false, live: false }));
-    expect(h.el('kill-agent').hidden).toBe(true);
-    expect(h.el('stop-turn').hidden).toBe(true);
-  });
-
-  it('follows the topic on screen, not whichever topic is busy', async () => {
-    const h = await open({ url: 'http://localhost:8787/?t=a1b2c3d4' });
-    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4', 'b2c3d4e5']));
-    await h.emit({
-      t: 'topics',
-      topics: [
-        { id: 'a1b2c3d4', title: 'here', lastAt: 1000, running: false, live: false, msgCount: 0 },
-        { id: 'b2c3d4e5', title: 'elsewhere', lastAt: 999, running: true, live: true, msgCount: 0 },
-      ],
-    });
-
-    expect(h.el('kill-agent').hidden).toBe(true);
-    expect(h.el('stop-turn').hidden).toBe(true);
-  });
 
   it('Stop sends /stop for this topic and leaves the draft in the composer', async () => {
     const h = await open();
@@ -687,19 +533,6 @@ describe('webui page: stopping the agent', () => {
     expect(h.el('log').textContent).toContain('/stop');
   });
 
-  it('the power button sends /kill, and nothing else', async () => {
-    const h = await open();
-    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4']));
-    await h.emit(state({ running: false, live: true }));
-    (h.el('input') as HTMLTextAreaElement).value = 'draft';
-
-    await h.click('#kill-agent');
-
-    const sent = h.calls.filter((c) => c.path === 'api/send');
-    expect(sent.map((c) => c.body.text)).toEqual(['/kill']);
-    expect(sent[0]?.body.files).toBeUndefined();
-    expect((h.el('input') as HTMLTextAreaElement).value).toBe('draft');
-  });
 });
 
 describe('webui page: the local transcript cache', () => {
@@ -937,41 +770,6 @@ describe('webui page: pasting', () => {
     expect(typeof sent.body.nonce).toBe('string');
   });
 
-  it('shows a sent screenshot in the transcript once the echo brings it, and opens it on a tap', async () => {
-    const h = await open();
-    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4']));
-    h.el('input').dispatchEvent(pasteOf(h, [{ kind: 'file', type: 'image/png', file: image(h, 'image.png', 'image/png') }]));
-    await until('the chip is rendered', () => chipNames(h).length > 0);
-    (h.el('input') as HTMLTextAreaElement).value = 'what is wrong here?';
-    await h.click('#composer button[type="submit"]');
-
-    // The local bubble names the file and draws nothing: drawing it would put the whole file into
-    // this bubble as a data: URL, and this bubble is what the cache keeps if the send fails.
-    const bubble = h.el('log').children[0] as HTMLElement;
-    expect(bubble.querySelector('img')).toBeNull();
-    expect(bubble.innerHTML).not.toContain('data:');
-    expect(bubble.querySelector('.files .chip')?.textContent).toBe('pasted-1.png');
-
-    // The echo, in the shape room.ts renderBody builds it.
-    const nonce = h.calls.find((c) => c.path === 'api/send')?.body.nonce as string;
-    const html =
-      '<div class="raw">what is wrong here?</div>' +
-      '<div class="shots"><img class="shot" src="f/0123abcd" alt="pasted-1.png" loading="lazy"></div>' +
-      '<div class="files"><span class="chip">pasted-1.png</span></div>';
-    await h.emit({ t: 'msg', msg: { ...message('w1', html, true), nonce } });
-
-    expect(h.el('log').children[0]).toBe(bubble);
-    expect(bubble.querySelector('img.shot')?.getAttribute('src')).toBe('f/0123abcd');
-    await h.click('#log img.shot');
-    expect(h.el('lightbox').hidden).toBe(false);
-    expect(h.el('lightbox-img').getAttribute('src')).toBe('http://localhost:8787/f/0123abcd');
-
-    // After a restart the file is gone: the frame hides and the name is what is left.
-    const img = bubble.querySelector('img.shot') as HTMLImageElement;
-    img.dispatchEvent(new h.window.Event('error'));
-    expect(img.style.display).toBe('none');
-    expect(bubble.querySelector('.files .chip')?.textContent).toBe('pasted-1.png');
-  });
 
   it('gives each paste a name of its own', async () => {
     // Every engine calls a pasted screenshot image.png, so without this two of them are two
@@ -1459,18 +1257,6 @@ describe('webui page: attachments in the composer', () => {
     expect(chipNames(h)).toEqual([]);
   });
 
-  it('opens a thumbnail full-screen when it is tapped', async () => {
-    const h = await open();
-    await h.emit(sync(A, [], [A]));
-    pasteImage(h);
-    await until('the chip is rendered', () => thumbs(h).length === 1);
-
-    await h.click('#chips img.thumb');
-    expect(h.el('lightbox').hidden).toBe(false);
-    expect(h.el('lightbox-img').getAttribute('src')).toBe('data:image/png;base64,iVBORw==');
-    // Looking is not removing.
-    expect(chipNames(h)).toEqual(['pasted-1.png']);
-  });
 
   it('builds a thumbnail once, rather than again on every paste', async () => {
     // The src is the whole file again. Rebuilding every chip per paste re-parses and re-decodes

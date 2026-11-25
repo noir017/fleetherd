@@ -189,13 +189,16 @@ describe('webui page: the model switch in the status line', () => {
     // event after the tap replaces, so it stayed away until the first reply reported a status —
     // too late to choose the model that first message goes to.
     const agents = { groups: [{ name: '', agents: [{ id: 'oc@p', harness: 'opencode', kind: 'OpenCode' }] }], current: 'oc@p' };
-    const h = await open({ replies: { [URL_T]: LIST } });
+    const h = await open({ replies: { [URL_T]: LIST, 'api/topics/setup': { ok: true, agent: 'oc@p' } } });
     await h.emit(sync(T, [], [T], { agents }));
     expect(chip(h)).toBeNull();
 
     await h.click('.agent-card[data-agent="oc@p"]');
-    expect(h.calls.filter((c) => c.path === 'api/send').map((c) => c.body.text)).toEqual(['/agent oc@p']);
-    // No status has arrived and no sync followed: the tap alone puts it up, and it works.
+    expect(h.calls.filter((c) => c.path === 'api/topics/setup').map((c) => c.body)).toEqual([
+      { topic: T, agent: 'oc@p' },
+    ]);
+    await h.emit({ t: 'msg', msg: message('m1', '<p>hi</p>') });
+    // No status has arrived and no sync followed: the model switch is up before the first status, and it works.
     expect(chip(h)?.textContent).toBe('Model');
     await h.click('#status .st-model');
     expect(h.calls.find((c) => c.path === URL_T)).toBeTruthy();

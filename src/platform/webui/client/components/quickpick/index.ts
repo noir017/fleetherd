@@ -14,6 +14,7 @@ export interface QuickPickItem<T = unknown> {
   readonly keywords?: readonly string[];
   readonly icon?: IconInput;
   readonly shortcut?: string;
+  readonly shortcutTokens?: readonly string[];
   readonly disabled?: boolean;
   readonly data?: T;
 }
@@ -29,10 +30,12 @@ export interface QuickPickOptions<T = unknown> {
   readonly initialQuery?: string;
   readonly emptyText?: string;
   readonly searchIcon?: IconInput;
+  readonly footer?: TemplateResult;
   readonly overlays?: OverlayManager;
   readonly container?: HTMLElement;
   readonly doc?: Document;
   readonly className?: string;
+  readonly onQueryChange?: (query: string) => void;
   readonly onSelect?: (item: QuickPickItem<T>) => void;
   readonly onCancel?: () => void;
 }
@@ -216,11 +219,16 @@ function renderQuickPickTemplate<T>(vm: QuickPickViewModel<T>): TemplateResult {
                   ${entry.item.description ? html`<span class="fh-qp-desc">${entry.item.description}</span>` : nothing}
                   ${entry.item.detail ? html`<span class="fh-qp-detail">${entry.item.detail}</span>` : nothing}
                 </span>
-                ${entry.item.shortcut ? html`<kbd class="fh-qp-kbd">${entry.item.shortcut}</kbd>` : nothing}
+                ${entry.item.shortcutTokens && entry.item.shortcutTokens.length > 0
+                  ? html`<span class="fh-qp-kbd-group">${entry.item.shortcutTokens.map((tok, ti) => html`${ti > 0 && entry.item.shortcut?.includes('+') ? html`<span class="fh-qp-kbd-sep" aria-hidden="true">+</span>` : nothing}<kbd class="fh-qp-kbd">${tok}</kbd>`)}</span>`
+                  : entry.item.shortcut
+                    ? html`<kbd class="fh-qp-kbd">${entry.item.shortcut}</kbd>`
+                    : nothing}
               </div>
             `;
           })}
     </div>
+    ${vm.opts.footer ? html`<div class="fh-qp-foot">${vm.opts.footer}</div>` : nothing}
   </div>`;
 }
 
@@ -311,7 +319,12 @@ export function openQuickPick<T = unknown>(
         query,
         filtered,
         activeIdx,
-        onInput: (val) => { query = val; recompute(); },
+        onInput: (val) => {
+          query = val;
+          opts.onQueryChange?.(val);
+          if (closed) return;
+          recompute();
+        },
         onKeydown: handleInputKeydown,
         onHover: (idx) => { if (activeIdx !== idx) { activeIdx = idx; paint(); } },
         onPick: (item) => finish(item),

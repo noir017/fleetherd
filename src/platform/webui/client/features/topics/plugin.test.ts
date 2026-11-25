@@ -158,6 +158,7 @@ describe('topics built-in plugin', () => {
       'topics.star',
       'topics.copyRef',
       'topics.fork',
+      'topics.openInNewTab',
       'topics.endAgent',
       'topics.delete',
     ]);

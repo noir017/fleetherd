@@ -60,7 +60,7 @@ naming it, and they are all of them:
 | `client/main.ts` | Typed client entrypoint wiring `WorkbenchShell`, `ContributionRegistry`, `PluginManager`, all 12 built-in plugins, SSE stream, cache, reads, and mobile `StackShell`, bundled into `dist/webui-assets/app-<hash>.js` — see below |
 | `client/base/` | Typed foundation primitives: `lifecycle.ts` (`DisposableStore`, `MutableDisposable`), `event.ts` (`Emitter`), `html.ts` (`lit-html` re-exports + `escapeHtml`), `dom.ts` (disposable listeners, focus/class/attr/ResizeObserver helpers) |
 | `client/services/` | Typed client services: `boot.ts`, `storage.ts`, `store.ts`, `commands.ts`, `keybindings.ts`, `overlays.ts` (LIFO Esc stack), `api.ts` (`post`/`text`/`wait`/`sendLimit`), `stream.ts` (SSE lifecycle, backoff, parking, watchdog, `applyTopicRows`), `cache.ts` (two-layer memory + IndexedDB transcript cache wrapping `CACHE_CORE`), `reads.ts` (unread watermarks, `aa_reads` persistence/merging, `markAllRead`, `reportSeen`) |
-| `client/components/` | Reusable accessible `lit-html` + `--fh-*` workbench UI component library (only imports `base/`, `services/`, `i18n/`): `list/` (grouped list, keyboard nav, row `⋯` menu, empty state, multi-select), `filterbar/` (search, pinned/panel chips, sort, persistence, i18n), `actionbar/`, `tabs/` (tab strip + single-tab header mode + `nav`/`value` segmented control), `menu/` (fixed viewport-clamped context menu + `OverlayManager`), `dialog/` (focus-trapped modal & async confirm dialog), `quickpick/` (live fuzzy filter & grouped picker), `form/` (field rows, text input, switch, select, value segmented), `tree/` (collapsible keyboard-navigable tree), `badge/` (capsule badge, harness/status tag, pulsing status dot), `notice/` (`Notice` & `EmptyState`), `splitter/` (pointer/keyboard resize handle), and barrel `index.ts` |
+| `client/components/` | Reusable accessible `lit-html` + `--fh-*` workbench UI component library (only imports `base/`, `services/`, `i18n/`): `list/` (grouped list, keyboard nav, row `⋯` menu, empty state, multi-select), `filterbar/` (search, pinned/panel chips, sort, persistence, i18n), `actionbar/`, `tabs/` (permanent tab strip + `nav`/`value` segmented control), `menu/` (fixed viewport-clamped context menu + `OverlayManager`), `dialog/` (focus-trapped modal & async confirm dialog), `sheet/` (mobile bottom action sheet), `quickpick/` (live fuzzy filter & grouped picker), `form/` (field rows, text input, switch, select, value segmented, grouped list, radio group), `tree/` (collapsible keyboard-navigable tree), `badge/` (capsule badge, harness/status tag, pulsing status dot), `notice/` (`Notice` & `EmptyState`), `splitter/` (pointer/keyboard resize handle), and barrel `index.ts` |
 | `client/workbench/contracts.ts` | Frozen `DockEngine`, `PanelComponent`, `PanelRef`, and `LayoutState` (v1) contracts |
 | `client/workbench/dock/` | Dynamic & static dock engines: `splitview.ts` (pure 1D size math + pointer-drag `SplitView`), `gridview.ts` (binary row/column editor group tree + split/merge/normalize), `group.ts` (`EditorGroup` with single-tab titlebar / multi-tab strip, reorder, dirty dot), `dnd.ts` (pointer-event `DockDndController` with ghost, drop zones, Esc cancel, `allowSplit`), `serialize.ts` (`LayoutState` v1 validation, migration, missing-component pruning, `aa_layout` persistence), `engine.ts` (`DynamicDockEngine` implementing `DockEngine` + `onDidActiveTopicChange`), `layout-commands.ts` (17 layout commands, shortcuts, and `buildMoveViewMenuItems`), and `static.ts` (legacy P1 static engine) |
 | `client/workbench/parts/` | Workbench layout parts: `activity-bar.ts` (52px left nav rail with SVG icons & badges), `sidebar-part.ts`, `secondary-part.ts`, `panel-part.ts` (resizable bottom panel; each with header `⋯` move-view menu trigger and tab context menu), and `status-bar.ts` (22px left/right aligned status bar) |
@@ -70,11 +70,11 @@ naming it, and they are all of them:
 | `client/plugins/registry.ts` | `ContributionRegistry` (views, editors, topicTools, activity, statusBar, commands, menus, device-only settings), `WebuiEventBus`, `PluginI18nRegistry`, external-plugin API path allowlist/traversal guard (`assertPluginApiPath`), and unified `createPluginContext` factory |
 | `client/plugins/host.ts` | `PluginManager` lifecycle host: registration, async `activate`/`deactivate`, per-plugin error isolation with partial-registration rollback and status-bar error reporting, and automatic `DisposableStore` cleanup |
 | `client/plugins/builtin.ts` | Built-in plugin manifest (`BUILTIN_PLUGIN_IDS`, `createBuiltinPlugins`, `createDefaultBuiltinPluginFactories`, `registerBuiltinPlugins`) wiring all 12 built-in feature plugins |
-| `client/features/topics/` | Built-in `topics` plugin (`plugin.ts`, `index.ts`, `age.ts`, `tree.ts`, `row-render.ts`, `filter-bar.ts`, `row-menu.ts`, `prefetch.ts`, `idle-dialog.ts`, `types.ts`): activity bar item, primary sidebar topic list, tree/folding, filter bar, row menu, prefetch queue, and close-idle dialog |
+| `client/features/topics/` | Built-in `topics` plugin (`plugin.ts`, `index.ts`, `age.ts`, `tree.ts`, `row-render.ts`, `filter-bar.ts`, `row-menu.ts`, `row-sheet.ts`, `gestures.ts`, `prefetch.ts`, `idle-dialog.ts`, `types.ts`): activity bar item, primary sidebar topic list, tree/folding, filter bar, row menu, mobile left-swipe/long-press gestures and action sheet, prefetch queue, and close-idle dialog |
 | `client/features/topic/` | Built-in `topic` plugin (`plugin.ts`, `editor/{index,dom,header,panel,types}.ts`, `status/`, `transcript/`, `composer/`): per-topic editor panel with header, transcript, `/btw` card, model/option switcher, status strip, and composer (attachments, image shrink, drafts, voice, slash hints, unsent queue) |
 | `client/features/history/` | Built-in `history` plugin (`plugin.ts`, `view.ts`, `editor.ts`, `helpers.ts`): conversation library sidebar view and read-only transcript editor |
 | `client/features/schedules/` | Built-in `schedules` plugin (`plugin.ts`, `store.ts`, `view.ts`, `editor.ts`, `helpers.ts`, `types.ts`): scheduled Tasks/Sessions sidebar view and task detail/edit/create editor |
-| `client/features/reviews/` | Built-in `reviews` plugin (`plugin.ts`, `store.ts`, `view.ts`, `types.ts`): auto-review sidebar view and pending preference suggestions with Adopt/Dismiss |
+| `client/features/reviews/` | Built-in `reviews` plugin (`plugin.ts`, `store.ts`, `view.ts`, `editor.ts`, `types.ts`): auto-review sidebar view, review detail editor (`review`), and pending preference suggestions editor (`review-prefs`) with Adopt/Dismiss |
 | `client/features/skills/` | Built-in `skills` plugin (`plugin.ts`, `store.ts`, `view.ts`, `editor.ts`, `filtering.ts`, `new-dialog.ts`, `types.ts`): managed skills sidebar view and `SKILL.md` / file / history editor |
 | `client/features/settings/` | Built-in `settings` plugin (`plugin.ts`, `controller.ts`, `render.ts`, `workbench-catalog.ts`, `workbench-editor.ts`, `workbench-instructions.ts`, `workbench-types.ts`, `types.ts`): gateway `/setting` editor, device-only settings, and instructions editor |
 | `client/features/changes/` | Built-in `changes` plugin (`plugin.ts`, `changes-tool.ts`, `diff-editor.ts`, `diff-view.ts`, `diff-helpers.ts`, `types.ts`): topic-scoped secondary sidebar git/commits changes list and diff editor with line comments |
@@ -84,7 +84,7 @@ naming it, and they are all of them:
 | `client/features/status/` | Built-in `status` plugin (`plugin.ts`, `device-settings.ts`, `idle-dialog.ts`, `notify-bridge.ts`, `topics-stats.ts`, `i18n.ts`, `icons.ts`, `types.ts`): status bar items (connection, running/idle agents, plugin errors, notifications, low attention, language, theme, version) |
 | `client/features/notify/index.ts` | Web Push subscription controller (`createNotifyController`), VAPID key decoding, permission/toggle flow, and Service Worker `message` listener (`cached` → `cacheService.noteVersion`, `goto` → topic switch) |
 | `client/features/palette/` | Built-in `palette` plugin (`plugin.ts`, `format.ts`, `keybindings-dialog.ts`): `Mod+K` topic quick-open, `Mod+Shift+P` command palette, and `Mod+/` keyboard shortcuts overview |
-| `client/plugins/lazy-extras.ts` | On-demand ESM loader (`workbench-extras-<hash>.js`) and lightweight shells for lower-frequency built-in plugins to keep `app-*.js` gzip under 160 KiB |
+| `client/plugins/lazy-extras.ts` | On-demand ESM loader (`workbench-extras-<hash>.js`) and lightweight shells for lower-frequency built-in plugins (`history`, `schedules`, `reviews`, `skills`, `settings`, `changes`, `files`, `reader`, `palette`) to keep `app-*.js` gzip under 160 KiB |
 | `client/styles/main.css` | Stylesheet entrypoint importing `tokens.css` (default VS Code Dark Modern / Light Modern `--fh-*` semantic tokens and legacy aliases), 18 modular CSS files (`components`, `base`, `layout`, `topics`, `terminal`, `schedules`, `reviews`, `git`, `history`, `skills`, `transcript`, `settings`, `composer`, `overlays`, `status`, `files`, `responsive`, `workbench`), and `workbench-theme.css` (global §4.2 control/shape/typography/scrollbar rules) in cascade order, bundled into `dist/webui-assets/style-<hash>.css` |
 | `manifest.ts` | The web app manifest and the icon, as strings, for the same reason `page.ts` is a module |
 | `icons.ts` | The page's icons, hand-drawn inline SVG, and which emoji each one replaces — see [Icons](#icons) |
@@ -103,7 +103,8 @@ So wherever this README names a script function or a CSS rule as `page.ts`'s —
 `scripts/webui-client.mjs` (called by `scripts/build-webui-assets.mjs`, and by the tests), linked
 from the page by content-hashed name, and served by `GET /assets/<file>`. What the server decides
 per deployment reaches the script as `<script type="application/json" id="boot-config">` — read
-once into `BOOT` — instead of being spliced into its text, which is what let the CSP drop
+once into `BOOT` (including `version`, the package version rendered as `v<version>` in the status
+bar and mobile More view) — instead of being spliced into its text, which is what let the CSP drop
 `script-src 'unsafe-inline'`. Two build-time markers remain in the script (`clientIcons()` and
 `CACHE_CORE`, filled by `webui-client.mjs`); the build fails if either is missing.
 
@@ -175,6 +176,12 @@ saying so rather than doing nothing.
 The star is persisted beside the title, and only when true — a topic file from before stars, or
 from someone who never uses them, is unchanged. The page sends `{ starred: true|false }`, never a
 toggle, because `post` retries a dropped request and a retried toggle would flip back.
+
+**One-step topic setup (`POST /api/topics` and `POST /api/topics/setup`).** `POST /api/topics`
+accepts optional `{ agent?, cwd? }` to create a topic and bind its agent and working directory in
+one request (rolling back the newly created topic if setup fails). On an already-created empty topic
+before the first message, `POST /api/topics/setup` takes `{ topic, agent?, cwd? }` and applies the
+binding directly through the daemon without posting `/agent` or `/cd` commands into the transcript.
 
 ### Every topic keeps its transcript
 
@@ -787,12 +794,13 @@ timer while visible (5s while a run is in flight, 30s otherwise) — the daemon 
 run finishing. Countdowns ("in 3h 12m") are computed from `nextAt` on the client; every other time
 arrives formatted in the task's own zone.
 
-Reviews travel the same way and on the same timer: `useReviewPanel` hands the room `list()` and
-`dismiss(text)`, `daemon/review-panel.ts` builds them from `history.db` and `reviews.json`, and the
-routes are `GET api/reviews` and `POST api/reviews/op` — the latter takes one verb,
-`{action:'dismiss', text}` (`ReviewOpRequestSchema`), and answers with the fresh list. There is no
-verb that starts, changes or undoes a review, because a review has no writer but the sweep. The list is pulled
-when the tab is selected and on the panel's timer while it is the visible one.
+Reviews travel the same way and on the same timer: `useReviewPanel` hands the room `list()`,
+`dismiss(text)`, and `revert(name, id)`, `daemon/review-panel.ts` builds them from `history.db`
+and `reviews.json` (including reviewer/model/message-count/duration metadata and inline diffs), and
+the routes are `GET api/reviews` and `POST api/reviews/op` — the latter accepts
+`{action:'dismiss', text}` or `{action:'revert', name, id}` (`ReviewOpRequestSchema`), and
+answers with the fresh list. There is still no verb that starts or edits a review sweep. The list is
+pulled when the tab is selected and on the panel's timer while it is the visible one.
 
 **Creating tasks.** The page used not to create tasks, on the reasoning that a page POSTing a
 prompt or a command would put a bash surface behind the login form. The edit route already took a
@@ -2000,6 +2008,8 @@ A file can be opened from elsewhere: `window.openFileEditor(path)` takes a path 
 topic's working directory or absolute on that machine, and the git panel uses it.
 
 Routes are `GET /api/files/list|read|search` and `POST /api/files/write|create|rename|remove`.
+When the listed directory sits inside a git repository, `GET /api/files/list` attaches a `gitStatus`
+code (e.g. `M`, `A`, `?`) to modified/untracked file and directory entries.
 Every one answers 404 when the feature is off, and the page is told at render time (`FILES_OK`),
 so a page older than the config has no button to press. A successful write is a log line naming
 the operator, the machine and the file.
@@ -2549,7 +2559,10 @@ shipped, which `open()` loads and the DOM tests run; and **source**, the files a
 CSS rule or a line of script pinned as text must be read from the source. The helper's `renderPage`
 and `servePage` keep the old positional signature (the code view's URL fifth).
 
-`page.dom.test.ts` is the one that covers the client script's *behaviour*. It loads what the
+The `page.dom.*.test.ts` files (`chrome`, `core`, `i18n`, `layout`, `sending`, `theme`, `topics`)
+together with `page.dom.wb2-*.test.ts` and the colocated `client/features/**/*.test.ts` unit suites
+cover the client script's *behaviour* (the legacy pre-workbench `page.dom.{editors,panels,library,settings}.test.ts`
+files were retired once the workbench feature tests and `test/e2e/webui/` covered those views). `page.dom.*.test.ts` loads what the
 daemon serves into jsdom, stubs `EventSource` and `fetch`, and drives the page through the
 events `room.ts` actually emits — asserting on what a person would see: messages on screen, the
 drawer open or shut, where the URL points. Add to it whenever you touch `page.ts`; the string

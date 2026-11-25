@@ -11,9 +11,11 @@ import {
   ClearTopicsRequestSchema,
   LoginRequestSchema,
   ModelChooseRequestSchema,
+  ReviewOpRequestSchema,
   ScheduleOpRequestSchema,
   SendRequestSchema,
   StarTopicRequestSchema,
+  TopicSetupRequestSchema,
   parseBody,
 } from './protocol.js';
 
@@ -202,5 +204,25 @@ describe('webui protocol: the file window', () => {
     expect(parseBody(FilesRenameRequestSchema, { topic: TOPIC, from: '/w/a', to: '/w/b', owned: '/w' }).ok).toBe(false);
     expect(parseBody(FilesRemoveRequestSchema, { topic: TOPIC, path: '/w/a' }).ok).toBe(true);
     expect(parseBody(FilesRemoveRequestSchema, { topic: TOPIC, path: '/w/a', recursive: true }).ok).toBe(false);
+  });
+});
+
+describe('webui protocol: topic setup and review revert', () => {
+  it('accepts optional agent and cwd on create-topic and setup-topic', () => {
+    expect(parseBody(CreateTopicRequestSchema, {}).ok).toBe(true);
+    expect(parseBody(CreateTopicRequestSchema, { title: 'Fix', agent: 'oc', cwd: '/srv/app' }).ok).toBe(true);
+    expect(parseBody(CreateTopicRequestSchema, { agent: '' }).ok).toBe(false);
+    expect(parseBody(CreateTopicRequestSchema, { cwd: '' }).ok).toBe(false);
+    expect(parseBody(TopicSetupRequestSchema, { topic: TOPIC, agent: 'oc', cwd: '/srv/app' }).ok).toBe(true);
+    expect(parseBody(TopicSetupRequestSchema, { topic: TOPIC }).ok).toBe(false);
+    expect(parseBody(TopicSetupRequestSchema, { topic: 'bad', agent: 'oc' }).ok).toBe(false);
+  });
+
+  it('accepts dismiss and revert on review ops and rejects unknown verbs or bad commit ids', () => {
+    expect(parseBody(ReviewOpRequestSchema, { action: 'dismiss', text: 'keep it short' }).ok).toBe(true);
+    expect(parseBody(ReviewOpRequestSchema, { action: 'revert', name: 'ops-note', id: 'abcdef1' }).ok).toBe(true);
+    expect(parseBody(ReviewOpRequestSchema, { action: 'revert', name: 'ops-note', id: 'not-hex!' }).ok).toBe(false);
+    expect(parseBody(ReviewOpRequestSchema, { action: 'revert', name: '', id: 'abcdef1' }).ok).toBe(false);
+    expect(parseBody(ReviewOpRequestSchema, { action: 'run' }).ok).toBe(false);
   });
 });

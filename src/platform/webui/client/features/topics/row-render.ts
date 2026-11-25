@@ -1,7 +1,7 @@
 import { t as tr } from '../../i18n/index.js';
 import { text } from '../../services/api.js';
 import { ageHtml } from './age.js';
-import { agentTagHtml, rowRunning, splitTitle } from './tree.js';
+import { agentOf, agentTagHtml, rowRunning, splitTitle } from './tree.js';
 import type { RowHtmlOpts, Topic, TopicIcons, TreeRow, TreeRowOpts } from './types.js';
 
 export function rowHtml(o: RowHtmlOpts, rowMenuKey: string | null, icons: TopicIcons): string {
@@ -134,4 +134,104 @@ export function treeRowHtml(row: TreeRow, o: TreeRowOpts, ctx: TreeRowRenderCont
     ctx.rowMenuKey,
     ctx.icons,
   );
+}
+
+function harnessBadgeHtml(t: Topic): string {
+  const agent = agentOf(t);
+  if (!agent) return '';
+  const harnessCls = agent.harness ? ` h-${text(agent.harness)}` : '';
+  return `<span class="topic-hc${harnessCls}" title="${text(`Agent: ${agent.id}`)}">${text(agent.label)}</span>`;
+}
+
+function wbMetaHtml(
+  row: TreeRow,
+  o: TreeRowOpts,
+  ctx: TreeRowRenderContext,
+  untitled: boolean,
+): string {
+  const t = row.t;
+  const hc = harnessBadgeHtml(t);
+  const fold = foldButtonHtml(row, ctx.icons);
+  let detail = '';
+  if (o.sub !== undefined) {
+    detail = o.sub;
+  } else if (untitled) {
+    detail = `<span class="topic-dir">${text(tr('topics.chooseAgentHint'))}</span>`;
+  } else if (t.line && (t.asking || t.stage === 'failed' || t.stage === 'answer')) {
+    detail = `<span class="topic-dir">${text(t.line)}</span>`;
+  } else {
+    detail = topicDirHtml(t, ctx.offSince, ctx.offTitle, ctx.icons);
+  }
+  if (!hc && !fold && !detail) return '';
+  return `<span class="topic-sub">${fold}${hc}${detail}</span>`;
+}
+
+function swipeActionsHtml(t: Topic, icons: TopicIcons): string {
+  const starLabel = tr(t.starred ? 'topics.swipeUnstar' : 'topics.swipeStar');
+  const moreLabel = tr('topics.swipeMore');
+  const delLabel = tr('topics.swipeDelete');
+  const id = text(t.id);
+  return (
+    `<div class="wb-topic-swipe-actions" aria-hidden="true">` +
+    `<button type="button" class="wb-swipe-btn wb-swipe-star" data-swipe-act="star" data-swipe-id="${id}" tabindex="-1">${icons.star}<span>${text(starLabel)}</span></button>` +
+    `<button type="button" class="wb-swipe-btn wb-swipe-more" data-swipe-act="more" data-swipe-id="${id}" tabindex="-1">${icons.more}<span>${text(moreLabel)}</span></button>` +
+    `<button type="button" class="wb-swipe-btn wb-swipe-del" data-swipe-act="delete" data-swipe-id="${id}" tabindex="-1">${icons.trash}<span>${text(delLabel)}</span></button>` +
+    `</div>`
+  );
+}
+
+function wbTopicRowClasses(
+  row: TreeRow,
+  o: TreeRowOpts,
+  isCur: boolean,
+  isRunning: boolean,
+  untitled: boolean,
+): string {
+  const t = row.t;
+  const parts = [
+    isCur ? 'on' : '',
+    isRunning ? 'running' : 'idle',
+    t.live ? 'live' : '',
+    t.starred ? 'starred' : '',
+    untitled ? 'is-untitled' : '',
+    o.cls ? o.cls.trim() : '',
+    row.depth ? `sub d${Math.min(row.depth, 3)}` : '',
+    o.tail ? o.tail.trim() : '',
+  ];
+  return parts.filter(Boolean).join(' ');
+}
+
+export function wbTopicRowHtml(row: TreeRow, o: TreeRowOpts, ctx: TreeRowRenderContext): string {
+  const t = row.t;
+  const isCur = t.id === ctx.activeTopicId;
+  const isRunning = rowRunning(t, ctx.topics);
+  const untitled = !t.title;
+  const unread = ctx.unreadOf(t);
+  const cls = wbTopicRowClasses(row, o, isCur, isRunning, untitled);
+  const key = `${o.menu}:${t.id}`;
+  const moreTitle = o.moreTitle || tr('topic.topicActions');
+  const more =
+    `<button type="button" class="btn-icon topic-more" data-rm="${text(key)}"` +
+    ` aria-haspopup="menu" aria-expanded="${ctx.rowMenuKey === key ? 'true' : 'false'}"` +
+    ` title="${text(moreTitle)}" aria-label="${text(moreTitle)}">${ctx.icons.more}</button>`;
+  const titleText = untitled
+    ? tr('topics.newPlaceholderTitle')
+    : splitTitle(t.title || tr('common.untitled')).rest;
+  const title = `<span class="topic-title">${forkMarkHtml(t, ctx.topicById, ctx.icons)}${text(titleText)}</span>`;
+  const starMark = t.starred
+    ? `<span class="topic-star-mark" title="${text(tr('topic.starredTitle'))}" aria-hidden="true">${ctx.icons.star}</span>`
+    : '';
+  const badge = unread > 0 ? `<span class="topic-badge">${unread > 99 ? '99+' : unread}</span>` : '';
+  const term = t.term ? `<span class="topic-term" title="${text(tr('topic.termAttached'))}">&gt;_</span>` : '';
+  const age = o.time !== undefined ? o.time : ageHtml(t, ctx.topics, ctx.now);
+  const meta = wbMetaHtml(row, o, ctx, untitled);
+  const rowMarkup =
+    `<div class="topic-item wb-topic-row ${cls}" ${o.attr}="${text(t.id)}" role="button" tabindex="0"${o.attrs || ''}>` +
+    `<span class="${dotClassFor(t, isRunning)}"></span>` +
+    `${title}` +
+    `<span class="topic-tail">${term}${badge}${starMark}${age}</span>` +
+    `${meta}` +
+    `<span class="topic-acts">${more}</span>` +
+    `</div>`;
+  return `<div class="wb-topic-swipe-wrap" data-swipe-wrap="${text(t.id)}">${swipeActionsHtml(t, ctx.icons)}${rowMarkup}</div>`;
 }

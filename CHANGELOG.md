@@ -5,6 +5,36 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **One-step new topic setup, review revert, file tree git badges, and status-line permissions.**
+  New topics now show both agent cards and a working-directory grid upfront so you can pick an agent
+  and directory before sending anything — without echoing `/agent` or `/cd` into the transcript or
+  disturbing an existing draft. Review detail views now display reviewer, model, message count,
+  duration, and inline diffs for applied skill changes, with a confirmed **Revert** button to roll
+  back an applied skill commit in place. The file tree now surfaces git status badges (`M`, `A`,
+  `?`, etc.) for changed entries inside git repositories, the status line above the composer adds a
+  clickable **Permissions** chip, and the status bar and mobile **More** screen show the daemon
+  version.
+- **Quick schedule presets in the task editor.** Added **Daily**, **Weekly**, and **Interval**
+  presets alongside custom cron and one-off schedules so common recurring timings generate cron
+  expressions directly in the editor.
+
+### Changed
+
+- **Page-by-page workbench alignment and mobile stack shell polish.** Aligned desktop, tablet, and
+  mobile layouts across the shell, topic list, composer, tools, skills, and settings views: unified
+  mobile large-title headers and bottom action sheets, replaced remaining inline SVGs and hardcoded
+  colors with shared icons and theme tokens, and moved the terminal plugin into the on-demand extras
+  bundle to keep initial page load lean.
+
+### Fixed
+
+- **Workbench layout restoration and mobile state sync.** Kept the tablet sidebar drawer collapsed
+  on reload when a saved layout is restored, restored the desktop topic editor when switching back
+  from mobile detail view, and kept mobile **More** connection and notification toggles synchronized
+  with live stream and push state.
+
 ## [3.39.0-beta.1] - 2026-11-25
 
 ### Added

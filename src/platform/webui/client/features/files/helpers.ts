@@ -180,7 +180,7 @@ export function buildTreeNodes(
       hasChildren: item.dir,
       children,
       className: isRevealed ? 'is-revealed' : undefined,
-      data: { path: abs, name: item.name, dir: item.dir },
+      data: { path: abs, name: item.name, dir: item.dir, ...(item.gitStatus ? { gitStatus: item.gitStatus } : {}) },
     };
   });
 }

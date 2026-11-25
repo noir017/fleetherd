@@ -31,10 +31,12 @@ const EXTRAS_SOURCE = [
   "export { createFilesPlugin } from './features/files/index.js';",
   "export { createHistoryPlugin } from './features/history/index.js';",
   "export { createPalettePlugin } from './features/palette/index.js';",
+  "export { createReaderPlugin } from './features/reader/plugin.js';",
   "export { createReviewsPlugin } from './features/reviews/index.js';",
   "export { createSchedulesPlugin } from './features/schedules/index.js';",
   "export { createSettingsPlugin } from './features/settings/plugin.js';",
   "export { createSkillsPlugin } from './features/skills/index.js';",
+  "export { createTerminalPlugin } from './features/terminal/plugin.js';",
   "export { initLocale, setLocale } from './i18n/index.js';",
 ].join('\n');
 

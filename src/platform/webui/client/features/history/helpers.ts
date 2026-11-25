@@ -3,6 +3,7 @@ import type {
   HistoryPanelPage,
   HistoryPanelSession,
 } from '../../../../adapter.js';
+import { icon } from '../../../icons.js';
 import type { WebMessage } from '../../../protocol.js';
 import type { WebHistoryRead } from '../../../room.js';
 import type { FilterBarGroup, FilterBarOption, FilterBarState } from '../../components/index.js';
@@ -59,15 +60,16 @@ export type HistoryPageResponse = Partial<HistoryPanelPage> & { readonly error?:
 export type HistoryReadResponse = Partial<WebHistoryRead> & { readonly error?: string };
 
 export const DEFAULT_HISTORY_ICONS: HistoryIcons = {
-  copy: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15h-.5A1.5 1.5 0 0 1 3 13.5v-9A1.5 1.5 0 0 1 4.5 3h9A1.5 1.5 0 0 1 15 4.5V5"/></svg>',
-  check: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m4.5 12.5 5 5L19.5 7"/></svg>',
-  cross: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>',
-  search: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5"/></svg>',
-  filter: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3.5 5h17l-6.5 7.5V19l-4 1.5v-8z"/></svg>',
-  arrowUp: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6"/></svg>',
-  arrowDown: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 5v14M6 13l6 6 6-6"/></svg>',
-  chevronLeft: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M15 5.5 8.5 12l6.5 6.5"/></svg>',
-  globe: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/></svg>',
+  copy: icon('copy'),
+  check: icon('check'),
+  cross: icon('cross'),
+  search: icon('search'),
+  filter: icon('filter'),
+  arrowUp: icon('arrowUp'),
+  arrowDown: icon('arrowDown'),
+  chevronLeft: icon('chevronLeft'),
+  globe: icon('globe'),
+  refresh: icon('refresh'),
 };
 
 export function resolveHistoryIcons(deps: HistoryPluginDeps): HistoryIcons {
@@ -91,6 +93,94 @@ export function formatHistoryTime(at: number): string {
   } catch {
     return '';
   }
+}
+
+export function formatHistoryShortTime(at: number, nowMs: number = Date.now()): string {
+  try {
+    const d = new Date(at);
+    const now = new Date(nowMs);
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mm = String(d.getMinutes()).padStart(2, '0');
+    const sameDay =
+      d.getFullYear() === now.getFullYear() &&
+      d.getMonth() === now.getMonth() &&
+      d.getDate() === now.getDate();
+    if (sameDay) return `${hh}:${mm}`;
+    const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+    const isYesterday =
+      d.getFullYear() === yesterday.getFullYear() &&
+      d.getMonth() === yesterday.getMonth() &&
+      d.getDate() === yesterday.getDate();
+    if (isYesterday) return `${hh}:${mm}`;
+    const mo = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    if (d.getFullYear() === now.getFullYear()) return `${mo}-${day}`;
+    return `${d.getFullYear()}-${mo}-${day}`;
+  } catch {
+    return '';
+  }
+}
+
+export interface HistoryDateGroup<T> {
+  readonly key: string;
+  readonly label: string;
+  readonly items: T[];
+}
+
+export function groupHistoryByDate<T>(
+  items: readonly T[],
+  getAt: (item: T) => number,
+  nowMs: number = Date.now(),
+): HistoryDateGroup<T>[] {
+  const now = new Date(nowMs);
+  const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+  const groups: HistoryDateGroup<T>[] = [];
+  const byKey = new Map<string, HistoryDateGroup<T>>();
+
+  for (const item of items) {
+    const d = new Date(getAt(item));
+    let key: string;
+    let label: string;
+    if (
+      d.getFullYear() === now.getFullYear() &&
+      d.getMonth() === now.getMonth() &&
+      d.getDate() === now.getDate()
+    ) {
+      key = 'today';
+      label = tr('sched.today');
+    } else if (
+      d.getFullYear() === yesterday.getFullYear() &&
+      d.getMonth() === yesterday.getMonth() &&
+      d.getDate() === yesterday.getDate()
+    ) {
+      key = 'yesterday';
+      label = tr('sched.yesterday');
+    } else {
+      const monthIdx = d.getMonth();
+      const monthKey = `age.month${monthIdx}` as Parameters<typeof tr>[0];
+      key = `m:${d.getFullYear()}-${String(monthIdx + 1).padStart(2, '0')}`;
+      label = d.getFullYear() === now.getFullYear() ? tr(monthKey) : `${d.getFullYear()} ${tr(monthKey)}`;
+    }
+    let grp = byKey.get(key);
+    if (!grp) {
+      grp = { key, label, items: [] };
+      byKey.set(key, grp);
+      groups.push(grp);
+    }
+    grp.items.push(item);
+  }
+  return groups;
+}
+
+export function historyAgentClass(agent: string | undefined): string {
+  const a = (agent || '').toLowerCase();
+  if (a.includes('claude') || a === 'cc') return 'fh-hc fh-hc--claude';
+  if (a.includes('codex') || a === 'cx') return 'fh-hc fh-hc--codex';
+  if (a.includes('opencode') || a === 'op') return 'fh-hc fh-hc--opencode';
+  if (a.includes('agy') || a === 'ag') return 'fh-hc fh-hc--agy';
+  if (a.includes('gemini')) return 'fh-hc fh-hc--gemini';
+  if (a.includes('dsh')) return 'fh-hc fh-hc--dsh';
+  return 'fh-hc';
 }
 
 export function formatHistoryRef(title: string | undefined, id: string | number): string {

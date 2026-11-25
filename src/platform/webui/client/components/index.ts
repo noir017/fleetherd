@@ -48,11 +48,17 @@ export {
 
 export {
   renderFieldRow,
+  renderGroupedList,
+  renderRadioGroup,
   renderSegmentedField,
   renderSelect,
   renderSwitch,
   renderTextInput,
   type FieldRowOptions,
+  type GroupedListItem,
+  type GroupedListOptions,
+  type RadioGroupOptions,
+  type RadioOption,
   type SegmentedFieldOptions,
   type SelectOption,
   type SelectOptions,
@@ -104,6 +110,13 @@ export {
   type QuickPickItem,
   type QuickPickOptions,
 } from './quickpick/index.js';
+
+export {
+  openBottomSheet,
+  type BottomSheetAction,
+  type BottomSheetController,
+  type BottomSheetOptions,
+} from './sheet/index.js';
 
 export {
   createSplitter,

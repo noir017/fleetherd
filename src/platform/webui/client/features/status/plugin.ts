@@ -132,13 +132,23 @@ function getAllPluginErrors(rt: StatusRuntime): readonly StatusPluginError[] {
   return merged;
 }
 
+function renderBrandItem(rt: StatusRuntime, el: HTMLElement): void {
+  const label = rt.deps.brandLabel || 'fleetherd';
+  el.classList.add('is-prominent');
+  el.title = label;
+  render(
+    html`${renderStatusIcon('remote')}<span class="wb-status-label">${label}</span>`,
+    el,
+  );
+}
+
 function renderConnectionItem(rt: StatusRuntime, el: HTMLElement): void {
   const pres = connectionPresentation(rt.connectionState);
   const label = rt.ctx.i18n.t(pres.labelKey);
   el.title = rt.ctx.i18n.t('statusBar.connectionTitle', { state: label });
   el.dataset.state = rt.connectionState;
   render(
-    html`${renderStatusDot({ status: pres.tone, pulsing: pres.pulsing })}<span class="wb-status-label">${label}</span>`,
+    html`${rt.connectionState === 'connected' ? renderStatusIcon('check') : renderStatusDot({ status: pres.tone, pulsing: pres.pulsing })}<span class="wb-status-label">${label}</span>`,
     el,
   );
 }
@@ -149,7 +159,7 @@ function renderRunningItem(rt: StatusRuntime, el: HTMLElement): void {
   el.dataset.count = String(count);
   el.classList.toggle('is-active', count > 0);
   render(
-    html`${renderStatusIcon('play')}<span class="wb-status-label">${rt.ctx.i18n.t('statusBar.running', { count })}</span>`,
+    html`<span class=${count > 0 ? 'wb-status-ok-icon' : 'wb-status-icon'}>${renderStatusIcon('play')}</span><span class="wb-status-label">${rt.ctx.i18n.t('statusBar.running', { count })}</span>`,
     el,
   );
 }
@@ -259,6 +269,7 @@ function renderVersionItem(rt: StatusRuntime, el: HTMLElement): void {
 }
 
 const ITEM_RENDERERS: Readonly<Record<string, (rt: StatusRuntime, el: HTMLElement) => void>> = {
+  'status.brand': renderBrandItem,
   'status.connection': renderConnectionItem,
   'status.running': renderRunningItem,
   'status.idle': renderIdleItem,
@@ -356,6 +367,7 @@ function registerStatusBarItems(
     });
   };
 
+  register('status.brand', 'left', 0);
   register('status.connection', 'left', 10);
   register('status.running', 'left', 20);
   register('status.idle', 'left', 30, actions.openIdle);

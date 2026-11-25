@@ -152,15 +152,16 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 22px;
-  padding: 1px 6px;
+  min-width: 18px;
+  padding: 0 5px;
   border: 1px solid var(--fh-input-line);
-  border-radius: var(--fh-radius-ctrl, 2px);
-  background: var(--fh-bg-code);
-  color: var(--fh-fg-hi);
+  border-bottom-width: 2px;
+  border-radius: 3px;
+  background: var(--fh-bg);
+  color: var(--fh-fg-dim);
   font-family: var(--fh-font-mono);
   font-size: 11px;
-  line-height: 1.4;
+  line-height: 15px;
 }
 
 .fh-palette-kb-empty {
@@ -168,4 +169,122 @@
   text-align: center;
   font-size: 12.5px;
   color: var(--fh-fg-dim);
+}
+
+/* Palette QuickPick refinements (loaded after workbench-theme.css) */
+.fh-qp-backdrop .fh-qp {
+  width: min(620px, 100%);
+  box-shadow: 0 8px 28px var(--shadow-lg);
+}
+
+@media (min-width: 641px) {
+  .fh-qp-backdrop .fh-qp {
+    border-radius: 6px;
+  }
+}
+
+.fh-qp-backdrop .fh-qp-input-wrap {
+  margin: 8px;
+  padding: 5px 8px;
+  border: 1px solid var(--fh-input-line);
+  border-radius: 2px;
+}
+
+.fh-qp-backdrop .fh-qp-input-wrap:focus-within {
+  border-color: var(--fh-accent);
+}
+
+.fh-qp-backdrop .fh-qp-kbd-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: auto;
+  flex: none;
+}
+
+.fh-qp-backdrop .fh-qp-kbd-sep {
+  font-size: 10px;
+  color: var(--fh-fg-dim);
+  opacity: 0.7;
+}
+
+.fh-qp-backdrop .fh-qp-kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  padding: 0 4px;
+  border: 1px solid var(--fh-input-line);
+  border-bottom-width: 2px;
+  border-radius: 3px;
+  background: var(--fh-bg);
+  color: var(--fh-fg-dim);
+  font-family: var(--fh-font-mono);
+  font-size: 11px;
+  line-height: 15px;
+}
+
+.fh-qp-backdrop .fh-qp-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+  margin-top: 4px;
+  padding: 7px 12px;
+  border-top: 1px solid var(--fh-line);
+  font-size: 11px;
+  color: var(--fh-fg-dim);
+}
+
+.fh-qp-backdrop .fh-qp-foot > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+@media (min-width: 641px) {
+  body .fh-menu {
+    min-width: 210px;
+    padding: 4px 0;
+    border-radius: 5px;
+    box-shadow: 0 6px 20px var(--shadow-lg);
+  }
+
+  body .fh-menu .fh-menu-item {
+    width: calc(100% - 8px);
+    height: 26px;
+    margin: 0 4px;
+    padding: 0 10px;
+    gap: 9px;
+    border-radius: 3px;
+    font-size: 12.5px;
+  }
+
+  body .fh-menu .fh-menu-icon {
+    font-size: 15px;
+    color: var(--fh-fg-dim);
+  }
+
+  body .fh-menu .fh-menu-item.is-danger .fh-menu-icon {
+    color: var(--fh-err);
+  }
+
+  body .fh-menu .fh-menu-sep {
+    margin: 4px 0;
+  }
+
+  body .fh-menu .fh-menu-kbd {
+    min-width: 18px;
+    padding: 0 4px;
+    border: 1px solid var(--fh-input-line);
+    border-bottom-width: 2px;
+    border-radius: 3px;
+    background: var(--fh-bg);
+    line-height: 15px;
+  }
+}
+
+.fh-dialog-backdrop .fh-dialog {
+  border-radius: 6px;
+  box-shadow: 0 8px 28px var(--shadow-lg);
 }

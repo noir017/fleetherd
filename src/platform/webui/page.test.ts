@@ -6,6 +6,11 @@ import { fileURLToPath } from 'node:url';
 import { NO_ASSETS, servePage as serveShell } from './page.js';
 import { APP_SOURCE, CLIENT, renderPage, testAssets } from './page.test-helpers.js';
 
+const PKG_VERSION = (
+  JSON.parse(
+    fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '../../../package.json'), 'utf8'),
+  ) as { version: string }
+).version;
 const clientDir = path.join(path.dirname(fileURLToPath(import.meta.url)), 'client');
 const BOOT_SOURCE = fs.readFileSync(path.join(clientDir, 'services', 'boot.ts'), 'utf8');
 const STREAM_SOURCE = fs.readFileSync(path.join(clientDir, 'services', 'stream.ts'), 'utf8');
@@ -104,11 +109,13 @@ describe('webui page', () => {
      codeview: null,
       instance: 'web',
      build,
+     version: PKG_VERSION,
      plugins: [],
    });
-    expect(bootOf(shell)).toMatchObject({ terminal: false, terminalEnd: false, files: false, instructions: false, password: true, instance: 'web' });
-    const custom = serveShell('Chat', false, true, false, testAssets(), false, false, 'portal').html;
+    expect(bootOf(shell)).toMatchObject({ terminal: false, terminalEnd: false, files: false, instructions: false, password: true, instance: 'web', version: PKG_VERSION });
+    const custom = serveShell('Chat', false, true, false, testAssets(), false, false, 'portal', [], '9.9.9-test.1').html;
    expect(bootOf(custom).instance).toBe('portal');
+   expect(bootOf(custom).version).toBe('9.9.9-test.1');
    expect(APP_SOURCE).toContain('const boot = readBootConfig(document);');
    expect(BOOT_SOURCE).toContain("getElementById('boot-config')");
  });

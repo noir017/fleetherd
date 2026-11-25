@@ -43,12 +43,13 @@ Reader, and Status):
 - **Responsive breakpoints**: desktop (`≥ 1024px`) shows the full multi-pane workbench and
   auto-collapses the primary sidebar when the editor becomes narrow; tablet (`640–1023px`) turns
   sidebars into slide-over drawers; mobile (`< 640px`) switches to a stack-style page shell with a
-  bottom tab bar and in-topic tool tabs.
+  4-tab bottom bar (including **More** for Reviews, Preferences, Skills, Settings, device toggles,
+  and Gateway status), a topic detail header (status dot, agent, directory, unread back badge, and
+  `⋯` menu), left-swipe/long-press topic row actions, and in-topic tool tabs.
 - **Drag-and-drop splits, view movement, and layout persistence**: on desktop (`≥ 1024px`), drag
   any editor tab onto the left, right, top, or bottom edge of an editor group to split side by
-  side, or drag tabs within a strip to reorder them (press `Esc` to cancel a drag); a group with a
-  single tab renders as a clean title bar, and switches to a tab strip when two or more tabs are
-  open. Views in the primary sidebar, secondary sidebar, and bottom panel can be dragged between
+  side, or drag tabs within the permanent editor tab strip to reorder them (press `Esc` to cancel a
+  drag). Views in the primary sidebar, secondary sidebar, and bottom panel can be dragged between
   parts or moved via the **⋯** (**Move view**) button in each part header. Layout state is saved
   automatically in this browser (`localStorage['aa_layout']`) and restored on reload (corrupt state
   falls back to the default layout). On tablet widths (`640–1023px`), editor splitting is disabled
@@ -96,6 +97,11 @@ keeps nothing of these: the agent remembers its own setting, and `/new` or `/cd`
 on the agent's default again, so pick the directory first. Only the web UI shows them; there is no
 command for them.
 
+**Switching permissions from the status line.** Beside the model and agent options, the status line
+above the composer also shows the topic agent's current permission level as a clickable chip. Tapping
+it opens the same popover with the available permission levels (`ask`, `auto`, `full`) and updates
+that agent's permission level without leaving the conversation.
+
 **Topics.** The sidebar on the left lists parallel conversations and switches between them,
 the same way a Telegram forum topic or a Feishu 话题 does: each has its own agent
 session and its own context, and each gets named automatically from what it turned
@@ -135,11 +141,12 @@ width, and the same × closes the task panel on the right: the two are one compo
 same header and footer rows, the same slide and the same dimmed backdrop.
 
 **Choosing an agent.** With more than one agent configured, a new topic opens on all of them,
-grouped by machine: each card shows the agent's id, what it is (Claude Code, Codex, OpenCode,
-Antigravity, or a custom agent's command) and its model if one is set. Tap one and it answers
-this topic; the directory menu then asks where it should work, as a bare `/cc` does. Or just
-type — the card marked **default** is the agent that answers. The cards go away as soon as
-anything is said in the topic.
+grouped by machine, alongside a working-directory grid for the selected agent: each card shows the
+agent's id, what it is (Claude Code, Codex, OpenCode, Antigravity, or a custom agent's command) and
+its model if one is set. Tap an agent and a directory to configure both in one step before sending
+anything — neither `/agent` nor `/cd` is echoed into the transcript, and any draft in the composer
+stays intact. Or just type — the card marked **default** is the agent that answers. The launcher
+goes away as soon as anything is said in the topic.
 
 **Stopping it.** While a reply is streaming, **Stop** beside Send ends the turn
 (`/stop`) — and the same goes for an agent reporting back on background work after
@@ -182,8 +189,11 @@ check icon in the panel's title while Sessions is open, clears every run's unrea
 tells the daemon the replies it had not seen have been read.
 **Reviews** lists the automatic reviews of
 quiet conversations (see [skills](skills.md#auto-review)): what each one changed, what the store
-refused and why, the preferences it noticed, and the command that undoes each change. A review that
-changed nothing posts no line anywhere else, so this tab is its only home. Above the reviews,
+refused and why, the preferences it noticed, and the command that undoes each change. Opening a
+review shows its reviewer, model, message count, duration, and inline diffs for applied skill edits,
+with a **Revert** button (behind confirmation) to roll back an applied skill commit directly from
+the detail view. A review that changed nothing posts no line anywhere else, so this tab is its only
+home. Above the reviews,
 **Suggested preferences** lists the preference suggestions still pending, merged across reviews,
 each with **Adopt** and **Dismiss**. Adopt opens a new topic with a draft that asks an agent to add
 the suggestion to your instructions; nothing is sent, so you can edit it, switch agent with
@@ -511,7 +521,9 @@ ttyd -i ~/.config/fleetherd/webui-term-web.sock -b /term -W -a -O \
 Turned on, the chat header grows a folder button that opens a file browser and editor for the
 machine the topic's agent runs on — this one, or a remote host, whichever the topic uses. The left
 side is a directory tree that expands as you open it (a drawer on a phone); the right side holds
-the breadcrumbs, a filename search over the project, and the file itself. Files up to 1 MiB of
+the breadcrumbs, a filename search over the project, and the file itself. Inside a git repository,
+changed files and directories in the tree carry git status badges (`M`, `A`, `?`, etc.) so modified
+and untracked entries stand out while browsing. Files up to 1 MiB of
 UTF-8 text are editable; images (PNG, JPEG, GIF, WebP, up to 5 MiB) are shown, and anything else
 (binary, not UTF-8, or over the limit) is named with a sentence saying why it cannot be edited
 here. Markdown has a Preview tab.

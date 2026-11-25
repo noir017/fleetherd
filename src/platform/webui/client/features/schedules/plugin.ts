@@ -16,6 +16,7 @@ import type { ScheduleEditorInput, SchedulesPluginDeps } from './types.js';
 import { createSchedulesViewComponent, type SchedulesViewController } from './view.js';
 
 const SCHEDULES_EN_STRINGS: Record<string, string> = {
+  'wb.sched.activityTitle': 'Tasks',
   'wb.sched.runsAll': 'All',
   'wb.sched.colTime': 'Time',
   'wb.sched.colStatus': 'Status',
@@ -25,9 +26,30 @@ const SCHEDULES_EN_STRINGS: Record<string, string> = {
   'wb.sched.noMatchingRuns': 'No runs match this status.',
   'wb.sched.showAllRuns': 'Show all',
   'wb.sched.summaryOk': 'Completed',
+  'wb.sched.searchSessions': 'Search sessions',
+  'wb.sched.editPrefix': 'Edit · {name}',
+  'wb.sched.what': 'What it runs',
+  'wb.sched.who': 'Who runs it',
+  'wb.sched.recentRuns': 'Recent runs',
+  'wb.sched.addTagPlaceholder': '+ tag, Enter to add',
+  'wb.sched.quickDaily': 'Daily',
+  'wb.sched.quickWeekly': 'Weekly',
+  'wb.sched.quickInterval': 'Interval',
+  'wb.sched.quickCron': 'Cron',
+  'wb.sched.quickEvery': 'Every',
+  'wb.sched.quickUnitMin': 'min',
+  'wb.sched.quickUnitHour': 'hr',
+  'wb.sched.dow0': 'Sun',
+  'wb.sched.dow1': 'Mon',
+  'wb.sched.dow2': 'Tue',
+  'wb.sched.dow3': 'Wed',
+  'wb.sched.dow4': 'Thu',
+  'wb.sched.dow5': 'Fri',
+  'wb.sched.dow6': 'Sat',
 };
 
 const SCHEDULES_ZH_STRINGS: Record<string, string> = {
+  'wb.sched.activityTitle': '定时',
   'wb.sched.runsAll': '全部',
   'wb.sched.colTime': '时间',
   'wb.sched.colStatus': '状态',
@@ -37,6 +59,26 @@ const SCHEDULES_ZH_STRINGS: Record<string, string> = {
   'wb.sched.noMatchingRuns': '当前状态下没有运行记录。',
   'wb.sched.showAllRuns': '查看全部',
   'wb.sched.summaryOk': '正常完成',
+  'wb.sched.searchSessions': '搜索会话',
+  'wb.sched.editPrefix': '编辑 · {name}',
+  'wb.sched.what': '做什么',
+  'wb.sched.who': '谁来跑',
+  'wb.sched.recentRuns': '最近运行',
+  'wb.sched.addTagPlaceholder': '+ 标签，回车添加',
+  'wb.sched.quickDaily': '每天',
+  'wb.sched.quickWeekly': '每周',
+  'wb.sched.quickInterval': '间隔',
+  'wb.sched.quickCron': 'cron',
+  'wb.sched.quickEvery': '每',
+  'wb.sched.quickUnitMin': '分钟',
+  'wb.sched.quickUnitHour': '小时',
+  'wb.sched.dow0': '周日',
+  'wb.sched.dow1': '周一',
+  'wb.sched.dow2': '周二',
+  'wb.sched.dow3': '周三',
+  'wb.sched.dow4': '周四',
+  'wb.sched.dow5': '周五',
+  'wb.sched.dow6': '周六',
 };
 
 function isScheduleTask(value: unknown): value is SchedulePanelTask {
@@ -126,7 +168,7 @@ function buildTaskRowMenuItems(
       disabled: (target) => (isScheduleTask(target) && target.running ? tr('sched.editBusyTitle') : false),
       run: (target) => {
         if (isScheduleTask(target)) {
-          ctx.editors.open('schedule', { id: target.id, mode: 'edit', title: target.name });
+          ctx.editors.open('schedule', { id: target.id, mode: 'edit', title: target.name }, { id: `schedule:${target.id}` });
         }
       },
     },
@@ -180,7 +222,7 @@ export function createSchedulesPlugin(deps: SchedulesPluginDeps = {}): WebuiPlug
 
       ctx.activity.register({
         id: 'schedules',
-        title: tr('sideTasks.tabScheduled'),
+        title: ctx.i18n.t('wb.sched.activityTitle'),
         icon: 'clock',
         view: 'schedules',
         order: 30,

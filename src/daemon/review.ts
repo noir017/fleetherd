@@ -343,6 +343,7 @@ export class ReviewService {
   }
 
   private async runOne(candidate: ReviewCandidate, plan: Plan, reviewer: Reviewer, now: number): Promise<void> {
+    const messagesRead = plan.window.messages.length;
     let prompt: string;
     try {
       prompt = this.promptFor(plan, candidate.key);
@@ -358,10 +359,16 @@ export class ReviewService {
         preferences: [],
         invalid: [],
         error,
+        ...(reviewer.model ? { model: reviewer.model } : {}),
+        messagesRead,
       });
       return;
     }
+    const runStartedAt = this.deps.clock.now();
     const result = await this.run(reviewer, prompt);
+    const endedAt = this.deps.clock.now();
+    const durationMs = Math.max(0, endedAt - runStartedAt);
+    const model = (result.ok ? result.model : undefined) ?? reviewer.model;
     if (!result.ok) {
       // Two sources: the runner's own `capacity` flag, which is how a timeout is marked (a killed
       // run has no output to read), and the text of a run that finished with a 503. An immediate
@@ -369,7 +376,6 @@ export class ReviewService {
       const capacity = result.capacity === true || isCapacityFailure(result.error);
       // The back-off runs from the end of the attempt: `now` was taken before a run that may have
       // spent 30 minutes timing out, and "an hour" from its start would only be 30 minutes of wait.
-      const endedAt = this.deps.clock.now();
       const error = this.fail(candidate, plan, result.error, endedAt, capacity);
       // A failed attempt is a review too. Until this row existed the reason a quiet conversation
       // was never reviewed lived only in the log, which is not where a person looks; the Reviews
@@ -381,6 +387,9 @@ export class ReviewService {
         preferences: [],
         invalid: [],
         error,
+        ...(model ? { model } : {}),
+        messagesRead,
+        durationMs,
       });
       return;
     }
@@ -400,6 +409,9 @@ export class ReviewService {
         preferences: [],
         invalid: [],
         error: `the answer could not be read: ${parsed.error}`,
+        ...(model ? { model } : {}),
+        messagesRead,
+        durationMs,
       });
       return;
     }
@@ -418,6 +430,9 @@ export class ReviewService {
       changes,
       preferences: parsed.parsed.output.preferences,
       invalid: parsed.parsed.invalid,
+      ...(model ? { model } : {}),
+      messagesRead,
+      durationMs,
     });
     await this.notify(
       candidate,
@@ -675,7 +690,7 @@ export class ReviewService {
     plan: Plan,
     candidate: ReviewCandidate,
     now: number,
-    result: Pick<HistoryReviewRecord, 'outcome' | 'changes' | 'preferences' | 'invalid' | 'error'>
+    result: Pick<HistoryReviewRecord, 'outcome' | 'changes' | 'preferences' | 'invalid' | 'error' | 'model' | 'messagesRead' | 'durationMs'>
   ): void {
     if (sessionId === undefined) return;
     this.deps.history.recordReview(sessionId, {
@@ -742,7 +757,7 @@ function applyChange(change: ReviewChange, who: ReviewAuthor, dir: string | unde
         },
         dir
       );
-      return { name: change.name, action: 'created' };
+      return { name: change.name, action: 'created', ...(latestCommitId(change.name, dir) ? { commitId: latestCommitId(change.name, dir) } : {}) };
     case 'patch':
       // Not offered any more (review-prompt.ts PatchChange): retyping a whole SKILL.md is how a
       // review changes words it never meant to. Refused with the reason, not quietly applied.
@@ -977,6 +992,14 @@ function newestHistoryId(name: string, dir: string | undefined): string | undefi
   try {
     const entry = skillHistory(name, dir)[0];
     return entry?.beforeVersion ? entry.id : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function latestCommitId(name: string, dir: string | undefined): string | undefined {
+  try {
+    return skillHistory(name, dir)[0]?.id;
   } catch {
     return undefined;
   }

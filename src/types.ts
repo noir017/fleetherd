@@ -3,6 +3,7 @@
  */
 
 import type { ConversationAddress, ConversationRef } from './core/conversation.js';
+import type { PermissionLevel } from './config/schema.js';
 
 /**
  * A platform-agnostic message reference, usable for in-place edit / reaction / reply.
@@ -478,6 +479,14 @@ export interface AgentStatus {
   quota?: QuotaPool[];
   /** The agent's own session settings (SessionOption), as the strip shows them. Absent when it has none. */
   options?: StatusOption[];
+  /** The agent's effective permission level and offered levels (from core/permission-levels.ts). */
+  permissions?: StatusPermissions;
+}
+
+export interface StatusPermissions {
+  level: PermissionLevel;
+  unset?: boolean;
+  offered: PermissionLevel[];
 }
 
 /**
@@ -567,6 +576,10 @@ export interface AgentCatalogEntry {
   kind: string;
   /** The model configured for it, when there is one — short, as the footer says it (no vendor prefix). */
   model?: string;
+  /** The agent's configured root working directory, when known. */
+  root?: string;
+  /** Scanned subdirectories under `root`, ranked by frecency when available. */
+  dirs?: string[];
 }
 
 /**

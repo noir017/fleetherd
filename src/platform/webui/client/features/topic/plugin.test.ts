@@ -391,6 +391,11 @@ describe('features/topic/plugin', () => {
 
     panel.openTitleMenu();
     menuItem('topic.title.delete').click();
+    expect(onDeleteTopic).not.toHaveBeenCalled();
+    const dlgConfirm = document.querySelector<HTMLButtonElement>('.fh-dialog [data-dialog-action="confirm"]');
+    expect(dlgConfirm).not.toBeNull();
+    dlgConfirm!.click();
+    await Promise.resolve();
     expect(onDeleteTopic).toHaveBeenCalledWith('t-busy');
 
     // Switch to idle topic -> terminal disappears, fork becomes enabled

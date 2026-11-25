@@ -212,6 +212,7 @@ export function buildCommandQuickPickItems(
       ...(shortcut ? [shortcut] : []),
     ],
     shortcut,
+    shortcutTokens: entry.meta?.keybinding ? splitKeybindingTokens(entry.meta.keybinding, isMac) : undefined,
     data: entry,
   }));
 }

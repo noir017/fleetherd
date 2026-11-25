@@ -62,6 +62,7 @@ import type {
   SettingsScreen,
   SlashCommandSpec,
   StatusOption,
+  StatusPermissions,
   TopicActivity,
   TopicKillResult,
   TopicStage,
@@ -102,6 +103,7 @@ import type {
   SessionOptionPicker,
   SessionOptionResult,
   ReviewPanelList,
+  TopicSetupResult,
   SchedulePanelAction,
   SchedulePanelDetailResult,
   SchedulePanelEdit,
@@ -568,6 +570,10 @@ export class WebRoom {
   private topicKill: ((ref: ConversationRef, confirmed: ReadonlySet<string>) => TopicKillResult[]) | null = null;
   /** Likewise — see `useAgentCatalog`. Only ever read for a sync of an empty room. */
   private catalog: ((ref: ConversationRef) => AgentCatalog | undefined) | null = null;
+  /** Bind a new/empty topic's agent and working directory in one step. */
+  private topicSetup:
+    | ((ref: ConversationRef, opts: { agent?: string; cwd?: string; dryRun?: boolean }) => TopicSetupResult)
+    | null = null;
   /** Machines the daemon cannot reach — see `setOfflineMachines`. */
   private offline: readonly OfflineMachine[] = [];
   /** The poll that keeps `liveness` honest; only ever running once a lookup exists. */
@@ -949,11 +955,33 @@ export class WebRoom {
     this.optionPicker = picker;
   }
 
+  useTopicSetup(
+    setup: (ref: ConversationRef, opts: { agent?: string; cwd?: string; dryRun?: boolean }) => TopicSetupResult
+  ): void {
+    this.topicSetup = setup;
+  }
+
+  validateTopicSetup(opts: { agent?: string; cwd?: string }): TopicSetupResult {
+    if (!this.topicSetup) return { ok: false, error: 'This daemon does not support topic setup.' };
+    return this.topicSetup(this.conversation('00000000'), { ...opts, dryRun: true });
+  }
+
+  setupTopic(topic: string, opts: { agent?: string; cwd?: string }): TopicSetupResult {
+    if (!this.topicSetup) return { ok: false, error: 'This daemon does not support topic setup.' };
+    if (!this.topics.has(topic)) return { ok: false, error: 'No such topic.' };
+    const res = this.topicSetup(this.conversation(topic), opts);
+    if (res.ok) {
+      this.dirCache.delete(topic);
+      this.announceTopics();
+    }
+    return res;
+  }
+
   /**
    * Which of the agent's own settings to draw for a topic that has no status yet, without starting
    * its agent. Empty, never an error: a status line that has nothing extra to show shows nothing.
    */
-  async optionStatus(topic: string): Promise<{ agent?: string; model?: string; options: StatusOption[] }> {
+  async optionStatus(topic: string): Promise<{ agent?: string; model?: string; options: StatusOption[]; permissions?: StatusPermissions }> {
     if (!this.optionPicker || !this.topics.has(topic)) return { options: [] };
     return this.optionPicker.peek(this.conversation(topic));
   }
@@ -1208,10 +1236,12 @@ export class WebRoom {
     return this.reviewPanel.list();
   }
 
-  /** Dismiss one pending preference suggestion, answering with the fresh list. */
-  reviewOp(op: ReviewOpRequest): { ok: true; list: ReviewPanelList } | { ok: false; error: string } {
+  /** Dismiss a pending suggestion or revert an applied skill change, answering with the fresh list. */
+  async reviewOp(op: ReviewOpRequest): Promise<{ ok: true; list: ReviewPanelList } | { ok: false; error: string }> {
     if (!this.reviewPanel) return { ok: false, error: 'this daemon has no conversation library, so there are no reviews' };
-    return { ok: true, list: this.reviewPanel.dismiss(op.text) };
+    if (op.action === 'dismiss') return { ok: true, list: this.reviewPanel.dismiss(op.text) };
+    if (!this.reviewPanel.revert) return { ok: false, error: 'review revert is not available in this daemon' };
+    return this.reviewPanel.revert(op.name, op.id);
   }
 
   /**

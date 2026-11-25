@@ -626,4 +626,77 @@ describe('features/files plugin', () => {
     events.dispose();
     registry.dispose();
   });
+
+  it('preserves UTF-8 BOM + CRLF on save and displays mixed-EOL notice banner', async () => {
+    const { registry, events, manager } = makeHarness(TOPIC_WITH_DIR);
+    const writeBodies: Array<Record<string, unknown>> = [];
+    let editorDoc = '';
+    let onChange: ((d: string) => void) | undefined;
+    const mockCodeView: CodeViewApi = {
+      diff: vi.fn(),
+      highlighter: vi.fn(async () => null),
+      editor: vi.fn((_parent, opts) => {
+        editorDoc = opts.doc;
+        onChange = opts.onChange;
+        return {
+          getDoc: () => editorDoc,
+          setDoc: (next: string) => {
+            editorDoc = next;
+          },
+          focus: vi.fn(),
+          destroy: vi.fn(),
+        };
+      }),
+    };
+    const fetchFn = vi.fn(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const url = String(input);
+      if (url.includes('/api/files/read')) {
+        return jsonResponse({
+          ok: true,
+          path: '/workspace/demo-repo/bom.txt',
+          rel: 'bom.txt',
+          name: 'bom.txt',
+          kind: 'text',
+          text: '\uFEFFalpha\r\nbeta\ngamma',
+          mtimeMs: 7000,
+          size: 20,
+          sha256: 'abc123',
+          eol: 'crlf',
+          eolWarning: 'mixed',
+        });
+      }
+      if (url.includes('/api/files/write')) {
+        writeBodies.push(JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>);
+        return jsonResponse({ ok: true, mtimeMs: 7001, size: 22, sha256: 'def456' }, 200);
+      }
+      return jsonResponse({ ok: false }, 404);
+    });
+
+    manager.register(
+      createFilesPlugin({ filesEnabled: true, fetchFn, codeView: async () => mockCodeView }),
+      { builtin: true },
+    );
+    await manager.activate(FILES_PLUGIN_ID);
+
+    const editorPanel = registry.getEditor(FILE_EDITOR_KIND)!.component();
+    document.body.appendChild(editorPanel.element);
+    editorPanel.init({ topicId: 'topic-beta', path: '/workspace/demo-repo/bom.txt' }, makePanelInitCtx('file:bom.txt').ctx);
+    await flushMicrotasks();
+
+    expect(editorDoc).toBe('\uFEFFalpha\nbeta\ngamma');
+    expect(editorPanel.element.textContent).toContain('CRLF');
+
+    editorDoc = '\uFEFFalpha\nbeta\ngamma2';
+    onChange?.(editorDoc);
+    editorPanel.element.querySelector<HTMLButtonElement>('[data-action-id="save"]')!.click();
+    await flushMicrotasks();
+
+    expect(writeBodies).toHaveLength(1);
+    expect(writeBodies[0]?.text).toBe('\uFEFFalpha\r\nbeta\r\ngamma2');
+
+    editorPanel.dispose();
+    manager.dispose();
+    events.dispose();
+    registry.dispose();
+  });
 });

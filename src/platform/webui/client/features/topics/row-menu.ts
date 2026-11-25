@@ -1,5 +1,6 @@
 import { addDisposableListener } from '../../base/dom.js';
 import { type Disposable, DisposableStore } from '../../base/lifecycle.js';
+import { openConfirmDialog } from '../../components/dialog/index.js';
 import { t as tr } from '../../i18n/index.js';
 import { text } from '../../services/api.js';
 import { subtreeOf } from './tree.js';
@@ -151,7 +152,7 @@ function buildTaskMenuItems(t: ScheduleTaskLike, icons: TopicIcons): RowMenuItem
 class RowMenuControllerImpl implements RowMenuController {
   private readonly doc: Document;
   private readonly win: Window;
-  private readonly confirmFn: (message: string) => boolean;
+  private readonly confirmFn?: (message: string) => boolean;
   private readonly rowMenu: HTMLElement;
   private readonly listeners = new DisposableStore();
 
@@ -162,7 +163,7 @@ class RowMenuControllerImpl implements RowMenuController {
   constructor(private readonly deps: RowMenuDeps) {
     this.doc = deps.doc ?? document;
     this.win = deps.win ?? window;
-    this.confirmFn = deps.confirmFn ?? ((msg: string) => this.win.confirm(msg));
+    this.confirmFn = deps.confirmFn;
     this.rowMenu = deps.rowMenu;
   }
 
@@ -254,8 +255,20 @@ class RowMenuControllerImpl implements RowMenuController {
         return;
       }
       if (what === 'remove') {
-        if (!this.confirmFn(tr('sched.confirmDeleteTask', { name: t.name || t.id }))) return;
-        this.deps.onScheduleOp(id, 'remove', null);
+        const msg = tr('sched.confirmDeleteTask', { name: t.name || t.id });
+        const confirmed = this.confirmFn
+          ? Promise.resolve(this.confirmFn(msg))
+          : openConfirmDialog({
+              title: tr('common.delete'),
+              body: msg,
+              confirmLabel: tr('common.delete'),
+              cancelLabel: tr('common.cancel'),
+              danger: true,
+              doc: this.doc,
+            });
+        void confirmed.then((ok) => {
+          if (ok) this.deps.onScheduleOp(id, 'remove', null);
+        });
         return;
       }
       this.deps.onScheduleOp(id, what, null);

@@ -1,4 +1,4 @@
-import type { FilesPanelEntry, FilesPanelHit } from '../../../../adapter.js';
+import type { FileGitStatus, FilesPanelEntry, FilesPanelHit } from '../../../../adapter.js';
 import { icon } from '../../../icons.js';
 import { html, nothing, render } from '../../base/html.js';
 import { DisposableStore } from '../../base/lifecycle.js';
@@ -124,6 +124,7 @@ function paintToolHeader(tc: FilesToolContext): void {
         })}
       </div>
       <div class="fh-files-search">
+        ${renderIcon(icon('search'), 'fh-files-search-icon')}
         <input
           type="search"
           class="fh-input fh-files-search-input"
@@ -144,6 +145,11 @@ function paintToolHeader(tc: FilesToolContext): void {
           }}
         />
       </div>
+      ${state.root
+        ? html`<div class="fh-files-mpath" title=${state.currentDir || state.root}>
+            ${state.currentDir || state.root}
+          </div>`
+        : nothing}
       ${state.creating
         ? html`<div class="fh-files-create-row">
             <input
@@ -472,6 +478,13 @@ async function revealFileInTree(tc: FilesToolContext, req: RevealInTreeRequest):
   return rowEl !== null;
 }
 
+function gitBadgeClass(status: FileGitStatus): string {
+  if (status === 'A') return 'add';
+  if (status === '?') return 'new';
+  if (status === 'D' || status === 'U') return 'del';
+  return 'mod';
+}
+
 function createFilesTreeController(
   ctx: PluginContext,
   doc: Document,
@@ -503,6 +516,13 @@ function createFilesTreeController(
                 if (node.data) callbacks.openInEditor(node.data.path);
               }}
             >${renderIcon(icon('pencil'), 'fh-icon')}</button>`
+          : nothing}
+        ${node.data?.gitStatus
+          ? html`<span
+              class=${`fh-files-git fh-files-git--${gitBadgeClass(node.data.gitStatus)}`}
+              data-git-status=${node.data.gitStatus}
+              aria-label=${node.data.gitStatus}
+            >${node.data.gitStatus}</span>`
           : nothing}
       `,
       onToggle: (node, expanded) => {

@@ -1,3 +1,4 @@
+import { html, type TemplateResult } from '../../base/html.js';
 import { type Disposable, toDisposable } from '../../base/lifecycle.js';
 import { openQuickPick } from '../../components/quickpick/index.js';
 import { definePlugin, type PluginContext, type WebuiPlugin } from '../../plugins/api.js';
@@ -47,6 +48,17 @@ function registerAllowInInputBindings(
   }
 }
 
+function renderPaletteFooter(t: (key: string) => string, mode: 'topics' | 'commands'): TemplateResult {
+  return html`
+    <span><kbd class="fh-palette-kbd">↑</kbd> <kbd class="fh-palette-kbd">↓</kbd> ${t('palette.hintSelect')}</span>
+    <span><kbd class="fh-palette-kbd">Enter</kbd> ${t(mode === 'topics' ? 'palette.hintOpen' : 'palette.hintRun')}</span>
+    ${mode === 'topics'
+      ? html`<span><kbd class="fh-palette-kbd">&gt;</kbd> ${t('palette.hintCommands')}</span>`
+      : html``}
+    <span><kbd class="fh-palette-kbd">Esc</kbd> ${t('palette.hintClose')}</span>
+  `;
+}
+
 export function createPalettePlugin(deps: PalettePluginDeps = {}): WebuiPlugin {
   let activeOverlay: ActiveOverlay | null = null;
 
@@ -94,10 +106,16 @@ export function createPalettePlugin(deps: PalettePluginDeps = {}): WebuiPlugin {
           placeholder: t('palette.topicPlaceholder'),
           emptyText: t('palette.topicEmpty'),
           searchIcon: renderPaletteIcon('search'),
+          footer: renderPaletteFooter(t, 'topics'),
           overlays: deps.overlays,
           container: deps.container,
           doc: deps.doc,
           className: 'fh-palette-topics',
+          onQueryChange: (val) => {
+            if (val.startsWith('>')) {
+              openCommandPalette(val.slice(1).trimStart());
+            }
+          },
           onSelect: (picked) => {
             clearOverlayIfCurrent('topics');
             if (picked.data) ctx.topics.open(picked.data.id);
@@ -109,14 +127,17 @@ export function createPalettePlugin(deps: PalettePluginDeps = {}): WebuiPlugin {
         trackOverlay('topics', qp);
       };
 
-      const openCommandPalette = (): void => {
-        if (!toggleOrReplace('commands')) return;
+      const openCommandPalette = (initialQuery = ''): void => {
+        if (!initialQuery && !toggleOrReplace('commands')) return;
+        if (initialQuery) closeActiveOverlay();
         const items = buildCommandQuickPickItems(resolveCommandList(deps), isMac);
         const qp = openQuickPick({
           items,
+          initialQuery,
           placeholder: t('palette.commandPlaceholder'),
           emptyText: t('palette.commandEmpty'),
           searchIcon: renderPaletteIcon('command'),
+          footer: renderPaletteFooter(t, 'commands'),
           overlays: deps.overlays,
           container: deps.container,
           doc: deps.doc,
@@ -157,7 +178,7 @@ export function createPalettePlugin(deps: PalettePluginDeps = {}): WebuiPlugin {
         title: `${PALETTE_CATEGORY}: ${t('palette.cmdQuickOpenTopic')}`,
         keybinding: 'Mod+K',
       });
-      ctx.commands.register(PALETTE_COMMAND_IDS.commands, openCommandPalette, {
+      ctx.commands.register(PALETTE_COMMAND_IDS.commands, () => openCommandPalette(), {
         title: `${PALETTE_CATEGORY}: ${t('palette.cmdCommands')}`,
         keybinding: 'Mod+Shift+P',
       });

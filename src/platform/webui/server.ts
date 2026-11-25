@@ -86,6 +86,7 @@ import {
   FilesRemoveRequestSchema,
   InstructionsWriteRequestSchema,
   StarTopicRequestSchema,
+  TopicSetupRequestSchema,
   VoiceTranscribeRequestSchema,
   TOPIC_ID,
   parseBody,
@@ -460,6 +461,7 @@ const GUARDED: Route[] = [
   { method: 'POST', path: '/api/voice/transcribe', run: transcribeVoice },
   { method: 'POST', path: '/api/click', run: click },
   { method: 'POST', path: '/api/topics', run: createTopic },
+  { method: 'POST', path: '/api/topics/setup', run: setupTopic },
   { method: 'POST', path: '/api/topics/clear', run: clearTopics },
   { method: 'POST', path: '/api/topics/delete', run: deleteTopic },
   { method: 'POST', path: '/api/topics/star', run: starTopic },
@@ -1034,7 +1036,28 @@ async function createTopic({ req, res }: Req, ctx: Ctx): Promise<void> {
   const parsed = await readBody(req, res, CreateTopicRequestSchema);
   if (!parsed) return;
   try {
-    send(req, res, 201, { topic: ctx.room.createTopic(parsed.title ?? '') });
+    const setupOpts =
+      parsed.agent !== undefined || parsed.cwd !== undefined
+        ? {
+            ...(parsed.agent !== undefined ? { agent: parsed.agent } : {}),
+            ...(parsed.cwd !== undefined ? { cwd: parsed.cwd } : {}),
+          }
+        : undefined;
+    if (setupOpts) {
+      const check = ctx.room.validateTopicSetup(setupOpts);
+      if (!check.ok) return send(req, res, 409, { error: check.error });
+    }
+    const created = ctx.room.createTopic(parsed.title ?? '');
+    if (setupOpts) {
+      const setup = ctx.room.setupTopic(created.id, setupOpts);
+      if (!setup.ok) {
+        ctx.room.deleteTopic(created.id);
+        return send(req, res, 409, { error: setup.error });
+      }
+      const enriched = ctx.room.topicList().find((t) => t.id === created.id) ?? created;
+      return send(req, res, 201, { topic: enriched, agent: setup.agent, cwd: setup.cwd });
+    }
+    send(req, res, 201, { topic: created });
   } catch (e) {
     // The room evicts the oldest topic to make room, so reaching this means every topic is starred
     // or in use. The message says which and what to do; the page shows it. Logged as well, since a
@@ -1043,6 +1066,16 @@ async function createTopic({ req, res }: Req, ctx: Ctx): Promise<void> {
     console.warn(`[webui] refused to open a topic: ${error}`);
     send(req, res, 409, { error });
   }
+}
+
+async function setupTopic({ req, res }: Req, ctx: Ctx): Promise<void> {
+  const parsed = await readBody(req, res, TopicSetupRequestSchema);
+  if (!parsed) return;
+  const result = ctx.room.setupTopic(parsed.topic, {
+    ...(parsed.agent !== undefined ? { agent: parsed.agent } : {}),
+    ...(parsed.cwd !== undefined ? { cwd: parsed.cwd } : {}),
+  });
+  send(req, res, result.ok ? 200 : 409, result);
 }
 
 async function starTopic({ req, res }: Req, ctx: Ctx): Promise<void> {
@@ -1320,11 +1353,11 @@ function reviewsList({ req, res }: Req, ctx: Ctx): void {
   send(req, res, 200, ctx.room.reviews());
 }
 
-/** Dismiss one pending preference suggestion, answering with the fresh list. */
+/** Dismiss a pending suggestion or revert an applied skill change, answering with the fresh list. */
 async function reviewsOp({ req, res }: Req, ctx: Ctx): Promise<void> {
   const parsed = await readBody(req, res, ReviewOpRequestSchema);
   if (!parsed) return;
-  const result = ctx.room.reviewOp(parsed);
+  const result = await ctx.room.reviewOp(parsed);
   send(req, res, result.ok ? 200 : 400, result.ok ? result.list : { error: result.error });
 }
 

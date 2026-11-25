@@ -37,6 +37,7 @@ interface InstructionEditorDom {
   root: HTMLElement;
   titleEl: HTMLElement;
   whereEl: HTMLElement;
+  psubEl: HTMLElement;
   noteEl: HTMLElement;
   eolEl: HTMLElement;
   conflictEl: HTMLElement;
@@ -48,6 +49,10 @@ interface InstructionEditorDom {
   saveBtn: HTMLButtonElement;
   treeEl: HTMLElement;
   editorWrap: HTMLElement;
+  editorHeadEl: HTMLElement;
+  editorNameEl: HTMLElement;
+  editorMetaEl: HTMLElement;
+  discardBtn: HTMLButtonElement;
   textarea: HTMLTextAreaElement;
   emptyEl: HTMLElement;
 }
@@ -80,10 +85,12 @@ function buildEditorDom(doc: Document, ctx: PluginContext): InstructionEditorDom
   head.innerHTML =
     '<div class="wb-instr-titles">' +
     '<h2 class="wb-instr-title"></h2>' +
-    '<span class="wb-instr-where"></span>' +
     '</div>' +
     '<div class="wb-instr-actions">' +
-    '<button type="button" class="fh-btn fh-btn--secondary wb-instr-refresh" title="' +
+    '<span class="wb-instr-where">' +
+    text(ctx.i18n.t('wb.settings.instrHeaderHint')) +
+    '</span>' +
+    '<button type="button" class="fh-btn fh-btn--ghost fh-btn--icon wb-instr-refresh" title="' +
     text(ctx.i18n.t('common.refresh')) +
     '" aria-label="' +
     text(ctx.i18n.t('common.refresh')) +
@@ -94,6 +101,10 @@ function buildEditorDom(doc: Document, ctx: PluginContext): InstructionEditorDom
     text(ctx.i18n.t('common.save')) +
     '</button>' +
     '</div>';
+
+  const psubEl = doc.createElement('p');
+  psubEl.className = 'wb-instr-psub';
+  psubEl.textContent = ctx.i18n.t('wb.settings.instrSubtitle');
 
   const noteEl = doc.createElement('div');
   noteEl.className = 'wb-instr-note';
@@ -124,6 +135,8 @@ function buildEditorDom(doc: Document, ctx: PluginContext): InstructionEditorDom
 
   const body = doc.createElement('div');
   body.className = 'wb-instr-body';
+  const col = doc.createElement('div');
+  col.className = 'wb-instr-col';
 
   const treeEl = doc.createElement('aside');
   treeEl.className = 'wb-instr-tree';
@@ -131,6 +144,17 @@ function buildEditorDom(doc: Document, ctx: PluginContext): InstructionEditorDom
 
   const editorWrap = doc.createElement('div');
   editorWrap.className = 'wb-instr-pane';
+
+  const editorHeadEl = doc.createElement('div');
+  editorHeadEl.className = 'wb-instr-ed-head';
+  editorHeadEl.hidden = true;
+  editorHeadEl.innerHTML =
+    '<b class="wb-instr-ed-name"></b>' +
+    '<span class="wb-instr-ed-meta"></span>' +
+    '<span class="wb-instr-ed-sp"></span>' +
+    '<button type="button" class="fh-btn fh-btn--secondary wb-instr-discard" hidden>' +
+    text(ctx.i18n.t('wb.settings.instrDiscard')) +
+    '</button>';
 
   const emptyEl = doc.createElement('div');
   emptyEl.className = 'wb-instr-empty';
@@ -141,14 +165,16 @@ function buildEditorDom(doc: Document, ctx: PluginContext): InstructionEditorDom
   textarea.hidden = true;
   textarea.setAttribute('aria-label', ctx.i18n.t('files.fileContentsAria'));
 
-  editorWrap.append(emptyEl, textarea);
-  body.append(treeEl, editorWrap);
-  root.append(head, noteEl, eolEl, conflictEl, body);
+  editorWrap.append(editorHeadEl, emptyEl, textarea);
+  col.append(psubEl, noteEl, eolEl, conflictEl, treeEl, editorWrap);
+  body.appendChild(col);
+  root.append(head, body);
 
   return {
     root,
     titleEl: head.querySelector<HTMLElement>('.wb-instr-title')!,
     whereEl: head.querySelector<HTMLElement>('.wb-instr-where')!,
+    psubEl,
     noteEl,
     eolEl,
     conflictEl,
@@ -160,6 +186,10 @@ function buildEditorDom(doc: Document, ctx: PluginContext): InstructionEditorDom
     saveBtn: head.querySelector<HTMLButtonElement>('.wb-instr-save')!,
     treeEl,
     editorWrap,
+    editorHeadEl,
+    editorNameEl: editorHeadEl.querySelector<HTMLElement>('.wb-instr-ed-name')!,
+    editorMetaEl: editorHeadEl.querySelector<HTMLElement>('.wb-instr-ed-meta')!,
+    discardBtn: editorHeadEl.querySelector<HTMLButtonElement>('.wb-instr-discard')!,
     textarea,
     emptyEl,
   };
@@ -173,6 +203,16 @@ function setNote(dom: InstructionEditorDom, msg: string): void {
 function syncSaveButton(ctx: PluginContext, state: InstructionEditorState, dom: InstructionEditorDom): void {
   dom.saveBtn.textContent = state.dirty ? ctx.i18n.t('files.saveDirty') : ctx.i18n.t('common.save');
   dom.saveBtn.disabled = state.busy || !state.fileId || !state.source;
+  dom.editorHeadEl.hidden = !state.fileId;
+  if (state.fileId) {
+    const shortSha = state.sha ? state.sha.slice(0, 7) : '—';
+    dom.editorNameEl.textContent = state.rel || state.name;
+    dom.editorMetaEl.textContent = state.dirty
+      ? ctx.i18n.t('wb.settings.instrUnsaved', { version: shortSha })
+      : ctx.i18n.t('wb.settings.instrVersion', { version: shortSha });
+    dom.discardBtn.hidden = !state.dirty;
+    dom.discardBtn.disabled = state.busy;
+  }
 }
 
 function paintTree(state: InstructionEditorState, dom: InstructionEditorDom): void {
@@ -211,7 +251,7 @@ function applyReadPayload(
   state.saved = docText;
   state.dirty = false;
 
-  dom.whereEl.textContent = rel;
+  dom.whereEl.textContent = ctx.i18n.t('wb.settings.instrHeaderHint');
   dom.conflictEl.hidden = true;
   const warn = formatEolWarning(ctx, body.eolWarning, eol);
   dom.eolEl.textContent = warn;
@@ -452,6 +492,14 @@ export function createInstructionEditorComponent(
     }),
   );
   disposables.add(addDisposableListener(dom.saveBtn, 'click', () => void saveInstructionFile(env, false)));
+  disposables.add(
+    addDisposableListener(dom.discardBtn, 'click', () => {
+      if (state.busy || !state.fileId) return;
+      dom.textarea.value = state.saved;
+      state.dirty = false;
+      syncSaveButton(ctx, state, dom);
+    }),
+  );
   disposables.add(addDisposableListener(dom.refreshBtn, 'click', () => void loadInstructionList(env, state.fileId)));
   disposables.add(addDisposableListener(dom.reloadBtn, 'click', () => void openInstructionFile(env, state.fileId)));
   disposables.add(addDisposableListener(dom.overwriteBtn, 'click', () => void saveInstructionFile(env, true)));

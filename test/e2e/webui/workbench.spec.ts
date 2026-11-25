@@ -70,6 +70,8 @@ test.describe('Web UI workbench cutover suite', () => {
 
     await page.setViewportSize({ width: 800, height: 900 });
     await expect(root).toHaveAttribute('data-wb-mode', 'tablet');
+    await expect(page.locator('.wb-drawer-backdrop')).toBeHidden();
+    await page.locator('.wb-activity-item[data-activity-id="topics"]').click();
     await expect(page.locator('.wb-drawer-backdrop')).toBeVisible();
     await page.locator('.wb-drawer-backdrop').click();
     await expect(page.locator('.wb-drawer-backdrop')).toBeHidden();

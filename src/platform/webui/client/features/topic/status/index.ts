@@ -2,7 +2,7 @@ import { addDisposableListener } from '../../../base/dom.js';
 import { type Disposable, DisposableStore } from '../../../base/lifecycle.js';
 import { t as tr } from '../../../i18n/index.js';
 import { hasCountdown, renderBareStatus, statusSegments } from './format.js';
-import { createModelPopController, type ModelPopElements } from './model-pop.js';
+import { createModelPopController, PERM_OPT_ID, type ModelPopElements } from './model-pop.js';
 import { createPendingQueueController } from './pending-queue.js';
 import type {
   AgentStatus,
@@ -10,6 +10,7 @@ import type {
   OptionPeekResponse,
   StatusIcons,
   StatusOption,
+  StatusPermissions,
   WebPendingItem,
 } from './types.js';
 
@@ -65,6 +66,7 @@ interface PeekState {
   agent: string;
   model: string;
   options: StatusOption[];
+  permissions: StatusPermissions | null;
   seq: number;
   timer: ReturnType<typeof setTimeout> | null;
 }
@@ -85,6 +87,7 @@ class TopicStatusControllerImpl implements TopicStatusController {
     agent: '',
     model: '',
     options: [],
+    permissions: null,
     seq: 0,
     timer: null,
   };
@@ -113,6 +116,16 @@ class TopicStatusControllerImpl implements TopicStatusController {
       onOptionChosen: (t) => {
         if (t === deps.getTopic()) this.peekOptions();
       },
+      onPermChosen: (t, level) => {
+        if (t !== deps.getTopic()) return;
+        if (this.agentStatus?.permissions) {
+          this.agentStatus = { ...this.agentStatus, permissions: { ...this.agentStatus.permissions, level: level as StatusPermissions['level'], unset: false } };
+        }
+        if (this.opk.topic === t && this.opk.permissions) {
+          this.opk.permissions = { ...this.opk.permissions, level: level as StatusPermissions['level'], unset: false };
+        }
+        this.paintStatus();
+      },
       setNote: deps.setNote,
       fetchFn: deps.fetchFn,
       postFn: deps.postFn,
@@ -132,6 +145,7 @@ class TopicStatusControllerImpl implements TopicStatusController {
   }
 
   private resolveOptName(id: string): string {
+    if (id === PERM_OPT_ID) return tr('status.permLabel');
     const list = (this.agentStatus && this.agentStatus.options) || this.opkFor(this.deps.getTopic());
     for (const item of list) {
       if (item.id === id) return item.name;
@@ -159,6 +173,7 @@ class TopicStatusControllerImpl implements TopicStatusController {
       this.opk.agent = '';
       this.opk.model = '';
       this.opk.options = [];
+      this.opk.permissions = null;
     }
     this.fetchFn(`api/options?peek=1&t=${encodeURIComponent(t)}`, { credentials: 'same-origin' })
       .then((r) => (r.ok ? (r.json() as Promise<OptionPeekResponse>) : null))
@@ -168,6 +183,7 @@ class TopicStatusControllerImpl implements TopicStatusController {
           this.opk.agent = j.agent || '';
           this.opk.model = j.model || '';
           this.opk.options = j.options ? [...j.options] : [];
+          this.opk.permissions = j.permissions ?? null;
           this.paintStatus();
         },
         () => {},
@@ -198,6 +214,7 @@ class TopicStatusControllerImpl implements TopicStatusController {
     const html = s
       ? statusSegments(s, this.nowFn(), statusEl.classList.contains('open'), {
           fallbackOptions: this.opkFor(t),
+          fallbackPermissions: opkSame ? this.opk.permissions : null,
           openModel,
           openOptId,
         })
@@ -206,6 +223,7 @@ class TopicStatusControllerImpl implements TopicStatusController {
             agent: opkSame ? this.opk.agent : '',
             model: (opkSame && this.opk.model) || tr('status.model'),
             options: this.opkFor(t),
+            permissions: opkSame ? this.opk.permissions : null,
             openModel,
             openOptId,
           })
@@ -268,6 +286,42 @@ class TopicStatusControllerImpl implements TopicStatusController {
     this.pop.refreshI18n();
   }
 
+  private togglePermPop(): void {
+    const sameTopic = this.opk.topic === this.deps.getTopic();
+    const perms = this.agentStatus?.permissions ?? (sameTopic ? this.opk.permissions : null);
+    const agent = this.agentStatus?.agent || (sameTopic ? this.opk.agent : '');
+    if (!perms || !agent) return;
+    if (this.pop.isOpen() && this.pop.currentOpt() === PERM_OPT_ID) this.pop.close();
+    else this.pop.openPermissions(agent, perms);
+  }
+
+  private toggleOptPop(ob: HTMLButtonElement): void {
+    if (ob.disabled) return;
+    const oid = ob.getAttribute('data-opt');
+    if (!oid) return;
+    if (this.pop.isOpen() && this.pop.currentOpt() === oid) this.pop.close();
+    else this.pop.openOption(oid);
+  }
+
+  private handleStatusClick(target: Element): void {
+    if (target.closest('.st-perm')) {
+      this.togglePermPop();
+      return;
+    }
+    const ob = target.closest<HTMLButtonElement>('.st-opt');
+    if (ob) {
+      this.toggleOptPop(ob);
+      return;
+    }
+    if (target.closest('.st-model')) {
+      if (this.pop.isOpen() && !this.pop.currentOpt()) this.pop.close();
+      else this.pop.openModel();
+      return;
+    }
+    this.deps.statusEl?.classList.toggle('open');
+    this.paintStatus();
+  }
+
   attach(): void {
     const statusEl = this.deps.statusEl;
     this.listeners.add(this.pendingQueue.attach());
@@ -275,24 +329,7 @@ class TopicStatusControllerImpl implements TopicStatusController {
     if (statusEl) {
       this.listeners.add(
         addDisposableListener(statusEl, 'click', (e) => {
-          const target = e.target;
-          if (!(target instanceof Element)) return;
-          const ob = target.closest<HTMLButtonElement>('.st-opt');
-          if (ob) {
-            if (ob.disabled) return;
-            const oid = ob.getAttribute('data-opt');
-            if (!oid) return;
-            if (this.pop.isOpen() && this.pop.currentOpt() === oid) this.pop.close();
-            else this.pop.openOption(oid);
-            return;
-          }
-          if (target.closest('.st-model')) {
-            if (this.pop.isOpen() && !this.pop.currentOpt()) this.pop.close();
-            else this.pop.openModel();
-            return;
-          }
-          statusEl.classList.toggle('open');
-          this.paintStatus();
+          if (e.target instanceof Element) this.handleStatusClick(e.target);
         }),
       );
     }
