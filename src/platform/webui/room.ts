@@ -571,7 +571,9 @@ export class WebRoom {
   /** Likewise — see `useAgentCatalog`. Only ever read for a sync of an empty room. */
   private catalog: ((ref: ConversationRef) => AgentCatalog | undefined) | null = null;
   /** Bind a new/empty topic's agent and working directory in one step. */
-  private topicSetup: ((ref: ConversationRef, opts: { agent?: string; cwd?: string }) => TopicSetupResult) | null = null;
+  private topicSetup:
+    | ((ref: ConversationRef, opts: { agent?: string; cwd?: string; dryRun?: boolean }) => TopicSetupResult)
+    | null = null;
   /** Machines the daemon cannot reach — see `setOfflineMachines`. */
   private offline: readonly OfflineMachine[] = [];
   /** The poll that keeps `liveness` honest; only ever running once a lookup exists. */
@@ -953,8 +955,15 @@ export class WebRoom {
     this.optionPicker = picker;
   }
 
-  useTopicSetup(setup: (ref: ConversationRef, opts: { agent?: string; cwd?: string }) => TopicSetupResult): void {
+  useTopicSetup(
+    setup: (ref: ConversationRef, opts: { agent?: string; cwd?: string; dryRun?: boolean }) => TopicSetupResult
+  ): void {
     this.topicSetup = setup;
+  }
+
+  validateTopicSetup(opts: { agent?: string; cwd?: string }): TopicSetupResult {
+    if (!this.topicSetup) return { ok: false, error: 'This daemon does not support topic setup.' };
+    return this.topicSetup(this.conversation('00000000'), { ...opts, dryRun: true });
   }
 
   setupTopic(topic: string, opts: { agent?: string; cwd?: string }): TopicSetupResult {

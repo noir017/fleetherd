@@ -841,7 +841,7 @@ describe('webui server: topics', () => {
     const cookie = await signIn(base);
     const calls: Array<{ topic: string; agent?: string; cwd?: string }> = [];
     room.useTopicSetup((ref, opts) => {
-      calls.push({ topic: ref.thread ?? '', ...opts });
+      if (!opts.dryRun) calls.push({ topic: ref.thread ?? '', agent: opts.agent, cwd: opts.cwd });
       if (opts.agent === 'bad') return { ok: false, error: 'unknown agent' };
       return { ok: true, agent: opts.agent ?? 'cc', cwd: opts.cwd ?? '/w' };
     });
@@ -883,6 +883,35 @@ describe('webui server: topics', () => {
         })
       ).status
     ).toBe(401);
+
+    // Rejects relative and parent-traversal cwd at the protocol boundary.
+    for (const badCwd of ['.', 'relative/dir', '/srv/../etc']) {
+      const badRes = await fetch(`${base}/api/topics`, {
+        method: 'POST',
+        headers: { ...JSON_HEADERS, cookie },
+        body: JSON.stringify({ agent: 'oc', cwd: badCwd }),
+      });
+      expect(badRes.status).toBe(400);
+    }
+  });
+
+  it('does not evict existing topics when POST /api/topics fails setup on a full room', async () => {
+    const { base, room } = await boot();
+    const cookie = await signIn(base);
+    room.useTopicSetup((_ref, opts) => {
+      if (opts.agent === 'bad') return { ok: false, error: 'unknown agent' };
+      return { ok: true, agent: opts.agent ?? 'cc', cwd: opts.cwd ?? '/w' };
+    });
+    while (room.topicList().length < 200) room.createTopic(`t-${room.topicList().length}`);
+    const beforeIds = room.topicList().map((t) => t.id);
+
+    const res = await fetch(`${base}/api/topics`, {
+      method: 'POST',
+      headers: { ...JSON_HEADERS, cookie },
+      body: JSON.stringify({ agent: 'bad' }),
+    });
+    expect(res.status).toBe(409);
+    expect(room.topicList().map((t) => t.id)).toEqual(beforeIds);
   });
 
   it('streams only the topic that was asked for', async () => {

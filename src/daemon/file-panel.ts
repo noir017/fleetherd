@@ -362,7 +362,7 @@ async function gitStatusForDir(env: PanelEnv, ws: Workspace, dir: string): Promi
     if (dir !== repo && !dir.startsWith(repo + P.sep)) return new Map();
     const prefix = dir === repo ? '' : `${dir.slice(repo.length + 1).replace(/\\/g, '/')}/`;
     const r = await ws.run(
-      ['git', '-C', repo, '-c', 'core.quotepath=off', 'status', '--porcelain=v1', '-z', '--untracked-files=normal', '--', prefix || '.'],
+      ['git', '-C', repo, '--literal-pathspecs', '-c', 'core.quotepath=off', 'status', '--porcelain=v1', '-z', '--untracked-files=normal', '--', prefix || '.'],
       { env: { GIT_OPTIONAL_LOCKS: '0', LC_ALL: 'C' }, maxBytes: 2 << 20 }
     );
     if (r.spawnError || r.timedOut || r.code !== 0 || r.truncated) return new Map();

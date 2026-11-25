@@ -1036,12 +1036,20 @@ async function createTopic({ req, res }: Req, ctx: Ctx): Promise<void> {
   const parsed = await readBody(req, res, CreateTopicRequestSchema);
   if (!parsed) return;
   try {
+    const setupOpts =
+      parsed.agent !== undefined || parsed.cwd !== undefined
+        ? {
+            ...(parsed.agent !== undefined ? { agent: parsed.agent } : {}),
+            ...(parsed.cwd !== undefined ? { cwd: parsed.cwd } : {}),
+          }
+        : undefined;
+    if (setupOpts) {
+      const check = ctx.room.validateTopicSetup(setupOpts);
+      if (!check.ok) return send(req, res, 409, { error: check.error });
+    }
     const created = ctx.room.createTopic(parsed.title ?? '');
-    if (parsed.agent !== undefined || parsed.cwd !== undefined) {
-      const setup = ctx.room.setupTopic(created.id, {
-        ...(parsed.agent !== undefined ? { agent: parsed.agent } : {}),
-        ...(parsed.cwd !== undefined ? { cwd: parsed.cwd } : {}),
-      });
+    if (setupOpts) {
+      const setup = ctx.room.setupTopic(created.id, setupOpts);
       if (!setup.ok) {
         ctx.room.deleteTopic(created.id);
         return send(req, res, 409, { error: setup.error });

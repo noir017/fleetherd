@@ -147,7 +147,7 @@ export class WorkbenchShell implements Disposable {
 
   readonly views = {
     register: (v: ViewContribution): Disposable => this._registerView(v),
-    reveal: (id: string): PanelRef | undefined => this._revealView(id),
+    reveal: (id: string, opts?: { readonly openPart?: boolean }): PanelRef | undefined => this._revealView(id, opts),
     active: (part: PartId = 'sidebar'): string | undefined => this.dock.getActivePartPanel(part),
   };
 
@@ -961,26 +961,30 @@ export class WorkbenchShell implements Disposable {
     });
   }
 
-  private _revealView(id: string): PanelRef | undefined {
+  private _revealView(id: string, opts?: { readonly openPart?: boolean }): PanelRef | undefined {
     this._applyPendingSavedLayout();
     const existing = this.dock.getPanel(id);
     const view = this._views.get(id);
     if (!view && !existing) return undefined;
+    const shouldOpen = opts?.openPart !== false;
 
     if (existing) {
       const targetPart = isPartId(existing.group) ? existing.group : (view?.part ?? 'sidebar');
-      this.setPartVisible(targetPart, true);
-      existing.focus();
+      if (shouldOpen) {
+        this.setPartVisible(targetPart, true);
+        existing.focus();
+      }
       if (targetPart === 'sidebar') this.activityBar.setActive(id);
       return existing;
     }
 
     const part = view!.part;
     const keepCollapsedOnTabletInit =
-      this._mode === 'tablet' &&
-      part === 'sidebar' &&
-      !this.dock.isPartVisible('sidebar') &&
-      this.dock.getPartPanels('sidebar').length === 0;
+      !shouldOpen ||
+      (this._mode === 'tablet' &&
+        part === 'sidebar' &&
+        !this.dock.isPartVisible('sidebar') &&
+        this.dock.getPartPanels('sidebar').length === 0);
     if (!keepCollapsedOnTabletInit) {
       this.setPartVisible(part, true);
     }

@@ -517,7 +517,8 @@ function renderFormScheduleFields(
   ];
 
   return html`<div class="tp-label">${tr('taskPage.when')}</div>
-    ${renderSegmented({
+    <div data-quick-preset>
+      ${renderSegmented({
       kind: 'value',
       value: activeSeg,
       ariaLabel: tr('taskPage.whenAria'),
@@ -531,7 +532,8 @@ function renderFormScheduleFields(
           v === 'daily' || v === 'weekly' || v === 'interval' ? v : 'cron';
         onPresetChange({ ...preset, kind: nextKind });
       },
-    })}
+      })}
+    </div>
     ${effectiveWhenMode === 'cron' ? renderQuickPresetControls(ctx, preset, onPresetChange) : nothing}
     <div class="tp-row2">
       <div>

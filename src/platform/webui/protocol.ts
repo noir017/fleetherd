@@ -132,18 +132,29 @@ export const FramedSendHeaderSchema = SendRequestSchema.omit({ files: true })
   })
   .strict();
 
+const TopicCwd = z
+  .string()
+  .min(1)
+  .max(4096)
+  .refine((s) => !/[\x00-\x1f\x7f]/.test(s), 'cwd must not contain control characters')
+  .refine(
+    (s) => s.startsWith('/') || s === '~' || s.startsWith('~/') || /^[A-Za-z]:[\\/]/.test(s),
+    'cwd must be an absolute path'
+  )
+  .refine((s) => !/(?:^|[\\/])\.\.(?:$|[\\/])/.test(s), 'cwd must not contain ".."');
+
 export const CreateTopicRequestSchema = z
   .object({
     title: z.string().max(200).optional(),
     agent: z.string().min(1).max(200).optional(),
-    cwd: z.string().min(1).max(4096).optional(),
+    cwd: TopicCwd.optional(),
   })
   .strict();
 export const TopicSetupRequestSchema = z
   .object({
     topic: TopicId,
     agent: z.string().min(1).max(200).optional(),
-    cwd: z.string().min(1).max(4096).optional(),
+    cwd: TopicCwd.optional(),
   })
   .strict()
   .refine((v) => v.agent !== undefined || v.cwd !== undefined, 'agent or cwd is required');

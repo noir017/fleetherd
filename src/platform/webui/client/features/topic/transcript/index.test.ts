@@ -355,4 +355,52 @@ describe('createTranscriptController', () => {
 
     h.controller.dispose();
   });
+
+  it('posts api/click for permission button cards and removes buttons once resolved', async () => {
+    const h = makeHarness();
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 202 }));
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    try {
+      h.controller.attachEvents(document);
+      h.controller.upsert({
+        id: 'perm1',
+        html: '<p>Allow running <code>rm -rf tmp</code>?</p>',
+        buttons: [
+          { id: 'allow', label: 'Allow' },
+          { id: 'deny', label: 'Deny' },
+        ],
+        at: 100,
+      });
+
+      const allowBtn = h.log.querySelector<HTMLButtonElement>('button[data-msg="perm1"][data-btn="allow"]')!;
+      expect(allowBtn).not.toBeNull();
+      allowBtn.click();
+      await Promise.resolve();
+
+      expect(allowBtn.disabled).toBe(true);
+      expect(allowBtn.classList.contains('busy')).toBe(true);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+      expect(url).toBe('api/click');
+      expect(JSON.parse(String(init.body))).toEqual({
+        topic: 't1',
+        messageId: 'perm1',
+        buttonId: 'allow',
+      });
+
+      // Server edits the message to retire buttons after decision is recorded.
+      h.controller.upsert({
+        id: 'perm1',
+        html: '<p>Allowed.</p>',
+        buttons: [],
+        at: 100,
+      });
+      expect(h.log.querySelectorAll('button[data-msg="perm1"]')).toHaveLength(0);
+      expect(h.els['2:perm1']?.textContent).toContain('Allowed.');
+    } finally {
+      globalThis.fetch = origFetch;
+      h.controller.dispose();
+    }
+  });
 });

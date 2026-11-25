@@ -795,10 +795,10 @@ run finishing. Countdowns ("in 3h 12m") are computed from `nextAt` on the client
 arrives formatted in the task's own zone.
 
 Reviews travel the same way and on the same timer: `useReviewPanel` hands the room `list()`,
-`dismiss(text)`, and `revert(skill, commit)`, `daemon/review-panel.ts` builds them from `history.db`
+`dismiss(text)`, and `revert(name, id)`, `daemon/review-panel.ts` builds them from `history.db`
 and `reviews.json` (including reviewer/model/message-count/duration metadata and inline diffs), and
 the routes are `GET api/reviews` and `POST api/reviews/op` — the latter accepts
-`{action:'dismiss', text}` or `{action:'revert', skill, commit}` (`ReviewOpRequestSchema`), and
+`{action:'dismiss', text}` or `{action:'revert', name, id}` (`ReviewOpRequestSchema`), and
 answers with the fresh list. There is still no verb that starts or edits a review sweep. The list is
 pulled when the tab is selected and on the panel's timer while it is the visible one.
 

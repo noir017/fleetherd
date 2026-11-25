@@ -636,6 +636,30 @@ describe('agentCatalogForRef (what a new topic offers)', () => {
     store.setAgentSession(key, 'cc', 'acp-session-1');
     expect(reg.setupTopicForRef(ref, { agent: 'oc' }).ok).toBe(false);
   });
+
+  it('rejects relative/traversal cwd and leaves agent binding untouched when cwd setup fails', () => {
+    const { reg, store, key } = rig();
+    expect(reg.setupTopicForRef(ref, { agent: 'oc', cwd: '.' }).ok).toBe(false);
+    expect(reg.setupTopicForRef(ref, { agent: 'oc', cwd: `${root}/../shop-api` }).ok).toBe(false);
+    expect(reg.setupTopicForRef(ref, { agent: 'oc', cwd: join(root, 'missing-dir') }).ok).toBe(false);
+    expect(store.boundAgent(key)).toBeUndefined();
+    expect(reg.agentCatalogForRef(ref)?.current).toBe('cc');
+
+    // Dry-run validates without mutating store or memory state.
+    const dry = reg.setupTopicForRef(ref, { agent: 'oc', cwd: join(root, 'shop-api'), dryRun: true });
+    expect(dry).toEqual({ ok: true, agent: 'oc', cwd: join(root, 'shop-api') });
+    expect(store.boundAgent(key)).toBeUndefined();
+
+    // Without a store, cwd cannot be remembered; agent binding must not be modified either.
+    const noStore = new ConversationRegistry(
+      cfg,
+      new Map(),
+      { create: () => { throw new Error('unused'); } } as never,
+      { now: () => 0, schedule: () => () => {} } as never
+    );
+    expect(noStore.setupTopicForRef(ref, { agent: 'oc', cwd: join(root, 'shop-api') }).ok).toBe(false);
+    expect(noStore.agentCatalogForRef(ref)?.current).toBe('cc');
+  });
 });
 
 /**

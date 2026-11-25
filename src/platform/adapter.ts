@@ -1452,7 +1452,9 @@ export interface PlatformAdapter {
   useAgentCatalog?(lookup: (ref: ConversationRef) => AgentCatalog | undefined): void;
 
   /** Bind a new/empty topic's agent and working directory in one step without adding prompt text. */
-  useTopicSetup?(setup: (ref: ConversationRef, opts: { agent?: string; cwd?: string }) => TopicSetupResult): void;
+  useTopicSetup?(
+    setup: (ref: ConversationRef, opts: { agent?: string; cwd?: string; dryRun?: boolean }) => TopicSetupResult
+  ): void;
 
   /**
    * Hand the platform a model switch for its conversations: what each can switch to, and the switch
