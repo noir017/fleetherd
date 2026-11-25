@@ -60,12 +60,14 @@ function buildSettingsEditorDom(doc: Document, ctx: PluginContext): SettingsEdit
   head.innerHTML =
     '<div class="wb-set-titles">' +
     '<h2 class="wb-set-title">' +
-    text(ctx.i18n.t('settings.title')) +
+    text(ctx.i18n.t('wb.settings.gatewayTitle')) +
     '</h2>' +
-    '<span class="wb-set-topic"></span>' +
     '</div>' +
     '<div class="wb-set-actions">' +
-    '<button type="button" class="fh-btn fh-btn--secondary wb-set-refresh" title="' +
+    '<span class="wb-set-topic">' +
+    text(ctx.i18n.t('wb.settings.gatewaySubtitle')) +
+    '</span>' +
+    '<button type="button" class="fh-btn fh-btn--ghost fh-btn--icon wb-set-refresh" title="' +
     text(ctx.i18n.t('common.refresh')) +
     '" aria-label="' +
     text(ctx.i18n.t('common.refresh')) +
@@ -76,6 +78,8 @@ function buildSettingsEditorDom(doc: Document, ctx: PluginContext): SettingsEdit
 
   const pageEl = doc.createElement('div');
   pageEl.className = 'wb-set-page';
+  const colEl = doc.createElement('div');
+  colEl.className = 'wb-set-col';
 
   const toolbarEl = doc.createElement('div');
   toolbarEl.className = 'wb-set-toolbar';
@@ -129,7 +133,8 @@ function buildSettingsEditorDom(doc: Document, ctx: PluginContext): SettingsEdit
   searchEmptyEl.hidden = true;
 
   deviceWrapEl.append(deviceHeadingEl, deviceListEl);
-  pageEl.append(gatewayPageEl, emptyGatewayEl, deviceWrapEl, searchEmptyEl);
+  colEl.append(gatewayPageEl, emptyGatewayEl, deviceWrapEl, searchEmptyEl);
+  pageEl.appendChild(colEl);
   root.append(head, toolbarEl, pageEl);
 
   const hiddenCloseBtn = doc.createElement('button');
@@ -415,6 +420,13 @@ export function createSettingsEditorComponent(
 
   const applyTarget = (input: SettingsEditorInput | undefined): void => {
     pendingTarget = input;
+    const isDevice = input?.scope === 'device';
+    dom.titleEl.textContent = isDevice
+      ? ctx.i18n.t('wb.settings.deviceGroup')
+      : ctx.i18n.t('wb.settings.gatewayTitle');
+    dom.topicEl.textContent = isDevice
+      ? ctx.i18n.t('wb.settings.deviceSubtitle')
+      : ctx.i18n.t('wb.settings.gatewaySubtitle');
     if (!input) return;
     clearTargetHighlights(dom.root);
     const el = locateSectionElement(dom, input);
@@ -474,7 +486,13 @@ export function createSettingsEditorComponent(
   }
   disposables.add(
     ctx.events.on('locale.change', () => {
-      dom.titleEl.textContent = ctx.i18n.t('settings.title');
+      const isDevice = pendingTarget?.scope === 'device';
+      dom.titleEl.textContent = isDevice
+        ? ctx.i18n.t('wb.settings.deviceGroup')
+        : ctx.i18n.t('wb.settings.gatewayTitle');
+      dom.topicEl.textContent = isDevice
+        ? ctx.i18n.t('wb.settings.deviceSubtitle')
+        : ctx.i18n.t('wb.settings.gatewaySubtitle');
       dom.deviceHeadingEl.textContent = ctx.i18n.t('wb.settings.deviceGroup');
       dom.refreshBtn.title = ctx.i18n.t('common.refresh');
       dom.refreshBtn.setAttribute('aria-label', ctx.i18n.t('common.refresh'));

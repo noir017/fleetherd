@@ -38,6 +38,16 @@ const SETTINGS_EN_STRINGS: Record<string, string> = {
   'wb.settings.modifiedFilter': 'Modified ({count})',
   'wb.settings.reset': 'Reset',
   'wb.settings.initialValue': 'Initial: {value}',
+  'wb.settings.gatewayTitle': 'Gateway settings',
+  'wb.settings.gatewaySubtitle': 'Saved to config.yaml · applies to all topics',
+  'wb.settings.deviceSubtitle': 'Stored in this browser only',
+  'wb.settings.instrLabel': 'Instruction files',
+  'wb.settings.instrHeaderHint': 'Read by agents on every platform and host',
+  'wb.settings.instrSubtitle': 'Changes take effect immediately for all sessions. Version is verified before saving; refused if any agent exceeds its delivery cap.',
+  'wb.settings.instrDiscard': 'Discard',
+  'wb.settings.instrUnsaved': 'Unsaved changes · version {version}',
+  'wb.settings.instrVersion': 'Version {version}',
+  'wb.settings.mobileGatewayFooter': 'Changes save to config.yaml for all topics. Notifications, appearance, and language are in More.',
 };
 
 const SETTINGS_ZH_STRINGS: Record<string, string> = {
@@ -52,6 +62,16 @@ const SETTINGS_ZH_STRINGS: Record<string, string> = {
   'wb.settings.modifiedFilter': '已修改 ({count})',
   'wb.settings.reset': '重置',
   'wb.settings.initialValue': '初始值：{value}',
+  'wb.settings.gatewayTitle': '网关设置',
+  'wb.settings.gatewaySubtitle': '保存到 config.yaml · 对所有话题生效',
+  'wb.settings.deviceSubtitle': '只存在这个浏览器里',
+  'wb.settings.instrLabel': '指令文件',
+  'wb.settings.instrHeaderHint': '所有平台、所有主机上的智能体都读',
+  'wb.settings.instrSubtitle': '改动对没人看着的会话也立刻生效。保存前核对版本；放到每台机器前先算一遍，有智能体会超过下发上限就拒绝。',
+  'wb.settings.instrDiscard': '撤销',
+  'wb.settings.instrUnsaved': '有未保存的改动 · 版本 {version}',
+  'wb.settings.instrVersion': '版本 {version}',
+  'wb.settings.mobileGatewayFooter': '改动保存到 config.yaml，对所有话题生效。通知、外观、语言在「更多」里。',
 };
 
 function deriveGatewaySections(msg: SettingsWebMessage | null): GatewayCatalogSection[] {
@@ -135,14 +155,17 @@ function createSettingsRuntime(ctx: PluginContext, deps: SettingsPluginDeps): Se
 
   const createInstructionSource = (input: InstructionEditorInput, onRefresh?: () => void): FilesSource | null => {
     if (!instrOk) return null;
-    if (!input.orphans && !input.agent) return null;
+    if (!input.all && !input.orphans && !input.agent) return null;
     const title = input.title
       ?? (input.orphans
         ? ctx.i18n.t('instr.orphansTitle')
-        : ctx.i18n.t('instr.agentTitle', { agent: input.agent ?? '' }));
+        : input.all
+          ? ctx.i18n.t('wb.settings.instrLabel')
+          : ctx.i18n.t('instr.agentTitle', { agent: input.agent ?? '' }));
     return buildInstructionSource({
-      agent: input.orphans ? '' : (input.agent ?? ''),
+      agent: input.orphans || input.all ? '' : (input.agent ?? ''),
       orphans: input.orphans,
+      all: input.all,
       title,
       text,
       post: (path, body, tries) => postFn(path, body, tries),

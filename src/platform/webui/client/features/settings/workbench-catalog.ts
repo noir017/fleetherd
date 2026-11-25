@@ -14,7 +14,7 @@ import type {
 interface CatalogItemData {
   readonly scope: 'gateway' | 'device';
   readonly sectionId: string;
-  readonly kind: 'group' | 'orphans' | 'device';
+  readonly kind: 'group' | 'orphans' | 'instructions' | 'device';
 }
 
 function itemKey(scope: 'gateway' | 'device', sectionId: string): string {
@@ -49,6 +49,16 @@ function buildCatalogGroups(
         label: sec.label,
         trailing: sec.count !== undefined ? String(sec.count) : undefined,
         data: { scope: 'gateway', sectionId: sec.id, kind: sec.kind },
+      });
+    }
+  }
+  if (runtime.instrOk) {
+    const instrLabel = ctx.i18n.t('wb.settings.instrLabel');
+    if (matches(instrLabel, 'instructions')) {
+      gwItems.push({
+        id: itemKey('gateway', 'instructions'),
+        label: instrLabel,
+        data: { scope: 'gateway', sectionId: 'instructions', kind: 'instructions' },
       });
     }
   }
@@ -119,14 +129,22 @@ export function createSettingsCatalogComponent(
   const titleEl = head.querySelector<HTMLElement>('.wb-set-cat-title')!;
   const listHost = doc.createElement('div');
   listHost.className = 'wb-set-cat-list';
+  const mobileFooter = doc.createElement('div');
+  mobileFooter.className = 'wb-set-cat-footer';
+  mobileFooter.textContent = ctx.i18n.t('wb.settings.mobileGatewayFooter');
 
-  root.append(head, searchWrap, listHost);
+  root.append(head, searchWrap, listHost, mobileFooter);
 
   const openFromItem = (item: ListItem<CatalogItemData>): void => {
     const data = item.data;
     if (!data) return;
     if (data.kind === 'orphans') {
       runtime.openInstruction({ orphans: true });
+      return;
+    }
+    if (data.kind === 'instructions') {
+      runtime.setSelection({ scope: 'gateway', sectionId: 'instructions' });
+      runtime.openInstruction({ all: true });
       return;
     }
     const next: SettingsEditorInput = {
@@ -142,7 +160,6 @@ export function createSettingsCatalogComponent(
     selectedId: selectedKeyFrom(runtime.getSelection()),
     ariaLabel: ctx.i18n.t('settings.title'),
     empty: { title: ctx.i18n.t('files.noMatches') },
-    onSelect: openFromItem,
     onActivate: openFromItem,
   });
   disposables.add(list);
@@ -164,6 +181,7 @@ export function createSettingsCatalogComponent(
       titleEl.textContent = ctx.i18n.t('settings.title');
       searchInput.placeholder = ctx.i18n.t('wb.settings.searchPlaceholder');
       searchInput.setAttribute('aria-label', ctx.i18n.t('wb.settings.searchPlaceholder'));
+      mobileFooter.textContent = ctx.i18n.t('wb.settings.mobileGatewayFooter');
       refresh();
     }),
   );
