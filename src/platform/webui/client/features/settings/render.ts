@@ -18,7 +18,7 @@ export interface SettingsRenderContext {
   readonly renderAgentInstructions: (row: { target?: string; label: string }, index: number) => string;
 }
 
-// Ordered so the six built-in harness names hash onto distinct hues (pinned by page.dom.settings.test.ts).
+// Ordered so the six built-in harness names hash onto distinct hues (pinned by features/settings/render.test.ts).
 export const AG_HUES = [0, 52, 245, 24, 188, 330, 100, 210, 280, 158] as const;
 
 export function agHue(kind: string | undefined): number {

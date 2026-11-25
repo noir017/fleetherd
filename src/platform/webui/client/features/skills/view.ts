@@ -304,7 +304,7 @@ class SkillsViewPanel implements SkillPanelComponent {
             ? renderSkillItemRow(item.data, this._copiedNames.has(item.id), this._deps, (n) => this._handleCopy(n))
             : html`${item.label}`,
         onActivate: (item) => {
-          this._ctx.editors.open('skill', { name: item.id });
+          this._ctx.editors.open('skill', { name: item.id }, { id: `skill:${item.id}` });
         },
       },
       doc,

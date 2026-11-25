@@ -151,7 +151,7 @@
 .fh-changes-branch{flex:1;min-width:0;font-family:var(--fh-font-mono);font-size:11.5px;color:var(--fh-fg-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .fh-changes-modes{display:flex;align-items:center}
 .fh-changes-modes .fh-segmented{width:100%;min-width:0}
-.fh-changes-modes .fh-segmented-item{flex:1 1 0;min-width:0;padding:3px 4px;font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fh-changes-modes .fh-segmented-item{flex:1 1 0;min-width:0;padding:3px 2px;font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .fh-changes-base{width:100%;height:26px;padding:0 6px;border:1px solid var(--fh-input-line);border-radius:var(--fh-radius-ctrl);background:var(--fh-input);color:var(--fh-fg);font-family:var(--fh-font-mono);font-size:12px}
 .fh-changes-notice{flex:none;padding:6px 12px 0}
 .fh-changes-notice:empty{display:none;padding:0}

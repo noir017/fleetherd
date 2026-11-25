@@ -251,7 +251,6 @@ function applyReadPayload(
   state.saved = docText;
   state.dirty = false;
 
-  dom.whereEl.textContent = rel;
   dom.whereEl.textContent = ctx.i18n.t('wb.settings.instrHeaderHint');
   dom.conflictEl.hidden = true;
   const warn = formatEolWarning(ctx, body.eolWarning, eol);

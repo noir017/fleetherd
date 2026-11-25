@@ -85,9 +85,9 @@ function defaultResolveIcon(_name: string): string {
   return '';
 }
 
-function renderInlineSvg(svgStr: string): TemplateResult | undefined {
+function renderInlineSvg(svgStr: string, doc: Document): TemplateResult | undefined {
   if (!svgStr) return undefined;
-  const span = document.createElement('span');
+  const span = doc.createElement('span');
   span.className = 'wb-stack-inline-icon';
   span.innerHTML = svgStr;
   return html`${span}`;
@@ -319,7 +319,18 @@ export class StackShell implements Disposable {
     this._listActionDisposables.clear();
     if (opts.backLabel) {
       const backSvg = this._resolveIcon('chevronLeft');
-      this._listBackBtn.innerHTML = `${backSvg || '<'}<span>${opts.backLabel}</span>`;
+      this._listBackBtn.replaceChildren();
+      if (backSvg) {
+        const iconWrap = this._doc.createElement('span');
+        iconWrap.className = 'wb-stack-inline-icon';
+        iconWrap.innerHTML = backSvg;
+        this._listBackBtn.appendChild(iconWrap);
+      } else {
+        this._listBackBtn.appendChild(this._doc.createTextNode('<'));
+      }
+      const labelSpan = this._doc.createElement('span');
+      labelSpan.textContent = opts.backLabel;
+      this._listBackBtn.appendChild(labelSpan);
       this._listBackBtn.hidden = false;
       if (opts.onBack) {
         this._listActionDisposables.add(addDisposableListener(this._listBackBtn, 'click', opts.onBack));
@@ -630,7 +641,7 @@ export class StackShell implements Disposable {
     const idle = s.idleCount ?? 0;
     const icon = (name: string): TemplateResult | undefined => {
       const raw = this._resolveIcon(name);
-      return raw ? renderInlineSvg(raw) : undefined;
+      return raw ? renderInlineSvg(raw, this._doc) : undefined;
     };
 
     render(
@@ -649,7 +660,7 @@ export class StackShell implements Disposable {
             {
               id: 'review-prefs',
               label: tr('mobile.prefs'),
-              icon: icon('eye'),
+              icon: icon('bulb'),
               iconBox: true,
               value: s.prefsBadge,
               chevron: true,

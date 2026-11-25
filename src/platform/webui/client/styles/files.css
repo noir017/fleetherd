@@ -125,7 +125,7 @@
 .fh-file-editor-banners{flex:none;display:flex;flex-direction:column;gap:0;padding:0}
 .fh-file-editor-banners:empty{display:none;padding:0}
 .fh-file-conflict-wrap{width:100%}
-.fh-file-conflict-banner{border:0;border-bottom:1px solid var(--fh-line);border-left:3px solid var(--fh-warn);border-radius:0;background:rgba(204,167,0,.12);color:var(--fh-fg-hi);padding:6px 12px}
+.fh-file-conflict-banner{border:0;border-bottom:1px solid var(--fh-line);border-left:3px solid var(--fh-warn);border-radius:0;background:var(--warn-tint-2);color:var(--fh-fg-hi);padding:6px 12px}
 .fh-file-editor-empty{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;padding:20px}
 .fh-file-editor-empty[hidden],.fh-file-editor-body[hidden],.fh-file-editor-preview[hidden]{display:none}
 .fh-file-editor-body{flex:1;min-height:0;overflow:auto;background:var(--fh-bg)}

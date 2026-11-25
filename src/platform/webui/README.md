@@ -2549,7 +2549,10 @@ shipped, which `open()` loads and the DOM tests run; and **source**, the files a
 CSS rule or a line of script pinned as text must be read from the source. The helper's `renderPage`
 and `servePage` keep the old positional signature (the code view's URL fifth).
 
-`page.dom.test.ts` is the one that covers the client script's *behaviour*. It loads what the
+The `page.dom.*.test.ts` files (`chrome`, `core`, `i18n`, `layout`, `sending`, `theme`, `topics`)
+together with `page.dom.wb2-*.test.ts` and the colocated `client/features/**/*.test.ts` unit suites
+cover the client script's *behaviour* (the legacy pre-workbench `page.dom.{editors,panels,library,settings}.test.ts`
+files were retired once the workbench feature tests and `test/e2e/webui/` covered those views). `page.dom.*.test.ts` loads what the
 daemon serves into jsdom, stubs `EventSource` and `fetch`, and drives the page through the
 events `room.ts` actually emits — asserting on what a person would see: messages on screen, the
 drawer open or shut, where the URL points. Add to it whenever you touch `page.ts`; the string

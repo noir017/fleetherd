@@ -74,7 +74,15 @@
   gap: 1px;
   font-size: 10px;
   cursor: pointer;
-  padding: 0;
+  padding: 0 2px;
+  overflow: hidden;
+}
+
+.wb-activity-label {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .wb-activity-item:hover,
@@ -692,19 +700,19 @@
 .wb-root[data-wb-mode="tablet"] .wb-sidebar {
   left: 0;
   width: 300px !important;
-  box-shadow: 6px 0 18px rgba(0, 0, 0, 0.3);
+  box-shadow: 6px 0 18px var(--shadow-drawer);
 }
 
 .wb-root[data-wb-mode="tablet"] .wb-secondary {
   right: 0;
   width: min(520px, 88%) !important;
-  box-shadow: -6px 0 18px rgba(0, 0, 0, 0.3);
+  box-shadow: -6px 0 18px var(--shadow-drawer);
 }
 
 .wb-drawer-backdrop {
   position: absolute;
   inset: 0 0 22px 52px;
-  background: rgba(0, 0, 0, 0.4);
+  background: var(--scrim);
   z-index: 15;
 }
 

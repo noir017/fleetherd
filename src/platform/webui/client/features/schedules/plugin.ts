@@ -16,6 +16,7 @@ import type { ScheduleEditorInput, SchedulesPluginDeps } from './types.js';
 import { createSchedulesViewComponent, type SchedulesViewController } from './view.js';
 
 const SCHEDULES_EN_STRINGS: Record<string, string> = {
+  'wb.sched.activityTitle': 'Tasks',
   'wb.sched.runsAll': 'All',
   'wb.sched.colTime': 'Time',
   'wb.sched.colStatus': 'Status',
@@ -31,9 +32,24 @@ const SCHEDULES_EN_STRINGS: Record<string, string> = {
   'wb.sched.who': 'Who runs it',
   'wb.sched.recentRuns': 'Recent runs',
   'wb.sched.addTagPlaceholder': '+ tag, Enter to add',
+  'wb.sched.quickDaily': 'Daily',
+  'wb.sched.quickWeekly': 'Weekly',
+  'wb.sched.quickInterval': 'Interval',
+  'wb.sched.quickCron': 'Cron',
+  'wb.sched.quickEvery': 'Every',
+  'wb.sched.quickUnitMin': 'min',
+  'wb.sched.quickUnitHour': 'hr',
+  'wb.sched.dow0': 'Sun',
+  'wb.sched.dow1': 'Mon',
+  'wb.sched.dow2': 'Tue',
+  'wb.sched.dow3': 'Wed',
+  'wb.sched.dow4': 'Thu',
+  'wb.sched.dow5': 'Fri',
+  'wb.sched.dow6': 'Sat',
 };
 
 const SCHEDULES_ZH_STRINGS: Record<string, string> = {
+  'wb.sched.activityTitle': '定时',
   'wb.sched.runsAll': '全部',
   'wb.sched.colTime': '时间',
   'wb.sched.colStatus': '状态',
@@ -49,6 +65,20 @@ const SCHEDULES_ZH_STRINGS: Record<string, string> = {
   'wb.sched.who': '谁来跑',
   'wb.sched.recentRuns': '最近运行',
   'wb.sched.addTagPlaceholder': '+ 标签，回车添加',
+  'wb.sched.quickDaily': '每天',
+  'wb.sched.quickWeekly': '每周',
+  'wb.sched.quickInterval': '间隔',
+  'wb.sched.quickCron': 'cron',
+  'wb.sched.quickEvery': '每',
+  'wb.sched.quickUnitMin': '分钟',
+  'wb.sched.quickUnitHour': '小时',
+  'wb.sched.dow0': '周日',
+  'wb.sched.dow1': '周一',
+  'wb.sched.dow2': '周二',
+  'wb.sched.dow3': '周三',
+  'wb.sched.dow4': '周四',
+  'wb.sched.dow5': '周五',
+  'wb.sched.dow6': '周六',
 };
 
 function isScheduleTask(value: unknown): value is SchedulePanelTask {
@@ -192,7 +222,7 @@ export function createSchedulesPlugin(deps: SchedulesPluginDeps = {}): WebuiPlug
 
       ctx.activity.register({
         id: 'schedules',
-        title: tr('sideTasks.tabScheduled'),
+        title: ctx.i18n.t('wb.sched.activityTitle'),
         icon: 'clock',
         view: 'schedules',
         order: 30,

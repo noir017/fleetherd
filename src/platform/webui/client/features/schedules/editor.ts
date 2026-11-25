@@ -57,6 +57,142 @@ interface EditorNotice {
   readonly message: string;
 }
 
+type QuickPresetKind = 'daily' | 'weekly' | 'interval' | 'cron';
+
+interface QuickPresetState {
+  readonly kind: QuickPresetKind;
+  readonly time: string;
+  readonly dow: string;
+  readonly every: number;
+  readonly unit: 'm' | 'h';
+}
+
+function pad2(n: number): string {
+  return String(n).padStart(2, '0');
+}
+
+function parseQuickPreset(cron: string): QuickPresetState {
+  const base: QuickPresetState = { kind: 'cron', time: '09:00', dow: '1', every: 30, unit: 'm' };
+  const s = cron.trim();
+  const daily = /^(\d{1,2})\s+(\d{1,2})\s+\*\s+\*\s+\*$/.exec(s);
+  if (daily) {
+    const m = Number(daily[1]);
+    const h = Number(daily[2]);
+    if (m >= 0 && m <= 59 && h >= 0 && h <= 23) {
+      return { ...base, kind: 'daily', time: `${pad2(h)}:${pad2(m)}` };
+    }
+  }
+  const weekly = /^(\d{1,2})\s+(\d{1,2})\s+\*\s+\*\s+([0-6])$/.exec(s);
+  if (weekly) {
+    const m = Number(weekly[1]);
+    const h = Number(weekly[2]);
+    if (m >= 0 && m <= 59 && h >= 0 && h <= 23) {
+      return { ...base, kind: 'weekly', time: `${pad2(h)}:${pad2(m)}`, dow: weekly[3]! };
+    }
+  }
+  const minStep = /^\*\/(\d{1,2})\s+\*\s+\*\s+\*\s+\*$/.exec(s);
+  if (minStep) {
+    const every = Number(minStep[1]);
+    if (every >= 1 && every <= 59) return { ...base, kind: 'interval', every, unit: 'm' };
+  }
+  const hrStep = /^0\s+\*\/(\d{1,2})\s+\*\s+\*\s+\*$/.exec(s);
+  if (hrStep) {
+    const every = Number(hrStep[1]);
+    if (every >= 1 && every <= 23) return { ...base, kind: 'interval', every, unit: 'h' };
+  }
+  return base;
+}
+
+function buildCronFromPreset(p: QuickPresetState): string {
+  const [rawH = '9', rawM = '0'] = p.time.split(':');
+  const h = Math.max(0, Math.min(23, Number(rawH) || 0));
+  const m = Math.max(0, Math.min(59, Number(rawM) || 0));
+  if (p.kind === 'daily') return `${m} ${h} * * *`;
+  if (p.kind === 'weekly') return `${m} ${h} * * ${p.dow}`;
+  if (p.kind === 'interval') {
+    if (p.unit === 'h') {
+      const n = Math.max(1, Math.min(23, Math.round(p.every) || 1));
+      return `0 */${n} * * *`;
+    }
+    const n = Math.max(1, Math.min(59, Math.round(p.every) || 1));
+    return `*/${n} * * * *`;
+  }
+  return '';
+}
+
+function renderQuickPresetControls(
+  ctx: PluginContext,
+  preset: QuickPresetState,
+  onPresetChange: (next: QuickPresetState) => void,
+): TemplateResult | typeof nothing {
+  if (preset.kind === 'cron') return nothing;
+  if (preset.kind === 'daily') {
+    return html`<div class="tp-quick-row">
+      <input
+        id="tp-quick-time"
+        class="skill-field tp-quick-time"
+        type="time"
+        aria-label=${ctx.i18n.t('wb.sched.quickDaily')}
+        .value=${preset.time}
+        @input=${(ev: Event) => onPresetChange({ ...preset, time: (ev.currentTarget as HTMLInputElement).value || '09:00' })}
+      />
+    </div>`;
+  }
+  if (preset.kind === 'weekly') {
+    return html`<div class="tp-quick-row">
+      <select
+        id="tp-quick-dow"
+        class="skill-field tp-quick-dow"
+        aria-label=${ctx.i18n.t('wb.sched.quickWeekly')}
+        .value=${preset.dow}
+        @change=${(ev: Event) => onPresetChange({ ...preset, dow: (ev.currentTarget as HTMLSelectElement).value })}
+      >
+        ${['1', '2', '3', '4', '5', '6', '0'].map(
+          (d) => html`<option value=${d} ?selected=${preset.dow === d}>${ctx.i18n.t(`wb.sched.dow${d}`)}</option>`,
+        )}
+      </select>
+      <input
+        id="tp-quick-time"
+        class="skill-field tp-quick-time"
+        type="time"
+        aria-label=${ctx.i18n.t('wb.sched.quickWeekly')}
+        .value=${preset.time}
+        @input=${(ev: Event) => onPresetChange({ ...preset, time: (ev.currentTarget as HTMLInputElement).value || '09:00' })}
+      />
+    </div>`;
+  }
+  return html`<div class="tp-quick-row">
+    <span class="tp-quick-lbl">${ctx.i18n.t('wb.sched.quickEvery')}</span>
+    <input
+      id="tp-quick-every"
+      class="skill-field tp-quick-num"
+      type="number"
+      min="1"
+      max=${preset.unit === 'h' ? '23' : '59'}
+      aria-label=${ctx.i18n.t('wb.sched.quickInterval')}
+      .value=${String(preset.every)}
+      @input=${(ev: Event) => {
+        const num = Number((ev.currentTarget as HTMLInputElement).value);
+        if (Number.isFinite(num) && num >= 1) onPresetChange({ ...preset, every: num });
+      }}
+    />
+    <select
+      id="tp-quick-unit"
+      class="skill-field tp-quick-unit"
+      aria-label=${ctx.i18n.t('wb.sched.quickInterval')}
+      .value=${preset.unit}
+      @change=${(ev: Event) => {
+        const unit = (ev.currentTarget as HTMLSelectElement).value === 'h' ? 'h' : 'm';
+        const every = unit === 'h' ? Math.min(23, preset.every) : Math.min(59, preset.every);
+        onPresetChange({ ...preset, unit, every });
+      }}
+    >
+      <option value="m" ?selected=${preset.unit === 'm'}>${ctx.i18n.t('wb.sched.quickUnitMin')}</option>
+      <option value="h" ?selected=${preset.unit === 'h'}>${ctx.i18n.t('wb.sched.quickUnitHour')}</option>
+    </select>
+  </div>`;
+}
+
 function parseInput(raw: unknown): { id: string | null; mode: ScheduleEditorMode; title?: string } {
   if (!raw || typeof raw !== 'object') return { id: null, mode: 'new' };
   const rec = raw as ScheduleEditorInput;
@@ -357,31 +493,46 @@ function renderFormRuntimeFields(
 }
 
 function renderFormScheduleFields(
+  ctx: PluginContext,
   detail: TaskPageDetail,
   values: TaskFormValues,
+  preset: QuickPresetState,
   shape: SchedulePanelShape,
   supportsAt: boolean,
   topics: readonly TopicInfo[],
   timeZones: readonly string[],
   onPatch: (patch: Partial<TaskFormValues>) => void,
+  onPresetChange: (next: QuickPresetState) => void,
 ): TemplateResult {
   const ownTopic = detail.task?.targetTopic ?? '';
   const selectableTopics = topics.filter((t) => (!t.scheduled && !t.parent) || t.id === ownTopic);
   const effectiveWhenMode = supportsAt ? values.whenMode : 'cron';
+  const activeSeg = effectiveWhenMode === 'at' ? 'at' : preset.kind;
+  const whenOptions = [
+    { value: 'daily', label: ctx.i18n.t('wb.sched.quickDaily') },
+    { value: 'weekly', label: ctx.i18n.t('wb.sched.quickWeekly') },
+    { value: 'interval', label: ctx.i18n.t('wb.sched.quickInterval') },
+    { value: 'cron', label: ctx.i18n.t('wb.sched.quickCron') },
+    ...(supportsAt ? [{ value: 'at', label: tr('taskPage.once') }] : []),
+  ];
 
   return html`<div class="tp-label">${tr('taskPage.when')}</div>
-    ${supportsAt
-      ? renderSegmented({
-          kind: 'value',
-          value: effectiveWhenMode,
-          ariaLabel: tr('taskPage.whenAria'),
-          options: [
-            { value: 'cron', label: tr('taskPage.repeats') },
-            { value: 'at', label: tr('taskPage.once') },
-          ],
-          onChange: (v) => onPatch({ whenMode: v === 'at' ? 'at' : 'cron' }),
-        })
-      : nothing}
+    ${renderSegmented({
+      kind: 'value',
+      value: activeSeg,
+      ariaLabel: tr('taskPage.whenAria'),
+      options: whenOptions,
+      onChange: (v) => {
+        if (v === 'at') {
+          onPatch({ whenMode: 'at' });
+          return;
+        }
+        const nextKind: QuickPresetKind =
+          v === 'daily' || v === 'weekly' || v === 'interval' ? v : 'cron';
+        onPresetChange({ ...preset, kind: nextKind });
+      },
+    })}
+    ${effectiveWhenMode === 'cron' ? renderQuickPresetControls(ctx, preset, onPresetChange) : nothing}
     <div class="tp-row2">
       <div>
         ${effectiveWhenMode === 'at'
@@ -471,13 +622,16 @@ function renderFormScheduleFields(
 }
 
 function renderFormContent(
+  ctx: PluginContext,
   detail: TaskPageDetail,
   values: TaskFormValues,
+  preset: QuickPresetState,
   isNew: boolean,
   saving: boolean,
   topics: readonly TopicInfo[],
   timeZones: readonly string[],
   onPatch: (patch: Partial<TaskFormValues>) => void,
+  onPresetChange: (next: QuickPresetState) => void,
   onSubmit: () => void,
   onCancel: () => void,
 ): TemplateResult {
@@ -559,7 +713,7 @@ function renderFormContent(
       ${renderFormRuntimeFields(detail, values, keeps, onPatch)}
     </div>
     <div class="fh-fld">
-      ${renderFormScheduleFields(detail, values, shape, keeps.includes('at'), topics, timeZones, onPatch)}
+      ${renderFormScheduleFields(ctx, detail, values, preset, shape, keeps.includes('at'), topics, timeZones, onPatch, onPresetChange)}
     </div>
     <div class="tp-acts editor">
       <button type="submit" class="fh-btn fh-btn--primary" data-tp-act="save" ?disabled=${saving}>
@@ -607,6 +761,7 @@ class ScheduleEditor implements ScheduleEditorController {
   private _mode: ScheduleEditorMode = 'view';
   private _detail: TaskPageDetail | null = null;
   private _formValues: TaskFormValues | null = null;
+  private _preset: QuickPresetState = { kind: 'daily', time: '09:00', dow: '1', every: 30, unit: 'm' };
   private _notice: EditorNotice | null = null;
   private _runFilter: RunStatusFilter = 'all';
   private _saving = false;
@@ -703,6 +858,7 @@ class ScheduleEditor implements ScheduleEditorController {
       this._detail = res.detail;
       if (this._mode === 'edit' && !res.detail.locked) {
         this._formValues = initialFormValues(this._detail, this._ctx.topics.list(), this._ctx.topics.active()?.id);
+        this._preset = parseQuickPreset(this._formValues.cron);
       } else if (res.detail.locked) {
         this._mode = 'view';
       }
@@ -720,6 +876,7 @@ class ScheduleEditor implements ScheduleEditorController {
     if (res.ok) {
       this._detail = res.detail;
       this._formValues = initialFormValues(this._detail, this._ctx.topics.list(), this._ctx.topics.active()?.id);
+      this._preset = parseQuickPreset(this._formValues.cron);
       this._notice = null;
     } else {
       this._notice = { tone: 'err', message: res.error };
@@ -751,6 +908,7 @@ class ScheduleEditor implements ScheduleEditorController {
       this._formValues = this._detail
         ? initialFormValues(this._detail, this._ctx.topics.list(), this._ctx.topics.active()?.id)
         : null;
+      if (this._formValues) this._preset = parseQuickPreset(this._formValues.cron);
       this._notice = null;
       this._paint();
       return;
@@ -890,8 +1048,10 @@ class ScheduleEditor implements ScheduleEditorController {
     const isForm = this._mode === 'new' || (this._mode === 'edit' && !this._detail.locked);
     if (isForm && this._formValues) {
       return renderFormContent(
+        this._ctx,
         this._detail,
         this._formValues,
+        this._preset,
         this._mode === 'new',
         this._saving,
         topics,
@@ -899,6 +1059,20 @@ class ScheduleEditor implements ScheduleEditorController {
         (patch) => {
           if (!this._formValues) return;
           this._formValues = { ...this._formValues, ...patch };
+          if (patch.cron !== undefined) {
+            this._preset = parseQuickPreset(patch.cron);
+          }
+          this._paint();
+        },
+        (nextPreset) => {
+          if (!this._formValues) return;
+          this._preset = nextPreset;
+          const generated = buildCronFromPreset(nextPreset);
+          this._formValues = {
+            ...this._formValues,
+            whenMode: 'cron',
+            ...(generated ? { cron: generated } : {}),
+          };
           this._paint();
         },
         () => void this._handleSave(),

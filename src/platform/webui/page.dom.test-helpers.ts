@@ -852,7 +852,7 @@ export async function open(
       for (const fn of schemeListeners) fn({ matches: scheme === 'dark', media: '(prefers-color-scheme: dark)' });
     },
     waiting: () => doc.querySelector('#log > .syncing')?.textContent ?? null,
-    rows: () => doc.getElementById('topics')!.children.length,
+    rows: () => doc.querySelectorAll('#topics [data-topic]').length,
     notice: () => doc.querySelector('#log > .empty')?.textContent ?? null,
     click: async (selector) => {
       const target = doc.querySelector<HTMLElement>(selector);

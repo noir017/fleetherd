@@ -1,5 +1,6 @@
 import { addDisposableListener, focusSafely } from '../../base/dom.js';
 import { Emitter, type Event } from '../../base/event.js';
+import { icon } from '../../../icons.js';
 import { type Disposable, DisposableStore } from '../../base/lifecycle.js';
 import type { GridNodeState, PanelComponent, PanelRef } from '../contracts.js';
 
@@ -86,8 +87,7 @@ export interface DetachedGroupPanel {
   readonly _managed: ManagedPanel;
 }
 
-const CLOSE_SVG =
-  '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>';
+const CLOSE_SVG = icon('cross');
 
 export function reorderList<T>(items: readonly T[], fromIdx: number, toIdx: number): T[] {
   const len = items.length;
@@ -234,6 +234,16 @@ export class EditorGroup implements Disposable {
 
   getPanel(panelId: string): PanelRef | undefined {
     return this._findPanel(panelId)?.ref;
+  }
+
+  reattachPanel(panelId: string): boolean {
+    const panel = this._findPanel(panelId);
+    if (!panel) return false;
+    if (panel.component.element.parentElement !== this.bodyElement) {
+      this.bodyElement.appendChild(panel.component.element);
+    }
+    this._syncPanelVisibility();
+    return true;
   }
 
   getPanelIds(): readonly string[] {

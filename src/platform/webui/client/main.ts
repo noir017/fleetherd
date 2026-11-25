@@ -10,7 +10,8 @@ import type { ClientIconsBundle } from './build-markers.d.ts';
 import { createCodeViewLoader } from './features/reader/index.js';
 import { inlineCodeHtml as inl } from './features/settings/render.js';
 import type { SettingsPluginBridge } from './features/settings/plugin.js';
-import type { StatusPluginError } from './features/status/types.js';
+import { createStatusNotifyBridge } from './features/status/notify-bridge.js';
+import type { StatusNotifyBridge, StatusPluginError } from './features/status/types.js';
 import { TERMINAL_TOGGLE_COMMAND } from './features/terminal/plugin.js';
 import type { LocalBubbleMessage } from './features/topic/composer/index.js';
 import type { ComposerTopicStatusBridge } from './features/topic/composer/types.js';
@@ -49,7 +50,7 @@ import {
   type StreamClient,
   type StreamEventPayload,
 } from './services/stream.js';
-import type { StackToolItem } from './workbench/stack-shell.js';
+import type { StackHeaderAction, StackToolItem } from './workbench/stack-shell.js';
 import type { PanelComponent } from './workbench/contracts.js';
 import { mountWorkbench, type WorkbenchShell } from './workbench/shell.js';
 
@@ -76,6 +77,7 @@ interface AppState {
   insertHandler: ((topicId: string, text: string) => boolean) | null;
   settingsBridge: SettingsPluginBridge | null;
   mobileViewId: string;
+  streamConnected: boolean;
 }
 
 interface AppRuntime {
@@ -101,6 +103,7 @@ interface AppRuntime {
   readonly secretInput: HTMLInputElement | null;
   readonly errEl: HTMLElement | null;
   readonly workbenchRoot: HTMLElement;
+  readonly notifyBridge: StatusNotifyBridge;
   streamClient: StreamClient;
   cacheService: CacheService;
   readsService: ReadsService;
@@ -138,11 +141,14 @@ function currentTopicUrl(topicId: string): string {
 }
 
 function ensureTopicEditorOpen(rt: AppRuntime, topicId: string): void {
+  const panel = rt.shell.dock.getPanel('topic:active');
   const existing = rt.state.activeEditor;
-  if (existing) {
+  if (panel && existing) {
     existing.update?.({ topicId });
+    if (rt.shell.getMode() !== 'mobile') panel.focus();
     return;
   }
+  rt.state.activeEditor = null;
   rt.shell.editors.open('topic', { topicId }, { id: 'topic:active' });
 }
 
@@ -206,12 +212,12 @@ function openMobileTopicDetail(rt: AppRuntime, topicId: string): void {
   const tools: StackToolItem[] = [];
   if (rt.state.activeEditor) {
     const curParent = rt.state.activeEditor.element.parentElement;
-    if (curParent && !curParent.closest('.wb-stack-shell')) {
+    if (curParent && !curParent.closest('.wb-stack')) {
       rt.state.desktopEditorHost = curParent;
     }
     tools.push({
       id: 'chat',
-      title: tr('sidebar.topics'),
+      title: tr('mobile.chat'),
       component: rt.state.activeEditor,
       params: { topicId },
     });
@@ -627,6 +633,7 @@ function buildBuiltinDeps(rt: AppRuntime): BuiltinPluginsDeps {
       storage,
       overlays,
       appElement: rt.workbenchRoot,
+      notify: rt.notifyBridge,
       version: boot.build ? boot.build.slice(0, 7) : '',
       getPluginErrors: () => [...rt.pluginManager.getErrors(), ...rt.externalPluginErrors],
       onPluginError: (cb) => {
@@ -943,14 +950,84 @@ function wireStreamAndCache(rt: AppRuntime): void {
   rt.readsService.attachWindowEvents(document, window);
 }
 
+function buildMobileListActions(rt: AppRuntime, viewId: string): readonly StackHeaderAction[] {
+  if (viewId === 'topics') {
+    return [
+      { id: 'topics.new', label: tr('sidebar.newTopic'), icon: 'plus', onClick: () => void rt.commands.execute('topics.new') },
+      { id: 'topics.markAllRead', label: tr('sidebar.markAllRead'), icon: 'check', onClick: () => void rt.commands.execute('topics.markAllRead') },
+      { id: 'topics.clearUnstarred', label: tr('sidebar.clearUnstarredTopics'), icon: 'trash', onClick: () => void rt.commands.execute('topics.clearUnstarred') },
+    ];
+  }
+  if (viewId === 'schedules') {
+    return [
+      { id: 'schedules.new', label: tr('sideTasks.newTask'), icon: 'plus', onClick: () => void rt.commands.execute('schedules.new') },
+    ];
+  }
+  return [];
+}
+
+function syncMobileMoreState(rt: AppRuntime): void {
+  if (rt.shell.getMode() !== 'mobile') return;
+  const stack = rt.shell.getStackShell();
+  const revAct = rt.registry.listActivities().find((a) => a.id === 'reviews');
+  const revCount = revAct?.badge?.();
+  let runningCount = 0;
+  let idleCount = 0;
+  for (const topic of rt.state.topics) {
+    if (topic.running || topic.asking) runningCount += 1;
+    else if (topic.live) idleCount += 1;
+  }
+  stack.setMoreState({
+    reviewsBadge: undefined,
+    prefsBadge: typeof revCount === 'number' && revCount > 0 ? String(revCount) : undefined,
+    notificationsEnabled: rt.notifyBridge.getState().enabled,
+    lowAttention: rt.workbenchRoot.classList.contains('calm'),
+    theme: getTheme(),
+    locale: getLocale(),
+    connected: rt.state.streamConnected,
+    version: rt.boot.build ? rt.boot.build.slice(0, 7) : undefined,
+    runningCount,
+    idleCount,
+    onOpenReviews: () => rt.shell.openMobileView('reviews', tr('mobile.reviews')),
+    onOpenPrefs: () => {
+      if (!rt.shell.editors.open('review-prefs', {})) {
+        rt.shell.openMobileView('reviews', tr('mobile.prefs'));
+      }
+    },
+    onOpenSkills: () => rt.shell.openMobileView('skills', tr('mobile.skills')),
+    onOpenSettings: () => rt.shell.openMobileView('settings', tr('mobile.settings')),
+    onToggleNotifications: () => {
+      void Promise.resolve(rt.commands.execute('status.toggleNotify')).finally(() => syncMobileMoreState(rt));
+    },
+    onToggleLowAttention: () => {
+      void rt.commands.execute('status.toggleCalm');
+      syncMobileMoreState(rt);
+    },
+    onChangeTheme: (next) => {
+      setTheme(next);
+      rt.events.emit('theme.change', { theme: next });
+      syncMobileMoreState(rt);
+    },
+    onChangeLocale: (next) => {
+      setLocale(next);
+      syncMobileMoreState(rt);
+    },
+    onCloseIdle: () => void rt.commands.execute('status.closeIdle'),
+  });
+}
+
 function wireMobileShell(rt: AppRuntime): void {
   const mountedViews = new Map<string, PanelComponent>();
   const showMobileListView = (viewId: string): void => {
     rt.state.mobileViewId = viewId;
-    if (viewId === 'more') return;
+    const stack = rt.shell.getStackShell();
+    if (viewId === 'more') {
+      stack.setListHeader({ title: tr('mobile.more'), actions: [] });
+      return;
+    }
     const view = rt.registry.getView(viewId);
     if (!view) return;
-    const stack = rt.shell.getStackShell();
+    stack.setListHeader({ title: view.title, actions: buildMobileListActions(rt, viewId) });
     let comp = mountedViews.get(viewId);
     if (!comp) {
       comp = view.component();
@@ -959,64 +1036,7 @@ function wireMobileShell(rt: AppRuntime): void {
     stack.mountListView(viewId, comp);
   };
 
-  const syncMoreState = (): void => {
-    if (rt.shell.getMode() !== 'mobile') return;
-    const stack = rt.shell.getStackShell();
-    const activities = rt.registry.listActivities();
-    const revAct = activities.find((a) => a.id === 'reviews');
-    const revCount = revAct?.badge?.();
-    let runningCount = 0;
-    let idleCount = 0;
-    for (const topic of rt.state.topics) {
-      if (topic.running || topic.asking) runningCount += 1;
-      else if (topic.live) idleCount += 1;
-    }
-    stack.setMoreState({
-      reviewsBadge: typeof revCount === 'number' && revCount > 0 ? String(revCount) : undefined,
-      prefsBadge: typeof revCount === 'number' && revCount > 0 ? String(revCount) : undefined,
-      lowAttention: rt.workbenchRoot.classList.contains('calm'),
-      theme: getTheme(),
-      locale: getLocale(),
-      connected: !rt.workbenchRoot.hidden,
-      version: rt.boot.build ? rt.boot.build.slice(0, 7) : undefined,
-      runningCount,
-      idleCount,
-      onOpenReviews: () => {
-        rt.shell.openMobileView('reviews', tr('mobile.reviews'));
-      },
-      onOpenPrefs: () => {
-        const opened = rt.shell.editors.open('review-prefs', {});
-        if (!opened) {
-          rt.shell.openMobileView('reviews', tr('mobile.prefs'));
-        }
-      },
-      onOpenSkills: () => {
-        rt.shell.openMobileView('skills', tr('mobile.skills'));
-      },
-      onOpenSettings: () => {
-        rt.shell.openMobileView('settings', tr('mobile.settings'));
-      },
-      onToggleNotifications: () => {
-        void rt.commands.execute('status.toggleNotify');
-      },
-      onToggleLowAttention: () => {
-        void rt.commands.execute('status.toggleCalm');
-        syncMoreState();
-      },
-      onChangeTheme: (next) => {
-        setTheme(next);
-        rt.events.emit('theme.change', { theme: next });
-        syncMoreState();
-      },
-      onChangeLocale: (next) => {
-        setLocale(next);
-        syncMoreState();
-      },
-      onCloseIdle: () => {
-        void rt.commands.execute('status.closeIdle');
-      },
-    });
-  };
+  const syncMoreState = (): void => syncMobileMoreState(rt);
 
   const syncMobileMode = (): void => {
     if (rt.shell.getMode() !== 'mobile') return;
@@ -1054,14 +1074,23 @@ function wireMobileShell(rt: AppRuntime): void {
   rt.shell.onDidModeChange((mode) => {
     if (mode === 'mobile') {
       syncMobileMode();
-    } else if (
-      rt.state.activeEditor &&
-      rt.state.desktopEditorHost?.isConnected &&
-      rt.state.activeEditor.element.parentElement !== rt.state.desktopEditorHost
-    ) {
-      rt.state.activeEditor.element.hidden = false;
-      rt.state.desktopEditorHost.appendChild(rt.state.activeEditor.element);
+    } else {
+      rt.shell.getStackShell().backToList();
+      if (rt.state.activeEditor) {
+        const reattached = rt.shell.dock.reattachPanel('topic:active');
+        if (!reattached && rt.state.desktopEditorHost?.isConnected) {
+          rt.state.activeEditor.element.hidden = false;
+          rt.state.desktopEditorHost.appendChild(rt.state.activeEditor.element);
+        } else if (!reattached && rt.state.topic) {
+          ensureTopicEditorOpen(rt, rt.state.topic);
+        }
+      }
     }
+  });
+  rt.notifyBridge.onDidChange(() => syncMoreState());
+  rt.events.on('stream.state', ({ state }) => {
+    rt.state.streamConnected = state === 'open';
+    syncMoreState();
   });
   rt.events.on('topic.list', () => {
     syncMoreState();
@@ -1184,7 +1213,10 @@ function bootstrap(): void {
     insertHandler: null,
     settingsBridge: null,
     mobileViewId: 'topics',
+    streamConnected: false,
   };
+
+  const notifyBridge = createStatusNotifyBridge({ doc: document, win: window, postFn: post });
 
   const rt = {
     boot,
@@ -1209,6 +1241,7 @@ function bootstrap(): void {
     secretInput: document.getElementById('secret') as HTMLInputElement | null,
     errEl: document.getElementById('err'),
     workbenchRoot,
+    notifyBridge,
   } as unknown as AppRuntime;
 
   wireStreamAndCache(rt);

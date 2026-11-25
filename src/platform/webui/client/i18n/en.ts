@@ -830,6 +830,7 @@ export const en = {
   'gate.subtitle': 'Enter login secret',
   'gate.note': 'The secret is configured by the operator in the gateway config',
   'mobile.more': 'More',
+  'mobile.chat': 'Chat',
   'mobile.back': 'Back',
   'mobile.reviews': 'Reviews',
   'mobile.prefs': 'Preferences',

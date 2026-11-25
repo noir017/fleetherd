@@ -371,4 +371,51 @@ describe('features/schedules plugin', () => {
     events.dispose();
     registry.dispose();
   });
+
+  it('generates cron expressions from daily, weekly, and interval quick presets', async () => {
+    const { registry, events, manager } = makeHarness();
+    manager.register(createSchedulesPlugin(), { builtin: true });
+    await manager.activateAll();
+
+    const editorEntry = registry.getEditor('schedule')!;
+    const editor = editorEntry.component();
+    document.body.appendChild(editor.element);
+    editor.init({ id: null, mode: 'new' }, makePanelInitContext('schedule:new').ctx);
+    await flushMicrotasks();
+
+    const pickSeg = (val: string): void => {
+      const group = editor.element.querySelector<HTMLElement>('[aria-label="Repeats or once"]')!;
+      const btn = group.querySelector<HTMLButtonElement>(`[data-seg-value="${val}"]`)!;
+      btn.click();
+    };
+    const cronVal = (): string => editor.element.querySelector<HTMLInputElement>('#tp-cron')!.value;
+
+    pickSeg('daily');
+    const timeEl = editor.element.querySelector<HTMLInputElement>('#tp-quick-time')!;
+    timeEl.value = '02:30';
+    timeEl.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(cronVal()).toBe('30 2 * * *');
+
+    pickSeg('weekly');
+    const dowEl = editor.element.querySelector<HTMLSelectElement>('#tp-quick-dow')!;
+    dowEl.value = '5';
+    dowEl.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(cronVal()).toBe('30 2 * * 5');
+
+    pickSeg('interval');
+    const everyEl = editor.element.querySelector<HTMLInputElement>('#tp-quick-every')!;
+    everyEl.value = '15';
+    everyEl.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(cronVal()).toBe('*/15 * * * *');
+
+    const unitEl = editor.element.querySelector<HTMLSelectElement>('#tp-quick-unit')!;
+    unitEl.value = 'h';
+    unitEl.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(cronVal()).toBe('0 */15 * * *');
+
+    editor.dispose();
+    manager.dispose();
+    events.dispose();
+    registry.dispose();
+  });
 });

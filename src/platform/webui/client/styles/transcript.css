@@ -423,7 +423,7 @@
   .wb-topic-editor #log{padding:14px 16px 18px}
   .wb-topic-editor .wb-topic-fork-note{padding:8px 16px;font-size:13px}
   .wb-topic-editor .m{font-size:15.5px;line-height:1.55;margin-bottom:18px}
-  .wb-topic-editor .m.own{width:fit-content;max-width:86%;margin-left:auto;background:rgba(0,120,212,.26);border:0;border-radius:18px 18px 4px 18px;padding:9px 14px;color:var(--fh-fg-hi)}
+  .wb-topic-editor .m.own{width:fit-content;max-width:86%;margin-left:auto;background:var(--fh-own-m);border:0;border-radius:18px 18px 4px 18px;padding:9px 14px;color:var(--fh-fg-hi)}
   .wb-topic-editor .m.own .t{text-align:right}
   .wb-topic-editor .tl{border-radius:8px;padding:8px 12px;font-size:13px}
   .wb-topic-editor .tc{border-radius:10px;padding:11px 12px;font-size:13.5px}
@@ -443,8 +443,8 @@
   .wb-topic-editor .wd-picker{border-radius:12px}
 }
 @media (max-width: 640px) and (prefers-color-scheme: light) {
-  :root:not([data-theme="dark"]) .wb-topic-editor .m.own{background:rgba(0,95,184,.11)}
+  :root:not([data-theme="dark"]) .wb-topic-editor .m.own{background:var(--fh-own-m)}
 }
 @media (max-width: 640px) {
-  [data-theme="light"] .wb-topic-editor .m.own{background:rgba(0,95,184,.11)}
+  [data-theme="light"] .wb-topic-editor .m.own{background:var(--fh-own-m)}
 }

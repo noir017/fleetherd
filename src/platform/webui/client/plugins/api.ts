@@ -65,6 +65,7 @@ export interface EditorContribution {
 }
 
 export interface OpenEditorOptions {
+  readonly id?: string;
   readonly position?: PanelPosition;
   readonly preview?: boolean;
 }

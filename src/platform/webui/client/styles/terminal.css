@@ -46,7 +46,7 @@
 @media (max-width:640px){
   .wb-term-keys{flex:none;display:flex;gap:6px;padding:8px 8px calc(8px + env(safe-area-inset-bottom,0px));overflow-x:auto;background:var(--fh-bg-side);border-top:1px solid var(--fh-line);scrollbar-width:none}
   .wb-term-key{flex:none;min-width:44px;height:38px;padding:0 10px;border:0;border-radius:8px;background:var(--fh-btn2);color:var(--fh-fg-hi);display:grid;place-items:center;font:13.5px var(--fh-font-mono);cursor:pointer}
-  .wb-term-key.is-active{background:var(--fh-accent);color:#fff}
+  .wb-term-key.is-active{background:var(--fh-accent);color:var(--fh-on-accent)}
 }
 .wb-terminal-editor{display:flex;flex-direction:column;flex:1 1 auto;min-height:0;background:var(--term-bg,var(--fh-bg))}
 .wb-term-editor-bar{display:flex;align-items:center;gap:6px;min-height:30px;padding:0 8px;background:var(--fh-bg-side);border-bottom:1px solid var(--fh-line);color:var(--fh-fg);flex:none}

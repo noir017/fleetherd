@@ -1,3 +1,5 @@
+import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
+import { icon } from '../../../icons.js';
 import { html, nothing, type TemplateResult } from '../../base/html.js';
 import { type IconInput, renderIcon } from '../shared.js';
 import { renderSegmented, type SegmentedOption } from '../tabs/index.js';
@@ -195,11 +197,11 @@ export interface GroupedListOptions {
 }
 
 function renderCheckIcon(): TemplateResult {
-  return html`<svg class="fh-mgroup-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5 10 17.5 19.5 7"/></svg>`;
+  return html`${unsafeHTML(icon('check', 'fh-mgroup-check'))}`;
 }
 
 function renderChevronIcon(): TemplateResult {
-  return html`<svg class="fh-mgroup-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5.5 15.5 12 9 18.5"/></svg>`;
+  return html`${unsafeHTML(icon('chevronRight', 'fh-mgroup-chev'))}`;
 }
 
 export function renderRadioGroup(opts: RadioGroupOptions): TemplateResult {

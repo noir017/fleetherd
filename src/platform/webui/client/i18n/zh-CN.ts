@@ -832,6 +832,7 @@ export const zhCN = {
   'gate.subtitle': '输入登录密钥',
   'gate.note': '密钥由运维写在网关配置里',
   'mobile.more': '更多',
+  'mobile.chat': '对话',
   'mobile.back': '返回',
   'mobile.reviews': '复盘',
   'mobile.prefs': '偏好建议',

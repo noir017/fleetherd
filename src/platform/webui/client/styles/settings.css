@@ -202,6 +202,7 @@
 /* ── Workbench settings catalog (sidebar) ─────────────────────────────────── */
 .wb-set-catalog{display:flex;flex-direction:column;height:100%;min-height:0;background:var(--fh-bg-side,var(--panel))}
 .wb-set-cat-head{flex:none;display:flex;align-items:center;gap:6px;height:48px;padding:0 8px 0 14px;border-bottom:1px solid var(--fh-line,var(--line))}
+.wb-sidebar-body .wb-set-cat-head{display:none}
 .wb-set-cat-title{font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--fh-fg,var(--fg))}
 .wb-set-cat-search{position:relative;flex:none;margin:8px 10px;display:flex;align-items:center}
 .wb-set-cat-search-icon{position:absolute;left:8px;display:inline-flex;color:var(--fh-placeholder,var(--dim));pointer-events:none}
@@ -214,6 +215,7 @@
 
 /* ── Workbench settings editor ────────────────────────────────────────────── */
 .wb-set-editor{display:flex;flex-direction:column;height:100%;min-height:0;background:var(--fh-bg,var(--bg))}
+.wb-set-editor[data-settings-scope="device"] .wb-set-gateway,.wb-set-editor[data-settings-scope="device"] .wb-set-empty{display:none}
 .wb-set-head{flex:none;display:flex;align-items:center;gap:10px;height:48px;padding:0 10px 0 18px;border-bottom:1px solid var(--fh-line,var(--line));background:var(--fh-bg,var(--bg))}
 .wb-set-titles{flex:1;min-width:0;display:flex;align-items:center;gap:8px}
 .wb-set-title{margin:0;font-size:14px;font-weight:600;color:var(--fh-fg-hi,var(--fg));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -232,7 +234,7 @@
 .wb-set-col .set-badge.restart{border-radius:3px;padding:1px 7px;font-size:11px;font-weight:500;background:var(--fh-btn2,var(--field));color:var(--fh-fg,var(--fg))}
 .wb-set-col .set-seg{background:var(--fh-input,var(--field));border:1px solid var(--fh-input-line,var(--line));border-radius:2px;padding:2px;gap:2px}
 .wb-set-col .set-seg button{min-height:24px;min-width:0;padding:2px 10px;border-radius:2px;font-size:12px;color:var(--fh-fg-dim,var(--dim))}
-.wb-set-col .set-seg button[aria-checked="true"]{background:var(--fh-accent,var(--accent));color:#fff;font-weight:500}
+.wb-set-col .set-seg button[aria-checked="true"]{background:var(--fh-accent,var(--accent));color:var(--fh-on-accent);font-weight:500}
 .wb-set-col .set-select{min-width:180px;min-height:28px;padding:3px 26px 3px 8px;border:1px solid var(--fh-input-line,var(--line));border-radius:2px;background-color:var(--fh-input,var(--field));color:var(--fh-fg,var(--fg));font-size:12px}
 .wb-set-col .ag-card{border-radius:4px;background:var(--fh-card,var(--surface))}
 .wb-set-col .ag-place{margin:16px 2px 6px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--fh-fg-dim,var(--dim))}
@@ -259,8 +261,8 @@
 .wb-instr-col{max-width:820px;margin:0 auto;padding:22px 28px}
 .wb-instr-psub{margin:0 0 18px;font-size:12px;line-height:1.5;color:var(--fh-fg-dim,var(--dim))}
 .wb-instr-note{margin:0 0 12px;padding:8px 12px;border:1px solid var(--fh-line,var(--line));border-radius:4px;background:var(--fh-bg-side,var(--panel));font-size:12px;color:var(--fh-fg,var(--fg))}
-.wb-instr-eol{margin:0 0 12px;padding:7px 12px;border:1px solid var(--fh-line,var(--line));border-radius:4px;background:rgba(204,167,0,.12);font-size:12px;color:var(--fh-fg-hi,var(--fg))}
-.wb-instr-conflict{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:0 0 14px;padding:8px 12px;border:1px solid var(--fh-line,var(--line));border-radius:4px;background:rgba(204,167,0,.12);font-size:12px;color:var(--fh-fg-hi,var(--fg))}
+.wb-instr-eol{margin:0 0 12px;padding:7px 12px;border:1px solid var(--fh-line,var(--line));border-radius:4px;background:var(--warn-tint-2);font-size:12px;color:var(--fh-fg-hi,var(--fg))}
+.wb-instr-conflict{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:0 0 14px;padding:8px 12px;border:1px solid var(--fh-line,var(--line));border-radius:4px;background:var(--warn-tint-2);font-size:12px;color:var(--fh-fg-hi,var(--fg))}
 .wb-instr-conflict-text{flex:1;min-width:200px}
 .wb-instr-conflict-actions{display:flex;align-items:center;gap:6px}
 .wb-instr-tree{margin-bottom:16px}

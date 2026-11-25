@@ -3,6 +3,7 @@ import type {
   HistoryPanelPage,
   HistoryPanelSession,
 } from '../../../../adapter.js';
+import { icon } from '../../../icons.js';
 import type { WebMessage } from '../../../protocol.js';
 import type { WebHistoryRead } from '../../../room.js';
 import type { FilterBarGroup, FilterBarOption, FilterBarState } from '../../components/index.js';
@@ -59,15 +60,16 @@ export type HistoryPageResponse = Partial<HistoryPanelPage> & { readonly error?:
 export type HistoryReadResponse = Partial<WebHistoryRead> & { readonly error?: string };
 
 export const DEFAULT_HISTORY_ICONS: HistoryIcons = {
-  copy: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15h-.5A1.5 1.5 0 0 1 3 13.5v-9A1.5 1.5 0 0 1 4.5 3h9A1.5 1.5 0 0 1 15 4.5V5"/></svg>',
-  check: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m4.5 12.5 5 5L19.5 7"/></svg>',
-  cross: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>',
-  search: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5"/></svg>',
-  filter: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3.5 5h17l-6.5 7.5V19l-4 1.5v-8z"/></svg>',
-  arrowUp: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6"/></svg>',
-  arrowDown: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 5v14M6 13l6 6 6-6"/></svg>',
-  chevronLeft: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M15 5.5 8.5 12l6.5 6.5"/></svg>',
-  globe: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/></svg>',
+  copy: icon('copy'),
+  check: icon('check'),
+  cross: icon('cross'),
+  search: icon('search'),
+  filter: icon('filter'),
+  arrowUp: icon('arrowUp'),
+  arrowDown: icon('arrowDown'),
+  chevronLeft: icon('chevronLeft'),
+  globe: icon('globe'),
+  refresh: icon('refresh'),
 };
 
 export function resolveHistoryIcons(deps: HistoryPluginDeps): HistoryIcons {

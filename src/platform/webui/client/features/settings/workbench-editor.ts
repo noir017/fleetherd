@@ -270,7 +270,7 @@ function createSettingsPair(
   const feature = createSettingsFeature({
     settingsPage: dom.gatewayPageEl,
     settingsBody: dom.gatewayBodyEl,
-    settingsTopicEl: dom.topicEl,
+    settingsTopicEl: doc.createElement('span'),
     settingsClose: dom.hiddenCloseBtn,
     settingsOpenBtn: dom.hiddenOpenBtn,
     instrOk: runtime.instrOk,
@@ -391,6 +391,35 @@ function bindResetClickHandler(
   );
 }
 
+function applySettingsScopeUi(
+  ctx: PluginContext,
+  dom: SettingsEditorDom,
+  feature: SettingsFeature,
+  mountedDeviceCount: number,
+  input: SettingsEditorInput | undefined,
+): void {
+  const isDevice = input?.scope === 'device';
+  dom.root.dataset.settingsScope = isDevice ? 'device' : 'gateway';
+  dom.titleEl.textContent = isDevice
+    ? ctx.i18n.t('wb.settings.deviceGroup')
+    : ctx.i18n.t('wb.settings.gatewayTitle');
+  dom.topicEl.textContent = isDevice
+    ? ctx.i18n.t('wb.settings.deviceSubtitle')
+    : ctx.i18n.t('wb.settings.gatewaySubtitle');
+  dom.refreshBtn.hidden = isDevice;
+  if (isDevice) {
+    dom.deviceWrapEl.hidden = mountedDeviceCount === 0;
+  } else if (feature.getMessage()) {
+    dom.gatewayPageEl.hidden = false;
+  }
+  if (!input) return;
+  clearTargetHighlights(dom.root);
+  const el = locateSectionElement(dom, input);
+  if (!el) return;
+  el.classList.add('is-target');
+  scrollTargetIntoView(el);
+}
+
 export function createSettingsEditorComponent(
   ctx: PluginContext,
   runtime: SettingsRuntime,
@@ -420,19 +449,7 @@ export function createSettingsEditorComponent(
 
   const applyTarget = (input: SettingsEditorInput | undefined): void => {
     pendingTarget = input;
-    const isDevice = input?.scope === 'device';
-    dom.titleEl.textContent = isDevice
-      ? ctx.i18n.t('wb.settings.deviceGroup')
-      : ctx.i18n.t('wb.settings.gatewayTitle');
-    dom.topicEl.textContent = isDevice
-      ? ctx.i18n.t('wb.settings.deviceSubtitle')
-      : ctx.i18n.t('wb.settings.gatewaySubtitle');
-    if (!input) return;
-    clearTargetHighlights(dom.root);
-    const el = locateSectionElement(dom, input);
-    if (!el) return;
-    el.classList.add('is-target');
-    scrollTargetIntoView(el);
+    applySettingsScopeUi(ctx, dom, feature, mountedDevice.size, input);
   };
 
   const syncDeviceSections = (): void => {
@@ -444,8 +461,10 @@ export function createSettingsEditorComponent(
   const requestGateway = (): void => {
     const topic = runtime.getTopic();
     if (!topic) {
-      dom.emptyGatewayEl.textContent = ctx.i18n.t('wb.settings.noTopic');
-      dom.emptyGatewayEl.hidden = false;
+      if (pendingTarget?.scope !== 'device') {
+        dom.emptyGatewayEl.textContent = ctx.i18n.t('wb.settings.noTopic');
+        dom.emptyGatewayEl.hidden = false;
+      }
       return;
     }
     dom.emptyGatewayEl.hidden = true;
@@ -458,7 +477,9 @@ export function createSettingsEditorComponent(
       dom.emptyGatewayEl.hidden = true;
       runtime.setGatewayMessage(feature.getMessage());
       refreshSearchState();
-      if (pendingTarget?.scope === 'gateway') applyTarget(pendingTarget);
+      if (pendingTarget?.scope === 'gateway') {
+        applyTarget(pendingTarget);
+      }
     }
     return handled;
   };

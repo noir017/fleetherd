@@ -1,3 +1,5 @@
+import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
+import { icon } from '../../../icons.js';
 import { addDisposableListener, focusSafely } from '../../base/dom.js';
 import { html, nothing, render, type TemplateResult } from '../../base/html.js';
 import { type Disposable, DisposableStore } from '../../base/lifecycle.js';
@@ -42,7 +44,7 @@ export interface BottomSheetController extends Disposable {
 let sheetSeq = 0;
 
 function renderCheckMark(): TemplateResult {
-  return html`<svg class="fh-sheet-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5 10 17.5 19.5 7"/></svg>`;
+  return html`${unsafeHTML(icon('check', 'fh-sheet-check'))}`;
 }
 
 function renderSheetActions(

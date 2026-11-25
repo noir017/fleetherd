@@ -62,7 +62,8 @@ test.describe('Workbench topics list, row menu, confirm dialog, and mobile gestu
     await page.setViewportSize({ width: 390, height: 844 });
     await loginViaUi(page, gateway.baseUrl, gateway.secret);
 
-    await expect(page.locator('.wb-stack .wb-topics-mobile-title')).toBeVisible();
+    await expect(page.locator('.wb-stack .wb-stack-large-title')).toBeVisible();
+    await expect(page.locator('.wb-stack .wb-topics-mobile-title')).toBeHidden();
 
     const reviewId = seededIds[TOPIC_REVIEW]!;
     const row = page.locator(`.wb-stack .wb-topic-row[data-topic="${reviewId}"]`);

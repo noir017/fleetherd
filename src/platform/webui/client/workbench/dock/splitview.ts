@@ -440,21 +440,24 @@ export class SplitView implements Disposable {
     return next;
   }
 
-  setPaneVisible(id: string, visible: boolean): void {
+  setPaneVisible(id: string, visible: boolean, relayout = true): void {
     const pane = this._panes.find((p) => p.id === id);
     if (!pane || pane.visible === visible) return;
     pane.visible = visible;
     this._syncVisibility();
+    if (!relayout) return;
     if (this._totalSize > 0) this.layout(this._totalSize);
     else this._onDidChange.fire(this.getSizes());
   }
 
-  setPaneSize(id: string, size: number, persist = false): void {
+  setPaneSize(id: string, size: number, persist = false, relayout = true): void {
     const pane = this._panes.find((p) => p.id === id);
     if (!pane) return;
     pane.size = clampSize(size, pane.minSize, pane.maxSize);
-    if (this._totalSize > 0) this.layout(this._totalSize);
-    else this._applySizes(this._panes.map((p) => (p.visible ? p.size : 0)));
+    if (relayout) {
+      if (this._totalSize > 0) this.layout(this._totalSize);
+      else this._applySizes(this._panes.map((p) => (p.visible ? p.size : 0)));
+    }
     if (persist) this._savePersisted();
   }
 

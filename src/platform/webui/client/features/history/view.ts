@@ -1,4 +1,5 @@
 import type { HistoryPanelHit, HistoryPanelSession } from '../../../../adapter.js';
+import { icon } from '../../../icons.js';
 import { addDisposableListener } from '../../base/dom.js';
 import { DisposableStore } from '../../base/lifecycle.js';
 import {
@@ -148,7 +149,7 @@ class HistoryViewPanel implements HistoryViewInstance {
     this.refreshBtn.className = 'fh-btn fh-btn--ghost fh-btn--icon wb-history-refresh';
     this.refreshBtn.title = tr('common.refresh');
     this.refreshBtn.setAttribute('aria-label', tr('common.refresh'));
-    this.refreshBtn.innerHTML = icons.refresh || '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19.5 4.5v4.2h-4.2"/></svg>';
+    this.refreshBtn.innerHTML = icons.refresh || icon('refresh');
     headerEl.append(this.headerTitle, this.refreshBtn);
 
     const searchForm = this.doc.createElement('div');

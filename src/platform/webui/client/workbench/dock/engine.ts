@@ -363,6 +363,12 @@ export class DynamicDockEngine implements DockEngine {
     return this._gridView.getGroup(groupId)?.getPanel(id);
   }
 
+  reattachPanel(id: string): boolean {
+    const groupId = this._editorPanelGroup.get(id);
+    if (!groupId) return false;
+    return this._gridView.getGroup(groupId)?.reattachPanel(id) ?? false;
+  }
+
   removePanel(id: string): void {
     if (this._partPanels.has(id)) {
       this._removePartPanel(id);
@@ -408,9 +414,9 @@ export class DynamicDockEngine implements DockEngine {
     }
     if (part === 'sidebar' || part === 'secondary') {
       if (visible && state.size > 0) {
-        this._splitView?.setPaneSize(part, state.size);
+        this._splitView?.setPaneSize(part, state.size, false, false);
       }
-      this._splitView?.setPaneVisible(part, visible);
+      this._splitView?.setPaneVisible(part, visible, false);
     }
 
     this._syncAllParts();
