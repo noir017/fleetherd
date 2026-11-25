@@ -30,6 +30,7 @@ export interface TopicHeaderDeps {
   readonly onToggleTopicTool?: (toolId: string, topicId: string) => void;
   readonly getTitleMenuGroups?: (topic: TopicInfo) => readonly (readonly TopicEditorMenuEntry[])[];
   readonly onBack?: () => void;
+  readonly onToggleSidebar?: () => void;
 }
 
 export interface TopicHeaderController extends Disposable {
@@ -123,6 +124,10 @@ export function createTopicHeaderController(deps: TopicHeaderDeps): TopicHeaderC
   if (deps.onBack) {
     deps.els.backBtn.hidden = false;
     listeners.add(addDisposableListener(deps.els.backBtn, 'click', () => deps.onBack?.()));
+  }
+
+  if (deps.onToggleSidebar) {
+    listeners.add(addDisposableListener(deps.els.menuBtn, 'click', () => deps.onToggleSidebar?.()));
   }
 
   listeners.add(addDisposableListener(deps.els.moreBtn, 'click', () => openMenu()));

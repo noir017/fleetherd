@@ -3,6 +3,7 @@ import { icon } from '../../../../icons.js';
 import type { TopicEditorElements, TopicEditorIcons } from './types.js';
 
 export const DEFAULT_TOPIC_EDITOR_ICONS: TopicEditorIcons = {
+  menu: icon('menu'),
   back: icon('chevronLeft'),
   more: icon('more'),
   plus: icon('plus'),
@@ -47,6 +48,14 @@ function assignIdIfAbsent(doc: Document, node: HTMLElement, id: string): void {
 
 function buildHeaderDom(doc: Document, icons: TopicEditorIcons) {
   const header = el(doc, 'header', 'wb-topic-header th');
+  const menuBtn = el(doc, 'button', 'wb-icon-btn wb-topic-menu');
+  assignIdIfAbsent(doc, menuBtn, 'expand-sidebar');
+  menuBtn.type = 'button';
+  menuBtn.dataset.mobileDrawerToggle = '1';
+  menuBtn.title = tr('sidebar.showTopics');
+  menuBtn.setAttribute('aria-label', tr('sidebar.showTopics'));
+  menuBtn.innerHTML = icons.menu ?? DEFAULT_TOPIC_EDITOR_ICONS.menu ?? '';
+
   const backBtn = el(doc, 'button', 'wb-icon-btn wb-topic-back');
   backBtn.type = 'button';
   backBtn.hidden = true;
@@ -74,8 +83,8 @@ function buildHeaderDom(doc: Document, icons: TopicEditorIcons) {
   moreBtn.setAttribute('aria-expanded', 'false');
   moreBtn.innerHTML = icons.more;
 
-  header.append(backBtn, statusDotHost, titleEl, statePillEl, connPillEl, spacer, toolsHost, moreBtn);
-  return { header, backBtn, statusDotHost, titleEl, statePillEl, connPillEl, toolsHost, moreBtn };
+  header.append(menuBtn, backBtn, statusDotHost, titleEl, statePillEl, connPillEl, spacer, toolsHost, moreBtn);
+  return { header, menuBtn, backBtn, statusDotHost, titleEl, statePillEl, connPillEl, toolsHost, moreBtn };
 }
 
 function buildBtwAndModelPopDom(doc: Document, icons: TopicEditorIcons) {

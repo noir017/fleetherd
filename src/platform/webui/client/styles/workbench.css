@@ -722,6 +722,170 @@
   z-index: 15;
 }
 
+.wb-topic-menu,
+.wb-group-mobile-menu {
+  display: none;
+}
+
+/* Mobile slide-out drawer mode (< 640px) — reuses the workbench shell & drawers */
+.wb-root[data-wb-mode="mobile"] {
+  --wb-mobile-drawer-w: min(88vw, 380px);
+}
+
+.wb-root[data-wb-mode="mobile"] .wb-shell {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.wb-root[data-wb-mode="mobile"] .wb-workspace {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.wb-root[data-wb-mode="mobile"] .wb-status-bar,
+.wb-root[data-wb-mode="mobile"] .wb-sash {
+  display: none;
+}
+
+.wb-root[data-wb-mode="mobile"] .wb-shell.is-single-topic .wb-group-head {
+  display: none;
+}
+
+.wb-root[data-wb-mode="mobile"] .wb-group-mobile-menu {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 40px;
+  height: 35px;
+  border-right: 1px solid var(--fh-line);
+  border-radius: 0;
+}
+
+.wb-root[data-wb-mode="mobile"] .wb-activity-bar {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 52px;
+  z-index: 21;
+  padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+  transform: translateX(calc(-1 * var(--wb-mobile-drawer-w)));
+  visibility: hidden;
+  pointer-events: none;
+  transition: transform 0.2s ease, visibility 0s linear 0.2s;
+}
+
+.wb-root[data-wb-mode="mobile"] .wb-sidebar {
+  display: flex !important;
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 52px;
+  width: calc(var(--wb-mobile-drawer-w) - 52px) !important;
+  z-index: 20;
+  box-shadow: 6px 0 18px var(--shadow-drawer);
+  transform: translateX(calc(-1 * var(--wb-mobile-drawer-w)));
+  visibility: hidden;
+  pointer-events: none;
+  transition: transform 0.2s ease, visibility 0s linear 0.2s;
+}
+
+.wb-root[data-wb-mode="mobile"] .wb-shell.is-sidebar-open .wb-activity-bar,
+.wb-root[data-wb-mode="mobile"] .wb-shell.is-sidebar-open .wb-sidebar {
+  transform: translateX(0);
+  visibility: visible;
+  pointer-events: auto;
+  transition: transform 0.2s ease, visibility 0s;
+}
+
+.wb-root[data-wb-mode="mobile"] .wb-shell.is-drawer-dragging .wb-activity-bar,
+.wb-root[data-wb-mode="mobile"] .wb-shell.is-drawer-dragging .wb-sidebar {
+  visibility: visible;
+  pointer-events: auto;
+  transition: none;
+  transform: translateX(var(--wb-drawer-tx, 0px));
+}
+
+.wb-root[data-wb-mode="mobile"] .wb-secondary {
+  display: flex !important;
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(92vw, 480px) !important;
+  z-index: 20;
+  box-shadow: -6px 0 18px var(--shadow-drawer);
+  transform: translateX(100%);
+  visibility: hidden;
+  pointer-events: none;
+  transition: transform 0.2s ease, visibility 0s linear 0.2s;
+}
+
+.wb-root[data-wb-mode="mobile"] .wb-shell.is-secondary-open .wb-secondary {
+  transform: translateX(0);
+  visibility: visible;
+  pointer-events: auto;
+  transition: transform 0.2s ease, visibility 0s;
+}
+
+.wb-root[data-wb-mode="mobile"] .wb-drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 15;
+}
+
+.wb-root[data-wb-mode="mobile"] .wb-sidebar-body,
+.wb-root[data-wb-mode="mobile"] .wb-secondary-body,
+.wb-root[data-wb-mode="mobile"] .wb-panel {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.wb-root[data-wb-mode="mobile"] .wb-part-head {
+  min-height: 49px;
+  height: auto;
+}
+
+.wb-root[data-wb-mode="mobile"] .wb-part-close {
+  min-width: 40px;
+  height: 40px;
+}
+
+.wb-root[data-wb-mode="mobile"] .wb-topic-header {
+  min-height: 49px;
+  height: auto;
+  padding: 2px 6px 2px 4px;
+  gap: 4px;
+}
+
+.wb-root[data-wb-mode="mobile"] .wb-topic-menu {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  height: 44px;
+}
+
+.wb-root[data-wb-mode="mobile"] .wb-topic-menu svg {
+  width: 20px;
+  height: 20px;
+}
+
+.wb-root[data-wb-mode="mobile"] .wb-topic-tool-label {
+  display: none;
+}
+
+.wb-root[data-wb-mode="mobile"] .wb-topic-tool-btn {
+  min-width: 36px;
+  height: 40px;
+  padding: 0 6px;
+  justify-content: center;
+}
+
+.wb-root[data-wb-mode="mobile"] .wb-topic-more {
+  min-width: 36px;
+  height: 40px;
+}
+
 /* Mobile stack shell (< 640px) */
 .wb-stack {
   display: flex;

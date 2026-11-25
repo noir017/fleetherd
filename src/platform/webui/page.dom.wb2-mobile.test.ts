@@ -229,7 +229,7 @@ describe('wb2-mobile: login, stack-shell, sheet, grouped form, and palette', () 
     events.dispose();
   });
 
-  it('routes editors.open(kind, input) and openMobileView() into StackShell with multi-level Back on <640px', () => {
+  it('opens editors in the workbench editor area and closes the sidebar drawer on <640px', () => {
     const root = document.createElement('div');
     document.body.appendChild(root);
     const shell = new WorkbenchShell({
@@ -273,47 +273,16 @@ describe('wb2-mobile: login, stack-shell, sheet, grouped form, and palette', () 
       });
     }
 
-    const stack = shell.getStackShell();
-    expect(shell.openMobileView('settings', 'Settings')).toBe(true);
-    expect(stack.getMode()).toBe('detail');
-    expect(stack.getStackDepth()).toBe(1);
-    expect(stack.element.querySelector('.wb-stack-title')?.textContent).toBe('Settings');
-    expect((stack.element.querySelector('.wb-stack-tools') as HTMLElement).hidden).toBe(true);
+    shell.views.reveal('settings');
+    shell.setPartVisible('sidebar', true);
+    expect(shell.isPartVisible('sidebar')).toBe(true);
 
     const ref = shell.editors.open('settings', { scope: 'gateway', sectionId: 'Delegation' });
     expect(ref).toBeDefined();
-    expect(stack.getStackDepth()).toBe(2);
-    expect(stack.element.querySelector('.wb-stack-title')?.textContent).toBe('Delegation');
-    expect(stack.element.querySelector('[data-mobile-settings-section="Delegation"]')).not.toBeNull();
-
-    shell.editors.open('instruction', { title: 'common.md' });
-    expect(stack.getStackDepth()).toBe(3);
-    expect(stack.element.querySelector('.wb-stack-title')?.textContent).toBe('common.md');
-
-    // Pop instruction -> back to Delegation -> back to Settings catalog -> back to list
-    stack.popPage();
-    expect(stack.getStackDepth()).toBe(2);
-    expect(disposed).toContain('editor:instruction');
-    expect(stack.element.querySelector('.wb-stack-title')?.textContent).toBe('Delegation');
-
-    stack.popPage();
-    expect(stack.getStackDepth()).toBe(1);
+    expect(shell.isPartVisible('sidebar')).toBe(false);
+    expect(root.querySelector('.wb-editor-area')?.textContent).toContain('editor:settings');
+    ref!.close();
     expect(disposed).toContain('editor:settings');
-    expect(stack.element.querySelector('.wb-stack-title')?.textContent).toBe('Settings');
-
-    stack.popPage();
-    expect(stack.getStackDepth()).toBe(0);
-    expect(stack.getMode()).toBe('list');
-    expect(disposed).toContain('view:settings');
-
-    // Also verify schedule, history, review, review-prefs, skill all push to StackShell
-    for (const kind of ['schedule', 'history', 'review', 'review-prefs', 'skill']) {
-      shell.editors.open(kind, { title: `${kind}-page` });
-      expect(stack.getMode()).toBe('detail');
-      expect(stack.element.querySelector('.wb-stack-title')?.textContent).toBe(`${kind}-page`);
-      stack.popPage();
-      expect(stack.getMode()).toBe('list');
-    }
 
     shell.dispose();
   });

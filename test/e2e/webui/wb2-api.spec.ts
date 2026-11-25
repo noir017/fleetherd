@@ -81,8 +81,6 @@ test.describe('wb2-api: 5 backend + frontend workbench integrations', () => {
     await expect(launchEl.locator('.launch-choice-dir')).toContainText(subAPath);
     await expect(page.locator('.wb-topic-editor .m')).toHaveCount(0);
 
-    fs.mkdirSync('/tmp/wb4-launch', { recursive: true });
-    await page.screenshot({ path: '/tmp/wb4-launch/desktop-1280x800.png' });
 
     // Send first message and verify the topic runs in beta at sub-a
     await page.locator('.wb-topic-editor #input').fill('Launch check message');
@@ -190,18 +188,21 @@ test.describe('wb2-api: 5 backend + frontend workbench integrations', () => {
     await page.setViewportSize({ width: 390, height: 844 });
     await loginViaUi(page, gateway.baseUrl, gateway.secret);
 
-    const activeRow = page.locator('.wb-stack-list-body .topic-item').filter({ hasText: ACTIVE_TOPIC }).first();
+    await page.locator('#expand-sidebar').click();
+    const activeRow = page.locator('.wb-sidebar .topic-item').filter({ hasText: ACTIVE_TOPIC }).first();
     await expect(activeRow).toBeVisible();
     await activeRow.click();
-    await expect(page.locator('.wb-stack-detail-body .wb-topic-editor #status .st-perm')).toBeVisible();
+    await expect(page.locator('.wb-sidebar')).toBeHidden();
+    await expect(page.locator('.wb-topic-editor #status .st-perm')).toBeVisible();
 
-    await page.goto(gateway.baseUrl);
-    const freshRow = page.locator('.wb-stack-list-body .topic-item').filter({ hasText: MOBILE_NEW_TOPIC }).first();
+    await page.locator('#expand-sidebar').click();
+    const freshRow = page.locator('.wb-sidebar .topic-item').filter({ hasText: MOBILE_NEW_TOPIC }).first();
     await expect(freshRow).toBeVisible();
     await freshRow.click();
-    const mobileLaunch = page.locator('.wb-stack-detail-body .wb-topic-editor .launch');
+    await expect(page.locator('.wb-sidebar')).toBeHidden();
+    const mobileLaunch = page.locator('.wb-topic-editor .launch');
     await expect(mobileLaunch.locator('.agent-card.def')).toBeVisible();
-    await expect(page.locator('.wb-stack-detail-body .wb-topic-editor .launch .launch-dirs')).toHaveCount(0);
+    await expect(page.locator('.wb-topic-editor .launch .launch-dirs')).toHaveCount(0);
     const mobilePicker = mobileLaunch.locator('.launch-wd .wd-picker');
     await expect(mobilePicker).toBeVisible();
     const subAPath = path.join(gateway.workDir, 'sub-a');
@@ -209,9 +210,7 @@ test.describe('wb2-api: 5 backend + frontend workbench integrations', () => {
     await mobilePicker.locator('.wd-row').filter({ hasText: 'sub-a' }).locator('.wd-choose').click();
     expect((await mobileDirReq).postDataJSON()).toMatchObject({ cwd: subAPath });
     await expect(mobileLaunch.locator('.launch-choice-dir')).toContainText(subAPath);
-    await expect(page.locator('.wb-stack-detail-body .wb-topic-editor #status .st-model:not(.st-opt)')).toBeVisible();
-    await expect(page.locator('.wb-stack-detail-body .wb-topic-editor #status .st-perm')).toBeVisible();
-    fs.mkdirSync('/tmp/wb4-launch', { recursive: true });
-    await page.screenshot({ path: '/tmp/wb4-launch/mobile-390x844.png' });
+    await expect(page.locator('.wb-topic-editor #status .st-model:not(.st-opt)')).toBeVisible();
+    await expect(page.locator('.wb-topic-editor #status .st-perm')).toBeVisible();
   });
 });

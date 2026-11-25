@@ -131,6 +131,7 @@ export class TopicEditorPanel implements TopicEditorHandle {
       onToggleTopicTool: this._deps.onToggleTopicTool,
       getTitleMenuGroups: this._deps.getTitleMenuGroups,
       onBack: this._deps.onBack,
+      onToggleSidebar: this._deps.onToggleSidebar,
     });
 
     this._initSubControllers();
