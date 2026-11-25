@@ -257,15 +257,15 @@ describe('wb2 topics alignment', () => {
     vi.advanceTimersByTime(520);
     document.dispatchEvent(new PointerEv('pointerup', { bubbles: true, clientX: 120, clientY: 100 }));
 
-    const sheet = document.querySelector<HTMLElement>('.wb-topic-sheet')!;
+    const sheet = document.querySelector<HTMLElement>('.wb-topic-sheet-backdrop .fh-sheet')!;
     expect(sheet).not.toBeNull();
-    expect(sheet.querySelector('.wb-topic-sheet-title')?.textContent).toBe('Mobile topic');
-    expect(sheet.querySelector('.wb-topic-sheet-sub')?.textContent).toContain('claude');
-    expect(sheet.querySelector('[data-sheet-id="topics.openInNewTab"]')).toBeNull();
-    expect(sheet.querySelector('[data-sheet-id="topics.delete"]')).not.toBeNull();
+    expect(sheet.querySelector('.fh-sheet-title')?.textContent).toBe('Mobile topic');
+    expect(sheet.querySelector('.fh-sheet-subtitle')?.textContent).toContain('claude');
+    expect(sheet.querySelector('[data-sheet-action="topics.openInNewTab"]')).toBeNull();
+    expect(sheet.querySelector('[data-sheet-action="topics.delete"]')).not.toBeNull();
 
     sheet.querySelector<HTMLButtonElement>('[data-sheet-cancel]')!.click();
-    expect(document.querySelector('.wb-topic-sheet')).toBeNull();
+    expect(document.querySelector('.wb-topic-sheet-backdrop')).toBeNull();
 
     view.dispose();
     h.cleanup();

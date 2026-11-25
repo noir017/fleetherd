@@ -3,6 +3,7 @@ import type { ReviewPanel, ReviewPanelEntry, ReviewPanelList, ReviewPanelPrefere
 import { parseReviewOutput } from './review-prompt.js';
 import { commandOf, inferOutcome, recordedAction, summaryOf, undoOf, type AppliedChange } from './review-result.js';
 import { preferenceKey } from './review-state.js';
+import { revertSkill, skillCommitDiff, type SkillChangeBy } from './skills-store.js';
 
 /**
  * The daemon's side of the web UI's Reviews tab: `history.db`'s review sessions → the flat rows
@@ -48,14 +49,24 @@ export interface ReviewPanelOptions {
   standing?: () => string | undefined;
   /** The skills still active: an archive suggestion for one that is not has been dealt with. */
   activeSkills?: () => ReadonlySet<string>;
+  /** Managed skills directory (tests pass a temp dir; omitted uses configDir()). */
+  skillsDir?: string;
+  /** Run one skills-store write through SkillsRepo (pull before, push after). */
+  writeSkills?: <T>(fn: () => T) => Promise<T>;
   max?: number;
 }
 
+const PERSON: SkillChangeBy = { kind: 'person' };
+
 export function buildReviewPanel(options: ReviewPanelOptions): ReviewPanel {
+  const readDiff = (name: string, id: string, file?: string): string | undefined =>
+    skillCommitDiff(name, id, file, options.skillsDir);
   const list = (): ReviewPanelList => {
     const rows = options.history.reviewSessions(Math.max(options.max ?? REVIEW_PANEL_LIMIT, PENDING_SCAN));
     const entries = rows.map((row) =>
-      row.record ? recordedEntry(row.record, row.session, options.instance) : inferredEntry(row, options.history, options.instance)
+      row.record
+        ? recordedEntry(row.record, row.session, options.instance, readDiff)
+        : inferredEntry(row, options.history, options.instance)
     );
     return {
       enabled: true,
@@ -72,6 +83,17 @@ export function buildReviewPanel(options: ReviewPanelOptions): ReviewPanel {
     dismiss(text: string): ReviewPanelList {
       options.dismiss(text);
       return list();
+    },
+    // Security invariant 8: revert goes exclusively through skills-store.revertSkill (git history + validation).
+    async revert(name: string, id: string): Promise<{ ok: true; list: ReviewPanelList } | { ok: false; error: string }> {
+      try {
+        const run = (): unknown => revertSkill(name, id, options.skillsDir, Date.now(), PERSON);
+        if (options.writeSkills) await options.writeSkills(run);
+        else run();
+        return { ok: true, list: list() };
+      } catch (e) {
+        return { ok: false, error: e instanceof Error ? e.message : String(e) };
+      }
     },
   };
 }
@@ -147,7 +169,12 @@ function bestEffort<T>(read: () => T | undefined): T | undefined {
   }
 }
 
-function recordedEntry(record: HistoryReviewRecord, session: HistorySessionRow, instance: string): ReviewPanelEntry {
+function recordedEntry(
+  record: HistoryReviewRecord,
+  session: HistorySessionRow,
+  instance: string,
+  readDiff?: (name: string, id: string, file?: string) => string | undefined
+): ReviewPanelEntry {
   return {
     id: session.key,
     title: record.reviewedTitle || stripTitle(session.title) || record.reviewedKey,
@@ -157,12 +184,24 @@ function recordedEntry(record: HistoryReviewRecord, session: HistorySessionRow, 
     changes: record.changes.map((change) => {
       const undo = undoFor(change);
       const command = commandOf(change);
-      return { ...change, ...(undo ? { undo } : {}), ...(command ? { command } : {}) };
+      const cid = change.applied === true ? (change.revertId ?? change.commitId) : undefined;
+      const diffFile = change.file ?? (change.action === 'patch' ? 'SKILL.md' : undefined);
+      const diff = cid && readDiff ? readDiff(change.name, cid, diffFile) : undefined;
+      return {
+        ...change,
+        ...(undo ? { undo } : {}),
+        ...(command ? { command } : {}),
+        ...(diff ? { diff } : {}),
+      };
     }),
     preferences: record.preferences,
     invalid: record.invalid,
     ...(record.error ? { error: record.error } : {}),
     ...(record.platform === instance && record.thread ? { topic: record.thread } : {}),
+    ...(session.agent ? { reviewer: session.agent } : {}),
+    ...(record.model ? { model: record.model } : {}),
+    ...(record.messagesRead !== undefined ? { messagesRead: record.messagesRead } : {}),
+    ...(record.durationMs !== undefined ? { durationMs: record.durationMs } : {}),
   };
 }
 

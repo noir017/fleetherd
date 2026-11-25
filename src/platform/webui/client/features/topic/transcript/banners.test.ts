@@ -62,6 +62,30 @@ describe('banners pure helpers', () => {
     expect(html).toContain('Main');
     expect(html).toContain('4');
   });
+
+  it('renders directory grid for active agent from root and dirs', () => {
+    const html = launchHtml(
+      {
+        current: 'cc',
+        groups: [
+          {
+            name: 'local',
+            agents: [
+              { id: 'cc', harness: 'claude', kind: 'Claude Code', root: '/work', dirs: ['/work/a', '/work/b'] },
+              { id: 'oc', harness: 'opencode', kind: 'OpenCode', root: '/srv' },
+            ],
+          },
+        ],
+      },
+      ICONS,
+      { offSince: () => 0, offWhen: () => '', offTitle: () => '' },
+      '/work/b',
+    );
+    expect(html).toContain('data-launch-dirs-for="cc"');
+    expect(html).toContain('data-cwd="/work"');
+    expect(html).toContain('class="launch-dir on" data-cwd="/work/b"');
+    expect(html).toContain('data-cwd-more="1"');
+  });
 });
 
 describe('createBannersController', () => {

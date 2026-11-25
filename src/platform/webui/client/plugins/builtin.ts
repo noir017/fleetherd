@@ -9,7 +9,7 @@ import type { SchedulesPluginDeps } from '../features/schedules/types.js';
 import type { SettingsPluginDeps } from '../features/settings/workbench-types.js';
 import type { SkillsPluginDeps } from '../features/skills/types.js';
 import { createStatusPlugin, type StatusPluginDeps } from '../features/status/index.js';
-import { createTerminalPlugin, type TerminalPluginDeps } from '../features/terminal/plugin.js';
+import type { TerminalPluginDeps } from '../features/terminal/plugin.js';
 import { createTopicPlugin, type TopicPluginDeps } from '../features/topic/plugin.js';
 import { createTopicsPlugin, type TopicsPluginDeps } from '../features/topics/plugin.js';
 import { definePlugin, type WebuiPlugin } from './api.js';
@@ -25,6 +25,7 @@ import {
   createLazySchedulesPlugin,
   createLazySettingsPlugin,
   createLazySkillsPlugin,
+  createLazyTerminalPlugin,
   type ExtrasLoader,
 } from './lazy-extras.js';
 
@@ -85,7 +86,7 @@ export function createDefaultBuiltinPluginFactories(
     settings: () => createLazySettingsPlugin(loader, deps.settings),
     changes: () => createLazyChangesPlugin(loader, deps.changes),
     files: () => createLazyFilesPlugin(loader, deps.files),
-    terminal: () => createTerminalPlugin(deps.terminal),
+    terminal: () => createLazyTerminalPlugin(loader, deps.terminal),
     reader: () => createLazyReaderPlugin(loader, deps.reader),
     status: () => createStatusPlugin(deps.status),
     palette: () => createLazyPalettePlugin(loader, deps.palette),

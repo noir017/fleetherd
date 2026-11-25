@@ -168,7 +168,7 @@ function buildTaskRowMenuItems(
       disabled: (target) => (isScheduleTask(target) && target.running ? tr('sched.editBusyTitle') : false),
       run: (target) => {
         if (isScheduleTask(target)) {
-          ctx.editors.open('schedule', { id: target.id, mode: 'edit', title: target.name });
+          ctx.editors.open('schedule', { id: target.id, mode: 'edit', title: target.name }, { id: `schedule:${target.id}` });
         }
       },
     },

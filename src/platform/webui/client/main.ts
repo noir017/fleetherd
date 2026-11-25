@@ -380,6 +380,30 @@ function buildTranscriptDeps(rt: AppRuntime, els: TopicEditorElements, getTopicI
       void rt.commands.execute(READER_OPEN_IMAGE_COMMAND, { src: img.src, alt: img.alt, restoreFocus: img });
     },
     sendCommand: (cmd: string) => state.activeEditor?.composer?.command(cmd),
+    setupTopic: (opts: { agent?: string; cwd?: string }) => {
+      const tid = getTopicId();
+      if (!tid) return;
+      void post('api/topics/setup', { topic: tid, ...opts }, 1)
+        .then((r) => r.json().then((j: { ok?: boolean; agent?: string; cwd?: string; error?: string }) => ({ r, j })))
+        .then(({ r, j }) => {
+          if (!r.ok || !j.ok) {
+            els.noteEl.textContent = j.error || tr('common.networkError');
+            return;
+          }
+          if (state.launch && j.agent) state.launch = { ...state.launch, current: j.agent };
+          const row = state.topics.find((t) => t.id === tid);
+          if (row && j.cwd) {
+            const name = j.cwd.split(/[\\/]/).filter(Boolean).pop() || j.cwd;
+            row.dir = { ...(row.dir ?? { name }), path: j.cwd };
+          }
+          state.activeEditor?.transcript?.banners.syncLaunch(true);
+          state.activeEditor?.status?.peekOptions();
+          rt.events.emit('topic.list', { topics: toTopicInfos(state.topics) });
+        })
+        .catch(() => {
+          els.noteEl.textContent = tr('common.networkError');
+        });
+    },
     openReader: (link: Element) => {
       void rt.commands.execute(READER_OPEN_COMMAND, link);
     },
@@ -634,7 +658,7 @@ function buildBuiltinDeps(rt: AppRuntime): BuiltinPluginsDeps {
       overlays,
       appElement: rt.workbenchRoot,
       notify: rt.notifyBridge,
-      version: boot.build ? boot.build.slice(0, 7) : '',
+      version: boot.version ? `v${boot.version}` : boot.build ? boot.build.slice(0, 7) : '',
       getPluginErrors: () => [...rt.pluginManager.getErrors(), ...rt.externalPluginErrors],
       onPluginError: (cb) => {
         const sub1 = rt.pluginManager.onDidError(cb);
@@ -985,7 +1009,7 @@ function syncMobileMoreState(rt: AppRuntime): void {
     theme: getTheme(),
     locale: getLocale(),
     connected: rt.state.streamConnected,
-    version: rt.boot.build ? rt.boot.build.slice(0, 7) : undefined,
+    version: rt.boot.version ? `v${rt.boot.version}` : rt.boot.build ? rt.boot.build.slice(0, 7) : undefined,
     runningCount,
     idleCount,
     onOpenReviews: () => rt.shell.openMobileView('reviews', tr('mobile.reviews')),

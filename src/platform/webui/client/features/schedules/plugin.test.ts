@@ -265,7 +265,7 @@ describe('features/schedules plugin', () => {
     expect(openEditor).toHaveBeenCalledWith(
       'schedule',
       { id: 'task-1', mode: 'view', title: 'nightly-ci-report' },
-      undefined,
+      { id: 'schedule:task-1' },
     );
 
     // Opens context menu via ⋯ button and confirms delete via components/dialog.

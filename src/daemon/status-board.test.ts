@@ -39,7 +39,15 @@ function makeClock() {
   };
 }
 
-function rig(opts: { canShow?: boolean; lane?: boolean; reading?: CacheReading | undefined; agent?: string } = {}) {
+function rig(
+  opts: {
+    canShow?: boolean;
+    lane?: boolean;
+    reading?: CacheReading | undefined;
+    agent?: string;
+    permissionsOf?: (id: string) => AgentStatus['permissions'];
+  } = {}
+) {
   const clock = makeClock();
   const shown: Array<AgentStatus | undefined> = [];
   const platform = {
@@ -52,6 +60,7 @@ function rig(opts: { canShow?: boolean; lane?: boolean; reading?: CacheReading |
     platforms: new Map([['web', platform]]),
     agentOf: () => opts.agent ?? 'cc',
     configuredModel: () => 'anthropic/claude-opus-5-5',
+    ...(opts.permissionsOf ? { permissionsOf: opts.permissionsOf } : {}),
     cacheReading,
     clock,
   };
@@ -218,5 +227,17 @@ describe('StatusBoard', () => {
     // Unlike reset, the strip is left as it was: the first report, and nothing after it.
     expect(shown.map((s) => s?.context?.used)).toEqual([1]);
     expect(cacheReading).not.toHaveBeenCalled();
+  });
+
+  it('includes permissions in composed status and re-emits live on refresh', () => {
+    let perms: AgentStatus['permissions'] = { level: 'auto', offered: ['ask', 'auto', 'full'], unset: true };
+    const { board, shown } = rig({ permissionsOf: () => perms });
+    board.usage('c1', { used: 100, size: 1000 });
+    expect(shown.at(-1)?.permissions).toEqual(perms);
+
+    perms = { level: 'ask', offered: ['ask', 'auto', 'full'], unset: false };
+    board.refresh('c1');
+    expect(shown.at(-1)?.permissions).toEqual(perms);
+    expect(board.statusOf('c1')?.permissions).toEqual(perms);
   });
 });

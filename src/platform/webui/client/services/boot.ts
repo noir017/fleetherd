@@ -14,6 +14,7 @@ export interface BootConfig {
   readonly codeview: string | null;
   readonly instance: string;
   readonly build: string;
+  readonly version: string;
   readonly plugins: readonly BootPluginConfig[];
 }
 
@@ -26,6 +27,7 @@ const DEFAULT_BOOT: BootConfig = {
   codeview: null,
   instance: 'web',
   build: '',
+  version: '',
   plugins: [],
 };
 
@@ -62,6 +64,7 @@ export function readBootConfig(doc: Pick<Document, 'getElementById'> = document)
       codeview: typeof parsed.codeview === 'string' ? parsed.codeview : null,
       instance: typeof parsed.instance === 'string' && parsed.instance ? parsed.instance : 'web',
       build: typeof parsed.build === 'string' ? parsed.build : '',
+      version: typeof parsed.version === 'string' ? parsed.version : '',
       plugins: parseBootPlugins(parsed.plugins),
     };
   } catch {

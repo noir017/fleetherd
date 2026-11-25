@@ -130,6 +130,31 @@ export class ReviewsStore implements Disposable {
     }
   }
 
+  async revertChange(name: string, id: string): Promise<boolean> {
+    if (this._disposed) return false;
+    const key = `revert:${name}:${id}`;
+    this._busyKeys.add(key);
+    this._onDidChange.fire();
+    const body: ReviewOpRequest = { action: 'revert', name, id };
+    try {
+      const next = await this._ctx.api.post<ReviewPanelList | null>('/api/reviews/op', body);
+      if (this._disposed) return false;
+      this._seq++;
+      this._data = next ?? this._data;
+      this._note = null;
+      this._deps.onBadgeChange?.();
+      return true;
+    } catch (err) {
+      if (!this._disposed) {
+        this._note = tr('reviews.revertFailed', { name, err: errorMessage(err) });
+      }
+      return false;
+    } finally {
+      this._busyKeys.delete(key);
+      if (!this._disposed) this._onDidChange.fire();
+    }
+  }
+
   async archiveSuggestion(pref: ReviewPanelPreference): Promise<boolean> {
     if (this._disposed || !pref.archive) return false;
     const skillName = pref.archive.name;

@@ -164,7 +164,7 @@ describe('webui page: terminal topic tool in bottom panel', () => {
     termBtn!.click();
     await tick();
     expect((on.doc.querySelector('.wb-panel') as HTMLElement).hidden).toBe(false);
-    expect(on.doc.querySelector('.wb-terminal-panel')).not.toBeNull();
+    expect(on.doc.querySelector('.wb-terminal-panel, .wb-panel .wb-lazy-host')).not.toBeNull();
 
     termBtn!.click();
     await tick();

@@ -27,6 +27,7 @@ import {
   type ModelChoiceResult,
 } from '../core/model-menu.js';
 import { shortModelName } from '../core/runtime-footer.js';
+import { offeredLevelsFor, unsetLevel } from '../core/permission-levels.js';
 import { fallbackTitle, generateTitle } from '../core/title-namer.js';
 import {
   matchWorkdirs,
@@ -52,6 +53,7 @@ import type {
   ModelSelector,
   SessionOption,
   StatusOption,
+  StatusPermissions,
 } from '../types.js';
 import { forkRefusal } from './acp-fork.js';
 import { NO_FORK } from './acp-side-question.js';
@@ -594,14 +596,17 @@ export class ConversationControls {
    * session yet may make the catalog start a throwaway session once per run: before the first
    * message is when such a setting can still change.
    */
-  async optionStatusForRef(ref: ConversationRef): Promise<{ agent: string; model?: string; options: StatusOption[] }> {
+  async optionStatusForRef(
+    ref: ConversationRef
+  ): Promise<{ agent: string; model?: string; options: StatusOption[]; permissions?: StatusPermissions }> {
     const id = this.ctx.idForRef(ref);
     const agent = this.agentForRef(id, ref);
     const live = this.ctx.agents.peek(id);
     const own = live?.sessionOptions?.();
+    const permissions = this.permissionsForAgent(agent);
     if (own) {
       const model = this.peekModelFor(id, agent, live, false);
-      return { agent, ...(model ? { model } : {}), options: statusOptions(own) };
+      return { agent, ...(model ? { model } : {}), options: statusOptions(own), ...(permissions ? { permissions } : {}) };
     }
     const fresh = this.ctx.store?.agentSession(id, agent) === undefined;
     const kinds = fresh ? await this.ctx.modelCatalog.learnOptions(agent) : (this.ctx.modelCatalog.options(agent) ?? []);
@@ -610,6 +615,22 @@ export class ConversationControls {
       agent,
       ...(model ? { model } : {}),
       options: kinds.map((k) => peekOptionStatus(k, fresh)),
+      ...(permissions ? { permissions } : {}),
+    };
+  }
+
+  permissionsForAgent(agentId: string): StatusPermissions | undefined {
+    const def = findAgent(this.ctx.config, agentId);
+    if (!def) return undefined;
+    const modes = this.ctx.modelCatalog.modes(agentId);
+    const modeIds = modes?.kind === 'list' ? modes.options.map((o) => o.value) : [];
+    const liveMode = modes?.kind === 'list' ? modes.current : undefined;
+    const unset = def.permissions === undefined;
+    const level = def.permissions ?? unsetLevel(def, liveMode).level;
+    return {
+      level,
+      ...(unset ? { unset: true } : {}),
+      offered: offeredLevelsFor(def, modeIds),
     };
   }
 
@@ -628,12 +649,17 @@ export class ConversationControls {
     const state = this.ctx.ensureState(id, ref.platform, this.agentForRef(id, ref), { opener: 'a setting switch' });
     const agent = state.agentId;
     const warm = await this.warmSelector(id, agent, (s) => nonEmpty(s.sessionOptions?.()));
-    if (warm.error) return { ok: false, agent, reason: 'error', text: tMenus(locale, 'opt_start_failed', { agent, error: warm.error }) };
-    if (!warm.selector) return { ok: false, agent, reason: 'none', text: tMenus(locale, 'opt_none_to_change', { agent }) };
+    const permissions = this.permissionsForAgent(agent);
+    if (warm.error) {
+      return { ok: false, agent, reason: 'error', text: tMenus(locale, 'opt_start_failed', { agent, error: warm.error }), ...(permissions ? { permissions } : {}) };
+    }
+    if (!warm.selector) {
+      return { ok: false, agent, reason: 'none', text: tMenus(locale, 'opt_none_to_change', { agent }), ...(permissions ? { permissions } : {}) };
+    }
     const liveModel = selectorModelLabel(warm.session.modelSelector?.());
     if (liveModel) this.ctx.status.model(id, liveModel);
     this.ctx.status.options(id, warm.selector);
-    return { ok: true, agent, options: warm.selector };
+    return { ok: true, agent, options: warm.selector, ...(permissions ? { permissions } : {}) };
   }
 
   /** Set one of the agent's own settings; the agent may still refuse a listed value, in its own words. */

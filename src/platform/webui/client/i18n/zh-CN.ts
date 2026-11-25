@@ -581,6 +581,17 @@ export const zhCN = {
   'reviews.dismissFailed': '无法忽略该建议：{err}',
   'reviews.archiveRefused': '归档请求被拒绝',
   'reviews.archiveFailed': '无法归档 {name}：{err}',
+  'reviews.reviewer': '复盘者 {name}',
+  'reviews.messagesRead': '读了 {count} 条消息',
+  'reviews.duration': '用时 {time}',
+  'reviews.revert': '回滚',
+  'reviews.revertTitle': '回滚技能「{name}」？',
+  'reviews.revertBody': '这会将 {name} 恢复到此次复盘改动前的版本，并在技能库 git 历史中新增一条回滚提交。',
+  'reviews.revertFailed': '无法回滚 {name}：{err}',
+  'chat.launchDirsTitle': '{agent} 的工作目录',
+  'chat.launchOtherDir': '其他目录…',
+  'status.permLabel': '权限',
+  'status.permTitle': '切换此智能体的权限级别',
 
   // History panel
   'history.searchPlaceholder': '搜索所有对话',

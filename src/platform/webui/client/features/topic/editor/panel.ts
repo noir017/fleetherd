@@ -374,6 +374,7 @@ export class TopicEditorPanel implements TopicEditorHandle {
         (ev: MouseEvent) => {
           const target = ev.target;
           if (!(target instanceof Element)) return;
+          if (target.closest('.st-perm')) return;
           const optBtn = target.closest<HTMLButtonElement>('.st-opt');
           if (optBtn && !optBtn.disabled && this._deps.quickPick?.listOptionChoices) {
             const oid = optBtn.getAttribute('data-opt');

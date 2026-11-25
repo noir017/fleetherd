@@ -221,6 +221,7 @@ export interface HistoryReviewChange {
   error?: string;
   /** The history entry (a commit) `fleetherd skills revert` names, when there is one. */
   revertId?: string;
+  commitId?: string;
 }
 
 /**
@@ -250,6 +251,9 @@ export interface HistoryReviewRecord {
   /** Why the whole review failed. Empty for every other outcome. */
   error?: string;
   at: number;
+  model?: string;
+  messagesRead?: number;
+  durationMs?: number;
 }
 
 /** One review session with the result it recorded, when it recorded one. */
@@ -616,7 +620,10 @@ export class HistoryStore {
           preferences TEXT NOT NULL DEFAULT '[]',
           invalid TEXT NOT NULL DEFAULT '[]',
           error TEXT NOT NULL DEFAULT '',
-          at INTEGER NOT NULL
+          at INTEGER NOT NULL,
+          model TEXT,
+          messages_read INTEGER,
+          duration_ms INTEGER
         );
       `);
       this.migrate();
@@ -654,6 +661,10 @@ export class HistoryStore {
     // for the thirty returned (4.3 ms against 0.8 on 340 sessions / 100k rows, measured 2026-11-07).
     // An existing file builds it once on open; it is a few thousand rows.
     db.exec('CREATE INDEX IF NOT EXISTS sessions_last ON sessions(last_at)');
+    const reviewCols = db.prepare('PRAGMA table_info(reviews)').all() as Array<{ name: string }>;
+    if (!reviewCols.some((c) => c.name === 'model')) db.exec('ALTER TABLE reviews ADD COLUMN model TEXT');
+    if (!reviewCols.some((c) => c.name === 'messages_read')) db.exec('ALTER TABLE reviews ADD COLUMN messages_read INTEGER');
+    if (!reviewCols.some((c) => c.name === 'duration_ms')) db.exec('ALTER TABLE reviews ADD COLUMN duration_ms INTEGER');
   }
 
   /**
@@ -1468,8 +1479,8 @@ export class HistoryStore {
       this.requireDb()
         .prepare(
           `INSERT INTO reviews
-             (session_id, reviewed_key, reviewed_title, platform, channel, thread, outcome, changes, preferences, invalid, error, at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             (session_id, reviewed_key, reviewed_title, platform, channel, thread, outcome, changes, preferences, invalid, error, at, model, messages_read, duration_ms)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(session_id) DO UPDATE SET
              reviewed_key = excluded.reviewed_key,
              reviewed_title = excluded.reviewed_title,
@@ -1481,7 +1492,10 @@ export class HistoryStore {
              preferences = excluded.preferences,
              invalid = excluded.invalid,
              error = excluded.error,
-             at = excluded.at`
+             at = excluded.at,
+             model = excluded.model,
+             messages_read = excluded.messages_read,
+             duration_ms = excluded.duration_ms`
         )
         .run(
           sessionId,
@@ -1495,7 +1509,10 @@ export class HistoryStore {
           JSON.stringify(record.preferences),
           JSON.stringify(record.invalid),
           record.error ?? '',
-          record.at
+          record.at,
+          record.model ?? null,
+          record.messagesRead ?? null,
+          record.durationMs ?? null
         );
     });
   }
@@ -1516,7 +1533,9 @@ export class HistoryStore {
                 r.platform AS review_platform, r.channel AS review_channel, r.thread AS review_thread,
                 r.outcome AS review_outcome, r.changes AS review_changes,
                 r.preferences AS review_preferences, r.invalid AS review_invalid,
-                r.error AS review_error, r.at AS review_at
+                r.error AS review_error, r.at AS review_at,
+                r.model AS review_model, r.messages_read AS review_messages_read,
+                r.duration_ms AS review_duration_ms
          FROM sessions s
          LEFT JOIN reviews r ON r.session_id = s.id
          WHERE s.kind = 'review'
@@ -1891,6 +1910,9 @@ function reviewRecordRow(row: Record<string, unknown>): HistoryReviewRecord {
     invalid: jsonArray<string>(row.review_invalid),
     ...(row.review_error ? { error: String(row.review_error) } : {}),
     at: Number(row.review_at ?? 0),
+    ...(typeof row.review_model === 'string' && row.review_model ? { model: row.review_model } : {}),
+    ...(typeof row.review_messages_read === 'number' ? { messagesRead: row.review_messages_read } : {}),
+    ...(typeof row.review_duration_ms === 'number' ? { durationMs: row.review_duration_ms } : {}),
   };
 }
 

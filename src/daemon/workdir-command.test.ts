@@ -569,9 +569,9 @@ describe('agentCatalogForRef (what a new topic offers)', () => {
         {
           name: 'this machine',
           agents: [
-            { id: 'cc', harness: 'claude', kind: 'Claude Code' },
-            { id: 'oc', harness: 'opencode', kind: 'OpenCode' },
-            { id: 'agy', harness: 'agy', kind: 'Antigravity' },
+            { id: 'cc', harness: 'claude', kind: 'Claude Code', root, dirs: ['gateway', 'shop-api', 'uniagent'].map((d) => join(root, d)) },
+            { id: 'oc', harness: 'opencode', kind: 'OpenCode', root, dirs: ['gateway', 'shop-api', 'uniagent'].map((d) => join(root, d)) },
+            { id: 'agy', harness: 'agy', kind: 'Antigravity', root, dirs: ['gateway', 'shop-api', 'uniagent'].map((d) => join(root, d)) },
           ],
         },
       ],
@@ -614,6 +614,27 @@ describe('agentCatalogForRef (what a new topic offers)', () => {
     });
     const { reg } = rig({ config: ruled });
     expect(reg.agentCatalogForRef(ref)?.current).toBe('oc');
+  });
+
+  it('sets up a new topic’s agent and working directory in one step without touching any prompt', async () => {
+    const { reg, send, prompts } = rig();
+    const target = join(root, 'shop-api');
+    const res = reg.setupTopicForRef(ref, { agent: 'oc', cwd: target });
+    expect(res).toEqual({ ok: true, agent: 'oc', cwd: target });
+    expect(reg.agentCatalogForRef(ref)?.current).toBe('oc');
+    expect(reg.workdirForRef(ref)?.path).toBe(target);
+    // Nothing was sent to any agent; the first real user message arrives verbatim.
+    expect(prompts).toEqual([]);
+    await send('hello');
+    expect(prompts).toEqual(['hello']);
+  });
+
+  it('rejects unknown agent, missing directory, or a topic that already has a session', async () => {
+    const { reg, store, key } = rig();
+    expect(reg.setupTopicForRef(ref, { agent: 'nope' }).ok).toBe(false);
+    expect(reg.setupTopicForRef(ref, { cwd: join(root, 'missing-dir') }).ok).toBe(false);
+    store.setAgentSession(key, 'cc', 'acp-session-1');
+    expect(reg.setupTopicForRef(ref, { agent: 'oc' }).ok).toBe(false);
   });
 });
 

@@ -406,6 +406,12 @@
 .wb-topic-editor .ac-model{font-size:12px;color:var(--fh-fg-dim)}
 .wb-topic-editor .launch-host .off{color:var(--fh-err)}
 .wb-topic-editor .launch-group.off .agent-card{opacity:.5}
+.wb-topic-editor .launch-dirs{margin-top:4px}
+.wb-topic-editor .launch-dir-grid{display:flex;flex-wrap:wrap;gap:6px}
+.wb-topic-editor .launch-dir{font-family:var(--fh-font-mono);font-size:12px;padding:6px 10px;border-radius:var(--fh-radius-ctrl);border:1px solid var(--fh-line);background:var(--fh-card);color:var(--fh-fg);cursor:pointer;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wb-topic-editor .launch-dir:hover{background:var(--fh-hover)}
+.wb-topic-editor .launch-dir.on{background:var(--fh-sel);border-color:var(--fh-accent);color:var(--fh-fg-hi)}
+.wb-topic-editor .launch-dir.more{font-family:inherit;color:var(--fh-link);border-style:dashed}
 
 .wb-topic-editor .wd-picker{border:1px solid var(--fh-line);border-radius:var(--fh-radius-card);background:var(--fh-card)}
 .wb-topic-editor .wd-head{background:var(--fh-bg-side)}
@@ -425,6 +431,7 @@
   .wb-topic-editor .m{font-size:15.5px;line-height:1.55;margin-bottom:18px}
   .wb-topic-editor .m.own{width:fit-content;max-width:86%;margin-left:auto;background:var(--fh-own-m);border:0;border-radius:18px 18px 4px 18px;padding:9px 14px;color:var(--fh-fg-hi)}
   .wb-topic-editor .m.own .t{text-align:right}
+  .wb-topic-editor .msg-actions{position:static;margin-top:6px;width:fit-content;opacity:.9;pointer-events:auto}
   .wb-topic-editor .tl{border-radius:8px;padding:8px 12px;font-size:13px}
   .wb-topic-editor .tc{border-radius:10px;padding:11px 12px;font-size:13.5px}
   .wb-topic-editor .tc button,

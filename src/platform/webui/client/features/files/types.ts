@@ -1,4 +1,4 @@
-import type { FilesPanelEntry, FilesPanelFile, FilesPanelKind } from '../../../../adapter.js';
+import type { FileGitStatus, FilesPanelEntry, FilesPanelFile, FilesPanelKind } from '../../../../adapter.js';
 import type { CodeViewApi } from '../../../codeview/app.js';
 import type { TopicToolContribution } from '../../plugins/api.js';
 import type { ApiClient } from '../../services/api.js';
@@ -31,6 +31,7 @@ export interface FileTreeItemData {
   readonly path: string;
   readonly name: string;
   readonly dir: boolean;
+  readonly gitStatus?: FileGitStatus;
 }
 
 export interface FilesTreeCacheEntry {

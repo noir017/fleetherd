@@ -36,6 +36,7 @@ const EXTRAS_SOURCE = [
   "export { createSchedulesPlugin } from './features/schedules/index.js';",
   "export { createSettingsPlugin } from './features/settings/plugin.js';",
   "export { createSkillsPlugin } from './features/skills/index.js';",
+  "export { createTerminalPlugin } from './features/terminal/plugin.js';",
   "export { initLocale, setLocale } from './i18n/index.js';",
 ].join('\n');
 

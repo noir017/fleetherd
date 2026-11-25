@@ -103,7 +103,8 @@ So wherever this README names a script function or a CSS rule as `page.ts`'s —
 `scripts/webui-client.mjs` (called by `scripts/build-webui-assets.mjs`, and by the tests), linked
 from the page by content-hashed name, and served by `GET /assets/<file>`. What the server decides
 per deployment reaches the script as `<script type="application/json" id="boot-config">` — read
-once into `BOOT` — instead of being spliced into its text, which is what let the CSP drop
+once into `BOOT` (including `version`, the package version rendered as `v<version>` in the status
+bar and mobile More view) — instead of being spliced into its text, which is what let the CSP drop
 `script-src 'unsafe-inline'`. Two build-time markers remain in the script (`clientIcons()` and
 `CACHE_CORE`, filled by `webui-client.mjs`); the build fails if either is missing.
 
@@ -175,6 +176,12 @@ saying so rather than doing nothing.
 The star is persisted beside the title, and only when true — a topic file from before stars, or
 from someone who never uses them, is unchanged. The page sends `{ starred: true|false }`, never a
 toggle, because `post` retries a dropped request and a retried toggle would flip back.
+
+**One-step topic setup (`POST /api/topics` and `POST /api/topics/setup`).** `POST /api/topics`
+accepts optional `{ agent?, cwd? }` to create a topic and bind its agent and working directory in
+one request (rolling back the newly created topic if setup fails). On an already-created empty topic
+before the first message, `POST /api/topics/setup` takes `{ topic, agent?, cwd? }` and applies the
+binding directly through the daemon without posting `/agent` or `/cd` commands into the transcript.
 
 ### Every topic keeps its transcript
 
@@ -787,12 +794,13 @@ timer while visible (5s while a run is in flight, 30s otherwise) — the daemon 
 run finishing. Countdowns ("in 3h 12m") are computed from `nextAt` on the client; every other time
 arrives formatted in the task's own zone.
 
-Reviews travel the same way and on the same timer: `useReviewPanel` hands the room `list()` and
-`dismiss(text)`, `daemon/review-panel.ts` builds them from `history.db` and `reviews.json`, and the
-routes are `GET api/reviews` and `POST api/reviews/op` — the latter takes one verb,
-`{action:'dismiss', text}` (`ReviewOpRequestSchema`), and answers with the fresh list. There is no
-verb that starts, changes or undoes a review, because a review has no writer but the sweep. The list is pulled
-when the tab is selected and on the panel's timer while it is the visible one.
+Reviews travel the same way and on the same timer: `useReviewPanel` hands the room `list()`,
+`dismiss(text)`, and `revert(skill, commit)`, `daemon/review-panel.ts` builds them from `history.db`
+and `reviews.json` (including reviewer/model/message-count/duration metadata and inline diffs), and
+the routes are `GET api/reviews` and `POST api/reviews/op` — the latter accepts
+`{action:'dismiss', text}` or `{action:'revert', skill, commit}` (`ReviewOpRequestSchema`), and
+answers with the fresh list. There is still no verb that starts or edits a review sweep. The list is
+pulled when the tab is selected and on the panel's timer while it is the visible one.
 
 **Creating tasks.** The page used not to create tasks, on the reasoning that a page POSTing a
 prompt or a command would put a bash surface behind the login form. The edit route already took a
@@ -2000,6 +2008,8 @@ A file can be opened from elsewhere: `window.openFileEditor(path)` takes a path 
 topic's working directory or absolute on that machine, and the git panel uses it.
 
 Routes are `GET /api/files/list|read|search` and `POST /api/files/write|create|rename|remove`.
+When the listed directory sits inside a git repository, `GET /api/files/list` attaches a `gitStatus`
+code (e.g. `M`, `A`, `?`) to modified/untracked file and directory entries.
 Every one answers 404 when the feature is off, and the page is told at render time (`FILES_OK`),
 so a page older than the config has no button to press. A successful write is a log line naming
 the operator, the machine and the file.

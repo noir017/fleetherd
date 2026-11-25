@@ -5,6 +5,33 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### 3.39.0-beta.2
+
+Compared to `3.39.0-beta.1` (which landed the modular workbench architecture and dock engine), this
+release finishes page-by-page alignment against the workbench design across desktop, tablet, and
+mobile, adds four backend-backed workflows so common actions no longer drop back to slash commands,
+and retires legacy DOM tests superseded by the new workbench suites.
+
+- **One-step new topic setup, review revert, file tree git badges, and status-line permissions.**
+  New topics now display both agent cards and a working-directory grid upfront and bind choices via
+  `POST /api/topics` (`agent`/`cwd`) or `POST /api/topics/setup` without echoing `/agent` or `/cd`
+  into the transcript. Review detail views now show reviewer/model/message-count/duration metadata,
+  inline diffs for applied skill edits, and a confirmed **Revert** action (`POST /api/reviews/op`
+  `revert`). File tree listings (`GET /api/files/list`) surface `gitStatus` badges (`M`, `A`, `?`,
+  etc.) inside git repositories, the topic status line adds a clickable **Permissions** chip, and
+  `boot-config` now exposes the daemon `version` in the status bar and mobile More screen.
+- **Page-by-page workbench polish, mobile stack shell, and schedule quick presets.** Aligned the
+  desktop/tablet shell, topic list, chat composer, tools, skills/settings, and mobile `StackShell`
+  with the workbench mockup: unified mobile large-title headers and bottom action sheets, fixed
+  mobile-to-desktop editor reattachment and stream/notification state sync on the mobile **More**
+  tab, added **Daily / Weekly / Interval** quick schedule presets that generate cron expressions in
+  the task editor, moved inline SVGs into `icons.ts`, eliminated hardcoded CSS colors outside
+  `tokens.css`, and kept `app-*.js` gzip at 153.1 KiB (under the 160 KiB budget) by moving the
+  terminal plugin into `workbench-extras`.
+- **Test suite cleanup.** Retired superseded legacy `page.dom.{editors,panels,library,settings}`
+  suites, updated remaining DOM assertions for the new workbench and `/api/topics/setup` behavior,
+  and added end-to-end coverage in `test/e2e/webui/wb2-api.spec.ts`.
+
 ## [3.39.0-beta.1] - 2026-11-25
 
 ### Added

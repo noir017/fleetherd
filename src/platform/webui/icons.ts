@@ -102,7 +102,10 @@ const PATHS = {
   offline:
     '<path d="M2.5 8.8a14 14 0 0 1 19 0M5.6 12.3a9.5 9.5 0 0 1 12.8 0M8.8 15.7a5 5 0 0 1 6.4 0"/>' +
     '<circle cx="12" cy="19.2" r="1.3" fill="currentColor" stroke="none"/><path d="M4 3.5 20 20.5"/>',
-  bulb: '<path d="M9 17.5h6M10 21h4M12 3a6 6 0 0 0-3.6 10.8c.7.6 1.1 1.4 1.1 2.2v1.5h5V16c0-.8.4-1.6 1.1-2.2A6 6 0 0 0 12 3z"/>',
+  bulb:
+    '<path d="M9 17.5h6M10 21h4M12 3a6 6 0 0 0-3.6 10.8c.7.6 1.1 1.4 1.1 2.2v1.5h5V16c0-.8.4-1.6 1.1-2.2A6 6 0 0 0 12 3z"/>',
+  expand: '<path d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7"/>',
+  send: '<path d="M12 19V5M5.5 11.5 12 5l6.5 6.5"/>',
 } as const;
 
 export type IconName = keyof typeof PATHS;

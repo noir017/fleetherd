@@ -592,7 +592,7 @@ class SchedulesView implements SchedulesViewController {
             (t) => {
               this._activeTaskId = t.id;
               this._paintBody();
-              this._ctx.editors.open('schedule', { id: t.id, mode: 'view', title: t.name });
+              this._ctx.editors.open('schedule', { id: t.id, mode: 'view', title: t.name }, { id: `schedule:${t.id}` });
             },
             (anchor, t) => {
               const entries = this._resolveTaskMenu(t);

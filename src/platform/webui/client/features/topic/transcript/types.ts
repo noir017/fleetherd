@@ -86,6 +86,8 @@ export interface LaunchAgent {
   readonly harness: string;
   readonly kind: string;
   readonly model?: string;
+  readonly root?: string;
+  readonly dirs?: readonly string[];
 }
 
 export interface LaunchGroup {
@@ -109,7 +111,7 @@ export interface TranscriptTopicLike {
   readonly running?: boolean;
   readonly forkOf?: string;
   readonly forkTurn?: number;
-  readonly dir?: { readonly host?: string } | null;
+  readonly dir?: { readonly host?: string; readonly path?: string } | null;
 }
 
 export interface TranscriptIcons {

@@ -467,6 +467,7 @@ export class ConversationCommands {
     for (const [id, state] of this.ctx.conversations) {
       if (state.agentId !== agentId) continue;
       void this.ctx.agents.peek(id)?.applyPermissions?.();
+      this.ctx.status.refresh(id);
     }
   }
 

@@ -12,6 +12,7 @@ import type {
   SettingsScreen,
   SlashCommandSpec,
   StatusOption,
+  StatusPermissions,
   TopicActivity,
   TopicKillResult,
   WorkdirScreen,
@@ -170,8 +171,8 @@ export interface PendingQueueActions {
  * live session — started first if need be, as the model list is. `ok: false` says why not, in words.
  */
 export type SessionOptionList =
-  | { ok: true; agent: string; options: SessionOption[] }
-  | { ok: false; agent: string; reason: 'none' | 'error'; text: string };
+  | { ok: true; agent: string; options: SessionOption[]; permissions?: StatusPermissions }
+  | { ok: false; agent: string; reason: 'none' | 'error'; text: string; permissions?: StatusPermissions };
 
 /** The outcome of a pick: the whole set as the agent reports it afterwards, or its refusal in its words. */
 export type SessionOptionResult = { ok: true; options: SessionOption[]; text: string } | { ok: false; text: string };
@@ -187,7 +188,7 @@ export type SessionOptionResult = { ok: true; options: SessionOption[]; text: st
  * `list` is what opening one shows, and does start the session.
  */
 export interface SessionOptionPicker {
-  peek(ref: ConversationRef): Promise<{ agent: string; model?: string; options: StatusOption[] }>;
+  peek(ref: ConversationRef): Promise<{ agent: string; model?: string; options: StatusOption[]; permissions?: StatusPermissions }>;
   list(ref: ConversationRef): Promise<SessionOptionList>;
   choose(ref: ConversationRef, id: string, value: string): Promise<SessionOptionResult>;
 }
@@ -689,6 +690,10 @@ export interface ReviewPanelChange {
   undo?: string;
   /** The command that carries out a suggestion. */
   command?: string;
+  /** Skill git commit id to pass to revert, when applied and revertable. */
+  revertId?: string;
+  /** Unified diff for this skill change from the skills git history, when available. */
+  diff?: string;
 }
 
 /** One review, as the tab lists it. */
@@ -712,6 +717,14 @@ export interface ReviewPanelEntry {
   topic?: string;
   /** Read from a raw answer that predates result records — nothing here says what was applied. */
   inferred?: boolean;
+  /** Who ran the review (agent id or `api:<model>`). */
+  reviewer?: string;
+  /** Model used by the reviewer, when recorded. */
+  model?: string;
+  /** Number of messages from the reviewed conversation included in the prompt. */
+  messagesRead?: number;
+  /** Elapsed time of the review run in milliseconds. */
+  durationMs?: number;
 }
 
 /**
@@ -764,6 +777,8 @@ export interface ReviewPanel {
   list(): ReviewPanelList;
   /** Take one suggestion off the pending list; answers with the fresh list. */
   dismiss(text: string): ReviewPanelList;
+  /** Revert one applied skill change through skills-store (invariant 8); answers with the fresh list. */
+  revert?(name: string, id: string): Promise<{ ok: true; list: ReviewPanelList } | { ok: false; error: string }>;
 }
 
 /**
@@ -863,10 +878,14 @@ export interface HistoryPanelRead {
  */
 export type FilesPanelKind = 'text' | 'image' | 'binary' | 'big';
 
+export type FileGitStatus = 'M' | 'A' | 'D' | 'R' | 'U' | '?';
+
 /** One entry of a directory listing. `dir` is decided after following links, as everywhere else. */
 export interface FilesPanelEntry {
   name: string;
   dir: boolean;
+  /** Working-tree git status badge for this entry (aggregated for dirs). Absent when clean or outside git. */
+  gitStatus?: FileGitStatus;
 }
 
 export interface FilesPanelListing {
@@ -1095,6 +1114,8 @@ export interface InstructionsPanel {
   read(target: InstructionsTarget, opts?: { preview?: boolean }): Promise<InstructionsReadResult>;
   write(target: InstructionsTarget, text: string, expect: FilesPanelExpect): Promise<InstructionsWriteResult>;
 }
+
+export type TopicSetupResult = { ok: true; agent: string; cwd: string } | { ok: false; error: string };
 
 /**
  * Platform capability interface. One layer above Satori so the core classes depend only on
@@ -1429,6 +1450,9 @@ export interface PlatformAdapter {
    * question, and the only moment the answer matters is when an empty topic is drawn.
    */
   useAgentCatalog?(lookup: (ref: ConversationRef) => AgentCatalog | undefined): void;
+
+  /** Bind a new/empty topic's agent and working directory in one step without adding prompt text. */
+  useTopicSetup?(setup: (ref: ConversationRef, opts: { agent?: string; cwd?: string }) => TopicSetupResult): void;
 
   /**
    * Hand the platform a model switch for its conversations: what each can switch to, and the switch

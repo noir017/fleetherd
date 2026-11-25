@@ -509,6 +509,69 @@ describe('HistoryStore', () => {
       expect(rows[0]!.record?.outcome).toBe('preferences');
       store.close();
     });
+
+    it('persists model, messagesRead, durationMs, and change commitId, and migrates older reviews tables', () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fleetherd-history-revmeta-'));
+      dirs.push(dir);
+      const file = path.join(dir, 'history.db');
+      const raw = new Sqlite(file);
+      raw.exec(`
+        CREATE TABLE sessions (
+          id INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT NOT NULL UNIQUE, platform TEXT NOT NULL DEFAULT '',
+          title TEXT NOT NULL DEFAULT '', agent TEXT NOT NULL DEFAULT '', host TEXT NOT NULL DEFAULT '',
+          cwd TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL DEFAULT 'normal',
+          started_at INTEGER NOT NULL, last_at INTEGER NOT NULL
+        );
+        CREATE TABLE messages (
+          id INTEGER PRIMARY KEY AUTOINCREMENT, session_id INTEGER NOT NULL, ts INTEGER NOT NULL,
+          role TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'normal', text TEXT NOT NULL
+        );
+        CREATE TABLE reviews (
+          session_id INTEGER PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+          reviewed_key TEXT NOT NULL DEFAULT '', reviewed_title TEXT NOT NULL DEFAULT '', platform TEXT NOT NULL DEFAULT '',
+          channel TEXT NOT NULL DEFAULT '', thread TEXT NOT NULL DEFAULT '',
+          outcome TEXT NOT NULL DEFAULT 'nothing', changes TEXT NOT NULL DEFAULT '[]', preferences TEXT NOT NULL DEFAULT '[]',
+          invalid TEXT NOT NULL DEFAULT '[]', error TEXT NOT NULL DEFAULT '', at INTEGER NOT NULL
+        );
+        INSERT INTO sessions (key, platform, title, agent, kind, started_at, last_at)
+          VALUES ('review#old#1', 'review', '旧复盘', 'api', 'review', 1000, 1000);
+        INSERT INTO reviews (session_id, reviewed_key, reviewed_title, platform, outcome, changes, preferences, invalid, at)
+          VALUES (1, 'web#main#11111111', '旧话题', 'web', 'nothing', '[]', '[]', '[]', 1000);
+      `);
+      raw.close();
+
+      const store = new HistoryStore(file, () => {});
+      const id2 = store.session({ key: 'review#new#2', platform: 'review', title: '新复盘', agent: 'ag', kind: 'review', at: 2000 })!;
+      store.message(id2, { ts: 2000, role: 'agent', kind: 'review', text: 'ok' });
+      store.recordReview(id2, {
+        reviewedKey: 'web#main#22222222',
+        reviewedTitle: '新话题',
+        platform: 'web',
+        outcome: 'changed',
+        changes: [{ action: 'patch', name: 'ops', reason: 'fix', commitId: 'abcdef1234567890' }],
+        preferences: [],
+        invalid: [],
+        model: 'gemini-3-pro',
+        messagesRead: 14,
+        durationMs: 4200,
+        at: 2000,
+      });
+
+      const rows = store.reviewSessions();
+      expect(rows).toHaveLength(2);
+      const fresh = rows.find((r) => r.session.id === id2);
+      expect(fresh?.record).toMatchObject({
+        model: 'gemini-3-pro',
+        messagesRead: 14,
+        durationMs: 4200,
+        changes: [{ action: 'patch', name: 'ops', reason: 'fix', commitId: 'abcdef1234567890' }],
+      });
+      const legacy = rows.find((r) => r.session.id === 1);
+      expect(legacy?.record?.model).toBeUndefined();
+      expect(legacy?.record?.messagesRead).toBeUndefined();
+      expect(legacy?.record?.durationMs).toBeUndefined();
+      store.close();
+    });
   });
 });
 

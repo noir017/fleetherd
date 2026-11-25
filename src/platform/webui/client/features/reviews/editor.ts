@@ -5,6 +5,7 @@ import type {
 } from '../../../../adapter.js';
 import { html, nothing, render, type TemplateResult } from '../../base/html.js';
 import { DisposableStore } from '../../base/lifecycle.js';
+import { openConfirmDialog } from '../../components/index.js';
 import { t as tr } from '../../i18n/index.js';
 import type { PluginContext } from '../../plugins/api.js';
 import type { ReviewsStore } from './store.js';
@@ -39,6 +40,54 @@ function formatReviewTime(at: number): string {
   }
 }
 
+function formatReviewDuration(ms: number): string {
+  if (ms < 1000) return '<1s';
+  const totalSec = Math.round(ms / 1000);
+  const min = Math.floor(totalSec / 60);
+  const sec = totalSec % 60;
+  return min > 0 ? (sec > 0 ? `${min}m ${sec}s` : `${min}m`) : `${sec}s`;
+}
+
+function formatReviewMeta(entry: ReviewPanelEntry): string {
+  const parts: string[] = [formatReviewTime(entry.at)];
+  if (entry.reviewer) {
+    const who = entry.model ? `${entry.reviewer}（${entry.model}）` : entry.reviewer;
+    parts.push(tr('reviews.reviewer', { name: who }));
+  } else if (entry.model) {
+    parts.push(entry.model);
+  }
+  if (entry.messagesRead !== undefined) {
+    parts.push(tr('reviews.messagesRead', { count: entry.messagesRead }));
+  }
+  if (entry.durationMs !== undefined) {
+    parts.push(tr('reviews.duration', { time: formatReviewDuration(entry.durationMs) }));
+  }
+  if (entry.inferred) parts.push(tr('reviews.inferredNote'));
+  return parts.join(' · ');
+}
+
+function renderInlineDiff(diff: string): TemplateResult | typeof nothing {
+  const lines = diff.split('\n').filter((line) => {
+    if (line.startsWith('diff --git ') || line.startsWith('index ') || line.startsWith('--- ') || line.startsWith('+++ ')) {
+      return false;
+    }
+    return true;
+  });
+  if (lines.length === 0) return nothing;
+  return html`<div class="fh-rev-diff" data-rev-diff="1">
+    ${lines.map((line) => {
+      const cls = line.startsWith('@@')
+        ? 'fh-rev-dl fh-rev-dl--hunk'
+        : line.startsWith('+')
+          ? 'fh-rev-dl fh-rev-dl--add'
+          : line.startsWith('-')
+            ? 'fh-rev-dl fh-rev-dl--del'
+            : 'fh-rev-dl';
+      return html`<div class=${cls}>${line || ' '}</div>`;
+    })}
+  </div>`;
+}
+
 function formatChangeHeading(c: ReviewPanelChange): string {
   const what =
     c.action === 'create'
@@ -57,20 +106,51 @@ function formatChangeHeading(c: ReviewPanelChange): string {
   return `${what}${name}`;
 }
 
-function renderAppliedCard(changes: readonly ReviewPanelChange[], ctx: PluginContext): TemplateResult | typeof nothing {
+function renderAppliedCard(
+  changes: readonly ReviewPanelChange[],
+  ctx: PluginContext,
+  store: ReviewsStore,
+  busyKeys: ReadonlySet<string>,
+  doc: Document,
+): TemplateResult | typeof nothing {
   if (changes.length === 0) return nothing;
   return html`<div class="fh-sh">${ctx.i18n.t('wb.reviews.appliedChanges')} · ${changes.length}</div>
     <div class="fh-card">
-      ${changes.map(
-        (c) => html`<div class="fh-ci fh-ci--static">
-          <span class="fh-ci-l">${formatChangeHeading(c)}</span>
-          ${c.applied === undefined
-            ? html`<span class="fh-pill fh-pill--neutral">${tr('reviews.statusUnknown')}</span>`
-            : nothing}
-          ${c.reason ? html`<span class="fh-ci-h">${c.reason}</span>` : nothing}
-          ${c.undo ? html`<code class="rev-undo fh-ci-code">${c.undo}</code>` : nothing}
-        </div>`,
-      )}
+      ${changes.map((c) => {
+        const revertId = c.revertId;
+        const busy = revertId ? busyKeys.has(`revert:${c.name}:${revertId}`) : false;
+        return html`<div class="fh-ci fh-ci--static">
+            <span class="fh-ci-l">${formatChangeHeading(c)}</span>
+            ${revertId
+              ? html`<span class="fh-acts">
+                  <button
+                    type="button"
+                    class="fh-btn fh-btn--secondary"
+                    data-rev-revert=${revertId}
+                    data-rev-skill=${c.name}
+                    ?disabled=${busy}
+                    @click=${() => {
+                      openConfirmDialog({
+                        doc,
+                        title: tr('reviews.revertTitle', { name: c.name }),
+                        body: tr('reviews.revertBody', { name: c.name }),
+                        confirmLabel: tr('reviews.revert'),
+                        danger: true,
+                        onConfirm: async () => {
+                          await store.revertChange(c.name, revertId);
+                        },
+                      });
+                    }}
+                  >${tr('reviews.revert')}</button>
+                </span>`
+              : c.applied === undefined
+                ? html`<span class="fh-pill fh-pill--neutral">${tr('reviews.statusUnknown')}</span>`
+                : nothing}
+            ${c.reason ? html`<span class="fh-ci-h">${c.reason}</span>` : nothing}
+            ${!revertId && c.undo ? html`<code class="rev-undo fh-ci-code">${c.undo}</code>` : nothing}
+          </div>
+          ${c.diff ? renderInlineDiff(c.diff) : nothing}`;
+      })}
     </div>`;
 }
 
@@ -210,9 +290,9 @@ export function createReviewDetailEditorComponent(
       return;
     }
     panelCtx?.api.setTitle(`${tr('sideTasks.tabReviews')} · ${entry.title}`);
-    const applied = entry.changes.filter((c) => c.applied !== false && !c.suggested);
-    const refused = entry.changes.filter((c) => c.applied === false);
-    const archives = entry.changes.filter((c) => c.suggested || c.action === 'archive');
+    const archives = entry.changes.filter((c) => Boolean(c.suggested));
+    const applied = entry.changes.filter((c) => !c.suggested && c.applied !== false);
+    const refused = entry.changes.filter((c) => !c.suggested && c.applied === false);
     const canOpenTopic = Boolean(entry.topic && ctx.topics.list().some((t) => t.id === entry.topic));
     const pillCls =
       entry.outcome === 'failed'
@@ -239,15 +319,18 @@ export function createReviewDetailEditorComponent(
         </div>
         <div class="fh-review-editor-body">
           <div class="fh-pcol">
-            <div class="fh-psub">
-              ${formatReviewTime(entry.at)}${entry.inferred ? ` · ${tr('reviews.inferredNote')}` : ''}
-            </div>
+            <div class="fh-psub" data-rev-meta="1">${formatReviewMeta(entry)}</div>
+            ${snap.note
+              ? html`<div class="fh-card"><div class="fh-ci fh-ci--static">
+                  <span class="fh-ci-l rev-note bad">${snap.note}</span>
+                </div></div>`
+              : nothing}
             ${entry.error
               ? html`<div class="fh-card"><div class="fh-ci fh-ci--static">
                   <span class="fh-ci-l rev-note bad">${entry.error}</span>
                 </div></div>`
               : nothing}
-            ${renderAppliedCard(applied, ctx)}
+            ${renderAppliedCard(applied, ctx, store, snap.busyKeys, doc)}
             ${renderRefusedCard(refused, entry.invalid)}
             ${renderArchiveSuggestionsCard(archives, ctx, store, snap.busyKeys)}
             ${renderReviewPrefsCard(entry.preferences, ctx, store, snap.busyKeys)}
