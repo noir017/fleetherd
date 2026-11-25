@@ -141,12 +141,13 @@ width, and the same × closes the task panel on the right: the two are one compo
 same header and footer rows, the same slide and the same dimmed backdrop.
 
 **Choosing an agent.** With more than one agent configured, a new topic opens on all of them,
-grouped by machine, alongside a working-directory grid for the selected agent: each card shows the
-agent's id, what it is (Claude Code, Codex, OpenCode, Antigravity, or a custom agent's command) and
-its model if one is set. Tap an agent and a directory to configure both in one step before sending
-anything — neither `/agent` nor `/cd` is echoed into the transcript, and any draft in the composer
-stays intact. Or just type — the card marked **default** is the agent that answers. The launcher
-goes away as soon as anything is said in the topic.
+grouped by machine: each card shows the agent's id, what it is (Claude Code, Codex, OpenCode,
+Antigravity, or a custom agent's command) and its model if one is set. Tapping a card sends
+`/agent <id>` (leaving any draft in the composer intact) and opens the same folder picker as `/cd`
+— with breadcrumbs, parent navigation, and filtering — to choose its working directory; the status
+strip immediately offers that agent's model and settings (such as account) switches. Or just
+type — the card marked **default** is the agent that answers. The cards go away as soon as
+anything is said in the topic.
 
 **Stopping it.** While a reply is streaming, **Stop** beside Send ends the turn
 (`/stop`) — and the same goes for an agent reporting back on background work after
