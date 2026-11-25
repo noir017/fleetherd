@@ -15,24 +15,56 @@ const ACTIVE_TOPIC = 'API workbench topic';
 const NEW_TOPIC = 'Fresh setup topic';
 const MOBILE_NEW_TOPIC = 'Fresh mobile topic';
 
-test.describe('wb2-api: 5 backend + frontend workbench integrations', () => {
-  test.beforeAll(async () => {
-    gateway = await startGateway();
-    fs.mkdirSync(path.join(gateway.workDir, 'sub-a', 'nested'), { recursive: true });
-    fs.mkdirSync(path.join(gateway.workDir, 'sub-b'), { recursive: true });
-    fs.writeFileSync(path.join(gateway.workDir, 'README.md'), '# Modified README\n\nUpdated for git badge check.\n');
-    fs.writeFileSync(path.join(gateway.workDir, 'untracked.txt'), 'new file\n');
-    const seeded = await seedTopics(gateway, [
-      { title: ACTIVE_TOPIC, message: 'Check status permissions and file git badges', mode: 'rich' },
-      { title: NEW_TOPIC },
-      { title: MOBILE_NEW_TOPIC },
-    ]);
-    seededIds = seeded.topics;
-  });
+const MOCK_REVIEW_LIST = {
+  enabled: true,
+  running: true,
+  pending: [],
+  reviews: [
+    {
+      id: 'review:web#main#11111111:1',
+      title: 'Deploy notes for 3.39',
+      at: Date.UTC(2026, 10, 25, 9, 40),
+      outcome: 'changed',
+      summary: '1 skill change',
+      reviewer: 'ag@buildbox',
+      model: 'gemini-3.8-flash',
+      messagesRead: 18,
+      durationMs: 130_000,
+      changes: [
+        {
+          action: 'patch',
+          name: 'deploy-check',
+          reason: 'Add git fetch before tagging',
+          applied: true,
+          revertId: 'abcdef1',
+          diff: 'diff --git a/skills/deploy-check/SKILL.md b/skills/deploy-check/SKILL.md\n@@ -1,2 +1,3 @@\n # Deploy\n+1. Run git fetch first\n 2. Run tests',
+        },
+      ],
+      preferences: [],
+      invalid: [],
+    },
+  ],
+};
 
-  test.afterAll(async () => {
-    await gateway?.stop();
-  });
+test.beforeAll(async () => {
+  gateway = await startGateway();
+  fs.mkdirSync(path.join(gateway.workDir, 'sub-a', 'nested'), { recursive: true });
+  fs.mkdirSync(path.join(gateway.workDir, 'sub-b'), { recursive: true });
+  fs.writeFileSync(path.join(gateway.workDir, 'README.md'), '# Modified README\n\nUpdated for git badge check.\n');
+  fs.writeFileSync(path.join(gateway.workDir, 'untracked.txt'), 'new file\n');
+  const seeded = await seedTopics(gateway, [
+    { title: ACTIVE_TOPIC, message: 'Check status permissions and file git badges', mode: 'rich' },
+    { title: NEW_TOPIC },
+    { title: MOBILE_NEW_TOPIC },
+  ]);
+  seededIds = seeded.topics;
+});
+
+test.afterAll(async () => {
+  await gateway?.stop();
+});
+
+test.describe('wb2-api: desktop workbench integrations', () => {
 
   test('desktop: status bar version, inline new topic agent + folder picker, file git badges, and permission switcher', async ({ page }) => {
     test.setTimeout(60_000);
@@ -118,44 +150,17 @@ test.describe('wb2-api: 5 backend + frontend workbench integrations', () => {
     expect(String((sent.postDataJSON() as { text?: string }).text ?? '')).toMatch(/^\/setting permissions\.\S+ ask$/);
     await expect(permBtn).toContainText('ask');
   });
+});
+
+test.describe('wb2-api: reviews and mobile workbench integrations', () => {
 
   test('desktop: review detail shows reviewer/model/messages/duration, inline diff, and confirmed revert', async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
     let revertedBody: Record<string, unknown> | null = null;
-    const mockList = {
-      enabled: true,
-      running: true,
-      pending: [],
-      reviews: [
-        {
-          id: 'review:web#main#11111111:1',
-          title: 'Deploy notes for 3.39',
-          at: Date.UTC(2026, 10, 25, 9, 40),
-          outcome: 'changed',
-          summary: '1 skill change',
-          reviewer: 'ag@buildbox',
-          model: 'gemini-3.8-flash',
-          messagesRead: 18,
-          durationMs: 130_000,
-          changes: [
-            {
-              action: 'patch',
-              name: 'deploy-check',
-              reason: 'Add git fetch before tagging',
-              applied: true,
-              revertId: 'abcdef1',
-              diff: 'diff --git a/skills/deploy-check/SKILL.md b/skills/deploy-check/SKILL.md\n@@ -1,2 +1,3 @@\n # Deploy\n+1. Run git fetch first\n 2. Run tests',
-            },
-          ],
-          preferences: [],
-          invalid: [],
-        },
-      ],
-    };
-    await page.route('**/api/reviews', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(mockList) }));
+    await page.route('**/api/reviews', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(MOCK_REVIEW_LIST) }));
     await page.route('**/api/reviews/op', async (route) => {
       revertedBody = route.request().postDataJSON() as Record<string, unknown>;
-      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(mockList) });
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(MOCK_REVIEW_LIST) });
     });
 
     await loginViaUi(page, gateway.baseUrl, gateway.secret);
