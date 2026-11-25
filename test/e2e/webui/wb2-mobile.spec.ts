@@ -54,9 +54,13 @@ test.describe('Web UI mobile shell, palette, and login alignment', () => {
   test('mobile (<640px) renders topic view as main screen with slide-out sidebar drawer, gestures, and back button', async ({
     page,
   }) => {
+    await page.emulateMedia({ colorScheme: 'dark' });
     await page.setViewportSize({ width: 390, height: 844 });
     await loginViaUi(page, gateway.baseUrl, gateway.secret);
 
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+    const darkBg = await page.locator('#workbench-root').evaluate((el) => getComputedStyle(el).backgroundColor);
+    expect(darkBg).toBe('rgb(31, 31, 31)');
     await expect(page.locator('#workbench-root')).toHaveAttribute('data-wb-mode', 'mobile');
     await expect(page.locator('.wb-shell')).toBeVisible();
     await expect(page.locator('.wb-stack')).toHaveCount(0);
@@ -81,6 +85,10 @@ test.describe('Web UI mobile shell, palette, and login alignment', () => {
     for (const id of ['topics', 'history', 'schedules', 'reviews', 'skills', 'settings']) {
       await expect(page.locator(`.wb-activity-item[data-activity-id="${id}"]`)).toBeVisible();
     }
+    const leakedMargin = await page.locator('.wb-sidebar .wb-topic-row').evaluateAll((rows) =>
+      rows.some((r) => parseFloat(getComputedStyle(r).marginTop) > 0),
+    );
+    expect(leakedMargin).toBe(false);
     await page.screenshot({ path: '/tmp/wb4-mobile/after-drawer-topics-dark.png' });
 
     // Picking a topic switches to it and closes the drawer
@@ -124,17 +132,20 @@ test.describe('Web UI mobile shell, palette, and login alignment', () => {
     await expect(page.locator('.wb-topic-editor')).toBeVisible();
 
     // Light theme topic screenshot
-    await page.evaluate(() => {
-      document.documentElement.dataset.theme = 'light';
-    });
+    await page.emulateMedia({ colorScheme: 'light' });
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+    const lightBg = await page.locator('#workbench-root').evaluate((el) => getComputedStyle(el).backgroundColor);
+    expect(lightBg).toBe('rgb(255, 255, 255)');
     await page.screenshot({ path: '/tmp/wb4-mobile/after-topic-light.png' });
   });
 
   test('mobile drawer switches across History, Schedules, Reviews, Skills, Settings, and reaches topic tools', async ({
     page,
   }) => {
+    await page.emulateMedia({ colorScheme: 'dark' });
     await page.setViewportSize({ width: 390, height: 844 });
     await loginViaUi(page, gateway.baseUrl, gateway.secret);
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
 
     await page.locator('#expand-sidebar').click();
     await expect(page.locator('.wb-sidebar')).toBeVisible();
@@ -146,10 +157,29 @@ test.describe('Web UI mobile shell, palette, and login alignment', () => {
     }
 
     await expect(page.locator('.wb-sidebar .wb-set-catalog')).toBeVisible();
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
     await page.screenshot({ path: '/tmp/wb4-mobile/after-drawer-settings-dark.png' });
 
+    // Device theme preference still works at 390x844 via Settings -> Device preferences
+    const devItem = page.locator('.wb-sidebar .wb-set-catalog').getByRole('option', { name: 'Device preferences' });
+    await expect(devItem).toBeVisible();
+    await devItem.click();
+    await expect(page.locator('.wb-sidebar')).toBeHidden();
+    const lightBtn = page.locator('.fh-device-prefs .fh-seg-item').filter({ hasText: 'Light' }).first();
+    await expect(lightBtn).toBeVisible();
+    await lightBtn.click();
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+    expect(await page.evaluate(() => localStorage.getItem('fh_theme'))).toBe('light');
+    const darkBtn = page.locator('.fh-device-prefs .fh-seg-item').filter({ hasText: 'Dark' }).first();
+    await darkBtn.click();
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+    expect(await page.evaluate(() => localStorage.getItem('fh_theme'))).toBe('dark');
+    await expect
+      .poll(() => page.locator('#workbench-root').evaluate((el) => getComputedStyle(el).backgroundColor))
+      .toBe('rgb(31, 31, 31)');
+    await page.locator('.wb-tab.is-active .wb-tab-close').click();
+
     // Close drawer via backdrop and open topic tool (Changes) from topic header
-    await page.mouse.click(375, 420);
     await expect(page.locator('.wb-sidebar')).toBeHidden();
 
     const changesBtn = page.locator('.wb-topic-tools [data-tool-id="changes"]');
