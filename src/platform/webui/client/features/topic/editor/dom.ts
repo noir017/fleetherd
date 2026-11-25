@@ -22,6 +22,7 @@ export const DEFAULT_TOPIC_EDITOR_ICONS: TopicEditorIcons = {
     '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21M8.5 21h7"/>',
   ),
   stop: svg('stop', '<rect x="6" y="6" width="12" height="12" rx="1.5" fill="currentColor"/>'),
+  send: svg('send', '<path d="M12 19V5M5.5 11.5 12 5l6.5 6.5"/>'),
   copy: svg(
     'copy',
     '<rect x="9" y="9" width="11" height="11" rx="2"/>' +
@@ -148,6 +149,8 @@ function buildBtwAndModelPopDom(doc: Document, icons: TopicEditorIcons) {
   assignIdIfAbsent(doc, modelPop, 'model-pop');
   modelPop.hidden = true;
   modelPop.setAttribute('role', 'dialog');
+  const mpGrab = el(doc, 'div', 'mp-grab');
+  mpGrab.setAttribute('aria-hidden', 'true');
   const mpHead = el(doc, 'div', 'mp-head');
   const mpTitle = el(doc, 'div', 'mp-title');
   const mpHeading = el(doc, 'b', 'wb-mp-heading');
@@ -177,7 +180,7 @@ function buildBtwAndModelPopDom(doc: Document, icons: TopicEditorIcons) {
   mpList.setAttribute('role', 'listbox');
   const mpFoot = el(doc, 'p', 'mp-foot');
   assignIdIfAbsent(doc, mpFoot, 'mp-foot');
-  modelPop.append(mpHead, mpFilter, mpList, mpFoot);
+  modelPop.append(mpGrab, mpHead, mpFilter, mpList, mpFoot);
 
   return { btwBox, btwQ, btwBody, btwClose, modelPop, mpHeading, mpAgent, mpClose, mpFilter, mpList, mpFoot };
 }
@@ -226,12 +229,24 @@ function buildComposerDom(doc: Document, icons: TopicEditorIcons) {
   stopBtn.type = 'button';
   stopBtn.hidden = true;
   stopBtn.title = tr('composer.stopTitle');
-  stopBtn.textContent = tr('composer.stop');
+  stopBtn.setAttribute('aria-label', tr('composer.stopTitle'));
+  const stopLabel = el(doc, 'span', 'wb-send-label');
+  stopLabel.textContent = tr('composer.stop');
+  const stopIcon = el(doc, 'span', 'wb-send-icon');
+  stopIcon.setAttribute('aria-hidden', 'true');
+  stopIcon.innerHTML = icons.stop;
+  stopBtn.append(stopLabel, stopIcon);
 
   const sendBtn = el(doc, 'button', 'wb-topic-send send');
   sendBtn.type = 'submit';
   sendBtn.title = tr('composer.sendTitle');
-  sendBtn.textContent = tr('composer.send');
+  sendBtn.setAttribute('aria-label', tr('composer.sendTitle'));
+  const sendLabel = el(doc, 'span', 'wb-send-label');
+  sendLabel.textContent = tr('composer.send');
+  const sendIcon = el(doc, 'span', 'wb-send-icon');
+  sendIcon.setAttribute('aria-hidden', 'true');
+  sendIcon.innerHTML = icons.send ?? DEFAULT_TOPIC_EDITOR_ICONS.send ?? '';
+  sendBtn.append(sendLabel, sendIcon);
 
   row.append(input, picker, attachBtn, micBtn, stopBtn, sendBtn);
   composerForm.append(row);
@@ -269,10 +284,20 @@ export function buildTopicEditorDom(doc: Document, icons: TopicEditorIcons): Top
   machineNoteEl.setAttribute('role', 'status');
   machineNoteEl.hidden = true;
 
+  const statusRowEl = el(doc, 'div', 'wb-topic-status-row');
   const statusEl = el(doc, 'div', 'wb-topic-status status');
   assignIdIfAbsent(doc, statusEl, 'status');
   statusEl.hidden = true;
   statusEl.title = tr('status.tapDetails');
+  const dirEl = el(doc, 'span', 'wb-topic-dir');
+  dirEl.hidden = true;
+  const powerBtn = el(doc, 'button', 'wb-icon-btn wb-topic-power');
+  powerBtn.type = 'button';
+  powerBtn.hidden = true;
+  powerBtn.title = tr('topic.endAgent');
+  powerBtn.setAttribute('aria-label', tr('topic.endAgent'));
+  powerBtn.innerHTML = icons.power;
+  statusRowEl.append(statusEl, dirEl, powerBtn);
 
   const popups = buildBtwAndModelPopDom(doc, icons);
   const composer = buildComposerDom(doc, icons);
@@ -280,7 +305,7 @@ export function buildTopicEditorDom(doc: Document, icons: TopicEditorIcons): Top
   barEl.append(
     pendingQueueEl,
     machineNoteEl,
-    statusEl,
+    statusRowEl,
     popups.btwBox,
     popups.modelPop,
     composer.hints,
@@ -300,7 +325,10 @@ export function buildTopicEditorDom(doc: Document, icons: TopicEditorIcons): Top
     barEl,
     pendingQueueEl,
     machineNoteEl,
+    statusRowEl,
     statusEl,
+    dirEl,
+    powerBtn,
     ...popups,
     ...composer,
   };

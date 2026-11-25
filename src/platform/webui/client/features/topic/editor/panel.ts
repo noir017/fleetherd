@@ -130,6 +130,11 @@ export class TopicEditorPanel implements TopicEditorHandle {
     this._initSubControllers();
     this._wireQuickPickInterception();
     this._wireMessageContextMenu();
+    this._listeners.add(
+      addDisposableListener(this.els.powerBtn, 'click', () => {
+        this._composer?.command('/kill');
+      }),
+    );
 
     if (this._topicId) {
       this._composer?.loadDraft(this._topicId);
@@ -174,6 +179,25 @@ export class TopicEditorPanel implements TopicEditorHandle {
     this._panelCtx?.api.setTitle(title);
     this._header?.refresh(topic, this._streamState);
     this.els.stopBtn.hidden = !topic?.running;
+    this.els.composerForm.classList.toggle('is-running', Boolean(topic?.running));
+    this._syncStatusRow(topic?.dir, topic?.live, topic?.agent?.harness);
+  }
+
+  private _syncStatusRow(
+    dir: { readonly name?: string; readonly path?: string } | undefined,
+    live: boolean | undefined,
+    harness: string | undefined,
+  ): void {
+    const dirText = dir?.path || dir?.name || '';
+    this.els.dirEl.textContent = dirText;
+    this.els.dirEl.title = dir?.path || dirText;
+    this.els.dirEl.hidden = !dirText;
+    this.els.powerBtn.hidden = !live;
+    if (harness) {
+      this.els.statusRowEl.dataset.harness = harness;
+    } else {
+      delete this.els.statusRowEl.dataset.harness;
+    }
   }
 
   setStreamState(state: TopicStreamState): void {

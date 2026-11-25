@@ -103,7 +103,7 @@ export function optChips(
 ): string {
   let h = '';
   for (const item of list ?? []) {
-    h += ` \u00b7 ${optChip(item, openOptId)}`;
+    h += `<span class="st-sep"> \u00b7 </span>${optChip(item, openOptId)}`;
   }
   return h;
 }
@@ -183,8 +183,8 @@ export function statusSegments(
 ): string {
   const out: string[] = [];
   const whoHtml =
-    `${text(s.agent)} \u00b7 ${modelChip(s.model || tr('status.model'), opts.openModel)}` +
-    `${s.effort ? ` \u00b7 ${text(s.effort)}` : ''}` +
+    `<span class="st-agent">${text(s.agent)}</span><span class="st-sep"> \u00b7 </span>${modelChip(s.model || tr('status.model'), opts.openModel)}` +
+    `${s.effort ? `<span class="st-sep"> \u00b7 </span><span class="st-effort">${text(s.effort)}</span>` : ''}` +
     optChips(s.options ?? opts.fallbackOptions, opts.openOptId);
   out.push(seg('st-who', '', whoHtml));
   if (s.context && s.context.size > 0) {
@@ -204,7 +204,7 @@ export function statusSegments(
 
 export function renderBareStatus(opts: BareStatusRenderOptions): string {
   const bareWho =
-    `${opts.agent ? `${text(opts.agent)} \u00b7 ` : ''}` +
+    `${opts.agent ? `<span class="st-agent">${text(opts.agent)}</span><span class="st-sep"> \u00b7 </span>` : ''}` +
     modelChip(opts.model || tr('status.model'), opts.openModel) +
     optChips(opts.options, opts.openOptId);
   return seg('st-who', '', bareWho);

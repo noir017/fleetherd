@@ -81,11 +81,17 @@ export function launchHtml(
       if (!a) continue;
       const on = a.id === choice.current;
       const offSuffix = off ? text(tr('chat.agentOffline', { name: g.name })) : '';
+      const harnessBadge =
+        a.harness && a.harness !== 'custom'
+          ? `<span class="ac-hc h-${text(a.harness)}">${text(a.harness)}</span>`
+          : '';
+      const checkMark = on && icons.icon.check
+        ? `<span class="ac-check" aria-hidden="true">${icons.icon.check}</span>`
+        : '';
       h +=
         `<button type="button" class="agent-card${on ? ' def' : ''}" data-agent="${text(a.id)}" title="/agent ${text(a.id)}${offSuffix}">` +
-        `<span class="ac-top"><span class="ac-id">${text(a.id)}</span>${on ? `<span class="ac-tag">${text(tr('chat.defaultTag'))}</span>` : ''}</span>` +
-        `<span class="ac-kind"><i class="ac-dot h-${text(a.harness)}"></i><span>${text(a.kind)}</span></span>` +
-        (a.model ? `<span class="ac-model" title="${text(a.model)}">${text(a.model)}</span>` : '') +
+        `<span class="ac-top">${harnessBadge}<span class="ac-id">${text(a.id)}</span>${on ? `<span class="ac-tag">${text(tr('chat.defaultTag'))}</span>` : ''}${checkMark}</span>` +
+        `<span class="ac-kind"><span>${text(a.kind)}</span>${a.model ? `<span class="ac-sep" aria-hidden="true"> \u00b7 </span><span class="ac-model" title="${text(a.model)}">${text(a.model)}</span>` : ''}</span>` +
         '</button>';
     }
     h += '</div></section>';

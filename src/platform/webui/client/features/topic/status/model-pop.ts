@@ -367,7 +367,7 @@ class ModelPopControllerImpl implements ModelPopController {
         if (!this.isOpen()) return;
         const target = e.target;
         if (!(target instanceof Element)) return;
-        if (target.closest('#model-pop') || target.closest('.st-model')) return;
+        if (target.closest('#model-pop, .wb-topic-model-pop') || target.closest('.st-model')) return;
         this.close();
       }),
     );
