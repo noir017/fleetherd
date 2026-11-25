@@ -19,7 +19,8 @@ import type { TopicEditorElements, TopicEditorHandle } from './features/topic/ed
 import { stClock } from './features/topic/status/index.js';
 import type { LaunchChoice, TranscriptMessage } from './features/topic/transcript/index.js';
 import type { TopicSnapshotPayload } from './features/topics/index.js';
-import { applyDomI18n, initLocale, onLocaleChange, t as tr } from './i18n/index.js';
+import { applyDomI18n, getLocale, initLocale, onLocaleChange, setLocale, t as tr } from './i18n/index.js';
+import { getTheme, setTheme } from './theme.js';
 import type { TopicInfo } from './plugins/api.js';
 import {
   createDefaultBuiltinPluginFactories,
@@ -849,9 +850,10 @@ function wireStreamAndCache(rt: AppRuntime): void {
 function wireMobileShell(rt: AppRuntime): void {
   const mountedViews = new Map<string, PanelComponent>();
   const showMobileListView = (viewId: string): void => {
+    rt.state.mobileViewId = viewId;
+    if (viewId === 'more') return;
     const view = rt.registry.getView(viewId);
     if (!view) return;
-    rt.state.mobileViewId = viewId;
     const stack = rt.shell.getStackShell();
     let comp = mountedViews.get(viewId);
     if (!comp) {
@@ -859,6 +861,65 @@ function wireMobileShell(rt: AppRuntime): void {
       mountedViews.set(viewId, comp);
     }
     stack.mountListView(viewId, comp);
+  };
+
+  const syncMoreState = (): void => {
+    if (rt.shell.getMode() !== 'mobile') return;
+    const stack = rt.shell.getStackShell();
+    const activities = rt.registry.listActivities();
+    const revAct = activities.find((a) => a.id === 'reviews');
+    const revCount = revAct?.badge?.();
+    let runningCount = 0;
+    let idleCount = 0;
+    for (const topic of rt.state.topics) {
+      if (topic.running || topic.asking) runningCount += 1;
+      else if (topic.live) idleCount += 1;
+    }
+    stack.setMoreState({
+      reviewsBadge: typeof revCount === 'number' && revCount > 0 ? String(revCount) : undefined,
+      prefsBadge: typeof revCount === 'number' && revCount > 0 ? String(revCount) : undefined,
+      lowAttention: rt.workbenchRoot.classList.contains('calm'),
+      theme: getTheme(),
+      locale: getLocale(),
+      connected: !rt.workbenchRoot.hidden,
+      version: rt.boot.build ? rt.boot.build.slice(0, 7) : undefined,
+      runningCount,
+      idleCount,
+      onOpenReviews: () => {
+        rt.shell.openMobileView('reviews', tr('mobile.reviews'));
+      },
+      onOpenPrefs: () => {
+        const opened = rt.shell.editors.open('review-prefs', {});
+        if (!opened) {
+          rt.shell.openMobileView('reviews', tr('mobile.prefs'));
+        }
+      },
+      onOpenSkills: () => {
+        rt.shell.openMobileView('skills', tr('mobile.skills'));
+      },
+      onOpenSettings: () => {
+        rt.shell.openMobileView('settings', tr('mobile.settings'));
+      },
+      onToggleNotifications: () => {
+        void rt.commands.execute('status.toggleNotify');
+      },
+      onToggleLowAttention: () => {
+        void rt.commands.execute('status.toggleCalm');
+        syncMoreState();
+      },
+      onChangeTheme: (next) => {
+        setTheme(next);
+        rt.events.emit('theme.change', { theme: next });
+        syncMoreState();
+      },
+      onChangeLocale: (next) => {
+        setLocale(next);
+        syncMoreState();
+      },
+      onCloseIdle: () => {
+        void rt.commands.execute('status.closeIdle');
+      },
+    });
   };
 
   const syncMobileMode = (): void => {
@@ -873,19 +934,32 @@ function wireMobileShell(rt: AppRuntime): void {
         view: a.view,
         badge: a.badge,
       }));
-      const extra = activities[3];
-      stack.setTabs(
-        extra
-          ? [...primary, { id: extra.id, title: extra.title, icon: extra.icon, view: extra.view, badge: extra.badge }]
-          : primary,
-      );
+      const extra = activities.slice(3);
+      const moreBadge = (): number | 'dot' | null => {
+        let sum = 0;
+        let hasDot = false;
+        for (const item of extra) {
+          const b = item.badge?.() ?? null;
+          if (typeof b === 'number' && b > 0) sum += b;
+          else if (b === 'dot') hasDot = true;
+        }
+        if (sum > 0) return sum;
+        return hasDot ? 'dot' : null;
+      };
+      stack.setTabs([
+        ...primary,
+        { id: 'more', title: tr('mobile.more'), icon: 'more', view: 'more', badge: moreBadge },
+      ]);
     }
+    syncMoreState();
     showMobileListView(rt.state.mobileViewId || 'topics');
   };
 
   rt.shell.onDidModeChange((mode) => {
     if (mode === 'mobile') syncMobileMode();
   });
+  rt.events.on('topic.list', syncMoreState);
+  rt.events.on('locale.change', syncMobileMode);
 
   if (rt.shell.getMode() === 'mobile') {
     syncMobileMode();
@@ -893,6 +967,7 @@ function wireMobileShell(rt: AppRuntime): void {
 
   rt.shell.getStackShell().onDidSelectTab((tab) => {
     showMobileListView(tab.view);
+    if (tab.view === 'more') syncMoreState();
   });
 }
 

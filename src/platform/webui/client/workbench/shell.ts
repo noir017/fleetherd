@@ -13,6 +13,7 @@ import type { CommandRegistry } from '../services/commands.js';
 import type { KeybindingService } from '../services/keybindings.js';
 import type { OverlayManager } from '../services/overlays.js';
 import { StorageService } from '../services/storage.js';
+import { t as tr } from '../i18n/index.js';
 import type { DockEngine, LayoutState, PanelRef, PartId } from './contracts.js';
 import { DynamicDockEngine, MAIN_GROUP_ID } from './dock/engine.js';
 import {
@@ -545,6 +546,21 @@ export class WorkbenchShell implements Disposable {
     stack.openDetail({ title, tools, activeToolId });
   }
 
+  openMobileView(viewId: string, title?: string): boolean {
+    const view = this._views.get(viewId);
+    if (!view) return false;
+    const stack = this._ensureStackShell();
+    const comp = view.component();
+    const pageTitle = title ?? view.title;
+    stack.pushPage({
+      title: pageTitle,
+      hideToolsBar: true,
+      tools: [{ id: `view:${view.id}`, title: pageTitle, component: comp }],
+      onDispose: () => comp.dispose(),
+    });
+    return true;
+  }
+
   setMobileTabs(tabs: readonly StackNavTab[]): void {
     this._ensureStackShell().setTabs(tabs);
   }
@@ -825,9 +841,21 @@ export class WorkbenchShell implements Disposable {
       badge: a.badge,
     }));
     const extra = activities.slice(3);
-    const tabs: StackNavTab[] = extra.length > 0
-      ? [...primary, { id: extra[0]!.id, title: extra[0]!.title, icon: extra[0]!.icon, view: extra[0]!.view, badge: extra[0]!.badge }]
-      : primary;
+    const moreBadge = (): number | 'dot' | null => {
+      let sum = 0;
+      let hasDot = false;
+      for (const item of extra) {
+        const b = item.badge?.() ?? null;
+        if (typeof b === 'number' && b > 0) sum += b;
+        else if (b === 'dot') hasDot = true;
+      }
+      if (sum > 0) return sum;
+      return hasDot ? 'dot' : null;
+    };
+    const tabs: StackNavTab[] = [
+      ...primary,
+      { id: 'more', title: tr('mobile.more'), icon: 'more', view: 'more', badge: moreBadge },
+    ];
     this._stackShell.setTabs(tabs);
   }
 
@@ -965,6 +993,9 @@ export class WorkbenchShell implements Disposable {
     const editor = this._editors.get(kind);
     if (!editor) return undefined;
     const id = opts?.id ?? `editor:${kind}:${++this._editorSeq}`;
+    if (this._mode === 'mobile' && kind !== 'topic') {
+      return this._openMobileEditor(kind, id, editor, input);
+    }
     const activeGroup = this.dock.getActiveGroupId() ?? MAIN_GROUP_ID;
     return this.dock.addPanel({
       id,
@@ -973,6 +1004,48 @@ export class WorkbenchShell implements Disposable {
       params: input,
       position: opts?.position ?? { group: activeGroup },
     });
+  }
+
+  private _openMobileEditor(
+    kind: string,
+    id: string,
+    editor: EditorContribution,
+    input: unknown,
+  ): PanelRef {
+    const stack = this._ensureStackShell();
+    const comp = editor.component();
+    const title = editor.title(input);
+    if (kind === 'settings' && input && typeof input === 'object') {
+      const rec = input as Record<string, unknown>;
+      if (rec.scope === 'gateway' && typeof rec.sectionId === 'string' && rec.sectionId) {
+        comp.element.dataset.mobileSettingsSection = rec.sectionId;
+      }
+    }
+    stack.pushPage({
+      title,
+      hideToolsBar: true,
+      tools: [{ id, title, component: comp, params: input }],
+      onDispose: () => comp.dispose(),
+    });
+    const vis = new Emitter<boolean>();
+    const dim = new Emitter<{ readonly width: number; readonly height: number }>();
+    return {
+      id,
+      group: 'stack',
+      params: input,
+      onDidVisibilityChange: vis.event,
+      onDidDimensionsChange: dim.event,
+      setTitle(nextTitle: string) {
+        stack.setDetailTitle(nextTitle);
+      },
+      setBadge() {},
+      focus() {
+        comp.focus?.();
+      },
+      close() {
+        stack.popPage();
+      },
+    };
   }
 
   private _registerTool(t: TopicToolContribution): Disposable {
