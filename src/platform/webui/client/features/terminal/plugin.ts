@@ -121,9 +121,75 @@ interface TerminalDomParts {
   readonly termMinBtn: HTMLButtonElement;
   readonly termEndBtn: HTMLButtonElement;
   readonly termHost: HTMLDivElement;
+  readonly keysBar: HTMLDivElement;
   readonly emptyState: HTMLDivElement;
   readonly emptyNewBtn: HTMLButtonElement;
   readonly menu: MenuController;
+}
+
+interface TermKeySpec {
+  readonly label: string;
+  readonly key: string;
+  readonly modifier?: 'ctrl' | 'alt';
+}
+
+const MOBILE_TERM_KEYS: readonly TermKeySpec[] = [
+  { label: 'Esc', key: 'Escape' },
+  { label: 'Tab', key: 'Tab' },
+  { label: 'Ctrl', key: 'Control', modifier: 'ctrl' },
+  { label: 'Alt', key: 'Alt', modifier: 'alt' },
+  { label: '↑', key: 'ArrowUp' },
+  { label: '↓', key: 'ArrowDown' },
+  { label: '←', key: 'ArrowLeft' },
+  { label: '→', key: 'ArrowRight' },
+  { label: '|', key: '|' },
+  { label: '~', key: '~' },
+  { label: '/', key: '/' },
+  { label: '-', key: '-' },
+];
+
+function createMobileKeysBar(
+  doc: Document,
+  onKeyPress: (spec: TermKeySpec, btn: HTMLButtonElement) => void,
+): HTMLDivElement {
+  const bar = doc.createElement('div');
+  bar.className = 'wb-term-keys';
+  bar.setAttribute('role', 'toolbar');
+  bar.setAttribute('aria-label', tr('term.title'));
+  for (const spec of MOBILE_TERM_KEYS) {
+    const btn = doc.createElement('button');
+    btn.type = 'button';
+    btn.className = 'wb-term-key';
+    btn.dataset.termKey = spec.key;
+    btn.textContent = spec.label;
+    btn.addEventListener('click', () => onKeyPress(spec, btn));
+    bar.appendChild(btn);
+  }
+  return bar;
+}
+
+function forwardKeyToActiveFrame(
+  termHost: HTMLElement,
+  spec: TermKeySpec,
+  ctrlKey: boolean,
+  altKey: boolean,
+): void {
+  const frame = termHost.querySelector<HTMLIFrameElement>('iframe.on');
+  if (!frame) return;
+  try {
+    const frameDoc = frame.contentDocument;
+    const target =
+      frameDoc?.querySelector<HTMLTextAreaElement>('textarea.xterm-helper-textarea') ??
+      (frameDoc?.activeElement as HTMLElement | null) ??
+      frameDoc?.body;
+    if (!target) return;
+    focusSafely(target);
+    target.dispatchEvent(
+      new KeyboardEvent('keydown', { key: spec.key, ctrlKey, altKey, bubbles: true, cancelable: true }),
+    );
+  } catch {
+    // Cross-origin or unloaded iframe: ignore safely.
+  }
 }
 
 function makeIconButton(
@@ -203,11 +269,34 @@ function createTerminalDom(
   const termEndBtn = makeIconButton(doc, 'wb-term-end', tr('term.endTitle'), resolveSvg(resolveIcon, 'cross'));
   termEndBtn.hidden = !canEnd;
 
-  actions.append(newTabBtn, moveBtn, openEditorBtn, moreBtn, termMinBtn, termEndBtn);
-  bar.append(tabsWrap, termName, actions);
+  termEndBtn.innerHTML = resolveSvg(resolveIcon, 'trash');
+  tabsWrap.appendChild(newTabBtn);
+  const spacer = doc.createElement('span');
+  spacer.className = 'wb-term-spacer';
+  actions.append(moveBtn, openEditorBtn, moreBtn, termMinBtn, termEndBtn);
+  bar.append(tabsWrap, spacer, termName, actions);
 
   const termHost = doc.createElement('div');
   termHost.className = 'wb-term-frames';
+
+  const mods = { ctrl: false, alt: false };
+  const keysBar = createMobileKeysBar(doc, (spec, btn) => {
+    if (spec.modifier) {
+      mods[spec.modifier] = !mods[spec.modifier];
+      btn.classList.toggle('is-active', mods[spec.modifier]);
+      btn.setAttribute('aria-pressed', String(mods[spec.modifier]));
+      return;
+    }
+    forwardKeyToActiveFrame(termHost, spec, mods.ctrl, mods.alt);
+    if (mods.ctrl || mods.alt) {
+      mods.ctrl = false;
+      mods.alt = false;
+      for (const b of keysBar.querySelectorAll<HTMLButtonElement>('.wb-term-key.is-active')) {
+        b.classList.remove('is-active');
+        b.setAttribute('aria-pressed', 'false');
+      }
+    }
+  });
 
   const emptyState = doc.createElement('div');
   emptyState.className = 'wb-term-empty';
@@ -237,6 +326,7 @@ function createTerminalDom(
     termMinBtn,
     termEndBtn,
     termHost,
+    keysBar,
     emptyState,
     emptyNewBtn,
     menu,
@@ -437,7 +527,7 @@ function createTerminalPanelComponent(state: TerminalSessionState): PanelCompone
     init(params: unknown, panelCtx: PanelInitContext): void {
       state.currentPanelApi = panelCtx.api;
       state.panelEl = element;
-      element.append(state.dom.bar, state.dom.termHost);
+      element.append(state.dom.bar, state.dom.termHost, state.dom.keysBar);
       const paramTopic = extractTopicId(params);
       state.activeTopicId = paramTopic ?? state.ctx.topics.active()?.id ?? state.activeTopicId;
       state.panelVisible = true;
@@ -484,6 +574,7 @@ function createTerminalPanelComponent(state: TerminalSessionState): PanelCompone
       state.minimizeTopic(state.activeTopicId);
       if (state.dom.bar.parentNode === element) element.removeChild(state.dom.bar);
       if (state.dom.termHost.parentNode === element) element.removeChild(state.dom.termHost);
+      if (state.dom.keysBar.parentNode === element) element.removeChild(state.dom.keysBar);
     },
   };
 }
@@ -880,6 +971,7 @@ class TerminalSession implements TerminalSessionState {
     this.panelEl = undefined;
     this.dom.bar.remove();
     this.dom.termHost.remove();
+    this.dom.keysBar.remove();
   }
 }
 

@@ -29,6 +29,7 @@ import {
 } from './diff-helpers.js';
 import type { CommentDraftStore } from './comment-queue.js';
 import { createDiffViewer, type DiffViewerController } from './diff-view.js';
+import type { HunkNavState } from './hunk-nav.js';
 import type {
   ChangesMode,
   ChangesPluginDeps,
@@ -65,6 +66,8 @@ interface ChangesToolState {
   notice: { text: string; tone: 'err' | 'warn' | 'info' } | null;
   emptyReason: EmptyReason | null;
   loading: boolean;
+  mobileDiffOpen: boolean;
+  hunkState: HunkNavState;
   statusSeq: number;
   logSeq: number;
   commitSeq: number;
@@ -78,9 +81,12 @@ interface ChangesToolCtx {
   readonly formatAgo: (at: number) => string;
   readonly state: ChangesToolState;
   readonly viewer: DiffViewerController;
+  readonly rootEl: HTMLElement;
   readonly headerHost: HTMLElement;
   readonly noticeHost: HTMLElement;
   readonly listHost: HTMLElement;
+  readonly previewBarHost: HTMLElement;
+  readonly mobileFootHost: HTMLElement;
 }
 
 function buildDiffInput(state: ChangesToolState, path: string): DiffEditorInput {
@@ -134,8 +140,171 @@ function renderFileStats(ctx: PluginContext, file: GitStatusFile): TemplateResul
       ${ctx.i18n.t('git.countsNotRead')}
     </span>`;
   }
-  return html`<span class="fh-changes-stat-add" style="color:var(--fh-git-add)">+${file.additions}</span>
-    <span class="fh-changes-stat-del" style="color:var(--fh-git-del)">\u2212${file.deletions}</span>`;
+  if (file.additions === 0 && file.deletions === 0) {
+    return html`<span class="fh-changes-stat-dim">0</span>`;
+  }
+  return html`${file.additions > 0
+      ? html`<span class="fh-changes-stat-add" style="color:var(--fh-git-add)">+${file.additions}</span>`
+      : nothing}${file.deletions > 0
+      ? html`<span class="fh-changes-stat-del" style="color:var(--fh-git-del)">\u2212${file.deletions}</span>`
+      : nothing}`;
+}
+
+function modeLabelText(ctx: PluginContext, mode: ChangesMode): string {
+  if (mode === 'branch') return ctx.i18n.t('git.modeBranch');
+  if (mode === 'committed') return ctx.i18n.t('git.modeCommitted');
+  if (mode === 'commits') return ctx.i18n.t('git.modeCommits');
+  return ctx.i18n.t('git.modeWorking');
+}
+
+function splitFilePath(path: string): { name: string; dir: string } {
+  const idx = path.lastIndexOf('/');
+  if (idx < 0) return { name: path, dir: '' };
+  return { name: path.slice(idx + 1), dir: path.slice(0, idx) };
+}
+
+function activeFileList(state: ChangesToolState): readonly GitStatusFile[] {
+  return state.commit ? state.commitFiles : state.files;
+}
+
+function selectFileInline(ct: ChangesToolCtx, path: string, openMobile: boolean): void {
+  const { state } = ct;
+  if (!state.topicId) return;
+  state.selectedPath = path;
+  if (openMobile) state.mobileDiffOpen = true;
+  syncMobileClass(ct);
+  paintList(ct);
+  paintPreviewChrome(ct);
+  void ct.viewer.load(buildDiffInput(state, path));
+}
+
+function syncMobileClass(ct: ChangesToolCtx): void {
+  ct.rootEl.classList.toggle('is-mobile-diff', ct.state.mobileDiffOpen && Boolean(ct.state.selectedPath));
+}
+
+function renderSummaryBar(ct: ChangesToolCtx): TemplateResult | typeof nothing {
+  const { ctx, state } = ct;
+  const list = activeFileList(state);
+  if (list.length === 0) return nothing;
+  let adds = 0;
+  let dels = 0;
+  for (const f of list) {
+    if (!f.binary && !f.statsUnknown) {
+      adds += f.additions;
+      dels += f.deletions;
+    }
+  }
+  const base = state.commit
+    ? state.commit.short || state.commit.sha.slice(0, 7)
+    : state.mode === 'working'
+      ? 'HEAD'
+      : state.base || 'HEAD';
+  return html`<div class="fh-changes-summary">
+    <span>${ctx.i18n.t('changes.summary', { base, count: list.length })}</span>
+    <span class="fh-changes-summary-stats">
+      <span style="color:var(--fh-git-add)">+${adds}</span>
+      <span style="color:var(--fh-git-del)">\u2212${dels}</span>
+    </span>
+  </div>`;
+}
+
+function paintPreviewChrome(ct: ChangesToolCtx): void {
+  const { ctx, state, previewBarHost, mobileFootHost } = ct;
+  if (state.disposed) return;
+  if (!state.selectedPath) {
+    render(nothing, previewBarHost);
+    render(nothing, mobileFootHost);
+    return;
+  }
+  const list = activeFileList(state);
+  const idx = list.findIndex((f) => f.path === state.selectedPath);
+  const curFile = idx >= 0 ? list[idx] : undefined;
+  const { name, dir } = splitFilePath(state.selectedPath);
+  const hunkTotal = state.hunkState.total;
+  const hunkLabel =
+    hunkTotal > 0
+      ? ctx.i18n.t('changes.hunkCounter', {
+          current: state.hunkState.activeIndex >= 0 ? state.hunkState.activeIndex + 1 : 0,
+          total: hunkTotal,
+        })
+      : '';
+
+  render(
+    html`<div class="fh-changes-preview-bar">
+      <button
+        type="button"
+        class="fh-btn fh-btn--ghost fh-changes-mobile-back"
+        data-changes-mobile-back
+        @click=${() => {
+          state.mobileDiffOpen = false;
+          syncMobileClass(ct);
+        }}
+      >${renderIcon(icon('chevronLeft'), 'fh-icon')}<span>${ctx.i18n.t('changes.backToList')}</span></button>
+      <div class="fh-changes-preview-meta">
+        <span class="fh-changes-preview-name" title=${state.selectedPath}>${name}</span>
+        ${dir ? html`<span class="fh-changes-preview-dir">${dir}</span>` : nothing}
+      </div>
+      <div class="fh-changes-preview-acts">
+        ${hunkLabel ? html`<span class="fh-diff-hunk-counter">${hunkLabel}</span>` : nothing}
+        ${renderActionBar({
+          compact: true,
+          items: [
+            {
+              id: 'prev-hunk',
+              icon: icon('arrowUp'),
+              title: ctx.i18n.t('changes.prevHunk'),
+              disabled: hunkTotal <= 0,
+              onClick: () => ct.viewer.navigateHunk(-1),
+            },
+            {
+              id: 'next-hunk',
+              icon: icon('arrowDown'),
+              title: ctx.i18n.t('changes.nextHunk'),
+              disabled: hunkTotal <= 0,
+              onClick: () => ct.viewer.navigateHunk(1),
+            },
+            {
+              id: 'open-editor',
+              icon: icon('diff'),
+              title: ctx.i18n.t('changes.openInEditor'),
+              onClick: () => openDiffEditor(ctx, buildDiffInput(state, state.selectedPath)),
+            },
+          ],
+        })}
+      </div>
+    </div>`,
+    previewBarHost,
+  );
+
+  const canStep = list.length > 1 && idx >= 0;
+  render(
+    list.length > 0 && curFile
+      ? html`<div class="fh-changes-mobile-foot">
+          <button
+            type="button"
+            class="fh-changes-step-btn"
+            data-changes-prev-file
+            ?disabled=${!canStep}
+            @click=${() => {
+              const next = list[(idx - 1 + list.length) % list.length];
+              if (next) selectFileInline(ct, next.path, true);
+            }}
+          >\u2039 ${ctx.i18n.t('changes.prevFile')}</button>
+          <span class="fh-changes-step-count">${ctx.i18n.t('changes.fileCounter', { current: idx + 1, total: list.length })}</span>
+          <button
+            type="button"
+            class="fh-changes-step-btn"
+            data-changes-next-file
+            ?disabled=${!canStep}
+            @click=${() => {
+              const next = list[(idx + 1) % list.length];
+              if (next) selectFileInline(ct, next.path, true);
+            }}
+          >${ctx.i18n.t('changes.nextFile')} \u203A</button>
+        </div>`
+      : nothing,
+    mobileFootHost,
+  );
 }
 
 function paintNotice(ct: ChangesToolCtx): void {
@@ -151,6 +320,7 @@ function renderFileRow(ct: ChangesToolCtx, file: GitStatusFile, allowEdit: boole
   const selected = file.path === state.selectedPath;
   const colorVar = gitStatusColorVar(file.status);
   const absPath = joinRepoPath(state.repo?.root ?? '', file.path);
+  const { name, dir } = splitFilePath(file.path);
   return html`<div
     class=${`fh-changes-file${selected ? ' is-selected' : ''}`}
     data-changes-path=${file.path}
@@ -160,17 +330,20 @@ function renderFileRow(ct: ChangesToolCtx, file: GitStatusFile, allowEdit: boole
       type="button"
       class="fh-changes-file-main"
       @click=${() => {
-        if (!state.topicId) return;
-        const diffInput = buildDiffInput(state, file.path);
-        state.selectedPath = file.path;
-        paintList(ct);
-        openDiffEditor(ctx, diffInput);
-        void ct.viewer.load(diffInput);
+        selectFileInline(ct, file.path, true);
+      }}
+      @dblclick=${() => {
+        if (state.topicId) openDiffEditor(ctx, buildDiffInput(state, file.path));
       }}
     >
       <span class="fh-changes-badge" style=${`color:${colorVar}`}>${gitStatusLetter(file.status)}</span>
-      <span class="fh-changes-path" title=${file.path}>${file.path}</span>
+      <span class="fh-changes-path-wrap" title=${file.path}>
+        <span class="fh-changes-path">${file.path}</span>
+        <span class="fh-changes-name">${name}</span>
+        ${dir ? html`<span class="fh-changes-dir">${dir}</span>` : nothing}
+      </span>
       <span class="fh-changes-stats">${renderFileStats(ctx, file)}</span>
+      <span class="fh-changes-chevron" aria-hidden="true">${renderIcon(icon('chevronRight'), 'fh-icon')}</span>
     </button>
     <div class="fh-changes-row-actions">
       <button
@@ -307,16 +480,22 @@ function paintList(ct: ChangesToolCtx): void {
     );
     return;
   }
-  render(html`<div class="fh-changes-files">${state.files.map((f) => renderFileRow(ct, f, true))}</div>`, listHost);
+  render(
+    html`${renderSummaryBar(ct)}<div class="fh-changes-files">${state.files.map((f) => renderFileRow(ct, f, true))}</div>`,
+    listHost,
+  );
 }
 
 function paintHeader(ct: ChangesToolCtx): void {
   const { ctx, state, headerHost } = ct;
   if (state.disposed) return;
   const showBase = state.mode === 'branch' || state.mode === 'committed';
+  const branchText = state.repo?.branch
+    ? `${state.repo.branch} · ${modeLabelText(ctx, state.mode)}`
+    : modeLabelText(ctx, state.mode);
   render(
     html`<div class="fh-changes-head-top">
-        <span class="fh-changes-branch">${state.repo?.branch ?? ''}</span>
+        <span class="fh-changes-branch" title=${branchText}>${branchText}</span>
         ${renderActionBar({
           compact: true,
           items: [
@@ -369,6 +548,8 @@ function paintAll(ct: ChangesToolCtx): void {
   paintHeader(ct);
   paintNotice(ct);
   paintList(ct);
+  paintPreviewChrome(ct);
+  syncMobileClass(ct);
 }
 
 async function loadBranches(ct: ChangesToolCtx): Promise<void> {
@@ -411,11 +592,16 @@ function handleStatusSuccess(ct: ChangesToolCtx, d: GitStatusPayload): void {
   state.notice = d.truncated ? { text: ctx.i18n.t('git.tooManyChanges'), tone: 'warn' } : null;
   if (state.files.length === 0) {
     state.selectedPath = '';
+    state.mobileDiffOpen = false;
     ct.viewer.clear();
     state.emptyReason = emptyChangesReason(ctx, state.mode, state.base);
   } else if (state.selectedPath && !state.files.some((f) => f.path === state.selectedPath)) {
     state.selectedPath = '';
+    state.mobileDiffOpen = false;
     ct.viewer.clear(ctx.i18n.t('git.fileGone'));
+  } else if (!state.selectedPath && state.files[0]) {
+    state.selectedPath = state.files[0].path;
+    void ct.viewer.load(buildDiffInput(state, state.files[0].path));
   }
   paintAll(ct);
 }
@@ -520,6 +706,7 @@ function setMode(ct: ChangesToolCtx, next: ChangesMode): void {
   if (next === ct.state.mode) return;
   ct.state.mode = next;
   ct.state.selectedPath = '';
+  ct.state.mobileDiffOpen = false;
   ct.state.commit = null;
   ct.state.commitFiles = [];
   ct.state.commits = [];
@@ -551,6 +738,7 @@ function bindTopic(ct: ChangesToolCtx, topic: TopicInfo | undefined): void {
   ct.state.branches = [];
   ct.state.base = '';
   ct.state.selectedPath = '';
+  ct.state.mobileDiffOpen = false;
   ct.state.commits = [];
   ct.state.commit = null;
   ct.state.commitFiles = [];
@@ -584,6 +772,10 @@ export function createChangesToolPanel(
   listHost.className = 'fh-changes-list';
   const previewHost = doc.createElement('div');
   previewHost.className = 'fh-changes-preview';
+  const previewBarHost = doc.createElement('div');
+  previewBarHost.className = 'fh-changes-preview-bar-host';
+  const mobileFootHost = doc.createElement('div');
+  mobileFootHost.className = 'fh-changes-mobile-foot-host';
 
   const api = resolveChangesApi(deps);
   const viewer = store.add(
@@ -594,9 +786,13 @@ export function createChangesToolPanel(
       initialLayout: 'unified',
       doc,
       commentQueue,
+      onHunkChange: (next) => {
+        state.hunkState = next;
+        paintPreviewChrome(ct);
+      },
     }),
   );
-  previewHost.appendChild(viewer.el);
+  previewHost.append(previewBarHost, viewer.el, mobileFootHost);
   element.append(headerHost, noticeHost, listHost, previewHost);
 
   const state: ChangesToolState = {
@@ -615,6 +811,8 @@ export function createChangesToolPanel(
     notice: null,
     emptyReason: null,
     loading: false,
+    mobileDiffOpen: false,
+    hunkState: { activeIndex: -1, total: 0 },
     statusSeq: 0,
     logSeq: 0,
     commitSeq: 0,
@@ -628,9 +826,12 @@ export function createChangesToolPanel(
     formatAgo: deps.formatAgo ?? defaultFormatAgo,
     state,
     viewer,
+    rootEl: element,
     headerHost,
     noticeHost,
     listHost,
+    previewBarHost,
+    mobileFootHost,
   };
 
   return {
@@ -657,6 +858,8 @@ export function createChangesToolPanel(
       render(nothing, headerHost);
       render(nothing, noticeHost);
       render(nothing, listHost);
+      render(nothing, previewBarHost);
+      render(nothing, mobileFootHost);
       element.remove();
     },
   };

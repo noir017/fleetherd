@@ -124,6 +124,7 @@ function paintToolHeader(tc: FilesToolContext): void {
         })}
       </div>
       <div class="fh-files-search">
+        ${renderIcon(icon('search'), 'fh-files-search-icon')}
         <input
           type="search"
           class="fh-input fh-files-search-input"
@@ -144,6 +145,11 @@ function paintToolHeader(tc: FilesToolContext): void {
           }}
         />
       </div>
+      ${state.root
+        ? html`<div class="fh-files-mpath" title=${state.currentDir || state.root}>
+            ${state.currentDir || state.root}
+          </div>`
+        : nothing}
       ${state.creating
         ? html`<div class="fh-files-create-row">
             <input

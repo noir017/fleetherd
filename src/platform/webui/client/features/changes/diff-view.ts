@@ -89,6 +89,7 @@ interface CommentBarState {
 
 function renderCommentBarTemplate(s: CommentBarState): TemplateResult {
   const summary = formatSelectionSummary(s.ctx, s.selection);
+  const hint = s.ctx.i18n.t('changes.commentHint');
   return html`<div class="fh-diff-sel-bar">
       <span class="fh-diff-sel-what">${summary}</span>
       ${!s.commentOpen
@@ -99,6 +100,8 @@ function renderCommentBarTemplate(s: CommentBarState): TemplateResult {
     </div>
     ${s.commentOpen
       ? html`<div class="fh-diff-comment-box">
+          <div class="fh-diff-comment-grab" aria-hidden="true"></div>
+          <div class="fh-diff-comment-hint">${summary} · ${hint}</div>
           <textarea
             class="fh-diff-comment-input"
             rows="3"
@@ -113,16 +116,16 @@ function renderCommentBarTemplate(s: CommentBarState): TemplateResult {
             }}
           ></textarea>
           <div class="fh-diff-comment-actions">
-            <button type="button" class="fh-btn fh-btn--primary" data-diff-comment-submit @click=${s.onSubmit}>
-              ${s.ctx.i18n.t('git.addToMessage')}
+            <button type="button" class="fh-btn fh-btn--secondary" data-diff-comment-cancel @click=${s.onCancel}>
+              ${s.ctx.i18n.t('common.cancel')}
             </button>
             ${s.onStage
               ? html`<button type="button" class="fh-btn fh-btn--secondary" data-diff-comment-stage @click=${s.onStage}>
                   ${s.ctx.i18n.t('changes.stageComment')}
                 </button>`
               : nothing}
-            <button type="button" class="fh-btn fh-btn--secondary" data-diff-comment-cancel @click=${s.onCancel}>
-              ${s.ctx.i18n.t('common.cancel')}
+            <button type="button" class="fh-btn fh-btn--primary" data-diff-comment-submit @click=${s.onSubmit}>
+              ${s.ctx.i18n.t('git.addToMessage')}
             </button>
           </div>
         </div>`

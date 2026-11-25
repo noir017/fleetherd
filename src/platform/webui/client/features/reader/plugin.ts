@@ -1,4 +1,5 @@
 import type { CodeViewApi, EditorHandle } from '../../../codeview/app.js';
+import { icon } from '../../../icons.js';
 import { addDisposableListener, focusSafely } from '../../base/dom.js';
 import { type Disposable, DisposableStore, toDisposable } from '../../base/lifecycle.js';
 import { t as tr } from '../../i18n/index.js';
@@ -160,6 +161,10 @@ function createReaderEditorDom(doc: Document): ReaderEditorDom {
   const header = doc.createElement('div');
   header.className = 'wb-reader-bar';
 
+  const iconEl = doc.createElement('span');
+  iconEl.className = 'wb-reader-icon';
+  iconEl.innerHTML = icon('note');
+
   const nameEl = doc.createElement('span');
   nameEl.className = 'wb-reader-name';
 
@@ -169,7 +174,7 @@ function createReaderEditorDom(doc: Document): ReaderEditorDom {
   downloadEl.setAttribute('download', '');
   downloadEl.hidden = true;
 
-  header.append(nameEl, downloadEl);
+  header.append(iconEl, nameEl, downloadEl);
 
   const bodyEl = doc.createElement('div');
   bodyEl.className = 'wb-reader-body';
@@ -353,7 +358,12 @@ function createLightboxOverlay(deps: ReaderPluginDeps, doc: Document): LightboxO
     lightboxEl.hidden = true;
     lightboxImg = doc.createElement('img');
     lightboxImg.alt = '';
-    lightboxEl.appendChild(lightboxImg);
+    const closeBtn = doc.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.className = 'wb-lightbox-close';
+    closeBtn.setAttribute('aria-label', tr('common.close'));
+    closeBtn.innerHTML = icon('cross');
+    lightboxEl.append(lightboxImg, closeBtn);
     (deps.overlayHost ?? doc.body).appendChild(lightboxEl);
     ownedElement = true;
   }
