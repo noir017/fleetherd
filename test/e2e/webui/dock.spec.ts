@@ -164,4 +164,37 @@ test.describe('Web UI dynamic dock engine E2E', () => {
     await expect(tabs.nth(0)).toHaveAttribute('data-panel-id', secondId!);
     await expect(tabs.nth(1)).toHaveAttribute('data-panel-id', firstId!);
   });
+
+  test('a click on an older tab shows it, and the sidebar reopens at the width it was closed at', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await loginViaUi(page, gateway.baseUrl, gateway.secret);
+    await openSecondEditorTab(page);
+
+    const tabs = page.locator('.wb-editor-group .wb-tab');
+    for (const i of [0, 1, 0]) {
+      await tabs.nth(i).click();
+      await expect(tabs.nth(i)).toHaveAttribute('aria-selected', 'true');
+      await expect(tabs.nth(1 - i)).toHaveAttribute('aria-selected', 'false');
+    }
+
+    const sidebar = page.locator('.wb-sidebar');
+    const widthOf = async (): Promise<number> => Math.round((await sidebar.boundingBox())!.width);
+    const before = await widthOf();
+    const sash = await page.evaluate(() => {
+      const edge = document.querySelector('.wb-sidebar')!.getBoundingClientRect().right;
+      const boxes = Array.from(document.querySelectorAll('.wb-sash')).map((s) => s.getBoundingClientRect());
+      const near = boxes.filter((b) => b.height > 0).sort((a, b) => Math.abs(a.x - edge) - Math.abs(b.x - edge))[0]!;
+      return { x: near.x + near.width / 2, y: near.y + near.height / 2 };
+    });
+    await pointerDrag(page, sash, { x: sash.x + 120, y: sash.y });
+    const dragged = await widthOf();
+    expect(dragged).toBeGreaterThan(before + 60);
+
+    const active = page.locator('.wb-activity-item.is-active');
+    await active.click();
+    await expect(sidebar).toBeHidden();
+    await active.click();
+    await expect(sidebar).toBeVisible();
+    expect(Math.abs((await widthOf()) - dragged)).toBeLessThanOrEqual(2);
+  });
 });
