@@ -7,6 +7,7 @@ import {
   launchHtml,
   offWhen,
 } from './banners.js';
+import { attachLogEvents } from './events.js';
 import type { LaunchChoice, TranscriptIcons, TranscriptMessage, TranscriptTopicLike } from './types.js';
 
 const ICONS: TranscriptIcons = {
@@ -63,7 +64,7 @@ describe('banners pure helpers', () => {
     expect(html).toContain('4');
   });
 
-  it('renders directory grid for active agent from root and dirs', () => {
+  it('renders agent cards without flat directory grid buttons', () => {
     const html = launchHtml(
       {
         current: 'cc',
@@ -71,20 +72,53 @@ describe('banners pure helpers', () => {
           {
             name: 'local',
             agents: [
-              { id: 'cc', harness: 'claude', kind: 'Claude Code', root: '/work', dirs: ['/work/a', '/work/b'] },
-              { id: 'oc', harness: 'opencode', kind: 'OpenCode', root: '/srv' },
+              { id: 'cc', harness: 'claude', kind: 'Claude Code' },
+              { id: 'oc', harness: 'opencode', kind: 'OpenCode' },
             ],
           },
         ],
       },
       ICONS,
       { offSince: () => 0, offWhen: () => '', offTitle: () => '' },
-      '/work/b',
     );
-    expect(html).toContain('data-launch-dirs-for="cc"');
-    expect(html).toContain('data-cwd="/work"');
-    expect(html).toContain('class="launch-dir on" data-cwd="/work/b"');
-    expect(html).toContain('data-cwd-more="1"');
+    expect(html).toContain('data-agent="cc"');
+    expect(html).toContain('data-agent="oc"');
+    expect(html).not.toContain('launch-dirs');
+    expect(html).not.toContain('launch-dir-grid');
+    expect(html).not.toContain('data-cwd');
+  });
+
+  it('dispatches /agent <id> directly when clicking an agent card', () => {
+    const log = document.createElement('div');
+    log.innerHTML = launchHtml(
+      {
+        current: 'cc',
+        groups: [{ name: 'local', agents: [{ id: 'cc', harness: 'claude', kind: 'Claude Code' }, { id: 'oc', harness: 'opencode', kind: 'OpenCode' }] }],
+      },
+      ICONS,
+      { offSince: () => 0, offWhen: () => '', offTitle: () => '' },
+    );
+    const sendCommand = vi.fn();
+    const sub = attachLogEvents(log, {
+      getTopic: () => 't1',
+      getTopics: () => [],
+      isNarrow: () => false,
+      setSidebar: () => {},
+      switchTopic: () => {},
+      openShot: () => {},
+      sendCommand,
+      toggleBtw: () => {},
+      openReader: () => {},
+      deliverLocal: () => {},
+      copyLocal: () => {},
+      discardLocal: () => {},
+      toggleAll: () => {},
+      toggleLine: () => {},
+      openTurnChanges: () => {},
+    });
+    log.querySelector<HTMLButtonElement>('button[data-agent="oc"]')?.click();
+    expect(sendCommand).toHaveBeenCalledWith('/agent oc');
+    sub.dispose();
   });
 });
 
@@ -142,9 +176,15 @@ describe('createBannersController', () => {
     banners.setMachines([{ name: 'box1', since: Date.now() }]);
     banners.syncEmptyNote();
     expect(banners.hasLaunch()).toBe(true);
-    expect(log.querySelector('.launch')).not.toBeNull();
+    const launchNode = log.querySelector('.launch');
+    expect(launchNode).not.toBeNull();
     expect(log.querySelector('.empty')).toBeNull();
     expect(machineNoteEl.hidden).toBe(true);
+
+    // Topic dir.path changes alone do not rebuild the launch DOM.
+    topics[1] = { ...topics[1]!, dir: { host: 'box1', path: '/work/other' } };
+    banners.syncLaunch(true);
+    expect(log.querySelector('.launch')).toBe(launchNode);
 
     // Clearing launch on a stale empty topic shows .empty and machineNoteEl.
     launch = null;

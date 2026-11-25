@@ -569,9 +569,9 @@ describe('agentCatalogForRef (what a new topic offers)', () => {
         {
           name: 'this machine',
           agents: [
-            { id: 'cc', harness: 'claude', kind: 'Claude Code', root, dirs: ['gateway', 'shop-api', 'uniagent'].map((d) => join(root, d)) },
-            { id: 'oc', harness: 'opencode', kind: 'OpenCode', root, dirs: ['gateway', 'shop-api', 'uniagent'].map((d) => join(root, d)) },
-            { id: 'agy', harness: 'agy', kind: 'Antigravity', root, dirs: ['gateway', 'shop-api', 'uniagent'].map((d) => join(root, d)) },
+            { id: 'cc', harness: 'claude', kind: 'Claude Code' },
+            { id: 'oc', harness: 'opencode', kind: 'OpenCode' },
+            { id: 'agy', harness: 'agy', kind: 'Antigravity' },
           ],
         },
       ],
