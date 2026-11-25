@@ -307,6 +307,56 @@ export function scheduledSessions(topics: readonly TopicInfo[]): TopicInfo[] {
   return topics.filter((t) => Boolean(t.scheduled)).sort((a, b) => (b.lastAt || 0) - (a.lastAt || 0));
 }
 
+export interface ScheduledSessionEntry {
+  readonly topic: TopicInfo;
+  readonly depth: number;
+}
+
+export function collectScheduledSessionTree(topics: readonly TopicInfo[]): ScheduledSessionEntry[] {
+  const byId = new Map<string, TopicInfo>();
+  for (const t of topics) byId.set(t.id, t);
+
+  const childrenByParent = new Map<string, TopicInfo[]>();
+  const roots: TopicInfo[] = [];
+  for (const t of topics) {
+    if (t.scheduled) {
+      roots.push(t);
+      continue;
+    }
+    if (t.parent) {
+      const list = childrenByParent.get(t.parent) ?? [];
+      list.push(t);
+      childrenByParent.set(t.parent, list);
+    }
+  }
+  roots.sort((a, b) => (b.lastAt || 0) - (a.lastAt || 0));
+
+  const out: ScheduledSessionEntry[] = [];
+  const visited = new Set<string>();
+  const walk = (node: TopicInfo, depth: number): void => {
+    if (visited.has(node.id)) return;
+    visited.add(node.id);
+    out.push({ topic: node, depth });
+    const kids = childrenByParent.get(node.id);
+    if (!kids) return;
+    kids.sort((a, b) => (b.lastAt || 0) - (a.lastAt || 0));
+    for (const child of kids) walk(child, Math.min(depth + 1, 3));
+  };
+  for (const root of roots) walk(root, 0);
+  return out;
+}
+
+export function harnessClass(harness: string | undefined): string {
+  const h = (harness || '').toLowerCase();
+  if (h === 'claude') return 'fh-hc fh-hc--claude';
+  if (h === 'codex') return 'fh-hc fh-hc--codex';
+  if (h === 'opencode') return 'fh-hc fh-hc--opencode';
+  if (h === 'agy') return 'fh-hc fh-hc--agy';
+  if (h === 'gemini') return 'fh-hc fh-hc--gemini';
+  if (h === 'dsh') return 'fh-hc fh-hc--dsh';
+  return 'fh-hc';
+}
+
 function sessionGroupMeta(at: Date | null, now: Date, yesterday: Date): { key: string; label: string } {
   if (!at) return { key: 'x:earlier', label: tr('sched.earlier') };
   const sameMonth = at.getFullYear() === now.getFullYear() && at.getMonth() === now.getMonth();

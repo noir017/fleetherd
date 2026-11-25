@@ -17,6 +17,7 @@ import type { PluginContext, TopicInfo } from '../../plugins/api.js';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import {
   buildFilterGroups,
+  collectScheduledSessionTree,
   filterAndSortTasks,
   formatClock,
   formatDueIn,
@@ -25,6 +26,7 @@ import {
   formatRelativeAge,
   formatTasksSummary,
   groupScheduledSessions,
+  harnessClass,
   resolveTargetShort,
   scheduledSessions,
   type SessionGroup,
@@ -60,6 +62,7 @@ function taskRowTooltip(t: SchedulePanelTask, topics: readonly TopicInfo[], nowM
 
 function renderTaskRow(
   t: SchedulePanelTask,
+  active: boolean,
   topics: readonly TopicInfo[],
   nowMs: number,
   onOpen: (task: SchedulePanelTask) => void,
@@ -68,8 +71,8 @@ function renderTaskRow(
   const taskState = t.state || 'active';
   const dot = taskDotStatus(t);
   const lastShort = formatLastRunShort(t, nowMs);
-  const nextLabel = t.running
-    ? tr('sched.runningNow')
+  const rightLabel = t.running
+    ? tr('sched.statusRunning')
     : taskState === 'active' && t.nextAt
       ? formatDueIn(t.nextAt, nowMs)
       : taskState !== 'active'
@@ -78,7 +81,7 @@ function renderTaskRow(
 
   return html`<div class=${`sched-item ${taskState}${t.running ? ' running' : ''}`} data-id=${t.id}>
     <div
-      class=${`topic-item sched-row${t.running ? ' running' : ''}${taskState === 'active' ? '' : ' idle'}`}
+      class=${`topic-item sched-row${active ? ' on' : ''}${t.running ? ' running' : ''}${taskState === 'active' ? '' : ' idle'}`}
       role="button"
       tabindex="0"
       title=${taskRowTooltip(t, topics, nowMs)}
@@ -95,7 +98,7 @@ function renderTaskRow(
         <span class="topic-title">${t.name}</span>
         <span class="topic-sub">
           <span class="topic-dir sched-line">
-            ${nextLabel ? html`<span class="sched-next">${nextLabel}</span>` : nothing}
+            ${t.when ? html`<span class="sched-when">${t.when}</span>` : nothing}
             <span class="sched-target">${` \u00b7 \u2192 ${resolveTargetShort(t, topics)}`}</span>
             ${lastShort
               ? html`<span class=${`sched-last${t.last && t.last.status !== 'ok' ? ' bad' : ''}`}>${` \u00b7 ${lastShort}`}</span>`
@@ -104,6 +107,7 @@ function renderTaskRow(
           </span>
         </span>
       </span>
+      ${rightLabel ? html`<span class=${`sched-row-age${t.running ? ' is-running' : ''}`}>${rightLabel}</span>` : nothing}
       <button
         type="button"
         class="topic-more"
@@ -128,8 +132,17 @@ function sessionDotStatus(t: TopicInfo): { tone: StatusTone; pulsing: boolean } 
   return { tone: 'idle', pulsing: false };
 }
 
+function sessionStateLabel(t: TopicInfo): string {
+  if (t.asking) return tr('topic.awaitingYou');
+  if (t.running) return tr('topic.running');
+  if (t.stage === 'failed') return tr('topic.failed');
+  if (t.stage === 'review') return tr('topic.finished');
+  return '';
+}
+
 function renderSessionItem(
   t: TopicInfo,
+  depth: number,
   activeId: string | undefined,
   unread: number,
   nowMs: number,
@@ -137,24 +150,16 @@ function renderSessionItem(
 ): TemplateResult {
   const dot = sessionDotStatus(t);
   const count = t.msgCount || 0;
-  const stateLabel = t.asking
-    ? tr('topic.awaitingYou')
-    : t.running
-      ? tr('topic.running')
-      : t.stage === 'failed'
-        ? tr('topic.failed')
-        : t.stage === 'review'
-          ? tr('topic.finished')
-          : '';
+  const stateLabel = sessionStateLabel(t);
   const age = t.lastAt ? formatRelativeAge(t.lastAt, nowMs) : '';
   const bits = [
-    age,
     count ? tr(count === 1 ? 'sched.msgOne' : 'sched.msgMany', { count }) : '',
     stateLabel,
   ].filter(Boolean);
+  const harnessLabel = t.agent?.harness || t.agent?.id || '';
 
   return html`<div
-    class=${`topic-item sess-item${t.id === activeId ? ' on' : ''}${t.running ? ' running' : ' idle'}`}
+    class=${`topic-item sess-item${depth > 0 ? ` is-sub is-d${depth}` : ''}${t.id === activeId ? ' on' : ''}${t.running ? ' running' : ' idle'}`}
     data-sess=${t.id}
     role="button"
     tabindex="0"
@@ -170,14 +175,21 @@ function renderSessionItem(
     ${renderStatusDot({ status: dot.tone, pulsing: dot.pulsing })}
     <span class="topic-main">
       <span class="topic-title">${t.title || tr('common.untitled')}</span>
-      <span class="topic-sub"><span class="topic-dir">${bits.join(' \u00b7 ')}</span></span>
+      <span class="topic-sub">
+        <span class="topic-dir">
+          ${harnessLabel ? html`<span class=${harnessClass(t.agent?.harness)}>${harnessLabel}</span>` : nothing}
+          ${bits.join(' \u00b7 ')}
+        </span>
+      </span>
     </span>
+    ${age ? html`<span class="sched-row-age">${age}</span>` : nothing}
     ${unread > 0 ? html`<span class="topic-badge">${unread > 99 ? '99+' : unread}</span>` : nothing}
   </div>`;
 }
 
 function renderSessionGroup(
   g: SessionGroup,
+  depthMap: ReadonlyMap<string, number>,
   open: boolean,
   activeId: string | undefined,
   unreadOf: (t: TopicInfo) => number,
@@ -200,10 +212,10 @@ function renderSessionGroup(
       <span class="sess-group-caret">${unsafeHTML(open ? icon('chevronDown') : icon('chevronRight'))}</span>
       <span class="sess-group-name">${g.label}</span>
       <span class="sess-group-count">${g.items.length}</span>
-      ${!open && g.unread > 0
+      ${g.unread > 0
         ? html`<span class="sess-group-flag unread">${tr('sched.unreadCount', { count: g.unread })}</span>`
         : nothing}
-      ${!open && g.asking > 0
+      ${g.asking > 0
         ? html`<span class="sess-group-flag asking">${tr('sched.awaitingCount', { count: g.asking })}</span>`
         : nothing}
       ${!open && g.running > g.asking
@@ -211,7 +223,7 @@ function renderSessionGroup(
         : nothing}
     </button>
     <div class="sess-group-rows" id=${id} ?hidden=${!open}>
-      ${g.items.map((item) => renderSessionItem(item, activeId, unreadOf(item), nowMs, onOpenTopic))}
+      ${g.items.map((item) => renderSessionItem(item, depthMap.get(item.id) ?? 0, activeId, unreadOf(item), nowMs, onOpenTopic))}
     </div>
   </div>`;
 }
@@ -233,6 +245,8 @@ class SchedulesView implements SchedulesViewController {
   private readonly _disposables = new DisposableStore();
   private readonly _headerHost: HTMLElement;
   private readonly _filterHost: HTMLElement;
+  private readonly _sessSearchHost: HTMLElement;
+  private readonly _sessSearchInput: HTMLInputElement;
   private readonly _noticeHost: HTMLElement;
   private readonly _listHost: HTMLElement;
   private readonly _menu: ReturnType<typeof createMenu>;
@@ -240,6 +254,8 @@ class SchedulesView implements SchedulesViewController {
   private readonly _filterBar: ReturnType<typeof createFilterBar>;
   private readonly _sessGroups: Record<string, boolean>;
   private _subtab: ScheduleSubtab;
+  private _activeTaskId: string | null = null;
+  private _sessQuery = '';
   private _visible = true;
   private _pollTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -265,11 +281,30 @@ class SchedulesView implements SchedulesViewController {
     subtabHost.className = 'fh-schedules-subnav';
     this._filterHost = this._doc.createElement('div');
     this._filterHost.className = 'fh-schedules-filter';
+    this._sessSearchHost = this._doc.createElement('div');
+    this._sessSearchHost.className = 'fh-schedules-sess-search';
+    const sessSearchBox = this._doc.createElement('div');
+    sessSearchBox.className = 'fh-search-box';
+    sessSearchBox.innerHTML = icon('search');
+    this._sessSearchInput = this._doc.createElement('input');
+    this._sessSearchInput.type = 'search';
+    this._sessSearchInput.className = 'fh-search-input';
+    this._sessSearchInput.placeholder = this._ctx.i18n.t('wb.sched.searchSessions');
+    this._sessSearchInput.setAttribute('aria-label', this._ctx.i18n.t('wb.sched.searchSessions'));
+    sessSearchBox.appendChild(this._sessSearchInput);
+    this._sessSearchHost.appendChild(sessSearchBox);
     this._noticeHost = this._doc.createElement('div');
     this._noticeHost.className = 'fh-schedules-notice';
     this._listHost = this._doc.createElement('div');
     this._listHost.className = 'fh-schedules-body';
-    this.element.append(this._headerHost, subtabHost, this._filterHost, this._noticeHost, this._listHost);
+    this.element.append(
+      this._headerHost,
+      subtabHost,
+      this._filterHost,
+      this._sessSearchHost,
+      this._noticeHost,
+      this._listHost,
+    );
 
     this._subtab = ctx.storage.get<string>(SUBTAB_STORAGE_KEY) === 'sessions' ? 'sessions' : 'tasks';
     this._sessGroups = { ...(ctx.storage.get<Record<string, boolean>>(SESS_GROUPS_STORAGE_KEY) ?? {}) };
@@ -330,6 +365,12 @@ class SchedulesView implements SchedulesViewController {
 
     this._disposables.add(this._store.onDidChange(() => this._paint()));
     this._disposables.add(
+      addDisposableListener(this._sessSearchInput, 'input', () => {
+        this._sessQuery = this._sessSearchInput.value.trim().toLowerCase();
+        this._paintBody();
+      }),
+    );
+    this._disposables.add(
       addDisposableListener(this._doc, 'visibilitychange', () => {
         if (!this._visible) return;
         if (this._doc.visibilityState === 'hidden') this._disarmPoll();
@@ -355,6 +396,9 @@ class SchedulesView implements SchedulesViewController {
   }
 
   refreshLocale(): void {
+    const ph = this._ctx.i18n.t('wb.sched.searchSessions');
+    this._sessSearchInput.placeholder = ph;
+    this._sessSearchInput.setAttribute('aria-label', ph);
     this._filterBar.refreshI18n(tr('sched.searchTasks'), {
       status: tr('sched.sortStatus'),
       next: tr('sched.sortNext'),
@@ -448,7 +492,7 @@ class SchedulesView implements SchedulesViewController {
             aria-label=${tr('common.refresh')}
             @click=${() => void this._ctx.commands.execute('schedules.refresh')}
           >${unsafeHTML(icon('refresh'))}</button>
-          ${this._subtab === 'tasks' && snap.enabled
+          ${snap.enabled
             ? html`<button
                 type="button"
                 class="fh-btn fh-btn--ghost fh-btn--icon"
@@ -474,6 +518,7 @@ class SchedulesView implements SchedulesViewController {
       ],
     });
     this._filterHost.hidden = this._subtab !== 'tasks';
+    this._sessSearchHost.hidden = this._subtab !== 'sessions';
   }
 
   private _paintNotice(): void {
@@ -537,9 +582,14 @@ class SchedulesView implements SchedulesViewController {
         ${filtered.map((task) =>
           renderTaskRow(
             task,
+            this._activeTaskId === task.id,
             topics,
             nowMs,
-            (t) => this._ctx.editors.open('schedule', { id: t.id, mode: 'view', title: t.name }),
+            (t) => {
+              this._activeTaskId = t.id;
+              this._paintBody();
+              this._ctx.editors.open('schedule', { id: t.id, mode: 'view', title: t.name });
+            },
             (anchor, t) => {
               const entries = this._resolveTaskMenu(t);
               if (entries.length > 0) this._menu.open(anchor, entries);
@@ -552,7 +602,18 @@ class SchedulesView implements SchedulesViewController {
   }
 
   private _paintSessionsBody(): void {
-    const sessions = scheduledSessions(this._ctx.topics.list());
+    const tree = collectScheduledSessionTree(this._ctx.topics.list());
+    const depthMap = new Map<string, number>();
+    const filteredTopics: TopicInfo[] = [];
+    for (const entry of tree) {
+      depthMap.set(entry.topic.id, entry.depth);
+      if (this._sessQuery) {
+        const hay = `${entry.topic.title || ''} ${entry.topic.agent?.id || ''} ${entry.topic.agent?.harness || ''}`.toLowerCase();
+        if (!hay.includes(this._sessQuery)) continue;
+      }
+      filteredTopics.push(entry.topic);
+    }
+    const sessions = filteredTopics;
     if (sessions.length === 0) {
       render(html`<div class="sched-empty">${tr('sched.noSessions')}</div>`, this._listHost);
       return;
@@ -566,6 +627,7 @@ class SchedulesView implements SchedulesViewController {
           const open = g.current || (this._sessGroups[g.key] ?? idx === 0);
           return renderSessionGroup(
             g,
+            depthMap,
             open,
             activeId,
             this._unreadOf,

@@ -10,7 +10,6 @@ import { html, nothing, render, type TemplateResult } from '../../base/html.js';
 import { DisposableStore } from '../../base/lifecycle.js';
 import {
   openConfirmDialog,
-  renderBadge,
   renderNotice,
   renderSegmented,
   renderStatusDot,
@@ -90,23 +89,20 @@ function renderViewActions(
   detail: SchedulePanelTaskDetail,
   busy: boolean,
   onAction: (action: 'edit' | 'pause' | 'resume' | 'run' | 'remove') => void,
+  variant: 'desktop' | 'mobile' = 'desktop',
 ): TemplateResult {
   const t = detail.task;
   const taskState = t.state || 'active';
-  return html`<div class="tp-acts">
-    ${!detail.locked
-      ? html`<button type="button" class="fh-btn fh-btn--primary" data-tp-act="edit" ?disabled=${busy} @click=${() => onAction('edit')}>
-          ${unsafeHTML(icon('pencil'))}<span>${tr('common.edit')}</span>
-        </button>`
-      : nothing}
+  const cls = variant === 'mobile' ? 'tp-acts tp-acts--mobile' : 'tp-acts tp-acts--head';
+  return html`<div class=${cls}>
     ${taskState === 'active'
       ? html`<button type="button" class="fh-btn fh-btn--secondary" data-tp-act="pause" ?disabled=${busy} @click=${() => onAction('pause')}>
-          ${unsafeHTML(icon('pause'))}<span>${tr('sched.pause')}</span>
+          <span>${tr('sched.pause')}</span>
         </button>`
       : nothing}
     ${taskState === 'paused'
       ? html`<button type="button" class="fh-btn fh-btn--secondary" data-tp-act="resume" ?disabled=${busy} @click=${() => onAction('resume')}>
-          ${unsafeHTML(icon('play'))}<span>${tr('sched.resume')}</span>
+          <span>${tr('sched.resume')}</span>
         </button>`
       : nothing}
     ${taskState === 'active' || taskState === 'paused'
@@ -117,15 +113,29 @@ function renderViewActions(
           ?disabled=${busy || t.running}
           title=${t.running ? tr('sched.runNowBusyTitle') : tr('sched.runNowTitle')}
           @click=${() => onAction('run')}
-        >${unsafeHTML(icon('clock'))}<span>${tr('sched.runNow')}</span></button>`
+        ><span>${tr('sched.runNow')}</span></button>`
       : nothing}
-    <button type="button" class="fh-btn fh-btn--danger" data-tp-act="remove" ?disabled=${busy} @click=${() => onAction('remove')}>
-      ${unsafeHTML(icon('trash'))}<span>${tr('common.delete')}</span>
+    ${!detail.locked
+      ? html`<button type="button" class="fh-btn fh-btn--primary" data-tp-act="edit" ?disabled=${busy} @click=${() => onAction('edit')}>
+          <span>${tr('common.edit')}</span>
+        </button>`
+      : nothing}
+    <button
+      type="button"
+      class=${variant === 'mobile' ? 'fh-btn fh-btn--danger tp-del-btn' : 'fh-btn fh-btn--ghost fh-btn--icon tp-del-btn'}
+      data-tp-act="remove"
+      title=${tr('common.delete')}
+      aria-label=${tr('common.delete')}
+      ?disabled=${busy}
+      @click=${() => onAction('remove')}
+    >
+      ${unsafeHTML(icon('trash'))}
     </button>
   </div>`;
 }
 
 function renderViewTags(
+  ctx: PluginContext,
   t: SchedulePanelTask,
   onRemoveTag: (tag: string) => void,
   onAddTags: (raw: string, input: HTMLInputElement) => void,
@@ -134,8 +144,7 @@ function renderViewTags(
     <div class="sched-tag-edit">
       ${taskTags(t).map((tag) => {
         const removeLabel = tr('taskPage.removeTag', { tag });
-        return html`<span class="sched-tag">
-          ${unsafeHTML(icon('tag'))}
+        return html`<span class="sched-tag fh-tagx">
           <span>${tag}</span>
           <button
             type="button"
@@ -148,11 +157,10 @@ function renderViewTags(
         </span>`;
       })}
       <span class="sched-tag-add">
-        ${unsafeHTML(icon('plus'))}
         <input
           type="text"
           data-tag-input="1"
-          placeholder=${tr('taskPage.tagPlaceholder')}
+          placeholder=${ctx.i18n.t('wb.sched.addTagPlaceholder')}
           aria-label=${tr('taskPage.addTagAria')}
           autocomplete="off"
           spellcheck="false"
@@ -176,12 +184,12 @@ function renderViewSessions(
 ): TemplateResult {
   const sessions = taskAssociatedSessions(detail, topics);
   return html`<div class="tp-label">${tr('sideTasks.tabSessions')}<span class="tp-n">${sessions.length}</span></div>
-    <div class="tp-list tp-topics">
+    <div class="fh-card tp-list tp-topics">
       ${sessions.length === 0
-        ? html`<div class="tp-empty">${detail.task.kind === 'bash' ? tr('taskPage.noSessionsBash') : tr('taskPage.noSessionsAgent')}</div>`
+        ? html`<div class="tp-empty tp-card-empty">${detail.task.kind === 'bash' ? tr('taskPage.noSessionsBash') : tr('taskPage.noSessionsAgent')}</div>`
         : sessions.map(
             (s) => html`<div
-              class="topic-item tp-sess framed"
+              class="fh-ci tp-sess"
               data-tp-topic=${s.id}
               role="button"
               tabindex="0"
@@ -193,14 +201,14 @@ function renderViewSessions(
                 }
               }}
             >
-              ${renderStatusDot({
-                status: s.asking ? 'warn' : s.running ? 'ok' : s.stage === 'failed' ? 'err' : 'idle',
-                pulsing: Boolean(s.running || s.asking),
-              })}
-              <span class="topic-main">
-                <span class="topic-title">${s.title || tr('common.untitled')}</span>
-                <span class="topic-sub"><span class="topic-dir">${s.lastAt ? formatRelativeAge(s.lastAt, nowMs) : ''}</span></span>
+              <span class="fh-ci-l tp-sess-title">
+                ${renderStatusDot({
+                  status: s.asking ? 'warn' : s.running ? 'ok' : s.stage === 'failed' ? 'err' : 'idle',
+                  pulsing: Boolean(s.running || s.asking),
+                })}
+                <span>${s.title || tr('common.untitled')}</span>
               </span>
+              <span class="fh-ci-h">${s.lastAt ? formatRelativeAge(s.lastAt, nowMs) : ''}</span>
             </div>`,
           )}
     </div>`;
@@ -221,39 +229,27 @@ function renderViewContent(
 ): TemplateResult {
   const t = detail.task;
   const f = detail.fields;
+  const subBits = [
+    t.when,
+    t.run,
+    tr('sched.postsTo', { target: resolveTargetShort(t, topics) }),
+    f.cwd ? f.cwd : '',
+  ].filter(Boolean);
   const metaBits = [
     `#${t.id}`,
     tr(t.runs === 1 ? 'taskPage.runCountOne' : 'taskPage.runCountMany', { count: t.runs }),
+    t.next ? tr('sched.nextPrefix', { next: t.next }) : '',
     t.createdAt ? tr('taskPage.created', { when: formatClock(t.createdAt) }) : '',
     t.expires ? tr('taskPage.until', { when: t.expires }) : '',
   ].filter(Boolean);
 
-  return html`<div class="tp-view">
-    ${renderViewActions(detail, busy, onAction)}
+  return html`<div class="tp-view fh-pcol">
+    ${renderViewActions(detail, busy, onAction, 'mobile')}
+    <div class="fh-psub">${subBits.join(' \u00b7 ')}</div>
     ${detail.locked ? html`<div class="tp-locked">${detail.locked}</div>` : nothing}
-    <div class="tp-grid">
-      <div>
-        <div class="tp-label">${tr('taskPage.schedule')}</div>
-        <div class="tp-val tp-mono">${t.when}${t.next ? ` \u00b7 ${tr('sched.nextPrefix', { next: t.next })}` : ''}</div>
-      </div>
-      <div>
-        <div class="tp-label">${tr('taskPage.runsAs')}</div>
-        <div class="tp-val">${t.run}</div>
-      </div>
-      ${f.cwd
-        ? html`<div>
-            <div class="tp-label">${tr('taskPage.directory')}</div>
-            <div class="tp-val tp-mono">${f.cwd}</div>
-          </div>`
-        : nothing}
-      <div>
-        <div class="tp-label">${tr('taskPage.postsTo')}</div>
-        <div class="tp-val">${resolveTargetShort(t, topics)}</div>
-      </div>
-    </div>
     <div class="tp-label">${t.kind === 'bash' ? tr('taskPage.command') : tr('taskPage.prompt')}</div>
-    <div class="tp-body">${t.detail}</div>
-    ${renderViewTags(t, onRemoveTag, onAddTags)}
+    <div class="fh-card tp-prompt-card"><div class="tp-body">${t.detail}</div></div>
+    ${renderViewTags(ctx, t, onRemoveTag, onAddTags)}
     <div class="tp-meta">${metaBits.join(' \u00b7 ')}</div>
     ${renderViewSessions(detail, topics, nowMs, onOpenTopic)}
     ${renderRunsTableSection({
@@ -490,61 +486,74 @@ function renderFormContent(
 
   return html`<form
     id="tp-form"
+    class="fh-pcol fh-task-form"
     novalidate
     @submit=${(ev: Event) => {
       ev.preventDefault();
       onSubmit();
     }}
   >
-    <label class="tp-label" for="tp-name">${tr('taskPage.name')}</label>
-    <input
-      id="tp-name"
-      class="skill-field"
-      type="text"
-      autocomplete="off"
-      spellcheck="false"
-      placeholder=${isNew ? tr('taskPage.namePlaceholder') : ''}
-      .value=${values.name}
-      @input=${(ev: Event) => onPatch({ name: (ev.currentTarget as HTMLInputElement).value })}
-    />
-    <div class="tp-label">${tr('taskPage.runs')}</div>
-    ${renderSegmented({
-      kind: 'value',
-      value: values.kind,
-      ariaLabel: tr('taskPage.runsAria'),
-      options: [
-        { value: 'agent', label: tr('taskPage.agentPrompt') },
-        { value: 'bash', label: tr('taskPage.bashCommand') },
-      ],
-      onChange: (v) => onPatch({ kind: v === 'bash' ? 'bash' : 'agent' }),
-    })}
-    ${!isNew ? html`<div class="tp-hint">${tr('taskPage.editKeepHint')}</div>` : nothing}
-    <label class="tp-label" for="tp-text">${values.kind === 'bash' ? tr('taskPage.command') : tr('taskPage.prompt')}</label>
-    <textarea
-      id="tp-text"
-      class="tp-text"
-      spellcheck="false"
-      .value=${values.text}
-      @input=${(ev: Event) => onPatch({ text: (ev.currentTarget as HTMLTextAreaElement).value })}
-    ></textarea>
-    ${keeps.includes('host') ? html`<div class="tp-hint">${tr('taskPage.bashHint')}</div>` : nothing}
-    ${values.kind === 'agent'
-      ? html`<div class="tp-label">${tr('taskPage.session')}</div>
-          ${renderSegmented({
-            kind: 'value',
-            value: values.session,
-            ariaLabel: tr('taskPage.session'),
-            options: [
-              { value: 'new', label: tr('taskPage.sessionNew') },
-              { value: 'daily', label: tr('taskPage.sessionDaily') },
-              { value: 'fixed', label: tr('taskPage.sessionFixed') },
-            ],
-            onChange: (v) => onPatch({ session: v === 'daily' || v === 'fixed' ? v : 'new' }),
-          })}
-          <div class="tp-hint">${sessionHintText(shape)}</div>`
-      : nothing}
-    ${renderFormRuntimeFields(detail, values, keeps, onPatch)}
-    ${renderFormScheduleFields(detail, values, shape, keeps.includes('at'), topics, timeZones, onPatch)}
+    <div class="fh-fld">
+      <label class="fh-fld-label" for="tp-name">${tr('taskPage.name')}</label>
+      <input
+        id="tp-name"
+        class="skill-field fh-inp fh-inp--name"
+        type="text"
+        autocomplete="off"
+        spellcheck="false"
+        placeholder=${isNew ? tr('taskPage.namePlaceholder') : ''}
+        .value=${values.name}
+        @input=${(ev: Event) => onPatch({ name: (ev.currentTarget as HTMLInputElement).value })}
+      />
+    </div>
+    <div class="fh-fld">
+      <div class="fh-fld-label">${tr('taskPage.runs')}</div>
+      <div class="fh-frow">
+        ${renderSegmented({
+          kind: 'value',
+          value: values.kind,
+          ariaLabel: tr('taskPage.runsAria'),
+          options: [
+            { value: 'agent', label: tr('taskPage.agentPrompt') },
+            { value: 'bash', label: tr('taskPage.bashCommand') },
+          ],
+          onChange: (v) => onPatch({ kind: v === 'bash' ? 'bash' : 'agent' }),
+        })}
+      </div>
+      ${!isNew ? html`<div class="tp-hint">${tr('taskPage.editKeepHint')}</div>` : nothing}
+      <label class="tp-label" for="tp-text">${values.kind === 'bash' ? tr('taskPage.command') : tr('taskPage.prompt')}</label>
+      <textarea
+        id="tp-text"
+        class="tp-text"
+        spellcheck="false"
+        .value=${values.text}
+        @input=${(ev: Event) => onPatch({ text: (ev.currentTarget as HTMLTextAreaElement).value })}
+      ></textarea>
+      ${keeps.includes('host') ? html`<div class="tp-hint">${tr('taskPage.bashHint')}</div>` : nothing}
+    </div>
+    <div class="fh-fld">
+      ${values.kind === 'agent'
+        ? html`<div class="fh-fld-label">${tr('taskPage.session')}</div>
+            <div class="fh-frow">
+              ${renderSegmented({
+                kind: 'value',
+                value: values.session,
+                ariaLabel: tr('taskPage.session'),
+                options: [
+                  { value: 'new', label: tr('taskPage.sessionNew') },
+                  { value: 'daily', label: tr('taskPage.sessionDaily') },
+                  { value: 'fixed', label: tr('taskPage.sessionFixed') },
+                ],
+                onChange: (v) => onPatch({ session: v === 'daily' || v === 'fixed' ? v : 'new' }),
+              })}
+            </div>
+            <div class="tp-hint">${sessionHintText(shape)}</div>`
+        : nothing}
+      ${renderFormRuntimeFields(detail, values, keeps, onPatch)}
+    </div>
+    <div class="fh-fld">
+      ${renderFormScheduleFields(detail, values, shape, keeps.includes('at'), topics, timeZones, onPatch)}
+    </div>
     <div class="tp-acts editor">
       <button type="submit" class="fh-btn fh-btn--primary" data-tp-act="save" ?disabled=${saving}>
         ${saveLabel}
@@ -819,23 +828,55 @@ class ScheduleEditor implements ScheduleEditorController {
     });
   }
 
+  private _paintFormHeader(isNew: boolean, task: SchedulePanelTask | null): TemplateResult {
+    const titleText = isNew
+      ? tr('taskPage.newTitle')
+      : this._ctx.i18n.t('wb.sched.editPrefix', { name: task?.name || tr('taskPage.title') });
+    const saveLabel = this._saving
+      ? isNew
+        ? tr('common.adding')
+        : tr('common.saving')
+      : isNew
+        ? tr('common.add')
+        : tr('common.save');
+    return html`<div class="fh-schedule-editor-head">
+      <span class="fh-schedule-editor-title">${titleText}</span>
+      <span class="fh-head-spacer"></span>
+      <div class="tp-acts tp-acts--head">
+        <button type="button" class="fh-btn fh-btn--secondary" ?disabled=${this._saving} @click=${() => this._handleCancel()}>
+          ${tr('common.cancel')}
+        </button>
+        <button type="button" class="fh-btn fh-btn--primary" ?disabled=${this._saving} @click=${() => void this._handleSave()}>
+          ${saveLabel}
+        </button>
+      </div>
+    </div>`;
+  }
+
   private _paintHeader(nowMs: number): TemplateResult {
-    if (this._mode === 'new') {
-      return html`<div class="fh-schedule-editor-head">
-        <span class="fh-schedule-editor-title">${tr('taskPage.newTitle')}</span>
-      </div>`;
-    }
+    const isNew = this._mode === 'new';
+    const isForm = isNew || (this._mode === 'edit' && !this._detail?.locked);
     const task = this._detail?.task ?? this._store.getTask(this._taskId);
+    if (isForm) return this._paintFormHeader(isNew, task);
     const taskState = task?.state ?? 'active';
     const badgeLabel = task?.running ? tr('sched.statusRunning') : taskState;
-    const badgeTone = task?.running ? 'accent' : taskState === 'active' ? 'ok' : 'neutral';
+    const pillCls = task?.running || taskState === 'active' ? 'fh-pill fh-pill--ok' : 'fh-pill fh-pill--neutral';
     const subline = formatEditorSubline(task, nowMs);
     return html`<div class="fh-schedule-editor-head">
       <div class="fh-schedule-editor-title-row">
         <span class="fh-schedule-editor-title">${task?.name || tr('taskPage.title')}</span>
-        ${task ? renderBadge({ count: badgeLabel, tone: badgeTone }) : nothing}
+        ${task ? html`<span class=${pillCls}>${badgeLabel}</span>` : nothing}
       </div>
-      ${subline ? html`<div class="fh-schedule-editor-sub">${subline}</div>` : nothing}
+      ${subline ? html`<span class="fh-schedule-editor-sub" title=${subline}></span>` : nothing}
+      <span class="fh-head-spacer"></span>
+      ${this._detail?.task
+        ? renderViewActions(
+            this._detail as SchedulePanelTaskDetail,
+            this._store.snapshot().busy,
+            (act) => this._handleViewAction(act),
+            'desktop',
+          )
+        : nothing}
     </div>`;
   }
 

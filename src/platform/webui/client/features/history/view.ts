@@ -22,7 +22,10 @@ import {
   filterHistoryRecords,
   formatHistoryExportMarkdown,
   formatHistoryRef,
+  formatHistoryShortTime,
   formatHistoryTime,
+  groupHistoryByDate,
+  historyAgentClass,
   type HistoryEditorInput,
   type HistoryIcons,
   type HistoryPageResponse,
@@ -63,38 +66,45 @@ function renderCopyButton(title: string | undefined, id: string | number, icons:
 
 function renderSessionRow(s: HistoryPanelSession, activeId: string | null, icons: HistoryIcons): string {
   const count = s.messages || 0;
-  const meta = [
-    s.agent || tr('history.noAgent'),
+  const agent = s.agent || '';
+  const metaBits = [
     s.platform || tr('history.unknown'),
-    formatHistoryTime(s.lastAt),
     tr(count === 1 ? 'sched.msgOne' : 'sched.msgMany', { count }),
   ];
+  const badge = agent ? `<span class="${historyAgentClass(agent)}">${text(agent)}</span>` : '';
+  const shortTime = formatHistoryShortTime(s.lastAt);
   return (
     `<div class="hist-item${activeId !== null && String(s.id) === activeId ? ' on' : ''}"` +
-    ` data-hist="${text(s.id)}" data-hist-title="${text(s.title || '')}" role="button" tabindex="0">` +
+    ` data-hist="${text(s.id)}" data-hist-title="${text(s.title || '')}" title="${text(formatHistoryTime(s.lastAt))}" role="button" tabindex="0">` +
     `<div class="hist-top"><div class="hist-title">${text(s.title || tr('history.untitled'))}</div>` +
-    `${renderCopyButton(s.title, s.id, icons)}</div>` +
-    `<div class="hist-meta">${text(meta.join(' · '))}</div></div>`
+    `<span class="hist-age">${text(shortTime)}</span>${renderCopyButton(s.title, s.id, icons)}</div>` +
+    `<div class="hist-meta">${badge}${text(metaBits.join(' · '))}</div></div>`
   );
 }
 
 function renderHitRow(h: HistoryPanelHit, activeId: string | null, icons: HistoryIcons): string {
-  const meta = [h.agent || tr('history.noAgent'), h.platform || tr('history.unknown'), formatHistoryTime(h.at)];
+  const agent = h.agent || '';
+  const badge = agent ? `<span class="${historyAgentClass(agent)}">${text(agent)}</span>` : '';
+  const metaBits = [h.platform || tr('history.unknown')];
+  const shortTime = formatHistoryShortTime(h.at);
   return (
     `<div class="hist-item${activeId !== null && String(h.session) === activeId ? ' on' : ''}"` +
-    ` data-hist="${text(h.session)}" data-hist-title="${text(h.title || '')}" role="button" tabindex="0">` +
+    ` data-hist="${text(h.session)}" data-hist-title="${text(h.title || '')}" title="${text(formatHistoryTime(h.at))}" role="button" tabindex="0">` +
     `<div class="hist-top"><div class="hist-title">${text(h.title || tr('history.untitled'))}</div>` +
-    `${renderCopyButton(h.title, h.session, icons)}</div>` +
+    `<span class="hist-age">${text(shortTime)}</span>${renderCopyButton(h.title, h.session, icons)}</div>` +
     `<div class="hist-excerpt">${text(h.excerpt)}</div>` +
-    `<div class="hist-meta">${text(meta.join(' · '))}</div></div>`
+    `<div class="hist-meta">${badge}${text(metaBits.join(' · '))}</div></div>`
   );
 }
 
 class HistoryViewPanel implements HistoryViewInstance {
   readonly element: HTMLElement;
   private readonly doc: Document;
+  private readonly headerTitle: HTMLElement;
+  private readonly refreshBtn: HTMLButtonElement;
   private readonly searchInput: HTMLInputElement;
   private readonly searchBtn: HTMLButtonElement;
+  private readonly filterHost: HTMLElement;
   private readonly countEl: HTMLElement;
   private readonly errHost: HTMLElement;
   private readonly batchBarHost: HTMLElement;
@@ -127,8 +137,25 @@ class HistoryViewPanel implements HistoryViewInstance {
     this.element = this.doc.createElement('div');
     this.element.className = 'wb-history-view';
 
+    const icons = resolveHistoryIcons(deps);
+    const headerEl = this.doc.createElement('div');
+    headerEl.className = 'wb-history-header';
+    this.headerTitle = this.doc.createElement('span');
+    this.headerTitle.className = 'wb-history-header-title';
+    this.headerTitle.textContent = tr('sidebar.history');
+    this.refreshBtn = this.doc.createElement('button');
+    this.refreshBtn.type = 'button';
+    this.refreshBtn.className = 'fh-btn fh-btn--ghost fh-btn--icon wb-history-refresh';
+    this.refreshBtn.title = tr('common.refresh');
+    this.refreshBtn.setAttribute('aria-label', tr('common.refresh'));
+    this.refreshBtn.innerHTML = icons.refresh || '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19.5 4.5v4.2h-4.2"/></svg>';
+    headerEl.append(this.headerTitle, this.refreshBtn);
+
     const searchForm = this.doc.createElement('div');
     searchForm.className = 'wb-history-search';
+    const searchIconWrap = this.doc.createElement('span');
+    searchIconWrap.className = 'wb-history-search-icon';
+    searchIconWrap.innerHTML = icons.search;
     this.searchInput = this.doc.createElement('input');
     this.searchInput.type = 'text';
     this.searchInput.className = 'fh-input wb-history-q';
@@ -139,14 +166,14 @@ class HistoryViewPanel implements HistoryViewInstance {
 
     this.searchBtn = this.doc.createElement('button');
     this.searchBtn.type = 'button';
-    this.searchBtn.className = 'fh-btn fh-btn--secondary wb-history-go';
+    this.searchBtn.className = 'fh-btn fh-btn--ghost wb-history-go';
     this.searchBtn.textContent = tr('common.search');
     this.searchBtn.title = tr('history.searchTitle');
-    searchForm.appendChild(this.searchInput);
-    searchForm.appendChild(this.searchBtn);
+    searchForm.append(searchIconWrap, this.searchInput, this.searchBtn);
 
-    const filterHost = this.doc.createElement('div');
-    filterHost.className = 'wb-history-filter';
+    this.filterHost = this.doc.createElement('div');
+    this.filterHost.className = 'wb-history-filter';
+    this.filterHost.hidden = true;
     this.countEl = this.doc.createElement('div');
     this.countEl.className = 'wb-history-count';
     this.errHost = this.doc.createElement('div');
@@ -170,14 +197,14 @@ class HistoryViewPanel implements HistoryViewInstance {
     bodyEl.appendChild(this.listEl);
     bodyEl.appendChild(this.moreBtn);
 
+    this.element.appendChild(headerEl);
     this.element.appendChild(searchForm);
-    this.element.appendChild(filterHost);
+    this.element.appendChild(this.filterHost);
     this.element.appendChild(this.countEl);
     this.element.appendChild(this.errHost);
     this.element.appendChild(this.batchBarHost);
     this.element.appendChild(bodyEl);
 
-    const icons = resolveHistoryIcons(deps);
     this.filterBar = createFilterBar(
       {
         key: 'aa_history_filter',
@@ -192,7 +219,7 @@ class HistoryViewPanel implements HistoryViewInstance {
       },
       this.doc,
     );
-    filterHost.appendChild(this.filterBar.el);
+    this.filterHost.appendChild(this.filterBar.el);
     this.listNav = attachListNavigation({
       container: this.listEl,
       batchBarHost: this.batchBarHost,
@@ -206,6 +233,7 @@ class HistoryViewPanel implements HistoryViewInstance {
   }
 
   private bindEvents(): void {
+    this.listeners.add(addDisposableListener(this.refreshBtn, 'click', () => this.refresh()));
     this.listeners.add(addDisposableListener(this.searchBtn, 'click', () => this.runSearch()));
     this.listeners.add(
       addDisposableListener(this.searchInput, 'keydown', (e) => {
@@ -330,7 +358,9 @@ class HistoryViewPanel implements HistoryViewInstance {
   }
 
   private paintSearchHits(icons: HistoryIcons): void {
-    this.filterBar.setGroups(buildHistoryFilterGroups(this.state.hits, icons));
+    const groups = buildHistoryFilterGroups(this.state.hits, icons);
+    this.filterBar.setGroups(groups);
+    this.filterHost.hidden = groups.length === 0;
     const visibleHits = filterHistoryRecords(this.state.hits, this.filterBar.state());
     this.filterBar.setCounts(visibleHits.length, this.state.hits.length);
     if (!visibleHits.length) {
@@ -362,12 +392,23 @@ class HistoryViewPanel implements HistoryViewInstance {
       this.paintSearchHits(currentIcons);
       return;
     }
-    this.filterBar.setGroups(buildHistoryFilterGroups(this.state.sessions, currentIcons));
+    const filterGroups = buildHistoryFilterGroups(this.state.sessions, currentIcons);
+    this.filterBar.setGroups(filterGroups);
+    this.filterHost.hidden = filterGroups.length === 0;
     const visibleSessions = filterHistoryRecords(this.state.sessions, this.filterBar.state());
     this.filterBar.setCounts(visibleSessions.length, this.state.sessions.length);
-    this.listEl.innerHTML = visibleSessions.length
-      ? visibleSessions.map((s) => renderSessionRow(s, this.state.activeId, currentIcons)).join('')
-      : `<div class="skills-empty">${text(tr('history.empty'))}</div>`;
+    if (visibleSessions.length) {
+      const dateGroups = groupHistoryByDate(visibleSessions, (s) => s.lastAt);
+      this.listEl.innerHTML = dateGroups
+        .map(
+          (g) =>
+            `<div class="wb-history-grp">${text(g.label)}</div>` +
+            g.items.map((s) => renderSessionRow(s, this.state.activeId, currentIcons)).join(''),
+        )
+        .join('');
+    } else {
+      this.listEl.innerHTML = `<div class="skills-empty">${text(tr('history.empty'))}</div>`;
+    }
     const n = visibleSessions.length;
     const countStr = `${n}${this.state.next ? '+' : ''}`;
     this.countEl.textContent = n
@@ -513,6 +554,9 @@ class HistoryViewPanel implements HistoryViewInstance {
   }
 
   refreshLocale(): void {
+    this.headerTitle.textContent = tr('sidebar.history');
+    this.refreshBtn.title = tr('common.refresh');
+    this.refreshBtn.setAttribute('aria-label', tr('common.refresh'));
     this.searchInput.placeholder = tr('history.searchPlaceholder');
     this.searchInput.setAttribute('aria-label', tr('history.searchPlaceholder'));
     this.searchBtn.textContent = tr('common.search');
