@@ -62,7 +62,28 @@ export function ageClock(at: number, now = new Date()): string {
   return `${d.getFullYear() === now.getFullYear() ? day : `${day}, ${d.getFullYear()}`} ${hm}`;
 }
 
+const childrenIndexCache = new WeakMap<readonly Topic[], { len: number; byParent: Map<string, Topic[]> }>();
+
+function childrenByParent(topics: readonly Topic[]): Map<string, Topic[]> {
+  const cached = childrenIndexCache.get(topics);
+  if (cached && cached.len === topics.length) return cached.byParent;
+  const byParent = new Map<string, Topic[]>();
+  for (const t of topics) {
+    if (!t.parent) continue;
+    let list = byParent.get(t.parent);
+    if (!list) {
+      list = [];
+      byParent.set(t.parent, list);
+    }
+    list.push(t);
+  }
+  childrenIndexCache.set(topics, { len: topics.length, byParent });
+  return byParent;
+}
+
 export function subtreeRun(id: string, topics: readonly Topic[]): SubtreeRunInfo {
+  const byParent = childrenByParent(topics);
+  if (!byParent.has(id)) return { busy: false, since: 0 };
   let busy = false;
   let since = 0;
   const stack: string[] = [id];
@@ -72,8 +93,9 @@ export function subtreeRun(id: string, topics: readonly Topic[]): SubtreeRunInfo
     const p = stack.pop();
     if (!p || seen[p]) continue;
     seen[p] = true;
-    for (const t of topics) {
-      if (t.parent !== p) continue;
+    const kids = byParent.get(p);
+    if (!kids) continue;
+    for (const t of kids) {
       if (t.running) {
         busy = true;
         if (t.runningSince && (!since || t.runningSince < since)) since = t.runningSince;

@@ -367,6 +367,11 @@ function groupKeyForRow(
   return 'topics.groupIdle';
 }
 
+interface RenderedTopicItem {
+  readonly key: string;
+  readonly html: string;
+}
+
 function renderTopicRowsHtml(
   rt: TopicsRuntime,
   tabForest: TopicForest,
@@ -375,23 +380,26 @@ function renderTopicRowsHtml(
   icons: TopicIcons,
   openKey: string | null,
   filterState: ReturnType<FilterBarController['state']>,
-): { readonly html: string; readonly matched: number; readonly total: number } {
+): { readonly html: string; readonly items: readonly RenderedTopicItem[]; readonly matched: number; readonly total: number } {
   const painted = buildTopicRows(tabForest, topics, activeId, rt.folded, filterState);
   const unreadOf = rt.deps.unreadOf ?? (() => 0);
   const offSince = rt.deps.offSince ?? (() => 0);
   const offTitle = rt.deps.offTitle ?? ((host: string) => host);
+  const byId = new Map<string, Topic>();
+  for (const item of topics) byId.set(item.id, item);
   const ctx = {
     activeTopicId: activeId,
     topics,
     rowMenuKey: openKey,
     icons,
     unreadOf,
-    topicById: (id: string) => rt.topicById(id),
+    topicById: (id: string) => byId.get(id) ?? null,
     offSince,
     offTitle,
     now: rt.nowFn(),
   };
   let h = '';
+  const items: RenderedTopicItem[] = [];
   let currentGroup: MessageKey | null = null;
   for (let i = 0; i < painted.rows.length; i++) {
     const row = painted.rows[i];
@@ -401,13 +409,15 @@ function renderTopicRowsHtml(
       const nextGroup = groupKeyForRow(row, topics, activeId, rt.tab);
       if (nextGroup !== currentGroup) {
         currentGroup = nextGroup;
-        h += `<div class="wb-topics-grp" role="presentation">${text(tr(nextGroup))}</div>`;
+        const grpHtml = `<div class="wb-topics-grp" role="presentation">${text(tr(nextGroup))}</div>`;
+        h += grpHtml;
+        items.push({ key: `grp:${nextGroup}`, html: grpHtml });
       }
     }
     const needs = needsYou(t, activeId);
     const whatKey = t.stage ? NEEDS_WHAT[t.stage] : undefined;
     const attrs = needs && whatKey ? ` title="${text(`${tr(whatKey)}${t.line ? `: ${t.line}` : ''}`)}"` : '';
-    h += wbTopicRowHtml(
+    const rowHtml = wbTopicRowHtml(
       row,
       {
         attr: 'data-topic',
@@ -419,12 +429,47 @@ function renderTopicRowsHtml(
       },
       ctx,
     );
+    h += rowHtml;
+    items.push({ key: `row:${t.id}`, html: rowHtml });
   }
   return {
     html: h || renderEmptyTopicsHtml(painted.filtering, rt.tab),
+    items,
     matched: painted.matched,
     total: painted.total,
   };
+}
+
+function filterGroupsSig(groups: readonly FilterBarGroup[]): string {
+  let out = '';
+  for (const g of groups) {
+    out += `${g.id}:${g.label}:${g.pinned ? 1 : 0}|`;
+    for (const o of g.options) {
+      out += `${o.value}=${o.count ?? ''}:${o.label}:${o.short ?? ''},`;
+    }
+    out += ';';
+  }
+  return out;
+}
+
+function actionItemsSig(items: readonly ActionItem[]): string {
+  let out = '';
+  for (const item of items) {
+    out += `${item.id}:${item.label ?? ''}:${item.title ?? ''}:${item.disabled ? 1 : 0}|`;
+  }
+  return out;
+}
+
+function countTabForests(fullForest: TopicForest): { readonly allCount: number; readonly starredCount: number } {
+  let allCount = 0;
+  let starredCount = 0;
+  for (const cid of fullForest.convOrder) {
+    const c = fullForest.convs[cid];
+    if (!c) continue;
+    if (c.starred) starredCount++;
+    if (!(c.starred && c.rank >= 3)) allCount++;
+  }
+  return { allCount, starredCount };
 }
 
 async function starTopicById(rt: TopicsRuntime, id: string, nextStarred: boolean): Promise<void> {
@@ -548,11 +593,20 @@ class TopicsViewPanel implements TopicsViewInstance {
   private menuKey: string | null = null;
   private disposed = false;
   private panelVisible = true;
+  private dirty = false;
+  private lastSegSig = '';
+  private lastActSig = '';
+  private lastFilterSig = '';
+  private lastListHtml = '';
+  private lastRowKeys: string[] = [];
+  private lastRowHtmls: string[] = [];
+  private readonly patchTpl: HTMLTemplateElement;
 
   constructor(private readonly rt: TopicsRuntime) {
     const { doc, win } = rt;
     this.element = doc.createElement('div');
     this.element.className = 'wb-topics-view';
+    this.patchTpl = doc.createElement('template');
 
     this.headerEl = doc.createElement('div');
     this.headerEl.className = 'wb-topics-head';
@@ -802,13 +856,25 @@ class TopicsViewPanel implements TopicsViewInstance {
     }
   }
 
-  init(panelCtx?: { readonly api?: { readonly isVisible?: boolean; onDidVisibilityChange?: (cb: (visible: boolean) => void) => Disposable } }): void {
+  init(
+    params?: unknown,
+    panelCtx?: { readonly api?: { readonly isVisible?: boolean; onDidVisibilityChange?: (cb: (visible: boolean) => void) => Disposable } },
+  ): void {
     this.rt.views.add(this);
-    if (panelCtx?.api) {
-      if (typeof panelCtx.api.isVisible === 'boolean') this.panelVisible = panelCtx.api.isVisible;
-      const sub = panelCtx.api.onDidVisibilityChange?.((visible) => {
+    const ctx =
+      panelCtx ??
+      (params && typeof params === 'object' && 'api' in params
+        ? (params as { readonly api?: { readonly isVisible?: boolean; onDidVisibilityChange?: (cb: (visible: boolean) => void) => Disposable } })
+        : undefined);
+    if (ctx?.api) {
+      if (typeof ctx.api.isVisible === 'boolean') this.panelVisible = ctx.api.isVisible;
+      const sub = ctx.api.onDidVisibilityChange?.((visible) => {
         this.panelVisible = visible;
         this.syncActionBarHost();
+        if (visible && this.dirty) {
+          this.dirty = false;
+          this.paint();
+        }
       });
       if (sub) this.listeners.add(sub);
     }
@@ -826,25 +892,42 @@ class TopicsViewPanel implements TopicsViewInstance {
 
   paint(): void {
     if (this.disposed) return;
+    if (!this.panelVisible) {
+      this.dirty = true;
+      return;
+    }
+    this.dirty = false;
     const topics = this.rt.getTopics();
     const activeId = this.rt.getActiveTopicId();
     const fullForest = buildTopicForest(topics, activeId);
-    const allCount = buildTabForest(fullForest, 'topics').convOrder.length;
-    const starredCount = buildTabForest(fullForest, 'starred').convOrder.length;
-    this.segmented.update({
-      value: this.rt.tab,
-      options: [
-        { value: 'topics', label: tr('topics.tabAll'), badge: allCount || null, title: tr('sidebar.topicsTitle') },
-        { value: 'starred', label: tr('sidebar.starred'), badge: starredCount || null, title: tr('sidebar.starredTitle') },
-      ],
-    });
-    this.actionBar.update(buildToolbarActions(this.rt, fullForest));
+    const { allCount, starredCount } = countTabForests(fullForest);
+    const segSig = `${this.rt.tab}|${allCount}|${starredCount}|${tr('topics.tabAll')}|${tr('sidebar.starred')}`;
+    if (segSig !== this.lastSegSig) {
+      this.lastSegSig = segSig;
+      this.segmented.update({
+        value: this.rt.tab,
+        options: [
+          { value: 'topics', label: tr('topics.tabAll'), badge: allCount || null, title: tr('sidebar.topicsTitle') },
+          { value: 'starred', label: tr('sidebar.starred'), badge: starredCount || null, title: tr('sidebar.starredTitle') },
+        ],
+      });
+    }
+    const toolbarItems = buildToolbarActions(this.rt, fullForest);
+    const actSig = actionItemsSig(toolbarItems);
+    if (actSig !== this.lastActSig) {
+      this.lastActSig = actSig;
+      this.actionBar.update(toolbarItems);
+    }
     this.syncActionBarHost();
 
     const tabForest = buildTabForest(fullForest, this.rt.tab);
     const currentIcons = this.rt.getIcons();
     const fg = buildTopicFilterGroups(tabForest, this.rt.tab);
-    this.filterBar.setGroups(mapFilterGroups(fg.groups, currentIcons));
+    const fSig = filterGroupsSig(fg.groups);
+    if (fSig !== this.lastFilterSig) {
+      this.lastFilterSig = fSig;
+      this.filterBar.setGroups(mapFilterGroups(fg.groups, currentIcons));
+    }
 
     const openKey = this.menu.isOpen() ? this.menuKey : null;
     const rendered = renderTopicRowsHtml(
@@ -857,14 +940,49 @@ class TopicsViewPanel implements TopicsViewInstance {
       this.filterBar.state(),
     );
     this.filterBar.setCounts(rendered.matched, rendered.total);
-    this.listEl.innerHTML = rendered.html;
-    this.listNav.sync();
-    this.ageTicker.armAgeTick();
+    if (rendered.html !== this.lastListHtml) {
+      this.applyRenderedList(rendered.html, rendered.items);
+      this.listNav.sync();
+      this.ageTicker.armAgeTick();
+    }
     if (this.menu.isOpen()) this.menu.reposition();
+  }
+
+  private applyRenderedList(html: string, items: readonly RenderedTopicItem[]): void {
+    const canPatch =
+      items.length > 0 &&
+      items.length === this.lastRowKeys.length &&
+      this.listEl.children.length === items.length &&
+      items.every((it, idx) => it.key === this.lastRowKeys[idx]);
+    if (canPatch) {
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        if (!item || item.html === this.lastRowHtmls[i]) continue;
+        this.patchTpl.innerHTML = item.html;
+        const nextEl = this.patchTpl.content.firstElementChild;
+        const prevEl = this.listEl.children[i];
+        if (nextEl && prevEl) {
+          this.listEl.replaceChild(nextEl, prevEl);
+        }
+        this.lastRowHtmls[i] = item.html;
+      }
+      this.lastListHtml = html;
+      return;
+    }
+    this.listEl.innerHTML = html;
+    this.lastListHtml = html;
+    this.lastRowKeys = items.map((it) => it.key);
+    this.lastRowHtmls = items.map((it) => it.html);
   }
 
   refreshLocale(): void {
     if (this.disposed) return;
+    this.lastSegSig = '';
+    this.lastActSig = '';
+    this.lastFilterSig = '';
+    this.lastListHtml = '';
+    this.lastRowKeys = [];
+    this.lastRowHtmls = [];
     this.mobileTitleEl.textContent = tr('sidebar.topics');
     this.filterBar.refreshI18n(tr('sidebar.searchTopics'));
     this.paint();
