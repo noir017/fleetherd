@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { test, expect, loginViaUi } from './fixtures.js';
 import { startGateway, type GatewayHandle } from './harness.js';
 import { seedTopics } from './seed.js';
@@ -73,7 +74,6 @@ test.describe('Web UI mobile shell, palette, and login alignment', () => {
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
     expect(overflow).toBe(false);
 
-    await page.screenshot({ path: '/tmp/wb4-mobile/after-topic-dark.png' });
 
     // Hamburger button opens the slide-out sidebar drawer with full activity rail
     await page.locator('#expand-sidebar').click();
@@ -89,7 +89,6 @@ test.describe('Web UI mobile shell, palette, and login alignment', () => {
       rows.some((r) => parseFloat(getComputedStyle(r).marginTop) > 0),
     );
     expect(leakedMargin).toBe(false);
-    await page.screenshot({ path: '/tmp/wb4-mobile/after-drawer-topics-dark.png' });
 
     // Picking a topic switches to it and closes the drawer
     await page.locator('.wb-sidebar .topic-item').filter({ hasText: 'Slow cart API' }).first().click();
@@ -136,7 +135,6 @@ test.describe('Web UI mobile shell, palette, and login alignment', () => {
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
     const lightBg = await page.locator('#workbench-root').evaluate((el) => getComputedStyle(el).backgroundColor);
     expect(lightBg).toBe('rgb(255, 255, 255)');
-    await page.screenshot({ path: '/tmp/wb4-mobile/after-topic-light.png' });
   });
 
   test('mobile drawer switches across History, Schedules, Reviews, Skills, Settings, and reaches topic tools', async ({
@@ -158,7 +156,6 @@ test.describe('Web UI mobile shell, palette, and login alignment', () => {
 
     await expect(page.locator('.wb-sidebar .wb-set-catalog')).toBeVisible();
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
-    await page.screenshot({ path: '/tmp/wb4-mobile/after-drawer-settings-dark.png' });
 
     // Device theme preference still works at 390x844 via Settings -> Device preferences
     const devItem = page.locator('.wb-sidebar .wb-set-catalog').getByRole('option', { name: 'Device preferences' });
@@ -189,5 +186,116 @@ test.describe('Web UI mobile shell, palette, and login alignment', () => {
     await expect(page.locator('.wb-shell')).toHaveClass(/is-secondary-open/);
     await page.locator('.wb-secondary .wb-part-close').click();
     await expect(page.locator('.wb-secondary')).toBeHidden();
+  });
+
+  test('mobile long topic opens at the bottom and second open paints immediately from cache with ?last= resume', async ({
+    page,
+    context,
+  }) => {
+    test.setTimeout(60_000);
+    const loginRes = await fetch(`${gateway.baseUrl}/api/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ token: gateway.secret }),
+    });
+    const cookie = (loginRes.headers.get('set-cookie') ?? '').split(';')[0]!;
+    const postJson = async (route: string, body: unknown) => {
+      const r = await fetch(`${gateway.baseUrl}/${route}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', cookie },
+        body: JSON.stringify(body),
+      });
+      return r.json();
+    };
+    const longId = ((await postJson('api/topics', { title: 'Long scroll topic' })) as { topic: { id: string } }).topic
+      .id;
+    const otherId = ((await postJson('api/topics', { title: 'Other mobile topic' })) as { topic: { id: string } }).topic
+      .id;
+    gateway.setMode('ok');
+    for (let i = 1; i <= 4; i++) {
+      await postJson('api/send', {
+        topic: longId,
+        text: `Turn ${i}\n${Array.from({ length: 14 }, (_, k) => `Line ${k + 2} of turn ${i}`).join('\n')}`,
+        nonce: crypto.randomUUID(),
+      });
+      const deadline = Date.now() + 15_000;
+      while (Date.now() < deadline) {
+        const snap = (await (await fetch(`${gateway.baseUrl}/api/topic?t=${longId}`, { headers: { cookie } })).json()) as {
+          messages?: Array<{ own?: boolean }>;
+        };
+        if ((snap.messages ?? []).filter((m) => !m.own).length >= i) break;
+        await new Promise((r) => setTimeout(r, 50));
+      }
+    }
+    await postJson('api/send', { topic: otherId, text: 'Short topic', nonce: crypto.randomUUID() });
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    const eventUrls: string[] = [];
+    page.on('request', (req) => {
+      if (req.url().includes('api/events')) eventUrls.push(req.url().replace(gateway.baseUrl, ''));
+    });
+    await loginViaUi(page, gateway.baseUrl, gateway.secret);
+
+    const longRow = page.locator(`.wb-stack-list-body .topic-item[data-topic="${longId}"]`);
+    const otherRow = page.locator(`.wb-stack-list-body .topic-item[data-topic="${otherId}"]`);
+    await expect(longRow).toBeVisible();
+
+    // 1st open of long topic: must land at the bottom, not the first message.
+    await longRow.click();
+    await expect(page.locator('.wb-stack-detail-body #log .m').first()).toBeVisible();
+    const firstScroll = await page.evaluate(() => {
+      const log = document.querySelector<HTMLElement>('.wb-stack-detail-body #log')!;
+      return {
+        scrollHeight: log.scrollHeight,
+        clientHeight: log.clientHeight,
+        distFromBottom: log.scrollHeight - log.scrollTop - log.clientHeight,
+      };
+    });
+    expect(firstScroll.scrollHeight).toBeGreaterThan(firstScroll.clientHeight + 500);
+    expect(firstScroll.distFromBottom).toBeLessThan(80);
+
+    // Switch away to other topic and back to list.
+    await page.locator('.wb-stack-back').click();
+    await expect(otherRow).toBeVisible();
+    await otherRow.click();
+    await expect(page.locator('.wb-stack-detail-body #log .m').first()).toBeVisible();
+    await page.locator('.wb-stack-back').click();
+    await expect(longRow).toBeVisible();
+
+    // Throttle network (800ms RTT) and re-open long topic: must paint from cache immediately (< 500ms) and resume with ?last=.
+    const cdp = await context.newCDPSession(page);
+    await cdp.send('Network.enable');
+    await cdp.send('Network.emulateNetworkConditions', {
+      offline: false,
+      latency: 800,
+      downloadThroughput: (400 * 1024) / 8,
+      uploadThroughput: (200 * 1024) / 8,
+    });
+    eventUrls.length = 0;
+    const secondOpen = await page.evaluate((topicId) => {
+      return new Promise<{ domMs: number; count: number; distFromBottom: number }>((resolve) => {
+        const row = document.querySelector<HTMLElement>(`.wb-stack-list-body .topic-item[data-topic="${topicId}"]`)!;
+        const t0 = performance.now();
+        const check = () => {
+          const log = document.querySelector<HTMLElement>('.wb-stack-detail-body #log');
+          const count = log ? log.querySelectorAll('.m').length : 0;
+          if (count > 0 && log && log.clientHeight > 0) {
+            resolve({
+              domMs: performance.now() - t0,
+              count,
+              distFromBottom: log.scrollHeight - log.scrollTop - log.clientHeight,
+            });
+            return;
+          }
+          requestAnimationFrame(check);
+        };
+        row.click();
+        check();
+      });
+    }, longId);
+    expect(secondOpen.count).toBeGreaterThanOrEqual(8);
+    expect(secondOpen.domMs).toBeLessThan(500);
+    expect(secondOpen.distFromBottom).toBeLessThan(80);
+    expect(eventUrls.some((u) => u.includes(`t=${longId}`) && u.includes('last='))).toBe(true);
   });
 });

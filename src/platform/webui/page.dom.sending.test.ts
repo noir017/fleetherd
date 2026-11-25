@@ -1391,4 +1391,59 @@ describe('webui page: pending mid-turn queue and card send-now', () => {
     expect(h.el('pending-queue').hidden).toBe(true);
     expect(h.doc.querySelector('#log .m.failed')?.textContent).toContain('lost connection');
   });
+
+  it('keeps the sent-now message visible in #log on both steerable and interrupt paths and across reload', async () => {
+    const T = 'a1b2c3d4';
+    const h = await open({
+      replies: {
+        'api/pending/send-now': { ok: true, sent: 1 },
+      },
+    });
+    await h.emit(sync(T, [], [T]));
+    await h.emit({ t: 'typing', on: true });
+
+    // Path 1: steerable send-now (canSendNow: true) where pending clears before the msg echo lands.
+    (h.el('input') as HTMLTextAreaElement).value = 'steered follow-up';
+    await h.click('#composer button[type="submit"]');
+    const firstBody = h.calls.find((c) => c.path === 'api/send')?.body as { nonce: string };
+    await h.emit({
+      t: 'pending',
+      items: [
+        { id: 'm10', content: 'steered follow-up', at: 1000, nonce: firstBody.nonce, canSendNow: true, reason: 'tool' },
+      ],
+    });
+    await h.click('[data-pq-send="m10"]');
+    await h.emit({ t: 'pending', items: [] });
+    const m10 = { id: 'm10', own: true, html: '<p class="raw">steered follow-up</p>', at: 1000, nonce: firstBody.nonce };
+    await h.emit({ t: 'msg', msg: m10 });
+
+    expect(h.el('pending-queue').hidden).toBe(true);
+    expect(h.doc.querySelectorAll('#log .m.own')).toHaveLength(1);
+    expect(h.doc.querySelector('#log .m.own')?.textContent).toContain('steered follow-up');
+
+    // Path 2: non-steerable interrupt send-now (canSendNow: false) where msg lands then pending clears.
+    (h.el('input') as HTMLTextAreaElement).value = 'interrupt follow-up';
+    await h.click('#composer button[type="submit"]');
+    const secondBody = h.calls.filter((c) => c.path === 'api/send')[1]?.body as { nonce: string };
+    await h.emit({
+      t: 'pending',
+      items: [
+        { id: 'm11', content: 'interrupt follow-up', at: 2000, nonce: secondBody.nonce, canSendNow: false, reason: 'turn' },
+      ],
+    });
+    await h.click('[data-pq-send="m11"]');
+    await h.click('[data-pq-confirm="m11"]');
+    const m11 = { id: 'm11', own: true, html: '<p class="raw">interrupt follow-up</p>', at: 2000, nonce: secondBody.nonce };
+    await h.emit({ t: 'msg', msg: m11 });
+    await h.emit({ t: 'pending', items: [] });
+
+    expect(h.el('pending-queue').hidden).toBe(true);
+    const ownTexts = [...h.doc.querySelectorAll('#log .m.own')].map((el) => el.textContent);
+    expect(ownTexts.some((t) => t?.includes('steered follow-up'))).toBe(true);
+    expect(ownTexts.some((t) => t?.includes('interrupt follow-up'))).toBe(true);
+
+    // Reload sync keeps both delivered messages visible.
+    await h.emit(sync(T, [m10, m11], [T]));
+    expect(h.doc.querySelectorAll('#log .m.own')).toHaveLength(2);
+  });
 });

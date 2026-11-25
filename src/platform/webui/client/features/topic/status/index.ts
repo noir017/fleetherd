@@ -50,6 +50,7 @@ export interface TopicStatusController extends Disposable {
   schedulePeek(): void;
   peekOptions(): void;
   onMessageArrived(): void;
+  onAgentChosen(): void;
   openModelPop(): void;
   openOptPop(id: string): void;
   closeModelPop(): void;
@@ -82,6 +83,7 @@ class TopicStatusControllerImpl implements TopicStatusController {
   private agentStatus: AgentStatus | null = null;
   private statusTimer: ReturnType<typeof setInterval> | null = null;
   private statusHtml = '';
+  private chosenTopic: string | null = null;
   private readonly opk: PeekState = {
     topic: null,
     agent: '',
@@ -198,37 +200,42 @@ class TopicStatusControllerImpl implements TopicStatusController {
     }, PEEK_DEBOUNCE_MS);
   }
 
+  private renderStatusHtml(t: string, openModel: boolean, openOptId: string | null): string {
+    const s = this.agentStatus;
+    const opkSame = this.opk.topic === t;
+    if (s) {
+      return statusSegments(s, this.nowFn(), Boolean(this.deps.statusEl?.classList.contains('open')), {
+        fallbackOptions: this.opkFor(t),
+        fallbackPermissions: opkSame ? this.opk.permissions : null,
+        openModel,
+        openOptId,
+      });
+    }
+    const chosen = Boolean(t && this.chosenTopic === t);
+    const bare = Boolean(
+      t && this.deps.isSynced() && (chosen || (!this.deps.hasLauncher() && this.deps.hasMessages())),
+    );
+    if (!bare) return '';
+    if (this.opk.topic !== t) this.schedulePeek();
+    return renderBareStatus({
+      agent: opkSame ? this.opk.agent : '',
+      model: (opkSame && this.opk.model) || tr('status.model'),
+      options: this.opkFor(t),
+      permissions: opkSame ? this.opk.permissions : null,
+      openModel,
+      openOptId,
+    });
+  }
+
   paintStatus(): void {
     const statusEl = this.deps.statusEl;
     if (!statusEl) return;
-    const s = this.agentStatus;
     const t = this.deps.getTopic();
     // Ask the live launcher element rather than the sync snapshot so the switch appears immediately
     // after picking an agent in a new topic, before the first reply reports a status.
-    const bare = Boolean(
-      !s && t && this.deps.isSynced() && !this.deps.hasLauncher() && this.deps.hasMessages(),
-    );
-    const opkSame = this.opk.topic === t;
     const openModel = this.pop.isOpen() && !this.pop.currentOpt();
     const openOptId = this.pop.currentOpt();
-    const html = s
-      ? statusSegments(s, this.nowFn(), statusEl.classList.contains('open'), {
-          fallbackOptions: this.opkFor(t),
-          fallbackPermissions: opkSame ? this.opk.permissions : null,
-          openModel,
-          openOptId,
-        })
-      : bare
-        ? renderBareStatus({
-            agent: opkSame ? this.opk.agent : '',
-            model: (opkSame && this.opk.model) || tr('status.model'),
-            options: this.opkFor(t),
-            permissions: opkSame ? this.opk.permissions : null,
-            openModel,
-            openOptId,
-          })
-        : '';
-    if (bare && this.opk.topic !== t) this.schedulePeek();
+    const html = this.renderStatusHtml(t, openModel, openOptId);
     if (html === this.statusHtml) return;
     this.statusHtml = html;
     statusEl.innerHTML = html;
@@ -246,6 +253,23 @@ class TopicStatusControllerImpl implements TopicStatusController {
       this.paintStatus();
       this.schedulePeek();
     }
+  }
+
+  onAgentChosen(): void {
+    const t = this.deps.getTopic();
+    if (!t) return;
+    this.chosenTopic = t;
+    this.pop.close();
+    this.opk.topic = t;
+    this.opk.agent = '';
+    this.opk.model = '';
+    this.opk.options = [];
+    this.opk.permissions = null;
+    if (this.opk.timer) {
+      clearTimeout(this.opk.timer);
+      this.opk.timer = null;
+    }
+    this.paintStatus();
   }
 
   openModelPop(): void {

@@ -829,6 +829,7 @@ describe('InboundMerger: gateway pending-steer queue, recall, and immediate send
     h.resolveFirst();
     await tick();
     expect(h.batches).toEqual([['m1'], ['m3', 'm2']]);
+    expect(h.delivered).toEqual([['m3', 'm2']]);
     expect(h.merger.pendingItems()).toEqual([]);
   });
 });

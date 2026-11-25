@@ -11,14 +11,14 @@
 #topics-filter{flex:0 0 auto}
 .filterbar{flex:0 0 auto;display:flex;flex-direction:column;gap:6px;padding:8px;border-bottom:1px solid var(--line);container-type:inline-size}
 .fb-row{display:flex;align-items:center;gap:5px;min-width:0}
-.fb-search{flex:1;min-width:0;display:flex;align-items:center;gap:4px;height:28px;padding:0 4px 0 7px;background:var(--field);border:1px solid transparent;border-radius:5px}
+.fb-search{flex:1;min-width:0;display:flex;align-items:center;gap:4px;height:30px;padding:0 4px 0 7px;background:var(--field);border:1px solid transparent;border-radius:5px}
 .fb-search:focus-within{border-color:var(--line-focus)}
 .fb-search .ic{width:12px;height:12px;color:var(--dim)}
-.fb-q{flex:1;min-width:0;height:100%;padding:0;background:none;border:0;outline:0;color:var(--fg);font:inherit;font-size:12.5px}
+.fb-q{flex:1;min-width:0;height:100%;padding:0;background:none;border:0;outline:0;color:var(--fg);font:inherit;font-size:var(--fh-fs-sm)}
 .fb-q::placeholder{color:var(--fg-slate)}
 .fb-qclear{display:inline-flex;align-items:center;justify-content:center;background:none;border:0;color:var(--dim);cursor:pointer;padding:2px;border-radius:3px;line-height:1}
 .fb-qclear:hover{color:var(--fg);background:var(--hover-3)}
-.fb-btn{display:inline-flex;align-items:center;justify-content:center;gap:4px;height:28px;padding:0 7px;background:none;border:1px solid var(--line);border-radius:5px;color:var(--dim);font:inherit;font-size:12px;line-height:1;cursor:pointer;white-space:nowrap}
+.fb-btn{display:inline-flex;align-items:center;justify-content:center;gap:4px;height:30px;padding:0 7px;background:none;border:1px solid var(--line);border-radius:5px;color:var(--dim);font:inherit;font-size:var(--fh-fs-sm);line-height:1;cursor:pointer;white-space:nowrap}
 .fb-btn:hover{color:var(--fg);border-color:var(--line-strong)}
 .fb-btn[aria-expanded="true"],.fb-btn.on{color:var(--fg);background:var(--field)}
 .fb-btn .ic{width:12px;height:12px}
@@ -34,24 +34,26 @@
   .fb-row{flex-wrap:wrap}
   .fb-tools{flex-basis:100%;justify-content:flex-end}
 }
-.fb-sort{display:inline-flex;align-items:center;gap:3px;height:28px;padding:0 6px;border:1px solid var(--line);border-radius:5px;color:var(--dim);min-width:0}
+.fb-sort{display:inline-flex;align-items:center;gap:3px;height:30px;padding:0 6px;border:1px solid var(--line);border-radius:5px;color:var(--dim);min-width:0}
 .fb-sort:focus-within{border-color:var(--line-strong);color:var(--fg)}
 .fb-sort .ic{width:12px;height:12px;flex:none}
-.fb-sort select{appearance:none;background:none;border:0;outline:0;color:inherit;font:inherit;font-size:12px;line-height:1;padding:0;max-width:88px;cursor:pointer}
+.fb-sort select{appearance:none;background:none;border:0;outline:0;color:inherit;font:inherit;font-size:var(--fh-fs-sm);line-height:1;padding:0;max-width:88px;cursor:pointer}
 .fb-sort option{background:var(--surface-pop);color:var(--fg)}
-.fb-dir{padding:0;width:28px;flex:none}
-.fb-sum{display:flex;align-items:center;gap:4px;font-size:11px;color:var(--dim);line-height:1.4}
-.fb-sum .fb-clear{margin-left:auto;background:none;border:0;color:var(--accent);font:inherit;font-size:11px;cursor:pointer;padding:1px 3px;border-radius:3px}
+.fb-dir{padding:0;width:30px;flex:none}
+.fb-sum{display:flex;align-items:center;gap:4px;font-size:var(--fh-fs-xs);color:var(--dim);line-height:1.4}
+.fb-sum .fb-clear{margin-left:auto;background:none;border:0;color:var(--accent);font:inherit;font-size:var(--fh-fs-xs);cursor:pointer;padding:1px 3px;border-radius:3px}
 .fb-sum .fb-clear:hover{text-decoration:underline}
 .fb-panel{display:flex;flex-direction:column;gap:7px;max-height:min(42vh,320px);overflow-y:auto;border-top:1px solid var(--line);padding-top:7px}
 .fb-group{display:flex;flex-direction:column;gap:4px}
-.fb-label{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--dim)}
+.fb-label{font-size:var(--fh-fs-2xs);font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--dim)}
 .fb-chips{display:flex;flex-wrap:wrap;gap:4px}
-.fb-chip{display:inline-flex;align-items:center;gap:3px;padding:2px 7px;background:none;border:1px solid var(--line);border-radius:11px;color:var(--dim);font:inherit;font-size:11.5px;line-height:1.5;cursor:pointer;white-space:nowrap}
+.fb-chip{display:inline-flex;align-items:center;gap:3px;padding:2px 7px;background:none;border:1px solid var(--line);border-radius:11px;color:var(--dim);font:inherit;font-size:var(--fh-fs-xs);line-height:1.5;cursor:pointer;white-space:nowrap}
 .fb-chip:hover{color:var(--fg);border-color:var(--line-strong)}
 .fb-chip.on{color:var(--accent-chip-fg);background:var(--accent-chip-bg);border-color:var(--accent-chip-edge)}
+.fb-chip[data-v="running"] .ic{color:var(--fh-running)}
+.fb-chip[data-v="running"].on{color:var(--fh-running);background:var(--fh-running-bg);border-color:var(--fh-running)}
 .fb-chip .ic{width:10px;height:10px}
-.fb-count{opacity:.65;font-size:10px}
+.fb-count{opacity:.65;font-size:var(--fh-fs-2xs)}
 /* A group the bar keeps on screen rather than folding into the panel: the state filter of both
    lists, always one row under the search. Four chips share the row's width equally and never
    wrap — the sidebar's 180px and the panel's 220px cannot hold four words and four counts, and
@@ -66,8 +68,8 @@
   .fb-pin .fb-chip-label{display:none}
 }
 /* What the list says instead of rows when a search or a filter matches nothing. */
-.topics-empty{display:flex;align-items:center;gap:8px;padding:14px 4px;color:var(--dim);font-size:12px}
-.topics-empty .fb-clear{margin-left:auto;background:none;border:0;color:var(--accent);font:inherit;font-size:12px;cursor:pointer;padding:2px 4px;border-radius:3px}
+.topics-empty{display:flex;align-items:center;gap:8px;padding:14px 4px;color:var(--dim);font-size:var(--fh-fs-sm)}
+.topics-empty .fb-clear{margin-left:auto;background:none;border:0;color:var(--accent);font:inherit;font-size:var(--fh-fs-sm);cursor:pointer;padding:2px 4px;border-radius:3px}
 .topics-empty .fb-clear:hover{text-decoration:underline}
 
 /* 6px between rows, and 10px above the first, because a topic row's agent legend (.agent-tag) stands
@@ -78,7 +80,7 @@
    block, the sub-agent staircase, the star) stay scoped to it below.
    The row's colour is a variable because the hover buttons' fade (.topic-acts) has to end in exactly
    it: a fade into any other colour shows as a band across the title. --fh-bg-side (#181818) is both panels' own. */
-.topic-item{--row-bg:var(--bg-panel);display:flex;align-items:center;gap:8px;width:100%;padding:7px 9px;border:1px solid transparent;border-radius:5px;background:var(--row-bg);text-align:left;font:inherit;font-size:13px;cursor:pointer;transition:background .15s;position:relative}
+.topic-item{--row-bg:var(--bg-panel);display:flex;align-items:center;gap:8px;width:100%;padding:7px 9px;border:1px solid transparent;border-radius:5px;background:var(--row-bg);text-align:left;font:inherit;font-size:var(--fh-fs-ui);cursor:pointer;transition:background .15s;position:relative}
 .topic-item:hover{--row-bg:var(--hover-2)}
 .topic-item.on{--row-bg:var(--active);border-color:var(--line)}
 /* The selected row's title is the brightest thing in the column. The state rules below are more
@@ -94,7 +96,7 @@
                 because during an ask the turn IS still open and would otherwise paint over it. */
 .topic-dot{width:7px;height:7px;border-radius:50%;flex:0 0 7px;background:var(--dot-idle)}
 .topic-dot.live{background:var(--dot-live)}
-.topic-dot.running{background:var(--accent);box-shadow:0 0 6px var(--accent-glow);animation:pulse 1.5s infinite}
+.topic-dot.running{background:var(--fh-running);box-shadow:0 0 6px var(--fh-running-glow);animation:pulse 1.5s infinite}
 .topic-dot.asking{background:var(--warn);box-shadow:0 0 6px var(--warn-glow);animation:pulse 1.5s infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
 /* Two lines in one row, so the second can hold the directory. min-width:0 is what lets either
@@ -118,13 +120,13 @@
    has none of its own and stays grey. max-width keeps a long id clear of the row's right end. */
 .topic-item.framed{border-color:var(--line-frame);border-radius:6px;padding-top:9px}
 .topic-item.framed.on{border-color:var(--line-frame-on)}
-.agent-tag{position:absolute;top:-7px;left:7px;max-width:calc(100% - 50px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0 4px;font-size:10px;line-height:13px;letter-spacing:.02em;color:var(--hc,var(--hc-fallback));background:linear-gradient(to bottom,var(--behind,var(--bg-panel)) 50%,var(--row-bg) 50%);border-radius:3px}
+.agent-tag{position:absolute;top:-7px;left:7px;max-width:calc(100% - 50px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0 4px;font-size:var(--fh-fs-2xs);line-height:13px;letter-spacing:.02em;color:var(--hc,var(--hc-fallback));background:linear-gradient(to bottom,var(--behind,var(--bg-panel)) 50%,var(--row-bg) 50%);border-radius:3px}
 /* A step brighter on the row on screen, as its title and frame are. Mixed toward white rather than a
    second palette, so a harness added to the palette needs one colour, not two. */
 .topic-item.on .agent-tag{color:color-mix(in srgb,var(--hc,var(--hc-fallback)) 72%,var(--mix-hi))}
 /* Which project this topic is in. Dimmer than an idle title on purpose: it is what you scan
    for when several topics are open, not what you read. */
-.topic-dir{font-size:11px;line-height:1.35;color:var(--fg-slate);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.topic-dir{font-size:var(--fh-fs-xs);line-height:1.35;color:var(--fg-slate);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .topic-item.on .topic-dir{color:var(--fg-slate-hi)}
 /* The line under a title: the directory on the left, how long the topic has been working or how
    long since it stopped on the right. A flex row so the age keeps its width while a long path is
@@ -133,10 +135,10 @@
    directory to show. */
 .topic-sub{display:flex;align-items:baseline;gap:6px;min-width:0}
 .topic-sub .topic-line{flex:1 1 auto;min-width:0}
-.topic-age{flex:0 0 auto;margin-left:auto;font-size:11px;line-height:1.35;color:var(--fg-slate);white-space:nowrap;font-variant-numeric:tabular-nums}
+.topic-age{flex:0 0 auto;margin-left:auto;font-size:var(--fh-fs-xs);line-height:1.35;color:var(--fg-slate);white-space:nowrap;font-variant-numeric:tabular-nums}
 /* Working is the one state the row is watched in, so the age takes the running blue. Waiting on
    an answer keeps its own amber elsewhere; the age still says how long the turn has been open. */
-.topic-age.run{color:var(--accent)}
+.topic-age.run{color:var(--fh-running)}
 /* A machine the gateway cannot reach (OfflineMachine, the machines event): its name in a topic's
    line, the heading over its agents on a new topic, and a line above the composer. A muted red of
    its own, because amber already means "waiting for you" on this page, and this is not something to
@@ -151,12 +153,12 @@
    with nothing behind it. The dot says which; this is so the eye finds the right row first. */
 .topic-item.idle.live .topic-title{color:var(--fg-soft)}
 .topic-item.on.idle.live .topic-title{color:var(--fg-live-on)}
-.topic-badge{background:var(--badge-bg);color:var(--fg-on-accent);border-radius:9px;padding:1px 6px;font-size:11px;font-weight:600;line-height:1.3;margin-left:4px;flex-shrink:0}
+.topic-badge{background:var(--badge-bg);color:var(--fg-on-accent);border-radius:9px;padding:1px 6px;font-size:var(--fh-fs-xs);font-weight:600;line-height:1.3;margin-left:4px;flex-shrink:0}
 /* A terminal is attached to this topic. Deliberately not a fifth colour on .topic-dot: that dot
    is about the agent — whether one is resident, busy, or waiting on an answer — and a terminal is
    an unrelated state that can be true alongside any of them.
    A prompt-shaped glyph says which of the two it is without a legend. */
-.topic-term{flex-shrink:0;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:9.5px;line-height:1;color:var(--ok);border:1px solid var(--ok-border);border-radius:3px;padding:2px 3px;margin-left:4px}
+.topic-term{flex-shrink:0;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:var(--fh-fs-2xs);line-height:1;color:var(--ok);border:1px solid var(--ok-border);border-radius:3px;padding:2px 3px;margin-left:4px}
 /* The row's one control: a ⋯ that opens the topic's menu (Star/Unstar, End agent, Delete). The
    star and the × it replaced were two buttons competing for a 240px column's tail; the menu is
    one target the pointer reveals, and the rest live inside it.
@@ -196,7 +198,7 @@
    would vanish mid-tap. Fixed, so it can sit beside the button that opened it and stay there while
    the list scrolls; above the sidebar's own z-index (20 on a phone) so it works inside the drawer. */
 #row-menu{position:fixed;z-index:21;min-width:210px;background:var(--surface-pop);border:1px solid var(--line);border-radius:6px;box-shadow:0 6px 20px var(--shadow);padding:4px}
-#row-menu button{display:flex;align-items:center;gap:9px;width:100%;background:none;border:0;padding:8px 10px;border-radius:4px;color:var(--fg);font:inherit;font-size:12.5px;text-align:left;cursor:pointer;white-space:nowrap}
+#row-menu button{display:flex;align-items:center;gap:9px;width:100%;background:none;border:0;padding:8px 10px;border-radius:4px;color:var(--fg);font:inherit;font-size:var(--fh-fs-ui);text-align:left;cursor:pointer;white-space:nowrap}
 #row-menu button:hover:not(:disabled){background:var(--field)}
 #row-menu button:disabled{color:var(--dim);cursor:default}
 #row-menu .ic{width:14px;height:14px;flex:none}
@@ -222,11 +224,11 @@
    directory: anywhere on the right, the star and × that float in on hover (.topic-acts) cover it,
    and a click meant to fold lands on delete — which the first end-to-end run did. */
 .topic-line{display:flex;align-items:center;gap:6px;min-width:0}
-.topic-fold{flex-shrink:0;border:1px solid var(--line);background:none;color:var(--dim);border-radius:9px;padding:0 5px;font:inherit;font-size:10px;line-height:1.4;cursor:pointer;transition:color .15s,border-color .15s}
+.topic-fold{flex-shrink:0;border:1px solid var(--line);background:none;color:var(--dim);border-radius:9px;padding:0 5px;font:inherit;font-size:var(--fh-fs-2xs);line-height:1.4;cursor:pointer;transition:color .15s,border-color .15s}
 .topic-fold:hover{color:var(--fg);border-color:var(--line-strong)}
 .topic-fold.asking{color:var(--warn);border-color:var(--warn-border-2)}
 .topic-fold.failed{color:var(--err);border-color:var(--err-border-4)}
-.topic-fold.running{color:var(--accent);border-color:var(--accent-border-2)}
+.topic-fold.running{color:var(--fh-running);border-color:var(--fh-running)}
 /* A failed last turn, when nothing else is going on: the one state that stays until something runs
    again, so the dot keeps saying it after the reply has been read. */
 .topic-dot.failed{background:var(--err)}
@@ -262,13 +264,13 @@
 #idle-dialog{position:fixed;inset:0;z-index:20;background:var(--scrim-2);display:flex;align-items:center;justify-content:center;padding:16px}
 #idle-box{background:var(--bg);border:1px solid var(--line);border-radius:8px;width:min(440px,100%);max-height:80vh;max-height:80dvh;display:flex;flex-direction:column;gap:10px;padding:16px;box-shadow:0 8px 30px var(--shadow)}
 #idle-title{font-weight:600}
-#idle-why{margin:0;color:var(--dim);font-size:12.5px}
+#idle-why{margin:0;color:var(--dim);font-size:var(--fh-fs-sm)}
 #idle-list{list-style:none;margin:0;padding:0;overflow-y:auto;min-height:0;border-top:1px solid var(--line)}
 #idle-list li{display:flex;align-items:center;gap:10px;padding:7px 2px;border-bottom:1px solid var(--line)}
 .idle-main{flex:1;min-width:0;display:flex;flex-direction:column}
 .idle-name,.idle-dir{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.idle-dir{color:var(--dim);font-size:12px}
-.idle-out{flex:none;font-size:12px;color:var(--dim)}
+.idle-dir{color:var(--dim);font-size:var(--fh-fs-sm)}
+.idle-out{flex:none;font-size:var(--fh-fs-sm);color:var(--dim)}
 .idle-out.kept{color:var(--warn)}
 .idle-acts{display:flex;justify-content:flex-end;gap:8px}
 #idle-go{color:var(--err);border-color:var(--err-border-3)}
@@ -288,7 +290,7 @@
 
 .wb-topics-list{flex:1 1 auto;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:0;padding:2px 0 8px}
 #topics.wb-topics-list{gap:0;padding:2px 0 8px}
-.wb-topics-grp{flex:none;font-size:11px;font-weight:600;color:var(--fh-fg-dim);padding:10px 14px 4px;text-transform:uppercase;letter-spacing:.05em}
+.wb-topics-grp{flex:none;font-size:var(--fh-fs-xs);font-weight:600;color:var(--fh-fg-dim);padding:10px 14px 4px;text-transform:uppercase;letter-spacing:.05em}
 .wb-topic-swipe-wrap{position:relative;flex:none}
 .wb-topic-swipe-actions{display:none}
 
@@ -310,25 +312,25 @@
 
 .wb-topics-list .wb-topic-row .topic-dot{grid-column:1;grid-row:1;width:8px;height:8px;flex:none;background:var(--fh-idle);box-shadow:none}
 .wb-topics-list .wb-topic-row .topic-dot.live{background:var(--dot-live)}
-.wb-topics-list .wb-topic-row .topic-dot.running{background:var(--fh-ok);box-shadow:none;animation:pulse 1.6s ease-in-out infinite}
+.wb-topics-list .wb-topic-row .topic-dot.running{background:var(--fh-running);box-shadow:0 0 6px var(--fh-running-glow);animation:pulse 1.6s ease-in-out infinite}
 .wb-topics-list .wb-topic-row .topic-dot.asking{background:var(--fh-warn);box-shadow:none;animation:pulse 1.6s ease-in-out infinite}
 .wb-topics-list .wb-topic-row .topic-dot.failed{background:var(--fh-err);box-shadow:none}
 .wb-topics-list .wb-topic-row .topic-dot.review{background:var(--fh-ok);box-shadow:none}
 
-.wb-topics-list .wb-topic-row .topic-title{grid-column:2;grid-row:1;font-weight:500;font-size:13px;line-height:1.4;color:var(--fh-fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wb-topics-list .wb-topic-row .topic-title{grid-column:2;grid-row:1;font-weight:500;font-size:var(--fh-fs-ui);line-height:1.4;color:var(--fh-fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .wb-topics-list .wb-topic-row.on .topic-title{color:var(--fh-fg-hi)}
 .wb-topics-list .wb-topic-row.idle:not(.on):not(.needs) .topic-title{color:var(--fh-fg)}
 .wb-topics-list .wb-topic-row .topic-tail{grid-column:3;grid-row:1;display:inline-flex;align-items:center;gap:4px;flex:none}
-.wb-topics-list .wb-topic-row .topic-age{margin-left:0;font-size:11px;color:var(--fh-fg-dim)}
-.wb-topics-list .wb-topic-row .topic-age.run{color:var(--fh-ok)}
-.wb-topics-list .wb-topic-row .topic-badge{background:var(--fh-accent);color:var(--fh-on-accent);border-radius:var(--fh-radius-pill);padding:0 5px;min-width:16px;height:16px;font-size:10px;line-height:16px;text-align:center;margin-left:0}
-.wb-topics-list .wb-topic-row .topic-sub{grid-column:2 / -1;grid-row:2;display:flex;align-items:center;gap:4px;min-width:0;font-size:11.5px;color:var(--fh-fg-dim)}
-.wb-topics-list .wb-topic-row .topic-dir{font-size:11.5px;color:var(--fh-fg-dim)}
+.wb-topics-list .wb-topic-row .topic-age{margin-left:0;font-size:var(--fh-fs-xs);color:var(--fh-fg-dim)}
+.wb-topics-list .wb-topic-row .topic-age.run{color:var(--fh-running)}
+.wb-topics-list .wb-topic-row .topic-badge{background:var(--fh-accent);color:var(--fh-on-accent);border-radius:var(--fh-radius-pill);padding:0 5px;min-width:18px;height:18px;font-size:var(--fh-fs-2xs);line-height:18px;text-align:center;margin-left:0}
+.wb-topics-list .wb-topic-row .topic-sub{grid-column:2 / -1;grid-row:2;display:flex;align-items:center;gap:4px;min-width:0;font-size:var(--fh-fs-xs);color:var(--fh-fg-dim)}
+.wb-topics-list .wb-topic-row .topic-dir{font-size:var(--fh-fs-xs);color:var(--fh-fg-dim)}
 .wb-topics-list .wb-topic-row.on .topic-dir{color:var(--fh-fg)}
 .wb-topics-list .wb-topic-row .topic-acts{grid-column:3;grid-row:1;right:8px}
 
 /* Inline harness pill matching §4.1 --fh-hc-* tokens */
-.topic-hc{display:inline-block;flex:none;font-size:10.5px;line-height:1.45;padding:0 5px;border-radius:var(--fh-radius-ctrl);background:var(--fh-btn2);color:var(--fh-fg-dim)}
+.topic-hc{display:inline-block;flex:none;font-size:var(--fh-fs-2xs);line-height:1.45;padding:0 5px;border-radius:var(--fh-radius-ctrl);background:var(--fh-btn2);color:var(--fh-fg-dim)}
 .topic-hc.h-claude{background:var(--fh-hc-claude-bg);color:var(--fh-hc-claude)}
 .topic-hc.h-codex{background:var(--fh-hc-codex-bg);color:var(--fh-hc-codex)}
 .topic-hc.h-opencode{background:var(--fh-hc-opencode-bg);color:var(--fh-hc-opencode)}
@@ -336,7 +338,7 @@
 .topic-hc.h-gemini{background:var(--fh-hc-gemini-bg);color:var(--fh-hc-gemini)}
 .topic-hc.h-dsh{background:var(--fh-hc-dsh-bg);color:var(--fh-hc-dsh)}
 
-.wb-topics-list .topics-empty{padding:16px 14px;color:var(--fh-fg-dim);font-size:12.5px}
+.wb-topics-list .topics-empty{padding:16px 14px;color:var(--fh-fg-dim);font-size:var(--fh-fs-sm)}
 
 /* Mobile stack shell styling (?m#topics, ?m#confirm) */
 .wb-root[data-wb-mode="mobile"] .wb-topics-view{background:var(--fh-bg)}
@@ -347,11 +349,11 @@
 .wb-root[data-wb-mode="mobile"] .wb-stack .wb-topics-head,
 .wb-root[data-wb-mode="mobile"] .wb-stack .wb-topics-mobile-title{display:none}
 .wb-root[data-wb-mode="mobile"] .wb-topics-list{background:var(--fh-bg);padding:0 0 12px}
-.wb-root[data-wb-mode="mobile"] .wb-topics-grp{position:sticky;top:0;z-index:1;background:var(--fh-bg);padding:14px 16px 6px;font-size:12px}
+.wb-root[data-wb-mode="mobile"] .wb-topics-grp{position:sticky;top:0;z-index:1;background:var(--fh-bg);padding:14px 16px 6px;font-size:var(--fh-fs-sm)}
 .wb-root[data-wb-mode="mobile"] .wb-topic-swipe-wrap{overflow:hidden;border-bottom:1px solid var(--fh-line)}
 .wb-root[data-wb-mode="mobile"] .wb-topic-swipe-actions{display:flex;position:absolute;top:0;right:0;bottom:0;z-index:1}
 .wb-root[data-wb-mode="mobile"] .wb-topic-swipe-wrap:not(.is-swiped) .wb-topic-swipe-actions{visibility:hidden}
-.wb-root[data-wb-mode="mobile"] .wb-swipe-btn{width:74px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;border:0;border-radius:0;color:var(--fh-on-accent);font:inherit;font-size:12.5px;cursor:pointer}
+.wb-root[data-wb-mode="mobile"] .wb-swipe-btn{width:74px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;border:0;border-radius:0;color:var(--fh-on-accent);font:inherit;font-size:var(--fh-fs-sm);cursor:pointer}
 .wb-root[data-wb-mode="mobile"] .wb-swipe-btn svg{width:21px;height:21px}
 .wb-root[data-wb-mode="mobile"] .wb-swipe-star{background:var(--fh-accent)}
 .wb-root[data-wb-mode="mobile"] .wb-swipe-more{background:var(--fh-idle)}
@@ -362,8 +364,8 @@
 .wb-root[data-wb-mode="mobile"] .wb-topics-list .wb-topic-row.sub.d2{padding-left:52px}
 .wb-root[data-wb-mode="mobile"] .wb-topics-list .wb-topic-row.sub.d3{padding-left:66px}
 .wb-root[data-wb-mode="mobile"] .wb-topics-list .wb-topic-row .topic-dot{width:10px;height:10px}
-.wb-root[data-wb-mode="mobile"] .wb-topics-list .wb-topic-row .topic-title{font-size:16px;color:var(--fh-fg-hi)}
-.wb-root[data-wb-mode="mobile"] .wb-topics-list .wb-topic-row .topic-sub,.wb-root[data-wb-mode="mobile"] .wb-topics-list .wb-topic-row .topic-dir{font-size:13.5px}
-.wb-root[data-wb-mode="mobile"] .wb-topics-list .wb-topic-row .topic-age{font-size:12.5px}
-.wb-root[data-wb-mode="mobile"] .wb-topics-list .wb-topic-row .topic-hc{font-size:11.5px;padding:0 6px;border-radius:4px}
+.wb-root[data-wb-mode="mobile"] .wb-topics-list .wb-topic-row .topic-title{font-size:var(--fh-fs-lg);color:var(--fh-fg-hi)}
+.wb-root[data-wb-mode="mobile"] .wb-topics-list .wb-topic-row .topic-sub,.wb-root[data-wb-mode="mobile"] .wb-topics-list .wb-topic-row .topic-dir{font-size:var(--fh-fs-ui)}
+.wb-root[data-wb-mode="mobile"] .wb-topics-list .wb-topic-row .topic-age{font-size:var(--fh-fs-sm)}
+.wb-root[data-wb-mode="mobile"] .wb-topics-list .wb-topic-row .topic-hc{font-size:var(--fh-fs-xs);padding:0 6px;border-radius:4px}
 .wb-root[data-wb-mode="mobile"] .wb-topics-list .wb-topic-row .topic-acts{display:none}

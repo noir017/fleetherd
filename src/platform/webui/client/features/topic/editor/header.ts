@@ -48,7 +48,7 @@ function resolveStatusDot(topic: TopicInfo | undefined): {
   if (!topic) return { status: 'idle', pulsing: false, label: '' };
   if (topic.asking) return { status: 'warn', pulsing: false, label: tr('topic.awaitingYou') };
   if (topic.running) return { status: 'ok', pulsing: true, label: tr('topic.running') };
-  if (topic.live) return { status: 'ok', pulsing: false, label: '' };
+  if (topic.live) return { status: 'live', pulsing: false, label: '' };
   return { status: 'idle', pulsing: false, label: '' };
 }
 

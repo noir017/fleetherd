@@ -33,6 +33,9 @@
   --fh-own-m:rgba(0,120,212,.26);
   --fh-own-edge:#0078d4;
   --fh-ok:#89d185;
+  --fh-running:#38bdf8;
+  --fh-running-bg:rgba(56,189,248,.16);
+  --fh-running-glow:rgba(56,189,248,.75);
   --fh-warn:#cca700;
   --fh-err:#f14c4c;
   --fh-idle:#6e7681;
@@ -66,6 +69,15 @@
   --fh-radius-pill:999px;
   --fh-font-ui:-apple-system,BlinkMacSystemFont,"Segoe WPC","Segoe UI",system-ui,"Noto Sans CJK SC",sans-serif;
   --fh-font-mono:"Cascadia Code","JetBrains Mono",Consolas,monospace;
+  --fh-fs-2xs:11px;
+  --fh-fs-xs:12px;
+  --fh-fs-sm:13px;
+  --fh-fs-ui:14px;
+  --fh-fs-body:15px;
+  --fh-fs-lg:16px;
+  --fh-fs-xl:18px;
+  --fh-lh-ui:1.5;
+  --fh-lh-body:1.6;
   --fh-icon-stroke:1.5;
   --panel:var(--fh-bg-side);
   --mono:var(--fh-font-mono);
@@ -294,6 +306,9 @@
   --fh-own-m:rgba(0,95,184,.11);
   --fh-own-edge:#005fb8;
   --fh-ok:#388a34;
+  --fh-running:#0284c7;
+  --fh-running-bg:rgba(2,132,199,.12);
+  --fh-running-glow:rgba(2,132,199,.55);
   --fh-warn:#bf8803;
   --fh-err:#e51400;
   --fh-idle:#8b949e;
@@ -545,6 +560,9 @@
   --fh-own-m:rgba(0,95,184,.11);
   --fh-own-edge:#005fb8;
   --fh-ok:#388a34;
+  --fh-running:#0284c7;
+  --fh-running-bg:rgba(2,132,199,.12);
+  --fh-running-glow:rgba(2,132,199,.55);
   --fh-warn:#bf8803;
   --fh-err:#e51400;
   --fh-idle:#8b949e;

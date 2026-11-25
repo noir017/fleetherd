@@ -104,6 +104,7 @@ import type {
   SessionOptionResult,
   ReviewPanelList,
   TopicSetupResult,
+  WorkdirBrowseResult,
   SchedulePanelAction,
   SchedulePanelDetailResult,
   SchedulePanelEdit,
@@ -203,6 +204,7 @@ const TOPIC_LIST_MS = 300;
  * own pictures (see `submit`) share the one table.
  */
 const MAX_DOWNLOADS = 200;
+const MAX_PENDING_DRAFTS = 200;
 
 /**
  * How long a topic's working directory is reused before it is looked up again.
@@ -573,6 +575,10 @@ export class WebRoom {
   /** Bind a new/empty topic's agent and working directory in one step. */
   private topicSetup:
     | ((ref: ConversationRef, opts: { agent?: string; cwd?: string; dryRun?: boolean }) => TopicSetupResult)
+    | null = null;
+  /** Browse one level of directories for a topic's selected agent. */
+  private workdirBrowser:
+    | ((ref: ConversationRef, opts?: { agent?: string; dir?: string; atRoot?: boolean }) => Promise<WorkdirBrowseResult>)
     | null = null;
   /** Machines the daemon cannot reach — see `setOfflineMachines`. */
   private offline: readonly OfflineMachine[] = [];
@@ -975,6 +981,21 @@ export class WebRoom {
       this.announceTopics();
     }
     return res;
+  }
+
+  useWorkdirBrowser(
+    browse: (ref: ConversationRef, opts?: { agent?: string; dir?: string; atRoot?: boolean }) => Promise<WorkdirBrowseResult>
+  ): void {
+    this.workdirBrowser = browse;
+  }
+
+  async browseWorkdir(
+    topic: string,
+    opts?: { agent?: string; dir?: string; atRoot?: boolean }
+  ): Promise<WorkdirBrowseResult> {
+    if (!this.workdirBrowser) return { ok: false, error: 'This daemon does not support directory browsing.' };
+    if (!this.topics.has(topic)) return { ok: false, error: 'No such topic.' };
+    return this.workdirBrowser(this.conversation(topic), opts);
   }
 
   /**
@@ -2125,10 +2146,9 @@ export class WebRoom {
       const nonce = room.pendingDrafts.get(item.id)?.req.nonce;
       return nonce !== undefined ? { ...item, nonce } : { ...item };
     });
-    const keepIds = new Set(next.map((item) => item.id));
-    for (const id of room.pendingDrafts.keys()) {
-      if (!keepIds.has(id)) room.pendingDrafts.delete(id);
-    }
+    // Keep drafts across pending updates: InboundMerger clears pending before async steer() or
+    // drainQueue() calls markPendingDelivered(), and may re-queue a refused steer. Drafts are
+    // removed on delivery, recall, or bounded eviction in submit().
     room.pending = next;
     const ev: WebEvent = { t: 'pending', items: next };
     const data = JSON.stringify(ev);
@@ -2163,7 +2183,9 @@ export class WebRoom {
 
   recallPending(topicId: string, messageId?: string): { ok: boolean; recalled: number; content?: string } {
     if (!this.topics.has(topicId) || !this.pendingActions) return { ok: false, recalled: 0 };
-    return this.pendingActions.recall(this.conversation(topicId), messageId);
+    const res = this.pendingActions.recall(this.conversation(topicId), messageId);
+    if (res.ok && messageId) this.roomOf(topicId).pendingDrafts.delete(messageId);
+    return res;
   }
 
   sendNowPending(topicId: string, messageId?: string, opts?: { interrupt?: boolean }): { ok: boolean; sent: number } {
@@ -2458,7 +2480,13 @@ export class WebRoom {
       return;
     }
     const room = this.roomOf(req.topic);
-    if (!quiet) room.pendingDrafts.set(id, { req, attachments, at });
+    if (!quiet) {
+      room.pendingDrafts.set(id, { req, attachments, at });
+      while (room.pendingDrafts.size > MAX_PENDING_DRAFTS) {
+        const oldest = room.pendingDrafts.keys().next().value;
+        if (oldest !== undefined) room.pendingDrafts.delete(oldest);
+      }
+    }
     const files = attachments.length > 0 ? ` (+${attachments.length} file${attachments.length === 1 ? '' : 's'})` : '';
     console.log(`[in] ${describeConversation(inbound.conversation)} @${OWNER}: ${text.slice(0, 50).replace(/\n/g, ' ')}${files}`);
     this.onMsg?.(inbound);
