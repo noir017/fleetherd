@@ -1,4 +1,4 @@
-#log{flex:1;overflow-y:auto;padding:20px 16px 8px;max-width:860px;width:100%;margin:0 auto}
+#log{flex:1;overflow-y:auto;padding:20px 16px 8px;max-width:860px;width:100%;margin:0 auto;contain:layout style}
 .m{position:relative;margin:0 0 18px;max-width:100%;font-size:var(--fh-fs-body);line-height:var(--fh-lh-body);overflow-wrap:anywhere;animation:fade .18s ease-out}
 /* Only on the element's first appearance, which is the whole reason messages are now reconciled
    rather than rebuilt: an animation restarts every time a node is created, so under the old
@@ -360,7 +360,7 @@
 .wb-topic-editor .wb-topic-more:hover{background:var(--fh-act-hover)}
 
 .wb-topic-editor .wb-topic-log,
-.wb-topic-editor #log{max-width:none;width:100%;margin:0;padding:22px max(24px,calc((100% - 760px)/2)) 12px}
+.wb-topic-editor #log{max-width:none;width:100%;margin:0;padding:22px max(24px,calc((100% - 760px)/2)) 12px;contain:strict}
 .wb-topic-editor .m{margin:0 0 16px}
 .wb-topic-editor .m.own{background:var(--fh-own);border-left:2px solid var(--fh-own-edge);border-radius:0 var(--fh-radius-card) var(--fh-radius-card) 0;padding:10px 14px;color:var(--fh-fg-hi)}
 .wb-topic-editor .m .t{font-size:var(--fh-fs-xs);color:var(--fh-fg-dim);margin-top:4px}

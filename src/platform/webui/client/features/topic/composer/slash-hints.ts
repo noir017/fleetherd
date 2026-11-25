@@ -57,12 +57,12 @@ export function createSlashHintsController(deps: SlashHintsDeps): SlashHintsCont
   function suggest(): void {
     const html = renderSlashHintsHtml(deps.input.value, commands);
     if (!html) {
-      deps.hints.hidden = true;
-      deps.hints.innerHTML = '';
+      if (!deps.hints.hidden) deps.hints.hidden = true;
+      if (deps.hints.innerHTML) deps.hints.innerHTML = '';
       return;
     }
-    deps.hints.innerHTML = html;
-    deps.hints.hidden = false;
+    if (deps.hints.innerHTML !== html) deps.hints.innerHTML = html;
+    if (deps.hints.hidden) deps.hints.hidden = false;
   }
 
   function close(): void {
