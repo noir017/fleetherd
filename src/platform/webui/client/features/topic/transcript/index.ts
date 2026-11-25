@@ -574,6 +574,7 @@ class TranscriptControllerImpl implements TranscriptController {
   }
 
   dispose(): void {
+    this.scroll.dispose();
     this.codeBlocks.dispose();
     this.btw.dispose();
     this.banners.dispose();

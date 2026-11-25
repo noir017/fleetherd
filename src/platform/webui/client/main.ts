@@ -18,7 +18,7 @@ import type { ComposerTopicStatusBridge } from './features/topic/composer/types.
 import type { TopicEditorElements, TopicEditorHandle } from './features/topic/editor/index.js';
 import { stClock } from './features/topic/status/index.js';
 import type { LaunchChoice, TranscriptMessage, WorkdirScreen } from './features/topic/transcript/index.js';
-import type { TopicSnapshotPayload } from './features/topics/index.js';
+import { isRowCurrent, type TopicSnapshotPayload } from './features/topics/index.js';
 import { applyDomI18n, initLocale, onLocaleChange, t as tr } from './i18n/index.js';
 import type { TopicInfo } from './plugins/api.js';
 import {
@@ -34,6 +34,7 @@ import { readBootConfig, type BootConfig } from './services/boot.js';
 import {
   collectCacheableMessages,
   createCacheService,
+  type CacheCopy,
   type CacheCore,
   type CacheMessage,
   type CacheService,
@@ -53,6 +54,7 @@ import { mountWorkbench, type WorkbenchShell } from './workbench/shell.js';
 
 const READER_OPEN_COMMAND = 'reader.open';
 const READER_OPEN_IMAGE_COMMAND = 'reader.openImage';
+const LOCAL_CACHE_WAIT_MS = 300;
 
 interface CacheCoreBundle extends CacheCore {
   readonly snapshotMsgs: (d: TopicSnapshotPayload) => CacheMessage[];
@@ -70,6 +72,7 @@ interface AppState {
   launch: LaunchChoice | null;
   launchWdSeq: number;
   settleOnResume: boolean;
+  enterToken: number;
   activeEditor: TopicEditorHandle | null;
   insertHandler: ((topicId: string, text: string) => boolean) | null;
   settingsBridge: SettingsPluginBridge | null;
@@ -171,10 +174,71 @@ function resetTopicView(rt: AppRuntime, id: string): void {
   }
 }
 
+function applyCachedTopicEntry(rt: AppRuntime, id: string, c: CacheCopy | null): boolean {
+  const epoch = rt.state.epoch;
+  const editor = rt.state.activeEditor;
+  const resume = Boolean(c && c.msgs.length && c.last && epoch && c.epoch === epoch);
+  if (c) {
+    for (const msg of c.msgs) {
+      editor?.composer?.claim(msg as unknown as WebMessage);
+    }
+    if (resume) rt.state.stale = c.stale;
+    if (c.msgs.length) {
+      const row = topicById(rt.state, id);
+      const current = resume && isRowCurrent(row, c.last, (a, b) => rt.cacheService.isNewer(a, b));
+      editor?.transcript?.adopt(c.msgs as unknown as readonly TranscriptMessage[], current);
+    }
+  }
+  if (id) editor?.composer?.showUnsent(id);
+  if (resume && c) {
+    rt.streamClient.setLastEventId(c.last);
+    rt.state.settleOnResume = true;
+  }
+  return resume;
+}
+
+function enterTopic(rt: AppRuntime, id: string): void {
+  const mine = ++rt.state.enterToken;
+  let used = false;
+  const v = id ? rt.cacheService.getVersion(id) : undefined;
+  rt.streamClient.close();
+  const here = (): boolean => mine === rt.state.enterToken && id === rt.state.topic;
+
+  const go = (c: CacheCopy | null): void => {
+    if (used) return;
+    used = true;
+    if (!here()) return;
+    const resume = applyCachedTopicEntry(rt, id, c);
+    rt.streamClient.connect(resume);
+  };
+
+  const m = id ? rt.cacheService.memCopy(id) : null;
+  if (m || !id) {
+    go(m);
+    return;
+  }
+  void rt.cacheService.get(id).then((c) => {
+    if (!used) {
+      go(c);
+      return;
+    }
+    if (c && c.msgs.length && here()) {
+      rt.state.activeEditor?.transcript?.adopt(c.msgs as unknown as readonly TranscriptMessage[]);
+    }
+  });
+  const epoch = rt.state.epoch;
+  if (epoch && rt.cacheService.isDbAvailable() && (!v || (v.last && v.epoch === epoch))) {
+    setTimeout(() => go(null), LOCAL_CACHE_WAIT_MS);
+  } else {
+    go(null);
+  }
+}
+
 function switchTopic(rt: AppRuntime, id: string): void {
   if (!id) return;
   const prev = rt.state.topic;
   if (prev && prev !== id) {
+    rt.cacheService.leave();
     rt.state.activeEditor?.transcript?.scroll.saveView(prev, rt.state.entering);
     rt.state.activeEditor?.composer?.stashDraft(prev);
   }
@@ -186,8 +250,8 @@ function switchTopic(rt: AppRuntime, id: string): void {
     rt.readsService.reportSeen();
     const active = topicById(rt.state, id);
     rt.events.emit('topic.active', { id, topic: active as unknown as TopicInfo | undefined });
-    rt.streamClient.close();
-    rt.streamClient.connect(false);
+    rt.state.activeEditor?.transcript?.banners.showSkeleton();
+    enterTopic(rt, id);
   } else {
     ensureTopicEditorOpen(rt, id);
     rt.readsService.reportSeen();
@@ -488,8 +552,18 @@ function buildTopicPluginDeps(rt: AppRuntime): Pick<BuiltinPluginsDeps, 'topics'
       getActiveTopicId: () => state.topic,
       unreadOf: (t) => rt.readsService.unreadOf(t),
       needsRead: (t) => rt.readsService.needsRead(t),
-      onSelectTopic: (id) => switchTopic(rt, id),
       onCreateTopic: () => createTopic(rt),
+      prefetchDeps: {
+        isDbAvailable: () => rt.cacheService.isDbAvailable(),
+        isStreamParked: () => rt.streamClient.isParked(),
+        isStreamOpen: () => rt.streamClient.isOpen(),
+        getEpoch: () => state.epoch,
+        getVersion: (id) => rt.cacheService.getVersion(id),
+        isNewer: (a, b) => rt.cacheService.isNewer(a, b),
+        peekCache: (id) => rt.cacheService.peek(id),
+        putCache: (id, msgs, meta) => rt.cacheService.put(id, msgs, meta),
+        snapshotMsgs: (d) => rt.cacheCore.snapshotMsgs(d),
+      },
       onStarTopic: async (id, nextStarred) => {
         await post('api/topics/star', { topic: id, starred: nextStarred }, 0);
       },
@@ -835,6 +909,7 @@ function handleResumedEvent(rt: AppRuntime): void {
   editor?.transcript?.banners.clearSyncing();
   editor?.transcript?.banners.placeDivider();
   editor?.transcript?.banners.syncEmptyNote();
+  editor?.transcript?.scroll.clearView();
   rt.cacheService.scheduleSave();
   if (editor) editor.els.noteEl.textContent = '';
 }
@@ -927,6 +1002,12 @@ function wireStreamAndCache(rt: AppRuntime): void {
       if (!log) return [];
       return collectCacheableMessages(log, state.data as Record<string, CacheMessage | undefined>);
     },
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') rt.cacheService.leave();
+  });
+  window.addEventListener('pagehide', () => {
+    rt.cacheService.leave();
   });
 
   rt.readsService = createReadsService({
@@ -1039,6 +1120,7 @@ function bootstrap(): void {
     launch: null,
     launchWdSeq: 0,
     settleOnResume: false,
+    enterToken: 0,
     activeEditor: null,
     insertHandler: null,
     settingsBridge: null,

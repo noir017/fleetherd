@@ -106,4 +106,59 @@ describe('createScrollManager', () => {
     expect(scroll.getSavedView('t2')).toBeDefined();
     expect(scroll.getSavedView('t3')).toBeUndefined();
   });
+
+  it('defers land() when hidden (clientHeight=0) and scrolls to bottom once visible via ResizeObserver or ensureLanded', () => {
+    type RoCb = (entries: readonly { target: Element; contentRect: { width: number; height: number } }[]) => void;
+    const holder: { cb: RoCb | null } = { cb: null };
+    const origRO = globalThis.ResizeObserver;
+    class FakeResizeObserver {
+      constructor(cb: RoCb) {
+        holder.cb = cb;
+      }
+      observe() {}
+      unobserve() {}
+      disconnect() {
+        holder.cb = null;
+      }
+    }
+    globalThis.ResizeObserver = FakeResizeObserver as unknown as typeof ResizeObserver;
+    try {
+      const log = setupLog(0, 0, 0);
+      document.body.appendChild(log);
+      const scroll = createScrollManager(log);
+      scroll.prepareEnter('t1');
+      // Land while hidden (clientHeight=0, scrollHeight=0), followed by clearView() as handleSyncEvent does.
+      scroll.land({});
+      scroll.clearView();
+      expect(log.scrollTop).toBe(0);
+
+      // Container becomes visible with tall content.
+      Object.defineProperty(log, 'clientHeight', { value: 600, configurable: true });
+      Object.defineProperty(log, 'scrollHeight', { value: 3000, configurable: true });
+      holder.cb?.([{ target: log, contentRect: { width: 390, height: 600 } }]);
+      expect(log.scrollTop).toBe(3000);
+
+      // User scrolls up to read older messages -> hiding and re-showing must NOT yank to bottom.
+      log.scrollTop = 200;
+      log.dispatchEvent(new Event('scroll'));
+      expect(scroll.atBottom()).toBe(false);
+      Object.defineProperty(log, 'clientHeight', { value: 0, configurable: true });
+      holder.cb?.([{ target: log, contentRect: { width: 0, height: 0 } }]);
+      Object.defineProperty(log, 'clientHeight', { value: 600, configurable: true });
+      holder.cb?.([{ target: log, contentRect: { width: 390, height: 600 } }]);
+      expect(log.scrollTop).toBe(200);
+
+      // User returns to bottom -> reparent/hide+show resets scrollTop to 0, ensureLanded restores bottom.
+      scroll.toBottom();
+      expect(log.scrollTop).toBe(3000);
+      log.scrollTop = 0;
+      scroll.ensureLanded();
+      expect(log.scrollTop).toBe(3000);
+
+      scroll.dispose();
+      log.remove();
+    } finally {
+      globalThis.ResizeObserver = origRO;
+    }
+  });
 });
