@@ -72,17 +72,19 @@ test.describe('wb2-sched schedules, history, and reviews alignment', () => {
     await expect(page.locator('.fh-reviews-view')).toBeVisible();
   });
 
-  test('mobile renders large-title lists without horizontal overflow', async ({ page }) => {
+  test('mobile drawer renders history and schedules lists without horizontal overflow', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await loginViaUi(page, gateway.baseUrl, gateway.secret);
 
-    const tabs = page.locator('.wb-stack-tab');
-    await tabs.nth(1).click();
+    await page.locator('#expand-sidebar').click();
+    await expect(page.locator('.wb-sidebar')).toBeVisible();
+
+    await page.locator('.wb-activity-item[data-activity-id="history"]').click();
     await expect(page.locator('.wb-history-view .hist-item').first()).toBeVisible();
     const histOverflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
     expect(histOverflow).toBe(false);
 
-    await tabs.nth(2).click();
+    await page.locator('.wb-activity-item[data-activity-id="schedules"]').click();
     await expect(page.locator('.fh-schedules-view .sched-row').first()).toBeVisible();
     const schedOverflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
     expect(schedOverflow).toBe(false);

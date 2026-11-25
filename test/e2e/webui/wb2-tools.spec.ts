@@ -132,10 +132,14 @@ test.describe('wb2-tools: changes, files, terminal, reader', () => {
     await loginViaUi(page, gateway.baseUrl, gateway.secret);
 
     await expect(page.locator('#workbench-root')).toHaveAttribute('data-wb-mode', 'mobile');
-    await page.locator(`.wb-stack .topic-item[data-topic="${topicId}"]`).click();
+    await page.locator('#expand-sidebar').click();
+    await expect(page.locator('.wb-sidebar')).toBeVisible();
+    await page.locator(`.wb-sidebar .topic-item[data-topic="${topicId}"]`).click();
+    await expect(page.locator('.wb-sidebar')).toBeHidden();
 
-    // Switch to Changes tab in mobile stack shell
-    await page.locator('.wb-stack-tool[data-tool-id="changes"]').click();
+    // Open Changes tool drawer from topic header
+    await page.locator('.wb-topic-tools [data-tool-id="changes"]').click();
+    await expect(page.locator('.wb-secondary')).toBeVisible();
     await expect(page.locator('.fh-changes-tool')).toBeVisible();
     await expect(page.locator('.fh-changes-summary')).toBeVisible();
     await page.screenshot({ path: path.join(SHOTS_DIR, 'mobile-dark-changes.png') });
@@ -151,8 +155,11 @@ test.describe('wb2-tools: changes, files, terminal, reader', () => {
     await page.locator('[data-changes-mobile-back]').click();
     await expect(page.locator('.fh-changes-tool.is-mobile-diff')).toHaveCount(0);
 
-    // Switch to Files tab in mobile stack shell
-    await page.locator('.wb-stack-tool[data-tool-id="files"]').click();
+    // Switch to Files tool drawer
+    await page.locator('.wb-secondary .wb-part-close').click();
+    await expect(page.locator('.wb-secondary')).toBeHidden();
+    await page.locator('.wb-topic-tools [data-tool-id="files"]').click();
+    await expect(page.locator('.wb-secondary')).toBeVisible();
     await expect(page.locator('.fh-files-tool')).toBeVisible();
     await expect(page.locator('.fh-files-mpath')).toBeVisible();
     await page.screenshot({ path: path.join(SHOTS_DIR, 'mobile-dark-files.png') });
@@ -163,7 +170,10 @@ test.describe('wb2-tools: changes, files, terminal, reader', () => {
       document.documentElement.dataset.theme = 'light';
     });
     await page.screenshot({ path: path.join(SHOTS_DIR, 'mobile-light-files.png') });
-    await page.locator('.wb-stack-tool[data-tool-id="changes"]').click();
+    await page.locator('.wb-secondary .wb-part-close').click();
+    await expect(page.locator('.wb-secondary')).toBeHidden();
+    await page.locator('.wb-topic-tools [data-tool-id="changes"]').click();
+    await expect(page.locator('.fh-changes-tool')).toBeVisible();
     await page.screenshot({ path: path.join(SHOTS_DIR, 'mobile-light-changes.png') });
   });
 });
