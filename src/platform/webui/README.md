@@ -182,6 +182,9 @@ accepts optional `{ agent?, cwd? }` to create a topic and bind its agent and wor
 one request (rolling back the newly created topic if setup fails). On an already-created empty topic
 before the first message, `POST /api/topics/setup` takes `{ topic, agent?, cwd? }` and applies the
 binding directly through the daemon without posting `/agent` or `/cd` commands into the transcript.
+The new-topic launcher no longer calls `/api/topics/setup` (clicking an agent card sends
+`/agent <id>` so the gateway pushes the `/cd` folder picker and updates the status switches); the
+endpoint remains available for programmatic API callers.
 
 ### Every topic keeps its transcript
 
