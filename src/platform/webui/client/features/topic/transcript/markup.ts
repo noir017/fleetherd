@@ -157,7 +157,21 @@ export function renderMenu(m: TranscriptMessage, icons: TranscriptIcons): string
   );
 }
 
-function workdirBreadcrumbs(list: readonly WorkdirCrumb[], msg: string): string {
+export type WorkdirPickerMode = { readonly kind: 'msg'; readonly msg: string } | { readonly kind: 'launch' };
+
+function wdBrowseAttr(mode: WorkdirPickerMode, buttonId: string, path: string): string {
+  return mode.kind === 'msg'
+    ? `data-msg="${mode.msg}" data-btn="${text(buttonId)}"`
+    : `data-wd-browse="${text(path)}"`;
+}
+
+function wdPickAttr(mode: WorkdirPickerMode, buttonId: string, path: string): string {
+  return mode.kind === 'msg'
+    ? `data-msg="${mode.msg}" data-btn="${text(buttonId)}"`
+    : `data-wd-pick="${text(path)}"`;
+}
+
+function workdirBreadcrumbs(list: readonly WorkdirCrumb[], mode: WorkdirPickerMode): string {
   let crumbs = '';
   for (let i = 0; i < list.length; i++) {
     const c = list[i];
@@ -169,13 +183,13 @@ function workdirBreadcrumbs(list: readonly WorkdirCrumb[], msg: string): string 
     if (i === list.length - 1) {
       crumbs += `<span class="wd-crumb cur" title="${text(c.path)}">${text(c.name)}</span>`;
     } else {
-      crumbs += `<button type="button" class="wd-crumb" data-msg="${msg}" data-btn="${text(c.buttonId)}" title="${text(c.path)}">${text(c.name)}</button>`;
+      crumbs += `<button type="button" class="wd-crumb" ${wdBrowseAttr(mode, c.buttonId, c.path)} title="${text(c.path)}">${text(c.name)}</button>`;
     }
   }
   return crumbs;
 }
 
-function workdirEntryRow(e: WorkdirEntry, msg: string, icons: TranscriptIcons): string {
+function workdirEntryRow(e: WorkdirEntry, mode: WorkdirPickerMode, icons: TranscriptIcons): string {
   const rowTag = e.current
     ? `<span class="wd-tag on">${text(tr('workdir.currentTag'))}</span>`
     : e.root
@@ -183,13 +197,13 @@ function workdirEntryRow(e: WorkdirEntry, msg: string, icons: TranscriptIcons): 
       : '';
   return (
     `<div class="wd-row${e.current ? ' on' : ''}" data-wd-name="${text(String(e.name).toLowerCase())}">` +
-    `<button type="button" class="wd-open" data-msg="${msg}" data-btn="${text(e.enterId)}" title="${text(tr('workdir.openTitle', { name: e.name }))}">` +
+    `<button type="button" class="wd-open" ${wdBrowseAttr(mode, e.enterId, e.path)} title="${text(tr('workdir.openTitle', { name: e.name }))}">` +
     `<span class="wd-ic">${e.root ? (icons.icon.home ?? '') : (icons.icon.folder ?? '')}</span>` +
     `<span class="wd-name">${text(e.name)}</span>` +
     rowTag +
     `<span class="wd-go" aria-hidden="true">${icons.icon.chevronRight ?? ''}</span>` +
     '</button>' +
-    `<button type="button" class="wd-choose${e.current ? ' on' : ''}" data-msg="${msg}" data-btn="${text(e.pickId)}" title="${text(tr('workdir.chooseTitle', { path: e.path }))}">` +
+    `<button type="button" class="wd-choose${e.current ? ' on' : ''}" ${wdPickAttr(mode, e.pickId, e.path)} title="${text(tr('workdir.chooseTitle', { path: e.path }))}">` +
     `${icons.icon.check ?? ''}<span>${text(tr('workdir.choose'))}</span>` +
     '</button></div>'
   );
@@ -197,38 +211,40 @@ function workdirEntryRow(e: WorkdirEntry, msg: string, icons: TranscriptIcons): 
 
 function workdirActionsBar(
   w: NonNullable<TranscriptMessage['workdir']>,
-  msg: string,
+  mode: WorkdirPickerMode,
   icons: TranscriptIcons,
 ): string {
-  const crumbs = workdirBreadcrumbs(w.breadcrumbs ?? [], msg);
+  const crumbs = workdirBreadcrumbs(w.breadcrumbs ?? [], mode);
   const upIcon = icons.icon.arrowUp ?? '';
   const upBtn = w.parent
-    ? `<button type="button" class="wd-act wd-up" data-msg="${msg}" data-btn="${text(w.parent.buttonId)}" title="${text(tr('workdir.upTitle', { path: w.parent.path }))}">${upIcon}<span>${text(tr('workdir.up'))}</span></button>`
+    ? `<button type="button" class="wd-act wd-up" ${wdBrowseAttr(mode, w.parent.buttonId, w.parent.path)} title="${text(tr('workdir.upTitle', { path: w.parent.path }))}">${upIcon}<span>${text(tr('workdir.up'))}</span></button>`
     : `<button type="button" class="wd-act wd-up" disabled>${upIcon}<span>${text(tr('workdir.up'))}</span></button>`;
   const homeBtn = w.home
-    ? `<button type="button" class="wd-act wd-home" data-msg="${msg}" data-btn="${text(w.home.buttonId)}" title="${text(tr('workdir.rootTitle', { path: w.home.path }))}">${icons.icon.home ?? ''}<span>${text(tr('workdir.root'))}</span></button>`
+    ? `<button type="button" class="wd-act wd-home" ${wdBrowseAttr(mode, w.home.buttonId, w.home.path)} title="${text(tr('workdir.rootTitle', { path: w.home.path }))}">${icons.icon.home ?? ''}<span>${text(tr('workdir.root'))}</span></button>`
     : '';
   return `<div class="wd-bar"><div class="wd-acts">${upBtn}${homeBtn}</div><nav class="wd-crumbs" aria-label="Path">${crumbs}</nav></div>`;
 }
 
 function workdirCurrentRow(
   sc: NonNullable<TranscriptMessage['workdir']>['selectCurrent'],
-  msg: string,
+  mode: WorkdirPickerMode,
   icons: TranscriptIcons,
 ): string {
   const curTags =
     (sc.current ? `<span class="wd-tag on">${text(tr('workdir.currentTag'))}</span>` : '') +
     (sc.root ? `<span class="wd-tag">${text(tr('workdir.rootTag'))}</span>` : '');
-  const label = tr(sc.current ? 'workdir.keepCurrent' : 'workdir.useCurrent');
+  const label = tr(
+    sc.current ? (mode.kind === 'launch' ? 'workdir.selected' : 'workdir.keepCurrent') : 'workdir.useCurrent',
+  );
   return (
     `<div class="wd-cur"><div class="wd-cur-info"><code class="wd-path" title="${text(sc.path)}">${text(sc.path)}</code>${curTags}</div>` +
-    `<button type="button" class="wd-pick-cur${sc.current ? ' on' : ''}" data-msg="${msg}" data-btn="${text(sc.buttonId)}">${icons.icon.check ?? ''}<span>${text(label)}</span></button></div>`
+    `<button type="button" class="wd-pick-cur${sc.current ? ' on' : ''}" ${wdPickAttr(mode, sc.buttonId, sc.path)}>${icons.icon.check ?? ''}<span>${text(label)}</span></button></div>`
   );
 }
 
 function workdirEntriesBody(
   entries: readonly WorkdirEntry[],
-  msg: string,
+  mode: WorkdirPickerMode,
   icons: TranscriptIcons,
 ): string {
   const filterHtml =
@@ -239,7 +255,7 @@ function workdirEntriesBody(
   let rows = '';
   for (let j = 0; j < entries.length; j++) {
     const entry = entries[j];
-    if (entry) rows += workdirEntryRow(entry, msg, icons);
+    if (entry) rows += workdirEntryRow(entry, mode, icons);
   }
   return (
     filterHtml +
@@ -247,23 +263,30 @@ function workdirEntriesBody(
   );
 }
 
-export function workdirPicker(m: TranscriptMessage, icons: TranscriptIcons): string {
-  const w = m.workdir;
-  if (!w) return '';
-  const msg = text(m.id);
+export function workdirPickerHtml(
+  w: NonNullable<TranscriptMessage['workdir']>,
+  icons: TranscriptIcons,
+  mode: WorkdirPickerMode,
+): string {
   const hostPill = w.host ? `<span class="wd-meta">${text(w.host)}</span>` : '';
   return (
     `<div class="wd-picker" data-browsing="${text(w.browsing)}">` +
     `<div class="wd-head"><div class="wd-title-row"><span class="wd-title">${icons.icon.folder ?? ''}<span>${text(tr('workdir.title'))}</span></span>` +
     `<span class="wd-badges"><span class="wd-meta">${text(w.agentId)}</span>${hostPill}</span></div>` +
     `<div class="wd-hint">${text(tr('workdir.hint'))}</div></div>` +
-    workdirActionsBar(w, msg, icons) +
+    workdirActionsBar(w, mode, icons) +
     (w.error ? `<div class="wd-err" role="alert">${text(w.error)}</div>` : '') +
-    workdirCurrentRow(w.selectCurrent, msg, icons) +
-    workdirEntriesBody(w.entries ?? [], msg, icons) +
+    workdirCurrentRow(w.selectCurrent, mode, icons) +
+    workdirEntriesBody(w.entries ?? [], mode, icons) +
     (w.truncated > 0 ? `<div class="wd-more">${text(tr('workdir.truncated', { count: w.truncated }))}</div>` : '') +
     '</div>'
   );
+}
+
+export function workdirPicker(m: TranscriptMessage, icons: TranscriptIcons): string {
+  const w = m.workdir;
+  if (!w) return '';
+  return workdirPickerHtml(w, icons, { kind: 'msg', msg: text(m.id) });
 }
 
 function renderFileAttachment(m: TranscriptMessage, hist: boolean): string {

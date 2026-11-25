@@ -2,12 +2,14 @@ import { addDisposableListener } from '../../../base/dom.js';
 import { type Disposable, DisposableStore } from '../../../base/lifecycle.js';
 import { t as tr } from '../../../i18n/index.js';
 import { text } from '../../../services/api.js';
+import { workdirPickerHtml } from './markup.js';
 import type {
   LaunchChoice,
   OfflineMachine,
   TranscriptIcons,
   TranscriptMessage,
   TranscriptTopicLike,
+  WorkdirScreen,
 } from './types.js';
 
 export const SKELETON_HTML =
@@ -53,14 +55,42 @@ export interface LaunchOfflineView {
   readonly offTitle: (name: string) => string;
 }
 
+function launchCardHtml(
+  a: LaunchChoice['groups'][number]['agents'][number],
+  on: boolean,
+  offSuffix: string,
+  icons: TranscriptIcons,
+): string {
+  const harnessBadge =
+    a.harness && a.harness !== 'custom'
+      ? `<span class="ac-hc h-${text(a.harness)}">${text(a.harness)}</span>`
+      : '';
+  const checkMark =
+    on && icons.icon.check ? `<span class="ac-check" aria-hidden="true">${icons.icon.check}</span>` : '';
+  const modelPart = a.model
+    ? `<span class="ac-sep" aria-hidden="true"> \u00b7 </span><span class="ac-model" title="${text(a.model)}">${text(a.model)}</span>`
+    : '';
+  return (
+    `<button type="button" class="agent-card${on ? ' def' : ''}" data-agent="${text(a.id)}" title="/agent ${text(a.id)}${offSuffix}">` +
+    `<span class="ac-top">${harnessBadge}<span class="ac-id">${text(a.id)}</span>${on ? `<span class="ac-tag">${text(tr('chat.defaultTag'))}</span>` : ''}${checkMark}</span>` +
+    `<span class="ac-kind"><span>${text(a.kind)}</span>${modelPart}</span>` +
+    '</button>'
+  );
+}
+
 export function launchHtml(
   choice: LaunchChoice,
   icons: TranscriptIcons,
   offline: LaunchOfflineView,
+  cwd = '',
 ): string {
   let h =
     `<div class="launch-head"><div class="launch-title">${text(tr('chat.launchTitle'))}</div>` +
-    `<div class="launch-sub">${text(tr('chat.launchSubPrefix'))}<b>${text(choice.current)}</b>${text(tr('chat.launchSubSuffix'))}</div></div>`;
+    `<div class="launch-sub">${text(tr('chat.launchSubPrefix'))}<b>${text(choice.current)}</b>${text(tr('chat.launchSubSuffix'))}</div>` +
+    `<div class="launch-choice">` +
+    `<span class="launch-choice-item"><span class="launch-choice-k">${text(tr('chat.launchAgentLabel'))}</span><span class="launch-choice-agent">${text(choice.current)}</span></span>` +
+    `<span class="launch-choice-item launch-choice-dir-wrap"${cwd ? '' : ' hidden'}><span class="launch-choice-k">${text(tr('chat.launchDirLabel'))}</span><code class="launch-choice-dir" title="${text(cwd)}">${text(cwd)}</code></span>` +
+    '</div></div>';
   const many = choice.groups.length > 1;
   for (let i = 0; i < choice.groups.length; i++) {
     const g = choice.groups[i];
@@ -76,27 +106,25 @@ export function launchHtml(
         '</h3>';
     }
     h += '<div class="launch-grid">';
+    const offSuffix = off ? text(tr('chat.agentOffline', { name: g.name })) : '';
     for (let j = 0; j < g.agents.length; j++) {
       const a = g.agents[j];
       if (!a) continue;
-      const on = a.id === choice.current;
-      const offSuffix = off ? text(tr('chat.agentOffline', { name: g.name })) : '';
-      const harnessBadge =
-        a.harness && a.harness !== 'custom'
-          ? `<span class="ac-hc h-${text(a.harness)}">${text(a.harness)}</span>`
-          : '';
-      const checkMark = on && icons.icon.check
-        ? `<span class="ac-check" aria-hidden="true">${icons.icon.check}</span>`
-        : '';
-      h +=
-        `<button type="button" class="agent-card${on ? ' def' : ''}" data-agent="${text(a.id)}" title="/agent ${text(a.id)}${offSuffix}">` +
-        `<span class="ac-top">${harnessBadge}<span class="ac-id">${text(a.id)}</span>${on ? `<span class="ac-tag">${text(tr('chat.defaultTag'))}</span>` : ''}${checkMark}</span>` +
-        `<span class="ac-kind"><span>${text(a.kind)}</span>${a.model ? `<span class="ac-sep" aria-hidden="true"> \u00b7 </span><span class="ac-model" title="${text(a.model)}">${text(a.model)}</span>` : ''}</span>` +
-        '</button>';
+      h += launchCardHtml(a, a.id === choice.current, offSuffix, icons);
     }
     h += '</div></section>';
   }
+  h += '<div class="launch-wd" hidden></div>';
   return h;
+}
+
+function withCurrentWorkdir(screen: WorkdirScreen, cwd: string): WorkdirScreen {
+  return {
+    ...screen,
+    current: cwd,
+    selectCurrent: { ...screen.selectCurrent, current: screen.selectCurrent.path === cwd },
+    entries: (screen.entries ?? []).map((e) => ({ ...e, current: e.path === cwd })),
+  };
 }
 
 export interface BannersDeps {
@@ -119,6 +147,7 @@ export interface BannersDeps {
   readonly switchTopic: (id: string) => void;
   readonly isNarrow: () => boolean;
   readonly setSidebar: (open: boolean) => void;
+  readonly onLaunchShown?: (agentId: string) => void;
 }
 
 export interface BannersController extends Disposable {
@@ -128,6 +157,9 @@ export interface BannersController extends Disposable {
   syncEmptyNote(): void;
   syncLaunch(want: boolean): void;
   hasLaunch(): boolean;
+  setLaunchAgent(agentId: string): void;
+  setLaunchWorkdir(screen: WorkdirScreen | null, loading?: boolean): void;
+  setLaunchCwd(cwd: string): void;
   takeMachines(list: readonly OfflineMachine[] | null | undefined): boolean;
   setMachines(list: readonly OfflineMachine[] | null | undefined): void;
   offSince(name: string): number;
@@ -150,6 +182,7 @@ class BannersControllerImpl implements BannersController {
   private _emptyEl: HTMLElement | null = null;
   private _launchEl: HTMLElement | null = null;
   private _launchSig = '';
+  private _launchWorkdir: WorkdirScreen | null = null;
   private _dividerEl: HTMLElement | null = null;
   private _syncingEl: HTMLElement | null = null;
   private _forkNoteKey = '';
@@ -182,6 +215,7 @@ class BannersControllerImpl implements BannersController {
     this._emptyEl = null;
     this._launchEl = null;
     this._launchSig = '';
+    this._launchWorkdir = null;
     this._dividerEl = null;
     this._syncingEl = null;
   }
@@ -243,20 +277,98 @@ class BannersControllerImpl implements BannersController {
     }
     this._launchEl = null;
     this._launchSig = '';
+    this._launchWorkdir = null;
     if (active && launch) {
       this.clearSkeleton();
       this._launchEl = this._deps.log.ownerDocument.createElement('div');
       this._launchEl.className = 'launch';
+      const cwd = this._deps.topicById(this._deps.getTopic())?.dir?.path ?? '';
       this._launchEl.innerHTML = launchHtml(launch, this._deps.getIcons(), {
         offSince: (name) => this.offSince(name),
         offWhen: (at) => this.offWhen(at),
         offTitle: (name) => this.offTitle(name),
-      });
+      }, cwd);
       this._deps.log.appendChild(this._launchEl);
       this._launchSig = s;
+      this._deps.onLaunchShown?.(launch.current);
     }
     this._deps.paintStatus();
     this.paintMachineNote();
+  }
+
+  setLaunchAgent(agentId: string): void {
+    if (!this._launchEl) return;
+    const icons = this._deps.getIcons();
+    const cards = this._launchEl.querySelectorAll<HTMLButtonElement>('button[data-agent]');
+    for (let i = 0; i < cards.length; i++) {
+      const card = cards[i];
+      if (!card) continue;
+      const on = card.getAttribute('data-agent') === agentId;
+      card.classList.toggle('def', on);
+      const top = card.querySelector('.ac-top');
+      if (!top) continue;
+      top.querySelector('.ac-tag')?.remove();
+      top.querySelector('.ac-check')?.remove();
+      if (on) {
+        const tag = card.ownerDocument.createElement('span');
+        tag.className = 'ac-tag';
+        tag.textContent = tr('chat.defaultTag');
+        top.appendChild(tag);
+        if (icons.icon.check) {
+          const chk = card.ownerDocument.createElement('span');
+          chk.className = 'ac-check';
+          chk.setAttribute('aria-hidden', 'true');
+          chk.innerHTML = icons.icon.check;
+          top.appendChild(chk);
+        }
+      }
+    }
+    const subB = this._launchEl.querySelector('.launch-sub b');
+    if (subB) subB.textContent = agentId;
+    const choiceAgent = this._launchEl.querySelector('.launch-choice-agent');
+    if (choiceAgent) choiceAgent.textContent = agentId;
+    const launch = this._deps.getLaunch();
+    if (launch) this._launchSig = JSON.stringify(launch) + this._offlineSig;
+  }
+
+  setLaunchWorkdir(screen: WorkdirScreen | null, loading = false): void {
+    if (!this._launchEl) return;
+    const host = this._launchEl.querySelector<HTMLElement>('.launch-wd');
+    if (!host) return;
+    host.classList.toggle('loading', loading);
+    if (screen) {
+      this._launchWorkdir = screen;
+      host.innerHTML = workdirPickerHtml(screen, this._deps.getIcons(), { kind: 'launch' });
+      host.hidden = false;
+      this._paintLaunchCwdLabel(screen.current || screen.browsing);
+    } else if (!loading) {
+      this._launchWorkdir = null;
+      host.innerHTML = '';
+      host.hidden = true;
+    }
+  }
+
+  setLaunchCwd(cwd: string): void {
+    if (!this._launchEl || !cwd) return;
+    this._paintLaunchCwdLabel(cwd);
+    if (this._launchWorkdir) {
+      this._launchWorkdir = withCurrentWorkdir(this._launchWorkdir, cwd);
+      const host = this._launchEl.querySelector<HTMLElement>('.launch-wd');
+      if (host && !host.hidden) {
+        host.innerHTML = workdirPickerHtml(this._launchWorkdir, this._deps.getIcons(), { kind: 'launch' });
+      }
+    }
+  }
+
+  private _paintLaunchCwdLabel(cwd: string): void {
+    if (!this._launchEl) return;
+    const wrap = this._launchEl.querySelector<HTMLElement>('.launch-choice-dir-wrap');
+    const code = this._launchEl.querySelector<HTMLElement>('.launch-choice-dir');
+    if (code) {
+      code.textContent = cwd;
+      code.title = cwd;
+    }
+    if (wrap) wrap.hidden = !cwd;
   }
 
   syncEmptyNote(): void {
@@ -369,14 +481,19 @@ class BannersControllerImpl implements BannersController {
     this._emptyEl = null;
     this._launchEl = null;
     this._launchSig = '';
+    this._launchWorkdir = null;
     this._dividerEl = null;
     this._syncingEl = null;
   }
 
   refreshI18n(): void {
     this._forkNoteKey = '';
+    const keptWd = this._launchWorkdir;
     this._launchSig = '';
-    if (this._launchEl) this.syncLaunch(true);
+    if (this._launchEl) {
+      this.syncLaunch(true);
+      if (keptWd) this.setLaunchWorkdir(keptWd);
+    }
     if (this._emptyEl) this._emptyEl.textContent = tr('chat.emptyNote');
     if (this._dividerEl) this._dividerEl.textContent = tr('chat.dividerNote');
     if (this._syncingEl) {

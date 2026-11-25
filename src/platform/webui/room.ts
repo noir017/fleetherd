@@ -104,6 +104,7 @@ import type {
   SessionOptionResult,
   ReviewPanelList,
   TopicSetupResult,
+  WorkdirBrowseResult,
   SchedulePanelAction,
   SchedulePanelDetailResult,
   SchedulePanelEdit,
@@ -574,6 +575,10 @@ export class WebRoom {
   private topicSetup:
     | ((ref: ConversationRef, opts: { agent?: string; cwd?: string; dryRun?: boolean }) => TopicSetupResult)
     | null = null;
+  /** Browse one level of directories for a topic's selected agent. */
+  private workdirBrowser:
+    | ((ref: ConversationRef, opts?: { agent?: string; dir?: string; atRoot?: boolean }) => Promise<WorkdirBrowseResult>)
+    | null = null;
   /** Machines the daemon cannot reach — see `setOfflineMachines`. */
   private offline: readonly OfflineMachine[] = [];
   /** The poll that keeps `liveness` honest; only ever running once a lookup exists. */
@@ -975,6 +980,21 @@ export class WebRoom {
       this.announceTopics();
     }
     return res;
+  }
+
+  useWorkdirBrowser(
+    browse: (ref: ConversationRef, opts?: { agent?: string; dir?: string; atRoot?: boolean }) => Promise<WorkdirBrowseResult>
+  ): void {
+    this.workdirBrowser = browse;
+  }
+
+  async browseWorkdir(
+    topic: string,
+    opts?: { agent?: string; dir?: string; atRoot?: boolean }
+  ): Promise<WorkdirBrowseResult> {
+    if (!this.workdirBrowser) return { ok: false, error: 'This daemon does not support directory browsing.' };
+    if (!this.topics.has(topic)) return { ok: false, error: 'No such topic.' };
+    return this.workdirBrowser(this.conversation(topic), opts);
   }
 
   /**

@@ -28,6 +28,8 @@ export interface WorkdirCurrent {
 export interface WorkdirScreen {
   readonly agentId: string;
   readonly host?: string;
+  readonly root?: string;
+  readonly current?: string;
   readonly browsing: string;
   readonly breadcrumbs?: readonly WorkdirCrumb[];
   readonly parent?: { readonly path: string; readonly buttonId: string } | null;

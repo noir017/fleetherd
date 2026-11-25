@@ -80,15 +80,19 @@ describe('banners pure helpers', () => {
       },
       ICONS,
       { offSince: () => 0, offWhen: () => '', offTitle: () => '' },
+      '/work/proj',
     );
     expect(html).toContain('data-agent="cc"');
     expect(html).toContain('data-agent="oc"');
+    expect(html).toContain('class="launch-choice-agent">cc<');
+    expect(html).toContain('class="launch-choice-dir" title="/work/proj">/work/proj<');
+    expect(html).toContain('class="launch-wd"');
     expect(html).not.toContain('launch-dirs');
     expect(html).not.toContain('launch-dir-grid');
     expect(html).not.toContain('data-cwd');
   });
 
-  it('dispatches /agent <id> directly when clicking an agent card', () => {
+  it('dispatches launch agent, folder browse, and folder pick callbacks from inline launcher', () => {
     const log = document.createElement('div');
     log.innerHTML = launchHtml(
       {
@@ -99,6 +103,9 @@ describe('banners pure helpers', () => {
       { offSince: () => 0, offWhen: () => '', offTitle: () => '' },
     );
     const sendCommand = vi.fn();
+    const selectLaunchAgent = vi.fn();
+    const browseLaunchWorkdir = vi.fn();
+    const pickLaunchWorkdir = vi.fn();
     const sub = attachLogEvents(log, {
       getTopic: () => 't1',
       getTopics: () => [],
@@ -107,6 +114,9 @@ describe('banners pure helpers', () => {
       switchTopic: () => {},
       openShot: () => {},
       sendCommand,
+      selectLaunchAgent,
+      browseLaunchWorkdir,
+      pickLaunchWorkdir,
       toggleBtw: () => {},
       openReader: () => {},
       deliverLocal: () => {},
@@ -117,7 +127,18 @@ describe('banners pure helpers', () => {
       openTurnChanges: () => {},
     });
     log.querySelector<HTMLButtonElement>('button[data-agent="oc"]')?.click();
-    expect(sendCommand).toHaveBeenCalledWith('/agent oc');
+    expect(selectLaunchAgent).toHaveBeenCalledWith('oc');
+    expect(sendCommand).not.toHaveBeenCalled();
+    const wd = log.querySelector<HTMLElement>('.launch-wd')!;
+    wd.innerHTML =
+      '<div class="wd-picker">' +
+      '<button type="button" class="wd-open" data-wd-browse="/work/sub">sub</button>' +
+      '<button type="button" class="wd-choose" data-wd-pick="/work/sub">Select</button>' +
+      '</div>';
+    wd.querySelector<HTMLButtonElement>('button[data-wd-browse]')?.click();
+    expect(browseLaunchWorkdir).toHaveBeenCalledWith('/work/sub');
+    wd.querySelector<HTMLButtonElement>('button[data-wd-pick]')?.click();
+    expect(pickLaunchWorkdir).toHaveBeenCalledWith('/work/sub');
     sub.dispose();
   });
 });
@@ -185,6 +206,25 @@ describe('createBannersController', () => {
     topics[1] = { ...topics[1]!, dir: { host: 'box1', path: '/work/other' } };
     banners.syncLaunch(true);
     expect(log.querySelector('.launch')).toBe(launchNode);
+
+    // Switching agent and rendering inline folder browser happen in place on the same .launch node.
+    banners.setLaunchWorkdir({
+      agentId: 'claude',
+      root: '/work',
+      current: '/work',
+      browsing: '/work',
+      breadcrumbs: [{ name: '/', path: '/', buttonId: 'wdb:launch:0' }, { name: 'work', path: '/work', buttonId: 'wdb:launch:1' }],
+      selectCurrent: { path: '/work', buttonId: 'wdr:launch:0', current: true, root: true },
+      entries: [{ name: 'sub-a', path: '/work/sub-a', enterId: 'wde:launch:1', pickId: 'wdr:launch:1' }],
+      truncated: 0,
+    });
+    expect(log.querySelector('.launch')).toBe(launchNode);
+    expect(log.querySelector('.launch-wd .wd-picker')).not.toBeNull();
+    expect(log.querySelector('.launch-choice-dir')?.textContent).toBe('/work');
+    banners.setLaunchCwd('/work/sub-a');
+    expect(log.querySelector('.launch')).toBe(launchNode);
+    expect(log.querySelector('.launch-choice-dir')?.textContent).toBe('/work/sub-a');
+    expect(log.querySelector('.launch-wd .wd-row.on')?.getAttribute('data-wd-name')).toBe('sub-a');
 
     // Clearing launch on a stale empty topic shows .empty and machineNoteEl.
     launch = null;

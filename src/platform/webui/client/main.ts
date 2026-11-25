@@ -17,7 +17,7 @@ import type { LocalBubbleMessage } from './features/topic/composer/index.js';
 import type { ComposerTopicStatusBridge } from './features/topic/composer/types.js';
 import type { TopicEditorElements, TopicEditorHandle } from './features/topic/editor/index.js';
 import { stClock } from './features/topic/status/index.js';
-import type { LaunchChoice, TranscriptMessage } from './features/topic/transcript/index.js';
+import type { LaunchChoice, TranscriptMessage, WorkdirScreen } from './features/topic/transcript/index.js';
 import type { TopicSnapshotPayload } from './features/topics/index.js';
 import { applyDomI18n, getLocale, initLocale, onLocaleChange, setLocale, t as tr } from './i18n/index.js';
 import { getTheme, setTheme } from './theme.js';
@@ -71,6 +71,7 @@ interface AppState {
   entering: boolean;
   stale: boolean;
   launch: LaunchChoice | null;
+  launchWdSeq: number;
   settleOnResume: boolean;
   activeEditor: TopicEditorHandle | null;
   desktopEditorHost: HTMLElement | null;
@@ -340,6 +341,33 @@ function buildTopicEditorDeps(rt: AppRuntime) {
   };
 }
 
+function loadLaunchWorkdirs(
+  rt: AppRuntime,
+  tid: string,
+  agentId: string,
+  opts?: { readonly dir?: string; readonly atRoot?: boolean },
+): void {
+  const seq = ++rt.state.launchWdSeq;
+  const params = new URLSearchParams({ t: tid, agent: agentId });
+  if (opts?.dir) params.set('dir', opts.dir);
+  if (opts?.atRoot) params.set('root', '1');
+  void fetch(`api/topics/workdirs?${params.toString()}`, { credentials: 'same-origin' })
+    .then((r) => (r.ok ? (r.json() as Promise<WorkdirScreen>) : null))
+    .then((screen) => {
+      if (seq !== rt.state.launchWdSeq || rt.state.topic !== tid) return;
+      if (screen && typeof screen.browsing === 'string') {
+        rt.state.activeEditor?.transcript?.banners.setLaunchWorkdir(screen, false);
+      } else {
+        rt.state.activeEditor?.transcript?.banners.setLaunchWorkdir(null, false);
+      }
+    })
+    .catch(() => {
+      if (seq === rt.state.launchWdSeq && rt.state.topic === tid) {
+        rt.state.activeEditor?.transcript?.banners.setLaunchWorkdir(null, false);
+      }
+    });
+}
+
 function buildTranscriptDeps(rt: AppRuntime, els: TopicEditorElements, getTopicId: () => string) {
   const { state, icons, codeView } = rt;
   return {
@@ -383,6 +411,70 @@ function buildTranscriptDeps(rt: AppRuntime, els: TopicEditorElements, getTopicI
       void rt.commands.execute(READER_OPEN_IMAGE_COMMAND, { src: img.src, alt: img.alt, restoreFocus: img });
     },
     sendCommand: (cmd: string) => state.activeEditor?.composer?.command(cmd),
+    onLaunchShown: (agentId: string) => {
+      const tid = getTopicId();
+      if (tid) loadLaunchWorkdirs(rt, tid, agentId);
+    },
+    selectLaunchAgent: (agentId: string) => {
+      const tid = getTopicId();
+      if (!tid) return;
+      const prevAgent = state.launch?.current;
+      if (state.launch) state.launch = { ...state.launch, current: agentId };
+      state.activeEditor?.transcript?.banners.setLaunchAgent(agentId);
+      state.activeEditor?.transcript?.banners.setLaunchWorkdir(null, true);
+      state.activeEditor?.status?.onAgentChosen();
+      void post('api/topics/setup', { topic: tid, agent: agentId }, 1)
+        .then((r) => r.json().then((j: { ok?: boolean; agent?: string; cwd?: string; error?: string }) => ({ r, j })))
+        .then(({ r, j }) => {
+          if (state.topic !== tid) return;
+          if (!r.ok || !j.ok) {
+            if (prevAgent && state.launch) {
+              state.launch = { ...state.launch, current: prevAgent };
+              state.activeEditor?.transcript?.banners.setLaunchAgent(prevAgent);
+            }
+            state.activeEditor?.transcript?.banners.setLaunchWorkdir(null, false);
+            els.noteEl.textContent = j.error || tr('common.networkError');
+            return;
+          }
+          const chosen = j.agent || agentId;
+          if (j.cwd) state.activeEditor?.transcript?.banners.setLaunchCwd(j.cwd);
+          state.activeEditor?.status?.peekOptions();
+          loadLaunchWorkdirs(rt, tid, chosen, { atRoot: true });
+        })
+        .catch(() => {
+          if (state.topic !== tid) return;
+          els.noteEl.textContent = tr('common.networkError');
+        });
+    },
+    browseLaunchWorkdir: (dir: string) => {
+      const tid = getTopicId();
+      const agentId = state.launch?.current;
+      if (!tid || !agentId) return;
+      state.activeEditor?.transcript?.banners.setLaunchWorkdir(null, true);
+      loadLaunchWorkdirs(rt, tid, agentId, { dir });
+    },
+    pickLaunchWorkdir: (cwd: string) => {
+      const tid = getTopicId();
+      const agentId = state.launch?.current;
+      if (!tid || !agentId) return;
+      state.activeEditor?.transcript?.banners.setLaunchCwd(cwd);
+      state.activeEditor?.status?.onAgentChosen();
+      void post('api/topics/setup', { topic: tid, agent: agentId, cwd }, 1)
+        .then((r) => r.json().then((j: { ok?: boolean; agent?: string; cwd?: string; error?: string }) => ({ r, j })))
+        .then(({ r, j }) => {
+          if (state.topic !== tid) return;
+          if (!r.ok || !j.ok) {
+            els.noteEl.textContent = j.error || tr('common.networkError');
+            return;
+          }
+          if (j.cwd) state.activeEditor?.transcript?.banners.setLaunchCwd(j.cwd);
+          state.activeEditor?.status?.peekOptions();
+        })
+        .catch(() => {
+          if (state.topic !== tid) return;
+          els.noteEl.textContent = tr('common.networkError');
+        });
+    },
     openReader: (link: Element) => {
       void rt.commands.execute(READER_OPEN_COMMAND, link);
     },
@@ -1212,6 +1304,7 @@ function bootstrap(): void {
     entering: true,
     stale: false,
     launch: null,
+    launchWdSeq: 0,
     settleOnResume: false,
     activeEditor: null,
     desktopEditorHost: null,
