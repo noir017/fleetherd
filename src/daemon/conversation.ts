@@ -28,12 +28,14 @@ import type {
   PlatformAdapter,
   SessionOptionList,
   SessionOptionResult,
+  TopicSetupResult,
   TurnChangeFileResult,
   TurnChangeStatusResult,
 } from '../platform/adapter.js';
-import type { AgentCatalog, AgentStatus, ConversationId, InboundMessage, StatusOption, TopicActivity } from '../types.js';
+import type { AgentCatalog, AgentStatus, ConversationId, InboundMessage, StatusOption, StatusPermissions, TopicActivity } from '../types.js';
 import type { AgentFactory } from './agent.js';
 import { resolveConversationCwd } from './agent-common.js';
+import { isDirectory } from './workdir-scan.js';
 import { runAgyCliCommand } from './agy-cli.js';
 import type { RespawnCounts } from './config-reload.js';
 import { ConversationCommands } from './conversation-commands.js';
@@ -134,6 +136,7 @@ export class ConversationRegistry {
       agentOf: (id) => this.agentIdOf(id),
       configuredModel: (id) =>
         this.conversations.get(id)?.modelOverride ?? findAgent(this.config, this.agentIdOf(id))?.model,
+      permissionsOf: (id) => this.controls?.permissionsForAgent(this.agentIdOf(id)),
       cacheReading: (id) => this.recorder.cacheReading(id),
       clock: this.clock,
     });
@@ -641,7 +644,42 @@ export class ConversationRegistry {
     const id = this.idForRef(ref);
     const current = this.boundAgentFor(id, resolveAgent(this.config, routeInputFromRef(ref)).agentId);
     if (this.store?.agentSession(id, current) !== undefined) return undefined;
-    return agentCatalog(agentGroups(this.config.agents), current);
+    return agentCatalog(agentGroups(this.config.agents), current, (agentId) => this.workdirChoices(agentId));
+  }
+
+  /** Bind a new/empty topic's agent and working directory in one step; never adds prompt text. */
+  setupTopicForRef(ref: ConversationRef, opts: { agent?: string; cwd?: string }): TopicSetupResult {
+    const id = this.idForRef(ref);
+    const targetAgent =
+      opts.agent ?? this.boundAgentFor(id, resolveAgent(this.config, routeInputFromRef(ref)).agentId);
+    const def = findAgent(this.config, targetAgent);
+    if (!def) return { ok: false, error: `No agent "${targetAgent}" is configured.` };
+    if (opts.agent !== undefined) {
+      const refused = this.switchRefusal(id, targetAgent, `/agent ${targetAgent}`);
+      if (refused !== undefined) return { ok: false, error: refused };
+    }
+    if (opts.cwd !== undefined) {
+      if (this.controls.isWorkdirLocked(id, targetAgent)) {
+        return { ok: false, error: 'Working directory cannot be changed once the session has started.' };
+      }
+      if (!def.host && !isDirectory(opts.cwd)) {
+        return { ok: false, error: `Directory does not exist: ${opts.cwd}` };
+      }
+    }
+    if (opts.agent !== undefined) {
+      const state = this.conversations.get(id);
+      if (state && state.agentId !== targetAgent) {
+        this.rebind(id, state, targetAgent, ref.platform, addressOf(ref), false);
+      } else if (!state) {
+        this.createState(id, targetAgent, ref.platform, ' (chosen at topic setup)');
+      }
+    }
+    if (opts.cwd !== undefined) {
+      const wdRes = this.controls.setWorkdir(id, targetAgent, opts.cwd);
+      if (wdRes.kind === 'failed') return { ok: false, error: wdRes.reason };
+      if (wdRes.kind === 'missing') return { ok: false, error: `Directory does not exist: ${wdRes.path}` };
+    }
+    return { ok: true, agent: targetAgent, cwd: resolveConversationCwd(def, id, this.store) };
   }
 
   /** Read off `reclaimState`, not `peek`: a handle outlives its reclaimed child. Absent reads as not live. */
@@ -695,7 +733,9 @@ export class ConversationRegistry {
     return this.controls.chooseModelForRef(ref, value);
   }
 
-  optionStatusForRef(ref: ConversationRef): Promise<{ agent: string; model?: string; options: StatusOption[] }> {
+  optionStatusForRef(
+    ref: ConversationRef
+  ): Promise<{ agent: string; model?: string; options: StatusOption[]; permissions?: StatusPermissions }> {
     return this.controls.optionStatusForRef(ref);
   }
 

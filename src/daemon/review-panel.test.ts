@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { HistoryStore, type HistoryReviewChange } from '../history/store.js';
 import { buildReviewPanel } from './review-panel.js';
 import { ReviewStateStore } from './review-state.js';
+import { createSkill, patchSkill, readSkillFiles, skillHistory } from './skills-store.js';
 
 /**
  * The Reviews tab's data, built from a real `history.db` in a temp dir: the point of the module is
@@ -33,6 +34,8 @@ function panel(
     state?: ReviewStateStore;
     standing?: () => string | undefined;
     activeSkills?: () => ReadonlySet<string>;
+    skillsDir?: string;
+    writeSkills?: <T>(fn: () => T) => Promise<T>;
   } = {}
 ) {
   const state = over.state ?? new ReviewStateStore(path.join(dir, 'reviews.json'), () => {});
@@ -44,6 +47,8 @@ function panel(
     dismiss: (text) => state.dismissPreference(text),
     ...(over.standing ? { standing: over.standing } : {}),
     ...(over.activeSkills ? { activeSkills: over.activeSkills } : {}),
+    ...(over.skillsDir ? { skillsDir: over.skillsDir } : {}),
+    ...(over.writeSkills ? { writeSkills: over.writeSkills } : {}),
   });
 }
 
@@ -276,5 +281,68 @@ describe('the pending preference list', () => {
     expect(panel({ activeSkills: () => new Set(['simular-box']) }).list().pending).toEqual([]);
     const state = new ReviewStateStore(path.join(dir, 'reviews.json'), () => {});
     expect(panel({ state, activeSkills: () => active }).dismiss('Archive simular-box, merged into sbox').pending).toEqual([]);
+  });
+
+  it('exposes reviewer, model, messagesRead, durationMs, inline diff, and reverts a skill commit via skills-store', async () => {
+    const skillsDir = path.join(dir, 'skills');
+    const created = createSkill(
+      { name: 'ops-note', description: 'Ops checklist', body: 'Step 1: check logs.\n' },
+      skillsDir
+    );
+    const origMd = readSkillFiles('ops-note', skillsDir).get('SKILL.md')!.toString('utf8');
+    patchSkill(
+      {
+        name: 'ops-note',
+        version: created.version,
+        content: origMd.replace('Step 1: check logs.', 'Step 1: check journalctl logs.'),
+      },
+      skillsDir
+    );
+    const commits = skillHistory('ops-note', skillsDir);
+    const commitId = commits[0]!.id;
+    const revertId = commitId;
+
+    const id = history.session({ key: 'review#detail#1', platform: 'review', title: 'Review: Deploy', agent: 'ag', kind: 'review', at: now })!;
+    history.message(id, { ts: now, role: 'agent', kind: 'review', text: 'ok' });
+    history.recordReview(id, {
+      reviewedKey: 'web#main#a1b2c3d4',
+      reviewedTitle: 'Deploy',
+      platform: 'web',
+      outcome: 'changed',
+      changes: [{ action: 'patch', name: 'ops-note', reason: 'use journalctl', applied: true, revertId, commitId }],
+      preferences: [],
+      invalid: [],
+      model: 'gemini-3-pro',
+      messagesRead: 9,
+      durationMs: 3100,
+      at: now,
+    });
+
+    const writeCalls: number[] = [];
+    const p = panel({
+      skillsDir,
+      writeSkills: async (fn) => {
+        writeCalls.push(1);
+        return fn();
+      },
+    });
+    const list = p.list();
+    expect(list.reviews[0]).toMatchObject({
+      reviewer: 'ag',
+      model: 'gemini-3-pro',
+      messagesRead: 9,
+      durationMs: 3100,
+    });
+    const change = list.reviews[0]!.changes[0]!;
+    expect(change.revertId).toBe(revertId);
+    expect(change.diff).toContain('-Step 1: check logs.');
+    expect(change.diff).toContain('+Step 1: check journalctl logs.');
+
+    const reverted = await p.revert!('ops-note', revertId);
+    expect(reverted.ok).toBe(true);
+    expect(writeCalls).toHaveLength(1);
+    expect(readSkillFiles('ops-note', skillsDir).get('SKILL.md')!.toString('utf8')).toContain('Step 1: check logs.');
+    // Revert creates a new commit in git history rather than rewriting history.
+    expect(skillHistory('ops-note', skillsDir).length).toBeGreaterThan(commits.length);
   });
 });

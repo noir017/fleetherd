@@ -36,12 +36,24 @@
  * no CDN, no favicon request. Every byte the page uses is one this daemon serves.
  */
 import { createHash } from 'node:crypto';
+import { createRequire } from 'node:module';
 
 import { escapeHtml } from '../web-markdown.js';
 import { PAGE_BODY } from './page-body.js';
 import type { BootPluginEntry } from './plugins/manifest.js';
 
 export type { BootPluginEntry } from './plugins/manifest.js';
+
+function readPackageVersion(): string | undefined {
+  try {
+    const pkg = createRequire(import.meta.url)('../../../package.json') as { version?: unknown };
+    return typeof pkg.version === 'string' && pkg.version ? pkg.version : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export const PACKAGE_VERSION = readPackageVersion();
 
 /**
  * What the page links, each relative to the page (`assets/<file>`) or null when this daemon has no
@@ -83,9 +95,10 @@ export function renderPage(
   files = false,
   instructions = false,
   instance = 'web',
-  plugins: readonly BootPluginEntry[] = []
+  plugins: readonly BootPluginEntry[] = [],
+  version: string | undefined = PACKAGE_VERSION
 ): string {
-  return servePage(title, terminal, password, terminalEnd, assets, files, instructions, instance, plugins).html;
+  return servePage(title, terminal, password, terminalEnd, assets, files, instructions, instance, plugins, version).html;
 }
 
 /**
@@ -110,7 +123,9 @@ export function servePage(
   /** This web UI's platform instance id (`platforms.<id>`), used to format `<id>:main/<topic>` refs. */
   instance = 'web',
   /** Loaded frontend plugins exposed to the client loader (empty by default). */
-  plugins: readonly BootPluginEntry[] = []
+  plugins: readonly BootPluginEntry[] = [],
+  /** Package version from package.json, shown in the workbench status bar. */
+  version: string | undefined = PACKAGE_VERSION
 ): { html: string; build: string } {
   const boot = bootConfig({
     terminal,
@@ -122,6 +137,7 @@ export function servePage(
     ...(assets.extras !== undefined ? { extras: assets.extras } : {}),
     instance,
     build: '__BUILD__',
+    ...(version ? { version } : {}),
     plugins,
   });
   const html = page({

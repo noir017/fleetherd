@@ -4,6 +4,7 @@ import path from 'node:path';
 import { configDir } from '../config/load.js';
 import { LEGACY_SKILL_LINK, metaKeys } from '../legacy-name.js';
 import {
+  commitDiff,
   commitPaths,
   conversationCommitPaths,
   filesAt,
@@ -844,6 +845,24 @@ export function skillHistory(name: string, dir = configDir()): SkillHistoryEntry
     ...(e.afterVersion ? { afterVersion: e.afterVersion } : {}),
     ...(e.note ? { note: e.note } : {}),
   }));
+}
+
+/** Read-only unified diff for one skill commit, scoped to `file` when provided. */
+export function skillCommitDiff(name: string, id: string, file?: string, dir = configDir()): string | undefined {
+  try {
+    const clean = validateSkillName(name);
+    const root = repoRoot(dir);
+    if (!isRepo(root)) return undefined;
+    const paths = file
+      ? (() => {
+          const safe = file === SKILL_FILE ? SKILL_FILE : validateFilePath(file);
+          return [`${SKILLS_DIR}/${clean}/${safe}`, `${ARCHIVE_DIR}/${clean}/${safe}`];
+        })()
+      : skillPaths(clean);
+    return commitDiff(root, id, paths);
+  } catch {
+    return undefined;
+  }
 }
 
 /**

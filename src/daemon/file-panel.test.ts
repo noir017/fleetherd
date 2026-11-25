@@ -6,7 +6,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { ConversationRef } from '../core/conversation.js';
-import { MAX_EDIT_BYTES, buildFilesPanel, lineEndings } from './file-panel.js';
+import { MAX_EDIT_BYTES, buildFilesPanel, lineEndings, parseDirGitStatus } from './file-panel.js';
 import type { Workspace } from './workspace.js';
 import { WorkspaceConflictError, localWorkspace } from './workspace.js';
 
@@ -552,5 +552,122 @@ describe('buildFilesPanel against a remote host (a fake workspace)', () => {
     const r = await panel.list(REF, '');
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error).toMatch(/no workspace/);
+  });
+
+  it('annotates remote host entries via Workspace.run git status without extra remote RPCs', async () => {
+    const ws = fakeHost({
+      async listDir() {
+        return [
+          { name: 'src', dir: true, size: 0, mtimeMs: 1 },
+          { name: 'app.ts', dir: false, size: 10, mtimeMs: 2 },
+          { name: 'clean.ts', dir: false, size: 10, mtimeMs: 3 },
+        ];
+      },
+      async run(argv) {
+        if (argv[0] === 'pwd') {
+          return { code: 0, output: Buffer.from('/home/u/work\n'), stderr: '', truncated: false, timedOut: false };
+        }
+        if (argv[0] === 'git' && argv.includes('--show-toplevel')) {
+          return { code: 0, output: Buffer.from('/home/u/work\n'), stderr: '', truncated: false, timedOut: false };
+        }
+        if (argv[0] === 'git' && argv.includes('status')) {
+          return {
+            code: 0,
+            output: Buffer.from(' M app.ts\0?? src/new.ts\0'),
+            stderr: '',
+            truncated: false,
+            timedOut: false,
+          };
+        }
+        return { code: 0, output: Buffer.alloc(0), stderr: '', truncated: false, timedOut: false };
+      },
+    });
+
+    const panel = buildFilesPanel({ instance: 'webui', roots: [], workspaceForRef: () => ws });
+    const listed = await panel.list(REF, '');
+    expect(listed.ok).toBe(true);
+    if (listed.ok) {
+      const byName = new Map(listed.entries.map((e) => [e.name, e.gitStatus]));
+      expect(byName.get('app.ts')).toBe('M');
+      expect(byName.get('src')).toBe('?');
+      expect(byName.get('clean.ts')).toBeUndefined();
+    }
+  });
+});
+
+describe('parseDirGitStatus', () => {
+  it('parses modified, added, deleted, renamed, unmerged, and untracked files and rolls up into subdirs', () => {
+    const raw = [
+      ' M a.ts',
+      'A  added.ts',
+      'D  gone.ts',
+      'R  new.ts\0old.ts',
+      'UU conflict.ts',
+      '?? untracked.txt',
+      ' M sub/inner/file.ts',
+      '?? sub/other.ts',
+    ].join('\0') + '\0';
+    const root = parseDirGitStatus(raw, '');
+    expect(root.get('a.ts')).toBe('M');
+    expect(root.get('added.ts')).toBe('A');
+    expect(root.get('gone.ts')).toBe('D');
+    expect(root.get('new.ts')).toBe('R');
+    expect(root.has('old.ts')).toBe(false);
+    expect(root.get('conflict.ts')).toBe('U');
+    expect(root.get('untracked.txt')).toBe('?');
+    // Subdir gets highest-priority status among its descendants (M outranks ?).
+    expect(root.get('sub')).toBe('M');
+
+    const sub = parseDirGitStatus(raw, 'sub');
+    expect(sub.get('inner')).toBe('M');
+    expect(sub.get('other.ts')).toBe('?');
+    expect(sub.has('a.ts')).toBe(false);
+  });
+});
+
+describe('file tree git status badges', () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'file-panel-git-'));
+  });
+  afterEach(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('annotates local git repo entries with gitStatus and stays silent outside a repo', async () => {
+    // Outside a git repo: entries still list cleanly with no gitStatus.
+    fs.writeFileSync(path.join(dir, 'plain.txt'), 'hi\n');
+    const nonGit = buildFilesPanel({ instance: 'webui', roots: [], workspaceForRef: () => localWorkspace(dir) });
+    const plainRes = await nonGit.list(REF, '');
+    expect(plainRes.ok).toBe(true);
+    if (plainRes.ok) expect(plainRes.entries.find((e) => e.name === 'plain.txt')?.gitStatus).toBeUndefined();
+
+    // Inside a git repo: modified, staged-added, untracked, and dirty subdir are annotated.
+    execFileSync('git', ['init'], { cwd: dir });
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: dir });
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd: dir });
+    fs.mkdirSync(path.join(dir, 'sub'));
+    fs.writeFileSync(path.join(dir, 'sub', 'x.ts'), 'v1\n');
+    execFileSync('git', ['add', '.'], { cwd: dir });
+    execFileSync('git', ['commit', '-m', 'init'], { cwd: dir });
+
+    fs.writeFileSync(path.join(dir, 'plain.txt'), 'changed\n');
+    fs.writeFileSync(path.join(dir, 'staged.ts'), 'new\n');
+    execFileSync('git', ['add', 'staged.ts'], { cwd: dir });
+    fs.writeFileSync(path.join(dir, 'untracked.md'), 'draft\n');
+    fs.writeFileSync(path.join(dir, 'sub', 'x.ts'), 'v2\n');
+
+    const panel = buildFilesPanel({ instance: 'webui', roots: [], workspaceForRef: () => localWorkspace(dir) });
+    const listed = await panel.list(REF, '');
+    expect(listed.ok).toBe(true);
+    if (listed.ok) {
+      const byName = new Map(listed.entries.map((e) => [e.name, e.gitStatus]));
+      expect(byName.get('plain.txt')).toBe('M');
+      expect(byName.get('staged.ts')).toBe('A');
+      expect(byName.get('untracked.md')).toBe('?');
+      expect(byName.get('sub')).toBe('M');
+    }
+    // Access boundary (locate) is unchanged: traversal outside root is still rejected.
+    expect((await panel.list(REF, '../')).ok).toBe(false);
   });
 });

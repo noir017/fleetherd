@@ -166,7 +166,7 @@ describe('the api route', () => {
       return reply({ choices: [{ message: { content: ' {"changes":[]} ' }, finish_reason: 'stop' }] });
     }) as unknown as typeof fetch;
     const run = await runApiReview(reviewer, 'PROMPT', fetchStub);
-    expect(run).toEqual({ ok: true, output: '{"changes":[]}' });
+    expect(run).toEqual({ ok: true, output: '{"changes":[]}', model: 'm' });
     expect(seen[0]!.url).toBe('http://newapi:3000/v1/chat/completions');
     expect((seen[0]!.init.headers as Record<string, string>).authorization).toBe('Bearer sk-test');
     expect(JSON.parse(String(seen[0]!.init.body))).toEqual(apiReviewBody('m', 'PROMPT'));

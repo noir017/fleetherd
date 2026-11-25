@@ -836,6 +836,55 @@ describe('webui server: topics', () => {
     expect(made.topic.id).toMatch(/^[0-9a-f]{8}$/);
   });
 
+  it('opens a topic with agent and cwd in one step, and rolls it back if setup fails', async () => {
+    const { base, room } = await boot();
+    const cookie = await signIn(base);
+    const calls: Array<{ topic: string; agent?: string; cwd?: string }> = [];
+    room.useTopicSetup((ref, opts) => {
+      calls.push({ topic: ref.thread ?? '', ...opts });
+      if (opts.agent === 'bad') return { ok: false, error: 'unknown agent' };
+      return { ok: true, agent: opts.agent ?? 'cc', cwd: opts.cwd ?? '/w' };
+    });
+
+    const ok = await fetch(`${base}/api/topics`, {
+      method: 'POST',
+      headers: { ...JSON_HEADERS, cookie },
+      body: JSON.stringify({ agent: 'oc', cwd: '/srv/app' }),
+    });
+    expect(ok.status).toBe(201);
+    const created = (await ok.json()) as { topic: { id: string }; agent: string; cwd: string };
+    expect(created.agent).toBe('oc');
+    expect(created.cwd).toBe('/srv/app');
+    expect(calls[0]).toEqual({ topic: created.topic.id, agent: 'oc', cwd: '/srv/app' });
+
+    const beforeCount = room.topicList().length;
+    const fail = await fetch(`${base}/api/topics`, {
+      method: 'POST',
+      headers: { ...JSON_HEADERS, cookie },
+      body: JSON.stringify({ agent: 'bad' }),
+    });
+    expect(fail.status).toBe(409);
+    expect(await fail.json()).toEqual({ error: 'unknown agent' });
+    expect(room.topicList().length).toBe(beforeCount);
+
+    const setupRes = await fetch(`${base}/api/topics/setup`, {
+      method: 'POST',
+      headers: { ...JSON_HEADERS, cookie },
+      body: JSON.stringify({ topic: created.topic.id, agent: 'cc', cwd: '/srv/other' }),
+    });
+    expect(setupRes.status).toBe(200);
+    expect(await setupRes.json()).toEqual({ ok: true, agent: 'cc', cwd: '/srv/other' });
+    expect(
+      (
+        await fetch(`${base}/api/topics/setup`, {
+          method: 'POST',
+          headers: JSON_HEADERS,
+          body: JSON.stringify({ topic: created.topic.id, agent: 'cc' }),
+        })
+      ).status
+    ).toBe(401);
+  });
+
   it('streams only the topic that was asked for', async () => {
     const { base, port, room, topic } = await boot();
     const cookie = await signIn(base);
@@ -2235,6 +2284,37 @@ describe('webui server: traffic', () => {
       expect(await res.json()).toMatchObject({ pending: [] });
       expect(dismissed).toEqual(['answers lead with the conclusion']);
       expect((await fetch(`${base}/api/reviews/op`, { method: 'POST', headers: JSON_HEADERS, body: '{}' })).status).toBe(401);
+    });
+
+    it('reverts a skill commit through the review panel and returns the fresh list', async () => {
+      const { base, room } = await boot();
+      const cookie = await signIn(base);
+      const reverted: Array<{ name: string; id: string }> = [];
+      room.useReviewPanel({
+        list: () => list,
+        dismiss: () => list,
+        revert: async (name, id) => {
+          reverted.push({ name, id });
+          if (id === 'deadbeef') return { ok: false, error: 'commit not found' };
+          return { ok: true, list };
+        },
+      });
+      const ok = await fetch(`${base}/api/reviews/op`, {
+        method: 'POST',
+        headers: { ...JSON_HEADERS, cookie },
+        body: JSON.stringify({ action: 'revert', name: 'ops-note', id: 'abcdef1' }),
+      });
+      expect(ok.status).toBe(200);
+      expect(await ok.json()).toEqual(list);
+      expect(reverted).toEqual([{ name: 'ops-note', id: 'abcdef1' }]);
+
+      const conflict = await fetch(`${base}/api/reviews/op`, {
+        method: 'POST',
+        headers: { ...JSON_HEADERS, cookie },
+        body: JSON.stringify({ action: 'revert', name: 'ops-note', id: 'deadbeef' }),
+      });
+      expect(conflict.status).toBe(400);
+      expect(await conflict.json()).toEqual({ error: 'commit not found' });
     });
 
     it('is behind the session like every other route', async () => {

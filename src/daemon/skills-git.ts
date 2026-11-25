@@ -372,3 +372,12 @@ export function dirtyPaths(root: string, paths: string[]): string[] {
     .filter((e) => e.length > 3)
     .map((e) => e.slice(3));
 }
+
+/** Unified diff for one commit scoped to `paths`, capped at `maxBytes`. */
+export function commitDiff(root: string, id: string, paths: string[], maxBytes = 64 * 1024): string | undefined {
+  const full = resolveCommit(root, id);
+  if (!full) return undefined;
+  const out = gitSync(root, ['diff-tree', '-p', '--no-commit-id', '--no-color', '-U3', '--root', full, '--', ...paths]);
+  if (!out) return undefined;
+  return out.length > maxBytes ? `${out.slice(0, maxBytes)}\n... (diff truncated)` : out;
+}

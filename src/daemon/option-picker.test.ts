@@ -115,13 +115,16 @@ function rig(opts: { stored?: boolean } = {}) {
 }
 
 describe('listing a conversation’s settings', () => {
+  const DEFAULT_PERMS = { level: 'auto', offered: ['ask', 'auto'], unset: true };
+
   it('starts a new conversation’s session first, as the model list does, and lists what it reports', async () => {
     const r = rig();
     const list = await r.registry.optionsForRef(REF);
     expect(r.own()?.ensured).toBe(1);
-    expect(list).toEqual({ ok: true, agent: 'browser', options: [ACCOUNTS] });
+    expect(list).toEqual({ ok: true, agent: 'browser', options: [ACCOUNTS], permissions: DEFAULT_PERMS });
     // And the strip hears it now, not at the first turn.
     expect(r.registry.statusOf(r.id)?.options).toEqual([{ id: 'account', name: 'Account', value: 'Work' }]);
+    expect(r.registry.statusOf(r.id)?.permissions).toEqual(DEFAULT_PERMS);
   });
 
   it('says so for an agent with no settings of its own', async () => {
@@ -131,7 +134,13 @@ describe('listing a conversation’s settings', () => {
     // The session is up and reports an empty set: warming it again cannot change that.
     r.own()!.options = [];
     const none = await r.registry.optionsForRef(REF);
-    expect(none).toEqual({ ok: false, agent: 'browser', reason: 'none', text: 'browser has no settings of its own to change.' });
+    expect(none).toEqual({
+      ok: false,
+      agent: 'browser',
+      reason: 'none',
+      text: 'browser has no settings of its own to change.',
+      permissions: DEFAULT_PERMS,
+    });
   });
 });
 
@@ -180,10 +189,16 @@ describe('choosing one', () => {
 });
 
 describe('what a status line draws before anything has reported', () => {
+  const DEFAULT_PERMS = { level: 'auto', offered: ['ask', 'auto'], unset: true };
+
   it('asks the agent once, on a throwaway session, for a new conversation — including default value', async () => {
     const r = rig();
     const peek = await r.registry.optionStatusForRef(REF);
-    expect(peek).toEqual({ agent: 'browser', options: [{ id: 'account', name: 'Account', value: 'Work' }] });
+    expect(peek).toEqual({
+      agent: 'browser',
+      options: [{ id: 'account', name: 'Account', value: 'Work' }],
+      permissions: DEFAULT_PERMS,
+    });
     // Not this conversation's session: that would bind the topic before its first message.
     expect(r.created).toEqual(['models:browser']);
     expect(r.own()).toBeUndefined();
@@ -199,6 +214,7 @@ describe('what a status line draws before anything has reported', () => {
     expect(await r.registry.optionStatusForRef(REF)).toEqual({
       agent: 'browser',
       options: [{ id: 'account', name: 'Account', value: 'Home', note: '5-hour limit used up' }],
+      permissions: DEFAULT_PERMS,
     });
   });
 
@@ -207,12 +223,14 @@ describe('what a status line draws before anything has reported', () => {
     expect(await r.registry.optionStatusForRef(REF)).toEqual({
       agent: 'browser',
       options: [{ id: 'account', name: 'Account', value: 'Work' }],
+      permissions: DEFAULT_PERMS,
     });
     await r.registry.optionsForRef(REF);
     await r.registry.chooseOptionForRef(REF, 'account', 'home');
     expect(await r.registry.optionStatusForRef({ ...REF, thread: 't-new' })).toEqual({
       agent: 'browser',
       options: [{ id: 'account', name: 'Account', value: 'Home', note: '5-hour limit used up' }],
+      permissions: DEFAULT_PERMS,
     });
   });
 
@@ -225,7 +243,11 @@ describe('what a status line draws before anything has reported', () => {
 
   it('starts nothing for a conversation that has had a session: its next turn reports', async () => {
     const r = rig({ stored: true });
-    expect(await r.registry.optionStatusForRef(REF)).toEqual({ agent: 'browser', options: [] });
+    expect(await r.registry.optionStatusForRef(REF)).toEqual({
+      agent: 'browser',
+      options: [],
+      permissions: DEFAULT_PERMS,
+    });
     expect(r.created).toEqual([]);
   });
 });
