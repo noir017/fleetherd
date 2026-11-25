@@ -622,6 +622,33 @@ describe('webui page: topics', () => {
     expect(h.streams.filter((s) => !s.closed)).toHaveLength(1);
   });
 
+  it('paints a revisited topic from cache at once and resumes its stream with ?last=', async () => {
+    const h = await open();
+    const emitId = async (ev: Record<string, unknown>, id: string): Promise<void> => {
+      await within('a stream to deliver to', 1000, () => h.streams.some((s) => !s.closed));
+      h.live().onmessage?.({ data: JSON.stringify(ev), lastEventId: id });
+      await tick();
+    };
+    const syncA = sync('a1b2c3d4', [message('m1', '<p>cached A</p>')], ['a1b2c3d4', 'b2c3d4e5'], { tv: 7 });
+    await emitId(syncA, 'a1b2c3d4.1.5');
+
+    // Switch away to B (flushes A into cache immediately via cacheService.leave()).
+    await h.click('[data-topic="b2c3d4e5"]');
+    await opens(h, 'api/events?t=b2c3d4e5');
+    await emitId(
+      sync('b2c3d4e5', [message('m2', '<p>in B</p>')], ['a1b2c3d4', 'b2c3d4e5'], { tv: 7 }),
+      'b2c3d4e5.1.2',
+    );
+
+    // Switch back to A: messages paint synchronously from cache BEFORE any sync/resumed arrives,
+    // and the stream resumes with ?last= instead of requesting a full sync.
+    await h.click('[data-topic="a1b2c3d4"]');
+    expect(h.painted()).toBe(1);
+    expect(h.el('log').textContent).toContain('cached A');
+    expect(h.live().url).toContain('t=a1b2c3d4');
+    expect(h.live().url).toContain('last=a1b2c3d4.1.5');
+  });
+
 
   it('shows which project each topic is working in', async () => {
     const h = await open({ url: 'http://localhost:8787/?t=a1b2c3d4' });
