@@ -20,6 +20,7 @@ export interface InstructionEditorInput {
   readonly agent?: string;
   readonly fileId?: string;
   readonly orphans?: boolean;
+  readonly all?: boolean;
   readonly title?: string;
   readonly source?: FilesSource;
 }
@@ -28,7 +29,7 @@ export interface GatewayCatalogSection {
   readonly id: string;
   readonly label: string;
   readonly count?: number;
-  readonly kind: 'group' | 'orphans';
+  readonly kind: 'group' | 'orphans' | 'instructions';
 }
 
 export interface SettingsPluginBridge {
@@ -95,6 +96,7 @@ export function isInstructionEditorInput(input: unknown): input is InstructionEd
   const agentOk = obj.agent === undefined || typeof obj.agent === 'string';
   const fileOk = obj.fileId === undefined || typeof obj.fileId === 'string';
   const orphansOk = obj.orphans === undefined || typeof obj.orphans === 'boolean';
+  const allOk = obj.all === undefined || typeof obj.all === 'boolean';
   const titleOk = obj.title === undefined || typeof obj.title === 'string';
-  return agentOk && fileOk && orphansOk && titleOk;
+  return agentOk && fileOk && orphansOk && allOk && titleOk;
 }

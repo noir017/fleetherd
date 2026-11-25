@@ -1,5 +1,6 @@
 import { addDisposableListener } from '../../base/dom.js';
 import { type Disposable, DisposableStore } from '../../base/lifecycle.js';
+import { openConfirmDialog } from '../../components/dialog/index.js';
 import { t as tr } from '../../i18n/index.js';
 import { post, text } from '../../services/api.js';
 import type { CacheCopy, CacheMessage, CacheMeta, CacheVersion } from '../../services/cache.js';
@@ -247,7 +248,7 @@ class TopicsFeatureImpl implements TopicsFeature {
   private readonly win: Window;
   private readonly storage: Pick<Storage, 'getItem' | 'setItem'> | null;
   private readonly postFn: (path: string, body: unknown, tries?: number, limit?: number) => Promise<Response>;
-  private readonly confirmFn: (message: string) => boolean;
+  private readonly confirmFn?: (message: string) => boolean;
   private readonly alertFn: (message: string) => void;
   private readonly nowFn: () => number;
   private readonly listeners = new DisposableStore();
@@ -264,7 +265,7 @@ class TopicsFeatureImpl implements TopicsFeature {
     this.win = deps.win ?? window;
     this.storage = deps.storage !== undefined ? deps.storage : getDefaultStorage();
     this.postFn = deps.postFn ?? post;
-    this.confirmFn = deps.confirmFn ?? ((msg: string) => this.win.confirm(msg));
+    this.confirmFn = deps.confirmFn;
     this.alertFn = deps.alertFn ?? ((msg: string) => this.win.alert(msg));
     this.nowFn = deps.now ?? (() => Date.now());
     this.folded = loadFolded(this.storage);
@@ -667,14 +668,20 @@ class TopicsFeatureImpl implements TopicsFeature {
   deleteTopic(delId: string): void {
     const target = this.topicById(delId);
     const title = target && target.title ? target.title : tr('common.untitled');
-    if (
-      !this.confirmFn(
-        tr(target && target.starred ? 'topic.confirmDeleteStarred' : 'topic.confirmDelete', { title }),
-      )
-    ) {
-      return;
-    }
-    void this.postFn('api/topics/delete', { topic: delId }, 1)
+    const msg = tr(target && target.starred ? 'topic.confirmDeleteStarred' : 'topic.confirmDelete', { title });
+    const confirmed = this.confirmFn
+      ? Promise.resolve(this.confirmFn(msg))
+      : openConfirmDialog({
+          title: tr(target && target.starred ? 'topics.confirmDeleteStarredTitle' : 'topics.confirmDeleteTitle', { title }),
+          body: tr('topics.confirmDeleteBody'),
+          confirmLabel: tr('common.delete'),
+          cancelLabel: tr('common.cancel'),
+          danger: true,
+          doc: this.doc,
+        });
+    void confirmed.then((ok) => {
+      if (!ok) return;
+      return this.postFn('api/topics/delete', { topic: delId }, 1)
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
         if (!d) return;
@@ -688,6 +695,7 @@ class TopicsFeatureImpl implements TopicsFeature {
         }
         this.deps.forgetTopic(delId);
       });
+    });
   }
 
   starTopic(id: string): void {
@@ -770,8 +778,19 @@ class TopicsFeatureImpl implements TopicsFeature {
           scope,
         })
       : tr('topic.confirmClearAll', { total: topics.length, scope });
-    if (!this.confirmFn(msg)) return;
-    void this.postFn('api/topics/clear', {}, 1)
+    const confirmed = this.confirmFn
+      ? Promise.resolve(this.confirmFn(msg))
+      : openConfirmDialog({
+          title: tr('topics.confirmClearTitle'),
+          body: msg,
+          confirmLabel: tr('common.delete'),
+          cancelLabel: tr('common.cancel'),
+          danger: true,
+          doc: this.doc,
+        });
+    void confirmed.then((ok) => {
+      if (!ok) return;
+      return this.postFn('api/topics/clear', {}, 1)
       .then((r) => (r.ok ? (r.json() as Promise<ClearTopicsResponse>) : null))
       .then((d) => {
         if (!d || !d.topic) return;
@@ -785,6 +804,7 @@ class TopicsFeatureImpl implements TopicsFeature {
         this.switchTopic(d.topic.id);
         if (this.deps.narrow()) this.deps.setSidebar(false);
       });
+    });
   }
 
   foldClick(e: Event): boolean {

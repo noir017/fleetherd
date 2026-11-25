@@ -21,6 +21,10 @@ const EN_DICT: Record<string, string> = {
   'files.keepLocalOverwrite': 'Keep local & overwrite',
   'files.conflictTitle': 'File write conflict',
   'files.unsavedDotAria': 'Unsaved changes',
+  'files.sourceMode': 'Source',
+  'files.previewMode': 'Preview',
+  'files.revert': 'Revert',
+  'files.versionCheckHint': 'UTF-8 · {eol} · version checked on save',
 };
 
 const ZH_DICT: Record<string, string> = {
@@ -33,6 +37,10 @@ const ZH_DICT: Record<string, string> = {
   'files.keepLocalOverwrite': '保留本地修改并覆盖',
   'files.conflictTitle': '文件写入冲突',
   'files.unsavedDotAria': '有未保存的更改',
+  'files.sourceMode': '源码',
+  'files.previewMode': '预览',
+  'files.revert': '撤销',
+  'files.versionCheckHint': 'UTF-8 · {eol} · 保存前核对版本',
 };
 
 export function isFilesAvailable(topic: TopicInfo, deps: FilesPluginDeps): boolean {

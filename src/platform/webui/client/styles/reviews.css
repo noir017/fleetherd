@@ -45,3 +45,68 @@
 .rev-dismiss{flex:none;background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--dim);font:inherit;font-size:11.5px;padding:3px 8px;cursor:pointer}
 .rev-dismiss:hover:not(:disabled){color:var(--fg);border-color:var(--line-3)}
 .rev-dismiss:disabled{opacity:.5;cursor:default}
+
+/* ── Workbench reviews view & editors (mockup #reviews, #prefs) ──────────── */
+.fh-reviews-view{display:flex;flex-direction:column;height:100%;min-height:0;background:var(--fh-bg-side)}
+.fh-reviews-header{display:flex;align-items:center;gap:6px;padding:6px 8px 6px 14px;border-bottom:1px solid var(--fh-line);flex:none}
+.wb-sidebar-body .fh-reviews-header .panel-title{display:none}
+.fh-reviews-actions{display:flex;align-items:center;gap:2px;flex:none;margin-left:auto}
+.fh-reviews-notice{padding:6px 10px 0;flex:none}
+.fh-reviews-batch{padding:4px 10px;border-bottom:1px solid var(--fh-line);flex:none}
+.fh-reviews-list{flex:1;min-height:0;overflow-y:auto;padding:2px 0 10px;display:flex;flex-direction:column}
+
+.fh-rev-nav{padding:6px 0;flex:none;border-bottom:1px solid var(--fh-line)}
+.fh-rev-nv{display:flex;align-items:center;gap:8px;padding:6px 14px;color:var(--fh-fg);border:1px solid transparent;cursor:pointer;font-size:13px}
+.fh-rev-nv:hover{background:var(--fh-hover)}
+.fh-rev-nv.on{background:var(--fh-sel);border-color:var(--fh-accent);color:var(--fh-fg-hi)}
+.fh-rev-nv svg.ic{width:15px;height:15px;color:var(--fh-warn);flex:none}
+.fh-rev-nv-label{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fh-rev-nv-c{margin-left:auto;font-size:10.5px;min-width:16px;padding:0 5px;border-radius:8px;background:var(--fh-btn2-hover);color:var(--fh-fg);text-align:center;line-height:16px}
+.fh-rev-nv-cv{display:none;color:var(--fh-fg-inactive)}
+.fh-rev-nv-cv svg.ic{width:16px;height:16px;color:inherit}
+
+.fh-rev-grp{font-size:11px;font-weight:600;color:var(--fh-fg-dim);padding:10px 14px 4px;text-transform:uppercase;letter-spacing:.05em}
+.fh-reviews-view .rev-item{border:1px solid transparent;border-radius:0;padding:7px 14px;background:transparent;gap:2px}
+.fh-reviews-view .rev-item:hover{background:var(--fh-hover)}
+.fh-reviews-view .rev-item.on{background:var(--fh-sel);border-color:var(--fh-accent);color:var(--fh-fg-hi)}
+.fh-reviews-view .rev-topic{font-size:13px;font-weight:500;color:var(--fh-fg-hi)}
+.fh-reviews-view .rev-when{font-size:11px;color:var(--fh-fg-dim)}
+.fh-reviews-view .rev-result{font-size:11.5px;color:var(--fh-fg-dim)}
+.fh-reviews-view .rev-item.failed .rev-result{color:var(--fh-err)}
+.fh-reviews-view .rev-pending{margin:8px 10px;border-radius:var(--fh-radius-card)}
+
+/* Review detail & prefs editors (#reviews, #prefs) */
+.fh-review-editor{display:flex;flex-direction:column;height:100%;min-height:0;background:var(--fh-bg)}
+.fh-review-editor-head{flex:none;display:flex;align-items:center;gap:10px;height:48px;padding:0 12px 0 18px;border-bottom:1px solid var(--fh-line);background:var(--fh-bg)}
+.fh-review-editor-title{font-weight:600;font-size:14px;color:var(--fh-fg-hi);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.fh-review-editor-from{color:var(--fh-fg-dim);font-size:12px;white-space:nowrap}
+.fh-review-editor-body{flex:1;min-height:0;overflow-y:auto}
+.fh-review-editor .fh-sh{font-size:11px;font-weight:600;color:var(--fh-fg-dim);text-transform:uppercase;letter-spacing:.05em;margin:20px 2px 8px}
+.fh-review-editor .fh-ci--static{cursor:default}
+.fh-review-editor .fh-acts{display:flex;gap:6px;grid-row:span 2;flex:none}
+.fh-review-editor .fh-ci-code{grid-column:1;margin-top:4px;font-family:var(--fh-font-mono);font-size:11.5px;color:var(--fh-fg-dim);background:var(--fh-bg-code);padding:2px 6px;border-radius:3px;width:fit-content;max-width:100%;overflow-x:auto}
+
+@media(max-width:639px){
+  .fh-reviews-view{background:var(--fh-bg)}
+  .fh-reviews-header{flex-direction:column;align-items:stretch;padding:4px 16px 10px;background:var(--fh-bg-side);border-bottom:0}
+  .fh-reviews-header .sched-heading{order:2}
+  .fh-reviews-header .panel-title{display:block;font-size:30px;font-weight:700;line-height:1.15;color:var(--fh-fg-hi);text-transform:none;letter-spacing:0}
+  .fh-reviews-header .sched-summary{display:none}
+  .fh-reviews-actions{order:1;justify-content:flex-end;margin-left:0;margin-right:-8px}
+  .fh-reviews-actions .fh-btn--icon{min-width:44px;height:44px;color:var(--fh-link)}
+  .fh-rev-nav{padding:0 16px 12px;background:var(--fh-bg-side);border-bottom:1px solid var(--fh-line)}
+  .fh-rev-nv{min-height:50px;padding:0 10px 0 14px;gap:10px;border:1px solid var(--fh-line);border-radius:12px;background:var(--fh-card);font-size:15.5px;color:var(--fh-fg-hi)}
+  .fh-rev-nv svg.ic{width:20px;height:20px}
+  .fh-rev-nv-c{font-size:12px;min-width:22px;line-height:20px;border-radius:10px;background:var(--fh-accent);color:var(--fh-on-accent)}
+  .fh-rev-nv-cv{display:inline-flex;align-items:center}
+  .fh-rev-grp{position:sticky;top:0;z-index:1;background:var(--fh-bg);padding:14px 16px 6px;font-size:12px}
+  .fh-reviews-view .rev-item{min-height:66px;padding:10px 16px;gap:4px;border:0;border-bottom:1px solid var(--fh-line)}
+  .fh-reviews-view .rev-item.on{background:var(--fh-bg);border-color:var(--fh-line)}
+  .fh-reviews-view .rev-topic{font-size:16px}
+  .fh-reviews-view .rev-result{font-size:13.5px}
+  .fh-reviews-view .rev-when{font-size:12.5px}
+
+  .fh-review-editor-head{padding:0 12px 0 16px;min-height:48px}
+  .fh-review-editor .fh-acts{order:3;margin-top:10px}
+  .fh-review-editor .fh-acts .fh-btn{flex:1;height:38px;border-radius:8px;font-size:14.5px}
+}

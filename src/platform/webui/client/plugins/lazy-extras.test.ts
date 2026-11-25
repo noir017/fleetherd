@@ -81,6 +81,7 @@ function dummyExtras(overrides: Partial<WorkbenchExtrasModule> = {}): WorkbenchE
     createFilesPlugin: () => noop('files'),
     createHistoryPlugin: () => noop('history'),
     createPalettePlugin: () => noop('palette'),
+    createReaderPlugin: () => noop('reader'),
     createReviewsPlugin: () => noop('reviews'),
     createSchedulesPlugin: () => noop('schedules'),
     createSettingsPlugin: () => noop('settings'),

@@ -25,12 +25,79 @@ function formatWhen(at: number): string {
   }
 }
 
-function formatAgo(at: number, nowMs: number): string {
-  const diff = Math.max(0, nowMs - at);
-  if (diff < 60000) return tr('age.secAgo', { n: Math.max(1, Math.floor(diff / 1000)) });
-  if (diff < 3600000) return tr('age.minAgo', { n: Math.floor(diff / 60000) });
-  if (diff < 86400000) return tr('age.hourAgo', { n: Math.floor(diff / 3600000) });
-  return tr('age.dayAgo', { n: Math.floor(diff / 86400000) });
+const BULB_SVG =
+  '<svg class="ic ic-bulb" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<path d="M9 17.5h6M10 21h4M12 3a6 6 0 0 0-3.6 10.8c.7.6 1.1 1.4 1.1 2.2v1.5h5V16c0-.8.4-1.6 1.1-2.2A6 6 0 0 0 12 3z"/></svg>';
+
+function formatShortReviewTime(at: number, nowMs: number): string {
+  try {
+    const d = new Date(at);
+    const now = new Date(nowMs);
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mm = String(d.getMinutes()).padStart(2, '0');
+    const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+    const sameDay =
+      d.getFullYear() === now.getFullYear() &&
+      d.getMonth() === now.getMonth() &&
+      d.getDate() === now.getDate();
+    const isYesterday =
+      d.getFullYear() === yesterday.getFullYear() &&
+      d.getMonth() === yesterday.getMonth() &&
+      d.getDate() === yesterday.getDate();
+    if (sameDay || isYesterday) return `${hh}:${mm}`;
+    const mo = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    if (d.getFullYear() === now.getFullYear()) return `${mo}-${day}`;
+    return `${d.getFullYear()}-${mo}-${day}`;
+  } catch {
+    return '';
+  }
+}
+
+interface ReviewDateGroup {
+  readonly key: string;
+  readonly label: string;
+  readonly items: ReviewPanelEntry[];
+}
+
+function groupReviewsByDate(items: readonly ReviewPanelEntry[], nowMs: number): ReviewDateGroup[] {
+  const now = new Date(nowMs);
+  const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+  const groups: ReviewDateGroup[] = [];
+  const byKey = new Map<string, ReviewDateGroup>();
+  for (const item of items) {
+    const d = new Date(item.at);
+    let key: string;
+    let label: string;
+    if (
+      d.getFullYear() === now.getFullYear() &&
+      d.getMonth() === now.getMonth() &&
+      d.getDate() === now.getDate()
+    ) {
+      key = 'today';
+      label = tr('sched.today');
+    } else if (
+      d.getFullYear() === yesterday.getFullYear() &&
+      d.getMonth() === yesterday.getMonth() &&
+      d.getDate() === yesterday.getDate()
+    ) {
+      key = 'yesterday';
+      label = tr('sched.yesterday');
+    } else {
+      const monthIdx = d.getMonth();
+      const monthKey = `age.month${monthIdx}` as Parameters<typeof tr>[0];
+      key = `m:${d.getFullYear()}-${String(monthIdx + 1).padStart(2, '0')}`;
+      label = d.getFullYear() === now.getFullYear() ? tr(monthKey) : `${d.getFullYear()} ${tr(monthKey)}`;
+    }
+    let grp = byKey.get(key);
+    if (!grp) {
+      grp = { key, label, items: [] };
+      byKey.set(key, grp);
+      groups.push(grp);
+    }
+    grp.items.push(item);
+  }
+  return groups;
 }
 
 function renderPendingSection(
@@ -171,13 +238,14 @@ function renderEntryDetail(
 function renderReviewRow(
   r: ReviewPanelEntry,
   open: boolean,
+  selected: boolean,
   isRead: boolean,
   nowMs: number,
   topicExists: (id: string) => boolean,
   onOpenTopic: (id: string) => void,
 ): TemplateResult {
   return html`<div
-    class=${`rev-item ${r.outcome}${open ? ' open' : ''}${isRead ? ' is-read' : ''}`}
+    class=${`rev-item ${r.outcome}${selected ? ' on' : ''}${open ? ' open' : ''}${isRead ? ' is-read' : ''}`}
     data-rev=${r.id}
     data-rev-read=${isRead ? 'true' : 'false'}
     role="button"
@@ -185,10 +253,9 @@ function renderReviewRow(
     aria-expanded=${open ? 'true' : 'false'}
   >
     <div class="rev-row">
-      <span class="rev-dot"></span>
       <span class="rev-topic">${r.title}</span>
       ${r.inferred ? html`<span class="rev-badge">${tr('reviews.inferredBadge')}</span>` : nothing}
-      <span class="rev-when" title=${formatWhen(r.at)}>${formatAgo(r.at, nowMs)}</span>
+      <span class="rev-when" title=${formatWhen(r.at)}>${formatShortReviewTime(r.at, nowMs)}</span>
     </div>
     <div class="rev-result">${r.summary}</div>
     ${open ? renderEntryDetail(r, topicExists, onOpenTopic) : nothing}
@@ -277,9 +344,66 @@ function renderReviewsEmpty(listHost: HTMLElement, data: ReturnType<ReviewsStore
   return false;
 }
 
+function renderPendingNav(
+  ctx: PluginContext,
+  pendingCount: number,
+  active: boolean,
+  onOpen: () => void,
+): TemplateResult {
+  return html`<div class="fh-rev-nav">
+    <div
+      class=${`fh-rev-nv${active ? ' on' : ''}`}
+      data-rev-prefs-nav="1"
+      role="button"
+      tabindex="0"
+      @click=${onOpen}
+      @keydown=${(ev: KeyboardEvent) => {
+        if (ev.key === 'Enter' || ev.key === ' ') {
+          ev.preventDefault();
+          onOpen();
+        }
+      }}
+    >
+      ${unsafeHTML(BULB_SVG)}
+      <span class="fh-rev-nv-label">${ctx.i18n.t('wb.reviews.pendingTitle')}</span>
+      ${pendingCount > 0 ? html`<span class="fh-rev-nv-c">${pendingCount}</span>` : nothing}
+      <span class="fh-rev-nv-cv">${unsafeHTML(icon('chevronRight'))}</span>
+    </div>
+  </div>`;
+}
+
 export interface ReviewsViewController extends ReviewPanelComponent {
   refreshLocale(): void;
   refreshTopics(): void;
+}
+
+function createReviewsDom(doc: Document) {
+  const root = doc.createElement('div');
+  root.className = 'fh-reviews-view';
+  const headerHost = doc.createElement('div');
+  headerHost.className = 'fh-reviews-header';
+  const noticeHost = doc.createElement('div');
+  noticeHost.className = 'fh-reviews-notice';
+  const batchBarHost = doc.createElement('div');
+  batchBarHost.className = 'fh-reviews-batch';
+  batchBarHost.hidden = true;
+  const listHost = doc.createElement('div');
+  listHost.className = 'fh-reviews-list';
+  listHost.setAttribute('aria-multiselectable', 'true');
+  root.append(headerHost, noticeHost, batchBarHost, listHost);
+  return { root, headerHost, noticeHost, batchBarHost, listHost };
+}
+
+function buildReviewBatchActions(
+  ids: ReadonlySet<string>,
+  onMarkRead: (ids: ReadonlySet<string>) => void,
+  onArchive: (ids: ReadonlySet<string>) => void,
+): DomListBatchAction[] {
+  const zh = getLocale() === 'zh-CN';
+  return [
+    { id: 'mark-read', label: zh ? '标记已读' : 'Mark read', variant: 'secondary', onAction: () => onMarkRead(ids) },
+    { id: 'archive', label: zh ? '归档' : 'Archive', variant: 'secondary', onAction: () => onArchive(ids) },
+  ];
 }
 
 export function createReviewsViewComponent(
@@ -293,63 +417,32 @@ export function createReviewsViewComponent(
   const expanded = new Set<string>();
   const readIds = readStoredIds(ctx, 'readIds');
   const archivedIds = readStoredIds(ctx, 'archivedIds');
-
-  const root = doc.createElement('div');
-  root.className = 'fh-reviews-view';
-
-  const headerHost = doc.createElement('div');
-  headerHost.className = 'fh-reviews-header';
-
-  const noticeHost = doc.createElement('div');
-  noticeHost.className = 'fh-reviews-notice';
-
-  const batchBarHost = doc.createElement('div');
-  batchBarHost.className = 'fh-reviews-batch';
-  batchBarHost.hidden = true;
-
-  const listHost = doc.createElement('div');
-  listHost.className = 'fh-reviews-list';
-  listHost.setAttribute('aria-multiselectable', 'true');
-
-  root.append(headerHost, noticeHost, batchBarHost, listHost);
+  let activeSelection: string | null = null;
+  let inlinePendingOpen = false;
+  const { root, headerHost, noticeHost, batchBarHost, listHost } = createReviewsDom(doc);
 
   const topicExists = (id: string): boolean => ctx.topics.list().some((t) => t.id === id);
 
-  const toggleRow = (id: string): void => {
-    if (expanded.has(id)) expanded.delete(id);
-    else expanded.add(id);
+  const openReviewOrToggle = (id: string): void => {
+    activeSelection = `rev:${id}`;
+    const entry = store.snapshot().data?.reviews.find((r) => r.id === id);
+    try {
+      ctx.editors.open('review', { id, title: entry?.title });
+    } catch {
+      if (expanded.has(id)) expanded.delete(id);
+      else expanded.add(id);
+    }
     paintList();
   };
 
-  const buildBatchActions = (ids: ReadonlySet<string>): DomListBatchAction[] => {
-    const zh = getLocale() === 'zh-CN';
-    return [
-      {
-        id: 'mark-read',
-        label: zh ? '标记已读' : 'Mark read',
-        variant: 'secondary',
-        onAction: () => {
-          for (const id of ids) readIds.add(id);
-          writeStoredIds(ctx, 'readIds', readIds);
-          listNav.clearSelection();
-          paintList();
-        },
-      },
-      {
-        id: 'archive',
-        label: zh ? '归档' : 'Archive',
-        variant: 'secondary',
-        onAction: () => {
-          for (const id of ids) {
-            archivedIds.add(id);
-            expanded.delete(id);
-          }
-          writeStoredIds(ctx, 'archivedIds', archivedIds);
-          listNav.clearSelection();
-          paintList();
-        },
-      },
-    ];
+  const openPrefsOrToggle = (): void => {
+    activeSelection = 'prefs';
+    try {
+      ctx.editors.open('review-prefs', {});
+    } catch {
+      inlinePendingOpen = !inlinePendingOpen;
+    }
+    paintList();
   };
 
   const listNav = attachListNavigation({
@@ -358,8 +451,26 @@ export function createReviewsViewComponent(
     rowSelector: '[data-rev]',
     getRowId: (row) => row.getAttribute('data-rev'),
     ignoreSelector: '[data-rev-topic],[data-rev-adopt],[data-rev-archive],[data-rev-dismiss]',
-    getBatchActions: buildBatchActions,
-    onActivate: (id) => toggleRow(id),
+    getBatchActions: (ids) =>
+      buildReviewBatchActions(
+        ids,
+        (sel) => {
+          for (const id of sel) readIds.add(id);
+          writeStoredIds(ctx, 'readIds', readIds);
+          listNav.clearSelection();
+          paintList();
+        },
+        (sel) => {
+          for (const id of sel) {
+            archivedIds.add(id);
+            expanded.delete(id);
+          }
+          writeStoredIds(ctx, 'archivedIds', archivedIds);
+          listNav.clearSelection();
+          paintList();
+        },
+      ),
+    onActivate: (id) => openReviewOrToggle(id),
   });
   disposables.add(listNav);
 
@@ -373,17 +484,33 @@ export function createReviewsViewComponent(
     const { data, busyKeys } = store.snapshot();
     if (renderReviewsEmpty(listHost, data) || !data) return;
     const nowMs = now();
+    const pending = data.pending ?? [];
     const visibleReviews = data.reviews.filter((r) => !archivedIds.has(r.id));
+    const dateGroups = groupReviewsByDate(visibleReviews, nowMs);
     render(
-      html`${renderPendingSection(
-          data.pending ?? [],
-          busyKeys,
-          (pref) => void store.adoptSuggestion(pref),
-          (pref) => void store.archiveSuggestion(pref),
-          (pref) => void store.dismissSuggestion(pref.text),
-        )}
-        ${visibleReviews.map((r) =>
-          renderReviewRow(r, expanded.has(r.id), readIds.has(r.id), nowMs, topicExists, (tid) => ctx.topics.open(tid)),
+      html`${renderPendingNav(ctx, pending.length, activeSelection === 'prefs', () => openPrefsOrToggle())}
+        ${inlinePendingOpen
+          ? renderPendingSection(
+              pending,
+              busyKeys,
+              (pref) => void store.adoptSuggestion(pref),
+              (pref) => void store.archiveSuggestion(pref),
+              (pref) => void store.dismissSuggestion(pref.text),
+            )
+          : nothing}
+        ${dateGroups.map(
+          (g) => html`<div class="fh-rev-grp">${g.label}</div>
+            ${g.items.map((r) =>
+              renderReviewRow(
+                r,
+                expanded.has(r.id),
+                activeSelection === `rev:${r.id}`,
+                readIds.has(r.id),
+                nowMs,
+                topicExists,
+                (tid) => ctx.topics.open(tid),
+              ),
+            )}`,
         )}`,
       listHost,
     );

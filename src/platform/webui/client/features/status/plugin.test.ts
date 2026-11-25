@@ -190,7 +190,7 @@ describe('features/status plugin', () => {
     const leftIds = h.registry.listStatusBar('left').map((item) => item.id);
     const rightIds = h.registry.listStatusBar('right').map((item) => item.id);
 
-    expect(leftIds).toEqual(['status.connection', 'status.running', 'status.idle']);
+    expect(leftIds).toEqual(['status.brand', 'status.connection', 'status.running', 'status.idle']);
     expect(rightIds).toEqual([
       'status.pluginErrors',
       'status.notify',

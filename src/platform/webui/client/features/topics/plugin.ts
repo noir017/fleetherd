@@ -5,6 +5,7 @@ import {
   createFilterBar,
   createMenu,
   createSegmented,
+  openConfirmDialog,
   type ActionBarController,
   type ActionItem,
   type FilterBarController,
@@ -19,7 +20,7 @@ import {
   type DomListBatchAction,
   type DomListNavigationController,
 } from '../../components/list/index.js';
-import { getLocale, t as tr } from '../../i18n/index.js';
+import { t as tr, type MessageKey } from '../../i18n/index.js';
 import {
   definePlugin,
   type MenuItem,
@@ -33,18 +34,22 @@ import type { ContributionRegistry, ResolvedMenuItem } from '../../plugins/regis
 import { text } from '../../services/api.js';
 import type { OverlayManager } from '../../services/overlays.js';
 import { createAgeTicker } from './age.js';
+import { createTopicGestures, type TopicGesturesController } from './gestures.js';
 import { createTopicPrefetcher, type TopicPrefetchDeps, type TopicPrefetcher } from './prefetch.js';
-import { treeRowHtml } from './row-render.js';
+import { wbTopicRowHtml } from './row-render.js';
+import { createTopicRowSheet, type TopicRowSheetController } from './row-sheet.js';
 import {
+  agentOf,
   buildTabForest,
   buildTopicFilterGroups,
   buildTopicForest,
   buildTopicRows,
   NEEDS_WHAT,
   needsYou,
+  rowRunning,
   subtreeOf,
 } from './tree.js';
-import type { FilterBarGroup, Topic, TopicForest, TopicIcons } from './types.js';
+import type { FilterBarGroup, Topic, TopicForest, TopicIcons, TreeRow } from './types.js';
 
 export type TopicsPluginTab = 'topics' | 'starred';
 
@@ -106,6 +111,7 @@ const DEFAULT_ICONS: TopicIcons = {
   bell: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 9a6 6 0 0 1 12 0c0 3.6 1.2 5.2 2.2 6.3H3.8C4.8 14.2 6 12.6 6 9z"/><path d="M10 19a2 2 0 0 0 4 0"/></svg>',
   dot: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="4.5" fill="currentColor" stroke="none"/></svg>',
   globe: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/></svg>',
+  expand: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7"/></svg>',
 };
 
 function asElement(target: EventTarget | null): Element | null {
@@ -152,20 +158,32 @@ function toMenuEntries(
   groups: readonly (readonly ResolvedMenuItem[])[],
   target: Topic,
   icons: TopicIcons,
+  topics: readonly Topic[],
 ): MenuEntry[] {
   const entries: MenuEntry[] = [];
+  let aliveSub = 0;
+  for (const child of subtreeOf(target.id, topics).slice(1)) {
+    if (child.live) aliveSub++;
+  }
   for (let i = 0; i < groups.length; i++) {
     const group = groups[i];
     if (!group || group.length === 0) continue;
     if (entries.length > 0) entries.push({ kind: 'separator' });
     for (const resolved of group) {
       const item = resolved.item;
+      let label = item.label;
+      let title = resolved.disabledReason ?? item.title;
+      if (item.id === 'topics.endAgent' && aliveSub > 0 && !resolved.disabled) {
+        label = tr(aliveSub === 1 ? 'topic.endAgentSub' : 'topic.endAgentSubs', { count: aliveSub });
+        title = tr(aliveSub === 1 ? 'topic.endAgentSubTitle' : 'topic.endAgentSubsTitle', { count: aliveSub });
+      }
       entries.push({
         kind: 'item',
         id: item.id,
-        label: item.label,
+        label,
         icon: resolveIconSvg(icons, item.icon),
-        title: resolved.disabledReason ?? item.title,
+        shortcut: item.id === 'topics.openInNewTab' ? 'Ctrl' : undefined,
+        title,
         disabled: resolved.disabled,
         danger: item.danger,
         onSelect: () => {
@@ -183,7 +201,7 @@ interface TopicsRuntime {
   readonly doc: Document;
   readonly win: Window;
   readonly nowFn: () => number;
-  readonly confirmFn: (message: string) => boolean;
+  readonly confirmFn?: (message: string) => boolean;
   readonly alertFn: (message: string) => void;
   topics: Topic[];
   activeTopicId: string;
@@ -293,6 +311,61 @@ function renderEmptyTopicsHtml(filtering: boolean, tab: TopicsPluginTab): string
   return '';
 }
 
+async function confirmAction(
+  rt: TopicsRuntime,
+  opts: {
+    readonly title: string;
+    readonly body: string;
+    readonly confirmLabel: string;
+    readonly danger?: boolean;
+    readonly fallbackMessage?: string;
+  },
+): Promise<boolean> {
+  if (rt.confirmFn) {
+    return rt.confirmFn(opts.fallbackMessage ?? opts.title);
+  }
+  return openConfirmDialog({
+    title: opts.title,
+    body: opts.body,
+    confirmLabel: opts.confirmLabel,
+    cancelLabel: tr('common.cancel'),
+    danger: opts.danger,
+    overlays: rt.deps.overlays,
+    doc: rt.doc,
+  });
+}
+
+function topicSheetSubtitle(t: Topic, topics: readonly Topic[]): string {
+  const parts: string[] = [];
+  const agent = agentOf(t);
+  if (agent) parts.push(agent.label);
+  if (t.dir) parts.push(t.dir.host ? `${t.dir.host} · ${t.dir.name}` : t.dir.name);
+  const running = rowRunning(t, topics);
+  const state = t.asking
+    ? tr('topic.awaitingYou')
+    : running
+      ? tr('topic.running')
+      : t.stage === 'failed'
+        ? tr('topic.failed')
+        : tr('topics.statusIdle');
+  parts.push(state);
+  return parts.join(' · ');
+}
+
+function groupKeyForRow(
+  row: TreeRow,
+  topics: readonly Topic[],
+  activeId: string,
+  tab: TopicsPluginTab,
+): MessageKey {
+  const t = row.t;
+  if (needsYou(t, activeId)) return 'topics.groupNeeds';
+  if (!t.title) return 'topics.groupNew';
+  if (rowRunning(t, topics)) return 'topics.groupRunning';
+  if (tab === 'starred' || t.starred) return 'topics.groupStarred';
+  return 'topics.groupIdle';
+}
+
 function renderTopicRowsHtml(
   rt: TopicsRuntime,
   tabForest: TopicForest,
@@ -318,14 +391,22 @@ function renderTopicRowsHtml(
     now: rt.nowFn(),
   };
   let h = '';
+  let currentGroup: MessageKey | null = null;
   for (let i = 0; i < painted.rows.length; i++) {
     const row = painted.rows[i];
     if (!row) continue;
     const t = row.t;
+    if (row.depth === 0) {
+      const nextGroup = groupKeyForRow(row, topics, activeId, rt.tab);
+      if (nextGroup !== currentGroup) {
+        currentGroup = nextGroup;
+        h += `<div class="wb-topics-grp" role="presentation">${text(tr(nextGroup))}</div>`;
+      }
+    }
     const needs = needsYou(t, activeId);
     const whatKey = t.stage ? NEEDS_WHAT[t.stage] : undefined;
     const attrs = needs && whatKey ? ` title="${text(`${tr(whatKey)}${t.line ? `: ${t.line}` : ''}`)}"` : '';
-    h += treeRowHtml(
+    h += wbTopicRowHtml(
       row,
       {
         attr: 'data-topic',
@@ -427,16 +508,18 @@ function buildTopicsBatchActions(
     icon: icons.trash,
     variant: 'danger',
     onAction: async () => {
+      const confirmed = await confirmAction(rt, {
+        title: tr('topics.confirmBatchDeleteTitle', { count: selected.length }),
+        body: tr('topics.confirmDeleteBody'),
+        confirmLabel: tr('common.delete'),
+        danger: true,
+      });
+      if (!confirmed) return;
       if (rt.deps.onDeleteTopic) {
         for (const t of selected) await rt.deps.onDeleteTopic(t.id);
         clearSelection();
         return;
       }
-      const zh = getLocale() === 'zh-CN';
-      const msg = zh
-        ? `确定删除已选的 ${selected.length} 个话题？`
-        : `Delete ${selected.length} selected topics?`;
-      if (!rt.confirmFn(msg)) return;
       for (const t of selected) {
         await rt.ctx.api.post('/api/topics/delete', { topic: t.id });
       }
@@ -448,6 +531,7 @@ function buildTopicsBatchActions(
 
 class TopicsViewPanel implements TopicsViewInstance {
   readonly element: HTMLElement;
+  private readonly mobileTitleEl: HTMLElement;
   private readonly batchBarHost: HTMLElement;
   private readonly listEl: HTMLElement;
   private readonly listeners = new DisposableStore();
@@ -456,6 +540,8 @@ class TopicsViewPanel implements TopicsViewInstance {
   private readonly actionBar: ActionBarController;
   private readonly filterBar: FilterBarController;
   private readonly menu: MenuController;
+  private readonly rowSheet: TopicRowSheetController;
+  private readonly gestures: TopicGesturesController;
   private readonly listNav: DomListNavigationController;
   private menuKey: string | null = null;
   private disposed = false;
@@ -467,6 +553,9 @@ class TopicsViewPanel implements TopicsViewInstance {
 
     const headerEl = doc.createElement('div');
     headerEl.className = 'wb-topics-head';
+    this.mobileTitleEl = doc.createElement('div');
+    this.mobileTitleEl.className = 'wb-topics-mobile-title';
+    this.mobileTitleEl.textContent = tr('sidebar.topics');
     const segWrap = doc.createElement('div');
     segWrap.className = 'wb-topics-seg';
     const filterHost = doc.createElement('div');
@@ -482,6 +571,7 @@ class TopicsViewPanel implements TopicsViewInstance {
     this.listEl.setAttribute('aria-multiselectable', 'true');
 
     this.element.appendChild(headerEl);
+    this.element.appendChild(this.mobileTitleEl);
     this.element.appendChild(segWrap);
     this.element.appendChild(filterHost);
     this.element.appendChild(this.batchBarHost);
@@ -495,7 +585,7 @@ class TopicsViewPanel implements TopicsViewInstance {
         value: rt.tab,
         ariaLabel: tr('sidebar.tabsAria'),
         options: [
-          { value: 'topics', label: tr('sidebar.topics'), title: tr('sidebar.topicsTitle') },
+          { value: 'topics', label: tr('topics.tabAll'), title: tr('sidebar.topicsTitle') },
           { value: 'starred', label: tr('sidebar.starred'), title: tr('sidebar.starredTitle') },
         ],
         onChange: (value) => rt.setTab(value === 'starred' ? 'starred' : 'topics'),
@@ -537,16 +627,39 @@ class TopicsViewPanel implements TopicsViewInstance {
       align: 'end',
       className: 'wb-topic-row-menu',
     });
+    this.rowSheet = createTopicRowSheet({
+      doc,
+      overlays: rt.deps.overlays,
+    });
+    this.gestures = createTopicGestures({
+      container: this.listEl,
+      doc,
+      win,
+      isMobile: () => this.isMobileMode(),
+      onLongPress: (topicId) => this.openRowSheet(topicId),
+    });
     this.listNav = attachListNavigation({
       container: this.listEl,
       batchBarHost: this.batchBarHost,
       rowSelector: '[data-topic]',
       getRowId: (row) => row.getAttribute('data-topic'),
-      ignoreSelector: '[data-rm],[data-fold],[data-filter-clear]',
+      ignoreSelector: '[data-rm],[data-fold],[data-filter-clear],[data-swipe-act]',
       getBatchActions: (ids) => buildTopicsBatchActions(this.rt, ids, () => this.listNav.clearSelection()),
-      onActivate: (id) => this.rt.openTopic(id),
+      onActivate: (id) => {
+        if (this.gestures.consumeSuppressedClick()) return;
+        if (this.gestures.getOpenId()) {
+          this.gestures.closeAll();
+          return;
+        }
+        this.rt.openTopic(id);
+      },
     });
     this.bindEvents();
+  }
+
+  private isMobileMode(): boolean {
+    if (this.element.closest('[data-wb-mode="mobile"]')) return true;
+    return this.rt.win.innerWidth > 0 && this.rt.win.innerWidth < 640;
   }
 
   private bindEvents(): void {
@@ -558,6 +671,15 @@ class TopicsViewPanel implements TopicsViewInstance {
   private handleListClick(e: MouseEvent): void {
     const el = asElement(e.target);
     if (!el) return;
+    const swipeBtn = el.closest<HTMLElement>('[data-swipe-act]');
+    if (swipeBtn) {
+      e.stopPropagation();
+      const act = swipeBtn.getAttribute('data-swipe-act');
+      const id = swipeBtn.getAttribute('data-swipe-id');
+      this.gestures.closeAll();
+      if (id && act) this.handleSwipeAction(id, act);
+      return;
+    }
     if (el.closest('[data-filter-clear]')) {
       e.stopPropagation();
       this.filterBar.clear();
@@ -568,7 +690,10 @@ class TopicsViewPanel implements TopicsViewInstance {
       e.stopPropagation();
       const raw = more.getAttribute('data-rm') ?? '';
       const id = raw.startsWith('topic:') ? raw.slice('topic:'.length) : raw;
-      if (id) this.openContextMenu(id, more);
+      if (id) {
+        if (this.isMobileMode()) this.openRowSheet(id);
+        else this.openContextMenu(id, more);
+      }
       return;
     }
     const fold = el.closest('[data-fold]');
@@ -578,12 +703,57 @@ class TopicsViewPanel implements TopicsViewInstance {
       if (foldId) this.rt.toggleFold(foldId);
       return;
     }
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey) {
+      const row = el.closest<HTMLElement>('[data-topic]');
+      const id = row?.getAttribute('data-topic');
+      if (id) {
+        e.stopPropagation();
+        this.rt.ctx.editors.open('topic', { topicId: id }, { preview: false });
+      }
+    }
+  }
+
+  private handleSwipeAction(topicId: string, action: string): void {
+    const topic = this.rt.topicById(topicId);
+    if (!topic) return;
+    if (action === 'star') {
+      void starTopicById(this.rt, topicId, !topic.starred);
+      return;
+    }
+    if (action === 'more') {
+      this.openRowSheet(topicId);
+      return;
+    }
+    if (action === 'delete') {
+      const groups = this.rt.getMenuGroups('topic.row', topic);
+      const delItem = groups.flat().find((r) => r.item.id === 'topics.delete');
+      if (delItem) void delItem.item.run(topic);
+    }
+  }
+
+  private openRowSheet(topicId: string): void {
+    const topic = this.rt.topicById(topicId);
+    if (!topic) return;
+    const entries = toMenuEntries(
+      this.rt.getMenuGroups('topic.row', topic),
+      topic,
+      this.rt.getIcons(),
+      this.rt.getTopics(),
+    );
+    if (entries.length === 0) return;
+    const title = topic.title || tr('topics.newPlaceholderTitle');
+    const subtitle = topicSheetSubtitle(topic, this.rt.getTopics());
+    this.rowSheet.open({ title, subtitle }, entries);
   }
 
   private handleContextMenu(e: MouseEvent): void {
     const id = asElement(e.target)?.closest('[data-topic]')?.getAttribute('data-topic');
     if (!id) return;
     e.preventDefault();
+    if (this.isMobileMode()) {
+      this.openRowSheet(id);
+      return;
+    }
     this.openContextMenu(id, { x: e.clientX, y: e.clientY });
   }
 
@@ -599,7 +769,12 @@ class TopicsViewPanel implements TopicsViewInstance {
       this.menuKey = null;
       return;
     }
-    const entries = toMenuEntries(this.rt.getMenuGroups('topic.row', topic), topic, this.rt.getIcons());
+    const entries = toMenuEntries(
+      this.rt.getMenuGroups('topic.row', topic),
+      topic,
+      this.rt.getIcons(),
+      this.rt.getTopics(),
+    );
     if (entries.length === 0) return;
     this.menuKey = key;
     this.menu.open(anchor, entries);
@@ -628,7 +803,7 @@ class TopicsViewPanel implements TopicsViewInstance {
     this.segmented.update({
       value: this.rt.tab,
       options: [
-        { value: 'topics', label: tr('sidebar.topics'), badge: allCount || null, title: tr('sidebar.topicsTitle') },
+        { value: 'topics', label: tr('topics.tabAll'), badge: allCount || null, title: tr('sidebar.topicsTitle') },
         { value: 'starred', label: tr('sidebar.starred'), badge: starredCount || null, title: tr('sidebar.starredTitle') },
       ],
     });
@@ -658,6 +833,7 @@ class TopicsViewPanel implements TopicsViewInstance {
 
   refreshLocale(): void {
     if (this.disposed) return;
+    this.mobileTitleEl.textContent = tr('sidebar.topics');
     this.filterBar.refreshI18n(tr('sidebar.searchTopics'));
     this.paint();
     this.ageTicker.paintAges();
@@ -668,6 +844,8 @@ class TopicsViewPanel implements TopicsViewInstance {
     this.disposed = true;
     this.rt.views.delete(this);
     this.listNav.dispose();
+    this.gestures.dispose();
+    this.rowSheet.dispose();
     this.menu.dispose();
     this.filterBar.dispose();
     this.actionBar.dispose();
@@ -682,13 +860,7 @@ function createTopicsView(rt: TopicsRuntime): TopicsViewInstance {
   return new TopicsViewPanel(rt);
 }
 
-function registerTopicMenus(rt: TopicsRuntime, bucket: DisposableStore): void {
-  const canEnd = (target: unknown): boolean => {
-    if (!isTopicTarget(target)) return false;
-    const under = subtreeOf(target.id, rt.getTopics());
-    return under.some((t) => Boolean(t.live));
-  };
-
+function createTopicMenuHandlers(rt: TopicsRuntime) {
   const starRun = async (target: unknown, nextStarred: boolean): Promise<void> => {
     if (!isTopicTarget(target)) return;
     if (rt.deps.onStarTopic) {
@@ -740,17 +912,32 @@ function registerTopicMenus(rt: TopicsRuntime, bucket: DisposableStore): void {
 
   const deleteRun = async (target: unknown): Promise<void> => {
     if (!isTopicTarget(target)) return;
+    const title = target.title || tr('common.untitled');
+    const ok = await confirmAction(rt, {
+      title: tr(target.starred ? 'topics.confirmDeleteStarredTitle' : 'topics.confirmDeleteTitle', { title }),
+      body: tr('topics.confirmDeleteBody'),
+      confirmLabel: tr('common.delete'),
+      danger: true,
+      fallbackMessage: tr(target.starred ? 'topic.confirmDeleteStarred' : 'topic.confirmDelete', { title }),
+    });
+    if (!ok) return;
     if (rt.deps.onDeleteTopic) {
       await rt.deps.onDeleteTopic(target.id);
       return;
     }
-    const title = target.title || tr('common.untitled');
-    const ok = rt.confirmFn(
-      tr(target.starred ? 'topic.confirmDeleteStarred' : 'topic.confirmDelete', { title }),
-    );
-    if (!ok) return;
     await rt.ctx.api.post('/api/topics/delete', { topic: target.id });
   };
+
+  return { starRun, copyRefRun, forkRun, endRun, deleteRun };
+}
+
+function registerTopicMenus(rt: TopicsRuntime, bucket: DisposableStore): void {
+  const canEnd = (target: unknown): boolean => {
+    if (!isTopicTarget(target)) return false;
+    const under = subtreeOf(target.id, rt.getTopics());
+    return under.some((t) => Boolean(t.live));
+  };
+  const { starRun, copyRefRun, forkRun, endRun, deleteRun } = createTopicMenuHandlers(rt);
 
   const items: readonly MenuItem[] = [
     {
@@ -796,12 +983,25 @@ function registerTopicMenus(rt: TopicsRuntime, bucket: DisposableStore): void {
       run: forkRun,
     },
     {
+      id: 'topics.openInNewTab',
+      label: tr('topics.openInNewTab'),
+      icon: 'expand',
+      title: tr('topics.openInNewTabTitle'),
+      group: '1_primary',
+      order: 40,
+      when: isTopicTarget,
+      run: (target) => {
+        if (!isTopicTarget(target)) return;
+        rt.ctx.editors.open('topic', { topicId: target.id }, { preview: false });
+      },
+    },
+    {
       id: 'topics.endAgent',
       label: tr('topic.endAgent'),
       icon: 'power',
       title: tr('topic.endAgentTitle'),
-      group: '1_primary',
-      order: 40,
+      group: '2_process',
+      order: 10,
       when: isTopicTarget,
       disabled: (target) => (canEnd(target) ? false : tr('topic.endAgentNoneTitle')),
       run: endRun,
@@ -875,7 +1075,14 @@ function registerTopicCommands(rt: TopicsRuntime): void {
             scope: '',
           })
         : tr('topic.confirmClearAll', { total: topics.length, scope: '' });
-      if (!rt.confirmFn(msg)) return;
+      const ok = await confirmAction(rt, {
+        title: tr('topics.confirmClearTitle'),
+        body: msg,
+        confirmLabel: tr('common.delete'),
+        danger: true,
+        fallbackMessage: msg,
+      });
+      if (!ok) return;
       const res = await rt.ctx.api.post<{ readonly topic?: Topic }>('/api/topics/clear', {});
       if (res?.topic?.id) rt.openTopic(res.topic.id);
     },
@@ -910,7 +1117,7 @@ export function createTopicsPlugin(deps: TopicsPluginDeps = {}): WebuiPlugin {
         doc,
         win,
         nowFn,
-        confirmFn: deps.confirmFn ?? ((msg: string) => win.confirm(msg)),
+        confirmFn: deps.confirmFn,
         alertFn: deps.alertFn ?? ((msg: string) => win.alert(msg)),
         topics: deps.getTopics ? [...deps.getTopics()] : ctx.topics.list().map(toTopic),
         activeTopicId: deps.getActiveTopicId ? deps.getActiveTopicId() : (ctx.topics.active()?.id ?? ''),

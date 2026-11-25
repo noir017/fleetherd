@@ -81,6 +81,8 @@ const FALLBACK_SVG_PATHS: Readonly<Record<string, string>> = {
   book: '<path d="M12 6.5C10 5 7 4.6 3 5v13c4-.4 7 0 9 1.5 2-1.5 5-1.9 9-1.5V5c-4-.4-7 0-9 1.5zM12 6.5v13"/>',
   undo: '<path d="M9 6 4 11l5 5"/><path d="M4 11h10.5a5 5 0 0 1 0 10H11"/>',
   trash: '<path d="M4 6.5h16M9.5 6.5v-2a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v2M6 6.5l.9 12.6a1.5 1.5 0 0 0 1.5 1.4h7.2a1.5 1.5 0 0 0 1.5-1.4L18 6.5M10 10.5v6M14 10.5v6"/>',
+  pin: '<path d="M15 4.5 19.5 9l-3 1.5-3.5 3.5.5 4.5-3-3-5.5 5.5 5.5-5.5-3-3 4.5.5 3.5-3.5z"/>',
+  file: '<path d="M6 3.5h8l4 4v13a1.5 1.5 0 0 1-1.5 1.5h-10A1.5 1.5 0 0 1 5 20.5v-15A1.5 1.5 0 0 1 6.5 3.5z"/><path d="M14 3.5V8h4"/>',
 };
 
 function fallbackSvg(name: string): string {

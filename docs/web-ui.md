@@ -43,12 +43,13 @@ Reader, and Status):
 - **Responsive breakpoints**: desktop (`≥ 1024px`) shows the full multi-pane workbench and
   auto-collapses the primary sidebar when the editor becomes narrow; tablet (`640–1023px`) turns
   sidebars into slide-over drawers; mobile (`< 640px`) switches to a stack-style page shell with a
-  bottom tab bar and in-topic tool tabs.
+  4-tab bottom bar (including **More** for Reviews, Preferences, Skills, Settings, device toggles,
+  and Gateway status), a topic detail header (status dot, agent, directory, unread back badge, and
+  `⋯` menu), left-swipe/long-press topic row actions, and in-topic tool tabs.
 - **Drag-and-drop splits, view movement, and layout persistence**: on desktop (`≥ 1024px`), drag
   any editor tab onto the left, right, top, or bottom edge of an editor group to split side by
-  side, or drag tabs within a strip to reorder them (press `Esc` to cancel a drag); a group with a
-  single tab renders as a clean title bar, and switches to a tab strip when two or more tabs are
-  open. Views in the primary sidebar, secondary sidebar, and bottom panel can be dragged between
+  side, or drag tabs within the permanent editor tab strip to reorder them (press `Esc` to cancel a
+  drag). Views in the primary sidebar, secondary sidebar, and bottom panel can be dragged between
   parts or moved via the **⋯** (**Move view**) button in each part header. Layout state is saved
   automatically in this browser (`localStorage['aa_layout']`) and restored on reload (corrupt state
   falls back to the default layout). On tablet widths (`640–1023px`), editor splitting is disabled

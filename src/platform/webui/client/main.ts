@@ -8,7 +8,6 @@ import type { Topic } from '../topics.js';
 import { Emitter } from './base/event.js';
 import type { ClientIconsBundle } from './build-markers.d.ts';
 import { createCodeViewLoader } from './features/reader/index.js';
-import { READER_OPEN_COMMAND, READER_OPEN_IMAGE_COMMAND } from './features/reader/plugin.js';
 import { inlineCodeHtml as inl } from './features/settings/render.js';
 import type { SettingsPluginBridge } from './features/settings/plugin.js';
 import type { StatusPluginError } from './features/status/types.js';
@@ -19,7 +18,8 @@ import type { TopicEditorElements, TopicEditorHandle } from './features/topic/ed
 import { stClock } from './features/topic/status/index.js';
 import type { LaunchChoice, TranscriptMessage } from './features/topic/transcript/index.js';
 import type { TopicSnapshotPayload } from './features/topics/index.js';
-import { applyDomI18n, initLocale, onLocaleChange, t as tr } from './i18n/index.js';
+import { applyDomI18n, getLocale, initLocale, onLocaleChange, setLocale, t as tr } from './i18n/index.js';
+import { getTheme, setTheme } from './theme.js';
 import type { TopicInfo } from './plugins/api.js';
 import {
   createDefaultBuiltinPluginFactories,
@@ -53,6 +53,9 @@ import type { StackToolItem } from './workbench/stack-shell.js';
 import type { PanelComponent } from './workbench/contracts.js';
 import { mountWorkbench, type WorkbenchShell } from './workbench/shell.js';
 
+const READER_OPEN_COMMAND = 'reader.open';
+const READER_OPEN_IMAGE_COMMAND = 'reader.openImage';
+
 interface CacheCoreBundle extends CacheCore {
   readonly snapshotMsgs: (d: TopicSnapshotPayload) => CacheMessage[];
 }
@@ -69,6 +72,7 @@ interface AppState {
   launch: LaunchChoice | null;
   settleOnResume: boolean;
   activeEditor: TopicEditorHandle | null;
+  desktopEditorHost: HTMLElement | null;
   insertHandler: ((topicId: string, text: string) => boolean) | null;
   settingsBridge: SettingsPluginBridge | null;
   mobileViewId: string;
@@ -142,13 +146,75 @@ function ensureTopicEditorOpen(rt: AppRuntime, topicId: string): void {
   rt.shell.editors.open('topic', { topicId }, { id: 'topic:active' });
 }
 
+function topicSubtitleTone(topic: Topic | undefined): 'running' | 'asking' | 'live' | 'idle' {
+  if (topic?.asking) return 'asking';
+  if (topic?.running) return 'running';
+  if (topic?.live) return 'live';
+  return 'idle';
+}
+
+function countMobileBackBadge(rt: AppRuntime, excludeTopicId: string): number {
+  let count = 0;
+  for (const t of rt.state.topics) {
+    if (t.id === excludeTopicId) continue;
+    if (
+      rt.readsService.unreadOf(t) > 0 ||
+      rt.readsService.needsRead(t) ||
+      t.stage === 'answer' ||
+      t.stage === 'review' ||
+      t.stage === 'failed'
+    ) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+function buildMobileTopicHeader(rt: AppRuntime, topicId: string): {
+  readonly title: string;
+  readonly subtitle: string;
+  readonly subtitleTone: 'running' | 'asking' | 'live' | 'idle';
+  readonly backBadge: number;
+} {
+  const topic = topicById(rt.state, topicId);
+  const title = topic?.title || tr('common.untitled');
+  const subParts: string[] = [];
+  if (topic?.agent?.id) subParts.push(topic.agent.id);
+  if (topic?.dir) {
+    subParts.push(topic.dir.host ? `${topic.dir.host} · ${topic.dir.name}` : topic.dir.name);
+  }
+  return {
+    title,
+    subtitle: subParts.join(' · '),
+    subtitleTone: topicSubtitleTone(topic),
+    backBadge: countMobileBackBadge(rt, topicId),
+  };
+}
+
+function syncMobileTopicHeader(rt: AppRuntime): void {
+  if (rt.shell.getMode() !== 'mobile') return;
+  const stack = rt.shell.getStackShell();
+  if (stack.getMode() !== 'detail' || stack.getStackDepth() !== 1 || !rt.state.topic) return;
+  if (stack.getActiveTool() === undefined) return;
+  stack.updateDetailHeader(buildMobileTopicHeader(rt, rt.state.topic));
+}
+
 function openMobileTopicDetail(rt: AppRuntime, topicId: string): void {
   if (rt.shell.getMode() !== 'mobile') return;
   const topic = topicById(rt.state, topicId);
-  const title = topic?.title || tr('common.untitled');
+  const header = buildMobileTopicHeader(rt, topicId);
   const tools: StackToolItem[] = [];
   if (rt.state.activeEditor) {
-    tools.push({ id: 'chat', title: tr('sidebar.topics'), component: rt.state.activeEditor });
+    const curParent = rt.state.activeEditor.element.parentElement;
+    if (curParent && !curParent.closest('.wb-stack-shell')) {
+      rt.state.desktopEditorHost = curParent;
+    }
+    tools.push({
+      id: 'chat',
+      title: tr('sidebar.topics'),
+      component: rt.state.activeEditor,
+      params: { topicId },
+    });
   }
   if (topic) {
     const avail = rt.registry.listAvailableTopicTools(topic as unknown as TopicInfo);
@@ -157,7 +223,35 @@ function openMobileTopicDetail(rt: AppRuntime, topicId: string): void {
     }
   }
   if (tools.length > 0) {
-    rt.shell.openMobileDetail(title, tools, 'chat');
+    rt.shell.openMobileDetail(header.title, tools, 'chat', {
+      subtitle: header.subtitle,
+      subtitleTone: header.subtitleTone,
+      backBadge: header.backBadge,
+      actions: [
+        {
+          id: 'more',
+          label: tr('mobile.more'),
+          icon: 'more',
+          onClick: () => {
+            rt.state.activeEditor?.openTitleMenu();
+          },
+        },
+      ],
+    });
+    const editor = rt.state.activeEditor;
+    if (editor && rt.state.topic === topicId && editor.els.log.childElementCount === 0) {
+      const syncedMsgs = Object.values(rt.state.data).filter(
+        (m): m is TranscriptMessage => m !== undefined && !m._local,
+      );
+      if (syncedMsgs.length > 0) {
+        editor.transcript?.reconcile(syncedMsgs as unknown as WebMessage[]);
+        editor.transcript?.banners.placeDivider();
+        editor.transcript?.banners.syncEmptyNote();
+      } else if (rt.state.synced) {
+        rt.streamClient.close();
+        rt.streamClient.connect(false);
+      }
+    }
   }
 }
 
@@ -520,6 +614,9 @@ function buildBuiltinDeps(rt: AppRuntime): BuiltinPluginsDeps {
     },
     reader: {
       boot,
+      doc: document,
+      win: window,
+      fetchFn: (input, init) => fetch(input, init),
       overlays,
       codeView,
       codeBlocks: (root) => {
@@ -849,9 +946,10 @@ function wireStreamAndCache(rt: AppRuntime): void {
 function wireMobileShell(rt: AppRuntime): void {
   const mountedViews = new Map<string, PanelComponent>();
   const showMobileListView = (viewId: string): void => {
+    rt.state.mobileViewId = viewId;
+    if (viewId === 'more') return;
     const view = rt.registry.getView(viewId);
     if (!view) return;
-    rt.state.mobileViewId = viewId;
     const stack = rt.shell.getStackShell();
     let comp = mountedViews.get(viewId);
     if (!comp) {
@@ -859,6 +957,65 @@ function wireMobileShell(rt: AppRuntime): void {
       mountedViews.set(viewId, comp);
     }
     stack.mountListView(viewId, comp);
+  };
+
+  const syncMoreState = (): void => {
+    if (rt.shell.getMode() !== 'mobile') return;
+    const stack = rt.shell.getStackShell();
+    const activities = rt.registry.listActivities();
+    const revAct = activities.find((a) => a.id === 'reviews');
+    const revCount = revAct?.badge?.();
+    let runningCount = 0;
+    let idleCount = 0;
+    for (const topic of rt.state.topics) {
+      if (topic.running || topic.asking) runningCount += 1;
+      else if (topic.live) idleCount += 1;
+    }
+    stack.setMoreState({
+      reviewsBadge: typeof revCount === 'number' && revCount > 0 ? String(revCount) : undefined,
+      prefsBadge: typeof revCount === 'number' && revCount > 0 ? String(revCount) : undefined,
+      lowAttention: rt.workbenchRoot.classList.contains('calm'),
+      theme: getTheme(),
+      locale: getLocale(),
+      connected: !rt.workbenchRoot.hidden,
+      version: rt.boot.build ? rt.boot.build.slice(0, 7) : undefined,
+      runningCount,
+      idleCount,
+      onOpenReviews: () => {
+        rt.shell.openMobileView('reviews', tr('mobile.reviews'));
+      },
+      onOpenPrefs: () => {
+        const opened = rt.shell.editors.open('review-prefs', {});
+        if (!opened) {
+          rt.shell.openMobileView('reviews', tr('mobile.prefs'));
+        }
+      },
+      onOpenSkills: () => {
+        rt.shell.openMobileView('skills', tr('mobile.skills'));
+      },
+      onOpenSettings: () => {
+        rt.shell.openMobileView('settings', tr('mobile.settings'));
+      },
+      onToggleNotifications: () => {
+        void rt.commands.execute('status.toggleNotify');
+      },
+      onToggleLowAttention: () => {
+        void rt.commands.execute('status.toggleCalm');
+        syncMoreState();
+      },
+      onChangeTheme: (next) => {
+        setTheme(next);
+        rt.events.emit('theme.change', { theme: next });
+        syncMoreState();
+      },
+      onChangeLocale: (next) => {
+        setLocale(next);
+        syncMoreState();
+      },
+      onCloseIdle: () => {
+        void rt.commands.execute('status.closeIdle');
+      },
+    });
   };
 
   const syncMobileMode = (): void => {
@@ -873,18 +1030,47 @@ function wireMobileShell(rt: AppRuntime): void {
         view: a.view,
         badge: a.badge,
       }));
-      const extra = activities[3];
-      stack.setTabs(
-        extra
-          ? [...primary, { id: extra.id, title: extra.title, icon: extra.icon, view: extra.view, badge: extra.badge }]
-          : primary,
-      );
+      const extra = activities.slice(3);
+      const moreBadge = (): number | 'dot' | null => {
+        let sum = 0;
+        let hasDot = false;
+        for (const item of extra) {
+          const b = item.badge?.() ?? null;
+          if (typeof b === 'number' && b > 0) sum += b;
+          else if (b === 'dot') hasDot = true;
+        }
+        if (sum > 0) return sum;
+        return hasDot ? 'dot' : null;
+      };
+      stack.setTabs([
+        ...primary,
+        { id: 'more', title: tr('mobile.more'), icon: 'more', view: 'more', badge: moreBadge },
+      ]);
     }
+    syncMoreState();
     showMobileListView(rt.state.mobileViewId || 'topics');
   };
 
   rt.shell.onDidModeChange((mode) => {
-    if (mode === 'mobile') syncMobileMode();
+    if (mode === 'mobile') {
+      syncMobileMode();
+    } else if (
+      rt.state.activeEditor &&
+      rt.state.desktopEditorHost?.isConnected &&
+      rt.state.activeEditor.element.parentElement !== rt.state.desktopEditorHost
+    ) {
+      rt.state.activeEditor.element.hidden = false;
+      rt.state.desktopEditorHost.appendChild(rt.state.activeEditor.element);
+    }
+  });
+  rt.events.on('topic.list', () => {
+    syncMoreState();
+    syncMobileTopicHeader(rt);
+  });
+  rt.events.on('topic.active', () => syncMobileTopicHeader(rt));
+  rt.events.on('locale.change', () => {
+    syncMobileMode();
+    syncMobileTopicHeader(rt);
   });
 
   if (rt.shell.getMode() === 'mobile') {
@@ -893,6 +1079,7 @@ function wireMobileShell(rt: AppRuntime): void {
 
   rt.shell.getStackShell().onDidSelectTab((tab) => {
     showMobileListView(tab.view);
+    if (tab.view === 'more') syncMoreState();
   });
 }
 
@@ -993,6 +1180,7 @@ function bootstrap(): void {
     launch: null,
     settleOnResume: false,
     activeEditor: null,
+    desktopEditorHost: null,
     insertHandler: null,
     settingsBridge: null,
     mobileViewId: 'topics',

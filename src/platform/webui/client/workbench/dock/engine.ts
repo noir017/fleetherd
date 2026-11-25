@@ -74,6 +74,7 @@ export interface DynamicDockOptions {
   readonly dndThresholdPx?: number;
   readonly minGroupSize?: number;
   readonly resolveIcon?: (name: string) => string;
+  readonly alwaysShowTabs?: boolean;
   readonly renderSingleHeader?: EditorGroupOptions['renderSingleHeader'];
   readonly resolveTopicId?: (panel: PanelRef, componentName: string) => string | undefined;
   readonly defaultLayout?: () => LayoutState;
@@ -161,6 +162,7 @@ export class DynamicDockEngine implements DockEngine {
   private readonly _storage?: LayoutStorage;
   private readonly _storageKey: string;
   private readonly _resolveIcon?: (name: string) => string;
+  private readonly _alwaysShowTabs: boolean;
   private readonly _renderSingleHeader?: EditorGroupOptions['renderSingleHeader'];
   private readonly _resolveTopicId?: DynamicDockOptions['resolveTopicId'];
   private readonly _defaultLayoutFactory?: () => LayoutState;
@@ -202,6 +204,7 @@ export class DynamicDockEngine implements DockEngine {
     this._storage = options.storage;
     this._storageKey = options.storageKey ?? LAYOUT_STORAGE_KEY;
     this._resolveIcon = options.resolveIcon;
+    this._alwaysShowTabs = options.alwaysShowTabs ?? false;
     this._renderSingleHeader = options.renderSingleHeader;
     this._resolveTopicId = options.resolveTopicId;
     this._defaultLayoutFactory = options.defaultLayout;
@@ -224,6 +227,7 @@ export class DynamicDockEngine implements DockEngine {
       minGroupSize: options.minGroupSize,
       createGroupOptions: () => ({
         resolveIcon: this._resolveIcon,
+        alwaysShowTabs: this._alwaysShowTabs,
         renderSingleHeader: this._renderSingleHeader,
         onTabPointerDown: (info) => this._onGroupTabPointerDown(info),
       }),

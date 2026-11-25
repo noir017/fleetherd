@@ -8,6 +8,7 @@ import {
   renderActionBar,
   renderEmptyState,
   renderNotice,
+  renderSegmented,
   type ActionItem,
 } from '../../components/index.js';
 import type { PluginContext } from '../../plugins/api.js';
@@ -74,6 +75,7 @@ interface EditorContext {
   readonly emptyEl: HTMLElement;
   readonly editorEl: HTMLElement;
   readonly previewEl: HTMLElement;
+  readonly footerEl: HTMLElement;
   panelApi: FeaturePanelRef | null;
   panelId: string;
   paintAll: () => void;
@@ -123,13 +125,6 @@ function paintEditorHeader(ec: EditorContext): void {
       disabled: !state.dirty || state.busy,
       onClick: () => void ec.save(false),
     });
-    if (isMarkdownFilename(state.name)) {
-      items.push({
-        id: 'preview',
-        label: state.previewing ? ctx.i18n.t('common.edit') : ctx.i18n.t('files.preview'),
-        onClick: () => void ec.togglePreview(),
-      });
-    }
   }
   if (state.input) {
     items.push({
@@ -172,8 +167,54 @@ function paintEditorHeader(ec: EditorContext): void {
         <span class="fh-file-editor-path" title=${state.rel || state.path}>${state.rel || state.path}</span>
         ${state.dirty ? html`<span class="fh-file-dirty" data-file-dirty>${ctx.i18n.t('files.unsavedChanges')}</span>` : nothing}
       </div>
-      ${items.length > 0 ? renderActionBar({ items, compact: true }) : nothing}`,
+      <div class="fh-file-editor-controls">
+        ${state.kind === 'text' && isMarkdownFilename(state.name)
+          ? renderSegmented({
+              kind: 'value',
+              className: 'fh-file-mode-seg',
+              ariaLabel: ctx.i18n.t('files.preview'),
+              value: state.previewing ? 'preview' : 'source',
+              options: [
+                { value: 'source', label: ctx.i18n.t('files.sourceMode') },
+                { value: 'preview', label: ctx.i18n.t('files.previewMode') },
+              ],
+              onChange: (val) => {
+                if ((val === 'preview') !== state.previewing) void ec.togglePreview();
+              },
+            })
+          : nothing}
+        ${items.length > 0 ? renderActionBar({ items, compact: true }) : nothing}
+      </div>`,
     headerEl,
+  );
+}
+
+function paintEditorFooter(ec: EditorContext): void {
+  const { ctx, state, footerEl } = ec;
+  if (state.kind !== 'text' || !state.input) {
+    render(nothing, footerEl);
+    return;
+  }
+  const eolLabel = state.eol === 'crlf' ? 'CRLF' : 'LF';
+  render(
+    html`<span class="fh-file-editor-foot-meta">${ctx.i18n.t('files.versionCheckHint', { eol: eolLabel })}</span>
+      ${state.dirty
+        ? html`<button
+            type="button"
+            class="fh-btn fh-btn--ghost fh-file-revert-btn"
+            data-file-revert
+            ?disabled=${state.busy}
+            @click=${() => {
+              if (!state.view) return;
+              state.view.setDoc(state.savedDoc);
+              state.dirty = false;
+              state.conflict = null;
+              updatePanelTitle(ec);
+              ec.paintAll();
+            }}
+          >${ctx.i18n.t('files.revert')}</button>`
+        : nothing}`,
+    footerEl,
   );
 }
 
@@ -270,6 +311,7 @@ async function mountTextEditor(ec: EditorContext, initialDoc: string, seq: numbe
       state.dirty = nextDirty;
       updatePanelTitle(ec);
       paintEditorHeader(ec);
+      paintEditorFooter(ec);
     }
   };
 
@@ -564,6 +606,7 @@ function createEditorDom(doc: Document): {
   emptyEl: HTMLElement;
   editorEl: HTMLElement;
   previewEl: HTMLElement;
+  footerEl: HTMLElement;
 } {
   const element = doc.createElement('div');
   element.className = 'fh-file-editor';
@@ -579,8 +622,10 @@ function createEditorDom(doc: Document): {
   const previewEl = doc.createElement('div');
   previewEl.className = 'fh-file-editor-preview';
   previewEl.hidden = true;
-  element.append(headerEl, bannersEl, emptyEl, editorEl, previewEl);
-  return { element, headerEl, bannersEl, emptyEl, editorEl, previewEl };
+  const footerEl = doc.createElement('div');
+  footerEl.className = 'fh-file-editor-foot';
+  element.append(headerEl, bannersEl, emptyEl, editorEl, previewEl, footerEl);
+  return { element, headerEl, bannersEl, emptyEl, editorEl, previewEl, footerEl };
 }
 
 export function createFileEditorPanel(
@@ -593,7 +638,7 @@ export function createFileEditorPanel(
   const store = new DisposableStore();
   let tabSub: Disposable | null = null;
 
-  const { element, headerEl, bannersEl, emptyEl, editorEl, previewEl } = createEditorDom(doc);
+  const { element, headerEl, bannersEl, emptyEl, editorEl, previewEl, footerEl } = createEditorDom(doc);
 
   const state = createInitialEditorState();
 
@@ -609,12 +654,14 @@ export function createFileEditorPanel(
     emptyEl,
     editorEl,
     previewEl,
+    footerEl,
     panelApi: null,
     panelId: '',
     paintAll: () => {
       if (state.disposed) return;
       paintEditorHeader(ec);
       paintEditorBanners(ec);
+      paintEditorFooter(ec);
     },
     loadFile: (input: FileEditorInput) => runLoadEditorFile(ec, input),
     save: (force: boolean) => saveEditorFile(ec, force),

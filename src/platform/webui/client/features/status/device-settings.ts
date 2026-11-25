@@ -91,7 +91,24 @@ export function createDevicePreferencesPanel(
           <h3 class="fh-device-prefs-title">${t('devicePrefs.title')}</h3>
           <p class="fh-device-prefs-sub">${t('devicePrefs.subtitle')}</p>
         </div>
-        <div class="fh-device-prefs-list">
+        <div class="fh-device-prefs-list fh-device-prefs-card">
+          ${renderFieldRow({
+            id: 'fh-pref-notify',
+            label: t('devicePrefs.notifications'),
+            hint: notifyHint(snap.notify, t),
+            warning: snap.notify.blocked ? t('menu.notificationsBlocked') : null,
+            inline: true,
+            control: renderSwitch({
+              id: 'fh-pref-notify',
+              checked: snap.notify.enabled,
+              label: notifyLabel,
+              ariaLabel: t('devicePrefs.notifications'),
+              disabled: notifyDisabled,
+              onChange: () => {
+                void deps.toggleNotify();
+              },
+            }),
+          })}
           ${renderFieldRow({
             id: 'fh-pref-theme',
             label: t('devicePrefs.theme'),
@@ -127,23 +144,6 @@ export function createDevicePreferencesPanel(
               label: snap.calm ? t('common.onCap') : t('common.offCap'),
               ariaLabel: t('devicePrefs.calm'),
               onChange: (checked) => deps.setCalm(checked),
-            }),
-          })}
-          ${renderFieldRow({
-            id: 'fh-pref-notify',
-            label: t('devicePrefs.notifications'),
-            hint: notifyHint(snap.notify, t),
-            warning: snap.notify.blocked ? t('menu.notificationsBlocked') : null,
-            inline: true,
-            control: renderSwitch({
-              id: 'fh-pref-notify',
-              checked: snap.notify.enabled,
-              label: notifyLabel,
-              ariaLabel: t('devicePrefs.notifications'),
-              disabled: notifyDisabled,
-              onChange: () => {
-                void deps.toggleNotify();
-              },
             }),
           })}
           ${renderFieldRow({

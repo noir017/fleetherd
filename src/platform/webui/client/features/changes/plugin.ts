@@ -25,6 +25,12 @@ const EN_DICT: Record<string, string> = {
   'changes.deleteComment': 'Remove',
   'changes.mergedToMessage': 'Merged {count} comments into the message.',
   'changes.commentStaged': 'Comment staged ({count} pending).',
+  'changes.summary': 'vs {base} · {count} files',
+  'changes.prevFile': 'Prev',
+  'changes.nextFile': 'Next',
+  'changes.fileCounter': '{current} / {total} files',
+  'changes.backToList': 'Files',
+  'changes.commentHint': 'Added to composer below, chat stays visible',
 };
 
 const ZH_DICT: Record<string, string> = {
@@ -42,6 +48,12 @@ const ZH_DICT: Record<string, string> = {
   'changes.deleteComment': '删除',
   'changes.mergedToMessage': '已合并 {count} 条评论写入输入框。',
   'changes.commentStaged': '已暂存评论（待发送 {count} 条）。',
+  'changes.summary': '对比 {base} · {count} 个文件',
+  'changes.prevFile': '上一个',
+  'changes.nextFile': '下一个',
+  'changes.fileCounter': '{current} / {total} 个文件',
+  'changes.backToList': '返回',
+  'changes.commentHint': '加到下方输入框，对话一直可见',
 };
 
 export function isChangesAvailable(topic: TopicInfo): boolean {
