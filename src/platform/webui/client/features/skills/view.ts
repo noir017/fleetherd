@@ -174,7 +174,7 @@ class SkillsViewPanel implements SkillPanelComponent {
     this._deps = deps;
     const doc = deps.doc;
     const icons = deps.icons();
-    this._tier = ctx.storage.get<string>(TIER_STORAGE_KEY) === 'library' ? 'library' : 'resident';
+    this._tier = ctx.storage.get<string>(TIER_STORAGE_KEY) === 'resident' ? 'resident' : 'library';
 
     this.element = doc.createElement('div');
     this.element.className = 'fh-skills-view';

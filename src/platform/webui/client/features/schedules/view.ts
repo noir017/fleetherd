@@ -517,8 +517,8 @@ class SchedulesView implements SchedulesViewController {
     this._segmented.update({
       value: this._subtab,
       options: [
-        { value: 'tasks', label: tr('sideTasks.tabTasks'), badge: snap.tasks ? snap.tasks.length : null },
-        { value: 'sessions', label: tr('sideTasks.tabSessions'), badge: sessions.length },
+        { value: 'tasks', label: tr('sideTasks.tabTasks'), badge: snap.tasks?.length || null },
+        { value: 'sessions', label: tr('sideTasks.tabSessions'), badge: sessions.length || null },
       ],
     });
     this._filterHost.hidden = this._subtab !== 'tasks';

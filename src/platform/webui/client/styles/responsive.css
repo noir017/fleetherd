@@ -728,6 +728,19 @@
 .wb-root[data-wb-mode="mobile"] .fh-sidebar-filter .fh-fb-q {
   font-size: 16px;
 }
+.wb-root[data-wb-mode="mobile"] .fh-sidebar-filter .fh-fb-filter,
+.wb-root[data-wb-mode="mobile"] .fh-sidebar-filter .fh-fb-sort,
+.wb-root[data-wb-mode="mobile"] .fh-sidebar-filter .fh-fb-dir {
+  height: 38px;
+  min-height: 38px;
+  border-radius: 10px;
+}
+.wb-root[data-wb-mode="mobile"] .fh-sidebar-filter .fh-fb-dir {
+  width: 38px;
+}
+.wb-root[data-wb-mode="mobile"] .fh-sidebar-filter .fh-fb-sortsel {
+  font-size: 16px;
+}
 .wb-root[data-wb-mode="mobile"] .fh-sidebar-filter .fh-fb-pins .fh-fb-chips {
   flex-wrap: nowrap;
   overflow-x: auto;

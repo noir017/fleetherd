@@ -245,10 +245,13 @@ describe('features/skills plugin', () => {
     const libraryTab = panel.element.querySelector<HTMLButtonElement>('[role="tab"][data-seg-value="library"]')!;
     expect(residentTab.querySelector('.fh-seg-count')?.textContent).toBe('1');
     expect(libraryTab.querySelector('.fh-seg-count')?.textContent).toBe('2');
+    expect(libraryTab.getAttribute('aria-selected')).toBe('true');
+    expect(visibleNames()).toEqual(['beta-library', 'gamma-archived']);
+
+    // Switch to Resident tab and back via shared segmented control
+    residentTab.click();
     expect(residentTab.getAttribute('aria-selected')).toBe('true');
     expect(visibleNames()).toEqual(['alpha-resident']);
-
-    // Switch to Library tab via shared segmented control
     libraryTab.click();
     expect(libraryTab.getAttribute('aria-selected')).toBe('true');
     expect(visibleNames()).toEqual(['beta-library', 'gamma-archived']);

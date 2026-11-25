@@ -984,6 +984,7 @@ function buildMobileListActions(rt: AppRuntime, viewId: string): readonly StackH
   }
   if (viewId === 'schedules') {
     return [
+      { id: 'schedules.refresh', label: tr('common.refresh'), icon: 'refresh', onClick: () => void rt.commands.execute('schedules.refresh') },
       { id: 'schedules.new', label: tr('sideTasks.newTask'), icon: 'plus', onClick: () => void rt.commands.execute('schedules.new') },
     ];
   }

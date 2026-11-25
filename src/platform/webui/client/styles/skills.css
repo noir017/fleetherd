@@ -115,7 +115,8 @@
 .fh-skills-view{display:flex;flex-direction:column;height:100%;min-height:0;background:var(--fh-bg-side,var(--panel))}
 .fh-skills-view-head{flex:none;display:flex;align-items:center;gap:6px;height:48px;padding:0 8px 0 14px;border-bottom:1px solid var(--fh-line,var(--line))}
 .wb-sidebar-body .fh-skills-view-head{height:34px;padding:0 8px 0 10px}
-.wb-sidebar-body .fh-skills-view-title{display:none}
+.wb-sidebar-body .fh-skills-view-title,
+.wb-stack .fh-skills-view-title{display:none}
 .fh-skills-view-count{flex:1;min-width:0;display:flex;align-items:center;gap:6px}
 .fh-skills-view-title{font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--fh-fg,var(--fg))}
 .fh-skills-view-actions{flex:none;display:flex;align-items:center;gap:2px}

@@ -283,6 +283,7 @@
 .wb-sidebar-head .wb-part-actions .fh-btn--ghost:hover:not(:disabled){background:var(--fh-act-hover);color:var(--fh-fg-hi)}
 .wb-topics-mobile-title{display:none}
 .wb-topics-filter .fh-fb-row{flex-wrap:nowrap}
+.wb-topics-filter .fh-fb-search{min-width:0}
 .wb-topics-batch{flex:none}
 
 .wb-topics-list{flex:1 1 auto;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:0;padding:2px 0 8px}
