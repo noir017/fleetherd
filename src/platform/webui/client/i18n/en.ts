@@ -827,6 +827,28 @@ export const en = {
   'instr.notDelivering': 'Not delivering: its instruction file is already delivered to another agent on the same machine with a different layer.',
   'instr.itsOwnFiles': 'Its own files',
   'instr.itsOwnFilesAria': '{label} · its own files',
+
+  // Topics workbench view, menu, confirm, and mobile sheet
+  'topics.tabAll': 'All',
+  'topics.groupNeeds': 'Needs you',
+  'topics.groupNew': 'New',
+  'topics.groupRunning': 'Running',
+  'topics.groupStarred': 'Starred',
+  'topics.groupIdle': 'Idle',
+  'topics.newPlaceholderTitle': 'New topic',
+  'topics.chooseAgentHint': 'Choose an agent',
+  'topics.openInNewTab': 'Open in new tab',
+  'topics.openInNewTabTitle': 'Open this topic in a new editor tab',
+  'topics.confirmDeleteTitle': 'Delete topic "{title}"?',
+  'topics.confirmDeleteStarredTitle': 'Delete starred topic "{title}"?',
+  'topics.confirmDeleteBody': 'This removes the topic from this page and stops any running agent. The conversation stays in History.',
+  'topics.confirmClearTitle': 'Clear topics?',
+  'topics.confirmBatchDeleteTitle': 'Delete {count} topics?',
+  'topics.swipeStar': 'Star',
+  'topics.swipeUnstar': 'Unstar',
+  'topics.swipeMore': 'More',
+  'topics.swipeDelete': 'Delete',
+  'topics.statusIdle': 'Idle',
 } as const;
 
 export type MessageKey = keyof typeof en;
