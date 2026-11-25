@@ -490,13 +490,6 @@ export class DockDndController implements Disposable {
       target: null,
     };
     this._session = session;
-
-    try {
-      sourceEl.setPointerCapture?.(ev.pointerId);
-    } catch {
-      // jsdom or synthetic pointer events may not support capture.
-    }
-
     this._bindSessionListeners(doc, win);
   }
 
@@ -584,6 +577,13 @@ export class DockDndController implements Disposable {
 
   private _activateDrag(session: ActiveDragSession, point: DndPoint): void {
     session.dragging = true;
+    // Capture only once drag actually starts; capturing on pointerdown on a container
+    // retargets browser click events away from child tab buttons.
+    try {
+      session.sourceEl.setPointerCapture?.(session.pointerId);
+    } catch {
+      // jsdom or synthetic pointer events may not support capture.
+    }
     const doc = this._doc ?? session.sourceEl.ownerDocument;
     const host = this._host ?? doc.body;
 
@@ -665,10 +665,12 @@ export class DockDndController implements Disposable {
     this._sessionDisposables.clear();
 
     if (session) {
-      try {
-        session.sourceEl.releasePointerCapture?.(session.pointerId);
-      } catch {
-        // Ignore release errors when pointer capture was not active.
+      if (session.dragging) {
+        try {
+          session.sourceEl.releasePointerCapture?.(session.pointerId);
+        } catch {
+          // Ignore release errors when pointer capture was not active.
+        }
       }
       const host = this._host ?? session.sourceEl.ownerDocument.body;
       host.classList.remove('wb-is-dragging');

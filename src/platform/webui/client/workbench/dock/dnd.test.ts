@@ -312,11 +312,12 @@ describe('workbench/dock/dnd DockDndController (jsdom pointer lifecycle)', () =>
     controller.attachSource(source, samplePayload);
 
     dispatchPointer(source, 'pointerdown', { clientX: 210, clientY: 50, pointerId: 3 });
-    expect(setCapture).toHaveBeenCalledWith(3);
+    expect(setCapture).not.toHaveBeenCalled();
 
     // Move into right edge of group g1 -> split right.
     dispatchPointer(window, 'pointermove', { clientX: 560, clientY: 200, pointerId: 3 });
     expect(controller.isDragging).toBe(true);
+    expect(setCapture).toHaveBeenCalledWith(3);
     expect(onDragStart).toHaveBeenCalledWith(samplePayload);
     expect(host.classList.contains('wb-is-dragging')).toBe(true);
 

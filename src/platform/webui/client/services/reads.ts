@@ -182,7 +182,7 @@ class ReadsServiceImpl implements ReadsService {
   }
 
   unseenReply(topic: ReadTopicLike): boolean {
-    return topic.stage === 'review' && !topic.parent;
+    return (topic.stage === 'review' || topic.stage === 'failed') && !topic.parent;
   }
 
   needsRead(topic: ReadTopicLike): boolean {
@@ -248,7 +248,7 @@ class ReadsServiceImpl implements ReadsService {
         break;
       }
     }
-    if (!cur || cur.stage !== 'review') return;
+    if (!cur || (cur.stage !== 'review' && cur.stage !== 'failed')) return;
     const now = this._now();
     const last = this._seenPosted[topicId];
     if (last !== undefined && now - last < this._seenThrottleMs) return;

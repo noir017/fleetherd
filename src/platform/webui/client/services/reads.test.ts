@@ -232,4 +232,31 @@ describe('services/reads', () => {
     docTarget.dispatchEvent(new Event('visibilitychange'));
     expect(posted).toEqual(['t1', 't1']);
   });
+
+  it('reportSeen and markAllRead also clear failed topics', async () => {
+    const { storage } = createMemoryStorage();
+    const posted: string[] = [];
+    const topics: ReadTopicLike[] = [
+      { id: 'f1', msgCount: 3, stage: 'failed' },
+      { id: 'fsub', msgCount: 2, stage: 'failed', parent: 'f1' },
+    ];
+    const reads = createReadsService({
+      storage,
+      getActiveTopic: () => 'f1',
+      getTopics: () => topics,
+      postSeen: async (id) => {
+        posted.push(id);
+        return { ok: true };
+      },
+    });
+
+    reads.reportSeen();
+    expect(posted).toEqual(['f1']);
+    expect(reads.unseenReply(topics[0]!)).toBe(true);
+    expect(reads.unseenReply(topics[1]!)).toBe(false);
+
+    posted.length = 0;
+    await reads.markAllRead(topics, 'topics', () => {});
+    expect(posted).toEqual(['f1']);
+  });
 });

@@ -30,8 +30,11 @@ describe('topicStage — first matching row wins', () => {
     expect(topicStage({ running: true, asking: false, activity: done(5), seenAt: 0 })).toBe('working');
   });
 
-  it('a failure stays a failure after it has been seen', () => {
-    expect(topicStage({ running: false, asking: false, activity: failed(5), seenAt: 100 })).toBe('failed');
+  it('a failure needs attention until the person has looked, and stays failed when seenAt is omitted', () => {
+    expect(topicStage({ running: false, asking: false, activity: failed(5) })).toBe('failed');
+    expect(topicStage({ running: false, asking: false, activity: failed(5), seenAt: 4 })).toBe('failed');
+    expect(topicStage({ running: false, asking: false, activity: failed(5), seenAt: 5 })).toBe('idle');
+    expect(topicStage({ running: false, asking: false, activity: failed(5), seenAt: 100 })).toBe('idle');
   });
 
   it('a finished reply needs reviewing only until the person has looked', () => {

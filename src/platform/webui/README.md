@@ -537,9 +537,9 @@ read as two conversations. The outcome and `seenAt` are persisted in the topic f
 (its timer dies with the daemon).
 
 **`seenAt` is the server's clock, not the page's.** The page only says *now* (`api/seen {topic}`), and
-only when the topic on screen is in `review` and the page is visible; the room stamps `Date.now()`.
+only when the topic on screen is in `review` or `failed` and the page is visible; the room stamps `Date.now()`.
 It is compared with a turn's end, which is the daemon's time, and a phone's clock is nothing to
-compare a server's with. Posting only on `review` keeps the traffic to one request per reply read.
+compare a server's with. Posting only on `review`/`failed` keeps the traffic to one request per outcome read.
 
 **A menu is not a question** (`awaitingQuestion`). The room's `awaiting` set is "messages with live
 buttons", which was the same thing while every such message was an ask. Operator control menus —

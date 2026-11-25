@@ -167,6 +167,52 @@ describe('workbench/dock/group (EditorGroup)', () => {
     expect(c1.dispose).toHaveBeenCalledTimes(1);
     expect(c2.dispose).toHaveBeenCalledTimes(1);
   });
+
+  it('switches active tab and visible content on click and keyboard arrow navigation', () => {
+    const group = new EditorGroup({ id: 'g1', doc: document, alwaysShowTabs: true });
+    document.body.appendChild(group.element);
+    const c1 = createStubComponent('topic');
+    const c2 = createStubComponent('file');
+    const c3 = createStubComponent('diff');
+
+    group.addPanel({ id: 'topic:active', componentName: 'editor:topic', component: c1.component, title: 'Topic' });
+    group.addPanel({ id: 'editor:file:1', componentName: 'editor:file', component: c2.component, title: 'app.ts' });
+    group.addPanel({ id: 'editor:diff:2', componentName: 'editor:diff', component: c3.component, title: 'diff' });
+
+    expect(group.activePanelId).toBe('editor:diff:2');
+    expect(c1.element.hidden).toBe(true);
+    expect(c2.element.hidden).toBe(true);
+    expect(c3.element.hidden).toBe(false);
+
+    // Clicking an earlier tab activates it and swaps visible content.
+    const firstTab = group.headerElement.querySelector<HTMLButtonElement>('[data-panel-id="topic:active"]')!;
+    firstTab.click();
+    expect(group.activePanelId).toBe('topic:active');
+    expect(c1.element.hidden).toBe(false);
+    expect(c2.element.hidden).toBe(true);
+    expect(c3.element.hidden).toBe(true);
+    expect(
+      group.headerElement.querySelector('[data-panel-id="topic:active"]')?.getAttribute('aria-selected'),
+    ).toBe('true');
+
+    // ArrowRight moves to the next tab and retains keyboard focus on the live tab button.
+    const liveFirst = group.headerElement.querySelector<HTMLButtonElement>('[data-panel-id="topic:active"]')!;
+    liveFirst.focus();
+    liveFirst.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    expect(group.activePanelId).toBe('editor:file:1');
+    expect(c1.element.hidden).toBe(true);
+    expect(c2.element.hidden).toBe(false);
+    const liveSecond = group.headerElement.querySelector<HTMLButtonElement>('[data-panel-id="editor:file:1"]')!;
+    expect(document.activeElement).toBe(liveSecond);
+
+    // ArrowLeft moves back to the first tab.
+    liveSecond.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
+    expect(group.activePanelId).toBe('topic:active');
+    expect(c1.element.hidden).toBe(false);
+    expect(c2.element.hidden).toBe(true);
+
+    group.dispose();
+  });
 });
 
 describe('workbench/dock/gridview (GridView DOM controller)', () => {
