@@ -45,7 +45,7 @@ const SESS_GROUPS_STORAGE_KEY = 'sess_groups';
 function taskDotStatus(t: SchedulePanelTask): { tone: StatusTone; pulsing: boolean } {
   if (t.running) return { tone: 'ok', pulsing: true };
   if (t.last && t.last.status !== 'ok') return { tone: 'err', pulsing: false };
-  if (t.state === 'active') return { tone: 'ok', pulsing: false };
+  if (t.state === 'active') return { tone: 'live', pulsing: false };
   return { tone: 'idle', pulsing: false };
 }
 
@@ -129,6 +129,7 @@ function sessionDotStatus(t: TopicInfo): { tone: StatusTone; pulsing: boolean } 
   if (t.asking) return { tone: 'warn', pulsing: true };
   if (t.running) return { tone: 'ok', pulsing: true };
   if (t.stage === 'failed') return { tone: 'err', pulsing: false };
+  if (t.live) return { tone: 'live', pulsing: false };
   return { tone: 'idle', pulsing: false };
 }
 

@@ -220,6 +220,8 @@ describe('features/topic/plugin', () => {
     expect(panel.els.titleEl.textContent).toBe('Alpha renamed');
     expect(panel.els.statePillEl.hidden).toBe(true);
     expect(panel.els.stopBtn.hidden).toBe(true);
+    expect(panel.els.statusDotHost.querySelector('.fh-dot--live')).not.toBeNull();
+    expect(panel.els.statusDotHost.querySelector('.fh-dot--ok')).toBeNull();
 
     // Stream state updates connection indicator
     h.events.emit('stream.state', { state: 'reconnecting' });

@@ -1,5 +1,5 @@
 #log{flex:1;overflow-y:auto;padding:20px 16px 8px;max-width:860px;width:100%;margin:0 auto}
-.m{position:relative;margin:0 0 18px;max-width:100%;overflow-wrap:anywhere;animation:fade .18s ease-out}
+.m{position:relative;margin:0 0 18px;max-width:100%;font-size:var(--fh-fs-body);line-height:var(--fh-lh-body);overflow-wrap:anywhere;animation:fade .18s ease-out}
 /* Only on the element's first appearance, which is the whole reason messages are now reconciled
    rather than rebuilt: an animation restarts every time a node is created, so under the old
    empty-and-repaint sync this would have flickered the entire transcript on every reconnect. */
@@ -24,7 +24,7 @@
    still unknown is whether anything was said while you were elsewhere, and that lands at the
    bottom. Sized and centred like .divider rather than like a message, for the ordinary case
    where nothing was missed: a message-shaped placeholder would have promised one. */
-.syncing{display:flex;align-items:center;justify-content:center;gap:7px;margin:2px auto 18px;font-size:11.5px;color:var(--dim)}
+.syncing{display:flex;align-items:center;justify-content:center;gap:7px;margin:2px auto 18px;font-size:var(--fh-fs-xs);color:var(--dim)}
 .syncing .dots{display:inline-flex;gap:3px}
 .syncing i{width:5px;height:5px;border-radius:50%;background:var(--dim);animation:blip 1.2s ease-in-out infinite}
 .syncing i:nth-child(2){animation-delay:.2s}
@@ -40,7 +40,7 @@
    persisted, so every restart leaves rows that open onto nothing — and an empty panel rendered
    faithfully is indistinguishable from a page that failed to load, which is how it was reported.
    Sized and centred like a system note rather than a message: it is about the room, not in it. */
-.empty{margin:28px auto;max-width:46ch;text-align:center;font-size:12.5px;line-height:1.6;color:var(--dim)}
+.empty{margin:28px auto;max-width:46ch;text-align:center;font-size:var(--fh-fs-sm);line-height:1.6;color:var(--dim)}
 /* A new topic: every agent it could be given to, by machine, in place of a blank transcript (see
    paintLaunch). A choice laid out rather than a message, so it is not in the transcript and leaves
    the moment anything is — typing straight away is still an answer, and the card marked default is
@@ -50,11 +50,11 @@
 .launch{max-width:720px;margin:7vh auto 24px;animation:fade .18s ease-out}
 .launch-head{text-align:center;margin-bottom:26px}
 .launch-title{font-size:19px;font-weight:600;color:var(--fg);letter-spacing:-.01em}
-.launch-sub{margin-top:5px;font-size:13px;color:var(--dim)}
+.launch-sub{margin-top:5px;font-size:var(--fh-fs-ui);color:var(--dim)}
 .launch-sub b{color:var(--fg-muted);font-weight:600}
 .launch-group+.launch-group{margin-top:20px}
 /* The machine, as a rule with its name on it: the heading groups the cards without boxing them. */
-.launch-host{display:flex;align-items:center;gap:10px;margin:0 2px 9px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.07em;color:var(--dim)}
+.launch-host{display:flex;align-items:center;gap:10px;margin:0 2px 9px;font-size:var(--fh-fs-xs);font-weight:600;text-transform:uppercase;letter-spacing:.07em;color:var(--dim)}
 .launch-host::after{content:'';flex:1;border-top:1px solid var(--line)}
 .launch-host .n{font-weight:400;color:var(--fg-faint);letter-spacing:0}
 .launch-host .off{display:inline-flex;align-items:center;gap:4px;font-weight:500;letter-spacing:0;text-transform:none;color:var(--offline)}
@@ -70,9 +70,9 @@
 .agent-card.def{background:var(--own);border-color:var(--own-edge)}
 .agent-card.def:hover{background:var(--own-hover);border-color:var(--own-hover-edge)}
 .ac-top{display:flex;align-items:center;gap:8px}
-.ac-id{flex:1;min-width:0;font-size:15px;font-weight:600;color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.ac-tag{flex:none;font-size:10.5px;line-height:1;padding:3px 6px;border-radius:9px;color:var(--accent-tag);background:var(--accent-tint-1);border:1px solid var(--accent-border-1)}
-.ac-kind{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--fg-kind);overflow:hidden;white-space:nowrap}
+.ac-id{flex:1;min-width:0;font-size:var(--fh-fs-body);font-weight:600;color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ac-tag{flex:none;font-size:var(--fh-fs-2xs);line-height:1;padding:3px 6px;border-radius:9px;color:var(--accent-tag);background:var(--accent-tint-1);border:1px solid var(--accent-border-1)}
+.ac-kind{display:flex;align-items:center;gap:6px;font-size:var(--fh-fs-sm);color:var(--fg-kind);overflow:hidden;white-space:nowrap}
 .ac-kind span{overflow:hidden;text-overflow:ellipsis}
 /* Which harness, at a glance, in a colour of its own: the eye finds "the Codex one" by colour
    before it has read a word. Keyed on the configured harness, not the label, which is prose.
@@ -90,7 +90,7 @@
 /* The UI face rather than monospace, and 720px for the launcher rather than less: measured in
    Chromium, "deepseek-v4.1-flash-free" is 159px in 11px monospace and 143px here, and a desktop card
    at four to a row leaves 148px for it. A longer name still ends in an ellipsis, whole on hover. */
-.ac-model{font-size:11.5px;color:var(--fg-model);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ac-model{font-size:var(--fh-fs-xs);color:var(--fg-model);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* A rule and an indent were all that separated the two sides of the conversation, and at a
    glance down a long transcript that is not enough to find where your own question ended and
    the answer began. Own messages get a tinted panel instead — cool where the page is neutral,
@@ -110,7 +110,7 @@
    "waiting on you"); report is green, the colour a finished thing has everywhere else here. */
 .m.dispatch{background:var(--disp);border-left:3px solid var(--disp-edge);border-radius:0 6px 6px 0;padding:9px 12px}
 .m.report{background:var(--rep);border-left:3px solid var(--rep-edge);border-radius:0 6px 6px 0;padding:9px 12px}
-.sub-k{display:inline-block;margin:0 0 6px;padding:1px 8px;border:1px solid;border-radius:9px;font-size:10.5px;line-height:1.6;font-weight:600;letter-spacing:.03em;text-transform:uppercase}
+.sub-k{display:inline-block;margin:0 0 6px;padding:1px 8px;border:1px solid;border-radius:9px;font-size:var(--fh-fs-2xs);line-height:1.6;font-weight:600;letter-spacing:.03em;text-transform:uppercase}
 .m.dispatch .sub-k{color:var(--disp-tag-fg);background:var(--disp-tag-bg);border-color:var(--disp-tag-edge)}
 .m.report .sub-k{color:var(--rep-tag-fg);background:var(--rep-tag-bg);border-color:var(--rep-tag-edge)}
 /* The answer to a side question (/btw): asked of a copy of the conversation and kept out of it, so
@@ -125,39 +125,39 @@
    height, because the cache and the reading position are both read off #log's children (cacheable,
    firstVisible) and a node taken out would be lost to both. */
 .m.aside-held{margin:0;animation:none}
-.btw-chip{display:flex;align-items:center;gap:8px;width:100%;min-height:34px;padding:5px 10px;border:1px dashed var(--aside-border);border-radius:6px;background:var(--aside);color:var(--fg);font:inherit;font-size:13px;text-align:left;cursor:pointer}
+.btw-chip{display:flex;align-items:center;gap:8px;width:100%;min-height:34px;padding:5px 10px;border:1px dashed var(--aside-border);border-radius:6px;background:var(--aside);color:var(--fg);font:inherit;font-size:var(--fh-fs-ui);text-align:left;cursor:pointer}
 .btw-chip:hover,.btw-chip[aria-expanded="true"]{border-style:solid;background:var(--aside-hover)}
 .btw-chip:focus-visible{outline:2px solid var(--aside-edge);outline-offset:1px}
-.btw-tag{flex:none;padding:0 7px;border:1px solid var(--aside-tag-edge);border-radius:9px;background:var(--aside-tag-bg);color:var(--aside-tag-fg);font-size:10.5px;font-weight:600;line-height:1.6;letter-spacing:.03em;text-transform:uppercase}
+.btw-tag{flex:none;padding:0 7px;border:1px solid var(--aside-tag-edge);border-radius:9px;background:var(--aside-tag-bg);color:var(--aside-tag-fg);font-size:var(--fh-fs-2xs);font-weight:600;line-height:1.6;letter-spacing:.03em;text-transform:uppercase}
 .btw-text{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--fg-own)}
-.btw-state{flex:none;display:inline-flex;align-items:center;gap:2px;color:var(--dim);font-size:11.5px}
+.btw-state{flex:none;display:inline-flex;align-items:center;gap:2px;color:var(--dim);font-size:var(--fh-fs-xs)}
 .btw-state.ready{color:var(--aside-tag-fg)}
-.btw-when{flex:none;color:var(--dim);font-size:11.5px}
+.btw-when{flex:none;color:var(--dim);font-size:var(--fh-fs-xs)}
 /* The card the answer is read in: over the composer, inside #bar so it moves with it, like the model
    list. Not closed by a click elsewhere, unlike that list — the transcript under it is still being
    read, and scrolling it must not take the answer away. */
 #btw{position:absolute;left:16px;right:16px;bottom:calc(100% + 6px);z-index:14;display:flex;flex-direction:column;max-height:min(46vh,440px);background:var(--aside);border:1px solid var(--aside-border);border-radius:8px;box-shadow:0 10px 30px var(--shadow-lg);overflow:hidden}
 .btw-head{display:flex;align-items:center;gap:8px;padding:6px 6px 6px 12px;border-bottom:1px solid var(--aside-sep)}
-#btw-q{flex:1;min-width:0;font-weight:600;font-size:13px;line-height:1.4;overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow-wrap:anywhere}
-#btw-close{flex:none;font-size:17px;padding:4px 10px}
+#btw-q{flex:1;min-width:0;font-weight:600;font-size:var(--fh-fs-ui);line-height:1.4;overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow-wrap:anywhere}
+#btw-close{flex:none;font-size:var(--fh-fs-xl);padding:4px 10px}
 #btw-body{flex:1;min-height:0;overflow-y:auto;padding:10px 12px 4px;overflow-wrap:anywhere}
 #btw-body>.b{margin-bottom:.6em}
-#btw-body .btw-foot{margin:.8em 0 0;color:var(--dim);font-size:12px}
-.btw-wait{display:flex;align-items:center;gap:8px;color:var(--dim);font-size:12.5px;padding-bottom:8px}
+#btw-body .btw-foot{margin:.8em 0 0;color:var(--dim);font-size:var(--fh-fs-sm)}
+.btw-wait{display:flex;align-items:center;gap:8px;color:var(--dim);font-size:var(--fh-fs-sm);padding-bottom:8px}
 /* A message that is on screen because it was typed here, not because the daemon sent it back.
    Dimmed while the request is in flight; edged red and given something to do about it once the
    request has failed, since the text in it is the only copy left. */
 .m.pending{opacity:.6}
 .m.failed{border-left-color:var(--err-edge)}
-.m .warn{color:var(--err-warn);font-size:12px;margin-top:7px}
+.m .warn{color:var(--err-warn);font-size:var(--fh-fs-sm);margin-top:7px}
 .m .acts{margin-top:7px;display:flex;flex-wrap:wrap;gap:6px}
-.m .acts button{font-size:12px;padding:4px 10px}
+.m .acts button{font-size:var(--fh-fs-sm);padding:4px 10px}
 /* Cached from a daemon that is no longer running. Legible, just half a step back: it is real
    conversation, it is only no longer anything the process on the other end can be asked about. */
 .m.hist{opacity:.9}
 /* Says so, once, between the cached messages and the live ones. Sized like .empty rather than
    like a message, because it is about the room and not in it. */
-.divider{margin:2px auto 20px;max-width:46ch;padding-top:10px;border-top:1px solid var(--line);text-align:center;font-size:11.5px;line-height:1.6;color:var(--dim)}
+.divider{margin:2px auto 20px;max-width:46ch;padding-top:10px;border-top:1px solid var(--line);text-align:center;font-size:var(--fh-fs-xs);line-height:1.6;color:var(--dim)}
 .b>:first-child{margin-top:0}
 .b>:last-child{margin-bottom:0}
 /* The operator's own message, which renderBody escapes and does not render (see room.ts).
@@ -168,8 +168,8 @@
 .b .raw{white-space:pre-wrap;overflow-wrap:break-word;word-break:break-word}
 .b p{margin:0 0 .6em}
 .b pre{background:var(--field);border:1px solid var(--line);border-radius:4px;padding:10px;overflow-x:auto;margin:.6em 0}
-.b code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px}
-.b pre code{font-size:12.5px}
+.b code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:var(--fh-fs-ui)}
+.b pre code{font-size:var(--fh-fs-sm)}
 .b :not(pre)>code{background:var(--field);padding:1px 4px;border-radius:3px}
 .b h1,.b h2,.b h3,.b h4,.b h5,.b h6{font-size:1em;font-weight:600;margin:.9em 0 .4em}
 .b blockquote{margin:.6em 0;padding-left:10px;border-left:2px solid var(--line);color:var(--dim)}
@@ -186,7 +186,7 @@
    still carries, from the transcript on disk and the browser's cache: it keeps the block display
    that made it scroll then. */
 .b .tbl{overflow-x:auto;margin:.6em 0;max-width:100%;overflow-wrap:normal}
-.b table{border-collapse:collapse;margin:.6em 0;font-size:13.5px;display:block;overflow-x:auto}
+.b table{border-collapse:collapse;margin:.6em 0;font-size:var(--fh-fs-ui);display:block;overflow-x:auto}
 .b .tbl>table{display:table;margin:0}
 .b th,.b td{border:1px solid var(--line);padding:4px 8px;text-align:left}
 /* A code block's frame (web-markdown.ts codeBlock): the bar and the pre share one border, and the
@@ -195,10 +195,10 @@
    of a patch's lines. The bar's buttons are dim until pointed at, like the rest of a reply's
    chrome; 26px is a mouse target, and a phone gets more below. */
 .b .cb{margin:.6em 0;background:var(--field);border:1px solid var(--line);border-radius:4px;overflow:hidden}
-.b .cb pre{margin:0;border:0;border-radius:0;background:none;font-size:12.5px}
-.cb-h{display:flex;align-items:center;gap:2px;min-height:26px;padding:0 3px 0 10px;border-bottom:1px solid var(--line);color:var(--dim);font-size:11.5px}
+.b .cb pre{margin:0;border:0;border-radius:0;background:none;font-size:var(--fh-fs-sm)}
+.cb-h{display:flex;align-items:center;gap:2px;min-height:28px;padding:0 3px 0 10px;border-bottom:1px solid var(--line);color:var(--dim);font-size:var(--fh-fs-xs)}
 .cb-lang{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
-.cb-b{flex:none;display:inline-flex;align-items:center;justify-content:center;width:26px;height:24px;padding:0;border:0;border-radius:3px;background:none;color:var(--dim);font-size:14px;cursor:pointer}
+.cb-b{flex:none;display:inline-flex;align-items:center;justify-content:center;width:26px;height:24px;padding:0;border:0;border-radius:3px;background:none;color:var(--dim);font-size:var(--fh-fs-ui);cursor:pointer}
 .cb-b:hover{color:var(--fg);background:var(--surface-subtle)}
 .cb-b[aria-pressed="true"]{color:var(--fg);background:var(--surface-subtle-2)}
 /* Wrap: long lines break inside the frame, anywhere, since a path or a minified line has no spaces. */
@@ -208,8 +208,8 @@
 .cb .pa,.cb .pd{display:inline-block;min-width:100%;vertical-align:top}
 .b hr{border:0;border-top:1px solid var(--line);margin:1em 0}
 .b a{color:var(--accent-link)}
-.q{margin:0 0 6px;padding-left:10px;border-left:2px solid var(--line);color:var(--dim);font-size:13px;max-height:4.8em;overflow:hidden}
-.t{color:var(--dim);font-size:11.5px;margin-top:4px}
+.q{margin:0 0 6px;padding-left:10px;border-left:2px solid var(--line);color:var(--dim);font-size:var(--fh-fs-ui);max-height:4.8em;overflow:hidden}
+.t{color:var(--dim);font-size:var(--fh-fs-xs);margin-top:4px}
 /* A tool-progress bubble: one row per tool call, cut at the bubble's edge rather than at a
    character count, so a wide screen shows as much of each command as fits and a phone still
    reads one row per tool. Only the command (.tl-c) is cut: the ✓/✗ and duration after it (.tl-s)
@@ -233,7 +233,7 @@
    two-button question keeps two cells' width instead of being stretched across the bubble. 22px is
    a cell's padding and border, which --cw (the label alone) does not count. A label that does wrap
    is balanced, or a model id breaks at its last hyphen and leaves one character on a line. */
-.btns{--gap:4px;margin-top:8px;display:grid;grid-template-columns:repeat(auto-fill,minmax(min(calc(var(--cw,8ch) + var(--mk,0) * (1em - 1ch) + 22px),calc(50% - var(--gap))),1fr));gap:var(--gap);font-size:13px}
+.btns{--gap:4px;margin-top:8px;display:grid;grid-template-columns:repeat(auto-fill,minmax(min(calc(var(--cw,8ch) + var(--mk,0) * (1em - 1ch) + 22px),calc(50% - var(--gap))),1fr));gap:var(--gap);font-size:var(--fh-fs-ui)}
 .btns button{min-width:0;padding:5px 10px;border-radius:5px;text-align:left;line-height:1.35;overflow-wrap:anywhere;text-wrap:balance;transition:background .12s,border-color .12s}
 .btns button:not(.on):hover:not(:disabled){background:var(--hover-1)}
 /* The current choice, in the blue of the operator's own messages: it is the one they made. */
@@ -252,35 +252,35 @@
    gap between two choices is what a near miss lands in. */
 @media(hover:none){.btns{--gap:6px}.btns button{padding:8px 10px}.btns .nav button{padding:7px 14px}}
 /* Interactive directory browser for `/cd` and post-`/agent` placement (`WorkdirScreen`). */
-.wd-picker{margin-top:4px;border:1px solid var(--line);border-radius:10px;background:var(--panel);overflow:hidden;font-size:13px}
+.wd-picker{margin-top:4px;border:1px solid var(--line);border-radius:10px;background:var(--panel);overflow:hidden;font-size:var(--fh-fs-ui)}
 .wd-head{padding:11px 14px 9px;border-bottom:1px solid var(--line)}
 .wd-title-row{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
-.wd-title{display:inline-flex;align-items:center;gap:7px;font-size:14px;font-weight:600;color:var(--fg)}
+.wd-title{display:inline-flex;align-items:center;gap:7px;font-size:var(--fh-fs-ui);font-weight:600;color:var(--fg)}
 .wd-title .ic{width:15px;height:15px;color:var(--accent)}
 .wd-badges{display:inline-flex;align-items:center;gap:5px;flex-wrap:wrap}
-.wd-meta{padding:1px 7px;border:1px solid var(--line);border-radius:9px;font-size:11px;color:var(--dim);background:var(--field)}
-.wd-hint{margin-top:3px;font-size:12px;color:var(--dim)}
+.wd-meta{padding:1px 7px;border:1px solid var(--line);border-radius:9px;font-size:var(--fh-fs-xs);color:var(--dim);background:var(--field)}
+.wd-hint{margin-top:3px;font-size:var(--fh-fs-sm);color:var(--dim)}
 .wd-bar{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--line);background:var(--field);flex-wrap:wrap}
 .wd-acts{display:inline-flex;align-items:center;gap:5px;flex:none}
-.wd-act{display:inline-flex;align-items:center;gap:4px;padding:4px 9px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--fg);font-size:12px;line-height:1.3;cursor:pointer;transition:background .12s,border-color .12s}
+.wd-act{display:inline-flex;align-items:center;gap:4px;padding:4px 9px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--fg);font-size:var(--fh-fs-sm);line-height:1.3;cursor:pointer;transition:background .12s,border-color .12s}
 .wd-act .ic{width:13px;height:13px}
 .wd-act:hover:not(:disabled){background:var(--hover-1);border-color:var(--own-edge)}
 .wd-act:disabled{opacity:.45;cursor:default}
-.wd-crumbs{display:flex;align-items:center;gap:2px;flex:1;min-width:0;overflow-x:auto;scrollbar-width:thin;font-family:var(--mono);font-size:12px;padding:2px 0}
+.wd-crumbs{display:flex;align-items:center;gap:2px;flex:1;min-width:0;overflow-x:auto;scrollbar-width:thin;font-family:var(--mono);font-size:var(--fh-fs-sm);padding:2px 0}
 .wd-crumb{flex:none;padding:2px 6px;border:none;border-radius:5px;background:transparent;color:var(--dim);font:inherit;cursor:pointer;white-space:nowrap}
 .wd-crumb:hover:not(:disabled){color:var(--fg);background:var(--hover-1)}
 .wd-crumb.cur{color:var(--fg);font-weight:600;cursor:default}
 .wd-sep{color:var(--fg-faint);user-select:none;flex:none}
-.wd-err{padding:8px 14px;border-bottom:1px solid var(--line);color:var(--err);font-size:12.5px;background:var(--panel)}
+.wd-err{padding:8px 14px;border-bottom:1px solid var(--line);color:var(--err);font-size:var(--fh-fs-sm);background:var(--panel)}
 .wd-cur{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 14px;border-bottom:1px solid var(--line);flex-wrap:wrap}
 .wd-cur-info{display:flex;align-items:center;gap:6px;min-width:0;flex:1;flex-wrap:wrap}
-.wd-path{font-family:var(--mono);font-size:12px;color:var(--fg-muted);overflow-wrap:anywhere;background:none;border:none;padding:0}
-.wd-pick-cur{display:inline-flex;align-items:center;gap:5px;flex:none;padding:5px 11px;border:1px solid var(--own-edge);border-radius:6px;background:var(--own);color:var(--fg-own);font-size:12.5px;font-weight:500;cursor:pointer;transition:background .12s,border-color .12s}
+.wd-path{font-family:var(--mono);font-size:var(--fh-fs-sm);color:var(--fg-muted);overflow-wrap:anywhere;background:none;border:none;padding:0}
+.wd-pick-cur{display:inline-flex;align-items:center;gap:5px;flex:none;padding:5px 11px;border:1px solid var(--own-edge);border-radius:6px;background:var(--own);color:var(--fg-own);font-size:var(--fh-fs-sm);font-weight:500;cursor:pointer;transition:background .12s,border-color .12s}
 .wd-pick-cur .ic{width:13px;height:13px}
 .wd-pick-cur:hover:not(:disabled){filter:brightness(1.06)}
 .wd-filter{display:flex;align-items:center;gap:7px;padding:7px 12px;border-bottom:1px solid var(--line)}
 .wd-filter .ic{width:13px;height:13px;color:var(--dim);flex:none}
-.wd-q{flex:1;min-width:0;border:none;background:transparent;color:var(--fg);font:inherit;font-size:12.5px;outline:none}
+.wd-q{flex:1;min-width:0;border:none;background:transparent;color:var(--fg);font:inherit;font-size:var(--fh-fs-sm);outline:none}
 .wd-list{max-height:320px;overflow-y:auto;padding:6px}
 .wd-row{display:flex;align-items:center;gap:6px;padding:2px;border-radius:7px}
 .wd-row:hover{background:var(--hover-1)}
@@ -293,13 +293,13 @@
 .wd-go{display:inline-flex;color:var(--fg-faint);flex:none}
 .wd-go .ic{width:13px;height:13px}
 .wd-open:hover .wd-go{color:var(--fg)}
-.wd-tag{flex:none;padding:0 6px;border:1px solid var(--line);border-radius:8px;font-size:10.5px;line-height:1.6;color:var(--dim)}
+.wd-tag{flex:none;padding:0 6px;border:1px solid var(--line);border-radius:8px;font-size:var(--fh-fs-2xs);line-height:1.6;color:var(--dim)}
 .wd-tag.on{border-color:var(--own-edge);color:var(--accent)}
-.wd-choose{display:inline-flex;align-items:center;gap:4px;flex:none;padding:4px 9px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--fg-muted);font-size:12px;cursor:pointer;transition:background .12s,border-color .12s,color .12s}
+.wd-choose{display:inline-flex;align-items:center;gap:4px;flex:none;padding:4px 9px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--fg-muted);font-size:var(--fh-fs-sm);cursor:pointer;transition:background .12s,border-color .12s,color .12s}
 .wd-choose .ic{width:12px;height:12px}
 .wd-choose:hover:not(:disabled),.wd-choose.on{border-color:var(--own-edge);background:var(--own);color:var(--fg-own)}
-.wd-empty{padding:18px 14px;text-align:center;color:var(--dim);font-size:12.5px}
-.wd-more{padding:6px 14px 9px;border-top:1px solid var(--line);font-size:11.5px;color:var(--dim)}
+.wd-empty{padding:18px 14px;text-align:center;color:var(--dim);font-size:var(--fh-fs-sm)}
+.wd-more{padding:6px 14px 9px;border-top:1px solid var(--line);font-size:var(--fh-fs-xs);color:var(--dim)}
 .wd-picker button.busy{opacity:.85;border-color:var(--own-edge);background:var(--own)}
 @media(hover:none){.wd-act{padding:6px 10px}.wd-open{padding:9px 8px}.wd-choose{padding:7px 10px}.wd-pick-cur{padding:7px 12px}}
 .files{margin-top:6px;display:flex;flex-wrap:wrap;gap:6px}
@@ -307,7 +307,7 @@
    a control in the flow of the answer, and one line even on a phone — the counts are what is read
    at a glance, the file count is what says how much. */
 .tc{margin-top:8px;display:flex;flex-wrap:wrap;align-items:center;gap:6px}
-.tc button,.tc .tc-summary{display:inline-flex;align-items:center;gap:6px;max-width:100%;padding:2px 8px;font:inherit;font-size:12px;color:var(--fh-fg-dim);background:none;border:1px solid var(--fh-line);border-radius:var(--fh-radius-ctrl)}
+.tc button,.tc .tc-summary{display:inline-flex;align-items:center;gap:6px;max-width:100%;padding:2px 8px;font:inherit;font-size:var(--fh-fs-sm);color:var(--fh-fg-dim);background:none;border:1px solid var(--fh-line);border-radius:var(--fh-radius-ctrl)}
 .tc button{cursor:pointer}
 .tc button:hover:not(:disabled){color:var(--fh-fg-hi);background:var(--fh-hover);border-color:var(--fh-fg-dim)}
 .tc button:focus-visible{outline:1px solid var(--fh-accent);outline-offset:1px}
@@ -342,21 +342,21 @@
    Scoped under .wb-topic-editor to override later cascade rules in workbench.css/workbench-theme.css. */
 .wb-topic-editor>.wb-topic-header{height:48px;min-height:48px;padding:0 10px 0 18px;gap:10px;border-bottom:1px solid var(--fh-line);background:var(--fh-bg)}
 .wb-stack .wb-topic-editor>.wb-topic-header{display:none}
-.wb-topic-editor .wb-topic-title{font-size:14px;font-weight:600;color:var(--fh-fg-hi)}
+.wb-topic-editor .wb-topic-title{font-size:var(--fh-fs-body);font-weight:600;color:var(--fh-fg-hi)}
 .wb-topic-editor .wb-topic-pill,
-.wb-topic-editor .wb-topic-conn{font-size:11px;line-height:1.4;padding:1px 7px;border-radius:3px;white-space:nowrap;flex:none}
-.wb-topic-editor .wb-topic-pill[data-tone="ok"]{background:var(--fh-ok-bg);color:var(--fh-ok)}
+.wb-topic-editor .wb-topic-conn{font-size:var(--fh-fs-xs);line-height:1.4;padding:1px 7px;border-radius:3px;white-space:nowrap;flex:none}
+.wb-topic-editor .wb-topic-pill[data-tone="ok"]{background:var(--fh-running-bg);color:var(--fh-running)}
 .wb-topic-editor .wb-topic-pill[data-tone="warn"]{background:var(--warn-tint-2);color:var(--fh-warn)}
 .wb-topic-editor .wb-topic-pill[data-tone="err"],
 .wb-topic-editor .wb-topic-conn{background:var(--err-tint-3);color:var(--fh-err)}
 .wb-topic-editor .wb-topic-tools{display:flex;align-items:center;gap:2px;background:var(--fh-bg-widget);border:1px solid var(--fh-input-line);border-radius:var(--fh-radius-ctrl);padding:2px;flex:none}
-.wb-topic-editor .wb-topic-tool-btn{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border:0;border-radius:var(--fh-radius-ctrl);background:transparent;color:var(--fh-fg-dim);font-size:12px;line-height:1.4;white-space:nowrap;cursor:pointer}
+.wb-topic-editor .wb-topic-tool-btn{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border:0;border-radius:var(--fh-radius-ctrl);background:transparent;color:var(--fh-fg-dim);font-size:var(--fh-fs-sm);line-height:1.4;white-space:nowrap;cursor:pointer}
 .wb-topic-editor .wb-topic-tool-btn:hover{color:var(--fh-fg-hi);background:transparent;border-color:transparent}
 .wb-topic-editor .wb-topic-tool-btn.on,
 .wb-topic-editor .wb-topic-tool-btn.is-active{background:var(--fh-sel-inactive);color:var(--fh-fg-hi)}
 .wb-topic-editor .wb-topic-tool-icon,
 .wb-topic-editor .wb-topic-tool-icon svg{width:15px;height:15px;display:inline-flex;align-items:center;justify-content:center;flex:none}
-.wb-topic-editor .wb-topic-tool-btn .fh-badge{font-size:10px;min-width:16px;height:15px;line-height:15px;padding:0 4px;border-radius:8px;background:var(--fh-accent);color:var(--fh-on-accent)}
+.wb-topic-editor .wb-topic-tool-btn .fh-badge{font-size:var(--fh-fs-2xs);min-width:17px;height:17px;line-height:17px;padding:0 4px;border-radius:9px;background:var(--fh-accent);color:var(--fh-on-accent)}
 .wb-topic-editor .wb-topic-more{width:28px;height:28px;border-radius:5px;color:var(--fh-fg)}
 .wb-topic-editor .wb-topic-more:hover{background:var(--fh-act-hover)}
 
@@ -364,16 +364,16 @@
 .wb-topic-editor #log{max-width:none;width:100%;margin:0;padding:22px max(24px,calc((100% - 760px)/2)) 12px}
 .wb-topic-editor .m{margin:0 0 16px}
 .wb-topic-editor .m.own{background:var(--fh-own);border-left:2px solid var(--fh-own-edge);border-radius:0 var(--fh-radius-card) var(--fh-radius-card) 0;padding:10px 14px;color:var(--fh-fg-hi)}
-.wb-topic-editor .m .t{font-size:11px;color:var(--fh-fg-dim);margin-top:4px}
-.wb-topic-editor .b :not(pre)>code{background:var(--fh-bg-code);font-size:12px;padding:1px 4px;border-radius:3px}
+.wb-topic-editor .m .t{font-size:var(--fh-fs-xs);color:var(--fh-fg-dim);margin-top:4px}
+.wb-topic-editor .b :not(pre)>code{background:var(--fh-bg-code);font-size:var(--fh-fs-sm);padding:1px 4px;border-radius:3px}
 .wb-topic-editor .b .cb{background:var(--fh-bg-side);border:1px solid var(--fh-line);border-radius:var(--fh-radius-card)}
 .wb-topic-editor .b .cb .cb-h{background:var(--fh-bg-widget);border-bottom:1px solid var(--fh-line)}
-.wb-topic-editor .tl{border:1px solid var(--fh-line);border-radius:var(--fh-radius-card);padding:5px 10px;color:var(--fh-fg-dim);font-size:12px;margin:6px 0;gap:8px;align-items:center;background:var(--fh-bg-side)}
+.wb-topic-editor .tl{border:1px solid var(--fh-line);border-radius:var(--fh-radius-card);padding:5px 10px;color:var(--fh-fg-dim);font-size:var(--fh-fs-sm);margin:6px 0;gap:8px;align-items:center;background:var(--fh-bg-side)}
 .wb-topic-editor .tl:hover{background:var(--fh-hover);color:var(--fh-fg)}
 .wb-topic-editor .tl.open{display:block}
-.wb-topic-editor .tc{margin-top:8px;border:1px solid var(--fh-line);border-radius:var(--fh-radius-card);padding:7px 10px;font-size:12px;display:flex;flex-wrap:wrap;gap:10px;align-items:center;background:var(--fh-bg-side)}
+.wb-topic-editor .tc{margin-top:8px;border:1px solid var(--fh-line);border-radius:var(--fh-radius-card);padding:7px 10px;font-size:var(--fh-fs-sm);display:flex;flex-wrap:wrap;gap:10px;align-items:center;background:var(--fh-bg-side)}
 .wb-topic-editor .tc button,
-.wb-topic-editor .tc .tc-summary{padding:0;border:0;background:none;color:var(--fh-fg);font-size:12px;gap:8px}
+.wb-topic-editor .tc .tc-summary{padding:0;border:0;background:none;color:var(--fh-fg);font-size:var(--fh-fs-sm);gap:8px}
 .wb-topic-editor .tc button:hover:not(:disabled){background:none;border-color:transparent;color:var(--fh-fg-hi)}
 .wb-topic-editor .tc .add{color:var(--fh-git-add)}
 .wb-topic-editor .tc .del{color:var(--fh-git-del)}
@@ -382,13 +382,13 @@
 
 .wb-topic-editor .launch{max-width:none;margin:0}
 .wb-topic-editor .launch-head{text-align:left;margin-bottom:14px}
-.wb-topic-editor .launch-title{font-size:14px;color:var(--fh-fg-hi)}
-.wb-topic-editor .launch-sub{font-size:12px;color:var(--fh-fg-dim)}
-.wb-topic-editor .launch-choice{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;margin-top:10px;padding:7px 10px;border:1px solid var(--fh-line);border-radius:var(--fh-radius-card);background:var(--fh-bg-side);font-size:12px}
+.wb-topic-editor .launch-title{font-size:var(--fh-fs-ui);color:var(--fh-fg-hi)}
+.wb-topic-editor .launch-sub{font-size:var(--fh-fs-sm);color:var(--fh-fg-dim)}
+.wb-topic-editor .launch-choice{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;margin-top:10px;padding:7px 10px;border:1px solid var(--fh-line);border-radius:var(--fh-radius-card);background:var(--fh-bg-side);font-size:var(--fh-fs-sm)}
 .wb-topic-editor .launch-choice-item{display:inline-flex;align-items:center;gap:6px;min-width:0;max-width:100%}
 .wb-topic-editor .launch-choice-k{color:var(--fh-fg-dim);flex:none}
 .wb-topic-editor .launch-choice-agent{font-weight:600;color:var(--fh-fg-hi);white-space:nowrap}
-.wb-topic-editor .launch-choice-dir{font-family:var(--fh-font-mono);font-size:11.5px;color:var(--fh-fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:460px}
+.wb-topic-editor .launch-choice-dir{font-family:var(--fh-font-mono);font-size:var(--fh-fs-xs);color:var(--fh-fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:460px}
 .wb-topic-editor .launch-wd{margin-top:16px;transition:opacity .12s ease}
 .wb-topic-editor .launch-wd.loading{opacity:.65;pointer-events:none}
 .wb-topic-editor .launch-host{margin:20px 2px 8px;letter-spacing:.05em}
@@ -398,9 +398,9 @@
 .wb-topic-editor .agent-card{min-height:auto;padding:9px 12px;background:var(--fh-card);border:1px solid var(--fh-line);border-radius:var(--fh-radius-card)}
 .wb-topic-editor .agent-card:hover{background:var(--fh-hover);border-color:var(--fh-line);transform:none}
 .wb-topic-editor .agent-card.def{background:var(--fh-sel);border-color:var(--fh-accent)}
-.wb-topic-editor .ac-id{font-size:13px;color:var(--fh-fg-hi)}
-.wb-topic-editor .ac-tag{font-size:10.5px;padding:1px 6px;border-radius:var(--fh-radius-ctrl);border:1px solid var(--fh-input-line);background:transparent;color:var(--fh-fg-dim)}
-.wb-topic-editor .ac-hc{flex:none;display:inline-block;font-size:10.5px;line-height:1.45;padding:0 5px;border-radius:var(--fh-radius-ctrl);background:var(--fh-btn2);color:var(--fh-fg-hi)}
+.wb-topic-editor .ac-id{font-size:var(--fh-fs-ui);color:var(--fh-fg-hi)}
+.wb-topic-editor .ac-tag{font-size:var(--fh-fs-2xs);padding:1px 6px;border-radius:var(--fh-radius-ctrl);border:1px solid var(--fh-input-line);background:transparent;color:var(--fh-fg-dim)}
+.wb-topic-editor .ac-hc{flex:none;display:inline-block;font-size:var(--fh-fs-2xs);line-height:1.45;padding:0 5px;border-radius:var(--fh-radius-ctrl);background:var(--fh-btn2);color:var(--fh-fg-hi)}
 .wb-topic-editor .ac-hc.h-claude{background:var(--fh-hc-claude-bg);color:var(--fh-hc-claude)}
 .wb-topic-editor .ac-hc.h-codex{background:var(--fh-hc-codex-bg);color:var(--fh-hc-codex)}
 .wb-topic-editor .ac-hc.h-opencode{background:var(--fh-hc-opencode-bg);color:var(--fh-hc-opencode)}
@@ -408,9 +408,9 @@
 .wb-topic-editor .ac-hc.h-gemini{background:var(--fh-hc-gemini-bg);color:var(--fh-hc-gemini)}
 .wb-topic-editor .ac-hc.h-dsh{background:var(--fh-hc-dsh-bg);color:var(--fh-hc-dsh)}
 .wb-topic-editor .ac-check{display:none}
-.wb-topic-editor .ac-kind{font-size:12px;color:var(--fh-fg-dim);gap:0}
+.wb-topic-editor .ac-kind{font-size:var(--fh-fs-sm);color:var(--fh-fg-dim);gap:0}
 .wb-topic-editor .ac-sep{flex:none}
-.wb-topic-editor .ac-model{font-size:12px;color:var(--fh-fg-dim)}
+.wb-topic-editor .ac-model{font-size:var(--fh-fs-sm);color:var(--fh-fg-dim)}
 .wb-topic-editor .launch-host .off{color:var(--fh-err)}
 .wb-topic-editor .launch-group.off .agent-card{opacity:.5}
 
@@ -422,32 +422,32 @@
 .wb-topic-editor .wd-choose:hover:not(:disabled),
 .wb-topic-editor .wd-choose.on{border-color:var(--fh-accent);background:var(--fh-sel);color:var(--fh-fg-hi)}
 
-.wb-topic-editor .wb-topic-fork-note{display:flex;align-items:center;gap:6px;width:100%;padding:6px max(24px,calc((100% - 760px)/2));border:0;border-bottom:1px solid var(--fh-line);border-radius:0;background:var(--fh-bg-side);color:var(--fh-fg-dim);font-size:12px;text-align:left;cursor:pointer}
+.wb-topic-editor .wb-topic-fork-note{display:flex;align-items:center;gap:6px;width:100%;padding:6px max(24px,calc((100% - 760px)/2));border:0;border-bottom:1px solid var(--fh-line);border-radius:0;background:var(--fh-bg-side);color:var(--fh-fg-dim);font-size:var(--fh-fs-sm);text-align:left;cursor:pointer}
 .wb-topic-editor .wb-topic-fork-note:hover{background:var(--fh-hover);color:var(--fh-fg-hi)}
 
 @media (max-width: 640px) {
   .wb-topic-editor .wb-topic-log,
   .wb-topic-editor #log{padding:14px 16px 18px}
-  .wb-topic-editor .wb-topic-fork-note{padding:8px 16px;font-size:13px}
-  .wb-topic-editor .m{font-size:15.5px;line-height:1.55;margin-bottom:18px}
+  .wb-topic-editor .wb-topic-fork-note{padding:8px 16px;font-size:var(--fh-fs-ui)}
+  .wb-topic-editor .m{font-size:var(--fh-fs-body);line-height:1.55;margin-bottom:18px}
   .wb-topic-editor .m.own{width:fit-content;max-width:86%;margin-left:auto;background:var(--fh-own-m);border:0;border-radius:18px 18px 4px 18px;padding:9px 14px;color:var(--fh-fg-hi)}
   .wb-topic-editor .m.own .t{text-align:right}
   .wb-topic-editor .msg-actions{position:static;margin-top:6px;width:fit-content;opacity:.9;pointer-events:auto}
-  .wb-topic-editor .tl{border-radius:8px;padding:8px 12px;font-size:13px}
-  .wb-topic-editor .tc{border-radius:10px;padding:11px 12px;font-size:13.5px}
+  .wb-topic-editor .tl{border-radius:8px;padding:8px 12px;font-size:var(--fh-fs-ui)}
+  .wb-topic-editor .tc{border-radius:10px;padding:11px 12px;font-size:var(--fh-fs-ui)}
   .wb-topic-editor .tc button,
-  .wb-topic-editor .tc .tc-summary{font-size:13.5px}
+  .wb-topic-editor .tc .tc-summary{font-size:var(--fh-fs-ui)}
   .wb-topic-editor .launch-grid{grid-template-columns:1fr;gap:0;border:1px solid var(--fh-line);border-radius:12px;overflow:hidden;background:var(--fh-card)}
   .wb-topic-editor .agent-card{border:0;border-bottom:1px solid var(--fh-line);border-radius:0;min-height:50px;padding:10px 14px}
   .wb-topic-editor .agent-card:last-child{border-bottom:0}
   .wb-topic-editor .agent-card.def{background:var(--fh-card);border-color:var(--fh-line)}
-  .wb-topic-editor .ac-id{font-size:15.5px}
-  .wb-topic-editor .ac-hc{font-size:11.5px;padding:0 6px;border-radius:4px}
-  .wb-topic-editor .ac-tag{font-size:11.5px;padding:1px 7px;border-radius:4px}
+  .wb-topic-editor .ac-id{font-size:var(--fh-fs-body)}
+  .wb-topic-editor .ac-hc{font-size:var(--fh-fs-xs);padding:0 6px;border-radius:4px}
+  .wb-topic-editor .ac-tag{font-size:var(--fh-fs-xs);padding:1px 7px;border-radius:4px}
   .wb-topic-editor .ac-check{display:inline-flex;align-items:center;justify-content:center;color:var(--fh-link);flex:none}
   .wb-topic-editor .ac-check svg{width:19px;height:19px}
   .wb-topic-editor .ac-kind,
-  .wb-topic-editor .ac-model{font-size:12.5px}
+  .wb-topic-editor .ac-model{font-size:var(--fh-fs-sm)}
   .wb-topic-editor .wd-picker{border-radius:12px}
   .wb-topic-editor .launch-choice{padding:8px 10px;border-radius:10px;gap:5px 10px}
   .wb-topic-editor .launch-choice-dir{max-width:100%}
