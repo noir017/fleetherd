@@ -473,6 +473,127 @@
   color: var(--fh-on-accent);
 }
 
+.fh-seg-item .fh-badge {
+  min-width: 0;
+  height: auto;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--fh-fg-dim);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.fh-seg--nav .fh-seg-item.is-active .fh-badge {
+  color: var(--fh-fg);
+}
+
+.fh-seg--value .fh-seg-item.is-active .fh-badge {
+  color: var(--fh-on-accent);
+  opacity: 0.85;
+}
+
+/* Shared sidebar list header: segmented tabs + filter bar */
+.fh-sidebar-seg {
+  padding: 8px 10px 0;
+  flex: none;
+}
+
+.fh-sidebar-seg .fh-seg {
+  width: 100%;
+  display: flex;
+  background: var(--fh-bg-widget);
+  border: 1px solid var(--fh-input-line);
+  border-radius: var(--fh-radius-ctrl);
+  padding: 2px;
+  gap: 2px;
+}
+
+.fh-sidebar-seg .fh-seg-item {
+  flex: 1;
+  padding: 4px 0;
+  border-radius: var(--fh-radius-ctrl);
+  color: var(--fh-fg-dim);
+  font-size: 12px;
+}
+
+.fh-sidebar-seg .fh-seg-item.is-active {
+  background: var(--fh-sel-inactive);
+  color: var(--fh-fg-hi);
+}
+
+.fh-sidebar-filter {
+  padding: 8px 10px 6px;
+  flex: none;
+}
+
+.fh-sidebar-filter .fh-filterbar {
+  gap: 6px;
+}
+
+.fh-sidebar-filter .fh-fb-row {
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.fh-sidebar-filter .fh-fb-search {
+  height: 28px;
+  box-sizing: border-box;
+  padding: 0 8px;
+  border-radius: var(--fh-radius-ctrl);
+  background: var(--fh-input);
+  border: 1px solid var(--fh-input-line);
+}
+
+.fh-sidebar-filter .fh-fb-q {
+  font-size: 12.5px;
+}
+
+.fh-sidebar-filter .fh-fb-filter,
+.fh-sidebar-filter .fh-fb-sort,
+.fh-sidebar-filter .fh-fb-dir {
+  height: 28px;
+  min-height: 28px;
+  box-sizing: border-box;
+}
+
+.fh-sidebar-filter .fh-fb-tools {
+  margin-left: auto;
+}
+
+.fh-sidebar-filter .fh-fb-pins {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.fh-sidebar-filter .fh-fb-pins[hidden] {
+  display: none;
+}
+
+.fh-sidebar-filter .fh-fb-pins .fh-fb-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.fh-sidebar-filter .fh-fb-chip {
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: var(--fh-radius-ctrl);
+  border: 1px solid var(--fh-input-line);
+  background: transparent;
+  color: var(--fh-fg-dim);
+}
+
+.fh-sidebar-filter .fh-fb-chip.is-active {
+  border-color: var(--fh-toggle-line);
+  color: var(--fh-fg-hi);
+  background: var(--fh-toggle);
+}
+
 /* Grouped List (square rows, sel + 1px accent outline, 11px uppercase group headers) */
 .fh-list {
   display: flex;

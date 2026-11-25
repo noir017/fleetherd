@@ -257,6 +257,14 @@ describe('features/schedules plugin', () => {
     view.init(undefined, makePanelInitContext('schedules').ctx);
     await flushMicrotasks();
 
+    // Uses shared sidebar segmented tablist + FilterBar header containers
+    const segHost = view.element.querySelector<HTMLElement>('.fh-sidebar-seg');
+    const filterHost = view.element.querySelector<HTMLElement>('.fh-sidebar-filter');
+    expect(segHost?.querySelector('.fh-seg--nav[role="tablist"]')).not.toBeNull();
+    expect(segHost?.querySelector('[data-seg-value="tasks"] .fh-seg-count')?.textContent).toBe('1');
+    expect(segHost?.querySelector('[data-seg-value="sessions"] .fh-seg-count')?.textContent).toBe('1');
+    expect(filterHost?.querySelector('.fh-filterbar')).not.toBeNull();
+
     // Renders loaded task row and clicking it opens the schedule editor.
     const row = view.element.querySelector<HTMLElement>('.sched-row');
     expect(row).not.toBeNull();

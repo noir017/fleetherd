@@ -6,6 +6,7 @@ import {
   createFilterBar,
   createList,
   createNotice,
+  createSegmented,
   type FilterBarStorageAdapter,
   type ListGroup,
   type ListItem,
@@ -28,9 +29,13 @@ import type {
   FilterBarController,
   ListController,
   NoticeController,
+  SegmentedController,
 } from '../../components/index.js';
 
 const FILTER_STORAGE_KEY = 'skills_filter_v1';
+const TIER_STORAGE_KEY = 'skills_tier_v1';
+
+type SkillTierTab = 'resident' | 'library';
 
 function createFilterStorageAdapter(ctx: PluginContext): FilterBarStorageAdapter {
   return {
@@ -153,12 +158,14 @@ class SkillsViewPanel implements SkillPanelComponent {
   private readonly _countHost: HTMLElement;
   private readonly _searchesHost: HTMLElement;
   private readonly _actionBar: ActionBarController;
+  private readonly _segmented: SegmentedController;
   private readonly _notice: NoticeController;
   private readonly _filterBar: FilterBarController;
   private readonly _list: ListController<SkillPanelEntry>;
   private readonly _disposables = new DisposableStore();
   private readonly _copyTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly _copiedNames = new Set<string>();
+  private _tier: SkillTierTab;
   private _disposed = false;
 
   constructor(ctx: PluginContext, store: SkillsStore, deps: ResolvedSkillsDeps) {
@@ -167,6 +174,7 @@ class SkillsViewPanel implements SkillPanelComponent {
     this._deps = deps;
     const doc = deps.doc;
     const icons = deps.icons();
+    this._tier = ctx.storage.get<string>(TIER_STORAGE_KEY) === 'resident' ? 'resident' : 'library';
 
     this.element = doc.createElement('div');
     this.element.className = 'fh-skills-view';
@@ -179,19 +187,41 @@ class SkillsViewPanel implements SkillPanelComponent {
     actionsHost.className = 'fh-skills-view-actions';
     header.append(this._countHost, actionsHost);
 
+    const segHost = doc.createElement('div');
+    segHost.className = 'fh-skills-view-seg fh-sidebar-seg';
     const noticeHost = doc.createElement('div');
     noticeHost.className = 'fh-skills-view-notice';
     const filterHost = doc.createElement('div');
-    filterHost.className = 'fh-skills-view-filter';
+    filterHost.className = 'fh-skills-view-filter fh-sidebar-filter';
     const bodyHost = doc.createElement('div');
     bodyHost.className = 'fh-skills-view-body';
     this._searchesHost = doc.createElement('div');
     this._searchesHost.className = 'fh-skills-view-searches';
-    this.element.append(header, noticeHost, filterHost, bodyHost, this._searchesHost);
+    this.element.append(header, segHost, noticeHost, filterHost, bodyHost, this._searchesHost);
 
     this._actionBar = this._createActionBar(doc, icons);
     actionsHost.appendChild(this._actionBar.el);
     this._disposables.add(this._actionBar);
+
+    this._segmented = createSegmented(
+      {
+        kind: 'nav',
+        value: this._tier,
+        ariaLabel: tr('skills.tierAria'),
+        options: [
+          { value: 'resident', label: tr('skills.tabResident'), title: tr('skills.tierResidentTitle') },
+          { value: 'library', label: tr('skills.tabLibrary'), title: tr('skills.tierLibraryTitle') },
+        ],
+        onChange: (value) => {
+          this._tier = value === 'library' ? 'library' : 'resident';
+          this._ctx.storage.set(TIER_STORAGE_KEY, this._tier);
+          this._syncAll();
+        },
+      },
+      doc,
+    );
+    segHost.appendChild(this._segmented.el);
+    this._disposables.add(this._segmented);
 
     this._notice = createNotice({ tone: 'err', message: '' }, doc);
     this._notice.dismiss();
@@ -336,13 +366,41 @@ class SkillsViewPanel implements SkillPanelComponent {
   private _syncAll(): void {
     if (this._disposed) return;
     const snap = this._store.snapshot();
-    this._filterBar.setGroups(buildSkillFilterGroups(snap.list));
+    const tabSkills = this._skillsForTier(snap.list);
+    this._filterBar.setGroups(buildSkillFilterGroups(tabSkills));
     this._paintList();
+  }
+
+  private _skillsForTier(list: readonly SkillPanelEntry[]): SkillPanelEntry[] {
+    return list.filter((s) => (this._tier === 'resident' ? Boolean(s.resident) : !s.resident));
   }
 
   private _paintList(): void {
     if (this._disposed) return;
     const snap = this._store.snapshot();
+    let residentCount = 0;
+    let libraryCount = 0;
+    for (const s of snap.list) {
+      if (s.resident) residentCount++;
+      else libraryCount++;
+    }
+    this._segmented.update({
+      value: this._tier,
+      options: [
+        {
+          value: 'resident',
+          label: tr('skills.tabResident'),
+          badge: residentCount || null,
+          title: tr('skills.tierResidentTitle'),
+        },
+        {
+          value: 'library',
+          label: tr('skills.tabLibrary'),
+          badge: libraryCount || null,
+          title: tr('skills.tierLibraryTitle'),
+        },
+      ],
+    });
     render(
       html`<span class="fh-skills-view-title">${tr('skills.title')}</span>${renderBadge({
         count: snap.list.length > 0 ? snap.list.length : null,
@@ -353,8 +411,9 @@ class SkillsViewPanel implements SkillPanelComponent {
     this._actionBar.setDisabled('refresh', snap.loading);
     this._paintNotice(snap.error, snap.enabled);
 
-    const filtered = filterSkills(snap.list, this._filterBar.state());
-    this._filterBar.setCounts(filtered.length, snap.list.length);
+    const tabSkills = this._skillsForTier(snap.list);
+    const filtered = filterSkills(tabSkills, this._filterBar.state());
+    this._filterBar.setCounts(filtered.length, tabSkills.length);
 
     const groups: ListGroup<SkillPanelEntry>[] = groupSkills(filtered).map((bucket) => ({
       id: bucket.id,
