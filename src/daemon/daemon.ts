@@ -841,6 +841,7 @@ export class Daemon {
     if (historyPanel) adapter.useHistoryPanel?.(historyPanel);
     adapter.useAgentCatalog?.((ref) => this.registry.agentCatalogForRef(ref));
     adapter.useTopicSetup?.((ref, opts) => this.registry.setupTopicForRef(ref, opts));
+    adapter.useWorkdirBrowser?.((ref, opts) => this.registry.browseWorkdirForRef(ref, opts));
     adapter.useModelPicker?.({
       list: (ref) => this.registry.modelPickerForRef(ref),
       choose: (ref, value) => this.registry.chooseModelForRef(ref, value),

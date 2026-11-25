@@ -192,6 +192,7 @@ describe('webui page: the model switch in the status line', () => {
     const h = await open({
       replies: {
         [URL_T]: LIST,
+        'api/topics/setup': { ok: true, agent: 'oc@p', cwd: '/work' },
         [`api/options?peek=1&t=${T}`]: {
           agent: 'oc@p',
           model: 'm1',
@@ -218,14 +219,17 @@ describe('webui page: the model switch in the status line', () => {
     expect(chip(h)).toBeNull();
 
     await h.click('.agent-card[data-agent="oc@p"]');
-    expect(h.calls.filter((c) => c.path === 'api/send').map((c) => c.body.text)).toEqual(['/agent oc@p']);
-    // No status has arrived and no sync followed: the tap alone puts it up, and it works.
-    expect(chip(h)?.textContent).toBe('Model');
+    expect(h.calls.filter((c) => c.path === 'api/topics/setup').map((c) => c.body)).toEqual([
+      { topic: T, agent: 'oc@p' },
+    ]);
+    expect(h.calls.filter((c) => c.path === 'api/send')).toHaveLength(0);
+    // No status has arrived and no sync followed: the tap alone puts it up, and it works while the launcher stays open.
+    expect(chip(h)?.textContent).toBe('m1');
     await h.click('#status .st-model');
     expect(h.calls.find((c) => c.path === URL_T)).toBeTruthy();
     await tick();
     expect(rows(h)).toHaveLength(13);
-    // After the model list loads, peek populates the agent's model and custom settings (e.g. Account).
+    // Peek populates the chosen agent's model and custom settings (e.g. Account) right away.
     await tick();
     const optBtn = h.doc.querySelector('#status .st-opt[data-opt="account"]') as HTMLButtonElement | null;
     expect(optBtn).not.toBeNull();

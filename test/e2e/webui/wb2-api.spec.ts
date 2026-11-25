@@ -18,7 +18,8 @@ const MOBILE_NEW_TOPIC = 'Fresh mobile topic';
 test.describe('wb2-api: 5 backend + frontend workbench integrations', () => {
   test.beforeAll(async () => {
     gateway = await startGateway();
-    fs.mkdirSync(path.join(gateway.workDir, 'sub-a'), { recursive: true });
+    fs.mkdirSync(path.join(gateway.workDir, 'sub-a', 'nested'), { recursive: true });
+    fs.mkdirSync(path.join(gateway.workDir, 'sub-b'), { recursive: true });
     fs.writeFileSync(path.join(gateway.workDir, 'README.md'), '# Modified README\n\nUpdated for git badge check.\n');
     fs.writeFileSync(path.join(gateway.workDir, 'untracked.txt'), 'new file\n');
     const seeded = await seedTopics(gateway, [
@@ -33,8 +34,9 @@ test.describe('wb2-api: 5 backend + frontend workbench integrations', () => {
     await gateway?.stop();
   });
 
-  test('desktop: status bar version, new topic /agent launcher + folder picker, file git badges, and permission switcher', async ({ page }) => {
-    await page.setViewportSize({ width: 1440, height: 900 });
+  test('desktop: status bar version, inline new topic agent + folder picker, file git badges, and permission switcher', async ({ page }) => {
+    test.setTimeout(60_000);
+    await page.setViewportSize({ width: 1280, height: 800 });
     await loginViaUi(page, gateway.baseUrl, gateway.secret);
 
     // 5. Status bar displays v<package.json version>
@@ -42,20 +44,54 @@ test.describe('wb2-api: 5 backend + frontend workbench integrations', () => {
     await expect(versionEl).toBeVisible();
     await expect(versionEl).toContainText(`v${PKG_VERSION}`);
 
-    // 1. New topic shows agent cards (no flat dir grid), and picking an agent triggers the folder picker
+    // 1. New topic shows agent cards AND inline folder browser on the same page; both can be picked in any order
     const newId = seededIds[NEW_TOPIC];
     expect(newId).toBeTruthy();
     await page.goto(`${gateway.baseUrl}/?t=${newId}`);
-    const card = page.locator('.wb-topic-editor .launch .agent-card.def');
-    await expect(card).toBeVisible();
+    const launchEl = page.locator('.wb-topic-editor .launch');
+    await expect(launchEl.locator('.agent-card.def')).toBeVisible();
     await expect(page.locator('.wb-topic-editor .launch .launch-dirs')).toHaveCount(0);
-    const sendAgentReq = page.waitForRequest((req) => req.url().includes('/api/send') && req.method() === 'POST');
-    await card.click();
-    const req = await sendAgentReq;
-    expect(String((req.postDataJSON() as { text?: string }).text ?? '')).toMatch(/^\/agent \S+$/);
-    const picker = page.locator('.wb-topic-editor .wd-picker');
+    const picker = launchEl.locator('.launch-wd .wd-picker');
     await expect(picker).toBeVisible();
-    await expect(page.locator('.wb-topic-editor #status .st-model')).toBeVisible();
+    await expect(launchEl.locator('.launch-choice-agent')).toContainText('alpha');
+    await expect(launchEl.locator('.launch-choice-dir')).toContainText(gateway.workDir);
+
+    // Browse into sub-a, see nested, then go Up without leaving the page
+    await picker.locator('.wd-open').filter({ hasText: 'sub-a' }).first().click();
+    await expect(picker.locator('.wd-row').filter({ hasText: 'nested' })).toBeVisible();
+    await picker.locator('.wd-up').click();
+    await expect(picker.locator('.wd-row').filter({ hasText: 'sub-a' })).toBeVisible();
+
+    // Pick agent beta in place (resets browser to beta's root and shows model switch immediately)
+    const agentSetupReq = page.waitForRequest((req) => req.url().includes('/api/topics/setup') && req.method() === 'POST');
+    await launchEl.locator('.agent-card[data-agent="beta"]').click();
+    const agentReq = await agentSetupReq;
+    expect(agentReq.postDataJSON()).toMatchObject({ topic: newId, agent: 'beta' });
+    await expect(launchEl.locator('.agent-card[data-agent="beta"]')).toHaveClass(/\bdef\b/);
+    await expect(launchEl.locator('.launch-choice-agent')).toContainText('beta');
+    await expect(page.locator('.wb-topic-editor #status .st-model:not(.st-opt)')).toBeVisible();
+    await expect(page.locator('.wb-topic-editor #status .st-perm')).toBeVisible();
+
+    // Pick folder sub-a on the same page
+    const subAPath = path.join(gateway.workDir, 'sub-a');
+    const dirSetupReq = page.waitForRequest((req) => req.url().includes('/api/topics/setup') && req.method() === 'POST');
+    await picker.locator('.wd-row').filter({ hasText: 'sub-a' }).locator('.wd-choose').click();
+    const dirReq = await dirSetupReq;
+    expect(dirReq.postDataJSON()).toMatchObject({ topic: newId, agent: 'beta', cwd: subAPath });
+    await expect(launchEl.locator('.launch-choice-dir')).toContainText(subAPath);
+    await expect(page.locator('.wb-topic-editor .m')).toHaveCount(0);
+
+    fs.mkdirSync('/tmp/wb4-launch', { recursive: true });
+    await page.screenshot({ path: '/tmp/wb4-launch/desktop-1280x800.png' });
+
+    // Send first message and verify the topic runs in beta at sub-a
+    await page.locator('.wb-topic-editor #input').fill('Launch check message');
+    await page.locator('.wb-topic-editor #composer button[type="submit"]').click();
+    await expect(page.locator('.wb-topic-editor .m').filter({ hasText: 'Launch check message' })).toBeVisible();
+    await expect(page.locator('.wb-topic-editor .launch')).toHaveCount(0);
+    await expect(page.locator('.wb-topic-editor #log')).toContainText('echo(beta): Launch check message', { timeout: 15_000 });
+    const promptLog = fs.readFileSync(gateway.promptLogFile, 'utf8');
+    expect(promptLog).toContain('Launch check message');
 
     // 3. File tree shows git status badges (M for modified README.md, ? for untracked.txt)
     const activeId = seededIds[ACTIVE_TOPIC];
@@ -150,7 +186,7 @@ test.describe('wb2-api: 5 backend + frontend workbench integrations', () => {
     await expect.poll(() => revertedBody).toEqual({ action: 'revert', name: 'deploy-check', id: 'abcdef1' });
   });
 
-  test('mobile: new topic /agent launcher + folder picker and status permission chip render cleanly', async ({ page }) => {
+  test('mobile: inline new topic agent + folder picker and status permission chip render cleanly', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await loginViaUi(page, gateway.baseUrl, gateway.secret);
 
@@ -163,14 +199,19 @@ test.describe('wb2-api: 5 backend + frontend workbench integrations', () => {
     const freshRow = page.locator('.wb-stack-list-body .topic-item').filter({ hasText: MOBILE_NEW_TOPIC }).first();
     await expect(freshRow).toBeVisible();
     await freshRow.click();
-    const mobileCard = page.locator('.wb-stack-detail-body .wb-topic-editor .launch .agent-card.def');
-    await expect(mobileCard).toBeVisible();
+    const mobileLaunch = page.locator('.wb-stack-detail-body .wb-topic-editor .launch');
+    await expect(mobileLaunch.locator('.agent-card.def')).toBeVisible();
     await expect(page.locator('.wb-stack-detail-body .wb-topic-editor .launch .launch-dirs')).toHaveCount(0);
-    const sendAgentReq = page.waitForRequest((req) => req.url().includes('/api/send') && req.method() === 'POST');
-    await mobileCard.click();
-    const req = await sendAgentReq;
-    expect(String((req.postDataJSON() as { text?: string }).text ?? '')).toMatch(/^\/agent \S+$/);
-    await expect(page.locator('.wb-stack-detail-body .wb-topic-editor .wd-picker')).toBeVisible();
-    await expect(page.locator('.wb-stack-detail-body .wb-topic-editor #status .st-model')).toBeVisible();
+    const mobilePicker = mobileLaunch.locator('.launch-wd .wd-picker');
+    await expect(mobilePicker).toBeVisible();
+    const subAPath = path.join(gateway.workDir, 'sub-a');
+    const mobileDirReq = page.waitForRequest((req) => req.url().includes('/api/topics/setup') && req.method() === 'POST');
+    await mobilePicker.locator('.wd-row').filter({ hasText: 'sub-a' }).locator('.wd-choose').click();
+    expect((await mobileDirReq).postDataJSON()).toMatchObject({ cwd: subAPath });
+    await expect(mobileLaunch.locator('.launch-choice-dir')).toContainText(subAPath);
+    await expect(page.locator('.wb-stack-detail-body .wb-topic-editor #status .st-model:not(.st-opt)')).toBeVisible();
+    await expect(page.locator('.wb-stack-detail-body .wb-topic-editor #status .st-perm')).toBeVisible();
+    fs.mkdirSync('/tmp/wb4-launch', { recursive: true });
+    await page.screenshot({ path: '/tmp/wb4-launch/mobile-390x844.png' });
   });
 });

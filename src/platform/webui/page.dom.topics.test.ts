@@ -302,17 +302,58 @@ describe('webui page: choosing an agent for a new topic', () => {
     expect(launch(h)!.querySelector('.launch-host')).toBeNull();
   });
 
-  it('a tap sends /agent <id> immediately, clears the launcher, and preserves the composer draft', async () => {
-    const h = await open({ url: 'http://localhost:8787/?t=a1b2c3d4' });
+  it('a tap switches agent in place via api/topics/setup, loads its folder root, and preserves the composer draft', async () => {
+    const wdScreen = (agentId: string, root: string, browsing = root, current = root) => ({
+      agentId,
+      root,
+      current,
+      browsing,
+      breadcrumbs: [
+        { name: '/', path: '/', buttonId: 'wdb:launch:0' },
+        { name: browsing.split('/').filter(Boolean).pop() ?? browsing, path: browsing, buttonId: 'wdb:launch:1' },
+      ],
+      selectCurrent: { path: browsing, buttonId: 'wdr:launch:0', current: browsing === current, root: browsing === root },
+      entries:
+        browsing === '/work'
+          ? [{ name: 'sub-a', path: '/work/sub-a', enterId: 'wde:launch:1', pickId: 'wdr:launch:1', current: current === '/work/sub-a' }]
+          : [{ name: 'nested', path: `${browsing}/nested`, enterId: 'wde:launch:1', pickId: 'wdr:launch:1' }],
+      truncated: 0,
+    });
+    const h = await open({
+      url: 'http://localhost:8787/?t=a1b2c3d4',
+      replies: {
+        'api/topics/workdirs?t=a1b2c3d4&agent=cc': wdScreen('cc', '/work'),
+        'api/topics/workdirs?t=a1b2c3d4&agent=cc&dir=%2Fwork%2Fsub-a': wdScreen('cc', '/work', '/work/sub-a', '/work'),
+        'api/topics/workdirs?t=a1b2c3d4&agent=oc2&root=1': wdScreen('oc2', '/srv'),
+        'api/topics/setup': { ok: true, agent: 'oc2', cwd: '/srv' },
+      },
+    });
     await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4'], { agents }));
+    await tick();
+    const launchEl = launch(h);
+    expect(launchEl).not.toBeNull();
+    // Inline folder browser loads on the same page for the default agent.
+    expect(launchEl!.querySelector('.launch-wd .wd-picker')?.getAttribute('data-browsing')).toBe('/work');
+    expect(launchEl!.querySelector('.launch-choice-dir')?.textContent).toBe('/work');
+    // Navigating into a subfolder updates only the folder browser in place.
+    await h.click('.launch-wd .wd-open[data-wd-browse="/work/sub-a"]');
+    await tick();
+    expect(launch(h)).toBe(launchEl);
+    expect(launchEl!.querySelector('.launch-wd .wd-picker')?.getAttribute('data-browsing')).toBe('/work/sub-a');
+
     (h.el('input') as HTMLTextAreaElement).value = 'a draft';
 
     await h.click('.agent-card[data-agent="oc2"]');
     await tick();
+    await tick();
 
-    const sent = h.calls.filter((c) => c.path === 'api/send');
-    expect(sent.map((c) => [c.body.text, c.body.topic])).toEqual([['/agent oc2', 'a1b2c3d4']]);
-    expect(launch(h)).toBeNull();
+    const setup = h.calls.filter((c) => c.path === 'api/topics/setup');
+    expect(setup.map((c) => [c.body.agent, c.body.topic])).toEqual([['oc2', 'a1b2c3d4']]);
+    expect(h.calls.filter((c) => c.path === 'api/send')).toHaveLength(0);
+    expect(launch(h)).toBe(launchEl);
+    expect(launchEl!.querySelector('.agent-card.def')?.getAttribute('data-agent')).toBe('oc2');
+    expect(launchEl!.querySelector('.launch-wd .wd-picker')?.getAttribute('data-browsing')).toBe('/srv');
+    expect(launchEl!.querySelector('.launch-choice-dir')?.textContent).toBe('/srv');
     // A control, like Stop: what was in the composer is still there.
     expect((h.el('input') as HTMLTextAreaElement).value).toBe('a draft');
   });
@@ -426,7 +467,7 @@ describe('webui page: a machine the gateway cannot reach', () => {
     expect(h.el('log').querySelector('.launch-group.off .agent-card')?.getAttribute('data-agent')).toBe('cc@laptop');
     // Dimmed, not disabled: the machine may be back by the time anyone writes.
     await h.click('.agent-card[data-agent="oc@laptop"]');
-    expect(h.calls.filter((c) => c.path === 'api/send').map((c) => c.body.text)).toEqual(['/agent oc@laptop']);
+    expect(h.calls.filter((c) => c.path === 'api/topics/setup').map((c) => c.body.agent)).toEqual(['oc@laptop']);
   });
 
   it('follows the machines event while the choice is open, both ways', async () => {
