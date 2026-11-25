@@ -276,8 +276,11 @@
 /* ── Workbench topics view (desktop, tablet drawer, mobile stack) ────────── */
 .wb-topics-view{display:flex;flex-direction:column;flex:1 1 auto;min-height:0;height:100%;background:var(--fh-bg-side)}
 .wb-topics-head{display:flex;align-items:center;justify-content:flex-end;gap:4px;padding:6px 10px 0;flex:none}
-.wb-topics-head .fh-btn--ghost{background:transparent;border-color:transparent;color:var(--fh-fg)}
-.wb-topics-head .fh-btn--ghost:hover:not(:disabled){background:var(--fh-act-hover);color:var(--fh-fg-hi)}
+.wb-topics-head[hidden]{display:none}
+.wb-topics-head .fh-btn--ghost,
+.wb-sidebar-head .wb-part-actions .fh-btn--ghost{background:transparent;border-color:transparent;color:var(--fh-fg)}
+.wb-topics-head .fh-btn--ghost:hover:not(:disabled),
+.wb-sidebar-head .wb-part-actions .fh-btn--ghost:hover:not(:disabled){background:var(--fh-act-hover);color:var(--fh-fg-hi)}
 .wb-topics-mobile-title{display:none}
 .wb-topics-seg{padding:8px 10px 0;flex:none}
 .wb-topics-seg .fh-seg{width:100%;display:flex;background:var(--fh-bg-widget);border:1px solid var(--fh-input-line);border-radius:var(--fh-radius-ctrl);padding:2px;gap:2px}
@@ -344,26 +347,6 @@
 .topic-hc.h-dsh{background:var(--fh-hc-dsh-bg);color:var(--fh-hc-dsh)}
 
 .wb-topics-list .topics-empty{padding:16px 14px;color:var(--fh-fg-dim);font-size:12.5px}
-
-/* Mobile bottom action sheet (?m#sheet-row) */
-.wb-topic-sheet-host{position:fixed;inset:0;z-index:1350}
-.wb-topic-sheet-host[hidden]{display:none !important}
-.wb-topic-sheet-scrim{position:absolute;inset:0;background:rgba(0,0,0,.5)}
-.wb-topic-sheet{position:absolute;left:0;right:0;bottom:0;max-height:80vh;max-height:80dvh;display:flex;flex-direction:column;padding:6px 0 calc(10px + env(safe-area-inset-bottom,0px));background:var(--fh-bg-widget);border-top:1px solid var(--fh-line);border-radius:14px 14px 0 0;outline:0}
-.wb-topic-sheet-grab{flex:none;width:38px;height:5px;margin:2px auto 10px;border-radius:3px;background:var(--fh-input-line)}
-.wb-topic-sheet-head{flex:none;padding:0 20px 12px;border-bottom:1px solid var(--fh-line)}
-.wb-topic-sheet-title{display:block;font-size:16px;font-weight:600;color:var(--fh-fg-hi);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.wb-topic-sheet-sub{display:block;margin-top:2px;font-size:12.5px;color:var(--fh-fg-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.wb-topic-sheet-body{flex:1;min-height:0;overflow:auto}
-.wb-topic-sheet-op{display:flex;align-items:center;gap:14px;width:100%;height:52px;padding:0 20px;border:0;border-bottom:1px solid var(--fh-line);border-radius:0;background:transparent;font:inherit;font-size:16px;color:var(--fh-fg-hi);text-align:left;cursor:pointer}
-.wb-topic-sheet-op:last-child{border-bottom:0}
-.wb-topic-sheet-op:hover:not(:disabled){background:var(--fh-hover)}
-.wb-topic-sheet-op:disabled{opacity:.45;cursor:not-allowed}
-.wb-topic-sheet-op.is-danger,.wb-topic-sheet-op.is-danger .wb-topic-sheet-icon{color:var(--fh-err)}
-.wb-topic-sheet-icon{display:inline-flex;align-items:center;justify-content:center;color:var(--fh-fg-dim);flex:none}
-.wb-topic-sheet-icon svg{width:21px;height:21px}
-.wb-topic-sheet-cancel{flex:none;height:50px;margin:10px 12px 0;border:0;border-radius:12px;background:var(--fh-btn2);color:var(--fh-fg-hi);font:inherit;font-size:16px;font-weight:600;cursor:pointer}
-.wb-topic-sheet-cancel:hover{background:var(--fh-btn2-hover)}
 
 /* Mobile stack shell styling (?m#topics, ?m#confirm) */
 .wb-root[data-wb-mode="mobile"] .wb-topics-view{background:var(--fh-bg)}

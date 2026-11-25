@@ -83,13 +83,13 @@ test.describe('Workbench topics list, row menu, confirm dialog, and mobile gestu
 
     // Tap More to open bottom action sheet
     await wrap.locator('[data-swipe-act="more"]').click();
-    const sheet = page.locator('.wb-topic-sheet');
+    const sheet = page.locator('.wb-topic-sheet-backdrop .fh-sheet');
     await expect(sheet).toBeVisible();
-    await expect(sheet.locator('.wb-topic-sheet-title')).toContainText(TOPIC_REVIEW);
-    await expect(sheet.locator('[data-sheet-id="topics.openInNewTab"]')).toHaveCount(0);
+    await expect(sheet.locator('.fh-sheet-title')).toContainText(TOPIC_REVIEW);
+    await expect(sheet.locator('[data-sheet-action="topics.openInNewTab"]')).toHaveCount(0);
 
     // Tap Delete in bottom sheet -> confirm alert -> Cancel
-    await sheet.locator('[data-sheet-id="topics.delete"]').click();
+    await sheet.locator('[data-sheet-action="topics.delete"]').click();
     const dlg = page.locator('.fh-dialog-backdrop .fh-dialog');
     await expect(dlg).toBeVisible();
     await dlg.locator('[data-dialog-action="cancel"]').click();

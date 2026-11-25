@@ -92,6 +92,8 @@ export interface DomListNavigationOptions {
   readonly ignoreSelector?: string;
   readonly getBatchActions?: (ids: ReadonlySet<string>) => readonly DomListBatchAction[];
   readonly batchLabels?: ListBatchLabels;
+  /** Allow Ctrl/Cmd+Click to toggle multi-select (default: true). Set false when Ctrl/Cmd+Click has a dedicated action (e.g., open in new tab). */
+  readonly ctrlSelect?: boolean;
   readonly onActivate?: (id: string, row: HTMLElement, ev: Event) => void;
   readonly onFocusChange?: (id: string | null) => void;
   readonly onSelectionChange?: (ids: ReadonlySet<string>) => void;
@@ -712,12 +714,14 @@ export function attachListNavigation(opts: DomListNavigationOptions): DomListNav
       const row = ev.target instanceof Element ? ev.target.closest<HTMLElement>(opts.rowSelector) : null;
       const id = row ? opts.getRowId(row) : null;
       if (!row || !id) return;
-      if (ev.shiftKey || ev.ctrlKey || ev.metaKey || selectedIds.size > 0) {
+      const ctrlMulti = opts.ctrlSelect !== false && (ev.ctrlKey || ev.metaKey);
+      if (ev.shiftKey || ctrlMulti || selectedIds.size > 0) {
         ev.preventDefault();
         ev.stopPropagation();
         toggleId(id, ev.shiftKey);
         return;
       }
+      if (ev.ctrlKey || ev.metaKey) return;
       focusedId = id;
       anchorId = id;
       opts.onActivate?.(id, row, ev);

@@ -290,9 +290,9 @@ export function createReviewDetailEditorComponent(
       return;
     }
     panelCtx?.api.setTitle(`${tr('sideTasks.tabReviews')} · ${entry.title}`);
-    const applied = entry.changes.filter((c) => c.applied !== false && !c.suggested);
-    const refused = entry.changes.filter((c) => c.applied === false);
-    const archives = entry.changes.filter((c) => c.suggested || c.action === 'archive');
+    const archives = entry.changes.filter((c) => Boolean(c.suggested));
+    const applied = entry.changes.filter((c) => !c.suggested && c.applied !== false);
+    const refused = entry.changes.filter((c) => !c.suggested && c.applied === false);
     const canOpenTopic = Boolean(entry.topic && ctx.topics.list().some((t) => t.id === entry.topic));
     const pillCls =
       entry.outcome === 'failed'

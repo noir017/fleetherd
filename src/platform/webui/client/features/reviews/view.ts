@@ -25,10 +25,6 @@ function formatWhen(at: number): string {
   }
 }
 
-const BULB_SVG =
-  '<svg class="ic ic-bulb" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-  '<path d="M9 17.5h6M10 21h4M12 3a6 6 0 0 0-3.6 10.8c.7.6 1.1 1.4 1.1 2.2v1.5h5V16c0-.8.4-1.6 1.1-2.2A6 6 0 0 0 12 3z"/></svg>';
-
 function formatShortReviewTime(at: number, nowMs: number): string {
   try {
     const d = new Date(at);
@@ -364,7 +360,7 @@ function renderPendingNav(
         }
       }}
     >
-      ${unsafeHTML(BULB_SVG)}
+      ${unsafeHTML(icon('bulb'))}
       <span class="fh-rev-nv-label">${ctx.i18n.t('wb.reviews.pendingTitle')}</span>
       ${pendingCount > 0 ? html`<span class="fh-rev-nv-c">${pendingCount}</span>` : nothing}
       <span class="fh-rev-nv-cv">${unsafeHTML(icon('chevronRight'))}</span>
@@ -427,7 +423,7 @@ export function createReviewsViewComponent(
     activeSelection = `rev:${id}`;
     const entry = store.snapshot().data?.reviews.find((r) => r.id === id);
     try {
-      ctx.editors.open('review', { id, title: entry?.title });
+      ctx.editors.open('review', { id, title: entry?.title }, { id: `review:${id}` });
     } catch {
       if (expanded.has(id)) expanded.delete(id);
       else expanded.add(id);
@@ -438,7 +434,7 @@ export function createReviewsViewComponent(
   const openPrefsOrToggle = (): void => {
     activeSelection = 'prefs';
     try {
-      ctx.editors.open('review-prefs', {});
+      ctx.editors.open('review-prefs', {}, { id: 'review:prefs' });
     } catch {
       inlinePendingOpen = !inlinePendingOpen;
     }

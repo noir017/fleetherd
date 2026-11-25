@@ -1,4 +1,5 @@
 import { toDisposable } from '../../base/lifecycle.js';
+import { openConfirmDialog } from '../../components/dialog/index.js';
 import { t as tr } from '../../i18n/index.js';
 import { definePlugin, type PluginContext, type TopicInfo, type WebuiPlugin } from '../../plugins/api.js';
 import type { ContributionRegistry } from '../../plugins/registry.js';
@@ -177,7 +178,18 @@ function registerTopicMenus(ctx: PluginContext, deps: TopicPluginDeps, instanceI
     when: (target) => Boolean(asTopicInfo(target)),
     run: (target) => {
       const topic = asTopicInfo(target);
-      if (topic) deps.onDeleteTopic?.(topic.id);
+      if (!topic) return;
+      const title = topic.title || tr('common.untitled');
+      void openConfirmDialog({
+        title: tr(topic.starred ? 'topics.confirmDeleteStarredTitle' : 'topics.confirmDeleteTitle', { title }),
+        body: tr('topics.confirmDeleteBody'),
+        confirmLabel: tr('common.delete'),
+        danger: true,
+        doc: deps.doc,
+        overlays: deps.overlays,
+      }).then((ok) => {
+        if (ok) deps.onDeleteTopic?.(topic.id);
+      });
     },
   });
 

@@ -1,5 +1,6 @@
 import { addDisposableListener } from '../../base/dom.js';
-import { DisposableStore } from '../../base/lifecycle.js';
+import { icon } from '../../../icons.js';
+import { type Disposable, DisposableStore } from '../../base/lifecycle.js';
 import {
   createActionBar,
   createFilterBar,
@@ -87,31 +88,31 @@ export interface TopicsPluginDeps {
 }
 
 const DEFAULT_ICONS: TopicIcons = {
-  more: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="5.5" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="18.5" cy="12" r="1.6" fill="currentColor" stroke="none"/></svg>',
-  star: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 3l2.53 6.12 6.6.51-5.04 4.3 1.55 6.44L12 16.9l-5.64 3.47 1.55-6.44-5.04-4.3 6.6-.51z"/></svg>',
-  chevronRight: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m9 5.5 6.5 6.5L9 18.5"/></svg>',
-  chevronDown: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m5.5 9 6.5 6.5L18.5 9"/></svg>',
-  fork: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="6" cy="5" r="2.2"/><circle cx="18" cy="5" r="2.2"/><circle cx="12" cy="19" r="2.2"/><path d="M6 7.2V9a3 3 0 0 0 3 3h6a3 3 0 0 0 3-3V7.2M12 12v4.8"/></svg>',
-  offline: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 3.5 20 20.5"/></svg>',
-  search: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5"/></svg>',
-  cross: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>',
-  filter: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3.5 5h17l-6.5 7.5V19l-4 1.5v-8z"/></svg>',
-  sort: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M8 20V4M16 4v16"/></svg>',
-  arrowUp: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6"/></svg>',
-  arrowDown: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 5v14M6 13l6 6 6-6"/></svg>',
-  copy: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15h-.5A1.5 1.5 0 0 1 3 13.5v-9A1.5 1.5 0 0 1 4.5 3h9A1.5 1.5 0 0 1 15 4.5V5"/></svg>',
-  power: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 3v8M6.3 6.8a8 8 0 1 0 11.4 0"/></svg>',
-  trash: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 6.5h16M9.5 6.5v-2a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v2M6 6.5l.9 12.6a1.5 1.5 0 0 0 1.5 1.4h7.2a1.5 1.5 0 0 0 1.5-1.4L18 6.5"/></svg>',
-  pause: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M9 5.5v13M15 5.5v13"/></svg>',
-  play: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M8 5.5v13l10-6.5z"/></svg>',
-  clock: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5.2l3.2 2"/></svg>',
-  pencil: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M15.5 4.5l4 4L8.5 19.5 4 20l.5-4.5z"/></svg>',
-  plus: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>',
-  check: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m4.5 12.5 5 5L19.5 7"/></svg>',
-  bell: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 9a6 6 0 0 1 12 0c0 3.6 1.2 5.2 2.2 6.3H3.8C4.8 14.2 6 12.6 6 9z"/><path d="M10 19a2 2 0 0 0 4 0"/></svg>',
-  dot: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="4.5" fill="currentColor" stroke="none"/></svg>',
-  globe: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/></svg>',
-  expand: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7"/></svg>',
+  more: icon('more'),
+  star: icon('star'),
+  chevronRight: icon('chevronRight'),
+  chevronDown: icon('chevronDown'),
+  fork: icon('fork'),
+  offline: icon('offline'),
+  search: icon('search'),
+  cross: icon('cross'),
+  filter: icon('filter'),
+  sort: icon('sort'),
+  arrowUp: icon('arrowUp'),
+  arrowDown: icon('arrowDown'),
+  copy: icon('copy'),
+  power: icon('power'),
+  trash: icon('trash'),
+  pause: icon('pause'),
+  play: icon('play'),
+  clock: icon('clock'),
+  pencil: icon('pencil'),
+  plus: icon('plus'),
+  check: icon('check'),
+  bell: icon('bell'),
+  dot: icon('dot'),
+  globe: icon('globe'),
+  expand: icon('expand'),
 };
 
 function asElement(target: EventTarget | null): Element | null {
@@ -531,6 +532,7 @@ function buildTopicsBatchActions(
 
 class TopicsViewPanel implements TopicsViewInstance {
   readonly element: HTMLElement;
+  private readonly headerEl: HTMLElement;
   private readonly mobileTitleEl: HTMLElement;
   private readonly batchBarHost: HTMLElement;
   private readonly listEl: HTMLElement;
@@ -545,14 +547,15 @@ class TopicsViewPanel implements TopicsViewInstance {
   private readonly listNav: DomListNavigationController;
   private menuKey: string | null = null;
   private disposed = false;
+  private panelVisible = true;
 
   constructor(private readonly rt: TopicsRuntime) {
     const { doc, win } = rt;
     this.element = doc.createElement('div');
     this.element.className = 'wb-topics-view';
 
-    const headerEl = doc.createElement('div');
-    headerEl.className = 'wb-topics-head';
+    this.headerEl = doc.createElement('div');
+    this.headerEl.className = 'wb-topics-head';
     this.mobileTitleEl = doc.createElement('div');
     this.mobileTitleEl.className = 'wb-topics-mobile-title';
     this.mobileTitleEl.textContent = tr('sidebar.topics');
@@ -570,7 +573,7 @@ class TopicsViewPanel implements TopicsViewInstance {
     this.listEl.setAttribute('role', 'list');
     this.listEl.setAttribute('aria-multiselectable', 'true');
 
-    this.element.appendChild(headerEl);
+    this.element.appendChild(this.headerEl);
     this.element.appendChild(this.mobileTitleEl);
     this.element.appendChild(segWrap);
     this.element.appendChild(filterHost);
@@ -595,7 +598,7 @@ class TopicsViewPanel implements TopicsViewInstance {
     segWrap.appendChild(this.segmented.el);
 
     this.actionBar = createActionBar({ items: [], compact: true, ariaLabel: tr('sidebar.topics') }, doc);
-    headerEl.appendChild(this.actionBar.el);
+    this.headerEl.appendChild(this.actionBar.el);
 
     this.filterBar = createFilterBar(
       {
@@ -644,6 +647,7 @@ class TopicsViewPanel implements TopicsViewInstance {
       rowSelector: '[data-topic]',
       getRowId: (row) => row.getAttribute('data-topic'),
       ignoreSelector: '[data-rm],[data-fold],[data-filter-clear],[data-swipe-act]',
+      ctrlSelect: false,
       getBatchActions: (ids) => buildTopicsBatchActions(this.rt, ids, () => this.listNav.clearSelection()),
       onActivate: (id) => {
         if (this.gestures.consumeSuppressedClick()) return;
@@ -703,14 +707,15 @@ class TopicsViewPanel implements TopicsViewInstance {
       if (foldId) this.rt.toggleFold(foldId);
       return;
     }
-    if ((e.ctrlKey || e.metaKey) && !e.shiftKey) {
-      const row = el.closest<HTMLElement>('[data-topic]');
-      const id = row?.getAttribute('data-topic');
-      if (id) {
-        e.stopPropagation();
-        this.rt.ctx.editors.open('topic', { topicId: id }, { preview: false });
-      }
-    }
+    this.openNewTabOnCtrlClick(e, el);
+  }
+
+  private openNewTabOnCtrlClick(e: MouseEvent, el: Element): void {
+    if (!(e.ctrlKey || e.metaKey) || e.shiftKey || this.listNav.isBatchMode()) return;
+    const id = el.closest<HTMLElement>('[data-topic]')?.getAttribute('data-topic');
+    if (!id) return;
+    e.stopPropagation();
+    this.rt.ctx.editors.open('topic', { topicId: id }, { preview: false });
   }
 
   private handleSwipeAction(topicId: string, action: string): void {
@@ -780,8 +785,34 @@ class TopicsViewPanel implements TopicsViewInstance {
     this.menu.open(anchor, entries);
   }
 
-  init(): void {
+  private syncActionBarHost(): void {
+    const sidebarActions = !this.isMobileMode()
+      ? this.element.closest('.wb-sidebar')?.querySelector<HTMLElement>('.wb-sidebar-head > .wb-part-actions') ?? null
+      : null;
+    if (sidebarActions && this.panelVisible) {
+      if (this.actionBar.el.parentElement !== sidebarActions) {
+        sidebarActions.appendChild(this.actionBar.el);
+      }
+      this.headerEl.hidden = true;
+    } else {
+      if (this.actionBar.el.parentElement !== this.headerEl) {
+        this.headerEl.appendChild(this.actionBar.el);
+      }
+      this.headerEl.hidden = false;
+    }
+  }
+
+  init(panelCtx?: { readonly api?: { readonly isVisible?: boolean; onDidVisibilityChange?: (cb: (visible: boolean) => void) => Disposable } }): void {
     this.rt.views.add(this);
+    if (panelCtx?.api) {
+      if (typeof panelCtx.api.isVisible === 'boolean') this.panelVisible = panelCtx.api.isVisible;
+      const sub = panelCtx.api.onDidVisibilityChange?.((visible) => {
+        this.panelVisible = visible;
+        this.syncActionBarHost();
+      });
+      if (sub) this.listeners.add(sub);
+    }
+    this.syncActionBarHost();
     this.paint();
   }
 
@@ -808,6 +839,7 @@ class TopicsViewPanel implements TopicsViewInstance {
       ],
     });
     this.actionBar.update(buildToolbarActions(this.rt, fullForest));
+    this.syncActionBarHost();
 
     const tabForest = buildTabForest(fullForest, this.rt.tab);
     const currentIcons = this.rt.getIcons();
@@ -1055,10 +1087,6 @@ function registerTopicCommands(rt: TopicsRuntime): void {
   rt.ctx.commands.register(
     'topics.clearUnstarred',
     async () => {
-      if (rt.deps.onClearUnstarred) {
-        await rt.deps.onClearUnstarred();
-        return;
-      }
       const topics = rt.getTopics();
       const stars = topics.filter((t) => t.starred).length;
       const gone = topics.length - stars;
@@ -1083,6 +1111,10 @@ function registerTopicCommands(rt: TopicsRuntime): void {
         fallbackMessage: msg,
       });
       if (!ok) return;
+      if (rt.deps.onClearUnstarred) {
+        await rt.deps.onClearUnstarred();
+        return;
+      }
       const res = await rt.ctx.api.post<{ readonly topic?: Topic }>('/api/topics/clear', {});
       if (res?.topic?.id) rt.openTopic(res.topic.id);
     },
