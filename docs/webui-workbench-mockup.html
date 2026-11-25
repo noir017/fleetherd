@@ -1,7 +1,8 @@
 <!doctype html>
 <!-- Static wireframe of the web UI workbench (docs/webui-workbench-plan.md, design v3 + status bar,
      2026-11-24): VS Code Dark Modern / Light Modern colours, corners and control styles. Not product code.
-     Views by hash: #topic (default), #tasks, #settings; phone layout below 640px (#plist / #topic); ?light. -->
+     Views by hash: #topic (default), #new, #tasks, #history, #reviews, #prefs, #skills, #settings;
+     phone layout below 640px (#plist / #topic); ?light. -->
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
@@ -119,6 +120,32 @@ code{font:12px "Cascadia Code","JetBrains Mono",Consolas,"DejaVu Sans Mono",mono
 .kv{display:grid;grid-template-columns:110px 1fr;gap:6px 14px;font-size:12.5px}.kv dt{color:var(--dim)}.kv dd{margin:0}
 .nav{padding:6px 0}.nv{display:flex;align-items:center;gap:8px;padding:6px 14px;color:var(--fg);border:1px solid transparent}.nv:hover{background:var(--hover)}.nv.on{background:var(--sel);border-color:var(--focus);color:var(--fg-hi)}.nv .c{margin-left:auto;font-size:10.5px;min-width:16px;padding:0 5px;border-radius:8px;background:var(--btn2-hov);color:var(--fg);text-align:center}
 .nvh{font-size:11px;font-weight:600;color:var(--dim);padding:12px 14px 4px;text-transform:uppercase;letter-spacing:.05em}
+.nv svg.i{width:15px;height:15px;color:var(--warn)}
+/* batch 1: history / reviews / skills / new topic */
+.row.nd{grid-template-columns:minmax(0,1fr) auto}.row.nd .m{grid-column:1}.row.off{opacity:.55}
+.row .t svg.i{width:13px;height:13px;margin-right:4px;vertical-align:-2px;color:var(--dim)}
+.lm{display:block;width:calc(100% - 20px);margin:8px 10px 0;padding:5px 0;border:1px solid var(--field-line);border-radius:2px;color:var(--fg);font-size:12px}.lm:hover{background:var(--hover)}
+.pill.n{background:var(--btn2);color:var(--fg)}.pill.e{background:rgba(241,76,76,.14);color:var(--err)}
+.meta{color:var(--dim);font-size:12px;margin:0 0 16px}
+.ro{display:flex;align-items:center;gap:10px;border:1px solid var(--line);border-radius:4px;padding:8px 8px 8px 12px;background:var(--panel);color:var(--dim);font-size:12.5px}
+.ro svg.i{width:16px;height:16px}.ro span{flex:1}
+.ci>.btn,.ci>.acts,.ci>.pill{grid-row:span 2}.acts{display:flex;gap:6px}
+.dv{font:12px/1.6 "Cascadia Code","JetBrains Mono",Consolas,"DejaVu Sans Mono",monospace;background:var(--bg);border-bottom:1px solid var(--line);padding:4px 0}
+.dl.mod{box-shadow:inset 2px 0 0 var(--g-mod)}
+.files.box{border:1px solid var(--line);border-radius:4px 4px 0 0;border-bottom:0;background:var(--card)}
+.files .fr svg.i{width:14px;height:14px;color:var(--dim)}.fr.new{color:var(--link);font-family:inherit}
+.ed{border:1px solid var(--line);border-radius:0 0 4px 4px;overflow:hidden;margin-bottom:14px}
+.edh{display:flex;align-items:center;gap:8px;padding:5px 8px 5px 12px;background:var(--panel);border-bottom:1px solid var(--line);font-size:12px}
+.edh b{color:var(--fg-hi);font-weight:600}.edh .dim{color:var(--dim)}.edh .sp{flex:1}
+.edb{font:12px/1.6 "Cascadia Code","JetBrains Mono",Consolas,"DejaVu Sans Mono",monospace;background:var(--bg);padding:6px 0}
+.ags{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px}
+.ag{border:1px solid var(--line);border-radius:4px;padding:9px 12px;background:var(--card);cursor:pointer}.ag:hover{background:var(--hover)}
+.ag.on{background:var(--sel);border-color:var(--focus)}.ag.off{opacity:.5;cursor:default}
+.ag b{color:var(--fg-hi);font-weight:600}.ag .k{color:var(--dim);font-size:12px;margin-top:2px}
+.ag .tag{float:right;font-size:10.5px;padding:0 6px;border:1px solid var(--field-line);border-radius:2px;color:var(--dim)}
+.dirs{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:4px}
+.dir{padding:4px 10px;border:1px solid transparent;border-radius:2px;background:var(--btn2);font:12px "Cascadia Code",Consolas,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.dir:hover{background:var(--btn2-hov)}
+.dir.on{background:var(--accent);color:#fff}.dir.more{background:none;border:1px dashed var(--field-line);color:var(--dim);font-family:inherit}
 /* phone */
 .tabbar,.back,.ptools{display:none}
 .only-narrow{display:none!important}.ri.ph{display:none}body.narrow .only-narrow{display:flex!important}
@@ -147,16 +174,16 @@ code{font:12px "Cascadia Code","JetBrains Mono",Consolas,"DejaVu Sans Mono",mono
 </div>
 <script>
 if(new URLSearchParams(location.search).has('light'))document.documentElement.dataset.theme='light';
-const P={chat:'<path d="M5 4.5h14A1.5 1.5 0 0 1 20.5 6v9a1.5 1.5 0 0 1-1.5 1.5h-8.5L6 20v-3.5H5A1.5 1.5 0 0 1 3.5 15V6A1.5 1.5 0 0 1 5 4.5z"/>',history:'<path d="M3.5 12a8.5 8.5 0 1 0 8.5-8.5 9.2 9.2 0 0 0-6.36 2.59L3.5 8"/><path d="M3.5 3.5V8h4.5"/><path d="M12 7.5V12l3 1.8"/>',clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5.2l3.2 2"/>',eye:'<path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',book:'<path d="M12 6.5C10 5 7 4.6 3 5v13c4-.4 7 0 9 1.5 2-1.5 5-1.9 9-1.5V5c-4-.4-7 0-9 1.5zM12 6.5v13"/>',gear:'<circle cx="12" cy="12" r="6.6"/><circle cx="12" cy="12" r="2.4"/><path stroke-width="2.6" stroke-linecap="butt" d="M18.6 12h3M16.67 16.67l2.12 2.12M12 18.6v3M7.33 16.67l-2.12 2.12M5.4 12h-3M7.33 7.33 5.21 5.21M12 5.4v-3M16.67 7.33l2.12-2.12"/>',bell:'<path d="M6 9a6 6 0 0 1 12 0c0 3.6 1.2 5.2 2.2 6.3H3.8C4.8 14.2 6 12.6 6 9z"/><path d="M10 19a2 2 0 0 0 4 0"/>',plus:'<path d="M12 5v14M5 12h14"/>',more:'<circle cx="5.5" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="18.5" cy="12" r="1.6" fill="currentColor" stroke="none"/>',search:'<circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5"/>',git:'<circle cx="6.5" cy="6" r="2.5"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="8" r="2.5"/><path d="M6.5 8.5v7M17.5 10.5c0 3.5-3.5 4.5-8 4.5"/>',folder:'<path d="M3 6.5A1.5 1.5 0 0 1 4.5 5H9l2 2.5h8.5A1.5 1.5 0 0 1 21 9v9.5a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5z"/>',terminal:'<rect x="3" y="4.5" width="18" height="15" rx="2"/><path d="m7 9.5 3 2.5-3 2.5M12.5 15H17"/>',cross:'<path d="M6 6l12 12M18 6 6 18"/>',left:'<path d="M15 5.5 8.5 12l6.5 6.5"/>',expand:'<path d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7"/>',mic:'<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21M8.5 21h7"/>',filter:'<path d="M3.5 5h17l-6.5 7.5V19l-4 1.5v-8z"/>',star:'<path d="M12 3l2.53 6.12 6.6.51-5.04 4.3 1.55 6.44L12 16.9l-5.64 3.47 1.55-6.44-5.04-4.3 6.6-.51z"/>',power:'<path d="M12 3v8M6.3 6.8a8 8 0 1 0 11.4 0"/>',remote:'<path d="m4 9 4-4 4 4M8 5v9M20 15l-4 4-4-4M16 19v-9"/>',check:'<path d="m4.5 12.5 5 5L19.5 7"/>',play:'<path d="M8 5.5v13l10-6.5z"/>',pause:'<path d="M9 5.5v13M15 5.5v13"/>',globe:'<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.6 3.7 5.6 3.7 9s-1.2 6.4-3.7 9c-2.5-2.6-3.7-5.6-3.7-9S9.5 5.6 12 3z"/>',moon:'<path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z"/>'};
+const P={chat:'<path d="M5 4.5h14A1.5 1.5 0 0 1 20.5 6v9a1.5 1.5 0 0 1-1.5 1.5h-8.5L6 20v-3.5H5A1.5 1.5 0 0 1 3.5 15V6A1.5 1.5 0 0 1 5 4.5z"/>',history:'<path d="M3.5 12a8.5 8.5 0 1 0 8.5-8.5 9.2 9.2 0 0 0-6.36 2.59L3.5 8"/><path d="M3.5 3.5V8h4.5"/><path d="M12 7.5V12l3 1.8"/>',clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5.2l3.2 2"/>',eye:'<path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',book:'<path d="M12 6.5C10 5 7 4.6 3 5v13c4-.4 7 0 9 1.5 2-1.5 5-1.9 9-1.5V5c-4-.4-7 0-9 1.5zM12 6.5v13"/>',gear:'<circle cx="12" cy="12" r="6.6"/><circle cx="12" cy="12" r="2.4"/><path stroke-width="2.6" stroke-linecap="butt" d="M18.6 12h3M16.67 16.67l2.12 2.12M12 18.6v3M7.33 16.67l-2.12 2.12M5.4 12h-3M7.33 7.33 5.21 5.21M12 5.4v-3M16.67 7.33l2.12-2.12"/>',bell:'<path d="M6 9a6 6 0 0 1 12 0c0 3.6 1.2 5.2 2.2 6.3H3.8C4.8 14.2 6 12.6 6 9z"/><path d="M10 19a2 2 0 0 0 4 0"/>',plus:'<path d="M12 5v14M5 12h14"/>',more:'<circle cx="5.5" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="18.5" cy="12" r="1.6" fill="currentColor" stroke="none"/>',search:'<circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5"/>',git:'<circle cx="6.5" cy="6" r="2.5"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="8" r="2.5"/><path d="M6.5 8.5v7M17.5 10.5c0 3.5-3.5 4.5-8 4.5"/>',folder:'<path d="M3 6.5A1.5 1.5 0 0 1 4.5 5H9l2 2.5h8.5A1.5 1.5 0 0 1 21 9v9.5a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5z"/>',terminal:'<rect x="3" y="4.5" width="18" height="15" rx="2"/><path d="m7 9.5 3 2.5-3 2.5M12.5 15H17"/>',cross:'<path d="M6 6l12 12M18 6 6 18"/>',left:'<path d="M15 5.5 8.5 12l6.5 6.5"/>',expand:'<path d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7"/>',mic:'<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21M8.5 21h7"/>',filter:'<path d="M3.5 5h17l-6.5 7.5V19l-4 1.5v-8z"/>',star:'<path d="M12 3l2.53 6.12 6.6.51-5.04 4.3 1.55 6.44L12 16.9l-5.64 3.47 1.55-6.44-5.04-4.3 6.6-.51z"/>',power:'<path d="M12 3v8M6.3 6.8a8 8 0 1 0 11.4 0"/>',remote:'<path d="m4 9 4-4 4 4M8 5v9M20 15l-4 4-4-4M16 19v-9"/>',check:'<path d="m4.5 12.5 5 5L19.5 7"/>',play:'<path d="M8 5.5v13l10-6.5z"/>',pause:'<path d="M9 5.5v13M15 5.5v13"/>',globe:'<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.6 3.7 5.6 3.7 9s-1.2 6.4-3.7 9c-2.5-2.6-3.7-5.6-3.7-9S9.5 5.6 12 3z"/>',moon:'<path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z"/>',copy:'<rect x="8.5" y="8.5" width="11" height="11" rx="1.5"/><path d="M15.5 8.5V6A1.5 1.5 0 0 0 14 4.5H6A1.5 1.5 0 0 0 4.5 6v8A1.5 1.5 0 0 0 6 15.5h2.5"/>',refresh:'<path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19.5 4.5v4.2h-4.2"/>',pin:'<path d="M9 4.5h6M10 4.5v5l-3 4h10l-3-4v-5M12 13.5V20"/>',info:'<circle cx="12" cy="12" r="9"/><path d="M12 11v5.5M12 7.6v.1"/>',bulb:'<path d="M9 17.5h6M10 21h4M12 3a6 6 0 0 0-3.6 10.8c.7.6 1.1 1.4 1.1 2.2v1.5h5V16c0-.8.4-1.6 1.1-2.2A6 6 0 0 0 12 3z"/>',file:'<path d="M6 3.5h8l4.5 4.5v12.5H6z"/><path d="M14 3.5V8h4.5"/>'};
 const I=(n)=>`<svg class="i" viewBox="0 0 24 24">${P[n]}</svg>`;
 const view=(location.hash.slice(1)||'topic');
 const phone=matchMedia('(max-width:640px)').matches;
 document.body.className='v-'+(phone&&view==='plist'?'plist':view==='plist'?'topic':view);
-const active=view==='tasks'?'tasks':view==='settings'?'settings':'topics';
+const active={tasks:'tasks',settings:'settings',history:'history',reviews:'reviews',prefs:'reviews',skills:'skills'}[view]||'topics';
 const railItems=[['topics','chat','话题','<span class="badge">2</span>'],['history','history','历史',''],['tasks','clock','定时','<span class="badge dot"></span>'],['reviews','eye','复盘',''],['skills','book','技能','']];
 document.getElementById('rail').innerHTML='<div class="logo">f</div>'+railItems.map(([k,ic,l,b])=>`<button class="ri ${k===active?'on':''} ${k==='reviews'||k==='skills'?'desk':''}">${I(ic)}<span>${l}</span>${b}</button>`).join('')+'<div class="sp"></div>'+`<button class="ri desk ${active==='settings'?'on':''}">${I('gear')}<span>设置</span></button><button class="ri ph">${I('more')}<span>更多</span></button>`;
 const row=(d,t,m,a,extra='',cls='')=>`<div class="row ${cls}"><span class="d ${d}"></span><span class="t">${t}</span><span class="a">${a}</span><span class="m">${m}</span>${extra}</div>`;
-const topicList=`<div class="lh"><b>话题</b><button class="ib" title="批量">${I('more')}</button><button class="ib" title="新话题">${I('plus')}</button></div>
+const topicList=(fresh=false)=>`<div class="lh"><b>话题</b><button class="ib" title="批量">${I('more')}</button><button class="ib" title="新话题">${I('plus')}</button></div>
 <div class="seg"><button class="on">全部 9</button><button>收藏 2</button></div>
 <div class="search">${I('search')}<span>搜索话题 / Ctrl K</span></div>
 <div class="chips"><span class="chip on">需要处理 2</span><span class="chip">运行中 3</span><span class="chip">未读 1</span></div>
@@ -164,8 +191,9 @@ const topicList=`<div class="lh"><b>话题</b><button class="ib" title="批量">
 <div class="grp">需要处理</div>
 ${row('ask','Deploy notes for 3.38','<span class="hc">claude</span>等你确认：开 2 个子任务','2m')}
 ${row('bad','Flaky CI on arm64','<span class="hc cx">codex</span>失败：upstream busy','14m')}
+${fresh?`<div class="grp">新建</div>${row('','<span style="color:var(--dim)">新话题</span>','选择智能体','','','on')}`:''}
 <div class="grp">进行中</div>
-${row('run','Refactor webui panels','<span class="hc">claude</span>正在编辑 page-body.ts','now','',"on")}
+${row('run','Refactor webui panels','<span class="hc">claude</span>正在编辑 page-body.ts','now','',fresh?'':'on')}
 ${row('run','拆分 sidebar 模块','<span class="hc cx">codex</span>子任务 · 运行 3m','now','','sub')}
 ${row('run','Slow cart API','<span class="hc">claude</span>work · 读日志','1m')}
 <div class="grp">今天</div>
@@ -186,7 +214,6 @@ const setNav=`<div class="lh"><b>设置</b></div><div class="search">${I('search
 <div class="nvh">网关 · config.yaml</div>
 <div class="nv on">智能体<span class="c">5</span></div><div class="nv">子代理</div><div class="nv">会话</div><div class="nv">回复</div><div class="nv">复盘</div><div class="nv">指令文件</div>
 <div class="nvh">本设备</div><div class="nv">通知</div><div class="nv">外观与语言</div><div class="nv">低打扰模式</div></div>`;
-document.getElementById('list').innerHTML=active==='tasks'?taskList:active==='settings'?setNav:topicList;
 const toolsBar=`<div class="tools"><button class="only-narrow">${I('chat')}对话</button><button class="on">${I('git')}更改 <span class="k">2</span></button><button>${I('folder')}文件</button><button>${I('terminal')}终端</button></div>`;
 const chat=`<div class="th"><button class="ib back">${I('left')}</button><span class="tt">Refactor webui panels</span><span class="pill">运行中</span><span class="sp"></span>${toolsBar}<button class="ib">${I('more')}</button></div>
 <div class="ptools"><button class="on">对话</button><button>更改 2</button><button>文件</button><button>终端</button></div>
@@ -221,7 +248,6 @@ const settings=`<div class="th"><span class="tt">智能体</span><span class="sp
 <div class="card"><div class="ci"><span class="l"><span class="hc">claude</span> cc@host-a</span><span class="sg"><span>ask</span><span class="on">auto</span></span><span class="h">opus-5.5 · 在线</span></div>
 <div class="ci"><span class="l">ag@host-a</span><span class="sg"><span class="on">auto</span></span><span class="h">gemini-3.8-flash · 空闲</span></div></div>
 </div></div>`;
-document.getElementById('main').innerHTML=active==='tasks'?taskPage:active==='settings'?settings:chat;
 const diff=`<div class="ph"><b>更改</b><span class="br">main · 工作区</span><span class="sp" style="flex:1"></span><button class="ib" title="铺满">${I('expand')}</button><button class="ib" title="关闭">${I('cross')}</button></div>
 <div class="modes"><button class="on">工作区</button><button>分支</button><button>已提交</button><button>提交历史</button></div>
 <div class="files"><div class="fr on"><span class="s">M</span>src/platform/webui/page-body.ts<span class="x"><i>+41</i><u>−29</u></span></div><div class="fr"><span class="s a">A</span>client/shell/rail.ts<span class="x"><i>+7</i></span></div></div>
@@ -239,10 +265,143 @@ const diff=`<div class="ph"><b>更改</b><span class="br">main · 工作区</spa
 <div class="dl"><span class="no">21</span>     &lt;/div&gt;</div>
 </div>
 <div class="cbox"><div class="q">评论 L19–L21 · 加到下方输入框，对话一直可见</div><div class="ta">这三个图标改成文字</div><div class="acts"><button class="btn">取消</button><button class="btn p">添加到消息</button></div></div>`;
+const hrow=(t,m,a,cls='')=>`<div class="row nd ${cls}"><span class="t">${t}</span><span class="a">${a}</span><span class="m">${m}</span></div>`;
+const histList=`<div class="lh"><b>历史</b><button class="ib" title="刷新">${I('refresh')}</button></div>
+<div class="search">${I('search')}<span>搜索全部对话，回车</span></div>
+<div class="rows">
+<div class="grp">今天</div>
+${hrow('Slow cart API','<span class="hc">claude</span>网页 · 42 条','10:24','on')}
+${hrow('Deploy notes for 3.38','<span class="hc">claude</span>网页 · 18 条','09:40')}
+${hrow('nightly-ci-report','<span class="hc cx">codex</span>定时任务 · 6 条','02:06')}
+<div class="grp">昨天</div>
+${hrow('Node 22 upgrade','<span class="hc cx">codex</span>Telegram · 57 条','18:12')}
+${hrow('Fix slugify tests','<span class="hc">claude</span>网页 · 23 条','15:30')}
+${hrow('ttyd 启动参数','<span class="hc">claude</span>飞书 · 4 条','09:05')}
+<div class="grp">11 月</div>
+${hrow('Refactor sidebar','<span class="hc">claude</span>网页 · 211 条','11-21')}
+${hrow('Backup check','<span class="hc cx">codex</span>Discord · 9 条','11-19')}
+<button class="lm">加载更早的对话</button>
+</div>`;
+const histPage=`<div class="th"><button class="ib back">${I('left')}</button><span class="tt">Slow cart API</span><span class="pill n">只读</span><span class="sp"></span><button class="ib" title="复制引用">${I('copy')}</button><button class="ib" title="关闭">${I('cross')}</button></div>
+<div class="log"><div class="col">
+<div class="meta"><span class="hc">claude</span>网页 · 42 条 · 11-25 08:51 – 10:24 · #1287</div>
+<div class="msg me">购物车接口最近很慢，p95 到 2s 了，帮我查一下。<div class="ts">08:51</div></div>
+<div class="msg">先看了慢查询日志和接口耗时分布。
+<div class="tool">${I('search')} 6 个工具调用 · 读日志、跑 EXPLAIN</div>
+瓶颈在 <code>cart_items</code> 按 <code>user_id</code> 查询时没走索引，每次都是全表扫描。<div class="ts">09:02</div></div>
+<div class="msg me">加索引吧，顺便写个迁移。<div class="ts">09:05</div></div>
+<div class="msg">已加迁移 <code>0042_cart_items_user_idx</code>，本地压测 p95 降到 180ms。
+<div class="tool">${I('folder')} 3 个工具调用 · 写迁移、跑压测</div><div class="ts">10:24</div></div>
+</div></div>
+<div class="bar"><div class="col"><div class="ro">${I('info')}<span>只读记录：连续的工具调用合成一行，没有按钮、图片和耗时。它在本页还是话题「Slow cart API」。</span><button class="btn p">打开话题</button></div></div></div>`;
+const revList=(sel)=>`<div class="lh"><b>复盘</b><button class="ib" title="刷新">${I('refresh')}</button></div>
+<div class="nav"><div class="nv ${sel==='prefs'?'on':''}">${I('bulb')}待处理的偏好建议<span class="c">3</span></div></div>
+<div class="rows">
+<div class="grp">今天</div>
+${hrow('Deploy notes for 3.38','更新 deploy-check · 新建 1 · 拒绝 1','09:40',sel==='rev'?'on':'')}
+${hrow('Slow cart API','没有改动','08:12')}
+<div class="grp">昨天</div>
+${hrow('Node 22 upgrade','新建 node-upgrade','19:30')}
+${hrow('Flaky CI on arm64','<span style="color:var(--err)">失败 · 6 小时后重试</span>','16:02')}
+${hrow('Fix slugify tests','更新 test-conventions','11:47')}
+${hrow('Refactor sidebar','没有改动 · 偏好建议 1','09:20')}
+</div>`;
+const revPage=`<div class="th"><span class="tt">Deploy notes for 3.38</span><span class="pill">2 项改动</span><span class="sp"></span><button class="btn">打开原对话</button><button class="ib">${I('more')}</button></div>
+<div class="page"><div class="pcol">
+<div class="psub">11-25 09:40 复盘 · 复盘者 ag@buildbox（gemini-3.8-flash）· 读了 18 条消息 · 用时 2m 10s</div>
+<div class="sh">已做的改动 · 2</div>
+<div class="card">
+<div class="ci"><span class="l">更新技能 deploy-check · SKILL.md</span><button class="btn">回滚</button><span class="h">这次对话里因为没 fetch 被别人抢先发版，补上这一步</span></div>
+<div class="dv"><div class="dl"><span class="no">9</span> # 发版前</div><div class="dl p"><span class="no">10</span>+1. git fetch，确认 main 能快进；被抢先就撤掉本地 tag 再 rebase</div><div class="dl"><span class="no">11</span> 2. 跑 typecheck 和相关测试</div></div>
+<div class="ci"><span class="l">新建参考资料 deploy-check/references/arm64.md</span><button class="btn">回滚</button><span class="h">记下验证过的 arm64 构建步骤，SKILL.md 里加了一句指向它</span></div>
+</div>
+<div class="sh">被拒绝 · 1</div>
+<div class="card"><div class="ci"><span class="l">修改 server-ops · SKILL.md</span><span class="pill e">拒绝</span><span class="h">要替换的原文在当前版本里出现了 0 次：技能在复盘期间被改过</span></div></div>
+<div class="sh">建议归档 · 1</div>
+<div class="card"><div class="ci"><span class="l">old-deploy</span><span class="acts"><button class="btn">忽略</button><button class="btn p">归档</button></span><span class="h">有用的内容已并进 deploy-check。网关不会自己归档，等你决定</span></div></div>
+<div class="sh">偏好建议 · 1</div>
+<div class="card"><div class="ci"><span class="l">回答先给结论，再摆证据</span><span class="acts"><button class="btn">忽略</button><button class="btn p">采纳</button></span><span class="h">采纳会新开一个话题、放好草稿，你确认后再发</span></div></div>
+</div></div>`;
+const prefsPage=`<div class="th"><span class="tt">待处理的偏好建议</span><span class="sp"></span><span style="color:var(--dim);font-size:12px">来自自动复盘</span></div>
+<div class="page"><div class="pcol">
+<div class="psub">多次复盘提过的合成一条。采纳会新开一个话题，输入框里放好请智能体写进指令的草稿，不会自动发送；忽略只是从这里去掉。</div>
+<div class="card">
+<div class="ci"><span class="l">回答先给结论，再摆证据</span><span class="acts"><button class="btn">忽略</button><button class="btn p">采纳</button></span><span class="h">3 次复盘提到 · 最近：Deploy notes for 3.38（今天）</span></div>
+<div class="ci"><span class="l">提交信息用英文，正文写清为什么</span><span class="acts"><button class="btn">忽略</button><button class="btn p">采纳</button></span><span class="h">2 次复盘提到 · 最近：Node 22 upgrade（昨天）</span></div>
+<div class="ci"><span class="l">本地只跑相关测试，不跑全量</span><span class="acts"><button class="btn">忽略</button><button class="btn p">采纳</button></span><span class="h">1 次复盘提到 · Refactor sidebar（昨天）</span></div>
+</div>
+</div></div>`;
+const skillList=`<div class="lh"><b>技能</b><button class="ib" title="刷新">${I('refresh')}</button><button class="ib" title="新建技能">${I('plus')}</button></div>
+<div class="seg"><button class="on">库内 18</button><button>常驻 6</button></div>
+<div class="search">${I('search')}<span>搜索技能</span></div>
+<div class="rows">
+<div class="grp">运维</div>
+${hrow(I('pin')+'deploy-check','发版、部署前后的检查清单','2h','on')}
+${hrow('server-ops','操作和排查服务器时使用','1d')}
+${hrow('backup-restore','备份与恢复演练','12d')}
+<div class="grp">开发</div>
+${hrow('test-conventions','写测试、跑测试时使用','3h')}
+${hrow('release-notes','写 CHANGELOG 和发版说明','5d')}
+<div class="grp">已关闭</div>
+${hrow('old-deploy','旧的部署步骤','30d','off')}
+<div class="grp">搜索落空</div>
+${hrow('“arm64 交叉编译”','没搜到 · 3 次','1d')}
+${hrow('release-notes','搜到 4 次，一次也没打开','2d')}
+</div>`;
+const skillPage=`<div class="th"><span class="tt">deploy-check</span><span class="pill n">库内</span><span class="sp"></span><button class="ib" title="复制名称">${I('copy')}</button><button class="ib" title="重新读取">${I('refresh')}</button><button class="btn p">保存</button></div>
+<div class="page"><div class="pcol">
+<div class="psub">发版、部署前后的检查清单 · 分类 运维 · 发给 claude、codex · 最后使用 2 小时前 · 版本 c4f06d7</div>
+<div class="card">
+<div class="ci"><span class="l">层级</span><span class="sg"><span class="on">库内</span><span>常驻</span></span><span class="h">常驻会出现在每个智能体的技能列表里，描述限 120 字</span></div>
+<div class="ci"><span class="l">启用</span><span class="sg"><span class="on">开</span><span>关</span></span><span class="h">关闭即归档，不再发给任何智能体；再打开就恢复</span></div>
+<div class="ci"><span class="l">钉住</span><span class="sg"><span class="on">开</span><span>关</span></span><span class="h">钉住的技能不会因为久未使用而过期</span></div>
+</div>
+<div class="sh">文件</div>
+<div class="files box"><div class="fr on">${I('file')}SKILL.md<span class="x">已改动</span></div><div class="fr">${I('file')}references/arm64.md</div><div class="fr">${I('file')}scripts/check.sh</div><div class="fr new">${I('plus')}新建文件</div></div>
+<div class="ed"><div class="edh"><b>SKILL.md</b><span class="dim">有未保存的改动 · 保存时带上版本 c4f06d7，别处改过会拒绝</span><span class="sp"></span><button class="btn">撤销</button></div>
+<div class="edb">
+<div class="dl"><span class="no">1</span>---</div><div class="dl"><span class="no">2</span>name: deploy-check</div><div class="dl"><span class="no">3</span>description: 发版、部署前后的检查清单</div><div class="dl"><span class="no">4</span>metadata:</div><div class="dl"><span class="no">5</span>  fleetherd-category: "运维"</div><div class="dl"><span class="no">6</span>---</div><div class="dl"><span class="no">7</span></div><div class="dl"><span class="no">8</span># 发版前</div><div class="dl"><span class="no">9</span></div><div class="dl"><span class="no">10</span>1. git fetch，确认 main 能快进</div><div class="dl mod"><span class="no">11</span>2. 跑 typecheck、lint 和相关测试，不跑全量</div><div class="dl"><span class="no">12</span>3. arm64 构建见 references/arm64.md</div>
+</div></div>
+<div class="sh">改动记录</div>
+<div class="card">
+<div class="ci"><span class="l"><code>c4f06d7</code> 补上发版前 fetch</span><span class="pill n">当前</span><span class="h">自动复盘 · Deploy notes for 3.38 · 2 小时前</span></div>
+<div class="ci"><span class="l"><code>9e1a2b0</code> 更新 SKILL.md</span><button class="btn">恢复此版本</button><span class="h">claude · Node 22 upgrade · 1 天前</span></div>
+<div class="ci"><span class="l"><code>51d0c3e</code> 调整步骤顺序</span><button class="btn">恢复此版本</button><span class="h">手工提交 · 作者 alice · 3 天前</span></div>
+<div class="ci"><span class="l"><code>02ab77f</code> 创建</span><button class="btn">恢复此版本</button><span class="h">claude · Deploy notes for 3.30 · 11-12</span></div>
+</div>
+</div></div>`;
+const newPage=`<div class="th"><button class="ib back">${I('left')}</button><span class="tt" style="color:var(--dim)">新话题</span><span class="sp"></span></div>
+<div class="log"><div class="col">
+<div class="sh" style="margin-top:0">本机 · gateway</div>
+<div class="ags">
+<div class="ag on"><span class="tag">默认</span><span class="hc">claude</span><b>claude</b><div class="k">Claude Code · sonnet-5.5</div></div>
+<div class="ag"><span class="hc cx">codex</span><b>codex</b><div class="k">Codex</div></div>
+<div class="ag"><b>op</b><div class="k">OpenCode · glm-4.6</div></div>
+</div>
+<div class="sh">host-a</div>
+<div class="ags">
+<div class="ag"><span class="hc">claude</span><b>cc@host-a</b><div class="k">Claude Code · opus-5.5</div></div>
+<div class="ag"><b>ag@host-a</b><div class="k">Antigravity · gemini-3.8-flash</div></div>
+</div>
+<div class="sh">host-b · <span style="color:var(--err)">离线</span></div>
+<div class="ags"><div class="ag off"><span class="hc cx">codex</span><b>cx@host-b</b><div class="k">主机连不上，暂时不能选</div></div></div>
+<div class="sh">claude 的工作目录</div>
+<div class="dirs"><div class="dir on">~/work/fleetherd</div><div class="dir">~/work/shop-api</div><div class="dir">~/work/docs-site</div><div class="dir">~/work/infra</div><div class="dir">~/scratch</div><div class="dir">~</div><div class="dir more">其他目录…</div></div>
+</div></div>
+<div class="bar"><div class="col">
+<div class="status"><span class="hc">claude</span><a>模型 ▾</a> · ~/work/fleetherd</div>
+<div class="comp"><span class="in">输入第一条消息；不选也行，默认由 claude 回答</span>${I('plus')}${I('mic')}<button class="send">发送</button></div>
+</div></div>`;
+const V={topic:{list:topicList(),main:chat,pane:diff},tasks:{list:taskList,main:taskPage},settings:{list:setNav,main:settings},
+  history:{list:histList,main:histPage},reviews:{list:revList('rev'),main:revPage},prefs:{list:revList('prefs'),main:prefsPage},
+  skills:{list:skillList,main:skillPage},new:{list:topicList(true),main:newPage}};
+const v=V[view]||V.topic;
+document.getElementById('list').innerHTML=v.list;
+document.getElementById('main').innerHTML=v.main;
 const pane=document.getElementById('pane');
-if(active==='topics'&&!phone){pane.innerHTML='<div class="grip"></div>'+diff;}else pane.remove();
+if(v.pane&&!phone){pane.innerHTML='<div class="grip"></div>'+v.pane;}else pane.remove();
 document.getElementById('sb').innerHTML=`<span class="it rm">${I('remote')}fleetherd</span><span class="it">${I('check')}已连接</span><span class="it"><span class="okc">${I('play')}</span>运行中 3</span><span class="it">${I('pause')}空闲 7</span><span class="sp"></span><span class="it">${I('bell')}通知 开</span><span class="it">${I('moon')}低打扰 关</span><span class="it">${I('globe')}中文</span><span class="it">v3.38.0</span>`;
-if(!phone&&active==='topics'&&innerWidth<1360){document.querySelector('.shell').style.gridTemplateColumns='52px minmax(0,1fr) auto';document.getElementById('list').style.display='none';document.body.classList.add('narrow');}
+if(!phone&&v.pane&&innerWidth<1360){document.querySelector('.shell').style.gridTemplateColumns='52px minmax(0,1fr) auto';document.getElementById('list').style.display='none';document.body.classList.add('narrow');}
 </script>
 </body>
 </html>
