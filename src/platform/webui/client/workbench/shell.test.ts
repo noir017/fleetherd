@@ -446,7 +446,7 @@ describe('workbench/shell', () => {
     commands.dispose();
   });
 
-  it('opens secondary pane at 480px default width and escapes StackShell.setListHeader backLabel', () => {
+  it('opens secondary pane at 480px default width', () => {
     const root = document.createElement('div');
     document.body.appendChild(root);
     const storage = makeMemoryStorage();
@@ -454,12 +454,6 @@ describe('workbench/shell', () => {
 
     shell.setPartVisible('secondary', true);
     expect(shell.secondary.element.style.width).toBe('480px');
-
-    const stack = shell.getStackShell();
-    stack.setListHeader({ title: 'Reviews', backLabel: '<img src=x onerror=alert(1)>' });
-    const backBtn = stack.element.querySelector<HTMLButtonElement>('.wb-stack-list-back')!;
-    expect(backBtn.querySelector('img')).toBeNull();
-    expect(backBtn.textContent).toContain('<img src=x onerror=alert(1)>');
 
     shell.dispose();
   });

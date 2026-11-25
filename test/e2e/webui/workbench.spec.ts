@@ -78,8 +78,14 @@ test.describe('Web UI workbench cutover suite', () => {
 
     await page.setViewportSize({ width: 390, height: 844 });
     await expect(root).toHaveAttribute('data-wb-mode', 'mobile');
-    await expect(page.locator('.wb-stack')).toBeVisible();
-    await expect(page.locator('.wb-shell')).toBeHidden();
+    await expect(page.locator('.wb-shell')).toBeVisible();
+    await expect(page.locator('#expand-sidebar')).toBeVisible();
+    await expect(page.locator('.wb-sidebar')).toBeHidden();
+    await page.locator('#expand-sidebar').click();
+    await expect(page.locator('.wb-sidebar')).toBeVisible();
+    await expect(page.locator('.wb-drawer-backdrop')).toBeVisible();
+    await page.mouse.click(375, 420);
+    await expect(page.locator('.wb-sidebar')).toBeHidden();
   });
 
   test('switches sidebar views via activity bar and interacts with status bar controls', async ({

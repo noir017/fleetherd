@@ -16,12 +16,9 @@
 
 .wb-root[hidden],
 .wb-shell[hidden],
-.wb-stack[hidden],
 .wb-sash[hidden],
 .wb-drawer-backdrop[hidden],
-.wb-part-tabs[hidden],
-.wb-stack-list-page[hidden],
-.wb-stack-detail-page[hidden] {
+.wb-part-tabs[hidden] {
   display: none !important;
 }
 
@@ -129,8 +126,7 @@
   line-height: 18px;
 }
 
-.wb-activity-item .wb-badge,
-.wb-stack-tab .wb-badge {
+.wb-activity-item .wb-badge {
   position: absolute;
   top: 3px;
   right: 4px;
@@ -884,128 +880,6 @@
 .wb-root[data-wb-mode="mobile"] .wb-topic-more {
   min-width: 36px;
   height: 40px;
-}
-
-/* Mobile stack shell (< 640px) */
-.wb-stack {
-  display: flex;
-  flex-direction: column;
-  width: 100%;
-  height: 100%;
-  background: var(--fh-bg);
-}
-
-.wb-stack-list-page,
-.wb-stack-detail-page {
-  display: flex;
-  flex-direction: column;
-  flex: 1 1 auto;
-  min-height: 0;
-}
-
-.wb-stack-body {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow: auto;
-  display: flex;
-  flex-direction: column;
-}
-
-.wb-stack-tabbar {
-  display: flex;
-  align-items: stretch;
-  justify-content: space-around;
-  border-top: 1px solid var(--fh-line);
-  background: var(--fh-bg-side);
-  padding: 4px 0 max(8px, env(safe-area-inset-bottom));
-  flex: none;
-}
-
-.wb-stack-tab {
-  position: relative;
-  flex: 1;
-  border: 0;
-  background: transparent;
-  color: var(--fh-fg-inactive);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 2px;
-  font-size: var(--fh-fs-2xs);
-  padding: 4px 0;
-  cursor: pointer;
-}
-
-.wb-stack-tab.is-active {
-  color: var(--fh-fg-hi);
-}
-
-.wb-stack-tab.is-active::before {
-  content: "";
-  position: absolute;
-  left: 30%;
-  right: 30%;
-  top: -4px;
-  height: 2px;
-  background: var(--fh-accent);
-}
-
-.wb-stack-tab-icon svg {
-  width: 18px;
-  height: 18px;
-  stroke-width: 1.5;
-  display: block;
-}
-
-.wb-stack-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  height: 48px;
-  padding: 0 10px 0 4px;
-  border-bottom: 1px solid var(--fh-line);
-  background: var(--fh-bg-side);
-  flex: none;
-}
-
-.wb-stack-title {
-  font-size: var(--fh-fs-ui);
-  font-weight: 600;
-  color: var(--fh-fg-hi);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  min-width: 0;
-}
-
-.wb-stack-tools {
-  display: flex;
-  gap: 4px;
-  padding: 6px 10px;
-  border-bottom: 1px solid var(--fh-line);
-  background: var(--fh-bg);
-  overflow-x: auto;
-  flex: none;
-}
-
-.wb-stack-tool {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  border: 0;
-  border-radius: 2px;
-  padding: 3px 12px;
-  background: var(--fh-btn2);
-  color: var(--fh-fg-dim);
-  font-size: var(--fh-fs-sm);
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-.wb-stack-tool.is-active {
-  background: var(--fh-accent);
-  color: var(--fh-on-accent);
 }
 
 /* Workbench topic editor & built-in feature views */

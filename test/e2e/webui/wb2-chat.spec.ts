@@ -53,19 +53,22 @@ test.describe('wb2-chat topic editor alignment', () => {
     await expect(page.locator('.wb-topic-editor .launch .agent-card.def')).toBeVisible();
   });
 
-  test('mobile ?m#topic hides duplicate header and renders pill composer', async ({ page }) => {
+  test('mobile topic hides duplicate tab bar and renders pill composer', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await loginViaUi(page, gateway.baseUrl, gateway.secret);
 
-    const topicRow = page.locator('.wb-stack-list-body .topic-item').filter({ hasText: RICH_TOPIC }).first();
+    await page.locator('#expand-sidebar').click();
+    const topicRow = page.locator('.wb-sidebar .topic-item').filter({ hasText: RICH_TOPIC }).first();
     await expect(topicRow).toBeVisible();
     await topicRow.click();
+    await expect(page.locator('.wb-sidebar')).toBeHidden();
 
-    const detailEditor = page.locator('.wb-stack-detail-body .wb-topic-editor');
-    await expect(detailEditor).toBeVisible();
-    await expect(detailEditor.locator('> .wb-topic-header')).toBeHidden();
-    await expect(detailEditor.locator('.wb-topic-attach')).toBeVisible();
-    await expect(detailEditor.locator('.wb-topic-send')).toBeVisible();
+    const editor = page.locator('.wb-topic-editor');
+    await expect(editor).toBeVisible();
+    await expect(page.locator('.wb-group-head')).toBeHidden();
+    await expect(editor.locator('> .wb-topic-header')).toBeVisible();
+    await expect(editor.locator('.wb-topic-attach')).toBeVisible();
+    await expect(editor.locator('.wb-topic-send')).toBeVisible();
   });
 
   test('send-now with interrupt keeps the sent message visible in transcript live and after reload', async ({ page }) => {
