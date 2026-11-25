@@ -49,27 +49,41 @@ describe('webui page: workbench responsive layout (desktop, tablet, mobile)', ()
     expect((h.doc.querySelector('.wb-sidebar') as HTMLElement).hidden).toBe(true);
   });
 
-  it('uses StackShell on mobile (< 640px) with bottom tab bar and list/detail navigation', async () => {
+  it('uses slide-out sidebar drawer on mobile (< 640px) with topic view as main screen', async () => {
     const h = await open({ width: 390, height: 844 });
     await h.emit(sync('a1b2c3d4', [message('m1', '<p>mobile</p>')], ['a1b2c3d4', 'b2c3d4e5']));
 
     const root = h.el('workbench-root');
     expect(root.dataset.wbMode).toBe('mobile');
-    expect((h.doc.querySelector('.wb-shell') as HTMLElement).hidden).toBe(true);
-
-    const stack = h.doc.querySelector('.wb-stack') as HTMLElement;
-    expect(stack).not.toBeNull();
-    expect(stack.hidden).toBe(false);
-    expect(stack.dataset.stackMode).toBe('list');
-    expect(stack.querySelectorAll('.wb-stack-tab').length).toBeGreaterThanOrEqual(4);
+    const shellEl = h.doc.querySelector('.wb-shell') as HTMLElement;
+    expect(shellEl.hidden).toBe(false);
+    expect(h.doc.querySelector('.wb-stack')).toBeNull();
+    expect(h.el('log').textContent).toContain('mobile');
     expect(h.doc.activeElement).not.toBe(h.el('input'));
 
-    await h.click('.wb-stack-list-body [data-topic="b2c3d4e5"]');
-    expect(stack.dataset.stackMode).toBe('detail');
-    expect(stack.querySelector('.wb-stack-title')?.textContent).toContain('Topic b2c3d4e5');
+    const backdrop = h.doc.querySelector('.wb-drawer-backdrop') as HTMLElement;
+    expect(backdrop.hidden).toBe(true);
+    expect(shellEl.classList.contains('is-sidebar-open')).toBe(false);
 
-    await h.click('.wb-stack-back');
-    expect(stack.dataset.stackMode).toBe('list');
+    await h.click('#expand-sidebar');
+    expect(shellEl.classList.contains('is-sidebar-open')).toBe(true);
+    expect(backdrop.hidden).toBe(false);
+    const actIds = Array.from(h.doc.querySelectorAll('.wb-activity-item')).map((el) =>
+      el.getAttribute('data-activity-id'),
+    );
+    expect(actIds).toEqual(['topics', 'history', 'schedules', 'reviews', 'skills', 'settings']);
+
+    await h.click('.wb-sidebar [data-topic="b2c3d4e5"]');
+    expect(shellEl.classList.contains('is-sidebar-open')).toBe(false);
+    expect(backdrop.hidden).toBe(true);
+    expect(h.doc.activeElement).not.toBe(h.el('input'));
+
+    await h.click('#expand-sidebar');
+    expect(shellEl.classList.contains('is-sidebar-open')).toBe(true);
+    backdrop.click();
+    await tick();
+    expect(shellEl.classList.contains('is-sidebar-open')).toBe(false);
+    expect(backdrop.hidden).toBe(true);
   });
 });
 
@@ -193,10 +207,10 @@ describe('webui page: the narrow-screen stylesheet', () => {
     expect(outside).toContain('width:26px;height:24px');
   });
 
-  it('includes mobile StackShell and safe-area rules in the served stylesheet', () => {
+  it('includes mobile slide-out drawer and safe-area rules in the served stylesheet', () => {
     const html = renderPage('Chat', false);
-    expect(html).toContain('.wb-stack');
-    expect(html).toContain('.wb-stack-tabbar');
+    expect(html).toContain('.wb-root[data-wb-mode="mobile"] .wb-sidebar');
+    expect(html).toContain('.wb-root[data-wb-mode="mobile"] .wb-topic-menu');
     expect(html).toContain('env(safe-area-inset-bottom');
     expect(html).toContain('100dvh');
     expect(narrowBlock()).toContain('#input,#secret{font-size:16px}');

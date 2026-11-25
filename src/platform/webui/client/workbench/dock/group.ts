@@ -645,6 +645,16 @@ export class EditorGroup implements Disposable {
   }
 
   private _renderMultiTabStrip(): void {
+    const menuBtn = this._doc.createElement('button');
+    menuBtn.type = 'button';
+    menuBtn.className = 'wb-icon-btn wb-group-mobile-menu';
+    menuBtn.dataset.mobileDrawerToggle = '1';
+    menuBtn.dataset.dndIgnore = '1';
+    menuBtn.setAttribute('aria-label', 'Open sidebar');
+    const menuSvg = this._resolveIcon('menu') || icon('menu');
+    menuBtn.innerHTML = menuSvg;
+    this.headerElement.appendChild(menuBtn);
+
     const strip = this._doc.createElement('div');
     strip.className = 'wb-tab-strip';
     strip.setAttribute('role', 'tablist');

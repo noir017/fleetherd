@@ -154,23 +154,26 @@ test.describe('wb2-api: 5 backend + frontend workbench integrations', () => {
     await page.setViewportSize({ width: 390, height: 844 });
     await loginViaUi(page, gateway.baseUrl, gateway.secret);
 
-    const activeRow = page.locator('.wb-stack-list-body .topic-item').filter({ hasText: ACTIVE_TOPIC }).first();
+    await page.locator('#expand-sidebar').click();
+    const activeRow = page.locator('.wb-sidebar .topic-item').filter({ hasText: ACTIVE_TOPIC }).first();
     await expect(activeRow).toBeVisible();
     await activeRow.click();
-    await expect(page.locator('.wb-stack-detail-body .wb-topic-editor #status .st-perm')).toBeVisible();
+    await expect(page.locator('.wb-sidebar')).toBeHidden();
+    await expect(page.locator('.wb-topic-editor #status .st-perm')).toBeVisible();
 
-    await page.goto(gateway.baseUrl);
-    const freshRow = page.locator('.wb-stack-list-body .topic-item').filter({ hasText: MOBILE_NEW_TOPIC }).first();
+    await page.locator('#expand-sidebar').click();
+    const freshRow = page.locator('.wb-sidebar .topic-item').filter({ hasText: MOBILE_NEW_TOPIC }).first();
     await expect(freshRow).toBeVisible();
     await freshRow.click();
-    const mobileCard = page.locator('.wb-stack-detail-body .wb-topic-editor .launch .agent-card.def');
+    await expect(page.locator('.wb-sidebar')).toBeHidden();
+    const mobileCard = page.locator('.wb-topic-editor .launch .agent-card.def');
     await expect(mobileCard).toBeVisible();
-    await expect(page.locator('.wb-stack-detail-body .wb-topic-editor .launch .launch-dirs')).toHaveCount(0);
+    await expect(page.locator('.wb-topic-editor .launch .launch-dirs')).toHaveCount(0);
     const sendAgentReq = page.waitForRequest((req) => req.url().includes('/api/send') && req.method() === 'POST');
     await mobileCard.click();
     const req = await sendAgentReq;
     expect(String((req.postDataJSON() as { text?: string }).text ?? '')).toMatch(/^\/agent \S+$/);
-    await expect(page.locator('.wb-stack-detail-body .wb-topic-editor .wd-picker')).toBeVisible();
-    await expect(page.locator('.wb-stack-detail-body .wb-topic-editor #status .st-model')).toBeVisible();
+    await expect(page.locator('.wb-topic-editor .wd-picker')).toBeVisible();
+    await expect(page.locator('.wb-topic-editor #status .st-model')).toBeVisible();
   });
 });

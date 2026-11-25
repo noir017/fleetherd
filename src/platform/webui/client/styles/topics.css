@@ -343,7 +343,7 @@
 .wb-root[data-wb-mode="mobile"] .wb-topics-head{height:44px;padding:0 4px;background:var(--fh-bg-side)}
 .wb-root[data-wb-mode="mobile"] .wb-topics-head .fh-btn--icon{min-width:44px;width:44px;height:44px;background:transparent;border:0;color:var(--fh-link);border-radius:8px}
 .wb-root[data-wb-mode="mobile"] .wb-topics-head .fh-btn--icon svg{width:22px;height:22px}
-.wb-root[data-wb-mode="mobile"] .wb-topics-mobile-title{display:block;flex:none;font-size:30px;font-weight:700;line-height:1.15;color:var(--fh-fg-hi);padding:0 16px 12px;background:var(--fh-bg-side)}
+.wb-root[data-wb-mode="mobile"] .wb-topics-mobile-title{display:none}
 .wb-root[data-wb-mode="mobile"] .wb-stack .wb-topics-head,
 .wb-root[data-wb-mode="mobile"] .wb-stack .wb-topics-mobile-title{display:none}
 .wb-root[data-wb-mode="mobile"] .wb-topics-list{background:var(--fh-bg);padding:0 0 12px}

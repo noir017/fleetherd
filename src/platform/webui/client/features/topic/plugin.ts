@@ -62,6 +62,7 @@ export interface TopicPluginDeps {
   readonly hasIdleAgents?: () => boolean;
   readonly copyText?: (text: string) => void;
   readonly onBack?: () => void;
+  readonly onToggleSidebar?: () => void;
   readonly onTopicChange?: (nextTopicId: string, prevTopicId: string) => void;
   readonly onEditorCreated?: (handle: TopicEditorHandle) => void;
   readonly onRegisterInsertHandler?: (handler: (topicId: string, text: string) => boolean) => void;
@@ -417,6 +418,7 @@ export function createTopicPlugin(deps: TopicPluginDeps = {}): WebuiPlugin {
             },
             canOpenSideDiff,
             onBack: deps.onBack,
+            onToggleSidebar: deps.onToggleSidebar,
             onTopicChange: deps.onTopicChange,
             onMount: (handle) => {
               mountedEditors.add(handle);

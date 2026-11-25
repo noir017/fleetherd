@@ -34,6 +34,7 @@ export interface MessageMenuTarget {
 }
 
 export interface TopicEditorIcons {
+  readonly menu?: string;
   readonly back: string;
   readonly more: string;
   readonly plus: string;
@@ -61,6 +62,7 @@ export interface TopicEditorIcons {
 export interface TopicEditorElements {
   readonly root: HTMLElement;
   readonly header: HTMLElement;
+  readonly menuBtn: HTMLButtonElement;
   readonly backBtn: HTMLButtonElement;
   readonly statusDotHost: HTMLElement;
   readonly titleEl: HTMLElement;
@@ -135,6 +137,7 @@ export interface TopicEditorDeps {
   readonly onOpenTurnDiffSideBySide?: (topicId: string, turn: number, panelId?: string) => Promise<void> | void;
   readonly canOpenSideDiff?: () => boolean;
   readonly onBack?: () => void;
+  readonly onToggleSidebar?: () => void;
   readonly onTopicChange?: (nextTopicId: string, prevTopicId: string) => void;
   readonly onMount?: (handle: TopicEditorHandle) => void;
   readonly onDispose?: (handle: TopicEditorHandle) => void;
