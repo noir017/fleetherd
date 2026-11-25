@@ -933,12 +933,6 @@ export class WorkbenchShell implements Disposable {
         this._splitView.setPaneVisible('sidebar', sbVisible, false);
         this._splitView.setPaneVisible('secondary', secVisible, false);
         const workW = Math.max(0, this._width - ACTIVITY_BAR_WIDTH);
-        if (secVisible) {
-          const sbW = sbVisible ? this._splitView.getPreferredPaneSize('sidebar') || 264 : 0;
-          const secW = this.dock.getPartSize('secondary') || this._splitView.getPreferredPaneSize('secondary') || 480;
-          this._splitView.setPaneSize('secondary', secW, false, false);
-          this._splitView.setPaneSize('center', Math.max(320, workW - sbW - secW), false, false);
-        }
         this._splitView.layout(workW);
       }
 

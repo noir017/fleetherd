@@ -764,8 +764,11 @@ export class EditorGroup implements Disposable {
     if (!target) return;
     ev.preventDefault();
     this.setActivePanel(target.id, false);
-    const nextBtn = strip.querySelector<HTMLElement>(`[data-panel-id="${target.id}"]`);
-    focusSafely(nextBtn);
+    const scope = strip.isConnected ? strip : this.headerElement;
+    const nextBtn = Array.from(
+      scope.querySelectorAll<HTMLElement>('.wb-tab[data-panel-id]'),
+    ).find((el) => el.dataset.panelId === target.id);
+    focusSafely(nextBtn ?? null);
   }
 
   private _createDirtyDot(): HTMLSpanElement {

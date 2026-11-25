@@ -472,4 +472,70 @@ describe('workbench/shell', () => {
 
     shell.dispose();
   });
+
+  it('remembers sidebar, secondary, and bottom panel sizes across hide/show toggles and reload', () => {
+    const storage = makeMemoryStorage();
+    const root = document.createElement('div');
+    document.body.appendChild(root);
+    const shell = new WorkbenchShell({ root, storage, initialWidth: 1440, initialHeight: 900 });
+    shell.views.register({
+      id: 'topics',
+      title: 'Topics',
+      part: 'sidebar',
+      component: () => makePanel('topics-view'),
+    });
+    shell.views.reveal('topics');
+
+    shell.dock.setPartSize('sidebar', 380);
+    expect(shell.sidebar.element.style.width).toBe('380px');
+
+    // Hide then re-show sidebar -> must restore 380px rather than shrinking to minSize (180px).
+    shell.setPartVisible('sidebar', false);
+    expect(shell.isPartVisible('sidebar')).toBe(false);
+    shell.setPartVisible('sidebar', true);
+    expect(shell.sidebar.element.style.width).toBe('380px');
+    expect(shell.dock.getPartSize('sidebar')).toBe(380);
+
+    // Same for secondary sidebar.
+    shell.setPartVisible('secondary', true);
+    shell.dock.setPartSize('secondary', 410);
+    expect(shell.secondary.element.style.width).toBe('410px');
+    shell.setPartVisible('secondary', false);
+    shell.setPartVisible('secondary', true);
+    expect(shell.secondary.element.style.width).toBe('410px');
+    expect(shell.dock.getPartSize('secondary')).toBe(410);
+
+    // Same for bottom panel height.
+    shell.setPartVisible('panel', true);
+    shell.panel.setHeight(310);
+    shell.setPartVisible('panel', false);
+    shell.setPartVisible('panel', true);
+    expect(shell.panel.element.style.height).toBe('310px');
+    expect(shell.dock.getPartSize('panel')).toBe(310);
+
+    // Collapse sidebar, reload into a fresh shell, then re-expand -> still 380px.
+    shell.setPartVisible('sidebar', false);
+    shell.dispose();
+    root.remove();
+
+    const root2 = document.createElement('div');
+    document.body.appendChild(root2);
+    const shell2 = new WorkbenchShell({ root: root2, storage, initialWidth: 1440, initialHeight: 900 });
+    shell2.views.register({
+      id: 'topics',
+      title: 'Topics',
+      part: 'sidebar',
+      component: () => makePanel('topics-view-2'),
+    });
+    const restored = shell2.restoreLayout();
+    expect(restored).toBe(true);
+    shell2.views.reveal('topics', { openPart: !restored && shell2.getMode() !== 'tablet' });
+    expect(shell2.isPartVisible('sidebar')).toBe(false);
+    expect(shell2.panel.element.style.height).toBe('310px');
+    shell2.setPartVisible('sidebar', true);
+    expect(shell2.sidebar.element.style.width).toBe('380px');
+
+    shell2.dispose();
+    root2.remove();
+  });
 });

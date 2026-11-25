@@ -470,4 +470,56 @@ describe('workbench/dock/engine (DynamicDockEngine)', () => {
     engine.dispose();
     expect(created.every((c) => c.dispose.mock.calls.length === 1)).toBe(true);
   });
+
+  it('switches to an earlier editor tab on pointerdown/pointerup/click without premature pointer capture', () => {
+    const host = document.createElement('div');
+    const container = document.createElement('div');
+    host.appendChild(container);
+    document.body.appendChild(host);
+
+    const engine = new DynamicDockEngine({
+      doc: document,
+      editorContainer: container,
+      dndHost: host,
+      alwaysShowTabs: true,
+    });
+
+    const c1 = createStubComponent('topic');
+    const c2 = createStubComponent('file');
+    engine.registerComponent('editor:topic', () => c1.component);
+    engine.registerComponent('editor:file', () => c2.component);
+
+    engine.addPanel({ id: 'topic:active', component: 'editor:topic', title: 'Topic', params: { topicId: 't1' } });
+    engine.addPanel({ id: 'editor:file:1', component: 'editor:file', title: 'main.ts' });
+
+    const group = engine.getGroup(MAIN_GROUP_ID)!;
+    const setCapture = vi.fn();
+    group.headerElement.setPointerCapture = setCapture;
+
+    expect(engine.getActiveGroupPanel()).toBe('editor:file:1');
+    expect(c1.element.hidden).toBe(true);
+    expect(c2.element.hidden).toBe(false);
+
+    const firstTab = group.headerElement.querySelector<HTMLButtonElement>('[data-panel-id="topic:active"]')!;
+    const down = new MouseEvent('pointerdown', { bubbles: true, cancelable: true, button: 0, clientX: 20, clientY: 10 });
+    Object.defineProperty(down, 'pointerId', { value: 1 });
+    Object.defineProperty(down, 'pointerType', { value: 'mouse' });
+    firstTab.dispatchEvent(down);
+
+    // Must NOT capture on pointerdown before drag threshold, or browsers swallow the child tab click.
+    expect(setCapture).not.toHaveBeenCalled();
+
+    const up = new MouseEvent('pointerup', { bubbles: true, cancelable: true, button: 0, clientX: 20, clientY: 10 });
+    Object.defineProperty(up, 'pointerId', { value: 1 });
+    Object.defineProperty(up, 'pointerType', { value: 'mouse' });
+    firstTab.dispatchEvent(up);
+    firstTab.click();
+
+    expect(engine.getActiveGroupPanel()).toBe('topic:active');
+    expect(c1.element.hidden).toBe(false);
+    expect(c2.element.hidden).toBe(true);
+
+    engine.dispose();
+    host.remove();
+  });
 });

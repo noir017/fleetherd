@@ -224,8 +224,8 @@ or ask an agent in a topic, which registers one the same way.
 **What needs you.** Every topic waiting on you moves to the top of the list, its title in green,
 with a line under the group: a question to answer first (amber dot), then a turn that failed (red
 dot), then a reply you have not read yet (green dot). Hover a row for what it is — a reply's first
-line, which is usually the conclusion. A reply goes back to its place once you have looked at it. A
-failure stays until the next turn runs, and its dot stays red after that.
+line, which is usually the conclusion. Both a finished reply and a failed turn go back to their
+place once you have looked at them.
 
 A sub-agent's topic is not one of these: its finished replies and failures are the news of the
 agent that opened it, so it is never moved up, and its finished turn keeps the ordinary idle/online

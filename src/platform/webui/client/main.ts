@@ -288,12 +288,15 @@ function switchTopic(rt: AppRuntime, id: string, opts?: { readonly openDetail?: 
     resetTopicView(rt, id);
     history.replaceState(null, '', currentTopicUrl(id));
     ensureTopicEditorOpen(rt, id);
+    rt.readsService.markTopicFromList(id, rt.state.topics);
+    rt.readsService.reportSeen();
     const active = topicById(rt.state, id);
     rt.events.emit('topic.active', { id, topic: active as unknown as TopicInfo | undefined });
     rt.streamClient.close();
     rt.streamClient.connect(false);
   } else {
     ensureTopicEditorOpen(rt, id);
+    rt.readsService.reportSeen();
   }
   if (opts?.openDetail !== false && rt.shell.getMode() === 'mobile') {
     openMobileTopicDetail(rt, id);
@@ -691,6 +694,7 @@ function handleSyncEvent(rt: AppRuntime, ev: Extract<WebEvent, { t: 'sync' }>): 
   const active = topicById(state, state.topic);
   rt.events.emit('topic.list', { topics: toTopicInfos(state.topics) });
   rt.events.emit('topic.active', { id: state.topic, topic: active as unknown as TopicInfo | undefined });
+  rt.readsService.reportSeen();
   rt.registry.refreshActivityBadges();
 }
 
@@ -1267,7 +1271,8 @@ function bootstrap(): void {
 
   registerBuiltinPlugins(pluginManager, createDefaultBuiltinPluginFactories(buildBuiltinDeps(rt)));
   void pluginManager.activateAll().then(() => {
-    shell.views.reveal('topics', { openPart: shell.getMode() !== 'tablet' });
+    const restored = shell.restoreLayout();
+    shell.views.reveal('topics', { openPart: !restored && shell.getMode() !== 'tablet' });
     ensureTopicEditorOpen(rt, state.topic);
     wireMobileShell(rt);
     if (state.topic) {

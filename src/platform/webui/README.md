@@ -537,9 +537,9 @@ read as two conversations. The outcome and `seenAt` are persisted in the topic f
 (its timer dies with the daemon).
 
 **`seenAt` is the server's clock, not the page's.** The page only says *now* (`api/seen {topic}`), and
-only when the topic on screen is in `review` and the page is visible; the room stamps `Date.now()`.
+only when the topic on screen is in `review` or `failed` and the page is visible; the room stamps `Date.now()`.
 It is compared with a turn's end, which is the daemon's time, and a phone's clock is nothing to
-compare a server's with. Posting only on `review` keeps the traffic to one request per reply read.
+compare a server's with. Posting only on `review`/`failed` keeps the traffic to one request per outcome read.
 
 **A menu is not a question** (`awaitingQuestion`). The room's `awaiting` set is "messages with live
 buttons", which was the same thing while every such message was an ask. Operator control menus —
@@ -673,7 +673,7 @@ no request of its own — the `topics` event that keeps the switcher current car
 state, message counts and unread marks, so a run that starts or finishes moves the tab as it
 happens. Its one bulk write is **Mark all read** — the check icon in the panel's title (`#sched-read`),
 shown only on this sub-tab, as the topic list's sits beside its own title — which clears this page's `aa_reads` marks and posts
-`api/seen` once for each run the daemon still counts as `stage: review` (the route takes one topic
+`api/seen` once for each run the daemon still counts as `stage: review` or `failed` (the route takes one topic
 and has no bulk form; a run list is a handful). The list is grouped by the browser's calendar —
 this month by day, older by month, `lastAt` deciding — with each group folded or opened on its own
 in `aa_sched_groups`; the newest group and the one holding the topic on screen start open, and a

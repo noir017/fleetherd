@@ -443,6 +443,9 @@ export class SplitView implements Disposable {
   setPaneVisible(id: string, visible: boolean, relayout = true): void {
     const pane = this._panes.find((p) => p.id === id);
     if (!pane || pane.visible === visible) return;
+    if (visible) {
+      this._reclaimSpaceFor(pane, clampSize(pane.size, pane.minSize, pane.maxSize));
+    }
     pane.visible = visible;
     this._syncVisibility();
     if (!relayout) return;
@@ -450,15 +453,50 @@ export class SplitView implements Disposable {
     else this._onDidChange.fire(this.getSizes());
   }
 
+  private _reclaimSpaceFor(target: MutablePane, amount: number): void {
+    let needed = amount;
+    if (needed <= 0) return;
+    const donors = this._panes
+      .filter((p) => p !== target && p.visible && !p.fixed)
+      .sort((a, b) => PRIORITY_RANK[b.priority] - PRIORITY_RANK[a.priority]);
+    for (const donor of donors) {
+      if (needed <= 0) break;
+      const avail = Math.max(0, donor.size - donor.minSize);
+      const take = Math.min(needed, avail);
+      if (take > 0) {
+        donor.size -= take;
+        needed -= take;
+      }
+    }
+  }
+
   setPaneSize(id: string, size: number, persist = false, relayout = true): void {
     const pane = this._panes.find((p) => p.id === id);
     if (!pane) return;
-    pane.size = clampSize(size, pane.minSize, pane.maxSize);
+    const prev = pane.size;
+    const next = clampSize(size, pane.minSize, pane.maxSize);
+    pane.size = next;
+    if (pane.visible && next > prev) {
+      this._reclaimSpaceFor(pane, next - prev);
+    }
     if (relayout) {
       if (this._totalSize > 0) this.layout(this._totalSize);
       else this._applySizes(this._panes.map((p) => (p.visible ? p.size : 0)));
     }
     if (persist) this._savePersisted();
+  }
+
+  setPaneSizes(sizes: Readonly<Record<string, number>>, relayout = false): void {
+    for (const pane of this._panes) {
+      const target = sizes[pane.id];
+      if (target !== undefined) {
+        pane.size = clampSize(target, pane.minSize, pane.maxSize);
+      }
+    }
+    if (relayout) {
+      if (this._totalSize > 0) this.layout(this._totalSize);
+      else this._applySizes(this._panes.map((p) => (p.visible ? p.size : 0)));
+    }
   }
 
   getPaneSize(id: string): number {

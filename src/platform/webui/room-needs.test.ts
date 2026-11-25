@@ -46,11 +46,18 @@ describe('WebRoom: the stage of a topic', () => {
     expect(room.seenAt(topic)).toBeGreaterThan(0);
   });
 
-  it('a failure stays a failure after it has been seen', () => {
+  it('a failure is "failed" until the operator looks, then idle without re-notifying', () => {
+    vi.useFakeTimers();
     const { room, topic, row } = rig();
-    room.setActivity(topic, { outcome: { kind: 'failed', at: Date.now() - 1, line: 'upstream 503', reason: 'service' } });
-    room.markSeen(topic);
+    const sent: TopicNotice[] = [];
+    room.useNotifier((n) => sent.push(n));
+    room.setActivity(topic, { outcome: { kind: 'failed', at: Date.now(), line: 'upstream 503', reason: 'service' } });
     expect(row(topic)?.stage).toBe('failed');
+    vi.advanceTimersByTime(1_000);
+    expect(room.markSeen(topic)).toBe(true);
+    expect(row(topic)?.stage).toBe('idle');
+    vi.advanceTimersByTime(5_000);
+    expect(sent).toEqual([]);
   });
 
   it('a scheduled continue reads as retrying', () => {
