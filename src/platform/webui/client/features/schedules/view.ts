@@ -282,9 +282,9 @@ class SchedulesView implements SchedulesViewController {
     this._headerHost = this._doc.createElement('div');
     this._headerHost.className = 'fh-schedules-header';
     const subtabHost = this._doc.createElement('div');
-    subtabHost.className = 'fh-schedules-subnav';
+    subtabHost.className = 'fh-schedules-subnav fh-sidebar-seg';
     this._filterHost = this._doc.createElement('div');
-    this._filterHost.className = 'fh-schedules-filter';
+    this._filterHost.className = 'fh-schedules-filter fh-sidebar-filter';
     this._sessSearchHost = this._doc.createElement('div');
     this._sessSearchHost.className = 'fh-schedules-sess-search';
     const sessSearchBox = this._doc.createElement('div');

@@ -25,8 +25,6 @@ export function buildSkillSortDef(): FilterBarSortDef {
 }
 
 export function buildSkillFilterGroups(skills: readonly SkillPanelEntry[]): FilterBarGroup[] {
-  let residentCount = 0;
-  let libraryCount = 0;
   let activeCount = 0;
   let archivedCount = 0;
   let expiredCount = 0;
@@ -34,8 +32,6 @@ export function buildSkillFilterGroups(skills: readonly SkillPanelEntry[]): Filt
   const categoryCounts = new Map<string, number>();
 
   for (const skill of skills) {
-    if (skill.resident) residentCount++;
-    else libraryCount++;
     if (isSkillActive(skill)) activeCount++;
     else archivedCount++;
     if (skill.status === 'expired') expiredCount++;
@@ -46,15 +42,6 @@ export function buildSkillFilterGroups(skills: readonly SkillPanelEntry[]): Filt
   }
 
   const groups: FilterBarGroup[] = [
-    {
-      id: 'tier',
-      label: tr('skills.tierAria'),
-      pinned: true,
-      options: [
-        { value: 'resident', label: tr('skills.tabResident'), count: residentCount },
-        { value: 'library', label: tr('skills.tabLibrary'), count: libraryCount },
-      ],
-    },
     {
       id: 'status',
       label: tr('common.filter'),
@@ -90,12 +77,6 @@ function matchesQuery(skill: SkillPanelEntry, query: string): boolean {
   if (skill.description.toLowerCase().includes(needle)) return true;
   if (skill.category && skill.category.toLowerCase().includes(needle)) return true;
   return false;
-}
-
-function matchesTier(skill: SkillPanelEntry, tiers: readonly string[] | undefined): boolean {
-  if (!tiers || tiers.length === 0) return true;
-  const key = skill.resident ? 'resident' : 'library';
-  return tiers.includes(key);
 }
 
 function matchesStatus(skill: SkillPanelEntry, statuses: readonly string[] | undefined): boolean {
@@ -137,14 +118,12 @@ function compareSkills(a: SkillPanelEntry, b: SkillPanelEntry, sort: string, dir
 
 export function filterSkills(skills: readonly SkillPanelEntry[], state: FilterBarState): SkillPanelEntry[] {
   const q = state.q.trim();
-  const tiers = state.sel.tier;
   const statuses = state.sel.status;
   const categories = state.sel.category;
 
   const filtered = skills.filter(
     (s) =>
       matchesQuery(s, q) &&
-      matchesTier(s, tiers) &&
       matchesStatus(s, statuses) &&
       matchesCategory(s, categories),
   );

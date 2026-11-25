@@ -129,7 +129,6 @@
   .skill-main{flex-basis:100%}
   .skill-seg button{min-height:32px;padding:0 12px}
   .skill-switch{min-height:32px}
-  .skill-tab{flex:1;justify-content:center;min-height:32px}
   .skill-text{min-height:40dvh;font-size:14px}
   /* The settings page, for the same reason and the same way: a 760px window shrunk into a phone
      is a column of rows behind a sliver of transcript nobody opened it to read. */
@@ -693,4 +692,56 @@
   .fh-empty-desc {
     font-size: 13.5px;
   }
+}
+
+.wb-root[data-wb-mode="mobile"] .fh-sidebar-seg {
+  padding: 0 16px 10px;
+  background: var(--fh-bg-side);
+}
+.wb-root[data-wb-mode="mobile"] .fh-sidebar-seg .fh-seg {
+  border-radius: 9px;
+  padding: 2px;
+}
+.wb-root[data-wb-mode="mobile"] .fh-sidebar-seg .fh-seg-item {
+  height: 30px;
+  padding: 0;
+  border-radius: 7px;
+  font-size: 13.5px;
+}
+.wb-root[data-wb-mode="mobile"] .fh-sidebar-seg .fh-seg-item.is-active {
+  font-weight: 600;
+}
+.wb-root[data-wb-mode="mobile"] .fh-sidebar-filter {
+  padding: 0 0 10px;
+  background: var(--fh-bg-side);
+  border-bottom: 1px solid var(--fh-line);
+}
+.wb-root[data-wb-mode="mobile"] .fh-sidebar-filter .fh-fb-row {
+  padding: 0 16px;
+}
+.wb-root[data-wb-mode="mobile"] .fh-sidebar-filter .fh-fb-search {
+  height: 38px;
+  padding: 0 10px;
+  gap: 8px;
+  border-radius: 10px;
+}
+.wb-root[data-wb-mode="mobile"] .fh-sidebar-filter .fh-fb-q {
+  font-size: 16px;
+}
+.wb-root[data-wb-mode="mobile"] .fh-sidebar-filter .fh-fb-pins .fh-fb-chips {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  padding: 2px 16px 2px;
+  gap: 8px;
+  scrollbar-width: none;
+}
+.wb-root[data-wb-mode="mobile"] .fh-sidebar-filter .fh-fb-chip {
+  flex: none;
+  font-size: 13.5px;
+  padding: 5px 13px;
+  border-radius: 16px;
+}
+.wb-root[data-wb-mode="mobile"] .fh-sidebar-filter .fh-fb-sum,
+.wb-root[data-wb-mode="mobile"] .fh-sidebar-filter .fh-fb-panel {
+  margin: 0 16px;
 }

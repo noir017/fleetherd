@@ -182,11 +182,6 @@ select.skill-field{appearance:auto}
 .fh-schedules-header{display:flex;align-items:center;gap:6px;padding:6px 8px 6px 14px;border-bottom:1px solid var(--fh-line);flex:none}
 .wb-sidebar-body .fh-schedules-header .panel-title{display:none}
 .fh-schedules-actions{display:flex;align-items:center;gap:2px;flex:none;margin-left:auto}
-.fh-schedules-subnav{padding:10px 10px 0;flex:none}
-.fh-schedules-subnav .fh-seg{width:100%;display:flex}
-.fh-schedules-subnav .fh-seg button{flex:1}
-.fh-schedules-filter{flex:none}
-.fh-schedules-filter .fh-fb{padding:8px 10px 6px;border-bottom:0}
 .fh-schedules-sess-search{padding:8px 10px 6px;flex:none}
 .fh-search-box{display:flex;align-items:center;gap:6px;background:var(--fh-input);border:1px solid var(--fh-input-line);border-radius:var(--fh-radius-ctrl);padding:0 8px;height:28px;color:var(--fh-placeholder)}
 .fh-search-box:focus-within{border-color:var(--fh-accent)}
@@ -293,11 +288,6 @@ select.skill-field{appearance:auto}
   .fh-schedules-header .sched-summary{display:none}
   .fh-schedules-actions{order:1;justify-content:flex-end;margin-left:0;margin-right:-8px}
   .fh-schedules-actions .fh-btn--icon{min-width:44px;height:44px;color:var(--fh-link)}
-  .fh-schedules-subnav{padding:0 16px 10px;background:var(--fh-bg-side)}
-  .fh-schedules-subnav .fh-seg{border-radius:9px}
-  .fh-schedules-subnav .fh-seg button{height:30px;border-radius:7px;font-size:13.5px}
-  .fh-schedules-filter{background:var(--fh-bg-side);border-bottom:1px solid var(--fh-line)}
-  .fh-schedules-filter .fh-fb{padding:0 16px 10px}
   .fh-schedules-sess-search{padding:0 16px 10px;background:var(--fh-bg-side);border-bottom:1px solid var(--fh-line)}
   .fh-search-box{height:38px;border-radius:10px;padding:0 10px;font-size:15.5px}
   .fh-search-input{font-size:16px}

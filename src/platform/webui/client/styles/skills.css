@@ -39,13 +39,6 @@
 .skill-group-head .skill-section{margin:0}
 .skill-group-hint{font-size:11.5px;color:var(--dim)}
 .skill-off .skill-main{opacity:.6}
-/* Library and Resident as two tabs, each counting its skills; an off skill stays in its tier's tab. */
-.skill-tabs{display:flex;gap:4px;margin:0 0 8px}
-.skill-tab{flex:none;display:inline-flex;align-items:center;gap:6px;padding:5px 14px;border:1px solid var(--line);border-radius:5px;background:var(--field);color:var(--dim);font:inherit;font-size:12px;cursor:pointer}
-.skill-tab:hover{color:var(--fg);border-color:var(--line-3)}
-.skill-tab.on{background:var(--accent-tab-bg);color:var(--accent-tab-fg);font-weight:600;border-color:var(--accent)}
-.skill-tab-n{font-weight:500;color:var(--fg-slate)}
-.skill-tab.on .skill-tab-n{color:var(--accent-tab-count)}
 .skill-pane>.skill-group-hint{margin:0 0 8px}
 .skill-seg{display:inline-flex;border:1px solid var(--line);border-radius:5px;overflow:hidden}
 .skill-seg button{background:var(--field);border:0;color:var(--dim);font:inherit;font-size:12px;padding:4px 9px;cursor:pointer}
@@ -128,7 +121,6 @@
 .fh-skills-view-actions{flex:none;display:flex;align-items:center;gap:2px}
 .fh-skills-view-notice:empty{display:none}
 .fh-skills-view-notice{flex:none;padding:6px 10px 0}
-.fh-skills-view-filter{flex:none;padding:8px 10px 4px}
 .fh-skills-view-body{flex:1;min-height:0;overflow:auto;padding:2px 0 8px}
 .fh-skills-view-searches:empty{display:none}
 .fh-skills-view-searches{flex:none;max-height:30%;overflow:auto;border-top:1px solid var(--fh-line,var(--line));padding:4px 0 8px}

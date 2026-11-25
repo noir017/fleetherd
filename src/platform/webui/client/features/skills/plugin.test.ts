@@ -231,15 +231,27 @@ describe('features/skills plugin', () => {
       Array.from(panel.element.querySelectorAll<HTMLElement>('[data-skill-name]')).map(
         (el) => el.dataset.skillName,
       );
-    expect(visibleNames()).toEqual(['alpha-resident', 'beta-library', 'gamma-archived']);
 
-    // Filter by resident tier chip
-    const residentChip = panel.element.querySelector<HTMLButtonElement>(
-      '[data-fb-group="tier"][data-fb-value="resident"]',
-    )!;
-    residentChip.click();
+    // Uses shared createSegmented tablist above FilterBar instead of custom .skill-tab or tier chips
+    const segHost = panel.element.querySelector<HTMLElement>('.fh-sidebar-seg');
+    const filterHost = panel.element.querySelector<HTMLElement>('.fh-sidebar-filter');
+    expect(segHost?.querySelector('.fh-seg--nav[role="tablist"]')).not.toBeNull();
+    expect(filterHost?.querySelector('.fh-filterbar')).not.toBeNull();
+    expect(segHost!.compareDocumentPosition(filterHost!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(panel.element.querySelector('.skill-tab')).toBeNull();
+    expect(panel.element.querySelector('[data-fb-group="tier"]')).toBeNull();
+
+    const residentTab = panel.element.querySelector<HTMLButtonElement>('[role="tab"][data-seg-value="resident"]')!;
+    const libraryTab = panel.element.querySelector<HTMLButtonElement>('[role="tab"][data-seg-value="library"]')!;
+    expect(residentTab.querySelector('.fh-seg-count')?.textContent).toBe('1');
+    expect(libraryTab.querySelector('.fh-seg-count')?.textContent).toBe('2');
+    expect(residentTab.getAttribute('aria-selected')).toBe('true');
     expect(visibleNames()).toEqual(['alpha-resident']);
-    residentChip.click();
+
+    // Switch to Library tab via shared segmented control
+    libraryTab.click();
+    expect(libraryTab.getAttribute('aria-selected')).toBe('true');
+    expect(visibleNames()).toEqual(['beta-library', 'gamma-archived']);
 
     // Filter by archived status chip
     const archivedChip = panel.element.querySelector<HTMLButtonElement>(

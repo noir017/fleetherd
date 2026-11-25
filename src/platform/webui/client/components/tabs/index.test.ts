@@ -57,6 +57,9 @@ describe('components/tabs', () => {
     });
     document.body.appendChild(nav.el);
     expect(nav.el.querySelector('.fh-seg--nav')?.getAttribute('role')).toBe('tablist');
+    const badge = nav.el.querySelector('[data-seg-value="all"] .fh-seg-count');
+    expect(badge?.textContent).toBe('9');
+    expect(badge?.classList.contains('fh-badge--accent')).toBe(false);
 
     const first = nav.el.querySelector<HTMLButtonElement>('[data-seg-value="all"]')!;
     first.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));

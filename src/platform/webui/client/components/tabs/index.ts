@@ -231,7 +231,9 @@ export function renderSegmented(opts: SegmentedOptions): TemplateResult {
       >
         ${renderIcon(opt.icon, 'fh-seg-icon')}
         <span class="fh-seg-label">${opt.label}</span>
-        ${opt.badge != null && opt.badge !== '' ? renderBadge({ count: opt.badge }) : nothing}
+        ${opt.badge != null && opt.badge !== ''
+          ? renderBadge({ count: opt.badge, tone: 'neutral', className: 'fh-seg-count' })
+          : nothing}
       </button>`;
     })}
   </div>`;

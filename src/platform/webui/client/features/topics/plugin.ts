@@ -560,9 +560,9 @@ class TopicsViewPanel implements TopicsViewInstance {
     this.mobileTitleEl.className = 'wb-topics-mobile-title';
     this.mobileTitleEl.textContent = tr('sidebar.topics');
     const segWrap = doc.createElement('div');
-    segWrap.className = 'wb-topics-seg';
+    segWrap.className = 'wb-topics-seg fh-sidebar-seg';
     const filterHost = doc.createElement('div');
-    filterHost.className = 'wb-topics-filter';
+    filterHost.className = 'wb-topics-filter fh-sidebar-filter';
     if (!doc.getElementById('topics-filter')) filterHost.id = 'topics-filter';
     this.batchBarHost = doc.createElement('div');
     this.batchBarHost.className = 'wb-topics-batch';
