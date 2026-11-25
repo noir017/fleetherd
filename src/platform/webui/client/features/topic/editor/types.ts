@@ -39,6 +39,7 @@ export interface TopicEditorIcons {
   readonly plus: string;
   readonly mic: string;
   readonly stop: string;
+  readonly send?: string;
   readonly copy: string;
   readonly check: string;
   readonly cross: string;
@@ -74,7 +75,10 @@ export interface TopicEditorElements {
   readonly barEl: HTMLElement;
   readonly pendingQueueEl: HTMLElement;
   readonly machineNoteEl: HTMLElement;
+  readonly statusRowEl: HTMLElement;
   readonly statusEl: HTMLElement;
+  readonly dirEl: HTMLElement;
+  readonly powerBtn: HTMLButtonElement;
   readonly btwBox: HTMLElement;
   readonly btwQ: HTMLElement;
   readonly btwBody: HTMLElement;
