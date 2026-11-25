@@ -1,9 +1,10 @@
 import { t as tr } from '../../../i18n/index.js';
 import { text } from '../../../services/api.js';
-import type { AgentStatus, QuotaPool, StatusOption } from './types.js';
+import type { AgentStatus, QuotaPool, StatusOption, StatusPermissions } from './types.js';
 
 export interface StatusRenderOptions {
   readonly fallbackOptions: readonly StatusOption[];
+  readonly fallbackPermissions?: StatusPermissions | null;
   readonly openModel: boolean;
   readonly openOptId: string | null;
 }
@@ -12,6 +13,7 @@ export interface BareStatusRenderOptions {
   readonly agent: string;
   readonly model: string;
   readonly options: readonly StatusOption[];
+  readonly permissions?: StatusPermissions | null;
   readonly openModel: boolean;
   readonly openOptId: string | null;
 }
@@ -94,6 +96,16 @@ export function optChip(o: StatusOption, openOptId: string | null): string {
   return (
     `<button type="button" class="st-model st-opt" data-opt="${text(o.id)}" aria-haspopup="dialog" aria-expanded="${open ? 'true' : 'false'}"` +
     ` title="${text(tr('status.optSwitchTitle', { name: o.name, note }))}">${body}</button>`
+  );
+}
+
+export function permChip(p: StatusPermissions | null | undefined, open: boolean): string {
+  if (!p || !p.level) return '';
+  const label = tr('status.permLabel');
+  return (
+    `<span class="st-sep"> \u00b7 </span>` +
+    `<button type="button" class="st-model st-opt st-perm" data-perm="1" aria-haspopup="dialog" aria-expanded="${open ? 'true' : 'false'}"` +
+    ` title="${text(tr('status.permTitle'))}"><span class="st-olabel">${text(label)}</span> <span class="st-mtext">${text(p.level)}</span></button>`
   );
 }
 
@@ -185,6 +197,7 @@ export function statusSegments(
   const whoHtml =
     `<span class="st-agent">${text(s.agent)}</span><span class="st-sep"> \u00b7 </span>${modelChip(s.model || tr('status.model'), opts.openModel)}` +
     `${s.effort ? `<span class="st-sep"> \u00b7 </span><span class="st-effort">${text(s.effort)}</span>` : ''}` +
+    permChip(s.permissions ?? opts.fallbackPermissions, opts.openOptId === '__permissions__') +
     optChips(s.options ?? opts.fallbackOptions, opts.openOptId);
   out.push(seg('st-who', '', whoHtml));
   if (s.context && s.context.size > 0) {
@@ -206,6 +219,7 @@ export function renderBareStatus(opts: BareStatusRenderOptions): string {
   const bareWho =
     `${opts.agent ? `<span class="st-agent">${text(opts.agent)}</span><span class="st-sep"> \u00b7 </span>` : ''}` +
     modelChip(opts.model || tr('status.model'), opts.openModel) +
+    permChip(opts.permissions, opts.openOptId === '__permissions__') +
     optChips(opts.options, opts.openOptId);
   return seg('st-who', '', bareWho);
 }

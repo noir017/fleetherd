@@ -579,6 +579,17 @@ export const en = {
   'reviews.dismissFailed': 'Could not dismiss that suggestion: {err}',
   'reviews.archiveRefused': 'the archive was refused',
   'reviews.archiveFailed': 'Could not archive {name}: {err}',
+  'reviews.reviewer': 'Reviewer {name}',
+  'reviews.messagesRead': '{count} messages read',
+  'reviews.duration': 'took {time}',
+  'reviews.revert': 'Revert',
+  'reviews.revertTitle': 'Revert skill “{name}”?',
+  'reviews.revertBody': 'This restores {name} to before this review change, recording a new revert commit in the skill library history.',
+  'reviews.revertFailed': 'Could not revert {name}: {err}',
+  'chat.launchDirsTitle': 'Working directory for {agent}',
+  'chat.launchOtherDir': 'Other folder…',
+  'status.permLabel': 'Permissions',
+  'status.permTitle': 'Switch permission level for this agent',
 
   // History panel
   'history.searchPlaceholder': 'Search all conversations',

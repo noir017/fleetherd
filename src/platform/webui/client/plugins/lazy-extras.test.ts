@@ -86,6 +86,7 @@ function dummyExtras(overrides: Partial<WorkbenchExtrasModule> = {}): WorkbenchE
     createSchedulesPlugin: () => noop('schedules'),
     createSettingsPlugin: () => noop('settings'),
     createSkillsPlugin: () => noop('skills'),
+    createTerminalPlugin: () => noop('terminal'),
     ...overrides,
   };
 }

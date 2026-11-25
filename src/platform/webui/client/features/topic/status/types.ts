@@ -1,7 +1,7 @@
-import type { AgentStatus, QuotaPool, SessionOption, StatusOption } from '../../../../../../types.js';
+import type { AgentStatus, QuotaPool, SessionOption, StatusOption, StatusPermissions } from '../../../../../../types.js';
 import type { WebPendingItem } from '../../../../protocol.js';
 
-export type { AgentStatus, QuotaPool, SessionOption, StatusOption, WebPendingItem };
+export type { AgentStatus, QuotaPool, SessionOption, StatusOption, StatusPermissions, WebPendingItem };
 
 export type PendingReason = 'sending' | 'tool' | 'delay' | 'turn';
 
@@ -38,6 +38,7 @@ export interface OptionListResponse {
   readonly ok: boolean;
   readonly agent?: string;
   readonly options?: readonly SessionOption[];
+  readonly permissions?: StatusPermissions;
   readonly text?: string;
 }
 
@@ -45,6 +46,7 @@ export interface OptionPeekResponse {
   readonly agent?: string;
   readonly model?: string;
   readonly options?: readonly StatusOption[];
+  readonly permissions?: StatusPermissions;
 }
 
 export interface ModelChoiceResponse {

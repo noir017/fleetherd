@@ -9,6 +9,7 @@ import type { ReviewsPluginDeps } from '../features/reviews/types.js';
 import type { SchedulesPluginDeps } from '../features/schedules/types.js';
 import type { SettingsPluginBridge, SettingsPluginDeps } from '../features/settings/workbench-types.js';
 import type { SkillsPluginDeps } from '../features/skills/types.js';
+import type { TerminalPluginDeps } from '../features/terminal/plugin.js';
 import { getLocale, type Locale, onLocaleChange, t as tr } from '../i18n/index.js';
 import type { PanelComponent, PanelInitContext, PartId } from '../workbench/contracts.js';
 import {
@@ -35,6 +36,7 @@ export interface WorkbenchExtrasModule {
   readonly createSchedulesPlugin: (deps?: SchedulesPluginDeps) => WebuiPlugin;
   readonly createSettingsPlugin: (deps: SettingsPluginDeps) => WebuiPlugin;
   readonly createSkillsPlugin: (deps?: SkillsPluginDeps) => WebuiPlugin;
+  readonly createTerminalPlugin?: (deps?: TerminalPluginDeps) => WebuiPlugin;
   readonly initLocale?: () => void;
   readonly setLocale?: (locale: Locale) => void;
 }
@@ -590,6 +592,34 @@ export function createLazyFilesPlugin(loader: ExtrasLoader, deps?: FilesPluginDe
       { id: 'files.openFile' },
       { id: 'files.revealInTree', title: 'Reveal in file tree' },
       { id: 'files.closeFile', title: 'Close file' },
+    ],
+  });
+}
+
+export function createLazyTerminalPlugin(loader: ExtrasLoader, deps?: TerminalPluginDeps): WebuiPlugin {
+  const enabled = Boolean(deps?.boot?.terminal);
+  return createLazyPluginShell({
+    id: 'terminal',
+    loadPlugin: async () => (await loader())?.createTerminalPlugin?.(deps) ?? null,
+    topicTools: [
+      {
+        id: 'terminal',
+        title: tr('term.title'),
+        icon: 'terminal',
+        defaultPart: 'panel',
+        available: (topic) => Boolean(enabled && topic.id && /^[0-9a-f]{8}$/.test(topic.id)),
+      },
+    ],
+    editors: [{ kind: 'terminal', title: (input) => stringField(input, 'title') ?? tr('term.title') }],
+    commands: [
+      { id: 'terminal.toggle' },
+      { id: 'terminal.endSession' },
+      { id: 'terminal.newTab' },
+      { id: 'terminal.closeTab' },
+      { id: 'terminal.renameTab' },
+      { id: 'terminal.moveToSecondary' },
+      { id: 'terminal.moveToPanel' },
+      { id: 'terminal.openInEditor' },
     ],
   });
 }
