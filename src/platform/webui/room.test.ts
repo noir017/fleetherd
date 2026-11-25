@@ -3199,4 +3199,66 @@ describe('WebRoom: pending mid-turn queue', () => {
     expect(actions).toEqual([`sendNow:${heldId}`, `sendNow:${heldId}:interrupt`, `recall:${heldId}`]);
     expect(seen.some((e) => e.ev.t === 'msg' && e.ev.msg.id === heldId)).toBe(false);
   });
+
+  it('still posts a pending message when setPendingQueue clears it before markPendingDelivered (steered / send-now)', () => {
+    const { room, topic, seen } = attached();
+    let heldId = '';
+    room.onMessage((m) => {
+      heldId = m.messageId;
+      room.setPendingQueue(topic, [
+        { id: m.messageId, content: m.content, at: m.timestamp, canSendNow: true, reason: 'tool' },
+      ]);
+    });
+
+    expect(room.submit({ topic, text: 'steer me now', nonce: 'n-steer-1' })).toBe('accepted');
+    expect(seen.some((e) => e.ev.t === 'msg' && e.ev.msg.id === heldId)).toBe(false);
+
+    // Mirrors InboundMerger.sendNow() / flushPendingSteer(): emitPending() removes the item from
+    // pending before async steer() resolves and calls markPendingDelivered().
+    room.setPendingQueue(topic, []);
+    room.markPendingDelivered(topic, [heldId]);
+
+    expect(
+      seen.some((e) => e.ev.t === 'msg' && e.ev.msg.id === heldId && e.ev.msg.nonce === 'n-steer-1' && e.ev.msg.own),
+    ).toBe(true);
+
+    // Survives reload (fresh sync includes the delivered message).
+    const fresh: WebEvent[] = [];
+    const unsub = room.subscribe(topic, (_id, ev) => {
+      fresh.push(ev);
+    });
+    const syncEv = fresh.find((e) => e.t === 'sync');
+    expect(
+      syncEv &&
+        syncEv.t === 'sync' &&
+        syncEv.messages.some((m) => m.id === heldId && m.own && m.html.includes('steer me now')),
+    ).toBe(true);
+    unsub();
+  });
+
+  it('preserves draft nonce if a steered item is refused and re-queued before later delivery', () => {
+    const { room, topic, seen } = attached();
+    let heldId = '';
+    room.onMessage((m) => {
+      heldId = m.messageId;
+      room.setPendingQueue(topic, [
+        { id: m.messageId, content: m.content, at: m.timestamp, canSendNow: true, reason: 'delay' },
+      ]);
+    });
+
+    expect(room.submit({ topic, text: 'retry queued', nonce: 'n-requeue-1' })).toBe('accepted');
+    // Cleared while offering to steer, then refused and placed back into queued.
+    room.setPendingQueue(topic, []);
+    room.setPendingQueue(topic, [
+      { id: heldId, content: 'retry queued', at: Date.now(), canSendNow: false, reason: 'turn' },
+    ]);
+    expect(seen.at(-1)?.ev).toEqual({
+      t: 'pending',
+      items: [expect.objectContaining({ id: heldId, nonce: 'n-requeue-1', reason: 'turn' })],
+    });
+
+    room.setPendingQueue(topic, []);
+    room.markPendingDelivered(topic, [heldId]);
+    expect(seen.some((e) => e.ev.t === 'msg' && e.ev.msg.id === heldId && e.ev.msg.nonce === 'n-requeue-1')).toBe(true);
+  });
 });
