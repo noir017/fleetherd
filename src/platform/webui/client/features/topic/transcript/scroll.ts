@@ -53,180 +53,169 @@ function findFirstVisibleMessage(log: HTMLElement): Element | null {
   return null;
 }
 
-export function createScrollManager(log: HTMLElement): ScrollManager {
-  const views: Record<string, ViewPosition> = {};
-  const disposables = new DisposableStore();
-  let view: ViewPosition | null = null;
-  let landedAt = -1;
-  let pinned = true;
-  let pendingLand = false;
-  let pendingView: ViewPosition | null = null;
-  let lastClientHeight = log.clientHeight;
-  let suppressScroll = false;
+class ScrollManagerImpl implements ScrollManager {
+  private readonly _log: HTMLElement;
+  private readonly _views: Record<string, ViewPosition> = {};
+  private readonly _disposables = new DisposableStore();
+  private _view: ViewPosition | null = null;
+  private _landedAt = -1;
+  private _pinned = true;
+  private _pendingLand = false;
+  private _pendingView: ViewPosition | null = null;
+  private _lastClientHeight: number;
+  private _suppressScroll = false;
 
-  function atBottom(): boolean {
-    if (log.clientHeight === 0) return pinned;
-    return log.scrollHeight - log.scrollTop - log.clientHeight < BOTTOM_THRESHOLD_PX;
+  constructor(log: HTMLElement) {
+    this._log = log;
+    this._lastClientHeight = log.clientHeight;
+    this._disposables.add(
+      addDisposableListener(
+        log,
+        'scroll',
+        () => {
+          if (this._suppressScroll || log.clientHeight === 0 || this._pendingLand) return;
+          this._pinned = this.atBottom();
+        },
+        { passive: true },
+      ),
+    );
+    this._disposables.add(
+      observeResize(log, ({ height }) => {
+        const nextH = height > 0 ? height : log.clientHeight;
+        if (nextH > 0) {
+          if (this._pendingLand) {
+            this._applyViewOrBottom(this._pendingView);
+            this._pendingLand = false;
+            this._pendingView = null;
+          } else if (this._lastClientHeight === 0 && this._pinned && !this.atBottom()) {
+            this.toBottom();
+          }
+        }
+        this._lastClientHeight = nextH;
+      }),
+    );
   }
 
-  function setScrollTop(value: number): void {
-    suppressScroll = true;
+  private _setScrollTop(value: number): void {
+    this._suppressScroll = true;
     try {
-      log.scrollTop = value;
+      this._log.scrollTop = value;
     } finally {
-      suppressScroll = false;
+      this._suppressScroll = false;
     }
   }
 
-  function toBottom(): void {
-    setScrollTop(log.scrollHeight);
-    pinned = true;
-    if (log.clientHeight === 0 || !log.isConnected) {
-      pendingLand = true;
-      pendingView = null;
-    } else {
-      pendingLand = false;
-      pendingView = null;
-    }
-  }
-
-  function applyViewOrBottom(
+  private _applyViewOrBottom(
     target: ViewPosition | null,
     els?: Readonly<Record<string, HTMLElement | undefined>>,
   ): void {
-    const el = target ? findLogChildByKey(log, target.key, els) : undefined;
+    const el = target ? findLogChildByKey(this._log, target.key, els) : undefined;
     if (el && target) {
-      setScrollTop(log.scrollTop + el.getBoundingClientRect().top - log.getBoundingClientRect().top - target.off);
-      pinned = log.clientHeight === 0 ? false : atBottom();
+      this._setScrollTop(
+        this._log.scrollTop + el.getBoundingClientRect().top - this._log.getBoundingClientRect().top - target.off,
+      );
+      this._pinned = this._log.clientHeight === 0 ? false : this.atBottom();
     } else {
-      setScrollTop(log.scrollHeight);
-      pinned = true;
+      this._setScrollTop(this._log.scrollHeight);
+      this._pinned = true;
     }
-    landedAt = log.scrollTop;
+    this._landedAt = this._log.scrollTop;
   }
 
-  function firstVisible(): Element | null {
-    return findFirstVisibleMessage(log);
+  atBottom(): boolean {
+    if (this._log.clientHeight === 0) return this._pinned;
+    return this._log.scrollHeight - this._log.scrollTop - this._log.clientHeight < BOTTOM_THRESHOLD_PX;
   }
 
-  function saveView(id: string, entering: boolean): void {
+  toBottom(): void {
+    this._setScrollTop(this._log.scrollHeight);
+    this._pinned = true;
+    this._pendingLand = this._log.clientHeight === 0 || !this._log.isConnected;
+    this._pendingView = null;
+  }
+
+  firstVisible(): Element | null {
+    return findFirstVisibleMessage(this._log);
+  }
+
+  saveView(id: string, entering: boolean): void {
     if (!id) return;
-    if (entering && (landedAt < 0 || log.scrollTop === landedAt)) {
-      if (view) views[id] = view;
-      else delete views[id];
+    if (entering && (this._landedAt < 0 || this._log.scrollTop === this._landedAt)) {
+      if (this._view) this._views[id] = this._view;
+      else delete this._views[id];
       return;
     }
-    const el = log.clientHeight && !atBottom() ? firstVisible() : null;
+    const el = this._log.clientHeight && !this.atBottom() ? this.firstVisible() : null;
     const key = el ? el.getAttribute('data-k') : null;
     if (!el || !key) {
-      delete views[id];
+      delete this._views[id];
       return;
     }
-    views[id] = {
+    this._views[id] = {
       key,
-      off: el.getBoundingClientRect().top - log.getBoundingClientRect().top,
+      off: el.getBoundingClientRect().top - this._log.getBoundingClientRect().top,
     };
   }
 
-  function prepareEnter(id: string): void {
-    view = views[id] ?? null;
-    landedAt = -1;
-    pinned = view === null;
-    pendingLand = false;
-    pendingView = null;
+  prepareEnter(id: string): void {
+    this._view = this._views[id] ?? null;
+    this._landedAt = -1;
+    this._pinned = this._view === null;
+    this._pendingLand = false;
+    this._pendingView = null;
   }
 
-  function isArriving(entering: boolean): boolean {
-    return entering && (landedAt < 0 || log.scrollTop === landedAt);
+  isArriving(entering: boolean): boolean {
+    return entering && (this._landedAt < 0 || this._log.scrollTop === this._landedAt);
   }
 
-  function land(els: Readonly<Record<string, HTMLElement | undefined>>): void {
-    applyViewOrBottom(view, els);
-    if (log.clientHeight === 0 || !log.isConnected) {
-      pendingLand = true;
-      pendingView = view;
+  land(els: Readonly<Record<string, HTMLElement | undefined>>): void {
+    this._applyViewOrBottom(this._view, els);
+    if (this._log.clientHeight === 0 || !this._log.isConnected) {
+      this._pendingLand = true;
+      this._pendingView = this._view;
     } else {
-      pendingLand = false;
-      pendingView = null;
+      this._pendingLand = false;
+      this._pendingView = null;
     }
   }
 
-  function ensureLanded(els?: Readonly<Record<string, HTMLElement | undefined>>): void {
-    if (log.clientHeight === 0 || !log.isConnected) return;
-    if (pendingLand) {
-      applyViewOrBottom(pendingView, els);
-      pendingLand = false;
-      pendingView = null;
+  ensureLanded(els?: Readonly<Record<string, HTMLElement | undefined>>): void {
+    if (this._log.clientHeight === 0 || !this._log.isConnected) return;
+    if (this._pendingLand) {
+      this._applyViewOrBottom(this._pendingView, els);
+      this._pendingLand = false;
+      this._pendingView = null;
       return;
     }
-    if (pinned && !atBottom()) {
-      toBottom();
+    if (this._pinned && !this.atBottom()) {
+      this.toBottom();
     }
   }
 
-  function clearView(): void {
-    view = null;
+  clearView(): void {
+    this._view = null;
   }
 
-  function forgetView(id: string): void {
-    delete views[id];
+  forgetView(id: string): void {
+    delete this._views[id];
   }
 
-  function pruneViews(keep: Readonly<Record<string, unknown>>): void {
-    for (const id of Object.keys(views)) {
-      if (!keep[id]) delete views[id];
+  pruneViews(keep: Readonly<Record<string, unknown>>): void {
+    for (const id of Object.keys(this._views)) {
+      if (!keep[id]) delete this._views[id];
     }
   }
 
-  function getSavedView(id: string): ViewPosition | undefined {
-    return views[id];
+  getSavedView(id: string): ViewPosition | undefined {
+    return this._views[id];
   }
 
-  disposables.add(
-    addDisposableListener(
-      log,
-      'scroll',
-      () => {
-        if (suppressScroll || log.clientHeight === 0 || pendingLand) return;
-        pinned = atBottom();
-      },
-      { passive: true },
-    ),
-  );
-
-  disposables.add(
-    observeResize(log, ({ height }) => {
-      const nextH = height > 0 ? height : log.clientHeight;
-      if (nextH > 0) {
-        if (pendingLand) {
-          applyViewOrBottom(pendingView);
-          pendingLand = false;
-          pendingView = null;
-        } else if (lastClientHeight === 0 && pinned && !atBottom()) {
-          toBottom();
-        }
-      }
-      lastClientHeight = nextH;
-    }),
-  );
-
-  function dispose(): void {
-    disposables.dispose();
+  dispose(): void {
+    this._disposables.dispose();
   }
+}
 
-  return {
-    atBottom,
-    toBottom,
-    firstVisible,
-    saveView,
-    prepareEnter,
-    isArriving,
-    land,
-    ensureLanded,
-    clearView,
-    forgetView,
-    pruneViews,
-    getSavedView,
-    dispose,
-  };
+export function createScrollManager(log: HTMLElement): ScrollManager {
+  return new ScrollManagerImpl(log);
 }

@@ -174,22 +174,27 @@ function resetTopicView(rt: AppRuntime, id: string): void {
   }
 }
 
-function applyCachedTopicEntry(rt: AppRuntime, id: string, c: CacheCopy | null): boolean {
-  const epoch = rt.state.epoch;
+function canResumeFromCache(c: CacheCopy | null, epoch: number): c is CacheCopy {
+  return Boolean(c && c.msgs.length && c.last && epoch && c.epoch === epoch);
+}
+
+function adoptCachedCopy(rt: AppRuntime, id: string, c: CacheCopy, resume: boolean): void {
   const editor = rt.state.activeEditor;
-  const resume = Boolean(c && c.msgs.length && c.last && epoch && c.epoch === epoch);
-  if (c) {
-    for (const msg of c.msgs) {
-      editor?.composer?.claim(msg as unknown as WebMessage);
-    }
-    if (resume) rt.state.stale = c.stale;
-    if (c.msgs.length) {
-      const row = topicById(rt.state, id);
-      const current = resume && isRowCurrent(row, c.last, (a, b) => rt.cacheService.isNewer(a, b));
-      editor?.transcript?.adopt(c.msgs as unknown as readonly TranscriptMessage[], current);
-    }
+  const composer = editor?.composer;
+  if (composer) {
+    for (const msg of c.msgs) composer.claim(msg as unknown as WebMessage);
   }
-  if (id) editor?.composer?.showUnsent(id);
+  if (resume) rt.state.stale = c.stale;
+  if (!c.msgs.length) return;
+  const row = topicById(rt.state, id);
+  const current = resume && isRowCurrent(row, c.last, (a, b) => rt.cacheService.isNewer(a, b));
+  editor?.transcript?.adopt(c.msgs as unknown as readonly TranscriptMessage[], current);
+}
+
+function applyCachedTopicEntry(rt: AppRuntime, id: string, c: CacheCopy | null): boolean {
+  const resume = canResumeFromCache(c, rt.state.epoch);
+  if (c) adoptCachedCopy(rt, id, c, resume);
+  if (id) rt.state.activeEditor?.composer?.showUnsent(id);
   if (resume && c) {
     rt.streamClient.setLastEventId(c.last);
     rt.state.settleOnResume = true;

@@ -1,3 +1,4 @@
+import type { Page } from '@playwright/test';
 import crypto from 'node:crypto';
 import { test, expect, loginViaUi } from './fixtures.js';
 import { startGateway, type GatewayHandle } from './harness.js';
@@ -5,18 +6,83 @@ import { seedTopics } from './seed.js';
 
 let gateway: GatewayHandle;
 
-test.describe('Web UI mobile shell, palette, and login alignment', () => {
-  test.beforeAll(async () => {
-    gateway = await startGateway({ title: 'fleetherd' });
-    await seedTopics(gateway, [
-      { title: 'Refactor webui panels', message: 'Check mobile shell and tokens.', starred: true },
-      { title: 'Slow cart API', message: 'Inspect latency logs.' },
-    ]);
+async function seedLongMobileTopics(gw: GatewayHandle): Promise<{ longId: string; otherId: string }> {
+  const loginRes = await fetch(`${gw.baseUrl}/api/login`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ token: gw.secret }),
   });
+  const cookie = (loginRes.headers.get('set-cookie') ?? '').split(';')[0]!;
+  const postJson = async (route: string, body: unknown) => {
+    const r = await fetch(`${gw.baseUrl}/${route}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie },
+      body: JSON.stringify(body),
+    });
+    return r.json();
+  };
+  const longId = ((await postJson('api/topics', { title: 'Long scroll topic' })) as { topic: { id: string } }).topic.id;
+  const otherId = ((await postJson('api/topics', { title: 'Other mobile topic' })) as { topic: { id: string } }).topic.id;
+  gw.setMode('ok');
+  for (let i = 1; i <= 4; i++) {
+    await postJson('api/send', {
+      topic: longId,
+      text: `Turn ${i}\n${Array.from({ length: 14 }, (_, k) => `Line ${k + 2} of turn ${i}`).join('\n')}`,
+      nonce: crypto.randomUUID(),
+    });
+    const deadline = Date.now() + 15_000;
+    while (Date.now() < deadline) {
+      const snap = (await (await fetch(`${gw.baseUrl}/api/topic?t=${longId}`, { headers: { cookie } })).json()) as {
+        messages?: Array<{ own?: boolean }>;
+      };
+      if ((snap.messages ?? []).filter((m) => !m.own).length >= i) break;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+  }
+  await postJson('api/send', { topic: otherId, text: 'Short topic', nonce: crypto.randomUUID() });
+  return { longId, otherId };
+}
 
-  test.afterAll(async () => {
-    await gateway?.stop();
-  });
+async function measureCachedMobileOpen(
+  page: Page,
+  topicId: string,
+): Promise<{ domMs: number; count: number; distFromBottom: number }> {
+  return page.evaluate((id) => {
+    return new Promise<{ domMs: number; count: number; distFromBottom: number }>((resolve) => {
+      const row = document.querySelector<HTMLElement>(`.wb-sidebar .topic-item[data-topic="${id}"]`)!;
+      const t0 = performance.now();
+      const check = () => {
+        const log = document.querySelector<HTMLElement>('.wb-topic-editor #log');
+        const count = log ? log.querySelectorAll('.m').length : 0;
+        if (count > 0 && log && log.clientHeight > 0) {
+          resolve({
+            domMs: performance.now() - t0,
+            count,
+            distFromBottom: log.scrollHeight - log.scrollTop - log.clientHeight,
+          });
+          return;
+        }
+        requestAnimationFrame(check);
+      };
+      row.click();
+      check();
+    });
+  }, topicId);
+}
+
+test.beforeAll(async () => {
+  gateway = await startGateway({ title: 'fleetherd' });
+  await seedTopics(gateway, [
+    { title: 'Refactor webui panels', message: 'Check mobile shell and tokens.', starred: true },
+    { title: 'Slow cart API', message: 'Inspect latency logs.' },
+  ]);
+});
+
+test.afterAll(async () => {
+  await gateway?.stop();
+});
+
+test.describe('Web UI mobile shell, palette, and login alignment', () => {
 
   test('login card shows logo, title, subtitle, error feedback, and admits valid secret', async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
@@ -136,6 +202,9 @@ test.describe('Web UI mobile shell, palette, and login alignment', () => {
     const lightBg = await page.locator('#workbench-root').evaluate((el) => getComputedStyle(el).backgroundColor);
     expect(lightBg).toBe('rgb(255, 255, 255)');
   });
+});
+
+test.describe('Web UI mobile drawer navigation and cached topic open', () => {
 
   test('mobile drawer switches across History, Schedules, Reviews, Skills, Settings, and reaches topic tools', async ({
     page,
@@ -193,41 +262,7 @@ test.describe('Web UI mobile shell, palette, and login alignment', () => {
     context,
   }) => {
     test.setTimeout(60_000);
-    const loginRes = await fetch(`${gateway.baseUrl}/api/login`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ token: gateway.secret }),
-    });
-    const cookie = (loginRes.headers.get('set-cookie') ?? '').split(';')[0]!;
-    const postJson = async (route: string, body: unknown) => {
-      const r = await fetch(`${gateway.baseUrl}/${route}`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', cookie },
-        body: JSON.stringify(body),
-      });
-      return r.json();
-    };
-    const longId = ((await postJson('api/topics', { title: 'Long scroll topic' })) as { topic: { id: string } }).topic
-      .id;
-    const otherId = ((await postJson('api/topics', { title: 'Other mobile topic' })) as { topic: { id: string } }).topic
-      .id;
-    gateway.setMode('ok');
-    for (let i = 1; i <= 4; i++) {
-      await postJson('api/send', {
-        topic: longId,
-        text: `Turn ${i}\n${Array.from({ length: 14 }, (_, k) => `Line ${k + 2} of turn ${i}`).join('\n')}`,
-        nonce: crypto.randomUUID(),
-      });
-      const deadline = Date.now() + 15_000;
-      while (Date.now() < deadline) {
-        const snap = (await (await fetch(`${gateway.baseUrl}/api/topic?t=${longId}`, { headers: { cookie } })).json()) as {
-          messages?: Array<{ own?: boolean }>;
-        };
-        if ((snap.messages ?? []).filter((m) => !m.own).length >= i) break;
-        await new Promise((r) => setTimeout(r, 50));
-      }
-    }
-    await postJson('api/send', { topic: otherId, text: 'Short topic', nonce: crypto.randomUUID() });
+    const { longId, otherId } = await seedLongMobileTopics(gateway);
 
     await page.setViewportSize({ width: 390, height: 844 });
     const eventUrls: string[] = [];
@@ -275,27 +310,7 @@ test.describe('Web UI mobile shell, palette, and login alignment', () => {
       uploadThroughput: (200 * 1024) / 8,
     });
     eventUrls.length = 0;
-    const secondOpen = await page.evaluate((topicId) => {
-      return new Promise<{ domMs: number; count: number; distFromBottom: number }>((resolve) => {
-        const row = document.querySelector<HTMLElement>(`.wb-sidebar .topic-item[data-topic="${topicId}"]`)!;
-        const t0 = performance.now();
-        const check = () => {
-          const log = document.querySelector<HTMLElement>('.wb-topic-editor #log');
-          const count = log ? log.querySelectorAll('.m').length : 0;
-          if (count > 0 && log && log.clientHeight > 0) {
-            resolve({
-              domMs: performance.now() - t0,
-              count,
-              distFromBottom: log.scrollHeight - log.scrollTop - log.clientHeight,
-            });
-            return;
-          }
-          requestAnimationFrame(check);
-        };
-        row.click();
-        check();
-      });
-    }, longId);
+    const secondOpen = await measureCachedMobileOpen(page, longId);
     expect(secondOpen.count).toBeGreaterThanOrEqual(8);
     expect(secondOpen.domMs).toBeLessThan(500);
     expect(secondOpen.distFromBottom).toBeLessThan(80);
