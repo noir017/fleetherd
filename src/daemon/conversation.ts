@@ -18,7 +18,7 @@ import { shouldRespond, type GateConfig } from '../core/inbound-gate.js';
 import type { SoloOutcome } from '../core/inbound-merger.js';
 import type { ModelChoiceResult } from '../core/model-menu.js';
 import type { SettingApplyResult, SettingOption, SettingRow } from '../core/settings.js';
-import type { WorkdirChoiceResult } from '../core/workdir-menu.js';
+import { buildWorkdirScreen, workdirBaseName, type WorkdirChoiceResult } from '../core/workdir-menu.js';
 import type { WorkdirScan } from './workdir-scan.js';
 import type { HistoryStore } from '../history/store.js';
 import type { ListChannelsResult } from '../ipc/protocol.js';
@@ -32,10 +32,11 @@ import type {
   TopicSetupResult,
   TurnChangeFileResult,
   TurnChangeStatusResult,
+  WorkdirBrowseResult,
 } from '../platform/adapter.js';
 import type { AgentCatalog, AgentStatus, ConversationId, InboundMessage, StatusOption, StatusPermissions, TopicActivity } from '../types.js';
 import type { AgentFactory } from './agent.js';
-import { resolveConversationCwd } from './agent-common.js';
+import { resolveAgentCwd, resolveConversationCwd } from './agent-common.js';
 import { isDirectory } from './workdir-scan.js';
 import { runAgyCliCommand } from './agy-cli.js';
 import type { RespawnCounts } from './config-reload.js';
@@ -681,6 +682,60 @@ export class ConversationRegistry {
       }
     }
     return { ok: true, agent: targetAgent, cwd: resolveConversationCwd(def, id, this.store) };
+  }
+
+  /** Browse one level of directories for a topic's selected agent, using `/cd`'s screen format. */
+  async browseWorkdirForRef(
+    ref: ConversationRef,
+    opts?: { agent?: string; dir?: string; atRoot?: boolean }
+  ): Promise<WorkdirBrowseResult> {
+    const id = this.idForRef(ref);
+    const agentId =
+      opts?.agent ?? this.boundAgentFor(id, resolveAgent(this.config, routeInputFromRef(ref)).agentId);
+    const def = findAgent(this.config, agentId);
+    if (!def) return { ok: false, error: `No agent "${agentId}" is configured.` };
+    const root = resolveAgentCwd(def);
+    const current = resolveConversationCwd(def, id, this.store);
+    const posixPaths = Boolean(def.host);
+    const resolved = this.resolveBrowseDir(opts?.dir, opts?.atRoot ? root : current, posixPaths);
+    if (!resolved.ok) return resolved;
+    const targetDir = resolved.dir;
+    const scan = await this.controls.scanWorkdirAt(agentId, targetDir);
+    const screen = buildWorkdirScreen({
+      reqId: 'launch',
+      agentId,
+      ...(def.host ? { host: def.host } : {}),
+      root,
+      current,
+      browsing: targetDir,
+      options: scan.ok
+        ? scan.options
+        : [{ path: targetDir, name: workdirBaseName(targetDir, posixPaths), root: targetDir === root }],
+      truncated: scan.ok ? scan.truncated : 0,
+      posixPaths,
+      ...(scan.ok ? {} : { error: scan.reason }),
+    });
+    return { ok: true, screen };
+  }
+
+  private resolveBrowseDir(
+    raw: string | undefined,
+    fallback: string,
+    isRemote: boolean
+  ): { ok: true; dir: string } | { ok: false; error: string } {
+    if (raw === undefined) return { ok: true, dir: fallback };
+    if (/[\x00-\x1f\x7f]/.test(raw)) return { ok: false, error: 'Working directory contains invalid characters.' };
+    if (/(?:^|[\\/])\.\.(?:$|[\\/])/.test(raw)) {
+      return { ok: false, error: 'Working directory must be a normalized absolute path without "..".' };
+    }
+    if (isRemote) {
+      if (!(raw.startsWith('/') || raw === '~' || raw.startsWith('~/'))) {
+        return { ok: false, error: 'Working directory must be an absolute path.' };
+      }
+      return { ok: true, dir: raw };
+    }
+    if (!path.isAbsolute(raw)) return { ok: false, error: 'Working directory must be an absolute path.' };
+    return { ok: true, dir: path.normalize(raw) };
   }
 
   private validateTopicSetup(

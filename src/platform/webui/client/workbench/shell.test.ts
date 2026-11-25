@@ -126,7 +126,7 @@ describe('workbench/shell', () => {
     shell.dispose();
   });
 
-  it('switches cleanly between desktop, tablet drawers, and mobile StackShell', () => {
+  it('switches cleanly between desktop, tablet drawers, and mobile slide-out drawer', () => {
     const root = document.createElement('div');
     const storage = makeMemoryStorage();
     const shell = new WorkbenchShell({
@@ -156,33 +156,24 @@ describe('workbench/shell', () => {
 
     shell.layout(390, 844);
     expect(shell.getMode()).toBe('mobile');
-    expect((root.querySelector('.wb-shell') as HTMLElement).hidden).toBe(true);
-    const stackEl = root.querySelector('.wb-stack') as HTMLElement;
-    expect(stackEl).not.toBeNull();
-    expect(stackEl.hidden).toBe(false);
-    expect(stackEl.querySelectorAll('.wb-stack-tab').length).toBe(4);
+    expect(root.dataset.wbMode).toBe('mobile');
+    const desktopShell = root.querySelector('.wb-shell') as HTMLElement;
+    expect(desktopShell.hidden).toBe(false);
+    expect(root.querySelector('.wb-stack')).toBeNull();
+    expect(shell.isPartVisible('sidebar')).toBe(false);
+    expect(backdrop.hidden).toBe(true);
 
-    const chatComp = makePanel('chat');
-    const changesComp = makePanel('changes');
-    shell.openMobileDetail('Refactor shell', [
-      { id: 'chat', title: 'Chat', component: chatComp },
-      { id: 'changes', title: 'Changes', badge: 2, component: changesComp },
-    ]);
-    const stack = shell.getStackShell();
-    expect(stack.getMode()).toBe('detail');
-    expect(chatComp.init).toHaveBeenCalledTimes(1);
-    expect(stackEl.querySelector('.wb-stack-detail-body')?.textContent).toContain('chat');
+    shell.setPartVisible('sidebar', true);
+    expect(desktopShell.classList.contains('is-sidebar-open')).toBe(true);
+    expect(backdrop.hidden).toBe(false);
 
-    stack.selectTool('changes');
-    expect(changesComp.init).toHaveBeenCalledTimes(1);
-    expect(stackEl.querySelector('.wb-stack-detail-body')?.textContent).toContain('changes');
-
-    (stackEl.querySelector('.wb-stack-back') as HTMLButtonElement).click();
-    expect(stack.getMode()).toBe('list');
+    window.dispatchEvent(new PopStateEvent('popstate'));
+    expect(shell.isPartVisible('sidebar')).toBe(false);
+    expect(desktopShell.classList.contains('is-sidebar-open')).toBe(false);
+    expect(backdrop.hidden).toBe(true);
 
     shell.layout(1400, 900);
-    expect(stackEl.hidden).toBe(true);
-    expect((root.querySelector('.wb-shell') as HTMLElement).hidden).toBe(false);
+    expect(desktopShell.hidden).toBe(false);
     expect(modes).toEqual(['tablet', 'mobile', 'desktop']);
 
     shell.dispose();
@@ -455,7 +446,7 @@ describe('workbench/shell', () => {
     commands.dispose();
   });
 
-  it('opens secondary pane at 480px default width and escapes StackShell.setListHeader backLabel', () => {
+  it('opens secondary pane at 480px default width', () => {
     const root = document.createElement('div');
     document.body.appendChild(root);
     const storage = makeMemoryStorage();
@@ -463,12 +454,6 @@ describe('workbench/shell', () => {
 
     shell.setPartVisible('secondary', true);
     expect(shell.secondary.element.style.width).toBe('480px');
-
-    const stack = shell.getStackShell();
-    stack.setListHeader({ title: 'Reviews', backLabel: '<img src=x onerror=alert(1)>' });
-    const backBtn = stack.element.querySelector<HTMLButtonElement>('.wb-stack-list-back')!;
-    expect(backBtn.querySelector('img')).toBeNull();
-    expect(backBtn.textContent).toContain('<img src=x onerror=alert(1)>');
 
     shell.dispose();
   });

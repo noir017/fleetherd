@@ -893,6 +893,32 @@ describe('webui server: topics', () => {
       });
       expect(badRes.status).toBe(400);
     }
+
+    const browseCalls: Array<{ topic: string; agent?: string; dir?: string; atRoot?: boolean }> = [];
+    room.useWorkdirBrowser(async (ref, opts) => {
+      browseCalls.push({ topic: ref.thread ?? '', ...opts });
+      return {
+        ok: true,
+        screen: {
+          agentId: opts?.agent ?? 'cc',
+          root: '/srv',
+          current: '/srv',
+          browsing: opts?.dir ?? '/srv',
+          breadcrumbs: [{ name: '/', path: '/', buttonId: 'wdb:launch:0' }],
+          selectCurrent: { path: opts?.dir ?? '/srv', buttonId: 'wdr:launch:0', current: true, root: true },
+          entries: [],
+          truncated: 0,
+        },
+      };
+    });
+    const wdRes = await fetch(
+      `${base}/api/topics/workdirs?t=${created.topic.id}&agent=oc&dir=${encodeURIComponent('/srv/sub')}&root=1`,
+      { headers: { cookie } }
+    );
+    expect(wdRes.status).toBe(200);
+    expect(await wdRes.json()).toMatchObject({ agentId: 'oc', browsing: '/srv/sub' });
+    expect(browseCalls).toEqual([{ topic: created.topic.id, agent: 'oc', dir: '/srv/sub', atRoot: true }]);
+    expect((await fetch(`${base}/api/topics/workdirs?t=${created.topic.id}`)).status).toBe(401);
   });
 
   it('does not evict existing topics when POST /api/topics fails setup on a full room', async () => {

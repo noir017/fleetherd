@@ -30,6 +30,7 @@ export interface TopicHeaderDeps {
   readonly onToggleTopicTool?: (toolId: string, topicId: string) => void;
   readonly getTitleMenuGroups?: (topic: TopicInfo) => readonly (readonly TopicEditorMenuEntry[])[];
   readonly onBack?: () => void;
+  readonly onToggleSidebar?: () => void;
 }
 
 export interface TopicHeaderController extends Disposable {
@@ -47,7 +48,7 @@ function resolveStatusDot(topic: TopicInfo | undefined): {
   if (!topic) return { status: 'idle', pulsing: false, label: '' };
   if (topic.asking) return { status: 'warn', pulsing: false, label: tr('topic.awaitingYou') };
   if (topic.running) return { status: 'ok', pulsing: true, label: tr('topic.running') };
-  if (topic.live) return { status: 'ok', pulsing: false, label: '' };
+  if (topic.live) return { status: 'live', pulsing: false, label: '' };
   return { status: 'idle', pulsing: false, label: '' };
 }
 
@@ -123,6 +124,10 @@ export function createTopicHeaderController(deps: TopicHeaderDeps): TopicHeaderC
   if (deps.onBack) {
     deps.els.backBtn.hidden = false;
     listeners.add(addDisposableListener(deps.els.backBtn, 'click', () => deps.onBack?.()));
+  }
+
+  if (deps.onToggleSidebar) {
+    listeners.add(addDisposableListener(deps.els.menuBtn, 'click', () => deps.onToggleSidebar?.()));
   }
 
   listeners.add(addDisposableListener(deps.els.moreBtn, 'click', () => openMenu()));

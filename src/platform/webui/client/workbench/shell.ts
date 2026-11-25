@@ -13,7 +13,6 @@ import type { CommandRegistry } from '../services/commands.js';
 import type { KeybindingService } from '../services/keybindings.js';
 import type { OverlayManager } from '../services/overlays.js';
 import { StorageService } from '../services/storage.js';
-import { t as tr } from '../i18n/index.js';
 import type { DockEngine, LayoutState, PanelRef, PartId } from './contracts.js';
 import { DynamicDockEngine, MAIN_GROUP_ID } from './dock/engine.js';
 import {
@@ -31,7 +30,7 @@ import { PanelPart } from './parts/panel-part.js';
 import { SecondaryPart } from './parts/secondary-part.js';
 import { SidebarPart } from './parts/sidebar-part.js';
 import { StatusBarPart, type StatusBarItem } from './parts/status-bar.js';
-import { StackShell, type StackDetailOptions, type StackNavTab, type StackToolItem } from './stack-shell.js';
+import { MobileDrawerController } from './mobile-drawer.js';
 
 export const LAYOUT_STORAGE_KEY = SERIALIZE_LAYOUT_KEY;
 export const SPLIT_STORAGE_KEY = 'aa_split_sizes';
@@ -48,6 +47,10 @@ export function resolveShellMode(width: number): ShellMode {
   if (width < MOBILE_BREAKPOINT) return 'mobile';
   if (width < DESKTOP_BREAKPOINT) return 'tablet';
   return 'desktop';
+}
+
+function isDrawerMode(mode: ShellMode): boolean {
+  return mode === 'tablet' || mode === 'mobile';
 }
 
 function isPartId(value: string): value is PartId {
@@ -109,7 +112,7 @@ export class WorkbenchShell implements Disposable {
   private readonly _backdrop: HTMLElement;
   private readonly _splitView: SplitView;
   private readonly _moveMenu: MenuController;
-  private _stackShell: StackShell | undefined;
+  private readonly _mobileDrawer: MobileDrawerController;
   private _commands: CommandRegistry | undefined;
   private _layoutCommandsRegistered = false;
   private _toastEl: HTMLElement | undefined;
@@ -163,7 +166,6 @@ export class WorkbenchShell implements Disposable {
     register: (a: ActivityBarItem): Disposable => this.activityBar.registerItem(a),
     refreshBadges: (): void => {
       this.activityBar.refreshBadges();
-      this._stackShell?.refreshBadges();
     },
     setActive: (id: string | undefined): void => this.activityBar.setActive(id),
   };
@@ -284,6 +286,8 @@ export class WorkbenchShell implements Disposable {
       className: 'wb-view-move-menu',
     });
 
+    this._mobileDrawer = this._createMobileDrawer();
+
     this._desktopShell.append(
       this.activityBar.element,
       this._workspaceEl,
@@ -305,6 +309,7 @@ export class WorkbenchShell implements Disposable {
     this._disposables.add(this._splitView);
     this._disposables.add(this.dock);
     this._disposables.add(this._moveMenu);
+    this._disposables.add(this._mobileDrawer);
 
     if (options.commands) {
       this._disposables.add(this._attachLayoutCommands(options.commands, options.keybindings));
@@ -355,7 +360,6 @@ export class WorkbenchShell implements Disposable {
       }
       const activeSidebar = this.dock.getActivePartPanel('sidebar');
       if (activeSidebar) this.activityBar.setActive(activeSidebar);
-      this._syncMobileTabs(items);
     };
 
     const syncViews = (): void => {
@@ -427,10 +431,6 @@ export class WorkbenchShell implements Disposable {
     return this._mode;
   }
 
-  getStackShell(): StackShell {
-    return this._ensureStackShell();
-  }
-
   isPartVisible(part: PartId): boolean {
     return this.dock.isPartVisible(part);
   }
@@ -439,7 +439,7 @@ export class WorkbenchShell implements Disposable {
     if (part === 'sidebar') {
       this._sidebarAutoCollapsed = false;
       this.dock.setPartVisible('sidebar', visible);
-      if (this._mode === 'tablet' && visible) {
+      if (isDrawerMode(this._mode) && visible) {
         this.dock.setPartVisible('secondary', false);
       }
       this._syncLayout();
@@ -449,7 +449,7 @@ export class WorkbenchShell implements Disposable {
     if (part === 'secondary') {
       if (visible) {
         this._maybeAutoCollapseSidebar();
-        if (this._mode === 'tablet') {
+        if (isDrawerMode(this._mode)) {
           this.dock.setPartVisible('sidebar', false);
         }
         this.dock.setPartVisible('secondary', true);
@@ -478,33 +478,25 @@ export class WorkbenchShell implements Disposable {
     this.dock.setAllowSplit(nextMode === 'desktop');
     this.dock.getDndController().setEnabled(nextMode !== 'mobile');
 
-    if (nextMode === 'mobile') {
-      this._desktopShell.hidden = true;
-      const stack = this._ensureStackShell();
-      stack.element.hidden = false;
-      this._backdrop.hidden = true;
-    } else {
-      this._desktopShell.hidden = false;
-      if (this._stackShell) this._stackShell.element.hidden = true;
-      if (nextMode === 'tablet' && this.dock.getGroups().length > 1) {
-        this._collapseExtraGroups();
-      }
-      if (nextMode === 'tablet' && prevMode !== 'tablet') {
-        const prevSuppress = this._suppressAutoSave;
-        this._suppressAutoSave = true;
-        try {
-          this.dock.setPartVisible('sidebar', false);
-          this.dock.setPartVisible('secondary', false);
-        } finally {
-          this._suppressAutoSave = prevSuppress;
-        }
-      }
-      if (nextMode === 'desktop' && this.dock.isPartVisible('secondary')) {
-        this._maybeAutoCollapseSidebar();
-        this._maybeRestoreSidebarIfFits();
-      }
-      this._syncLayout();
+    this._desktopShell.hidden = false;
+    if (isDrawerMode(nextMode) && this.dock.getGroups().length > 1) {
+      this._collapseExtraGroups();
     }
+    if (isDrawerMode(nextMode) && !isDrawerMode(prevMode)) {
+      const prevSuppress = this._suppressAutoSave;
+      this._suppressAutoSave = true;
+      try {
+        this.dock.setPartVisible('sidebar', false);
+        this.dock.setPartVisible('secondary', false);
+      } finally {
+        this._suppressAutoSave = prevSuppress;
+      }
+    }
+    if (nextMode === 'desktop' && this.dock.isPartVisible('secondary')) {
+      this._maybeAutoCollapseSidebar();
+      this._maybeRestoreSidebarIfFits();
+    }
+    this._syncLayout();
 
     if (prevMode !== nextMode) {
       this._onDidModeChange.fire(nextMode);
@@ -551,35 +543,6 @@ export class WorkbenchShell implements Disposable {
     }
   }
 
-  openMobileDetail(
-    title: string,
-    tools: readonly StackToolItem[],
-    activeToolId?: string,
-    extra?: Pick<StackDetailOptions, 'subtitle' | 'subtitleTone' | 'backBadge' | 'actions'>,
-  ): void {
-    const stack = this._ensureStackShell();
-    stack.openDetail({ title, tools, activeToolId, ...extra });
-  }
-
-  openMobileView(viewId: string, title?: string): boolean {
-    const view = this._views.get(viewId);
-    if (!view) return false;
-    const stack = this._ensureStackShell();
-    const comp = view.component();
-    const pageTitle = title ?? view.title;
-    stack.pushPage({
-      title: pageTitle,
-      hideToolsBar: true,
-      tools: [{ id: `view:${view.id}`, title: pageTitle, component: comp }],
-      onDispose: () => comp.dispose(),
-    });
-    return true;
-  }
-
-  setMobileTabs(tabs: readonly StackNavTab[]): void {
-    this._ensureStackShell().setTabs(tabs);
-  }
-
   dispose(): void {
     if (this._toastTimer) {
       clearTimeout(this._toastTimer);
@@ -587,11 +550,30 @@ export class WorkbenchShell implements Disposable {
     }
     this._toastEl?.remove();
     this._toastEl = undefined;
-    this._stackShell?.dispose();
     this._views.clear();
     this._editors.clear();
     this._tools.clear();
     this._disposables.dispose();
+  }
+
+  private _createMobileDrawer(): MobileDrawerController {
+    return new MobileDrawerController({
+      doc: this._doc,
+      win: this._win,
+      shellEl: this._desktopShell,
+      activityBarEl: this.activityBar.element,
+      sidebarEl: this.sidebar.element,
+      backdropEl: this._backdrop,
+      isMobile: () => this._mode === 'mobile',
+      isSidebarOpen: () => this.dock.isPartVisible('sidebar'),
+      isSecondaryOpen: () => this.dock.isPartVisible('secondary'),
+      setSidebarOpen: (open) => this.setPartVisible('sidebar', open),
+      closeAllDrawers: () => {
+        this.dock.setPartVisible('sidebar', false);
+        this.dock.setPartVisible('secondary', false);
+        this._syncLayout();
+      },
+    });
   }
 
   private _loadInitialSavedLayout(): void {
@@ -620,7 +602,7 @@ export class WorkbenchShell implements Disposable {
       this.dock.fromJSON(saved);
       const panelHeight = this.dock.getPartSize('panel');
       if (panelHeight > 0) this.panel.setHeight(panelHeight);
-      if (this._mode === 'tablet') {
+      if (isDrawerMode(this._mode)) {
         if (this.dock.getGroups().length > 1) {
           this._collapseExtraGroups();
         }
@@ -738,7 +720,7 @@ export class WorkbenchShell implements Disposable {
         }
         this.activityBar.setActive(item.id);
         this._revealView(item.view);
-        if (this._mode === 'tablet') {
+        if (isDrawerMode(this._mode)) {
           this.setPartVisible('sidebar', true);
         }
       }),
@@ -802,7 +784,7 @@ export class WorkbenchShell implements Disposable {
 
     this._disposables.add(
       addDisposableListener(this._backdrop, 'click', () => {
-        if (this._mode === 'tablet') {
+        if (isDrawerMode(this._mode)) {
           this.dock.setPartVisible('sidebar', false);
           this.dock.setPartVisible('secondary', false);
           this._syncLayout();
@@ -811,8 +793,19 @@ export class WorkbenchShell implements Disposable {
     );
 
     this._disposables.add(
+      addDisposableListener(this._editorContainer, 'click', (ev) => {
+        if (this._mode !== 'mobile') return;
+        const target = ev.target;
+        if (!(target instanceof Element)) return;
+        if (target.closest('.wb-group-mobile-menu')) {
+          this.setPartVisible('sidebar', !this.dock.isPartVisible('sidebar'));
+        }
+      }),
+    );
+
+    this._disposables.add(
       addDisposableListener(this._doc, 'keydown', (ev) => {
-        if (ev.key !== 'Escape' || this._mode !== 'tablet') return;
+        if (ev.key !== 'Escape' || !isDrawerMode(this._mode)) return;
         if (this.dock.isPartVisible('sidebar') || this.dock.isPartVisible('secondary')) {
           ev.preventDefault();
           this.dock.setPartVisible('sidebar', false);
@@ -836,48 +829,6 @@ export class WorkbenchShell implements Disposable {
       }),
     );
   }
-  private _ensureStackShell(): StackShell {
-    if (!this._stackShell) {
-      this._stackShell = new StackShell({
-        doc: this._doc,
-        resolveIcon: this._resolveIcon,
-      });
-      this._stackShell.element.hidden = this._mode !== 'mobile';
-      this.root.appendChild(this._stackShell.element);
-    }
-    return this._stackShell;
-  }
-
-  private _syncMobileTabs(
-    activities: readonly { readonly id: string; readonly title: string; readonly icon: string; readonly view: string; readonly badge?: () => number | 'dot' | null }[],
-  ): void {
-    if (!this._stackShell || activities.length === 0) return;
-    const primary = activities.slice(0, 3).map((a) => ({
-      id: a.id,
-      title: a.title,
-      icon: a.icon,
-      view: a.view,
-      badge: a.badge,
-    }));
-    const extra = activities.slice(3);
-    const moreBadge = (): number | 'dot' | null => {
-      let sum = 0;
-      let hasDot = false;
-      for (const item of extra) {
-        const b = item.badge?.() ?? null;
-        if (typeof b === 'number' && b > 0) sum += b;
-        else if (b === 'dot') hasDot = true;
-      }
-      if (sum > 0) return sum;
-      return hasDot ? 'dot' : null;
-    };
-    const tabs: StackNavTab[] = [
-      ...primary,
-      { id: 'more', title: tr('mobile.more'), icon: 'more', view: 'more', badge: moreBadge },
-    ];
-    this._stackShell.setTabs(tabs);
-  }
-
   private _maybeAutoCollapseSidebar(): void {
     if (this._mode !== 'desktop') return;
     if (!this.dock.isPartVisible('sidebar')) return;
@@ -919,12 +870,16 @@ export class WorkbenchShell implements Disposable {
       const secVisible = this.dock.isPartVisible('secondary');
       const activeSidebar = this.dock.getActivePartPanel('sidebar');
       if (activeSidebar) this.activityBar.setActive(activeSidebar);
+      const mobile = this._mode === 'mobile';
+      const drawer = isDrawerMode(this._mode);
+      const workW = mobile ? this._width : Math.max(0, this._width - ACTIVITY_BAR_WIDTH);
+      const workH = mobile ? this._height : Math.max(0, this._height - STATUS_BAR_HEIGHT);
 
-      if (this._mode === 'tablet') {
+      if (drawer) {
         this._splitView.setPaneVisible('sidebar', false, false);
         this._splitView.setPaneVisible('secondary', false, false);
         // Layout splitView before toggling drawer visibility so SplitView does not re-hide drawers.
-        this._splitView.layout(Math.max(0, this._width - ACTIVITY_BAR_WIDTH));
+        this._splitView.layout(workW);
         this.sidebar.setVisible(sbVisible);
         this.secondary.setVisible(secVisible);
         this._backdrop.hidden = !(sbVisible || secVisible);
@@ -932,12 +887,23 @@ export class WorkbenchShell implements Disposable {
         this._backdrop.hidden = true;
         this._splitView.setPaneVisible('sidebar', sbVisible, false);
         this._splitView.setPaneVisible('secondary', secVisible, false);
-        const workW = Math.max(0, this._width - ACTIVITY_BAR_WIDTH);
         this._splitView.layout(workW);
       }
 
-      const workW = Math.max(0, this._width - ACTIVITY_BAR_WIDTH);
-      const workH = Math.max(0, this._height - STATUS_BAR_HEIGHT);
+      this._desktopShell.classList.toggle('is-sidebar-open', drawer && sbVisible);
+      this._desktopShell.classList.toggle('is-secondary-open', drawer && secVisible);
+      const groups = this.dock.getGroups();
+      const singleTopic =
+        mobile &&
+        groups.length === 1 &&
+        groups[0]!.size === 1 &&
+        this.dock.getActiveGroupPanel() === 'topic:active';
+      this._desktopShell.classList.toggle('is-single-topic', singleTopic);
+      this.activityBar.element.inert = mobile && !sbVisible;
+      this.sidebar.element.inert = mobile && !sbVisible;
+      this.secondary.element.inert = mobile && !secVisible;
+      this._mobileDrawer.syncDrawerHistory(mobile && (sbVisible || secVisible));
+
       this.dock.layout(workW, workH);
     } finally {
       this._syncingLayout = false;
@@ -975,7 +941,7 @@ export class WorkbenchShell implements Disposable {
     const part = view!.part;
     const keepCollapsedOnTabletInit =
       !shouldOpen ||
-      (this._mode === 'tablet' &&
+      (isDrawerMode(this._mode) &&
         part === 'sidebar' &&
         !this.dock.isPartVisible('sidebar') &&
         this.dock.getPartPanels('sidebar').length === 0);
@@ -1011,63 +977,18 @@ export class WorkbenchShell implements Disposable {
     const editor = this._editors.get(kind);
     if (!editor) return undefined;
     const id = opts?.id ?? `editor:${kind}:${++this._editorSeq}`;
-    if (this._mode === 'mobile' && kind !== 'topic') {
-      return this._openMobileEditor(kind, id, editor, input);
-    }
     const activeGroup = this.dock.getActiveGroupId() ?? MAIN_GROUP_ID;
-    return this.dock.addPanel({
+    const ref = this.dock.addPanel({
       id,
       component: `editor:${kind}`,
       title: editor.title(input),
       params: input,
       position: opts?.position ?? { group: activeGroup },
     });
-  }
-
-  private _openMobileEditor(
-    kind: string,
-    id: string,
-    editor: EditorContribution,
-    input: unknown,
-  ): PanelRef {
-    const stack = this._ensureStackShell();
-    const comp = editor.component();
-    const title = editor.title(input);
-    if (kind === 'settings' && input && typeof input === 'object') {
-      const rec = input as Record<string, unknown>;
-      if (rec.scope === 'gateway' && typeof rec.sectionId === 'string' && rec.sectionId) {
-        comp.element.dataset.mobileSettingsSection = rec.sectionId;
-      }
+    if (this._mode === 'mobile' && this.dock.isPartVisible('sidebar')) {
+      this.setPartVisible('sidebar', false);
     }
-    const vis = new Emitter<boolean>();
-    const dim = new Emitter<{ readonly width: number; readonly height: number }>();
-    stack.pushPage({
-      title,
-      hideToolsBar: true,
-      tools: [{ id, title, component: comp, params: input }],
-      onDispose: () => {
-        comp.dispose();
-        vis.dispose();
-        dim.dispose();
-      },
-    });
-    return {
-      id,
-      group: 'stack',
-      params: input,
-      onDidVisibilityChange: vis.event,
-      onDidDimensionsChange: dim.event,
-      setTitle(nextTitle: string) {
-        stack.setDetailTitle(nextTitle);
-      },
-      setBadge() {},
-      focus() {
-        comp.focus?.();
-      },
-      close() {
-        stack.popPage();
-      },
-    };
+    return ref;
   }
 
   private _registerTool(t: TopicToolContribution): Disposable {

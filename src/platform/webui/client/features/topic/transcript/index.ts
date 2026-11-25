@@ -67,6 +67,10 @@ export interface TranscriptDeps {
   readonly setSidebar: (open: boolean) => void;
   readonly openShot: (img: HTMLImageElement) => void;
   readonly sendCommand: (cmd: string) => void;
+  readonly onLaunchShown?: (agentId: string) => void;
+  readonly selectLaunchAgent?: (agentId: string) => void;
+  readonly browseLaunchWorkdir?: (dir: string) => void;
+  readonly pickLaunchWorkdir?: (cwd: string) => void;
   readonly openReader: (link: HTMLAnchorElement) => void;
   readonly deliverLocal: (nonce: string) => void;
   readonly copyLocal: (nonce: string, btn: HTMLElement) => void;
@@ -165,6 +169,7 @@ class TranscriptControllerImpl implements TranscriptController {
       switchTopic: deps.switchTopic,
       isNarrow: deps.isNarrow,
       setSidebar: deps.setSidebar,
+      onLaunchShown: deps.onLaunchShown,
     });
     this.btw = createBtwController({
       btwBox: deps.btwBox,
@@ -202,7 +207,13 @@ class TranscriptControllerImpl implements TranscriptController {
     return this._msgAt(key);
   }
 
-  paint(key: string, before?: Node | null): void {
+  paint(
+    key: string,
+    before?: Node | null,
+    batchFrag?: DocumentFragment | null,
+    deferHighlight = false,
+    skipHighlight = false,
+  ): void {
     const data = this._deps.getData();
     const els = this._deps.getEls();
     const m = data[key];
@@ -212,10 +223,14 @@ class TranscriptControllerImpl implements TranscriptController {
       this.banners.clearSkeleton();
       el = this._deps.log.ownerDocument.createElement('div');
       el.setAttribute('data-k', key);
-      const syncingEl = this.banners.getSyncingEl();
-      const at = before && before.parentNode === this._deps.log ? before : syncingEl;
-      if (at) this._deps.log.insertBefore(el, at);
-      else this._deps.log.appendChild(el);
+      if (batchFrag) {
+        batchFrag.appendChild(el);
+      } else {
+        const syncingEl = this.banners.getSyncingEl();
+        const at = before && before.parentNode === this._deps.log ? before : syncingEl;
+        if (at) this._deps.log.insertBefore(el, at);
+        else this._deps.log.appendChild(el);
+      }
       els[key] = el;
     }
     const out = this.msgMarkup(key, m, this._deps.isHistory(m));
@@ -224,7 +239,10 @@ class TranscriptControllerImpl implements TranscriptController {
     el.className = out.cls;
     el.innerHTML = out.h;
     this._sig[key] = out.h;
-    this.codeBlocks.enhance(el);
+    this.codeBlocks.enhance(
+      el,
+      deferHighlight ? { defer: true, skipHighlight, liveEl: null } : undefined,
+    );
   }
 
   private _msgAt(key: string): TranscriptMessage | undefined {
@@ -313,27 +331,9 @@ class TranscriptControllerImpl implements TranscriptController {
     }
   }
 
-  reconcile(list: readonly TranscriptMessage[]): void {
-    this.banners.clearSkeleton();
-    this.banners.clearSyncing();
+  private _pruneGone(keep: Readonly<Record<string, 1>>, epoch: number): void {
     const data = this._deps.getData();
     const els = this._deps.getEls();
-    const epoch = this._deps.getEpoch();
-    const keep: Record<string, 1> = {};
-    const orderedEls: HTMLElement[] = [];
-    for (let i = 0; i < list.length; i++) {
-      const m = list[i];
-      if (!m) continue;
-      m._g = m.g || epoch;
-      if (m.settings || m.wasSettings) continue;
-      this._deps.claim(m);
-      const key = this._deps.keyOf(m);
-      keep[key] = 1;
-      data[key] = m;
-      this.paint(key);
-      const el = els[key];
-      if (el) orderedEls.push(el);
-    }
     const gone: string[] = [];
     for (const k of Object.keys(els)) {
       if (keep[k]) continue;
@@ -345,6 +345,40 @@ class TranscriptControllerImpl implements TranscriptController {
       const k = gone[j];
       if (k) this.drop(k);
     }
+  }
+
+  private _insertBatch(frag: DocumentFragment | null, at: ChildNode | null): void {
+    if (!frag || frag.childNodes.length === 0) return;
+    if (at && at.parentNode === this._deps.log) this._deps.log.insertBefore(frag, at);
+    else this._deps.log.appendChild(frag);
+  }
+
+  reconcile(list: readonly TranscriptMessage[]): void {
+    this.banners.clearSkeleton();
+    this.banners.clearSyncing();
+    const data = this._deps.getData();
+    const els = this._deps.getEls();
+    const epoch = this._deps.getEpoch();
+    const keep: Record<string, 1> = {};
+    const orderedEls: HTMLElement[] = [];
+    const bulk = list.length > 8;
+    const batchFrag = bulk ? this._deps.log.ownerDocument.createDocumentFragment() : null;
+    const tailStart = list.length - 10;
+    for (let i = 0; i < list.length; i++) {
+      const m = list[i];
+      if (!m) continue;
+      m._g = m.g || epoch;
+      if (m.settings || m.wasSettings) continue;
+      this._deps.claim(m);
+      const key = this._deps.keyOf(m);
+      keep[key] = 1;
+      data[key] = m;
+      this.paint(key, null, batchFrag, bulk, bulk && i < tailStart);
+      const el = els[key];
+      if (el) orderedEls.push(el);
+    }
+    this._insertBatch(batchFrag, this.banners.getSyncingEl());
+    this._pruneGone(keep, epoch);
     if (!areNodesContiguousInParent(this._deps.log, orderedEls)) {
       for (let i = 0; i < orderedEls.length; i++) {
         const el = orderedEls[i];
@@ -352,6 +386,7 @@ class TranscriptControllerImpl implements TranscriptController {
       }
     }
     this.sinkLocals();
+    if (bulk) this.codeBlocks.scheduleSweep();
   }
 
   repaintHistory(): void {
@@ -367,6 +402,9 @@ class TranscriptControllerImpl implements TranscriptController {
     m: TranscriptMessage,
     synced: boolean,
     anchor: ChildNode | null,
+    batchFrag: DocumentFragment | null,
+    deferHighlight: boolean,
+    skipHighlight: boolean,
   ): boolean {
     if (m._local) return this._deps.adoptLegacy(m);
     if (m.settings || m.wasSettings) return false;
@@ -376,7 +414,7 @@ class TranscriptControllerImpl implements TranscriptController {
     if (data[key] || els[key]) return false;
     if (synced && !this._deps.isHistory(m)) return false;
     data[key] = m;
-    this.paint(key, synced ? anchor : null);
+    this.paint(key, synced ? anchor : null, batchFrag, deferHighlight, skipHighlight);
     return false;
   }
 
@@ -388,11 +426,15 @@ class TranscriptControllerImpl implements TranscriptController {
     const anchor = synced ? this._deps.log.firstChild : null;
     const els = this._deps.getEls();
     let moved = false;
+    const bulk = list.length > 8;
+    const batchFrag = bulk ? this._deps.log.ownerDocument.createDocumentFragment() : null;
+    const tailStart = list.length - 10;
     for (let i = 0; i < list.length; i++) {
       const m = list[i];
       if (!m || !m.id) continue;
-      moved = this._adoptOne(m, synced, anchor) || moved;
+      moved = this._adoptOne(m, synced, anchor, batchFrag, bulk, bulk && i < tailStart) || moved;
     }
+    this._insertBatch(batchFrag, synced ? anchor : this.banners.getSyncingEl());
     if (moved) {
       this._deps.showUnsent(this._deps.getTopic());
       this._deps.cacheSave();
@@ -403,6 +445,7 @@ class TranscriptControllerImpl implements TranscriptController {
     if (!current) this.banners.showSyncing();
     if (entering) this.scroll.land(els);
     else if (stick) this.scroll.toBottom();
+    if (bulk) this.codeBlocks.scheduleSweep();
   }
 
   openTurnChanges(turn: number): void {
@@ -528,6 +571,9 @@ class TranscriptControllerImpl implements TranscriptController {
         switchTopic: this._deps.switchTopic,
         openShot: this._deps.openShot,
         sendCommand: this._deps.sendCommand,
+        selectLaunchAgent: this._deps.selectLaunchAgent,
+        browseLaunchWorkdir: this._deps.browseLaunchWorkdir,
+        pickLaunchWorkdir: this._deps.pickLaunchWorkdir,
         toggleBtw: (qk) => {
           if (this.btw.isOpen() && this.btw.getKey() === qk) this.btw.close(true);
           else this.btw.open(qk);

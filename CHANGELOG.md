@@ -5,6 +5,43 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **Phones get the slide-out sidebar back.** The workbench gave phones a list screen with bottom
+  tabs (Topics, History, Schedules, More) and opened each topic as a separate screen with a back
+  button, so moving between topics meant two screens every time. Below 640px the topic is now the
+  main screen and the same sidebar the desktop has — Topics, History, Schedules, Reviews, Skills,
+  Settings — slides in from the menu button or the left edge, and closes on a pick, a tap outside,
+  a swipe or the back gesture. The separate phone shell is gone.
+- **A new topic picks its agent and its folder on one page.** beta.3 went back to choosing an agent
+  first and a folder after it, because beta.2's grid of every directory was a wall of long paths.
+  The launcher now has the agent cards and, below them, a folder browser for the chosen agent that
+  shows one level at a time with the `/cd` picker's breadcrumbs, up and filter; either can be
+  picked first, and the first message starts in both.
+- **Larger default text.** The workbench had set everything to 13px. Messages and the composer are
+  back at 15px and the rest of the interface at 14px, with the sizes kept in a few shared tokens.
+- **Running is blue again.** A running topic's dot, age and badges, the Run filter and the status
+  bar had turned green, the colour that means done; they are bright blue, and an idle topic whose
+  agent is still up keeps the dim blue the sidebar uses for it.
+
+### Fixed
+
+- **A message sent with Send now no longer vanishes.** Tapping Send now on a queued message while
+  a turn was running delivered it to the agent but dropped it from the page, and it was not in the
+  history after a reload either: the queued copy was discarded before its delivery was recorded.
+  It now shows in the transcript where it was delivered.
+- **Topics open at the newest message, and open from the cache.** On phones a topic opened at its
+  first message, because it scrolled to the bottom while still hidden; and every switch fetched
+  the whole topic again instead of painting what the page had cached and fetching only what was
+  new. A second open of a long topic now shows in about 0.15s instead of 1.2s on a slow network.
+- **Typing, streaming and switching topics no longer stall the page.** Each keystroke made the
+  browser lay out the whole transcript, a long transcript highlighted every code block before it
+  showed, and every list update rebuilt the whole topic list, even while it was hidden. Code blocks
+  are now highlighted as they scroll near the screen and only changed rows of the list are
+  redrawn. Measured on a slowed-down CPU with 86 topics and a 150-message transcript, time spent in
+  long tasks fell by 94–98% while typing, 72–88% while a reply streams in, and 30–38% when
+  switching topics.
+
 ## [3.39.0-beta.3] - 2026-11-25
 
 ### Changed

@@ -2,7 +2,7 @@ import { html, nothing, render, type TemplateResult } from '../../base/html.js';
 import { type IconInput, renderIcon } from '../shared.js';
 
 export type BadgeTone = 'accent' | 'neutral' | 'ok' | 'warn' | 'err';
-export type StatusTone = 'ok' | 'warn' | 'err' | 'idle';
+export type StatusTone = 'ok' | 'live' | 'warn' | 'err' | 'idle';
 export type KnownHarness = 'claude' | 'codex' | 'opencode' | 'agy' | 'gemini' | 'dsh';
 
 const KNOWN_HARNESSES = new Set<string>(['claude', 'codex', 'opencode', 'agy', 'gemini', 'dsh']);

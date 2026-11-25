@@ -789,6 +789,7 @@ function lifecycle(
   | 'useTopicKill'
   | 'useAgentCatalog'
   | 'useTopicSetup'
+  | 'useWorkdirBrowser'
   | 'useModelPicker'
   | 'usePendingQueueActions'
   | 'useOptionPicker'
@@ -869,6 +870,7 @@ function lifecycle(
      */
     useAgentCatalog: (lookup) => room.useAgentCatalog(lookup),
     useTopicSetup: (setup) => room.useTopicSetup(setup),
+    useWorkdirBrowser: (browse) => room.useWorkdirBrowser(browse),
     /**
      * The only implementor because it is the only platform with a status line to put a switch
      * in: a chat app has `/model` and its menu, which is a message.

@@ -3,8 +3,8 @@
 /* ── §4.2 Typography & Icons ─────────────────────────────────────────────── */
 body{
   font-family:var(--fh-font-ui);
-  font-size:13px;
-  line-height:1.45;
+  font-size:var(--fh-fs-ui);
+  line-height:var(--fh-lh-ui);
   background:var(--fh-bg);
   color:var(--fh-fg);
   -webkit-font-smoothing:antialiased;
@@ -48,7 +48,7 @@ kbd,
 .skill-section,
 .rev-label,
 .fx-sec{
-  font-size:11px;
+  font-size:var(--fh-fs-xs);
   font-weight:600;
   text-transform:uppercase;
   letter-spacing:0.05em;

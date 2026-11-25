@@ -27,6 +27,9 @@ class ComposerControllerImpl implements ComposerController {
   private readonly copyRef: ReturnType<typeof createCopyRefController>;
   private readonly unsent: ReturnType<typeof createUnsentController>;
   private readonly voice: ReturnType<typeof createVoiceController>;
+  private lastGrowLen = 0;
+  private lastGrowHeight = 0;
+  private singleLineHeight = 0;
 
   constructor(private readonly deps: ComposerDeps) {
     this.doc = deps.doc ?? document;
@@ -91,8 +94,28 @@ class ComposerControllerImpl implements ComposerController {
   }
 
   grow(): void {
-    this.deps.els.input.style.height = 'auto';
-    this.deps.els.input.style.height = `${this.deps.els.input.scrollHeight}px`;
+    const input = this.deps.els.input;
+    const len = input.value.length;
+    const shrank = len < this.lastGrowLen;
+    this.lastGrowLen = len;
+    // Avoid forcing a full-document reflow via height='auto' when the textarea cannot shrink.
+    if (!shrank && this.lastGrowHeight > 0) {
+      const sh = input.scrollHeight;
+      if (sh === this.lastGrowHeight) return;
+      if (sh > this.lastGrowHeight) {
+        input.style.height = `${sh}px`;
+        this.lastGrowHeight = sh;
+        return;
+      }
+    }
+    if (shrank && this.singleLineHeight > 0 && this.lastGrowHeight <= this.singleLineHeight) {
+      return;
+    }
+    input.style.height = 'auto';
+    const next = input.scrollHeight;
+    input.style.height = `${next}px`;
+    this.lastGrowHeight = next;
+    if (len === 0 && next > 0) this.singleLineHeight = next;
   }
 
   renderChips(): void {
