@@ -13,6 +13,7 @@ import { OverlayManager } from './client/services/overlays.js';
 import { StorageService } from './client/services/storage.js';
 import type { PanelComponent } from './client/workbench/contracts.js';
 import { StackShell } from './client/workbench/stack-shell.js';
+import { WorkbenchShell } from './client/workbench/shell.js';
 import { renderPage } from './page.js';
 
 function makeDummyPanel(text: string): PanelComponent {
@@ -226,5 +227,94 @@ describe('wb2-mobile: login, stack-shell, sheet, grouped form, and palette', () 
     keybindings.dispose();
     registry.dispose();
     events.dispose();
+  });
+
+  it('routes editors.open(kind, input) and openMobileView() into StackShell with multi-level Back on <640px', () => {
+    const root = document.createElement('div');
+    document.body.appendChild(root);
+    const shell = new WorkbenchShell({
+      root,
+      initialWidth: 390,
+      initialHeight: 844,
+      autoSaveLayout: false,
+    });
+
+    const disposed: string[] = [];
+    const makeTracked = (tag: string): PanelComponent => {
+      const el = document.createElement('div');
+      el.textContent = tag;
+      return {
+        element: el,
+        init(params) {
+          el.dataset.params = JSON.stringify(params ?? null);
+        },
+        dispose() {
+          disposed.push(tag);
+          el.remove();
+        },
+      };
+    };
+
+    shell.views.register({
+      id: 'settings',
+      title: 'Settings',
+      part: 'sidebar',
+      component: () => makeTracked('view:settings'),
+    });
+
+    for (const kind of ['schedule', 'history', 'review', 'review-prefs', 'skill', 'settings', 'instruction']) {
+      shell.editors.register({
+        kind,
+        title: (inp) => {
+          const rec = inp as { sectionId?: string; title?: string } | undefined;
+          return rec?.sectionId ?? rec?.title ?? kind;
+        },
+        component: () => makeTracked(`editor:${kind}`),
+      });
+    }
+
+    const stack = shell.getStackShell();
+    expect(shell.openMobileView('settings', 'Settings')).toBe(true);
+    expect(stack.getMode()).toBe('detail');
+    expect(stack.getStackDepth()).toBe(1);
+    expect(stack.element.querySelector('.wb-stack-title')?.textContent).toBe('Settings');
+    expect((stack.element.querySelector('.wb-stack-tools') as HTMLElement).hidden).toBe(true);
+
+    const ref = shell.editors.open('settings', { scope: 'gateway', sectionId: 'Delegation' });
+    expect(ref).toBeDefined();
+    expect(stack.getStackDepth()).toBe(2);
+    expect(stack.element.querySelector('.wb-stack-title')?.textContent).toBe('Delegation');
+    expect(stack.element.querySelector('[data-mobile-settings-section="Delegation"]')).not.toBeNull();
+
+    shell.editors.open('instruction', { title: 'common.md' });
+    expect(stack.getStackDepth()).toBe(3);
+    expect(stack.element.querySelector('.wb-stack-title')?.textContent).toBe('common.md');
+
+    // Pop instruction -> back to Delegation -> back to Settings catalog -> back to list
+    stack.popPage();
+    expect(stack.getStackDepth()).toBe(2);
+    expect(disposed).toContain('editor:instruction');
+    expect(stack.element.querySelector('.wb-stack-title')?.textContent).toBe('Delegation');
+
+    stack.popPage();
+    expect(stack.getStackDepth()).toBe(1);
+    expect(disposed).toContain('editor:settings');
+    expect(stack.element.querySelector('.wb-stack-title')?.textContent).toBe('Settings');
+
+    stack.popPage();
+    expect(stack.getStackDepth()).toBe(0);
+    expect(stack.getMode()).toBe('list');
+    expect(disposed).toContain('view:settings');
+
+    // Also verify schedule, history, review, review-prefs, skill all push to StackShell
+    for (const kind of ['schedule', 'history', 'review', 'review-prefs', 'skill']) {
+      shell.editors.open(kind, { title: `${kind}-page` });
+      expect(stack.getMode()).toBe('detail');
+      expect(stack.element.querySelector('.wb-stack-title')?.textContent).toBe(`${kind}-page`);
+      stack.popPage();
+      expect(stack.getMode()).toBe('list');
+    }
+
+    shell.dispose();
   });
 });

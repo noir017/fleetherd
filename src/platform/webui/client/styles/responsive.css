@@ -506,6 +506,14 @@
   .wb-root .wb-stack-detail-body .wb-topic-header {
     display: none;
   }
+  .wb-root .wb-stack-detail-body .wb-set-cat-head,
+  .wb-root .wb-stack-detail-body .wb-set-ed-head {
+    display: none;
+  }
+  .wb-root .wb-stack-detail-body [data-mobile-settings-section]:has(.set-sec.is-target) .set-sec:not(.is-target),
+  .wb-root .wb-stack-detail-body [data-mobile-settings-section] .wb-set-device-wrap {
+    display: none;
+  }
   .wb-root .wb-stack-detail-body #input.wb-topic-input,
   .wb-root .wb-stack-detail-body .wb-topic-input {
     min-height: 40px;

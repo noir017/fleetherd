@@ -834,6 +834,7 @@ export const zhCN = {
   'mobile.more': '更多',
   'mobile.back': '返回',
   'mobile.reviews': '复盘',
+  'mobile.prefs': '偏好建议',
   'mobile.skills': '技能',
   'mobile.settings': '设置',
   'mobile.deviceSection': '本设备',

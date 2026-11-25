@@ -832,6 +832,7 @@ export const en = {
   'mobile.more': 'More',
   'mobile.back': 'Back',
   'mobile.reviews': 'Reviews',
+  'mobile.prefs': 'Preferences',
   'mobile.skills': 'Skills',
   'mobile.settings': 'Settings',
   'mobile.deviceSection': 'This device',

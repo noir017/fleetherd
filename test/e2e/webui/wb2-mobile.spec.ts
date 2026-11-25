@@ -76,4 +76,50 @@ test.describe('Web UI mobile shell, palette, and login alignment', () => {
     await page.locator('.wb-stack-back').click();
     await expect(page.locator('.wb-stack-list-page')).toBeVisible();
   });
+
+  test('mobile More tab opens reviews, prefs, skills, settings, and appearance sub-pages with stack Back', async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await loginViaUi(page, gateway.baseUrl, gateway.secret);
+
+    const moreTab = page.locator('.wb-stack-tab[data-tab-id="more"]');
+    await expect(moreTab).toBeVisible();
+    await moreTab.click();
+
+    const moreView = page.locator('.wb-stack-more');
+    await expect(moreView).toBeVisible();
+    await expect(moreView.locator('[data-group-item="reviews"]')).toBeVisible();
+    await expect(moreView.locator('[data-group-item="review-prefs"]')).toBeVisible();
+    await expect(moreView.locator('[data-group-item="skills"]')).toBeVisible();
+    await expect(moreView.locator('[data-group-item="settings"]')).toBeVisible();
+    await expect(moreView.locator('[data-group-item="appearance"]')).toBeVisible();
+
+    await page.screenshot({ path: '/tmp/wb2-mobile/shots/mobile-more-dark.png' });
+
+    // Open Appearance & Language sub-page and pop back
+    await moreView.locator('[data-group-item="appearance"]').click();
+    await expect(page.locator('.wb-stack-appearance')).toBeVisible();
+    await page.screenshot({ path: '/tmp/wb2-mobile/shots/mobile-appearance-dark.png' });
+    await page.locator('.wb-stack-back').click();
+    await expect(moreView).toBeVisible();
+
+    // Open Settings view from More and pop back
+    await moreView.locator('[data-group-item="settings"]').click();
+    await expect(page.locator('.wb-stack-detail-body .wb-set-catalog')).toBeVisible();
+    await page.screenshot({ path: '/tmp/wb2-mobile/shots/mobile-settings-dark.png' });
+    await page.locator('.wb-stack-back').click();
+    await expect(moreView).toBeVisible();
+
+    // Open Reviews and Skills views from More and pop back
+    await moreView.locator('[data-group-item="reviews"]').click();
+    await expect(page.locator('.wb-stack-detail-page')).toBeVisible();
+    await page.locator('.wb-stack-back').click();
+    await expect(moreView).toBeVisible();
+
+    await moreView.locator('[data-group-item="skills"]').click();
+    await expect(page.locator('.wb-stack-detail-page')).toBeVisible();
+    await page.locator('.wb-stack-back').click();
+    await expect(moreView).toBeVisible();
+  });
 });

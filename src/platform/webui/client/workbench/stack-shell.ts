@@ -39,10 +39,13 @@ export interface StackDetailOptions {
   readonly actions?: readonly StackHeaderAction[];
   readonly tools: readonly StackToolItem[];
   readonly activeToolId?: string;
+  readonly hideToolsBar?: boolean;
+  readonly onDispose?: () => void;
 }
 
 export interface MobileMoreState {
   readonly reviewsBadge?: string;
+  readonly prefsBadge?: string;
   readonly skillsCount?: number;
   readonly notificationsEnabled?: boolean;
   readonly lowAttention?: boolean;
@@ -53,6 +56,7 @@ export interface MobileMoreState {
   readonly runningCount?: number;
   readonly idleCount?: number;
   readonly onOpenReviews?: () => void;
+  readonly onOpenPrefs?: () => void;
   readonly onOpenSkills?: () => void;
   readonly onOpenSettings?: () => void;
   readonly onToggleNotifications?: (enabled: boolean) => void;
@@ -88,7 +92,12 @@ function renderInlineSvg(svgStr: string): TemplateResult | undefined {
   return html`${span}`;
 }
 
-function createNoopPanelRef(id: string, params: unknown, onClose: () => void): PanelRef {
+function createStackPanelRef(
+  id: string,
+  params: unknown,
+  onClose: () => void,
+  onSetTitle?: (title: string) => void,
+): PanelRef {
   const vis = new Emitter<boolean>();
   const dim = new Emitter<{ readonly width: number; readonly height: number }>();
   return {
@@ -97,8 +106,8 @@ function createNoopPanelRef(id: string, params: unknown, onClose: () => void): P
     params,
     onDidVisibilityChange: vis.event,
     onDidDimensionsChange: dim.event,
-    setTitle() {
-      // Managed by stack shell header.
+    setTitle(nextTitle: string) {
+      onSetTitle?.(nextTitle);
     },
     setBadge() {
       // Managed by stack shell tool strip.
@@ -138,6 +147,7 @@ export class StackShell implements Disposable {
   private _mode: StackMode = 'list';
   private _tools: StackToolItem[] = [];
   private _activeToolId: string | undefined;
+  private _hideToolsBar = false;
   private _pageStack: StackDetailOptions[] = [];
   private _moreState: MobileMoreState;
   private _moreHost: HTMLElement | undefined;
@@ -361,6 +371,7 @@ export class StackShell implements Disposable {
   }
 
   openDetail(options: StackDetailOptions): void {
+    this._disposePageStack();
     this._pageStack = [options];
     this._applyDetailEntry(options);
     this._setMode('detail');
@@ -374,7 +385,8 @@ export class StackShell implements Disposable {
 
   popPage(): void {
     if (this._pageStack.length > 1) {
-      this._pageStack.pop();
+      const popped = this._pageStack.pop();
+      popped?.onDispose?.();
       const top = this._pageStack[this._pageStack.length - 1];
       if (top) {
         this._applyDetailEntry(top);
@@ -382,6 +394,10 @@ export class StackShell implements Disposable {
       }
     }
     this.backToList();
+  }
+
+  setDetailTitle(title: string): void {
+    this._detailTitle.textContent = title;
   }
 
   selectTool(toolId: string): void {
@@ -394,7 +410,7 @@ export class StackShell implements Disposable {
   }
 
   backToList(): void {
-    this._pageStack = [];
+    this._disposePageStack();
     if (this._mode === 'list') return;
     this._setMode('list');
   }
@@ -408,15 +424,22 @@ export class StackShell implements Disposable {
   }
 
   dispose(): void {
+    this._disposePageStack();
     if (this._moreHost) {
       render(nothing, this._moreHost);
       this._moreHost = undefined;
     }
-    this._pageStack = [];
     this._mountedViews.clear();
     this._tools = [];
     this._tabButtons.clear();
     this._disposables.dispose();
+  }
+
+  private _disposePageStack(): void {
+    for (let i = this._pageStack.length - 1; i >= 0; i--) {
+      this._pageStack[i]?.onDispose?.();
+    }
+    this._pageStack = [];
   }
 
   private _syncListHeaderTitle(): void {
@@ -443,6 +466,7 @@ export class StackShell implements Disposable {
     }
     this._renderHeaderActions(this._detailActions, options.actions ?? [], this._headActionDisposables);
     this._tools = [...options.tools];
+    this._hideToolsBar = options.hideToolsBar === true || this._tools.length <= 1;
     this._activeToolId =
       options.activeToolId && this._tools.some((t) => t.id === options.activeToolId)
         ? options.activeToolId
@@ -547,7 +571,9 @@ export class StackShell implements Disposable {
     this.pushPage({
       title: tr('mobile.appearanceLang'),
       subtitle: tr('mobile.deviceFooter'),
+      hideToolsBar: true,
       tools: [{ id: 'appearance', title: tr('mobile.appearanceLang'), component: comp }],
+      onDispose: () => comp.dispose(),
     });
   }
 
@@ -579,6 +605,15 @@ export class StackShell implements Disposable {
               value: s.reviewsBadge,
               chevron: true,
               onClick: () => s.onOpenReviews?.(),
+            },
+            {
+              id: 'review-prefs',
+              label: tr('mobile.prefs'),
+              icon: icon('eye'),
+              iconBox: true,
+              value: s.prefsBadge,
+              chevron: true,
+              onClick: () => s.onOpenPrefs?.(),
             },
             {
               id: 'skills',
@@ -686,13 +721,14 @@ export class StackShell implements Disposable {
     component: PanelComponent,
     params: unknown,
     onClose: () => void,
+    onSetTitle?: (title: string) => void,
   ): void {
     if (this._initialized.has(component)) {
       if (params !== undefined) component.update?.(params);
       return;
     }
     this._initialized.add(component);
-    component.init(params, { id, api: createNoopPanelRef(id, params, onClose) });
+    component.init(params, { id, api: createStackPanelRef(id, params, onClose, onSetTitle) });
   }
 
   private _renderTabBar(): void {
@@ -739,7 +775,7 @@ export class StackShell implements Disposable {
   private _renderTools(): void {
     this._toolDisposables.clear();
     this._toolsBar.replaceChildren();
-    this._toolsBar.hidden = this._tools.length === 0;
+    this._toolsBar.hidden = this._hideToolsBar || this._tools.length === 0;
 
     for (const tool of this._tools) {
       const btn = this._doc.createElement('button');
@@ -770,7 +806,18 @@ export class StackShell implements Disposable {
     this._detailBody.replaceChildren();
     const active = this._tools.find((t) => t.id === this._activeToolId);
     if (!active) return;
-    this._ensureInit(active.id, active.component, active.params, () => this.backToList());
+    this._ensureInit(
+      active.id,
+      active.component,
+      active.params,
+      () => this.popPage(),
+      (nextTitle) => {
+        const top = this._pageStack[this._pageStack.length - 1];
+        if (top && top.tools.some((t) => t.id === active.id)) {
+          this.setDetailTitle(nextTitle);
+        }
+      },
+    );
     active.component.element.hidden = false;
     this._detailBody.appendChild(active.component.element);
     active.component.focus?.();
