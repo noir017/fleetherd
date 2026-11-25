@@ -18,6 +18,7 @@ import {
   errorMessage,
   formatHistoryRef,
   formatHistoryTime,
+  historyAgentClass,
   type HistoryEditorComponent,
   type HistoryEditorInput,
   type HistoryPanelInitContext,
@@ -108,6 +109,8 @@ function formatMatchCount(current: number, total: number, hasQuery: boolean): st
 class HistoryEditorPanel implements HistoryEditorInstance {
   readonly element: HTMLElement;
   private readonly doc: Document;
+  private readonly headTitleEl: HTMLElement;
+  private readonly headPillEl: HTMLElement;
   private readonly findInput: HTMLInputElement;
   private readonly findCount: HTMLElement;
   private readonly prevBtn: HTMLButtonElement;
@@ -141,14 +144,17 @@ class HistoryEditorPanel implements HistoryEditorInstance {
     this.element.className = 'wb-history-editor';
     this.element.setAttribute('aria-label', tr('history.recordedAria'));
 
-    const bannerHost = this.doc.createElement('div');
-    bannerHost.className = 'wb-history-ro-bar';
-    const actionsHost = this.doc.createElement('div');
-    actionsHost.className = 'wb-history-ro-actions';
-    const topBar = this.doc.createElement('div');
-    topBar.className = 'wb-history-top';
-    topBar.appendChild(bannerHost);
-    topBar.appendChild(actionsHost);
+    const headBar = this.doc.createElement('div');
+    headBar.className = 'wb-history-head';
+    this.headTitleEl = this.doc.createElement('span');
+    this.headTitleEl.className = 'wb-history-head-title';
+    this.headTitleEl.textContent = tr('sidebar.history');
+    this.headPillEl = this.doc.createElement('span');
+    this.headPillEl.className = 'wb-history-pill';
+    this.headPillEl.textContent = tr('history.readOnlyTag');
+    const headSpacer = this.doc.createElement('span');
+    headSpacer.className = 'wb-history-spacer';
+    headBar.append(this.headTitleEl, this.headPillEl, headSpacer);
 
     const findBar = this.doc.createElement('div');
     findBar.className = 'wb-history-find';
@@ -172,7 +178,21 @@ class HistoryEditorPanel implements HistoryEditorInstance {
     this.noteHost.hidden = true;
     this.logEl = this.doc.createElement('div');
     this.logEl.className = 'wb-history-log';
-    this.element.append(topBar, findBar, this.noteHost, this.logEl);
+
+    const bannerHost = this.doc.createElement('div');
+    bannerHost.className = 'wb-history-ro-bar';
+    const actionsHost = this.doc.createElement('div');
+    actionsHost.className = 'wb-history-ro-actions';
+    const footWrap = this.doc.createElement('div');
+    footWrap.className = 'wb-history-foot';
+    const footCol = this.doc.createElement('div');
+    footCol.className = 'wb-history-col';
+    const topBar = this.doc.createElement('div');
+    topBar.className = 'wb-history-top';
+    topBar.append(bannerHost, actionsHost);
+    footCol.appendChild(topBar);
+    footWrap.appendChild(footCol);
+    this.element.append(headBar, findBar, this.noteHost, this.logEl, footWrap);
 
     this.roNotice = createNotice(
       { tone: 'info', title: tr('history.readOnlyTag'), message: tr('history.roLibrary') },
@@ -371,18 +391,21 @@ class HistoryEditorPanel implements HistoryEditorInstance {
     const s = (res.session ?? {}) as HistoryPanelSession;
     const title = s.title || tr('history.untitled');
     this.session = s;
+    this.headTitleEl.textContent = title;
     this.panelCtx?.api.setTitle(title);
 
     const count = s.messages || 0;
+    const agentBadge = s.agent ? `<span class="${historyAgentClass(s.agent)}">${text(s.agent)}</span>` : '';
     const meta = [
-      s.agent || tr('history.noAgent'),
       s.platform || tr('history.unknown'),
-      tr('history.lastActive', { when: formatHistoryTime(s.lastAt) }),
       tr(count === 1 ? 'sched.msgOne' : 'sched.msgMany', { count }),
+      formatHistoryTime(s.lastAt),
+      `#${s.id}`,
     ];
     let h =
-      `<div class="lib-head"><div class="hist-meta">${text(meta.join(' · '))}</div>` +
-      `<div class="hist-meta hist-key">${text(s.key || '')}</div></div>`;
+      `<div class="wb-history-col"><div class="lib-head"><div class="hist-meta">${agentBadge}${text(meta.join(' · '))}</div>` +
+      (s.key ? `<div class="hist-meta hist-key">${text(s.key)}</div>` : '') +
+      `</div>`;
     const list = res.messages ?? [];
     const renderMsg = this.deps.msgMarkup ?? ((k: string, m: WebMessage) => defaultMsgMarkup(k, m));
     this.msgData = {};
@@ -394,6 +417,7 @@ class HistoryEditorPanel implements HistoryEditorInstance {
       h += `<div class="${out.cls}" data-k="${text(key)}">${out.h}</div>`;
     }
     if (!list.length) h += `<div class="empty">${text(tr('history.noMessages'))}</div>`;
+    h += '</div>';
     this.logEl.innerHTML = h;
     this.deps.codeBlocks?.(this.logEl);
     for (const node of this.logEl.querySelectorAll('[data-k]')) {
@@ -434,7 +458,10 @@ class HistoryEditorPanel implements HistoryEditorInstance {
     this.matchIndex = -1;
     this.deps.forgetOpenedPrefix?.('h:');
     this.setNote(undefined);
-    if (input.title) this.panelCtx?.api.setTitle(input.title);
+    if (input.title) {
+      this.headTitleEl.textContent = input.title;
+      this.panelCtx?.api.setTitle(input.title);
+    }
     this.roNotice.update({ tone: 'info', title: tr('history.readOnlyTag'), message: tr('history.roLibrary') });
     this.actionBar.update(this.buildActions());
     this.logEl.innerHTML = `<div class="empty">${text(tr('common.loading'))}</div>`;
@@ -494,6 +521,7 @@ class HistoryEditorPanel implements HistoryEditorInstance {
 
   refreshLocale(): void {
     this.element.setAttribute('aria-label', tr('history.recordedAria'));
+    this.headPillEl.textContent = tr('history.readOnlyTag');
     this.findInput.placeholder = tr('common.search');
     this.findInput.setAttribute('aria-label', tr('common.search'));
     this.prevBtn.title = tr('common.prev');

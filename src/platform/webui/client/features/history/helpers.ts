@@ -93,6 +93,94 @@ export function formatHistoryTime(at: number): string {
   }
 }
 
+export function formatHistoryShortTime(at: number, nowMs: number = Date.now()): string {
+  try {
+    const d = new Date(at);
+    const now = new Date(nowMs);
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mm = String(d.getMinutes()).padStart(2, '0');
+    const sameDay =
+      d.getFullYear() === now.getFullYear() &&
+      d.getMonth() === now.getMonth() &&
+      d.getDate() === now.getDate();
+    if (sameDay) return `${hh}:${mm}`;
+    const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+    const isYesterday =
+      d.getFullYear() === yesterday.getFullYear() &&
+      d.getMonth() === yesterday.getMonth() &&
+      d.getDate() === yesterday.getDate();
+    if (isYesterday) return `${hh}:${mm}`;
+    const mo = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    if (d.getFullYear() === now.getFullYear()) return `${mo}-${day}`;
+    return `${d.getFullYear()}-${mo}-${day}`;
+  } catch {
+    return '';
+  }
+}
+
+export interface HistoryDateGroup<T> {
+  readonly key: string;
+  readonly label: string;
+  readonly items: T[];
+}
+
+export function groupHistoryByDate<T>(
+  items: readonly T[],
+  getAt: (item: T) => number,
+  nowMs: number = Date.now(),
+): HistoryDateGroup<T>[] {
+  const now = new Date(nowMs);
+  const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+  const groups: HistoryDateGroup<T>[] = [];
+  const byKey = new Map<string, HistoryDateGroup<T>>();
+
+  for (const item of items) {
+    const d = new Date(getAt(item));
+    let key: string;
+    let label: string;
+    if (
+      d.getFullYear() === now.getFullYear() &&
+      d.getMonth() === now.getMonth() &&
+      d.getDate() === now.getDate()
+    ) {
+      key = 'today';
+      label = tr('sched.today');
+    } else if (
+      d.getFullYear() === yesterday.getFullYear() &&
+      d.getMonth() === yesterday.getMonth() &&
+      d.getDate() === yesterday.getDate()
+    ) {
+      key = 'yesterday';
+      label = tr('sched.yesterday');
+    } else {
+      const monthIdx = d.getMonth();
+      const monthKey = `age.month${monthIdx}` as Parameters<typeof tr>[0];
+      key = `m:${d.getFullYear()}-${String(monthIdx + 1).padStart(2, '0')}`;
+      label = d.getFullYear() === now.getFullYear() ? tr(monthKey) : `${d.getFullYear()} ${tr(monthKey)}`;
+    }
+    let grp = byKey.get(key);
+    if (!grp) {
+      grp = { key, label, items: [] };
+      byKey.set(key, grp);
+      groups.push(grp);
+    }
+    grp.items.push(item);
+  }
+  return groups;
+}
+
+export function historyAgentClass(agent: string | undefined): string {
+  const a = (agent || '').toLowerCase();
+  if (a.includes('claude') || a === 'cc') return 'fh-hc fh-hc--claude';
+  if (a.includes('codex') || a === 'cx') return 'fh-hc fh-hc--codex';
+  if (a.includes('opencode') || a === 'op') return 'fh-hc fh-hc--opencode';
+  if (a.includes('agy') || a === 'ag') return 'fh-hc fh-hc--agy';
+  if (a.includes('gemini')) return 'fh-hc fh-hc--gemini';
+  if (a.includes('dsh')) return 'fh-hc fh-hc--dsh';
+  return 'fh-hc';
+}
+
 export function formatHistoryRef(title: string | undefined, id: string | number): string {
   return `${title || tr('history.untitled')} (#${id})`;
 }

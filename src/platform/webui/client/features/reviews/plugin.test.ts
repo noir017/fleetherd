@@ -201,8 +201,16 @@ describe('features/reviews plugin', () => {
     // Pending badge reflects 2 suggestions.
     expect(registry.getActivityBadge('reviews')).toBe(2);
 
+    // Clicking the pending suggestions nav opens the review-prefs editor.
+    const prefsNav = view.element.querySelector<HTMLElement>('[data-rev-prefs-nav="1"]')!;
+    prefsNav.click();
+    const prefsEd = registry.getEditor('review-prefs')!.component();
+    document.body.appendChild(prefsEd.element);
+    prefsEd.init(undefined, makePanelInitContext('review-prefs'));
+    await flushMicrotasks();
+
     // Adopt triggers createTopic with suggestion text & draft.
-    const adoptBtn = view.element.querySelector<HTMLButtonElement>('[data-rev-adopt="0"]')!;
+    const adoptBtn = prefsEd.element.querySelector<HTMLButtonElement>('[data-rev-adopt="0"]')!;
     adoptBtn.click();
     await flushMicrotasks();
     expect(createTopic).toHaveBeenCalledWith(
@@ -210,7 +218,7 @@ describe('features/reviews plugin', () => {
     );
 
     // Dismiss removes first pending suggestion and updates badge to 1.
-    const dismissBtn = view.element.querySelector<HTMLButtonElement>('[data-rev-dismiss="0"]')!;
+    const dismissBtn = prefsEd.element.querySelector<HTMLButtonElement>('[data-rev-dismiss="0"]')!;
     dismissBtn.click();
     await flushMicrotasks();
     expect(postJson).toHaveBeenCalledWith('/api/reviews/op', {
@@ -220,21 +228,26 @@ describe('features/reviews plugin', () => {
     expect(registry.getActivityBadge('reviews')).toBe(1);
 
     // Archive posts to /api/skills/op and triggers archive lifecycle hooks.
-    const archiveBtn = view.element.querySelector<HTMLButtonElement>('[data-rev-archive="0"]')!;
+    const archiveBtn = prefsEd.element.querySelector<HTMLButtonElement>('[data-rev-archive="0"]')!;
     archiveBtn.click();
     await flushMicrotasks();
     expect(beforeSkillArchive).toHaveBeenCalledTimes(1);
     expect(postJson).toHaveBeenCalledWith('/api/skills/op', { action: 'archive', name: 'obsolete-helper' });
     expect(afterSkillArchive).toHaveBeenCalledWith(true);
     expect(registry.getActivityBadge('reviews')).toBeNull();
+    prefsEd.dispose();
 
-    // Expand review item and click "Open the reviewed topic".
+    // Open review detail editor and click "Open original topic".
     const item = view.element.querySelector<HTMLElement>('[data-rev="rev-1"]')!;
     item.click();
-    expect(item.getAttribute('aria-expanded')).toBe('true');
-    const openBtn = view.element.querySelector<HTMLButtonElement>('[data-rev-topic="topic-reviewed"]')!;
+    const detailEd = registry.getEditor('review')!.component();
+    document.body.appendChild(detailEd.element);
+    detailEd.init({ id: 'rev-1', title: 'Refactor webui' }, makePanelInitContext('review-1'));
+    await flushMicrotasks();
+    const openBtn = detailEd.element.querySelector<HTMLButtonElement>('[data-rev-topic="topic-reviewed"]')!;
     openBtn.click();
     expect(openTopic).toHaveBeenCalledWith('topic-reviewed');
+    detailEd.dispose();
 
     // Locale change updates rendered labels.
     setLocale('zh-CN');

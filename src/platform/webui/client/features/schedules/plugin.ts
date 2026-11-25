@@ -25,6 +25,12 @@ const SCHEDULES_EN_STRINGS: Record<string, string> = {
   'wb.sched.noMatchingRuns': 'No runs match this status.',
   'wb.sched.showAllRuns': 'Show all',
   'wb.sched.summaryOk': 'Completed',
+  'wb.sched.searchSessions': 'Search sessions',
+  'wb.sched.editPrefix': 'Edit · {name}',
+  'wb.sched.what': 'What it runs',
+  'wb.sched.who': 'Who runs it',
+  'wb.sched.recentRuns': 'Recent runs',
+  'wb.sched.addTagPlaceholder': '+ tag, Enter to add',
 };
 
 const SCHEDULES_ZH_STRINGS: Record<string, string> = {
@@ -37,6 +43,12 @@ const SCHEDULES_ZH_STRINGS: Record<string, string> = {
   'wb.sched.noMatchingRuns': '当前状态下没有运行记录。',
   'wb.sched.showAllRuns': '查看全部',
   'wb.sched.summaryOk': '正常完成',
+  'wb.sched.searchSessions': '搜索会话',
+  'wb.sched.editPrefix': '编辑 · {name}',
+  'wb.sched.what': '做什么',
+  'wb.sched.who': '谁来跑',
+  'wb.sched.recentRuns': '最近运行',
+  'wb.sched.addTagPlaceholder': '+ 标签，回车添加',
 };
 
 function isScheduleTask(value: unknown): value is SchedulePanelTask {
