@@ -6,6 +6,7 @@ import readline from 'node:readline';
 const agentId = process.env.FAKE_AGENT || 'alpha';
 const modeFile = process.env.FAKE_MODE || '';
 const logFile = process.env.FAKE_LOG || '';
+const activePrompts = new Map();
 
 function readMode() {
   if (!modeFile) return 'ok';
@@ -66,7 +67,10 @@ function handlePrompt(msg, mode) {
         text: `Rich reply (${agentId}) for: ${prompt}\n\n- item one\n- item two\n\n\`\`\`ts\nexport const ok = true;\n\`\`\``,
       },
     });
-    if (mode === 'slow') return;
+    if (mode === 'slow') {
+      activePrompts.set(sessionId, msg.id);
+      return;
+    }
     reply(msg.id, { stopReason: 'end_turn' });
     return;
   }
@@ -107,6 +111,15 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
   }
   if (msg.method === 'session/prompt') {
     handlePrompt(msg, mode);
+    return;
+  }
+  if (msg.method === 'session/cancel') {
+    const sessionId = String(msg.params?.sessionId ?? '');
+    const openId = activePrompts.get(sessionId);
+    if (openId !== undefined) {
+      activePrompts.delete(sessionId);
+      reply(openId, { stopReason: 'cancelled' });
+    }
     return;
   }
   if (msg.id !== undefined && msg.method) {
