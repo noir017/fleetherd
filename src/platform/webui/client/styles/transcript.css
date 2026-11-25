@@ -341,7 +341,6 @@
 /* Workbench topic editor alignment (docs/webui-workbench-mockup.html #topic & ?m#topic).
    Scoped under .wb-topic-editor to override later cascade rules in workbench.css/workbench-theme.css. */
 .wb-topic-editor>.wb-topic-header{height:48px;min-height:48px;padding:0 10px 0 18px;gap:10px;border-bottom:1px solid var(--fh-line);background:var(--fh-bg)}
-.wb-stack .wb-topic-editor>.wb-topic-header{display:none}
 .wb-topic-editor .wb-topic-title{font-size:var(--fh-fs-body);font-weight:600;color:var(--fh-fg-hi)}
 .wb-topic-editor .wb-topic-pill,
 .wb-topic-editor .wb-topic-conn{font-size:var(--fh-fs-xs);line-height:1.4;padding:1px 7px;border-radius:3px;white-space:nowrap;flex:none}

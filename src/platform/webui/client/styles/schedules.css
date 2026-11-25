@@ -181,7 +181,6 @@ select.skill-field{appearance:auto}
 .fh-schedules-view{display:flex;flex-direction:column;height:100%;min-height:0;background:var(--fh-bg-side)}
 .fh-schedules-header{display:flex;align-items:center;gap:6px;padding:6px 8px 6px 10px;border-bottom:1px solid var(--fh-line);flex:none}
 .wb-sidebar-body .fh-schedules-header .panel-title{display:none}
-.wb-root[data-wb-mode="mobile"] .wb-stack .fh-schedules-header{display:none}
 .fh-schedules-actions{display:flex;align-items:center;gap:2px;flex:none;margin-left:auto}
 .fh-schedules-sess-search{padding:8px 10px 6px;flex:none}
 .fh-search-box{display:flex;align-items:center;gap:6px;background:var(--fh-input);border:1px solid var(--fh-input-line);border-radius:var(--fh-radius-ctrl);padding:0 8px;height:28px;color:var(--fh-placeholder)}

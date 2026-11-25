@@ -334,7 +334,7 @@ describe('webui page', () => {
 
   it('adapts to a screen held upright', () => {
     expect(html).toContain('@media(max-width:640px)');
-    expect(html).toContain('.wb-stack');
+    expect(html).toContain('.wb-root[data-wb-mode="mobile"] .wb-sidebar');
     expect(html).toContain('.wb-drawer-backdrop');
     // dvh, not vh: the mobile URL bar is counted by the latter and not by the former, and the
     // difference is whether the composer is on screen.

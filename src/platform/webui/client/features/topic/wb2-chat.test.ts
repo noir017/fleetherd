@@ -133,7 +133,8 @@ describe('wb2-chat topic editor alignment', () => {
   it('includes mobile duplicate-header suppression, own bubble, and model sheet rules in CSS', () => {
     const transcriptCss = fs.readFileSync(path.join(STYLES_DIR, 'transcript.css'), 'utf8');
     const composerCss = fs.readFileSync(path.join(STYLES_DIR, 'composer.css'), 'utf8');
-    expect(transcriptCss).toContain('.wb-stack .wb-topic-editor>.wb-topic-header{display:none}');
+    const workbenchCss = fs.readFileSync(path.join(STYLES_DIR, 'workbench.css'), 'utf8');
+    expect(workbenchCss).toContain('.wb-root[data-wb-mode="mobile"] .wb-shell.is-single-topic .wb-group-head');
     expect(transcriptCss).toContain('border-radius:18px 18px 4px 18px');
     expect(composerCss).toContain('.wb-topic-editor .mp-grab');
     expect(composerCss).toContain('.wb-topic-editor .st-sep{display:none}');

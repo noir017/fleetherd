@@ -346,8 +346,6 @@
 .wb-root[data-wb-mode="mobile"] .wb-topics-head .fh-btn--icon{min-width:44px;width:44px;height:44px;background:transparent;border:0;color:var(--fh-link);border-radius:8px}
 .wb-root[data-wb-mode="mobile"] .wb-topics-head .fh-btn--icon svg{width:22px;height:22px}
 .wb-root[data-wb-mode="mobile"] .wb-topics-mobile-title{display:none}
-.wb-root[data-wb-mode="mobile"] .wb-stack .wb-topics-head,
-.wb-root[data-wb-mode="mobile"] .wb-stack .wb-topics-mobile-title{display:none}
 .wb-root[data-wb-mode="mobile"] .wb-topics-list{background:var(--fh-bg);padding:0 0 12px}
 .wb-root[data-wb-mode="mobile"] .wb-topics-grp{position:sticky;top:0;z-index:1;background:var(--fh-bg);padding:14px 16px 6px;font-size:var(--fh-fs-sm)}
 .wb-root[data-wb-mode="mobile"] .wb-topic-swipe-wrap{overflow:hidden;border-bottom:1px solid var(--fh-line)}

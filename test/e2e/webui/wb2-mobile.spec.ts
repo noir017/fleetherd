@@ -236,15 +236,17 @@ test.describe('Web UI mobile shell, palette, and login alignment', () => {
     });
     await loginViaUi(page, gateway.baseUrl, gateway.secret);
 
-    const longRow = page.locator(`.wb-stack-list-body .topic-item[data-topic="${longId}"]`);
-    const otherRow = page.locator(`.wb-stack-list-body .topic-item[data-topic="${otherId}"]`);
+    const longRow = page.locator(`.wb-sidebar .topic-item[data-topic="${longId}"]`);
+    const otherRow = page.locator(`.wb-sidebar .topic-item[data-topic="${otherId}"]`);
+    await page.locator('#expand-sidebar').click();
     await expect(longRow).toBeVisible();
 
     // 1st open of long topic: must land at the bottom, not the first message.
     await longRow.click();
-    await expect(page.locator('.wb-stack-detail-body #log .m').first()).toBeVisible();
+    await expect(page.locator('.wb-sidebar')).toBeHidden();
+    await expect(page.locator('.wb-topic-editor #log .m').first()).toBeVisible();
     const firstScroll = await page.evaluate(() => {
-      const log = document.querySelector<HTMLElement>('.wb-stack-detail-body #log')!;
+      const log = document.querySelector<HTMLElement>('.wb-topic-editor #log')!;
       return {
         scrollHeight: log.scrollHeight,
         clientHeight: log.clientHeight,
@@ -254,12 +256,13 @@ test.describe('Web UI mobile shell, palette, and login alignment', () => {
     expect(firstScroll.scrollHeight).toBeGreaterThan(firstScroll.clientHeight + 500);
     expect(firstScroll.distFromBottom).toBeLessThan(80);
 
-    // Switch away to other topic and back to list.
-    await page.locator('.wb-stack-back').click();
+    // Switch away to other topic and reopen the drawer.
+    await page.locator('#expand-sidebar').click();
     await expect(otherRow).toBeVisible();
     await otherRow.click();
-    await expect(page.locator('.wb-stack-detail-body #log .m').first()).toBeVisible();
-    await page.locator('.wb-stack-back').click();
+    await expect(page.locator('.wb-sidebar')).toBeHidden();
+    await expect(page.locator('.wb-topic-editor #log .m').first()).toBeVisible();
+    await page.locator('#expand-sidebar').click();
     await expect(longRow).toBeVisible();
 
     // Throttle network (800ms RTT) and re-open long topic: must paint from cache immediately (< 500ms) and resume with ?last=.
@@ -274,10 +277,10 @@ test.describe('Web UI mobile shell, palette, and login alignment', () => {
     eventUrls.length = 0;
     const secondOpen = await page.evaluate((topicId) => {
       return new Promise<{ domMs: number; count: number; distFromBottom: number }>((resolve) => {
-        const row = document.querySelector<HTMLElement>(`.wb-stack-list-body .topic-item[data-topic="${topicId}"]`)!;
+        const row = document.querySelector<HTMLElement>(`.wb-sidebar .topic-item[data-topic="${topicId}"]`)!;
         const t0 = performance.now();
         const check = () => {
-          const log = document.querySelector<HTMLElement>('.wb-stack-detail-body #log');
+          const log = document.querySelector<HTMLElement>('.wb-topic-editor #log');
           const count = log ? log.querySelectorAll('.m').length : 0;
           if (count > 0 && log && log.clientHeight > 0) {
             resolve({

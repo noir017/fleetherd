@@ -13,7 +13,6 @@ import type { CommandRegistry } from '../services/commands.js';
 import type { KeybindingService } from '../services/keybindings.js';
 import type { OverlayManager } from '../services/overlays.js';
 import { StorageService } from '../services/storage.js';
-import { t as tr } from '../i18n/index.js';
 import type { DockEngine, LayoutState, PanelRef, PartId } from './contracts.js';
 import { DynamicDockEngine, MAIN_GROUP_ID } from './dock/engine.js';
 import {
@@ -32,7 +31,6 @@ import { SecondaryPart } from './parts/secondary-part.js';
 import { SidebarPart } from './parts/sidebar-part.js';
 import { StatusBarPart, type StatusBarItem } from './parts/status-bar.js';
 import { MobileDrawerController } from './mobile-drawer.js';
-import { StackShell, type StackDetailOptions, type StackNavTab, type StackToolItem } from './stack-shell.js';
 
 export const LAYOUT_STORAGE_KEY = SERIALIZE_LAYOUT_KEY;
 export const SPLIT_STORAGE_KEY = 'aa_split_sizes';
@@ -115,7 +113,6 @@ export class WorkbenchShell implements Disposable {
   private readonly _splitView: SplitView;
   private readonly _moveMenu: MenuController;
   private readonly _mobileDrawer: MobileDrawerController;
-  private _stackShell: StackShell | undefined;
   private _commands: CommandRegistry | undefined;
   private _layoutCommandsRegistered = false;
   private _toastEl: HTMLElement | undefined;
@@ -169,7 +166,6 @@ export class WorkbenchShell implements Disposable {
     register: (a: ActivityBarItem): Disposable => this.activityBar.registerItem(a),
     refreshBadges: (): void => {
       this.activityBar.refreshBadges();
-      this._stackShell?.refreshBadges();
     },
     setActive: (id: string | undefined): void => this.activityBar.setActive(id),
   };
@@ -364,7 +360,6 @@ export class WorkbenchShell implements Disposable {
       }
       const activeSidebar = this.dock.getActivePartPanel('sidebar');
       if (activeSidebar) this.activityBar.setActive(activeSidebar);
-      this._syncMobileTabs(items);
     };
 
     const syncViews = (): void => {
@@ -436,10 +431,6 @@ export class WorkbenchShell implements Disposable {
     return this._mode;
   }
 
-  getStackShell(): StackShell {
-    return this._ensureStackShell();
-  }
-
   isPartVisible(part: PartId): boolean {
     return this.dock.isPartVisible(part);
   }
@@ -488,7 +479,6 @@ export class WorkbenchShell implements Disposable {
     this.dock.getDndController().setEnabled(nextMode !== 'mobile');
 
     this._desktopShell.hidden = false;
-    if (this._stackShell) this._stackShell.element.hidden = true;
     if (isDrawerMode(nextMode) && this.dock.getGroups().length > 1) {
       this._collapseExtraGroups();
     }
@@ -553,35 +543,6 @@ export class WorkbenchShell implements Disposable {
     }
   }
 
-  openMobileDetail(
-    title: string,
-    tools: readonly StackToolItem[],
-    activeToolId?: string,
-    extra?: Pick<StackDetailOptions, 'subtitle' | 'subtitleTone' | 'backBadge' | 'actions'>,
-  ): void {
-    const stack = this._ensureStackShell();
-    stack.openDetail({ title, tools, activeToolId, ...extra });
-  }
-
-  openMobileView(viewId: string, title?: string): boolean {
-    const view = this._views.get(viewId);
-    if (!view) return false;
-    const stack = this._ensureStackShell();
-    const comp = view.component();
-    const pageTitle = title ?? view.title;
-    stack.pushPage({
-      title: pageTitle,
-      hideToolsBar: true,
-      tools: [{ id: `view:${view.id}`, title: pageTitle, component: comp }],
-      onDispose: () => comp.dispose(),
-    });
-    return true;
-  }
-
-  setMobileTabs(tabs: readonly StackNavTab[]): void {
-    this._ensureStackShell().setTabs(tabs);
-  }
-
   dispose(): void {
     if (this._toastTimer) {
       clearTimeout(this._toastTimer);
@@ -589,7 +550,6 @@ export class WorkbenchShell implements Disposable {
     }
     this._toastEl?.remove();
     this._toastEl = undefined;
-    this._stackShell?.dispose();
     this._views.clear();
     this._editors.clear();
     this._tools.clear();
@@ -869,48 +829,6 @@ export class WorkbenchShell implements Disposable {
       }),
     );
   }
-  private _ensureStackShell(): StackShell {
-    if (!this._stackShell) {
-      this._stackShell = new StackShell({
-        doc: this._doc,
-        resolveIcon: this._resolveIcon,
-      });
-      this._stackShell.element.hidden = this._mode !== 'mobile';
-      this.root.appendChild(this._stackShell.element);
-    }
-    return this._stackShell;
-  }
-
-  private _syncMobileTabs(
-    activities: readonly { readonly id: string; readonly title: string; readonly icon: string; readonly view: string; readonly badge?: () => number | 'dot' | null }[],
-  ): void {
-    if (!this._stackShell || activities.length === 0) return;
-    const primary = activities.slice(0, 3).map((a) => ({
-      id: a.id,
-      title: a.title,
-      icon: a.icon,
-      view: a.view,
-      badge: a.badge,
-    }));
-    const extra = activities.slice(3);
-    const moreBadge = (): number | 'dot' | null => {
-      let sum = 0;
-      let hasDot = false;
-      for (const item of extra) {
-        const b = item.badge?.() ?? null;
-        if (typeof b === 'number' && b > 0) sum += b;
-        else if (b === 'dot') hasDot = true;
-      }
-      if (sum > 0) return sum;
-      return hasDot ? 'dot' : null;
-    };
-    const tabs: StackNavTab[] = [
-      ...primary,
-      { id: 'more', title: tr('mobile.more'), icon: 'more', view: 'more', badge: moreBadge },
-    ];
-    this._stackShell.setTabs(tabs);
-  }
-
   private _maybeAutoCollapseSidebar(): void {
     if (this._mode !== 'desktop') return;
     if (!this.dock.isPartVisible('sidebar')) return;

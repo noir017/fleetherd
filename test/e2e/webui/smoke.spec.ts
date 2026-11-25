@@ -97,32 +97,36 @@ test.describe('Web UI smoke suite', () => {
     await expect(page.locator('#log')).not.toContainText(BETA_MSG);
   });
 
-  test('mobile viewport (390x844) has no horizontal overflow and navigates StackShell list/detail', async ({
+  test('mobile viewport (390x844) has no horizontal overflow and navigates topics via slide-out drawer', async ({
     page,
   }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await loginViaUi(page, gateway.baseUrl, gateway.secret);
 
-    const stack = page.locator('.wb-stack');
     await expect(page.locator('#workbench-root')).toHaveAttribute('data-wb-mode', 'mobile');
-    await expect(stack).toBeVisible();
-    await expect(stack).toHaveAttribute('data-stack-mode', 'list');
-    await expect(page.locator('.wb-stack-tabbar')).toBeVisible();
+    await expect(page.locator('.wb-shell')).toBeVisible();
+    await expect(page.locator('#expand-sidebar')).toBeVisible();
+    await expect(page.locator('.wb-sidebar')).toBeHidden();
+    await expect(page.locator('#input')).toBeVisible();
 
     const hasOverflow = await page.evaluate(
       () => document.documentElement.scrollWidth > window.innerWidth
     );
     expect(hasOverflow).toBe(false);
 
-    const alphaRow = page.locator(`.wb-stack-list-body .topic-item[data-topic="${seededIds[TOPIC_ALPHA]}"]`);
+    await page.locator('#expand-sidebar').click();
+    await expect(page.locator('.wb-sidebar')).toBeVisible();
+    const alphaRow = page.locator(`.wb-sidebar .topic-item[data-topic="${seededIds[TOPIC_ALPHA]}"]`);
     await expect(alphaRow).toBeVisible();
     await alphaRow.click();
 
-    await expect(stack).toHaveAttribute('data-stack-mode', 'detail');
-    await expect(page.locator('.wb-stack-title')).toContainText(TOPIC_ALPHA);
+    await expect(page.locator('.wb-sidebar')).toBeHidden();
+    await expect(page.locator('.wb-topic-title')).toContainText(TOPIC_ALPHA);
     await expect(page.locator('#input')).toBeVisible();
 
-    await page.locator('.wb-stack-back').click();
-    await expect(stack).toHaveAttribute('data-stack-mode', 'list');
+    await page.locator('#expand-sidebar').click();
+    await expect(page.locator('.wb-sidebar')).toBeVisible();
+    await page.locator('.wb-drawer-backdrop').click({ position: { x: 375, y: 400 } });
+    await expect(page.locator('.wb-sidebar')).toBeHidden();
   });
 });

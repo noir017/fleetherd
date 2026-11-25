@@ -12,23 +12,10 @@ import { KeybindingService } from './client/services/keybindings.js';
 import { OverlayManager } from './client/services/overlays.js';
 import { StorageService } from './client/services/storage.js';
 import type { PanelComponent } from './client/workbench/contracts.js';
-import { StackShell } from './client/workbench/stack-shell.js';
 import { WorkbenchShell } from './client/workbench/shell.js';
 import { renderPage } from './page.js';
 
-function makeDummyPanel(text: string): PanelComponent {
-  const el = document.createElement('div');
-  el.textContent = text;
-  return {
-    element: el,
-    init() {},
-    dispose() {
-      el.remove();
-    },
-  };
-}
-
-describe('wb2-mobile: login, stack-shell, sheet, grouped form, and palette', () => {
+describe('wb2-mobile: login, mobile drawer, sheet, grouped form, and palette', () => {
   afterEach(() => {
     document.body.innerHTML = '';
   });
@@ -46,71 +33,6 @@ describe('wb2-mobile: login, stack-shell, sheet, grouped form, and palette', () 
     expect(ssoHtml).toContain('class="fh-login-card"');
     expect(ssoHtml).toContain('data-i18n="gate.ssoExpired"');
     expect(ssoHtml).toContain('data-i18n="gate.reload"');
-  });
-
-  it('supports StackShell large title, multi-level push/pop, detail subtitle/badge, and built-in More view', () => {
-    const onCloseIdle = vi.fn();
-    const onToggleNotifications = vi.fn();
-    const onChangeTheme = vi.fn();
-    const stack = new StackShell({
-      moreState: {
-        reviewsBadge: '3 pending',
-        skillsCount: 12,
-        notificationsEnabled: false,
-        lowAttention: false,
-        theme: 'system',
-        locale: 'en',
-        connected: true,
-        version: 'v3.39.0',
-        runningCount: 2,
-        idleCount: 5,
-        onCloseIdle,
-        onToggleNotifications,
-        onChangeTheme,
-      },
-    });
-    document.body.appendChild(stack.element);
-
-    expect(stack.element.querySelector('.wb-stack-large-title')?.textContent).toBe('Topics');
-
-    stack.selectTab('more');
-    expect(stack.element.querySelector('.wb-stack-large-title')?.textContent).toBe('More');
-    expect(stack.element.querySelector('.wb-stack-more')?.textContent).toContain('3 pending');
-    expect(stack.element.querySelector('.wb-stack-more')?.textContent).toContain('v3.39.0');
-
-    const notifySwitch = stack.element.querySelector<HTMLButtonElement>('[data-group-item="notifications"] .fh-switch')!;
-    notifySwitch.click();
-    expect(onToggleNotifications).toHaveBeenCalledWith(true);
-
-    stack.element.querySelector<HTMLButtonElement>('.fh-mgroup-textbtn')!.click();
-    expect(onCloseIdle).toHaveBeenCalledTimes(1);
-
-    stack.element.querySelector<HTMLButtonElement>('[data-group-item="appearance"]')!.click();
-    expect(stack.getMode()).toBe('detail');
-    expect(stack.getStackDepth()).toBe(1);
-    const darkRadio = stack.element.querySelector<HTMLButtonElement>('[data-radio-value="dark"]')!;
-    darkRadio.click();
-    expect(onChangeTheme).toHaveBeenCalledWith('dark');
-
-    stack.pushPage({
-      title: 'Nested page',
-      subtitle: 'Details',
-      backBadge: 4,
-      tools: [{ id: 'nested', title: 'Nested', component: makeDummyPanel('nested body') }],
-    });
-    expect(stack.getStackDepth()).toBe(2);
-    expect(stack.element.querySelector('.wb-stack-subtitle')?.textContent).toBe('Details');
-    expect(stack.element.querySelector('.wb-stack-back-badge')?.textContent).toBe('4');
-
-    stack.popPage();
-    expect(stack.getStackDepth()).toBe(1);
-    expect(stack.getMode()).toBe('detail');
-
-    stack.popPage();
-    expect(stack.getStackDepth()).toBe(0);
-    expect(stack.getMode()).toBe('list');
-
-    stack.dispose();
   });
 
   it('opens and dismisses BottomSheet with actions, selection state, and OverlayManager Escape', () => {

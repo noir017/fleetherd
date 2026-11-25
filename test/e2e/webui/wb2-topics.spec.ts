@@ -58,15 +58,16 @@ test.describe('Workbench topics list, row menu, confirm dialog, and mobile gestu
     await expect(row).toBeVisible();
   });
 
-  test('mobile supports large title, left-swipe actions, bottom sheet, and delete alert', async ({ page }) => {
+  test('mobile drawer supports left-swipe actions, bottom sheet, and delete alert', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await loginViaUi(page, gateway.baseUrl, gateway.secret);
 
-    await expect(page.locator('.wb-stack .wb-stack-large-title')).toBeVisible();
-    await expect(page.locator('.wb-stack .wb-topics-mobile-title')).toBeHidden();
+    await page.locator('#expand-sidebar').click();
+    await expect(page.locator('.wb-sidebar')).toBeVisible();
+    await expect(page.locator('.wb-sidebar .wb-topics-mobile-title')).toBeHidden();
 
     const reviewId = seededIds[TOPIC_REVIEW]!;
-    const row = page.locator(`.wb-stack .wb-topic-row[data-topic="${reviewId}"]`);
+    const row = page.locator(`.wb-sidebar .wb-topic-row[data-topic="${reviewId}"]`);
     await expect(row).toBeVisible();
 
     // Left-swipe reveals Star / More / Delete
@@ -79,7 +80,7 @@ test.describe('Workbench topics list, row menu, confirm dialog, and mobile gestu
       await page.mouse.move(box.x + 40, cy, { steps: 10 });
       await page.mouse.up();
     }
-    const wrap = page.locator(`.wb-stack .wb-topic-swipe-wrap[data-swipe-wrap="${reviewId}"]`);
+    const wrap = page.locator(`.wb-sidebar .wb-topic-swipe-wrap[data-swipe-wrap="${reviewId}"]`);
     await expect(wrap).toHaveClass(/is-swiped/);
 
     // Tap More to open bottom action sheet
