@@ -1,14 +1,15 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
-import { parseConfig } from '../config/schema.js';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { parseConfig, type AgentDef } from '../config/schema.js';
 import { buildTask } from '../core/schedule.js';
 import { normalizeActionPaths } from '../commands/reverse.js';
 import { expandRemoteHome, remoteAgentEnv, remoteAgentHome, remoteAgentRoot } from './agent-common.js';
 import { remoteClaudeProjectsDir } from './claude-transcript.js';
 import { diffConfig } from './config-reload.js';
 import { gatewayNamespace, RemoteHosts } from './remote-hosts.js';
+import type { Welcome } from '../remote/connection.js';
 import type { RemoteHost } from '../remote/host.js';
 import { workdirScanFrom } from './workdir-scan.js';
 
@@ -242,5 +243,61 @@ describe('scheduled --bash from a remote agent', () => {
       }
     );
     expect(built.ok && built.task.run).toEqual({ kind: 'bash', command: 'make test', timeoutMs: expect.any(Number), cwd: '/home/me/work', host: 'box' });
+  });
+});
+
+describe('RemoteHosts.placeSkill', () => {
+  class FakeHost {
+    readonly id = 'myhost';
+    readonly writes = new Map<string, string>();
+    readonly links = new Map<string, string>();
+    readonly swept: string[] = [];
+    async writeFile(p: string, data: Uint8Array): Promise<void> {
+      this.writes.set(p, Buffer.from(data).toString('utf8'));
+    }
+    async sweepSkillLinks(dir: string): Promise<string[]> {
+      this.swept.push(dir);
+      return [];
+    }
+    async ensureLink(target: string, link: string): Promise<{ outcome: string; link: string }> {
+      this.links.set(link, target);
+      return { outcome: 'linked', link };
+    }
+    async removeLink(link: string): Promise<{ outcome: string; link: string }> {
+      return { outcome: 'skipped', link };
+    }
+  }
+
+  const w: Welcome = { version: '9.0.0', instance: 'i1', home: '/home/me', pid: 1, os: 'linux', arch: 'amd64', resumed: false };
+  const base = '/home/me/.fleetherd/remote/9.0.0';
+  const custom = { id: 'custom-a', harness: 'custom', command: 'my-agent', host: 'myhost', env: {} } as unknown as AgentDef;
+  const claude = { id: 'cc', harness: 'claude', host: 'myhost', env: {} } as unknown as AgentDef;
+  const codex = { id: 'cx', harness: 'codex', host: 'myhost', env: {} } as unknown as AgentDef;
+
+  const place = async (hosts: RemoteHosts, host: FakeHost, def: AgentDef): Promise<void> => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      await hosts.placeSkill(host as unknown as RemoteHost, def, '/home/me', w);
+    } finally {
+      log.mockRestore();
+    }
+  };
+
+  it('still writes skill-super files when the first agent on the host has no skill directory', async () => {
+    const [hosts, host] = [new RemoteHosts(), new FakeHost()];
+    await place(hosts, host, custom);
+    expect(host.swept.length).toBeGreaterThan(0);
+    expect([...host.writes.keys()].some((p) => p.startsWith(`${base}/skill-super/`))).toBe(false);
+
+    const sweptAfterFirst = host.swept.length;
+    await place(hosts, host, claude);
+    expect(host.writes.has(`${base}/skill-super/SKILL.md`)).toBe(true);
+    expect(host.links.get('/home/me/.claude/skills/super')).toBe(`${base}/skill-super`);
+    expect(host.swept.length).toBe(sweptAfterFirst);
+
+    host.writes.clear();
+    await place(hosts, host, codex);
+    expect([...host.writes.keys()].some((p) => p.startsWith(`${base}/skill-super/`))).toBe(false);
+    expect(host.links.get('/home/me/.agents/skills/super')).toBe(`${base}/skill-super`);
   });
 });
