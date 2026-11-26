@@ -435,4 +435,62 @@ describe('topics built-in plugin', () => {
     view.dispose();
     h.cleanup();
   });
+
+  it('keeps an open row menu anchored at the same spot across list repaints and age ticks, and closes if the row disappears', async () => {
+    let nowMs = 1_700_000_060_000;
+    const t1 = makeTopic({ id: 't1', title: 'Alpha', lastAt: 1_700_000_000_000, msgCount: 2, live: true });
+    const t2 = makeTopic({ id: 't2', title: 'Beta', lastAt: 1_699_999_900_000, msgCount: 1, live: false });
+    const h = setupHarness([t1, t2], 't1', { now: () => nowMs });
+    await h.manager.activate('topics');
+
+    const view = h.registry.getView('topics')!.component();
+    h.doc.getElementById('mount')!.appendChild(view.element);
+    view.init(undefined, makePanelInitCtx('topics'));
+
+    const origGetRect = HTMLElement.prototype.getBoundingClientRect;
+    const rectSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      if (this.getAttribute('data-rm') === 'topic:t1' && this.isConnected) {
+        return { left: 220, right: 244, top: 140, bottom: 162, width: 24, height: 22, x: 220, y: 140, toJSON: () => ({}) } as DOMRect;
+      }
+      if (this.getAttribute('data-rm') === 'topic:t1' && !this.isConnected) {
+        return { left: 0, right: 0, top: 0, bottom: 0, width: 0, height: 0, x: 0, y: 0, toJSON: () => ({}) } as DOMRect;
+      }
+      return origGetRect.call(this);
+    });
+
+    try {
+      const moreBtn = view.element.querySelector<HTMLButtonElement>('[data-rm="topic:t1"]')!;
+      moreBtn.click();
+
+      const menuEl = h.doc.querySelector<HTMLElement>('.wb-topic-row-menu')!;
+      expect(menuEl.hidden).toBe(false);
+      const leftBefore = menuEl.style.left;
+      const topBefore = menuEl.style.top;
+      expect(topBefore).toBe('166px');
+
+      // Advance time by 2 minutes and trigger a list repaint that replaces the row
+      nowMs += 120_000;
+      h.setTopics([{ ...t1, msgCount: 3 }, t2]);
+
+      expect(menuEl.hidden).toBe(false);
+      expect(menuEl.style.left).toBe(leftBefore);
+      expect(menuEl.style.top).toBe(topBefore);
+      expect(view.element.querySelector('[data-rm="topic:t1"]')?.getAttribute('aria-expanded')).toBe('true');
+
+      // Full innerHTML rebuild when another topic is added still keeps the menu open and anchored
+      const t3 = makeTopic({ id: 't3', title: 'Gamma', lastAt: 1_700_000_050_000, msgCount: 1 });
+      h.setTopics([{ ...t1, msgCount: 3 }, t2, t3]);
+      expect(menuEl.hidden).toBe(false);
+      expect(menuEl.style.left).toBe(leftBefore);
+      expect(menuEl.style.top).toBe(topBefore);
+
+      // Removing the topic closes the open row menu
+      h.setTopics([t2, t3]);
+      expect(menuEl.hidden).toBe(true);
+    } finally {
+      rectSpy.mockRestore();
+      view.dispose();
+      h.cleanup();
+    }
+  });
 });

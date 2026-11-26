@@ -570,3 +570,73 @@ describe('webui page: a machine the gateway cannot reach', () => {
   });
 
 });
+
+describe('webui page: topic row agent tag and row menu stability', () => {
+  it('renders a quiet separated agent label and keeps an open row menu anchored across topic list repaints', async () => {
+    const h = await open({ width: 1280, height: 800 });
+    const t1 = {
+      id: 'a1b2c3d4',
+      title: 'Fix row menu',
+      lastAt: Date.now() - 120_000,
+      running: false,
+      live: true,
+      msgCount: 3,
+      agent: { id: 'cc@uniagent', harness: 'claude' },
+      dir: { name: 'workspace', path: '/home/user/workspace', host: 'uniagent' },
+    };
+    const t2 = {
+      id: 'b2c3d4e5',
+      title: '',
+      lastAt: Date.now() - 60_000,
+      running: false,
+      msgCount: 0,
+      agent: { id: 'cc', harness: 'claude' },
+    };
+    await h.emit(sync('a1b2c3d4', [], [], { topics: [t1, t2] }));
+
+    const row1 = h.doc.querySelector<HTMLElement>('[data-topic="a1b2c3d4"]')!;
+    expect(row1.querySelector('.topic-hc.h-claude')?.textContent).toBe('cc');
+    expect(row1.querySelector('.topic-hc')?.getAttribute('title')).toBe('Agent: cc@uniagent');
+    expect(row1.querySelector('.topic-sep')?.textContent).toBe('·');
+
+    const row2 = h.doc.querySelector<HTMLElement>('[data-topic="b2c3d4e5"]')!;
+    expect(row2.querySelector('.topic-hc.h-claude')?.textContent).toBe('cc');
+    expect(row2.querySelector('.topic-sep')?.textContent).toBe('·');
+
+    const origGetRect = h.window.HTMLElement.prototype.getBoundingClientRect;
+    h.window.HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
+      if (this.getAttribute('data-rm') === 'topic:a1b2c3d4' && this.isConnected) {
+        return { left: 220, right: 244, top: 150, bottom: 170, width: 24, height: 20, x: 220, y: 150, toJSON: () => ({}) } as DOMRect;
+      }
+      if (this.getAttribute('data-rm') === 'topic:a1b2c3d4' && !this.isConnected) {
+        return { left: 0, right: 0, top: 0, bottom: 0, width: 0, height: 0, x: 0, y: 0, toJSON: () => ({}) } as DOMRect;
+      }
+      return origGetRect.call(this);
+    };
+
+    await h.click('[data-rm="topic:a1b2c3d4"]');
+    const menu = h.doc.querySelector<HTMLElement>('.wb-topic-row-menu')!;
+    expect(menu.hidden).toBe(false);
+    const leftBefore = menu.style.left;
+    const topBefore = menu.style.top;
+    expect(topBefore).toBe('174px');
+
+    // Trigger a list repaint with updated message count and a new row
+    await h.emit({
+      t: 'topics',
+      topics: [
+        { ...t1, msgCount: 4, lastAt: Date.now() },
+        t2,
+        { id: 'c3d4e5f6', title: 'Another topic', lastAt: Date.now() - 30_000, running: false, msgCount: 1 },
+      ],
+    });
+    expect(menu.hidden).toBe(false);
+    expect(menu.style.left).toBe(leftBefore);
+    expect(menu.style.top).toBe(topBefore);
+    expect(h.doc.querySelector('[data-rm="topic:a1b2c3d4"]')?.getAttribute('aria-expanded')).toBe('true');
+
+    // Removing the topic closes the open menu
+    await h.emit({ t: 'topics', topics: [t2] });
+    expect(menu.hidden).toBe(true);
+  });
+});

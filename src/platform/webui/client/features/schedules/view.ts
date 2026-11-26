@@ -12,6 +12,7 @@ import {
   renderStatusDot,
   type StatusTone,
 } from '../../components/index.js';
+import { escapeAttrValue } from '../../components/shared.js';
 import { t as tr } from '../../i18n/index.js';
 import type { PluginContext, TopicInfo } from '../../plugins/api.js';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
@@ -63,6 +64,7 @@ function taskRowTooltip(t: SchedulePanelTask, topics: readonly TopicInfo[], nowM
 function renderTaskRow(
   t: SchedulePanelTask,
   active: boolean,
+  menuOpen: boolean,
   topics: readonly TopicInfo[],
   nowMs: number,
   onOpen: (task: SchedulePanelTask) => void,
@@ -115,7 +117,7 @@ function renderTaskRow(
         title=${tr('sched.taskActions')}
         aria-label=${tr('sched.taskActions')}
         aria-haspopup="menu"
-        aria-expanded="false"
+        aria-expanded=${menuOpen ? 'true' : 'false'}
         @click=${(ev: MouseEvent) => {
           ev.stopPropagation();
           onMenu(ev.currentTarget as HTMLElement, t);
@@ -260,6 +262,7 @@ class SchedulesView implements SchedulesViewController {
   private readonly _sessGroups: Record<string, boolean>;
   private _subtab: ScheduleSubtab;
   private _activeTaskId: string | null = null;
+  private _menuTaskId: string | null = null;
   private _sessQuery = '';
   private _visible = true;
   private _pollTimer: ReturnType<typeof setTimeout> | undefined;
@@ -313,7 +316,14 @@ class SchedulesView implements SchedulesViewController {
 
     this._subtab = ctx.storage.get<string>(SUBTAB_STORAGE_KEY) === 'sessions' ? 'sessions' : 'tasks';
     this._sessGroups = { ...(ctx.storage.get<Record<string, boolean>>(SESS_GROUPS_STORAGE_KEY) ?? {}) };
-    this._menu = createMenu({ overlays: deps.overlays, doc: this._doc, win: deps.win ?? window });
+    this._menu = createMenu({
+      overlays: deps.overlays,
+      doc: this._doc,
+      win: deps.win ?? window,
+      onClose: () => {
+        this._menuTaskId = null;
+      },
+    });
     this._disposables.add(this._menu);
 
     this._segmented = createSegmented(
@@ -556,6 +566,7 @@ class SchedulesView implements SchedulesViewController {
     if (snap.tasks === null) {
       this._filterBar.setCounts(0, 0);
       render(html`<div class="sched-empty">${tr('common.loading')}</div>`, this._listHost);
+      this._syncOpenMenu();
       return;
     }
     const topics = this._ctx.topics.list();
@@ -567,6 +578,7 @@ class SchedulesView implements SchedulesViewController {
         html`<div class="sched-empty">${snap.enabled ? tr('sched.noTasksEnabled') : tr('sched.noTasksDisabled')}</div>`,
         this._listHost,
       );
+      this._syncOpenMenu();
       return;
     }
     if (filtered.length === 0) {
@@ -579,6 +591,7 @@ class SchedulesView implements SchedulesViewController {
         </div>`,
         this._listHost,
       );
+      this._syncOpenMenu();
       return;
     }
     const nowMs = this._now();
@@ -588,6 +601,7 @@ class SchedulesView implements SchedulesViewController {
           renderTaskRow(
             task,
             this._activeTaskId === task.id,
+            this._menuTaskId === task.id && this._menu.isOpen(),
             topics,
             nowMs,
             (t) => {
@@ -596,14 +610,34 @@ class SchedulesView implements SchedulesViewController {
               this._ctx.editors.open('schedule', { id: t.id, mode: 'view', title: t.name }, { id: `schedule:${t.id}` });
             },
             (anchor, t) => {
+              if (this._menu.isOpen() && this._menuTaskId === t.id) {
+                this._menu.close(true);
+                return;
+              }
               const entries = this._resolveTaskMenu(t);
-              if (entries.length > 0) this._menu.open(anchor, entries);
+              if (entries.length > 0) {
+                this._menuTaskId = t.id;
+                this._menu.open(anchor, entries);
+              }
             },
           ),
         )}
       </div>`,
       this._listHost,
     );
+    this._syncOpenMenu();
+  }
+
+  private _syncOpenMenu(): void {
+    if (!this._menu.isOpen() || !this._menuTaskId) return;
+    const anchor = this._listHost.querySelector<HTMLElement>(
+      `[data-task-menu="${escapeAttrValue(this._menuTaskId)}"]`,
+    );
+    if (!anchor) {
+      this._menu.close(false);
+      return;
+    }
+    this._menu.setAnchor(anchor);
   }
 
   private _paintSessionsBody(): void {

@@ -216,7 +216,7 @@ select.skill-field{appearance:auto}
 .fh-schedules-view .sched-row .topic-more:hover{background:var(--fh-act-hover);color:var(--fh-fg-hi)}
 @media(hover:hover){
   .fh-schedules-view .sched-row .topic-more{opacity:0}
-  .fh-schedules-view .sched-row:hover .topic-more,.fh-schedules-view .sched-row:focus-within .topic-more{opacity:1}
+  .fh-schedules-view .sched-row:hover .topic-more,.fh-schedules-view .sched-row:focus-within .topic-more,.fh-schedules-view .sched-row .topic-more[aria-expanded="true"]{opacity:1}
 }
 .fh-schedules-view .sess-item.is-sub{padding-left:32px}
 .fh-schedules-view .sess-item.is-d2{padding-left:44px}

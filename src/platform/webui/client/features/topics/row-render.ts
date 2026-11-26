@@ -163,7 +163,8 @@ function wbMetaHtml(
     detail = topicDirHtml(t, ctx.offSince, ctx.offTitle, ctx.icons);
   }
   if (!hc && !fold && !detail) return '';
-  return `<span class="topic-sub">${fold}${hc}${detail}</span>`;
+  const sep = hc && detail ? '<span class="topic-sep" aria-hidden="true">·</span>' : '';
+  return `<span class="topic-sub">${fold}${hc}${sep}${detail}</span>`;
 }
 
 function swipeActionsHtml(t: Topic, icons: TopicIcons): string {
