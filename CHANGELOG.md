@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.39.0-beta.6] - 2026-11-26
+
 ### Changed
 
 - **A new topic folds into two rows, each opened on its own.** beta.5 folded the agent and the
