@@ -241,6 +241,7 @@ export const en = {
   'chat.launchSubSuffix': ' answers by default.',
   'chat.launchAgentLabel': 'Agent',
   'chat.launchDirLabel': 'Folder',
+  'chat.launchChange': 'Change',
   'chat.defaultTag': 'default',
   'chat.offlineSince': 'offline since {when}',
   'chat.agentOffline': ' — {name} is offline',

@@ -106,6 +106,7 @@ describe('banners pure helpers', () => {
     const selectLaunchAgent = vi.fn();
     const browseLaunchWorkdir = vi.fn();
     const pickLaunchWorkdir = vi.fn();
+    const unfoldLaunch = vi.fn();
     const sub = attachLogEvents(log, {
       getTopic: () => 't1',
       getTopics: () => [],
@@ -117,6 +118,7 @@ describe('banners pure helpers', () => {
       selectLaunchAgent,
       browseLaunchWorkdir,
       pickLaunchWorkdir,
+      unfoldLaunch,
       toggleBtw: () => {},
       openReader: () => {},
       deliverLocal: () => {},
@@ -139,6 +141,8 @@ describe('banners pure helpers', () => {
     expect(browseLaunchWorkdir).toHaveBeenCalledWith('/work/sub');
     wd.querySelector<HTMLButtonElement>('button[data-wd-pick]')?.click();
     expect(pickLaunchWorkdir).toHaveBeenCalledWith('/work/sub');
+    log.querySelector<HTMLButtonElement>('button[data-launch-unfold]')?.click();
+    expect(unfoldLaunch).toHaveBeenCalledTimes(1);
     sub.dispose();
   });
 });
@@ -259,6 +263,78 @@ describe('createBannersController', () => {
     curTopic = 't1';
     stale = false;
     synced = true;
+    banners.dispose();
+  });
+
+  it('folds agent cards and workdir, survives repaints, unfolds on demand, and resets on topic switch', () => {
+    const log = document.createElement('div');
+    const machineNoteEl = document.createElement('div');
+    const forkNote = document.createElement('button');
+    let curTopic = 't1';
+    const launch: LaunchChoice = {
+      current: 'claude',
+      groups: [{ name: 'box1', agents: [{ id: 'claude', harness: 'claude', kind: 'Claude' }] }],
+    };
+    const banners = createBannersController({
+      log,
+      machineNoteEl,
+      forkNote,
+      getTopic: () => curTopic,
+      getTopics: () => [{ id: 't1', title: 'One' }, { id: 't2', title: 'Two' }],
+      topicById: (id) => ({ id, title: id }),
+      getData: () => ({}),
+      getEls: () => ({}),
+      isSynced: () => true,
+      isStale: () => false,
+      getLaunch: () => launch,
+      isHistory: () => false,
+      getIcons: () => ICONS,
+      formatStatusClock: () => '11:30',
+      paintTopics: () => {},
+      paintStatus: () => {},
+      switchTopic: () => {},
+      isNarrow: () => false,
+      setSidebar: () => {},
+    });
+    const screen = {
+      agentId: 'claude',
+      root: '/work',
+      current: '/work',
+      browsing: '/work',
+      breadcrumbs: [{ name: '/', path: '/', buttonId: 'wdb:launch:0' }],
+      selectCurrent: { path: '/work', buttonId: 'wdr:launch:0', current: true, root: true },
+      entries: [{ name: 'sub-a', path: '/work/sub-a', enterId: 'wde:launch:1', pickId: 'wdr:launch:1' }],
+      truncated: 0,
+    };
+    const hiddenOf = (sel: string) => log.querySelector<HTMLElement>(sel)!.hidden;
+
+    banners.syncLaunch(true);
+    banners.setLaunchWorkdir(screen);
+    expect([hiddenOf('.launch-agents'), hiddenOf('.launch-wd'), hiddenOf('[data-launch-unfold]')]).toEqual([false, false, true]);
+
+    banners.setLaunchAgent('claude', { fold: true });
+    expect([hiddenOf('.launch-agents'), hiddenOf('.launch-wd'), hiddenOf('[data-launch-unfold]')]).toEqual([true, false, false]);
+
+    banners.setLaunchCwd('/work/sub-a', { fold: true });
+    expect(hiddenOf('.launch-wd')).toBe(true);
+
+    // Same-topic repaints preserve folded state.
+    banners.setMachines([{ name: 'box1', since: Date.now() }]);
+    expect([hiddenOf('.launch-agents'), hiddenOf('.launch-wd'), hiddenOf('[data-launch-unfold]')]).toEqual([true, true, false]);
+    banners.setLaunchWorkdir(screen);
+    expect(hiddenOf('.launch-wd')).toBe(true);
+
+    banners.unfoldLaunch();
+    expect([hiddenOf('.launch-agents'), hiddenOf('.launch-wd'), hiddenOf('[data-launch-unfold]')]).toEqual([false, false, true]);
+
+    // Switching topic resets fold state.
+    banners.setLaunchAgent('claude', { fold: true });
+    curTopic = 't2';
+    log.innerHTML = '';
+    banners.resetForTopicSwitch();
+    banners.syncLaunch(true);
+    banners.setLaunchWorkdir(screen);
+    expect([hiddenOf('.launch-agents'), hiddenOf('.launch-wd'), hiddenOf('[data-launch-unfold]')]).toEqual([false, false, true]);
     banners.dispose();
   });
 });

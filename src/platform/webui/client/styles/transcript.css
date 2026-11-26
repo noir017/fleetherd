@@ -388,6 +388,11 @@
 .wb-topic-editor .launch-choice-k{color:var(--fh-fg-dim);flex:none}
 .wb-topic-editor .launch-choice-agent{font-weight:600;color:var(--fh-fg-hi);white-space:nowrap}
 .wb-topic-editor .launch-choice-dir{font-family:var(--fh-font-mono);font-size:var(--fh-fs-xs);color:var(--fh-fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:460px}
+.wb-topic-editor .launch-choice-change{margin-left:auto;flex:none;padding:3px 9px;border:1px solid var(--fh-input-line);border-radius:var(--fh-radius-ctrl);background:var(--fh-btn2);color:var(--fh-fg);font-size:var(--fh-fs-xs);font-weight:500;line-height:1.4;cursor:pointer;white-space:nowrap;transition:background .12s,border-color .12s,color .12s}
+.wb-topic-editor .launch-choice-change:hover{background:var(--fh-hover);border-color:var(--fh-accent);color:var(--fh-fg-hi)}
+.wb-topic-editor .launch-choice-change:focus-visible{outline:2px solid var(--fh-accent);outline-offset:1px}
+.wb-topic-editor .launch.agents-folded .launch-wd{margin-top:0}
+.wb-topic-editor .launch.agents-folded.wd-folded .launch-head{margin-bottom:0}
 .wb-topic-editor .launch-wd{margin-top:16px;transition:opacity .12s ease}
 .wb-topic-editor .launch-wd.loading{opacity:.65;pointer-events:none}
 .wb-topic-editor .launch-host{margin:20px 2px 8px;letter-spacing:.05em}
@@ -450,6 +455,7 @@
   .wb-topic-editor .wd-picker{border-radius:12px}
   .wb-topic-editor .launch-choice{padding:8px 10px;border-radius:10px;gap:5px 10px}
   .wb-topic-editor .launch-choice-dir{max-width:100%}
+  .wb-topic-editor .launch-choice-change{min-height:30px;padding:4px 11px;font-size:var(--fh-fs-sm)}
   .wb-topic-editor .launch-wd{margin-top:14px}
   .wb-topic-editor .wd-picker .wd-bar{gap:6px;padding:8px 10px}
   .wb-topic-editor .wd-picker .wd-cur{padding:9px 10px;gap:8px}

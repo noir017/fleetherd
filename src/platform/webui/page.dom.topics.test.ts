@@ -352,10 +352,82 @@ describe('webui page: choosing an agent for a new topic', () => {
     expect(h.calls.filter((c) => c.path === 'api/send')).toHaveLength(0);
     expect(launch(h)).toBe(launchEl);
     expect(launchEl!.querySelector('.agent-card.def')?.getAttribute('data-agent')).toBe('oc2');
+    expect(launchEl!.querySelector<HTMLElement>('.launch-agents')?.hidden).toBe(true);
+    expect(launchEl!.querySelector<HTMLElement>('[data-launch-unfold]')?.hidden).toBe(false);
+    expect(launchEl!.querySelector<HTMLElement>('.launch-wd')?.hidden).toBe(false);
     expect(launchEl!.querySelector('.launch-wd .wd-picker')?.getAttribute('data-browsing')).toBe('/srv');
     expect(launchEl!.querySelector('.launch-choice-dir')?.textContent).toBe('/srv');
     // A control, like Stop: what was in the composer is still there.
     expect((h.el('input') as HTMLTextAreaElement).value).toBe('a draft');
+  });
+
+  it('folds agent cards and folder browser once chosen, survives repaints, unfolds on Change, and resets on topic switch', async () => {
+    const wdScreen = (agentId: string, root: string, browsing = root, current = root) => ({
+      agentId,
+      root,
+      current,
+      browsing,
+      breadcrumbs: [{ name: '/', path: '/', buttonId: 'wdb:launch:0' }, { name: 'work', path: root, buttonId: 'wdb:launch:1' }],
+      selectCurrent: { path: browsing, buttonId: 'wdr:launch:0', current: browsing === current, root: browsing === root },
+      entries: [{ name: 'sub-a', path: `${root}/sub-a`, enterId: 'wde:launch:1', pickId: 'wdr:launch:1', current: `${root}/sub-a` === current }],
+      truncated: 0,
+    });
+    const h = await open({
+      url: 'http://localhost:8787/?t=a1b2c3d4',
+      replies: {
+        'api/topics/workdirs?t=a1b2c3d4&agent=cc': wdScreen('cc', '/work'),
+        'api/topics/workdirs?t=a1b2c3d4&agent=oc2&root=1': wdScreen('oc2', '/srv'),
+        'api/topics/workdirs?t=a1b2c3d4&agent=oc2': wdScreen('oc2', '/srv', '/srv', '/srv/sub-a'),
+        'api/topics/workdirs?t=b2c3d4e5&agent=cc': wdScreen('cc', '/work'),
+        'api/topics/setup': { ok: true, agent: 'oc2', cwd: '/srv/sub-a' },
+      },
+    });
+    const foldState = () => {
+      const root = launch(h)!;
+      return {
+        agents: root.querySelector<HTMLElement>('.launch-agents')!.hidden,
+        wd: root.querySelector<HTMLElement>('.launch-wd')!.hidden,
+        change: root.querySelector<HTMLElement>('[data-launch-unfold]')!.hidden,
+      };
+    };
+    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4', 'b2c3d4e5'], { agents }));
+    await tick();
+
+    // Fresh topic starts unfolded with Change hidden.
+    expect(foldState()).toEqual({ agents: false, wd: false, change: true });
+
+    // Choosing an agent folds agent cards only.
+    await h.click('.agent-card[data-agent="oc2"]');
+    await tick();
+    await tick();
+    expect(foldState()).toEqual({ agents: true, wd: false, change: false });
+    expect(launch(h)!.querySelector('.launch-choice-agent')!.textContent).toBe('oc2');
+
+    // Choosing a folder folds the folder browser and updates the summary bar.
+    await h.click('.launch-wd .wd-choose[data-wd-pick="/srv/sub-a"]');
+    await tick();
+    await tick();
+    expect(foldState()).toEqual({ agents: true, wd: true, change: false });
+    expect(launch(h)!.querySelector('.launch-choice-dir')!.textContent).toBe('/srv/sub-a');
+
+    // Machine offline repaint preserves folded state for the same topic.
+    await h.emit({ t: 'machines', offline: [{ name: 'buildbox', since: Date.now() }] });
+    await tick();
+    expect(foldState()).toEqual({ agents: true, wd: true, change: false });
+    expect(launch(h)!.querySelector('.launch-choice-dir')!.textContent).toBe('/srv/sub-a');
+
+    // Clicking Change unfolds both and hides the button.
+    await h.click('[data-launch-unfold]');
+    expect(foldState()).toEqual({ agents: false, wd: false, change: true });
+
+    // Re-fold, then switch to another new topic: folded state must not leak.
+    await h.click('.agent-card[data-agent="oc2"]');
+    await tick();
+    expect(foldState().agents).toBe(true);
+    await h.click('[data-topic="b2c3d4e5"]');
+    await h.emit(sync('b2c3d4e5', [], ['a1b2c3d4', 'b2c3d4e5'], { agents }));
+    await tick();
+    expect(foldState()).toEqual({ agents: false, wd: false, change: true });
   });
 
   it('goes as soon as anything is said, typed or not, and comes back if the room empties again', async () => {

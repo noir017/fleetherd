@@ -574,6 +574,7 @@ class TranscriptControllerImpl implements TranscriptController {
         selectLaunchAgent: this._deps.selectLaunchAgent,
         browseLaunchWorkdir: this._deps.browseLaunchWorkdir,
         pickLaunchWorkdir: this._deps.pickLaunchWorkdir,
+        unfoldLaunch: () => this.banners.unfoldLaunch(),
         toggleBtw: (qk) => {
           if (this.btw.isOpen() && this.btw.getKey() === qk) this.btw.close(true);
           else this.btw.open(qk);

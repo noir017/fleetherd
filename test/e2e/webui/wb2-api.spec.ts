@@ -85,12 +85,15 @@ test.describe('wb2-api: desktop workbench integrations', () => {
     await expect(page.locator('.wb-topic-editor .launch .launch-dirs')).toHaveCount(0);
     const picker = launchEl.locator('.launch-wd .wd-picker');
     await expect(picker).toBeVisible();
+    const changeBtn = launchEl.locator('[data-launch-unfold]');
+    await expect(changeBtn).toBeHidden();
     await expect(launchEl.locator('.launch-choice-agent')).toContainText('alpha');
     await expect(launchEl.locator('.launch-choice-dir')).toContainText(gateway.workDir);
 
     // Browse into sub-a, see nested, then go Up without leaving the page
     await picker.locator('.wd-open').filter({ hasText: 'sub-a' }).first().click();
     await expect(picker.locator('.wd-row').filter({ hasText: 'nested' })).toBeVisible();
+    await expect(changeBtn).toBeHidden();
     await picker.locator('.wd-up').click();
     await expect(picker.locator('.wd-row').filter({ hasText: 'sub-a' })).toBeVisible();
 
@@ -100,6 +103,9 @@ test.describe('wb2-api: desktop workbench integrations', () => {
     const agentReq = await agentSetupReq;
     expect(agentReq.postDataJSON()).toMatchObject({ topic: newId, agent: 'beta' });
     await expect(launchEl.locator('.agent-card[data-agent="beta"]')).toHaveClass(/\bdef\b/);
+    await expect(launchEl.locator('.launch-agents')).toBeHidden();
+    await expect(changeBtn).toBeVisible();
+    await expect(picker).toBeVisible();
     await expect(launchEl.locator('.launch-choice-agent')).toContainText('beta');
     await expect(page.locator('.wb-topic-editor #status .st-model:not(.st-opt)')).toBeVisible();
     await expect(page.locator('.wb-topic-editor #status .st-perm')).toBeVisible();
@@ -111,6 +117,13 @@ test.describe('wb2-api: desktop workbench integrations', () => {
     const dirReq = await dirSetupReq;
     expect(dirReq.postDataJSON()).toMatchObject({ topic: newId, agent: 'beta', cwd: subAPath });
     await expect(launchEl.locator('.launch-choice-dir')).toContainText(subAPath);
+    await expect(launchEl.locator('.launch-wd')).toBeHidden();
+    await expect(changeBtn).toBeVisible();
+    // Clicking Change unfolds both agent cards and folder browser again
+    await changeBtn.click();
+    await expect(launchEl.locator('.launch-agents')).toBeVisible();
+    await expect(picker).toBeVisible();
+    await expect(changeBtn).toBeHidden();
     await expect(page.locator('.wb-topic-editor .m')).toHaveCount(0);
 
 
@@ -210,11 +223,22 @@ test.describe('wb2-api: reviews and mobile workbench integrations', () => {
     await expect(page.locator('.wb-topic-editor .launch .launch-dirs')).toHaveCount(0);
     const mobilePicker = mobileLaunch.locator('.launch-wd .wd-picker');
     await expect(mobilePicker).toBeVisible();
+    const mobileChange = mobileLaunch.locator('[data-launch-unfold]');
+    await expect(mobileChange).toBeHidden();
     const subAPath = path.join(gateway.workDir, 'sub-a');
     const mobileDirReq = page.waitForRequest((req) => req.url().includes('/api/topics/setup') && req.method() === 'POST');
     await mobilePicker.locator('.wd-row').filter({ hasText: 'sub-a' }).locator('.wd-choose').click();
     expect((await mobileDirReq).postDataJSON()).toMatchObject({ cwd: subAPath });
     await expect(mobileLaunch.locator('.launch-choice-dir')).toContainText(subAPath);
+    await expect(mobileLaunch.locator('.launch-wd')).toBeHidden();
+    await expect(mobileChange).toBeVisible();
+    await mobileLaunch.locator('.agent-card[data-agent="beta"]').click();
+    await expect(mobileLaunch.locator('.launch-agents')).toBeHidden();
+    await expect(mobileLaunch.locator('.launch-choice-agent')).toContainText('beta');
+    await mobileChange.click();
+    await expect(mobileLaunch.locator('.launch-agents')).toBeVisible();
+    await expect(mobilePicker).toBeVisible();
+    await expect(mobileChange).toBeHidden();
     await expect(page.locator('.wb-topic-editor #status .st-model:not(.st-opt)')).toBeVisible();
     await expect(page.locator('.wb-topic-editor #status .st-perm')).toBeVisible();
   });
