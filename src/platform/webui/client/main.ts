@@ -642,6 +642,11 @@ function buildBuiltinDeps(rt: AppRuntime): BuiltinPluginsDeps {
     schedules: {
       overlays,
       unreadOf: (t) => rt.readsService.unreadOf(t as unknown as Topic),
+      markAllRead: async (list) => {
+        await rt.readsService.markAllRead(list as unknown as Topic[], tr('topic.nounPlural'), (msg) =>
+          console.warn('[schedules]', msg),
+        );
+      },
       onBadgeChange: () => registry.refreshActivityBadges(),
     },
     reviews: {
