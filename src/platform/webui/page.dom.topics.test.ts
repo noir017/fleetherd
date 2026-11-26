@@ -334,7 +334,9 @@ describe('webui page: choosing an agent for a new topic', () => {
     expect(launchEl).not.toBeNull();
     // Inline folder browser loads on the same page for the default agent.
     expect(launchEl!.querySelector('.launch-wd .wd-picker')?.getAttribute('data-browsing')).toBe('/work');
-    expect(launchEl!.querySelector('.launch-choice-dir')?.textContent).toBe('/work');
+    expect(launchEl!.querySelector('.launch-wd .wd-cur')).toBeNull();
+    expect(launchEl!.querySelector('.launch-wd .wd-bar .wd-pick-bar')?.getAttribute('data-wd-pick')).toBe('/work');
+    expect(launchEl!.querySelector('.launch-wd .wd-selected .wd-path')?.textContent).toBe('/work');
     // Navigating into a subfolder updates only the folder browser in place.
     await h.click('.launch-wd .wd-open[data-wd-browse="/work/sub-a"]');
     await tick();
@@ -353,10 +355,11 @@ describe('webui page: choosing an agent for a new topic', () => {
     expect(launch(h)).toBe(launchEl);
     expect(launchEl!.querySelector('.agent-card.def')?.getAttribute('data-agent')).toBe('oc2');
     expect(launchEl!.querySelector<HTMLElement>('.launch-agents')?.hidden).toBe(true);
-    expect(launchEl!.querySelector<HTMLElement>('[data-launch-unfold]')?.hidden).toBe(false);
+    expect(launchEl!.querySelector<HTMLElement>('.launch-choice')?.hidden).toBe(false);
     expect(launchEl!.querySelector<HTMLElement>('.launch-wd')?.hidden).toBe(false);
+    expect(launchEl!.querySelector<HTMLElement>('.launch-wd .wd-body')?.hidden).toBe(false);
     expect(launchEl!.querySelector('.launch-wd .wd-picker')?.getAttribute('data-browsing')).toBe('/srv');
-    expect(launchEl!.querySelector('.launch-choice-dir')?.textContent).toBe('/srv');
+    expect(launchEl!.querySelector('.launch-wd .wd-selected .wd-path')?.textContent).toBe('/srv');
     // A control, like Stop: what was in the composer is still there.
     expect((h.el('input') as HTMLTextAreaElement).value).toBe('a draft');
   });
@@ -386,48 +389,106 @@ describe('webui page: choosing an agent for a new topic', () => {
       const root = launch(h)!;
       return {
         agents: root.querySelector<HTMLElement>('.launch-agents')!.hidden,
-        wd: root.querySelector<HTMLElement>('.launch-wd')!.hidden,
-        change: root.querySelector<HTMLElement>('[data-launch-unfold]')!.hidden,
+        agentRow: root.querySelector<HTMLElement>('.launch-choice')!.hidden,
+        wdBody: root.querySelector<HTMLElement>('.launch-wd .wd-body')!.hidden,
+        wdHint: root.querySelector<HTMLElement>('.launch-wd .wd-hint')!.hidden,
+        wdSelected: root.querySelector<HTMLElement>('.launch-wd .wd-selected')!.hidden,
+        wdChange: root.querySelector<HTMLElement>('[data-launch-unfold="workdir"]')!.hidden,
       };
     };
     await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4', 'b2c3d4e5'], { agents }));
     await tick();
 
-    // Fresh topic starts unfolded with Change hidden.
-    expect(foldState()).toEqual({ agents: false, wd: false, change: true });
+    // Fresh topic starts unfolded with both Change rows hidden and no .wd-cur.
+    expect(launch(h)!.querySelector('.wd-cur')).toBeNull();
+    expect(launch(h)!.querySelector('.wd-bar .wd-pick-bar')?.getAttribute('data-wd-pick')).toBe('/work');
+    expect(foldState()).toEqual({
+      agents: false,
+      agentRow: true,
+      wdBody: false,
+      wdHint: false,
+      wdSelected: true,
+      wdChange: true,
+    });
 
-    // Choosing an agent folds agent cards only.
+    // Choosing an agent folds agent cards only; folder browser stays open.
     await h.click('.agent-card[data-agent="oc2"]');
     await tick();
     await tick();
-    expect(foldState()).toEqual({ agents: true, wd: false, change: false });
+    expect(foldState()).toEqual({
+      agents: true,
+      agentRow: false,
+      wdBody: false,
+      wdHint: false,
+      wdSelected: true,
+      wdChange: true,
+    });
     expect(launch(h)!.querySelector('.launch-choice-agent')!.textContent).toBe('oc2');
 
-    // Choosing a folder folds the folder browser and updates the summary bar.
+    // Choosing a folder folds only the folder body, keeping .wd-head with the selected path.
     await h.click('.launch-wd .wd-choose[data-wd-pick="/srv/sub-a"]');
     await tick();
     await tick();
-    expect(foldState()).toEqual({ agents: true, wd: true, change: false });
-    expect(launch(h)!.querySelector('.launch-choice-dir')!.textContent).toBe('/srv/sub-a');
+    expect(foldState()).toEqual({
+      agents: true,
+      agentRow: false,
+      wdBody: true,
+      wdHint: true,
+      wdSelected: false,
+      wdChange: false,
+    });
+    expect(launch(h)!.querySelector('.launch-wd .wd-selected .wd-path')!.textContent).toBe('/srv/sub-a');
 
     // Machine offline repaint preserves folded state for the same topic.
     await h.emit({ t: 'machines', offline: [{ name: 'buildbox', since: Date.now() }] });
     await tick();
-    expect(foldState()).toEqual({ agents: true, wd: true, change: false });
-    expect(launch(h)!.querySelector('.launch-choice-dir')!.textContent).toBe('/srv/sub-a');
+    expect(foldState()).toEqual({
+      agents: true,
+      agentRow: false,
+      wdBody: true,
+      wdHint: true,
+      wdSelected: false,
+      wdChange: false,
+    });
+    expect(launch(h)!.querySelector('.launch-wd .wd-selected .wd-path')!.textContent).toBe('/srv/sub-a');
 
-    // Clicking Change unfolds both and hides the button.
-    await h.click('[data-launch-unfold]');
-    expect(foldState()).toEqual({ agents: false, wd: false, change: true });
+    // Clicking Agent Change unfolds only agent cards; workdir stays folded.
+    await h.click('[data-launch-unfold="agents"]');
+    expect(foldState()).toEqual({
+      agents: false,
+      agentRow: true,
+      wdBody: true,
+      wdHint: true,
+      wdSelected: false,
+      wdChange: false,
+    });
 
-    // Re-fold, then switch to another new topic: folded state must not leak.
+    // Clicking Workdir Change unfolds only workdir; agent cards stay as they are.
     await h.click('.agent-card[data-agent="oc2"]');
     await tick();
+    await h.click('[data-launch-unfold="workdir"]');
+    expect(foldState()).toEqual({
+      agents: true,
+      agentRow: false,
+      wdBody: false,
+      wdHint: false,
+      wdSelected: true,
+      wdChange: true,
+    });
+
+    // Switch to another new topic: folded state must not leak.
     expect(foldState().agents).toBe(true);
     await h.click('[data-topic="b2c3d4e5"]');
     await h.emit(sync('b2c3d4e5', [], ['a1b2c3d4', 'b2c3d4e5'], { agents }));
     await tick();
-    expect(foldState()).toEqual({ agents: false, wd: false, change: true });
+    expect(foldState()).toEqual({
+      agents: false,
+      agentRow: true,
+      wdBody: false,
+      wdHint: false,
+      wdSelected: true,
+      wdChange: true,
+    });
   });
 
   it('goes as soon as anything is said, typed or not, and comes back if the room empties again', async () => {

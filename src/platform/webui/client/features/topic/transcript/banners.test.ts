@@ -85,7 +85,8 @@ describe('banners pure helpers', () => {
     expect(html).toContain('data-agent="cc"');
     expect(html).toContain('data-agent="oc"');
     expect(html).toContain('class="launch-choice-agent">cc<');
-    expect(html).toContain('class="launch-choice-dir" title="/work/proj">/work/proj<');
+    expect(html).toContain('data-launch-unfold="agents"');
+    expect(html).toContain('class="launch-choice" hidden');
     expect(html).toContain('class="launch-wd"');
     expect(html).not.toContain('launch-dirs');
     expect(html).not.toContain('launch-dir-grid');
@@ -134,6 +135,7 @@ describe('banners pure helpers', () => {
     const wd = log.querySelector<HTMLElement>('.launch-wd')!;
     wd.innerHTML =
       '<div class="wd-picker">' +
+      '<button type="button" class="wd-change" data-launch-unfold="workdir">Change</button>' +
       '<button type="button" class="wd-open" data-wd-browse="/work/sub">sub</button>' +
       '<button type="button" class="wd-choose" data-wd-pick="/work/sub">Select</button>' +
       '</div>';
@@ -141,8 +143,10 @@ describe('banners pure helpers', () => {
     expect(browseLaunchWorkdir).toHaveBeenCalledWith('/work/sub');
     wd.querySelector<HTMLButtonElement>('button[data-wd-pick]')?.click();
     expect(pickLaunchWorkdir).toHaveBeenCalledWith('/work/sub');
-    log.querySelector<HTMLButtonElement>('button[data-launch-unfold]')?.click();
-    expect(unfoldLaunch).toHaveBeenCalledTimes(1);
+    log.querySelector<HTMLButtonElement>('button[data-launch-unfold="agents"]')?.click();
+    expect(unfoldLaunch).toHaveBeenLastCalledWith('agents');
+    log.querySelector<HTMLButtonElement>('button[data-launch-unfold="workdir"]')?.click();
+    expect(unfoldLaunch).toHaveBeenLastCalledWith('workdir');
     sub.dispose();
   });
 });
@@ -224,10 +228,12 @@ describe('createBannersController', () => {
     });
     expect(log.querySelector('.launch')).toBe(launchNode);
     expect(log.querySelector('.launch-wd .wd-picker')).not.toBeNull();
-    expect(log.querySelector('.launch-choice-dir')?.textContent).toBe('/work');
+    expect(log.querySelector('.launch-wd .wd-cur')).toBeNull();
+    expect(log.querySelector('.launch-wd .wd-bar .wd-pick-bar')?.getAttribute('data-wd-pick')).toBe('/work');
+    expect(log.querySelector('.launch-wd .wd-selected .wd-path')?.textContent).toBe('/work');
     banners.setLaunchCwd('/work/sub-a');
     expect(log.querySelector('.launch')).toBe(launchNode);
-    expect(log.querySelector('.launch-choice-dir')?.textContent).toBe('/work/sub-a');
+    expect(log.querySelector('.launch-wd .wd-selected .wd-path')?.textContent).toBe('/work/sub-a');
     expect(log.querySelector('.launch-wd .wd-row.on')?.getAttribute('data-wd-name')).toBe('sub-a');
 
     // Clearing launch on a stale empty topic shows .empty and machineNoteEl.
@@ -272,8 +278,8 @@ describe('createBannersController', () => {
     const forkNote = document.createElement('button');
     let curTopic = 't1';
     const launch: LaunchChoice = {
-      current: 'claude',
-      groups: [{ name: 'box1', agents: [{ id: 'claude', harness: 'claude', kind: 'Claude' }] }],
+      current: 'cc@myhost',
+      groups: [{ name: 'myhost', agents: [{ id: 'cc@myhost', harness: 'claude', kind: 'Claude' }] }],
     };
     const banners = createBannersController({
       log,
@@ -297,44 +303,75 @@ describe('createBannersController', () => {
       setSidebar: () => {},
     });
     const screen = {
-      agentId: 'claude',
-      root: '/work',
-      current: '/work',
-      browsing: '/work',
+      agentId: 'cc@myhost',
+      host: 'myhost',
+      root: '/home/me/projects',
+      current: '/home/me/projects',
+      browsing: '/home/me/projects',
       breadcrumbs: [{ name: '/', path: '/', buttonId: 'wdb:launch:0' }],
-      selectCurrent: { path: '/work', buttonId: 'wdr:launch:0', current: true, root: true },
-      entries: [{ name: 'sub-a', path: '/work/sub-a', enterId: 'wde:launch:1', pickId: 'wdr:launch:1' }],
+      selectCurrent: { path: '/home/me/projects', buttonId: 'wdr:launch:0', current: true, root: true },
+      entries: [{ name: 'sub-a', path: '/home/me/projects/sub-a', enterId: 'wde:launch:1', pickId: 'wdr:launch:1' }],
       truncated: 0,
     };
     const hiddenOf = (sel: string) => log.querySelector<HTMLElement>(sel)!.hidden;
 
     banners.syncLaunch(true);
     banners.setLaunchWorkdir(screen);
-    expect([hiddenOf('.launch-agents'), hiddenOf('.launch-wd'), hiddenOf('[data-launch-unfold]')]).toEqual([false, false, true]);
+    expect(log.querySelector('.wd-cur')).toBeNull();
+    expect(log.querySelector('.wd-bar .wd-pick-bar')?.classList.contains('on')).toBe(true);
+    expect([
+      hiddenOf('.launch-agents'),
+      hiddenOf('.launch-choice'),
+      hiddenOf('.launch-wd'),
+      hiddenOf('.wd-body'),
+      hiddenOf('.wd-hint'),
+      hiddenOf('.wd-selected'),
+      hiddenOf('[data-launch-unfold="workdir"]'),
+    ]).toEqual([false, true, false, false, false, true, true]);
 
-    banners.setLaunchAgent('claude', { fold: true });
-    expect([hiddenOf('.launch-agents'), hiddenOf('.launch-wd'), hiddenOf('[data-launch-unfold]')]).toEqual([true, false, false]);
+    // Folding only agent keeps workdir picker open.
+    banners.setLaunchAgent('cc@myhost', { fold: true });
+    expect([
+      hiddenOf('.launch-agents'),
+      hiddenOf('.launch-choice'),
+      hiddenOf('.wd-body'),
+      hiddenOf('[data-launch-unfold="workdir"]'),
+    ]).toEqual([true, false, false, true]);
 
-    banners.setLaunchCwd('/work/sub-a', { fold: true });
-    expect(hiddenOf('.launch-wd')).toBe(true);
+    // Folding workdir keeps .wd-head visible with selected path and its own Change button.
+    banners.setLaunchCwd('/home/me/projects/sub-a', { fold: true });
+    expect([
+      hiddenOf('.launch-wd'),
+      hiddenOf('.wd-body'),
+      hiddenOf('.wd-hint'),
+      hiddenOf('.wd-selected'),
+      hiddenOf('[data-launch-unfold="workdir"]'),
+    ]).toEqual([false, true, true, false, false]);
+    expect(log.querySelector('.wd-selected .wd-path')?.textContent).toBe('/home/me/projects/sub-a');
 
     // Same-topic repaints preserve folded state.
-    banners.setMachines([{ name: 'box1', since: Date.now() }]);
-    expect([hiddenOf('.launch-agents'), hiddenOf('.launch-wd'), hiddenOf('[data-launch-unfold]')]).toEqual([true, true, false]);
+    banners.setMachines([{ name: 'myhost', since: Date.now() }]);
+    expect([hiddenOf('.launch-agents'), hiddenOf('.launch-choice'), hiddenOf('.wd-body'), hiddenOf('.wd-selected')]).toEqual([true, false, true, false]);
     banners.setLaunchWorkdir(screen);
-    expect(hiddenOf('.launch-wd')).toBe(true);
+    expect(hiddenOf('.wd-body')).toBe(true);
 
-    banners.unfoldLaunch();
-    expect([hiddenOf('.launch-agents'), hiddenOf('.launch-wd'), hiddenOf('[data-launch-unfold]')]).toEqual([false, false, true]);
+    // Unfolding agents only does not touch workdir.
+    banners.unfoldLaunch('agents');
+    expect([hiddenOf('.launch-agents'), hiddenOf('.launch-choice'), hiddenOf('.wd-body'), hiddenOf('.wd-selected')]).toEqual([false, true, true, false]);
+
+    // Re-fold agents, then unfold workdir only: agents stay folded.
+    banners.setLaunchAgent('cc@myhost', { fold: true });
+    banners.unfoldLaunch('workdir');
+    expect([hiddenOf('.launch-agents'), hiddenOf('.launch-choice'), hiddenOf('.wd-body'), hiddenOf('.wd-hint'), hiddenOf('.wd-selected')]).toEqual([true, false, false, false, true]);
 
     // Switching topic resets fold state.
-    banners.setLaunchAgent('claude', { fold: true });
+    banners.setLaunchCwd('/home/me/projects/sub-a', { fold: true });
     curTopic = 't2';
     log.innerHTML = '';
     banners.resetForTopicSwitch();
     banners.syncLaunch(true);
     banners.setLaunchWorkdir(screen);
-    expect([hiddenOf('.launch-agents'), hiddenOf('.launch-wd'), hiddenOf('[data-launch-unfold]')]).toEqual([false, false, true]);
+    expect([hiddenOf('.launch-agents'), hiddenOf('.launch-choice'), hiddenOf('.wd-body'), hiddenOf('.wd-selected')]).toEqual([false, true, false, true]);
     banners.dispose();
   });
 });
