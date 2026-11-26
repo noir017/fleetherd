@@ -81,6 +81,35 @@ test.describe('wb2-sched schedules, history, and reviews alignment', () => {
     await expect(page.locator('.wb-sidebar-head > .wb-part-actions [data-action-id="reviews.refresh"]')).toBeVisible();
   });
 
+  test('marks every scheduled session read from the Sessions tab title bar', async ({ page }) => {
+    // Log in before the run: a page opened afterwards makes the new session its active topic, which is never unread.
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await loginViaUi(page, gateway.baseUrl, gateway.secret);
+
+    const list = (await (await fetch(`${gateway.baseUrl}/api/schedules`, { headers: { cookie } })).json()) as {
+      tasks?: { id?: string | null; name?: string }[];
+    };
+    const id = list.tasks?.find((t) => t.name === 'nightly-ci-report')?.id;
+    expect(id).toBeTruthy();
+    const ran = await fetch(`${gateway.baseUrl}/api/schedules/op`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie },
+      body: JSON.stringify({ id, action: 'run' }),
+    });
+    expect(ran.ok).toBe(true);
+
+    await page.locator('.wb-activity-item[data-activity-id="schedules"]').click();
+    await page.locator('.fh-schedules-subnav button').nth(1).click();
+
+    const unread = page.locator('.fh-schedules-view .sess-group-flag.unread');
+    const markAll = page.locator('.wb-sidebar-head > .wb-part-actions [data-action-id="schedules.markAllRead"]');
+    await expect(unread.first()).toBeVisible({ timeout: 30_000 });
+    await expect(markAll).toBeEnabled();
+    await markAll.click();
+    await expect(unread).toHaveCount(0);
+    await expect(markAll).toBeDisabled();
+  });
+
   test('mobile drawer renders history and schedules lists without horizontal overflow', async ({ page }) => {
     await page.setViewportSize({ width: 360, height: 740 });
     await loginViaUi(page, gateway.baseUrl, gateway.secret);
