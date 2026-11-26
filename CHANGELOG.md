@@ -5,6 +5,35 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **A new topic folds into two rows, each opened on its own.** beta.5 folded the agent and the
+  folder into one summary line with a single Change button that reopened both. The agent now folds
+  to a row of its own (`Agent cc@myhost [Change]`), and the folder keeps the top of its picker —
+  the title and the agent and host badges — with the chosen path in place of the hint and its own
+  Change button. Each opens only its own part.
+- **The folder picker chooses from its path bar.** The row under the path that repeated the folder
+  being browsed, with its tags and a "Use this folder" button, is gone; a Select button at the end
+  of the path bar does the same, highlighted when that folder is already the chosen one. This is
+  the same picker as `/cd`'s, so both change.
+- **Scheduled sessions can be marked read at once.** The Sessions tab of Scheduled had a Mark all
+  read button that never appeared, because the page never handed the view what it needed to
+  offer it. It is now in the title bar beside Refresh, as in Topics.
+
+### Fixed
+
+- **Switching a new topic to an agent on another machine no longer keeps the old folder.** A
+  folder picked for an agent on one machine stayed recorded when the topic moved to an agent on
+  another, so the summary showed a path that did not exist there and the picker failed with "no
+  such file or directory". Moving machines without naming a folder now starts from the new agent's
+  own; moving between agents on one machine still keeps it, as a retry already did.
+- **`/super` works again on a host whose first agent after an update has no skill directory.**
+  The bundled skills' files are copied once per version, and that copy was recorded as done even
+  when the first agent started on the host — a custom harness such as a web agent — had nowhere to
+  link them, so nothing was copied. Every later agent linked `super` to a directory that was never
+  written, and the skill vanished from every harness on that host. The files are now copied by the
+  first agent that has a skill directory to link them into.
+
 ## [3.39.0-beta.5] - 2026-11-26
 
 ### Changed
