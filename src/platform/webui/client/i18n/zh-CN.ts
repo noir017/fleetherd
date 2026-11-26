@@ -243,6 +243,7 @@ export const zhCN = {
   'chat.launchSubSuffix': ' 回复。',
   'chat.launchAgentLabel': 'Agent',
   'chat.launchDirLabel': '目录',
+  'chat.launchChange': '更改',
   'chat.defaultTag': '默认',
   'chat.offlineSince': '自 {when} 起离线',
   'chat.agentOffline': ' — {name} 已离线',

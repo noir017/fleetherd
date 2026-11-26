@@ -382,7 +382,7 @@ function buildTranscriptDeps(rt: AppRuntime, els: TopicEditorElements, getTopicI
       if (!tid) return;
       const prevAgent = state.launch?.current;
       if (state.launch) state.launch = { ...state.launch, current: agentId };
-      state.activeEditor?.transcript?.banners.setLaunchAgent(agentId);
+      state.activeEditor?.transcript?.banners.setLaunchAgent(agentId, { fold: true });
       state.activeEditor?.transcript?.banners.setLaunchWorkdir(null, true);
       state.activeEditor?.status?.onAgentChosen();
       void post('api/topics/setup', { topic: tid, agent: agentId }, 1)
@@ -392,7 +392,7 @@ function buildTranscriptDeps(rt: AppRuntime, els: TopicEditorElements, getTopicI
           if (!r.ok || !j.ok) {
             if (prevAgent && state.launch) {
               state.launch = { ...state.launch, current: prevAgent };
-              state.activeEditor?.transcript?.banners.setLaunchAgent(prevAgent);
+              state.activeEditor?.transcript?.banners.setLaunchAgent(prevAgent, { fold: false });
             }
             state.activeEditor?.transcript?.banners.setLaunchWorkdir(null, false);
             els.noteEl.textContent = j.error || tr('common.networkError');
@@ -419,7 +419,7 @@ function buildTranscriptDeps(rt: AppRuntime, els: TopicEditorElements, getTopicI
       const tid = getTopicId();
       const agentId = state.launch?.current;
       if (!tid || !agentId) return;
-      state.activeEditor?.transcript?.banners.setLaunchCwd(cwd);
+      state.activeEditor?.transcript?.banners.setLaunchCwd(cwd, { fold: true });
       state.activeEditor?.status?.onAgentChosen();
       void post('api/topics/setup', { topic: tid, agent: agentId, cwd }, 1)
         .then((r) => r.json().then((j: { ok?: boolean; agent?: string; cwd?: string; error?: string }) => ({ r, j })))

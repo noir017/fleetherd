@@ -147,8 +147,10 @@ Antigravity, or a custom agent's command) and its model if one is set. On the sa
 inline folder browser for the selected agent (with `/cd`'s breadcrumbs, parent navigation, and
 filtering, showing only the current level's subfolders), plus a summary of the current agent and
 folder choice. You can pick the agent and folder in any order without leaving the page or echoing
-commands into the transcript (leaving any draft in the composer intact); switching the agent moves
-the folder browser to that agent's root, and the status strip immediately offers that agent's model
+commands into the transcript (leaving any draft in the composer intact). Picking an agent folds the
+agent cards away and picking a folder folds the folder browser away, leaving the summary bar with a
+**Change** button to expand both again; switching the agent moves the folder browser to that agent's
+root, and the status strip immediately offers that agent's model
 and settings (such as account) switches. Or just type — the card marked **default** is the agent
 that answers. The launcher goes away as soon as anything is said in the topic.
 
