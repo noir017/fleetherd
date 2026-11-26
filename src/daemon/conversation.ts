@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { configDir } from '../config/load.js';
-import type { Config } from '../config/schema.js';
+import type { AgentDef, Config } from '../config/schema.js';
 import { agentDisplayName, findAgent } from '../config/schema.js';
 import { harnessCommandName } from '../core/command-translate.js';
 import { agentCatalog, agentGroups, agentPlaceOf } from '../core/agent-menu.js';
@@ -652,14 +652,16 @@ export class ConversationRegistry {
   /** Bind a new/empty topic's agent and working directory in one step; never adds prompt text. */
   setupTopicForRef(ref: ConversationRef, opts: { agent?: string; cwd?: string; dryRun?: boolean }): TopicSetupResult {
     const id = this.idForRef(ref);
-    const targetAgent =
-      opts.agent ?? this.boundAgentFor(id, resolveAgent(this.config, routeInputFromRef(ref)).agentId);
+    const prevAgent = this.boundAgentFor(id, resolveAgent(this.config, routeInputFromRef(ref)).agentId);
+    const targetAgent = opts.agent ?? prevAgent;
     const def = findAgent(this.config, targetAgent);
     if (!def) return { ok: false, error: `No agent "${targetAgent}" is configured.` };
     const validated = this.validateTopicSetup(id, targetAgent, Boolean(def.host), opts);
     if (!validated.ok) return validated;
+    const crossHostClear = this.isCrossHostSwitch(prevAgent, def, opts);
     if (opts.dryRun) {
-      return { ok: true, agent: targetAgent, cwd: validated.cwd ?? resolveConversationCwd(def, id, this.store) };
+      const cwd = validated.cwd ?? (crossHostClear ? resolveAgentCwd(def) : resolveConversationCwd(def, id, this.store));
+      return { ok: true, agent: targetAgent, cwd };
     }
     const prevState = this.conversations.get(id);
     const prevAgentId = prevState?.agentId;
@@ -671,17 +673,40 @@ export class ConversationRegistry {
         this.createState(id, targetAgent, ref.platform, ' (chosen at topic setup)');
       }
     }
-    if (validated.cwd !== undefined) {
-      const wdRes = this.controls.setWorkdir(id, targetAgent, validated.cwd);
-      if (wdRes.kind === 'failed' || wdRes.kind === 'missing') {
-        if (opts.agent !== undefined) this.rollbackAgentBind(id, prevState, prevAgentId, prevStoreAgent);
-        return {
-          ok: false,
-          error: wdRes.kind === 'failed' ? wdRes.reason : `Directory does not exist: ${wdRes.path}`,
-        };
-      }
+    const wdError = this.applyTopicWorkdir(id, targetAgent, def, validated.cwd, crossHostClear);
+    if (wdError !== undefined) {
+      if (opts.agent !== undefined) this.rollbackAgentBind(id, prevState, prevAgentId, prevStoreAgent);
+      return { ok: false, error: wdError };
     }
     return { ok: true, agent: targetAgent, cwd: resolveConversationCwd(def, id, this.store) };
+  }
+
+  private isCrossHostSwitch(prevAgent: string, def: AgentDef, opts: { agent?: string; cwd?: string }): boolean {
+    if (opts.agent === undefined || opts.cwd !== undefined) return false;
+    const prevDef = findAgent(this.config, prevAgent);
+    return Boolean(prevDef && (prevDef.host ?? '') !== (def.host ?? ''));
+  }
+
+  private applyTopicWorkdir(
+    id: ConversationId,
+    targetAgent: string,
+    def: AgentDef,
+    cwd: string | undefined,
+    crossHostClear: boolean
+  ): string | undefined {
+    if (cwd !== undefined) {
+      const wdRes = this.controls.setWorkdir(id, targetAgent, cwd);
+      if (wdRes.kind === 'failed' || wdRes.kind === 'missing') {
+        return wdRes.kind === 'failed' ? wdRes.reason : `Directory does not exist: ${wdRes.path}`;
+      }
+      return undefined;
+    } else if (crossHostClear && this.store?.conversationCwd(id) !== undefined) {
+      const wdRes = this.controls.setWorkdir(id, targetAgent, resolveAgentCwd(def));
+      if (wdRes.kind === 'unchanged' || wdRes.kind === 'missing') {
+        this.store.setConversationCwd(id, targetAgent, undefined);
+      }
+    }
+    return undefined;
   }
 
   /** Browse one level of directories for a topic's selected agent, using `/cd`'s screen format. */
