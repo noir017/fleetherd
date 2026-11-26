@@ -5,6 +5,17 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **The web UI is a workbench.** Six betas, listed below, replaced the single-page client with a
+  dockable workbench: views that move between the sidebars and the bottom panel, editor tabs and
+  split groups, a command palette, VS Code Modern themes, and on phones a slide-out drawer with
+  bottom tabs. A new topic picks its agent and folder on one page, and the sidebars keep their
+  buttons in the title bar. The client is now typed modules, bundled on demand. Web UI plugins
+  (`platforms.web.plugins`) arrive with it, off by default: they run as the gateway's own code,
+  with no sandbox (`docs/webui-plugins.md`). Nothing changed after beta.6; the beta entries list
+  every change and fix.
+
 ## [3.39.0-beta.6] - 2026-11-26
 
 ### Changed
