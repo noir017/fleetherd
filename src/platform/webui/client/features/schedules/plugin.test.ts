@@ -426,4 +426,68 @@ describe('features/schedules plugin', () => {
     events.dispose();
     registry.dispose();
   });
+
+  it('keeps an open task row menu anchored across list repaints and closes if the task is removed', async () => {
+    let tasks: SchedulePanelTask[] = [
+      SAMPLE_TASK,
+      { ...SAMPLE_TASK, id: 'task-2', name: 'second-task', state: 'paused' },
+    ];
+    const { registry, events, manager } = makeHarness({
+      getJson: async (path: string) => {
+        if (path === '/api/schedules') return { enabled: true, tasks };
+        return {};
+      },
+    });
+    manager.register(createSchedulesPlugin({ now: () => 1700000100000 }), { builtin: true });
+    await manager.activateAll();
+
+    const view = registry.getView('schedules')!.component();
+    document.body.appendChild(view.element);
+    view.init(undefined, makePanelInitContext('schedules').ctx);
+    await flushMicrotasks();
+
+    const origGetRect = HTMLElement.prototype.getBoundingClientRect;
+    const rectSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      if (this.getAttribute('data-task-menu') === 'task-1' && this.isConnected) {
+        return { left: 210, right: 234, top: 110, bottom: 134, width: 24, height: 24, x: 210, y: 110, toJSON: () => ({}) } as DOMRect;
+      }
+      return origGetRect.call(this);
+    });
+
+    try {
+      const moreBtn = view.element.querySelector<HTMLButtonElement>('[data-task-menu="task-1"]')!;
+      moreBtn.click();
+
+      const menuEl = document.querySelector<HTMLElement>('.fh-menu:not([hidden])')!;
+      expect(menuEl).not.toBeNull();
+      const leftBefore = menuEl.style.left;
+      const topBefore = menuEl.style.top;
+      expect(topBefore).toBe('138px');
+
+      // Repaint via refresh keeps menu open, anchored, and aria-expanded="true"
+      tasks = [
+        { ...SAMPLE_TASK, id: 'task-2', name: 'second-task', state: 'active', running: true },
+        SAMPLE_TASK,
+      ];
+      await registry.executeCommand('schedules.refresh');
+      await flushMicrotasks();
+
+      expect(menuEl.hidden).toBe(false);
+      expect(menuEl.style.left).toBe(leftBefore);
+      expect(menuEl.style.top).toBe(topBefore);
+      expect(view.element.querySelector('[data-task-menu="task-1"]')?.getAttribute('aria-expanded')).toBe('true');
+
+      // Removing the task closes the open menu
+      tasks = [{ ...SAMPLE_TASK, id: 'task-2', name: 'second-task', state: 'active' }];
+      await registry.executeCommand('schedules.refresh');
+      await flushMicrotasks();
+      expect(menuEl.hidden).toBe(true);
+    } finally {
+      rectSpy.mockRestore();
+      view.dispose();
+      manager.dispose();
+      events.dispose();
+      registry.dispose();
+    }
+  });
 });

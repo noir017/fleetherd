@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { setLocale } from '../../i18n/index.js';
-import { forkFromText, forkMarkHtml, rowHtml, topicDirHtml, treeRowHtml } from './row-render.js';
+import { forkFromText, forkMarkHtml, rowHtml, topicDirHtml, treeRowHtml, wbTopicRowHtml } from './row-render.js';
 import type { Topic, TopicIcons } from './types.js';
 
 const ICONS: TopicIcons = {
@@ -104,5 +104,45 @@ describe('topics/row-render', () => {
     expect(html).toContain('class="topic-star-mark"');
     expect(html).toContain('class="topic-fold folded failed"');
     expect(html).toContain('Deep task');
+  });
+
+  it('renders wbTopicRowHtml with quiet agent tag separated by middle dot on both normal and new-topic rows', () => {
+    const named = makeTopic({
+      id: 't1',
+      title: 'Deploy fix',
+      agent: { id: 'cc@uniagent', harness: 'claude' },
+      dir: { name: 'workspace', path: '/home/user/workspace', host: 'uniagent' },
+    });
+    const untitled = makeTopic({
+      id: 't2',
+      title: '',
+      agent: { id: 'cc', harness: 'claude' },
+    });
+    const agentOnly = makeTopic({
+      id: 't3',
+      title: 'No dir',
+      agent: { id: 'cc', harness: 'claude' },
+    });
+    const baseCtx = {
+      activeTopicId: '',
+      topics: [named, untitled, agentOnly],
+      rowMenuKey: null,
+      icons: ICONS,
+      unreadOf: () => 0,
+      topicById: () => null,
+      offSince: () => 0,
+      offTitle: () => '',
+      now: 1_700_000_060_000,
+    };
+
+    const namedHtml = wbTopicRowHtml({ t: named, depth: 0, kids: 0, shut: false, under: '' }, { attr: 'data-topic', menu: 'topic' }, baseCtx);
+    expect(namedHtml).toContain('<span class="topic-hc h-claude" title="Agent: cc@uniagent">cc</span><span class="topic-sep" aria-hidden="true">·</span><span class="topic-dir"');
+
+    const untitledHtml = wbTopicRowHtml({ t: untitled, depth: 0, kids: 0, shut: false, under: '' }, { attr: 'data-topic', menu: 'topic' }, baseCtx);
+    expect(untitledHtml).toContain('<span class="topic-hc h-claude" title="Agent: cc">cc</span><span class="topic-sep" aria-hidden="true">·</span><span class="topic-dir">Choose an agent</span>');
+
+    const agentOnlyHtml = wbTopicRowHtml({ t: agentOnly, depth: 0, kids: 0, shut: false, under: '' }, { attr: 'data-topic', menu: 'topic' }, baseCtx);
+    expect(agentOnlyHtml).toContain('<span class="topic-hc h-claude" title="Agent: cc">cc</span>');
+    expect(agentOnlyHtml).not.toContain('topic-sep');
   });
 });

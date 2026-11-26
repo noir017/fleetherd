@@ -34,13 +34,46 @@ test.describe('Workbench topics list, row menu, confirm dialog, and mobile gestu
     const starredId = seededIds[TOPIC_STARRED]!;
     const row = page.locator(`.wb-sidebar .wb-topic-row[data-topic="${starredId}"]`);
     await expect(row).toBeVisible();
-    await expect(row.locator('.topic-hc')).toBeVisible();
+    const hc = row.locator('.topic-hc');
+    await expect(hc).toBeVisible();
+    await expect(row.locator('.topic-sep')).toHaveText('·');
+    const hcBg = await hc.evaluate((el) => getComputedStyle(el).backgroundColor);
+    expect(hcBg).toBe('rgba(0, 0, 0, 0)');
+
+    // Hover hides .topic-tail so time and "..." never overlap, without row height/title jump
+    const titleBoxBefore = await row.locator('.topic-title').boundingBox();
+    const rowBoxBefore = await row.boundingBox();
+    await row.hover();
+    await expect(row.locator('.topic-tail')).toHaveCSS('visibility', 'hidden');
+    await expect(row.locator('[data-rm]')).toBeVisible();
+    const titleBoxHover = await row.locator('.topic-title').boundingBox();
+    const rowBoxHover = await row.boundingBox();
+    expect(Math.abs((titleBoxHover?.width ?? 0) - (titleBoxBefore?.width ?? 0))).toBeLessThanOrEqual(1);
+    expect(Math.abs((rowBoxHover?.height ?? 0) - (rowBoxBefore?.height ?? 0))).toBeLessThanOrEqual(1);
 
     // Open row menu and check items + 2 separators
-    await row.hover();
     await row.locator('[data-rm]').click({ force: true });
     const menu = page.locator('.wb-topic-row-menu:not([hidden])');
     await expect(menu).toBeVisible();
+    const menuBoxBefore = await menu.boundingBox();
+    expect(menuBoxBefore).not.toBeNull();
+    expect(menuBoxBefore!.y).toBeGreaterThan(20);
+
+    // Trigger a live topic list repaint while the menu is open; menu must stay open at the same spot
+    await page.evaluate(async () => {
+      await fetch('/api/topics', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+    });
+    await page.waitForTimeout(300);
+    await expect(menu).toBeVisible();
+    const menuBoxAfter = await menu.boundingBox();
+    expect(menuBoxAfter).not.toBeNull();
+    expect(Math.abs(menuBoxAfter!.x - menuBoxBefore!.x)).toBeLessThanOrEqual(2);
+    expect(Math.abs(menuBoxAfter!.y - menuBoxBefore!.y)).toBeLessThanOrEqual(2);
+
     await expect(menu.locator('.fh-menu-sep')).toHaveCount(2);
     await expect(menu.locator('[data-menu-id="topics.unstar"]')).toBeVisible();
     await expect(menu.locator('[data-menu-id="topics.copyRef"]')).toBeVisible();

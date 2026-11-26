@@ -21,6 +21,7 @@ import {
   type DomListBatchAction,
   type DomListNavigationController,
 } from '../../components/list/index.js';
+import { escapeAttrValue } from '../../components/shared.js';
 import { t as tr, type MessageKey } from '../../i18n/index.js';
 import {
   definePlugin,
@@ -591,6 +592,7 @@ class TopicsViewPanel implements TopicsViewInstance {
   private readonly gestures: TopicGesturesController;
   private readonly listNav: DomListNavigationController;
   private menuKey: string | null = null;
+  private menuPointAnchor = false;
   private disposed = false;
   private panelVisible = true;
   private dirty = false;
@@ -683,6 +685,10 @@ class TopicsViewPanel implements TopicsViewInstance {
       overlays: rt.deps.overlays,
       align: 'end',
       className: 'wb-topic-row-menu',
+      onClose: () => {
+        this.menuKey = null;
+        this.menuPointAnchor = false;
+      },
     });
     this.rowSheet = createTopicRowSheet({
       doc,
@@ -825,7 +831,6 @@ class TopicsViewPanel implements TopicsViewInstance {
     const key = `topic:${topicId}`;
     if (this.menu.isOpen() && this.menuKey === key && !('x' in anchor)) {
       this.menu.close(true);
-      this.menuKey = null;
       return;
     }
     const entries = toMenuEntries(
@@ -836,6 +841,7 @@ class TopicsViewPanel implements TopicsViewInstance {
     );
     if (entries.length === 0) return;
     this.menuKey = key;
+    this.menuPointAnchor = 'x' in anchor;
     this.menu.open(anchor, entries);
   }
 
@@ -945,7 +951,24 @@ class TopicsViewPanel implements TopicsViewInstance {
       this.listNav.sync();
       this.ageTicker.armAgeTick();
     }
-    if (this.menu.isOpen()) this.menu.reposition();
+    this.syncOpenMenu();
+  }
+
+  private syncOpenMenu(): void {
+    if (!this.menu.isOpen() || !this.menuKey) return;
+    const id = this.menuKey.startsWith('topic:') ? this.menuKey.slice('topic:'.length) : this.menuKey;
+    if (this.menuPointAnchor) {
+      if (!this.listEl.querySelector(`[data-topic="${escapeAttrValue(id)}"]`)) {
+        this.menu.close(false);
+      }
+      return;
+    }
+    const anchor = this.listEl.querySelector<HTMLElement>(`[data-rm="${escapeAttrValue(this.menuKey)}"]`);
+    if (!anchor) {
+      this.menu.close(false);
+      return;
+    }
+    this.menu.setAnchor(anchor);
   }
 
   private applyRenderedList(html: string, items: readonly RenderedTopicItem[]): void {

@@ -83,4 +83,54 @@ describe('components/menu', () => {
     menu.dispose();
     overlays.dispose();
   });
+
+  it('re-anchors cleanly via setAnchor, ignores detached reposition, restores focus to new anchor, and calls onClose', () => {
+    const overlays = new OverlayManager();
+    const onClose = vi.fn();
+    const btn1 = document.createElement('button');
+    const btn2 = document.createElement('button');
+    document.body.append(btn1, btn2);
+
+    const origGetRect = HTMLElement.prototype.getBoundingClientRect;
+    const rectSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      if (this === btn1 && this.isConnected) {
+        return { left: 200, right: 224, top: 100, bottom: 120, width: 24, height: 20, x: 200, y: 100, toJSON: () => ({}) } as DOMRect;
+      }
+      if (this === btn2 && this.isConnected) {
+        return { left: 200, right: 224, top: 100, bottom: 120, width: 24, height: 20, x: 200, y: 100, toJSON: () => ({}) } as DOMRect;
+      }
+      return origGetRect.call(this);
+    });
+
+    const menu = createMenu({ overlays, onClose });
+    try {
+      menu.open(btn1, [{ id: 'a', label: 'Action' }]);
+      expect(menu.el.style.left).toBe('24px');
+      expect(menu.el.style.top).toBe('124px');
+
+      // Detaching btn1 and calling reposition must not jump to (8, 4)
+      btn1.remove();
+      menu.reposition();
+      expect(menu.el.style.left).toBe('24px');
+      expect(menu.el.style.top).toBe('124px');
+
+      // Re-anchoring to btn2 sets aria-expanded and keeps position
+      const focus2 = vi.spyOn(btn2, 'focus');
+      menu.setAnchor(btn2);
+      expect(btn2.getAttribute('aria-expanded')).toBe('true');
+      expect(menu.el.style.left).toBe('24px');
+      expect(menu.el.style.top).toBe('124px');
+
+      // Escape restores focus to the re-anchored btn2 and fires onClose
+      expect(overlays.handleEscape()).toBe(true);
+      expect(menu.isOpen()).toBe(false);
+      expect(btn2.getAttribute('aria-expanded')).toBe('false');
+      expect(focus2).toHaveBeenCalled();
+      expect(onClose).toHaveBeenCalledTimes(1);
+    } finally {
+      rectSpy.mockRestore();
+      menu.dispose();
+      overlays.dispose();
+    }
+  });
 });
