@@ -7,10 +7,10 @@ import {
   createList,
   createNotice,
   createSegmented,
+  createSidebarActionBarHost,
   type FilterBarStorageAdapter,
   type ListGroup,
   type ListItem,
-  renderBadge,
   renderTag,
 } from '../../components/index.js';
 import { t as tr } from '../../i18n/index.js';
@@ -26,10 +26,13 @@ import {
 } from './types.js';
 import type {
   ActionBarController,
+  ActionItem,
   FilterBarController,
   ListController,
   NoticeController,
   SegmentedController,
+  SidebarActionBarHost,
+  SidebarActionBarVisibilityApi,
 } from '../../components/index.js';
 
 const FILTER_STORAGE_KEY = 'skills_filter_v1';
@@ -155,9 +158,9 @@ class SkillsViewPanel implements SkillPanelComponent {
   private readonly _ctx: PluginContext;
   private readonly _store: SkillsStore;
   private readonly _deps: ResolvedSkillsDeps;
-  private readonly _countHost: HTMLElement;
   private readonly _searchesHost: HTMLElement;
   private readonly _actionBar: ActionBarController;
+  private _actionBarHost: SidebarActionBarHost | null = null;
   private readonly _segmented: SegmentedController;
   private readonly _notice: NoticeController;
   private readonly _filterBar: FilterBarController;
@@ -179,14 +182,6 @@ class SkillsViewPanel implements SkillPanelComponent {
     this.element = doc.createElement('div');
     this.element.className = 'fh-skills-view';
 
-    const header = doc.createElement('div');
-    header.className = 'fh-skills-view-head';
-    this._countHost = doc.createElement('div');
-    this._countHost.className = 'fh-skills-view-count';
-    const actionsHost = doc.createElement('div');
-    actionsHost.className = 'fh-skills-view-actions';
-    header.append(this._countHost, actionsHost);
-
     const segHost = doc.createElement('div');
     segHost.className = 'fh-skills-view-seg fh-sidebar-seg';
     const noticeHost = doc.createElement('div');
@@ -197,10 +192,12 @@ class SkillsViewPanel implements SkillPanelComponent {
     bodyHost.className = 'fh-skills-view-body';
     this._searchesHost = doc.createElement('div');
     this._searchesHost.className = 'fh-skills-view-searches';
-    this.element.append(header, segHost, noticeHost, filterHost, bodyHost, this._searchesHost);
+    this.element.append(segHost, noticeHost, filterHost, bodyHost, this._searchesHost);
 
-    this._actionBar = this._createActionBar(doc, icons);
-    actionsHost.appendChild(this._actionBar.el);
+    this._actionBar = createActionBar(
+      { compact: true, ariaLabel: tr('skills.title'), items: this._buildActionItems(false) },
+      doc,
+    );
     this._disposables.add(this._actionBar);
 
     this._segmented = createSegmented(
@@ -237,7 +234,14 @@ class SkillsViewPanel implements SkillPanelComponent {
     this._disposables.add(this._list);
   }
 
-  init(): void {
+  init(_params?: unknown, panelCtx?: { readonly api?: SidebarActionBarVisibilityApi }): void {
+    this._actionBarHost?.dispose();
+    this._actionBarHost = createSidebarActionBarHost({
+      viewEl: this.element,
+      actionBarEl: this._actionBar.el,
+      api: panelCtx?.api,
+    });
+    this._disposables.add(this._actionBarHost);
     this._disposables.add(this._store.onDidChange(() => this._syncAll()));
     this._syncAll();
     if (!this._store.snapshot().fetchedAt) {
@@ -255,41 +259,35 @@ class SkillsViewPanel implements SkillPanelComponent {
     for (const timer of this._copyTimers.values()) clearTimeout(timer);
     this._copyTimers.clear();
     this._disposables.dispose();
-    render(nothing, this._countHost);
     render(nothing, this._searchesHost);
     this.element.remove();
   }
 
-  private _createActionBar(doc: Document, icons: Readonly<Record<string, string>>): ActionBarController {
-    return createActionBar(
+  private _buildActionItems(loading: boolean): ActionItem[] {
+    const icons = this._deps.icons();
+    return [
       {
-        compact: true,
-        ariaLabel: tr('skills.title'),
-        items: [
-          {
-            id: 'refresh',
-            icon: getSkillIcon(icons, 'refresh'),
-            title: tr('skills.refreshTitle'),
-            ariaLabel: tr('skills.refreshTitle'),
-            variant: 'ghost',
-            onClick: () => {
-              void this._ctx.commands.execute('skills.refresh');
-            },
-          },
-          {
-            id: 'new',
-            icon: getSkillIcon(icons, 'plus'),
-            title: tr('skills.newTitle'),
-            ariaLabel: tr('skills.newTitle'),
-            variant: 'ghost',
-            onClick: () => {
-              void this._ctx.commands.execute('skills.new');
-            },
-          },
-        ],
+        id: 'skills.refresh',
+        icon: getSkillIcon(icons, 'refresh'),
+        title: tr('skills.refreshTitle'),
+        ariaLabel: tr('skills.refreshTitle'),
+        variant: 'ghost',
+        disabled: loading,
+        onClick: () => {
+          void this._ctx.commands.execute('skills.refresh');
+        },
       },
-      doc,
-    );
+      {
+        id: 'skills.new',
+        icon: getSkillIcon(icons, 'plus'),
+        title: tr('skills.newTitle'),
+        ariaLabel: tr('skills.newTitle'),
+        variant: 'ghost',
+        onClick: () => {
+          void this._ctx.commands.execute('skills.new');
+        },
+      },
+    ];
   }
 
   private _createFilterBar(doc: Document, icons: Readonly<Record<string, string>>): FilterBarController {
@@ -401,14 +399,8 @@ class SkillsViewPanel implements SkillPanelComponent {
         },
       ],
     });
-    render(
-      html`<span class="fh-skills-view-title">${tr('skills.title')}</span>${renderBadge({
-        count: snap.list.length > 0 ? snap.list.length : null,
-        tone: 'neutral',
-      })}`,
-      this._countHost,
-    );
-    this._actionBar.setDisabled('refresh', snap.loading);
+    this._actionBar.update(this._buildActionItems(snap.loading));
+    this._actionBarHost?.sync();
     this._paintNotice(snap.error, snap.enabled);
 
     const tabSkills = this._skillsForTier(snap.list);

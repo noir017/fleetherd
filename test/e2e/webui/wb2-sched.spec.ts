@@ -45,6 +45,9 @@ test.describe('wb2-sched schedules, history, and reviews alignment', () => {
 
     // Schedules: Tasks + Detail + Edit + Sessions
     await page.locator('.wb-activity-item[data-activity-id="schedules"]').click();
+    await expect(page.locator('.fh-schedules-header')).toHaveCount(0);
+    await expect(page.locator('.wb-sidebar-head > .wb-part-actions [data-action-id="schedules.refresh"]')).toBeVisible();
+    await expect(page.locator('.wb-sidebar-head > .wb-part-actions [data-action-id="schedules.new"]')).toBeVisible();
     const taskRow = page.locator('.fh-schedules-view .sched-row').first();
     await expect(taskRow).toBeVisible();
     await taskRow.click();
@@ -62,6 +65,9 @@ test.describe('wb2-sched schedules, history, and reviews alignment', () => {
 
     // History: date groups + read-only editor footer
     await page.locator('.wb-activity-item[data-activity-id="history"]').click();
+    await expect(page.locator('.wb-history-header')).toHaveCount(0);
+    await expect(page.locator('.wb-sidebar-head > .wb-part-actions [data-action-id]')).toHaveCount(1);
+    await expect(page.locator('.wb-sidebar-head > .wb-part-actions [data-action-id="history.refresh"]')).toBeVisible();
     await expect(page.locator('.wb-history-grp').first()).toBeVisible();
     await page.locator('.wb-history-view .hist-item').first().click();
     await expect(page.locator('.wb-history-editor .wb-history-head')).toBeVisible();
@@ -70,10 +76,13 @@ test.describe('wb2-sched schedules, history, and reviews alignment', () => {
     // Reviews view loads cleanly
     await page.locator('.wb-activity-item[data-activity-id="reviews"]').click();
     await expect(page.locator('.fh-reviews-view')).toBeVisible();
+    await expect(page.locator('.fh-reviews-header')).toHaveCount(0);
+    await expect(page.locator('.wb-sidebar-head > .wb-part-actions [data-action-id]')).toHaveCount(1);
+    await expect(page.locator('.wb-sidebar-head > .wb-part-actions [data-action-id="reviews.refresh"]')).toBeVisible();
   });
 
   test('mobile drawer renders history and schedules lists without horizontal overflow', async ({ page }) => {
-    await page.setViewportSize({ width: 390, height: 844 });
+    await page.setViewportSize({ width: 360, height: 740 });
     await loginViaUi(page, gateway.baseUrl, gateway.secret);
 
     await page.locator('#expand-sidebar').click();
@@ -81,11 +90,23 @@ test.describe('wb2-sched schedules, history, and reviews alignment', () => {
 
     await page.locator('.wb-activity-item[data-activity-id="history"]').click();
     await expect(page.locator('.wb-history-view .hist-item').first()).toBeVisible();
+    await expect(page.locator('.wb-sidebar-head > .wb-part-actions [data-action-id="history.refresh"]')).toBeVisible();
     const histOverflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
     expect(histOverflow).toBe(false);
 
     await page.locator('.wb-activity-item[data-activity-id="schedules"]').click();
     await expect(page.locator('.fh-schedules-view .sched-row').first()).toBeVisible();
+    await expect(page.locator('.wb-sidebar-head > .wb-part-actions [data-action-id="schedules.refresh"]')).toBeVisible();
+    await expect(page.locator('.wb-sidebar-head > .wb-part-actions [data-action-id="schedules.new"]')).toBeVisible();
+    const titleFit = await page.evaluate(() => {
+      const head = document.querySelector<HTMLElement>('.wb-sidebar-head')!;
+      const title = head.querySelector<HTMLElement>('.wb-part-title')!;
+      const hr = head.getBoundingClientRect();
+      const tr = title.getBoundingClientRect();
+      return { width: tr.width, inside: tr.left >= hr.left && tr.right <= hr.right + 1 };
+    });
+    expect(titleFit.width).toBeGreaterThan(20);
+    expect(titleFit.inside).toBe(true);
     const schedOverflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
     expect(schedOverflow).toBe(false);
   });

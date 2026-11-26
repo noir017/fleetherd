@@ -6,7 +6,13 @@ import type {
 import { icon } from '../../../icons.js';
 import { html, nothing, render, type TemplateResult } from '../../base/html.js';
 import { DisposableStore } from '../../base/lifecycle.js';
-import { renderNotice } from '../../components/index.js';
+import {
+  createActionBar,
+  createSidebarActionBarHost,
+  renderNotice,
+  type ActionItem,
+  type SidebarActionBarHost,
+} from '../../components/index.js';
 import {
   attachListNavigation,
   type DomListBatchAction,
@@ -268,36 +274,6 @@ function writeStoredIds(ctx: PluginContext, key: string, ids: ReadonlySet<string
   ctx.storage.set(key, [...ids]);
 }
 
-function renderReviewsHeader(
-  headerHost: HTMLElement,
-  count: number | null,
-  onRefresh: () => void,
-): void {
-  const summary =
-    count === null
-      ? tr('common.loadingLower')
-      : count > 0
-        ? tr(count === 1 ? 'sched.summaryReviewOne' : 'sched.summaryReviewMany', { count })
-        : tr('sched.summaryNoReviews');
-  render(
-    html`<div class="sched-heading">
-        <span class="panel-title">${tr('sideTasks.tabReviews')}</span>
-        <span class="sched-summary">${summary}</span>
-      </div>
-      <div class="fh-reviews-actions">
-        <button
-          type="button"
-          class="fh-btn fh-btn--ghost fh-btn--icon"
-          data-rev-refresh="1"
-          title=${tr('common.refresh')}
-          aria-label=${tr('common.refresh')}
-          @click=${onRefresh}
-        >${unsafeHTML(icon('refresh'))}</button>
-      </div>`,
-    headerHost,
-  );
-}
-
 function renderReviewsNotice(
   noticeHost: HTMLElement,
   note: string | null,
@@ -376,8 +352,6 @@ export interface ReviewsViewController extends ReviewPanelComponent {
 function createReviewsDom(doc: Document) {
   const root = doc.createElement('div');
   root.className = 'fh-reviews-view';
-  const headerHost = doc.createElement('div');
-  headerHost.className = 'fh-reviews-header';
   const noticeHost = doc.createElement('div');
   noticeHost.className = 'fh-reviews-notice';
   const batchBarHost = doc.createElement('div');
@@ -386,8 +360,8 @@ function createReviewsDom(doc: Document) {
   const listHost = doc.createElement('div');
   listHost.className = 'fh-reviews-list';
   listHost.setAttribute('aria-multiselectable', 'true');
-  root.append(headerHost, noticeHost, batchBarHost, listHost);
-  return { root, headerHost, noticeHost, batchBarHost, listHost };
+  root.append(noticeHost, batchBarHost, listHost);
+  return { root, noticeHost, batchBarHost, listHost };
 }
 
 function buildReviewBatchActions(
@@ -400,6 +374,70 @@ function buildReviewBatchActions(
     { id: 'mark-read', label: zh ? '标记已读' : 'Mark read', variant: 'secondary', onAction: () => onMarkRead(ids) },
     { id: 'archive', label: zh ? '归档' : 'Archive', variant: 'secondary', onAction: () => onArchive(ids) },
   ];
+}
+
+function buildReviewToolbarActions(ctx: PluginContext): ActionItem[] {
+  return [
+    {
+      id: 'reviews.refresh',
+      icon: icon('refresh'),
+      title: tr('common.refresh'),
+      ariaLabel: tr('common.refresh'),
+      variant: 'ghost',
+      onClick: () => {
+        void ctx.commands.execute('reviews.refresh');
+      },
+    },
+  ];
+}
+
+function renderReviewsBody(
+  ctx: PluginContext,
+  store: ReviewsStore,
+  listHost: HTMLElement,
+  state: {
+    readonly expanded: ReadonlySet<string>;
+    readonly readIds: ReadonlySet<string>;
+    readonly archivedIds: ReadonlySet<string>;
+    readonly activeSelection: string | null;
+    readonly inlinePendingOpen: boolean;
+    readonly nowMs: number;
+    readonly topicExists: (id: string) => boolean;
+    readonly onOpenPrefs: () => void;
+  },
+): void {
+  const { data, busyKeys } = store.snapshot();
+  if (renderReviewsEmpty(listHost, data) || !data) return;
+  const pending = data.pending ?? [];
+  const visibleReviews = data.reviews.filter((r) => !state.archivedIds.has(r.id));
+  const dateGroups = groupReviewsByDate(visibleReviews, state.nowMs);
+  render(
+    html`${renderPendingNav(ctx, pending.length, state.activeSelection === 'prefs', state.onOpenPrefs)}
+      ${state.inlinePendingOpen
+        ? renderPendingSection(
+            pending,
+            busyKeys,
+            (pref) => void store.adoptSuggestion(pref),
+            (pref) => void store.archiveSuggestion(pref),
+            (pref) => void store.dismissSuggestion(pref.text),
+          )
+        : nothing}
+      ${dateGroups.map(
+        (g) => html`<div class="fh-rev-grp">${g.label}</div>
+          ${g.items.map((r) =>
+            renderReviewRow(
+              r,
+              state.expanded.has(r.id),
+              state.activeSelection === `rev:${r.id}`,
+              state.readIds.has(r.id),
+              state.nowMs,
+              state.topicExists,
+              (tid) => ctx.topics.open(tid),
+            ),
+          )}`,
+      )}`,
+    listHost,
+  );
 }
 
 export function createReviewsViewComponent(
@@ -415,7 +453,13 @@ export function createReviewsViewComponent(
   const archivedIds = readStoredIds(ctx, 'archivedIds');
   let activeSelection: string | null = null;
   let inlinePendingOpen = false;
-  const { root, headerHost, noticeHost, batchBarHost, listHost } = createReviewsDom(doc);
+  const { root, noticeHost, batchBarHost, listHost } = createReviewsDom(doc);
+  const actionBar = createActionBar(
+    { items: buildReviewToolbarActions(ctx), compact: true, ariaLabel: tr('sideTasks.tabReviews') },
+    doc,
+  );
+  disposables.add(actionBar);
+  let actionBarHost: SidebarActionBarHost | null = null;
 
   const topicExists = (id: string): boolean => ctx.topics.list().some((t) => t.id === id);
 
@@ -470,51 +514,24 @@ export function createReviewsViewComponent(
   });
   disposables.add(listNav);
 
-  const paintHeader = (): void =>
-    renderReviewsHeader(headerHost, store.reviewsCount(), () => void ctx.commands.execute('reviews.refresh'));
-
   const paintNotice = (): void =>
     renderReviewsNotice(noticeHost, store.snapshot().note, () => store.clearNote());
 
   const paintList = (): void => {
-    const { data, busyKeys } = store.snapshot();
-    if (renderReviewsEmpty(listHost, data) || !data) return;
-    const nowMs = now();
-    const pending = data.pending ?? [];
-    const visibleReviews = data.reviews.filter((r) => !archivedIds.has(r.id));
-    const dateGroups = groupReviewsByDate(visibleReviews, nowMs);
-    render(
-      html`${renderPendingNav(ctx, pending.length, activeSelection === 'prefs', () => openPrefsOrToggle())}
-        ${inlinePendingOpen
-          ? renderPendingSection(
-              pending,
-              busyKeys,
-              (pref) => void store.adoptSuggestion(pref),
-              (pref) => void store.archiveSuggestion(pref),
-              (pref) => void store.dismissSuggestion(pref.text),
-            )
-          : nothing}
-        ${dateGroups.map(
-          (g) => html`<div class="fh-rev-grp">${g.label}</div>
-            ${g.items.map((r) =>
-              renderReviewRow(
-                r,
-                expanded.has(r.id),
-                activeSelection === `rev:${r.id}`,
-                readIds.has(r.id),
-                nowMs,
-                topicExists,
-                (tid) => ctx.topics.open(tid),
-              ),
-            )}`,
-        )}`,
-      listHost,
-    );
+    renderReviewsBody(ctx, store, listHost, {
+      expanded,
+      readIds,
+      archivedIds,
+      activeSelection,
+      inlinePendingOpen,
+      nowMs: now(),
+      topicExists,
+      onOpenPrefs: () => openPrefsOrToggle(),
+    });
     listNav.sync();
   };
 
   const paint = (): void => {
-    paintHeader();
     paintNotice();
     paintList();
   };
@@ -524,6 +541,13 @@ export function createReviewsViewComponent(
   return {
     element: root,
     init(_params, panelCtx): void {
+      actionBarHost?.dispose();
+      actionBarHost = createSidebarActionBarHost({
+        viewEl: root,
+        actionBarEl: actionBar.el,
+        api: panelCtx?.api,
+      });
+      disposables.add(actionBarHost);
       disposables.add(
         panelCtx.api.onDidVisibilityChange((isVisible) => {
           if (isVisible) void store.load();
@@ -537,6 +561,8 @@ export function createReviewsViewComponent(
       target?.focus();
     },
     refreshLocale(): void {
+      actionBar.update(buildReviewToolbarActions(ctx));
+      actionBarHost?.sync();
       paint();
     },
     refreshTopics(): void {
@@ -545,7 +571,6 @@ export function createReviewsViewComponent(
     dispose(): void {
       expanded.clear();
       disposables.dispose();
-      render(nothing, headerHost);
       render(nothing, noticeHost);
       render(nothing, listHost);
       root.remove();

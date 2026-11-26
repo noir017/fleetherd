@@ -73,6 +73,9 @@ test.describe('wb2-lib skills, settings, instructions, and device views', () => 
     // 1. Skills sidebar & editor (dark)
     await page.locator('.wb-activity-item[data-activity-id="skills"]').click();
     await expect(page.locator('.fh-skills-view')).toBeVisible();
+    await expect(page.locator('.fh-skills-view-head')).toHaveCount(0);
+    await expect(page.locator('.wb-sidebar-head > .wb-part-actions [data-action-id="skills.refresh"]')).toBeVisible();
+    await expect(page.locator('.wb-sidebar-head > .wb-part-actions [data-action-id="skills.new"]')).toBeVisible();
     await expect(page.locator('[data-skill-name="deploy-check"]')).toBeVisible();
     await page.locator('[data-list-id="deploy-check"]').click();
     await expect(page.locator('.fh-skill-ed-bar')).toBeVisible();

@@ -104,3 +104,10 @@ export function createActionBar(
     },
   };
 }
+
+export {
+  createSidebarActionBarHost,
+  type SidebarActionBarHost,
+  type SidebarActionBarHostOptions,
+  type SidebarActionBarVisibilityApi,
+} from './sidebar-host.js';

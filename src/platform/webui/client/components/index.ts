@@ -2,11 +2,15 @@ export type { IconInput } from './shared.js';
 
 export {
   createActionBar,
+  createSidebarActionBarHost,
   renderActionBar,
   type ActionBarController,
   type ActionBarOptions,
   type ActionItem,
   type ActionVariant,
+  type SidebarActionBarHost,
+  type SidebarActionBarHostOptions,
+  type SidebarActionBarVisibilityApi,
 } from './actionbar/index.js';
 
 export {
