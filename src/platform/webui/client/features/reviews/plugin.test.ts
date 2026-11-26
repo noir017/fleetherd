@@ -252,7 +252,8 @@ describe('features/reviews plugin', () => {
     // Locale change updates rendered labels.
     setLocale('zh-CN');
     events.emit('locale.change', { locale: 'zh-CN' });
-    expect(view.element.querySelector('.panel-title')?.textContent).toBe('复盘');
+    expect(view.element.querySelector('.fh-reviews-header')).toBeNull();
+    expect(view.element.querySelector('.fh-rev-nv-label')?.textContent).toBe('待处理的偏好建议');
 
     view.dispose();
     manager.dispose();

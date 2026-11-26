@@ -179,9 +179,6 @@ select.skill-field{appearance:auto}
 
 /* ── Workbench schedules view & editor (mockup #tasks, #task-edit, #sessions) ── */
 .fh-schedules-view{display:flex;flex-direction:column;height:100%;min-height:0;background:var(--fh-bg-side)}
-.fh-schedules-header{display:flex;align-items:center;gap:6px;padding:6px 8px 6px 10px;border-bottom:1px solid var(--fh-line);flex:none}
-.wb-sidebar-body .fh-schedules-header .panel-title{display:none}
-.fh-schedules-actions{display:flex;align-items:center;gap:2px;flex:none;margin-left:auto}
 .fh-schedules-sess-search{padding:8px 10px 6px;flex:none}
 .fh-search-box{display:flex;align-items:center;gap:6px;background:var(--fh-input);border:1px solid var(--fh-input-line);border-radius:var(--fh-radius-ctrl);padding:0 8px;height:28px;color:var(--fh-placeholder)}
 .fh-search-box:focus-within{border-color:var(--fh-accent)}
@@ -282,12 +279,6 @@ select.skill-field{appearance:auto}
 
 @media(max-width:639px){
   .fh-schedules-view{background:var(--fh-bg)}
-  .fh-schedules-header{flex-direction:column;align-items:stretch;padding:4px 16px 10px;background:var(--fh-bg-side);border-bottom:0}
-  .fh-schedules-header .sched-heading{order:2}
-  .fh-schedules-header .panel-title{display:block;font-size:30px;font-weight:700;line-height:1.15;color:var(--fh-fg-hi);text-transform:none;letter-spacing:0}
-  .fh-schedules-header .sched-summary{display:none}
-  .fh-schedules-actions{order:1;justify-content:flex-end;margin-left:0;margin-right:-8px}
-  .fh-schedules-actions .fh-btn--icon{min-width:44px;height:44px;color:var(--fh-link)}
   .fh-schedules-sess-search{padding:0 16px 10px;background:var(--fh-bg-side);border-bottom:1px solid var(--fh-line)}
   .fh-search-box{height:38px;border-radius:10px;padding:0 10px;font-size:var(--fh-fs-body)}
   .fh-search-input{font-size:var(--fh-fs-lg)}

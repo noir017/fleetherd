@@ -221,6 +221,15 @@ test.describe('Web UI mobile drawer navigation and cached topic open', () => {
       await page.locator(`.wb-activity-item[data-activity-id="${id}"]`).click();
       await expect(page.locator(`.wb-activity-item[data-activity-id="${id}"]`)).toHaveClass(/is-active/);
       await expect(page.locator('.wb-sidebar')).toBeVisible();
+      if (id === 'history') {
+        await expect(page.locator('.wb-sidebar-head > .wb-part-actions [data-action-id]')).toHaveCount(1);
+        await expect(page.locator('.wb-sidebar-head > .wb-part-actions [data-action-id="history.refresh"]')).toBeVisible();
+      } else if (id === 'reviews') {
+        await expect(page.locator('.wb-sidebar-head > .wb-part-actions [data-action-id]')).toHaveCount(1);
+        await expect(page.locator('.wb-sidebar-head > .wb-part-actions [data-action-id="reviews.refresh"]')).toBeVisible();
+      } else if (id === 'settings') {
+        await expect(page.locator('.wb-sidebar-head > .wb-part-actions [data-action-id]')).toHaveCount(0);
+      }
     }
 
     await expect(page.locator('.wb-sidebar .wb-set-catalog')).toBeVisible();

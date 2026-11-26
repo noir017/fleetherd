@@ -285,24 +285,6 @@ export function filterAndSortTasks(
   return valued.concat(missing).map((r) => r.t);
 }
 
-export function formatTasksSummary(tasks: readonly SchedulePanelTask[] | null, enabled: boolean): string {
-  if (tasks === null) return tr('common.loadingLower');
-  if (!enabled) return tr('sched.notEnabled');
-  if (tasks.length === 0) return tr('sched.nothingScheduled');
-  let active = 0;
-  let paused = 0;
-  let ended = 0;
-  for (const t of tasks) {
-    if (t.state === 'active') active++;
-    else if (t.state === 'paused') paused++;
-    else ended++;
-  }
-  let out = tr('sched.summaryActive', { count: active });
-  if (paused > 0) out += ` \u00b7 ${tr('sched.summaryPaused', { count: paused })}`;
-  if (ended > 0) out += ` \u00b7 ${tr('sched.summaryEnded', { count: ended })}`;
-  return out;
-}
-
 export function scheduledSessions(topics: readonly TopicInfo[]): TopicInfo[] {
   return topics.filter((t) => Boolean(t.scheduled)).sort((a, b) => (b.lastAt || 0) - (a.lastAt || 0));
 }

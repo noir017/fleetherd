@@ -3,15 +3,19 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ReviewPanelList } from '../adapter.js';
 import { Emitter } from './client/base/event.js';
 import { groupHistoryByDate, historyAgentClass } from './client/features/history/helpers.js';
+import { createHistoryPlugin } from './client/features/history/plugin.js';
 import { createReviewsPlugin } from './client/features/reviews/plugin.js';
 import type { ReviewPanelInitContext } from './client/features/reviews/types.js';
 import { collectScheduledSessionTree, harnessClass } from './client/features/schedules/helpers.js';
+import { createSchedulesPlugin } from './client/features/schedules/plugin.js';
+import { createSkillsPlugin } from './client/features/skills/plugin.js';
 import { setLocale } from './client/i18n/index.js';
 import type { TopicInfo } from './client/plugins/api.js';
 import { PluginManager } from './client/plugins/host.js';
 import { ContributionRegistry, type PluginTopicsBridge, WebuiEventBus } from './client/plugins/registry.js';
 import type { ApiClient } from './client/services/api.js';
 import { StorageService, type StorageLike } from './client/services/storage.js';
+import { WorkbenchShell } from './client/workbench/shell.js';
 
 function makeStorage(): StorageLike {
   const map = new Map<string, string>();
@@ -172,6 +176,94 @@ describe('wb2-sched workbench alignment', () => {
 
     detailEd.dispose();
     view.dispose();
+    manager.dispose();
+    events.dispose();
+    registry.dispose();
+  });
+
+  it('hosts History, Schedules, Reviews, and Skills actions in sidebar title bar with no in-view header/count rows', async () => {
+    const root = document.createElement('div');
+    document.body.appendChild(root);
+    const registry = new ContributionRegistry();
+    const events = new WebuiEventBus();
+    const storage = new StorageService('', makeStorage());
+    const api: ApiClient = {
+      get: vi.fn(async () => new Response('{}')),
+      post: vi.fn(async () => new Response('{}')),
+      getJson: vi.fn(async (path: string) => {
+        if (path.startsWith('/api/history')) return { enabled: true, sessions: [], next: null };
+        if (path.startsWith('/api/schedules')) return { enabled: true, tasks: [] };
+        if (path.startsWith('/api/reviews')) return { enabled: true, running: false, pending: [], reviews: [] };
+        if (path.startsWith('/api/skills')) return { enabled: true, skills: [], searches: null };
+        return {};
+      }) as ApiClient['getJson'],
+      postJson: vi.fn(async () => ({})) as ApiClient['postJson'],
+    };
+    const topics: PluginTopicsBridge = {
+      list: () => [],
+      active: () => undefined,
+      open: vi.fn(),
+      insertIntoComposer: vi.fn(),
+    };
+    const manager = new PluginManager({ registry, events, storage, api, topics });
+    manager.register(createHistoryPlugin({ doc: document }), { builtin: true });
+    manager.register(createSchedulesPlugin({ doc: document }), { builtin: true });
+    manager.register(createReviewsPlugin({ doc: document }), { builtin: true });
+    manager.register(createSkillsPlugin({ doc: document }), { builtin: true });
+    await manager.activateAll();
+
+    const shell = new WorkbenchShell({
+      root,
+      initialWidth: 1280,
+      initialHeight: 800,
+      autoSaveLayout: false,
+    });
+    shell.attachRegistry(registry);
+    await flush();
+
+    const actionIds = (): string[] =>
+      Array.from(root.querySelectorAll<HTMLElement>('.wb-sidebar-head > .wb-part-actions [data-action-id]')).map(
+        (el) => el.dataset.actionId ?? '',
+      );
+
+    // Schedules shows Refresh + New in title bar, with no in-view header or count row.
+    shell.views.reveal('schedules');
+    await flush();
+    expect(actionIds()).toEqual(['schedules.refresh', 'schedules.new']);
+    expect(root.querySelector('.fh-schedules-header')).toBeNull();
+    expect(root.querySelector('.sched-summary')).toBeNull();
+
+    // Switching from Schedules to History leaves ONLY History's Refresh button in the title bar.
+    shell.views.reveal('history');
+    await flush();
+    expect(actionIds()).toEqual(['history.refresh']);
+    expect(root.querySelector('.wb-history-header')).toBeNull();
+    expect(root.querySelector('.wb-history-refresh')).toBeNull();
+
+    // Reviews shows ONLY Reviews' Refresh button, with no in-view header or count row.
+    shell.views.reveal('reviews');
+    await flush();
+    expect(actionIds()).toEqual(['reviews.refresh']);
+    expect(root.querySelector('.fh-reviews-header')).toBeNull();
+
+    // Skills shows Refresh + New in title bar, with no in-view header or count badge.
+    shell.views.reveal('skills');
+    await flush();
+    expect(actionIds()).toEqual(['skills.refresh', 'skills.new']);
+    expect(root.querySelector('.fh-skills-view-head')).toBeNull();
+
+    // Works on phone (<640px) drawer too when sidebar is visible.
+    shell.layout(360, 740);
+    shell.setPartVisible('sidebar', true);
+    await flush();
+    expect(root.dataset.wbMode).toBe('mobile');
+    expect(actionIds()).toEqual(['skills.refresh', 'skills.new']);
+
+    // Hiding the sidebar clears title-bar actions.
+    shell.setPartVisible('sidebar', false);
+    expect(actionIds()).toEqual([]);
+
+    shell.dispose();
     manager.dispose();
     events.dispose();
     registry.dispose();

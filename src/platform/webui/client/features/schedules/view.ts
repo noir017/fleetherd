@@ -4,12 +4,17 @@ import { addDisposableListener } from '../../base/dom.js';
 import { html, nothing, render, type TemplateResult } from '../../base/html.js';
 import { DisposableStore } from '../../base/lifecycle.js';
 import {
+  createActionBar,
   createFilterBar,
   createMenu,
   createSegmented,
+  createSidebarActionBarHost,
+  type ActionBarController,
+  type ActionItem,
   type MenuEntry,
   renderNotice,
   renderStatusDot,
+  type SidebarActionBarHost,
   type StatusTone,
 } from '../../components/index.js';
 import { escapeAttrValue } from '../../components/shared.js';
@@ -25,7 +30,6 @@ import {
   formatLastRun,
   formatLastRunShort,
   formatRelativeAge,
-  formatTasksSummary,
   groupScheduledSessions,
   harnessClass,
   resolveTargetShort,
@@ -250,16 +254,17 @@ class SchedulesView implements SchedulesViewController {
   private readonly _now: () => number;
   private readonly _unreadOf: (t: TopicInfo) => number;
   private readonly _disposables = new DisposableStore();
-  private readonly _headerHost: HTMLElement;
   private readonly _filterHost: HTMLElement;
   private readonly _sessSearchHost: HTMLElement;
   private readonly _sessSearchInput: HTMLInputElement;
   private readonly _noticeHost: HTMLElement;
   private readonly _listHost: HTMLElement;
+  private readonly _actionBar: ActionBarController;
   private readonly _menu: ReturnType<typeof createMenu>;
   private readonly _segmented: ReturnType<typeof createSegmented>;
   private readonly _filterBar: ReturnType<typeof createFilterBar>;
   private readonly _sessGroups: Record<string, boolean>;
+  private _actionBarHost: SidebarActionBarHost | null = null;
   private _subtab: ScheduleSubtab;
   private _activeTaskId: string | null = null;
   private _menuTaskId: string | null = null;
@@ -283,8 +288,6 @@ class SchedulesView implements SchedulesViewController {
 
     this.element = this._doc.createElement('div');
     this.element.className = 'fh-schedules-view';
-    this._headerHost = this._doc.createElement('div');
-    this._headerHost.className = 'fh-schedules-header';
     const subtabHost = this._doc.createElement('div');
     subtabHost.className = 'fh-schedules-subnav fh-sidebar-seg';
     this._filterHost = this._doc.createElement('div');
@@ -306,13 +309,18 @@ class SchedulesView implements SchedulesViewController {
     this._listHost = this._doc.createElement('div');
     this._listHost.className = 'fh-schedules-body';
     this.element.append(
-      this._headerHost,
       subtabHost,
       this._filterHost,
       this._sessSearchHost,
       this._noticeHost,
       this._listHost,
     );
+
+    this._actionBar = createActionBar(
+      { items: [], compact: true, ariaLabel: tr('sideTasks.tabScheduled') },
+      this._doc,
+    );
+    this._disposables.add(this._actionBar);
 
     this._subtab = ctx.storage.get<string>(SUBTAB_STORAGE_KEY) === 'sessions' ? 'sessions' : 'tasks';
     this._sessGroups = { ...(ctx.storage.get<Record<string, boolean>>(SESS_GROUPS_STORAGE_KEY) ?? {}) };
@@ -395,6 +403,13 @@ class SchedulesView implements SchedulesViewController {
   }
 
   init(_params: unknown, panelCtx: Parameters<SchedulePanelComponent['init']>[1]): void {
+    this._actionBarHost?.dispose();
+    this._actionBarHost = createSidebarActionBarHost({
+      viewEl: this.element,
+      actionBarEl: this._actionBar.el,
+      api: panelCtx?.api,
+    });
+    this._disposables.add(this._actionBarHost);
     this._disposables.add(
       panelCtx.api.onDidVisibilityChange((isVisible) => {
         this._visible = isVisible;
@@ -424,7 +439,7 @@ class SchedulesView implements SchedulesViewController {
   }
 
   refreshTopics(): void {
-    this._paintHeader();
+    this._syncActionBar();
     this._paintSegmented();
     this._paintBody();
   }
@@ -432,7 +447,6 @@ class SchedulesView implements SchedulesViewController {
   dispose(): void {
     this._disarmPoll();
     this._disposables.dispose();
-    render(nothing, this._headerHost);
     render(nothing, this._noticeHost);
     render(nothing, this._listHost);
     this.element.remove();
@@ -463,63 +477,59 @@ class SchedulesView implements SchedulesViewController {
   private _paint(): void {
     const snap = this._store.snapshot();
     if (snap.tasks !== null) this._filterBar.setGroups(buildFilterGroups(snap.tasks));
-    this._paintHeader();
+    this._syncActionBar();
     this._paintSegmented();
     this._paintNotice();
     this._paintBody();
   }
 
-  private _paintHeader(): void {
+  private _syncActionBar(): void {
     const snap = this._store.snapshot();
     const sessions = scheduledSessions(this._ctx.topics.list());
     const unreadSessions = sessions.filter((t) => this._unreadOf(t) > 0).length;
-    const busySessions = sessions.filter((t) => t.running || t.asking).length;
-    const summary =
-      this._subtab === 'sessions'
-        ? sessions.length > 0
-          ? `${tr(sessions.length === 1 ? 'sched.summarySessionOne' : 'sched.summarySessionMany', { count: sessions.length })}${busySessions > 0 ? ` \u00b7 ${tr('sched.runningCount', { count: busySessions })}` : ''}`
-          : tr('sched.summaryNoSessions')
-        : formatTasksSummary(snap.tasks, snap.enabled);
-
-    render(
-      html`<div class="sched-heading">
-          <span class="panel-title">${tr('sideTasks.tabScheduled')}</span>
-          <span class="sched-summary">${summary}</span>
-        </div>
-        <div class="fh-schedules-actions">
-          ${this._subtab === 'sessions' && this._deps.markAllRead
-            ? html`<button
-                type="button"
-                class="fh-btn fh-btn--ghost fh-btn--icon"
-                ?disabled=${unreadSessions === 0}
-                title=${unreadSessions > 0
-                  ? tr(unreadSessions === 1 ? 'sched.markAllReadSessionsOne' : 'sched.markAllReadSessionsMany', { count: unreadSessions })
-                  : tr('sidebar.markAllReadNone')}
-                aria-label=${tr('sidebar.markAllReadNone')}
-                @click=${() => void this._deps.markAllRead?.(sessions)}
-              >${unsafeHTML(icon('check'))}</button>`
-            : nothing}
-          <button
-            type="button"
-            class="fh-btn fh-btn--ghost fh-btn--icon"
-            data-sched-refresh="1"
-            title=${tr('common.refresh')}
-            aria-label=${tr('common.refresh')}
-            @click=${() => void this._ctx.commands.execute('schedules.refresh')}
-          >${unsafeHTML(icon('refresh'))}</button>
-          ${snap.enabled
-            ? html`<button
-                type="button"
-                class="fh-btn fh-btn--ghost fh-btn--icon"
-                data-sched-new="1"
-                title=${tr('sideTasks.newTask')}
-                aria-label=${tr('sideTasks.newTask')}
-                @click=${() => void this._ctx.commands.execute('schedules.new')}
-              >${unsafeHTML(icon('plus'))}</button>`
-            : nothing}
-        </div>`,
-      this._headerHost,
-    );
+    const items: ActionItem[] = [];
+    if (this._subtab === 'sessions' && this._deps.markAllRead) {
+      items.push({
+        id: 'schedules.markAllRead',
+        icon: icon('check'),
+        disabled: unreadSessions === 0,
+        title:
+          unreadSessions > 0
+            ? tr(unreadSessions === 1 ? 'sched.markAllReadSessionsOne' : 'sched.markAllReadSessionsMany', {
+                count: unreadSessions,
+              })
+            : tr('sidebar.markAllReadNone'),
+        ariaLabel: tr('sidebar.markAllReadNone'),
+        variant: 'ghost',
+        onClick: () => {
+          void this._deps.markAllRead?.(sessions);
+        },
+      });
+    }
+    items.push({
+      id: 'schedules.refresh',
+      icon: icon('refresh'),
+      title: tr('common.refresh'),
+      ariaLabel: tr('common.refresh'),
+      variant: 'ghost',
+      onClick: () => {
+        void this._ctx.commands.execute('schedules.refresh');
+      },
+    });
+    if (snap.enabled) {
+      items.push({
+        id: 'schedules.new',
+        icon: icon('plus'),
+        title: tr('sideTasks.newTask'),
+        ariaLabel: tr('sideTasks.newTask'),
+        variant: 'ghost',
+        onClick: () => {
+          void this._ctx.commands.execute('schedules.new');
+        },
+      });
+    }
+    this._actionBar.update(items);
+    this._actionBarHost?.sync();
   }
 
   private _paintSegmented(): void {

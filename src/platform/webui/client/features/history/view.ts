@@ -3,10 +3,16 @@ import { icon } from '../../../icons.js';
 import { addDisposableListener } from '../../base/dom.js';
 import { DisposableStore } from '../../base/lifecycle.js';
 import {
+  createActionBar,
   createFilterBar,
   createNotice,
+  createSidebarActionBarHost,
+  type ActionBarController,
+  type ActionItem,
   type FilterBarController,
   type NoticeController,
+  type SidebarActionBarHost,
+  type SidebarActionBarVisibilityApi,
 } from '../../components/index.js';
 import {
   attachListNavigation,
@@ -101,8 +107,6 @@ function renderHitRow(h: HistoryPanelHit, activeId: string | null, icons: Histor
 class HistoryViewPanel implements HistoryViewInstance {
   readonly element: HTMLElement;
   private readonly doc: Document;
-  private readonly headerTitle: HTMLElement;
-  private readonly refreshBtn: HTMLButtonElement;
   private readonly searchInput: HTMLInputElement;
   private readonly searchBtn: HTMLButtonElement;
   private readonly filterHost: HTMLElement;
@@ -111,9 +115,11 @@ class HistoryViewPanel implements HistoryViewInstance {
   private readonly batchBarHost: HTMLElement;
   private readonly listEl: HTMLElement;
   private readonly moreBtn: HTMLButtonElement;
+  private readonly actionBar: ActionBarController;
   private readonly filterBar: FilterBarController;
   private readonly listNav: DomListNavigationController;
   private readonly listeners = new DisposableStore();
+  private actionBarHost: SidebarActionBarHost | null = null;
   private readonly state: HistoryViewState = {
     sessions: [],
     hits: [],
@@ -139,18 +145,10 @@ class HistoryViewPanel implements HistoryViewInstance {
     this.element.className = 'wb-history-view';
 
     const icons = resolveHistoryIcons(deps);
-    const headerEl = this.doc.createElement('div');
-    headerEl.className = 'wb-history-header';
-    this.headerTitle = this.doc.createElement('span');
-    this.headerTitle.className = 'wb-history-header-title';
-    this.headerTitle.textContent = tr('sidebar.history');
-    this.refreshBtn = this.doc.createElement('button');
-    this.refreshBtn.type = 'button';
-    this.refreshBtn.className = 'fh-btn fh-btn--ghost fh-btn--icon wb-history-refresh';
-    this.refreshBtn.title = tr('common.refresh');
-    this.refreshBtn.setAttribute('aria-label', tr('common.refresh'));
-    this.refreshBtn.innerHTML = icons.refresh || icon('refresh');
-    headerEl.append(this.headerTitle, this.refreshBtn);
+    this.actionBar = createActionBar(
+      { items: this.buildToolbarActions(), compact: true, ariaLabel: tr('sidebar.history') },
+      this.doc,
+    );
 
     const searchForm = this.doc.createElement('div');
     searchForm.className = 'wb-history-search';
@@ -198,7 +196,6 @@ class HistoryViewPanel implements HistoryViewInstance {
     bodyEl.appendChild(this.listEl);
     bodyEl.appendChild(this.moreBtn);
 
-    this.element.appendChild(headerEl);
     this.element.appendChild(searchForm);
     this.element.appendChild(this.filterHost);
     this.element.appendChild(this.countEl);
@@ -233,8 +230,21 @@ class HistoryViewPanel implements HistoryViewInstance {
     this.bindEvents();
   }
 
+  private buildToolbarActions(): ActionItem[] {
+    const icons = resolveHistoryIcons(this.deps);
+    return [
+      {
+        id: 'history.refresh',
+        icon: icons.refresh || icon('refresh'),
+        title: tr('common.refresh'),
+        ariaLabel: tr('common.refresh'),
+        variant: 'ghost',
+        onClick: () => this.refresh(),
+      },
+    ];
+  }
+
   private bindEvents(): void {
-    this.listeners.add(addDisposableListener(this.refreshBtn, 'click', () => this.refresh()));
     this.listeners.add(addDisposableListener(this.searchBtn, 'click', () => this.runSearch()));
     this.listeners.add(
       addDisposableListener(this.searchInput, 'keydown', (e) => {
@@ -530,7 +540,14 @@ class HistoryViewPanel implements HistoryViewInstance {
     this.onOpen({ id, title, query: this.state.query || undefined });
   }
 
-  init(): void {
+  init(_params?: unknown, panelCtx?: { readonly api?: SidebarActionBarVisibilityApi }): void {
+    this.actionBarHost?.dispose();
+    this.actionBarHost = createSidebarActionBarHost({
+      viewEl: this.element,
+      actionBarEl: this.actionBar.el,
+      api: panelCtx?.api,
+    });
+    this.listeners.add(this.actionBarHost);
     this.loadSessions();
   }
 
@@ -555,9 +572,8 @@ class HistoryViewPanel implements HistoryViewInstance {
   }
 
   refreshLocale(): void {
-    this.headerTitle.textContent = tr('sidebar.history');
-    this.refreshBtn.title = tr('common.refresh');
-    this.refreshBtn.setAttribute('aria-label', tr('common.refresh'));
+    this.actionBar.update(this.buildToolbarActions());
+    this.actionBarHost?.sync();
     this.searchInput.placeholder = tr('history.searchPlaceholder');
     this.searchInput.setAttribute('aria-label', tr('history.searchPlaceholder'));
     this.searchBtn.textContent = tr('common.search');
@@ -576,6 +592,7 @@ class HistoryViewPanel implements HistoryViewInstance {
     this.errNotice?.dispose();
     this.listNav.dispose();
     this.filterBar.dispose();
+    this.actionBar.dispose();
     this.listeners.dispose();
     this.element.remove();
   }

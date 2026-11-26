@@ -330,6 +330,15 @@
   display: flex;
   align-items: center;
   gap: 4px;
+  flex: none;
+}
+
+.wb-part-actions:empty {
+  display: none;
+}
+
+.wb-part-actions .fh-actionbar {
+  flex-wrap: nowrap;
 }
 
 .wb-part-tabs {

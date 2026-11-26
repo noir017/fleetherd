@@ -113,12 +113,6 @@
 
 /* ── Workbench skills sidebar view ────────────────────────────────────────── */
 .fh-skills-view{display:flex;flex-direction:column;height:100%;min-height:0;background:var(--fh-bg-side,var(--panel))}
-.fh-skills-view-head{flex:none;display:flex;align-items:center;gap:6px;height:48px;padding:0 8px 0 14px;border-bottom:1px solid var(--fh-line,var(--line))}
-.wb-sidebar-body .fh-skills-view-head{height:34px;padding:0 8px 0 10px}
-.wb-sidebar-body .fh-skills-view-title,
-.fh-skills-view-count{flex:1;min-width:0;display:flex;align-items:center;gap:6px}
-.fh-skills-view-title{font-size:var(--fh-fs-xs);font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--fh-fg,var(--fg))}
-.fh-skills-view-actions{flex:none;display:flex;align-items:center;gap:2px}
 .fh-skills-view-notice:empty{display:none}
 .fh-skills-view-notice{flex:none;padding:6px 10px 0}
 .fh-skills-view-body{flex:1;min-height:0;overflow:auto;padding:2px 0 8px}
@@ -191,8 +185,6 @@
 
 /* ── Mobile (<640px) skills adjustments ───────────────────────────────────── */
 @media (max-width:639px){
-  .fh-skills-view-head{height:52px;padding:0 12px 0 16px}
-  .fh-skills-view-title{font-size:var(--fh-fs-lg);text-transform:none;letter-spacing:0}
   .fh-skill-row .fh-skill-copy{opacity:1}
   .fh-skill-row-name{font-size:var(--fh-fs-body)}
   .fh-skill-row-desc{font-size:var(--fh-fs-ui)}
