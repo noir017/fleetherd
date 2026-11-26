@@ -68,10 +68,27 @@ describe('webui page: workbench responsive layout (desktop, tablet, mobile)', ()
     await h.click('#expand-sidebar');
     expect(shellEl.classList.contains('is-sidebar-open')).toBe(true);
     expect(backdrop.hidden).toBe(false);
-    const actIds = Array.from(h.doc.querySelectorAll('.wb-activity-item')).map((el) =>
-      el.getAttribute('data-activity-id'),
+    const tabBar = h.doc.querySelector('.wb-stack-tabbar') as HTMLElement;
+    expect(tabBar).not.toBeNull();
+    expect(tabBar.hidden).toBe(false);
+    const tabIds = Array.from(tabBar.querySelectorAll('.wb-stack-tab')).map((el) =>
+      el.getAttribute('data-tab-id'),
     );
-    expect(actIds).toEqual(['topics', 'history', 'schedules', 'reviews', 'skills', 'settings']);
+    expect(tabIds).toEqual(['topics', 'history', 'schedules', 'more']);
+    expect((h.doc.querySelector('.wb-activity-bar') as HTMLElement).inert).toBe(true);
+
+    // Topics actions (+, mark all read, clear) live in the drawer title bar, not a separate row.
+    const headActionIds = Array.from(
+      h.doc.querySelectorAll('.wb-sidebar-head > .wb-part-actions button[data-action-id]'),
+    ).map((el) => el.getAttribute('data-action-id'));
+    expect(headActionIds).toEqual(['topics.new', 'topics.markAllRead', 'topics.clearUnstarred']);
+    expect((h.doc.querySelector('.wb-topics-head') as HTMLElement).hidden).toBe(true);
+
+    await h.click('.wb-stack-tab[data-tab-id="more"]');
+    expect(h.doc.querySelector('.wb-stack-more [data-group-item="reviews"]')).not.toBeNull();
+    expect(h.doc.querySelector('.wb-stack-more [data-group-item="skills"]')).not.toBeNull();
+    expect(h.doc.querySelector('.wb-stack-more [data-group-item="settings"]')).not.toBeNull();
+    await h.click('.wb-stack-tab[data-tab-id="topics"]');
 
     await h.click('.wb-sidebar [data-topic="b2c3d4e5"]');
     expect(shellEl.classList.contains('is-sidebar-open')).toBe(false);
@@ -211,6 +228,8 @@ describe('webui page: the narrow-screen stylesheet', () => {
     const html = renderPage('Chat', false);
     expect(html).toContain('.wb-root[data-wb-mode="mobile"] .wb-sidebar');
     expect(html).toContain('.wb-root[data-wb-mode="mobile"] .wb-topic-menu');
+    expect(html).toContain('.wb-stack-tabbar');
+    expect(html).toContain('@supports not selector(::-webkit-scrollbar)');
     expect(html).toContain('env(safe-area-inset-bottom');
     expect(html).toContain('100dvh');
     expect(narrowBlock()).toContain('#input,#secret{font-size:16px}');

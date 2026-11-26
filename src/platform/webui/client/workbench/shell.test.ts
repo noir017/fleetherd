@@ -166,6 +166,12 @@ describe('workbench/shell', () => {
     shell.setPartVisible('sidebar', true);
     expect(desktopShell.classList.contains('is-sidebar-open')).toBe(true);
     expect(backdrop.hidden).toBe(false);
+    expect(shell.mobileTabBar.element.hidden).toBe(false);
+    expect(shell.activityBar.element.inert).toBe(true);
+
+    const moreTab = root.querySelector<HTMLButtonElement>('.wb-stack-tab[data-tab-id="more"]');
+    moreTab?.click();
+    expect(shell.views.active('sidebar')).toBe('more');
 
     window.dispatchEvent(new PopStateEvent('popstate'));
     expect(shell.isPartVisible('sidebar')).toBe(false);
@@ -174,6 +180,8 @@ describe('workbench/shell', () => {
 
     shell.layout(1400, 900);
     expect(desktopShell.hidden).toBe(false);
+    expect(shell.mobileTabBar.element.hidden).toBe(true);
+    expect(shell.activityBar.element.inert).toBe(false);
     expect(modes).toEqual(['tablet', 'mobile', 'desktop']);
 
     shell.dispose();

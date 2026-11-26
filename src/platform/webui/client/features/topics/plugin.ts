@@ -840,9 +840,8 @@ class TopicsViewPanel implements TopicsViewInstance {
   }
 
   private syncActionBarHost(): void {
-    const sidebarActions = !this.isMobileMode()
-      ? this.element.closest('.wb-sidebar')?.querySelector<HTMLElement>('.wb-sidebar-head > .wb-part-actions') ?? null
-      : null;
+    const sidebarActions =
+      this.element.closest('.wb-sidebar')?.querySelector<HTMLElement>('.wb-sidebar-head > .wb-part-actions') ?? null;
     if (sidebarActions && this.panelVisible) {
       if (this.actionBar.el.parentElement !== sidebarActions) {
         sidebarActions.appendChild(this.actionBar.el);

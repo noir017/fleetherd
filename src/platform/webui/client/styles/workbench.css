@@ -18,7 +18,8 @@
 .wb-shell[hidden],
 .wb-sash[hidden],
 .wb-drawer-backdrop[hidden],
-.wb-part-tabs[hidden] {
+.wb-part-tabs[hidden],
+.wb-stack-tabbar[hidden] {
   display: none !important;
 }
 
@@ -126,7 +127,8 @@
   line-height: 18px;
 }
 
-.wb-activity-item .wb-badge {
+.wb-activity-item .wb-badge,
+.wb-stack-tab .wb-badge {
   position: absolute;
   top: 3px;
   right: 4px;
@@ -758,17 +760,7 @@
 }
 
 .wb-root[data-wb-mode="mobile"] .wb-activity-bar {
-  position: fixed;
-  top: 0;
-  bottom: 0;
-  left: 0;
-  width: 52px;
-  z-index: 21;
-  padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
-  transform: translateX(calc(-1 * var(--wb-mobile-drawer-w)));
-  visibility: hidden;
-  pointer-events: none;
-  transition: transform 0.2s ease, visibility 0s linear 0.2s;
+  display: none !important;
 }
 
 .wb-root[data-wb-mode="mobile"] .wb-sidebar {
@@ -776,8 +768,8 @@
   position: fixed;
   top: 0;
   bottom: 0;
-  left: 52px;
-  width: calc(var(--wb-mobile-drawer-w) - 52px) !important;
+  left: 0;
+  width: var(--wb-mobile-drawer-w) !important;
   z-index: 20;
   box-shadow: 6px 0 18px var(--shadow-drawer);
   transform: translateX(calc(-1 * var(--wb-mobile-drawer-w)));
@@ -786,7 +778,6 @@
   transition: transform 0.2s ease, visibility 0s linear 0.2s;
 }
 
-.wb-root[data-wb-mode="mobile"] .wb-shell.is-sidebar-open .wb-activity-bar,
 .wb-root[data-wb-mode="mobile"] .wb-shell.is-sidebar-open .wb-sidebar {
   transform: translateX(0);
   visibility: visible;
@@ -794,7 +785,6 @@
   transition: transform 0.2s ease, visibility 0s;
 }
 
-.wb-root[data-wb-mode="mobile"] .wb-shell.is-drawer-dragging .wb-activity-bar,
 .wb-root[data-wb-mode="mobile"] .wb-shell.is-drawer-dragging .wb-sidebar {
   visibility: visible;
   pointer-events: auto;
@@ -830,7 +820,6 @@
   z-index: 15;
 }
 
-.wb-root[data-wb-mode="mobile"] .wb-sidebar-body,
 .wb-root[data-wb-mode="mobile"] .wb-secondary-body,
 .wb-root[data-wb-mode="mobile"] .wb-panel {
   padding-bottom: env(safe-area-inset-bottom, 0px);
@@ -839,11 +828,123 @@
 .wb-root[data-wb-mode="mobile"] .wb-part-head {
   min-height: 49px;
   height: auto;
+  padding: 0 6px 0 14px;
+  gap: 2px;
+}
+
+.wb-root[data-wb-mode="mobile"] .wb-part-actions {
+  gap: 2px;
+}
+
+.wb-root[data-wb-mode="mobile"] .wb-sidebar-head .wb-part-actions .fh-btn--icon,
+.wb-root[data-wb-mode="mobile"] .wb-sidebar-head .wb-part-more,
+.wb-root[data-wb-mode="mobile"] .wb-sidebar-head .wb-part-close {
+  min-width: 34px;
+  width: 34px;
+  height: 36px;
+  border: 0;
+  border-radius: 6px;
+}
+
+.wb-root[data-wb-mode="mobile"] .wb-sidebar-head .wb-part-actions .fh-btn--icon svg,
+.wb-root[data-wb-mode="mobile"] .wb-sidebar-head .wb-part-more svg,
+.wb-root[data-wb-mode="mobile"] .wb-sidebar-head .wb-part-close svg {
+  width: 18px;
+  height: 18px;
 }
 
 .wb-root[data-wb-mode="mobile"] .wb-part-close {
+  min-width: 36px;
+  height: 36px;
+}
+
+/* Mobile drawer bottom tab bar & More view */
+.wb-stack-tabbar {
+  display: flex;
+  align-items: stretch;
+  justify-content: space-around;
+  border-top: 1px solid var(--fh-line);
+  background: var(--fh-bg-side);
+  padding: 6px 0 calc(4px + env(safe-area-inset-bottom, 0px));
+  flex: none;
+  user-select: none;
+}
+
+.wb-stack-tab {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--fh-fg-inactive);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  font-size: var(--fh-fs-2xs);
+  padding: 2px 0;
+  cursor: pointer;
+}
+
+.wb-stack-tab.is-active {
+  color: var(--fh-link);
+}
+
+.wb-stack-tab-icon svg {
+  width: 22px;
+  height: 22px;
+  stroke-width: 1.5;
+  display: block;
+}
+
+.wb-stack-tab-label {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 2px;
+}
+
+.wb-stack-more,
+.wb-stack-appearance {
+  padding-bottom: 16px;
+}
+
+.wb-stack-inline-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.wb-stack-subhead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px 4px 4px;
+  border-bottom: 1px solid var(--fh-line);
+}
+
+.wb-stack-mib {
   min-width: 40px;
   height: 40px;
+  padding: 0 6px;
+  border: 0;
+  background: transparent;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  color: var(--fh-link);
+  font-size: var(--fh-fs-ui);
+  flex: none;
+  cursor: pointer;
+}
+
+.wb-stack-subtitle-head {
+  font-size: var(--fh-fs-ui);
+  font-weight: 600;
+  color: var(--fh-fg-hi);
 }
 
 .wb-root[data-wb-mode="mobile"] .wb-topic-header {
