@@ -1,11 +1,12 @@
 import { addDisposableListener } from '../../base/dom.js';
 import { icon } from '../../../icons.js';
-import { type Disposable, DisposableStore } from '../../base/lifecycle.js';
+import { DisposableStore } from '../../base/lifecycle.js';
 import {
   createActionBar,
   createFilterBar,
   createMenu,
   createSegmented,
+  createSidebarActionBarHost,
   openConfirmDialog,
   type ActionBarController,
   type ActionItem,
@@ -15,6 +16,8 @@ import {
   type MenuController,
   type MenuEntry,
   type SegmentedController,
+  type SidebarActionBarHost,
+  type SidebarActionBarVisibilityApi,
 } from '../../components/index.js';
 import {
   attachListNavigation,
@@ -595,6 +598,7 @@ class TopicsViewPanel implements TopicsViewInstance {
   private menuPointAnchor = false;
   private disposed = false;
   private panelVisible = true;
+  private actionBarHost: SidebarActionBarHost | null = null;
   private dirty = false;
   private lastSegSig = '';
   private lastActSig = '';
@@ -845,37 +849,17 @@ class TopicsViewPanel implements TopicsViewInstance {
     this.menu.open(anchor, entries);
   }
 
-  private syncActionBarHost(): void {
-    const sidebarActions =
-      this.element.closest('.wb-sidebar')?.querySelector<HTMLElement>('.wb-sidebar-head > .wb-part-actions') ?? null;
-    if (sidebarActions && this.panelVisible) {
-      if (this.actionBar.el.parentElement !== sidebarActions) {
-        sidebarActions.appendChild(this.actionBar.el);
-      }
-      this.headerEl.hidden = true;
-    } else {
-      if (this.actionBar.el.parentElement !== this.headerEl) {
-        this.headerEl.appendChild(this.actionBar.el);
-      }
-      this.headerEl.hidden = false;
-    }
-  }
-
-  init(
-    params?: unknown,
-    panelCtx?: { readonly api?: { readonly isVisible?: boolean; onDidVisibilityChange?: (cb: (visible: boolean) => void) => Disposable } },
-  ): void {
+  init(params?: unknown, panelCtx?: { readonly api?: SidebarActionBarVisibilityApi }): void {
     this.rt.views.add(this);
     const ctx =
       panelCtx ??
       (params && typeof params === 'object' && 'api' in params
-        ? (params as { readonly api?: { readonly isVisible?: boolean; onDidVisibilityChange?: (cb: (visible: boolean) => void) => Disposable } })
+        ? (params as { readonly api?: SidebarActionBarVisibilityApi })
         : undefined);
     if (ctx?.api) {
       if (typeof ctx.api.isVisible === 'boolean') this.panelVisible = ctx.api.isVisible;
       const sub = ctx.api.onDidVisibilityChange?.((visible) => {
         this.panelVisible = visible;
-        this.syncActionBarHost();
         if (visible && this.dirty) {
           this.dirty = false;
           this.paint();
@@ -883,7 +867,14 @@ class TopicsViewPanel implements TopicsViewInstance {
       });
       if (sub) this.listeners.add(sub);
     }
-    this.syncActionBarHost();
+    this.actionBarHost?.dispose();
+    this.actionBarHost = createSidebarActionBarHost({
+      viewEl: this.element,
+      actionBarEl: this.actionBar.el,
+      fallbackHost: this.headerEl,
+      api: { isVisible: this.panelVisible, onDidVisibilityChange: ctx?.api?.onDidVisibilityChange },
+    });
+    this.listeners.add(this.actionBarHost);
     this.paint();
   }
 
@@ -923,7 +914,7 @@ class TopicsViewPanel implements TopicsViewInstance {
       this.lastActSig = actSig;
       this.actionBar.update(toolbarItems);
     }
-    this.syncActionBarHost();
+    this.actionBarHost?.sync();
 
     const tabForest = buildTabForest(fullForest, this.rt.tab);
     const currentIcons = this.rt.getIcons();

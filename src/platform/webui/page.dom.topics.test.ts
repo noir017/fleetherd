@@ -581,8 +581,8 @@ describe('webui page: topic row agent tag and row menu stability', () => {
       running: false,
       live: true,
       msgCount: 3,
-      agent: { id: 'cc@uniagent', harness: 'claude' },
-      dir: { name: 'workspace', path: '/home/user/workspace', host: 'uniagent' },
+      agent: { id: 'cc@myhost', harness: 'claude' },
+      dir: { name: 'workspace', path: '/home/me/projects', host: 'myhost' },
     };
     const t2 = {
       id: 'b2c3d4e5',
@@ -596,7 +596,7 @@ describe('webui page: topic row agent tag and row menu stability', () => {
 
     const row1 = h.doc.querySelector<HTMLElement>('[data-topic="a1b2c3d4"]')!;
     expect(row1.querySelector('.topic-hc.h-claude')?.textContent).toBe('cc');
-    expect(row1.querySelector('.topic-hc')?.getAttribute('title')).toBe('Agent: cc@uniagent');
+    expect(row1.querySelector('.topic-hc')?.getAttribute('title')).toBe('Agent: cc@myhost');
     expect(row1.querySelector('.topic-sep')?.textContent).toBe('·');
 
     const row2 = h.doc.querySelector<HTMLElement>('[data-topic="b2c3d4e5"]')!;

@@ -110,8 +110,8 @@ describe('topics/row-render', () => {
     const named = makeTopic({
       id: 't1',
       title: 'Deploy fix',
-      agent: { id: 'cc@uniagent', harness: 'claude' },
-      dir: { name: 'workspace', path: '/home/user/workspace', host: 'uniagent' },
+      agent: { id: 'cc@myhost', harness: 'claude' },
+      dir: { name: 'workspace', path: '/home/me/projects', host: 'myhost' },
     });
     const untitled = makeTopic({
       id: 't2',
@@ -136,7 +136,7 @@ describe('topics/row-render', () => {
     };
 
     const namedHtml = wbTopicRowHtml({ t: named, depth: 0, kids: 0, shut: false, under: '' }, { attr: 'data-topic', menu: 'topic' }, baseCtx);
-    expect(namedHtml).toContain('<span class="topic-hc h-claude" title="Agent: cc@uniagent">cc</span><span class="topic-sep" aria-hidden="true">·</span><span class="topic-dir"');
+    expect(namedHtml).toContain('<span class="topic-hc h-claude" title="Agent: cc@myhost">cc</span><span class="topic-sep" aria-hidden="true">·</span><span class="topic-dir"');
 
     const untitledHtml = wbTopicRowHtml({ t: untitled, depth: 0, kids: 0, shut: false, under: '' }, { attr: 'data-topic', menu: 'topic' }, baseCtx);
     expect(untitledHtml).toContain('<span class="topic-hc h-claude" title="Agent: cc">cc</span><span class="topic-sep" aria-hidden="true">·</span><span class="topic-dir">Choose an agent</span>');

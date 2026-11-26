@@ -235,6 +235,10 @@ test.describe('Web UI mobile drawer navigation and cached topic open', () => {
       await page.locator(`.wb-stack-tab[data-tab-id="${id}"]`).click();
       await expect(page.locator(`.wb-stack-tab[data-tab-id="${id}"]`)).toHaveClass(/is-active/);
       await expect(page.locator('.wb-sidebar')).toBeVisible();
+      if (id === 'history') {
+        await expect(page.locator('.wb-sidebar-head > .wb-part-actions [data-action-id]')).toHaveCount(1);
+        await expect(page.locator('.wb-sidebar-head > .wb-part-actions [data-action-id="history.refresh"]')).toBeVisible();
+      }
     }
 
     // More tab reveals Reviews, Skills, and Settings inside the drawer
@@ -246,13 +250,10 @@ test.describe('Web UI mobile drawer navigation and cached topic open', () => {
       await item.click();
       await expect(page.locator('.wb-stack-tab[data-tab-id="more"]')).toHaveClass(/is-active/);
       await expect(page.locator('.wb-sidebar')).toBeVisible();
-      if (id === 'history') {
-        await expect(page.locator('.wb-sidebar-head > .wb-part-actions [data-action-id]')).toHaveCount(1);
-        await expect(page.locator('.wb-sidebar-head > .wb-part-actions [data-action-id="history.refresh"]')).toBeVisible();
-      } else if (id === 'reviews') {
+      if (itemId === 'reviews') {
         await expect(page.locator('.wb-sidebar-head > .wb-part-actions [data-action-id]')).toHaveCount(1);
         await expect(page.locator('.wb-sidebar-head > .wb-part-actions [data-action-id="reviews.refresh"]')).toBeVisible();
-      } else if (id === 'settings') {
+      } else if (itemId === 'settings') {
         await expect(page.locator('.wb-sidebar-head > .wb-part-actions [data-action-id]')).toHaveCount(0);
       }
     }
