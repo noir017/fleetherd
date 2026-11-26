@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.39.0] - 2026-11-26
+
 ### Changed
 
 - **The web UI is a workbench.** Six betas, listed below, replaced the single-page client with a
