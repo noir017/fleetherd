@@ -22,9 +22,11 @@ import type {
 import { WebAuth } from './auth.js';
 import { loadAssets, type WebAssets } from './assets.js';
 import { diskUploadStore } from './index.js';
+import { PluginHostManager } from './plugins/host.js';
+import { loadPlugins, type LoadedPluginEntry } from './plugins/loader.js';
 import { MAX_READ_BYTES } from './reading.js';
 import { WebRoom, type WebuiInstance } from './room.js';
-import { createWebServer, type WebServer } from './server.js';
+import { createWebServer, type PluginRouteDispatcher, type WebServer } from './server.js';
 import { WebSso, type SsoOptions } from './sso.js';
 import { TerminalSessions } from './terminal-sessions.js';
 import { TopicStore } from './topics.js';
@@ -80,7 +82,9 @@ async function boot(
   },
   sso?: WebSso,
   push?: WebPush,
-  assets?: WebAssets
+  assets?: WebAssets,
+  plugins: readonly LoadedPluginEntry[] = [],
+  pluginHost?: PluginRouteDispatcher
 ): Promise<Booted> {
   const port = await freePort();
   const instance: WebuiInstance = {
@@ -105,7 +109,9 @@ async function boot(
     // A test that does not hand in a build gets an empty one, not whatever the developer's last
     // `npm run build` left in dist: the page's CODEVIEW and the route's answers are then the same
     // on every machine, and this file does not read outside its own temp directory.
-    assets ?? loadAssets(path.join(dir, `no-assets-${port}`))
+    assets ?? loadAssets(path.join(dir, `no-assets-${port}`)),
+    plugins,
+    pluginHost
   );
   await server.start();
   running.push(server);
@@ -828,6 +834,110 @@ describe('webui server: topics', () => {
     expect(res.status).toBe(201);
     const made = (await res.json()) as { topic: { id: string } };
     expect(made.topic.id).toMatch(/^[0-9a-f]{8}$/);
+  });
+
+  it('opens a topic with agent and cwd in one step, and rolls it back if setup fails', async () => {
+    const { base, room } = await boot();
+    const cookie = await signIn(base);
+    const calls: Array<{ topic: string; agent?: string; cwd?: string }> = [];
+    room.useTopicSetup((ref, opts) => {
+      if (!opts.dryRun) calls.push({ topic: ref.thread ?? '', agent: opts.agent, cwd: opts.cwd });
+      if (opts.agent === 'bad') return { ok: false, error: 'unknown agent' };
+      return { ok: true, agent: opts.agent ?? 'cc', cwd: opts.cwd ?? '/w' };
+    });
+
+    const ok = await fetch(`${base}/api/topics`, {
+      method: 'POST',
+      headers: { ...JSON_HEADERS, cookie },
+      body: JSON.stringify({ agent: 'oc', cwd: '/srv/app' }),
+    });
+    expect(ok.status).toBe(201);
+    const created = (await ok.json()) as { topic: { id: string }; agent: string; cwd: string };
+    expect(created.agent).toBe('oc');
+    expect(created.cwd).toBe('/srv/app');
+    expect(calls[0]).toEqual({ topic: created.topic.id, agent: 'oc', cwd: '/srv/app' });
+
+    const beforeCount = room.topicList().length;
+    const fail = await fetch(`${base}/api/topics`, {
+      method: 'POST',
+      headers: { ...JSON_HEADERS, cookie },
+      body: JSON.stringify({ agent: 'bad' }),
+    });
+    expect(fail.status).toBe(409);
+    expect(await fail.json()).toEqual({ error: 'unknown agent' });
+    expect(room.topicList().length).toBe(beforeCount);
+
+    const setupRes = await fetch(`${base}/api/topics/setup`, {
+      method: 'POST',
+      headers: { ...JSON_HEADERS, cookie },
+      body: JSON.stringify({ topic: created.topic.id, agent: 'cc', cwd: '/srv/other' }),
+    });
+    expect(setupRes.status).toBe(200);
+    expect(await setupRes.json()).toEqual({ ok: true, agent: 'cc', cwd: '/srv/other' });
+    expect(
+      (
+        await fetch(`${base}/api/topics/setup`, {
+          method: 'POST',
+          headers: JSON_HEADERS,
+          body: JSON.stringify({ topic: created.topic.id, agent: 'cc' }),
+        })
+      ).status
+    ).toBe(401);
+
+    // Rejects relative and parent-traversal cwd at the protocol boundary.
+    for (const badCwd of ['.', 'relative/dir', '/srv/../etc']) {
+      const badRes = await fetch(`${base}/api/topics`, {
+        method: 'POST',
+        headers: { ...JSON_HEADERS, cookie },
+        body: JSON.stringify({ agent: 'oc', cwd: badCwd }),
+      });
+      expect(badRes.status).toBe(400);
+    }
+
+    const browseCalls: Array<{ topic: string; agent?: string; dir?: string; atRoot?: boolean }> = [];
+    room.useWorkdirBrowser(async (ref, opts) => {
+      browseCalls.push({ topic: ref.thread ?? '', ...opts });
+      return {
+        ok: true,
+        screen: {
+          agentId: opts?.agent ?? 'cc',
+          root: '/srv',
+          current: '/srv',
+          browsing: opts?.dir ?? '/srv',
+          breadcrumbs: [{ name: '/', path: '/', buttonId: 'wdb:launch:0' }],
+          selectCurrent: { path: opts?.dir ?? '/srv', buttonId: 'wdr:launch:0', current: true, root: true },
+          entries: [],
+          truncated: 0,
+        },
+      };
+    });
+    const wdRes = await fetch(
+      `${base}/api/topics/workdirs?t=${created.topic.id}&agent=oc&dir=${encodeURIComponent('/srv/sub')}&root=1`,
+      { headers: { cookie } }
+    );
+    expect(wdRes.status).toBe(200);
+    expect(await wdRes.json()).toMatchObject({ agentId: 'oc', browsing: '/srv/sub' });
+    expect(browseCalls).toEqual([{ topic: created.topic.id, agent: 'oc', dir: '/srv/sub', atRoot: true }]);
+    expect((await fetch(`${base}/api/topics/workdirs?t=${created.topic.id}`)).status).toBe(401);
+  });
+
+  it('does not evict existing topics when POST /api/topics fails setup on a full room', async () => {
+    const { base, room } = await boot();
+    const cookie = await signIn(base);
+    room.useTopicSetup((_ref, opts) => {
+      if (opts.agent === 'bad') return { ok: false, error: 'unknown agent' };
+      return { ok: true, agent: opts.agent ?? 'cc', cwd: opts.cwd ?? '/w' };
+    });
+    while (room.topicList().length < 200) room.createTopic(`t-${room.topicList().length}`);
+    const beforeIds = room.topicList().map((t) => t.id);
+
+    const res = await fetch(`${base}/api/topics`, {
+      method: 'POST',
+      headers: { ...JSON_HEADERS, cookie },
+      body: JSON.stringify({ agent: 'bad' }),
+    });
+    expect(res.status).toBe(409);
+    expect(room.topicList().map((t) => t.id)).toEqual(beforeIds);
   });
 
   it('streams only the topic that was asked for', async () => {
@@ -2231,6 +2341,37 @@ describe('webui server: traffic', () => {
       expect((await fetch(`${base}/api/reviews/op`, { method: 'POST', headers: JSON_HEADERS, body: '{}' })).status).toBe(401);
     });
 
+    it('reverts a skill commit through the review panel and returns the fresh list', async () => {
+      const { base, room } = await boot();
+      const cookie = await signIn(base);
+      const reverted: Array<{ name: string; id: string }> = [];
+      room.useReviewPanel({
+        list: () => list,
+        dismiss: () => list,
+        revert: async (name, id) => {
+          reverted.push({ name, id });
+          if (id === 'deadbeef') return { ok: false, error: 'commit not found' };
+          return { ok: true, list };
+        },
+      });
+      const ok = await fetch(`${base}/api/reviews/op`, {
+        method: 'POST',
+        headers: { ...JSON_HEADERS, cookie },
+        body: JSON.stringify({ action: 'revert', name: 'ops-note', id: 'abcdef1' }),
+      });
+      expect(ok.status).toBe(200);
+      expect(await ok.json()).toEqual(list);
+      expect(reverted).toEqual([{ name: 'ops-note', id: 'abcdef1' }]);
+
+      const conflict = await fetch(`${base}/api/reviews/op`, {
+        method: 'POST',
+        headers: { ...JSON_HEADERS, cookie },
+        body: JSON.stringify({ action: 'revert', name: 'ops-note', id: 'deadbeef' }),
+      });
+      expect(conflict.status).toBe(400);
+      expect(await conflict.json()).toEqual({ error: 'commit not found' });
+    });
+
     it('is behind the session like every other route', async () => {
       const { base } = await boot();
       expect((await fetch(`${base}/api/reviews`)).status).toBe(401);
@@ -3422,5 +3563,153 @@ describe('WebServer: the agent’s own settings', () => {
     expect((await fetch(`${base}/api/options?t=${topic}`)).status).toBe(401);
     const pick = await fetch(`${base}/api/options`, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ topic, id: 'a', value: 'b' }) });
     expect(pick.status).toBe(401);
+  });
+});
+
+describe('external plugin routes (/api/plugins/ and /plugins/)', () => {
+  function writePluginFixture(id: string): string {
+    const pluginDir = path.join(dir, `plugin-${id}`);
+    fs.mkdirSync(pluginDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(pluginDir, 'fleetherd-plugin.json'),
+      JSON.stringify({
+        id,
+        name: `Plugin ${id}`,
+        version: '0.1.0',
+        client: 'client.mjs',
+        style: 'style.css',
+        server: 'server.mjs',
+      }),
+      'utf8'
+    );
+    fs.writeFileSync(path.join(pluginDir, 'client.mjs'), `export default { id: ${JSON.stringify(id)}, activate() {} };\n`, 'utf8');
+    fs.writeFileSync(path.join(pluginDir, 'style.css'), '.hello { color: var(--fh-fg); }\n', 'utf8');
+    fs.writeFileSync(
+      path.join(pluginDir, 'server.mjs'),
+      `export function activate(host) {
+        host.routes.get('/ping', (_req, res) => {
+          const body = JSON.stringify({ ok: true, id: host.id, greeting: host.config?.greeting ?? 'hi' });
+          res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(body);
+        });
+        host.routes.post('/echo', async (req, res) => {
+          const chunks = [];
+          for await (const chunk of req) chunks.push(chunk);
+          const raw = Buffer.concat(chunks).toString('utf8');
+          res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify({ echoed: JSON.parse(raw) }));
+        });
+      }
+      `,
+      'utf8'
+    );
+    return pluginDir;
+  }
+
+  async function bootWithPlugin(): Promise<Booted & { pluginHost: PluginHostManager }> {
+    const pluginDir = writePluginFixture('hello');
+    const loaded = loadPlugins([{ path: pluginDir, config: { greeting: 'bonjour' } }]);
+    expect(loaded).toHaveLength(1);
+    const port = await freePort();
+    const instance: WebuiInstance = {
+      ...WebuiConfigSchema.parse({ type: 'webui', token: 'open-sesame' }),
+      id: 'webui',
+      host: '127.0.0.1',
+      port,
+    };
+    const topics = new TopicStore(path.join(dir, `${port}.json`));
+    const topic = topics.current().id;
+    const room = new WebRoom(instance, topics);
+    const sessions = new TerminalSessions();
+    room.useTerminalSessions(sessions);
+    const pluginHost = new PluginHostManager({
+      room,
+      plugins: loaded,
+      storageDir: path.join(dir, `plugin-storage-${port}`),
+    });
+    await pluginHost.activateAll();
+    const server = createWebServer(
+      room,
+      new WebAuth({ token: instance.token }),
+      instance,
+      { enabled: false, socket: '/nonexistent.sock', sessions },
+      undefined,
+      undefined,
+      loadAssets(path.join(dir, `no-assets-${port}`)),
+      loaded,
+      pluginHost
+    );
+    await server.start();
+    running.push({
+      start: () => server.start(),
+      stop: async () => {
+        await pluginHost.dispose();
+        await server.stop();
+      },
+    });
+    return { room, server, base: `http://127.0.0.1:${port}`, port, topic, instance, sessions, pluginHost };
+  }
+
+  it('requires authentication for plugin API routes and plugin static assets', async () => {
+    const { base } = await bootWithPlugin();
+    expect((await fetch(`${base}/api/plugins/hello/ping`)).status).toBe(401);
+    expect(
+      (
+        await fetch(`${base}/api/plugins/hello/echo`, {
+          method: 'POST',
+          headers: JSON_HEADERS,
+          body: JSON.stringify({ msg: 'hi' }),
+        })
+      ).status
+    ).toBe(401);
+    expect((await fetch(`${base}/plugins/hello/client.mjs`)).status).toBe(401);
+  });
+
+  it('dispatches authenticated GET/POST requests to the plugin host and enforces same-origin on POST', async () => {
+    const { base, pluginHost } = await bootWithPlugin();
+    const cookie = await signIn(base);
+
+    const ping = await fetch(`${base}/api/plugins/hello/ping`, { headers: { cookie } });
+    expect(ping.status).toBe(200);
+    expect(await ping.json()).toEqual({ ok: true, id: 'hello', greeting: 'bonjour' });
+
+    const echo = await fetch(`${base}/api/plugins/hello/echo`, {
+      method: 'POST',
+      headers: { ...JSON_HEADERS, cookie },
+      body: JSON.stringify({ text: 'world' }),
+    });
+    expect(echo.status).toBe(200);
+    expect(await echo.json()).toEqual({ echoed: { text: 'world' } });
+
+    const crossOrigin = await fetch(`${base}/api/plugins/hello/echo`, {
+      method: 'POST',
+      headers: { ...JSON_HEADERS, cookie, origin: 'https://evil.example' },
+      body: JSON.stringify({ text: 'blocked' }),
+    });
+    expect(crossOrigin.status).toBe(403);
+
+    expect((await fetch(`${base}/api/plugins/hello/missing`, { headers: { cookie } })).status).toBe(404);
+    expect((await fetch(`${base}/api/plugins/unknown/ping`, { headers: { cookie } })).status).toBe(404);
+
+    await pluginHost.dispose();
+    expect((await fetch(`${base}/api/plugins/hello/ping`, { headers: { cookie } })).status).toBe(404);
+  });
+
+  it('prevents plugins from shadowing built-in routes and rejects traversal subpaths', async () => {
+    const { base, topic } = await bootWithPlugin();
+    const cookie = await signIn(base);
+
+    const builtIn = await fetch(`${base}/api/topic?t=${topic}`, { headers: { cookie } });
+    expect(builtIn.status).toBe(200);
+    expect(await builtIn.json()).toMatchObject({ topic });
+
+    const created = await fetch(`${base}/api/topics`, {
+      method: 'POST',
+      headers: { ...JSON_HEADERS, cookie },
+      body: JSON.stringify({ title: 'Built-in stays intact' }),
+    });
+    expect(created.status).toBe(201);
+
+    expect((await fetch(`${base}/api/plugins/hello/%2e%2e/topics`, { headers: { cookie } })).status).toBe(404);
   });
 });

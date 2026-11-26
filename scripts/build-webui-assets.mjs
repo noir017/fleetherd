@@ -30,6 +30,7 @@ import { gzipSync } from 'node:zlib';
 import { build } from 'esbuild';
 
 import { collectLicenses, licenseFailure, renderLicenses } from './third-party-licenses.mjs';
+import { buildWebuiPluginTypes } from './build-webui-plugin-types.mjs';
 import { buildClient } from './webui-client.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -77,7 +78,7 @@ const client = await buildClient({ outdir: out });
 
 fs.writeFileSync(
   path.join(out, 'manifest.json'),
-  `${JSON.stringify({ app: client.app.file, boot: client.boot.file, style: client.style.file, codeview: entryName }, null, 2)}\n`,
+  `${JSON.stringify({ app: client.app.file, boot: client.boot.file, style: client.style.file, codeview: entryName, extras: client.extras.file }, null, 2)}\n`,
   'utf8'
 );
 
@@ -104,6 +105,7 @@ if (!written.includes('@codemirror/state') || !/MIT/.test(written)) {
 }
 
 const kib = (n) => `${(n / 1024).toFixed(1)} KiB`;
+const APP_GZIP_BUDGET_BYTES = 160 * 1024;
 let raw = 0;
 let packed = 0;
 const files = [
@@ -111,6 +113,7 @@ const files = [
   path.join(out, client.app.file),
   path.join(out, client.boot.file),
   path.join(out, client.style.file),
+  path.join(out, client.extras.file),
 ];
 for (const file of files) {
   const bytes = fs.readFileSync(file);
@@ -118,8 +121,16 @@ for (const file of files) {
   raw += bytes.length;
   packed += packedBytes;
   console.log(`build-webui-assets: ${path.basename(file)} ${kib(bytes.length)} (gzip ${kib(packedBytes)})`);
+  if (path.basename(file) === client.app.file && packedBytes > APP_GZIP_BUDGET_BYTES) {
+    console.warn(`build-webui-assets: WARNING ${client.app.file} gzip ${kib(packedBytes)} exceeds ${kib(APP_GZIP_BUDGET_BYTES)} budget`);
+  }
 }
 console.log(
-  `build-webui-assets: ${files.length} files, ${kib(raw)} (gzip ${kib(packed)}); the page loads ${client.boot.file}, ${client.app.file} and ${client.style.file}, and ${entryName} only when it shows code`
+  `build-webui-assets: ${files.length} files, ${kib(raw)} (gzip ${kib(packed)}); the page loads ${client.boot.file}, ${client.app.file} and ${client.style.file}, ${client.extras.file} on demand, and ${entryName} only when it shows code`
 );
 console.log(`build-webui-assets: ${licenses.length} third-party licences in licenses.txt (${kib(fs.statSync(licensesFile).size)})`);
+
+const pluginTypes = buildWebuiPluginTypes({ root });
+console.log(
+  `build-webui-assets: ${path.relative(root, pluginTypes.outFile)} (${pluginTypes.lines} lines, ${kib(pluginTypes.bytes)})`
+);

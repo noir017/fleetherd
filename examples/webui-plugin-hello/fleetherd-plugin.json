@@ -1,0 +1,11 @@
+{
+  "id": "hello",
+  "name": "Hello Example",
+  "version": "0.1.0",
+  "engines": {
+    "fleetherdWebui": ">=1.0.0"
+  },
+  "client": "client.mjs",
+  "style": "style.css",
+  "server": "server.mjs"
+}

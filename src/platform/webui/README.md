@@ -56,15 +56,36 @@ naming it, and they are all of them:
 | `assets.ts` | Where the built assets are, and the three names the page links: its script, its stylesheet, the code view's entry |
 | `page.ts` | The page's HTML shell: head, gate, the `boot-config` JSON, and the links to its script and stylesheet |
 | `page-body.ts` | The page's markup — every element the script finds by id — as a template |
-| `client/legacy-app.ts` | The client script, bundled into `dist/webui-assets/app-<hash>.js` — see below |
-| `client/panels/reviews.ts` | Typed Reviews tab module (`createReviewsPanel`), bundled into `app-<hash>.js` and checked by `client/tsconfig.json` and eslint |
-| `client/panels/history.ts` | Typed History tab and read-only transcript viewer (`createHistoryPanel`), bundled into `app-<hash>.js` and checked by `client/tsconfig.json` and eslint |
-| `client/panels/git.ts` | Typed Git and Commits diff window (`createGitPanel`), bundled into `app-<hash>.js` and checked by `client/tsconfig.json` and eslint |
-| `client/panels/files.ts` | Typed File browser and editor window (`createFilesPanel`), bundled into `app-<hash>.js` and checked by `client/tsconfig.json` and eslint |
-| `client/panels/instructions.ts` | Typed Instructions settings cards and editor source (`createInstructionsPanel`), bundled into `app-<hash>.js` and checked by `client/tsconfig.json` and eslint |
-| `client/panels/schedules.ts` | Typed Scheduled side panel (Tasks, Sessions, and task detail/edit/add page; `createSchedulesPanel`), bundled into `app-<hash>.js` and checked by `client/tsconfig.json` and eslint |
-| `client/panels/skills.ts` | Typed Skills management window (`createSkillsPanel`), bundled into `app-<hash>.js` and checked by `client/tsconfig.json` and eslint |
-| `client/styles/main.css` | The stylesheet, bundled into `dist/webui-assets/style-<hash>.css` |
+| `page-body.ts` | Minimal body shell (`#workbench-root`) paired with the login gate in `page.ts` |
+| `client/main.ts` | Typed client entrypoint wiring `WorkbenchShell`, `ContributionRegistry`, `PluginManager`, all 12 built-in plugins, SSE stream, cache, and reads, bundled into `dist/webui-assets/app-<hash>.js` — see below |
+| `client/base/` | Typed foundation primitives: `lifecycle.ts` (`DisposableStore`, `MutableDisposable`), `event.ts` (`Emitter`), `html.ts` (`lit-html` re-exports + `escapeHtml`), `dom.ts` (disposable listeners, focus/class/attr/ResizeObserver helpers) |
+| `client/services/` | Typed client services: `boot.ts`, `storage.ts`, `store.ts`, `commands.ts`, `keybindings.ts`, `overlays.ts` (LIFO Esc stack), `api.ts` (`post`/`text`/`wait`/`sendLimit`), `stream.ts` (SSE lifecycle, backoff, parking, watchdog, `applyTopicRows`), `cache.ts` (two-layer memory + IndexedDB transcript cache wrapping `CACHE_CORE`), `reads.ts` (unread watermarks, `aa_reads` persistence/merging, `markAllRead`, `reportSeen`) |
+| `client/components/` | Reusable accessible `lit-html` + `--fh-*` workbench UI component library (only imports `base/`, `services/`, `i18n/`): `list/` (grouped list, keyboard nav, row `⋯` menu, empty state, multi-select), `filterbar/` (search, pinned/panel chips, sort, persistence, i18n), `actionbar/`, `tabs/` (permanent tab strip + `nav`/`value` segmented control), `menu/` (fixed viewport-clamped context menu + `OverlayManager`), `dialog/` (focus-trapped modal & async confirm dialog), `sheet/` (mobile bottom action sheet), `quickpick/` (live fuzzy filter & grouped picker), `form/` (field rows, text input, switch, select, value segmented, grouped list, radio group), `tree/` (collapsible keyboard-navigable tree), `badge/` (capsule badge, harness/status tag, pulsing status dot), `notice/` (`Notice` & `EmptyState`), `splitter/` (pointer/keyboard resize handle), and barrel `index.ts` |
+| `client/workbench/contracts.ts` | Frozen `DockEngine`, `PanelComponent`, `PanelRef`, and `LayoutState` (v1) contracts |
+| `client/workbench/dock/` | Dynamic & static dock engines: `splitview.ts` (pure 1D size math + pointer-drag `SplitView`), `gridview.ts` (binary row/column editor group tree + split/merge/normalize), `group.ts` (`EditorGroup` with single-tab titlebar / multi-tab strip, reorder, dirty dot), `dnd.ts` (pointer-event `DockDndController` with ghost, drop zones, Esc cancel, `allowSplit`), `serialize.ts` (`LayoutState` v1 validation, migration, missing-component pruning, `aa_layout` persistence), `engine.ts` (`DynamicDockEngine` implementing `DockEngine` + `onDidActiveTopicChange`), `layout-commands.ts` (17 layout commands, shortcuts, and `buildMoveViewMenuItems`), and `static.ts` (legacy P1 static engine) |
+| `client/workbench/parts/` | Workbench layout parts: `activity-bar.ts` (52px left nav rail with SVG icons & badges), `sidebar-part.ts`, `secondary-part.ts`, `panel-part.ts` (resizable bottom panel; each with header `⋯` move-view menu trigger and tab context menu), and `status-bar.ts` (22px left/right aligned status bar) |
+| `client/workbench/mobile-drawer.ts` | `< 640px` mobile drawer gesture controller (left-edge swipe open, swipe-back close, and `popstate` back-gesture dismiss) |
+| `client/workbench/shell.ts` | Default `WorkbenchShell` (`mountWorkbench`, `attachRegistry`) backed by `DynamicDockEngine`, auto-loading/saving `aa_layout` with corrupt-state fallback, wiring `registerLayoutCommands`, part-header `buildMoveViewMenuItems`, `onDidActiveTopicChange`, and three width breakpoints (`≥ 1024px` desktop with `< 640px` editor auto-collapse/restore, `640–1023px` tablet drawers with `setAllowSplit(false)`, `< 640px` mobile slide-out drawer reusing the workbench shell) |
+| `client/plugins/api.ts` | Frozen `WebuiPlugin`, `definePlugin`, `PluginContext`, `MenuItem`, `TopicInfo`, and `WebuiEvents` contracts |
+| `client/plugins/registry.ts` | `ContributionRegistry` (views, editors, topicTools, activity, statusBar, commands, menus, device-only settings), `WebuiEventBus`, `PluginI18nRegistry`, external-plugin API path allowlist/traversal guard (`assertPluginApiPath`), and unified `createPluginContext` factory |
+| `client/plugins/host.ts` | `PluginManager` lifecycle host: registration, async `activate`/`deactivate`, per-plugin error isolation with partial-registration rollback and status-bar error reporting, and automatic `DisposableStore` cleanup |
+| `client/plugins/builtin.ts` | Built-in plugin manifest (`BUILTIN_PLUGIN_IDS`, `createBuiltinPlugins`, `createDefaultBuiltinPluginFactories`, `registerBuiltinPlugins`) wiring all 12 built-in feature plugins |
+| `client/features/topics/` | Built-in `topics` plugin (`plugin.ts`, `index.ts`, `age.ts`, `tree.ts`, `row-render.ts`, `filter-bar.ts`, `row-menu.ts`, `row-sheet.ts`, `gestures.ts`, `prefetch.ts`, `idle-dialog.ts`, `types.ts`): activity bar item, primary sidebar topic list, tree/folding, filter bar, row menu, mobile left-swipe/long-press gestures and action sheet, prefetch queue, and close-idle dialog |
+| `client/features/topic/` | Built-in `topic` plugin (`plugin.ts`, `editor/{index,dom,header,panel,types}.ts`, `status/`, `transcript/`, `composer/`): per-topic editor panel with header, transcript, `/btw` card, model/option switcher, status strip, and composer (attachments, image shrink, drafts, voice, slash hints, unsent queue) |
+| `client/features/history/` | Built-in `history` plugin (`plugin.ts`, `view.ts`, `editor.ts`, `helpers.ts`): conversation library sidebar view and read-only transcript editor |
+| `client/features/schedules/` | Built-in `schedules` plugin (`plugin.ts`, `store.ts`, `view.ts`, `editor.ts`, `helpers.ts`, `types.ts`): scheduled Tasks/Sessions sidebar view and task detail/edit/create editor |
+| `client/features/reviews/` | Built-in `reviews` plugin (`plugin.ts`, `store.ts`, `view.ts`, `editor.ts`, `types.ts`): auto-review sidebar view, review detail editor (`review`), and pending preference suggestions editor (`review-prefs`) with Adopt/Dismiss |
+| `client/features/skills/` | Built-in `skills` plugin (`plugin.ts`, `store.ts`, `view.ts`, `editor.ts`, `filtering.ts`, `new-dialog.ts`, `types.ts`): managed skills sidebar view and `SKILL.md` / file / history editor |
+| `client/features/settings/` | Built-in `settings` plugin (`plugin.ts`, `controller.ts`, `render.ts`, `workbench-catalog.ts`, `workbench-editor.ts`, `workbench-instructions.ts`, `workbench-types.ts`, `types.ts`): gateway `/setting` editor, device-only settings, and instructions editor |
+| `client/features/changes/` | Built-in `changes` plugin (`plugin.ts`, `changes-tool.ts`, `diff-editor.ts`, `diff-view.ts`, `diff-helpers.ts`, `types.ts`): topic-scoped secondary sidebar git/commits changes list and diff editor with line comments |
+| `client/features/files/` | Built-in `files` plugin (`plugin.ts`, `files-tool.ts`, `file-editor.ts`, `helpers.ts`, `types.ts`): topic-scoped secondary sidebar file tree and CodeMirror/Markdown file editor |
+| `client/features/terminal/` | Built-in `terminal` plugin (`plugin.ts`, `index.ts`): per-topic embedded ttyd terminal in the workbench bottom panel |
+| `client/features/reader/` | Built-in `reader` plugin (`plugin.ts`, `index.ts`): on-demand CodeMirror loader (`createCodeViewLoader`), image lightbox, and document reader editor |
+| `client/features/status/` | Built-in `status` plugin (`plugin.ts`, `device-settings.ts`, `idle-dialog.ts`, `notify-bridge.ts`, `topics-stats.ts`, `i18n.ts`, `icons.ts`, `types.ts`): status bar items (connection, running/idle agents, plugin errors, notifications, low attention, language, theme, version) |
+| `client/features/notify/index.ts` | Web Push subscription controller (`createNotifyController`), VAPID key decoding, permission/toggle flow, and Service Worker `message` listener (`cached` → `cacheService.noteVersion`, `goto` → topic switch) |
+| `client/features/palette/` | Built-in `palette` plugin (`plugin.ts`, `format.ts`, `keybindings-dialog.ts`): `Mod+K` topic quick-open, `Mod+Shift+P` command palette, and `Mod+/` keyboard shortcuts overview |
+| `client/plugins/lazy-extras.ts` | On-demand ESM loader (`workbench-extras-<hash>.js`) and lightweight shells for lower-frequency built-in plugins (`history`, `schedules`, `reviews`, `skills`, `settings`, `changes`, `files`, `reader`, `palette`) to keep `app-*.js` gzip under 160 KiB |
+| `client/styles/main.css` | Stylesheet entrypoint importing `tokens.css` (default VS Code Dark Modern / Light Modern `--fh-*` semantic tokens and legacy aliases), 18 modular CSS files (`components`, `base`, `layout`, `topics`, `terminal`, `schedules`, `reviews`, `git`, `history`, `skills`, `transcript`, `settings`, `composer`, `overlays`, `status`, `files`, `responsive`, `workbench`), and `workbench-theme.css` (global §4.2 control/shape/typography/scrollbar rules) in cascade order, bundled into `dist/webui-assets/style-<hash>.css` |
 | `manifest.ts` | The web app manifest and the icon, as strings, for the same reason `page.ts` is a module |
 | `icons.ts` | The page's icons, hand-drawn inline SVG, and which emoji each one replaces — see [Icons](#icons) |
 | `webpush.ts` | Web Push, server half: the VAPID key, the subscribed devices, RFC 8291 encryption, the endpoint allowlist |
@@ -78,11 +99,12 @@ a port — which is what `room.test.ts` and `index.test.ts` do.
 **The client script and stylesheet were inline in `page.ts` until Phase 1 Step 1A of
 [the refactor plan](../../../docs/refactor-plan.md)**, and were moved to `client/` as they were.
 So wherever this README names a script function or a CSS rule as `page.ts`'s — `codeView()`,
-`menu()`, `.b .raw` — read `client/legacy-app.ts` or `client/styles/main.css`. Both are bundled by
+`menu()`, `.b .raw` — read `client/main.ts` (and the typed modules it wires under `client/`) or `client/styles/` (imported by `main.css`). Both are bundled by
 `scripts/webui-client.mjs` (called by `scripts/build-webui-assets.mjs`, and by the tests), linked
 from the page by content-hashed name, and served by `GET /assets/<file>`. What the server decides
 per deployment reaches the script as `<script type="application/json" id="boot-config">` — read
-once into `BOOT` — instead of being spliced into its text, which is what let the CSP drop
+once into `BOOT` (including `version`, the package version rendered as `v<version>` in the status
+bar and mobile More view) — instead of being spliced into its text, which is what let the CSP drop
 `script-src 'unsafe-inline'`. Two build-time markers remain in the script (`clientIcons()` and
 `CACHE_CORE`, filled by `webui-client.mjs`); the build fails if either is missing.
 
@@ -154,6 +176,16 @@ saying so rather than doing nothing.
 The star is persisted beside the title, and only when true — a topic file from before stars, or
 from someone who never uses them, is unchanged. The page sends `{ starred: true|false }`, never a
 toggle, because `post` retries a dropped request and a retried toggle would flip back.
+
+**One-step topic setup (`POST /api/topics` and `POST /api/topics/setup`).** `POST /api/topics`
+accepts optional `{ agent?, cwd? }` to create a topic and bind its agent and working directory in
+one request (rolling back the newly created topic if setup fails). On an already-created empty topic
+before the first message, `POST /api/topics/setup` takes `{ topic, agent?, cwd? }` and applies the
+binding directly through the daemon without posting `/agent` or `/cd` commands into the transcript.
+The new-topic launcher pairs `POST /api/topics/setup` with `GET /api/topics/workdirs` so users can
+switch agents in place and browse/pick a working directory inline (using `/cd`'s one-level
+breadcrumbs/up/filter picker) on the same page before sending the first message, while the status
+line immediately exposes the chosen agent's model and settings switches.
 
 ### Every topic keeps its transcript
 
@@ -509,9 +541,9 @@ read as two conversations. The outcome and `seenAt` are persisted in the topic f
 (its timer dies with the daemon).
 
 **`seenAt` is the server's clock, not the page's.** The page only says *now* (`api/seen {topic}`), and
-only when the topic on screen is in `review` and the page is visible; the room stamps `Date.now()`.
+only when the topic on screen is in `review` or `failed` and the page is visible; the room stamps `Date.now()`.
 It is compared with a turn's end, which is the daemon's time, and a phone's clock is nothing to
-compare a server's with. Posting only on `review` keeps the traffic to one request per reply read.
+compare a server's with. Posting only on `review`/`failed` keeps the traffic to one request per outcome read.
 
 **A menu is not a question** (`awaitingQuestion`). The room's `awaiting` set is "messages with live
 buttons", which was the same thing while every such message was an ask. Operator control menus —
@@ -645,7 +677,7 @@ no request of its own — the `topics` event that keeps the switcher current car
 state, message counts and unread marks, so a run that starts or finishes moves the tab as it
 happens. Its one bulk write is **Mark all read** — the check icon in the panel's title (`#sched-read`),
 shown only on this sub-tab, as the topic list's sits beside its own title — which clears this page's `aa_reads` marks and posts
-`api/seen` once for each run the daemon still counts as `stage: review` (the route takes one topic
+`api/seen` once for each run the daemon still counts as `stage: review` or `failed` (the route takes one topic
 and has no bulk form; a run list is a handful). The list is grouped by the browser's calendar —
 this month by day, older by month, `lastAt` deciding — with each group folded or opened on its own
 in `aa_sched_groups`; the newest group and the one holding the topic on screen start open, and a
@@ -766,12 +798,13 @@ timer while visible (5s while a run is in flight, 30s otherwise) — the daemon 
 run finishing. Countdowns ("in 3h 12m") are computed from `nextAt` on the client; every other time
 arrives formatted in the task's own zone.
 
-Reviews travel the same way and on the same timer: `useReviewPanel` hands the room `list()` and
-`dismiss(text)`, `daemon/review-panel.ts` builds them from `history.db` and `reviews.json`, and the
-routes are `GET api/reviews` and `POST api/reviews/op` — the latter takes one verb,
-`{action:'dismiss', text}` (`ReviewOpRequestSchema`), and answers with the fresh list. There is no
-verb that starts, changes or undoes a review, because a review has no writer but the sweep. The list is pulled
-when the tab is selected and on the panel's timer while it is the visible one.
+Reviews travel the same way and on the same timer: `useReviewPanel` hands the room `list()`,
+`dismiss(text)`, and `revert(name, id)`, `daemon/review-panel.ts` builds them from `history.db`
+and `reviews.json` (including reviewer/model/message-count/duration metadata and inline diffs), and
+the routes are `GET api/reviews` and `POST api/reviews/op` — the latter accepts
+`{action:'dismiss', text}` or `{action:'revert', name, id}` (`ReviewOpRequestSchema`), and
+answers with the fresh list. There is still no verb that starts or edits a review sweep. The list is
+pulled when the tab is selected and on the panel's timer while it is the visible one.
 
 **Creating tasks.** The page used not to create tasks, on the reasoning that a page POSTing a
 prompt or a command would put a bash surface behind the login form. The edit route already took a
@@ -1979,6 +2012,8 @@ A file can be opened from elsewhere: `window.openFileEditor(path)` takes a path 
 topic's working directory or absolute on that machine, and the git panel uses it.
 
 Routes are `GET /api/files/list|read|search` and `POST /api/files/write|create|rename|remove`.
+When the listed directory sits inside a git repository, `GET /api/files/list` attaches a `gitStatus`
+code (e.g. `M`, `A`, `?`) to modified/untracked file and directory entries.
 Every one answers 404 when the feature is off, and the page is told at render time (`FILES_OK`),
 so a page older than the config has no button to press. A successful write is a log line naming
 the operator, the machine and the file.
@@ -2423,16 +2458,14 @@ without it. `page.test.ts` pins the viewport tag so this does not get added by r
   that promise's `finally`.
 - **A reverse proxy must not buffer**, and must not strip `Content-Encoding` without
   re-adding it. `proxy_buffering off;` in nginx.
-- **The client script is invisible to the toolchain.** `client/legacy-app.ts` is left out of
-  `tsconfig.json` and `eslint.config.js` until the refactor plan's later steps split it into typed
-  modules. So the script is kept stupid, and any change that needs a new *decision* belongs on the
-  other side of the wire. It still uses string concatenation rather than template literals, a
-  habit from when it was itself a template — the trap now applies only to `page.ts` and
-  `page-body.ts`, where a literal `` ` `` or `${` is eaten by the surrounding template and becomes
-  a module-load error. It is not untested: `page.dom.*.test.ts` runs it in jsdom, and a behavioural
-  change in there should arrive with a test, because nothing else in the repo can see it. And after
-  editing it, `npm run build:assets` before trying a source checkout: the daemon serves the bundle,
-  not the file.
+- **The client script is strictly typechecked and linted.** The entire `client/` tree — including
+  the entrypoint `client/main.ts` — is covered by `client/tsconfig.json` and `eslint.config.js`.
+  Server-side decisions still belong on the daemon side of the wire, and template-literal escaping
+  still applies to `page.ts` and `page-body.ts`, where a literal `` ` `` or `${` is eaten by
+  the surrounding template and becomes a module-load error. Behavioural changes in `client/` should
+  arrive with unit or `page.dom.*.test.ts` coverage, and after editing anything under `client/`,
+  run `npm run build:assets` before trying a source checkout: the daemon serves the bundle, not the
+  source file.
 - **The page can render nothing while the event stream is perfectly healthy**, and this has
   already shipped once. A client that names no topic sends `GET /api/events` with no `?t=`,
   and `stream()` answers for `topics.current()` — so the sync that comes back carries a topic
@@ -2530,7 +2563,10 @@ shipped, which `open()` loads and the DOM tests run; and **source**, the files a
 CSS rule or a line of script pinned as text must be read from the source. The helper's `renderPage`
 and `servePage` keep the old positional signature (the code view's URL fifth).
 
-`page.dom.test.ts` is the one that covers the client script's *behaviour*. It loads what the
+The `page.dom.*.test.ts` files (`chrome`, `core`, `i18n`, `layout`, `sending`, `theme`, `topics`)
+together with `page.dom.wb2-*.test.ts` and the colocated `client/features/**/*.test.ts` unit suites
+cover the client script's *behaviour* (the legacy pre-workbench `page.dom.{editors,panels,library,settings}.test.ts`
+files were retired once the workbench feature tests and `test/e2e/webui/` covered those views). `page.dom.*.test.ts` loads what the
 daemon serves into jsdom, stubs `EventSource` and `fetch`, and drives the page through the
 events `room.ts` actually emits — asserting on what a person would see: messages on screen, the
 drawer open or shut, where the URL points. Add to it whenever you touch `page.ts`; the string
@@ -2631,6 +2667,32 @@ the test that names it. Its real-browser half was checked on 2026-10-24 in Chrom
 real server behind a proxy that played the four failures (an Access 302 to another origin, a send
 swallowed, an answer lost, the browser offline); the same run against the code before it lost the
 draft and put the restored failure at the top.
+
+### Real-browser E2E (`test/e2e/webui/`)
+
+Layout, responsive breakpoints, drawers, and real SSE/login flows are covered by Playwright tests
+under `test/e2e/webui/` (`smoke.spec.ts` plus reusable `harness.ts`, `fake-agent.mjs`, `seed.ts`,
+and `fixtures.ts`). Each test run starts an isolated gateway in a temporary `HOME` on a random
+loopback port with `FLEETHERD_*` and `TALKCODE_*` stripped from the child environment, backed by a
+fake ACP stdio agent.
+
+Build the web UI assets first, then run the suite:
+
+```bash
+npm run build:assets
+npx playwright install chromium   # once, if using local Chromium
+npm run test:e2e
+```
+
+To run against a remote Chromium instance over CDP instead of launching a local browser, set
+`PW_CDP_URL` (and optionally `PW_CDP_HEADERS` as `Key: Value` lines or a JSON object):
+
+```bash
+PW_CDP_URL=http://127.0.0.1:9222 npm run test:e2e
+```
+
+Failure screenshots, traces, and videos (local/CI) are written under `test-results/webui-e2e/`.
+In GitHub Actions, `.github/workflows/webui-e2e.yml` runs independently from `release.yml`.
 
 ## Icons
 

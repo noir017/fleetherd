@@ -8,18 +8,11 @@ export default tseslint.config(
     // Worktrees other sessions park inside the repo, kept out of git by `.git/info/exclude`: they
     // are whole checkouts of this tree, often mid-edit, and linting them is never meant — `eslint .`
     // walking into one turns another session's work in progress into this one's errors.
-    ignores: ['dist/**', 'node_modules/**', 'coverage/**', '*.config.js', '*.config.ts', '.claude/worktrees/**', '.codebuddy/worktrees/**', '.worktrees/**'],
-  },
-  {
-    // The web UI's client script as it was moved out of page.ts (refactor Phase 1 Step 1A):
-    // twelve thousand lines of ES5-style browser code that no lint ever saw while it was a string.
-    // Its later steps split it into typed modules and lint those; until then it is out, by name,
-    // so a new file beside it is linted from the start. tsconfig.json leaves client/ out too.
-    ignores: ['src/platform/webui/client/legacy-app.ts'],
+    ignores: ['dist/**', 'node_modules/**', 'coverage/**', 'test-results/**', 'playwright-report/**', 'blob-report/**', '*.config.js', '*.config.ts', '.claude/worktrees/**', '.codebuddy/worktrees/**', '.worktrees/**'],
   },
   ...tseslint.configs.recommended,
   {
-    files: ['src/**/*.ts'],
+    files: ['src/**/*.ts', 'test/e2e/**/*.ts'],
     rules: {
       '@typescript-eslint/no-unused-vars': [
         'error',
@@ -35,6 +28,22 @@ export default tseslint.config(
     rules: {
       '@typescript-eslint/no-explicit-any': 'off',
       'max-lines-per-function': 'off',
+    },
+  },
+  {
+    files: ['src/platform/webui/client/features/**/*.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['**/workbench/*', '../workbench/*', '../../workbench/*', '../../../workbench/*'],
+              message: 'Web UI features must not import workbench internals directly; use PluginContext or services.',
+            },
+          ],
+        },
+      ],
     },
   }
 );

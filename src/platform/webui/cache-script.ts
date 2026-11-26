@@ -1,7 +1,7 @@
 /**
  * The browser's transcript cache — its database, its record, its rotation, and the one rule for
  * which of two copies of a topic is newer — as one piece of script that both of its writers
- * include: the page's client script (`client/legacy-app.ts`), and the service worker (`sw.ts`),
+ * include: the page's client script (`client/main.ts`), and the service worker (`sw.ts`),
  * which keeps the topic a push is about so the page that opens it finds it already there.
  *
  * Two writers of one IndexedDB store must agree on its name, its version, the shape of a record,

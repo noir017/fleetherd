@@ -5,6 +5,211 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.39.0-beta.6] - 2026-11-26
+
+### Changed
+
+- **A new topic folds into two rows, each opened on its own.** beta.5 folded the agent and the
+  folder into one summary line with a single Change button that reopened both. The agent now folds
+  to a row of its own (`Agent cc@myhost [Change]`), and the folder keeps the top of its picker —
+  the title and the agent and host badges — with the chosen path in place of the hint and its own
+  Change button. Each opens only its own part.
+- **The folder picker chooses from its path bar.** The row under the path that repeated the folder
+  being browsed, with its tags and a "Use this folder" button, is gone; a Select button at the end
+  of the path bar does the same, highlighted when that folder is already the chosen one. This is
+  the same picker as `/cd`'s, so both change.
+- **Scheduled sessions can be marked read at once.** The Sessions tab of Scheduled had a Mark all
+  read button that never appeared, because the page never handed the view what it needed to
+  offer it. It is now in the title bar beside Refresh, as in Topics.
+
+### Fixed
+
+- **Switching a new topic to an agent on another machine no longer keeps the old folder.** A
+  folder picked for an agent on one machine stayed recorded when the topic moved to an agent on
+  another, so the summary showed a path that did not exist there and the picker failed with "no
+  such file or directory". Moving machines without naming a folder now starts from the new agent's
+  own; moving between agents on one machine still keeps it, as a retry already did.
+- **`/super` works again on a host whose first agent after an update has no skill directory.**
+  The bundled skills' files are copied once per version, and that copy was recorded as done even
+  when the first agent started on the host — a custom harness such as a web agent — had nowhere to
+  link them, so nothing was copied. Every later agent linked `super` to a directory that was never
+  written, and the skill vanished from every harness on that host. The files are now copied by the
+  first agent that has a skill directory to link them into.
+
+## [3.39.0-beta.5] - 2026-11-26
+
+### Changed
+
+- **A new topic folds away what has been picked.** The agent cards and the folder browser stayed
+  open after the choice, filling most of a phone's screen above the composer. Picking an agent now
+  folds the cards and picking a folder folds the browser; the summary line keeps showing both, and
+  its Change button opens them again.
+- **The agent tag in the topic list no longer stands out.** It was a filled coloured chip on every
+  row, the loudest thing in a long list. It is now dim text in the same line as the host and
+  folder (`cc · myhost · project`), with only a faint tint of the harness colour.
+- **Sidebar buttons sit in the title bar.** History, Schedules, Reviews and Skills each drew a
+  row of their own under the title, repeating the title or a count ("30 sessions", "50 reviews")
+  beside Refresh and New. Those buttons are now in the sidebar's title bar next to its menu, the
+  way Topics already had them on desktop, and the rows are gone. On phones Topics' New, Select and
+  Clear moved up there too.
+- **Phones get the bottom tabs back, inside the drawer.** beta.4's drawer brought the desktop's
+  vertical rail along, which took a column of an already narrow screen. The drawer now ends in
+  beta.3's tab bar — Topics, History, Schedules and More, with Reviews, Skills and Settings under
+  More — and the filter chips are compact enough to fit on one row instead of scrolling sideways.
+
+### Fixed
+
+- **A topic's menu stays where it opened.** Opening a row's menu and then letting the list repaint
+  — the age ticking over, another topic updating — replaced the button the menu was anchored to,
+  so the menu jumped to the top-left corner or closed. It now stays put until it is dismissed, in
+  the topic list and in the schedules list.
+- **The time and the menu button no longer overlap.** Hovering a row laid the menu button on top
+  of its age; the age now gives way to the button without the row moving.
+- **Scrollbars look the same everywhere.** The page's scrollbar colours were set with the standard
+  properties, which make Chromium 121 and later ignore the slim square scrollbar the stylesheet
+  defines, so Chromium drew its own native scrollbar instead — thick and rounded on phones. The
+  standard properties now apply only where the browser has no other way to style scrollbars.
+
+## [3.39.0-beta.4] - 2026-11-25
+
+### Changed
+
+- **Phones get the slide-out sidebar back.** The workbench gave phones a list screen with bottom
+  tabs (Topics, History, Schedules, More) and opened each topic as a separate screen with a back
+  button, so moving between topics meant two screens every time. Below 640px the topic is now the
+  main screen and the same sidebar the desktop has — Topics, History, Schedules, Reviews, Skills,
+  Settings — slides in from the menu button or the left edge, and closes on a pick, a tap outside,
+  a swipe or the back gesture. The separate phone shell is gone.
+- **A new topic picks its agent and its folder on one page.** beta.3 went back to choosing an agent
+  first and a folder after it, because beta.2's grid of every directory was a wall of long paths.
+  The launcher now has the agent cards and, below them, a folder browser for the chosen agent that
+  shows one level at a time with the `/cd` picker's breadcrumbs, up and filter; either can be
+  picked first, and the first message starts in both.
+- **Larger default text.** The workbench had set everything to 13px. Messages and the composer are
+  back at 15px and the rest of the interface at 14px, with the sizes kept in a few shared tokens.
+- **Running is blue again.** A running topic's dot, age and badges, the Run filter and the status
+  bar had turned green, the colour that means done; they are bright blue, and an idle topic whose
+  agent is still up keeps the dim blue the sidebar uses for it.
+
+### Fixed
+
+- **A message sent with Send now no longer vanishes.** Tapping Send now on a queued message while
+  a turn was running delivered it to the agent but dropped it from the page, and it was not in the
+  history after a reload either: the queued copy was discarded before its delivery was recorded.
+  It now shows in the transcript where it was delivered.
+- **Topics open at the newest message, and open from the cache.** On phones a topic opened at its
+  first message, because it scrolled to the bottom while still hidden; and every switch fetched
+  the whole topic again instead of painting what the page had cached and fetching only what was
+  new. A second open of a long topic now shows in about 0.15s instead of 1.2s on a slow network.
+- **Typing, streaming and switching topics no longer stall the page.** Each keystroke made the
+  browser lay out the whole transcript, a long transcript highlighted every code block before it
+  showed, and every list update rebuilt the whole topic list, even while it was hidden. Code blocks
+  are now highlighted as they scroll near the screen and only changed rows of the list are
+  redrawn. Measured on a slowed-down CPU with 86 topics and a 150-message transcript, time spent in
+  long tasks fell by 94–98% while typing, 72–88% while a reply streams in, and 30–38% when
+  switching topics.
+
+## [3.39.0-beta.3] - 2026-11-25
+
+### Changed
+
+- **New topics pick their directory with the folder picker again.** beta.2 laid every directory of
+  the chosen agent out as a grid of path buttons; with dozens of long paths it was a wall to read.
+  Tapping an agent card now sends `/agent` as before the workbench, and the gateway answers with the
+  same folder picker `/cd` uses — breadcrumbs, up, filter. The agent catalogue no longer carries
+  each agent's directory list.
+- **A failed topic leaves Needs you once you have looked at it.** A failure used to stay there until
+  the next turn, however often it was opened, so the group filled with topics already read. It now
+  clears the way a finished reply does: when the topic is seen after the failure. Sub-agent
+  tracking is unchanged — the agent waiting on a failed part has not seen it, so `fleetherd tasks`
+  still reports it until the next turn.
+- **Quieter tab counts, and one sidebar header for Topics, Skills and Schedules.** The counts beside
+  **All** / **Starred** were solid accent pills that drew the eye more than the labels; every
+  segmented control now shows them as plain secondary text. Skills' **Resident** / **Library** and
+  the Schedules header (search, filter, sort, state chips) now use the same segmented tabs and
+  filter bar as Topics, so the three sidebars line up instead of each drawing its own.
+
+### Fixed
+
+- **Choosing an agent on a new topic switches in place, and its model and settings can be picked
+  right away.** beta.2 posted each pick to the setup endpoint, waited for the answer, then rebuilt
+  the launcher and repainted the whole topic list, and the status line never offered the new agent's
+  model or account. A pick is the `/agent` command again, and the status line shows that agent's
+  switches as soon as it is chosen.
+- **Sidebars and panels reopen at the width they were closed at.** Hiding and showing the sidebar
+  (or the secondary sidebar and bottom panel) brought it back at a narrow default; a sidebar saved
+  as collapsed now also stays collapsed on reload, and split editor groups keep their proportions
+  when the window is resized.
+- **Editor tabs switch again.** The tab strip captured the pointer on every press to be ready for a
+  drag, which sent the click to the strip instead of the tab, so only the newest tab could be
+  shown; the pointer is now captured only once a drag actually starts.
+
+## [3.39.0-beta.2] - 2026-11-25
+
+### Added
+
+- **One-step new topic setup, review revert, file tree git badges, and status-line permissions.**
+  New topics now show both agent cards and a working-directory grid upfront so you can pick an agent
+  and directory before sending anything — without echoing `/agent` or `/cd` into the transcript or
+  disturbing an existing draft. Review detail views now display reviewer, model, message count,
+  duration, and inline diffs for applied skill changes, with a confirmed **Revert** button to roll
+  back an applied skill commit in place. The file tree now surfaces git status badges (`M`, `A`,
+  `?`, etc.) for changed entries inside git repositories, the status line above the composer adds a
+  clickable **Permissions** chip, and the status bar and mobile **More** screen show the daemon
+  version.
+- **Quick schedule presets in the task editor.** Added **Daily**, **Weekly**, and **Interval**
+  presets alongside custom cron and one-off schedules so common recurring timings generate cron
+  expressions directly in the editor.
+
+### Changed
+
+- **Page-by-page workbench alignment and mobile stack shell polish.** Aligned desktop, tablet, and
+  mobile layouts across the shell, topic list, composer, tools, skills, and settings views: unified
+  mobile large-title headers and bottom action sheets, replaced remaining inline SVGs and hardcoded
+  colors with shared icons and theme tokens, and moved the terminal plugin into the on-demand extras
+  bundle to keep initial page load lean.
+
+### Fixed
+
+- **Workbench layout restoration and mobile state sync.** Kept the tablet sidebar drawer collapsed
+  on reload when a saved layout is restored, restored the desktop topic editor when switching back
+  from mobile detail view, and kept mobile **More** connection and notification toggles synchronized
+  with live stream and push state.
+
+## [3.39.0-beta.1] - 2026-11-25
+
+### Added
+
+- **Web UI dockable workbench, VS Code Modern themes, and multi-window workflows.** Rebuilt the
+  browser UI as a modular workbench with a primary sidebar, secondary topic-tools sidebar, bottom
+  panel, status bar, and draggable multi-group editor grid (`DynamicDockEngine`) with four-way
+  splits, tab reordering, cross-part view moves, `aa_layout` persistence/reset, keyboard layout
+  commands (`Mod+\`, `Mod+1/2/3`, `Mod+B`, `Mod+Alt+B`, `Mod+J`), responsive desktop/tablet/mobile
+  breakpoints (preserving single-column `StackShell` on phones), and VS Code Dark Modern / Light
+  Modern `--fh-*` color tokens.
+- **Command palette and window polish across built-in tools.** Added `Mod+K` topic quick-open,
+  `Mod+Shift+P` command palette, and `Mod+/` keyboard shortcuts overview; message action bars and
+  one-click side-by-side turn diff; per-file diff tabs with hunk navigation and multi-comment
+  staging; multi-file editor tabs with dirty indicators, 409 conflict banners, and reveal-in-tree;
+  multi-tab terminals with rename and move-to-secondary/editor actions; settings search and
+  modified-item markers, skill history diffs, scheduled task run tables, unified list keyboard/batch
+  operations, and highlighted search inside read-only history transcripts.
+- **External Web UI plugin system (`platforms.web.plugins`).** Added opt-in external plugins
+  configured strictly via `config.yaml` (default `[]`), with manifest validation, safe directory
+  containment checks (rejecting `files.roots` and agent workdirs), GUARDED `/plugins/<id>/` static
+  asset allowlisting and `/api/plugins/<id>/` server routes, `PluginHost` (topics, events, SSE push,
+  isolated 0600 storage, and mandatory `[plugin:<id>]` attribution prefix), error-isolated frontend
+  loading, `fleetherd doctor` warnings, `dist/webui-plugin.d.ts` type generation, an example plugin
+  (`examples/webui-plugin-hello/`), and English/Chinese plugin documentation (`docs/webui-plugins.md`).
+
+### Changed
+
+- **Web UI client architecture and on-demand bundling.** Replaced the monolithic `legacy-app.ts`
+  and legacy `panels/` with 13 typed built-in plugins under `src/platform/webui/client/`, enabled
+  full TypeScript and ESLint enforcement across the client, split lower-frequency built-in plugins
+  into an on-demand `workbench-extras-*.js` chunk keeping `app-*.js` gzip under the 160 KiB budget,
+  and added a Playwright E2E suite (`smoke`, `workbench`, `dock`, `plugins`) in `test/e2e/webui/`.
+
 ## [3.38.0] - 2026-11-24
 
 ### Added

@@ -129,10 +129,15 @@ jobs:
           else
             notes=(--generate-notes)
           fi
+          prerelease=()
+          case "${{ steps.tag.outputs.name }}" in
+            *-*) prerelease=(--prerelease) ;;
+          esac
           gh release create "${{ steps.tag.outputs.name }}" \
             dist-pack/*.tgz dist-pack/SHA256SUMS \
             --title "${{ steps.tag.outputs.name }}" \
             --verify-tag \
+            "${prerelease[@]}" \
             "${notes[@]}"
 
       - name: Version for the image

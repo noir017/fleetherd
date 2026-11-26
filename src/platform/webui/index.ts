@@ -31,6 +31,9 @@ import type { MessageRef, SettingsScreen, SlashCommandSpec, WorkdirScreen } from
 import { MESSAGE_KINDS, type MessageKind, type PlatformAdapter, type SendOptions } from '../adapter.js';
 import { renderWebMarkdown } from '../web-markdown.js';
 import { WebAuth, fileSessionStore } from './auth.js';
+import { loadAssets } from './assets.js';
+import { loadPlugins } from './plugins/loader.js';
+import { PluginHostManager } from './plugins/host.js';
 import type { WebMessage } from './protocol.js';
 import { readableKind } from './reading.js';
 import {
@@ -157,7 +160,12 @@ const CAPABILITIES: PlatformAdapter['capabilities'] = {
  * listening from the factory would accept a message in that window and drop it into a null
  * handler with nothing logged.
  */
-export function createWebuiAdapter(instance: WebuiInstance): PlatformAdapter {
+export interface WebuiAdapterOptions {
+  /** Additional directories (e.g. agent working dirs) forbidden from hosting plugins. */
+  readonly forbiddenPluginRoots?: readonly string[];
+}
+
+export function createWebuiAdapter(instance: WebuiInstance, opts?: WebuiAdapterOptions): PlatformAdapter {
   // Per instance rather than one shared file: two web UIs on two ports are two deployments,
   // and merging their topic lists would put one's rooms in the other's switcher.
   const topics = new TopicStore(path.join(configDir(), `webui-topics-${instance.id}.json`));
@@ -179,6 +187,13 @@ export function createWebuiAdapter(instance: WebuiInstance): PlatformAdapter {
   room.useNotifier((notice) => {
     if (push.count > 0) void push.notifyAll(notice);
   });
+  const forbiddenRoots = [...(instance.files?.roots ?? []), ...(opts?.forbiddenPluginRoots ?? [])];
+  const plugins = loadPlugins(instance.plugins ?? [], { forbiddenRoots });
+  const pluginHost = new PluginHostManager({
+    room,
+    plugins,
+    storageDir: path.join(configDir(), 'plugins'),
+  });
   const server = createWebServer(
     room,
     // Beside the topic file, per instance for the same reason. Persisted so that an upgrade —
@@ -199,9 +214,17 @@ export function createWebuiAdapter(instance: WebuiInstance): PlatformAdapter {
     // Absent unless configured, and that absence is the whole of "SSO is off": the server has
     // no fallback path that half-trusts a header when there is nothing to verify it against.
     instance.sso ? new WebSso(instance.sso) : undefined,
-    push
+    push,
+    loadAssets(),
+    plugins,
+    pluginHost
   );
-  return { ...describe(instance), ...outbound(room, instance), forkThread: forkTopicThread(room), ...lifecycle(room, server) };
+  return {
+    ...describe(instance),
+    ...outbound(room, instance),
+    forkThread: forkTopicThread(room),
+    ...lifecycle(room, server, pluginHost),
+  };
 }
 
 function describe(instance: WebuiInstance): Pick<PlatformAdapter, 'platform' | 'platformType' | 'capabilities'> {
@@ -745,7 +768,8 @@ function outbound(room: WebRoom, instance: WebuiInstance): Outbound {
 
 function lifecycle(
   room: WebRoom,
-  server: WebServer
+  server: WebServer,
+  pluginHost: PluginHostManager
 ): Pick<
   PlatformAdapter,
   | 'onMessage'
@@ -764,6 +788,8 @@ function lifecycle(
   | 'useIdleReclaim'
   | 'useTopicKill'
   | 'useAgentCatalog'
+  | 'useTopicSetup'
+  | 'useWorkdirBrowser'
   | 'useModelPicker'
   | 'usePendingQueueActions'
   | 'useOptionPicker'
@@ -843,6 +869,8 @@ function lifecycle(
      * agent as one tap — where a chat app has a message box and the `/agent` menu's two levels.
      */
     useAgentCatalog: (lookup) => room.useAgentCatalog(lookup),
+    useTopicSetup: (setup) => room.useTopicSetup(setup),
+    useWorkdirBrowser: (browse) => room.useWorkdirBrowser(browse),
     /**
      * The only implementor because it is the only platform with a status line to put a switch
      * in: a chat app has `/model` and its menu, which is a message.
@@ -874,10 +902,14 @@ function lifecycle(
     async registerCommands(cmds: SlashCommandSpec[]) {
       room.setCommands(cmds);
     },
-    start: () => server.start(),
+    start: async () => {
+      await pluginHost.activateAll();
+      await server.start();
+    },
     stop: async () => {
       // Send whatever is being held before the sockets go, so a turn that ended just as the
       // daemon was asked to stop is not left with its last edit in a queue nobody will run.
+      await pluginHost.dispose();
       room.dispose();
       await server.stop();
     },

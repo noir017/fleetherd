@@ -1,0 +1,142 @@
+import { expect, loginViaUi, test } from './fixtures.js';
+import { startGateway, type GatewayHandle } from './harness.js';
+import { seedTopics } from './seed.js';
+
+let gateway: GatewayHandle;
+let cookie = '';
+
+test.describe('wb2-sched schedules, history, and reviews alignment', () => {
+  test.beforeAll(async () => {
+    gateway = await startGateway({ title: 'fleetherd-wb2-sched-e2e' });
+    const seeded = await seedTopics(gateway, [
+      { title: 'Node 22 upgrade', message: 'Check Node 22 upgrade steps.' },
+      { title: 'Slow cart API', message: 'Inspect slow cart API queries.' },
+    ]);
+    cookie = seeded.cookie;
+    const targetTopic = seeded.topics['Node 22 upgrade'];
+
+    await fetch(`${gateway.baseUrl}/api/schedules/add`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie },
+      body: JSON.stringify({
+        task: {
+          name: 'nightly-ci-report',
+          prompt: 'Summarize failing CI jobs.',
+          agent: 'alpha',
+          session: 'new',
+          cron: '0 2 * * *',
+          tz: 'UTC',
+          target: { topic: targetTopic },
+          tags: ['ci'],
+        },
+      }),
+    });
+  });
+
+  test.afterAll(async () => {
+    await gateway.stop();
+  });
+
+  test('desktop renders schedules detail/edit/sessions, grouped history + read-only footer, and reviews', async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await loginViaUi(page, gateway.baseUrl, gateway.secret);
+
+    // Schedules: Tasks + Detail + Edit + Sessions
+    await page.locator('.wb-activity-item[data-activity-id="schedules"]').click();
+    await expect(page.locator('.fh-schedules-header')).toHaveCount(0);
+    await expect(page.locator('.wb-sidebar-head > .wb-part-actions [data-action-id="schedules.refresh"]')).toBeVisible();
+    await expect(page.locator('.wb-sidebar-head > .wb-part-actions [data-action-id="schedules.new"]')).toBeVisible();
+    const taskRow = page.locator('.fh-schedules-view .sched-row').first();
+    await expect(taskRow).toBeVisible();
+    await taskRow.click();
+    await expect(page.locator('.fh-schedule-editor .tp-view')).toBeVisible();
+    await expect(page.locator('.fh-schedule-editor .fh-psub')).toBeVisible();
+    await expect(page.locator('.fh-schedule-editor .tp-prompt-card')).toBeVisible();
+
+    await page.locator('.fh-schedule-editor .tp-acts--head [data-tp-act="edit"]').click();
+    await expect(page.locator('#tp-form')).toBeVisible();
+    await page.locator('.fh-schedule-editor .tp-acts--head button').first().click();
+    await expect(page.locator('.fh-schedule-editor .tp-view')).toBeVisible();
+
+    await page.locator('.fh-schedules-subnav button').nth(1).click();
+    await expect(page.locator('.fh-schedules-sess-search')).toBeVisible();
+
+    // History: date groups + read-only editor footer
+    await page.locator('.wb-activity-item[data-activity-id="history"]').click();
+    await expect(page.locator('.wb-history-header')).toHaveCount(0);
+    await expect(page.locator('.wb-sidebar-head > .wb-part-actions [data-action-id]')).toHaveCount(1);
+    await expect(page.locator('.wb-sidebar-head > .wb-part-actions [data-action-id="history.refresh"]')).toBeVisible();
+    await expect(page.locator('.wb-history-grp').first()).toBeVisible();
+    await page.locator('.wb-history-view .hist-item').first().click();
+    await expect(page.locator('.wb-history-editor .wb-history-head')).toBeVisible();
+    await expect(page.locator('.wb-history-editor .wb-history-foot')).toBeVisible();
+
+    // Reviews view loads cleanly
+    await page.locator('.wb-activity-item[data-activity-id="reviews"]').click();
+    await expect(page.locator('.fh-reviews-view')).toBeVisible();
+    await expect(page.locator('.fh-reviews-header')).toHaveCount(0);
+    await expect(page.locator('.wb-sidebar-head > .wb-part-actions [data-action-id]')).toHaveCount(1);
+    await expect(page.locator('.wb-sidebar-head > .wb-part-actions [data-action-id="reviews.refresh"]')).toBeVisible();
+  });
+
+  test('marks every scheduled session read from the Sessions tab title bar', async ({ page }) => {
+    // Log in before the run: a page opened afterwards makes the new session its active topic, which is never unread.
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await loginViaUi(page, gateway.baseUrl, gateway.secret);
+
+    const list = (await (await fetch(`${gateway.baseUrl}/api/schedules`, { headers: { cookie } })).json()) as {
+      tasks?: { id?: string | null; name?: string }[];
+    };
+    const id = list.tasks?.find((t) => t.name === 'nightly-ci-report')?.id;
+    expect(id).toBeTruthy();
+    const ran = await fetch(`${gateway.baseUrl}/api/schedules/op`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie },
+      body: JSON.stringify({ id, action: 'run' }),
+    });
+    expect(ran.ok).toBe(true);
+
+    await page.locator('.wb-activity-item[data-activity-id="schedules"]').click();
+    await page.locator('.fh-schedules-subnav button').nth(1).click();
+
+    const unread = page.locator('.fh-schedules-view .sess-group-flag.unread');
+    const markAll = page.locator('.wb-sidebar-head > .wb-part-actions [data-action-id="schedules.markAllRead"]');
+    await expect(unread.first()).toBeVisible({ timeout: 30_000 });
+    await expect(markAll).toBeEnabled();
+    await markAll.click();
+    await expect(unread).toHaveCount(0);
+    await expect(markAll).toBeDisabled();
+  });
+
+  test('mobile drawer renders history and schedules lists without horizontal overflow', async ({ page }) => {
+    await page.setViewportSize({ width: 360, height: 740 });
+    await loginViaUi(page, gateway.baseUrl, gateway.secret);
+
+    await page.locator('#expand-sidebar').click();
+    await expect(page.locator('.wb-sidebar')).toBeVisible();
+
+    await page.locator('.wb-stack-tab[data-tab-id="history"]').click();
+    await expect(page.locator('.wb-history-view .hist-item').first()).toBeVisible();
+    await expect(page.locator('.wb-sidebar-head > .wb-part-actions [data-action-id="history.refresh"]')).toBeVisible();
+    const histOverflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
+    expect(histOverflow).toBe(false);
+
+    await page.locator('.wb-stack-tab[data-tab-id="schedules"]').click();
+    await expect(page.locator('.fh-schedules-view .sched-row').first()).toBeVisible();
+    await expect(page.locator('.wb-sidebar-head > .wb-part-actions [data-action-id="schedules.refresh"]')).toBeVisible();
+    await expect(page.locator('.wb-sidebar-head > .wb-part-actions [data-action-id="schedules.new"]')).toBeVisible();
+    const titleFit = await page.evaluate(() => {
+      const head = document.querySelector<HTMLElement>('.wb-sidebar-head')!;
+      const title = head.querySelector<HTMLElement>('.wb-part-title')!;
+      const hr = head.getBoundingClientRect();
+      const tr = title.getBoundingClientRect();
+      return { width: tr.width, inside: tr.left >= hr.left && tr.right <= hr.right + 1 };
+    });
+    expect(titleFit.width).toBeGreaterThan(20);
+    expect(titleFit.inside).toBe(true);
+    const schedOverflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
+    expect(schedOverflow).toBe(false);
+  });
+});

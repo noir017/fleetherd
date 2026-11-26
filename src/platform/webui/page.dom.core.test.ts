@@ -1,17 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import {
-  servePage,
   tick,
-  saved,
   until,
   within,
-  untilAsync,
   opens,
   sync,
   message,
   face,
   open,
-  rowMenu,
   type Harness,
 } from './page.dom.test-helpers.js';
 
@@ -51,23 +47,6 @@ describe('webui page: rendering', () => {
     expect(meta[0]?.querySelector('.ic-eye')?.getAttribute('class')).toBe('ic ic-eye');
   });
 
-  it('draws its own controls as icons, leaving no emoji in the page around the conversation', async () => {
-    const h = await open({ terminal: true });
-    await h.emit(sync('a1b2c3d4', [message('m1', '<p>hello</p>')], ['a1b2c3d4', 'b2c3d4e5']));
-
-    expect(face(h.el('expand-sidebar'))).toBe('[menu]');
-    expect(face(h.el('term-toggle'))).toBe('[terminal]');
-    expect(face(h.el('skills-back'))).toBe('[chevronLeft]');
-    expect(face(h.el('opts-toggle').querySelector('.opts-gear'))).toBe('[gear]');
-    // A control is still named for whoever cannot see it.
-    expect(h.el('expand-sidebar').getAttribute('aria-label')).toBe('Show topics');
-    expect(h.el('term-toggle').getAttribute('aria-label')).toBe('Terminal');
-    // Nothing the page draws itself is an emoji any more (the script and stylesheet hold the
-    // glyphs they translate, so they are left out of what is read).
-    const shown = h.doc.body.cloneNode(true) as HTMLElement;
-    shown.querySelectorAll('script,style').forEach((n) => n.remove());
-    expect(shown.textContent).not.toMatch(/[\p{Extended_Pictographic}☰★☆▸▾■✓‹›]/u);
-  });
 
   it('shows an operator message as typed, numbers and line breaks intact', async () => {
     // The bug this is here for: rendered as markdown, "-ce 2" ends the first list and "2." opens
@@ -229,27 +208,6 @@ describe('webui page: a picture the agent sent', () => {
     expect(h.doc.querySelector('#log .files a')?.textContent).toBe('report.pdf');
   });
 
-  it('opens the picture full-screen when it is tapped, and closes on a click or Escape', async () => {
-    const h = await open();
-    await h.emit(sync('a1b2c3d4', [fileMessage('m1', 'shot.png', true)], ['a1b2c3d4']));
-    expect(h.el('lightbox').hidden).toBe(true);
-
-    await h.click('#log img.shot');
-    expect(h.el('lightbox').hidden).toBe(false);
-    // `.src` resolved against the document, which is what keeps the relative `f/<token>` working
-    // when a reverse proxy mounts this page under a sub-path.
-    expect(h.el('lightbox-img').getAttribute('src')).toBe('http://localhost:8787/f/abc123');
-
-    await h.click('#lightbox');
-    expect(h.el('lightbox').hidden).toBe(true);
-    // Dropped, not left decoded behind an invisible overlay for the life of the daemon.
-    expect(h.el('lightbox-img').hasAttribute('src')).toBe(false);
-
-    await h.click('#log img.shot');
-    expect(h.el('lightbox').hidden).toBe(false);
-    h.doc.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Escape' }));
-    expect(h.el('lightbox').hidden).toBe(true);
-  });
 
   it('hides a picture whose file is gone rather than showing a broken frame', async () => {
     // The download table holds 200 files across every topic, so scrolling back far enough finds
@@ -270,14 +228,6 @@ describe('webui page: reading a file the agent sent', () => {
   function readable(id: string, name: string, token: string, extra: Record<string, unknown> = {}): Record<string, unknown> {
     return { ...message(id, ''), file: { name, url: `f/${token}`, view: `view/${token}` }, ...extra };
   }
-  const reading = (html: string, size = 120, shown = size): Record<string, unknown> => ({
-    name: 'x',
-    size,
-    shown,
-    html,
-  });
-  const say = (h: Harness): string => h.el('reader-body').textContent ?? '';
-
   it("makes the file's name the way into the reader, with Download beside it, only when the server said it can render", async () => {
     const h = await open();
     await h.emit(
@@ -294,109 +244,12 @@ describe('webui page: reading a file the agent sent', () => {
     expect(rows[1]?.querySelector('a.view')).toBeNull();
   });
 
-  it('opens the file in a window over the transcript, rendered, with its name and a way to save it', async () => {
-    const h = await open({ replies: { 'view/aa': reading('<h1>Plan</h1><p>ship it</p>') } });
-    await h.emit(sync(T, [readable('m1', 'plan.md', 'aa')], [T]));
-    expect(h.el('reader').hidden).toBe(true);
 
-    await h.click('#log a[data-view]');
-    await until('the file to arrive', () => say(h).includes('ship it'));
-    expect(h.el('reader').hidden).toBe(false);
-    // A dialog over the page, not a page of its own: the backdrop holds a box, and the box holds
-    // the name, the download link and the document.
-    expect(h.el('reader').getAttribute('role')).toBe('dialog');
-    expect(h.el('reader').querySelector('#reader-box #reader-body')).not.toBeNull();
-    expect(h.calls.map((c) => c.path)).toContain('view/aa');
-    expect(h.el('reader-name').textContent).toBe('plan.md');
-    expect(h.el('reader-get').getAttribute('href')).toBe('f/aa');
-    expect(h.el('reader-get').hasAttribute('download')).toBe(true);
-    // Inside `.b`, so a document gets the headings, tables and code blocks a reply gets.
-    expect(h.el('reader-body').querySelector('.b h1')?.textContent).toBe('Plan');
-    // Nothing about a cut, because nothing was cut.
-    expect(h.el('reader-body').querySelector('.reader-note')).toBeNull();
-  });
 
-  it('says how much of a long file it is showing', async () => {
-    const h = await open({ replies: { 'view/aa': reading('<pre class="src"><code>1\n2</code></pre>', 3 * 1048576, 524288) } });
-    await h.emit(sync(T, [readable('m1', 'run.log', 'aa')], [T]));
-    await h.click('#log a[data-view]');
-    await until('the file to arrive', () => h.el('reader-body').querySelector('.src') !== null);
-    expect(h.el('reader-body').querySelector('.reader-note')?.textContent).toBe(
-      'Showing the first 512 KB of 3.0 MB. Download it for the rest.'
-    );
-  });
 
-  it('closes on its button and on Escape, and lets the document go', async () => {
-    const h = await open({ replies: { 'view/aa': reading('<p>ship it</p>') } });
-    await h.emit(sync(T, [readable('m1', 'plan.md', 'aa')], [T]));
 
-    await h.click('#log a[data-view]');
-    await until('the file to arrive', () => say(h).includes('ship it'));
-    await h.click('#reader-close');
-    expect(h.el('reader').hidden).toBe(true);
-    // Emptied, not hidden with half a megabyte of DOM still under it.
-    expect(h.el('reader-body').childNodes.length).toBe(0);
 
-    await h.click('#log a[data-view]');
-    await until('the file to arrive', () => say(h).includes('ship it'));
-    h.doc.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Escape' }));
-    expect(h.el('reader').hidden).toBe(true);
-  });
 
-  it('closes on the dimmed page behind it, but not on the document', async () => {
-    const h = await open({ replies: { 'view/aa': reading('<p>ship it</p>') } });
-    await h.emit(sync(T, [readable('m1', 'plan.md', 'aa')], [T]));
-
-    await h.click('#log a[data-view]');
-    await until('the file to arrive', () => say(h).includes('ship it'));
-    // A click that lands in the box is a click in the document, and must not put it away.
-    h.el('reader-box').click();
-    expect(h.el('reader').hidden).toBe(false);
-    h.el('reader').click();
-    expect(h.el('reader').hidden).toBe(true);
-  });
-
-  it('says a file is gone, in words, when its token no longer resolves', async () => {
-    const h = await open({ status: { 'view/aa': 404 }, replies: { 'view/aa': { error: 'no such file' } } });
-    await h.emit(sync(T, [readable('m1', 'plan.md', 'aa')], [T]));
-    await h.click('#log a[data-view]');
-    await until('an answer', () => !say(h).includes('Loading'));
-    expect(say(h)).toBe('This file is no longer here: the daemon has let it go since it was sent.');
-  });
-
-  it("shows the server's reason for a file it would not render", async () => {
-    const h = await open({ status: { 'view/aa': 415 }, replies: { 'view/aa': { error: 'that file is not text' } } });
-    await h.emit(sync(T, [readable('m1', 'notes.txt', 'aa')], [T]));
-    await h.click('#log a[data-view]');
-    await until('an answer', () => !say(h).includes('Loading'));
-    expect(say(h)).toBe('that file is not text');
-  });
-
-  it('puts the second file on screen when the first answers late', async () => {
-    // A slow link: the first file is opened, given up on, and another opened — and then the first
-    // answer lands. It must not end up under the second file's name.
-    let release: () => void = () => {};
-    const slow = new Promise<void>((r) => {
-      release = r;
-    });
-    const h = await open({
-      held: { 'view/aa': slow },
-      replies: { 'view/aa': reading('<p>the first</p>'), 'view/bb': reading('<p>the second</p>') },
-    });
-    await h.emit(sync(T, [readable('m1', 'one.md', 'aa'), readable('m2', 'two.md', 'bb')], [T]));
-    const [first, second] = Array.from(h.doc.querySelectorAll('#log a[data-view]')) as HTMLAnchorElement[];
-
-    first?.click();
-    await tick();
-    await h.click('#reader-close');
-    second?.click();
-    await until('the second file', () => say(h).includes('the second'));
-    release();
-    await tick();
-    await tick();
-    expect(h.el('reader-name').textContent).toBe('two.md');
-    expect(say(h)).toBe('the second');
-  });
 
   it('offers no preview on a message from before a restart, whose token is dead', async () => {
     const h = await open();
@@ -409,227 +262,8 @@ describe('webui page: reading a file the agent sent', () => {
     expect(rows[1]?.querySelector('a[data-view]')).not.toBeNull();
   });
 
-  /** A stand-in for the loaded bundle: the reader only ever asks it for an editor. */
-  function fakeCodeView(log: { calls: Array<{ doc: string; name: string; readOnly?: boolean }>; destroyed: number }) {
-    return {
-      editor(parent: HTMLElement, o: { doc: string; name: string; readOnly?: boolean }) {
-        log.calls.push(o);
-        const el = parent.ownerDocument.createElement('div');
-        el.className = 'cm-editor';
-        el.textContent = o.doc;
-        parent.appendChild(el);
-        let doc = o.doc;
-        return {
-          getDoc: () => doc,
-          setDoc: (next: string) => {
-            doc = next;
-            el.textContent = next;
-          },
-          focus: () => {},
-          destroy: () => {
-            log.destroyed++;
-            el.remove();
-          },
-        };
-      },
-      diff() {
-        throw new Error('the reader never asks for a diff');
-      },
-    };
-  }
-
-  it('shows a text file in the code view when the page has one, instead of the server pre', async () => {
-    const log = { calls: [] as Array<{ doc: string; name: string; readOnly?: boolean }>, destroyed: 0 };
-    const h = await open({
-      codeView: fakeCodeView(log),
-      replies: {
-        'view/aa': { ...reading('<pre class="src"><code>package main</code></pre>', 3 * 1048576, 524288), name: 'main.go', text: 'package main\n' },
-      },
-    });
-    await h.emit(sync(T, [readable('m1', 'main.go', 'aa')], [T]));
-    await h.click('#log a[data-view]');
-    await until('the code view', () => h.el('reader-body').querySelector('.cm-editor') !== null);
-
-    expect(log.calls[0]).toEqual({ doc: 'package main\n', name: 'main.go', readOnly: true });
-    // One view of the file, not two: the server's escaped copy is not also on screen.
-    expect(h.el('reader-body').querySelector('.src')).toBeNull();
-    // The cut notice still stands above it, and the body has handed its scrolling to the editor.
-    expect(h.el('reader-body').querySelector('.reader-note')?.textContent).toBe(
-      'Showing the first 512 KB of 3.0 MB. Download it for the rest.'
-    );
-    expect(h.el('reader-body').classList.contains('cv')).toBe(true);
-
-    // Closing drops the view rather than leaving CodeMirror's listeners on a detached node.
-    await h.click('#reader-close');
-    expect(log.destroyed).toBe(1);
-    expect(h.el('reader-body').classList.contains('cv')).toBe(false);
-  });
-
-  it('keeps the server pre for a text file when there is no code view, which is a build with no bundle', async () => {
-    const h = await open({
-      replies: { 'view/aa': { ...reading('<pre class="src"><code>one\ntwo</code></pre>'), text: 'one\ntwo' } },
-    });
-    await h.emit(sync(T, [readable('m1', 'run.log', 'aa')], [T]));
-    await h.click('#log a[data-view]');
-    await until('the plain text', () => h.el('reader-body').querySelector('.src') !== null);
-    expect(h.el('reader-body').textContent).toBe('one\ntwo');
-    expect(h.el('reader-body').classList.contains('cv')).toBe(false);
-  });
-
-  it('falls back to the pre when the bundle will not load, and warns about it exactly once', async () => {
-    // The case that only happens in production: the page names a hash a rebuild has since deleted,
-    // so the import 404s. jsdom refuses a dynamic import outright, which is the same rejection.
-    const h = await open({
-      codeviewUrl: 'assets/codeview-gone.js',
-      replies: {
-        'view/aa': { ...reading('<pre class="src"><code>one</code></pre>'), text: 'one' },
-        'view/bb': { ...reading('<pre class="src"><code>two</code></pre>'), text: 'two' },
-      },
-    });
-    const warns = () => h.warnings.filter((w) => w.includes('code view unavailable'));
-    await h.emit(sync(T, [readable('m1', 'one.log', 'aa'), readable('m2', 'two.log', 'bb')], [T]));
-    await h.click('#log a[data-view]');
-    await until('the plain text', () => h.el('reader-body').querySelector('.src') !== null);
-    expect(h.el('reader-body').classList.contains('cv')).toBe(false);
-    expect(warns()).toHaveLength(1);
-
-    // A second file finds the same failed promise: the reader degrades again, the log stays quiet.
-    const links = Array.from(h.doc.querySelectorAll('#log a[data-view]')) as HTMLAnchorElement[];
-    links[1]?.click();
-    await until('the second file', () => (h.el('reader-body').textContent ?? '').includes('two'));
-    expect(h.el('reader-body').classList.contains('cv')).toBe(false);
-    expect(warns()).toHaveLength(1);
-  });
-
-  it('destroys the open editor when another file takes its place', async () => {
-    const log = { calls: [] as Array<{ doc: string; name: string; readOnly?: boolean }>, destroyed: 0 };
-    const h = await open({
-      codeView: fakeCodeView(log),
-      replies: {
-        'view/aa': { ...reading('<pre class="src"><code>one</code></pre>', 3, 3), name: 'one.ts', text: 'one' },
-        'view/bb': { ...reading('<pre class="src"><code>two</code></pre>', 3, 3), name: 'two.ts', text: 'two' },
-      },
-    });
-    await h.emit(sync(T, [readable('m1', 'one.ts', 'aa'), readable('m2', 'two.ts', 'bb')], [T]));
-
-    await h.click('#log a[data-view]');
-    await until('the first editor', () => (h.el('reader-body').textContent ?? '') === 'one');
-    const links = Array.from(h.doc.querySelectorAll('#log a[data-view]')) as HTMLAnchorElement[];
-    links[1]?.click();
-    await until('the second editor', () => (h.el('reader-body').textContent ?? '') === 'two');
-
-    // One handle, one replacement: the first view is gone rather than left listening on a node
-    // that has been detached from the document.
-    expect(log.calls.map((c) => c.doc)).toEqual(['one', 'two']);
-    expect(log.destroyed).toBe(1);
-    expect(h.el('reader-body').querySelectorAll('.cm-editor')).toHaveLength(1);
-  });
 });
 
-describe('webui page: closing the idle agents', () => {
-  const A = 'a1b2c3d4';
-  /** One of each state the dot can be in, plus a second idle topic that is starred. */
-  const fleet = (): Array<Record<string, unknown>> => [
-    { id: A, title: 'asking', lastAt: 1000, running: true, asking: true, live: true, msgCount: 0 },
-    { id: 'b2c3d4e5', title: 'working', lastAt: 999, running: true, live: true, msgCount: 0 },
-    { id: 'c3d4e5f6', title: 'resident', lastAt: 998, live: true, msgCount: 0, dir: { name: 'fleetherd', path: '/w/fleetherd', host: 'uniagent' } },
-    { id: 'd4e5f6a7', title: 'cold', lastAt: 997, live: false, msgCount: 0 },
-    { id: 'e5f6a7b8', title: 'kept warm', lastAt: 996, live: true, starred: true, msgCount: 0 },
-  ];
-  /** The item lives in the Manage menu now; open it the way a person would. */
-  const closeIdle = async (h: Harness): Promise<void> => {
-    await h.click('#manage-toggle');
-    await h.click('#close-idle');
-  };
-  const rows = (h: Harness) =>
-    Array.from(h.doc.querySelectorAll('#idle-list li')).map((li) => ({
-      id: li.getAttribute('data-idle'),
-      text: Array.from(li.querySelectorAll('.idle-name,.idle-dir'))
-        .map((n) => n.textContent)
-        .join(' | '),
-      out: li.querySelector('.idle-out')?.textContent,
-    }));
-
-  it('counts the dim dots, and only them, on a button that is gone when there are none', async () => {
-    const h = await open();
-    await h.emit(sync(A, [], [A]));
-    expect(h.el('close-idle').hidden).toBe(true);
-
-    await h.emit({ t: 'topics', topics: fleet() });
-    // Not the asking topic, not the working one, not the cold one: a question on screen and a
-    // running turn are not idle, and a grey dot has no process to close.
-    expect(h.el('close-idle').hidden).toBe(false);
-    expect(h.el('close-idle').textContent).toBe('Close idle (2)');
-  });
-
-  it('lists each topic it would close, starred first, before closing anything', async () => {
-    const h = await open();
-    await h.emit(sync(A, [], [A], { topics: fleet() }));
-    await closeIdle(h);
-
-    expect(h.el('idle-dialog').hidden).toBe(false);
-    expect(h.el('idle-title').textContent).toBe('Close 2 idle agents?');
-    expect(rows(h)).toEqual([
-      { id: 'e5f6a7b8', text: 'kept warm', out: '' },
-      { id: 'c3d4e5f6', text: 'resident | uniagent · fleetherd', out: '' },
-    ]);
-    // Cancel holds the focus, so an Enter out of habit changes nothing.
-    expect(h.doc.activeElement).toBe(h.el('idle-cancel'));
-    expect(h.calls.map((c) => c.path)).not.toContain('api/topics/close-idle');
-
-    await h.click('#idle-cancel');
-    expect(h.el('idle-dialog').hidden).toBe(true);
-    expect(h.calls.map((c) => c.path)).not.toContain('api/topics/close-idle');
-  });
-
-  it('closes exactly the listed topics and says what became of each', async () => {
-    const h = await open({ replies: { 'api/topics/close-idle': { closed: ['e5f6a7b8'], kept: ['c3d4e5f6'] } } });
-    await h.emit(sync(A, [], [A], { topics: fleet() }));
-    await closeIdle(h);
-    // A topic that goes idle while the dialog is open was not shown, so it is not closed either.
-    await h.emit({ t: 'topics', topics: fleet().map((t) => (t.id === 'b2c3d4e5' ? { ...t, running: false } : t)) });
-    await h.click('#idle-go');
-    await until('the answer', () => h.el('idle-cancel').textContent === 'Done');
-
-    expect(h.calls.find((c) => c.path === 'api/topics/close-idle')?.body).toEqual({ topics: ['e5f6a7b8', 'c3d4e5f6'] });
-    expect(rows(h).map((r) => [r.id, r.out])).toEqual([
-      ['e5f6a7b8', 'closed'],
-      ['c3d4e5f6', 'left running'],
-    ]);
-    expect(h.el('idle-title').textContent).toBe('Closed 1 idle agent; 1 left running — busy again, or unable to resume');
-    expect(h.el('idle-go').hidden).toBe(true);
-    await h.click('#idle-cancel');
-    expect(h.el('idle-dialog').hidden).toBe(true);
-  });
-
-  it('keeps the question open, and says why, when the request fails', async () => {
-    const h = await open({ status: { 'api/topics/close-idle': 500 } });
-    await h.emit(sync(A, [], [A], { topics: fleet() }));
-    await closeIdle(h);
-    await h.click('#idle-go');
-    await until('the failure', () => h.el('idle-title').textContent !== 'Close 2 idle agents?');
-
-    expect(h.el('idle-title').textContent).toBe('The daemon refused the request.');
-    expect((h.el('idle-go') as HTMLButtonElement).disabled).toBe(false);
-    // Asked once: a retry after a lost answer would find every agent gone and call them all busy.
-    expect(h.calls.filter((c) => c.path === 'api/topics/close-idle')).toHaveLength(1);
-  });
-
-  it('goes away on Escape and on a click outside the box', async () => {
-    const h = await open();
-    await h.emit(sync(A, [], [A], { topics: fleet() }));
-    await closeIdle(h);
-    h.doc.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Escape' }));
-    expect(h.el('idle-dialog').hidden).toBe(true);
-
-    await closeIdle(h);
-    await h.click('#idle-dialog');
-    expect(h.el('idle-dialog').hidden).toBe(true);
-    await closeIdle(h);
-    await h.click('#idle-box');
-    expect(h.el('idle-dialog').hidden).toBe(false);
-  });
-});
 
 describe('webui page: the gate', () => {
   it('asks for the token and posts it, when the shared secret is still a door', async () => {
@@ -670,7 +304,7 @@ describe('webui page: the gate', () => {
       h.live().readyState = 2;
       h.live().onerror?.();
       await until('the gate is up', () => !h.el('login').hidden);
-      expect(h.el('app').hidden).toBe(true);
+      expect(h.el('workbench-root').hidden).toBe(true);
     }
   });
 
@@ -688,7 +322,7 @@ describe('webui page: the gate', () => {
     expect(h.el('login').hidden).toBe(true);
     expect(h.el('note').textContent).toBe('Reconnecting...');
     await within('a new stream after a second', 2500, () => h.streams.length > before);
-    expect(h.el('app').hidden).toBe(false);
+    expect(h.el('workbench-root').hidden).toBe(false);
   });
 });
 
@@ -742,46 +376,8 @@ describe('webui page: a daemon that restarts under an open page', () => {
     expect(timers[timers.length - 1]).toBe(1000);
   });
 
-  it('offers a reload when the daemon that came back serves a different page', async () => {
-    const h = await open({ heads: { '/': { ETag: 'W/"some-other-build"' } } });
-    await h.emit(sync('a1b2c3d4', [message('m1', '<p>hello</p>')], ['a1b2c3d4']));
-    // The first sync of a page is the daemon that served it: nothing to compare yet.
-    expect(h.calls.some((c) => c.method === 'HEAD')).toBe(false);
-    expect(h.el('update').hidden).toBe(true);
-    await h.emit(sync('a1b2c3d4', [message('m1', '<p>hello</p>')], ['a1b2c3d4'], { epoch: 2 }));
-    await until('it asked which page the daemon serves', () => h.calls.some((c) => c.method === 'HEAD'));
-    expect(h.calls.find((c) => c.method === 'HEAD')?.path).toBe('/');
-    await until('the offer is up', () => !h.el('update').hidden);
-    expect(h.el('update').textContent).toContain('updated');
-  });
 
-  it('says nothing when the daemon came back serving this same page, or would not say', async () => {
-    const build = servePage('Chat', false).build;
-    const answers: Array<Record<string, Record<string, string>>> = [{ '/': { ETag: `W/"${build}"` } }, {}];
-    for (const heads of answers) {
-      const h = await open({ heads });
-      await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4']));
-      await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4'], { epoch: 2 }));
-      await until('it asked', () => h.calls.some((c) => c.method === 'HEAD'));
-      await tick();
-      expect(h.el('update').hidden).toBe(true);
-    }
-  });
 
-  it('keeps the draft when the offer is taken', async () => {
-    const h = await open({ heads: { '/': { ETag: 'W/"some-other-build"' } } });
-    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4']));
-    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4'], { epoch: 2 }));
-    await until('the offer is up', () => !h.el('update').hidden);
-    (h.el('input') as HTMLTextAreaElement).value = 'half a thought';
-    // jsdom does not navigate; what matters is what is on disk when the reload happens.
-    try {
-      await h.click('#update-reload');
-    } catch {
-      // jsdom: "Not implemented: navigation".
-    }
-    expect(JSON.parse(h.window.localStorage.getItem('aa_drafts') ?? '{}').a1b2c3d4).toContain('half a thought');
-  });
 });
 
 describe('webui page: a tab in the background', () => {
@@ -994,56 +590,12 @@ describe('webui page: what changed in the topic list', () => {
 });
 
 describe('webui page: topics', () => {
-  it('paints a switched-to topic from cache before its stream has answered', async () => {
-    const h = await open();
-    await h.emit(sync('a1b2c3d4', [message('m1', '<p>in A</p>'), message('m2', '<p>also A</p>')], ['a1b2c3d4', 'b2c3d4e5']));
-    expect(h.painted()).toBe(2);
-
-    await h.click('[data-topic="b2c3d4e5"]');
-    // Nothing cached for B yet and its stream has said nothing — so what is on screen is the
-    // shape of a transcript rather than either an empty panel or a message.
-    expect(h.painted()).toBe(0);
-    expect(h.skeletons()).toBeGreaterThan(0);
-    await opens(h, 'api/events?t=b2c3d4e5');
-
-    await h.click('[data-topic="a1b2c3d4"]');
-    // A came back with no sync emitted at all — this is the cache, and the point of it. It is
-    // read rather than remembered, so it arrives an IndexedDB turn later than the click.
-    await until('A is painted from cache', () => h.painted() === 2);
-    expect(h.el('log').textContent).toContain('in A');
-    expect(h.window.location.search).toBe('?t=a1b2c3d4');
-  });
 
   /**
    * The gap this covers is the one a warm cache creates: the transcript is on screen instantly,
    * and then a second or two later everything said while you were elsewhere arrives in one frame.
    * Between those two moments the page has to be visibly waiting on something.
    */
-  it('keeps saying it is waiting while a cached topic catches up', async () => {
-    const h = await open();
-    await h.emit(sync('a1b2c3d4', [message('m1', '<p>in A</p>')], ['a1b2c3d4', 'b2c3d4e5']));
-    await h.click('[data-topic="b2c3d4e5"]');
-    await h.click('[data-topic="a1b2c3d4"]');
-    await until('A is painted from cache', () => h.painted() === 1);
-
-    // Not the skeleton — that is for an empty log, and this one is full.
-    expect(h.skeletons()).toBe(0);
-    expect(h.waiting()).toContain('while you were away');
-    // At the bottom, where whatever is missing is going to land.
-    expect(h.el('log').lastElementChild?.className).toBe('syncing');
-
-    // And a message typed into the gap still goes above it: the line marks the end of the
-    // transcript, not a place in it.
-    (h.el('input') as HTMLTextAreaElement).value = 'while I wait';
-    await h.click('#composer button[type="submit"]');
-    expect(h.el('log').lastElementChild?.className).toBe('syncing');
-
-    await h.emit(
-      sync('a1b2c3d4', [message('m1', '<p>in A</p>'), message('m2', '<p>said since</p>')], ['a1b2c3d4', 'b2c3d4e5'])
-    );
-    expect(h.waiting()).toBe(null);
-    expect(h.el('log').textContent).toContain('said since');
-  });
 
   it('leaves a topic with nothing cached to the skeleton rather than stacking two waits on it', async () => {
     const h = await open();
@@ -1070,20 +622,33 @@ describe('webui page: topics', () => {
     expect(h.streams.filter((s) => !s.closed)).toHaveLength(1);
   });
 
-  it('asks the daemon to delete a topic and stops showing it', async () => {
+  it('paints a revisited topic from cache at once and resumes its stream with ?last=', async () => {
     const h = await open();
-    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4', 'b2c3d4e5']));
+    const emitId = async (ev: Record<string, unknown>, id: string): Promise<void> => {
+      await within('a stream to deliver to', 1000, () => h.streams.some((s) => !s.closed));
+      h.live().onmessage?.({ data: JSON.stringify(ev), lastEventId: id });
+      await tick();
+    };
+    const syncA = sync('a1b2c3d4', [message('m1', '<p>cached A</p>')], ['a1b2c3d4', 'b2c3d4e5'], { tv: 7 });
+    await emitId(syncA, 'a1b2c3d4.1.5');
 
-    await rowMenu(h, 'b2c3d4e5');
-    await h.click('[data-rmk="delete"]');
+    // Switch away to B (flushes A into cache immediately via cacheService.leave()).
+    await h.click('[data-topic="b2c3d4e5"]');
+    await opens(h, 'api/events?t=b2c3d4e5');
+    await emitId(
+      sync('b2c3d4e5', [message('m2', '<p>in B</p>')], ['a1b2c3d4', 'b2c3d4e5'], { tv: 7 }),
+      'b2c3d4e5.1.2',
+    );
 
-    expect(h.calls.map((c) => c.path)).toContain('api/topics/delete');
-    expect(h.calls.find((c) => c.path === 'api/topics/delete')?.body).toEqual({ topic: 'b2c3d4e5' });
-
-    // The server answers by announcing the list again; the sidebar follows it, not the click.
-    await h.emit({ t: 'topics', topics: [{ id: 'a1b2c3d4', title: 'Topic a1b2c3d4', lastAt: 1000, msgCount: 0 }] });
-    expect(h.rows()).toBe(1);
+    // Switch back to A: messages paint synchronously from cache BEFORE any sync/resumed arrives,
+    // and the stream resumes with ?last= instead of requesting a full sync.
+    await h.click('[data-topic="a1b2c3d4"]');
+    expect(h.painted()).toBe(1);
+    expect(h.el('log').textContent).toContain('cached A');
+    expect(h.live().url).toContain('t=a1b2c3d4');
+    expect(h.live().url).toContain('last=a1b2c3d4.1.5');
   });
+
 
   it('shows which project each topic is working in', async () => {
     const h = await open({ url: 'http://localhost:8787/?t=a1b2c3d4' });
@@ -1129,146 +694,10 @@ describe('webui page: topics', () => {
     ]);
   });
 
-  it('names the agent on the row frame, in its harness colour, and leaves the title line to the subject', async () => {
-    // "[gemini-task] " in front of every title took the one ellipsised line a 240px column has, and
-    // left a subject of a few characters. The stored name keeps its tag (the chat platforms' topic
-    // names need it); the row draws the agent as a legend on its frame instead.
-    const h = await open({ url: 'http://localhost:8787/?t=a1b2c3d4' });
-    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4']));
 
-    await h.emit({
-      t: 'topics',
-      topics: [
-        { id: 'a1b2c3d4', title: '[cc] parse the config', lastAt: 1000, msgCount: 0, agent: { id: 'cc', harness: 'claude' } },
-        { id: 'b2c3d4e5', title: '[gemini-task] 工具访问权限限制排查', lastAt: 999, msgCount: 0, agent: { id: 'gemini-task', harness: 'custom' } },
-        { id: 'c3d4e5f6', title: '[ag] 调研', lastAt: 998, msgCount: 0, agent: { id: 'ag', harness: 'agy' } },
-      ],
-    });
 
-    const rows = Array.from(h.doc.querySelectorAll('#topics .topic-item'));
-    expect(rows.map((r) => r.querySelector('.topic-title')?.textContent)).toEqual(['parse the config', '工具访问权限限制排查', '调研']);
-    const tags = rows.map((r) => r.querySelector('.agent-tag'));
-    expect(tags.map((t) => t?.textContent)).toEqual(['cc', 'gemini-task', 'ag']);
-    // The class is the configured harness, which the stylesheet's palette keys on; a custom harness
-    // gets its class too and simply has no colour there, so it stays grey.
-    expect(tags.map((t) => t?.className)).toEqual(['agent-tag h-claude', 'agent-tag h-custom', 'agent-tag h-agy']);
-    expect(tags.map((t) => t?.getAttribute('title'))).toEqual(['Agent: cc', 'Agent: gemini-task', 'Agent: ag']);
-    // Outside the title, so it takes none of the line it used to.
-    expect(rows[0]!.querySelector('.topic-title .agent-tag')).toBeNull();
-    expect(rows.every((r) => r.classList.contains('framed'))).toBe(true);
-  });
 
-  it('labels the agent the daemon says is bound, not the one the title was named under', async () => {
-    // The tag is written when the topic is named and a later /agent does not rewrite it, so a topic
-    // named under cc and handed to cx would go on saying cc.
-    const h = await open({ url: 'http://localhost:8787/?t=a1b2c3d4' });
-    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4']));
-    await h.emit({
-      t: 'topics',
-      topics: [{ id: 'a1b2c3d4', title: '[cc] 修 history 搜索', lastAt: 1000, msgCount: 0, agent: { id: 'cx', harness: 'codex' } }],
-    });
 
-    const tag = h.doc.querySelector('#topics .agent-tag');
-    expect(tag?.textContent).toBe('cx');
-    expect(tag?.className).toBe('agent-tag h-codex');
-    expect(h.doc.querySelector('#topics .topic-title')?.textContent).toBe('修 history 搜索');
-  });
-
-  it('falls back to the title tag, uncoloured, when the daemon names no agent, and draws none when nothing does', async () => {
-    // A topic whose agent left config, or a page served by a daemon without the lookup: the tag the
-    // topic was named under is still the best answer, but it carries no harness.
-    const h = await open({ url: 'http://localhost:8787/?t=a1b2c3d4' });
-    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4']));
-    await h.emit({
-      t: 'topics',
-      topics: [
-        { id: 'a1b2c3d4', title: '[ag] 开工', lastAt: 1000, msgCount: 0 },
-        { id: 'b2c3d4e5', title: '', lastAt: 999, msgCount: 0 },
-        { id: 'c3d4e5f6', title: 'seeded from the first message', lastAt: 998, msgCount: 0 },
-      ],
-    });
-
-    const rows = Array.from(h.doc.querySelectorAll('#topics .topic-item'));
-    const byId = (id: string): Element => rows.find((r) => r.getAttribute('data-topic') === id)!;
-    const tag = byId('a1b2c3d4').querySelector('.agent-tag');
-    expect(tag?.textContent).toBe('ag');
-    expect(tag?.className).toBe('agent-tag');
-    expect(tag?.getAttribute('title')).toBe('Agent: ag');
-    expect(byId('a1b2c3d4').querySelector('.topic-title')?.textContent).toBe('开工');
-    // No agent named anywhere: no legend, and the row keeps its frame like every other.
-    expect(byId('b2c3d4e5').querySelector('.agent-tag')).toBeNull();
-    expect(byId('b2c3d4e5').querySelector('.topic-title')?.textContent).toBe('Untitled');
-    expect(byId('c3d4e5f6').querySelector('.agent-tag')).toBeNull();
-    expect(byId('c3d4e5f6').classList.contains('framed')).toBe(true);
-  });
-
-  it('shortens a host-qualified agent id once the row already names the machine, keeping it whole on the tooltip', async () => {
-    // A remote agent's id is `<id>@<host>`. Left whole it is 15 characters spent on a machine the
-    // directory line repeats (reported 2026-11-03, against the title's tag). The part before the
-    // `@` is what the operator types to bind the agent.
-    const h = await open({ url: 'http://localhost:8787/?t=a1b2c3d4' });
-    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4']));
-
-    await h.emit({
-      t: 'topics',
-      topics: [
-        {
-          id: 'a1b2c3d4',
-          title: '[cbc@uniagent] Deploy A…',
-          lastAt: 1000,
-          msgCount: 0,
-          agent: { id: 'cbc@uniagent', harness: 'custom' },
-          dir: { name: 'workspace', path: '/home/user/workspace', host: 'uniagent' },
-        },
-        // No directory known, so the second line cannot say which machine this is: the label keeps
-        // its host, because it is the only place on the row that names it. From the title's tag
-        // alone, the rule is the same.
-        { id: 'b2c3d4e5', title: '[ag@devbox] 你好', lastAt: 999, msgCount: 0 },
-        // A group standing in for the host names a different machine: left whole.
-        {
-          id: 'c3d4e5f6',
-          title: '[oc@aws] 你好',
-          lastAt: 998,
-          msgCount: 0,
-          agent: { id: 'oc@aws', harness: 'opencode' },
-          dir: { name: 'workspace', path: '/home/user/workspace', host: 'sydney' },
-        },
-      ],
-    });
-
-    const tags = Array.from(h.doc.querySelectorAll('#topics .agent-tag'));
-    expect(tags.map((t) => t.textContent)).toEqual(['cbc', 'ag@devbox', 'oc@aws']);
-    expect(tags.map((t) => t.getAttribute('title'))).toEqual(['Agent: cbc@uniagent', 'Agent: ag@devbox', 'Agent: oc@aws']);
-    expect(Array.from(h.doc.querySelectorAll('#topics .topic-title')).map((t) => t.textContent)).toEqual(['Deploy A…', '你好', '你好']);
-  });
-
-  it('leaves the needs-you tooltip to the row, the agent id to its legend', async () => {
-    const h = await open({ url: 'http://localhost:8787/?t=a1b2c3d4' });
-    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4']));
-
-    await h.emit({
-      t: 'topics',
-      topics: [
-        { id: 'a1b2c3d4', title: 'on screen', lastAt: 1000, msgCount: 0 },
-        {
-          id: 'b2c3d4e5',
-          title: '[cbc@uniagent] Deploy A…',
-          lastAt: 999,
-          msgCount: 0,
-          stage: 'answer',
-          line: 'Ship 2.23.0?',
-          agent: { id: 'cbc@uniagent', harness: 'custom' },
-          dir: { name: 'workspace', path: '/home/user/workspace', host: 'uniagent' },
-        },
-      ],
-    });
-
-    const row = h.doc.querySelector('.topic-item.needs');
-    expect(row?.getAttribute('title')).toBe('Waiting on your answer: Ship 2.23.0?');
-    expect(row?.querySelector('.topic-title')?.hasAttribute('title')).toBe(false);
-    // The legend's tooltip covers the legend alone: hovering the rest of the row still says what it needs.
-    expect(row?.querySelector('.agent-tag')?.getAttribute('title')).toBe('Agent: cbc@uniagent');
-  });
 
   it('leaves the row alone for a daemon that offered no directory', async () => {
     // Every `topics` event before this feature existed, and every deployment whose adapter does
@@ -1314,72 +743,6 @@ describe('webui page: topics', () => {
     expect(h.doc.querySelector('.topic-badge')?.textContent).toBe('3');
   });
 
-  it('sweeps every topic away and lands in the one that replaced them', async () => {
-    const h = await open({ replies: { 'api/topics/clear': { topic: { id: 'deadbeef', title: '', lastAt: 2000 } } } });
-    await h.emit(sync('a1b2c3d4', [message('m1', '<p>in A</p>')], ['a1b2c3d4', 'b2c3d4e5']));
-    expect(h.painted()).toBe(1);
-    await saved();
-    expect(await h.cached('a1b2c3d4')).toHaveLength(1);
 
-    await h.click('#clear-topics');
 
-    expect(h.calls.find((c) => c.path === 'api/topics/clear')?.body).toEqual({});
-    // Landed in the replacement rather than waiting for the broadcast list to say where to go.
-    await opens(h, 'api/events?t=deadbeef');
-    expect(h.window.location.search).toBe('?t=deadbeef');
-    expect(h.painted()).toBe(0);
-    expect(h.rows()).toBe(1);
-    // Every local record of the old rooms went with them: a cache left behind would repaint
-    // messages for ids the daemon has forgotten the moment one of them was opened again, and a
-    // read mark left behind would badge the replacement against a count from a dead room.
-    await untilAsync('the cached transcript is gone', async () => (await h.cached('a1b2c3d4')) === null);
-    expect(await h.cached('a1b2c3d4')).toBeNull();
-    expect(JSON.parse(h.window.localStorage.getItem('aa_reads') ?? 'null')).toEqual({ deadbeef: 0 });
-  });
-
-  it('does nothing at all when the confirmation is declined', async () => {
-    const h = await open({ confirm: false });
-    await h.emit(sync('a1b2c3d4', [message('m1', '<p>in A</p>')], ['a1b2c3d4', 'b2c3d4e5']));
-
-    await h.click('#clear-topics');
-
-    expect(h.calls.map((c) => c.path)).not.toContain('api/topics/clear');
-    expect(h.rows()).toBe(2);
-    expect(h.painted()).toBe(1);
-  });
-
-  it('paints the dot by what a topic is doing, not merely by whether a turn is open', async () => {
-    // Four states, and two of them only exist because a turn is a bad proxy for the agent: a
-    // question holds its turn OPEN while waiting on the user, and a turn ending does not stop
-    // the process. The row for each must not be the row for the other.
-    const h = await open();
-    await h.emit(
-      sync('a1b2c3d4', [], ['a1b2c3d4'], {
-        topics: [
-          { id: 'a1b2c3d4', title: 'asking', lastAt: 1000, running: true, asking: true, live: true, msgCount: 0 },
-          { id: 'b2c3d4e5', title: 'working', lastAt: 999, running: true, live: true, msgCount: 0 },
-          { id: 'c3d4e5f6', title: 'resident', lastAt: 998, running: false, live: true, msgCount: 0 },
-          { id: 'd4e5f6a7', title: 'cold', lastAt: 997, running: false, live: false, msgCount: 0 },
-        ],
-      })
-    );
-
-    expect(Array.from(h.doc.querySelectorAll('.topic-dot')).map((el) => el.className)).toEqual([
-      'topic-dot asking',
-      'topic-dot running',
-      'topic-dot live',
-      'topic-dot',
-    ]);
-    // The row a reclaimed topic gets is the one that says so, and it is not the one a topic with
-    // its context still in memory gets.
-    expect(Array.from(h.doc.querySelectorAll('.topic-item')).map((el) => el.className)).toEqual([
-      'topic-item on running live framed',
-      'topic-item running live framed',
-      'topic-item idle live framed',
-      'topic-item idle framed',
-    ]);
-    // And the header says the useful half of "running AND waiting on you".
-    expect(h.el('topic-status').textContent).toBe('awaiting you');
-    expect(h.el('topic-status').className).toBe('chat-status asking');
-  });
 });

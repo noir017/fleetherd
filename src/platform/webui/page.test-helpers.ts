@@ -22,16 +22,24 @@
  * awaits are evaluated once and shared by every test file the worker runs.
  */
 import fs from 'node:fs';
+import path from 'node:path';
 
 import { appSource, buildClient, STYLE_ENTRY } from '../../../scripts/webui-client.mjs';
 import { servePage as serveShell, type PageAssets } from './page.js';
 
+function readStyleSource(entry: string): string {
+  const dir = path.dirname(entry);
+  return fs.readFileSync(entry, 'utf8').replace(/@import\s+['"]([^'"]+)['"]\s*;/g, (_, rel: string) =>
+    readStyleSource(path.resolve(dir, rel))
+  );
+}
+
 /** The script and stylesheet as the asset build makes them. */
 export const CLIENT = await buildClient();
-/** The script as written in `client/legacy-app.ts`, with its build-time markers filled. */
+/** The script as written in `client/main.ts`, with its build-time markers filled. */
 export const APP_SOURCE = await appSource();
-/** The stylesheet as written in `client/styles/main.css`. */
-export const STYLE_SOURCE = fs.readFileSync(STYLE_ENTRY, 'utf8');
+/** The stylesheet as written under `client/styles/`, with `@import`s expanded in cascade order. */
+export const STYLE_SOURCE = readStyleSource(STYLE_ENTRY);
 
 const APP_URL = `assets/${CLIENT.app.file}`;
 const BOOT_URL = `assets/${CLIENT.boot.file}`;

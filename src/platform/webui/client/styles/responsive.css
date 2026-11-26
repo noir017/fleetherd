@@ -1,0 +1,549 @@
+/* Phones and tablets held upright. Everything here is about the parts of a handset a desktop
+   layout has no concept of: a URL bar that eats viewport height, a home indicator under the
+   composer, Safari's zoom-on-focus, and a finger instead of a pointer. */
+/* A 240px sidebar and a 240–320px panel leave too little chat on a laptop screen, so below
+   1024px the right panel slides over the chat instead of taking a column — the same drawer the
+   topic sidebar becomes at 640px, on the other edge. It stays laid out and is moved off-screen
+   with a transform, because display:none has nothing to animate; the margin it used as a column
+   is given up so the fixed position can take over. The backdrop is what dismisses it, as the
+   sidebar drawer's is. */
+@media(max-width:1023px){
+  #schedules{position:fixed;top:0;right:0;bottom:0;z-index:20;width:min(88vw,380px);flex-basis:auto;box-shadow:-3px 0 12px var(--shadow-drawer)}
+  #schedules.collapsed{margin:0;transform:translateX(100%)}
+  #app.sched-open #backdrop{display:block}
+  /* Nothing to dock it to here, so the resize handle is not offered: an overlay's width is the
+     screen's, not the operator's. */
+  #schedules>.panel-resize{display:none}
+  /* Whichever panel is a drawer here runs to the bottom edge, so its last row needs the same
+     home-indicator clearance the composer gets. */
+  .panel-foot{padding-bottom:calc(8px + env(safe-area-inset-bottom,0px))}
+}
+@media(max-width:640px){
+  /* height:100% resolves against a viewport that still counts the collapsing browser chrome,
+     so the composer sits below the fold until the page is scrolled. dvh is the height actually
+     on screen; the plain vh declaration above it stays as the fallback for older engines. */
+  html,body,#workbench-root,.wb-root{height:100vh;height:100dvh}
+  /* A code block's Wrap and Copy are tapped, not clicked: a finger needs more than the 26px a
+     pointer does, and the bar grows to hold them. */
+  .cb-b{width:36px;height:32px;font-size:16px}
+  /* A column 240px wide leaves nothing of the chat on a 360px screen, so it becomes a drawer
+     over it, dismissed by tapping the backdrop. Fixed rather than absolute so it tracks the
+     visible viewport as the URL bar collapses instead of the taller page box behind it. The
+     closed position is a transform rather than a negative margin, so it moves the full width
+     of whatever the screen allowed — the same drawer the task panel is from 1023px down, at
+     the same 88vw/380px, so the two edges feel like one component. */
+  #sidebar{position:fixed;top:0;bottom:0;left:0;height:auto;z-index:20;width:min(88vw,380px);flex-basis:min(88vw,380px);box-shadow:3px 0 12px var(--shadow-drawer)}
+  #sidebar.collapsed{margin:0;transform:translateX(-100%)}
+  #app.sb-open #backdrop{display:block}
+  #sidebar>.panel-resize{display:none}
+  .topic-item,.topic-item.framed{padding:10px 9px}
+  /* The filter bar in the drawer: the same finger-sized field as the composer, and a
+     16px search box — the rule is the zoom, not the look. */
+  .filterbar{padding:8px 10px}
+  .fb-search{height:36px}
+  .fb-q{font-size:var(--fh-fs-lg)}
+  .fb-btn,.fb-sort{height:36px}
+  .fb-sort select{font-size:var(--fh-fs-lg);max-width:140px}
+  .fb-dir{width:36px}
+  .fb-chip{min-height:32px;padding:4px 10px}
+  /* The pinned row keeps its four chips on one line in a drawer too: the finger target comes
+     from the height, not from padding the words apart. */
+  .fb-pin{padding:4px 6px}
+  .fb-sum{font-size:var(--fh-fs-sm)}
+  .fb-sum .fb-clear,.topics-empty .fb-clear{min-height:32px;font-size:var(--fh-fs-sm)}
+  /* The header and the footer row are finger targets here: 12px text in 7px of padding is a
+     30px target, and the × is the only way out of a panel that covers the chat. 49px rather
+     than 42 so a 44px box fits without the bar growing twice. */
+  .panel-head{min-height:49px;padding:0 4px 0 12px}
+  .panel-head .btn-icon{display:inline-flex;align-items:center;justify-content:center;min-width:44px;height:44px;font-size:20px}
+  .panel-foot>button,.panel-menu button{min-height:44px}
+  /* The drawer toggle is the only way back to the topic list on a phone, but it inherits
+     .btn-icon's 13px glyph and 4px padding — a 26x21 target, well under the 44px every mobile
+     HIG asks for. Pad it out to 44px square and grow the glyph to match; the header's own
+     vertical padding gives way to it, so the title bar goes 42px -> 49px rather than 42 -> 56.
+     The negative margin puts the glyph's ink back where .btn-icon had it, now that it sits in
+     a box twice the width. Setting display here is only safe because of the global
+     [hidden]{display:none!important} above — without it this rule would win over the UA's
+     own [hidden] rule and strand the button on screen while the drawer is open. */
+  #chat-header{padding:2px 12px}
+  #expand-sidebar{display:inline-flex;align-items:center;justify-content:center;
+    min-width:44px;height:44px;margin-left:-10px;font-size:20px;color:var(--fg)}
+  /* The same 44px, for the same finger. The glyph grows with the box, or a 14px icon floats in
+     a target three times its size and reads as a stray mark rather than a control. */
+  #kill-agent{min-width:44px;height:44px}
+  #kill-agent svg{width:18px;height:18px}
+  #clear-topics svg,#read-topics svg,#sched-read svg,#sched-new svg{width:18px;height:18px}
+  /* The panel keeps the drawer's width here rather than taking the whole screen: it is the same
+     overlay the 1023px rule makes, sliding in from the right, and a strip of the conversation
+     stays visible behind it. Only the header and the targets grow for a finger. */
+  #schedules-toggle{min-width:44px;height:44px}
+  #schedules-toggle svg{width:18px;height:18px}
+  #term-toggle{min-width:44px;height:44px}
+  #term-toggle .ic{width:18px;height:18px}
+  .sched-subtab{min-height:44px}
+  .rev-open{min-height:44px;padding:0 14px}
+  /* Both answers on a suggestion at an ordinary height: at 44px, two under every suggestion read
+     as a column of slabs between the lines they answer (2026-11-06). */
+  .rev-adopt,.rev-dismiss{min-height:32px;padding:0 12px}
+  /* The skills window is the whole screen on a phone: 980px of desktop window shrunk into a
+     phone is an editor with a sliver of transcript behind it, and the transcript is not what the
+     operator opened. */
+  /* A task's page too, for the same reason, with the finger-sized controls the rest of the
+     phone layout has. */
+  #task-page{padding:0}
+  #task-box{width:100%;height:100%;max-height:none;border:0;border-radius:0}
+  #task-bar{padding:0 4px 0 12px;min-height:49px}
+  #task-close{display:inline-flex;align-items:center;justify-content:center;min-width:44px;height:44px;font-size:20px}
+  #task-body{padding:12px 12px calc(16px + env(safe-area-inset-bottom,0px))}
+  .tp-acts button{min-height:40px;padding:0 14px}
+  .tp-run-open{min-height:36px;padding:0 12px}
+  .tp-row2{grid-template-columns:minmax(0,1fr)}
+  #task-page .skill-field,#task-page .tp-text{font-size:var(--fh-fs-lg)}
+  #skills{padding:0}
+  #skills-box{width:100%;height:100%;max-height:none;border:0;border-radius:0}
+  #skills-bar{padding:0 4px 0 12px;min-height:49px}
+  #skills-refresh,#skills-close{display:inline-flex;align-items:center;justify-content:center;min-width:44px;height:44px}
+  #skills-refresh{font-size:var(--fh-fs-xl)}
+  #skills-close{font-size:20px}
+  #skills-new{min-height:44px;padding:0 14px}
+  /* The History tab in the drawer: the same finger-sized rows and 16px field as the topic list
+     beside it (the .filterbar rules above cover the search), and the read-only bar's two buttons
+     and its clearance of the home indicator, which is where the composer's were. */
+  .hist-item{padding:10px 9px}
+  #history-go{min-width:36px;height:36px;margin-right:-4px}
+  #history-more{min-height:44px;padding:0 16px}
+  #lib-log{padding:14px 12px 6px}
+  #lib-bar{padding:8px 12px calc(10px + env(safe-area-inset-bottom,0px))}
+  .lib-acts button{min-height:44px;padding:0 14px}
+  /* The header keeps the title: the tag's words would leave it "Release not…" at 390px, and the
+     bar at the bottom already says what this is and why. The icon stays as the mark. */
+  .lib-tag-word{display:none}
+  #lib-tag .ic{width:16px;height:16px}
+  /* The page's own buttons at an ordinary height, not the bar's 44px: with two controls in every
+     row of the list, 44px read as a page of slabs (2026-11-06). 32px is still a fair thumb target. */
+  .skill-acts button,.skill-file{min-height:32px;padding:0 12px}
+  .skill-copy{display:inline-flex;align-items:center;justify-content:center;min-width:32px;min-height:32px;padding:0}
+  /* The row's switches go under the text: beside it they would leave the description a third of
+     a phone's width. */
+  .skill-card{flex-wrap:wrap;row-gap:6px}
+  .skill-main{flex-basis:100%}
+  .skill-seg button{min-height:32px;padding:0 12px}
+  .skill-switch{min-height:32px}
+  .skill-text{min-height:40dvh;font-size:var(--fh-fs-ui)}
+  /* The settings page, for the same reason and the same way: a 760px window shrunk into a phone
+     is a column of rows behind a sliver of transcript nobody opened it to read. */
+  #settings-page{padding:0}
+  #settings-box{width:100%;height:100%;max-height:none;border:0;border-radius:0}
+  #settings-bar{padding:0 4px 0 12px;min-height:49px}
+  #settings-close{display:inline-flex;align-items:center;justify-content:center;min-width:44px;height:44px;font-size:20px}
+  #settings-body{padding:12px 12px calc(16px + env(safe-area-inset-bottom,0px))}
+  /* A row's control goes under its text, full width, where it has room — except a switch, which is
+     narrow and is where a thumb expects it. A model's value goes under its agent for the same
+     reason: a 50-character model id beside an agent id is two truncated halves at 390px. */
+  .set-item{grid-template-columns:minmax(0,1fr);gap:8px;padding:12px}
+  .set-item.sw{grid-template-columns:minmax(0,1fr) auto}
+  .set-item>.set-ctl{justify-self:stretch}
+  .set-item.sw>.set-ctl{justify-self:end}
+  /* An open card puts each label above its control, which then has the card's whole width. */
+  .ag-top{min-height:56px;padding:10px 12px}
+  .ag-field{grid-template-columns:minmax(0,1fr);row-gap:6px}
+  .ag-lab{padding-top:0}
+  .ag-val>.set-select,.ag-open,.ag-files{max-width:none}
+  .ag-open,.ag-fixed{min-height:44px}
+  .ag-file{min-height:44px;grid-template-columns:minmax(0,1fr) auto;row-gap:2px}
+  .ag-file>.ag-fname{grid-column:1;grid-row:1}
+  .ag-file>.ag-fsub{grid-column:1;grid-row:2}
+  .ag-file>.set-chev{grid-column:2;grid-row:1/span 2}
+  .set-seg{display:flex;width:100%}
+  .set-seg button{flex:1;min-height:40px;padding:0 4px}
+  .set-select{max-width:none;width:100%;min-height:44px;font-size:var(--fh-fs-lg)}
+  .set-open{grid-template-columns:minmax(0,1fr) auto;gap:3px 12px}
+  .set-open>.set-tx{grid-column:1;grid-row:1}
+  .set-open>.set-vv{grid-column:1;grid-row:2;max-width:none;justify-content:flex-start}
+  .set-open>.set-chev{grid-column:2;grid-row:1/span 2}
+  .set-type{min-height:44px;font-size:var(--fh-fs-lg)}
+  .set-use{min-height:44px}
+  .set-switch{width:52px;height:44px;margin:-12px -6px}
+  .set-switch::before{left:8px;top:12px}
+  .set-switch::after{left:11px;top:15px}
+  .set-back{min-height:44px}
+  /* A hover-revealed ⋯ does not exist on a finger, and it is the only way to a scheduled run's
+     menu — and so to deleting it — now that the switcher no longer lists it. */
+  .topic-more{opacity:1;min-width:44px;height:44px}
+  .chat-title{max-width:none}
+  #log{padding:14px 12px 6px}
+  #typing,#note{padding-left:12px;padding-right:12px}
+  /* env() keeps the Send row clear of the home indicator rather than under it. */
+  #bar{padding:8px 12px calc(10px + env(safe-area-inset-bottom,0px))}
+  /* Safari zooms the whole page in when a field it focuses is under 16px, and it does not zoom
+     back out afterwards — every tap on the composer would leave the page a little larger. */
+  #input,#secret{font-size:16px}
+  #input{max-height:30dvh}
+  /* On a handset the composer splits into two rows so buttons do not squeeze the input box:
+     row 1 is the full-width textarea, row 2 carries the actions — attach and mic on the left,
+     Stop and Send on the right. Desktop keeps them all in one row. */
+  #row{flex-wrap:wrap}
+  #input{width:100%;flex:0 0 100%}
+  #row button[type="submit"]{margin-left:auto}
+  #row #stop-turn:not([hidden]){margin-left:auto}
+  #row #stop-turn:not([hidden])+button[type="submit"]{margin-left:0}
+  /* The window's two controls, for a finger. Same 44px the drawer toggle gets, and for the
+     same reason — but here it also matters WHICH of the two a near miss lands on: one hides the
+     terminal and the other kills what is running in it. The gap is the separation. Setting
+     display is safe against the close button's own hidden attribute for the reason given
+     there: the global [hidden] rule at the top is !important. */
+  #term-bar{padding:2px 4px 2px 12px;gap:8px}
+  #term-min,#term-end{display:inline-flex;align-items:center;justify-content:center;
+    min-width:44px;height:44px;font-size:var(--fh-fs-xl)}
+  /* The divider is dragged by a finger here, so it gets a thumb's height and a thicker line.
+     And the panel is the last thing on the page, which makes the home indicator its business
+     rather than the composer's. */
+  #term-grip{height:20px}
+  #term-grip::after{top:9px;width:56px;height:3px;margin-left:-28px;border-radius:2px}
+  #chat.term #bar{padding-bottom:10px}
+  #term{padding-bottom:env(safe-area-inset-bottom,0px)}
+  /* The reader's way out, for the same finger: it measured 35x30 at 390px in Chromium before this.
+     The bar gives up its vertical padding to it, as the chat header does to the drawer toggle.
+     Download grows too — at 12px with 1px of padding it was a 22px-tall target beside the file's
+     name. The window keeps a margin all round rather than going edge to edge, so it still reads
+     as something laid over the conversation. */
+  #reader{padding:8px}
+  #reader-bar{padding:0 4px 0 12px}
+  #reader-close{display:inline-flex;align-items:center;justify-content:center;min-width:44px;height:44px;font-size:20px}
+  .files .view{padding:6px 12px}
+  /* The idle-agents dialog's two answers, one of which ends processes: 34px tall at 390px before. */
+  .idle-acts button{min-height:44px;padding:0 16px}
+  /* Closer to the top on a phone, where the keyboard will take the bottom half; two columns, which
+     at 390px leaves each card 170px — room for "DeepSeek Harness" without an ellipsis. */
+  .launch{margin-top:3vh}
+  .launch-head{margin-bottom:20px}
+  .launch-grid{grid-template-columns:repeat(auto-fill,minmax(136px,1fr))}
+  /* The status strip's token counts, on a screen with no room for them: the percentage beside the
+     meter says the same thing in four characters, and a tap brings the counts back. Without this
+     the line clipped before the cache and quota — the parts that change. */
+  #status:not(.open) .st-x{display:none}
+  /* The model switch is a finger target here: 44px tall, which makes the status line that tall —
+     the price of a control that can be hit first time. The list is the composer's width. */
+  .st-model{min-height:44px;padding:0 8px;margin:-8px -8px -8px -4px}
+  #model-pop{left:8px;right:8px;width:auto;max-height:min(62dvh,520px)}
+  #mp-filter{min-height:44px;font-size:16px}
+  #mp-close{min-width:44px;min-height:44px}
+  /* The side answer's card takes the composer's width and up to half the screen; its line in the
+     transcript and its close button are finger targets. */
+  #btw{left:8px;right:8px;max-height:min(55dvh,480px)}
+  #btw-close{min-width:44px;min-height:44px}
+  .btw-chip{min-height:44px}
+  .mp-opt{min-height:48px}
+  /* The same 44px for taking an attachment back off. A miss lands on the thumbnail, which only
+     opens it — but a 15px glyph with no padding is a target a finger finds on the third try. */
+  .chip-x{min-width:44px;min-height:44px}
+  /* The file window: full screen, and its tree is a drawer. A 250px column on a 390px handset
+     leaves the editor 140px, which is not a line of code — so the tree slides over the editor
+     and the bar's toggle is the way to it. The editor keeps the whole width otherwise. */
+  #files{padding:0}
+  #files-box{width:100%;height:100%;max-height:none;border:0;border-radius:0}
+  #files-tree-toggle{display:inline-flex;align-items:center;justify-content:center;min-width:44px;height:44px}
+  #files-tree{position:absolute;top:0;bottom:0;left:0;width:min(300px,86%);z-index:2;transform:translateX(-102%);transition:transform .18s;box-shadow:2px 0 14px var(--shadow-lg)}
+  #files.tree-open #files-tree{transform:none}
+  #files-bar{min-height:49px;padding:0 4px 0 8px}
+  #files-close,#files-refresh{display:inline-flex;align-items:center;justify-content:center;min-width:44px;height:44px}
+  #files-tree-head button{min-height:44px}
+  .fx-row{min-height:40px}
+  /* A hover-revealed action does not exist on a finger. Always shown, and a 40px target. */
+  .fx-act{opacity:1;width:40px;height:40px}
+  .fx-act .ic{width:15px;height:15px}
+  #files-q{font-size:var(--fh-fs-lg);min-height:44px}
+  #files-new-name,#files-rename-name{font-size:var(--fh-fs-lg);min-height:44px}
+  #files-actions button{min-height:44px}
+
+  /* Mobile login (?m#login) */
+  #gate.fh-login-gate {
+    background: var(--fh-bg);
+    padding: 0 24px;
+  }
+  #login.fh-login-card {
+    width: 100%;
+    max-width: 360px;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+  }
+  #login.fh-login-card .fh-login-logo {
+    width: 56px;
+    height: 56px;
+    margin-bottom: 18px;
+    border-radius: 14px;
+    font-size: 24px;
+  }
+  #login.fh-login-card .fh-login-title {
+    font-size: 26px;
+  }
+  #login.fh-login-card .fh-login-sub {
+    font-size: var(--fh-fs-body);
+  }
+  #login.fh-login-card .fh-login-input {
+    height: 48px;
+    padding: 0 14px;
+    border-radius: 10px;
+    font-size: var(--fh-fs-lg);
+  }
+  #login.fh-login-card .fh-login-err {
+    font-size: var(--fh-fs-ui);
+  }
+  #login.fh-login-card .fh-login-submit {
+    height: 48px;
+    border-radius: 10px;
+    font-size: var(--fh-fs-lg);
+    font-weight: 600;
+  }
+  #login.fh-login-card .fh-login-note {
+    font-size: var(--fh-fs-ui);
+  }
+
+  /* Mobile drawer bottom tab bar badges */
+  .wb-root .wb-stack-tab .wb-badge {
+    top: -3px;
+    right: calc(50% - 22px);
+  }
+  .wb-root .wb-stack-tab .wb-badge.wb-badge-dot {
+    top: 1px;
+    right: calc(50% - 14px);
+  }
+
+  /* Mobile topic composer (< 640px) */
+  .wb-root[data-wb-mode="mobile"] .wb-topic-bar {
+    max-width: none;
+    background: var(--fh-bg-side);
+    padding: 8px 10px calc(8px + env(safe-area-inset-bottom, 0px));
+  }
+  .wb-root[data-wb-mode="mobile"] #input.wb-topic-input,
+  .wb-root[data-wb-mode="mobile"] .wb-topic-input {
+    min-height: 40px;
+    padding: 9px 14px;
+    border-radius: 20px;
+    font-size: var(--fh-fs-lg);
+  }
+  .wb-root[data-wb-mode="mobile"] .wb-topic-send {
+    min-height: 40px;
+    border-radius: 20px;
+    padding: 0 16px;
+    font-size: var(--fh-fs-body);
+  }
+
+  /* Mobile shared components (?m#confirm, ?m#sheet-row, ?gallery=6) */
+  .fh-dialog-backdrop:not(.fh-palette-kb-dialog) .fh-dialog {
+    width: min(280px, calc(100% - 48px));
+    border-radius: 14px;
+    text-align: center;
+    overflow: hidden;
+  }
+  .fh-dialog-backdrop:not(.fh-palette-kb-dialog) .fh-dialog-head {
+    justify-content: center;
+    padding: 20px 16px 6px;
+    border-bottom: 0;
+  }
+  .fh-dialog-backdrop:not(.fh-palette-kb-dialog) .fh-dialog-close {
+    display: none;
+  }
+  .fh-dialog-backdrop:not(.fh-palette-kb-dialog) .fh-dialog-title {
+    font-size: var(--fh-fs-lg);
+  }
+  .fh-dialog-backdrop:not(.fh-palette-kb-dialog) .fh-dialog-body {
+    padding: 0 18px 18px;
+    font-size: var(--fh-fs-ui);
+    color: var(--fh-fg-dim);
+  }
+  .fh-dialog-backdrop:not(.fh-palette-kb-dialog) .fh-dialog-foot {
+    padding: 0;
+    gap: 0;
+    border-top: 1px solid var(--fh-line);
+  }
+  .fh-dialog-backdrop:not(.fh-palette-kb-dialog) .fh-dialog-foot .fh-btn {
+    flex: 1;
+    height: 46px;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    color: var(--fh-link);
+    font-size: var(--fh-fs-lg);
+    font-weight: 400;
+  }
+  .fh-dialog-backdrop:not(.fh-palette-kb-dialog) .fh-dialog-foot .fh-btn + .fh-btn {
+    border-left: 1px solid var(--fh-line);
+  }
+  .fh-dialog-backdrop:not(.fh-palette-kb-dialog) .fh-dialog-foot .fh-btn--primary {
+    font-weight: 600;
+  }
+  .fh-dialog-backdrop:not(.fh-palette-kb-dialog) .fh-dialog-foot .fh-btn--danger {
+    color: var(--fh-err);
+    font-weight: 600;
+  }
+  body .fh-menu {
+    left: 0 !important;
+    right: 0;
+    bottom: 0;
+    top: auto !important;
+    min-width: 0;
+    max-width: none;
+    max-height: 75dvh;
+    overflow-y: auto;
+    padding: 10px 0 calc(10px + env(safe-area-inset-bottom, 0px));
+    border: 0;
+    border-top: 1px solid var(--fh-line);
+    border-radius: 14px 14px 0 0;
+  }
+  body .fh-menu .fh-menu-item {
+    width: 100%;
+    height: auto;
+    min-height: 52px;
+    margin: 0;
+    padding: 0 20px;
+    gap: 14px;
+    border-bottom: 1px solid var(--fh-line);
+    border-radius: 0;
+    font-size: var(--fh-fs-lg);
+  }
+  body .fh-menu .fh-menu-item:last-child {
+    border-bottom: 0;
+  }
+  body .fh-menu .fh-menu-icon {
+    font-size: 21px;
+  }
+  .fh-qp-backdrop {
+    padding: 12px 10px calc(12px + env(safe-area-inset-bottom, 0px));
+  }
+  .fh-qp-backdrop .fh-qp {
+    border-radius: 12px;
+    max-height: 82dvh;
+  }
+  .fh-qp-backdrop .fh-qp-input {
+    font-size: var(--fh-fs-lg);
+    min-height: 36px;
+  }
+  .fh-qp-backdrop .fh-qp-row {
+    min-height: 44px;
+    padding: 8px 14px;
+  }
+  .fh-switch .fh-switch-track {
+    width: 50px;
+    height: 30px;
+    border-radius: 15px;
+    padding: 3px;
+    background: var(--fh-btn2-hover);
+  }
+  .fh-switch.is-checked .fh-switch-track {
+    background: var(--fh-accent);
+  }
+  .fh-switch .fh-switch-thumb {
+    width: 24px;
+    height: 24px;
+  }
+  .fh-switch.is-checked .fh-switch-thumb {
+    transform: translateX(20px);
+  }
+  .fh-seg {
+    border-radius: 9px;
+    padding: 2px;
+  }
+  .fh-seg .fh-seg-item {
+    height: 30px;
+    border-radius: 7px;
+    font-size: var(--fh-fs-ui);
+  }
+  .fh-seg .fh-seg-item.is-active {
+    font-weight: 600;
+  }
+  .fh-tag {
+    font-size: var(--fh-fs-xs);
+    padding: 0 6px;
+    border-radius: 4px;
+  }
+  .fh-dot {
+    width: 10px;
+    height: 10px;
+  }
+  .fh-notice {
+    border-radius: 10px;
+    padding: 10px 12px;
+    font-size: var(--fh-fs-ui);
+  }
+  .fh-empty-title {
+    font-size: var(--fh-fs-body);
+  }
+  .fh-empty-desc {
+    font-size: var(--fh-fs-ui);
+  }
+}
+
+.wb-root[data-wb-mode="mobile"] .fh-sidebar-seg {
+  padding: 8px 12px 8px;
+  background: var(--fh-bg-side);
+}
+.wb-root[data-wb-mode="mobile"] .fh-sidebar-seg .fh-seg {
+  border-radius: 9px;
+  padding: 2px;
+}
+.wb-root[data-wb-mode="mobile"] .fh-sidebar-seg .fh-seg-item {
+  height: 30px;
+  padding: 0;
+  border-radius: 7px;
+  font-size: var(--fh-fs-ui);
+}
+.wb-root[data-wb-mode="mobile"] .fh-sidebar-seg .fh-seg-item.is-active {
+  font-weight: 600;
+}
+.wb-root[data-wb-mode="mobile"] .fh-sidebar-filter {
+  padding: 0 0 8px;
+  background: var(--fh-bg-side);
+  border-bottom: 1px solid var(--fh-line);
+}
+.wb-root[data-wb-mode="mobile"] .fh-sidebar-filter .fh-fb-row {
+  padding: 0 12px;
+}
+.wb-root[data-wb-mode="mobile"] .fh-sidebar-filter .fh-fb-search {
+  height: 38px;
+  padding: 0 10px;
+  gap: 8px;
+  border-radius: 10px;
+}
+.wb-root[data-wb-mode="mobile"] .fh-sidebar-filter .fh-fb-q {
+  font-size: var(--fh-fs-lg);
+}
+.wb-root[data-wb-mode="mobile"] .fh-sidebar-filter .fh-fb-filter,
+.wb-root[data-wb-mode="mobile"] .fh-sidebar-filter .fh-fb-sort,
+.wb-root[data-wb-mode="mobile"] .fh-sidebar-filter .fh-fb-dir {
+  height: 38px;
+  min-height: 38px;
+  border-radius: 10px;
+}
+.wb-root[data-wb-mode="mobile"] .fh-sidebar-filter .fh-fb-dir {
+  width: 38px;
+}
+.wb-root[data-wb-mode="mobile"] .fh-sidebar-filter .fh-fb-sortsel {
+  font-size: var(--fh-fs-lg);
+}
+.wb-root[data-wb-mode="mobile"] .fh-sidebar-filter .fh-fb-pins .fh-fb-chips {
+  flex-wrap: nowrap;
+  overflow: hidden;
+  padding: 2px 12px;
+  gap: 4px;
+}
+.wb-root[data-wb-mode="mobile"] .fh-sidebar-filter .fh-fb-chip {
+  flex: 1 1 auto;
+  min-width: 0;
+  justify-content: center;
+  font-size: var(--fh-fs-xs);
+  padding: 4px 5px;
+  gap: 3px;
+  border-radius: 12px;
+  white-space: nowrap;
+}
+.wb-root[data-wb-mode="mobile"] .fh-sidebar-filter .fh-fb-chip .fh-fb-chip-icon svg {
+  width: 12px;
+  height: 12px;
+}
+.wb-root[data-wb-mode="mobile"] .fh-sidebar-filter .fh-fb-sum,
+.wb-root[data-wb-mode="mobile"] .fh-sidebar-filter .fh-fb-panel {
+  margin: 0 12px;
+}

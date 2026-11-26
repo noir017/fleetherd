@@ -1,5 +1,6 @@
+import path from 'node:path';
 import { configDir } from '../config/load.js';
-import type { Config } from '../config/schema.js';
+import type { AgentDef, Config } from '../config/schema.js';
 import { agentDisplayName, findAgent } from '../config/schema.js';
 import { harnessCommandName } from '../core/command-translate.js';
 import { agentCatalog, agentGroups, agentPlaceOf } from '../core/agent-menu.js';
@@ -17,7 +18,7 @@ import { shouldRespond, type GateConfig } from '../core/inbound-gate.js';
 import type { SoloOutcome } from '../core/inbound-merger.js';
 import type { ModelChoiceResult } from '../core/model-menu.js';
 import type { SettingApplyResult, SettingOption, SettingRow } from '../core/settings.js';
-import type { WorkdirChoiceResult } from '../core/workdir-menu.js';
+import { buildWorkdirScreen, workdirBaseName, type WorkdirChoiceResult } from '../core/workdir-menu.js';
 import type { WorkdirScan } from './workdir-scan.js';
 import type { HistoryStore } from '../history/store.js';
 import type { ListChannelsResult } from '../ipc/protocol.js';
@@ -28,12 +29,15 @@ import type {
   PlatformAdapter,
   SessionOptionList,
   SessionOptionResult,
+  TopicSetupResult,
   TurnChangeFileResult,
   TurnChangeStatusResult,
+  WorkdirBrowseResult,
 } from '../platform/adapter.js';
-import type { AgentCatalog, AgentStatus, ConversationId, InboundMessage, StatusOption, TopicActivity } from '../types.js';
+import type { AgentCatalog, AgentStatus, ConversationId, InboundMessage, StatusOption, StatusPermissions, TopicActivity } from '../types.js';
 import type { AgentFactory } from './agent.js';
-import { resolveConversationCwd } from './agent-common.js';
+import { resolveAgentCwd, resolveConversationCwd } from './agent-common.js';
+import { isDirectory } from './workdir-scan.js';
 import { runAgyCliCommand } from './agy-cli.js';
 import type { RespawnCounts } from './config-reload.js';
 import { ConversationCommands } from './conversation-commands.js';
@@ -134,6 +138,7 @@ export class ConversationRegistry {
       agentOf: (id) => this.agentIdOf(id),
       configuredModel: (id) =>
         this.conversations.get(id)?.modelOverride ?? findAgent(this.config, this.agentIdOf(id))?.model,
+      permissionsOf: (id) => this.controls?.permissionsForAgent(this.agentIdOf(id)),
       cacheReading: (id) => this.recorder.cacheReading(id),
       clock: this.clock,
     });
@@ -644,6 +649,173 @@ export class ConversationRegistry {
     return agentCatalog(agentGroups(this.config.agents), current);
   }
 
+  /** Bind a new/empty topic's agent and working directory in one step; never adds prompt text. */
+  setupTopicForRef(ref: ConversationRef, opts: { agent?: string; cwd?: string; dryRun?: boolean }): TopicSetupResult {
+    const id = this.idForRef(ref);
+    const prevAgent = this.boundAgentFor(id, resolveAgent(this.config, routeInputFromRef(ref)).agentId);
+    const targetAgent = opts.agent ?? prevAgent;
+    const def = findAgent(this.config, targetAgent);
+    if (!def) return { ok: false, error: `No agent "${targetAgent}" is configured.` };
+    const validated = this.validateTopicSetup(id, targetAgent, Boolean(def.host), opts);
+    if (!validated.ok) return validated;
+    const crossHostClear = this.isCrossHostSwitch(prevAgent, def, opts);
+    if (opts.dryRun) {
+      const cwd = validated.cwd ?? (crossHostClear ? resolveAgentCwd(def) : resolveConversationCwd(def, id, this.store));
+      return { ok: true, agent: targetAgent, cwd };
+    }
+    const prevState = this.conversations.get(id);
+    const prevAgentId = prevState?.agentId;
+    const prevStoreAgent = this.store?.boundAgent(id);
+    if (opts.agent !== undefined) {
+      if (prevState && prevState.agentId !== targetAgent) {
+        this.rebind(id, prevState, targetAgent, ref.platform, addressOf(ref), false);
+      } else if (!prevState) {
+        this.createState(id, targetAgent, ref.platform, ' (chosen at topic setup)');
+      }
+    }
+    const wdError = this.applyTopicWorkdir(id, targetAgent, def, validated.cwd, crossHostClear);
+    if (wdError !== undefined) {
+      if (opts.agent !== undefined) this.rollbackAgentBind(id, prevState, prevAgentId, prevStoreAgent);
+      return { ok: false, error: wdError };
+    }
+    return { ok: true, agent: targetAgent, cwd: resolveConversationCwd(def, id, this.store) };
+  }
+
+  private isCrossHostSwitch(prevAgent: string, def: AgentDef, opts: { agent?: string; cwd?: string }): boolean {
+    if (opts.agent === undefined || opts.cwd !== undefined) return false;
+    const prevDef = findAgent(this.config, prevAgent);
+    return Boolean(prevDef && (prevDef.host ?? '') !== (def.host ?? ''));
+  }
+
+  private applyTopicWorkdir(
+    id: ConversationId,
+    targetAgent: string,
+    def: AgentDef,
+    cwd: string | undefined,
+    crossHostClear: boolean
+  ): string | undefined {
+    if (cwd !== undefined) {
+      const wdRes = this.controls.setWorkdir(id, targetAgent, cwd);
+      if (wdRes.kind === 'failed' || wdRes.kind === 'missing') {
+        return wdRes.kind === 'failed' ? wdRes.reason : `Directory does not exist: ${wdRes.path}`;
+      }
+      return undefined;
+    } else if (crossHostClear && this.store?.conversationCwd(id) !== undefined) {
+      const wdRes = this.controls.setWorkdir(id, targetAgent, resolveAgentCwd(def));
+      if (wdRes.kind === 'unchanged' || wdRes.kind === 'missing') {
+        this.store.setConversationCwd(id, targetAgent, undefined);
+      }
+    }
+    return undefined;
+  }
+
+  /** Browse one level of directories for a topic's selected agent, using `/cd`'s screen format. */
+  async browseWorkdirForRef(
+    ref: ConversationRef,
+    opts?: { agent?: string; dir?: string; atRoot?: boolean }
+  ): Promise<WorkdirBrowseResult> {
+    const id = this.idForRef(ref);
+    const agentId =
+      opts?.agent ?? this.boundAgentFor(id, resolveAgent(this.config, routeInputFromRef(ref)).agentId);
+    const def = findAgent(this.config, agentId);
+    if (!def) return { ok: false, error: `No agent "${agentId}" is configured.` };
+    const root = resolveAgentCwd(def);
+    const current = resolveConversationCwd(def, id, this.store);
+    const posixPaths = Boolean(def.host);
+    const resolved = this.resolveBrowseDir(opts?.dir, opts?.atRoot ? root : current, posixPaths);
+    if (!resolved.ok) return resolved;
+    const targetDir = resolved.dir;
+    const scan = await this.controls.scanWorkdirAt(agentId, targetDir);
+    const screen = buildWorkdirScreen({
+      reqId: 'launch',
+      agentId,
+      ...(def.host ? { host: def.host } : {}),
+      root,
+      current,
+      browsing: targetDir,
+      options: scan.ok
+        ? scan.options
+        : [{ path: targetDir, name: workdirBaseName(targetDir, posixPaths), root: targetDir === root }],
+      truncated: scan.ok ? scan.truncated : 0,
+      posixPaths,
+      ...(scan.ok ? {} : { error: scan.reason }),
+    });
+    return { ok: true, screen };
+  }
+
+  private resolveBrowseDir(
+    raw: string | undefined,
+    fallback: string,
+    isRemote: boolean
+  ): { ok: true; dir: string } | { ok: false; error: string } {
+    if (raw === undefined) return { ok: true, dir: fallback };
+    if (/[\x00-\x1f\x7f]/.test(raw)) return { ok: false, error: 'Working directory contains invalid characters.' };
+    if (/(?:^|[\\/])\.\.(?:$|[\\/])/.test(raw)) {
+      return { ok: false, error: 'Working directory must be a normalized absolute path without "..".' };
+    }
+    if (isRemote) {
+      if (!(raw.startsWith('/') || raw === '~' || raw.startsWith('~/'))) {
+        return { ok: false, error: 'Working directory must be an absolute path.' };
+      }
+      return { ok: true, dir: raw };
+    }
+    if (!path.isAbsolute(raw)) return { ok: false, error: 'Working directory must be an absolute path.' };
+    return { ok: true, dir: path.normalize(raw) };
+  }
+
+  private validateTopicSetup(
+    id: ConversationId,
+    targetAgent: string,
+    isRemote: boolean,
+    opts: { agent?: string; cwd?: string }
+  ): { ok: true; cwd?: string } | { ok: false; error: string } {
+    if (opts.agent !== undefined) {
+      const refused = this.switchRefusal(id, targetAgent, `/agent ${targetAgent}`);
+      if (refused !== undefined) return { ok: false, error: refused };
+    }
+    if (opts.cwd === undefined) return { ok: true };
+    if (this.controls.isWorkdirLocked(id, targetAgent)) {
+      return { ok: false, error: 'Working directory cannot be changed once the session has started.' };
+    }
+    const checked = this.validateTopicCwd(opts.cwd, isRemote);
+    if (!checked.ok) return checked;
+    if (!this.store) {
+      return { ok: false, error: 'this deployment keeps no conversation store, so a directory cannot be remembered' };
+    }
+    return { ok: true, cwd: checked.cwd };
+  }
+
+  private rollbackAgentBind(
+    id: ConversationId,
+    prevState: ConversationState | undefined,
+    prevAgentId: string | undefined,
+    prevStoreAgent: string | undefined
+  ): void {
+    if (!prevState) this.conversations.delete(id);
+    else if (prevAgentId && prevState.agentId !== prevAgentId) prevState.agentId = prevAgentId;
+    if (prevStoreAgent !== undefined) this.store?.bind(id, prevStoreAgent);
+    else this.store?.clear(id);
+  }
+
+  private validateTopicCwd(raw: string, isRemote: boolean): { ok: true; cwd: string } | { ok: false; error: string } {
+    if (/[\x00-\x1f\x7f]/.test(raw)) return { ok: false, error: 'Working directory contains invalid characters.' };
+    if (/(?:^|[\\/])\.\.(?:$|[\\/])/.test(raw)) {
+      return { ok: false, error: 'Working directory must be a normalized absolute path without "..".' };
+    }
+    if (isRemote) {
+      if (!(raw.startsWith('/') || raw === '~' || raw.startsWith('~/'))) {
+        return { ok: false, error: 'Working directory must be an absolute path.' };
+      }
+      return { ok: true, cwd: raw };
+    }
+    if (!path.isAbsolute(raw)) {
+      return { ok: false, error: 'Working directory must be an absolute path.' };
+    }
+    const normalized = path.normalize(raw);
+    if (!isDirectory(normalized)) return { ok: false, error: `Directory does not exist: ${raw}` };
+    return { ok: true, cwd: normalized };
+  }
+
   /** Read off `reclaimState`, not `peek`: a handle outlives its reclaimed child. Absent reads as not live. */
   liveForRef(ref: ConversationRef): boolean {
     const session = this.agents.peek(this.idForRef(ref));
@@ -695,7 +867,9 @@ export class ConversationRegistry {
     return this.controls.chooseModelForRef(ref, value);
   }
 
-  optionStatusForRef(ref: ConversationRef): Promise<{ agent: string; model?: string; options: StatusOption[] }> {
+  optionStatusForRef(
+    ref: ConversationRef
+  ): Promise<{ agent: string; model?: string; options: StatusOption[]; permissions?: StatusPermissions }> {
     return this.controls.optionStatusForRef(ref);
   }
 

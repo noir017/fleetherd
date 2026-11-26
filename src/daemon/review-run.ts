@@ -10,6 +10,7 @@ import type { AgentDef, Config } from '../config/schema.js';
 import { findAgent, REVIEW_ARGS_HARNESSES } from '../config/schema.js';
 import type { RemoteHost } from '../remote/host.js';
 import { applyModelPreference, resolveHarness } from './agent-acp.js';
+import { liveModelName } from './agent-acp-options.js';
 import { buildHarnessEnv, expandEnv, remoteAgentEnv, windowsSpawnOptions, type AgentChild } from './agent-common.js';
 import { AGY_COMMAND } from './agy-cli.js';
 import { remoteHosts } from './remote-hosts.js';
@@ -74,7 +75,7 @@ import { remoteHosts } from './remote-hosts.js';
 export const REVIEW_TIMEOUT_MS = 30 * 60_000;
 
 export type ReviewRun =
-  | { ok: true; output: string }
+  | { ok: true; output: string; model?: string }
   | {
       ok: false;
       error: string;
@@ -220,7 +221,7 @@ export async function runApiReview(
     return { ok: false, error: `${label}: the answer is not JSON: ${raw.slice(0, 300)}` };
   }
   const answer = apiReviewAnswer(body);
-  return answer.ok ? answer : { ok: false, error: `${label}: ${answer.error}` };
+  return answer.ok ? { ...answer, model: reviewer.model } : { ok: false, error: `${label}: ${answer.error}` };
 }
 
 // ─────────────────────────────────────── the acp route ───────────────────────────────────────
@@ -449,6 +450,7 @@ export async function driveAcpReview(child: AgentChild, turn: AcpReviewTurn): Pr
       ...(turn.meta ? { _meta: turn.meta } : {}),
     });
     await applyModelPreference(ctx, created.sessionId, turn.def, created.configOptions ?? undefined, turn.model);
+    const resolvedModel = turn.model ?? liveModelName(created.configOptions ?? undefined);
     const res = await ctx.request('session/prompt', {
       sessionId: created.sessionId,
       prompt: [{ type: 'text', text: turn.prompt }],
@@ -459,7 +461,7 @@ export async function driveAcpReview(child: AgentChild, turn: AcpReviewTurn): Pr
     const why = refused.length ? `; refused: ${refused.join(', ')}` : '';
     if (res.stopReason !== 'end_turn') return failed(`${turn.label} ended its turn with ${res.stopReason}${why}`);
     if (!text.trim()) return failed(`${turn.label} produced no answer${why}`);
-    return { ok: true, output: text.trim() };
+    return { ok: true, output: text.trim(), ...(resolvedModel ? { model: resolvedModel } : {}) };
   })().catch(async (e: unknown) => {
     // A child that died closes the connection first; its exit, a moment later, says more than
     // "ACP connection closed" — give it that moment, and `ended` wins the race if it comes.
@@ -619,7 +621,8 @@ export async function runAgyReview(def: AgentDef, model: string | undefined, pro
       const captured = `${r.output.toString('utf8')}\n${r.stderr ?? ''}`;
       return isCapacityFailure(captured) ? { ok: false, error, capacity: true } : { ok: false, error };
     }
-    return agyReviewAnswer(r.output.toString('utf8'));
+    const answer = agyReviewAnswer(r.output.toString('utf8'));
+    return answer.ok && model ? { ...answer, model } : answer;
   });
 }
 
@@ -672,7 +675,10 @@ function runAgyReviewLocal(def: AgentDef, dir: string, argv: string[], input: st
         finish(failed(`agy exited ${code ?? 'by signal'}${err.trim() ? `: ${err.trim().slice(0, 500)}` : ''}`));
         return;
       }
-      finish(agyReviewAnswer(out));
+      const answer = agyReviewAnswer(out);
+      finish(answer.ok && argv.some((a) => a.startsWith('--model='))
+        ? { ...answer, model: argv.find((a) => a.startsWith('--model='))!.slice('--model='.length) }
+        : answer);
     });
     // agy can exit before reading all of stdin; that is a close, not a crash.
     child.stdin.on('error', () => {});

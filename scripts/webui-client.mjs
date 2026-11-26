@@ -3,16 +3,12 @@
 // (`src/platform/webui/page.test-helpers.ts`, which runs the same bytes in jsdom). One function for
 // both, so a page that works in the tests is the page the build ships.
 //
-// Neither output is minified. The script and the stylesheet were moved out of page.ts as they were
-// (Phase 1 Step 1A of docs/refactor-plan.md), and a change that only moves code should not also
-// rewrite every identifier in it: a stack from a failing DOM test, or from an operator's console,
-// still names the function it came from. esbuild still reprints both (comments dropped, its own
-// formatting), which is why tests that assert on source text read the source, not this output.
+// `app` is minified to keep the bundled client within the gzip budget; tests that assert on source
+// text read the TypeScript source files directly rather than this output.
 //
 // No `target` either: nothing is lowered or prefixed, so what runs is what was written. The script
-// is classic, not a module (`format: 'iife'`), because it was a classic inline script — sloppy
-// mode, `var` hoisting and all — and `tsconfigRaw: {}` keeps esbuild from reading the repo's
-// `strict: true` as `alwaysStrict` and changing that.
+// is bundled as a classic IIFE (`format: 'iife'`), and `tsconfigRaw: {}` keeps esbuild from forcing
+// `alwaysStrict` over the injected `CACHE_CORE` snippet.
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -24,11 +20,25 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const webui = path.join(root, 'src', 'platform', 'webui');
 
 /** The client script's source, with its two build-time markers still in it. */
-export const APP_ENTRY = path.join(webui, 'client', 'legacy-app.ts');
+export const APP_ENTRY = path.join(webui, 'client', 'main.ts');
 /** The synchronous theme boot script linked in <head> before first paint. */
 export const BOOT_ENTRY = path.join(webui, 'client', 'theme-boot.ts');
 /** The stylesheet's source. */
 export const STYLE_ENTRY = path.join(webui, 'client', 'styles', 'main.css');
+
+const EXTRAS_SOURCE = [
+  "export { createChangesPlugin } from './features/changes/index.js';",
+  "export { createFilesPlugin } from './features/files/index.js';",
+  "export { createHistoryPlugin } from './features/history/index.js';",
+  "export { createPalettePlugin } from './features/palette/index.js';",
+  "export { createReaderPlugin } from './features/reader/plugin.js';",
+  "export { createReviewsPlugin } from './features/reviews/index.js';",
+  "export { createSchedulesPlugin } from './features/schedules/index.js';",
+  "export { createSettingsPlugin } from './features/settings/plugin.js';",
+  "export { createSkillsPlugin } from './features/skills/index.js';",
+  "export { createTerminalPlugin } from './features/terminal/plugin.js';",
+  "export { initLocale, setLocale } from './i18n/index.js';",
+].join('\n');
 
 /**
  * What the script takes from TypeScript at build time: the icon table and the cache core. Both live
@@ -87,10 +97,28 @@ const hashed = (prefix, ext, text) => `${prefix}-${createHash('sha256').update(t
 export async function buildClient({ outdir } = {}) {
   const source = await appSource();
   const common = { bundle: true, write: false, logLevel: 'warning', absWorkingDir: root, tsconfigRaw: {} };
+  const extras = await build({
+    ...common,
+    stdin: {
+      contents: EXTRAS_SOURCE,
+      loader: 'ts',
+      resolveDir: path.dirname(APP_ENTRY),
+      sourcefile: 'workbench-extras.ts',
+    },
+    format: 'esm',
+    minify: true,
+    target: ['es2022', 'chrome100', 'firefox100', 'safari15'],
+  });
+  const extrasText = extras.outputFiles[0].text;
+  const extrasFile = hashed('workbench-extras', '.js', extrasText);
   const app = await build({
     ...common,
     stdin: { contents: source, loader: 'ts', resolveDir: path.dirname(APP_ENTRY), sourcefile: path.basename(APP_ENTRY) },
     format: 'iife',
+    minify: true,
+    define: {
+      __WEBUI_EXTRAS_ASSET__: JSON.stringify(outdir ? `assets/${extrasFile}` : null),
+    },
   });
   const boot = await build({
     ...common,
@@ -107,9 +135,12 @@ export async function buildClient({ outdir } = {}) {
     app: { file: hashed('app', '.js', appText), text: appText },
     boot: { file: hashed('boot', '.js', bootText), text: bootText },
     style: { file: hashed('style', '.css', styleText), text: styleText },
+    extras: { file: extrasFile, text: extrasText },
   };
   if (outdir) {
-    for (const { file, text } of [result.app, result.boot, result.style]) fs.writeFileSync(path.join(outdir, file), text, 'utf8');
+    for (const { file, text } of [result.app, result.boot, result.style, result.extras]) {
+      fs.writeFileSync(path.join(outdir, file), text, 'utf8');
+    }
   }
   return result;
 }

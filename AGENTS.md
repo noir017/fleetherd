@@ -252,10 +252,10 @@ integration harness, so those are verified by hand.
 
 The one exception to "no browser, no DOM" is `platform/webui/page.dom.*.test.ts` (sharing
 `page.dom.test-helpers.ts`), which runs the
-web UI's client script in jsdom — `webui/client/legacy-app.ts`, bundled the way the asset build
-bundles it (`page.test-helpers.ts`). Typecheck and lint still leave that file out until the
-refactor plan's later steps split it into typed modules, so those tests are all that sees it — and
-a page that renders nothing has already shipped green once. Behaviour changes to the client script
+web UI's client script in jsdom — `webui/client/main.ts`, bundled the way the asset build
+bundles it (`page.test-helpers.ts`). The entire `webui/client/` tree is covered by
+`client/tsconfig.json` and eslint, and `page.dom.*.test.ts` exercises the assembled bundle in
+jsdom. Behaviour changes to the client script
 are expected to arrive with a test there; read
 [its README](src/platform/webui/README.md#testing) first, because jsdom's handling of `@media`
 and of duplicate declarations will otherwise mislead you.
@@ -508,6 +508,31 @@ Do not weaken these without saying so explicitly in the PR:
    writes, sends into a running turn, or starts anything without the card; do not let it share a
    credential or a port with the web UI.
 
+12. **Web UI plugins run as the gateway's own code with no sandbox, and are off by default.**
+    `platforms.<id>.plugins` is the sixth security decision in `WebuiConfigSchema` (default empty,
+    `docs/webui-plugins.md`). What holds it:
+    - **No sandbox.** Server plugin modules (`plugins/host.ts`) execute in-process inside the
+      gateway daemon with its full OS and runtime privileges; client plugin modules
+      (`client/plugins/loader.ts`) execute same-origin in the browser with the signed-in session.
+    - **Only `config.yaml` can install or enable plugins.** No HTTP route, reverse command, MCP
+      tool, skill, or web UI control may install, enable, or write plugin code.
+    - **Forbidden directories are rejected at load.** Any plugin directory inside `files.roots` or
+      inside any configured agent working directory is refused (`plugins/loader.ts`
+      `assertSafePluginDir`, checking both resolved paths and `realpath` against symlink escapes).
+      This is best-effort: a local agent running as the same OS user as the gateway still falls
+      under invariant 1's boundary.
+    - **Plugin messages are always visible and attributed.** Text sent into a topic via
+      `PluginHost.topics.send` is prefixed visibly with `[plugin:<id>]` in the conversation
+      transcript; plugins cannot inject hidden text into an agent's prompt (enforcing "Nothing of
+      the gateway's in the agent's prompt").
+    - **`doctor` lists every configured plugin** (`commands/doctor.ts` `inspectWebuiPlugins`) and
+      warns explicitly that plugins execute with full gateway/session privileges and no sandbox.
+    Plugin static files (`GET /plugins/<id>/<file>`) and API routes (`GET`/`POST /api/plugins/<id>/`)
+    sit behind the `GUARDED` session/SSO gate and same-origin POST check; static files serve only
+    manifest-whitelisted entries with `realpath` containment re-checks, and `/api/plugins/` is
+    matched last so plugins can never shadow built-in routes. Do not add an in-UI installer, relax
+    the directory/manifest allowlist checks, or strip the `[plugin:<id>]` prefix.
+
 ## Adding things
 
 - **A platform** → `platform/config-schemas.ts` (schema) + `platform/profiles/<name>.ts`
@@ -554,7 +579,7 @@ touches one of these places keeps both names working.
 | Config directory | `~/.config/talkcode` used as it is when `~/.config/fleetherd` does not exist, logged once; never moved (a bind mount, absolute paths in config.yaml) | `defaultConfigDir`, `config/load.ts` |
 | Host directory | `~/.talkcode` moved to `~/.fleetherd` with a link left at the old name: on every host by the bootstrap, on the gateway's own machine at start; links that name the old path count as the gateway's own | `remote/connection.ts`, `migrateHostDir`, `isUnderEitherName`, `remote/ops.go` `under` |
 | Skill metadata | `talkcode-resident` / `-category` / `-hosts` / `-harnesses` read; the resident guard (invariant 8) treats both spellings as one key, either `"true"` meaning resident | `skills-store.ts` `metaValue` / `residentOf` |
-| Skills repository | commits authored `talkcode*` are the gateway's; `Talkcode-` trailers read like `Fleetherd-` ones | `skills-git.ts`, `webui/client/legacy-app.ts` skillHistRow |
+| Skills repository | commits authored `talkcode*` are the gateway's; `Talkcode-` trailers read like `Fleetherd-` ones | `skills-git.ts`, `webui/client/features/skills/editor.ts` |
 | Skill links | the bundled skill's old `talkcode` link is taken back where `fleetherd` is linked; `talkcode` stays a reserved skill name | `skill-link.ts`, `remote-hosts.ts`, `skills-store.ts` |
 | Transcripts | `talkcode skills …` and `~/.talkcode/skills/…` count as skill use and administration | `skill-usage.ts`, `review-prompt.ts` |
 | Remote host | a `talkcode-remote` daemon or version directory is retired like a `fleetherd-remote` one | `remote/attach.go` |

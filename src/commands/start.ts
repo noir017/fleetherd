@@ -69,7 +69,10 @@ export async function runStart(): Promise<void> {
   ensureReverseCliShim();
 
   // One adapter per configured platform instance; the daemon drives them all.
-  const platforms = await createPlatformAdapters(cfg.platforms);
+  const forbiddenPluginRoots = cfg.agents
+    .filter((a) => !a.host)
+    .flatMap((a) => [a.cwd, path.join(os.homedir(), '.fleetherd', 'agents', a.id)].filter((p): p is string => Boolean(p)));
+  const platforms = await createPlatformAdapters(cfg.platforms, { forbiddenPluginRoots });
   // Conversation state outlives the daemon: the store remembers which agent answers each
   // conversation and, per agent, that agent's own session id (ACP session id / agy conversation id)
   // so a restart resumes it. Only /new forgets any of it.

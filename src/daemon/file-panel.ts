@@ -37,6 +37,7 @@ import path from 'node:path';
 
 import type { ConversationRef } from '../core/conversation.js';
 import type {
+  FileGitStatus,
   FilesPanel,
   FilesPanelConflict,
   FilesPanelCreateResult,
@@ -118,6 +119,7 @@ interface Located {
 interface Roots {
   roots: string[];
   home: string;
+  repo?: string;
 }
 
 /** Everything the panel's operations share; built once per `buildFilesPanel`. */
@@ -218,7 +220,7 @@ async function resolveRoots(env: PanelEnv, ws: Workspace): Promise<Roots> {
     const abs = P.normalize(expandHome(raw, home, P));
     if (!roots.includes(abs)) roots.push(abs);
   }
-  return { roots, home };
+  return { roots, home, ...(repo ? { repo } : {}) };
 }
 
 /**
@@ -296,9 +298,77 @@ async function panelList(env: PanelEnv, ref: ConversationRef, input: string): Pr
       if (a.dir !== b.dir) return a.dir ? -1 : 1;
       return a.name.localeCompare(b.name);
     });
-    return { ok: true, path: at.abs, ...(at.rel !== undefined ? { rel: at.rel } : {}), entries: sorted };
+    const statuses = await gitStatusForDir(env, ws, at.abs);
+    const annotated: FilesPanelEntry[] =
+      statuses.size > 0
+        ? sorted.map((e) => {
+            const gitStatus = statuses.get(e.name);
+            return gitStatus ? { ...e, gitStatus } : e;
+          })
+        : sorted;
+    return { ok: true, path: at.abs, ...(at.rel !== undefined ? { rel: at.rel } : {}), entries: annotated };
   } catch (e) {
     return fail(e);
+  }
+}
+
+const GIT_STATUS_PRIORITY: Readonly<Record<FileGitStatus, number>> = {
+  U: 6,
+  M: 5,
+  A: 4,
+  R: 3,
+  D: 2,
+  '?': 1,
+};
+
+function mapPorcelainStatus(xy: string): FileGitStatus {
+  if (xy === '??') return '?';
+  if (xy.includes('U') || xy === 'AA' || xy === 'DD') return 'U';
+  if (xy.includes('R') || xy.includes('C')) return 'R';
+  if (xy.includes('A')) return 'A';
+  if (xy.includes('D')) return 'D';
+  return 'M';
+}
+
+/** Parse `git status --porcelain=v1 -z` output into direct child entry badges under `prefix`. */
+export function parseDirGitStatus(text: string, prefix: string): Map<string, FileGitStatus> {
+  const out = new Map<string, FileGitStatus>();
+  const pfx = prefix && !prefix.endsWith('/') ? `${prefix}/` : prefix;
+  const parts = text.split('\0');
+  for (let i = 0; i < parts.length; i++) {
+    const rec = parts[i];
+    if (!rec || rec.length < 4) continue;
+    const xy = rec.slice(0, 2);
+    const rel = rec.slice(3);
+    if (xy[0] === 'R' || xy[0] === 'C' || xy[1] === 'R' || xy[1] === 'C') i += 1;
+    if (pfx && !rel.startsWith(pfx)) continue;
+    const sub = (pfx ? rel.slice(pfx.length) : rel).replace(/\/+$/, '');
+    if (!sub) continue;
+    const slash = sub.indexOf('/');
+    const name = slash >= 0 ? sub.slice(0, slash) : sub;
+    const badge = mapPorcelainStatus(xy);
+    const prev = out.get(name);
+    if (!prev || GIT_STATUS_PRIORITY[badge] > GIT_STATUS_PRIORITY[prev]) out.set(name, badge);
+  }
+  return out;
+}
+
+/** Best-effort read-only git status for one already-located directory (invariant 9). */
+async function gitStatusForDir(env: PanelEnv, ws: Workspace, dir: string): Promise<Map<string, FileGitStatus>> {
+  try {
+    const { repo } = await rootsOf(env, ws);
+    if (!repo) return new Map();
+    const P = sep(ws);
+    if (dir !== repo && !dir.startsWith(repo + P.sep)) return new Map();
+    const prefix = dir === repo ? '' : `${dir.slice(repo.length + 1).replace(/\\/g, '/')}/`;
+    const r = await ws.run(
+      ['git', '-C', repo, '--literal-pathspecs', '-c', 'core.quotepath=off', 'status', '--porcelain=v1', '-z', '--untracked-files=normal', '--', prefix || '.'],
+      { env: { GIT_OPTIONAL_LOCKS: '0', LC_ALL: 'C' }, maxBytes: 2 << 20 }
+    );
+    if (r.spawnError || r.timedOut || r.code !== 0 || r.truncated) return new Map();
+    return parseDirGitStatus(r.output.toString('utf8'), prefix);
+  } catch {
+    return new Map();
   }
 }
 

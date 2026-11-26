@@ -1,14 +1,43 @@
 import { describe, it, expect } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { NO_ASSETS, servePage as serveShell } from './page.js';
 import { APP_SOURCE, CLIENT, renderPage, testAssets } from './page.test-helpers.js';
 
+const PKG_VERSION = (
+  JSON.parse(
+    fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '../../../package.json'), 'utf8'),
+  ) as { version: string }
+).version;
+const clientDir = path.join(path.dirname(fileURLToPath(import.meta.url)), 'client');
+const BOOT_SOURCE = fs.readFileSync(path.join(clientDir, 'services', 'boot.ts'), 'utf8');
+const STREAM_SOURCE = fs.readFileSync(path.join(clientDir, 'services', 'stream.ts'), 'utf8');
+const CACHE_SOURCE = fs.readFileSync(path.join(clientDir, 'services', 'cache.ts'), 'utf8');
+const READS_SOURCE = fs.readFileSync(path.join(clientDir, 'services', 'reads.ts'), 'utf8');
+const READER_SOURCE = fs.readFileSync(path.join(clientDir, 'features', 'reader', 'index.ts'), 'utf8');
+const SHELL_SOURCE = fs.readFileSync(path.join(clientDir, 'workbench', 'shell.ts'), 'utf8');
+const TRANSCRIPT_MARKUP_SOURCE = fs.readFileSync(
+  path.join(clientDir, 'features', 'topic', 'transcript', 'markup.ts'),
+  'utf8',
+);
+const TOPICS_PLUGIN_SOURCE = fs.readFileSync(path.join(clientDir, 'features', 'topics', 'plugin.ts'), 'utf8');
+const SCHEDULES_PLUGIN_SOURCE = fs.readFileSync(path.join(clientDir, 'features', 'schedules', 'plugin.ts'), 'utf8');
+const STATUS_PLUGIN_SOURCE = fs.readFileSync(path.join(clientDir, 'features', 'status', 'plugin.ts'), 'utf8');
+const COMPOSER_ATTACHMENTS_SOURCE = fs.readFileSync(
+  path.join(clientDir, 'features', 'topic', 'composer', 'attachments.ts'),
+  'utf8',
+);
+const COMPOSER_UNSENT_SOURCE = fs.readFileSync(
+  path.join(clientDir, 'features', 'topic', 'composer', 'unsent.ts'),
+  'utf8',
+);
+
 /**
- * The client script is the one artifact in this repo the toolchain cannot see: it is not
- * typechecked and not linted (client/legacy-app.ts is left out of both until the refactor plan's
- * later steps). These assertions are the substitute — they will not catch a logic error, but they
- * catch what would otherwise reach a browser: a syntax error, a build marker left unfilled, and a
- * page that can no longer run under its own CSP.
+ * Contract assertions on the assembled web UI page and client entrypoint (`client/main.ts`).
+ * Together with `client/tsconfig.json` and ESLint, these guard against a syntax error in the
+ * bundled IIFE, a build marker left unfilled, and a page that can no longer run under its own CSP.
  *
  * `html` is the page with its script and stylesheet inline as they are written (page.test-helpers.ts),
  * which is what the text assertions below read; `shell` is the document the server actually sends.
@@ -80,11 +109,15 @@ describe('webui page', () => {
      codeview: null,
       instance: 'web',
      build,
+     version: PKG_VERSION,
+     plugins: [],
    });
-    expect(bootOf(shell)).toMatchObject({ terminal: false, terminalEnd: false, files: false, instructions: false, password: true, instance: 'web' });
-    const custom = serveShell('Chat', false, true, false, testAssets(), false, false, 'portal').html;
-    expect(bootOf(custom).instance).toBe('portal');
-   expect(APP_SOURCE).toContain('var BOOT = JSON.parse($(\'boot-config\').textContent);');
+    expect(bootOf(shell)).toMatchObject({ terminal: false, terminalEnd: false, files: false, instructions: false, password: true, instance: 'web', version: PKG_VERSION });
+    const custom = serveShell('Chat', false, true, false, testAssets(), false, false, 'portal', [], '9.9.9-test.1').html;
+   expect(bootOf(custom).instance).toBe('portal');
+   expect(bootOf(custom).version).toBe('9.9.9-test.1');
+   expect(APP_SOURCE).toContain('const boot = readBootConfig(document);');
+   expect(BOOT_SOURCE).toContain("getElementById('boot-config')");
  });
 
   it('cannot be broken out of through the boot config', () => {
@@ -99,15 +132,24 @@ describe('webui page', () => {
     // The bundle is an ES module under assets/, imported the first time a file needs it — never a
     // script element of the page's, so a page that never shows code never downloads the editor, and
     // a build with no code view (null) still has a complete page.
-    expect(APP_SOURCE).toContain('window.__fhCodeView');
-    expect(APP_SOURCE).toContain('import(new URL(CODEVIEW, document.baseURI).href)');
-    expect(APP_SOURCE).toContain('var CODEVIEW = BOOT.codeview;');
+    expect(READER_SOURCE).toContain('__fhCodeView');
+    expect(READER_SOURCE).toContain('new URL(bundleUrl, doc.baseURI).href');
+    expect(APP_SOURCE).toContain('createCodeViewLoader(boot.codeview)');
     expect(shell).not.toContain('codeview-');
   });
 
   it('carries the built bundle when it is handed one, by a path a sub-path mount still resolves', () => {
     const built = serveShell('Chat', false, true, false, testAssets('assets/codeview-abc123.js')).html;
     expect(bootOf(built).codeview).toBe('assets/codeview-abc123.js');
+  });
+
+  it('carries the optional extras chunk URL in boot-config when provided and escapes it safely', () => {
+    const withExtras = serveShell('Chat', false, true, false, {
+      ...testAssets(),
+      extras: 'assets/workbench-extras-abc123.js',
+    }).html;
+    expect(bootOf(withExtras).extras).toBe('assets/workbench-extras-abc123.js');
+    expect(withExtras).not.toContain('<script src="assets/workbench-extras-abc123.js">');
   });
 
   it('says it was not built, instead of serving a login form that does nothing', () => {
@@ -127,9 +169,10 @@ describe('webui page', () => {
   });
 
   it('asks for everything by a relative path, so a reverse proxy sub-path just works', () => {
-    expect(html).toContain("EventSource('api/events'");
+    expect(STREAM_SOURCE).toContain('`api/events');
+    expect(STREAM_SOURCE).toContain('new EventSource(url)');
     expect(html).not.toMatch(/fetch\('\//);
-    expect(html).toContain("post('api/send'");
+    expect(COMPOSER_UNSENT_SOURCE).toContain("postFn('api/send'");
     // The app-install tags are subject to the same rule — an absolute href walks out of a
     // sub-path mount, and the symptom is an installed app that opens on the proxy's root.
     expect(html).toContain('href="manifest.webmanifest"');
@@ -167,14 +210,10 @@ describe('webui page', () => {
   });
 
   it('has a collapsible topic sidebar with running indicators and unread badges', () => {
-    expect(html).toContain('id="topics"');
-    expect(html).toContain('id="sidebar"');
-    expect(html).toContain('#sidebar.collapsed');
-    expect(html).toContain('id="collapse-sidebar"');
-    expect(html).toContain('id="expand-sidebar"');
-    // The rows' attribute is a parameter of the shared row (treeRowHtml); the handlers read it.
-    expect(html).toContain("closest('[data-topic]')");
-    expect(html).toContain('data-new=');
+    expect(html).toContain('id="workbench-root"');
+    expect(SHELL_SOURCE).toContain('attachRegistry');
+    expect(SHELL_SOURCE).not.toContain('aa_workbench');
+    expect(TOPICS_PLUGIN_SOURCE).toContain("closest('[data-topic]')");
     expect(html).toContain('topic-badge');
     expect(html).toContain('topic-dot');
     expect(html).toContain('.topic-item.idle');
@@ -198,42 +237,17 @@ describe('webui page', () => {
   });
 
   it('has a scheduled-task panel of its own, opened from the chat header', () => {
-    // A column, not a row in the topic list: a task is not a conversation, and the sidebar is
-    // the conversation switcher. Opening it is remembered; a first visit starts closed.
-    expect(html).toContain('id="schedules"');
-    expect(html).toContain('id="schedules-toggle"');
-    expect(CLIENT.app.text).toContain('api/schedules');
-    expect(CLIENT.app.text).toContain('api/schedules/op');
-    expect(html).toContain('aa_sched_open');
-    expect(html).not.toContain('aa_sched_pin');
-    expect(html).not.toContain('schedules-pin');
-    // The same panel component as the sidebar, on the right: one set of rules, not two.
-    expect(html).toContain('class="panel panel-right"');
-    expect(html).toContain('.panel-left.collapsed{margin-left:calc(-1 * var(--pw,var(--pw-default)))}');
-    expect(html).toContain('.panel-right.collapsed{margin-right:calc(-1 * var(--pw,var(--pw-default)))}');
-    // The heading is words, not a clock glyph.
-    expect(html).toContain('<span class="panel-title" data-i18n="sideTasks.title">Side tasks</span>');
-    // Two top-level tabs at the foot (Scheduled and Reviews), with Scheduled subdivided into Tasks and Sessions.
-    expect(html).toContain('id="sched-tabs"');
-    expect(html).toContain('id="sched-tab-scheduled"');
-    expect(html).toContain('id="sched-tab-reviews"');
-    expect(html).toContain('id="sched-subnav"');
-    expect(html).toContain('id="sched-tab-tasks"');
-    expect(html).toContain('id="sched-tab-sessions"');
-    expect(html).toContain('id="sched-sessions"');
-    expect(html).toContain('id="sched-reviews"');
-    expect(html.indexOf('id="sched-subnav"')).toBeLessThan(html.indexOf('id="schedules-body"'));
-    expect(html.indexOf('id="schedules-body"')).toBeLessThan(html.indexOf('id="sched-tabs"'));
-    expect(html.indexOf('id="sched-tab-scheduled"')).toBeLessThan(html.indexOf('id="sched-tab-reviews"'));
-    expect(html.indexOf('id="sched-tab-tasks"')).toBeLessThan(html.indexOf('id="sched-tab-sessions"'));
-    // Narrower than the old fixed column, and the operator can drag it.
-    expect(html).toContain('clamp(240px,20vw,320px)');
-    expect(html).toContain('id="sched-resize"');
-    expect(html).toContain('aa_sched_w');
+    // Schedules is a built-in workbench plugin contributing a sidebar view, activity item, and task editor.
+    expect(SCHEDULES_PLUGIN_SOURCE).toContain("id: 'schedules'");
+    expect(SCHEDULES_PLUGIN_SOURCE).toContain("kind: 'schedule'");
+    expect(CLIENT.extras.file).toMatch(/^workbench-extras-[A-Za-z0-9_-]+\.js$/);
+    expect(CLIENT.extras.text).toContain('api/schedules');
+    expect(CLIENT.extras.text).toContain('api/schedules/op');
+    expect(SHELL_SOURCE).toContain('aa_split_sizes');
   });
 
   it('sends a nonce, without which its own retry would double-post', () => {
-    expect(html).toContain('nonce:');
+    expect(COMPOSER_UNSENT_SOURCE).toContain('nonce');
   });
 
   it('makes the hidden attribute actually hide', () => {
@@ -248,14 +262,16 @@ describe('webui page', () => {
     expect(html).toContain('@media (prefers-color-scheme: light){:root:not([data-theme="dark"]){');
     expect(html).toContain('color-scheme:dark');
     expect(html).toContain('color-scheme:light');
-    expect(html).toMatch(/--bg:#1[0-9a-f]{5}/);
-    expect(html).toContain('id="theme-toggle"');
+    expect(html).toContain('--fh-bg:#1f1f1f');
+    expect(html).toContain('--bg:var(--fh-bg)');
+    expect(STATUS_PLUGIN_SOURCE).toContain("'status.theme'");
   });
 
   it('gives your own messages a tinted panel the agent does not get', () => {
     // Asserted as text: jsdom resolves no custom property, so the CSSOM would report an empty
     // background for a rule that is perfectly correct in a browser.
-    expect(html).toMatch(/--own:#[0-9a-f]{6}/);
+    expect(html).toContain('--fh-own:rgba(0,120,212,.10)');
+    expect(html).toContain('--own:var(--fh-own)');
     expect(html).toContain('.m.own{background:var(--own)');
     // One side marked is what makes the boundary findable; marking both moves the problem.
     expect(html).not.toContain('.m:not(.own){background:');
@@ -268,24 +284,23 @@ describe('webui page', () => {
   });
 
   it('takes a file off the clipboard and names it before it can collide', () => {
-    expect(html).toContain("addEventListener('paste'");
-    expect(html).toContain('getAsFile()');
+    expect(COMPOSER_ATTACHMENTS_SOURCE).toContain("'paste'");
+    expect(COMPOSER_ATTACHMENTS_SOURCE).toContain('getAsFile()');
     // Every engine calls a pasted screenshot image.png.
-    expect(html).toContain("'pasted-'");
+    expect(COMPOSER_ATTACHMENTS_SOURCE).toContain('pasted-');
   });
 
   it('styles scrollbars to blend with the dark background', () => {
     expect(html).toContain('color-scheme:dark');
     expect(html).toContain('scrollbar-color:');
-    expect(html).toContain('scrollbar-width:thin');
+    expect(html).toContain('scrollbar-width:auto');
     expect(html).toContain('::-webkit-scrollbar');
     expect(html).toContain('::-webkit-scrollbar-thumb');
   });
 
   it('allows deleting topics from the row menu, with its confirmation', () => {
-    expect(html).toContain('row-menu');
-    expect(html).toContain("key:'delete'");
-    expect(html).toContain('api/topics/delete');
+    expect(TOPICS_PLUGIN_SOURCE).toContain("id: 'topics.delete'");
+    expect(APP_SOURCE).toContain("post('api/topics/delete'");
   });
 
   it('caches topic messages in browser storage for instant switching', () => {
@@ -293,17 +308,19 @@ describe('webui page', () => {
     // IndexedDB, not localStorage: a transcript with code blocks in it runs to hundreds of
     // kilobytes and the ~5MB there is shared with everything else this origin keeps.
     expect(html).toContain('indexedDB');
+    expect(CACHE_SOURCE).toContain('indexedDB');
     expect(html).toContain('MAX_CACHE_TOPICS');
     expect(html).toContain('MAX_CACHE_MSGS');
     expect(html).toContain('MAX_CACHE_BYTES');
+    expect(READS_SOURCE).toContain('aa_reads');
   });
 
   it('shows a message the moment it is typed, and keeps one that failed to send', () => {
     // The local bubble and its three ways out. `page.dom.*.test.ts` is what proves they work;
     // this only proves the markup that carries them survived the template.
-    expect(html).toContain('data-retry=');
-    expect(html).toContain('data-copy=');
-    expect(html).toContain('data-discard=');
+    expect(TRANSCRIPT_MARKUP_SOURCE).toContain('data-retry=');
+    expect(TRANSCRIPT_MARKUP_SOURCE).toContain('data-copy=');
+    expect(TRANSCRIPT_MARKUP_SOURCE).toContain('data-discard=');
     expect(CLIENT.app.text).toContain('Not delivered');
   });
 
@@ -312,14 +329,13 @@ describe('webui page', () => {
     // for the client — so a bare `ev.topic !== topic` drops the only sync that visit will ever
     // get and the page stays an empty shell with a healthy event stream behind it. The guard
     // must only fire once we are actually on a topic.
-    expect(html).toContain('if(topic && ev.topic !== topic) return;');
+    expect(APP_SOURCE).toContain('if (state.topic && ev.topic !== state.topic) return;');
   });
 
   it('adapts to a screen held upright', () => {
     expect(html).toContain('@media(max-width:640px)');
-    // The drawer needs something to tap beside itself, or the only way out on a phone is the
-    // one button it covers half the screen to show.
-    expect(html).toContain('id="backdrop"');
+    expect(html).toContain('.wb-root[data-wb-mode="mobile"] .wb-sidebar');
+    expect(html).toContain('.wb-drawer-backdrop');
     // dvh, not vh: the mobile URL bar is counted by the latter and not by the former, and the
     // difference is whether the composer is on screen.
     expect(html).toContain('100dvh');

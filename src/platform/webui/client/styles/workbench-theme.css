@@ -1,0 +1,441 @@
+/* VS Code Dark Modern / Light Modern control visual spec (docs/webui-workbench-plan.md §4.2). */
+
+/* ── §4.2 Typography & Icons ─────────────────────────────────────────────── */
+body{
+  font-family:var(--fh-font-ui);
+  font-size:var(--fh-fs-ui);
+  line-height:var(--fh-lh-ui);
+  background:var(--fh-bg);
+  color:var(--fh-fg);
+  -webkit-font-smoothing:antialiased;
+}
+
+code,
+pre,
+kbd,
+.fh-mono,
+.b code,
+.cb-lang,
+.gf-path,
+.gf-status,
+.gf-stat,
+.git-patch,
+.ag-mono,
+.ag-fixed,
+.ag-fname,
+.set-v,
+.mp-v,
+.tp-mono,
+.tp-body,
+.tp-text,
+.skill-file,
+.skill-text,
+.term-name,
+.topic-term,
+.hist-key,
+#git-branch,
+#files-where,
+#files-editor .fx-text{
+  font-family:var(--fh-font-mono);
+}
+
+.fh-group-head,
+.panel-title,
+.set-group,
+.fb-label,
+.launch-host,
+.tp-label,
+.skill-section,
+.rev-label,
+.fx-sec{
+  font-size:var(--fh-fs-xs);
+  font-weight:600;
+  text-transform:uppercase;
+  letter-spacing:0.05em;
+  color:var(--fh-fg-dim);
+}
+
+svg.ic{
+  stroke-width:var(--fh-icon-stroke);
+}
+
+/* ── §4.2 Scrollbar (10px, rgba(121,121,121,.4)) ─────────────────────────── */
+@supports not selector(::-webkit-scrollbar){
+  *{
+    scrollbar-width:auto;
+    scrollbar-color:var(--fh-scroll-thumb) transparent;
+  }
+}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--fh-scroll-thumb);border-radius:0}
+::-webkit-scrollbar-thumb:hover{background:var(--fh-scroll-thumb-hover)}
+::-webkit-scrollbar-corner{background:transparent}
+
+/* ── §4.2 Shape Tokens — Controls (2px), Cards/Bubbles/Overlays (4px), Rows/Tabs (0px), Badges (pill) ── */
+.fh-input,
+.fh-select,
+.fh-textarea,
+.fh-btn,
+.fh-chip,
+.fh-seg,
+.fh-seg button,
+#login input,
+#input,
+.fb-search,
+.fb-btn,
+.fb-sort,
+.fb-chip,
+.chip,
+.set-seg,
+.set-seg button,
+.set-select,
+.set-type,
+.set-use,
+.set-nav button,
+.ag-open,
+#git-modes,
+.git-mode,
+#git-base,
+#git-layout,
+#git-comment-text,
+#git-comment-acts button,
+#files-q,
+#files-q-go,
+#files-new-row input,
+#files-rename-row input,
+#files-new-row button,
+#files-rename-row button,
+#files-tree-head button,
+#files-actions button,
+#skills-new,
+.skill-seg,
+.skill-seg button,
+.skill-acts button,
+.tp-acts button,
+.skill-field,
+.skill-text,
+.tp-text,
+.sched-subtab,
+#mp-filter,
+.btns button,
+.pq-btn,
+.wd-act,
+.wd-choose,
+.rev-open,
+.rev-adopt,
+.rev-dismiss,
+#history-more,
+.tc button,
+button{
+  border-radius:var(--fh-radius-ctrl);
+}
+
+.fh-card,
+.fh-bubble,
+.fh-overlay,
+.fh-dialog,
+.fh-menu,
+.fh-popover,
+.fh-comment-box,
+.set-card,
+.ag-card,
+.skill-item,
+.rev-item,
+.rev-pending,
+.agent-card,
+.wd-picker,
+.pq-item,
+.b pre,
+.b .cb,
+.btw-chip,
+#btw,
+#model-pop,
+#row-menu,
+.panel-menu,
+#idle-box,
+#settings-box,
+#reader-box,
+#git-box,
+#files-box,
+#skills-box,
+#task-box,
+#git-comment,
+.set-notice,
+#task-note,
+#git-note,
+#files-note,
+#files-eol,
+#files-conflict,
+.hist-note{
+  border-radius:var(--fh-radius-card);
+}
+
+.m.own,
+.m.dispatch,
+.m.report,
+.m.aside,
+.sk.own{
+  border-radius:0 var(--fh-radius-card) var(--fh-radius-card) 0;
+}
+
+.fh-row,
+.fh-list-row,
+.fh-tab,
+.topic-item,
+.topic-item.framed,
+.hist-item,
+.git-file,
+.git-commit,
+.fx-row,
+.mp-opt,
+.set-opt,
+.tp-run,
+.sb-tab,
+.wd-row{
+  border-radius:var(--fh-radius-row);
+}
+
+.fh-badge,
+.fh-count-badge,
+.topic-badge,
+.set-badge,
+.pq-badge,
+.rev-badge,
+.skill-state,
+.mp-tag,
+.set-vnote,
+.topic-fold,
+.ac-tag,
+.sub-k,
+.btw-tag{
+  border-radius:var(--fh-radius-pill);
+}
+
+/* ── §4.2 Inputs & Filter Chips ──────────────────────────────────────────── */
+.fh-input,
+.fh-select,
+.fh-textarea,
+#login input,
+#input,
+.fb-search,
+.set-select,
+.set-type,
+#mp-filter,
+#git-base,
+#git-comment-text,
+#files-q,
+#files-new-row input,
+#files-rename-row input,
+.skill-field{
+  background:var(--fh-input);
+  border:1px solid var(--fh-input-line);
+  color:var(--fh-fg);
+}
+
+.fh-input::placeholder,
+.fh-textarea::placeholder,
+#input::placeholder,
+.fb-q::placeholder{
+  color:var(--fh-placeholder);
+}
+
+.fh-input:focus,
+.fh-textarea:focus,
+.fh-select:focus,
+.fb-search:focus-within,
+#input:focus,
+#login input:focus,
+#mp-filter:focus,
+#git-comment-text:focus{
+  outline:none;
+  border-color:var(--fh-accent);
+}
+
+.fh-chip,
+.fb-chip{
+  background:transparent;
+  border:1px solid var(--fh-input-line);
+  color:var(--fh-fg-dim);
+}
+
+.fh-chip.on,
+.fh-chip[aria-pressed="true"],
+.fb-chip.on{
+  background:var(--fh-toggle);
+  border-color:var(--fh-toggle-line);
+  color:var(--fh-fg-hi);
+}
+
+/* ── §4.2 List Rows: hover + selection (sel bg + 1px accent border) ──────── */
+.fh-row,
+.fh-list-row,
+.topic-item,
+.hist-item,
+.git-file,
+.git-commit,
+.fx-row{
+  border:1px solid transparent;
+}
+
+.fh-row:hover,
+.fh-list-row:hover,
+.topic-item:hover,
+.hist-item:hover,
+.git-file:hover,
+.git-commit:hover,
+.fx-row:hover{
+  background:var(--fh-hover);
+  --row-bg:var(--fh-hover);
+}
+
+.fh-row.on,
+.fh-row[aria-selected="true"],
+.fh-list-row.on,
+.fh-list-row[aria-selected="true"],
+.topic-item.on,
+.topic-item.framed.on,
+.hist-item.on,
+.git-file.on,
+.git-commit.on,
+.fx-row.on{
+  background:var(--fh-sel);
+  --row-bg:var(--fh-sel);
+  border:1px solid var(--fh-accent);
+  color:var(--fh-fg-hi);
+}
+
+/* ── §4.2 Buttons: primary (accent + white), secondary (btn2), zero shadow ── */
+button,
+.fh-btn{
+  box-shadow:none;
+}
+
+.fh-btn,
+.fh-btn-secondary,
+#git-comment-acts button,
+#files-actions button,
+#skills-new,
+.skill-acts button,
+.tp-acts button,
+.set-nav button{
+  background:var(--fh-btn2);
+  border:1px solid var(--fh-input-line);
+  color:var(--fh-fg);
+  box-shadow:none;
+}
+
+.fh-btn:hover:not(:disabled),
+.fh-btn-secondary:hover:not(:disabled),
+#git-comment-acts button:hover:not(:disabled),
+#files-actions button:hover:not(:disabled),
+#skills-new:hover:not(:disabled),
+.skill-acts button:hover:not(:disabled),
+.tp-acts button:hover:not(:disabled),
+.set-nav button:hover:not(:disabled){
+  background:var(--fh-btn2-hover);
+}
+
+.fh-btn-primary,
+.fh-btn.primary,
+button.primary,
+#row button[type="submit"],
+#login button[type="submit"],
+#git-comment-acts button.primary,
+.tp-acts button.primary{
+  background:var(--fh-accent);
+  border:1px solid var(--fh-accent);
+  color:var(--fh-on-accent);
+  box-shadow:none;
+}
+
+.fh-btn-primary:hover:not(:disabled),
+.fh-btn.primary:hover:not(:disabled),
+button.primary:hover:not(:disabled),
+#row button[type="submit"]:hover:not(:disabled),
+#login button[type="submit"]:hover:not(:disabled),
+#git-comment-acts button.primary:hover:not(:disabled),
+.tp-acts button.primary:hover:not(:disabled){
+  background:var(--fh-accent-hover);
+  border-color:var(--fh-accent-hover);
+}
+
+/* ── §4.2 Segmented Controls (nav -> sel-inactive, value -> accent) ──────── */
+.fh-seg,
+.set-seg,
+#git-modes,
+.skill-seg,
+.sched-subnav{
+  background:var(--fh-bg-widget);
+  border:1px solid var(--fh-input-line);
+  border-radius:var(--fh-radius-ctrl);
+  padding:2px;
+  gap:2px;
+}
+
+.fh-seg button,
+.set-seg button,
+.git-mode,
+.skill-seg button,
+.sched-subtab{
+  background:transparent;
+  border:0;
+  color:var(--fh-fg-dim);
+  box-shadow:none;
+}
+
+.fh-seg button:hover:not(:disabled),
+.set-seg button:hover:not(:disabled),
+.git-mode:hover:not(:disabled),
+.skill-seg button:hover:not(:disabled),
+.sched-subtab:hover:not(:disabled){
+  color:var(--fh-fg-hi);
+}
+
+/* Navigation segmented controls (All/Starred, tool buttons, git modes, subtabs) */
+.fh-seg-nav button.on,
+.fh-seg-nav button[aria-selected="true"],
+.fh-seg-nav button[aria-pressed="true"],
+.fh-seg[data-variant="nav"] button.on,
+.fh-seg[data-variant="nav"] button[aria-selected="true"],
+.fh-seg[data-variant="nav"] button[aria-pressed="true"],
+.git-mode.on,
+.sched-subtab.on{
+  background:var(--fh-sel-inactive);
+  color:var(--fh-fg-hi);
+  border-color:transparent;
+}
+
+/* Value segmented controls (settings options, skill tier) */
+.fh-seg-value button.on,
+.fh-seg-value button[aria-checked="true"],
+.fh-seg-value button[aria-pressed="true"],
+.fh-seg[data-variant="value"] button.on,
+.fh-seg[data-variant="value"] button[aria-checked="true"],
+.fh-seg[data-variant="value"] button[aria-pressed="true"],
+.set-seg button[aria-checked="true"],
+.skill-seg button[aria-pressed="true"]{
+  background:var(--fh-accent);
+  color:var(--fh-on-accent);
+  border-color:transparent;
+}
+
+/* ── §4.2 Comment Box & Git Status Colours ───────────────────────────────── */
+.fh-comment-box,
+#git-comment{
+  background:var(--fh-bg-widget);
+  border:1px solid var(--fh-line);
+  border-top:2px solid var(--fh-accent);
+}
+
+.gf-status.modified{color:var(--fh-git-mod)}
+.gf-status.added{color:var(--fh-git-new)}
+.gf-status.deleted{color:var(--fh-git-del)}
+.gf-add,
+.tc .add{color:var(--fh-git-add)}
+.gf-del,
+.tc .del{color:var(--fh-git-del)}
+.git-patch .pa,
+.cb .pa{background:var(--fh-diff-add)}
+.git-patch .pd,
+.cb .pd{background:var(--fh-diff-del)}

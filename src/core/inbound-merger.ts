@@ -619,9 +619,13 @@ export class InboundMerger {
     // Kept messages go first: they were sent first, and the stop that kept them said they would go
     // in with the next message.
     const batch = [...this.held, ...this.buffer];
-    if (this.held.length > 0) console.log(`[dispatch] ${this.held.length} message(s) kept by /stop go in with this batch`);
+    const kept = this.held;
     this.held = [];
     this.buffer = [];
+    if (kept.length > 0) {
+      console.log(`[dispatch] ${kept.length} message(s) kept by /stop go in with this batch`);
+      this.deps.onPendingDeliver?.(kept);
+    }
     console.log(`[dispatch] triggered, ${batch.length} message(s) into this turn`);
     await this.runBatch(batch);
     await this.drainQueue();
@@ -685,8 +689,8 @@ export class InboundMerger {
       this.buffer = this.queued;
       this.queued = [];
       this.phase = 'collecting';
-      this.emitPending();
       this.deps.onPendingDeliver?.(this.buffer);
+      this.emitPending();
       // Queued messages start immediately (already waited, no second merge window).
       await this.dispatch();
       return;

@@ -38,7 +38,7 @@ export interface TopicFacts {
  * | `answer`   | a question is on screen                                                 |
  * | `retrying` | the last turn failed and an automatic continue is scheduled             |
  * | `working`  | a turn is running (a new turn supersedes whatever the last one left)    |
- * | `failed`   | the last turn failed, and nothing has run since                         |
+ * | `failed`   | the last turn failed after the person last looked                       |
  * | `review`   | the last turn finished after the person last looked                     |
  * | `idle`     | none of the above                                                       |
  *
@@ -46,16 +46,16 @@ export interface TopicFacts {
  * one of them says what the conversation is waiting for. `retrying` beats `working` for the moment
  * between a failure and its continue, when nothing is running yet but nothing needs a person either.
  *
- * A failure stays a failure after it has been seen, where a finished reply stops being news: the
- * work is still not done, and Super-agent keeps its `person/failed` the same way, until a person
- * writes. Here the next turn clears it — whoever starts that turn.
+ * Both `failed` and `review` clear once the person has looked (`outcome.at <= seenAt`): once seen,
+ * the topic no longer needs attention and returns to `idle`. Callers that omit `seenAt` (such as
+ * sub-agent status in `daemon/delegation.ts`) continue to see `failed` until the next turn runs.
  */
 export function topicStage(f: TopicFacts): TopicStage {
   if (f.asking) return 'answer';
   if (f.activity?.retry) return 'retrying';
   if (f.running) return 'working';
   const outcome = f.activity?.outcome;
-  if (outcome?.kind === 'failed') return 'failed';
+  if (outcome?.kind === 'failed' && outcome.at > (f.seenAt ?? 0)) return 'failed';
   if (outcome?.kind === 'done' && outcome.at > (f.seenAt ?? 0)) return 'review';
   return 'idle';
 }

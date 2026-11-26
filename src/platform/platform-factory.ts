@@ -16,7 +16,9 @@ import { createQQProfile } from './profiles/qq.js';
 import { createLineProfile } from './profiles/line.js';
 import { createWecomProfile } from './profiles/wecom.js';
 import { createDingtalkProfile } from './profiles/dingtalk.js';
-import { createWebuiAdapter } from './webui/index.js';
+import { createWebuiAdapter, type WebuiAdapterOptions } from './webui/index.js';
+
+export type PlatformAdapterOptions = WebuiAdapterOptions;
 
 /**
  * Platform type → profile factory. Adding a Satori platform = one line here + a schema in
@@ -45,11 +47,14 @@ const PROFILES: Record<Exclude<PlatformType, 'webui'>, () => PlatformProfile> = 
  * pick profile by type → hand to the generic Satori core to assemble. The schema's
  * discriminated union guarantees `type` is implemented, so no unknown-type branch remains.
  */
-export async function createPlatformAdapter(instance: PlatformInstance): Promise<PlatformAdapter> {
+export async function createPlatformAdapter(
+  instance: PlatformInstance,
+  opts?: PlatformAdapterOptions
+): Promise<PlatformAdapter> {
   // The one platform that is not a chat app. It implements PlatformAdapter directly rather
   // than going through the profile seam, for the reasons in webui/index.ts — the daemon only
   // ever sees PlatformAdapter, so nothing downstream can tell the difference.
-  if (instance.type === 'webui') return createWebuiAdapter(instance);
+  if (instance.type === 'webui') return createWebuiAdapter(instance, opts);
   return createSatoriAdapter(PROFILES[instance.type](), instance);
 }
 
@@ -59,11 +64,12 @@ export async function createPlatformAdapter(instance: PlatformInstance): Promise
  * webhook server ports where applicable), so instances are fully isolated.
  */
 export async function createPlatformAdapters(
-  platforms: Record<string, Omit<PlatformInstance, 'id'>>
+  platforms: Record<string, Omit<PlatformInstance, 'id'>>,
+  opts?: PlatformAdapterOptions
 ): Promise<Map<string, PlatformAdapter>> {
   const out = new Map<string, PlatformAdapter>();
   for (const [id, p] of Object.entries(platforms)) {
-    out.set(id, await createPlatformAdapter({ id, ...p } as PlatformInstance));
+    out.set(id, await createPlatformAdapter({ id, ...p } as PlatformInstance, opts));
   }
   return out;
 }

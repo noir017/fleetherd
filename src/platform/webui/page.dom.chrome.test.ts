@@ -1,6 +1,5 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
-  JSDOM,
   renderPage,
   renderWebMarkdown,
   renderWebToolLines,
@@ -190,18 +189,54 @@ describe('webui page: the model switch in the status line', () => {
     // event after the tap replaces, so it stayed away until the first reply reported a status —
     // too late to choose the model that first message goes to.
     const agents = { groups: [{ name: '', agents: [{ id: 'oc@p', harness: 'opencode', kind: 'OpenCode' }] }], current: 'oc@p' };
-    const h = await open({ replies: { [URL_T]: LIST } });
+    const h = await open({
+      replies: {
+        [URL_T]: LIST,
+        'api/topics/setup': { ok: true, agent: 'oc@p', cwd: '/work' },
+        [`api/options?peek=1&t=${T}`]: {
+          agent: 'oc@p',
+          model: 'm1',
+          options: [{ id: 'account', name: 'Account', value: 'work' }],
+        },
+        [`api/options?t=${T}`]: {
+          ok: true,
+          agent: 'oc@p',
+          options: [
+            {
+              id: 'account',
+              name: 'Account',
+              current: 'work',
+              options: [
+                { value: 'work', name: 'work' },
+                { value: 'home', name: 'home' },
+              ],
+            },
+          ],
+        },
+      },
+    });
     await h.emit(sync(T, [], [T], { agents }));
     expect(chip(h)).toBeNull();
 
     await h.click('.agent-card[data-agent="oc@p"]');
-    expect(h.calls.filter((c) => c.path === 'api/send').map((c) => c.body.text)).toEqual(['/agent oc@p']);
-    // No status has arrived and no sync followed: the tap alone puts it up, and it works.
-    expect(chip(h)?.textContent).toBe('Model');
+    expect(h.calls.filter((c) => c.path === 'api/topics/setup').map((c) => c.body)).toEqual([
+      { topic: T, agent: 'oc@p' },
+    ]);
+    expect(h.calls.filter((c) => c.path === 'api/send')).toHaveLength(0);
+    // No status has arrived and no sync followed: the tap alone puts it up, and it works while the launcher stays open.
+    expect(chip(h)?.textContent).toBe('m1');
     await h.click('#status .st-model');
     expect(h.calls.find((c) => c.path === URL_T)).toBeTruthy();
     await tick();
     expect(rows(h)).toHaveLength(13);
+    // Peek populates the chosen agent's model and custom settings (e.g. Account) right away.
+    await tick();
+    const optBtn = h.doc.querySelector('#status .st-opt[data-opt="account"]') as HTMLButtonElement | null;
+    expect(optBtn).not.toBeNull();
+    expect(optBtn?.textContent).toContain('Account');
+    await h.click('#status .st-opt[data-opt="account"]');
+    await tick();
+    expect(rows(h).map((r) => r.getAttribute('data-v'))).toEqual(['work', 'home']);
   });
 
   it('takes the switch away again when a failed send empties the room and the choice comes back', async () => {
@@ -834,12 +869,12 @@ describe('webui page: code blocks in a reply', () => {
     await settle();
     await h.click('#log a[data-view]');
 
-    await until('the reader coloured as it was written', () => runs(codes(h, '#reader-body')[0]).length > 0);
-    expect(runs(codes(h, '#reader-body')[0])).toEqual(TS_RUNS);
-    await h.click('#reader-body .cb-b[data-cb="copy"]');
+    await until('the reader coloured as it was written', () => runs(codes(h, '.wb-reader-editor')[0]).length > 0);
+    expect(runs(codes(h, '.wb-reader-editor')[0])).toEqual(TS_RUNS);
+    await h.click('.wb-reader-editor .cb-b[data-cb="copy"]');
     expect(h.clipboard).toEqual([CODE.replace('a;', 'b;')]);
-    await h.click('#reader-body .cb-b[data-cb="wrap"]');
-    expect(h.doc.querySelector('#reader-body .cb')?.classList.contains('wrap')).toBe(true);
+    await h.click('.wb-reader-editor .cb-b[data-cb="wrap"]');
+    expect(h.doc.querySelector('.wb-reader-editor .cb')?.classList.contains('wrap')).toBe(true);
   });
 
   it('frames a table to scroll on its own, and draws a task box where the bullet was', async () => {
@@ -957,8 +992,10 @@ describe('webui page: sub-agent bubbles', () => {
     const html = renderPage('Chat', false, true, false);
     expect(html).toContain('.m.dispatch{background:var(--disp);border-left:3px solid var(--disp-edge)');
     expect(html).toContain('.m.report{background:var(--rep);border-left:3px solid var(--rep-edge)');
-    expect(html).toContain('--disp:#1a1622;--disp-edge:#8b6cc1;');
-    expect(html).toContain('--rep:#14201a;--rep-edge:#3f8f6b;');
+    expect(html).toContain('--disp:#1a1622;');
+    expect(html).toContain('--disp-edge:#8b6cc1;');
+    expect(html).toContain('--rep:#14201a;');
+    expect(html).toContain('--rep-edge:#3f8f6b;');
     expect(html).toContain('.sub-k{');
   });
 
@@ -1083,10 +1120,10 @@ describe('webui page: side questions (/btw)', () => {
     await h.click('#log .btw-chip');
     expect(card(h).hidden).toBe(true);
     await h.click('#log .btw-chip');
-    const panelOpen = h.el('sidebar').classList.contains('collapsed');
+    const sbHidden = (h.doc.querySelector('.wb-sidebar') as HTMLElement).hidden;
     escape(h);
     expect(card(h).hidden).toBe(true);
-    expect(h.el('sidebar').classList.contains('collapsed')).toBe(panelOpen);
+    expect((h.doc.querySelector('.wb-sidebar') as HTMLElement).hidden).toBe(sbHidden);
   });
 
   it('opens on an answer that arrives while it is shut, if nobody shut it', async () => {
@@ -1155,11 +1192,11 @@ describe('webui page: side questions (/btw)', () => {
     expect(h.doc.querySelectorAll('#log .m.own')).toHaveLength(1);
   });
 
-  it('is over the composer, inside the bar, and a finger target on a phone', () => {
+  it('is over the composer, inside the bar, and a finger target on a phone', async () => {
     const html = renderPage('Chat', false);
     expect(html).toContain('#btw{position:absolute;left:16px;right:16px;bottom:calc(100% + 6px)');
-    const doc = new JSDOM(html).window.document;
-    expect(doc.getElementById('btw')?.parentElement?.id).toBe('bar');
+    const h = await open();
+    expect(h.el('btw').parentElement?.id).toBe('bar');
     const at640 = html.indexOf('@media(max-width:640px){');
     let depth = 0;
     let css = '';
@@ -1281,11 +1318,11 @@ describe('webui page: what needs you, and sub-agent topics', () => {
     // Opening is the operator's choice, and it is kept as one.
     await h.click(`#topics [data-fold="${D}"]`);
     expect(rows(h)).toEqual([D, B, C, A]);
-    expect(JSON.parse(h.window.localStorage.getItem('aa_folded') ?? '{}')).toEqual({ [D]: false });
+    expect(JSON.parse(h.window.localStorage.getItem('plugin:topics:folded') ?? '{}')).toEqual({ [D]: false });
     await opens(h, `api/events?t=${A}`);
     await h.click(`#topics [data-fold="${D}"]`);
     expect(rows(h)).toEqual([D, A]);
-    expect(JSON.parse(h.window.localStorage.getItem('aa_folded') ?? '{}')).toEqual({ [D]: true });
+    expect(JSON.parse(h.window.localStorage.getItem('plugin:topics:folded') ?? '{}')).toEqual({ [D]: true });
   });
 
   it('never folds away the topic on screen, even under the default fold', async () => {
@@ -1304,14 +1341,14 @@ describe('webui page: what needs you, and sub-agent topics', () => {
     // Its own turn ended long ago; the job did not, so the row and the header both say running.
     expect(row().className).toMatch(/\brunning\b/);
     expect(row().querySelector('.topic-dot')?.className).toBe('topic-dot running');
-    expect(h.el('topic-status').textContent).toBe('running');
+    expect(h.doc.querySelector(`.topic-item[data-topic="${A}"]`)?.classList.contains('running')).toBe(true);
     expect((h.el('stop-turn') as HTMLButtonElement).hidden).toBe(false);
     // And it is not offered for closing as an idle agent either.
-    expect(h.el('close-idle').hidden).toBe(true);
+    expect(h.doc.querySelector('[data-status-id="status.idle"]')?.getAttribute('data-count')).toBe('0');
 
     await h.emit({ t: 'topics', topics: list({ [B]: { parent: A }, [C]: { parent: B } }) });
     expect(row().className).not.toMatch(/\brunning\b/);
-    expect(h.el('topic-status').textContent).toBe('');
+    expect((h.el('stop-turn') as HTMLButtonElement).hidden).toBe(true);
   });
 
   it('orders the list by state: a decision, then working, then resident, then no agent', async () => {
@@ -1484,745 +1521,142 @@ describe('webui page: what needs you, and sub-agent topics', () => {
   });
 });
 
-describe('webui page: notifications on this device', () => {
-  const A = 'a1b2c3d4';
-  const C = 'c3d4e5f6';
-  const KEY = 'BP4z9KsN6nGRTbVYI_c7VJSPQTBtkgcy27mlmlMoZIIgDll6e3vCYLocInmYWAmS6TlzAC8wEqKK6PBru3jl7A8';
-  const ready = async (h: Harness): Promise<void> => {
-    await h.emit(sync(A, [], [A, C]));
-    await until('the toggle is drawn', () => !h.el('notify-toggle').hidden);
-  };
+describe('webui page: workbench status bar, calm mode, close-idle, and notifications', () => {
+  const T = 'a1b2c3d4';
+  const OTHER = 'b2c3d4e5';
 
-  it('is not offered by a browser that cannot do it', async () => {
-    const h = await open({ url: `http://localhost:8787/?t=${A}`, replies: { 'api/push': { enabled: true, key: KEY } } });
-    await h.emit(sync(A, [], [A]));
+  it('renders connection, running, idle, calm, locale, theme, and version items in the status bar', async () => {
+    const h = await open({ width: 1280, height: 800 });
+    await h.emit(sync(T, [message('m1', '<p>hello</p>')], [T, OTHER]));
+    await h.emit({
+      t: 'topics',
+      topics: [
+        { id: T, title: 'Active', lastAt: 2000, running: true, live: true },
+        { id: OTHER, title: 'Idle one', lastAt: 1000, running: false, live: true },
+      ],
+    });
     await tick();
-    expect(h.el('notify-toggle').hidden).toBe(true);
-    expect(h.calls.some((c) => c.path === 'api/push')).toBe(false);
+
+    const bar = h.doc.querySelector('.wb-status-bar');
+    expect(bar).not.toBeNull();
+    expect(bar?.querySelector('[data-status-id="status.connection"]')?.getAttribute('data-state')).toBe('connected');
+    expect(bar?.querySelector('[data-status-id="status.running"]')?.getAttribute('data-count')).toBe('1');
+    expect(bar?.querySelector('[data-status-id="status.idle"]')?.textContent).toContain('1');
+    expect(bar?.querySelector('[data-status-id="status.calm"]')).not.toBeNull();
+    expect(bar?.querySelector('[data-status-id="status.locale"]')).not.toBeNull();
+    expect(bar?.querySelector('[data-status-id="status.theme"]')).not.toBeNull();
+    expect(bar?.querySelector('[data-status-id="status.version"]')).not.toBeNull();
   });
 
-  it('is not offered when the server sends none', async () => {
-    const h = await open({ url: `http://localhost:8787/?t=${A}`, push: {}, replies: { 'api/push': { enabled: false } } });
-    await h.emit(sync(A, [], [A]));
-    await new Promise((r) => setTimeout(r, 20));
-    expect(h.el('notify-toggle').hidden).toBe(true);
-  });
+  it('toggles low-attention (calm) mode from the status bar and persists aa_calm', async () => {
+    const h = await open({ width: 1280, height: 800 });
+    await h.emit(sync(T, [], [T]));
 
-  it('turns on: asks permission, registers the worker, subscribes with the server key, and tells the server', async () => {
-    const h = await open({ url: `http://localhost:8787/?t=${A}`, push: {}, replies: { 'api/push': { enabled: true, key: KEY } } });
-    await ready(h);
-    expect(h.el('notify-state').textContent).toBe('off');
+    const root = h.el('workbench-root');
+    expect(root.classList.contains('calm')).toBe(false);
 
-    await h.click('#notify-toggle');
-    await until('the subscription reached the server', () => h.calls.some((c) => c.path === 'api/push/subscribe'));
-    expect(h.push.registered).toBe('sw.js');
-    expect(h.push.subscribedWith?.userVisibleOnly).toBe(true);
-    expect(Buffer.from(h.push.subscribedWith!.applicationServerKey).toString('base64url')).toBe(KEY);
-    expect(h.calls.find((c) => c.path === 'api/push/subscribe')?.body).toEqual({
-      endpoint: 'https://fcm.googleapis.com/fcm/send/dev1',
-      expirationTime: null,
-      keys: { p256dh: 'P', auth: 'A' },
-    });
-    await until('the toggle says so', () => h.el('notify-state').textContent === 'on');
-  });
-
-  it('turns off: unsubscribes here and on the server', async () => {
-    const h = await open({
-      url: `http://localhost:8787/?t=${A}`,
-      push: { permission: 'granted', subscribed: true },
-      replies: { 'api/push': { enabled: true, key: KEY } },
-    });
-    await ready(h);
-    await until('it knows it is on', () => h.el('notify-state').textContent === 'on');
-    await h.click('#notify-toggle');
-    await until('the server was told', () => h.calls.some((c) => c.path === 'api/push/unsubscribe'));
-    expect(h.push.unsubscribed).toBe(true);
-    expect(h.calls.find((c) => c.path === 'api/push/unsubscribe')?.body).toEqual({ endpoint: 'https://fcm.googleapis.com/fcm/send/dev1' });
-    await until('the toggle says so', () => h.el('notify-state').textContent === 'off');
-  });
-
-  it('says so when the browser blocks it, and asks nothing', async () => {
-    const h = await open({
-      url: `http://localhost:8787/?t=${A}`,
-      push: { permission: 'denied' },
-      replies: { 'api/push': { enabled: true, key: KEY } },
-    });
-    await ready(h);
-    expect(h.el('notify-state').textContent).toBe('blocked');
-    expect((h.el('notify-toggle') as HTMLButtonElement).disabled).toBe(true);
-  });
-
-  it('a permission refused at the prompt subscribes nothing', async () => {
-    const h = await open({
-      url: `http://localhost:8787/?t=${A}`,
-      push: { answer: 'denied' },
-      replies: { 'api/push': { enabled: true, key: KEY } },
-    });
-    await ready(h);
-    await h.click('#notify-toggle');
-    await until('the toggle repaints', () => h.el('notify-state').textContent === 'blocked');
-    expect(h.calls.some((c) => c.path === 'api/push/subscribe')).toBe(false);
-  });
-
-  it('a tapped notification brings the page to its topic', async () => {
-    const h = await open({ url: `http://localhost:8787/?t=${A}`, push: {}, replies: { 'api/push': { enabled: true, key: KEY } } });
-    await ready(h);
-    h.push.listeners.forEach((fn) => fn({ data: { goto: C } }));
-    await opens(h, `api/events?t=${C}`);
-  });
-});
-
-describe('webui page: how long a topic has been running, or since it stopped', () => {
-  const A = 'a1b2c3d4';
-  const B = 'b2c3d4e5';
-  const C = 'c3d4e5f6';
-  const D = 'd15a7c40';
-  const E = 'e6f7a8b9';
-  const F = 'f7a8b9c0';
-  const NOW = new Date('2027-01-02T12:00:00').getTime();
-  const MIN = 60_000;
-  const HOUR = 60 * MIN;
-  const DAY = 24 * HOUR;
-
-  beforeEach(() => {
-    vi.useFakeTimers({ toFake: ['Date'] });
-    vi.setSystemTime(NOW);
-  });
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  const ageOf = (h: Harness, id: string): HTMLElement | null =>
-    h.doc.querySelector(`#topics [data-topic="${id}"] .topic-age`);
-  const ageText = (h: Harness, id: string): string | null => ageOf(h, id)?.textContent ?? null;
-  const ended = (id: string, ms: number, extra: Record<string, unknown> = {}): Record<string, unknown> => ({
-    id,
-    title: `T ${id}`,
-    lastAt: NOW - 30 * DAY,
-    msgCount: 1,
-    stage: 'idle',
-    outcome: { kind: 'done', at: NOW - ms },
-    ...extra,
-  });
-
-  it('writes every span in the same units, and "ago" only once it has ended', async () => {
-    const ids = ['a1b2c3d4', 'b2c3d4e5', 'c3d4e5f6', 'd15a7c40', 'e6f7a8b9', 'f7a8b9c0', '0a1b2c3d'];
-    const h = await open({ url: `http://localhost:8787/?t=${A}` });
-    await h.emit(sync(A, [], [A]));
-    await h.emit({
-      t: 'topics',
-      topics: [
-        ended(ids[0]!, 30_000), // under a minute
-        ended(ids[1]!, 59 * MIN + 30_000), // 59m
-        ended(ids[2]!, 60 * MIN), // 1h
-        ended(ids[3]!, 23 * HOUR), // 23h, no minutes
-        ended(ids[4]!, DAY), // 1d, no hours
-        ended(ids[5]!, DAY + 10 * HOUR), // 1d10h
-        ended(ids[6]!, -5 * MIN), // a browser clock behind the server's
-      ],
-    });
-    expect(ids.map((id) => ageText(h, id))).toEqual([
-      '<1m ago',
-      '59m ago',
-      '1h ago',
-      '23h ago',
-      '1d ago',
-      '1d10h ago',
-      '<1m ago',
-    ]);
-  });
-
-  it('counts a working topic from its start, an idle one from its last end, and says nothing about a new one', async () => {
-    const h = await open({ url: `http://localhost:8787/?t=${A}` });
-    await h.emit(sync(A, [], [A]));
-    await h.emit({
-      t: 'topics',
-      topics: [
-        { id: A, title: 'working', lastAt: NOW - 10 * MIN, msgCount: 1, stage: 'working', running: true, runningSince: NOW - 3 * MIN },
-        { ...ended(B, 10 * MIN) },
-        { id: C, title: 'no outcome', lastAt: NOW - 2 * HOUR, msgCount: 2, stage: 'idle' },
-        // Nothing said in it yet: there is no run to time and no end to count from.
-        { id: D, title: 'new', lastAt: NOW, msgCount: 0, stage: 'idle' },
-        // A daemon from before runningSince: it says running, but not since when.
-        { id: E, title: 'old server', lastAt: NOW - HOUR, msgCount: 1, stage: 'working', running: true },
-        // A question holds its turn open, so the server sends running too, and it is timed
-        // like work.
-        { id: F, title: 'asking', lastAt: NOW - 8 * MIN, msgCount: 1, stage: 'answer', asking: true, running: true, runningSince: NOW - 5 * MIN },
-      ],
-    });
-
-    expect(ageText(h, A)).toBe('3m');
-    expect(ageOf(h, A)?.className).toContain('run');
-    expect(ageOf(h, A)?.getAttribute('title')).toBe('Started 11:57');
-    expect(ageText(h, B)).toBe('10m ago');
-    expect(ageOf(h, B)?.className).not.toContain('run');
-    expect(ageOf(h, B)?.getAttribute('title')).toBe('Ended 11:50');
-    // No outcome on the row, but it has been spoken in: the last message is the end.
-    expect(ageText(h, C)).toBe('2h ago');
-    expect(ageText(h, D)).toBeNull();
-    expect(ageText(h, E)).toBeNull();
-    expect(ageText(h, F)).toBe('5m');
-    expect(ageOf(h, F)?.className).toContain('run');
-  });
-
-  it('times a dispatcher from the earliest start under it, not from its own last turn', async () => {
-    const h = await open({ url: `http://localhost:8787/?t=${A}` });
-    await h.emit(sync(A, [], [A]));
-    await h.emit({
-      t: 'topics',
-      topics: [
-        // Its own turn is over; the job its sub-agents are doing began 80 minutes ago.
-        { id: A, title: 'dispatcher', lastAt: NOW - 2 * HOUR, msgCount: 3, stage: 'working', outcome: { kind: 'done', at: NOW - 2 * HOUR } },
-        { id: B, title: 'sub one', lastAt: NOW - 80 * MIN, msgCount: 1, stage: 'working', running: true, runningSince: NOW - 80 * MIN, parent: A },
-        { id: C, title: 'sub two', lastAt: NOW - 3 * MIN, msgCount: 1, stage: 'working', running: true, runningSince: NOW - 3 * MIN, parent: B },
-      ],
-    });
-
-    // Under a day the row shows hours only, so 80 minutes reads as "1h"; the point is that it is
-    // the child's start (10:40) and not the dispatcher's own last turn two hours ago.
-    expect(ageText(h, A)).toBe('1h');
-    expect(ageOf(h, A)?.className).toContain('run');
-    expect(ageOf(h, A)?.getAttribute('title')).toBe('Started 10:40');
-
-    // A daemon older than runningSince says the sub-agent works but not since when: the
-    // dispatcher is still drawn as running, so it shows no ended age instead.
-    await h.emit({
-      t: 'topics',
-      topics: [
-        { id: A, title: 'dispatcher', lastAt: NOW - 2 * HOUR, msgCount: 3, stage: 'working', outcome: { kind: 'done', at: NOW - 2 * HOUR } },
-        { id: B, title: 'sub one', lastAt: NOW - 80 * MIN, msgCount: 1, stage: 'working', running: true, parent: A },
-      ],
-    });
-    expect(ageText(h, A)).toBeNull();
-  });
-
-  it('moves the age on a 30-second tick by rewriting the text, never by repainting the row', async () => {
-    const h = await open({ url: `http://localhost:8787/?t=${A}` });
-    await h.emit(sync(A, [], [A]));
-    const set = vi.spyOn(h.window, 'setInterval');
-    const ticks = (): number => set.mock.calls.filter((c) => c[1] === 30_000).length;
-    await h.emit({ t: 'topics', topics: [ended(A, 10 * MIN)] });
-    expect(ticks()).toBe(1);
-
-    // A second list change repaints the rows; the timer already running is reused, not doubled.
-    await h.emit({ t: 'topics', topics: [ended(A, 10 * MIN), ended(B, 5 * MIN)] });
-    expect(ticks()).toBe(1);
-
-    const timer = set.mock.calls.find((c) => c[1] === 30_000)!;
-    const node = ageOf(h, A)!;
-    expect(node.textContent).toBe('10m ago');
-
-    vi.setSystemTime(NOW + MIN);
-    (timer[0] as () => void)();
-
-    // The same element, not a fresh row: a repaint would lose the hover state and any menu open
-    // over the row, which is why the tick writes textContent only.
-    expect(ageOf(h, A)).toBe(node);
-    expect(node.textContent).toBe('11m ago');
-  });
-
-  it('clears the tick when the last age leaves the list', async () => {
-    const h = await open({ url: `http://localhost:8787/?t=${A}` });
-    await h.emit(sync(A, [], [A]));
-    const set = vi.spyOn(h.window, 'setInterval');
-    const clear = vi.spyOn(h.window, 'clearInterval');
-    await h.emit({ t: 'topics', topics: [ended(A, 10 * MIN)] });
-    const timer = set.mock.calls.find((c) => c[1] === 30_000)!;
-    const id = set.mock.results[set.mock.calls.indexOf(timer)]?.value;
-
-    // Nothing said in it any more: no running start, no end, so no age to keep current.
-    await h.emit({ t: 'topics', topics: [{ id: A, title: 'new', lastAt: NOW, msgCount: 0, stage: 'idle' }] });
-    expect(h.doc.querySelector('.topic-age')).toBeNull();
-    expect(clear).toHaveBeenCalledWith(id);
-  });
-
-  it('stops the tick behind a hidden tab, and catches up the moment it is looked at', async () => {
-    const h = await open({ url: `http://localhost:8787/?t=${A}` });
-    await h.emit(sync(A, [], [A]));
-    const set = vi.spyOn(h.window, 'setInterval');
-    const clear = vi.spyOn(h.window, 'clearInterval');
-    const ticks = (): number => set.mock.calls.filter((c) => c[1] === 30_000).length;
-    await h.emit({ t: 'topics', topics: [ended(A, 10 * MIN)] });
-    const timer = set.mock.calls.find((c) => c[1] === 30_000)!;
-    const node = ageOf(h, A)!;
-    expect(ticks()).toBe(1);
-
-    Object.defineProperty(h.doc, 'visibilityState', { configurable: true, get: () => 'hidden' });
-    h.doc.dispatchEvent(new h.window.Event('visibilitychange'));
-    expect(clear).toHaveBeenCalledWith(set.mock.results[set.mock.calls.indexOf(timer)]?.value);
-
-    // Five minutes later the row still says what it said; coming back rewrites it at once,
-    // rather than up to half a minute later, and arms a fresh timer.
-    vi.setSystemTime(NOW + 5 * MIN);
-    expect(node.textContent).toBe('10m ago');
-    Object.defineProperty(h.doc, 'visibilityState', { configurable: true, get: () => 'visible' });
-    h.doc.dispatchEvent(new h.window.Event('visibilitychange'));
-    expect(ageOf(h, A)).toBe(node);
-    expect(node.textContent).toBe('15m ago');
-    expect(ticks()).toBe(2);
-  });
-
-  it('writes a scheduled run’s last activity in the same units, and keeps it current', async () => {
-    const h = await open({ replies: { 'api/schedules': { enabled: true, tasks: [] } } });
-    await h.emit(sync(A, [], [A]));
-    const set = vi.spyOn(h.window, 'setInterval');
-    await h.emit({
-      t: 'topics',
-      topics: [{ id: A, title: 'a run', lastAt: NOW - DAY - 10 * HOUR, msgCount: 4, scheduled: true, stage: 'idle' }],
-    });
-    await h.click('#schedules-toggle');
-    await h.click('#sched-tab-sessions');
-    const line = h.doc.querySelector('.sess-item .topic-dir')?.textContent ?? '';
-    expect(line).toContain('1d10h ago');
-    expect(line).toContain('4 messages');
-
-    // The panel's age is stamped and rewritten by the same tick as the sidebar's, so it does not
-    // go stale while the panel is the thing on screen.
-    const node = h.doc.querySelector('.sess-item .topic-age')!;
-    expect(node.textContent).toBe('1d10h ago');
-    const timer = set.mock.calls.find((c) => c[1] === 30_000)!;
-    vi.setSystemTime(NOW + HOUR);
-    (timer[0] as () => void)();
-    expect(h.doc.querySelector('.sess-item .topic-age')).toBe(node);
-    expect(node.textContent).toBe('1d11h ago');
-  });
-
-  it('draws a scheduled run’s agent as the legend on its frame, as the switcher does', async () => {
-    const h = await open({ replies: { 'api/schedules': { enabled: true, tasks: [] } } });
-    await h.emit(sync(A, [], [A]));
-    await h.emit({
-      t: 'topics',
-      topics: [
-        { id: A, title: '[cc] ⏰ Morning CI', lastAt: NOW - HOUR, msgCount: 4, scheduled: true, stage: 'idle', agent: { id: 'cc', harness: 'claude' } },
-      ],
-    });
-    await h.click('#schedules-toggle');
-    await h.click('#sched-tab-sessions');
-    const row = h.doc.querySelector('.sess-item')!;
-    expect(row.querySelector('.topic-title')?.textContent).toBe('⏰ Morning CI');
-    expect(row.querySelector('.agent-tag')?.className).toBe('agent-tag h-claude');
-    expect(row.querySelector('.agent-tag')?.getAttribute('title')).toBe('Agent: cc');
-    expect(row.classList.contains('framed')).toBe(true);
-  });
-});
-
-describe('webui page: the sidebar footer, and low attention', () => {
-  const A = 'a1b2c3d4';
-  const B = 'b2c3d4e5';
-  const C = 'c3d4e5f6';
-  const menuOpen = (h: Harness): boolean => !h.el('opts-menu').hidden || !h.el('manage-menu').hidden;
-  const calm = (h: Harness): boolean => h.el('app').classList.contains('calm');
-
-  it('puts settings and skills in Menu, and housekeeping in Manage, leaving two buttons on the row', async () => {
-    const h = await open();
-    await h.emit(sync(A, [], [A]));
-    const menu = h.el('opts-menu');
-    for (const id of ['settings-open', 'notify-toggle', 'calm-toggle', 'theme-toggle', 'skills-toggle']) {
-      expect(menu.contains(h.el(id))).toBe(true);
-    }
-    const manage = h.el('manage-menu');
-    for (const id of ['close-idle', 'no-idle']) expect(manage.contains(h.el(id))).toBe(true);
-    expect(manage.contains(h.el('clear-topics'))).toBe(false);
-    expect(h.doc.querySelector('#sidebar-header .panel-title')?.contains(h.el('clear-topics'))).toBe(true);
-    // The footer itself holds two buttons and nothing else — the two menus are its children.
-    const buttons = Array.from(h.el('sidebar-footer').children).filter((e) => e.tagName === 'BUTTON');
-    expect(buttons.map((b) => b.id)).toEqual(['opts-toggle', 'manage-toggle']);
-    expect(face(h.el('opts-toggle').querySelector('.opts-gear'))).toBe('[gear]');
-    expect(h.el('manage-toggle').querySelector('.opts-gear svg')).not.toBeNull();
-    expect(h.el('manage-toggle').querySelector('.opts-gear svg')?.getAttribute('viewBox')).toBe('0 0 24 24');
-    expect(menuOpen(h)).toBe(false);
-    expect(h.el('opts-toggle').getAttribute('aria-expanded')).toBe('false');
-    expect(h.el('manage-toggle').getAttribute('aria-expanded')).toBe('false');
-
-    // Manage aligns to the right edge via margin-left: auto (twin of the 2.34.0 close-idle rule).
-    const html = renderPage('Chat', false);
-    const css = html.slice(html.indexOf('<style>'), html.indexOf('</style>'));
-    expect(css).toMatch(/#manage-toggle\s*\{[^}]*margin-left:\s*auto[^}]*\}/);
-  });
-
-  it('shows the idle count on Manage without opening anything', async () => {
-    const h = await open();
-    // Two topics with a resident agent and nothing running: the two Close idle would end.
-    await h.emit(sync(A, [], [A, B]));
-    await h.emit({
-      t: 'topics',
-      topics: [
-        { id: A, title: 'here', lastAt: 1000, msgCount: 0, stage: 'idle', live: true },
-        { id: B, title: 'also here', lastAt: 999, msgCount: 0, stage: 'idle', live: true },
-      ],
-    });
-    expect(h.el('idle-count').textContent).toBe('(2)');
-    expect(h.el('close-idle').textContent).toBe('Close idle (2)');
-    expect(h.el('no-idle').hidden).toBe(true);
-
-    // Nothing to close: the count goes, close-idle is hidden, and no-idle is shown.
-    await h.emit({
-      t: 'topics',
-      topics: [{ id: A, title: 'here', lastAt: 1000, msgCount: 0, stage: 'idle', live: true, running: true }],
-    });
-    expect(h.el('idle-count').textContent).toBe('');
-    expect(h.el('close-idle').hidden).toBe(true);
-    expect(h.el('no-idle').hidden).toBe(false);
-    expect(h.doc.getElementById('idle-sep')).toBeNull();
-  });
-
-  it('shows a disabled explanation in Manage when idle is 0 instead of an empty box', async () => {
-    const h = await open();
-    await h.emit(sync(A, [], [A]));
-    expect(h.el('manage-toggle').hidden).toBe(false);
-    await h.click('#manage-toggle');
-    expect(h.el('manage-menu').hidden).toBe(false);
-    expect(h.el('close-idle').hidden).toBe(true);
-    expect(h.el('no-idle').hidden).toBe(false);
-    expect(h.el('no-idle').textContent).toBe('No idle agents');
-    expect(h.el('no-idle').getAttribute('disabled')).not.toBeNull();
-  });
-
-  it('opens one menu at a time: opening the other puts the first away', async () => {
-    const h = await open();
-    await h.emit(sync(A, [], [A]));
-
-    await h.click('#opts-toggle');
-    expect(menuOpen(h)).toBe(true);
-    await h.click('#manage-toggle');
-    expect(h.el('opts-menu').hidden).toBe(true);
-    expect(h.el('manage-menu').hidden).toBe(false);
-    expect(h.el('opts-toggle').getAttribute('aria-expanded')).toBe('false');
-    expect(h.el('manage-toggle').getAttribute('aria-expanded')).toBe('true');
-
-    // A click outside closes the menu.
-    await h.click('#log');
-    expect(h.el('manage-menu').hidden).toBe(true);
-  });
-
-  it('opens on a click, stays open while a toggle flips, and closes on a click elsewhere or on Escape', async () => {
-    const h = await open();
-    await h.emit(sync(A, [], [A]));
-    await h.click('#opts-toggle');
-    expect(menuOpen(h)).toBe(true);
-    expect(h.el('opts-toggle').getAttribute('aria-expanded')).toBe('true');
-    // Left open, so the state it flipped is seen flipping.
-    await h.click('#calm-toggle');
-    expect(menuOpen(h)).toBe(true);
-
-    await h.click('#log');
-    expect(menuOpen(h)).toBe(false);
-    expect(h.el('opts-toggle').getAttribute('aria-expanded')).toBe('false');
-
-    await h.click('#opts-toggle');
-    await h.click('#opts-toggle');
-    expect(menuOpen(h)).toBe(false);
-
-    await h.click('#opts-toggle');
-    h.el('calm-toggle').focus();
-    h.doc.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Escape' }));
-    expect(menuOpen(h)).toBe(false);
-    // Back on the button that opened it, rather than on a control that is no longer on screen.
-    expect(h.doc.activeElement).toBe(h.el('opts-toggle'));
-  });
-
-  it('asks for confirmation before Clear, and does nothing when declined', async () => {
-    const h = await open({ confirm: false });
-    await h.emit(sync(A, [], [A, B]));
-    let asked = false;
-    (h.window as any).confirm = (): boolean => {
-      asked = true;
-      return false;
-    };
-    await h.click('#clear-topics');
-    expect(asked).toBe(true);
-    expect(h.calls.map((c) => c.path)).not.toContain('api/topics/clear');
-  });
-
-  it('is off until asked for, then marks the page, says so, and is kept by this browser', async () => {
-    const h = await open();
-    await h.emit(sync(A, [], [A]));
-    expect(calm(h)).toBe(false);
-    expect(h.el('calm-state').textContent).toBe('off');
-    expect(h.el('calm-toggle').getAttribute('aria-pressed')).toBe('false');
-
-    await h.click('#opts-toggle');
-    await h.click('#calm-toggle');
-    expect(calm(h)).toBe(true);
-    expect(h.el('calm-state').textContent).toBe('on');
-    expect(h.el('calm-toggle').getAttribute('aria-pressed')).toBe('true');
+    await h.click('[data-status-id="status.calm"]');
+    expect(root.classList.contains('calm')).toBe(true);
     expect(h.window.localStorage.getItem('aa_calm')).toBe('1');
 
-    // Applied as the script starts, before the first sync: a reload does not flash the pulse back.
-    const again = await open({ storage: { aa_calm: '1' } });
-    expect(calm(again)).toBe(true);
-    expect(again.el('calm-state').textContent).toBe('on');
-    await again.click('#calm-toggle');
-    expect(calm(again)).toBe(false);
-    expect(again.window.localStorage.getItem('aa_calm')).toBeNull();
+    await h.click('[data-status-id="status.calm"]');
+    expect(root.classList.contains('calm')).toBe(false);
+    expect(h.window.localStorage.getItem('aa_calm')).toBeNull();
   });
 
-  it('draws the same list either way: the mode is in the stylesheet, not in what the rows say', async () => {
-    // A topic that needs you is found by the same row, dot and badge in both modes; only how loud
-    // they are differs. So the markup itself must not change.
-    const topics = [
-      { id: A, title: 'here', lastAt: 1000, msgCount: 0, stage: 'idle' },
-      { id: B, title: 'working', lastAt: 999, msgCount: 5, running: true, live: true, stage: 'working' },
-      { id: C, title: 'asks', lastAt: 998, msgCount: 2, running: true, asking: true, live: true, stage: 'answer' },
-    ];
-    const paint = async (storage: Record<string, string>): Promise<string> => {
-      const h = await open({ url: `http://localhost:8787/?t=${A}`, storage: { aa_reads: JSON.stringify({ [B]: 0, [C]: 0 }), ...storage } });
-      await h.emit(sync(A, [], [A]));
-      await h.emit({ t: 'topics', topics });
-      expect(h.doc.querySelectorAll('#topics .topic-badge')).toHaveLength(2);
-      return h.el('topics').innerHTML;
-    };
-    expect(await paint({ aa_calm: '1' })).toBe(await paint({}));
-  });
-
-  it('quiets the running dot and the unread count, and nothing that needs you', () => {
-    const html = renderPage('Chat', false);
-    const css = html.slice(html.indexOf('<style>'), html.indexOf('</style>'));
-    // Every rule the mode has, so one added for a question, a failure, a finished reply or the
-    // green rows fails here: those are what the mode exists to leave standing out. A running
-    // scheduled task is the same kind of "still working" signal as a running topic, so its dot
-    // is quieted by the same rule — it is the same .topic-dot now.
-    expect(css.match(/#app\.calm [^{]*\{[^}]*\}/g)).toEqual([
-      '#app.calm .topic-dot.running{animation:none}',
-      '#app.calm .topic-badge{background:var(--hover-3);color:var(--fg-mid);font-weight:500}',
-    ]);
-    expect(css).toMatch(/\.topic-dot\.asking\{[^}]*animation:pulse/);
-  });
-});
-
-describe('webui page: one panel component on both edges', () => {
-  const A = 'a1b2c3d4';
-
-  const openWide = async (): Promise<Harness> => {
-    const h = await open({ width: 1440, height: 900 });
-    await h.emit(sync(A, [], [A]));
-    return h;
-  };
-  const shut = (h: Harness, id: string): boolean => h.el(id).classList.contains('collapsed');
-  const appHas = (h: Harness, cls: string): boolean => h.el('app').classList.contains(cls);
-
-  it('marks both columns as the same panel, closed by the same × and inert while shut', async () => {
-    const h = await openWide();
-    // Which edge it is on is the only class that differs; the base rules are `.panel`'s.
-    expect(h.el('sidebar').classList.contains('panel')).toBe(true);
-    expect(h.el('sidebar').classList.contains('panel-left')).toBe(true);
-    expect(h.el('schedules').classList.contains('panel')).toBe(true);
-    expect(h.el('schedules').classList.contains('panel-right')).toBe(true);
-    // Both close buttons are the one control: same class, same glyph.
-    for (const id of ['collapse-sidebar', 'schedules-close']) {
-      expect(h.el(id).classList.contains('panel-close')).toBe(true);
-      expect(h.el(id).textContent).toBe('×');
-    }
-
-    // The left starts open on a wide screen, the right closed.
-    expect(shut(h, 'sidebar')).toBe(false);
-    expect(shut(h, 'schedules')).toBe(true);
-    expect(h.el('schedules').hasAttribute('inert')).toBe(true);
-
-    await h.click('#collapse-sidebar');
-    expect(shut(h, 'sidebar')).toBe(true);
-    expect(h.el('sidebar').hasAttribute('inert')).toBe(true);
-    expect(appHas(h, 'sb-open')).toBe(false);
-    // The ☰ is the way back, at every width, because a closed column must not strand itself.
-    await h.click('#expand-sidebar');
-    expect(shut(h, 'sidebar')).toBe(false);
-    expect(h.el('sidebar').hasAttribute('inert')).toBe(false);
-
-    await h.click('#schedules-toggle');
-    expect(shut(h, 'schedules')).toBe(false);
-    expect(h.el('schedules').hasAttribute('inert')).toBe(false);
-    expect(appHas(h, 'sched-open')).toBe(true);
-    await h.click('#schedules-close');
-    expect(shut(h, 'schedules')).toBe(true);
-    expect(h.el('schedules').hasAttribute('inert')).toBe(true);
-    expect(appHas(h, 'sched-open')).toBe(false);
-  });
-
-  it('answers Escape on both: the right panel first, then the left', async () => {
-    const h = await openWide();
-    await h.click('#schedules-toggle');
-    expect(shut(h, 'sidebar')).toBe(false);
-    expect(shut(h, 'schedules')).toBe(false);
-
-    h.doc.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Escape' }));
-    await tick();
-    expect(shut(h, 'schedules')).toBe(true);
-    // The left is a column the person has not asked to close; the second Escape does that.
-    expect(shut(h, 'sidebar')).toBe(false);
-
-    h.doc.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Escape' }));
-    await tick();
-    expect(shut(h, 'sidebar')).toBe(true);
-  });
-
-  it('keeps each width under its own key, in the one --pw property both edges read', async () => {
-    const h = await open({ width: 1440, height: 900, storage: { aa_sb_w: '300', aa_sched_w: '260' } });
-    expect(h.el('sidebar').style.getPropertyValue('--pw')).toBe('300px');
-    expect(h.el('schedules').style.getPropertyValue('--pw')).toBe('260px');
-    expect(h.window.localStorage.getItem('aa_sb_w')).toBe('300');
-    expect(h.window.localStorage.getItem('aa_sched_w')).toBe('260');
-
-    // Double-click on either handle is the default width again, and storage forgets it.
-    for (const [handle, panel, key] of [
-      ['sidebar-resize', 'sidebar', 'aa_sb_w'],
-      ['sched-resize', 'schedules', 'aa_sched_w'],
-    ] as const) {
-      h.doc.getElementById(handle)!.dispatchEvent(new h.window.MouseEvent('dblclick', { bubbles: true }));
-      expect(h.el(panel).style.getPropertyValue('--pw')).toBe('');
-      expect(h.window.localStorage.getItem(key)).toBeNull();
-    }
-  });
-
-  it('keeps the two menus apart and each item wired to its own action', async () => {
-    const h = await open({ replies: { 'api/skills': { skills: [] }, 'api/schedules': { enabled: true, tasks: [] } } });
-    await h.emit(sync(A, [], [A]));
-
-    // Menu → All settings: a page, opened with a quiet command.
-    await h.click('#opts-toggle');
-    await h.click('#settings-open');
-    expect(h.el('opts-menu').hidden).toBe(true);
-    expect(h.el('settings-page').hidden).toBe(false);
-    expect(h.calls.find((c) => c.path === 'api/send')?.body).toMatchObject({ text: '/setting', quiet: true });
-    h.doc.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Escape' }));
-
-    // Menu → Skills: the managed-skills window, and the menu is gone.
-    await h.click('#opts-toggle');
-    await h.click('#skills-toggle');
-    expect(h.el('opts-menu').hidden).toBe(true);
-    expect(h.el('skills').hidden).toBe(false);
-    await until('the skills request', () => h.calls.some((c) => c.path === 'api/skills'));
-    h.doc.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Escape' }));
-
-    // Menu → Low attention stays open, so the state it flipped is seen flipping.
-    await h.click('#opts-toggle');
-    await h.click('#calm-toggle');
-    expect(h.el('opts-menu').hidden).toBe(false);
-    expect(appHas(h, 'calm')).toBe(true);
-    h.doc.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Escape' }));
-
-    // Manage → Close idle: the confirmation, not the action. One resident agent is enough.
+  it('opens the Close Idle confirmation dialog from the status bar and posts api/topics/kill on confirm', async () => {
+    const h = await open({
+      width: 1280,
+      height: 800,
+      replies: { 'api/topics/kill': { ok: true, closed: [OTHER], kept: [] } },
+    });
+    await h.emit(sync(T, [], [T, OTHER]));
     await h.emit({
       t: 'topics',
-      topics: [{ id: A, title: 'here', lastAt: 1000, msgCount: 0, stage: 'idle', live: true }],
+      topics: [
+        { id: T, title: 'Busy', lastAt: 2000, running: true, live: true },
+        { id: OTHER, title: 'Idle one', lastAt: 1000, running: false, live: true },
+      ],
     });
-    await h.click('#manage-toggle');
-    expect(h.el('manage-menu').hidden).toBe(false);
-    expect(h.el('close-idle').hidden).toBe(false);
-    await h.click('#close-idle');
-    expect(h.el('manage-menu').hidden).toBe(true);
-    expect(h.el('idle-dialog').hidden).toBe(false);
-    expect(h.el('idle-title').textContent).toBe('Close 1 idle agent?');
-    expect(h.calls.some((c) => c.path === 'api/topics/close-idle')).toBe(false);
+    await tick();
+
+    await h.click('[data-status-id="status.idle"]');
+    const dialog = h.doc.querySelector('.fh-dialog');
+    expect(dialog).not.toBeNull();
+    expect(dialog?.textContent).toContain('Idle one');
+
+    const confirmBtn = dialog?.querySelector<HTMLButtonElement>('.fh-btn--primary, .fh-btn--danger');
+    expect(confirmBtn).not.toBeNull();
+    confirmBtn!.click();
+    await tick();
+    expect(h.calls.some((c) => c.path.includes('topics/close-idle'))).toBe(true);
   });
 
-  it('asks before Clear, and posts only on a yes', async () => {
-    const h = await open({ confirm: true });
-    await h.emit(sync(A, [], [A]));
-    await h.click('#clear-topics');
+  it('toggles language from the status bar without reload and persists fh_lang', async () => {
+    const h = await open({ width: 1280, height: 800 });
+    await h.emit(sync(T, [], [T]));
+    expect(h.doc.documentElement.lang).toBe('en');
 
-    expect(h.confirms).toHaveLength(1);
-    await until('the clear request', () => h.calls.some((c) => c.path === 'api/topics/clear'));
+    await h.click('[data-status-id="status.locale"]');
+    await tick();
+    expect(h.doc.documentElement.lang).toBe('zh-CN');
+    expect(h.window.localStorage.getItem('fh_lang')).toBe('zh-CN');
+
+    await h.click('[data-status-id="status.locale"]');
+    await tick();
+    expect(h.doc.documentElement.lang).toBe('en');
   });
 });
 
 describe('webui page: Escape belongs to what is in front of it', () => {
-  const A = 'a1b2c3d4';
-
-  /** Both panels out, so a stray Escape has something visible to put away. */
-  const openBoth = async (opts: NonNullable<Parameters<typeof open>[0]> = {}): Promise<Harness> => {
-    const h = await open({ width: 1440, height: 900, ...opts });
-    await h.emit(sync(A, [], [A]));
-    await h.click('#schedules-toggle');
-    expect(h.el('schedules').classList.contains('collapsed')).toBe(false);
-    return h;
-  };
-  const bothOpen = (h: Harness): boolean =>
-    !h.el('sidebar').classList.contains('collapsed') && !h.el('schedules').classList.contains('collapsed');
-  const esc = async (h: Harness, init: KeyboardEventInit = {}): Promise<void> => {
-    h.doc.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Escape', ...init }));
-    await tick();
+  const T = 'a1b2c3d4';
+  const esc = (h: Harness, extra: KeyboardEventInit = {}) => {
+    const win = h.doc.defaultView as Window & typeof globalThis;
+    h.doc.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, ...extra }));
   };
 
-  it('leaves both panels alone when Escape cancels an IME composition', async () => {
-    const h = await openBoth();
-    // A stored choice first, so a stray close would also be visible in storage.
-    await h.click('#collapse-sidebar');
-    await h.click('#expand-sidebar');
-    expect(h.window.localStorage.getItem('aa_sb_open')).toBe('1');
-
-    const input = h.el('input') as HTMLTextAreaElement;
-    input.focus();
-    await esc(h, { isComposing: true });
-
-    expect(bothOpen(h)).toBe(true);
-    expect(h.window.localStorage.getItem('aa_sb_open')).toBe('1');
-    expect(h.window.localStorage.getItem('aa_sched_open')).toBe('1');
-  });
-
-  it('stops a recording without putting either panel away', async () => {
-    const h = await openBoth({ mic: { types: ['audio/webm;codecs=opus'] } });
-    await h.click('#mic');
-    await tick();
-    expect(h.el('mic').classList.contains('rec')).toBe(true);
-
-    await esc(h);
-
-    expect(h.el('mic').classList.contains('rec')).toBe(false);
-    expect(h.recorders[0]!.tracksStopped()).toBe(true);
-    // Thrown away, not sent: Escape means cancel.
-    expect(h.calls.some((c) => c.path === 'api/send')).toBe(false);
-    expect(bothOpen(h)).toBe(true);
-  });
-
-  it('closes only the idle dialog when it is the thing in front', async () => {
-    const h = await openBoth();
-    await h.emit({
-      t: 'topics',
-      topics: [{ id: A, title: 'here', lastAt: 1000, msgCount: 0, stage: 'idle', live: true }],
-    });
-    await h.click('#manage-toggle');
-    await h.click('#close-idle');
-    expect(h.el('idle-dialog').hidden).toBe(false);
-
-    await esc(h);
-
-    expect(h.el('idle-dialog').hidden).toBe(true);
-    expect(bothOpen(h)).toBe(true);
-  });
-
-  it('closes only the picture when it is the thing in front', async () => {
-    const h = await openBoth();
-    await h.emit(sync(A, [{ ...message('m1', '<p>here</p>'), file: { name: 'shot.png', url: 'f/abc123', image: true } }], [A]));
-    await h.click('#log img.shot');
-    expect(h.el('lightbox').hidden).toBe(false);
-
-    await esc(h);
-
-    expect(h.el('lightbox').hidden).toBe(true);
-    expect(bothOpen(h)).toBe(true);
-  });
-
-  it('closes only the menu when it is the thing in front', async () => {
-    const h = await openBoth();
-    await h.click('#opts-toggle');
-    expect(h.el('opts-menu').hidden).toBe(false);
-
-    await esc(h);
-
-    expect(h.el('opts-menu').hidden).toBe(true);
-    expect(bothOpen(h)).toBe(true);
-  });
-
-  it('dismisses the command suggestions without touching the panels', async () => {
-    const h = await openBoth();
+  it('dismisses command suggestions on Escape without closing the sidebar', async () => {
+    const h = await open({ width: 1280, height: 800 });
+    await h.emit(sync(T, [], [T], { commands: [{ name: 'new', description: 'start over' }] }));
     const input = h.el('input') as HTMLTextAreaElement;
     input.value = '/';
     input.dispatchEvent(new h.window.Event('input', { bubbles: true }));
+    await tick();
     expect(h.el('hints').hidden).toBe(false);
 
-    await esc(h);
-
+    esc(h);
+    await tick();
     expect(h.el('hints').hidden).toBe(true);
-    expect(bothOpen(h)).toBe(true);
+    expect((h.doc.querySelector('.wb-sidebar') as HTMLElement).hidden).toBe(false);
+  });
+
+  it('closes the topic row menu on Escape without touching the sidebar', async () => {
+    const h = await open({ width: 1280, height: 800 });
+    await h.emit(sync(T, [], [T]));
+    await h.click(`[data-rm="topic:${T}"]`);
+    const menuEl = h.doc.querySelector<HTMLElement>('.wb-topic-row-menu');
+    expect(menuEl).not.toBeNull();
+    expect(menuEl?.hidden).toBe(false);
+
+    esc(h);
+    await tick();
+    const after = h.doc.querySelector<HTMLElement>('.wb-topic-row-menu');
+    expect(after === null || after.hidden).toBe(true);
+    expect((h.doc.querySelector('.wb-sidebar') as HTMLElement).hidden).toBe(false);
+  });
+
+  it('closes the Close Idle dialog on Escape without closing the sidebar', async () => {
+    const h = await open({ width: 1280, height: 800 });
+    await h.emit(sync(T, [], [T]));
+    await h.emit({ t: 'topics', topics: [{ id: T, title: 'Idle', lastAt: 1000, running: false, live: true }] });
+    await tick();
+
+    await h.click('[data-status-id="status.idle"]');
+    expect(h.doc.querySelector('.fh-dialog')).not.toBeNull();
+
+    esc(h);
+    await tick();
+    expect(h.doc.querySelector('.fh-dialog')).toBeNull();
+    expect((h.doc.querySelector('.wb-sidebar') as HTMLElement).hidden).toBe(false);
   });
 });

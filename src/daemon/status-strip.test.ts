@@ -99,6 +99,7 @@ describe('the status strip, through the registry', () => {
       model: 'Claude Opus 5.5 (Medium)',
       context: { used: 17_000, size: 1_048_576 },
       quota: [{ id: '3p-5h', remaining: 0.9, active: true }],
+      permissions: { level: 'auto', offered: ['ask', 'auto'], unset: true },
     });
     r.dispose();
   });

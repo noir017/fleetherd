@@ -840,6 +840,8 @@ export class Daemon {
     const historyPanel = this.historyPanel(id);
     if (historyPanel) adapter.useHistoryPanel?.(historyPanel);
     adapter.useAgentCatalog?.((ref) => this.registry.agentCatalogForRef(ref));
+    adapter.useTopicSetup?.((ref, opts) => this.registry.setupTopicForRef(ref, opts));
+    adapter.useWorkdirBrowser?.((ref, opts) => this.registry.browseWorkdirForRef(ref, opts));
     adapter.useModelPicker?.({
       list: (ref) => this.registry.modelPickerForRef(ref),
       choose: (ref, value) => this.registry.chooseModelForRef(ref, value),
@@ -893,6 +895,7 @@ export class Daemon {
       dismiss: (text) => state?.dismissPreference(text),
       standing: () => standingInstructions(),
       activeSkills: () => new Set(activeSkillNames()),
+      writeSkills: (fn) => this.skillsRepo.write(fn),
     });
   }
 

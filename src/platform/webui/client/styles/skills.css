@@ -1,0 +1,203 @@
+#skills{position:fixed;inset:0;z-index:20;background:var(--scrim-2);display:flex;align-items:center;justify-content:center;padding:24px}
+#skills[hidden]{display:none}
+#skills-box{display:flex;flex-direction:column;width:min(980px,100%);max-height:100%;overflow:hidden;background:var(--bg);border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 30px var(--shadow)}
+#skills-bar{display:flex;align-items:center;gap:8px;padding:6px 10px 6px 16px;border-bottom:1px solid var(--line);min-height:var(--headh);font-size:var(--fh-fs-ui)}
+#skills-title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
+#skills-count{flex:none;font-size:var(--fh-fs-xs);color:var(--dim)}
+#skills-new{background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:inherit;font-size:var(--fh-fs-sm);padding:5px 10px;cursor:pointer}
+#skills-new:hover{border-color:var(--line-3);background:var(--hover-3)}
+#skills-refresh{font-size:var(--fh-fs-body)}
+#skills-refresh:disabled{opacity:.45;cursor:default}
+#skills-close{font-size:var(--fh-fs-xl);padding:6px 10px}
+#skills-body{flex:1;min-height:0;overflow-y:auto;padding:12px 16px calc(16px + env(safe-area-inset-bottom,0px))}
+/* Sticky, because the switches are on every row of a long list: a refusal (a description too long
+   for a resident skill) written above the first row would be out of sight of the row tapped. */
+#skills-note{position:sticky;top:-12px;z-index:1;margin:-12px -16px 10px;padding:10px 16px;background:var(--bg);border-bottom:1px solid var(--line);font-size:var(--fh-fs-sm);color:var(--warn);overflow-wrap:anywhere}
+.skills-empty{padding:10px 2px;font-size:var(--fh-fs-sm);line-height:1.6;color:var(--dim)}
+.skill-item{border:1px solid var(--line);border-radius:6px;padding:10px 12px;background:var(--surface-2);cursor:pointer;display:flex;flex-direction:column;gap:3px;margin-bottom:6px}
+.skill-item:hover{background:var(--surface-pop)}
+.skill-row{display:flex;align-items:center;gap:8px;min-width:0}
+.skill-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--fh-fs-ui);font-weight:600}
+.skill-state{flex:none;font-size:var(--fh-fs-2xs);font-weight:600;text-transform:uppercase;letter-spacing:.05em;padding:1px 6px;border-radius:999px;background:var(--active-2);color:var(--fg-soft)}
+.skill-state.expired{color:var(--warn);background:var(--warn-tint-2)}
+.skill-pin{flex:none;font-size:var(--fh-fs-2xs);font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--warn)}
+.skill-cat{flex:none;font-size:var(--fh-fs-xs);color:var(--dim)}
+.skill-warn{font-size:var(--fh-fs-xs);color:var(--warn);overflow-wrap:anywhere;margin-top:2px}
+/* A list row: what the skill is on the left, its two switches on the right — on/off, and resident
+   or library — so neither needs the skill opened first. The rows are grouped by where they stand
+   (resident, library, off), which is what the two switches decide. */
+.skill-card{flex-direction:row;align-items:flex-start;gap:12px}
+.skill-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+.skill-ctl{flex:none;display:flex;align-items:center;gap:10px}
+.skill-open{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left;background:none;border:0;padding:0;color:inherit;font:inherit;font-size:var(--fh-fs-ui);font-weight:600;cursor:pointer}
+/* The name is what an agent needs to be told in a chat, so the row and the skill's own page hand
+   it over in one tap. Small and quiet: it sits beside the name, not instead of it. */
+.skill-copy{flex:none;background:none;border:0;padding:2px 4px;color:var(--dim);font:inherit;font-size:var(--fh-fs-ui);line-height:1;cursor:pointer;border-radius:4px}
+.skill-copy:hover{color:var(--fg);background:var(--field)}
+.skill-head .skill-copy{font-size:var(--fh-fs-ui)}
+.skill-group-head{display:flex;align-items:baseline;flex-wrap:wrap;column-gap:8px;margin:14px 0 6px}
+.skill-group-head .skill-section{margin:0}
+.skill-group-hint{font-size:var(--fh-fs-xs);color:var(--dim)}
+.skill-off .skill-main{opacity:.6}
+.skill-pane>.skill-group-hint{margin:0 0 8px}
+.skill-seg{display:inline-flex;border:1px solid var(--line);border-radius:5px;overflow:hidden}
+.skill-seg button{background:var(--field);border:0;color:var(--dim);font:inherit;font-size:var(--fh-fs-sm);padding:4px 9px;cursor:pointer}
+.skill-seg button+button{border-left:1px solid var(--line)}
+.skill-seg button:hover:not(:disabled){color:var(--fg);background:var(--hover-3)}
+.skill-seg button[aria-pressed="true"]{background:var(--accent-tint-seg);color:var(--accent-seg);cursor:default}
+.skill-seg button:disabled{opacity:.45;cursor:default}
+.skill-switch{display:inline-flex;align-items:center;gap:6px;background:none;border:0;padding:4px 0;color:var(--dim);font:inherit;font-size:var(--fh-fs-sm);cursor:pointer;min-width:58px}
+.skill-knob{position:relative;flex:none;width:30px;height:17px;border-radius:999px;background:var(--line-3);transition:background .15s}
+.skill-knob::after{content:"";position:absolute;top:2px;left:2px;width:13px;height:13px;border-radius:50%;background:var(--fg-soft);transition:transform .15s,background .15s}
+.skill-switch[aria-checked="true"]{color:var(--fg)}
+.skill-switch[aria-checked="true"] .skill-knob{background:var(--ok-solid)}
+.skill-switch[aria-checked="true"] .skill-knob::after{transform:translateX(13px);background:var(--fg-on-accent)}
+.skill-searches{margin-top:14px}
+.skill-search{font-size:var(--fh-fs-sm);padding:3px 0;overflow-wrap:anywhere}
+.skill-search small{color:var(--dim);margin-left:6px}
+.skill-desc{font-size:var(--fh-fs-sm);color:var(--fg-2);line-height:1.45;overflow-wrap:anywhere}
+.skill-meta{font-size:var(--fh-fs-xs);color:var(--dim);overflow-wrap:anywhere}
+.skill-problem{font-size:var(--fh-fs-xs);color:var(--err);overflow-wrap:anywhere;margin-top:2px}
+.skill-head{display:flex;align-items:flex-start;gap:10px;flex-wrap:wrap}
+.skill-head .skill-name{flex:1 1 220px;font-size:var(--fh-fs-body)}
+.skill-acts,.tp-acts{display:flex;flex-wrap:wrap;gap:6px}
+.skill-acts.editor{margin-top:8px}
+.skill-acts button,.tp-acts button{display:inline-flex;align-items:center;background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:inherit;font-size:var(--fh-fs-sm);padding:5px 10px;cursor:pointer}
+.skill-acts button:hover:not(:disabled),.tp-acts button:hover:not(:disabled){border-color:var(--line-3);background:var(--hover-3)}
+.skill-acts button:disabled,.tp-acts button:disabled{opacity:.45;cursor:default}
+.skill-acts button.danger,.tp-acts button.danger{color:var(--dim);border-color:transparent;background:none}
+.skill-acts button.danger:hover:not(:disabled),.tp-acts button.danger:hover:not(:disabled){color:var(--err);border-color:var(--err-border-3);background:var(--err-tint-2)}
+.skill-section{margin-top:16px;font-size:var(--fh-fs-xs);color:var(--dim);text-transform:uppercase;letter-spacing:.05em}
+.skill-files{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.skill-file{background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:inherit;font-size:var(--fh-fs-sm);padding:5px 9px;cursor:pointer;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.skill-file.on{border-color:var(--accent-solid);background:var(--accent-tint-2);color:var(--accent-file)}
+.skill-file small{color:var(--dim);margin-left:6px}
+.skill-field{display:block;width:100%;box-sizing:border-box;margin-top:8px;background:var(--field);border:1px solid var(--line);border-radius:5px;color:var(--fg);font:inherit;font-size:var(--fh-fs-sm);padding:8px 10px}
+.skill-field[readonly]{color:var(--dim)}
+.skill-text{width:100%;box-sizing:border-box;margin-top:8px;min-height:280px;resize:vertical;background:var(--bg-code);border:1px solid var(--line);border-radius:5px;color:var(--fg);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:var(--fh-fs-sm);line-height:1.5;padding:10px;white-space:pre;overflow-wrap:normal;overflow-x:auto}
+.skill-new-form{cursor:default}
+.skill-history{margin-top:6px;border-top:1px solid var(--line)}
+.skill-hist{display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--line);font-size:var(--fh-fs-sm);flex-wrap:wrap}
+.skill-hist-main{flex:1 1 260px;min-width:0}
+.skill-hist-action{font-weight:600}
+.skill-hist-meta{font-size:var(--fh-fs-xs);color:var(--dim);overflow-wrap:anywhere}
+/* ── Workbench skills history diff ────────────────────────────────────────── */
+.fh-skill-hist-row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 8px;border-bottom:1px solid var(--fh-line,var(--line));transition:background .12s}
+.fh-skill-hist-row:hover{background:var(--fh-hover,var(--hover))}
+.fh-skill-hist-row.is-selected{background:var(--fh-sel,var(--surface-2));box-shadow:inset 2px 0 0 var(--fh-accent,var(--accent))}
+.fh-skill-hist-main{flex:1 1 auto;min-width:0;cursor:pointer}
+.fh-skill-hist-actions{flex:none;display:flex;align-items:center;gap:6px}
+.fh-skill-hist-diff-btn.is-active{color:var(--fh-accent,var(--accent));background:var(--fh-toggle,var(--accent-tint-2))}
+.fh-skill-diff-panel{margin-top:10px;border:1px solid var(--fh-line,var(--line));border-radius:4px;background:var(--fh-bg-code,var(--bg-code));overflow:hidden}
+.fh-skill-diff-head{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;padding:6px 10px;border-bottom:1px solid var(--fh-line,var(--line));background:var(--fh-bg-widget,var(--surface));font-size:var(--fh-fs-sm)}
+.fh-skill-diff-title{display:flex;align-items:center;flex-wrap:wrap;gap:6px;min-width:0}
+.fh-skill-diff-ref{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:var(--fh-fs-xs);color:var(--fh-fg-hi,var(--fg))}
+.fh-skill-diff-arrow{color:var(--fh-fg-dim,var(--dim))}
+.fh-skill-diff-stats{display:inline-flex;align-items:center;gap:6px;margin-left:4px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:var(--fh-fs-xs);font-weight:600}
+.fh-skill-diff-stat--add{color:var(--fh-ok,var(--ok))}
+.fh-skill-diff-stat--del{color:var(--fh-err,var(--err))}
+.fh-skill-diff-actions{display:flex;align-items:center;gap:6px}
+.fh-skill-diff-note{padding:6px 10px;border-bottom:1px solid var(--fh-line,var(--line));font-size:var(--fh-fs-xs);color:var(--fh-fg-dim,var(--dim));background:var(--fh-bg-side,var(--bg))}
+.fh-skill-diff-empty{padding:14px 10px;text-align:center;font-size:var(--fh-fs-sm);color:var(--fh-fg-dim,var(--dim))}
+.fh-skill-diff-body{max-height:360px;overflow:auto;font-family:"Cascadia Code","JetBrains Mono",Consolas,monospace;font-size:var(--fh-fs-sm);line-height:1.5}
+.fh-skill-diff-line{display:grid;grid-template-columns:40px 40px 18px minmax(0,1fr);align-items:baseline;padding:0 8px;white-space:pre}
+.fh-skill-diff-line--add{background:var(--fh-diff-add);color:var(--fh-fg-hi,var(--fg))}
+.fh-skill-diff-line--del{background:var(--fh-diff-del);color:var(--fh-fg-hi,var(--fg))}
+.fh-skill-diff-line--ctx{color:var(--fh-fg-dim,var(--dim))}
+.fh-skill-diff-line--hunk{display:block;padding:2px 10px;background:var(--fh-bg-side,var(--surface));color:var(--fh-link,var(--accent));font-size:var(--fh-fs-xs);border-top:1px solid var(--fh-line,var(--line));border-bottom:1px solid var(--fh-line,var(--line))}
+.fh-skill-diff-ln{text-align:right;padding-right:8px;color:var(--fh-fg-dim,var(--dim));user-select:none;font-variant-numeric:tabular-nums}
+.fh-skill-diff-sign{text-align:center;user-select:none;font-weight:600}
+.fh-skill-diff-line--add .fh-skill-diff-sign{color:var(--fh-ok,var(--ok))}
+.fh-skill-diff-line--del .fh-skill-diff-sign{color:var(--fh-err,var(--err))}
+.fh-skill-diff-code{overflow-wrap:normal}
+
+/* ── Workbench skills sidebar view ────────────────────────────────────────── */
+.fh-skills-view{display:flex;flex-direction:column;height:100%;min-height:0;background:var(--fh-bg-side,var(--panel))}
+.fh-skills-view-notice:empty{display:none}
+.fh-skills-view-notice{flex:none;padding:6px 10px 0}
+.fh-skills-view-body{flex:1;min-height:0;overflow:auto;padding:2px 0 8px}
+.fh-skills-view-searches:empty{display:none}
+.fh-skills-view-searches{flex:none;max-height:30%;overflow:auto;border-top:1px solid var(--fh-line,var(--line));padding:4px 0 8px}
+.fh-skill-row{display:flex;flex-direction:column;gap:2px;width:100%;min-width:0}
+.fh-skill-row.is-archived{opacity:.55}
+.fh-skill-row-head{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:0}
+.fh-skill-row-title{flex:1;min-width:0;display:flex;align-items:center;gap:5px}
+.fh-skill-pin-icon{flex:none;display:inline-flex;color:var(--fh-fg-dim,var(--dim))}
+.fh-skill-pin-icon svg{width:13px;height:13px}
+.fh-skill-row-name{min-width:0;font-weight:500;font-size:var(--fh-fs-ui);color:var(--fh-fg-hi,var(--fg));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fh-skill-row-tier{flex:none;font-size:var(--fh-fs-2xs);padding:0 5px;border-radius:2px;background:var(--fh-btn2,var(--field));color:var(--fh-fg-dim,var(--dim))}
+.fh-skill-row-tail{flex:none;display:flex;align-items:center;gap:4px}
+.fh-skill-row-age{font-size:var(--fh-fs-xs);color:var(--fh-fg-dim,var(--dim));font-variant-numeric:tabular-nums}
+.fh-skill-row .fh-skill-copy{width:22px;height:22px;padding:0;opacity:0;transition:opacity .12s}
+.fh-skill-row:hover .fh-skill-copy,.fh-skill-row:focus-within .fh-skill-copy{opacity:1}
+.fh-skill-row-desc{font-size:var(--fh-fs-xs);color:var(--fh-fg-dim,var(--dim));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fh-skill-row-warn{font-size:var(--fh-fs-xs);color:var(--fh-warn,var(--warn));overflow-wrap:anywhere}
+.fh-skill-row-problem{font-size:var(--fh-fs-xs);color:var(--fh-err,var(--err));overflow-wrap:anywhere}
+.fh-skill-searches-group{padding-bottom:4px}
+.fh-skill-searches-title{font-size:var(--fh-fs-xs);font-weight:600;color:var(--fh-fg-dim,var(--dim));padding:8px 14px 4px;text-transform:uppercase;letter-spacing:.05em}
+.fh-skill-search-item{display:flex;flex-direction:column;gap:2px;padding:6px 14px}
+.fh-skill-search-q{font-size:var(--fh-fs-sm);font-weight:500;color:var(--fh-fg,var(--fg));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fh-skill-search-meta{font-size:var(--fh-fs-xs);color:var(--fh-fg-dim,var(--dim));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* ── Workbench skill editor ───────────────────────────────────────────────── */
+.fh-skill-editor{display:flex;flex-direction:column;height:100%;min-height:0;background:var(--fh-bg,var(--bg))}
+.fh-skill-ed-bar-host{flex:none}
+.fh-skill-ed-bar{display:flex;align-items:center;gap:10px;height:48px;padding:0 12px 0 18px;border-bottom:1px solid var(--fh-line,var(--line));background:var(--fh-bg,var(--bg))}
+.fh-skill-ed-name{margin:0;font-size:var(--fh-fs-ui);font-weight:600;color:var(--fh-fg-hi,var(--fg));white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.fh-skill-ed-sp{flex:1}
+.fh-skill-pill{flex:none;font-size:var(--fh-fs-xs);padding:1px 7px;border-radius:3px;background:var(--fh-btn2,var(--field));color:var(--fh-fg,var(--fg));white-space:nowrap}
+.fh-skill-pill.is-warn{background:var(--warn-tint-2);color:var(--fh-warn,var(--warn))}
+.fh-skill-save-btn{padding:4px 12px}
+.fh-skill-ed-page{flex:1;min-height:0;overflow:auto}
+.fh-skill-ed-col{max-width:820px;margin:0 auto;padding:22px 28px}
+.fh-skill-ed-sub{color:var(--fh-fg-dim,var(--dim));font-size:var(--fh-fs-sm);line-height:1.5;margin-bottom:16px}
+.fh-skill-card{border:1px solid var(--fh-line,var(--line));border-radius:4px;margin-bottom:14px;overflow:hidden;background:var(--fh-card,var(--surface))}
+.fh-skill-ci{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 16px;align-items:center;padding:10px 14px;border-bottom:1px solid var(--fh-line,var(--line))}
+.fh-skill-ci:last-child{border-bottom:0}
+.fh-skill-ci:hover{background:var(--fh-hover,var(--hover))}
+.fh-skill-ci-l{font-weight:500;font-size:var(--fh-fs-ui);color:var(--fh-fg-hi,var(--fg))}
+.fh-skill-ci-h{grid-column:1;color:var(--fh-fg-dim,var(--dim));font-size:var(--fh-fs-sm);line-height:1.45}
+.fh-skill-ci-ctl{grid-row:span 2;display:flex;align-items:center;justify-content:flex-end}
+.fh-skill-pin-btn.is-pinned{background:var(--fh-accent,var(--accent));color:var(--fh-on-accent);border-color:transparent}
+.fh-skill-ed-section{font-size:var(--fh-fs-xs);font-weight:600;color:var(--fh-fg-dim,var(--dim));text-transform:uppercase;letter-spacing:.05em;margin:20px 2px 8px}
+.fh-skill-files-box{border:1px solid var(--fh-line,var(--line));border-bottom:0;border-radius:4px 4px 0 0;background:var(--fh-card,var(--surface));overflow:hidden}
+.fh-skill-file-row{display:flex;align-items:center;gap:8px;width:100%;padding:6px 14px;border:1px solid transparent;border-radius:0;background:none;color:var(--fh-fg,var(--fg));font:12px var(--fh-font-mono);text-align:left;cursor:pointer}
+.fh-skill-file-row:hover{background:var(--fh-hover,var(--hover))}
+.fh-skill-file-row.is-active{background:var(--fh-sel,var(--active));border-color:var(--fh-accent,var(--accent));color:var(--fh-fg-hi,var(--fg))}
+.fh-skill-file-row .fh-icon svg{width:14px;height:14px;color:var(--fh-fg-dim,var(--dim))}
+.fh-skill-file-row.is-new{color:var(--fh-link,var(--accent));font-family:var(--fh-font-ui)}
+.fh-skill-file-row.is-new .fh-icon svg{color:var(--fh-link,var(--accent))}
+.fh-skill-file-path{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fh-skill-file-meta{flex:none;margin-left:auto;font-family:var(--fh-font-ui);font-size:var(--fh-fs-xs);color:var(--fh-fg-dim,var(--dim))}
+.fh-skill-ed-box{border:1px solid var(--fh-line,var(--line));border-radius:0 0 4px 4px;overflow:hidden;margin-bottom:14px;background:var(--fh-bg,var(--bg))}
+.fh-skill-ed-box-head{display:flex;align-items:center;gap:8px;padding:6px 10px 6px 12px;background:var(--fh-bg-side,var(--panel));border-bottom:1px solid var(--fh-line,var(--line));font-size:var(--fh-fs-sm)}
+.fh-skill-ed-box-name{color:var(--fh-fg-hi,var(--fg));font-weight:600;font-family:var(--fh-font-mono)}
+.fh-skill-ed-box-dim{color:var(--fh-fg-dim,var(--dim));min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fh-skill-ed-path{min-width:180px;max-width:280px}
+.fh-skill-ed-surface{background:var(--fh-bg,var(--bg))}
+.fh-skill-ed-surface .fh-skill-ed-textarea{margin:0;border:0;border-radius:0;min-height:260px;background:var(--fh-bg,var(--bg));color:var(--fh-fg,var(--fg));font:12px/1.6 var(--fh-font-mono);padding:10px 12px}
+.fh-skill-ed-empty{padding:14px;font-size:var(--fh-fs-sm);color:var(--fh-fg-dim,var(--dim))}
+.fh-skill-ed-history .fh-skill-hist-row{padding:10px 14px}
+.fh-skill-ed-history .fh-skill-hist-row:last-child{border-bottom:0}
+.fh-skill-hist-action{display:flex;align-items:center;gap:6px;font-size:var(--fh-fs-ui);font-weight:500;color:var(--fh-fg-hi,var(--fg))}
+.fh-skill-hist-action code{font:11.5px var(--fh-font-mono);background:var(--fh-bg-code,var(--bg-code));padding:1px 5px;border-radius:3px}
+.fh-skill-hist-meta{margin-top:2px;font-size:var(--fh-fs-sm);color:var(--fh-fg-dim,var(--dim))}
+
+/* ── Mobile (<640px) skills adjustments ───────────────────────────────────── */
+@media (max-width:639px){
+  .fh-skill-row .fh-skill-copy{opacity:1}
+  .fh-skill-row-name{font-size:var(--fh-fs-body)}
+  .fh-skill-row-desc{font-size:var(--fh-fs-ui)}
+  .fh-skill-ed-bar{padding:0 12px 0 14px}
+  .fh-skill-ed-col{padding:14px 16px 24px}
+  .fh-skill-ed-sub{font-size:var(--fh-fs-ui)}
+  .fh-skill-card{border-radius:12px}
+  .fh-skill-ci{min-height:50px;padding:11px 14px}
+  .fh-skill-ci-l{font-size:var(--fh-fs-body)}
+  .fh-skill-ci-h{font-size:var(--fh-fs-sm)}
+  .fh-skill-files-box{border-radius:12px 12px 0 0}
+  .fh-skill-file-row{min-height:46px;padding:8px 14px;font-size:var(--fh-fs-ui)}
+  .fh-skill-ed-box{border-radius:0 0 12px 12px}
+  .fh-skill-ed-box-head{flex-wrap:wrap}
+  .fh-skill-ed-history .fh-skill-hist-row{flex-wrap:wrap;padding:11px 14px}
+}

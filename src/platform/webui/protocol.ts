@@ -132,7 +132,32 @@ export const FramedSendHeaderSchema = SendRequestSchema.omit({ files: true })
   })
   .strict();
 
-export const CreateTopicRequestSchema = z.object({ title: z.string().max(200).optional() }).strict();
+const TopicCwd = z
+  .string()
+  .min(1)
+  .max(4096)
+  .refine((s) => !/[\x00-\x1f\x7f]/.test(s), 'cwd must not contain control characters')
+  .refine(
+    (s) => s.startsWith('/') || s === '~' || s.startsWith('~/') || /^[A-Za-z]:[\\/]/.test(s),
+    'cwd must be an absolute path'
+  )
+  .refine((s) => !/(?:^|[\\/])\.\.(?:$|[\\/])/.test(s), 'cwd must not contain ".."');
+
+export const CreateTopicRequestSchema = z
+  .object({
+    title: z.string().max(200).optional(),
+    agent: z.string().min(1).max(200).optional(),
+    cwd: TopicCwd.optional(),
+  })
+  .strict();
+export const TopicSetupRequestSchema = z
+  .object({
+    topic: TopicId,
+    agent: z.string().min(1).max(200).optional(),
+    cwd: TopicCwd.optional(),
+  })
+  .strict()
+  .refine((v) => v.agent !== undefined || v.cwd !== undefined, 'agent or cwd is required');
 export const DeleteTopicRequestSchema = z.object({ topic: TopicId }).strict();
 /**
  * Star or unstar a topic. The state is stated rather than toggled, so a retried request — `post`
@@ -440,6 +465,7 @@ export type LoginRequest = z.infer<typeof LoginRequestSchema>;
 export type SendRequest = z.infer<typeof SendRequestSchema>;
 export type ClickRequest = z.infer<typeof ClickRequestSchema>;
 export type CreateTopicRequest = z.infer<typeof CreateTopicRequestSchema>;
+export type TopicSetupRequest = z.infer<typeof TopicSetupRequestSchema>;
 export type DeleteTopicRequest = z.infer<typeof DeleteTopicRequestSchema>;
 export type StarTopicRequest = z.infer<typeof StarTopicRequestSchema>;
 export type SeenRequest = z.infer<typeof SeenRequestSchema>;
@@ -464,7 +490,10 @@ export type SkillOpRequest = z.infer<typeof SkillOpRequestSchema>;
  * The Reviews tab's one write: dismiss a preference suggestion from the pending list. The text is
  * the suggestion as the list showed it; the store matches it by its normalised form.
  */
-export const ReviewOpRequestSchema = z.object({ action: z.literal('dismiss'), text: z.string().min(1).max(2000) }).strict();
+export const ReviewOpRequestSchema = z.discriminatedUnion('action', [
+  z.object({ action: z.literal('dismiss'), text: z.string().min(1).max(2000) }).strict(),
+  z.object({ action: z.literal('revert'), name: SkillName, id: SkillHistoryId }).strict(),
+]);
 export type ReviewOpRequest = z.infer<typeof ReviewOpRequestSchema>;
 
 /**
@@ -680,6 +709,11 @@ export type WebEvent =
    * topic list marks a row whose machine is gone, whichever topic the page is in.
    */
   | { t: 'machines'; offline: OfflineMachine[] }
+  /**
+   * Server-side plugin broadcast event (`PluginHost.events.push`), fanned out to all connected
+   * SSE clients without sequence numbering or backlog retention.
+   */
+  | { t: `plugin:${string}:${string}`; plugin: string; type: string; data: unknown }
   /**
    * The daemon is going away; stop this stream.
    *

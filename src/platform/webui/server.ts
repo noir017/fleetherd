@@ -39,7 +39,7 @@
  * leak a socket; it hangs Ctrl-C forever.
  */
 import { createReadStream } from 'node:fs';
-import { open, readFile, stat } from 'node:fs/promises';
+import { open, readFile, realpath, stat } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { Socket } from 'node:net';
 import path from 'node:path';
@@ -49,7 +49,8 @@ import type { InstructionsPanel, InstructionsTarget } from '../adapter.js';
 import { ASSET_FILE, loadAssets, type WebAssets } from './assets.js';
 import { SESSION_COOKIE, readCookie, sessionCookie, type WebAuth } from './auth.js';
 import { ICON_PNG, ICON_SVG, renderManifest } from './manifest.js';
-import { servePage, type PageAssets } from './page.js';
+import { servePage, type BootPluginEntry, type PageAssets } from './page.js';
+import { isPathWithin, pluginMimeType, type LoadedPluginEntry } from './plugins/loader.js';
 import {
   ClickRequestSchema,
   CreateTopicRequestSchema,
@@ -85,6 +86,7 @@ import {
   FilesRemoveRequestSchema,
   InstructionsWriteRequestSchema,
   StarTopicRequestSchema,
+  TopicSetupRequestSchema,
   VoiceTranscribeRequestSchema,
   TOPIC_ID,
   parseBody,
@@ -102,6 +104,10 @@ import type { WebPush } from './webpush.js';
 export interface WebServer {
   start(): Promise<void>;
   stop(): Promise<void>;
+}
+
+export interface PluginRouteDispatcher {
+  dispatchRoute(req: IncomingMessage, res: ServerResponse, pluginId: string, subpath: string): Promise<boolean>;
 }
 
 /** Where the terminal pane's ttyd is, whether the pane exists, and its session bookkeeping. */
@@ -174,12 +180,30 @@ export function createWebServer(
   terminal: TerminalSettings,
   sso?: WebSso,
   push?: WebPush,
-  assets: WebAssets = loadAssets()
+  assets: WebAssets = loadAssets(),
+  plugins: readonly LoadedPluginEntry[] = [],
+  pluginHost?: PluginRouteDispatcher
 ): WebServer {
   const sockets = new Set<Socket>();
   const streams = new Set<Stream>();
   const upstreams: UpstreamSet = new Set<Socket>();
-  const ctx: Ctx = { room, auth, instance, streams, terminal, upstreams, sso, push, assets, warned: new Map() };
+  const pluginMap = new Map<string, LoadedPluginEntry>(plugins.map((p) => [p.id, p]));
+  const bootPlugins: BootPluginEntry[] = plugins.flatMap((p) => (p.bootEntry ? [p.bootEntry] : []));
+  const ctx: Ctx = {
+    room,
+    auth,
+    instance,
+    streams,
+    terminal,
+    upstreams,
+    sso,
+    push,
+    assets,
+    plugins: pluginMap,
+    bootPlugins,
+    pluginHost,
+    warned: new Map(),
+  };
 
   const server = createServer((req, res) => {
     void route(req, res, ctx).catch((e: unknown) => {
@@ -329,6 +353,12 @@ interface Ctx {
   push?: WebPush;
   /** The built code view, if a build ever ran — see `assets.ts`. */
   assets: WebAssets;
+  /** Loaded external plugins keyed by plugin id, serving only manifest-whitelisted files. */
+  plugins: ReadonlyMap<string, LoadedPluginEntry>;
+  /** Frontend plugin entries included in boot-config. */
+  bootPlugins: readonly BootPluginEntry[];
+  /** Server-side plugin HTTP route dispatcher mounted under `/api/plugins/<id>/`. */
+  pluginHost?: PluginRouteDispatcher;
   /** The page as last served — see `servedPage`. */
   page?: ServedPage;
 }
@@ -431,6 +461,8 @@ const GUARDED: Route[] = [
   { method: 'POST', path: '/api/voice/transcribe', run: transcribeVoice },
   { method: 'POST', path: '/api/click', run: click },
   { method: 'POST', path: '/api/topics', run: createTopic },
+  { method: 'POST', path: '/api/topics/setup', run: setupTopic },
+  { method: 'GET', path: '/api/topics/workdirs', run: browseTopicWorkdirs },
   { method: 'POST', path: '/api/topics/clear', run: clearTopics },
   { method: 'POST', path: '/api/topics/delete', run: deleteTopic },
   { method: 'POST', path: '/api/topics/star', run: starTopic },
@@ -498,6 +530,9 @@ const GUARDED: Route[] = [
   // own script and stylesheet (also reachable before sign-in, see OPEN). The one route that serves
   // a script off disk — see `asset`, and the security note beside the page's CSP.
   { method: 'GET', path: '/assets/', prefix: true, run: ({ req, res, rest }, ctx) => asset(req, res, ctx.assets, rest) },
+  // External plugin static files: guarded behind login/SSO, strictly serving only files explicitly
+  // whitelisted in each plugin's `fleetherd-plugin.json` manifest (never arbitrary disk reads).
+  { method: 'GET', path: '/plugins/', prefix: true, run: ({ req, res, rest }, ctx) => pluginFile(req, res, ctx.plugins, rest) },
   // The terminal pane's backend. Listed unconditionally even though the feature is usually
   // off, so this table stays the complete answer to "what is reachable"; `terminalPage`
   // answers 404 when it is off, which is the truth about the route either way.
@@ -525,6 +560,10 @@ const GUARDED: Route[] = [
   { method: 'GET', path: '/api/instructions/refs', run: instructionsRefs },
   { method: 'GET', path: '/api/instructions/read', run: instructionsRead },
   { method: 'POST', path: '/api/instructions/write', run: instructionsWrite },
+  // Server-side plugin API routes: strictly namespaced under `/api/plugins/<id>/` behind
+  // GUARDED auth + same-origin checks, listed last so plugins can never shadow built-in routes.
+  { method: 'GET', path: '/api/plugins/', prefix: true, run: pluginApi },
+  { method: 'POST', path: '/api/plugins/', prefix: true, run: pluginApi },
 ];
 
 /**
@@ -676,6 +715,7 @@ function servedPage(ctx: Ctx): ServedPage {
     filesOn(ctx),
     instructionsOn(ctx),
     ctx.instance.id,
+    ctx.bootPlugins,
   ] as const;
   const key = JSON.stringify(args);
   if (ctx.page?.key === key) return ctx.page;
@@ -997,7 +1037,28 @@ async function createTopic({ req, res }: Req, ctx: Ctx): Promise<void> {
   const parsed = await readBody(req, res, CreateTopicRequestSchema);
   if (!parsed) return;
   try {
-    send(req, res, 201, { topic: ctx.room.createTopic(parsed.title ?? '') });
+    const setupOpts =
+      parsed.agent !== undefined || parsed.cwd !== undefined
+        ? {
+            ...(parsed.agent !== undefined ? { agent: parsed.agent } : {}),
+            ...(parsed.cwd !== undefined ? { cwd: parsed.cwd } : {}),
+          }
+        : undefined;
+    if (setupOpts) {
+      const check = ctx.room.validateTopicSetup(setupOpts);
+      if (!check.ok) return send(req, res, 409, { error: check.error });
+    }
+    const created = ctx.room.createTopic(parsed.title ?? '');
+    if (setupOpts) {
+      const setup = ctx.room.setupTopic(created.id, setupOpts);
+      if (!setup.ok) {
+        ctx.room.deleteTopic(created.id);
+        return send(req, res, 409, { error: setup.error });
+      }
+      const enriched = ctx.room.topicList().find((t) => t.id === created.id) ?? created;
+      return send(req, res, 201, { topic: enriched, agent: setup.agent, cwd: setup.cwd });
+    }
+    send(req, res, 201, { topic: created });
   } catch (e) {
     // The room evicts the oldest topic to make room, so reaching this means every topic is starred
     // or in use. The message says which and what to do; the page shows it. Logged as well, since a
@@ -1006,6 +1067,36 @@ async function createTopic({ req, res }: Req, ctx: Ctx): Promise<void> {
     console.warn(`[webui] refused to open a topic: ${error}`);
     send(req, res, 409, { error });
   }
+}
+
+async function setupTopic({ req, res }: Req, ctx: Ctx): Promise<void> {
+  const parsed = await readBody(req, res, TopicSetupRequestSchema);
+  if (!parsed) return;
+  const result = ctx.room.setupTopic(parsed.topic, {
+    ...(parsed.agent !== undefined ? { agent: parsed.agent } : {}),
+    ...(parsed.cwd !== undefined ? { cwd: parsed.cwd } : {}),
+  });
+  send(req, res, result.ok ? 200 : 409, result);
+}
+
+async function browseTopicWorkdirs({ req, res, url }: Req, ctx: Ctx): Promise<void> {
+  const topic = url.searchParams.get('t') ?? '';
+  if (!TOPIC_ID.test(topic)) return send(req, res, 400, { error: 'invalid topic id' });
+  const agent = url.searchParams.get('agent') ?? undefined;
+  const dir = url.searchParams.get('dir') ?? undefined;
+  const atRoot = url.searchParams.get('root') === '1';
+  if (agent !== undefined && (agent.length === 0 || agent.length > 200)) {
+    return send(req, res, 400, { error: 'invalid agent' });
+  }
+  if (dir !== undefined && (dir.length === 0 || dir.length > 4096)) {
+    return send(req, res, 400, { error: 'invalid dir' });
+  }
+  const result = await ctx.room.browseWorkdir(topic, {
+    ...(agent !== undefined ? { agent } : {}),
+    ...(dir !== undefined ? { dir } : {}),
+    ...(atRoot ? { atRoot: true } : {}),
+  });
+  send(req, res, result.ok ? 200 : 400, result.ok ? result.screen : { error: result.error });
 }
 
 async function starTopic({ req, res }: Req, ctx: Ctx): Promise<void> {
@@ -1283,11 +1374,11 @@ function reviewsList({ req, res }: Req, ctx: Ctx): void {
   send(req, res, 200, ctx.room.reviews());
 }
 
-/** Dismiss one pending preference suggestion, answering with the fresh list. */
+/** Dismiss a pending suggestion or revert an applied skill change, answering with the fresh list. */
 async function reviewsOp({ req, res }: Req, ctx: Ctx): Promise<void> {
   const parsed = await readBody(req, res, ReviewOpRequestSchema);
   if (!parsed) return;
-  const result = ctx.room.reviewOp(parsed);
+  const result = await ctx.room.reviewOp(parsed);
   send(req, res, result.ok ? 200 : 400, result.ok ? result.list : { error: result.error });
 }
 
@@ -1514,6 +1605,65 @@ async function asset(req: IncomingMessage, res: ServerResponse, assets: WebAsset
     'Cache-Control': 'public, max-age=31536000, immutable',
     'X-Content-Type-Options': 'nosniff',
   });
+}
+
+/**
+ * Serve a manifest-whitelisted file from a loaded plugin (`GET /plugins/<id>/<file>`).
+ * Re-checks realpath containment before reading to defend against post-startup symlink swaps.
+ */
+async function pluginFile(
+  req: IncomingMessage,
+  res: ServerResponse,
+  plugins: ReadonlyMap<string, LoadedPluginEntry>,
+  rest: string
+): Promise<void> {
+  const slash = rest.indexOf('/');
+  if (slash <= 0 || slash === rest.length - 1) return send(req, res, 404, { error: 'no such plugin file' });
+  const rawId = rest.slice(0, slash);
+  const rawRel = rest.slice(slash + 1);
+  let id: string;
+  let relPath: string;
+  try {
+    id = decodeURIComponent(rawId);
+    relPath = decodeURIComponent(rawRel);
+  } catch {
+    return send(req, res, 404, { error: 'no such plugin file' });
+  }
+  if (relPath.includes('\0') || relPath.includes('\\') || relPath.split('/').some((s) => s === '..' || s === '.')) {
+    return send(req, res, 404, { error: 'no such plugin file' });
+  }
+  const entry = plugins.get(id);
+  const allowedPath = entry?.allowedFiles.get(relPath);
+  if (!entry || !allowedPath) return send(req, res, 404, { error: 'no such plugin file' });
+  const real = await realpath(allowedPath).catch(() => undefined);
+  if (!real || !isPathWithin(real, entry.dir)) return send(req, res, 404, { error: 'no such plugin file' });
+  const bytes = await readFile(real).catch(() => undefined);
+  if (!bytes) return send(req, res, 404, { error: 'no such plugin file' });
+  body(req, res, 200, bytes, {
+    'Content-Type': pluginMimeType(relPath),
+    'Cache-Control': 'no-cache',
+    'X-Content-Type-Options': 'nosniff',
+  });
+}
+
+async function pluginApi({ req, res, rest }: Req, ctx: Ctx): Promise<void> {
+  if (!ctx.pluginHost || !rest) return send(req, res, 404, { error: 'no such plugin route' });
+  const slash = rest.indexOf('/');
+  const rawId = slash === -1 ? rest : rest.slice(0, slash);
+  const rawSub = slash === -1 ? '' : rest.slice(slash + 1);
+  if (!rawId) return send(req, res, 404, { error: 'no such plugin route' });
+  let pluginId: string;
+  let subpath: string;
+  try {
+    pluginId = decodeURIComponent(rawId);
+    subpath = decodeURIComponent(rawSub);
+  } catch {
+    return send(req, res, 404, { error: 'no such plugin route' });
+  }
+  const handled = await ctx.pluginHost.dispatchRoute(req, res, pluginId, subpath);
+  if (!handled && !res.headersSent) {
+    send(req, res, 404, { error: 'no such plugin route' });
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

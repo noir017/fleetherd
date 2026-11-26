@@ -615,6 +615,148 @@ describe('agentCatalogForRef (what a new topic offers)', () => {
     const { reg } = rig({ config: ruled });
     expect(reg.agentCatalogForRef(ref)?.current).toBe('oc');
   });
+
+  it('sets up a new topic’s agent and working directory in one step without touching any prompt', async () => {
+    const { reg, send, prompts } = rig();
+    const target = join(root, 'shop-api');
+    const res = reg.setupTopicForRef(ref, { agent: 'oc', cwd: target });
+    expect(res).toEqual({ ok: true, agent: 'oc', cwd: target });
+    expect(reg.agentCatalogForRef(ref)?.current).toBe('oc');
+    expect(reg.workdirForRef(ref)?.path).toBe(target);
+    // Nothing was sent to any agent; the first real user message arrives verbatim.
+    expect(prompts).toEqual([]);
+    await send('hello');
+    expect(prompts).toEqual(['hello']);
+  });
+
+  it('rejects unknown agent, missing directory, or a topic that already has a session', async () => {
+    const { reg, store, key } = rig();
+    expect(reg.setupTopicForRef(ref, { agent: 'nope' }).ok).toBe(false);
+    expect(reg.setupTopicForRef(ref, { cwd: join(root, 'missing-dir') }).ok).toBe(false);
+    store.setAgentSession(key, 'cc', 'acp-session-1');
+    expect(reg.setupTopicForRef(ref, { agent: 'oc' }).ok).toBe(false);
+  });
+
+  it('rejects relative/traversal cwd and leaves agent binding untouched when cwd setup fails', () => {
+    const { reg, store, key } = rig();
+    expect(reg.setupTopicForRef(ref, { agent: 'oc', cwd: '.' }).ok).toBe(false);
+    expect(reg.setupTopicForRef(ref, { agent: 'oc', cwd: `${root}/../shop-api` }).ok).toBe(false);
+    expect(reg.setupTopicForRef(ref, { agent: 'oc', cwd: join(root, 'missing-dir') }).ok).toBe(false);
+    expect(store.boundAgent(key)).toBeUndefined();
+    expect(reg.agentCatalogForRef(ref)?.current).toBe('cc');
+
+    // Dry-run validates without mutating store or memory state.
+    const dry = reg.setupTopicForRef(ref, { agent: 'oc', cwd: join(root, 'shop-api'), dryRun: true });
+    expect(dry).toEqual({ ok: true, agent: 'oc', cwd: join(root, 'shop-api') });
+    expect(store.boundAgent(key)).toBeUndefined();
+
+    // Without a store, cwd cannot be remembered; agent binding must not be modified either.
+    const noStore = new ConversationRegistry(
+      cfg,
+      new Map(),
+      { create: () => { throw new Error('unused'); } } as never,
+      { now: () => 0, schedule: () => () => {} } as never
+    );
+    expect(noStore.setupTopicForRef(ref, { agent: 'oc', cwd: join(root, 'shop-api') }).ok).toBe(false);
+    expect(noStore.agentCatalogForRef(ref)?.current).toBe('cc');
+  });
+});
+
+describe('setupTopicForRef across hosts', () => {
+  const ref = { platform: 'discord', channel: 'c1', kind: 'direct' as const, user: 'u1' };
+  const multiHostCfg = parseConfig({
+    platforms: { discord: { type: 'discord', token: 't' } },
+    hosts: { hostA: { ssh: 'u@hostA' }, hostB: { ssh: 'u@hostB' } },
+    agents: [
+      { id: 'a1', harness: 'claude', host: 'hostA', cwd: '/home/me/projects' },
+      { id: 'a2', harness: 'opencode', host: 'hostA', cwd: '/home/me/projects' },
+      { id: 'b1', harness: 'claude', host: 'hostB', cwd: '/home/me/work' },
+      { id: 'local', harness: 'claude', cwd: root },
+    ],
+    routing: { default: 'a1' },
+  });
+
+  beforeEach(() => {
+    const hostA = { conn: { welcome: { home: '/home/me' } } } as unknown as RemoteHost;
+    const hostB = { conn: { welcome: { home: '/home/me' } } } as unknown as RemoteHost;
+    vi.spyOn(remoteHosts, 'hostFor').mockImplementation((def) =>
+      def?.host === 'hostA' ? hostA : def?.host === 'hostB' ? hostB : undefined
+    );
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it('clears the remembered directory when switching to an agent on another host without cwd', () => {
+    const { reg, store, key } = rig({ config: multiHostCfg });
+    expect(reg.setupTopicForRef(ref, { agent: 'a1', cwd: '/home/me/projects/app' })).toEqual({
+      ok: true,
+      agent: 'a1',
+      cwd: '/home/me/projects/app',
+    });
+
+    expect(reg.setupTopicForRef(ref, { agent: 'b1', dryRun: true })).toEqual({
+      ok: true,
+      agent: 'b1',
+      cwd: '/home/me/work',
+    });
+    expect(store.conversationCwd(key)).toBe('/home/me/projects/app');
+
+    expect(reg.setupTopicForRef(ref, { agent: 'b1' })).toEqual({
+      ok: true,
+      agent: 'b1',
+      cwd: '/home/me/work',
+    });
+    expect(reg.workdirForRef(ref)?.path).toBe('/home/me/work');
+    expect(store.conversationCwd(key)).toBeUndefined();
+  });
+
+  it('keeps the remembered directory when switching to another agent on the same host', () => {
+    const { reg } = rig({ config: multiHostCfg });
+    reg.setupTopicForRef(ref, { agent: 'a1', cwd: '/home/me/projects/app' });
+    expect(reg.setupTopicForRef(ref, { agent: 'a2' })).toEqual({
+      ok: true,
+      agent: 'a2',
+      cwd: '/home/me/projects/app',
+    });
+    expect(reg.workdirForRef(ref)?.path).toBe('/home/me/projects/app');
+  });
+
+  it('uses the provided cwd when switching to an agent on another host with cwd', () => {
+    const { reg } = rig({ config: multiHostCfg });
+    reg.setupTopicForRef(ref, { agent: 'a1', cwd: '/home/me/projects/app' });
+    expect(reg.setupTopicForRef(ref, { agent: 'b1', cwd: '/home/me/work/svc' })).toEqual({
+      ok: true,
+      agent: 'b1',
+      cwd: '/home/me/work/svc',
+    });
+    expect(reg.workdirForRef(ref)?.path).toBe('/home/me/work/svc');
+  });
+
+  it('clears the remembered directory on a new topic with no state when switching from the default agent to another host', () => {
+    const { reg, store, key } = rig({ config: multiHostCfg });
+    expect(reg.setupTopicForRef(ref, { cwd: '/home/me/projects/app' })).toEqual({
+      ok: true,
+      agent: 'a1',
+      cwd: '/home/me/projects/app',
+    });
+    expect(reg.setupTopicForRef(ref, { agent: 'b1' })).toEqual({
+      ok: true,
+      agent: 'b1',
+      cwd: '/home/me/work',
+    });
+    expect(reg.workdirForRef(ref)?.path).toBe('/home/me/work');
+    expect(store.conversationCwd(key)).toBeUndefined();
+  });
+
+  it('clears a remote directory when switching to a local agent', () => {
+    const { reg, store, key } = rig({ config: multiHostCfg });
+    reg.setupTopicForRef(ref, { agent: 'a1', cwd: '/home/me/projects/app' });
+    expect(reg.setupTopicForRef(ref, { agent: 'local' })).toEqual({
+      ok: true,
+      agent: 'local',
+      cwd: root,
+    });
+    expect(store.conversationCwd(key)).toBeUndefined();
+  });
 });
 
 /**

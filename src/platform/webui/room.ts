@@ -62,6 +62,7 @@ import type {
   SettingsScreen,
   SlashCommandSpec,
   StatusOption,
+  StatusPermissions,
   TopicActivity,
   TopicKillResult,
   TopicStage,
@@ -102,6 +103,8 @@ import type {
   SessionOptionPicker,
   SessionOptionResult,
   ReviewPanelList,
+  TopicSetupResult,
+  WorkdirBrowseResult,
   SchedulePanelAction,
   SchedulePanelDetailResult,
   SchedulePanelEdit,
@@ -201,6 +204,7 @@ const TOPIC_LIST_MS = 300;
  * own pictures (see `submit`) share the one table.
  */
 const MAX_DOWNLOADS = 200;
+const MAX_PENDING_DRAFTS = 200;
 
 /**
  * How long a topic's working directory is reused before it is looked up again.
@@ -354,6 +358,10 @@ export function historyMessages(rows: HistoryPanelRead['messages']): WebMessage[
  * JSON, made once per event however many clients it fans out to (see `deliver`).
  */
 export type Sink = (id: string, ev: WebEvent, data: string) => void;
+
+/** Read-only lifecycle event channels exposed to server-side Web UI plugins (`PluginHost`). */
+export type RoomEventKind = 'topic' | 'message' | 'turn';
+export type RoomEventListener = (payload: unknown) => void;
 
 /**
  * Where the files this room serves from a copy of its own are kept: the operator's pictures, so the
@@ -564,6 +572,14 @@ export class WebRoom {
   private topicKill: ((ref: ConversationRef, confirmed: ReadonlySet<string>) => TopicKillResult[]) | null = null;
   /** Likewise — see `useAgentCatalog`. Only ever read for a sync of an empty room. */
   private catalog: ((ref: ConversationRef) => AgentCatalog | undefined) | null = null;
+  /** Bind a new/empty topic's agent and working directory in one step. */
+  private topicSetup:
+    | ((ref: ConversationRef, opts: { agent?: string; cwd?: string; dryRun?: boolean }) => TopicSetupResult)
+    | null = null;
+  /** Browse one level of directories for a topic's selected agent. */
+  private workdirBrowser:
+    | ((ref: ConversationRef, opts?: { agent?: string; dir?: string; atRoot?: boolean }) => Promise<WorkdirBrowseResult>)
+    | null = null;
   /** Machines the daemon cannot reach — see `setOfflineMachines`. */
   private offline: readonly OfflineMachine[] = [];
   /** The poll that keeps `liveness` honest; only ever running once a lookup exists. */
@@ -600,6 +616,11 @@ export class WebRoom {
    * does not care — which is why `topicList` reads it through `?.` rather than requiring one.
    */
   private terminal: Pick<TerminalSessions, 'has'> | null = null;
+  private readonly roomListeners: Record<RoomEventKind, Set<RoomEventListener>> = {
+    topic: new Set(),
+    message: new Set(),
+    turn: new Set(),
+  };
 
   constructor(
     private readonly instance: WebuiInstance,
@@ -627,6 +648,7 @@ export class WebRoom {
     if (this.topics.full()) this.makeRoom();
     const topic = this.topics.create(title, parent, opts);
     this.announceTopics();
+    this.notifyRoomListeners('topic', { action: 'created', topicId: topic.id, topic });
     return topic;
   }
 
@@ -702,6 +724,7 @@ export class WebRoom {
   starTopic(id: string, on: boolean): boolean {
     if (!this.topics.star(id, on)) return false;
     this.announceTopics();
+    this.notifyRoomListeners('topic', { action: 'starred', topicId: id, starred: on });
     return true;
   }
 
@@ -709,6 +732,7 @@ export class WebRoom {
   renameTopic(id: string, title: string): boolean {
     if (!this.topics.rename(id, title)) return false;
     this.announceTopics();
+    this.notifyRoomListeners('topic', { action: 'renamed', topicId: id, title });
     return true;
   }
 
@@ -720,6 +744,7 @@ export class WebRoom {
     this.forgetTurnChanges(id);
     if (!this.topics.delete(id)) return false;
     this.announceTopics();
+    this.notifyRoomListeners('topic', { action: 'deleted', topicId: id });
     return true;
   }
 
@@ -749,6 +774,7 @@ export class WebRoom {
     this.topics.clear();
     const fresh = this.topics.full() ? this.topics.current() : this.topics.create();
     this.announceTopics();
+    this.notifyRoomListeners('topic', { action: 'cleared', topicId: fresh.id, topic: fresh });
     return fresh;
   }
 
@@ -779,6 +805,7 @@ export class WebRoom {
   setActivity(topicId: string, activity: TopicActivity | undefined): void {
     if (!this.topics.setActivity(topicId, activity?.outcome, activity?.retry)) return;
     this.announceTopics();
+    this.notifyRoomListeners('turn', { topicId, phase: 'activity', activity });
   }
 
   /**
@@ -934,11 +961,48 @@ export class WebRoom {
     this.optionPicker = picker;
   }
 
+  useTopicSetup(
+    setup: (ref: ConversationRef, opts: { agent?: string; cwd?: string; dryRun?: boolean }) => TopicSetupResult
+  ): void {
+    this.topicSetup = setup;
+  }
+
+  validateTopicSetup(opts: { agent?: string; cwd?: string }): TopicSetupResult {
+    if (!this.topicSetup) return { ok: false, error: 'This daemon does not support topic setup.' };
+    return this.topicSetup(this.conversation('00000000'), { ...opts, dryRun: true });
+  }
+
+  setupTopic(topic: string, opts: { agent?: string; cwd?: string }): TopicSetupResult {
+    if (!this.topicSetup) return { ok: false, error: 'This daemon does not support topic setup.' };
+    if (!this.topics.has(topic)) return { ok: false, error: 'No such topic.' };
+    const res = this.topicSetup(this.conversation(topic), opts);
+    if (res.ok) {
+      this.dirCache.delete(topic);
+      this.announceTopics();
+    }
+    return res;
+  }
+
+  useWorkdirBrowser(
+    browse: (ref: ConversationRef, opts?: { agent?: string; dir?: string; atRoot?: boolean }) => Promise<WorkdirBrowseResult>
+  ): void {
+    this.workdirBrowser = browse;
+  }
+
+  async browseWorkdir(
+    topic: string,
+    opts?: { agent?: string; dir?: string; atRoot?: boolean }
+  ): Promise<WorkdirBrowseResult> {
+    if (!this.workdirBrowser) return { ok: false, error: 'This daemon does not support directory browsing.' };
+    if (!this.topics.has(topic)) return { ok: false, error: 'No such topic.' };
+    return this.workdirBrowser(this.conversation(topic), opts);
+  }
+
   /**
    * Which of the agent's own settings to draw for a topic that has no status yet, without starting
    * its agent. Empty, never an error: a status line that has nothing extra to show shows nothing.
    */
-  async optionStatus(topic: string): Promise<{ agent?: string; model?: string; options: StatusOption[] }> {
+  async optionStatus(topic: string): Promise<{ agent?: string; model?: string; options: StatusOption[]; permissions?: StatusPermissions }> {
     if (!this.optionPicker || !this.topics.has(topic)) return { options: [] };
     return this.optionPicker.peek(this.conversation(topic));
   }
@@ -1193,10 +1257,12 @@ export class WebRoom {
     return this.reviewPanel.list();
   }
 
-  /** Dismiss one pending preference suggestion, answering with the fresh list. */
-  reviewOp(op: ReviewOpRequest): { ok: true; list: ReviewPanelList } | { ok: false; error: string } {
+  /** Dismiss a pending suggestion or revert an applied skill change, answering with the fresh list. */
+  async reviewOp(op: ReviewOpRequest): Promise<{ ok: true; list: ReviewPanelList } | { ok: false; error: string }> {
     if (!this.reviewPanel) return { ok: false, error: 'this daemon has no conversation library, so there are no reviews' };
-    return { ok: true, list: this.reviewPanel.dismiss(op.text) };
+    if (op.action === 'dismiss') return { ok: true, list: this.reviewPanel.dismiss(op.text) };
+    if (!this.reviewPanel.revert) return { ok: false, error: 'review revert is not available in this daemon' };
+    return this.reviewPanel.revert(op.name, op.id);
   }
 
   /**
@@ -1938,6 +2004,7 @@ export class WebRoom {
     this.topics.touch(topicId, msg.at);
     this.keep(topicId);
     this.announceTopics();
+    this.notifyRoomListeners('message', { topicId, message: msg, text });
     return msg;
   }
 
@@ -2048,6 +2115,7 @@ export class WebRoom {
     this.flush(room, topicId);
     this.emit(topicId, { t: 'typing', on });
     this.announceTopics();
+    this.notifyRoomListeners('turn', { topicId, phase: on ? 'start' : 'end' });
   }
 
   /**
@@ -2078,10 +2146,9 @@ export class WebRoom {
       const nonce = room.pendingDrafts.get(item.id)?.req.nonce;
       return nonce !== undefined ? { ...item, nonce } : { ...item };
     });
-    const keepIds = new Set(next.map((item) => item.id));
-    for (const id of room.pendingDrafts.keys()) {
-      if (!keepIds.has(id)) room.pendingDrafts.delete(id);
-    }
+    // Keep drafts across pending updates: InboundMerger clears pending before async steer() or
+    // drainQueue() calls markPendingDelivered(), and may re-queue a refused steer. Drafts are
+    // removed on delivery, recall, or bounded eviction in submit().
     room.pending = next;
     const ev: WebEvent = { t: 'pending', items: next };
     const data = JSON.stringify(ev);
@@ -2116,7 +2183,9 @@ export class WebRoom {
 
   recallPending(topicId: string, messageId?: string): { ok: boolean; recalled: number; content?: string } {
     if (!this.topics.has(topicId) || !this.pendingActions) return { ok: false, recalled: 0 };
-    return this.pendingActions.recall(this.conversation(topicId), messageId);
+    const res = this.pendingActions.recall(this.conversation(topicId), messageId);
+    if (res.ok && messageId) this.roomOf(topicId).pendingDrafts.delete(messageId);
+    return res;
   }
 
   sendNowPending(topicId: string, messageId?: string, opts?: { interrupt?: boolean }): { ok: boolean; sent: number } {
@@ -2144,6 +2213,40 @@ export class WebRoom {
     const ev: WebEvent = { t: 'commands', commands };
     const data = JSON.stringify(ev);
     for (const client of this.clients) this.deliver(client, ev, undefined, data);
+  }
+
+  /** Subscribe to read-only room lifecycle events (`topic` | `message` | `turn`). */
+  onRoomEvent(kind: RoomEventKind, listener: RoomEventListener): () => void {
+    this.roomListeners[kind].add(listener);
+    return () => {
+      this.roomListeners[kind].delete(listener);
+    };
+  }
+
+  /** Fan out a server plugin SSE event (`plugin:<id>:<type>`) to every connected page. */
+  broadcastPluginEvent(pluginId: string, type: string, data: unknown): void {
+    const ev: WebEvent = { t: `plugin:${pluginId}:${type}`, plugin: pluginId, type, data };
+    let serialized: string;
+    try {
+      serialized = JSON.stringify(ev);
+    } catch (e) {
+      console.warn(
+        `[webui] plugin "${pluginId}" event "${type}" could not be serialized:`,
+        e instanceof Error ? e.message : e
+      );
+      return;
+    }
+    for (const client of [...this.clients]) this.deliver(client, ev, undefined, serialized);
+  }
+
+  private notifyRoomListeners(kind: RoomEventKind, payload: unknown): void {
+    for (const listener of [...this.roomListeners[kind]]) {
+      try {
+        listener(payload);
+      } catch (e) {
+        console.warn(`[webui] room "${kind}" listener failed:`, e instanceof Error ? e.message : e);
+      }
+    }
   }
 
   /** The rendered body of a message, for quoting it. Empty when it is no longer held. */
@@ -2305,6 +2408,9 @@ export class WebRoom {
     this.notifyTimers.clear();
     // After the flush above, which emits every held edit and so arms it again.
     this.cancelTopics();
+    this.roomListeners.topic.clear();
+    this.roomListeners.message.clear();
+    this.roomListeners.turn.clear();
   }
 
   // ── Inbound (page → daemon) ────────────────────────────────────────────────
@@ -2374,7 +2480,13 @@ export class WebRoom {
       return;
     }
     const room = this.roomOf(req.topic);
-    if (!quiet) room.pendingDrafts.set(id, { req, attachments, at });
+    if (!quiet) {
+      room.pendingDrafts.set(id, { req, attachments, at });
+      while (room.pendingDrafts.size > MAX_PENDING_DRAFTS) {
+        const oldest = room.pendingDrafts.keys().next().value;
+        if (oldest !== undefined) room.pendingDrafts.delete(oldest);
+      }
+    }
     const files = attachments.length > 0 ? ` (+${attachments.length} file${attachments.length === 1 ? '' : 's'})` : '';
     console.log(`[in] ${describeConversation(inbound.conversation)} @${OWNER}: ${text.slice(0, 50).replace(/\n/g, ' ')}${files}`);
     this.onMsg?.(inbound);

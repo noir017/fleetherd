@@ -1,0 +1,67 @@
+/* The agent's live status, above the composer: what the footer says once per reply, kept current
+   between replies. Wraps by default so trailing segments (5h/wk quota, cache, cost) are never
+   clipped behind long agent/model/account labels on narrow screens; tapping still toggles .open
+   for inactive quota pools and narrow-screen token counts. The global [hidden] rule at the top
+   keeps it hidden while there is nothing to show. */
+#status{display:flex;flex-wrap:wrap;align-items:center;row-gap:2px;column-gap:14px;margin:-3px 0 7px;font-size:var(--fh-fs-xs);line-height:1.5;color:var(--dim);font-variant-numeric:tabular-nums;cursor:pointer;user-select:none;-webkit-user-select:none}
+#machine-note{display:flex;align-items:center;gap:6px;margin:-3px 0 7px;font-size:var(--fh-fs-xs);line-height:1.5;color:var(--offline)}
+#machine-note .ic{width:12px;height:12px}
+#update{display:flex;align-items:center;gap:8px;margin:-3px 0 7px;font-size:var(--fh-fs-sm);line-height:1.5;color:var(--dim)}
+#update[hidden]{display:none}
+#update button{font:inherit;color:inherit;background:none;border:1px solid currentColor;border-radius:6px;padding:1px 9px;cursor:pointer}
+.st{flex:0 0 auto;display:inline-flex;align-items:center;gap:5px}
+/* Spacing separates segments because the strip wraps by default (a middle-dot ::before would lead
+   a wrapped line with a stray dot). .st-who wraps internally too so a long agent+model+account
+   never overflows a narrow viewport. */
+.st-who{color:var(--fg-muted);flex-wrap:wrap;row-gap:1px;max-width:100%}
+/* The model in the status line is a switch: /model without typing it (openModelPop). Drawn as the
+   text it was with a caret and a background on hover, so the line still reads as a status line;
+   the caret is what says it opens. A pseudo-element, so the line's text is still the model's. */
+.st-model{display:inline-flex;align-items:center;gap:3px;min-width:0;max-width:44ch;padding:0 4px;margin:0 -4px;border:0;border-radius:4px;background:none;color:var(--fg-cool-2);font:inherit;cursor:pointer}
+.st-model:hover,.st-model[aria-expanded="true"]{background:var(--field);color:var(--fg-hi)}
+.st-model:focus-visible{outline:2px solid var(--own-edge);outline-offset:0}
+.st-model .st-mtext{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.st-model::after{content:'\25be';flex:none;font-size:var(--fh-fs-2xs);opacity:.8}
+/* The agent's own settings beside it (optChip, an account say): the same switch, with the
+   setting's name dimmed in front so the value reads as a value. One the agent will not change now
+   is drawn dim and inert, with no caret — it states the value and the title says why. */
+.st-opt .st-olabel{flex:none;color:var(--dim)}
+.st-opt.fixed{cursor:default;opacity:.6}
+.st-opt.fixed::after{content:none}
+.st-opt.fixed:hover{background:none;color:var(--fg-cool-2)}
+/* The list it opens: above the composer, inside #bar so it moves with it, and closed by Escape, a
+   click outside, a pick, or a topic switch. A filter field first — opencode offers ~90 models. */
+#model-pop{position:absolute;left:16px;bottom:calc(100% - 6px);z-index:15;display:flex;flex-direction:column;width:min(440px,calc(100% - 32px));max-height:min(60vh,480px);background:var(--surface);border:1px solid var(--line-2);border-radius:8px;box-shadow:0 10px 30px var(--shadow-lg);overflow:hidden}
+.mp-head{display:flex;align-items:center;gap:8px;padding:8px 6px 6px 12px;border-bottom:1px solid var(--line)}
+.mp-title{flex:1;min-width:0;display:flex;flex-direction:column;line-height:1.3}
+.mp-title b{font-size:var(--fh-fs-ui);font-weight:600}
+#mp-agent{font-size:var(--fh-fs-xs);color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#mp-close{font-size:var(--fh-fs-xl);padding:4px 10px}
+#mp-filter{margin:8px 10px 4px;min-height:32px;padding:5px 10px;border:1px solid var(--line);border-radius:6px;background:var(--field);color:var(--fg);font:inherit;font-size:var(--fh-fs-ui)}
+#mp-filter:focus{outline:none;border-color:var(--own-edge)}
+#mp-list{flex:1;min-height:0;overflow-y:auto;padding:4px 0}
+.mp-opt{display:flex;align-items:center;gap:8px;width:100%;min-height:36px;padding:6px 12px;border:0;border-radius:0;background:none;color:var(--fg);font:inherit;text-align:left;cursor:pointer}
+.mp-opt:hover,.mp-opt:focus-visible{background:var(--hover-2);outline:none}
+.mp-opt[hidden]{display:none}
+.mp-opt.on{background:var(--accent-opt-on)}
+.mp-check{flex:none;width:14px;color:var(--accent);text-align:center}
+.mp-main{flex:1;min-width:0;display:flex;flex-direction:column}
+.mp-v{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:var(--fh-fs-sm);overflow-wrap:anywhere}
+.mp-n{font-size:var(--fh-fs-xs);color:var(--dim)}
+.mp-o{font-size:var(--fh-fs-ui);overflow-wrap:anywhere}
+.mp-opt:disabled{cursor:default}
+.mp-tag{flex:none;font-size:var(--fh-fs-2xs);color:var(--dim);border:1px solid var(--line-2);border-radius:999px;padding:0 6px;line-height:16px}
+.mp-opt.busy{background:var(--own);box-shadow:inset 2px 0 0 var(--own-edge)}
+.mp-msg{padding:12px;font-size:var(--fh-fs-sm);line-height:1.5;color:var(--fg-muted);white-space:pre-line}
+.mp-msg.err{color:var(--err-soft)}
+.mp-msg code,.mp-foot code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.95em;background:var(--field);padding:0 4px;border-radius:3px}
+.mp-wait{display:flex;align-items:center;gap:8px}
+.mp-foot{margin:0;padding:7px 12px 9px;border-top:1px solid var(--line);font-size:var(--fh-fs-xs);color:var(--dim)}
+.st-meter{display:inline-block;width:32px;height:4px;border-radius:2px;background:var(--line);overflow:hidden}
+.st-meter i{display:block;height:100%;background:var(--dim)}
+.st.warn{color:var(--warn)}
+.st.warn .st-meter i{background:var(--warn)}
+.st.bad{color:var(--err)}
+.st.bad .st-meter i{background:var(--err)}
+/* A pool the serving model is not spending from: shown only when the strip is open, and quieter. */
+.st.off{opacity:.55}

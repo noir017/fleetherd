@@ -10,7 +10,7 @@
  *
  * ── Where the script and the stylesheet went ─────────────────────────────────
  * Until Phase 1 Step 1A (docs/refactor-plan.md) both were inline here. They now live in
- * `client/` — `legacy-app.ts` and `styles/main.css`, moved as they were — and are bundled by
+ * `client/` — `main.ts` (wiring typed modules) and `styles/main.css` — and are bundled by
  * `scripts/build-webui-assets.mjs` into `dist/webui-assets/` with content-hashed names, which this
  * page links by the names `assets.ts` read from the build's manifest. With no inline script left,
  * the CSP's `script-src` is `'self'` alone (server.ts PAGE_HEADERS).
@@ -20,8 +20,8 @@
  * document in `<script type="application/json" id="boot-config">`, which no browser executes and
  * so no CSP has to allow, read once by the script.
  *
- * The script is still the part of this repo the toolchain cannot see — not typechecked, not
- * linted — so it is still kept deliberately stupid. Every decision that could live in TypeScript
+ * Business decisions still live on the server side of the wire where possible. Every decision
+ * that belongs on the daemon stays in TypeScript there:
  * does: markdown becomes HTML in `web-markdown.ts`, the message shape is fixed in `protocol.ts`,
  * button ids are formed in `core/button-id.ts`. If a change there needs a new *decision*, that
  * decision belongs on this side of the wire.
@@ -36,9 +36,24 @@
  * no CDN, no favicon request. Every byte the page uses is one this daemon serves.
  */
 import { createHash } from 'node:crypto';
+import { createRequire } from 'node:module';
 
 import { escapeHtml } from '../web-markdown.js';
 import { PAGE_BODY } from './page-body.js';
+import type { BootPluginEntry } from './plugins/manifest.js';
+
+export type { BootPluginEntry } from './plugins/manifest.js';
+
+function readPackageVersion(): string | undefined {
+  try {
+    const pkg = createRequire(import.meta.url)('../../../package.json') as { version?: unknown };
+    return typeof pkg.version === 'string' && pkg.version ? pkg.version : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export const PACKAGE_VERSION = readPackageVersion();
 
 /**
  * What the page links, each relative to the page (`assets/<file>`) or null when this daemon has no
@@ -56,6 +71,8 @@ export interface PageAssets {
   style: string | null;
   /** The code view's entry module, imported on demand by the script's `codeView()`. */
   codeview: string | null;
+  /** On-demand workbench extras ESM chunk (secondary plugins + command palette). */
+  extras?: string | null;
 }
 
 /** A daemon whose assets were never built (a source checkout without `npm run build:assets`). */
@@ -77,9 +94,11 @@ export function renderPage(
   assets: PageAssets = NO_ASSETS,
   files = false,
   instructions = false,
-  instance = 'web'
+  instance = 'web',
+  plugins: readonly BootPluginEntry[] = [],
+  version: string | undefined = PACKAGE_VERSION
 ): string {
-  return servePage(title, terminal, password, terminalEnd, assets, files, instructions, instance).html;
+  return servePage(title, terminal, password, terminalEnd, assets, files, instructions, instance, plugins, version).html;
 }
 
 /**
@@ -102,7 +121,11 @@ export function servePage(
   /** Whether the settings page offers the instruction editor (`platforms.<id>.instructions`). */
   instructions = false,
   /** This web UI's platform instance id (`platforms.<id>`), used to format `<id>:main/<topic>` refs. */
-  instance = 'web'
+  instance = 'web',
+  /** Loaded frontend plugins exposed to the client loader (empty by default). */
+  plugins: readonly BootPluginEntry[] = [],
+  /** Package version from package.json, shown in the workbench status bar. */
+  version: string | undefined = PACKAGE_VERSION
 ): { html: string; build: string } {
   const boot = bootConfig({
     terminal,
@@ -111,14 +134,17 @@ export function servePage(
     instructions,
     password,
     codeview: assets.codeview,
+    ...(assets.extras !== undefined ? { extras: assets.extras } : {}),
     instance,
     build: '__BUILD__',
+    ...(version ? { version } : {}),
+    plugins,
   });
   const html = page({
     title: escapeHtml(title),
     bootScript: assets.boot == null ? '' : `<script src="${escapeHtml(assets.boot)}"></script>`,
     style: assets.style === null ? '' : `<link rel="stylesheet" href="${escapeHtml(assets.style)}">`,
-    gate: (assets.app === null ? UNBUILT : '') + (password ? PASSWORD_GATE : SSO_GATE),
+    gate: (assets.app === null ? UNBUILT : '') + (password ? passwordGate(escapeHtml(title)) : ssoGate(escapeHtml(title))),
     boot,
     app: assets.app === null ? '' : `<script src="${escapeHtml(assets.app)}"></script>`,
   });
@@ -152,16 +178,26 @@ function bootConfig(config: Record<string, unknown>): string {
  * expired" into "wrong token" — the two states a locked-out operator most needs to tell apart.
  * Reloading is what re-triggers the provider's sign-in, so that is the button.
  */
-const PASSWORD_GATE = `<form id="gate" autocomplete="off"><div id="login">
-<input id="secret" type="password" placeholder="Token" data-i18n-placeholder="gate.tokenPlaceholder" autocomplete="current-password" autofocus>
-<button type="submit" data-i18n="gate.enter">Enter</button>
-<p id="err"></p>
+function passwordGate(escapedTitle: string): string {
+  return `<form id="gate" class="fh-login-gate" autocomplete="off"><div id="login" class="fh-login-card">
+<div class="fh-login-logo" aria-hidden="true">f</div>
+<h1 class="fh-login-title">${escapedTitle}</h1>
+<p class="fh-login-sub" data-i18n="gate.subtitle">Enter login secret</p>
+<input id="secret" class="fh-login-input" type="password" placeholder="Token" data-i18n-placeholder="gate.tokenPlaceholder" autocomplete="current-password" autofocus>
+<p id="err" class="fh-login-err" role="alert"></p>
+<button type="submit" class="fh-login-submit" data-i18n="gate.enter">Enter</button>
+<p class="fh-login-note" data-i18n="gate.note">The secret is configured in the gateway config</p>
 </div></form>`;
+}
 
-const SSO_GATE = `<form id="gate" autocomplete="off"><div id="login">
-<p id="err" data-i18n="gate.ssoExpired">Not signed in. Your access session may have expired.</p>
-<button type="submit" data-i18n="gate.reload">Reload</button>
+function ssoGate(escapedTitle: string): string {
+  return `<form id="gate" class="fh-login-gate" autocomplete="off"><div id="login" class="fh-login-card">
+<div class="fh-login-logo" aria-hidden="true">f</div>
+<h1 class="fh-login-title">${escapedTitle}</h1>
+<p id="err" class="fh-login-err" role="alert" data-i18n="gate.ssoExpired">Not signed in. Your access session may have expired.</p>
+<button type="submit" class="fh-login-submit" data-i18n="gate.reload">Reload</button>
 </div></form>`;
+}
 
 /**
  * What a daemon with no built script serves above the gate. Without the script nothing on the page
@@ -189,9 +225,9 @@ function page(p: { title: string; bootScript: string; style: string; gate: strin
 <link rel="manifest" href="manifest.webmanifest">
 <!-- Android paints the status bar this colour in standalone, so the app starts at its own
      background instead of being framed in white. -->
-<meta name="theme-color" content="#131313">
+<meta name="theme-color" content="#1f1f1f">
 ${p.bootScript}
-<!-- iOS ignores the manifest for both of these. "black" is the closest opaque bar to #131313;
+<!-- iOS ignores the manifest for both of these. "black" is the closest opaque bar to #1f1f1f;
      "black-translucent" would put the clock on top of the chat header. -->
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">

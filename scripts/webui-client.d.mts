@@ -16,4 +16,4 @@ export const STYLE_ENTRY: string;
 export function appSource(): Promise<string>;
 
 /** Bundle the script and the stylesheet; with `outdir`, also write both there. */
-export function buildClient(opts?: { outdir?: string }): Promise<{ app: ClientFile; boot: ClientFile; style: ClientFile }>;
+export function buildClient(opts?: { outdir?: string }): Promise<{ app: ClientFile; boot: ClientFile; style: ClientFile; extras: ClientFile }>;
