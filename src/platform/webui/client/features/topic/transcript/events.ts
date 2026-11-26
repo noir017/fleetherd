@@ -65,7 +65,7 @@ export interface LogEventsDeps {
   readonly selectLaunchAgent?: (agentId: string) => void;
   readonly browseLaunchWorkdir?: (dir: string) => void;
   readonly pickLaunchWorkdir?: (cwd: string) => void;
-  readonly unfoldLaunch?: () => void;
+  readonly unfoldLaunch?: (part?: 'agents' | 'workdir') => void;
   readonly toggleBtw: (qk: string) => void;
   readonly openReader: (link: HTMLAnchorElement) => void;
   readonly deliverLocal: (nonce: string) => void;
@@ -97,7 +97,8 @@ function handleLocalAction(act: HTMLElement, deps: LogEventsDeps): void {
 function handleLaunchClick(target: Element, deps: LogEventsDeps): boolean {
   const unfold = target.closest('button[data-launch-unfold]');
   if (unfold) {
-    deps.unfoldLaunch?.();
+    const part = unfold.getAttribute('data-launch-unfold');
+    deps.unfoldLaunch?.(part === 'agents' || part === 'workdir' ? part : undefined);
     return true;
   }
   const card = target.closest('button[data-agent]');

@@ -13,6 +13,7 @@ import {
   stuck,
   turnChangeRow,
   workdirPicker,
+  workdirPickerHtml,
 } from './markup.js';
 import type { TranscriptIcons, TranscriptMessage } from './types.js';
 
@@ -113,9 +114,32 @@ describe('markup helpers', () => {
     };
     const html = workdirPicker(msg, ICONS);
     expect(html).toContain('class="wd-picker"');
+    expect(html).not.toContain('wd-cur');
+    expect(html).not.toContain('wd-pick-cur');
+    expect(html).toContain('class="wd-choose wd-pick-bar on" data-msg="m2" data-btn="cur"');
     expect(html).toContain('class="wd-q"');
     expect(html).toContain('class="wd-more"');
     expect(html).toContain('devbox');
+
+    const launchOpen = workdirPickerHtml(
+      { ...msg.workdir!, selectCurrent: { path: '/home/me/projects', buttonId: 'wdr:0', current: false, root: false } },
+      ICONS,
+      { kind: 'launch' },
+    );
+    expect(launchOpen).not.toContain('wd-cur');
+    expect(launchOpen).toContain('class="wd-choose wd-pick-bar" data-wd-pick="/home/me/projects"');
+    expect(launchOpen).toContain('data-launch-unfold="workdir" hidden');
+
+    const launchFolded = workdirPickerHtml(
+      { ...msg.workdir!, selectCurrent: { path: '/home/me/projects', buttonId: 'wdr:0', current: true, root: false } },
+      ICONS,
+      { kind: 'launch', folded: true, selectedPath: '/home/me/projects' },
+    );
+    expect(launchFolded).toContain('class="wd-picker folded"');
+    expect(launchFolded).toContain('class="wd-body" hidden');
+    expect(launchFolded).toContain('class="wd-hint" hidden');
+    expect(launchFolded).toContain('<div class="wd-selected"><code class="wd-path" title="/home/me/projects">/home/me/projects</code></div>');
+    expect(launchFolded).toContain('data-launch-unfold="workdir">');
   });
 
   it('renders stuck failedActions and drops buttons/view links on history messages', () => {

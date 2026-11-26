@@ -157,7 +157,9 @@ export function renderMenu(m: TranscriptMessage, icons: TranscriptIcons): string
   );
 }
 
-export type WorkdirPickerMode = { readonly kind: 'msg'; readonly msg: string } | { readonly kind: 'launch' };
+export type WorkdirPickerMode =
+  | { readonly kind: 'msg'; readonly msg: string }
+  | { readonly kind: 'launch'; readonly folded?: boolean; readonly selectedPath?: string };
 
 function wdBrowseAttr(mode: WorkdirPickerMode, buttonId: string, path: string): string {
   return mode.kind === 'msg'
@@ -222,24 +224,11 @@ function workdirActionsBar(
   const homeBtn = w.home
     ? `<button type="button" class="wd-act wd-home" ${wdBrowseAttr(mode, w.home.buttonId, w.home.path)} title="${text(tr('workdir.rootTitle', { path: w.home.path }))}">${icons.icon.home ?? ''}<span>${text(tr('workdir.root'))}</span></button>`
     : '';
-  return `<div class="wd-bar"><div class="wd-acts">${upBtn}${homeBtn}</div><nav class="wd-crumbs" aria-label="Path">${crumbs}</nav></div>`;
-}
-
-function workdirCurrentRow(
-  sc: NonNullable<TranscriptMessage['workdir']>['selectCurrent'],
-  mode: WorkdirPickerMode,
-  icons: TranscriptIcons,
-): string {
-  const curTags =
-    (sc.current ? `<span class="wd-tag on">${text(tr('workdir.currentTag'))}</span>` : '') +
-    (sc.root ? `<span class="wd-tag">${text(tr('workdir.rootTag'))}</span>` : '');
-  const label = tr(
-    sc.current ? (mode.kind === 'launch' ? 'workdir.selected' : 'workdir.keepCurrent') : 'workdir.useCurrent',
-  );
-  return (
-    `<div class="wd-cur"><div class="wd-cur-info"><code class="wd-path" title="${text(sc.path)}">${text(sc.path)}</code>${curTags}</div>` +
-    `<button type="button" class="wd-pick-cur${sc.current ? ' on' : ''}" ${wdPickAttr(mode, sc.buttonId, sc.path)}>${icons.icon.check ?? ''}<span>${text(label)}</span></button></div>`
-  );
+  const sc = w.selectCurrent;
+  const pickBtn =
+    `<button type="button" class="wd-choose wd-pick-bar${sc.current ? ' on' : ''}" ${wdPickAttr(mode, sc.buttonId, sc.path)} title="${text(tr('workdir.chooseTitle', { path: sc.path }))}">` +
+    `${icons.icon.check ?? ''}<span>${text(tr('workdir.choose'))}</span></button>`;
+  return `<div class="wd-bar"><div class="wd-acts">${upBtn}${homeBtn}</div><nav class="wd-crumbs" aria-label="Path">${crumbs}</nav>${pickBtn}</div>`;
 }
 
 function workdirEntriesBody(
@@ -269,17 +258,26 @@ export function workdirPickerHtml(
   mode: WorkdirPickerMode,
 ): string {
   const hostPill = w.host ? `<span class="wd-meta">${text(w.host)}</span>` : '';
+  const isLaunch = mode.kind === 'launch';
+  const folded = Boolean(isLaunch && mode.folded);
+  const selectedPath = (isLaunch && mode.selectedPath) || w.current || w.browsing;
+  const changeBtn = isLaunch
+    ? `<button type="button" class="launch-choice-change wd-change" data-launch-unfold="workdir"${folded ? '' : ' hidden'}>${text(tr('chat.launchChange'))}</button>`
+    : '';
+  const selectedRow = isLaunch
+    ? `<div class="wd-selected"${folded ? '' : ' hidden'}><code class="wd-path" title="${text(selectedPath)}">${text(selectedPath)}</code></div>`
+    : '';
   return (
-    `<div class="wd-picker" data-browsing="${text(w.browsing)}">` +
+    `<div class="wd-picker${folded ? ' folded' : ''}" data-browsing="${text(w.browsing)}">` +
     `<div class="wd-head"><div class="wd-title-row"><span class="wd-title">${icons.icon.folder ?? ''}<span>${text(tr('workdir.title'))}</span></span>` +
-    `<span class="wd-badges"><span class="wd-meta">${text(w.agentId)}</span>${hostPill}</span></div>` +
-    `<div class="wd-hint">${text(tr('workdir.hint'))}</div></div>` +
+    `<span class="wd-head-right"><span class="wd-badges"><span class="wd-meta">${text(w.agentId)}</span>${hostPill}</span>${changeBtn}</span></div>` +
+    `<div class="wd-hint"${folded ? ' hidden' : ''}>${text(tr('workdir.hint'))}</div>${selectedRow}</div>` +
+    `<div class="wd-body"${folded ? ' hidden' : ''}>` +
     workdirActionsBar(w, mode, icons) +
     (w.error ? `<div class="wd-err" role="alert">${text(w.error)}</div>` : '') +
-    workdirCurrentRow(w.selectCurrent, mode, icons) +
     workdirEntriesBody(w.entries ?? [], mode, icons) +
     (w.truncated > 0 ? `<div class="wd-more">${text(tr('workdir.truncated', { count: w.truncated }))}</div>` : '') +
-    '</div>'
+    '</div></div>'
   );
 }
 

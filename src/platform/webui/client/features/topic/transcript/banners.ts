@@ -60,6 +60,8 @@ export interface LaunchFoldState {
   readonly workdir?: boolean;
 }
 
+export type LaunchFoldPart = 'agents' | 'workdir';
+
 function launchCardHtml(
   a: LaunchChoice['groups'][number]['agents'][number],
   on: boolean,
@@ -87,17 +89,15 @@ export function launchHtml(
   choice: LaunchChoice,
   icons: TranscriptIcons,
   offline: LaunchOfflineView,
-  cwd = '',
+  _cwd = '',
   fold: LaunchFoldState = {},
 ): string {
-  const anyFolded = Boolean(fold.agents || fold.workdir);
   let h =
     `<div class="launch-head"><div class="launch-title">${text(tr('chat.launchTitle'))}</div>` +
     `<div class="launch-sub">${text(tr('chat.launchSubPrefix'))}<b>${text(choice.current)}</b>${text(tr('chat.launchSubSuffix'))}</div>` +
-    `<div class="launch-choice">` +
+    `<div class="launch-choice"${fold.agents ? '' : ' hidden'}>` +
     `<span class="launch-choice-item"><span class="launch-choice-k">${text(tr('chat.launchAgentLabel'))}</span><span class="launch-choice-agent">${text(choice.current)}</span></span>` +
-    `<span class="launch-choice-item launch-choice-dir-wrap"${cwd ? '' : ' hidden'}><span class="launch-choice-k">${text(tr('chat.launchDirLabel'))}</span><code class="launch-choice-dir" title="${text(cwd)}">${text(cwd)}</code></span>` +
-    `<button type="button" class="launch-choice-change" data-launch-unfold${anyFolded ? '' : ' hidden'}>${text(tr('chat.launchChange'))}</button>` +
+    `<button type="button" class="launch-choice-change" data-launch-unfold="agents">${text(tr('chat.launchChange'))}</button>` +
     '</div></div>';
   h += `<div class="launch-agents"${fold.agents ? ' hidden' : ''}>`;
   const many = choice.groups.length > 1;
@@ -170,7 +170,7 @@ export interface BannersController extends Disposable {
   setLaunchAgent(agentId: string, opts?: { readonly fold?: boolean }): void;
   setLaunchWorkdir(screen: WorkdirScreen | null, loading?: boolean): void;
   setLaunchCwd(cwd: string, opts?: { readonly fold?: boolean }): void;
-  unfoldLaunch(): void;
+  unfoldLaunch(part?: LaunchFoldPart): void;
   takeMachines(list: readonly OfflineMachine[] | null | undefined): boolean;
   setMachines(list: readonly OfflineMachine[] | null | undefined): void;
   offSince(name: string): number;
@@ -390,10 +390,13 @@ class BannersControllerImpl implements BannersController {
     host.classList.toggle('loading', loading);
     if (screen) {
       this._launchWorkdir = screen;
-      host.innerHTML = workdirPickerHtml(screen, this._deps.getIcons(), { kind: 'launch' });
       const cwd = screen.current || screen.browsing;
       if (cwd) this._launchCwd = cwd;
-      this._paintLaunchCwdLabel(cwd);
+      host.innerHTML = workdirPickerHtml(screen, this._deps.getIcons(), {
+        kind: 'launch',
+        folded: this._wdFolded,
+        selectedPath: this._launchCwd || cwd,
+      });
       this._syncLaunchFoldDom();
     } else if (!loading) {
       this._launchWorkdir = null;
@@ -405,48 +408,60 @@ class BannersControllerImpl implements BannersController {
   setLaunchCwd(cwd: string, opts?: { readonly fold?: boolean }): void {
     if (!this._launchEl || !cwd) return;
     this._launchCwd = cwd;
-    this._paintLaunchCwdLabel(cwd);
+    if (opts?.fold !== undefined) this._wdFolded = opts.fold;
     if (this._launchWorkdir) {
       this._launchWorkdir = withCurrentWorkdir(this._launchWorkdir, cwd);
       const host = this._launchEl.querySelector<HTMLElement>('.launch-wd');
       if (host) {
-        host.innerHTML = workdirPickerHtml(this._launchWorkdir, this._deps.getIcons(), { kind: 'launch' });
+        host.innerHTML = workdirPickerHtml(this._launchWorkdir, this._deps.getIcons(), {
+          kind: 'launch',
+          folded: this._wdFolded,
+          selectedPath: cwd,
+        });
       }
     }
-    if (opts?.fold !== undefined) {
-      this._wdFolded = opts.fold;
-      this._syncLaunchFoldDom();
-    }
+    this._syncLaunchFoldDom();
   }
 
-  unfoldLaunch(): void {
+  unfoldLaunch(part?: LaunchFoldPart): void {
     if (!this._launchEl) return;
-    this._agentsFolded = false;
-    this._wdFolded = false;
+    if (!part || part === 'agents') this._agentsFolded = false;
+    if (!part || part === 'workdir') this._wdFolded = false;
     this._syncLaunchFoldDom();
   }
 
   private _syncLaunchFoldDom(): void {
     if (!this._launchEl) return;
+    const choiceEl = this._launchEl.querySelector<HTMLElement>('.launch-choice');
+    if (choiceEl) choiceEl.hidden = !this._agentsFolded;
     const agentsEl = this._launchEl.querySelector<HTMLElement>('.launch-agents');
     if (agentsEl) agentsEl.hidden = this._agentsFolded;
     const wdEl = this._launchEl.querySelector<HTMLElement>('.launch-wd');
-    if (wdEl) wdEl.hidden = this._wdFolded || !this._launchWorkdir;
-    const changeBtn = this._launchEl.querySelector<HTMLButtonElement>('[data-launch-unfold]');
-    if (changeBtn) changeBtn.hidden = !this._agentsFolded && !this._wdFolded;
+    if (wdEl) {
+      wdEl.hidden = !this._launchWorkdir;
+      const picker = wdEl.querySelector<HTMLElement>('.wd-picker');
+      if (picker) {
+        picker.classList.toggle('folded', this._wdFolded);
+        const body = picker.querySelector<HTMLElement>('.wd-body');
+        if (body) body.hidden = this._wdFolded;
+        const hint = picker.querySelector<HTMLElement>('.wd-hint');
+        if (hint) hint.hidden = this._wdFolded;
+        const selected = picker.querySelector<HTMLElement>('.wd-selected');
+        if (selected) {
+          selected.hidden = !this._wdFolded;
+          const code = selected.querySelector<HTMLElement>('.wd-path');
+          const path = this._launchCwd || this._launchWorkdir?.current || this._launchWorkdir?.browsing || '';
+          if (code && path) {
+            code.textContent = path;
+            code.title = path;
+          }
+        }
+        const wdChange = picker.querySelector<HTMLButtonElement>('[data-launch-unfold="workdir"]');
+        if (wdChange) wdChange.hidden = !this._wdFolded;
+      }
+    }
     this._launchEl.classList.toggle('agents-folded', this._agentsFolded);
     this._launchEl.classList.toggle('wd-folded', this._wdFolded);
-  }
-
-  private _paintLaunchCwdLabel(cwd: string): void {
-    if (!this._launchEl) return;
-    const wrap = this._launchEl.querySelector<HTMLElement>('.launch-choice-dir-wrap');
-    const code = this._launchEl.querySelector<HTMLElement>('.launch-choice-dir');
-    if (code) {
-      code.textContent = cwd;
-      code.title = cwd;
-    }
-    if (wrap) wrap.hidden = !cwd;
   }
 
   syncEmptyNote(): void {
