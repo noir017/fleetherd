@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.39.1] - 2026-11-26
+
 ### Fixed
 
 - **Sidebar title bar no longer piles up every view's buttons when the sidebar starts closed.**
