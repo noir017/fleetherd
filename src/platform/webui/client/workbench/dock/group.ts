@@ -324,6 +324,7 @@ export class EditorGroup implements Disposable {
 
     const managed = this._createManagedPanel(options);
     this._insertManaged(managed, options.index);
+    managed.component.element.hidden = true;
     this.bodyElement.appendChild(managed.component.element);
     managed.component.init(options.params, { id: managed.id, api: managed.ref });
 
@@ -518,6 +519,9 @@ export class EditorGroup implements Disposable {
       },
       get params() {
         return managed.params;
+      },
+      get isVisible() {
+        return managed.visible;
       },
       onDidVisibilityChange: visibilityEmitter.event,
       onDidDimensionsChange: dimensionsEmitter.event,

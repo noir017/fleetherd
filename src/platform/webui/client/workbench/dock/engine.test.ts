@@ -2,6 +2,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { LayoutState, PanelComponent, PanelInitContext, PartId } from '../contracts.js';
+import { createActionBar, createSidebarActionBarHost } from '../../components/actionbar/index.js';
 import { type DockPartHost, type DockTabInfo, DynamicDockEngine, MAIN_GROUP_ID } from './engine.js';
 import { LAYOUT_STORAGE_KEY } from './serialize.js';
 import { SplitView } from './splitview.js';
@@ -521,5 +522,84 @@ describe('workbench/dock/engine (DynamicDockEngine)', () => {
 
     engine.dispose();
     host.remove();
+  });
+
+  it('keeps hidden sidebar views out of the sidebar title bar during hidden startup (mobile regression)', () => {
+    const root = document.createElement('div');
+    document.body.appendChild(root);
+    const sidebar = createPartHost('sidebar');
+    sidebar.header.className = 'wb-part-head wb-sidebar-head';
+    const actionsEl = document.createElement('div');
+    actionsEl.className = 'wb-part-actions';
+    sidebar.header.appendChild(actionsEl);
+    root.appendChild(sidebar.element);
+
+    const editorContainer = document.createElement('div');
+    root.appendChild(editorContainer);
+
+    const engine = new DynamicDockEngine({
+      doc: document,
+      editorContainer,
+      parts: { sidebar },
+      initialVisible: { sidebar: false, secondary: false, panel: false },
+    });
+
+    const initVisSnapshots: Record<string, { apiVisible: boolean | undefined; domHidden: boolean }> = {};
+    const makeSidebarView = (id: string, actionIds: readonly string[]): PanelComponent => {
+      const element = document.createElement('div');
+      const bar = createActionBar({
+        items: actionIds.map((aid) => ({ id: aid, title: aid })),
+      });
+      let barHost: ReturnType<typeof createSidebarActionBarHost> | undefined;
+      return {
+        element,
+        init(_params, ctx) {
+          initVisSnapshots[id] = { apiVisible: ctx.api.isVisible, domHidden: element.hidden };
+          barHost = createSidebarActionBarHost({
+            viewEl: element,
+            actionBarEl: bar.el,
+            api: ctx.api,
+          });
+        },
+        dispose() {
+          barHost?.dispose();
+          bar.dispose();
+        },
+      };
+    };
+
+    engine.registerComponent('view:topics', () => makeSidebarView('topics', ['topics.new', 'topics.markAllRead', 'topics.clear']));
+    engine.registerComponent('view:history', () => makeSidebarView('history', ['history.refresh']));
+    engine.registerComponent('view:schedules', () => makeSidebarView('schedules', ['sched.markAllRead', 'sched.refresh', 'sched.new']));
+
+    engine.addPanel({ id: 'view:schedules', component: 'view:schedules', title: 'Schedules', position: { part: 'sidebar' } });
+    engine.addPanel({ id: 'view:history', component: 'view:history', title: 'History', position: { part: 'sidebar' } });
+    engine.addPanel({ id: 'view:topics', component: 'view:topics', title: 'Topics', position: { part: 'sidebar' } });
+
+    // While sidebar is closed at startup, every panel initialized as hidden and none mounted actions.
+    for (const id of ['schedules', 'history', 'topics']) {
+      expect(initVisSnapshots[id]).toEqual({ apiVisible: false, domHidden: true });
+    }
+    expect(actionsEl.querySelectorAll('[data-action-id]').length).toBe(0);
+
+    // Opening sidebar shows only the active panel's actions (topics).
+    engine.setPartVisible('sidebar', true);
+    expect(engine.getPanel('view:topics')?.isVisible).toBe(true);
+    expect(engine.getPanel('view:history')?.isVisible).toBe(false);
+    expect(engine.getPanel('view:schedules')?.isVisible).toBe(false);
+    const visibleIds = Array.from(actionsEl.querySelectorAll('[data-action-id]')).map((el) =>
+      el.getAttribute('data-action-id'),
+    );
+    expect(visibleIds).toEqual(['topics.new', 'topics.markAllRead', 'topics.clear']);
+
+    // Switching to history swaps the title bar actions cleanly.
+    engine.getPanel('view:history')?.focus();
+    const historyIds = Array.from(actionsEl.querySelectorAll('[data-action-id]')).map((el) =>
+      el.getAttribute('data-action-id'),
+    );
+    expect(historyIds).toEqual(['history.refresh']);
+
+    engine.dispose();
+    root.remove();
   });
 });

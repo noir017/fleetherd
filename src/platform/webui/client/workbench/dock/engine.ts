@@ -884,6 +884,9 @@ export class DynamicDockEngine implements DockEngine {
       get params() {
         return managed.params;
       },
+      get isVisible() {
+        return managed.visible;
+      },
       onDidVisibilityChange: visibilityEmitter.event,
       onDidDimensionsChange: dimensionsEmitter.event,
       setTitle: (title: string) => {
@@ -908,6 +911,7 @@ export class DynamicDockEngine implements DockEngine {
 
     this._partPanels.set(o.id, managed);
     this._insertIntoPart(part, o.id, index);
+    managed.component.element.hidden = true;
     this._mountPartPanelElement(managed);
     component.init(o.params, { id: o.id, api: ref });
     this._parts[part].activePanel = o.id;

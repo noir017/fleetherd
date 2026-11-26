@@ -5,6 +5,16 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **Sidebar title bar no longer piles up every view's buttons when the sidebar starts closed.**
+  On phones (and any layout where the sidebar begins hidden), each sidebar view registered its
+  title-bar action bar during `init()` while its root element was still unhidden and `PanelRef`
+  carried no `isVisible` flag, and the subsequent sync never fired `onDidVisibilityChange(false)`
+  because the engine already considered those panels hidden. `PanelRef` now exposes `isVisible`
+  and the dock hides panel roots before `init()`, so only the active visible view mounts its
+  actions in the sidebar header.
+
 ## [3.39.0] - 2026-11-26
 
 ### Changed

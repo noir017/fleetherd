@@ -195,6 +195,9 @@ export class StaticDockEngine implements DockEngine {
       get params() {
         return managed.params;
       },
+      get isVisible() {
+        return managed.visible;
+      },
       onDidVisibilityChange: visibilityEmitter.event,
       onDidDimensionsChange: dimensionsEmitter.event,
       setTitle: (title: string) => {
@@ -219,6 +222,7 @@ export class StaticDockEngine implements DockEngine {
 
     this._panels.set(o.id, managed);
     this._insertIntoTarget(o.id, target, index);
+    managed.component.element.hidden = true;
     this._mountPanelElement(managed);
     component.init(o.params, { id: o.id, api: ref });
     this._setActiveInTarget(target, o.id);

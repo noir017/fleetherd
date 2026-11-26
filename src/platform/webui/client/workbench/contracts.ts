@@ -27,6 +27,7 @@ export interface PanelRef {
   readonly id: string;
   readonly group: string | PartId;
   readonly params: unknown;
+  readonly isVisible?: boolean;
   readonly onDidVisibilityChange: Event<boolean>;
   readonly onDidDimensionsChange: Event<{ readonly width: number; readonly height: number }>;
   setTitle(title: string): void;
