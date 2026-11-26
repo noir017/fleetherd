@@ -5,6 +5,38 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **A new topic folds away what has been picked.** The agent cards and the folder browser stayed
+  open after the choice, filling most of a phone's screen above the composer. Picking an agent now
+  folds the cards and picking a folder folds the browser; the summary line keeps showing both, and
+  its Change button opens them again.
+- **The agent tag in the topic list no longer stands out.** It was a filled coloured chip on every
+  row, the loudest thing in a long list. It is now dim text in the same line as the host and
+  folder (`cc · myhost · project`), with only a faint tint of the harness colour.
+- **Sidebar buttons sit in the title bar.** History, Schedules, Reviews and Skills each drew a
+  row of their own under the title, repeating the title or a count ("30 sessions", "50 reviews")
+  beside Refresh and New. Those buttons are now in the sidebar's title bar next to its menu, the
+  way Topics already had them on desktop, and the rows are gone. On phones Topics' New, Select and
+  Clear moved up there too.
+- **Phones get the bottom tabs back, inside the drawer.** beta.4's drawer brought the desktop's
+  vertical rail along, which took a column of an already narrow screen. The drawer now ends in
+  beta.3's tab bar — Topics, History, Schedules and More, with Reviews, Skills and Settings under
+  More — and the filter chips are compact enough to fit on one row instead of scrolling sideways.
+
+### Fixed
+
+- **A topic's menu stays where it opened.** Opening a row's menu and then letting the list repaint
+  — the age ticking over, another topic updating — replaced the button the menu was anchored to,
+  so the menu jumped to the top-left corner or closed. It now stays put until it is dismissed, in
+  the topic list and in the schedules list.
+- **The time and the menu button no longer overlap.** Hovering a row laid the menu button on top
+  of its age; the age now gives way to the button without the row moving.
+- **Scrollbars look the same everywhere.** The page's scrollbar colours were set with the standard
+  properties, which make Chromium 121 and later ignore the slim square scrollbar the stylesheet
+  defines, so Chromium drew its own native scrollbar instead — thick and rounded on phones. The
+  standard properties now apply only where the browser has no other way to style scrollbars.
+
 ## [3.39.0-beta.4] - 2026-11-25
 
 ### Changed
