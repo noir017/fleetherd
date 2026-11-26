@@ -92,6 +92,8 @@ export class RemoteHosts {
   private ns: string | undefined;
   /** host id + version + daemon instance → the skill is on that host for that version. */
   private readonly skillPlaced = new Set<string>();
+  /** host id + version + daemon instance → dead links from older versions have been swept. */
+  private readonly skillSwept = new Set<string>();
   /** host id + version + daemon instance + readers → the digest of the rendered bundled skill sent there. */
   private readonly renderedPlaced = new Map<string, string>();
   /** host id + version + daemon instance → the agy plugin's files are on that host for that version. */
@@ -212,9 +214,13 @@ export class RemoteHosts {
     const key = `${host.id}@${w.version}@${w.instance}`;
     const homes = skillHomes(def.harness, home, def.command);
     try {
-      if (!this.skillPlaced.has(key)) {
-        await this.placeSkillFiles(host, homes, home, base);
+      if (homes.length > 0 && !this.skillPlaced.has(key)) {
+        await this.placeSkillFiles(host, base);
         this.skillPlaced.add(key);
+      }
+      if (!this.skillSwept.has(key)) {
+        await this.sweepDeadSkillLinks(host, home);
+        this.skillSwept.add(key);
       }
       for (const skill of BUNDLED_SKILLS) {
         for (const h of homes) {
@@ -230,17 +236,18 @@ export class RemoteHosts {
     }
   }
 
-  /** Once per version: the bundled skills that are linked as shipped, and the sweep of dead links. */
-  private async placeSkillFiles(host: RemoteHost, homes: SkillHome[], home: string, base: string): Promise<void> {
-    if (homes.length > 0) {
-      for (const skill of BUNDLED_SKILLS) {
-        if (skill.library) continue; // rendered per skill directory (placeRendered)
-        const source = bundledSkillDir(skill.dir);
-        for (const rel of listFiles(source)) {
-          await host.writeFile(`${base}/${skill.dir}/${rel}`, fs.readFileSync(path.join(source, rel)), 0o644);
-        }
+  /** Once per version: the bundled skills that are linked as shipped. */
+  private async placeSkillFiles(host: RemoteHost, base: string): Promise<void> {
+    for (const skill of BUNDLED_SKILLS) {
+      if (skill.library) continue; // rendered per skill directory (placeRendered)
+      const source = bundledSkillDir(skill.dir);
+      for (const rel of listFiles(source)) {
+        await host.writeFile(`${base}/${skill.dir}/${rel}`, fs.readFileSync(path.join(source, rel)), 0o644);
       }
     }
+  }
+
+  private async sweepDeadSkillLinks(host: RemoteHost, home: string): Promise<void> {
     for (const dir of allSkillDirs(home)) {
       for (const link of await host.sweepSkillLinks(dir)) console.log(`[skill] ${host.id}: removed dead link ${link}`);
     }
