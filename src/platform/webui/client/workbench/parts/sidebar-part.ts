@@ -125,7 +125,7 @@ export class SidebarPart implements DockPartHost, Disposable {
     const active = tabs.find((t) => t.id === activeId) ?? tabs[0];
     this._activePanelId = active?.id;
     this._titleEl.textContent = active?.title ?? '';
-    this._moreBtn.hidden = !active;
+    this._moreBtn.hidden = !active || active.id === 'more';
 
     this._tabsEl.replaceChildren();
     const allActivityViews =

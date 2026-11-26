@@ -30,7 +30,15 @@ import { PanelPart } from './parts/panel-part.js';
 import { SecondaryPart } from './parts/secondary-part.js';
 import { SidebarPart } from './parts/sidebar-part.js';
 import { StatusBarPart, type StatusBarItem } from './parts/status-bar.js';
+import { t as tr } from '../i18n/index.js';
 import { MobileDrawerController } from './mobile-drawer.js';
+import {
+  createMobileMorePanel,
+  MobileTabBar,
+  type MobileMorePanelController,
+  type MobileMoreState,
+  type MobileNavTab,
+} from './mobile-tabbar.js';
 
 export const LAYOUT_STORAGE_KEY = SERIALIZE_LAYOUT_KEY;
 export const SPLIT_STORAGE_KEY = 'aa_split_sizes';
@@ -96,6 +104,7 @@ export class WorkbenchShell implements Disposable {
   readonly secondary: SecondaryPart;
   readonly panel: PanelPart;
   readonly statusBar: StatusBarPart;
+  readonly mobileTabBar: MobileTabBar;
   readonly dock: DynamicDockEngine;
 
   private readonly _doc: Document;
@@ -113,6 +122,7 @@ export class WorkbenchShell implements Disposable {
   private readonly _splitView: SplitView;
   private readonly _moveMenu: MenuController;
   private readonly _mobileDrawer: MobileDrawerController;
+  private readonly _morePanel: MobileMorePanelController;
   private _commands: CommandRegistry | undefined;
   private _layoutCommandsRegistered = false;
   private _toastEl: HTMLElement | undefined;
@@ -163,11 +173,22 @@ export class WorkbenchShell implements Disposable {
   };
 
   readonly activity = {
-    register: (a: ActivityBarItem): Disposable => this.activityBar.registerItem(a),
+    register: (a: ActivityBarItem): Disposable => {
+      const sub = this.activityBar.registerItem(a);
+      this._syncMobileTabs();
+      return toDisposable(() => {
+        sub.dispose();
+        this._syncMobileTabs();
+      });
+    },
     refreshBadges: (): void => {
       this.activityBar.refreshBadges();
+      this.mobileTabBar.refreshBadges();
     },
-    setActive: (id: string | undefined): void => this.activityBar.setActive(id),
+    setActive: (id: string | undefined): void => {
+      this.activityBar.setActive(id);
+      this.mobileTabBar.setActive(id);
+    },
   };
 
   readonly statusBarApi = {
@@ -194,11 +215,15 @@ export class WorkbenchShell implements Disposable {
     this.sidebar = new SidebarPart({
       doc: this._doc,
       resolveIcon: this._resolveIcon,
-      isActivityView: (panelId) => this.activityBar.getItems().some((a) => a.view === panelId),
+      isActivityView: (panelId) =>
+        panelId === 'more' || this.activityBar.getItems().some((a) => a.view === panelId),
     });
     this.secondary = new SecondaryPart({ doc: this._doc, resolveIcon: this._resolveIcon });
     this.panel = new PanelPart({ doc: this._doc, resolveIcon: this._resolveIcon });
     this.statusBar = new StatusBarPart({ doc: this._doc });
+    this.mobileTabBar = new MobileTabBar({ doc: this._doc, resolveIcon: this._resolveIcon });
+    this.sidebar.element.appendChild(this.mobileTabBar.element);
+    this._morePanel = createMobileMorePanel({ doc: this._doc, resolveIcon: this._resolveIcon });
 
     this._desktopShell = this._doc.createElement('div');
     this._desktopShell.className = 'wb-shell';
@@ -299,26 +324,7 @@ export class WorkbenchShell implements Disposable {
 
     this._loadInitialSavedLayout();
     this._wireEvents();
-    this._disposables.add(this._onDidModeChange);
-    this._disposables.add(this._onDidActiveTopicChange);
-    this._disposables.add(this.activityBar);
-    this._disposables.add(this.sidebar);
-    this._disposables.add(this.secondary);
-    this._disposables.add(this.panel);
-    this._disposables.add(this.statusBar);
-    this._disposables.add(this._splitView);
-    this._disposables.add(this.dock);
-    this._disposables.add(this._moveMenu);
-    this._disposables.add(this._mobileDrawer);
-
-    if (options.commands) {
-      this._disposables.add(this._attachLayoutCommands(options.commands, options.keybindings));
-    }
-
-    if (options.registry) {
-      this._disposables.add(this.attachRegistry(options.registry));
-    }
-
+    this._finishInit(options);
     this.layout(this._width, this._height);
     this._suppressAutoSave = false;
   }
@@ -360,6 +366,7 @@ export class WorkbenchShell implements Disposable {
       }
       const activeSidebar = this.dock.getActivePartPanel('sidebar');
       if (activeSidebar) this.activityBar.setActive(activeSidebar);
+      this._syncMobileTabs();
     };
 
     const syncViews = (): void => {
@@ -431,6 +438,15 @@ export class WorkbenchShell implements Disposable {
     return this._mode;
   }
 
+  setMobileMoreState(next: MobileMoreState): void {
+    this._morePanel.setState(next);
+  }
+
+  refreshMobileTabs(): void {
+    this._syncMobileTabs();
+    this._morePanel.paint();
+  }
+
   isPartVisible(part: PartId): boolean {
     return this.dock.isPartVisible(part);
   }
@@ -492,6 +508,7 @@ export class WorkbenchShell implements Disposable {
         this._suppressAutoSave = prevSuppress;
       }
     }
+    this._leaveMobileMoreIfNeeded(prevMode, nextMode);
     if (nextMode === 'desktop' && this.dock.isPartVisible('secondary')) {
       this._maybeAutoCollapseSidebar();
       this._maybeRestoreSidebarIfFits();
@@ -574,6 +591,70 @@ export class WorkbenchShell implements Disposable {
         this._syncLayout();
       },
     });
+  }
+
+  private _finishInit(options: WorkbenchShellOptions): void {
+    this._disposables.add(
+      this._registerView({
+        id: 'more',
+        title: tr('mobile.more'),
+        icon: 'more',
+        part: 'sidebar',
+        component: () => this._morePanel.component,
+      }),
+    );
+    this._disposables.add(this._onDidModeChange);
+    this._disposables.add(this._onDidActiveTopicChange);
+    this._disposables.add(this.activityBar);
+    this._disposables.add(this.sidebar);
+    this._disposables.add(this.secondary);
+    this._disposables.add(this.panel);
+    this._disposables.add(this.statusBar);
+    this._disposables.add(this.mobileTabBar);
+    this._disposables.add(this._splitView);
+    this._disposables.add(this.dock);
+    this._disposables.add(this._moveMenu);
+    this._disposables.add(this._mobileDrawer);
+    this._syncMobileTabs();
+    if (options.commands) {
+      this._disposables.add(this._attachLayoutCommands(options.commands, options.keybindings));
+    }
+    if (options.registry) {
+      this._disposables.add(this.attachRegistry(options.registry));
+    }
+  }
+
+  private _leaveMobileMoreIfNeeded(prevMode: ShellMode, nextMode: ShellMode): void {
+    if (prevMode !== 'mobile' || nextMode === 'mobile') return;
+    if (this.dock.getActivePartPanel('sidebar') !== 'more') return;
+    const fallback = this.activityBar.getItems()[0]?.view;
+    if (fallback) this._revealView(fallback, { openPart: false });
+  }
+
+  private _syncMobileTabs(): void {
+    const activities = this.activityBar.getItems();
+    const primary: MobileNavTab[] = activities.slice(0, 3).map((a) => ({
+      id: a.id,
+      title: a.title,
+      icon: a.icon,
+      view: a.view,
+      badge: a.badge,
+    }));
+    const extra = activities.slice(3);
+    const moreBadge = (): number | 'dot' | null => {
+      let sum = 0;
+      let hasDot = false;
+      for (const item of extra) {
+        const b = item.badge?.() ?? null;
+        if (typeof b === 'number' && b > 0) sum += b;
+        else if (b === 'dot') hasDot = true;
+      }
+      if (sum > 0) return sum;
+      return hasDot ? 'dot' : null;
+    };
+    const tabs: MobileNavTab[] = [...primary, { id: 'more', title: tr('mobile.more'), icon: 'more', view: 'more', badge: moreBadge }];
+    this.mobileTabBar.setTabs(tabs);
+    this.mobileTabBar.setActive(this.dock.getActivePartPanel('sidebar') ?? 'topics');
   }
 
   private _loadInitialSavedLayout(): void {
@@ -726,6 +807,20 @@ export class WorkbenchShell implements Disposable {
       }),
     );
 
+    this._disposables.add(
+      this.mobileTabBar.onDidSelectTab((tab) => {
+        if (tab.view === 'more') {
+          this._morePanel.resetSubview();
+          this._revealView('more');
+          this.setPartVisible('sidebar', true);
+          return;
+        }
+        this.activityBar.setActive(tab.id);
+        this._revealView(tab.view);
+        this.setPartVisible('sidebar', true);
+      }),
+    );
+
     const partPairs: readonly [PartId, SidebarPart | SecondaryPart | PanelPart][] = [
       ['sidebar', this.sidebar],
       ['secondary', this.secondary],
@@ -869,7 +964,10 @@ export class WorkbenchShell implements Disposable {
       const sbVisible = this.dock.isPartVisible('sidebar');
       const secVisible = this.dock.isPartVisible('secondary');
       const activeSidebar = this.dock.getActivePartPanel('sidebar');
-      if (activeSidebar) this.activityBar.setActive(activeSidebar);
+      if (activeSidebar) {
+        this.activityBar.setActive(activeSidebar);
+        this.mobileTabBar.setActive(activeSidebar);
+      }
       const mobile = this._mode === 'mobile';
       const drawer = isDrawerMode(this._mode);
       const workW = mobile ? this._width : Math.max(0, this._width - ACTIVITY_BAR_WIDTH);
@@ -899,7 +997,8 @@ export class WorkbenchShell implements Disposable {
         groups[0]!.size === 1 &&
         this.dock.getActiveGroupPanel() === 'topic:active';
       this._desktopShell.classList.toggle('is-single-topic', singleTopic);
-      this.activityBar.element.inert = mobile && !sbVisible;
+      this.mobileTabBar.element.hidden = !mobile;
+      this.activityBar.element.inert = mobile;
       this.sidebar.element.inert = mobile && !sbVisible;
       this.secondary.element.inert = mobile && !secVisible;
       this._mobileDrawer.syncDrawerHistory(mobile && (sbVisible || secVisible));

@@ -301,6 +301,16 @@
     font-size: var(--fh-fs-ui);
   }
 
+  /* Mobile drawer bottom tab bar badges */
+  .wb-root .wb-stack-tab .wb-badge {
+    top: -3px;
+    right: calc(50% - 22px);
+  }
+  .wb-root .wb-stack-tab .wb-badge.wb-badge-dot {
+    top: 1px;
+    right: calc(50% - 14px);
+  }
+
   /* Mobile topic composer (< 640px) */
   .wb-root[data-wb-mode="mobile"] .wb-topic-bar {
     max-width: none;
@@ -467,7 +477,7 @@
 }
 
 .wb-root[data-wb-mode="mobile"] .fh-sidebar-seg {
-  padding: 0 16px 10px;
+  padding: 8px 12px 8px;
   background: var(--fh-bg-side);
 }
 .wb-root[data-wb-mode="mobile"] .fh-sidebar-seg .fh-seg {
@@ -484,12 +494,12 @@
   font-weight: 600;
 }
 .wb-root[data-wb-mode="mobile"] .fh-sidebar-filter {
-  padding: 0 0 10px;
+  padding: 0 0 8px;
   background: var(--fh-bg-side);
   border-bottom: 1px solid var(--fh-line);
 }
 .wb-root[data-wb-mode="mobile"] .fh-sidebar-filter .fh-fb-row {
-  padding: 0 16px;
+  padding: 0 12px;
 }
 .wb-root[data-wb-mode="mobile"] .fh-sidebar-filter .fh-fb-search {
   height: 38px;
@@ -515,18 +525,25 @@
 }
 .wb-root[data-wb-mode="mobile"] .fh-sidebar-filter .fh-fb-pins .fh-fb-chips {
   flex-wrap: nowrap;
-  overflow-x: auto;
-  padding: 2px 16px 2px;
-  gap: 8px;
-  scrollbar-width: none;
+  overflow: hidden;
+  padding: 2px 12px;
+  gap: 4px;
 }
 .wb-root[data-wb-mode="mobile"] .fh-sidebar-filter .fh-fb-chip {
-  flex: none;
-  font-size: var(--fh-fs-ui);
-  padding: 5px 13px;
-  border-radius: 16px;
+  flex: 1 1 auto;
+  min-width: 0;
+  justify-content: center;
+  font-size: var(--fh-fs-xs);
+  padding: 4px 5px;
+  gap: 3px;
+  border-radius: 12px;
+  white-space: nowrap;
+}
+.wb-root[data-wb-mode="mobile"] .fh-sidebar-filter .fh-fb-chip .fh-fb-chip-icon svg {
+  width: 12px;
+  height: 12px;
 }
 .wb-root[data-wb-mode="mobile"] .fh-sidebar-filter .fh-fb-sum,
 .wb-root[data-wb-mode="mobile"] .fh-sidebar-filter .fh-fb-panel {
-  margin: 0 16px;
+  margin: 0 12px;
 }

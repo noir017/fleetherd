@@ -19,7 +19,8 @@ import type { TopicEditorElements, TopicEditorHandle } from './features/topic/ed
 import { stClock } from './features/topic/status/index.js';
 import type { LaunchChoice, TranscriptMessage, WorkdirScreen } from './features/topic/transcript/index.js';
 import { isRowCurrent, type TopicSnapshotPayload } from './features/topics/index.js';
-import { applyDomI18n, initLocale, onLocaleChange, t as tr } from './i18n/index.js';
+import { applyDomI18n, getLocale, initLocale, onLocaleChange, setLocale, t as tr } from './i18n/index.js';
+import { getTheme, setTheme } from './theme.js';
 import type { TopicInfo } from './plugins/api.js';
 import {
   createDefaultBuiltinPluginFactories,
@@ -1028,6 +1029,86 @@ function wireStreamAndCache(rt: AppRuntime): void {
   rt.readsService.attachWindowEvents(document, window);
 }
 
+const BUILTIN_MORE_IDS = new Set(['reviews', 'skills', 'settings']);
+
+function syncMobileMoreState(rt: AppRuntime): void {
+  const activities = rt.registry.listActivities();
+  const revAct = activities.find((a) => a.id === 'reviews');
+  const revCount = revAct?.badge?.();
+  const extraItems = activities
+    .slice(3)
+    .filter((a) => !BUILTIN_MORE_IDS.has(a.id))
+    .map((a) => {
+      const b = a.badge?.();
+      return {
+        id: a.id,
+        title: a.title,
+        icon: a.icon,
+        view: a.view,
+        badge: typeof b === 'number' && b > 0 ? String(b) : undefined,
+      };
+    });
+  let runningCount = 0;
+  let idleCount = 0;
+  for (const topic of rt.state.topics) {
+    if (topic.running || topic.asking) runningCount += 1;
+    else if (topic.live) idleCount += 1;
+  }
+  rt.shell.setMobileMoreState({
+    reviewsBadge: undefined,
+    prefsBadge: typeof revCount === 'number' && revCount > 0 ? String(revCount) : undefined,
+    extraItems,
+    notificationsEnabled: rt.notifyBridge.getState().enabled,
+    lowAttention: rt.workbenchRoot.classList.contains('calm'),
+    theme: getTheme(),
+    locale: getLocale(),
+    connected: rt.state.streamConnected,
+    version: rt.boot.version ? `v${rt.boot.version}` : rt.boot.build ? rt.boot.build.slice(0, 7) : undefined,
+    runningCount,
+    idleCount,
+    onOpenReviews: () => { rt.shell.views.reveal('reviews'); },
+    onOpenPrefs: () => {
+      if (!rt.shell.editors.open('review-prefs', {})) {
+        rt.shell.views.reveal('reviews');
+      }
+    },
+    onOpenSkills: () => { rt.shell.views.reveal('skills'); },
+    onOpenSettings: () => { rt.shell.views.reveal('settings'); },
+    onOpenExtra: (viewId) => { rt.shell.views.reveal(viewId); },
+    onToggleNotifications: () => {
+      void Promise.resolve(rt.commands.execute('status.toggleNotify')).finally(() => syncMobileMoreState(rt));
+    },
+    onToggleLowAttention: () => {
+      void rt.commands.execute('status.toggleCalm');
+      syncMobileMoreState(rt);
+    },
+    onChangeTheme: (next) => {
+      setTheme(next);
+      rt.events.emit('theme.change', { theme: next });
+      syncMobileMoreState(rt);
+    },
+    onChangeLocale: (next) => {
+      setLocale(next);
+      syncMobileMoreState(rt);
+    },
+    onCloseIdle: () => void rt.commands.execute('status.closeIdle'),
+  });
+}
+
+function wireMobileMore(rt: AppRuntime): void {
+  const sync = (): void => syncMobileMoreState(rt);
+  rt.notifyBridge.onDidChange(sync);
+  rt.registry.onDidChangeActivity(sync);
+  rt.registry.onDidChangeActivityBadges(sync);
+  rt.events.on('stream.state', ({ state }) => {
+    rt.state.streamConnected = state === 'open';
+    sync();
+  });
+  rt.events.on('topic.list', sync);
+  rt.shell.onDidModeChange(sync);
+  sync();
+}
+
 function wireLoginGate(rt: AppRuntime): void {
   rt.gateForm?.addEventListener('submit', (e) => {
     e.preventDefault();
@@ -1185,6 +1266,7 @@ function bootstrap(): void {
     const restored = shell.restoreLayout();
     shell.views.reveal('topics', { openPart: !restored && shell.getMode() === 'desktop' });
     ensureTopicEditorOpen(rt, state.topic);
+    wireMobileMore(rt);
     if (state.topic) {
       state.activeEditor?.composer?.loadDraftIfEmpty(state.topic);
       adoptCachedTopicMessages(rt, state.topic);
@@ -1200,6 +1282,8 @@ function bootstrap(): void {
     state.activeEditor?.status?.onLocaleChange();
     state.activeEditor?.refreshHeader();
     shell.statusBarApi.refresh();
+    shell.refreshMobileTabs();
+    syncMobileMoreState(rt);
   });
 
   commands.register('workbench.resetLayout', () => shell.resetLayout(), { title: 'Reset Layout' });

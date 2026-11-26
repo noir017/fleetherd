@@ -122,7 +122,7 @@ test.describe('Web UI mobile shell, palette, and login alignment', () => {
     page,
   }) => {
     await page.emulateMedia({ colorScheme: 'dark' });
-    await page.setViewportSize({ width: 390, height: 844 });
+    await page.setViewportSize({ width: 360, height: 780 });
     await loginViaUi(page, gateway.baseUrl, gateway.secret);
 
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
@@ -141,16 +141,30 @@ test.describe('Web UI mobile shell, palette, and login alignment', () => {
     expect(overflow).toBe(false);
 
 
-    // Hamburger button opens the slide-out sidebar drawer with full activity rail
+    // Hamburger button opens the slide-out sidebar drawer with bottom tab bar and title-bar actions
     await page.locator('#expand-sidebar').click();
     await expect(page.locator('.wb-shell')).toHaveClass(/is-sidebar-open/);
     await expect(page.locator('.wb-sidebar')).toBeVisible();
-    await expect(page.locator('.wb-activity-bar')).toBeVisible();
+    await expect(page.locator('.wb-activity-bar')).toBeHidden();
+    await expect(page.locator('.wb-stack-tabbar')).toBeVisible();
     await expect(page.locator('.wb-drawer-backdrop')).toBeVisible();
 
-    for (const id of ['topics', 'history', 'schedules', 'reviews', 'skills', 'settings']) {
-      await expect(page.locator(`.wb-activity-item[data-activity-id="${id}"]`)).toBeVisible();
+    for (const id of ['topics', 'history', 'schedules', 'more']) {
+      await expect(page.locator(`.wb-stack-tab[data-tab-id="${id}"]`)).toBeVisible();
     }
+    // Topic actions (+, mark all read, clear) live in the drawer title bar, not a separate row
+    for (const actId of ['topics.new', 'topics.markAllRead', 'topics.clearUnstarred']) {
+      await expect(page.locator(`.wb-sidebar-head > .wb-part-actions button[data-action-id="${actId}"]`)).toBeVisible();
+    }
+    await expect(page.locator('.wb-topics-head')).toBeHidden();
+
+    // Pinned filter chips fit on one row at 360px with zero horizontal scroll
+    const chipsOverflow = await page.evaluate(() => {
+      const wrap = document.querySelector<HTMLElement>('.fh-sidebar-filter .fh-fb-pins .fh-fb-chips');
+      return wrap ? wrap.scrollWidth > wrap.clientWidth : true;
+    });
+    expect(chipsOverflow).toBe(false);
+
     const leakedMargin = await page.locator('.wb-sidebar .wb-topic-row').evaluateAll((rows) =>
       rows.some((r) => parseFloat(getComputedStyle(r).marginTop) > 0),
     );
@@ -186,7 +200,7 @@ test.describe('Web UI mobile shell, palette, and login alignment', () => {
     // Tapping outside (backdrop) closes the drawer
     await page.locator('#expand-sidebar').click();
     await expect(page.locator('.wb-sidebar')).toBeVisible();
-    await page.mouse.click(375, 420);
+    await page.mouse.click(345, 420);
     await expect(page.locator('.wb-sidebar')).toBeHidden();
 
     // Phone back gesture (browser back / popstate) closes the drawer first
@@ -217,9 +231,20 @@ test.describe('Web UI mobile drawer navigation and cached topic open', () => {
     await page.locator('#expand-sidebar').click();
     await expect(page.locator('.wb-sidebar')).toBeVisible();
 
-    for (const id of ['history', 'schedules', 'reviews', 'skills', 'settings']) {
-      await page.locator(`.wb-activity-item[data-activity-id="${id}"]`).click();
-      await expect(page.locator(`.wb-activity-item[data-activity-id="${id}"]`)).toHaveClass(/is-active/);
+    for (const id of ['history', 'schedules']) {
+      await page.locator(`.wb-stack-tab[data-tab-id="${id}"]`).click();
+      await expect(page.locator(`.wb-stack-tab[data-tab-id="${id}"]`)).toHaveClass(/is-active/);
+      await expect(page.locator('.wb-sidebar')).toBeVisible();
+    }
+
+    // More tab reveals Reviews, Skills, and Settings inside the drawer
+    for (const itemId of ['reviews', 'skills', 'settings']) {
+      await page.locator('.wb-stack-tab[data-tab-id="more"]').click();
+      await expect(page.locator('.wb-stack-tab[data-tab-id="more"]')).toHaveClass(/is-active/);
+      const item = page.locator(`.wb-stack-more [data-group-item="${itemId}"]`);
+      await expect(item).toBeVisible();
+      await item.click();
+      await expect(page.locator('.wb-stack-tab[data-tab-id="more"]')).toHaveClass(/is-active/);
       await expect(page.locator('.wb-sidebar')).toBeVisible();
       if (id === 'history') {
         await expect(page.locator('.wb-sidebar-head > .wb-part-actions [data-action-id]')).toHaveCount(1);
