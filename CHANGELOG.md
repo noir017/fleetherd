@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.39.0-beta.5] - 2026-11-26
+
 ### Changed
 
 - **A new topic folds away what has been picked.** The agent cards and the folder browser stayed
