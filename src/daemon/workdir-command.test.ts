@@ -662,6 +662,103 @@ describe('agentCatalogForRef (what a new topic offers)', () => {
   });
 });
 
+describe('setupTopicForRef across hosts', () => {
+  const ref = { platform: 'discord', channel: 'c1', kind: 'direct' as const, user: 'u1' };
+  const multiHostCfg = parseConfig({
+    platforms: { discord: { type: 'discord', token: 't' } },
+    hosts: { hostA: { ssh: 'u@hostA' }, hostB: { ssh: 'u@hostB' } },
+    agents: [
+      { id: 'a1', harness: 'claude', host: 'hostA', cwd: '/home/me/projects' },
+      { id: 'a2', harness: 'opencode', host: 'hostA', cwd: '/home/me/projects' },
+      { id: 'b1', harness: 'claude', host: 'hostB', cwd: '/home/me/work' },
+      { id: 'local', harness: 'claude', cwd: root },
+    ],
+    routing: { default: 'a1' },
+  });
+
+  beforeEach(() => {
+    const hostA = { conn: { welcome: { home: '/home/me' } } } as unknown as RemoteHost;
+    const hostB = { conn: { welcome: { home: '/home/me' } } } as unknown as RemoteHost;
+    vi.spyOn(remoteHosts, 'hostFor').mockImplementation((def) =>
+      def?.host === 'hostA' ? hostA : def?.host === 'hostB' ? hostB : undefined
+    );
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it('clears the remembered directory when switching to an agent on another host without cwd', () => {
+    const { reg, store, key } = rig({ config: multiHostCfg });
+    expect(reg.setupTopicForRef(ref, { agent: 'a1', cwd: '/home/me/projects/app' })).toEqual({
+      ok: true,
+      agent: 'a1',
+      cwd: '/home/me/projects/app',
+    });
+
+    expect(reg.setupTopicForRef(ref, { agent: 'b1', dryRun: true })).toEqual({
+      ok: true,
+      agent: 'b1',
+      cwd: '/home/me/work',
+    });
+    expect(store.conversationCwd(key)).toBe('/home/me/projects/app');
+
+    expect(reg.setupTopicForRef(ref, { agent: 'b1' })).toEqual({
+      ok: true,
+      agent: 'b1',
+      cwd: '/home/me/work',
+    });
+    expect(reg.workdirForRef(ref)?.path).toBe('/home/me/work');
+    expect(store.conversationCwd(key)).toBeUndefined();
+  });
+
+  it('keeps the remembered directory when switching to another agent on the same host', () => {
+    const { reg } = rig({ config: multiHostCfg });
+    reg.setupTopicForRef(ref, { agent: 'a1', cwd: '/home/me/projects/app' });
+    expect(reg.setupTopicForRef(ref, { agent: 'a2' })).toEqual({
+      ok: true,
+      agent: 'a2',
+      cwd: '/home/me/projects/app',
+    });
+    expect(reg.workdirForRef(ref)?.path).toBe('/home/me/projects/app');
+  });
+
+  it('uses the provided cwd when switching to an agent on another host with cwd', () => {
+    const { reg } = rig({ config: multiHostCfg });
+    reg.setupTopicForRef(ref, { agent: 'a1', cwd: '/home/me/projects/app' });
+    expect(reg.setupTopicForRef(ref, { agent: 'b1', cwd: '/home/me/work/svc' })).toEqual({
+      ok: true,
+      agent: 'b1',
+      cwd: '/home/me/work/svc',
+    });
+    expect(reg.workdirForRef(ref)?.path).toBe('/home/me/work/svc');
+  });
+
+  it('clears the remembered directory on a new topic with no state when switching from the default agent to another host', () => {
+    const { reg, store, key } = rig({ config: multiHostCfg });
+    expect(reg.setupTopicForRef(ref, { cwd: '/home/me/projects/app' })).toEqual({
+      ok: true,
+      agent: 'a1',
+      cwd: '/home/me/projects/app',
+    });
+    expect(reg.setupTopicForRef(ref, { agent: 'b1' })).toEqual({
+      ok: true,
+      agent: 'b1',
+      cwd: '/home/me/work',
+    });
+    expect(reg.workdirForRef(ref)?.path).toBe('/home/me/work');
+    expect(store.conversationCwd(key)).toBeUndefined();
+  });
+
+  it('clears a remote directory when switching to a local agent', () => {
+    const { reg, store, key } = rig({ config: multiHostCfg });
+    reg.setupTopicForRef(ref, { agent: 'a1', cwd: '/home/me/projects/app' });
+    expect(reg.setupTopicForRef(ref, { agent: 'local' })).toEqual({
+      ok: true,
+      agent: 'local',
+      cwd: root,
+    });
+    expect(store.conversationCwd(key)).toBeUndefined();
+  });
+});
+
 /**
  * An agent on a host (fleetherd 2.9.0): its directories can only be listed over the link, which is
  * asynchronous, while the menu decides on the spot. Until 2.9.2 the menus on the side read ahead and
