@@ -642,6 +642,9 @@ function buildTopicPresence(room: WebRoom, topicOf: TopicResolver): TopicPresenc
 function buildWorkbenchHost(room: WebRoom): WorkbenchHost {
   return {
     useWorkdirLookup: (lookup) => room.useWorkdirLookup(lookup),
+    refreshWorkdir: (address) => {
+      if (address.channel === CHANNEL && address.thread) room.refreshWorkdir(address.thread);
+    },
     useLivenessLookup: (lookup) => room.useLivenessLookup(lookup),
     useGitPanel: (panel) => room.useGitPanel(panel),
     useScheduleLookup: (lookup) => room.useScheduleLookup(lookup),

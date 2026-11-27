@@ -1988,6 +1988,24 @@ describe('WebRoom: which directory a topic is working in', () => {
     expect(sentDir(list(), topic)).toBe('buildbox·shop-api');
   });
 
+  it('refreshWorkdir drops the cached label within the TTL and announces the new directory and agent', () => {
+    vi.useFakeTimers();
+    const { room, topic, list } = attached();
+    let where: { path: string; host?: string; agent?: { id: string; harness: string } } = { path: '/home/me/projects/parent' };
+    room.useWorkdirLookup(() => where);
+    room.post(topic, { own: false, html: '<p>hi</p>' }, 'hi');
+    expect(sentDir(list(), topic)).toBe('·parent');
+
+    where = { path: '/home/me/projects/child', agent: { id: 'oc', harness: 'opencode' } };
+    // Still cached inside DIR_TTL_MS until refreshWorkdir invalidates it.
+    room.post(topic, { own: false, html: '<p>still</p>' }, 'still');
+    expect(sentDir(list(), topic)).toBe('·parent');
+
+    room.refreshWorkdir(topic);
+    expect(sentDir(list(), topic)).toBe('·child');
+    expect(list().find((t) => t.id === topic)?.agent).toEqual({ id: 'oc', harness: 'opencode' });
+  });
+
   it('is corrected by the liveness poll when a move lands after its own announcement', () => {
     // A `/cd` on a host lists the directory over the link before it applies, so the list sent with
     // the echo is already out of date and nothing else is coming. The poll reads the label fresh.

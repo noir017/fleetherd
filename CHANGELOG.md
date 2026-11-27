@@ -23,6 +23,7 @@ All notable changes to this project are documented here. The format is based on
   `~/.fleetherd/skills/` for copies absent from the active skill set and retract them along with
   any gateway-owned links across all harness skill directories, while leaving non-gateway files and
   directories untouched.
+- **Sub-agent topics now show their own working directory and agent immediately during their first turn.** Opening a topic via `task-new` (with `--cwd`, `--worktree`, or a non-default agent), scheduled runs, `/fork`, or retry-in-new-topic previously announced the topic before the daemon bound its agent and recorded its working directory, caching the default agent's directory in the web UI's `dirCache` across the first turn's messages and typing updates. `WorkbenchHost.refreshWorkdir` now invalidates that cache and pushes the updated topic row as soon as the daemon finishes binding and setting the working directory.
 
 ## [3.43.0] - 2026-11-27
 
