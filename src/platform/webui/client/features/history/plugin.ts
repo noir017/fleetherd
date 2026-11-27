@@ -53,7 +53,7 @@ export function createHistoryPlugin(deps: HistoryPluginDeps = {}): WebuiPlugin {
         title: tr('sidebar.history'),
         icon: 'history',
         view: 'history',
-        order: 20,
+        order: 50,
       });
 
       ctx.editors.register({

@@ -422,7 +422,7 @@ export function createLazyHistoryPlugin(loader: ExtrasLoader, deps?: HistoryPlug
   return createLazyPluginShell({
     id: 'history',
     loadPlugin: async () => (await loader())?.createHistoryPlugin(deps) ?? null,
-    activities: [{ id: 'history', title: tr('sidebar.history'), icon: 'history', view: 'history', order: 20 }],
+    activities: [{ id: 'history', title: tr('sidebar.history'), icon: 'history', view: 'history', order: 50 }],
     views: [{ id: 'history', title: tr('sidebar.history'), icon: 'history', part: 'sidebar' }],
     editors: [
       {
@@ -442,7 +442,7 @@ export function createLazySchedulesPlugin(loader: ExtrasLoader, deps?: Schedules
     id: 'schedules',
     loadPlugin: async () => (await loader())?.createSchedulesPlugin(deps) ?? null,
     activities: [
-      { id: 'schedules', title: tr('sideTasks.tabScheduled'), icon: 'clock', view: 'schedules', order: 50, hasBadge: true },
+      { id: 'schedules', title: tr('sideTasks.tabScheduled'), icon: 'clock', view: 'schedules', order: 20, hasBadge: true },
     ],
     views: [{ id: 'schedules', title: tr('sideTasks.tabScheduled'), icon: 'clock', part: 'sidebar' }],
     editors: [

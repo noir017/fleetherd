@@ -147,6 +147,7 @@ describe('history built-in plugin', () => {
     expect(h.manager.getStatus('history')).toBe('active');
     expect(h.registry.getView('history')?.part).toBe('sidebar');
     expect(h.registry.getActivity('history')?.view).toBe('history');
+    expect(h.registry.getActivity('history')?.order).toBe(50);
     expect(h.registry.getEditor('history')).toBeDefined();
     expect(h.registry.getEditor('history')!.title({ id: '42', title: 'Design chat' })).toBe('Design chat');
     expect(h.registry.commands.has('history.open')).toBe(true);

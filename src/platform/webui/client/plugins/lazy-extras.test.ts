@@ -266,7 +266,7 @@ describe('lazy-extras', () => {
     registry.dispose();
   });
 
-  it('registers lazy sidebar activities in order: history(20), reviews(30), skills(40), schedules(50), settings(100)', async () => {
+  it('registers lazy sidebar activities in order: schedules(20), reviews(30), skills(40), history(50), settings(100)', async () => {
     const { registry, events, manager } = makeHarness();
     const loader = createExtrasLoader({ bundleUrl: null });
     manager.register(createLazyHistoryPlugin(loader), { builtin: true });
@@ -280,10 +280,10 @@ describe('lazy-extras', () => {
     await manager.activateAll();
 
     expect(registry.listActivities().map((a) => [a.id, a.order])).toEqual([
-      ['history', 20],
+      ['schedules', 20],
       ['reviews', 30],
       ['skills', 40],
-      ['schedules', 50],
+      ['history', 50],
       ['settings', 100],
     ]);
 

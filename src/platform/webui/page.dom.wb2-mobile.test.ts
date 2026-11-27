@@ -210,28 +210,28 @@ describe('wb2-mobile: login, mobile drawer, sheet, grouped form, and palette', (
     shell.dispose();
   });
 
-  it('renders mobile bottom tab bar with badges and More panel with Prefs, Skills, Schedules, Settings, and Appearance subview', () => {
+  it('renders mobile bottom tab bar with badges and More panel with Prefs, Skills, History, Settings, and Appearance subview', () => {
     const tabBar = new MobileTabBar({ doc: document });
     document.body.appendChild(tabBar.element);
     const selected: string[] = [];
     tabBar.onDidSelectTab((tab) => selected.push(tab.id));
     tabBar.setTabs([
       { id: 'topics', title: 'Topics', icon: 'chat', view: 'topics', badge: () => 4 },
-      { id: 'history', title: 'History', icon: 'history', view: 'history' },
+      { id: 'schedules', title: 'Scheduled', icon: 'clock', view: 'schedules', badge: () => 'dot' },
       { id: 'reviews', title: 'Reviews', icon: 'eye', view: 'reviews' },
-      { id: 'more', title: 'More', icon: 'more', view: 'more', badge: () => 'dot' },
+      { id: 'more', title: 'More', icon: 'more', view: 'more' },
     ]);
     expect(tabBar.element.querySelector('.wb-stack-tab[data-tab-id="topics"] .wb-badge')?.textContent).toBe('4');
-    expect(tabBar.element.querySelector('.wb-stack-tab[data-tab-id="more"] .wb-badge-dot')).not.toBeNull();
-    tabBar.setActive('schedules');
+    expect(tabBar.element.querySelector('.wb-stack-tab[data-tab-id="schedules"] .wb-badge-dot')).not.toBeNull();
+    tabBar.setActive('history');
     expect(tabBar.getActiveTab()).toBe('more');
-    tabBar.element.querySelector<HTMLButtonElement>('.wb-stack-tab[data-tab-id="history"]')!.click();
-    expect(selected).toEqual(['history']);
+    tabBar.element.querySelector<HTMLButtonElement>('.wb-stack-tab[data-tab-id="schedules"]')!.click();
+    expect(selected).toEqual(['schedules']);
     tabBar.dispose();
 
     const onOpenPrefs = vi.fn();
     const onOpenSkills = vi.fn();
-    const onOpenSchedules = vi.fn();
+    const onOpenHistory = vi.fn();
     const onOpenSettings = vi.fn();
     const onChangeTheme = vi.fn();
     const more = createMobileMorePanel({ doc: document });
@@ -241,32 +241,32 @@ describe('wb2-mobile: login, mobile drawer, sheet, grouped form, and palette', (
       locale: 'en',
       connected: true,
       version: 'v3.39.0',
-      schedulesBadge: 'dot',
+      prefsBadge: '2',
       onOpenPrefs,
       onOpenSkills,
-      onOpenSchedules,
+      onOpenHistory,
       onOpenSettings,
       onChangeTheme,
     });
+    expect(more.component.element.querySelector('[data-group-item="schedules"]')).toBeNull();
     expect(more.component.element.querySelector('[data-group-item="reviews"]')).toBeNull();
     const navIds = Array.from(
       more.component.element.querySelectorAll<HTMLElement>('.fh-mgroup:first-of-type [data-group-item]'),
     ).map((el) => el.dataset.groupItem);
-    expect(navIds).toEqual(['review-prefs', 'skills', 'schedules', 'settings']);
-    expect(more.component.element.querySelector('[data-group-item="schedules"] .fh-dot')).not.toBeNull();
+    expect(navIds).toEqual(['review-prefs', 'skills', 'history', 'settings']);
     more.component.element.querySelector<HTMLButtonElement>('[data-group-item="review-prefs"]')!.click();
     more.component.element.querySelector<HTMLButtonElement>('[data-group-item="skills"]')!.click();
-    more.component.element.querySelector<HTMLButtonElement>('[data-group-item="schedules"]')!.click();
+    more.component.element.querySelector<HTMLButtonElement>('[data-group-item="history"]')!.click();
     more.component.element.querySelector<HTMLButtonElement>('[data-group-item="settings"]')!.click();
     expect(onOpenPrefs).toHaveBeenCalledTimes(1);
     expect(onOpenSkills).toHaveBeenCalledTimes(1);
-    expect(onOpenSchedules).toHaveBeenCalledTimes(1);
+    expect(onOpenHistory).toHaveBeenCalledTimes(1);
     expect(onOpenSettings).toHaveBeenCalledTimes(1);
     more.component.element.querySelector<HTMLButtonElement>('[data-group-item="appearance"]')!.click();
     more.component.element.querySelector<HTMLButtonElement>('[data-radio-value="light"]')!.click();
     expect(onChangeTheme).toHaveBeenCalledWith('light');
     more.component.element.querySelector<HTMLButtonElement>('.wb-stack-subback')!.click();
-    expect(more.component.element.querySelector('[data-group-item="schedules"]')).not.toBeNull();
+    expect(more.component.element.querySelector('[data-group-item="history"]')).not.toBeNull();
     more.component.dispose();
   });
 });

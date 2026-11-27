@@ -1034,14 +1034,12 @@ function wireStreamAndCache(rt: AppRuntime): void {
   rt.readsService.attachWindowEvents(document, window);
 }
 
-const BUILTIN_MORE_IDS = new Set(['skills', 'schedules', 'settings']);
+const BUILTIN_MORE_IDS = new Set(['skills', 'history', 'settings']);
 
 function syncMobileMoreState(rt: AppRuntime): void {
   const activities = rt.registry.listActivities();
   const revAct = activities.find((a) => a.id === 'reviews');
   const revCount = revAct?.badge?.();
-  const schedAct = activities.find((a) => a.id === 'schedules');
-  const schedBadge = schedAct?.badge?.();
   const extraItems = activities
     .slice(3)
     .filter((a) => !BUILTIN_MORE_IDS.has(a.id))
@@ -1063,12 +1061,6 @@ function syncMobileMoreState(rt: AppRuntime): void {
   }
   rt.shell.setMobileMoreState({
     prefsBadge: typeof revCount === 'number' && revCount > 0 ? String(revCount) : undefined,
-    schedulesBadge:
-      typeof schedBadge === 'number' && schedBadge > 0
-        ? String(schedBadge)
-        : schedBadge === 'dot'
-          ? 'dot'
-          : undefined,
     extraItems,
     notificationsEnabled: rt.notifyBridge.getState().enabled,
     lowAttention: rt.workbenchRoot.classList.contains('calm'),
@@ -1084,7 +1076,7 @@ function syncMobileMoreState(rt: AppRuntime): void {
       }
     },
     onOpenSkills: () => { rt.shell.views.reveal('skills'); },
-    onOpenSchedules: () => { rt.shell.views.reveal('schedules'); },
+    onOpenHistory: () => { rt.shell.views.reveal('history'); },
     onOpenSettings: () => { rt.shell.views.reveal('settings'); },
     onOpenExtra: (viewId) => { rt.shell.views.reveal(viewId); },
     onToggleNotifications: () => {

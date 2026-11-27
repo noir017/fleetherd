@@ -30,7 +30,6 @@ export interface MobileMoreExtraItem {
 export interface MobileMoreState {
   readonly prefsBadge?: string;
   readonly skillsCount?: number;
-  readonly schedulesBadge?: string;
   readonly extraItems?: readonly MobileMoreExtraItem[];
   readonly notificationsEnabled?: boolean;
   readonly lowAttention?: boolean;
@@ -42,7 +41,7 @@ export interface MobileMoreState {
   readonly idleCount?: number;
   readonly onOpenPrefs?: () => void;
   readonly onOpenSkills?: () => void;
-  readonly onOpenSchedules?: () => void;
+  readonly onOpenHistory?: () => void;
   readonly onOpenSettings?: () => void;
   readonly onOpenExtra?: (viewId: string) => void;
   readonly onToggleNotifications?: (enabled: boolean) => void;
@@ -197,10 +196,6 @@ function buildMoreNavItems(
   state: MobileMoreState,
   iconTpl: (name: string) => TemplateResult | undefined,
 ): GroupedListItem[] {
-  const schedulesValue =
-    state.schedulesBadge === 'dot'
-      ? html`<span class="fh-dot fh-dot--live" aria-hidden="true"></span>`
-      : state.schedulesBadge;
   const items: GroupedListItem[] = [
     {
       id: 'review-prefs',
@@ -221,13 +216,12 @@ function buildMoreNavItems(
       onClick: () => state.onOpenSkills?.(),
     },
     {
-      id: 'schedules',
-      label: tr('mobile.schedules'),
-      icon: iconTpl('clock'),
+      id: 'history',
+      label: tr('mobile.history'),
+      icon: iconTpl('history'),
       iconBox: true,
-      value: schedulesValue,
       chevron: true,
-      onClick: () => state.onOpenSchedules?.(),
+      onClick: () => state.onOpenHistory?.(),
     },
     {
       id: 'settings',

@@ -74,7 +74,7 @@ describe('webui page: workbench responsive layout (desktop, tablet, mobile)', ()
     const tabIds = Array.from(tabBar.querySelectorAll('.wb-stack-tab')).map((el) =>
       el.getAttribute('data-tab-id'),
     );
-    expect(tabIds).toEqual(['topics', 'history', 'reviews', 'more']);
+    expect(tabIds).toEqual(['topics', 'schedules', 'reviews', 'more']);
     expect((h.doc.querySelector('.wb-activity-bar') as HTMLElement).inert).toBe(true);
 
     // Topics actions (+, mark all read, clear) live in the drawer title bar, not a separate row.
@@ -85,10 +85,11 @@ describe('webui page: workbench responsive layout (desktop, tablet, mobile)', ()
     expect((h.doc.querySelector('.wb-topics-head') as HTMLElement).hidden).toBe(true);
 
     await h.click('.wb-stack-tab[data-tab-id="more"]');
+    expect(h.doc.querySelector('.wb-stack-more [data-group-item="schedules"]')).toBeNull();
     expect(h.doc.querySelector('.wb-stack-more [data-group-item="reviews"]')).toBeNull();
     expect(h.doc.querySelector('.wb-stack-more [data-group-item="review-prefs"]')).not.toBeNull();
     expect(h.doc.querySelector('.wb-stack-more [data-group-item="skills"]')).not.toBeNull();
-    expect(h.doc.querySelector('.wb-stack-more [data-group-item="schedules"]')).not.toBeNull();
+    expect(h.doc.querySelector('.wb-stack-more [data-group-item="history"]')).not.toBeNull();
     expect(h.doc.querySelector('.wb-stack-more [data-group-item="settings"]')).not.toBeNull();
     await h.click('.wb-stack-tab[data-tab-id="topics"]');
 
@@ -123,7 +124,7 @@ describe('webui page: workbench activity bar and built-in views', () => {
     const items = Array.from(h.doc.querySelectorAll('.wb-activity-item')).map((el) =>
       el.getAttribute('data-activity-id'),
     );
-    expect(items).toEqual(['topics', 'history', 'reviews', 'skills', 'schedules', 'settings']);
+    expect(items).toEqual(['topics', 'schedules', 'reviews', 'skills', 'history', 'settings']);
 
     const topicsBtn = h.doc.querySelector('.wb-activity-item[data-activity-id="topics"]') as HTMLElement;
     const historyBtn = h.doc.querySelector('.wb-activity-item[data-activity-id="history"]') as HTMLElement;

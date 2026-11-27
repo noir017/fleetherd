@@ -117,14 +117,14 @@ test.describe('wb2-sched schedules, history, and reviews alignment', () => {
     await page.locator('#expand-sidebar').click();
     await expect(page.locator('.wb-sidebar')).toBeVisible();
 
-    await page.locator('.wb-stack-tab[data-tab-id="history"]').click();
+    await page.locator('.wb-stack-tab[data-tab-id="more"]').click();
+    await page.locator('.wb-stack-more [data-group-item="history"]').click();
     await expect(page.locator('.wb-history-view .hist-item').first()).toBeVisible();
     await expect(page.locator('.wb-sidebar-head > .wb-part-actions [data-action-id="history.refresh"]')).toBeVisible();
     const histOverflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
     expect(histOverflow).toBe(false);
 
-    await page.locator('.wb-stack-tab[data-tab-id="more"]').click();
-    await page.locator('.wb-stack-more [data-group-item="schedules"]').click();
+    await page.locator('.wb-stack-tab[data-tab-id="schedules"]').click();
     await expect(page.locator('.fh-schedules-view .sched-row').first()).toBeVisible();
     await expect(page.locator('.wb-sidebar-head > .wb-part-actions [data-action-id="schedules.refresh"]')).toBeVisible();
     await expect(page.locator('.wb-sidebar-head > .wb-part-actions [data-action-id="schedules.new"]')).toBeVisible();
