@@ -40,7 +40,6 @@ import {
   workdirUnreadableText,
   type WorkdirChoiceResult,
 } from '../core/workdir-menu.js';
-import type { PlatformAdapter } from '../platform/adapter.js';
 import type {
   ModelPickerList,
   ModelPickerResult,

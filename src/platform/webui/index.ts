@@ -230,9 +230,6 @@ export function createWebuiAdapter(instance: WebuiInstance, opts?: WebuiAdapterO
     presence,
     workbench,
     ...outbound(room, topicOf),
-    ...topicTree,
-    ...presence,
-    ...workbench,
     ...lifecycle(room, server, pluginHost),
   };
 }

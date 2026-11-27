@@ -44,6 +44,7 @@ Three rules keep this from rotting:
 | File | Role |
 |---|---|
 | `adapter.ts` | `PlatformAdapter` + `PlatformCapabilities` — what `daemon/` sees |
+| `workbench.ts` | Optional workbench capability sub-interfaces (`TopicTree`, `TopicPresence`, `WorkbenchHost`) and panel DTOs |
 | `profile.ts` | `PlatformProfile` — the seam every platform implements |
 | `satori-core.ts` | Generic assembly of an adapter from a profile + one instance |
 | `satori-file-url.ts` | Repairs an upstream `http.file()` collision that broke every Telegram download |
@@ -94,8 +95,14 @@ as a Telegram forum topic, which is also why it is the second platform after Tel
 rename one — `retitleLane` refuses any address without a lane, so a design that gave each topic
 a channel of its own would have left `renameThread` permanently inert.
 
-**The adapter methods that are not in the matrix are not capabilities.**
-`useWorkdirLookup` hands an adapter a way to *ask* the daemon which directory the conversation
+**Workbench capabilities live on three optional sub-objects (`workbench.ts`), not flat on `PlatformAdapter`.**
+Only the web UI populates `adapter.topics` (`TopicTree`: `parentOf`, `childrenOf`, `hasThread`, `forkThread`),
+`adapter.presence` (`TopicPresence`: `setStatus`, `setActivity`, `setPendingQueue`, `markPendingDelivered`,
+`usePendingQueueActions`, `setOfflineMachines`, `seenAt`), and `adapter.workbench` (`WorkbenchHost`: the 19
+`use*` lookup/panel hooks wired by `daemon/workbench-wiring.ts`, plus `attachTurnChanges`). Chat platforms omit
+all three; `daemon/paced-adapter.ts` registers the three sub-objects as `unpaced` and forwards them verbatim.
+
+`workbench.useWorkdirLookup` hands an adapter a way to *ask* the daemon which directory the conversation
 at one of its addresses works in, and only the web UI implements it: a chat platform has
 nowhere to put the answer, while the page's topic switcher has a second line per row and,
 without this, nothing to put in it. Optional rather than flagged — an adapter that does not
@@ -103,24 +110,24 @@ implement it is simply never asked, the same shape `fetchAttachment` uses. Pull 
 push because the answer moves (`/cd`, a rebind) and because a restart leaves conversations that
 have a directory and no in-memory state at all; see the doc comment on the method for the rest.
 
-`useLivenessLookup` is the same seam for a different question: is an agent child still resident
+`workbench.useLivenessLookup` is the same seam for a different question: is an agent child still resident
 behind this conversation? A turn ending does not end the agent, so without it a topic that went
 quiet a minute ago and one whose child was reclaimed an hour ago are the same grey row. Pull for
 one more reason on top of the directory's: nothing *announces* a reclaim — it happens on a timer,
 in a conversation by definition nobody is touching — and a child can also exit on its own.
 
-`useIdleReclaim` hands over an action instead of a question: end the agent process behind a
+`workbench.useIdleReclaim` hands over an action instead of a question: end the agent process behind a
 conversation if it is idle — the idle sweeper's reclaim, asked for now. It is the web UI's "Close
 idle agents". The page's idea of idle is a dot that can be seconds old, so the daemon applies the
 sweeper's own gates (no turn, no pending question, a runtime that can resume) and refuses
 otherwise; the conversation is kept either way.
 
-`useScheduleLookup` is the third question, and the only one that is not decoration: does a scheduled task
+`workbench.useScheduleLookup` is the third question, and the only one that is not decoration: does a scheduled task
 still post into this conversation? The web UI evicts its least recently active topic once it holds
 64, and a task's target is a plain address nothing rewrites when the topic behind it goes — so the
 answer decides what may be evicted, not what a row looks like. It is read only at that moment.
 
-`useSchedulePanel` is the other half of that answer: the whole task list and the four operations
+`workbench.useSchedulePanel` is the other half of that answer: the whole task list and the four operations
 (pause, resume, run now, delete), handed to a platform that can draw them — the web UI's side
 panel. It is the one seam here that is a surface rather than decoration, so the page pulls it when
 it opens, after every action, and on a timer while it is visible; nothing announces a run
@@ -129,7 +136,7 @@ through `ScheduleService.op`, the same validation the agent's `schedule` command
 `/setting schedule` use, and a refusal comes back as a sentence rather than a throw because it is
 the page's to show.
 
-`setStatus` is the fourth, and runs the other way: the daemon *pushes* the agent's live status
+`presence.setStatus` is the fourth, and runs the other way: the daemon *pushes* the agent's live status
 (model, context, cost, cache expiry, quota) for a conversation, and only the web UI shows it — in a
 strip above its composer. Push rather than pull, the reverse of the three lookups and for the
 reverse reason: every value changes at a moment the daemon already sees (a `usage_update`, a status
@@ -138,7 +145,7 @@ forever for an answer that only moves while an agent is talking. The daemon's
 `status-board.ts` drops repeats and throttles before calling it; an implementation may treat every
 call as a change. It may throw on a bad address — the caller swallows that.
 
-`setActivity`, `seenAt`, `parentOf` and `childrenOf` are what one person running many conversations
+`presence.setActivity`, `presence.seenAt`, and `topics.parentOf` / `topics.childrenOf` are what one person running many conversations
 needs from a platform that lists them (daemon/turn-outcomes.ts, daemon/delegation.ts). `setActivity`
 is pushed like `setStatus`, and for the same reason: how a turn ended and whether a continue is
 scheduled change only at a turn's start and end. `seenAt` is a read — when the person last looked at

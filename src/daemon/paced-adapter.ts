@@ -48,8 +48,6 @@ const PACING = {
   // keeps renameThread off the render chain precisely so a slow rename never delays a character
   // of the answer (see TurnRunner.buildStreamHandlers onTitle).
   createThread: 'unpaced',
-  // Opens a topic in the web UI's own list, like createThread above; nothing is posted to a chat.
-  forkThread: 'unpaced',
   renameThread: 'unpaced',
   // startTyping is paced but as its own class: it is dropped rather than queued (see laneOf).
   startTyping: 'write',
@@ -58,58 +56,6 @@ const PACING = {
   stopTyping: 'unpaced',
   fetchHistory: 'unpaced',
   fetchAttachment: 'unpaced',
-  // Registers a callback and writes nothing to the chat; the lookup it installs is read while
-  // rendering a topic list, which is not traffic the platform meters.
-  useWorkdirLookup: 'unpaced',
-  useLivenessLookup: 'unpaced',
-  useScheduleLookup: 'unpaced',
-  // Registers the task panel's list/operations; the page reads them over its own HTTP routes,
-  // which are not chat traffic. Nothing here writes to a platform.
-  useSchedulePanel: 'unpaced',
-  useSkillsPanel: 'unpaced',
-  useReviewPanel: 'unpaced',
-  // Registers the history page's reads; the page asks over its own HTTP routes, not chat traffic.
-  useHistoryPanel: 'unpaced',
-  // Registers the file window's operations; they go over the page's own HTTP routes.
-  useFilesPanel: 'unpaced',
-  useInstructionsPanel: 'unpaced',
-  // Ends an agent process on this machine; nothing is written to the chat.
-  useIdleReclaim: 'unpaced',
-  // Ends a topic's agent and the agents under it; nothing is written to the chat.
-  useTopicKill: 'unpaced',
-  // Registers the git window's reads; the page asks over its own HTTP routes, not chat traffic.
-  useGitPanel: 'unpaced',
-  // Registers a callback, read while drawing an empty topic; writes nothing to the chat.
-  useAgentCatalog: 'unpaced',
-  useTopicSetup: 'unpaced',
-  useWorkdirBrowser: 'unpaced',
-  useModelPicker: 'unpaced',
-  useOptionPicker: 'unpaced',
-  // Registers the turn-change reads; the page asks over its own HTTP routes, not chat traffic.
-  useTurnChanges: 'unpaced',
-  useVoiceTranscriber: 'unpaced',
-  // Hangs a finished turn's summary off a message the turn has already written. Not chat traffic
-  // the platform meters: it edits the page's own copy of that message, and `editMessage` for the
-  // body has already been paced.
-  attachTurnChanges: 'unpaced',
-  // Not chat traffic at all: the one implementor draws it in its own page, and the status board
-  // already throttles it. Queueing a status behind a platform's flood pause would only show a
-  // stale one later.
-  setStatus: 'unpaced',
-  setPendingQueue: 'unpaced',
-  markPendingDelivered: 'unpaced',
-  usePendingQueueActions: 'unpaced',
-  // Same: state drawn in the page's own topic list, pushed only at a turn's start and end.
-  setActivity: 'unpaced',
-  // Same: state drawn in the page's own lists, pushed only when a machine comes or goes.
-  setOfflineMachines: 'unpaced',
-  // A read of what the page reported; nothing is sent anywhere.
-  seenAt: 'unpaced',
-  // Reads of the page's own topic list; nothing is sent anywhere.
-  parentOf: 'unpaced',
-  childrenOf: 'unpaced',
-  // A read of the page's own topic list; nothing is sent anywhere.
-  hasThread: 'unpaced',
   measureRendered: 'unpaced',
   registerCommands: 'unpaced',
   onMessage: 'unpaced',
@@ -120,6 +66,7 @@ const PACING = {
   platform: 'unpaced',
   platformType: 'unpaced',
   capabilities: 'unpaced',
+  // Workbench capability sub-objects (web UI only): forwarded verbatim without wrapping or pacing.
   topics: 'unpaced',
   presence: 'unpaced',
   workbench: 'unpaced',
