@@ -200,17 +200,21 @@ export function statusSegments(
     permChip(s.permissions ?? opts.fallbackPermissions, opts.openOptId === '__permissions__') +
     optChips(s.options ?? opts.fallbackOptions, opts.openOptId);
   out.push(seg('st-who', '', whoHtml));
+  const info: string[] = [];
   if (s.context && s.context.size > 0) {
-    out.push(renderContextSegment(s.context));
+    info.push(renderContextSegment(s.context));
   }
   if (s.cost) {
-    out.push(renderCostSegment(s.cost));
+    info.push(renderCostSegment(s.cost));
   }
   if (s.cacheExpiresAt) {
-    out.push(renderCacheSegment(s.cacheExpiresAt, now));
+    info.push(renderCacheSegment(s.cacheExpiresAt, now));
   }
   if (s.quota && s.quota.length > 0) {
-    out.push(...renderQuotaSegments(s.quota, now, open));
+    info.push(...renderQuotaSegments(s.quota, now, open));
+  }
+  if (info.length > 0) {
+    out.push(`<span class="st-info">${info.join('')}</span>`);
   }
   return out.join('');
 }

@@ -155,4 +155,23 @@ describe('wb2-chat topic editor alignment', () => {
     expect(mobileBlock).toContain('flex-wrap:nowrap;white-space:nowrap');
     expect(mobileBlock).toContain('.wb-topic-editor .msg-act-btn{flex:none;width:28px;height:26px}');
   });
+
+  it('lays out mobile status row in two wrapping rows with folder on row 1 and .st-info on row 2', () => {
+    const composerCss = fs.readFileSync(path.join(STYLES_DIR, 'composer.css'), 'utf8');
+    const statusCss = fs.readFileSync(path.join(STYLES_DIR, 'status.css'), 'utf8');
+    expect(statusCss).toContain('.st-info{display:contents}');
+
+    const mobileStart = composerCss.indexOf('@media (max-width: 640px) {');
+    expect(mobileStart).toBeGreaterThan(-1);
+    const mobileBlock = composerCss.slice(mobileStart);
+
+    expect(mobileBlock).toContain('.wb-topic-editor .wb-topic-status-row{flex-wrap:wrap;overflow-x:visible;');
+    expect(mobileBlock).not.toContain('overflow-x:auto');
+    expect(mobileBlock).toContain('.wb-topic-editor #status:not([hidden]){display:contents;');
+    expect(mobileBlock).toContain('.wb-topic-editor .st-who{display:contents}');
+    expect(mobileBlock).toContain('.wb-topic-editor .st-who>*{order:1}');
+    expect(mobileBlock).toContain('.wb-topic-editor .wb-topic-dir{order:2;flex:0 2 auto;');
+    expect(mobileBlock).toContain('direction:rtl;text-align:left}');
+    expect(mobileBlock).toContain('.wb-topic-editor .st-info{order:3;flex:1 0 100%;display:flex;flex-wrap:wrap;');
+  });
 });

@@ -54,6 +54,15 @@ All notable changes to this project are documented here. The format is based on
   guarded by session/SSO auth) while preserving scroll position, keeping partial reconciliation,
   unread counts, outbox confirmation, `/btw` pairing, and quote/message jumps working across
   unloaded history.
+- **Mobile web UI status strip now wraps into two rows instead of scrolling horizontally.** On
+  narrow viewports (`<= 640px`), the status pills above the composer previously sat in a single
+  `overflow-x: auto` strip that pushed context usage, cost, cache countdown, and quota pools off
+  screen behind long agent, model, and option chips. The strip now groups settings (agent, model,
+  effort, permissions, agent options, and the working directory pill) on the first row—truncating
+  the directory from the left to keep the tail folder name visible, then the model name, and
+  wrapping if space still runs out—and places context, cost, cache, and quota info inside a
+  dedicated `.st-info` second row that wraps cleanly and leaves no blank space when absent, while
+  leaving the desktop layout unchanged.
 - **Relaxed the web UI send timeout for slow uplinks.** `sendLimit` previously budgeted 1 s per
   64 KiB (~512 kbps) with a 300 s cap, leaving only ~4 s of margin for a 1 MB upload on a 250 kbps
   link and cutting off larger attachments on slower links. It now budgets 1 s per 16 KiB (~128 kbps)
