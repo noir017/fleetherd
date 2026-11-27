@@ -490,4 +490,143 @@ describe('createTranscriptController', () => {
       globalThis.IntersectionObserver = origIO;
     }
   });
+
+  it('toggles message actions on touch tap, switches/dismisses cleanly, and ignores interactive targets, selections, and mouse clicks', () => {
+    const h = makeHarness();
+    const composer = document.createElement('textarea');
+    const outside = document.createElement('div');
+    document.body.append(composer, outside);
+    h.controller.attachEvents(document);
+
+    h.controller.upsert({
+      id: 'm1',
+      html:
+        '<p>Hello <a href="https://example.com">link</a></p>' +
+        '<div class="cb"><div class="cb-h"><button type="button" class="cb-b">Copy</button></div><pre><code>x</code></pre></div>' +
+        '<input type="text" class="inline-in" value="abc">',
+      file: { name: 'pic.png', url: '/f/pic.png', image: true },
+      at: 100,
+    });
+    h.controller.upsert({
+      id: 'm2',
+      own: true,
+      html: '<div class="raw">My reply</div>',
+      at: 200,
+    });
+    h.controller.upsert({
+      id: 't1',
+      kind: 'tools',
+      html: '<div class="tools"><div class="tl"><span class="tl-c">Bash: "ls"</span></div></div>',
+      at: 300,
+    });
+
+    const m1 = h.els['2:m1']!;
+    const m2 = h.els['2:m2']!;
+    const t1 = h.els['2:t1']!;
+
+    const tap = (el: Element, pointerType: 'touch' | 'mouse' = 'touch'): void => {
+      const down = new Event('pointerdown', { bubbles: true });
+      Object.defineProperty(down, 'pointerType', { value: pointerType });
+      el.dispatchEvent(down);
+      const click = new MouseEvent('click', { bubbles: true, cancelable: true });
+      Object.defineProperty(click, 'pointerType', { value: pointerType });
+      el.dispatchEvent(click);
+    };
+
+    // Default: no message has .actions-open.
+    expect(m1.classList.contains('actions-open')).toBe(false);
+    expect(m2.classList.contains('actions-open')).toBe(false);
+
+    // Desktop mouse click does NOT set .actions-open.
+    tap(m1.querySelector('p')!, 'mouse');
+    expect(m1.classList.contains('actions-open')).toBe(false);
+
+    // Touch tap on message 1 reveals its actions.
+    tap(m1.querySelector('p')!, 'touch');
+    expect(m1.classList.contains('actions-open')).toBe(true);
+    expect(m2.classList.contains('actions-open')).toBe(false);
+
+    // Repainting message 1 while open preserves .actions-open.
+    h.controller.upsert({
+      id: 'm1',
+      html:
+        '<p>Hello updated <a href="https://example.com">link</a></p>' +
+        '<div class="cb"><div class="cb-h"><button type="button" class="cb-b">Copy</button></div><pre><code>x</code></pre></div>' +
+        '<input type="text" class="inline-in" value="abc">',
+      file: { name: 'pic.png', url: '/f/pic.png', image: true },
+      at: 100,
+    });
+    expect(m1.classList.contains('actions-open')).toBe(true);
+
+    // Tapping "more" button in revealed action bar opens message menu without hiding the bar.
+    const moreBtn = m1.querySelector<HTMLButtonElement>('[data-msg-act="more"]')!;
+    tap(moreBtn, 'touch');
+    expect(h.spies.openMessageMenu).toHaveBeenCalledWith('2:m1', moreBtn);
+    expect(m1.classList.contains('actions-open')).toBe(true);
+
+    // Tapping excluded interactive elements inside message does NOT hide or show actions.
+    tap(m1.querySelector('a[href="https://example.com"]')!, 'touch');
+    expect(m1.classList.contains('actions-open')).toBe(true);
+    tap(m1.querySelector('.cb-b')!, 'touch');
+    expect(m1.classList.contains('actions-open')).toBe(true);
+    tap(m1.querySelector('.inline-in')!, 'touch');
+    expect(m1.classList.contains('actions-open')).toBe(true);
+    tap(m1.querySelector('img.shot')!, 'touch');
+    expect(m1.classList.contains('actions-open')).toBe(true);
+    tap(m1.querySelector('.files a')!, 'touch');
+    expect(m1.classList.contains('actions-open')).toBe(true);
+
+    // Tapping a tool line toggles the tool line without switching message actions.
+    tap(t1.querySelector('.tl')!, 'touch');
+    expect(t1.querySelector('.tl')?.classList.contains('open')).toBe(true);
+    expect(t1.classList.contains('actions-open')).toBe(false);
+    expect(m1.classList.contains('actions-open')).toBe(true);
+
+    // Non-empty text selection prevents toggling message actions.
+    const sel = window.getSelection()!;
+    const range = document.createRange();
+    range.selectNodeContents(m1.querySelector('p')!);
+    sel.removeAllRanges();
+    sel.addRange(range);
+    tap(m1.querySelector('p')!, 'touch');
+    expect(m1.classList.contains('actions-open')).toBe(true);
+    sel.removeAllRanges();
+
+    // Tapping message 2 switches .actions-open from message 1 to message 2.
+    tap(m2.querySelector('.raw')!, 'touch');
+    expect(m1.classList.contains('actions-open')).toBe(false);
+    expect(m2.classList.contains('actions-open')).toBe(true);
+
+    // Tapping the same message again collapses its actions.
+    tap(m2.querySelector('.raw')!, 'touch');
+    expect(m2.classList.contains('actions-open')).toBe(false);
+
+    // Open again, then tapping empty #log space collapses it.
+    tap(m2.querySelector('.raw')!, 'touch');
+    expect(m2.classList.contains('actions-open')).toBe(true);
+    tap(h.log, 'touch');
+    expect(m2.classList.contains('actions-open')).toBe(false);
+
+    // Open again, then tapping composer input collapses it.
+    tap(m1.querySelector('p')!, 'touch');
+    expect(m1.classList.contains('actions-open')).toBe(true);
+    tap(composer, 'touch');
+    expect(m1.classList.contains('actions-open')).toBe(false);
+
+    // Open again, then tapping outside page area collapses it.
+    tap(m1.querySelector('p')!, 'touch');
+    expect(m1.classList.contains('actions-open')).toBe(true);
+    tap(outside, 'touch');
+    expect(m1.classList.contains('actions-open')).toBe(false);
+
+    // Topic switch clears open state.
+    tap(m1.querySelector('p')!, 'touch');
+    expect(m1.classList.contains('actions-open')).toBe(true);
+    h.controller.resetForTopicSwitch('t2');
+    expect(m1.classList.contains('actions-open')).toBe(false);
+
+    h.controller.dispose();
+    composer.remove();
+    outside.remove();
+  });
 });
