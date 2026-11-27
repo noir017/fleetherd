@@ -346,6 +346,7 @@ export function createInstructionsProvision(): AgentProvision<InstructionsResult
         return r;
       }
     },
+    // Connect agents have no instruction file on disk; this is that file's contents, nothing added (AGENTS.md).
     meta: (def) => {
       const instructions = connectInstructions(def);
       return instructions !== undefined ? { instructions } : undefined;

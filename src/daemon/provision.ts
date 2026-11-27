@@ -18,11 +18,17 @@ export interface HostFiles {
   removePath: (path: string, owned: string) => Promise<{ removed: boolean; path: string }>;
 }
 
-/** Something delivered to an agent's machine at spawn time (locally or over SSH). */
+/** Fields a provision may contribute to `_meta.fleetherd` for connect agents (excludes host/token/topic). */
+export interface ProvisionMeta {
+  instructions?: string;
+  skills?: Array<{ name: string; description: string }>;
+}
+
+/** Something delivered to an agent at spawn time (locally, over SSH, or via connect `_meta`). */
 export interface AgentProvision<TLocal = unknown, TRemote = unknown> {
   readonly name: string;
   local: (def: AgentDef, home: string) => TLocal;
   remote: (host: HostFiles, def: AgentDef, home: string, w: Welcome) => Promise<TRemote>;
   /** Fields contributed to `_meta.fleetherd` for connect agents that cannot receive files. */
-  meta?: (def: AgentDef) => Record<string, unknown> | undefined;
+  meta?: (def: AgentDef) => ProvisionMeta | undefined;
 }

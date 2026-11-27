@@ -98,15 +98,16 @@ export interface ConnectPlace {
 
 /**
  * The `_meta` of a connect agent's `initialize`: its `meta` as written, and the gateway's own
- * `fleetherd` entry — host name, optional token from `tokenFile`, metadata contributed by each
- * provision's `meta` facet (for agents that cannot receive files), and optional topic.
+ * `fleetherd` entry — host name, optional token from `tokenFile` (read on the agent's machine),
+ * metadata contributed by each provision's `meta` facet (for agents that cannot receive files),
+ * and optional topic.
  */
 export async function connectMeta(
   def: AgentDef,
   connect: AgentConnect,
   place: ConnectPlace | undefined,
-  topic?: string,
-  provisions: readonly AgentProvision[] = []
+  provisions: readonly AgentProvision[],
+  topic?: string
 ): Promise<Record<string, unknown>> {
   const gateway: Record<string, unknown> = { host: place ? place.host.id : os.hostname() };
   if (connect.tokenFile) gateway['token'] = await readToken(def, connect.tokenFile, place);
