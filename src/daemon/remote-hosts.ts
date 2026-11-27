@@ -1,60 +1,27 @@
 import { spawn } from 'node:child_process';
-import { createHash, randomBytes } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { AgentDef, Config, HostDef } from '../config/schema.js';
 import { configDir } from '../config/load.js';
-import { instructionsHome, instructionsOff } from '../config/instructions.js';
 import { commandHint, isBridgedCommand } from '../ipc/commands.js';
 import { packageVersion, remoteBinary, sshTransport } from '../remote/binaries.js';
-import type { Welcome } from '../remote/connection.js';
 import { RemoteHost, type CliBridge, type CliSession } from '../remote/host.js';
-import {
-  INSTRUCTIONS_MAX_BYTES,
-  SETTLED,
-  composeInstructions,
-  instructionsDir,
-  ownedDir,
-  reportInstructions,
-  type InstructionsResult,
-} from './instructions.js';
 import { selfInvocation } from './reverse-cli-shim.js';
-import { AGY_PLUGIN_DIR, AGY_PLUGIN_NAME, agyPluginHome, agyPluginSource } from './agy-plugin.js';
-import { BUNDLED_SKILLS, allSkillDirs, bundledSkillDir, skillHomes, skillReaders, type SkillHome } from './skill-link.js';
-import { renderBundledSkill } from './bundled-skill.js';
-import { deliveredTo, managedSkillsHome } from './managed-skills.js';
-import { activeSkillFiles, archivedSkillNames } from './skills-store.js';
-import { LEGACY_SKILL_LINK, envOf } from '../legacy-name.js';
+import { defaultIdentityFile, defaultKnownHostsFile, expandLocalHome } from './ssh-identity.js';
+import { envOf } from '../legacy-name.js';
 
 /**
  * The daemon's remote hosts (`hosts:` in config.yaml): one RemoteHost per entry, shared by every
  * agent whose `host` names it, and the pieces of "an agent on another machine" that are the
- * daemon's to decide rather than the transport's — the namespace this gateway uses on every host,
- * how an agent's `fleetherd` command is run back here, and where the bundled skill goes over there.
+ * daemon's to decide rather than the transport's — the namespace this gateway uses on every host
+ * and how an agent's `fleetherd` command is run back here.
  *
  * A module-level registry, configured once at start and again on `/reload`, because the runtimes
  * that need it are built by factories far from the daemon's constructor, and a host must be ONE
  * connection however many agents and conversations use it.
  */
-
-export function defaultIdentityFile(): string {
-  return path.join(configDir(), 'ssh', 'id_ed25519');
-}
-
-export function defaultKnownHostsFile(): string {
-  return path.join(configDir(), 'ssh', 'known_hosts');
-}
-
-/** The known_hosts file a host is checked against, `~` expanded. */
-export function knownHostsFileOf(def: HostDef): string {
-  return expandLocalHome(def.knownHostsFile ?? defaultKnownHostsFile());
-}
-
-export function expandLocalHome(p: string): string {
-  if (p === '~') return os.homedir();
-  return p.startsWith('~/') ? path.join(os.homedir(), p.slice(2)) : p;
-}
 
 /**
  * This gateway's name on every host it reaches (remote/paths.go `<ns>`): made up once and kept in
@@ -90,29 +57,6 @@ export class RemoteHosts {
   private readonly epoch = randomBytes(8).toString('hex');
   private socketPath = '';
   private ns: string | undefined;
-  /** host id + version + daemon instance → the skill is on that host for that version. */
-  private readonly skillPlaced = new Set<string>();
-  /** host id + version + daemon instance → dead links from older versions have been swept. */
-  private readonly skillSwept = new Set<string>();
-  /** host id + version + daemon instance + readers → the digest of the rendered bundled skill sent there. */
-  private readonly renderedPlaced = new Map<string, string>();
-  /** host id + version + daemon instance → the agy plugin's files are on that host for that version. */
-  private readonly agyPluginPlaced = new Set<string>();
-  /**
-   * host id + daemon instance + the harness's file → what was last delivered there and settled (a
-   * hash of the text, or `none` / `too-big`), so an unchanged text costs no round trip per spawn.
-   */
-  private readonly instructionsPlaced = new Map<string, string>();
-  /** host id + daemon instance + skill name → the version of the files delivered there, or `absent`. */
-  private readonly managedFiles = new Map<string, string>();
-  /**
-   * host id + daemon instance + skill name + the harness's skills directory → `linked`, `occupied`
-   * or `absent`. Keyed by directory, not just by skill: the copy is one per skill, but the links
-   * are one per harness, and a second harness starting on the same host must still get its own.
-   */
-  private readonly managedLinks = new Map<string, string>();
-  /** host id + daemon instance + skill name → archived and taken back; skipped until a restore. */
-  private readonly managedArchived = new Set<string>();
   /** Told each time a host's connection comes up or drops (host-availability.ts listens). */
   private connectionListener: ((id: string, up: boolean) => void) | undefined;
   /** Serves a host's `fleetherd mcp` in this process; unset, it is spawned like any command. */
@@ -198,302 +142,6 @@ export class RemoteHosts {
   }
 
   /**
-   * Put the bundled skills where `def` reads skills on the host (skill-link.ts says where, and
-   * why only for a harness that has run there). The files go into the version's own directory, so
-   * an upgrade retires them along with the old build, and the links are repointed by the next
-   * spawn — `fleetherd` to a copy rendered for its directory (placeRendered). Best-effort, like the
-   * local link: an agent without the skills still has its tools.
-   *
-   * Once per version, before linking, the links an older build left behind are swept: a link into a
-   * version directory that no longer exists is dead, and only a spawn of the harness it was made for
-   * would repoint it — so one made for a harness this build no longer maps would stay dead forever.
-   */
-  async placeSkill(host: RemoteHost, def: AgentDef, home: string, w: Welcome): Promise<void> {
-    if (envOf('NO_SKILL_LINK')) return;
-    const base = `${w.home}/.fleetherd/remote/${w.version}`;
-    const key = `${host.id}@${w.version}@${w.instance}`;
-    const homes = skillHomes(def.harness, home, def.command);
-    try {
-      if (homes.length > 0 && !this.skillPlaced.has(key)) {
-        await this.placeSkillFiles(host, base);
-        this.skillPlaced.add(key);
-      }
-      if (!this.skillSwept.has(key)) {
-        await this.sweepDeadSkillLinks(host, home);
-        this.skillSwept.add(key);
-      }
-      for (const skill of BUNDLED_SKILLS) {
-        for (const h of homes) {
-          const target = skill.library ? await this.placeRendered(host, bundledSkillDir(skill.dir), h, home, base, key) : `${base}/${skill.dir}`;
-          const r = await host.ensureLink(target, `${h.dir}/${skill.name}`, h.requires);
-          if (r.outcome === 'linked' || r.outcome === 'relinked') console.log(`[skill] ${host.id}: linked ${r.link} → ${target}`);
-          else if (r.outcome === 'occupied' || r.outcome === 'failed') console.warn(`[skill] ${host.id}: ${r.link}: ${r.outcome} (${r.detail ?? ''})`);
-        }
-      }
-      await this.removeLegacySkillLinks(host, homes, w);
-    } catch (e) {
-      console.warn(`[skill] ${host.id}: could not place the skill:`, e instanceof Error ? e.message : e);
-    }
-  }
-
-  /** Once per version: the bundled skills that are linked as shipped. */
-  private async placeSkillFiles(host: RemoteHost, base: string): Promise<void> {
-    for (const skill of BUNDLED_SKILLS) {
-      if (skill.library) continue; // rendered per skill directory (placeRendered)
-      const source = bundledSkillDir(skill.dir);
-      for (const rel of listFiles(source)) {
-        await host.writeFile(`${base}/${skill.dir}/${rel}`, fs.readFileSync(path.join(source, rel)), 0o644);
-      }
-    }
-  }
-
-  private async sweepDeadSkillLinks(host: RemoteHost, home: string): Promise<void> {
-    for (const dir of allSkillDirs(home)) {
-      for (const link of await host.sweepSkillLinks(dir)) console.log(`[skill] ${host.id}: removed dead link ${link}`);
-    }
-  }
-
-  /**
-   * The remote twin of skill-link.ts placeRendered: the skill rendered for the harnesses reading
-   * `where` on this host, at `<version>/bundled/<readers>` — so an upgrade retires it with the build.
-   * Sent only when its digest differs from what this host and daemon instance last got, so an
-   * unchanged library costs no write.
-   */
-  private async placeRendered(host: RemoteHost, source: string, where: SkillHome, home: string, base: string, key: string): Promise<string> {
-    const rendered = renderBundledSkill(source, host.id, skillReaders(where.dir, home));
-    const target = `${base}/bundled/${rendered.key}`;
-    const placedKey = `${key}@${rendered.key}`;
-    if (this.renderedPlaced.get(placedKey) !== rendered.digest) {
-      for (const [rel, data] of rendered.files) await host.writeFile(`${target}/${rel}`, data, 0o444, { atomic: true });
-      this.renderedPlaced.set(placedKey, rendered.digest);
-      console.log(`[skill] ${host.id}: wrote ${target} for ${where.dir}`);
-    }
-    return target;
-  }
-
-  /**
-   * Put the agy plugin where an agy agent's harness finds plugins on the host — the remote twin of
-   * agy-plugin.ts ensureAgyPlugin, which says why. Like the bundled skills: the files go into the
-   * version's own directory once per version, the link is made at every spawn (so an upgrade
-   * repoints it), and once per version a link an older build left into a directory that is gone is
-   * swept, because agy would otherwise try to load a plugin that is not there. Best-effort.
-   */
-  async placeAgyPlugin(host: RemoteHost, def: AgentDef, home: string, w: Welcome): Promise<void> {
-    const where = agyPluginHome(def.harness, home);
-    if (!where || envOf('NO_SKILL_LINK')) return;
-    const target = `${w.home}/.fleetherd/remote/${w.version}/${AGY_PLUGIN_DIR}`;
-    const key = `${host.id}@${w.version}@${w.instance}`;
-    try {
-      if (!this.agyPluginPlaced.has(key)) {
-        const source = agyPluginSource();
-        for (const rel of listFiles(source)) {
-          await host.writeFile(`${target}/${rel}`, fs.readFileSync(path.join(source, rel)), 0o644);
-        }
-        for (const link of await host.sweepSkillLinks(where.dir)) console.log(`[agy] ${host.id}: removed dead link ${link}`);
-        this.agyPluginPlaced.add(key);
-      }
-      const r = await host.ensureLink(target, `${where.dir}/${AGY_PLUGIN_NAME}`, where.requires);
-      if (r.outcome === 'linked' || r.outcome === 'relinked') console.log(`[agy] ${host.id}: linked ${r.link} → ${target}`);
-      else if (r.outcome === 'occupied' || r.outcome === 'failed') console.warn(`[agy] ${host.id}: ${r.link}: ${r.outcome} (${r.detail ?? ''})`);
-    } catch (e) {
-      console.warn(`[agy] ${host.id}: could not place the plugin:`, e instanceof Error ? e.message : e);
-    }
-  }
-
-  /**
-   * The bundled skill's link before 3.0.0, `talkcode` → ~/.talkcode/remote/<version>/skill, taken
-   * back where `fleetherd` is now linked — only when it points into this gateway's own directory
-   * (remote/legacy.go reads that under both spellings), as the local twin does (skill-link.ts).
-   */
-  private async removeLegacySkillLinks(host: RemoteHost, homes: SkillHome[], w: Welcome): Promise<void> {
-    for (const h of homes) {
-      const r = await host.removeLink(`${h.dir}/${LEGACY_SKILL_LINK}`, `${w.home}/.fleetherd/remote`);
-      if (r.outcome === 'removed') console.log(`[skill] ${host.id}: removed ${r.link}, the skill's link before 3.0.0`);
-    }
-  }
-
-  /**
-   * Put the operator's instructions where `def`'s harness reads them on the host — the remote twin
-   * of instructions.ts placeInstructions, which says where and under what rules. The text is
-   * composed HERE, from this gateway's `instructions/` directory, and the host only receives the
-   * result: one copy of the operator's words, wherever the agents run.
-   *
-   * Settled outcomes are remembered per host, daemon instance and file, so an unchanged text costs
-   * no round trip on the next spawn; a new remote daemon (an upgrade, a restart) places it again.
-   * What is not settled — a real file in the way, a failure — is tried again at the next spawn, and
-   * warned about once. Best-effort like the skill.
-   *
-   * Answers what it came to, for the web UI's editor, which places the text the moment it is saved
-   * and says where it landed (instructions-panel.ts): undefined when nothing is placed at all (no
-   * file for this harness, or placing turned off), `current` for a text already settled there.
-   */
-  async placeInstructions(host: RemoteHost, def: AgentDef, home: string, w: Welcome): Promise<InstructionsResult | undefined> {
-    if (envOf('NO_SKILL_LINK')) return undefined;
-    // The merge turned delivery off for this agent (config/pods.ts): its file and any link there
-    // are left exactly as they are.
-    if (instructionsOff(def)) return undefined;
-    const where = instructionsHome(def, home);
-    if (!where) return undefined;
-    const key = `${host.id}@${w.instance}@${where.file}`;
-    try {
-      const composed = composeInstructions(instructionsDir(), where.name);
-      const state = composed.kind === 'text' ? createHash('sha256').update(composed.text).digest('hex') : composed.kind;
-      if (this.instructionsPlaced.get(key) === state) {
-        return { link: where.file, outcome: composed.kind === 'text' ? 'current' : composed.kind === 'none' ? 'absent' : 'too-big' };
-      }
-      const owned = ownedDir(home);
-      let r: InstructionsResult;
-      if (composed.kind === 'none') {
-        r = (await host.removeLink(where.file, owned)) as InstructionsResult;
-      } else if (composed.kind === 'too-big') {
-        r = { link: where.file, outcome: 'too-big', detail: `${composed.bytes} bytes, over the ${INSTRUCTIONS_MAX_BYTES}-byte limit` };
-      } else {
-        const copy = path.join(owned, `${where.name}.md`);
-        await host.writeFile(copy, Buffer.from(composed.text, 'utf8'), 0o444, { atomic: true });
-        r = (await host.ensureLink(copy, where.file, where.requires, owned)) as InstructionsResult;
-      }
-      reportInstructions(r, host.id);
-      if (SETTLED.has(r.outcome)) this.instructionsPlaced.set(key, state);
-      return r;
-    } catch (e) {
-      const r: InstructionsResult = { link: where.file, outcome: 'failed', detail: e instanceof Error ? e.message : String(e) };
-      reportInstructions(r, host.id);
-      return r;
-    }
-  }
-
-  /**
-   * Put the gateway's managed skills where `def` reads skills on the host — the remote twin of
-   * managed-skills.ts `placeManagedSkills`, which says where and under what rules. The copy goes to
-   * `<home>/.fleetherd/skills/<name>/`; each skill is linked into the harness's directories with
-   * `owned` set, so a link of the operator's own is never repointed.
-   *
-   * The files and the links are remembered separately. The files are one copy per skill, so a
-   * version delivered once is not sent again (per host and daemon instance); the links are one per
-   * harness directory, so a codex start followed by a claude start on the same host still makes the
-   * claude link — the old single key made the second harness skip everything, and its directory
-   * stayed empty until the skill changed or the gateway restarted.
-   *
-   * A version change writes the current files first and only then prunes what the copy no longer
-   * has, so no reader ever sees the skill half-deleted; the prune is limited to the copy directory
-   * (remote/ops.go opRemovePath). An archived skill has its links taken back in every directory a
-   * link could be in and its copy removed — the same end state the local delivery reaches — then
-   * is remembered as archived so a spawn costs nothing more. A restore changes the version, which
-   * puts it back through the active path. Best-effort like the bundled skill.
-   */
-  async placeManagedSkills(host: RemoteHost, def: AgentDef, home: string, w: Welcome, dir?: string): Promise<void> {
-    if (envOf('NO_SKILL_LINK')) return;
-    const owned = managedSkillsHome(home);
-    await this.placeActiveManagedSkills(host, def, home, owned, w, dir);
-    await this.retireManagedSkills(host, home, owned, w, dir);
-  }
-
-  /**
-   * The active skills that reach this agent: files once per version, links once per harness
-   * directory — for a resident skill. A library skill gets its files and no link, and a link it
-   * had while resident is taken back (managed-skills.ts applyManagedSkills says why).
-   */
-  private async placeActiveManagedSkills(host: RemoteHost, def: AgentDef, home: string, owned: string, w: Welcome, dir?: string): Promise<void> {
-    const homes = skillHomes(def.harness, home, def.command);
-    for (const skill of activeSkillFiles(dir)) {
-      if (!deliveredTo(skill, def)) continue;
-      const key = `${host.id}@${w.instance}@${skill.name}`;
-      this.managedArchived.delete(key);
-      const copy = `${owned}/${skill.name}`;
-      try {
-        if (this.managedFiles.get(key) !== skill.version) {
-          for (const [rel, data] of skill.files) {
-            await host.writeFile(`${copy}/${rel}`, data, rel.startsWith('scripts/') ? 0o555 : 0o444, { atomic: true });
-          }
-          await this.pruneManagedFiles(host, copy, skill);
-          this.managedFiles.set(key, skill.version);
-        }
-      } catch (e) {
-        console.warn(`[skills] ${host.id}: could not place "${skill.name}":`, e instanceof Error ? e.message : e);
-        continue;
-      }
-      if (!skill.meta.resident) {
-        await this.unlinkLibrarySkill(host, home, key, skill.name, owned);
-        continue;
-      }
-      for (const h of homes) {
-        const linkKey = `${key}@${h.dir}`;
-        if (this.managedLinks.get(linkKey) === 'linked' || this.managedLinks.get(linkKey) === 'occupied') continue;
-        try {
-          const outcome = await this.linkManaged(host, copy, h, skill.name, owned);
-          if (outcome === 'linked' || outcome === 'relinked' || outcome === 'current') this.managedLinks.set(linkKey, 'linked');
-          else if (outcome === 'occupied') this.managedLinks.set(linkKey, 'occupied');
-        } catch (e) {
-          console.warn(`[skills] ${host.id}: could not link "${skill.name}" for ${h.dir}:`, e instanceof Error ? e.message : e);
-        }
-      }
-    }
-  }
-
-  /** A library skill's links, taken back from every directory once; remembered so a spawn costs nothing. */
-  private async unlinkLibrarySkill(host: RemoteHost, home: string, key: string, name: string, owned: string): Promise<void> {
-    for (const d of allSkillDirs(home)) {
-      const linkKey = `${key}@${d}`;
-      if (this.managedLinks.get(linkKey) === 'absent') continue;
-      try {
-        await this.unlinkManaged(host, d, name, owned, 'in the library now');
-        this.managedLinks.set(linkKey, 'absent');
-      } catch (e) {
-        console.warn(`[skills] ${host.id}: could not take back "${name}" from ${d}:`, e instanceof Error ? e.message : e);
-      }
-    }
-  }
-
-  /** Archived skills: links taken back everywhere, the copy removed, then remembered as done. */
-  private async retireManagedSkills(host: RemoteHost, home: string, owned: string, w: Welcome, dir?: string): Promise<void> {
-    for (const name of archivedSkillNames(dir)) {
-      const key = `${host.id}@${w.instance}@${name}`;
-      if (this.managedArchived.has(key)) continue;
-      try {
-        for (const d of allSkillDirs(home)) {
-          await this.unlinkManaged(host, d, name, owned, 'archived');
-          this.managedLinks.set(`${key}@${d}`, 'absent');
-        }
-        await host.removePath(`${owned}/${name}`, owned);
-        this.managedFiles.set(key, 'absent');
-        this.managedArchived.add(key);
-      } catch (e) {
-        console.warn(`[skills] ${host.id}: could not take back archived "${name}":`, e instanceof Error ? e.message : e);
-      }
-    }
-  }
-
-  /** Delete the files the copy still has that this version no longer carries (never before writing). */
-  private async pruneManagedFiles(host: RemoteHost, copy: string, skill: { files: Map<string, Buffer> }): Promise<void> {
-    const have = await host.listFiles(copy);
-    for (const rel of have) {
-      if (skill.files.has(rel)) continue;
-      await host.removePath(`${copy}/${rel}`, copy);
-    }
-  }
-
-  /** One managed skill's link into one of a harness's directories, with `owned` set. */
-  private async linkManaged(host: RemoteHost, copy: string, where: { dir: string; requires: string }, name: string, owned: string): Promise<string> {
-    const r = await host.ensureLink(copy, `${where.dir}/${name}`, where.requires, owned);
-    if (r.outcome === 'linked' || r.outcome === 'relinked') console.log(`[skills] ${host.id}: ${r.outcome} ${r.link} → ${copy}`);
-    else if (r.outcome === 'occupied' || r.outcome === 'failed') {
-      console.warn(`[skills] ${host.id}: ${r.link}: ${r.outcome} (${r.detail ?? ''}) — leaving it alone`);
-    }
-    return r.outcome;
-  }
-
-  /**
-   * Take one skill's link out of one directory, only if it is ours. `why` comes from the caller,
-   * the one place that knows: the log said "archived" for every take-back, and named two active
-   * skills a person had moved to the library archived.
-   */
-  private async unlinkManaged(host: RemoteHost, dir: string, name: string, owned: string, why: 'archived' | 'in the library now'): Promise<void> {
-    const r = await host.removeLink(`${dir}/${name}`, owned);
-    if (r.outcome === 'removed') console.log(`[skills] ${host.id}: took back ${r.link} (${why})`);
-    else if (r.outcome === 'kept') console.warn(`[skills] ${host.id}: ${r.link} is ${r.detail ?? 'not ours'} — leaving it alone`);
-  }
-
-  /**
    * Run one `fleetherd …` an agent on a host invoked, as this gateway's own CLI — the same program a
    * local agent's command runs, so parsing, validation and output are the same — with the turn
    * token the agent holds, this daemon's socket, and the agent's directory and home, which is what
@@ -562,16 +210,6 @@ export class RemoteHosts {
 
 function hostKey(def: HostDef): string {
   return JSON.stringify([def.ssh, def.identityFile ?? '', def.knownHostsFile ?? '']);
-}
-
-function listFiles(dir: string, prefix = ''): string[] {
-  const out: string[] = [];
-  for (const e of fs.readdirSync(path.join(dir, prefix), { withFileTypes: true })) {
-    const rel = prefix ? `${prefix}/${e.name}` : e.name;
-    if (e.isDirectory()) out.push(...listFiles(dir, rel));
-    else if (e.isFile()) out.push(rel);
-  }
-  return out;
 }
 
 /** The daemon's registry (see the header for why it is module-level). */

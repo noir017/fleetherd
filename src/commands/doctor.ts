@@ -7,7 +7,7 @@ import { ConfigSchema, accessUnrestricted, platformInstances, type Config, type 
 import { isNamedPipe } from '../ipc/server.js';
 import { spawnSync } from 'node:child_process';
 import { sshArgs } from '../remote/binaries.js';
-import { defaultIdentityFile, defaultKnownHostsFile } from '../daemon/remote-hosts.js';
+import { defaultIdentityFile, defaultKnownHostsFile } from '../daemon/ssh-identity.js';
 import { gitAsync, gitAvailable } from '../daemon/skills-git.js';
 import { gitSshCommand, redactRepoUrl, skillsRemoteOf } from '../daemon/skills-repo.js';
 import { isLegacyConfig, migrateLegacyConfig } from '../config/migrate.js';

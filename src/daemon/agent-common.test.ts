@@ -2,7 +2,11 @@ import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { buildHarnessEnv, expandHome, prependPath, windowsSpawnOptions } from './agent-common.js';
+import type { AgentDef } from '../config/schema.js';
+import type { Welcome } from '../remote/connection.js';
+import type { RemoteHost } from '../remote/host.js';
+import { buildAgentEnv, buildHarnessEnv, expandHome, prepareRemoteSpawn, prependPath, windowsSpawnOptions } from './agent-common.js';
+import type { AgentProvision } from './provision.js';
 import { shellLaunch } from './schedule-bash.js';
 
 describe('buildHarnessEnv', () => {
@@ -75,5 +79,44 @@ describe('Windows compatibility helpers', () => {
       detached: false,
       windowsHide: true,
     });
+  });
+});
+
+describe('agent provision dispatch', () => {
+  const def = { id: 'cc', harness: 'claude', args: [], env: { HOME: '/home/me/agent' }, permissions: 'auto', options: {} } as AgentDef;
+
+  it('buildAgentEnv runs injected provisions in order with the agent home', () => {
+    const seen: string[] = [];
+    const make = (name: string): AgentProvision => ({
+      name,
+      local: (d, home) => {
+        seen.push(`${name}:${d.id}:${home}`);
+      },
+      remote: async () => {},
+    });
+    buildAgentEnv(def, 'tok', '/tmp/ipc.sock', [make('first'), make('second')]);
+    expect(seen).toEqual(['first:cc:/home/me/agent', 'second:cc:/home/me/agent']);
+  });
+
+  it('prepareRemoteSpawn runs injected provisions sequentially with the resolved remote home', async () => {
+    const seen: string[] = [];
+    const welcome: Welcome = { version: '9.0.0', instance: 'i1', home: '/home/me', pid: 1, os: 'linux', arch: 'amd64', resumed: false };
+    const host = {
+      id: 'myhost',
+      ready: async () => welcome,
+      mkdirp: async () => {},
+      stat: async () => ({ exists: true, dir: true }),
+    } as unknown as RemoteHost;
+    const remoteDef = { ...def, host: 'myhost', env: { HOME: '~/alt' } } as AgentDef;
+    const make = (name: string): AgentProvision => ({
+      name,
+      local: () => {},
+      remote: async (h, d, home, w) => {
+        seen.push(`${name}:${h.id}:${d.id}:${home}:${w.instance}`);
+      },
+    });
+    const res = await prepareRemoteSpawn(remoteDef, host, '/home/me/.fleetherd/agents/cc', [make('first'), make('second')]);
+    expect(res.cwd).toBe('/home/me/.fleetherd/agents/cc');
+    expect(seen).toEqual(['first:myhost:cc:/home/me/alt:i1', 'second:myhost:cc:/home/me/alt:i1']);
   });
 });

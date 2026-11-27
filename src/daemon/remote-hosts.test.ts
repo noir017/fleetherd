@@ -8,7 +8,9 @@ import { normalizeActionPaths } from '../commands/reverse.js';
 import { expandRemoteHome, remoteAgentEnv, remoteAgentHome, remoteAgentRoot } from './agent-common.js';
 import { remoteClaudeProjectsDir } from './claude-transcript.js';
 import { diffConfig } from './config-reload.js';
+import type { HostFiles } from './provision.js';
 import { gatewayNamespace, RemoteHosts } from './remote-hosts.js';
+import { createBundledSkillProvision } from './skill-link.js';
 import type { Welcome } from '../remote/connection.js';
 import type { RemoteHost } from '../remote/host.js';
 import { workdirScanFrom } from './workdir-scan.js';
@@ -246,7 +248,7 @@ describe('scheduled --bash from a remote agent', () => {
   });
 });
 
-describe('RemoteHosts.placeSkill', () => {
+describe('bundledSkillProvision.remote', () => {
   class FakeHost {
     readonly id = 'myhost';
     readonly writes = new Map<string, string>();
@@ -274,29 +276,29 @@ describe('RemoteHosts.placeSkill', () => {
   const claude = { id: 'cc', harness: 'claude', host: 'myhost', env: {} } as unknown as AgentDef;
   const codex = { id: 'cx', harness: 'codex', host: 'myhost', env: {} } as unknown as AgentDef;
 
-  const place = async (hosts: RemoteHosts, host: FakeHost, def: AgentDef): Promise<void> => {
+  const place = async (provision: ReturnType<typeof createBundledSkillProvision>, host: FakeHost, def: AgentDef): Promise<void> => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     try {
-      await hosts.placeSkill(host as unknown as RemoteHost, def, '/home/me', w);
+      await provision.remote(host as unknown as HostFiles, def, '/home/me', w);
     } finally {
       log.mockRestore();
     }
   };
 
   it('still writes skill-super files when the first agent on the host has no skill directory', async () => {
-    const [hosts, host] = [new RemoteHosts(), new FakeHost()];
-    await place(hosts, host, custom);
+    const [provision, host] = [createBundledSkillProvision(), new FakeHost()];
+    await place(provision, host, custom);
     expect(host.swept.length).toBeGreaterThan(0);
     expect([...host.writes.keys()].some((p) => p.startsWith(`${base}/skill-super/`))).toBe(false);
 
     const sweptAfterFirst = host.swept.length;
-    await place(hosts, host, claude);
+    await place(provision, host, claude);
     expect(host.writes.has(`${base}/skill-super/SKILL.md`)).toBe(true);
     expect(host.links.get('/home/me/.claude/skills/super')).toBe(`${base}/skill-super`);
     expect(host.swept.length).toBe(sweptAfterFirst);
 
     host.writes.clear();
-    await place(hosts, host, codex);
+    await place(provision, host, codex);
     expect([...host.writes.keys()].some((p) => p.startsWith(`${base}/skill-super/`))).toBe(false);
     expect(host.links.get('/home/me/.agents/skills/super')).toBe(`${base}/skill-super`);
   });

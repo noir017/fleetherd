@@ -27,6 +27,7 @@ import {
   windowsSpawnOptions,
   type AgentChild,
 } from './agent-common.js';
+import type { AgentProvision } from './provision.js';
 import { agyWindow } from './agy-acp.js';
 import { isAgentAnswer } from './agent-reconnect.js';
 import { AGY_COMMAND } from './agy-cli.js';
@@ -352,11 +353,12 @@ export interface RemotePlace {
  */
 export async function placeOnHost(
   def: AgentDef,
-  cwd: string
+  cwd: string,
+  provisions: readonly AgentProvision[] = []
 ): Promise<{ place: RemotePlace; cwd: string } | undefined> {
   const host = remoteHosts.hostFor(def);
   if (!host) return undefined;
-  const prepared = await prepareRemoteSpawn(def, host, cwd);
+  const prepared = await prepareRemoteSpawn(def, host, cwd, provisions);
   return { place: { host, welcome: prepared.welcome }, cwd: prepared.cwd };
 }
 
@@ -372,6 +374,7 @@ export async function launchAcpChild(opts: {
   sessionToken: string;
   place: RemotePlace | undefined;
   topic?: string;
+  provisions?: readonly AgentProvision[];
 }): Promise<{
   command: string;
   args: string[];
@@ -379,13 +382,13 @@ export async function launchAcpChild(opts: {
   child: AgentChild;
   mcpServers: () => McpServer[];
 }> {
-  const { def, cwd, socketPath, sessionToken, place, topic } = opts;
+  const { def, cwd, socketPath, sessionToken, place, topic, provisions = [] } = opts;
   const initExtra = def.connect ? { _meta: await connectMeta(def, def.connect, place, topic) } : {};
   const { command, args } = def.connect
     ? { command: def.connect.url, args: [] }
     : resolveHarness(def, place !== undefined);
   const relay = await relayEnv(def, place?.host);
-  return { command, args, initExtra, ...spawnChild(def, command, args, cwd, socketPath, sessionToken, place, relay) };
+  return { command, args, initExtra, ...spawnChild(def, command, args, cwd, socketPath, sessionToken, place, relay, provisions) };
 }
 
 function spawnChild(
@@ -396,7 +399,8 @@ function spawnChild(
   socketPath: string,
   sessionToken: string,
   place: RemotePlace | undefined,
-  relay: Record<string, string>
+  relay: Record<string, string>,
+  provisions: readonly AgentProvision[]
 ): { child: AgentChild; mcpServers: () => McpServer[] } {
   if (def.connect) {
     return place
@@ -404,7 +408,7 @@ function spawnChild(
       : { child: connectHere(def.connect), mcpServers: () => acpMcpServers(sessionToken, socketPath, cwd) };
   }
   if (!place) {
-    const env = { ...buildAgentEnv(def, sessionToken, socketPath), ...relay };
+    const env = { ...buildAgentEnv(def, sessionToken, socketPath, provisions), ...relay };
     return {
       child: spawn(command, args, { cwd, env, ...windowsSpawnOptions(command, env) }),
       mcpServers: () => acpMcpServers(sessionToken, socketPath, cwd),

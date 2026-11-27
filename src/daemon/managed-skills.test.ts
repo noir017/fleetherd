@@ -4,9 +4,8 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentDef } from '../config/schema.js';
 import type { Welcome } from '../remote/connection.js';
-import type { RemoteHost } from '../remote/host.js';
-import { RemoteHosts } from './remote-hosts.js';
-import { applyManagedSkills, managedSkillsHome, placeManagedSkills } from './managed-skills.js';
+import type { HostFiles } from './provision.js';
+import { applyManagedSkills, createManagedSkillsProvision, managedSkillsHome, placeManagedSkills } from './managed-skills.js';
 import { archiveSkill, createSkill, patchSkill, removeSkillFile, setResident, showSkill, writeSkillFile } from './skills-store.js';
 
 /**
@@ -199,54 +198,54 @@ describe('placeManagedSkills on a remote host', () => {
 
   it('links a second harness on the same host and version, where the files are already cached', async () => {
     const host = new FakeHost();
-    const hosts = new RemoteHosts();
+    const provision = createManagedSkillsProvision(dir);
     const codex = { id: 'cx', harness: 'codex', env: {} } as unknown as AgentDef;
-    await hosts.placeManagedSkills(host as unknown as RemoteHost, codex, '/home/u', welcome('i1'), dir);
+    await provision.remote(host as unknown as HostFiles, codex, '/home/u', welcome('i1'));
     expect(host.links.get('/home/u/.agents/skills/deploy-check')).toBe('/home/u/.fleetherd/skills/deploy-check');
     expect(host.links.has('/home/u/.claude/skills/deploy-check')).toBe(false);
     // The files are already on the host for this instance; the claude link must still be made.
-    await hosts.placeManagedSkills(host as unknown as RemoteHost, claude, '/home/u', welcome('i1'), dir);
+    await provision.remote(host as unknown as HostFiles, claude, '/home/u', welcome('i1'));
     expect(host.links.get('/home/u/.claude/skills/deploy-check')).toBe('/home/u/.fleetherd/skills/deploy-check');
   });
 
   it('writes once per version, and links into the harness directories with `owned`', async () => {
     const host = new FakeHost();
-    const hosts = new RemoteHosts();
-    await hosts.placeManagedSkills(host as unknown as RemoteHost, claude, '/home/u', welcome('i1'), dir);
+    const provision = createManagedSkillsProvision(dir);
+    await provision.remote(host as unknown as HostFiles, claude, '/home/u', welcome('i1'));
     expect(host.writes).toContain('/home/u/.fleetherd/skills/deploy-check/SKILL.md');
     expect(host.writes).toContain('/home/u/.fleetherd/skills/deploy-check/references/api.md');
     expect(host.links.get('/home/u/.claude/skills/deploy-check')).toBe('/home/u/.fleetherd/skills/deploy-check');
     const written = host.writes.length;
-    await hosts.placeManagedSkills(host as unknown as RemoteHost, claude, '/home/u', welcome('i1'), dir);
+    await provision.remote(host as unknown as HostFiles, claude, '/home/u', welcome('i1'));
     expect(host.writes).toHaveLength(written);
   });
 
   it('re-sends after a change, and re-places for a new gateway instance', async () => {
     const host = new FakeHost();
-    const hosts = new RemoteHosts();
-    await hosts.placeManagedSkills(host as unknown as RemoteHost, claude, '/home/u', welcome('i1'), dir);
+    const provision = createManagedSkillsProvision(dir);
+    await provision.remote(host as unknown as HostFiles, claude, '/home/u', welcome('i1'));
     const written = host.writes.length;
     const shown = showSkill('deploy-check', undefined, dir);
     patchSkill(
       { name: 'deploy-check', version: shown.version, content: residentMd('new', 'new'), now: T0 + 2 },
       dir
     );
-    await hosts.placeManagedSkills(host as unknown as RemoteHost, claude, '/home/u', welcome('i1'), dir);
+    await provision.remote(host as unknown as HostFiles, claude, '/home/u', welcome('i1'));
     expect(host.writes.length).toBeGreaterThan(written);
     const afterChange = host.writes.length;
-    await hosts.placeManagedSkills(host as unknown as RemoteHost, claude, '/home/u', welcome('i2'), dir);
+    await provision.remote(host as unknown as HostFiles, claude, '/home/u', welcome('i2'));
     expect(host.writes.length).toBeGreaterThan(afterChange);
   });
 
   it('writes the new version before pruning a file it no longer carries', async () => {
     const host = new FakeHost();
-    const hosts = new RemoteHosts();
-    await hosts.placeManagedSkills(host as unknown as RemoteHost, claude, '/home/u', welcome('i1'), dir);
+    const provision = createManagedSkillsProvision(dir);
+    await provision.remote(host as unknown as HostFiles, claude, '/home/u', welcome('i1'));
     removeSkillFile({ name: 'deploy-check', file: 'references/api.md', now: T0 + 2 }, dir);
     // What the previous version left in the copy: the file that was just removed is still there.
     host.remoteFiles = ['SKILL.md', 'references/api.md'];
     host.ops.length = 0;
-    await hosts.placeManagedSkills(host as unknown as RemoteHost, claude, '/home/u', welcome('i1'), dir);
+    await provision.remote(host as unknown as HostFiles, claude, '/home/u', welcome('i1'));
     expect(host.removedPaths).toEqual([
       { path: '/home/u/.fleetherd/skills/deploy-check/references/api.md', owned: '/home/u/.fleetherd/skills/deploy-check' },
     ]);
@@ -259,11 +258,11 @@ describe('placeManagedSkills on a remote host', () => {
 
   it('places a library skill without a link, and takes back the link once it leaves the resident tier', async () => {
     const host = new FakeHost();
-    const hosts = new RemoteHosts();
-    await hosts.placeManagedSkills(host as unknown as RemoteHost, claude, '/home/u', welcome('i1'), dir);
+    const provision = createManagedSkillsProvision(dir);
+    await provision.remote(host as unknown as HostFiles, claude, '/home/u', welcome('i1'));
     expect(host.links.get('/home/u/.claude/skills/deploy-check')).toBe('/home/u/.fleetherd/skills/deploy-check');
     setResident('deploy-check', false, dir, T0 + 2);
-    const logged = await takeBacks(() => hosts.placeManagedSkills(host as unknown as RemoteHost, claude, '/home/u', welcome('i1'), dir));
+    const logged = await takeBacks(() => provision.remote(host as unknown as HostFiles, claude, '/home/u', welcome('i1')));
     expect(host.links.has('/home/u/.claude/skills/deploy-check')).toBe(false);
     // Still active, so the log must not call it archived.
     expect(logged).toContain('[skills] h1: took back /home/u/.claude/skills/deploy-check (in the library now)');
@@ -271,16 +270,16 @@ describe('placeManagedSkills on a remote host', () => {
     expect(host.writes.filter((w) => w.endsWith('deploy-check/SKILL.md'))).toHaveLength(2);
     // Remembered: a second spawn asks the host nothing more about it.
     const removed = host.removed.length;
-    await hosts.placeManagedSkills(host as unknown as RemoteHost, claude, '/home/u', welcome('i1'), dir);
+    await provision.remote(host as unknown as HostFiles, claude, '/home/u', welcome('i1'));
     expect(host.removed).toHaveLength(removed);
   });
 
   it('takes back an archived skill in every directory, removes its copy, then remembers it', async () => {
     const host = new FakeHost();
-    const hosts = new RemoteHosts();
-    await hosts.placeManagedSkills(host as unknown as RemoteHost, claude, '/home/u', welcome('i1'), dir);
+    const provision = createManagedSkillsProvision(dir);
+    await provision.remote(host as unknown as HostFiles, claude, '/home/u', welcome('i1'));
     archiveSkill('deploy-check', dir, T0 + 2);
-    const logged = await takeBacks(() => hosts.placeManagedSkills(host as unknown as RemoteHost, claude, '/home/u', welcome('i1'), dir));
+    const logged = await takeBacks(() => provision.remote(host as unknown as HostFiles, claude, '/home/u', welcome('i1')));
     expect(logged).toContain('[skills] h1: took back /home/u/.claude/skills/deploy-check (archived)');
     expect(logged.filter((l) => l.includes('library'))).toEqual([]);
     expect(host.removed).toContain('/home/u/.claude/skills/deploy-check');
@@ -288,7 +287,7 @@ describe('placeManagedSkills on a remote host', () => {
     expect(host.removedPaths).toContainEqual({ path: '/home/u/.fleetherd/skills/deploy-check', owned: '/home/u/.fleetherd/skills' });
     const removed = host.removed.length;
     const removedPaths = host.removedPaths.length;
-    await hosts.placeManagedSkills(host as unknown as RemoteHost, claude, '/home/u', welcome('i1'), dir);
+    await provision.remote(host as unknown as HostFiles, claude, '/home/u', welcome('i1'));
     expect(host.removed).toHaveLength(removed);
     expect(host.removedPaths).toHaveLength(removedPaths);
   });

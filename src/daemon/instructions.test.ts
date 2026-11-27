@@ -5,16 +5,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentDef } from '../config/schema.js';
 import { instructionsHome, type InstructionsHome } from '../config/instructions.js';
 import type { Welcome } from '../remote/connection.js';
-import type { RemoteHost } from '../remote/host.js';
 import {
   INSTRUCTIONS_MAX_BYTES,
   applyInstructions,
   standingInstructions,
   composeInstructions,
+  createInstructionsProvision,
   ownedDir,
   placeInstructions,
 } from './instructions.js';
-import { RemoteHosts } from './remote-hosts.js';
+import type { HostFiles } from './provision.js';
 
 /**
  * Placing instructions writes into the operator's own directories (`~/.codex/AGENTS.md`), so these
@@ -218,7 +218,7 @@ describe('placeInstructions', () => {
   });
 });
 
-describe('RemoteHosts.placeInstructions', () => {
+describe('instructionsProvision.remote', () => {
   let saved: string | undefined;
   beforeEach(() => {
     saved = process.env.FLEETHERD_CONFIG_DIR;
@@ -243,13 +243,13 @@ describe('RemoteHosts.placeInstructions', () => {
   const welcome = { instance: 'i1', home: '/home/u' } as unknown as Welcome;
 
   it('sends the text composed here, and nothing more while it stays the same', async () => {
-    const hosts = new RemoteHosts();
+    const provision = createInstructionsProvision();
     const host = fakeHost();
     vi.spyOn(console, 'log').mockImplementation(() => {});
     fs.writeFileSync(path.join(dir, 'common.md'), 'mine\n');
     fs.writeFileSync(path.join(dir, 'codex.md'), 'codex only\n');
 
-    await hosts.placeInstructions(host as unknown as RemoteHost, def, '/home/u', welcome);
+    await provision.remote(host as unknown as HostFiles, def, '/home/u', welcome);
     expect(host.writeFile).toHaveBeenCalledWith(
       '/home/u/.fleetherd/instructions/codex.md',
       Buffer.from('mine\n\ncodex only\n'),
@@ -264,19 +264,19 @@ describe('RemoteHosts.placeInstructions', () => {
     );
 
     // What the editor reports after a save (instructions-panel.ts): the settled text is "current".
-    expect(await hosts.placeInstructions(host as unknown as RemoteHost, def, '/home/u', welcome)).toEqual({
+    expect(await provision.remote(host as unknown as HostFiles, def, '/home/u', welcome)).toEqual({
       link: '/home/u/.codex/AGENTS.md',
       outcome: 'current',
     });
     expect(host.writeFile).toHaveBeenCalledTimes(1);
 
     fs.writeFileSync(path.join(dir, 'codex.md'), 'changed\n');
-    await hosts.placeInstructions(host as unknown as RemoteHost, def, '/home/u', welcome);
+    await provision.remote(host as unknown as HostFiles, def, '/home/u', welcome);
     expect(host.writeFile).toHaveBeenCalledTimes(2);
   });
 
   it("composes a custom agent's own layer and links the file it names", async () => {
-    const hosts = new RemoteHosts();
+    const provision = createInstructionsProvision();
     const host = fakeHost();
     vi.spyOn(console, 'log').mockImplementation(() => {});
     fs.writeFileSync(path.join(dir, 'common.md'), 'mine\n');
@@ -289,7 +289,7 @@ describe('RemoteHosts.placeInstructions', () => {
       env: {},
     } as unknown as AgentDef;
 
-    await hosts.placeInstructions(host as unknown as RemoteHost, mh, '/home/u', welcome);
+    await provision.remote(host as unknown as HostFiles, mh, '/home/u', welcome);
     expect(host.writeFile).toHaveBeenCalledWith(
       '/home/u/.fleetherd/instructions/mh.md',
       Buffer.from('mine\n\nmine too\n'),
@@ -305,38 +305,38 @@ describe('RemoteHosts.placeInstructions', () => {
   });
 
   it('tries again at the next spawn while something is in the way', async () => {
-    const hosts = new RemoteHosts();
+    const provision = createInstructionsProvision();
     const host = fakeHost('occupied');
     fs.writeFileSync(path.join(dir, 'common.md'), 'mine\n');
     vi.spyOn(console, 'warn').mockImplementation(() => {});
-    await hosts.placeInstructions(host as unknown as RemoteHost, def, '/home/u', welcome);
-    await hosts.placeInstructions(host as unknown as RemoteHost, def, '/home/u', welcome);
+    await provision.remote(host as unknown as HostFiles, def, '/home/u', welcome);
+    await provision.remote(host as unknown as HostFiles, def, '/home/u', welcome);
     expect(host.ensureLink).toHaveBeenCalledTimes(2);
   });
 
   it('takes the link back once when there is nothing to deliver', async () => {
-    const hosts = new RemoteHosts();
+    const provision = createInstructionsProvision();
     const host = fakeHost();
     vi.spyOn(console, 'log').mockImplementation(() => {});
-    expect(await hosts.placeInstructions(host as unknown as RemoteHost, def, '/home/u', welcome)).toMatchObject({ outcome: 'removed' });
-    expect(await hosts.placeInstructions(host as unknown as RemoteHost, def, '/home/u', welcome)).toMatchObject({ outcome: 'absent' });
+    expect(await provision.remote(host as unknown as HostFiles, def, '/home/u', welcome)).toMatchObject({ outcome: 'removed' });
+    expect(await provision.remote(host as unknown as HostFiles, def, '/home/u', welcome)).toMatchObject({ outcome: 'absent' });
     expect(host.removeLink).toHaveBeenCalledTimes(1);
     expect(host.removeLink).toHaveBeenCalledWith('/home/u/.codex/AGENTS.md', '/home/u/.fleetherd/instructions');
     expect(host.writeFile).not.toHaveBeenCalled();
   });
 
   it('places nothing for a harness with no known file', async () => {
-    const hosts = new RemoteHosts();
+    const provision = createInstructionsProvision();
     const host = fakeHost();
     fs.writeFileSync(path.join(dir, 'common.md'), 'mine\n');
     const dsh = { id: 'd', harness: 'dsh', env: {} } as unknown as AgentDef;
-    await hosts.placeInstructions(host as unknown as RemoteHost, dsh, '/home/u', welcome);
+    await provision.remote(host as unknown as HostFiles, dsh, '/home/u', welcome);
     expect(host.writeFile).not.toHaveBeenCalled();
     expect(host.removeLink).not.toHaveBeenCalled();
   });
 
   it('places nothing for an agent whose delivery the merge turned off, and leaves its link alone', async () => {
-    const hosts = new RemoteHosts();
+    const provision = createInstructionsProvision();
     const host = fakeHost();
     fs.writeFileSync(path.join(dir, 'common.md'), 'mine\n');
     const off = {
@@ -345,7 +345,7 @@ describe('RemoteHosts.placeInstructions', () => {
       env: {},
       instructions: { file: '~/.codex/AGENTS.md', layer: 'cx', off: true },
     } as unknown as AgentDef;
-    expect(await hosts.placeInstructions(host as unknown as RemoteHost, off, '/home/u', welcome)).toBeUndefined();
+    expect(await provision.remote(host as unknown as HostFiles, off, '/home/u', welcome)).toBeUndefined();
     expect(host.writeFile).not.toHaveBeenCalled();
     expect(host.ensureLink).not.toHaveBeenCalled();
     expect(host.removeLink).not.toHaveBeenCalled();
