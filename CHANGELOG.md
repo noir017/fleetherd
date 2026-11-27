@@ -27,6 +27,11 @@ All notable changes to this project are documented here. The format is based on
 
 ### Fixed
 
+- **Mid-turn disconnect/reconnect notices no longer stay pinned at the bottom behind later progress.**
+  `TurnRunner` now seals the open accumulating tool bubble (`ToolRenderer.sealBubble`) and rotates the
+  active `StreamBuffer` segment whenever `onNotice`, `onPermission`, or `onElicit` posts into a
+  conversation lane, so subsequent tool progress and streamed text open new bubbles below the notice
+  instead of editing an older bubble above it.
 - **Mobile own-message action bar no longer renders inside the user bubble.** Below `640px`,
   `.m.own > .msg-actions` is anchored outside and right-aligned beneath the blue message bubble with
   matching bottom spacing instead of sitting inside the bubble and widening short messages.
