@@ -6,15 +6,21 @@ import { locateCommand, runDoctor } from './doctor.js';
 
 describe('commands/doctor i18n', () => {
   const origEnv = { ...process.env };
+  // Restore values in place: assigning a new object to process.env detaches it from the real
+  // environment that os.tmpdir()/os.homedir() read, for every later file in this worker.
+  const restoreEnv = (): void => {
+    for (const k of Object.keys(process.env)) if (!(k in origEnv)) delete process.env[k];
+    Object.assign(process.env, origEnv);
+  };
 
   beforeEach(() => {
     vi.restoreAllMocks();
-    process.env = { ...origEnv };
+    restoreEnv();
     delete process.env.FLEETHERD_LOCALE;
   });
 
   afterEach(() => {
-    process.env = { ...origEnv };
+    restoreEnv();
     process.exitCode = undefined;
   });
 

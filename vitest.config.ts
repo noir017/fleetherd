@@ -21,6 +21,8 @@ export default defineConfig({
     include: ['src/**/*.test.ts', 'scripts/**/*.test.mjs'],
     // A throwaway HOME per test file: see the file for what reached the real one.
     setupFiles: ['./vitest.setup.ts'],
+    // One temporary root for the run, removed after the last worker: see the file.
+    globalSetup: ['./vitest.global-setup.ts'],
     /**
      * The 5 s default is too tight on a 2-vCPU container running 158 files: a few tests walk a
      * fake clock a minute at a time (~3000 timer turns) or wait on a spawned child, and finish in
