@@ -182,6 +182,32 @@ describe('the library tier and who a skill reaches', () => {
     const placed = fs.readdirSync(managedSkillsHome(home)).sort();
     expect(placed).toEqual(['deploy-check']);
   });
+
+  it('keeps another harness-scoped skill copy and link when deploying a different harness on the same home', () => {
+    const codex = { id: 'cx', harness: 'codex', env: {} } as unknown as AgentDef;
+    fs.mkdirSync(path.join(home, '.codex'), { recursive: true });
+    createSkill({ name: 'codex-only', description: 'Use on codex', now: T0 }, dir);
+    patchSkill(
+      {
+        name: 'codex-only',
+        version: showSkill('codex-only', undefined, dir).version,
+        content: '---\nname: codex-only\ndescription: "Use on codex"\nmetadata:\n  fleetherd-resident: "true"\n  fleetherd-harnesses: "codex"\n---\n',
+        by: { kind: 'person' },
+        now: T0 + 1,
+      },
+      dir
+    );
+    const codexCopy = path.join(managedSkillsHome(home), 'codex-only');
+    const codexLink = path.join(home, '.agents', 'skills', 'codex-only');
+
+    applyManagedSkills(codex, home, dir);
+    expect(fs.existsSync(path.join(codexCopy, 'SKILL.md'))).toBe(true);
+    expect(fs.readlinkSync(codexLink)).toBe(codexCopy);
+
+    applyManagedSkills(claude, home, dir);
+    expect(fs.existsSync(path.join(codexCopy, 'SKILL.md'))).toBe(true);
+    expect(fs.readlinkSync(codexLink)).toBe(codexCopy);
+  });
 });
 
 describe('placeManagedSkills on a remote host', () => {
@@ -404,5 +430,34 @@ describe('placeManagedSkills on a remote host', () => {
     await provision.remote(host as unknown as HostFiles, claude, '/home/u', welcome('i1'));
     expect(host.links.has('/home/u/.claude/skills/deploy-check')).toBe(false);
     expect(host.removedPaths.length).toBeGreaterThan(removedBefore);
+  });
+
+  it('keeps another harness-scoped skill copy and link when deploying a different harness on the same remote host', async () => {
+    const codex = { id: 'cx', harness: 'codex', env: {} } as unknown as AgentDef;
+    createSkill({ name: 'codex-only', description: 'Use on codex', now: T0 }, dir);
+    patchSkill(
+      {
+        name: 'codex-only',
+        version: showSkill('codex-only', undefined, dir).version,
+        content: '---\nname: codex-only\ndescription: "Use on codex"\nmetadata:\n  fleetherd-resident: "true"\n  fleetherd-harnesses: "codex"\n---\n',
+        by: { kind: 'person' },
+        now: T0 + 1,
+      },
+      dir
+    );
+
+    const host = new FakeHost();
+    const provision = createManagedSkillsProvision(dir);
+    await provision.remote(host as unknown as HostFiles, codex, '/home/u', welcome('i1'));
+    expect(host.files.has('/home/u/.fleetherd/skills/codex-only/SKILL.md')).toBe(true);
+    expect(host.links.get('/home/u/.agents/skills/codex-only')).toBe('/home/u/.fleetherd/skills/codex-only');
+
+    // Same instance and a fresh instance (which forces a full owned-dir scan) must both keep codex-only.
+    await provision.remote(host as unknown as HostFiles, claude, '/home/u', welcome('i1'));
+    await provision.remote(host as unknown as HostFiles, claude, '/home/u', welcome('i2'));
+    expect(host.files.has('/home/u/.fleetherd/skills/codex-only/SKILL.md')).toBe(true);
+    expect(host.links.get('/home/u/.agents/skills/codex-only')).toBe('/home/u/.fleetherd/skills/codex-only');
+    expect(host.removed).not.toContain('/home/u/.agents/skills/codex-only');
+    expect(host.removedPaths).not.toContainEqual({ path: '/home/u/.fleetherd/skills/codex-only', owned: '/home/u/.fleetherd/skills' });
   });
 });
