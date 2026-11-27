@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.41.1] - 2026-11-27
+
 ### Fixed
 
 - **Sidebar activity bar order corrected.** Reordered the top activity bar to
