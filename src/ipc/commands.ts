@@ -229,6 +229,7 @@ export const HELP_TOPICS: HelpTopic[] = [
       'task-send only reaches a turn that is still running when the harness accepts input mid-turn (claude and codex do; agy does not). The answer says which happened: joined, queued behind the turn, or started. To redirect a harness that is not listening, `--interrupt` stops the turn and sends the message as the next one — its context is kept.',
       '`task-send <topic> --forward <other>` sends <text> with <other>\'s last normally-ended reply attached whole, under a heading naming the topic and its turn: a review verdict reaches the agent that must act on it without being retyped. Both topics must be ones this conversation opened; a topic with no normally-ended reply yet is refused.',
       '`task-new --review-by <agent> --review "<what to check>"` gives a part that changes code a review that runs without you: whenever one of its turns ends with new commits in its directory, the reviewer gets your --review text (the first time), the author\'s reply and the commit range, in a topic of its own beside it. The reviewer ends its turn with `fleetherd task-verdict pass|nits|changes`: pass ends the loop; nits sends its reply to the author to fix, with no further review; changes sends it back, and the author\'s fix returns to the same reviewer — at most --rounds times (default 3). You are told once, when it passes or when the loop stops: a turn that ends with no new commits, a review with no verdict, the rounds used up, a failure or question, the person writing in either topic, task-stop. Leave --review-by out for parts that change nothing or need no review. The reviewer must be on the author\'s machine; the person confirms both on one card.',
+      '`task-new --worktree [name]` asks the gateway to create `<repo>/.worktrees/<name>` on a new branch from HEAD on the agent\'s machine when the part starts (nothing is created at proposal time; the card shows the path and branch). `<name>` defaults to a slug of `--title`. The directory (`--cwd` or the agent\'s root) must be inside a git repository, and an existing worktree or branch name is refused. Merged, clean worktrees are removed automatically once idle for 1h; unmerged or dirty ones stay and appear in `tasks`.',
       'A reply that says it will carry on, or is only waiting for a command in the background, is not a finished job: the update card says `turn ended`, not done.',
     ],
   },
@@ -1350,6 +1351,11 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
         description: 'with --review-by: how many times the review may send the work back on its own (default 3)',
         parse: intArg('--rounds'),
       },
+      {
+        flags: '--worktree [name]',
+        description:
+          'create <repo>/.worktrees/<name> on a new branch from HEAD when the part starts (default <name>: slug of --title)',
+      },
     ],
     build: (positionals, opts) => {
       refuseChannel('task-new', opts);
@@ -1360,6 +1366,14 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
         throw new Error('--review-by and --review go together: who reviews, and the whole of what it checks');
       }
       if (opts.rounds !== undefined && reviewBy === undefined) throw new Error('--rounds applies only with --review-by');
+      let worktree: true | string | undefined;
+      if (opts.worktree === true) {
+        worktree = true;
+      } else if (typeof opts.worktree === 'string') {
+        const trimmed = opts.worktree.trim();
+        if (!trimmed) throw new Error('--worktree name cannot be empty');
+        worktree = trimmed;
+      }
       return {
         kind: 'task-new',
         agent: str(opts.agent),
@@ -1371,6 +1385,7 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
         reviewBy,
         review,
         rounds: typeof opts.rounds === 'number' ? opts.rounds : undefined,
+        ...(worktree !== undefined ? { worktree } : {}),
       };
     },
   },

@@ -139,6 +139,21 @@ describe('task commands', () => {
     expect(() => spec('task-verdict').build(['maybe'], {})).toThrow(/pass, nits or changes/);
   });
 
+  it('builds task-new --worktree with an optional name', () => {
+    expect(spec('task-new').build(['go'], { worktree: true, title: 'Fix Bug' })).toEqual({
+      kind: 'task-new',
+      text: 'go',
+      title: 'Fix Bug',
+      worktree: true,
+    });
+    expect(spec('task-new').build(['go'], { worktree: 'feat-a' })).toEqual({
+      kind: 'task-new',
+      text: 'go',
+      worktree: 'feat-a',
+    });
+    expect(() => spec('task-new').build(['go'], { worktree: '   ' })).toThrow(/--worktree name cannot be empty/);
+  });
+
   it('task-agents lists every agent, or one in full when it names one', () => {
     expect(spec('task-agents').usage).toBe('task-agents [agent]');
     expect(spec('task-agents').build([], {})).toEqual({ kind: 'task-agents' });
