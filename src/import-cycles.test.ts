@@ -12,36 +12,9 @@ import { SRC_ROOT, collectImports, resolveTarget, walkProdTs } from './test-util
 
 const EXCLUDED_DIRS = new Set(['platform/webui/client']);
 
-const ALLOWED_ALL_IMPORT_CYCLES: readonly (readonly string[])[] = [
-  // B: daemon conversation / delegation / turn-runner cluster
-  [
-    'daemon/conversation-commands.ts',
-    'daemon/conversation-context.ts',
-    'daemon/conversation-controls.ts',
-    'daemon/conversation-delegation.ts',
-    'daemon/conversation-history.ts',
-    'daemon/conversation-turns.ts',
-    'daemon/conversation.ts',
-    'daemon/delegation.ts',
-    'daemon/turn-outcomes.ts',
-    'daemon/turn-runner.ts',
-  ],
-  // C: types.ts <-> core/conversation.ts <-> config/schema.ts <-> config/instructions.ts
-  [
-    'config/instructions.ts',
-    'config/schema.ts',
-    'core/conversation.ts',
-    'types.ts',
-  ],
-];
+const ALLOWED_ALL_IMPORT_CYCLES: readonly (readonly string[])[] = [];
 
-const ALLOWED_VALUE_IMPORT_CYCLES: readonly (readonly string[])[] = [
-  // A: delegation.ts <-> turn-runner.ts
-  [
-    'daemon/delegation.ts',
-    'daemon/turn-runner.ts',
-  ],
-];
+const ALLOWED_VALUE_IMPORT_CYCLES: readonly (readonly string[])[] = [];
 
 function buildImportGraph(valuesOnly: boolean): Map<string, string[]> {
   const files = walkProdTs(SRC_ROOT, { excludeDirs: EXCLUDED_DIRS });

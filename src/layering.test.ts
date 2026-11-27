@@ -99,16 +99,8 @@ describe('module layering (AGENTS.md)', () => {
 });
 
 it('src/types.ts imports nothing from src/ or third-party packages (only node: built-ins)', () => {
-  const typesFile = path.join(path.dirname(fileURLToPath(import.meta.url)), 'types.ts');
-  const src = fs.readFileSync(typesFile, 'utf8');
-  const stripped = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
-  const importRe = /(?:^|[\s;])(?:import|export)\s+(?:type\s+)?(?:[\s\S]*?\s+from\s+)?['"]([^'"]+)['"]/g;
-  const violations: string[] = [];
-  for (const m of stripped.matchAll(importRe)) {
-    const spec = m[1];
-    if (spec && !spec.startsWith('node:')) {
-      violations.push(`types.ts imports ${spec} (only node: built-ins allowed)`);
-    }
-  }
+  const violations = collectImports(path.join(SRC_ROOT, 'types.ts'))
+    .filter((spec) => !spec.startsWith('node:'))
+    .map((spec) => `types.ts imports ${spec} (only node: built-ins allowed)`);
   expect(violations).toEqual([]);
 });
