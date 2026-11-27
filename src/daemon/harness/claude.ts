@@ -1,6 +1,8 @@
+import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { instructionsHome } from '../../config/instructions.js';
+import { tCli } from '../../core/i18n/cli.js';
 import { claudeProjectsDir, remoteClaudeProjectsDir } from '../claude-transcript.js';
 import { claudeReferences, resolveClaudeReference } from '../instruction-imports.js';
 import { SESSION_FAILURE_CAPABILITY_META } from '../session-failure.js';
@@ -21,6 +23,15 @@ export const CLAUDE_NO_TOOLS_META: Record<string, unknown> = {
   disableBuiltInTools: true,
 };
 
+function adapterResolves(resolve: () => string): boolean {
+  try {
+    resolve();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function claudeSkillHomes(home: string): SkillHome[] {
   return [{ dir: path.join(home, '.claude', 'skills'), requires: path.join(home, '.claude') }];
 }
@@ -37,6 +48,42 @@ export const claudeProfile: HarnessProfile = {
   reviewIsolation: {
     kind: 'acp',
     build: (_def, base) => ({ ...base, env: {}, meta: CLAUDE_NO_TOOLS_META }),
+  },
+  doctor: {
+    command: () => 'claude-agent-acp',
+    checkLocal: () => adapterResolves(resolveClaudeAdapterEntry),
+    authNote: (def, locale) => {
+      const hasKey = Boolean(def.env?.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY);
+      return hasKey ? tCli(locale, 'doctor.auth.apiKey') : tCli(locale, 'doctor.auth.claudeLogin');
+    },
+    missingNote: (locale) => tCli(locale, 'doctor.detail.claudeMissing'),
+    extraChecks: ({ cfg, locale }) => [
+      {
+        name: tCli(locale, 'doctor.check.claudeTranscripts'),
+        run: async () => {
+          if (!cfg) return { ok: false, detail: tCli(locale, 'doctor.detail.configUnavailableAgents') };
+          const allClaude = cfg.agents.filter((a) => a.harness === 'claude');
+          if (allClaude.length === 0) return { ok: true, detail: tCli(locale, 'doctor.detail.noClaudeAgent') };
+          const claudeAgents = allClaude.filter((a) => !a.host);
+          const remote = allClaude
+            .filter((a) => Boolean(a.host))
+            .map((a) => tCli(locale, 'doctor.detail.remoteClaude', { id: a.id, host: a.host ?? '' }));
+          const lines: string[] = [...remote];
+          let anyMissing = false;
+          for (const dir of new Set(claudeAgents.map((a) => claudeProjectsDir(a)))) {
+            if (fs.existsSync(dir)) {
+              lines.push(`${dir} ✓`);
+            } else {
+              anyMissing = true;
+              lines.push(tCli(locale, 'doctor.detail.claudeDirMissing', { dir }));
+            }
+          }
+          return anyMissing
+            ? { ok: true, level: 'warn', detail: lines.join('; ') }
+            : { ok: true, detail: lines.join('; ') };
+        },
+      },
+    ],
   },
   skillHomes: (home) => claudeSkillHomes(home),
   skillReaders: [{ name: 'claude', homes: claudeSkillHomes }],

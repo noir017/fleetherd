@@ -19,6 +19,9 @@ export const opencodeProfile: HarnessProfile = {
       return { ...base, env: { OPENCODE_CONFIG_CONTENT: JSON.stringify({ ...own, permission: 'deny' }) } };
     },
   },
+  doctor: {
+    command: () => 'opencode',
+  },
   skillHomes: (home) => opencodeSkillHomes(home),
   skillReaders: [{ name: 'opencode', homes: opencodeSkillHomes }],
   skillScanDirs: (opts) =>

@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { instructionsHome } from '../../config/instructions.js';
+import { tCli } from '../../core/i18n/cli.js';
 import { agySplitModel } from '../agy-acp.js';
 import { AGY_COMMAND } from '../agy-cli.js';
 import { agyRelay } from '../agy-relay.js';
@@ -38,6 +39,11 @@ export const agyProfile: HarnessProfile = {
   launch: (def) => ({ command: AGY_COMMAND, args: ['acp', ...def.args] }),
   startupHint: ' (`agy acp` needs agy 1.5 or later — check `agy --version` on that machine and upgrade it)',
   reviewIsolation: { kind: 'agy-print', settingsJson: AGY_NO_TOOLS },
+  doctor: {
+    command: () => AGY_COMMAND,
+    authNote: (def, locale) =>
+      def.env?.AGY_LLM_GATEWAY_URL ? tCli(locale, 'doctor.auth.agyGateway') : tCli(locale, 'doctor.auth.agyKeyring'),
+  },
   splitModelOption: agySplitModel,
   // Measured on agy 1.5.1: session/load and session/resume answer on agy's default model.
   forgetsModelOnLoad: true,

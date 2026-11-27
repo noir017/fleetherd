@@ -1,7 +1,8 @@
 import { homedir } from 'node:os';
 import type { SessionConfigOption } from '@agentclientprotocol/sdk';
 import type { InstructionsAgent, InstructionsHome } from '../../config/instructions.js';
-import type { AgentDef } from '../../config/schema.js';
+import type { AgentDef, Config } from '../../config/schema.js';
+import type { Locale } from '../../core/i18n/index.js';
 import type { Welcome } from '../../remote/connection.js';
 import type { Harness } from '../../types.js';
 import { expandEnv, expandHome } from '../agent-common.js';
@@ -101,6 +102,26 @@ export function parseEnvJsonObject(raw: string | undefined): Record<string, unkn
   }
 }
 
+/** One self-check item returned by `fleetherd doctor`. */
+export interface DoctorCheck {
+  name: string;
+  run: () => Promise<{ ok: boolean; level?: 'warn'; detail?: string }>;
+}
+
+/** Per-harness self-check hooks consumed by `commands/doctor.ts`. */
+export interface HarnessDoctor {
+  /** Command name shown by doctor and probed on PATH / remote hosts. */
+  readonly command: (def: AgentDef) => string;
+  /** Local availability check override (defaults to `Boolean(locate(cmd))` when omitted). */
+  readonly checkLocal?: (cmd: string, locate: (c: string) => string | null) => boolean;
+  /** Authentication hint appended to the agent's doctor line when available. */
+  readonly authNote?: (def: AgentDef, locale: Locale) => string;
+  /** Remediation hint appended when the harness binary/adapter is missing locally. */
+  readonly missingNote?: (locale: Locale) => string;
+  /** Additional harness-specific doctor checks (e.g. Claude transcripts directory). */
+  readonly extraChecks?: (ctx: { cfg: Config | null; locale: Locale }) => DoctorCheck[];
+}
+
 /**
  * Harness seam: everything harness-specific in `daemon/` and `commands/` is funneled here.
  * Adding a harness = one file in `src/daemon/harness/` + one line in `HARNESSES` (`index.ts`).
@@ -112,6 +133,8 @@ export interface HarnessProfile {
   readonly startupHint?: string;
   /** Required review-isolation strategy (AGENTS.md invariant 8). */
   readonly reviewIsolation: ReviewIsolation;
+  /** Required self-check hooks for `fleetherd doctor`. */
+  readonly doctor: HarnessDoctor;
   /** Encode a config/chat model id into the wire value the harness's ACP selector expects (e.g. DSH JSON tuple). */
   readonly encodeModelWire?: (model: string) => string;
   /** Decode a wire selector value back to the human-readable model id. */

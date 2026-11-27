@@ -34,6 +34,9 @@ export const dshProfile: HarnessProfile = {
   id: 'dsh',
   launch: (def) => ({ command: 'dsh', args: ['--profile', 'acp', ...def.args] }),
   reviewIsolation: 'operator-args',
+  doctor: {
+    command: () => 'dsh',
+  },
   encodeModelWire: dshModelSelectorValue,
   decodeModelDisplay: dshModelDisplayValue,
   skillHomes: () => [],

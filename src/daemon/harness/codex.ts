@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { instructionsHome } from '../../config/instructions.js';
+import { tCli } from '../../core/i18n/cli.js';
 import { parseEnvJsonObject, type HarnessProfile, type SkillHome } from './profile.js';
 
 /** The codex features that are a shell. Off, codex has no way to read or run anything (AGENTS.md invariant 8). */
@@ -26,6 +27,10 @@ export const codexProfile: HarnessProfile = {
       // INITIAL_AGENT_MODE=read-only forces apply_patch to ask; refused permission cancels the turn.
       return { ...base, env: { CODEX_CONFIG: JSON.stringify({ ...own, features }), INITIAL_AGENT_MODE: 'read-only' } };
     },
+  },
+  doctor: {
+    command: () => 'codex-acp',
+    missingNote: (locale) => tCli(locale, 'doctor.detail.codexMissing'),
   },
   skillHomes: (home) => codexSkillHomes(home),
   skillReaders: [{ name: 'codex', homes: codexSkillHomes }],
