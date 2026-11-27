@@ -140,6 +140,7 @@ export interface TopicEditorDeps {
   readonly onToggleSidebar?: () => void;
   readonly onTopicChange?: (nextTopicId: string, prevTopicId: string) => void;
   readonly onMount?: (handle: TopicEditorHandle) => void;
+  readonly onFocus?: (handle: TopicEditorHandle) => void;
   readonly onDispose?: (handle: TopicEditorHandle) => void;
   readonly resolveIcon?: (name: string) => string;
   readonly icons?: Partial<TopicEditorIcons>;

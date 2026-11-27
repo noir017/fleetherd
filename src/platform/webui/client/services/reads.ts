@@ -15,6 +15,7 @@ export interface ReadsServiceDeps {
   readonly storage?: StorageService;
   readonly storageKey?: string;
   readonly getActiveTopic: () => string;
+  readonly getVisibleTopics?: () => readonly string[];
   readonly getTopics: () => readonly ReadTopicLike[];
   readonly isOverlayBlocking?: () => boolean;
   readonly postSeen?: (topicId: string) => Promise<{ readonly ok: boolean }>;
@@ -100,6 +101,19 @@ class ReadsServiceImpl implements ReadsService {
     this._storage.setJson(this._storageKey, this._counts);
   }
 
+  private _visibleTopicIds(): string[] {
+    if (this._deps.getVisibleTopics) {
+      const list = [...new Set(this._deps.getVisibleTopics().filter(Boolean))];
+      if (list.length > 0) return list;
+    }
+    const active = this._deps.getActiveTopic();
+    return active ? [active] : [];
+  }
+
+  private _isVisible(topicId: string): boolean {
+    return this._visibleTopicIds().includes(topicId);
+  }
+
   getCount(topicId: string): number | undefined {
     return this._counts[topicId];
   }
@@ -148,6 +162,8 @@ class ReadsServiceImpl implements ReadsService {
 
   syncTopics(topics: readonly ReadTopicLike[], activeTopicId: string): void {
     let wrote = false;
+    const visible = new Set(this._visibleTopicIds());
+    if (activeTopicId) visible.add(activeTopicId);
     for (let i = 0; i < topics.length; i++) {
       const seed = topics[i];
       if (!seed) continue;
@@ -156,7 +172,7 @@ class ReadsServiceImpl implements ReadsService {
         this._counts[seed.id] = count;
         wrote = true;
       }
-      if (seed.id === activeTopicId && this._counts[seed.id] !== count) {
+      if (visible.has(seed.id) && this._counts[seed.id] !== count) {
         this._counts[seed.id] = count;
         wrote = true;
       }
@@ -176,7 +192,7 @@ class ReadsServiceImpl implements ReadsService {
 
   unreadOf(topic: ReadTopicLike): number {
     const count = topic.msgCount || 0;
-    return topic.id === this._deps.getActiveTopic()
+    return this._isVisible(topic.id)
       ? 0
       : Math.max(0, count - (this._counts[topic.id] || 0));
   }
@@ -187,7 +203,7 @@ class ReadsServiceImpl implements ReadsService {
 
   needsRead(topic: ReadTopicLike): boolean {
     return (
-      topic.id !== this._deps.getActiveTopic() &&
+      !this._isVisible(topic.id) &&
       (this.unreadOf(topic) > 0 || this.unseenReply(topic))
     );
   }
@@ -235,25 +251,27 @@ class ReadsServiceImpl implements ReadsService {
   }
 
   reportSeen(): void {
-    const topicId = this._deps.getActiveTopic();
-    if (!topicId) return;
+    const visibleIds = this._visibleTopicIds();
+    if (visibleIds.length === 0) return;
     if (this._docRef && this._docRef.visibilityState === 'hidden') return;
     if (this._deps.isOverlayBlocking?.()) return;
     const topics = this._deps.getTopics();
-    let cur: ReadTopicLike | null = null;
-    for (let i = 0; i < topics.length; i++) {
-      const item = topics[i];
-      if (item && item.id === topicId) {
-        cur = item;
-        break;
-      }
-    }
-    if (!cur || (cur.stage !== 'review' && cur.stage !== 'failed')) return;
     const now = this._now();
-    const last = this._seenPosted[topicId];
-    if (last !== undefined && now - last < this._seenThrottleMs) return;
-    this._seenPosted[topicId] = now;
-    this._postSeen(topicId).catch(() => {});
+    for (const topicId of visibleIds) {
+      let cur: ReadTopicLike | null = null;
+      for (let i = 0; i < topics.length; i++) {
+        const item = topics[i];
+        if (item && item.id === topicId) {
+          cur = item;
+          break;
+        }
+      }
+      if (!cur || (cur.stage !== 'review' && cur.stage !== 'failed')) continue;
+      const last = this._seenPosted[topicId];
+      if (last !== undefined && now - last < this._seenThrottleMs) continue;
+      this._seenPosted[topicId] = now;
+      this._postSeen(topicId).catch(() => {});
+    }
   }
 
   attachWindowEvents(doc?: Document, win?: Window): Disposable {

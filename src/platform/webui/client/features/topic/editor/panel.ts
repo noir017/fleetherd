@@ -142,6 +142,16 @@ export class TopicEditorPanel implements TopicEditorHandle {
         this._composer?.command('/kill');
       }),
     );
+    this._listeners.add(
+      addDisposableListener(this.els.root, 'focusin', () => {
+        if (!this._disposed) this._deps.onFocus?.(this);
+      }),
+    );
+    this._listeners.add(
+      addDisposableListener(this.els.root, 'pointerdown', () => {
+        if (!this._disposed) this._deps.onFocus?.(this);
+      }),
+    );
 
     if (this._topicId) {
       this._composer?.loadDraft(this._topicId);

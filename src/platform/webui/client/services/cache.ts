@@ -67,6 +67,13 @@ export interface CacheCore {
   readonly cacheEvict: (store: IDBObjectStore, keep: string, all: boolean) => void;
 }
 
+export interface CacheTopicState {
+  readonly synced: boolean;
+  readonly stale: boolean;
+  readonly lastEventId: string;
+  readonly collectMessages: () => CacheMessage[];
+}
+
 export interface CacheServiceDeps {
   readonly core: CacheCore;
   readonly getIndexedDB?: () => IDBFactory | undefined | null;
@@ -76,6 +83,8 @@ export interface CacheServiceDeps {
   readonly isStale: () => boolean;
   readonly getLastEventId: () => string;
   readonly collectScreenMessages: () => CacheMessage[];
+  readonly getTopicState?: (topicId: string) => CacheTopicState | null;
+  readonly getOpenTopics?: () => readonly string[];
   readonly saveMs?: number;
   readonly copyTopics?: number;
   readonly copyMsgs?: number;
@@ -101,10 +110,10 @@ export interface CacheService extends Disposable {
   keepOnly(keep: Readonly<Record<string, unknown>>): void;
   forget(id: string): void;
   prune(known: Readonly<Record<string, unknown>>): void;
-  liveMeta(): CacheMeta | null;
-  keepScreen(): void;
-  scheduleSave(): void;
-  leave(): void;
+  liveMeta(topicId?: string): CacheMeta | null;
+  keepScreen(topicId?: string): void;
+  scheduleSave(topicId?: string): void;
+  leave(topicId?: string): void;
 }
 
 interface StoredCopy extends CacheCopy {
@@ -168,7 +177,7 @@ class CacheServiceImpl implements CacheService {
 
   private _db: IDBDatabase | null = null;
   private _dbOff = false;
-  private _saveTimer: ReturnType<typeof setTimeout> | undefined;
+  private readonly _saveTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly _copies: Record<string, StoredCopy> = {};
   private readonly _vers: Record<string, CacheVersion> = {};
   private _copySeq = 0;
@@ -422,44 +431,59 @@ class CacheServiceImpl implements CacheService {
     }
   }
 
-  liveMeta(): CacheMeta | null {
-    const topic = this._deps.getTopic();
+  liveMeta(topicId?: string): CacheMeta | null {
+    const topic = topicId ?? this._deps.getTopic();
     const epoch = this._deps.getEpoch();
-    const lastEv = this._deps.getLastEventId();
+    const state = topic && this._deps.getTopicState ? this._deps.getTopicState(topic) : null;
+    const lastEv = state ? state.lastEventId : this._deps.getLastEventId();
+    const synced = state ? state.synced : this._deps.isSynced();
+    const stale = state ? state.stale : this._deps.isStale();
     const last = lastEv && topic && lastEv.startsWith(`${topic}.`) ? lastEv : '';
-    return topic && epoch && (this._deps.isSynced() || last)
-      ? { epoch, stale: this._deps.isStale(), last }
-      : null;
+    return topic && epoch && (synced || last) ? { epoch, stale, last } : null;
   }
 
-  keepScreen(): void {
-    const meta = this.liveMeta();
+  keepScreen(topicId?: string): void {
+    const topic = topicId ?? this._deps.getTopic();
+    if (!topic) return;
+    const meta = this.liveMeta(topic);
     if (meta) {
-      void this.put(this._deps.getTopic(), this._deps.collectScreenMessages(), meta);
+      const state = this._deps.getTopicState?.(topic);
+      const msgs = state ? state.collectMessages() : this._deps.collectScreenMessages();
+      void this.put(topic, msgs, meta);
     }
   }
 
-  scheduleSave(): void {
-    if (!this._deps.getTopic() || this._saveTimer !== undefined) return;
-    this._saveTimer = setTimeout(() => {
-      this._saveTimer = undefined;
-      this.keepScreen();
+  scheduleSave(topicId?: string): void {
+    const topic = topicId ?? this._deps.getTopic();
+    if (!topic || this._saveTimers.has(topic)) return;
+    const timer = setTimeout(() => {
+      this._saveTimers.delete(topic);
+      this.keepScreen(topic);
     }, this._saveMs);
+    this._saveTimers.set(topic, timer);
   }
 
-  leave(): void {
-    if (this._saveTimer !== undefined) {
-      clearTimeout(this._saveTimer);
-      this._saveTimer = undefined;
+  leave(topicId?: string): void {
+    if (topicId) {
+      const timer = this._saveTimers.get(topicId);
+      if (timer !== undefined) {
+        clearTimeout(timer);
+        this._saveTimers.delete(topicId);
+      }
+      this.keepScreen(topicId);
+      return;
     }
-    this.keepScreen();
+    for (const timer of this._saveTimers.values()) clearTimeout(timer);
+    this._saveTimers.clear();
+    const topics = this._deps.getOpenTopics
+      ? [...new Set(this._deps.getOpenTopics().filter(Boolean))]
+      : [this._deps.getTopic()].filter(Boolean);
+    for (const id of topics) this.keepScreen(id);
   }
 
   dispose(): void {
-    if (this._saveTimer !== undefined) {
-      clearTimeout(this._saveTimer);
-      this._saveTimer = undefined;
-    }
+    for (const timer of this._saveTimers.values()) clearTimeout(timer);
+    this._saveTimers.clear();
   }
 }
 

@@ -3269,6 +3269,65 @@ describe('WebRoom: pending mid-turn queue', () => {
   });
 });
 
+describe('WebRoom: multiplexed multi-topic streams', () => {
+  it('streams multiple topics on one subscription, tagging per-topic events with topic and resuming independently', () => {
+    const { room, topic: t1 } = attached();
+    const t2 = room.createTopic('second').id;
+    const t3 = room.createTopic('third').id;
+    room.post(t1, { own: false, html: '<p>t1-init</p>' }, 't1-init');
+    room.post(t2, { own: false, html: '<p>t2-init</p>' }, 't2-init');
+
+    const received: Array<{ id: string; ev: WebEvent }> = [];
+    const unsub = room.subscribeMany([t1, t2], (id, ev) => {
+      received.push({ id, ev });
+    });
+
+    const syncs = received.filter((r) => r.ev.t === 'sync');
+    expect(syncs.map((s) => (s.ev.t === 'sync' ? s.ev.topic : ''))).toEqual([t1, t2]);
+    const last1 = syncs[0]!.id;
+    const last2 = syncs[1]!.id;
+
+    received.length = 0;
+    room.post(t1, { own: false, html: '<p>t1-live</p>' }, 't1-live');
+    room.post(t2, { own: false, html: '<p>t2-live</p>' }, 't2-live');
+    room.post(t3, { own: false, html: '<p>t3-ignored</p>' }, 't3-ignored');
+    room.setTyping(t2, true);
+    room.setStatus(t1, { agent: 'alpha', model: 'm1' });
+    room.setPendingQueue(t2, [{ id: 'p1', content: 'queued', at: 1, canSendNow: true, reason: 'turn' }]);
+
+    expect(received.some((r) => r.ev.t === 'msg' && r.ev.topic === t1 && r.ev.msg.html.includes('t1-live'))).toBe(true);
+    expect(received.some((r) => r.ev.t === 'msg' && r.ev.topic === t2 && r.ev.msg.html.includes('t2-live'))).toBe(true);
+    expect(received.some((r) => r.ev.t === 'msg' && r.ev.msg.html.includes('t3-ignored'))).toBe(false);
+    expect(received.some((r) => r.ev.t === 'typing' && r.ev.topic === t2 && r.ev.on === true)).toBe(true);
+    expect(received.some((r) => r.ev.t === 'status' && r.ev.topic === t1 && r.ev.status?.model === 'm1')).toBe(true);
+    expect(received.some((r) => r.ev.t === 'pending' && r.ev.topic === t2 && r.ev.items.length === 1)).toBe(true);
+    unsub();
+
+    // Reconnect with last1 valid (resume) and no last2 (full sync): t1 resumes while t2 syncs.
+    const resumed: Array<{ id: string; ev: WebEvent }> = [];
+    const unsub2 = room.subscribeMany([t1, t2], (id, ev) => {
+      resumed.push({ id, ev });
+    }, [last1]);
+    expect(resumed.some((r) => r.ev.t === 'msg' && r.ev.topic === t1 && r.ev.msg.html.includes('t1-live'))).toBe(true);
+    expect(resumed.some((r) => r.ev.t === 'resumed' && r.ev.topic === t1)).toBe(true);
+    expect(resumed.some((r) => r.ev.t === 'sync' && r.ev.topic === t2)).toBe(true);
+    unsub2();
+
+    // Reconnect with both last1 and last2 valid: both resume, global machines/topics sent once.
+    const bothResumed: Array<{ id: string; ev: WebEvent }> = [];
+    const unsub3 = room.subscribeMany([t1, t2], (id, ev) => {
+      bothResumed.push({ id, ev });
+    }, [last1, last2]);
+    expect(bothResumed.filter((r) => r.ev.t === 'resumed').map((r) => (r.ev.t === 'resumed' ? r.ev.topic : ''))).toEqual([
+      t1,
+      t2,
+    ]);
+    expect(bothResumed.filter((r) => r.ev.t === 'machines')).toHaveLength(1);
+    expect(bothResumed.filter((r) => r.ev.t === 'topics')).toHaveLength(1);
+    unsub3();
+  });
+});
+
 describe('WebRoom: agent handoff action', () => {
   it('enriches handoff with topic id and title, keeps it out of awaitingQuestion, and attaches via revise', () => {
     const { room, topic, seen } = attached();

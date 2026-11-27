@@ -858,9 +858,15 @@ async function login({ req, res }: Req, ctx: Ctx): Promise<void> {
  * not. The topic LIST still reaches every client (see `WebRoom.announceTopics`), so the
  * switcher stays current without subscribing to rooms nobody is reading.
  */
+const MAX_STREAM_TOPICS = 16;
+
 function stream({ req, res, url }: Req, ctx: Ctx): void {
-  const wanted = url.searchParams.get('t');
-  const topic = wanted && ctx.room.topics.has(wanted) ? wanted : ctx.room.topics.current().id;
+  const topics: string[] = [];
+  for (const wanted of url.searchParams.getAll('t')) {
+    if (topics.length >= MAX_STREAM_TOPICS) break;
+    if (wanted && ctx.room.topics.has(wanted) && !topics.includes(wanted)) topics.push(wanted);
+  }
+  if (topics.length === 0) topics.push(ctx.room.topics.current().id);
   const out = openStream(req, res, ctx.instance);
   ctx.streams.add(out);
   // The header is what `EventSource` sends when it reconnects by itself, and it is always the newer
@@ -868,16 +874,20 @@ function stream({ req, res, url }: Req, ctx: Ctx): void {
   // the background, see the page's `park`): a new EventSource cannot set a header, and without a
   // resume point it would be handed the whole topic again. The room validates either the same way.
   const header = req.headers['last-event-id'];
-  const lastId = (Array.isArray(header) ? header[0] : header) || url.searchParams.get('last') || undefined;
+  const headerId = Array.isArray(header) ? header[0] : header;
+  const lastIds = [
+    ...(headerId ? [headerId] : []),
+    ...url.searchParams.getAll('last').filter(Boolean),
+  ];
   // The version of the topic list the page holds, so a resume carries the list only if it moved.
   const tv = Number(url.searchParams.get('tv') ?? NaN);
-  const unsubscribe = ctx.room.subscribe(
-    topic,
-    // `data` is made once per event by the room, however many streams it goes to.
-    (id, _ev, data) => out.write(`${id ? `id: ${id}\n` : ''}data: ${data}\n\n`),
-    lastId,
-    Number.isInteger(tv) ? tv : undefined
-  );
+  const sink = (id: string, _ev: unknown, data: string): void =>
+    out.write(`${id ? `id: ${id}\n` : ''}data: ${data}\n\n`);
+  const parsedTv = Number.isInteger(tv) ? tv : undefined;
+  const unsubscribe =
+    topics.length > 1
+      ? ctx.room.subscribeMany(topics, sink, lastIds, parsedTv)
+      : ctx.room.subscribe(topics[0]!, sink, lastIds[0], parsedTv);
   // The response's close, not only the request's: a stream cut for falling behind is ended from
   // this side, and either way it has to leave the room's fan-out at once.
   let left = false;

@@ -259,4 +259,34 @@ describe('services/reads', () => {
     await reads.markAllRead(topics, 'topics', () => {});
     expect(posted).toEqual(['f1']);
   });
+
+  it('treats every topic visible in any open editor as seen', () => {
+    const { storage } = createMemoryStorage();
+    const posted: string[] = [];
+    const topics: ReadTopicLike[] = [
+      { id: 't1', msgCount: 5, stage: 'review' },
+      { id: 't2', msgCount: 4, stage: 'review' },
+      { id: 't3', msgCount: 3, stage: 'review' },
+    ];
+    const reads = createReadsService({
+      storage,
+      getActiveTopic: () => 't1',
+      getVisibleTopics: () => ['t1', 't2'],
+      getTopics: () => topics,
+      postSeen: async (id) => {
+        posted.push(id);
+        return { ok: true };
+      },
+    });
+
+    expect(reads.unreadOf(topics[0]!)).toBe(0);
+    expect(reads.unreadOf(topics[1]!)).toBe(0);
+    expect(reads.unreadOf(topics[2]!)).toBe(3);
+    expect(reads.needsRead(topics[0]!)).toBe(false);
+    expect(reads.needsRead(topics[1]!)).toBe(false);
+    expect(reads.needsRead(topics[2]!)).toBe(true);
+
+    reads.reportSeen();
+    expect(posted).toEqual(['t1', 't2']);
+  });
 });
