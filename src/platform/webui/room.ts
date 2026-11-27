@@ -577,7 +577,10 @@ export class WebRoom {
     | null = null;
   /** Browse one level of directories for a topic's selected agent. */
   private workdirBrowser:
-    | ((ref: ConversationRef, opts?: { agent?: string; dir?: string; atRoot?: boolean }) => Promise<WorkdirBrowseResult>)
+    | ((
+        ref: ConversationRef,
+        opts?: { agent?: string; dir?: string; atRoot?: boolean; cachedOnly?: boolean }
+      ) => Promise<WorkdirBrowseResult>)
     | null = null;
   /** Machines the daemon cannot reach — see `setOfflineMachines`. */
   private offline: readonly OfflineMachine[] = [];
@@ -983,18 +986,37 @@ export class WebRoom {
   }
 
   useWorkdirBrowser(
-    browse: (ref: ConversationRef, opts?: { agent?: string; dir?: string; atRoot?: boolean }) => Promise<WorkdirBrowseResult>
+    browse: (
+      ref: ConversationRef,
+      opts?: { agent?: string; dir?: string; atRoot?: boolean; cachedOnly?: boolean }
+    ) => Promise<WorkdirBrowseResult>
   ): void {
     this.workdirBrowser = browse;
   }
 
   async browseWorkdir(
     topic: string,
-    opts?: { agent?: string; dir?: string; atRoot?: boolean }
+    opts?: { agent?: string; dir?: string; atRoot?: boolean; cachedOnly?: boolean }
   ): Promise<WorkdirBrowseResult> {
     if (!this.workdirBrowser) return { ok: false, error: 'This daemon does not support directory browsing.' };
     if (!this.topics.has(topic)) return { ok: false, error: 'No such topic.' };
     return this.workdirBrowser(this.conversation(topic), opts);
+  }
+
+  /**
+   * Launcher payload for a newly created empty topic: the agent catalog plus the default agent's
+   * directory screen when already local or cached (never blocks on a cold remote host scan).
+   */
+  async launchData(topicId: string): Promise<{ agents?: AgentCatalog; workdir?: WorkdirScreen }> {
+    const agents = this.catalogFor(topicId, this.rooms.get(topicId));
+    if (!agents) return {};
+    if (!this.workdirBrowser) return { agents };
+    try {
+      const res = await this.workdirBrowser(this.conversation(topicId), { agent: agents.current, cachedOnly: true });
+      return res.ok ? { agents, workdir: res.screen } : { agents };
+    } catch {
+      return { agents };
+    }
   }
 
   /**
@@ -1393,8 +1415,8 @@ export class WebRoom {
    * The agents for an empty room's sync, or nothing. Best-effort like the directory: a lookup that
    * throws costs the page its choice of agent, never the sync that carries the transcript.
    */
-  private catalogFor(topicId: string, room: Room): AgentCatalog | undefined {
-    if (!this.catalog || room.stored.size > 0) return undefined;
+  private catalogFor(topicId: string, room: Room | undefined): AgentCatalog | undefined {
+    if (!this.catalog || (room && room.stored.size > 0)) return undefined;
     try {
       return this.catalog(this.conversation(topicId));
     } catch (e) {

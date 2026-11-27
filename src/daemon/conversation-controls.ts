@@ -69,6 +69,14 @@ import { isDirectory, scanWorkdirs, workdirScanFrom, type WorkdirScan } from './
 
 /** How long a menu offered on the side (a bare `/cc`, `/new`) waits for a remote root's first listing. */
 export const REMOTE_LISTING_WAIT_MS = 5_000;
+/** How long a cached remote directory listing stays fresh before a background refresh is triggered. */
+export const REMOTE_SCAN_TTL_MS = 30_000;
+const MAX_REMOTE_SCANS = 200;
+
+type RemoteListingEntry = { readonly name: string; readonly dir: boolean };
+type RemoteListingCache =
+  | { readonly ok: true; readonly entries: readonly RemoteListingEntry[]; readonly at: number }
+  | { readonly ok: false; readonly reason: string; readonly at: number };
 
 /**
  * The per-conversation controls: `/model`, `/effort`, `/cd`, `/fork`, `/title`, and the web UI's
@@ -78,8 +86,10 @@ export const REMOTE_LISTING_WAIT_MS = 5_000;
 export class ConversationControls {
   /** Naming calls in flight: the store gate cannot cover the seconds before the platform accepts a rename. */
   private readonly namingInFlight = new Set<ConversationId>();
-  /** Last listing of each remote root: the menu code is synchronous, a remote listing is not. */
-  private readonly remoteScans = new Map<string, WorkdirScan>();
+  /** Cached remote directory listings keyed by `<host>\0<dir>` (shared across agents on the same host). */
+  private readonly remoteScans = new Map<string, RemoteListingCache>();
+  /** Coalesces concurrent remote `listDir` RPCs for the same `<host>\0<dir>`. */
+  private readonly remoteScansInFlight = new Map<string, Promise<RemoteListingCache>>();
 
   constructor(
     private readonly ctx: ConversationContext,
@@ -721,24 +731,65 @@ export class ConversationControls {
 
   /** List a remote agent's root into remoteScans. Never rejects: a failure is the scan. */
   async refreshRemoteScan(def: AgentDef): Promise<void> {
-    const host = remoteHosts.hostFor(def);
-    if (!host) return;
-    let scan: WorkdirScan;
-    let root = resolveAgentCwd(def);
-    try {
-      await host.ready();
-      root = resolveAgentCwd(def); // `~` resolves once the host has been reached
-      scan = workdirScanFrom(root, await host.listDir(root, 15_000), true);
-    } catch (e) {
-      scan = { ok: false, reason: e instanceof Error ? e.message : String(e) };
+    if (!def.host) return;
+    await this.fetchRemoteDir(def, resolveAgentCwd(def), true);
+  }
+
+  private storeRemoteScan(key: string, entry: RemoteListingCache): void {
+    const existing = this.remoteScans.get(key);
+    // Keep a previously successful listing on transient background refresh failure.
+    if (!entry.ok && existing?.ok) return;
+    if (this.remoteScans.has(key)) this.remoteScans.delete(key);
+    this.remoteScans.set(key, entry);
+    if (this.remoteScans.size > MAX_REMOTE_SCANS) {
+      const oldest = this.remoteScans.keys().next().value;
+      if (oldest !== undefined) this.remoteScans.delete(oldest);
     }
-    this.remoteScans.set(`${def.host}\0${root}`, scan);
+  }
+
+  private fetchRemoteDir(def: AgentDef, dir: string, resolveRoot = false): Promise<RemoteListingCache> {
+    const hostId = def.host;
+    if (!hostId) {
+      return Promise.resolve({ ok: false, reason: 'agent has no remote host', at: this.ctx.clock.now() });
+    }
+    const host = remoteHosts.hostFor(def);
+    if (!host) {
+      return Promise.resolve({ ok: false, reason: `host "${hostId}" is not connected`, at: this.ctx.clock.now() });
+    }
+    const initialKey = `${hostId}\0${dir}`;
+    const pending = this.remoteScansInFlight.get(initialKey);
+    if (pending) return pending;
+    const task = (async (): Promise<RemoteListingCache> => {
+      let actualDir = dir;
+      let result: RemoteListingCache;
+      try {
+        await host.ready();
+        if (resolveRoot) actualDir = resolveAgentCwd(def); // `~` resolves once the host has been reached
+        const entries = await host.listDir(actualDir, 15_000);
+        result = { ok: true, entries, at: this.ctx.clock.now() };
+      } catch (e) {
+        result = { ok: false, reason: e instanceof Error ? e.message : String(e), at: this.ctx.clock.now() };
+      }
+      this.storeRemoteScan(`${hostId}\0${actualDir}`, result);
+      return result;
+    })().finally(() => {
+      this.remoteScansInFlight.delete(initialKey);
+    });
+    this.remoteScansInFlight.set(initialKey, task);
+    return task;
+  }
+
+  private toWorkdirScan(dir: string, listing: RemoteListingCache, root: string): WorkdirScan {
+    if (!listing.ok) return { ok: false, reason: listing.reason };
+    return this.rankWorkdirScan(workdirScanFrom(dir, listing.entries, true, root));
   }
 
   private remoteScanOf(def: AgentDef, root: string): WorkdirScan {
-    return (
-      this.remoteScans.get(`${def.host}\0${root}`) ?? { ok: false, reason: `the directory list on host "${def.host}" has not been read yet` }
-    );
+    const cached = this.remoteScans.get(`${def.host}\0${root}`);
+    if (!cached) {
+      return { ok: false, reason: `the directory list on host "${def.host}" has not been read yet` };
+    }
+    return this.toWorkdirScan(root, cached, root);
   }
 
   /** The `/cd` options: the root keeps the first slot (the way back out), the rest by frecency. */
@@ -763,20 +814,31 @@ export class ConversationControls {
   }
 
   /** Scan an arbitrary directory for an agent (used when browsing parent or subdirectories). */
-  async scanWorkdirAt(agentId: string, dir: string): Promise<WorkdirScan> {
+  async scanWorkdirAt(
+    agentId: string,
+    dir: string,
+    opts?: { readonly cachedOnly?: boolean }
+  ): Promise<WorkdirScan> {
     const def = findAgent(this.ctx.config, agentId);
     if (!def) return { ok: false, reason: `agent "${agentId}" is not configured` };
     const root = resolveAgentCwd(def);
     if (!def.host) return this.rankWorkdirScan(scanWorkdirs(dir, root));
     const host = remoteHosts.hostFor(def);
     if (!host) return { ok: false, reason: `host "${def.host}" is not connected` };
-    try {
-      await host.ready();
-      const scan = workdirScanFrom(dir, await host.listDir(dir, 15_000), true, resolveAgentCwd(def));
-      return this.rankWorkdirScan(scan);
-    } catch (e) {
-      return { ok: false, reason: e instanceof Error ? e.message : String(e) };
+    const key = `${def.host}\0${dir}`;
+    const cached = this.remoteScans.get(key);
+    if (cached?.ok) {
+      if (this.ctx.clock.now() - cached.at >= REMOTE_SCAN_TTL_MS) {
+        void this.fetchRemoteDir(def, dir);
+      }
+      return this.toWorkdirScan(dir, cached, root);
     }
+    if (opts?.cachedOnly) {
+      void this.fetchRemoteDir(def, dir);
+      return { ok: false, reason: 'not cached' };
+    }
+    const listing = await this.fetchRemoteDir(def, dir);
+    return this.toWorkdirScan(dir, listing, resolveAgentCwd(def));
   }
 
   /** Post a directory menu; false (silently) whenever there is nothing to ask, so the caller falls through. */

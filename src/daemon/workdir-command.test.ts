@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ConversationRegistry } from './conversation.js';
-import { REMOTE_LISTING_WAIT_MS } from './conversation-controls.js';
+import { REMOTE_LISTING_WAIT_MS, REMOTE_SCAN_TTL_MS } from './conversation-controls.js';
 import { remoteHosts } from './remote-hosts.js';
 import type { RemoteHost } from '../remote/host.js';
 import { ConversationStore } from './conversation-store.js';
@@ -845,6 +845,52 @@ describe('the directory question for an agent on a host', () => {
     expect(replies().at(-1)).toContain('Context cleared');
     expect(menus).toHaveLength(1);
     expect(menus[0]!.options.map((o) => o.name)).toContain('proj');
+  });
+
+  it('serves remote scanWorkdirAt from cache across agents on the same host, refreshes stale entries in background, and coalesces concurrent scans', async () => {
+    let now = 1_000;
+    const controlledClock = { ...clock, now: () => now };
+    const { reg } = rig({ config, clock: controlledClock });
+
+    // Cold cachedOnly does not wait for listDir, but starts warming the cache in background.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    listDir.mockImplementationOnce(async () => {
+      await gate;
+      return [{ name: 'proj', dir: true }];
+    });
+    const coldOnly = await reg.scanWorkdirAt('rc', '/srv/work', { cachedOnly: true });
+    expect(coldOnly.ok).toBe(false);
+    expect(listDir).toHaveBeenCalledTimes(1);
+
+    // Concurrent live scans for the same (host, dir) coalesce onto the in-flight RPC.
+    const p1 = reg.scanWorkdirAt('rc', '/srv/work');
+    const p2 = reg.scanWorkdirAt('ro', '/srv/work');
+    expect(listDir).toHaveBeenCalledTimes(1);
+    release();
+    const [r1, r2] = await Promise.all([p1, p2]);
+    expect(r1.ok && r2.ok).toBe(true);
+    expect(listDir).toHaveBeenCalledTimes(1);
+
+    // Fresh cache hit serves immediately with zero extra RPCs (even for another agent on the same host).
+    const hit = await reg.scanWorkdirAt('ro', '/srv/work', { cachedOnly: true });
+    expect(hit.ok).toBe(true);
+    if (hit.ok) expect(hit.options.map((o) => o.path)).toEqual(['/srv/work', '/srv/work/proj']);
+    expect(listDir).toHaveBeenCalledTimes(1);
+
+    // Past TTL: still returns the cached listing immediately and refreshes in the background.
+    now += REMOTE_SCAN_TTL_MS + 1;
+    listDir.mockResolvedValueOnce([{ name: 'proj', dir: true }, { name: 'new-app', dir: true }]);
+    const stale = await reg.scanWorkdirAt('rc', '/srv/work');
+    expect(stale.ok).toBe(true);
+    if (stale.ok) expect(stale.options.map((o) => o.name)).toEqual(['work', 'proj']);
+    expect(listDir).toHaveBeenCalledTimes(2);
+    await drain();
+
+    const refreshed = await reg.scanWorkdirAt('rc', '/srv/work');
+    expect(refreshed.ok).toBe(true);
+    if (refreshed.ok) expect(refreshed.options.map((o) => o.name)).toEqual(['work', 'new-app', 'proj']);
+    expect(listDir).toHaveBeenCalledTimes(2);
   });
 });
 

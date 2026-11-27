@@ -167,8 +167,10 @@ export interface BannersController extends Disposable {
   syncEmptyNote(): void;
   syncLaunch(want: boolean): void;
   hasLaunch(): boolean;
+  getLaunchWorkdir(): WorkdirScreen | null;
   setLaunchAgent(agentId: string, opts?: { readonly fold?: boolean }): void;
   setLaunchWorkdir(screen: WorkdirScreen | null, loading?: boolean): void;
+  clearLaunchWorkdirLoading(): void;
   setLaunchCwd(cwd: string, opts?: { readonly fold?: boolean }): void;
   unfoldLaunch(part?: LaunchFoldPart): void;
   takeMachines(list: readonly OfflineMachine[] | null | undefined): boolean;
@@ -251,6 +253,15 @@ class BannersControllerImpl implements BannersController {
 
   hasLaunch(): boolean {
     return Boolean(this._launchEl);
+  }
+
+  getLaunchWorkdir(): WorkdirScreen | null {
+    return this._launchWorkdir;
+  }
+
+  clearLaunchWorkdirLoading(): void {
+    const host = this._launchEl?.querySelector<HTMLElement>('.launch-wd');
+    if (host) host.classList.remove('loading');
   }
 
   getSyncingEl(): HTMLElement | null {

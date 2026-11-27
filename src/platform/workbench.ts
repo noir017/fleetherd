@@ -709,7 +709,10 @@ export interface WorkbenchHost {
     setup: (ref: ConversationRef, opts: { agent?: string; cwd?: string; dryRun?: boolean }) => TopicSetupResult
   ) => void;
   useWorkdirBrowser: (
-    browse: (ref: ConversationRef, opts?: { agent?: string; dir?: string; atRoot?: boolean }) => Promise<WorkdirBrowseResult>
+    browse: (
+      ref: ConversationRef,
+      opts?: { agent?: string; dir?: string; atRoot?: boolean; cachedOnly?: boolean }
+    ) => Promise<WorkdirBrowseResult>
   ) => void;
   useModelPicker: (picker: ModelPicker) => void;
   useOptionPicker: (picker: SessionOptionPicker) => void;
