@@ -921,6 +921,22 @@ export interface WorkdirScreen {
 }
 
 /**
+ * Structured handoff payload attached to a refused agent-switch message for platforms declaring
+ * `capabilities.handoffAction`. The UI offers a one-tap action that opens a new topic bound to
+ * `agentId` with an editable, unsent draft — never injecting gateway text into the new agent's prompt.
+ */
+export interface AgentHandoffAction {
+  agentId: string;
+  agentName: string;
+  fromAgent: string;
+  sessionId: string;
+  workdir?: string;
+  sameHost?: boolean;
+  fromTopicId?: string;
+  fromTopicTitle?: string;
+}
+
+/**
  * One topic in an "end this topic and everything under it" answer, from
  * `WorkbenchHost.useTopicKill` (the web UI's row menu).
  *

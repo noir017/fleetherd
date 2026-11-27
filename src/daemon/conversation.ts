@@ -35,7 +35,7 @@ import type {
   TurnChangeStatusResult,
   WorkdirBrowseResult,
 } from '../platform/workbench.js';
-import type { AgentCatalog, AgentStatus, ConversationId, InboundMessage, StatusOption, StatusPermissions, TopicActivity } from '../types.js';
+import type { AgentCatalog, AgentHandoffAction, AgentStatus, ConversationId, InboundMessage, StatusOption, StatusPermissions, TopicActivity } from '../types.js';
 import type { AgentFactory } from './agent.js';
 import { resolveAgentCwd, resolveConversationCwd } from './agent-common.js';
 import { isDirectory } from './workdir-scan.js';
@@ -48,6 +48,7 @@ import type {
   ConversationHooks,
   ConversationLane,
   ConversationState,
+  SwitchRefusal,
 } from './conversation-context.js';
 import { ConversationControls } from './conversation-controls.js';
 import {
@@ -181,7 +182,7 @@ export class ConversationRegistry {
       forgetUsage: (id, state) => this.forgetUsage(id, state),
       isBusy: (key) => this.isBusy(key),
       adoptThread: (id, address, platformId) => this.adoptThread(id, address, platformId),
-      switchRefusal: (key, agentId, wantedCommand) => this.switchRefusal(key, agentId, wantedCommand),
+      switchRefusal: (key, agentId, wantedCommand, conv) => this.switchRefusal(key, agentId, wantedCommand, conv),
       rebind: (key, state, agentId, platformId, address, announce) =>
         this.rebind(key, state, agentId, platformId, address, announce),
       chooseAgent: (key, agentId, conv) => this.chooseAgent(key, agentId, conv),
@@ -363,20 +364,70 @@ export class ConversationRegistry {
    * Why a switch to `agentId` is refused: the bound agent has a session id on record (read from the
    * store, so the first message after a restart is held to it). Before that, naming an agent chooses one.
    */
-  private switchRefusal(key: ConversationId, agentId: string, wantedCommand?: string): string | undefined {
+  private switchRefusal(
+    key: ConversationId,
+    agentId: string,
+    wantedCommand?: string,
+    conv?: ConversationRef
+  ): SwitchRefusal | undefined {
     const bound = this.conversations.get(key)?.agentId ?? this.store?.boundAgent(key);
     if (!bound || bound === agentId) return undefined;
-    if (!findAgent(this.config, bound)) return undefined;
+    const boundDef = findAgent(this.config, bound);
+    if (!boundDef) return undefined;
     const sessionId = this.store?.agentSession(key, bound);
     if (sessionId === undefined) return undefined;
     console.log(`[conversation] ${key} is bound to "${bound}" with a session; refused a switch to "${agentId}"`);
-    return agentSwitchRefusalText({
-      bound: agentDisplayName(findAgent(this.config, bound), bound),
-      wanted: agentDisplayName(findAgent(this.config, agentId), agentId),
-      wantedCommand: wantedCommand ?? `/${harnessCommandName(findAgent(this.config, agentId)?.harness) ?? agentId}`,
+    const wantedDef = findAgent(this.config, agentId);
+    const boundName = agentDisplayName(boundDef, bound);
+    const wantedName = agentDisplayName(wantedDef, agentId);
+    const workdir = this.workdirOf(key, bound);
+    const text = agentSwitchRefusalText({
+      bound: boundName,
+      wanted: wantedName,
+      wantedCommand: wantedCommand ?? `/${harnessCommandName(wantedDef?.harness) ?? agentId}`,
       sessionId,
-      workdir: this.workdirOf(key, bound),
+      workdir,
     });
+    const handoff = this.buildSwitchHandoff({
+      key,
+      conv,
+      agentId,
+      wantedDef,
+      wantedName,
+      boundDef,
+      boundName,
+      sessionId,
+      workdir,
+    });
+    return handoff ? { text, handoff } : { text };
+  }
+
+  private buildSwitchHandoff(p: {
+    key: ConversationId;
+    conv?: ConversationRef;
+    agentId: string;
+    wantedDef?: AgentDef;
+    wantedName: string;
+    boundDef: AgentDef;
+    boundName: string;
+    sessionId: string;
+    workdir?: string;
+  }): AgentHandoffAction | undefined {
+    const platformId = p.conv?.platform ?? this.conversations.get(p.key)?.platform;
+    const adapter = platformId ? this.platforms.get(platformId) : undefined;
+    if (adapter?.capabilities.handoffAction !== true) return undefined;
+    const fromTopicId = p.conv?.thread ?? this.laneOf(p.key)?.address.thread;
+    const fromTopicTitle = this.store?.conversationTitle(p.key);
+    return {
+      agentId: p.agentId,
+      agentName: p.wantedName,
+      fromAgent: p.boundName,
+      sessionId: p.sessionId,
+      ...(p.workdir ? { workdir: p.workdir } : {}),
+      sameHost: (p.boundDef.host ?? '') === (p.wantedDef?.host ?? ''),
+      ...(fromTopicId ? { fromTopicId } : {}),
+      ...(fromTopicTitle ? { fromTopicTitle } : {}),
+    };
   }
 
   /**
@@ -414,17 +465,17 @@ export class ConversationRegistry {
   }
 
   /** `/agent <id>`, typed or picked: bind by id, under the same switch lock as `/cc`. Returns what to say. */
-  chooseAgent(key: ConversationId, agentId: string, conv: ConversationRef): string {
+  chooseAgent(key: ConversationId, agentId: string, conv: ConversationRef): SwitchRefusal {
     const def = findAgent(this.config, agentId);
-    if (!def) return `No agent "${agentId}" is configured.`;
-    const refused = this.switchRefusal(key, agentId, `/agent ${agentId}`);
+    if (!def) return { text: `No agent "${agentId}" is configured.` };
+    const refused = this.switchRefusal(key, agentId, `/agent ${agentId}`, conv);
     if (refused !== undefined) return refused;
     const name = agentDisplayName(def, agentId);
     const state = this.conversations.get(key);
-    if (state?.agentId === agentId) return `${name} is already answering this topic.`;
-    if (state) return this.rebind(key, state, agentId, conv.platform, addressOf(conv), false);
+    if (state?.agentId === agentId) return { text: `${name} is already answering this topic.` };
+    if (state) return { text: this.rebind(key, state, agentId, conv.platform, addressOf(conv), false) };
     this.createState(key, agentId, conv.platform, ' (chosen with /agent)');
-    return `▸ ${name} is answering this conversation now`;
+    return { text: `▸ ${name} is answering this conversation now` };
   }
 
   offerPlacement(key: ConversationId, agentId: string, conv: ConversationRef): void {
@@ -770,7 +821,7 @@ export class ConversationRegistry {
   ): { ok: true; cwd?: string } | { ok: false; error: string } {
     if (opts.agent !== undefined) {
       const refused = this.switchRefusal(id, targetAgent, `/agent ${targetAgent}`);
-      if (refused !== undefined) return { ok: false, error: refused };
+      if (refused !== undefined) return { ok: false, error: refused.text };
     }
     if (opts.cwd === undefined) return { ok: true };
     if (this.controls.isWorkdirLocked(id, targetAgent)) {

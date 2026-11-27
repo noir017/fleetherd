@@ -5,6 +5,16 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **One-tap handoff to another agent in a new web UI topic.** When an agent switch is refused
+  because the current topic already has a session (via `/cc`-style command, `/agent <id>`, or the
+  `/agent` menu), the web UI now attaches a **Continue with `<agent>` in a new topic** action to the
+  refusal message (`PlatformCapabilities.handoffAction`). Tapping it opens a new topic bound to the
+  wanted agent in the same working directory and seeds the composer with an editable, unsent draft
+  naming the earlier agent, session id, working directory, and earlier topic link — keeping the
+  gateway out of the new agent's prompt. Other platforms keep the plain refusal text unchanged.
+
 ## [3.41.2] - 2026-11-27
 
 ### Fixed

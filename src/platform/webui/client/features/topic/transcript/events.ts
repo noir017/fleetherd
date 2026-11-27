@@ -76,6 +76,7 @@ export interface LogEventsDeps {
   readonly openTurnChanges: (turn: number) => void;
   readonly openTurnDiffSideBySide?: (turn: number, btn: HTMLButtonElement) => void;
   readonly onMessageAction?: (action: string, key: string, btn: HTMLButtonElement) => void;
+  readonly onHandoff?: (key: string, btn: HTMLButtonElement) => void;
   readonly postButton?: (btn: HTMLButtonElement, topicId: string) => void;
 }
 
@@ -190,6 +191,12 @@ function handleActionClick(target: Element, deps: LogEventsDeps): void {
   const splitTurns = target.closest<HTMLButtonElement>('button[data-turns-split]');
   if (splitTurns) {
     deps.openTurnDiffSideBySide?.(Number(splitTurns.getAttribute('data-turns-split')), splitTurns);
+    return;
+  }
+  const handoffBtn = target.closest<HTMLButtonElement>('button[data-handoff-k]');
+  if (handoffBtn) {
+    const key = handoffBtn.getAttribute('data-handoff-k');
+    if (key) deps.onHandoff?.(key, handoffBtn);
     return;
   }
   const btn = target.closest('button[data-btn]');

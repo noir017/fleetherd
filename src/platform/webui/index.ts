@@ -27,7 +27,7 @@ import path from 'node:path';
 import { configDir } from '../../config/load.js';
 import type { ConversationAddress } from '../../core/conversation.js';
 import { WORKDIR_PAGE_SIZE_MAX } from '../../core/paging.js';
-import type { MessageRef, SettingsScreen, SlashCommandSpec, WorkdirScreen } from '../../types.js';
+import type { AgentHandoffAction, MessageRef, SettingsScreen, SlashCommandSpec } from '../../types.js';
 import { MESSAGE_KINDS, type MessageKind, type PlatformAdapter, type SendOptions } from '../adapter.js';
 import type { TopicPresence, TopicTree, WorkbenchHost } from '../workbench.js';
 import { renderWebMarkdown } from '../web-markdown.js';
@@ -97,6 +97,7 @@ const CAPABILITIES: PlatformAdapter['capabilities'] = {
    */
   settingsScreen: true,
   workdirScreen: true,
+  handoffAction: true,
   /**
    * The most core allows, and twice what the chat platforms declare. It was their 12, so that
    * which client someone read from did not change how many models `/model` offered — until the
@@ -462,12 +463,13 @@ function parseKept(value: unknown): Kept | null {
   if (!value || typeof value !== 'object') return null;
   const { msg, text } = value as { msg?: Record<string, unknown>; text?: unknown };
   if (!msg || typeof text !== 'string') return null;
-  const { id, own, html, at, g, reactions, quote, file, nonce, kind, turnChanges } = msg;
+  const { id, own, html, at, g, reactions, quote, file, nonce, kind, turnChanges, handoff } = msg;
   if (typeof id !== 'string' || typeof html !== 'string' || typeof at !== 'number' || typeof g !== 'number') return null;
   const k = keptKind(kind);
   const q = keptQuote(quote);
   const tc = keptTurnChanges(turnChanges);
-  const f = file as { name?: unknown; url?: unknown; image?: unknown } | undefined;
+  const ho = keptHandoff(handoff);
+  const f = keptFile(file);
   return {
     text,
     msg: {
@@ -481,9 +483,7 @@ function parseKept(value: unknown): Kept | null {
       ...(q ? { quote: q } : {}),
       // Not `view`, for the reason `buttons` is emptied: the reader is answered from the download
       // table, which died with the run that minted the token, so it could only open onto a 404.
-      ...(typeof f?.name === 'string' && typeof f.url === 'string'
-        ? { file: { name: f.name, url: f.url, ...(f.image === true ? { image: true } : {}) } }
-        : {}),
+      ...(f ? { file: f } : {}),
       ...(typeof nonce === 'string' ? { nonce } : {}),
       // The kinds the page draws differently, restored across a restart so the marking — and a
       // report's folding — survives a reload exactly as it was.
@@ -491,7 +491,38 @@ function parseKept(value: unknown): Kept | null {
       // A turn's change entry is part of its reply: without it a restart would take the line, and
       // the way into that turn's diff, off every reply that had one.
       ...(tc ? { turnChanges: tc } : {}),
+      ...(ho ? { handoff: ho } : {}),
     },
+  };
+}
+
+function keptFile(file: unknown): WebMessage['file'] {
+  const f = file as { name?: unknown; url?: unknown; image?: unknown } | undefined;
+  if (typeof f?.name !== 'string' || typeof f.url !== 'string') return undefined;
+  return { name: f.name, url: f.url, ...(f.image === true ? { image: true } : {}) };
+}
+
+/** A kept refusal's handoff payload: pure client-side data that stays usable across restarts. */
+function keptHandoff(value: unknown): AgentHandoffAction | undefined {
+  const v = value as Record<string, unknown> | undefined;
+  if (
+    !v ||
+    typeof v.agentId !== 'string' ||
+    typeof v.agentName !== 'string' ||
+    typeof v.fromAgent !== 'string' ||
+    typeof v.sessionId !== 'string'
+  ) {
+    return undefined;
+  }
+  return {
+    agentId: v.agentId,
+    agentName: v.agentName,
+    fromAgent: v.fromAgent,
+    sessionId: v.sessionId,
+    ...(typeof v.workdir === 'string' ? { workdir: v.workdir } : {}),
+    ...(typeof v.sameHost === 'boolean' ? { sameHost: v.sameHost } : {}),
+    ...(typeof v.fromTopicId === 'string' ? { fromTopicId: v.fromTopicId } : {}),
+    ...(typeof v.fromTopicTitle === 'string' ? { fromTopicTitle: v.fromTopicTitle } : {}),
   };
 }
 
@@ -646,7 +677,13 @@ function outbound(room: WebRoom, topicOf: TopicResolver): Outbound {
     async sendMessage(address, text, opts) {
       const topic = topicOf(address, 'sendMessage');
       const kind = opts?.kind;
-      const part = { own: false, html: webMessageHtml(kind, text), ...(kind ? { kind } : {}) };
+      const handoff = opts?.handoff;
+      const part = {
+        own: false,
+        html: webMessageHtml(kind, text),
+        ...(kind ? { kind } : {}),
+        ...(handoff ? { handoff } : {}),
+      };
       return ref(topic, room.post(topic, part, text).id);
     },
     async editMessage(r, text) {
@@ -700,6 +737,7 @@ function outbound(room: WebRoom, topicOf: TopicResolver): Outbound {
       const topic = topicOf(address, 'sendButtons');
       const kind = opts?.kind;
       const workdir = opts?.workdir;
+      const handoff = opts?.handoff;
       return ref(
         topic,
         room.post(
@@ -713,13 +751,14 @@ function outbound(room: WebRoom, topicOf: TopicResolver): Outbound {
             ...(screen ? { settings: screen } : {}),
             ...(workdir ? { workdir } : {}),
             ...(kind ? { kind } : {}),
+            ...(handoff ? { handoff } : {}),
           },
           text
         ).id
       );
     },
-    async editButtons(r, text, buttons, screen?: SettingsScreen, opts?: { workdir?: WorkdirScreen }) {
-      room.revise(topicOf(r.address, 'editButtons'), r.messageId, text, buttons, screen, opts?.workdir);
+    async editButtons(r, text, buttons, screen?: SettingsScreen, opts?: SendOptions) {
+      room.revise(topicOf(r.address, 'editButtons'), r.messageId, text, buttons, screen, opts?.workdir, opts?.handoff);
     },
     async addReaction(r, emoji) {
       room.react(topicOf(r.address, 'addReaction'), r.messageId, emoji, true);

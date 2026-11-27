@@ -1,7 +1,9 @@
+import os from 'node:os';
 import { describe, expect, it } from 'vitest';
 import { ConversationRegistry } from './conversation.js';
 import { parseConfig, type Config } from '../config/schema.js';
-import type { PlatformAdapter } from '../platform/adapter.js';
+import type { PlatformAdapter, SendOptions } from '../platform/adapter.js';
+import { DaemonMenus } from './daemon-menus.js';
 import type { AgentFactory, AgentSession } from './agent.js';
 import type { ConversationId, InboundMessage } from '../types.js';
 
@@ -82,7 +84,15 @@ const drain = (): Promise<void> => new Promise((r) => setTimeout(r, 20));
 function rig(
   cfg: Config = baseConfig,
   persistedAgent?: string,
-  opts: { persistedSessions?: Record<string, string>; startsSessions?: boolean; nested?: boolean } = {}
+  opts: {
+    persistedSessions?: Record<string, string>;
+    startsSessions?: boolean;
+    nested?: boolean;
+    handoffAction?: boolean;
+    workdir?: string;
+    title?: string;
+    thread?: string;
+  } = {}
 ) {
   const prompts: Array<{ sessionId: string; agentId: string; prompt: string }> = [];
   const sessions = new Map<string, AgentSession>();
@@ -110,10 +120,16 @@ function rig(
   };
 
   const sent: string[] = [];
+  const sentOpts: Array<SendOptions | undefined> = [];
   const platform = {
-    capabilities: { thread: false, editMessage: true },
-    sendMessage: async (address: { channel: string }, text: string) => {
+    capabilities: {
+      thread: Boolean(opts.thread),
+      editMessage: true,
+      ...(opts.handoffAction ? { handoffAction: true } : {}),
+    },
+    sendMessage: async (address: { channel: string }, text: string, sendOptions?: SendOptions) => {
       sent.push(text);
+      sentOpts.push(sendOptions);
       return { address, messageId: 'm1' };
     },
     editMessage: async () => {},
@@ -144,13 +160,13 @@ function rig(
         bound = undefined;
         agentSessions = {};
       },
-      conversationCwd: () => undefined,
+      conversationCwd: () => opts.workdir,
       setConversationCwd: () => {},
       clearAgentSessions: () => {
         agentSessions = {};
       },
       // Naming reads these on the way into every turn; a stub without them would fail the turn.
-      conversationTitle: () => undefined,
+      conversationTitle: () => opts.title,
       titlePinned: () => false,
       setConversationTitle: () => {},
     } as never
@@ -164,7 +180,13 @@ function rig(
    */
   const send = async (content: string): Promise<void> => {
     reg.route({
-      conversation: { platform: 'discord', channel: 'c1', kind: 'direct', user: 'u1' },
+      conversation: {
+        platform: 'discord',
+        channel: 'c1',
+        ...(opts.thread ? { thread: opts.thread } : {}),
+        kind: 'direct',
+        user: 'u1',
+      },
       messageId: `m${++n}`,
       content,
       timestamp: 0,
@@ -173,7 +195,7 @@ function rig(
   };
 
   const headers = (): string[] => sent.filter((t) => t.startsWith('🤖'));
-  return { reg, sent, send, prompts, pickerCalls, headers };
+  return { reg, sent, sentOpts, send, prompts, pickerCalls, headers, platform };
 }
 
 describe('generic command translation in route()', () => {
@@ -661,5 +683,154 @@ describe('a topic keeps its agent', () => {
     expect(sent.some((t) => t.includes('Context cleared'))).toBe(true);
     expect(sent.some((t) => t.includes('does not switch agents'))).toBe(false);
     expect(prompts).toHaveLength(1);
+  });
+
+  it('attaches a structured handoff action on platforms declaring handoffAction, and omits it elsewhere', async () => {
+    const realWorkdir = os.tmpdir();
+    // Non-web platform: plain refusal text only, no handoff payload.
+    const plain = rig(baseConfig, undefined, {
+      startsSessions: true,
+      workdir: realWorkdir,
+      title: 'Fix login flow',
+    });
+    await plain.send('/cc hi');
+    await plain.send('/oc take over');
+    const plainIdx = plain.sent.findIndex((t) => t.includes('does not switch agents'));
+    expect(plainIdx).toBeGreaterThanOrEqual(0);
+    expect(plain.sentOpts[plainIdx]?.handoff).toBeUndefined();
+
+    // Web UI platform: carries handoff on both `/oc` and `/agent oc`.
+    const web = rig(baseConfig, undefined, {
+      startsSessions: true,
+      handoffAction: true,
+      workdir: realWorkdir,
+      title: 'Fix login flow',
+      thread: 'a1b2c3d4',
+    });
+    await web.send('/cc hi');
+    await web.send('/oc take over');
+    const cmdIdx = web.sent.findIndex((t) => t.includes('does not switch agents'));
+    expect(web.sentOpts[cmdIdx]?.handoff).toEqual({
+      agentId: 'oc',
+      agentName: 'opencode',
+      fromAgent: 'claude',
+      sessionId: 'sess-cc',
+      workdir: realWorkdir,
+      sameHost: true,
+      fromTopicId: 'a1b2c3d4',
+      fromTopicTitle: 'Fix login flow',
+    });
+
+    await web.send('/agent oc');
+    const agentIdx = web.sent.length - 1;
+    expect(web.sent[agentIdx]).toContain('does not switch agents');
+    expect(agentIdx).toBeGreaterThan(cmdIdx);
+    expect(web.sentOpts[agentIdx]?.handoff).toEqual({
+      agentId: 'oc',
+      agentName: 'opencode',
+      fromAgent: 'claude',
+      sessionId: 'sess-cc',
+      workdir: realWorkdir,
+      sameHost: true,
+      fromTopicId: 'a1b2c3d4',
+      fromTopicTitle: 'Fix login flow',
+    });
+  });
+
+  it('marks sameHost=false when refusing a switch to an agent on another host', async () => {
+    const realWorkdir = os.tmpdir();
+    const crossHostCfg = makeConfig({
+      hosts: {
+        myhost: { ssh: 'alice@myhost' },
+      },
+      agents: [
+        { id: 'cc', harness: 'claude' },
+        { id: 'oc', harness: 'opencode', host: 'myhost' },
+      ],
+    });
+    const web = rig(crossHostCfg, undefined, {
+      startsSessions: true,
+      handoffAction: true,
+      workdir: realWorkdir,
+      thread: 'a1b2c3d4',
+    });
+    await web.send('/cc hi');
+    await web.send('/oc take over');
+    const idx = web.sent.findIndex((t) => t.includes('does not switch agents'));
+    expect(web.sentOpts[idx]?.handoff).toMatchObject({
+      agentId: 'oc',
+      sameHost: false,
+      workdir: realWorkdir,
+    });
+  });
+
+  it('passes handoff through editButtons when the /agent menu refuses a switch on web UI only', async () => {
+    const realWorkdir = os.tmpdir();
+    for (const handoffAction of [true, false]) {
+      const r = rig(baseConfig, undefined, {
+        startsSessions: true,
+        handoffAction,
+        workdir: realWorkdir,
+        title: 'Menu topic',
+        thread: 'a1b2c3d4',
+      });
+      let sentButtons: Array<{ id: string; label: string }> = [];
+      const edits: Array<{ text: string; opts?: SendOptions }> = [];
+      r.platform.capabilities.buttons = true;
+      r.platform.capabilities.editButtons = true;
+      r.platform.sendButtons = async (address, _text, buttons) => {
+        sentButtons = buttons;
+        return { address, messageId: 'menu-1' };
+      };
+      r.platform.editButtons = async (_ref, text, _buttons, _screen, sendOpts) => {
+        edits.push({ text, opts: sendOpts });
+      };
+
+      await r.send('/cc hi');
+      const menus = new DaemonMenus({
+        config: baseConfig,
+        platforms: new Map([['discord', r.platform]]),
+        registry: r.reg,
+        voice: { onClick: () => false },
+      } as never);
+      const conv = { platform: 'discord', channel: 'c1', thread: 'a1b2c3d4', kind: 'direct' as const, user: 'u1' };
+      menus.onAgentMenuRequest(
+        'discord#c1#a1b2c3d4',
+        conv,
+        {
+          groups: [
+            {
+              name: '',
+              agents: baseConfig.agents,
+            },
+          ],
+          current: 'cc',
+        }
+      );
+      await drain();
+      const ocBtn = sentButtons.find((b) => b.label.includes('oc'));
+      expect(ocBtn).toBeDefined();
+      menus.onButton({
+        conversation: conv,
+        messageId: 'menu-1',
+        buttonId: ocBtn!.id,
+      });
+      await drain();
+      expect(edits.at(-1)?.text).toContain('does not switch agents');
+      if (handoffAction) {
+        expect(edits.at(-1)?.opts?.handoff).toEqual({
+          agentId: 'oc',
+          agentName: 'opencode',
+          fromAgent: 'claude',
+          sessionId: 'sess-cc',
+          workdir: realWorkdir,
+          sameHost: true,
+          fromTopicId: 'a1b2c3d4',
+          fromTopicTitle: 'Menu topic',
+        });
+      } else {
+        expect(edits.at(-1)?.opts?.handoff).toBeUndefined();
+      }
+    }
   });
 });

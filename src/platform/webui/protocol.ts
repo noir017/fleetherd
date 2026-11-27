@@ -20,6 +20,7 @@ import type { ButtonSpec, MessageKind } from '../adapter.js';
 import type { TurnChangeEntry } from '../workbench.js';
 import type {
   AgentCatalog,
+  AgentHandoffAction,
   AgentStatus,
   OfflineMachine,
   PendingQueueItem,
@@ -796,6 +797,8 @@ export interface WebMessage {
   wasSettings?: boolean;
   /** Structured directory browser payload for live `/cd` and post-`/agent` placement menus. */
   workdir?: WorkdirScreen;
+  /** Structured handoff action attached to a refused agent switch so the page can open a new topic with an unsent draft. */
+  handoff?: AgentHandoffAction;
   /** Lifecycle reactions currently on this message (👀 / ✅ / ❌). Empty, never absent, for the same reason. */
   reactions: string[];
   /**
