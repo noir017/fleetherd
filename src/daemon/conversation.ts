@@ -711,7 +711,7 @@ export class ConversationRegistry {
   /** Browse one level of directories for a topic's selected agent, using `/cd`'s screen format. */
   async browseWorkdirForRef(
     ref: ConversationRef,
-    opts?: { agent?: string; dir?: string; atRoot?: boolean }
+    opts?: { agent?: string; dir?: string; atRoot?: boolean; cachedOnly?: boolean }
   ): Promise<WorkdirBrowseResult> {
     const id = this.idForRef(ref);
     const agentId =
@@ -724,7 +724,12 @@ export class ConversationRegistry {
     const resolved = this.resolveBrowseDir(opts?.dir, opts?.atRoot ? root : current, posixPaths);
     if (!resolved.ok) return resolved;
     const targetDir = resolved.dir;
-    const scan = await this.controls.scanWorkdirAt(agentId, targetDir);
+    const scan = await this.controls.scanWorkdirAt(
+      agentId,
+      targetDir,
+      opts?.cachedOnly ? { cachedOnly: true } : undefined
+    );
+    if (opts?.cachedOnly && !scan.ok) return { ok: false, error: scan.reason };
     const screen = buildWorkdirScreen({
       reqId: 'launch',
       agentId,
@@ -919,8 +924,8 @@ export class ConversationRegistry {
     return this.controls.applyWorkdirChoice(id, expectAgentId, path);
   }
 
-  scanWorkdirAt(agentId: string, dir: string): Promise<WorkdirScan> {
-    return this.controls.scanWorkdirAt(agentId, dir);
+  scanWorkdirAt(agentId: string, dir: string, opts?: { readonly cachedOnly?: boolean }): Promise<WorkdirScan> {
+    return this.controls.scanWorkdirAt(agentId, dir, opts);
   }
 
   workdirChoices(agentId: string): { root: string; dirs: string[] } | undefined {

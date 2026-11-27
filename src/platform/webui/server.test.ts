@@ -940,6 +940,55 @@ describe('webui server: topics', () => {
     expect(room.topicList().map((t) => t.id)).toEqual(beforeIds);
   });
 
+  it('includes agent catalog and cached workdir in POST /api/topics without blocking on uncached remotes', async () => {
+    const { base, room } = await boot();
+    const cookie = await signIn(base);
+    room.useAgentCatalog(() => ({
+      current: 'cc',
+      groups: [{ name: 'box', agents: [{ id: 'cc', harness: 'claude', kind: 'Claude' }, { id: 'oc', harness: 'opencode', kind: 'OpenCode' }] }],
+    }));
+    const seenOpts: Array<{ agent?: string; cachedOnly?: boolean }> = [];
+    room.useWorkdirBrowser(async (_ref, opts) => {
+      seenOpts.push({ agent: opts?.agent, cachedOnly: opts?.cachedOnly });
+      return {
+        ok: true,
+        screen: {
+          agentId: opts?.agent ?? 'cc',
+          root: '/srv',
+          current: '/srv',
+          browsing: '/srv',
+          breadcrumbs: [{ name: '/', path: '/', buttonId: 'wdb:launch:0' }],
+          selectCurrent: { path: '/srv', buttonId: 'wdr:launch:0', current: true, root: true },
+          entries: [],
+          truncated: 0,
+        },
+      };
+    });
+
+    const warmRes = await fetch(`${base}/api/topics`, {
+      method: 'POST',
+      headers: { ...JSON_HEADERS, cookie },
+      body: JSON.stringify({}),
+    });
+    expect(warmRes.status).toBe(201);
+    const warmBody = (await warmRes.json()) as { topic: { id: string }; agents?: { current: string }; workdir?: { browsing: string } };
+    expect(warmBody.agents?.current).toBe('cc');
+    expect(warmBody.workdir?.browsing).toBe('/srv');
+    expect(seenOpts).toEqual([{ agent: 'cc', cachedOnly: true }]);
+
+    // When cachedOnly misses, POST /api/topics still succeeds with agents and omits workdir.
+    room.useWorkdirBrowser(async () => ({ ok: false, error: 'not cached' }));
+    const coldRes = await fetch(`${base}/api/topics`, {
+      method: 'POST',
+      headers: { ...JSON_HEADERS, cookie },
+      body: JSON.stringify({}),
+    });
+    expect(coldRes.status).toBe(201);
+    const coldBody = (await coldRes.json()) as { topic: { id: string }; agents?: { current: string }; workdir?: unknown };
+    expect(coldBody.agents?.current).toBe('cc');
+    expect(coldBody.workdir).toBeUndefined();
+  });
+
   it('streams only the topic that was asked for', async () => {
     const { base, port, room, topic } = await boot();
     const cookie = await signIn(base);
