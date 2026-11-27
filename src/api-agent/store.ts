@@ -85,6 +85,7 @@ export class SessionStore {
 
   /** Read a session, from the cache or from its file (the `session/load` path after a restart). */
   get(sessionId: string): SessionRecord | undefined {
+    assertSessionId(sessionId);
     const cached = this.cache.get(sessionId);
     if (cached) return { ...cached };
     const loaded = this.read(sessionId);
@@ -94,6 +95,7 @@ export class SessionStore {
 
   /** Insert or replace a record and persist. `updatedAt` is stamped here, not by the caller. */
   put(record: Omit<SessionRecord, 'updatedAt'>): SessionRecord {
+    assertSessionId(record.sessionId);
     const stored: SessionRecord = { ...record, updatedAt: this.now() };
     this.cache.set(stored.sessionId, stored);
     this.write(stored);
@@ -109,6 +111,7 @@ export class SessionStore {
    * goes through here and names only what it learned.
    */
   patch(sessionId: string, fields: Pick<Partial<SessionRecord>, 'lastInteractionId' | 'environmentId'>): SessionRecord {
+    assertSessionId(sessionId);
     const current = this.get(sessionId);
     return this.put({
       sessionId,
@@ -120,35 +123,36 @@ export class SessionStore {
 
   /** Drop the continuation ids after an expired context, keeping the model choice. */
   clearContext(sessionId: string): SessionRecord {
+    assertSessionId(sessionId);
     const current = this.get(sessionId);
     return this.put({ sessionId, model: current?.model });
   }
 
   /** Remove a session and its file. */
   delete(sessionId: string): void {
+    const file = this.fileOf(sessionId);
     this.cache.delete(sessionId);
     try {
-      rmSync(this.fileOf(sessionId), { force: true });
+      rmSync(file, { force: true });
     } catch (err) {
-      this.log(`[api-agent] cannot remove session state ${this.fileOf(sessionId)}: ${messageOf(err)}`);
+      this.log(`[api-agent] cannot remove session state ${file}: ${messageOf(err)}`);
     }
   }
 
   private fileOf(sessionId: string): string {
-    if (!SESSION_ID.test(sessionId) || sessionId === '.' || sessionId === '..') {
-      throw new Error(`invalid session id "${sessionId}"`);
-    }
+    assertSessionId(sessionId);
     return path.join(this.dir, `${sessionId}.json`);
   }
 
   private read(sessionId: string): SessionRecord | undefined {
+    const file = this.fileOf(sessionId);
     let raw: string;
     try {
-      raw = readFileSync(this.fileOf(sessionId), 'utf8');
+      raw = readFileSync(file, 'utf8');
     } catch (err) {
       // ENOENT is normal (a new session, or one pruned after seven days).
       if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
-        this.log(`[api-agent] cannot read session state ${this.fileOf(sessionId)}: ${messageOf(err)}`);
+        this.log(`[api-agent] cannot read session state ${file}: ${messageOf(err)}`);
       }
       return undefined;
     }
@@ -160,7 +164,7 @@ export class SessionStore {
     } catch (err) {
       // A corrupt file must not keep the agent from starting: the cost is lost context, which the
       // next turn rebuilds, not a broken conversation. It is overwritten on the next write.
-      this.log(`[api-agent] session state ${this.fileOf(sessionId)} is not valid JSON (${messageOf(err)}); ignoring it`);
+      this.log(`[api-agent] session state ${file} is not valid JSON (${messageOf(err)}); ignoring it`);
       return undefined;
     }
   }
@@ -210,6 +214,12 @@ export class SessionStore {
     for (const [sessionId, record] of this.cache) {
       if (record.updatedAt < cutoff) this.cache.delete(sessionId);
     }
+  }
+}
+
+function assertSessionId(sessionId: string): void {
+  if (!SESSION_ID.test(sessionId) || sessionId === '.' || sessionId === '..') {
+    throw new Error(`invalid session id "${sessionId}"`);
   }
 }
 

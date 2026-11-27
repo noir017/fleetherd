@@ -75,8 +75,20 @@ const API_REVISION = '2026-05-20';
  */
 const CONTEXT_WINDOW = 1_048_576;
 
-/** A dropped stream is retried this many times before the turn fails. */
+/** A dropped stream is retried this many times on transport errors before the turn fails. */
 const MAX_RECONNECTS = 6;
+
+/** Cap per-attempt reconnect backoff so long server pauses stay responsive. */
+const MAX_RECONNECT_DELAY_MS = 10_000;
+
+/** Bounded limits when the server closes streams repeatedly while still `in_progress`. */
+const MAX_STALL_RECONNECTS = 30;
+const MAX_STALL_MS = 5 * 60 * 1000;
+
+type InteractionState =
+  | { kind: 'running' }
+  | { kind: 'terminal'; interaction: Record<string, unknown> }
+  | { kind: 'unknown' };
 
 /** An interaction id is 70 characters and appears in every log line; ten is enough to correlate. */
 const shortId = (id: string | undefined): string => (id ? `${id.slice(0, 10)}…` : 'none');
@@ -104,6 +116,10 @@ export interface AntigravityOptions {
   /** Injected for tests; no trailing slash. */
   baseUrl?: string;
   log?: (line: string) => void;
+  /** Injected for tests; epoch ms. */
+  now?: () => number;
+  /** Injected for tests; abortable delay. */
+  sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
 }
 
 interface InteractionBody {
@@ -127,6 +143,8 @@ class AntigravityBackend implements ApiBackend {
   private readonly baseUrl: string;
   private readonly log: (line: string) => void;
   private readonly maxTokens: number;
+  private readonly now: () => number;
+  private readonly sleepImpl: (ms: number, signal: AbortSignal) => Promise<void>;
 
   constructor(options: AntigravityOptions) {
     this.models = options.models?.length ? [...options.models] : [...ANTIGRAVITY_MODELS];
@@ -138,6 +156,8 @@ class AntigravityBackend implements ApiBackend {
     this.baseUrl = (options.baseUrl ?? DEFAULT_BASE_URL).replace(/\/$/, '');
     this.log = options.log ?? ((line: string) => console.error(line));
     this.maxTokens = options.maxTokens;
+    this.now = options.now ?? Date.now;
+    this.sleepImpl = options.sleep ?? sleep;
   }
 
   async *turn(request: TurnRequest): AsyncGenerator<BackendEvent> {
@@ -244,7 +264,11 @@ class AntigravityBackend implements ApiBackend {
   private async *stream(id: string, signal: AbortSignal): AsyncGenerator<SseFrame> {
     let skip = 0;
     let emptyReconnects = 0;
-    for (let attempt = 0; ; attempt++) {
+    let networkAttempts = 0;
+    let backoffStep = 0;
+    let stallAttempts = 0;
+    let stallStartedAt: number | undefined;
+    for (;;) {
       const already = skip;
       let seen = 0;
       let sawDone = false;
@@ -262,14 +286,27 @@ class AntigravityBackend implements ApiBackend {
         if (seen < already) {
           throw new ApiAgentError('the replayed stream was shorter than what was already read', 'upstream');
         }
-        emptyReconnects = seen === already ? emptyReconnects + 1 : 0;
-        if (emptyReconnects >= 2) {
-          throw new ApiAgentError(
-            'the Antigravity stream closed before completion and a reconnect delivered no new events',
-            'upstream',
-          );
+        if (seen > already) {
+          emptyReconnects = 0;
+          networkAttempts = 0;
+          backoffStep = 0;
+          stallAttempts = 0;
+          stallStartedAt = undefined;
+          throw new ApiAgentError('the Antigravity stream closed before completion', 'network');
         }
-        throw new ApiAgentError('the Antigravity stream closed before completion', 'network');
+        emptyReconnects += 1;
+        if (emptyReconnects < 2) {
+          throw new ApiAgentError('the Antigravity stream closed before completion', 'network');
+        }
+        const remaining = await this.stallRemainingMs(id, signal, stallAttempts, stallStartedAt);
+        stallStartedAt ??= this.now();
+        stallAttempts += 1;
+        this.log(
+          `[api-agent] stream for ${shortId(id)} closed while still in progress; reconnecting, ${skip} event(s) already read`,
+        );
+        await this.sleepImpl(Math.min(backoffMs(backoffStep), remaining), signal);
+        backoffStep += 1;
+        continue;
       } catch (err) {
         if (signal.aborted) throw err;
         if (err instanceof InteractionFinished) throw err;
@@ -277,7 +314,7 @@ class AntigravityBackend implements ApiBackend {
         // 401 only spends time. Network failures, drops and clean early EOFs are what the loop is
         // for.
         if (err instanceof ApiAgentError && err.kind !== 'network') throw err;
-        if (attempt >= MAX_RECONNECTS) {
+        if (networkAttempts >= MAX_RECONNECTS) {
           throw new ApiAgentError(
             `lost the Antigravity stream and could not reconnect after ${MAX_RECONNECTS} attempts: ${messageOf(err)}`,
             'network',
@@ -286,9 +323,40 @@ class AntigravityBackend implements ApiBackend {
         this.log(
           `[api-agent] stream for ${shortId(id)} dropped (${messageOf(err)}); reconnecting, ${skip} event(s) already read`,
         );
-        await sleep(500 * 2 ** attempt, signal);
+        await this.sleepImpl(backoffMs(backoffStep), signal);
+        networkAttempts += 1;
+        backoffStep += 1;
       }
     }
+  }
+
+  /**
+   * Check interaction state before failing on repeated empty EOFs: free-tier turns can pause 70s+
+   * and close the idle stream while still `in_progress`.
+   */
+  private async stallRemainingMs(
+    id: string,
+    signal: AbortSignal,
+    stallAttempts: number,
+    stallStartedAt: number | undefined,
+  ): Promise<number> {
+    const state = await this.inspectInteraction(id, signal);
+    if (state.kind === 'terminal') throw new InteractionFinished(state.interaction);
+    if (state.kind !== 'running') {
+      throw new ApiAgentError(
+        'the Antigravity stream closed before completion and a reconnect delivered no new events',
+        'upstream',
+      );
+    }
+    const elapsed = stallStartedAt === undefined ? 0 : this.now() - stallStartedAt;
+    const remaining = MAX_STALL_MS - elapsed;
+    if (stallAttempts >= MAX_STALL_RECONNECTS || remaining <= 0) {
+      throw new ApiAgentError(
+        'the Antigravity stream closed before completion and stayed in progress past the reconnect limit',
+        'upstream',
+      );
+    }
+    return remaining;
   }
 
   /**
@@ -302,8 +370,8 @@ class AntigravityBackend implements ApiBackend {
     const res = await this.call('GET', `/interactions/${encodeURIComponent(id)}?stream=true`, undefined, signal);
     if (res.ok) return res;
     if (res.status === 400 || res.status === 404) {
-      const finished = await this.terminalInteraction(id, signal);
-      if (finished) throw new InteractionFinished(finished);
+      const state = await this.inspectInteraction(id, signal);
+      if (state.kind === 'terminal') throw new InteractionFinished(state.interaction);
       const detail = upstreamMessage(await res.text().catch(() => '')) ?? `HTTP ${res.status}`;
       throw new ApiAgentError(`the Antigravity stream is unavailable (${res.status}: ${detail})`, 'network');
     }
@@ -311,25 +379,27 @@ class AntigravityBackend implements ApiBackend {
   }
 
   /**
-   * The interaction itself (no stream), when it has reached a terminal state.
+   * Inspect the interaction itself (no stream) to distinguish running vs terminal vs unknown.
    *
    * Probed 2026-11-13: `GET /interactions/{id}` answers 200 for a real id and 404 `not_found` for
    * a well-formed id that never existed, so the same call is the existence test `fail()` needs
    * and the recovery path for a stream that closed after the answer was ready.
    */
-  private async terminalInteraction(id: string, signal: AbortSignal): Promise<Record<string, unknown> | undefined> {
+  private async inspectInteraction(id: string, signal: AbortSignal): Promise<InteractionState> {
     try {
       const res = await this.call('GET', `/interactions/${encodeURIComponent(id)}`, undefined, signal);
       if (!res.ok) {
         await res.text().catch(() => '');
-        return undefined;
+        return { kind: 'unknown' };
       }
       const body = (await res.json().catch(() => undefined)) as Record<string, unknown> | undefined;
       const status = typeof body?.status === 'string' ? body.status : '';
-      if (!status || status === 'in_progress' || status === 'requires_action') return undefined;
-      return body;
-    } catch {
-      return undefined;
+      if (!status || !body) return { kind: 'unknown' };
+      if (status === 'in_progress' || status === 'requires_action') return { kind: 'running' };
+      return { kind: 'terminal', interaction: body };
+    } catch (err) {
+      if (signal.aborted) throw err;
+      return { kind: 'unknown' };
     }
   }
 
@@ -389,6 +459,10 @@ class AntigravityBackend implements ApiBackend {
           'context_expired',
         );
       }
+      return new ApiAgentError(
+        `the Antigravity API returned ${res.status}: ${upstream} (if this keeps failing, send /new to start a fresh session)`,
+        'upstream',
+      );
     }
     return new ApiAgentError(`the Antigravity API returned ${res.status}: ${upstream}`, 'upstream');
   }
@@ -423,6 +497,8 @@ export class AntigravityEventMapper {
    */
   failure?: ApiAgentError;
   private readonly toolIds = new Map<number, string>();
+  private readonly startedTools = new Set<string>();
+  private readonly endedTools = new Set<string>();
   /** All text emitted so far, for rebuilding a tail after the stream was lost. */
   private text = '';
 
@@ -469,6 +545,22 @@ export class AntigravityEventMapper {
    */
   recover(interaction: Record<string, unknown>): BackendEvent[] {
     const events: BackendEvent[] = [];
+    const steps = interaction.steps;
+    if (Array.isArray(steps)) {
+      for (let index = 0; index < steps.length; index += 1) {
+        const step = steps[index];
+        if (!step || typeof step !== 'object') continue;
+        const event = this.mapToolStep(step as Record<string, unknown>, index);
+        if (!event) continue;
+        if (event.type === 'tool_start' && !this.startedTools.has(event.id)) {
+          this.startedTools.add(event.id);
+          events.push(event);
+        } else if (event.type === 'tool_end' && !this.endedTools.has(event.id)) {
+          this.endedTools.add(event.id);
+          events.push(event);
+        }
+      }
+    }
     const full = textOfInteraction(interaction);
     if (full.startsWith(this.text)) {
       const suffix = full.slice(this.text.length);
@@ -485,33 +577,37 @@ export class AntigravityEventMapper {
     const step = payload.step as Record<string, unknown> | undefined;
     if (!step) return [];
     const index = typeof payload.index === 'number' ? payload.index : 0;
+    const event = this.mapToolStep(step, index);
+    if (!event) return [];
+    if (event.type === 'tool_start') this.startedTools.add(event.id);
+    else if (event.type === 'tool_end') this.endedTools.add(event.id);
+    return [event];
+  }
+
+  private mapToolStep(step: Record<string, unknown>, index: number): BackendEvent | undefined {
     if (step.type === 'code_execution_call') {
       const id = typeof step.id === 'string' ? step.id : `code-${index}`;
       this.toolIds.set(index, id);
       const args = step.arguments as { language?: unknown; code?: unknown } | undefined;
       const language = typeof args?.language === 'string' ? args.language : undefined;
-      return [
-        {
-          type: 'tool_start',
-          id,
-          title: language ? `Running ${language} code` : 'Running code',
-          rawInput: args,
-        },
-      ];
+      return {
+        type: 'tool_start',
+        id,
+        title: language ? `Running ${language} code` : 'Running code',
+        rawInput: args,
+      };
     }
     if (step.type === 'code_execution_result') {
       const id = typeof step.call_id === 'string' ? step.call_id : this.toolIds.get(index) ?? `code-${index}`;
-      return [
-        {
-          type: 'tool_end',
-          id,
-          status: step.is_error === true ? 'failed' : 'completed',
-          output: typeof step.result === 'string' ? step.result : undefined,
-        },
-      ];
+      return {
+        type: 'tool_end',
+        id,
+        status: step.is_error === true ? 'failed' : 'completed',
+        output: typeof step.result === 'string' ? step.result : undefined,
+      };
     }
     // `model_output` and `thought` are markers for the deltas that follow, not content.
-    return [];
+    return undefined;
   }
 
   private stepDelta(payload: Record<string, unknown>): BackendEvent[] {
@@ -614,6 +710,10 @@ function upstreamMessage(text: string): string | undefined {
     // Not JSON; the body itself is the best description available.
   }
   return text.trim().slice(0, 300);
+}
+
+function backoffMs(step: number): number {
+  return Math.min(500 * 2 ** step, MAX_RECONNECT_DELAY_MS);
 }
 
 function messageOf(err: unknown): string {
