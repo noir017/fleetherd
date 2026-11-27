@@ -32,7 +32,7 @@ import { isAgentAnswer } from './agent-reconnect.js';
 import { markActivePools } from './agy-meters.js';
 import { AGY_CONTEXT_REFRESH_MS, readAgyContext } from './agy-transcript.js';
 import { connectAddress, connectHere, connectMeta } from './connect-agent.js';
-import { HARNESSES } from './harness/index.js';
+import { HARNESS_PROFILES } from './harness/index.js';
 import { harnessLogProbe, readHarnessErrors } from './harness-log.js';
 import { scopeQuotaPools, type QuotaMeter } from './quota-meter.js';
 import { relayEnv } from './relay.js';
@@ -164,7 +164,7 @@ export function remoteMcpServers(sessionToken: string, paths: { shim: string; so
 
 /** Resolve an agent def into the actual spawn command + args (presets default; custom self-configures; then append def.args). Exported for the doctor check and the harness unit tests. */
 export function resolveHarness(def: AgentDef, remote = false): { command: string; args: string[] } {
-  return HARNESSES[def.harness].launch(def, remote);
+  return HARNESS_PROFILES[def.harness].launch(def, remote);
 }
 
 /**
@@ -179,7 +179,7 @@ export function resolveHarness(def: AgentDef, remote = false): { command: string
  * "not offered by this session" in the log.
  */
 export function isCursorAgent(def: Pick<AgentDef, 'harness' | 'command'>): boolean {
-  return Boolean(HARNESSES[def.harness].capabilityMeta?.(def)?.parameterizedModelPicker);
+  return Boolean(HARNESS_PROFILES[def.harness].capabilityMeta?.(def)?.parameterizedModelPicker);
 }
 
 /**
@@ -190,7 +190,7 @@ export function isCursorAgent(def: Pick<AgentDef, 'harness' | 'command'>): boole
  *   into separate config options (probed against cursor-agent 2026.11.05-86047df, 2026-11-10).
  */
 export function capabilityMetaOf(def: AgentDef): Record<string, unknown> {
-  return HARNESSES[def.harness].capabilityMeta?.(def) ?? {};
+  return HARNESS_PROFILES[def.harness].capabilityMeta?.(def) ?? {};
 }
 
 /**
@@ -431,7 +431,7 @@ export class StartupTimeout extends Error {
  * a closed connection, so the version to check is named.
  */
 function startupHint(def: AgentDef): string {
-  return HARNESSES[def.harness].startupHint ?? '';
+  return HARNESS_PROFILES[def.harness].startupHint ?? '';
 }
 
 /**

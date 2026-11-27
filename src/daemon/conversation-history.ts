@@ -11,7 +11,7 @@ import {
   type CacheReading,
 } from './claude-transcript.js';
 import type { ConversationContext } from './conversation-context.js';
-import { HARNESSES } from './harness/index.js';
+import { HARNESS_PROFILES } from './harness/index.js';
 import { remoteHosts } from './remote-hosts.js';
 
 /**
@@ -75,7 +75,7 @@ export class ConversationHistory {
   async cacheReading(id: ConversationId): Promise<CacheReading | undefined> {
     const agentId = this.ctx.agentIdOf(id);
     const def = findAgent(this.ctx.config, agentId);
-    const transcript = def ? HARNESSES[def.harness].transcript : undefined;
+    const transcript = def ? HARNESS_PROFILES[def.harness].transcript : undefined;
     if (!def || !transcript?.projectsDir || !transcript?.remoteProjectsDir) return undefined;
     const sessionId = this.ctx.store?.agentSession(id, agentId);
     const cwd = this.ctx.workdirOf(id, agentId);

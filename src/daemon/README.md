@@ -34,7 +34,7 @@ session id, agy's conversation id). One conversation holds one session *per agen
 | `paced-adapter.ts` | Wraps every `PlatformAdapter` in the shared per-chat write budget |
 | `agent.ts` | `AgentFactory` / `AgentSession` / `AgentStreamHandlers` interfaces. Dependency-free. |
 | `agent-acp.ts` | ACP runtime factory, session lifecycle, update pump, watchdogs, and permission/elicitation answering (`session/request_permission`: approve under none/`auto`/`full`, ask via `onPermission` under `plan`/`ask`/`edits`, fail-closed when unanswered). Re-exports its three submodules below. |
-| `agent-acp-harness.ts` | ACP harness launch resolution (`resolveHarness`, `resolveClaudeAdapterEntry`), MCP server wiring, startup diagnostics, steering/folded-prompt drivers, and harness quirk adapters |
+| `agent-acp-harness.ts` | ACP harness launch dispatch (`resolveHarness`), MCP server wiring, startup diagnostics, steering/folded-prompt drivers, and harness quirk adapters |
 | `harness/` | `HarnessProfile` seam (`profile.ts`, `index.ts`, and one file per `Harness`): launch, capability `_meta`, model/option hooks, relay, required `reviewIsolation`, `doctor` checks, skill/instruction/transcript locations, and log probes |
 | `agent-acp-options.ts` | ACP model, effort, mode, and custom config option parsing, normalization, and permission-level mode mapping (`applyPermissionLevel`, `AcpOptionState`) |
 | `agent-acp-translate.ts` | Pure ACP `session/update`, permission, and elicitation translation to `AgentStreamHandlers` (`translateUpdate`, `decidePermission`, `permissionRequestOf`, `permissionResponse`, `parseFormElicitation`) |
@@ -1100,8 +1100,9 @@ renewing on every call.
 
 Everything above this boundary — `ConversationRegistry`, `TurnRunner`, `StreamBuffer`,
 `ToolRenderer` — is **protocol-agnostic** and is not touched by a harness. A harness that speaks
-ACP is an arm of `resolveHarness`; one that ever speaks something else would be a sibling runtime
-implementing `AgentFactory`, not a branch upstream.
+ACP is a profile in `src/daemon/harness/` (dispatched via `HARNESS_PROFILES` and `resolveHarness`);
+one that ever speaks something else would be a sibling runtime implementing `AgentFactory`, not a
+branch upstream.
 
 `agent.ts` holds only interfaces and imports nothing from the project, so either kind of runtime
 can implement it without a cycle.
@@ -1484,7 +1485,9 @@ Since 2026-11-06 `harness: agy` launches `agy acp` (agy 1.5+) and is served by `
 any ACP harness: sessions, `session/load`, the `model` and `thought_level` selectors, permission
 requests (put to the person under a level that asks), `session/cancel` for `/stop`, pictures as image blocks and
 the native tools over MCP. No launch flag from the previous print-mode runtime carries over —
-`resolveHarness` says why each was dropped. What `agy acp` 1.5.1 does its own way is in `agy-acp.ts`, each measured with
+re-measured on 1.5.1 (2026-11-06): there is no print-mode timeout to lift, permissions arrive via
+`session/request_permission` (so `--dangerously-skip-permissions` would bypass permission levels),
+and writes land in cwd (so `--add-dir` is unneeded). What `agy acp` 1.5.1 does its own way is in `agy-acp.ts`, each measured with
 `project-scripts/talkcode-agy-acp/` and recorded in the file header:
 
 - **Model ids.** The selector offers `gemini-3.8-flash` with a separate `thought_level`; configs and

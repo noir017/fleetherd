@@ -86,6 +86,8 @@ export const opencodeProfile: HarnessProfile = {
   doctor: {
     command: () => 'opencode',
   },
+  // Probed 2026-11-13 on opencode 2.2.5: a fork taken mid-turn carries on with the running turn and repeats its commands.
+  forkCarriesOnRunningTurn: true,
   contextMissingHint:
     ' On opencode that means a model from a custom provider: give it a `limit` block in opencode.json (e.g. `"limit": { "context": 128000 }`) and the numbers appear.',
   logProbe: {

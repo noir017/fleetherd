@@ -6,7 +6,7 @@ import { buildHarnessEnv, remoteAgentEnv } from './agent-common.js';
 import { runAgyCliCommand, runAgyCliFor, type AgyCliResult, type AgyCliRunner } from './agy-cli.js';
 import { parseAgyUsagePools } from './agy-meters.js';
 import { remoteHosts } from './remote-hosts.js';
-import { HARNESSES } from './harness/index.js';
+import { HARNESS_PROFILES } from './harness/index.js';
 import { agentHome } from './harness/profile.js';
 import { shellLaunch } from './shell-run.js';
 
@@ -87,7 +87,7 @@ export async function runQuotaCommandFor(def: AgentDef, cwd: string, local: Quot
 
 /** Whether an agent has a quota to read: its own command, or agy's `/usage`. */
 export function hasQuotaSource(def: Pick<AgentDef, 'harness' | 'quotaCommand'>): boolean {
-  return Boolean(def.quotaCommand) || Boolean(HARNESSES[def.harness].hasBuiltinQuota);
+  return Boolean(def.quotaCommand) || Boolean(HARNESS_PROFILES[def.harness].hasBuiltinQuota);
 }
 
 export interface QuotaMeter {

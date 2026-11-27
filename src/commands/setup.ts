@@ -6,7 +6,7 @@ import { isLegacyConfig, migrateLegacyConfig } from '../config/migrate.js';
 import { saveConfig, saveConfigPatch, configPath, readRawConfigIfExists } from '../config/load.js';
 import { detectEnvLocale, type Locale } from '../core/i18n/index.js';
 import { tCli, type CliMessageKey } from '../core/i18n/cli.js';
-import { HARNESSES } from '../daemon/harness/index.js';
+import { HARNESS_PROFILES } from '../daemon/harness/index.js';
 import type { Harness } from '../types.js';
 
 /**
@@ -65,7 +65,7 @@ async function promptHarnessAndModel(locale: Locale): Promise<{ harness: string;
   });
 
   const command =
-    HARNESSES[harness].setup?.promptCommand
+    HARNESS_PROFILES[harness].setup?.promptCommand
       ? await input({
           message: tCli(locale, 'setup.prompt.customCommand'),
           validate: (v) => (v.trim().length > 0 ? true : tCli(locale, 'setup.prompt.customCommandRequired')),
@@ -74,7 +74,7 @@ async function promptHarnessAndModel(locale: Locale): Promise<{ harness: string;
 
   const model = await input({
     message: tCli(locale, 'setup.prompt.model'),
-    default: HARNESSES[harness].setup?.defaultModel ?? '',
+    default: HARNESS_PROFILES[harness].setup?.defaultModel ?? '',
   });
 
   return { harness, command, model };

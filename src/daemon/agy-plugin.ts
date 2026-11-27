@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { AgentDef } from '../config/schema.js';
 import { envOf } from '../legacy-name.js';
-import { HARNESSES } from './harness/index.js';
+import { HARNESS_PROFILES } from './harness/index.js';
 import type { SkillHome } from './harness/profile.js';
 import type { AgentProvision } from './provision.js';
 import { selfInvocation } from './reverse-cli-shim.js';
@@ -36,7 +36,7 @@ import { bundledSkillDir, linkSkill, listFiles, type SkillLinkResult } from './s
  * ── How the hook waits (wait-background.sh) ───────────────────────────────────────────────────────
  * Silently. It returns `continue` with no `reason` — a reason is text the model reads — and only
  * when the mailbox has something new: a task finishing, or a message the person sent mid-turn
- * (agy-acp.ts takesPromptMidTurn). The model is not called while it waits. A 2026-11-12 attempt
+ * (harness/agy.ts takesPromptMidTurn). The model is not called while it waits. A 2026-11-12 attempt
  * re-prompted every 20 s with instructions to check the task; agy allows a turn ten forced
  * continuations (measured: the eleventh is ignored and the turn ends), so that gave up after about
  * three and a half minutes, and the model, reading why, polled with `sleep 9.2` instead.
@@ -84,7 +84,7 @@ export function agyPluginSource(): string {
 
 /** Where agy looks for plugins under `home`, for an agy agent; undefined for every other harness. */
 export function agyPluginHome(harness: AgentDef['harness'], home: string): SkillHome | undefined {
-  return HARNESSES[harness].pluginHome?.(home);
+  return HARNESS_PROFILES[harness].pluginHome?.(home);
 }
 
 /** Links already reported as occupied or failed, so a spawn does not repeat the warning. */

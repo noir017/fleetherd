@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { AgentDef } from '../config/schema.js';
 import type { Welcome } from '../remote/connection.js';
-import { HARNESSES } from './harness/index.js';
+import { HARNESS_PROFILES } from './harness/index.js';
 import type { AgentProvision, HostFiles } from './provision.js';
 import { selfInvocation } from './reverse-cli-shim.js';
 import { syncSkillCopy } from './skill-copy.js';
@@ -39,7 +39,7 @@ import { envOf } from '../legacy-name.js';
  * as a `custom` agent and is told apart by its command (the reading skillHomes gives it too).
  */
 export function skillHarnessOf(def: AgentDef): string {
-  return HARNESSES[def.harness].skillHarnessName?.(def) ?? def.harness;
+  return HARNESS_PROFILES[def.harness].skillHarnessName?.(def) ?? def.harness;
 }
 
 /** Whether `def` gets `skill` at all — its `fleetherd-hosts` / `fleetherd-harnesses`, if any. */

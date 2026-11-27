@@ -1,6 +1,7 @@
 import type { ClientContext, SessionConfigOption, SessionModeState } from '@agentclientprotocol/sdk';
 import type { SessionOption } from '../types.js';
 import type { AgentDef } from '../config/schema.js';
+import { HARNESS_FACTS } from '../core/harness-facts.js';
 import { levelMode } from '../core/permission-levels.js';
 import type {
   AgentStreamHandlers,
@@ -9,7 +10,7 @@ import type {
   SessionModeSelector,
 } from './agent.js';
 import type { ConversationStore } from './conversation-store.js';
-import { HARNESSES } from './harness/index.js';
+import { HARNESS_PROFILES } from './harness/index.js';
 
 /** ACP's well-known id for the model selector among a session's config options. */
 export const MODEL_CONFIG_ID = 'model';
@@ -280,7 +281,7 @@ export async function applyModelPreference(
   want: string | undefined
 ): Promise<SessionConfigOption[] | undefined> {
   if (!want) return undefined;
-  const profile = HARNESSES[def.harness];
+  const profile = HARNESS_PROFILES[def.harness];
   const wireWant = profile.encodeModelWire ? profile.encodeModelWire(want) : want;
   const display = (v: string): string => (profile.decodeModelDisplay ? profile.decodeModelDisplay(v) : v);
 
@@ -426,7 +427,7 @@ export function modeControlOf(
  * does ask to the person, and its own mode stays as it is (applyPermissionLevel).
  */
 function modesLeftOut(def: AgentDef): boolean {
-  return Boolean(HARNESSES[def.harness].omitPermissionModes);
+  return HARNESS_FACTS[def.harness].ignoresSessionModes;
 }
 
 /** The `modes` a session/new or session/load answer carried, if any. */
@@ -576,7 +577,7 @@ export class AcpOptionState {
 
   /** The model to enforce on a reloaded session: the person's choice, or (for agy) the configured one too. */
   modelAfterLoad(): string | undefined {
-    return this.modelPreference ?? (HARNESSES[this.def.harness].forgetsModelOnLoad ? this.def.model : undefined);
+    return this.modelPreference ?? (HARNESS_PROFILES[this.def.harness].forgetsModelOnLoad ? this.def.model : undefined);
   }
 
   /** The model hint to pass on `session/new` / `session/fork`. */
@@ -624,7 +625,7 @@ export class AcpOptionState {
     sessionId: string,
     model: string | undefined
   ): Promise<void> {
-    const split = model ? HARNESSES[this.def.harness].splitModelOption?.(model, this.liveConfigOptions) : undefined;
+    const split = model ? HARNESS_PROFILES[this.def.harness].splitModelOption?.(model, this.liveConfigOptions) : undefined;
     const afterModel = await applyModelPreference(ctx, sessionId, this.def, this.liveConfigOptions, split?.model ?? model);
     if (afterModel) {
       this.liveConfigOptions = afterModel;
@@ -638,7 +639,7 @@ export class AcpOptionState {
   modelSelector(): ModelSelector | undefined {
     const opt = this.liveConfigOptions?.find((o) => o.id === MODEL_CONFIG_ID);
     if (!opt || opt.type !== 'select') return undefined;
-    const decode = HARNESSES[this.def.harness].decodeModelDisplay;
+    const decode = HARNESS_PROFILES[this.def.harness].decodeModelDisplay;
     const display = (v: string): string => (decode ? decode(v) : v);
     const options = opt.options
       .flatMap((entry) => ('group' in entry ? entry.options : [entry]))
@@ -653,7 +654,7 @@ export class AcpOptionState {
     value: string,
     live?: { ctx: Pick<ClientContext, 'request'>; sessionId: string }
   ): Promise<string> {
-    const encode = HARNESSES[this.def.harness].encodeModelWire;
+    const encode = HARNESS_PROFILES[this.def.harness].encodeModelWire;
     const wire = encode ? encode(value) : value;
     if (!live) {
       this.modelPreference = value;

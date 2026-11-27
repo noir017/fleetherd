@@ -13,8 +13,7 @@ import { applyModelPreference, resolveHarness } from './agent-acp.js';
 import { liveModelName } from './agent-acp-options.js';
 import { buildHarnessEnv, remoteAgentEnv, windowsSpawnOptions, type AgentChild } from './agent-common.js';
 import { AGY_COMMAND } from './agy-cli.js';
-import { AGY_NO_TOOLS } from './harness/agy.js';
-import { HARNESSES } from './harness/index.js';
+import { HARNESS_PROFILES } from './harness/index.js';
 import type { AcpReviewLaunch } from './harness/profile.js';
 import { remoteHosts } from './remote-hosts.js';
 
@@ -146,7 +145,7 @@ export function reviewerOf(config: Pick<Config, 'review' | 'agents'>): Reviewer 
 /** One review run, by whichever route the reviewer takes. */
 export async function runReview(reviewer: Reviewer, prompt: string): Promise<ReviewRun> {
   if (reviewer.kind === 'api') return runApiReview(reviewer, prompt);
-  const iso = HARNESSES[reviewer.def.harness].reviewIsolation;
+  const iso = HARNESS_PROFILES[reviewer.def.harness].reviewIsolation;
   if (iso !== 'operator-args' && iso.kind === 'agy-print') return runAgyReview(reviewer.def, reviewer.model, prompt);
   return runAcpReview(reviewer.def, reviewer.model, reviewer.args, prompt);
 }
@@ -236,7 +235,7 @@ export async function runApiReview(
  */
 export function acpReviewLaunch(def: AgentDef, remote: boolean, extraArgs: readonly string[] = []): AcpReviewLaunch {
   const base = resolveHarness(def, remote);
-  const iso = HARNESSES[def.harness].reviewIsolation;
+  const iso = HARNESS_PROFILES[def.harness].reviewIsolation;
   if (iso === 'operator-args') return { command: base.command, args: [...base.args, ...extraArgs], env: {} };
   if (iso.kind === 'acp') return iso.build(def, base);
   throw new Error('an agy review runs `agy -p` (runAgyReview), not an ACP session');
@@ -426,17 +425,6 @@ function stopChild(child: AgentChild): void {
 // ─────────────────────────────────────── the agy route ───────────────────────────────────────
 
 /**
- * Every permission class the CLI knows, denied. `"*"` is NOT a wildcard here — measured on agy
- * 1.5.0, `deny: ["*"]` matched nothing and `write_file` still wrote a file — so each class is
- * named. The reviewer reads nothing and writes nothing: everything it needs is in the prompt.
- *
- * An unknown class in this list is ignored by the CLI (it logs "ignoring invalid deny entry"), so
- * adding one costs nothing; a NEW tool class in a future agy is not covered, which is why the
- * security note in AGENTS.md calls this list part of the contract. On agy 1.5.2 (2026-11-07)
- * `list_dir`, `search`, `url` and `browser` are such unknown entries: listing, searching and
- * fetching all went through `run_command` and `read_file` instead, and were denied there.
- */
-/**
  * The argv for one review. The prompt is NOT here: a single argv entry is capped at 128 KB
  * (`MAX_ARG_STRLEN`), and a long Chinese conversation (40k characters is ~120 KB) plus the skills
  * it used blows through that — measured: a 360 KB `-p=` fails with "Argument list too long".
@@ -446,9 +434,13 @@ function stopChild(child: AgentChild): void {
  * write tools ask nobody.
  */
 export function reviewAgyArgs(model: string | undefined): string[] {
+  const iso = HARNESS_PROFILES.agy.reviewIsolation;
+  if (iso === 'operator-args' || iso.kind !== 'agy-print') {
+    throw new Error('agy reviewIsolation must be agy-print');
+  }
   return [
     ...(model ? [`--model=${model}`] : []),
-    `--settings=${AGY_NO_TOOLS}`,
+    `--settings=${iso.settingsJson}`,
     '--disable-slash-commands',
     '--input-format=stream-json',
     '--output-format=stream-json',

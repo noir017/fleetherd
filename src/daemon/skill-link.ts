@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import type { AgentDef } from '../config/schema.js';
 import type { Welcome } from '../remote/connection.js';
 import { renderBundledSkill } from './bundled-skill.js';
-import { HARNESSES, SKILL_READERS } from './harness/index.js';
+import { HARNESS_PROFILES, SKILL_READERS } from './harness/index.js';
 import type { SkillHome } from './harness/profile.js';
 import type { AgentProvision, HostFiles } from './provision.js';
 import { selfInvocation } from './reverse-cli-shim.js';
@@ -94,7 +94,7 @@ export function bundledSkillDir(dir = 'skill'): string {
 
 /** Where `harness` reads skills from under `home` (see the header for the evidence per arm). */
 export function skillHomes(harness: AgentDef['harness'], home: string, command?: string): SkillHome[] {
-  return HARNESSES[harness].skillHomes(home, command);
+  return HARNESS_PROFILES[harness].skillHomes(home, command);
 }
 
 /**

@@ -143,7 +143,8 @@ export interface HarnessSetup {
 
 /**
  * Harness seam: everything harness-specific in `daemon/` and `commands/` is funneled here.
- * Adding a harness = one file in `src/daemon/harness/` + one line in `HARNESSES` (`index.ts`).
+ * Adding a harness also touches `src/core/harness-facts.ts`, `src/config/instructions.ts`, and
+ * (when `reviewIsolation` is `'operator-args'`) `REVIEW_ARGS_HARNESSES` — see `AGENTS.md`.
  */
 export interface HarnessProfile {
   readonly id: Harness;
@@ -167,18 +168,14 @@ export interface HarnessProfile {
   ) => { model: string; effort: string } | undefined;
   /** True when `session/load` resets to the harness's default model so the configured model must be re-applied. */
   readonly forgetsModelOnLoad?: boolean;
-  /** True when the harness's session modes are excluded from permission-level mapping (ask/auto only). */
-  readonly omitPermissionModes?: boolean;
   /** True when the harness accepts a second `session/prompt` mid-turn without advertising it in `initialize`. */
   readonly takesPromptMidTurn?: boolean;
+  /** True when `session/fork` taken mid-turn carries on with the running turn and repeats its commands. */
+  readonly forkCarriesOnRunningTurn?: boolean;
   /** True when the ACP runtime attaches `agyTurnWatch` for inline warning/context handling. */
   readonly usesAgyTurnWatch?: boolean;
   /** True when the harness provides a built-in quota source even without `quotaCommand`. */
   readonly hasBuiltinQuota?: boolean;
-  /** True when the harness supports one-shot CLI commands (e.g. `/usage` via `agy -p`). */
-  readonly hasBuiltinCli?: boolean;
-  /** True when unknown slash commands that map to an ACP option defer until session options are known. */
-  readonly deferUnknownOptions?: boolean;
   /** Extra hint appended to `/context` when a turn completed without reporting context numbers. */
   readonly contextMissingHint?: string;
   /** Log probe for diagnosing silent turns (e.g. opencode rate-limit retries). */

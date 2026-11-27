@@ -87,7 +87,7 @@ import {
   AcpOptionState,
   reportedModes,
 } from './agent-acp-options.js';
-import { HARNESSES } from './harness/index.js';
+import { HARNESS_PROFILES } from './harness/index.js';
 import {
   AgentUnreachable,
   canPickUp,
@@ -578,7 +578,7 @@ class AcpSession implements AgentSession {
           ...(hint
             ? {
                 _meta: {
-                  model: HARNESSES[this.def.harness].encodeModelWire?.(hint) ?? hint,
+                  model: HARNESS_PROFILES[this.def.harness].encodeModelWire?.(hint) ?? hint,
                 },
               }
             : {}),
@@ -611,7 +611,7 @@ class AcpSession implements AgentSession {
     progress.answered = true;
     this.loadSessionSupported = initResult.agentCapabilities?.loadSession === true;
     this.resume = readResumeSupport(initResult.agentCapabilities);
-    this.steeringMode = steeringModeOf(initResult, Boolean(HARNESSES[this.def.harness].takesPromptMidTurn));
+    this.steeringMode = steeringModeOf(initResult, Boolean(HARNESS_PROFILES[this.def.harness].takesPromptMidTurn));
     this.imagePrompts = initResult.agentCapabilities?.promptCapabilities?.image === true;
     this.embeddedContext = initResult.agentCapabilities?.promptCapabilities?.embeddedContext === true;
     [this.forkSupport, this.forkKnown] = [forkSupportOf(initResult), true];
@@ -722,7 +722,7 @@ class AcpSession implements AgentSession {
       contextWindow: this.def.contextWindow,
       subagents: this.subagentNames,
       agy:
-        HARNESSES[this.def.harness].usesAgyTurnWatch
+        HARNESS_PROFILES[this.def.harness].usesAgyTurnWatch
           ? agyTurnWatch(this.def.id, (text) => handlers.onNotice?.(text), inTurn, {
               onModelCall: () => this.agyMeter.refreshAgyContext(handlers),
               window: (reported) => agyWindow(this.def, this.options.currentModelValue(), reported),
