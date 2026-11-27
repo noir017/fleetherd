@@ -8,6 +8,8 @@ function codexSkillHomes(home: string): SkillHome[] {
 
 export const codexProfile: HarnessProfile = {
   id: 'codex',
+  // PATH command (@agentclientprotocol/codex-acp), not bundled (~284 MB native binary).
+  launch: (def) => ({ command: 'codex-acp', args: [...def.args] }),
   skillHomes: (home) => codexSkillHomes(home),
   skillReaders: [{ name: 'codex', homes: codexSkillHomes }],
   skillScanDirs: (opts) => [

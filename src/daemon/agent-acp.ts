@@ -117,7 +117,7 @@ import {
 // Re-export split submodules so every existing caller and test import path stays unchanged.
 export {
   acpMcpServers, FOLDED_PROMPT_GRACE_MS, isCursorAgent, NATIVE_TOOLS_SERVER, promptBlocks,
-  remoteMcpServers, resolveClaudeAdapterEntry, resolveHarness, startupFailureMessage, type StartupProgress,
+  remoteMcpServers, resolveHarness, startupFailureMessage, type StartupProgress,
 } from './agent-acp-harness.js';
 export {
   applyEffortPreference, applyModelPreference, applyPermissionLevel, applyPinnedOptions,

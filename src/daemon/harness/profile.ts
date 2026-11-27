@@ -57,12 +57,21 @@ export interface HarnessTranscript {
   readContext?: (def: AgentDef, sessionId: string) => Promise<number | undefined>;
 }
 
+/** Resolved executable and argument list for launching an ACP harness child. */
+export interface HarnessLaunch {
+  command: string;
+  args: string[];
+}
+
 /**
  * Harness seam: everything harness-specific in `daemon/` and `commands/` is funneled here.
  * Adding a harness = one file in `src/daemon/harness/` + one line in `HARNESSES` (`index.ts`).
  */
 export interface HarnessProfile {
   readonly id: Harness;
+  readonly launch: (def: AgentDef, remote?: boolean) => HarnessLaunch;
+  readonly capabilityMeta?: (def: Pick<AgentDef, 'harness' | 'command'>) => Record<string, unknown>;
+  readonly startupHint?: string;
   readonly skillHomes: (home: string, command?: string) => SkillHome[];
   readonly skillReaders?: readonly SkillReaderSpec[];
   readonly skillHarnessName?: (def: Pick<AgentDef, 'harness' | 'command'>) => string;

@@ -11,7 +11,7 @@ import { defaultIdentityFile, defaultKnownHostsFile } from '../daemon/ssh-identi
 import { gitAsync, gitAvailable } from '../daemon/skills-git.js';
 import { gitSshCommand, redactRepoUrl, skillsRemoteOf } from '../daemon/skills-repo.js';
 import { isLegacyConfig, migrateLegacyConfig } from '../config/migrate.js';
-import { resolveClaudeAdapterEntry } from '../daemon/agent-acp.js';
+import { resolveClaudeAdapterEntry } from '../daemon/harness/claude.js';
 import { AGY_COMMAND } from '../daemon/agy-cli.js';
 import { claudeProjectsDir } from '../daemon/claude-transcript.js';
 import { remoteAgentEnv } from '../daemon/agent-common.js';

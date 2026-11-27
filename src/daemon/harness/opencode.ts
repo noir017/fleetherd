@@ -10,6 +10,7 @@ function opencodeSkillHomes(home: string): SkillHome[] {
 
 export const opencodeProfile: HarnessProfile = {
   id: 'opencode',
+  launch: (def) => ({ command: 'opencode', args: ['acp', ...def.args] }),
   skillHomes: (home) => opencodeSkillHomes(home),
   skillReaders: [{ name: 'opencode', homes: opencodeSkillHomes }],
   skillScanDirs: (opts) =>

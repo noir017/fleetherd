@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { instructionsHome } from '../../config/instructions.js';
+import { AGY_COMMAND } from '../agy-cli.js';
 import { agyTranscriptPath, readAgyContext } from '../agy-transcript.js';
 import { agyReferences, agyRuleNote, resolveAgyReference } from '../instruction-imports.js';
 import type { HarnessProfile, SkillHome } from './profile.js';
@@ -11,6 +12,9 @@ function agySkillHomes(home: string): SkillHome[] {
 
 export const agyProfile: HarnessProfile = {
   id: 'agy',
+  // agy >= 1.5 native ACP server; permissions arrive via session/request_permission (never --dangerously-skip-permissions).
+  launch: (def) => ({ command: AGY_COMMAND, args: ['acp', ...def.args] }),
+  startupHint: ' (`agy acp` needs agy 1.5 or later — check `agy --version` on that machine and upgrade it)',
   skillHomes: (home) => agySkillHomes(home),
   skillReaders: [{ name: 'agy', homes: agySkillHomes }],
   skillScanDirs: (opts) => [
