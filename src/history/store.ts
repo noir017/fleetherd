@@ -547,6 +547,7 @@ export class HistoryStore {
   private db: Database | undefined;
   /** Why the file could not be opened, for the one warning at startup and for queries. */
   private readonly failure: string | undefined;
+  private cachedSessionCount: number | undefined;
 
   constructor(
     private readonly file: string,
@@ -661,6 +662,7 @@ export class HistoryStore {
     // for the thirty returned (4.3 ms against 0.8 on 340 sessions / 100k rows, measured 2026-11-07).
     // An existing file builds it once on open; it is a few thousand rows.
     db.exec('CREATE INDEX IF NOT EXISTS sessions_last ON sessions(last_at)');
+    db.exec("CREATE INDEX IF NOT EXISTS sessions_list_idx ON sessions(last_at DESC, id DESC) WHERE kind != 'review'");
     const reviewCols = db.prepare('PRAGMA table_info(reviews)').all() as Array<{ name: string }>;
     if (!reviewCols.some((c) => c.name === 'model')) db.exec('ALTER TABLE reviews ADD COLUMN model TEXT');
     if (!reviewCols.some((c) => c.name === 'messages_read')) db.exec('ALTER TABLE reviews ADD COLUMN messages_read INTEGER');
@@ -726,6 +728,7 @@ export class HistoryStore {
       // Already closed, or a process that is going away anyway.
     }
     this.db = undefined;
+    this.cachedSessionCount = undefined;
   }
 
   /**
@@ -1378,6 +1381,15 @@ export class HistoryStore {
     return rows.map(sessionRow);
   }
 
+  count(): number {
+    if (this.cachedSessionCount !== undefined) return this.cachedSessionCount;
+    const row = this.requireDb()
+      .prepare("SELECT COUNT(*) AS n FROM sessions WHERE kind != 'review'")
+      .get() as { n: number | bigint };
+    this.cachedSessionCount = Number(row.n);
+    return this.cachedSessionCount;
+  }
+
   /**
    * One conversation's row by the key `conversations.json` uses, without reading its messages —
    * what the review sweep asks before deciding whether a quiet conversation is worth reviewing.
@@ -1606,6 +1618,7 @@ export class HistoryStore {
         meta.lastAt ?? meta.at
       ) as { id: number | bigint } | undefined;
     if (!row) throw new Error(`could not record conversation ${meta.key}`);
+    this.cachedSessionCount = undefined;
     return Number(row.id);
   }
 

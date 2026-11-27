@@ -27,11 +27,13 @@ import {
   copyWithFallback,
   errorMessage,
   filterHistoryRecords,
+  formatHistoryCount,
   formatHistoryExportMarkdown,
   formatHistoryRef,
   formatHistoryShortTime,
   formatHistoryTime,
   groupHistoryByDate,
+  hasActiveHistoryFilter,
   historyAgentClass,
   type HistoryEditorInput,
   type HistoryIcons,
@@ -53,6 +55,7 @@ interface HistoryViewState {
   sessions: HistoryPanelSession[];
   hits: HistoryPanelHit[];
   moreHits: boolean;
+  total: number | null;
   next: string | null;
   query: string;
   seq: number;
@@ -124,6 +127,7 @@ class HistoryViewPanel implements HistoryViewInstance {
     sessions: [],
     hits: [],
     moreHits: false,
+    total: null,
     next: null,
     query: '',
     seq: 0,
@@ -406,7 +410,8 @@ class HistoryViewPanel implements HistoryViewInstance {
     const filterGroups = buildHistoryFilterGroups(this.state.sessions, currentIcons);
     this.filterBar.setGroups(filterGroups);
     this.filterHost.hidden = filterGroups.length === 0;
-    const visibleSessions = filterHistoryRecords(this.state.sessions, this.filterBar.state());
+    const filterState = this.filterBar.state();
+    const visibleSessions = filterHistoryRecords(this.state.sessions, filterState);
     this.filterBar.setCounts(visibleSessions.length, this.state.sessions.length);
     if (visibleSessions.length) {
       const dateGroups = groupHistoryByDate(visibleSessions, (s) => s.lastAt);
@@ -420,11 +425,12 @@ class HistoryViewPanel implements HistoryViewInstance {
     } else {
       this.listEl.innerHTML = `<div class="skills-empty">${text(tr('history.empty'))}</div>`;
     }
-    const n = visibleSessions.length;
-    const countStr = `${n}${this.state.next ? '+' : ''}`;
-    this.countEl.textContent = n
-      ? tr(n === 1 && !this.state.next ? 'history.convOne' : 'history.convMany', { count: countStr })
-      : '';
+    this.countEl.textContent = formatHistoryCount({
+      visible: visibleSessions.length,
+      total: this.state.total,
+      next: this.state.next,
+      filtered: hasActiveHistoryFilter(filterState),
+    });
     this.moreBtn.hidden = !this.state.next;
     this.moreBtn.disabled = false;
     this.listNav.sync();
@@ -449,12 +455,15 @@ class HistoryViewPanel implements HistoryViewInstance {
         this.state.moreHits = false;
         if (page && page.enabled === false) {
           this.state.disabledLibrary = true;
+          this.state.total = null;
           this.paintList();
           return;
         }
         this.state.disabledLibrary = false;
         const rows = page?.sessions ?? [];
         this.state.sessions = before ? this.state.sessions.concat(rows) : rows;
+        if (typeof page?.total === 'number') this.state.total = page.total;
+        else if (!before) this.state.total = null;
         this.state.next = page?.next ?? null;
         this.paintList();
       },

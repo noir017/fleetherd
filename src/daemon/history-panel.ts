@@ -38,14 +38,14 @@ export function buildHistoryPanel(options: HistoryPanelOptions): HistoryPanel {
   const list = (opts: { before?: string; limit?: number } = {}): HistoryPanelPage => {
     const limit = Math.max(1, Math.min(opts.limit ?? page, 200));
     const before = opts.before ? parseCursor(opts.before) : undefined;
-    // One row past the page: its presence is what says there is a next page, without a COUNT
-    // over a library that can hold hundreds of thousands of rows.
+    // One row past the page determines whether a next page exists without offset pagination.
     const rows = options.history.list({ all: true, limit: limit + 1, ...(before ? { before } : {}) });
     const kept = rows.slice(0, limit);
     const last = kept[kept.length - 1];
     return {
       enabled: true,
       sessions: kept.map((row) => sessionEntry(row, options.instance)),
+      total: options.history.count(),
       ...(rows.length > limit && last ? { next: cursorOf(last) } : {}),
     };
   };

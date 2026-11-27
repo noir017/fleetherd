@@ -1041,7 +1041,7 @@ describe('HistoryStore turns', () => {
     // `list`'s shape: without the index SQLite sorts every session in range, and computes each
     // one's row count before the LIMIT applies.
     expect(plan("SELECT * FROM sessions s WHERE s.last_at >= ? AND s.kind != 'review' ORDER BY s.last_at DESC LIMIT ?")).toMatch(
-      /sessions_last/
+      /sessions_list_idx/
     );
     // The restart sweep's subquery: no index starts with `turn`, so `turn = ?` alone walked every
     // message in the file; naming the session narrows it to one conversation (either of its two
@@ -1287,6 +1287,54 @@ describe('HistoryStore tool calls', () => {
     expect(capped.messages.map((m) => m.text)).toEqual(['问题 0', '[19999 tool calls: Bash ×13332, Edit ×6667]']);
     expect(capped.note).toMatch(/more than 500 messages/);
     store.close();
+  });
+
+  it('counts non-review sessions with a partial index and invalidates its cache on writes and close', () => {
+    const { store, file } = tempStore();
+    const at = Date.UTC(2026, 10, 8, 12, 0);
+    expect(store.count()).toBe(0);
+
+    store.session({ key: 'web#main#s1', platform: 'web', kind: 'normal', at });
+    store.session({ key: 'sched#1#', platform: 'web', kind: 'schedule', at: at + 1 });
+    store.session({ key: 'sub#1#', platform: 'web', kind: 'subagent', at: at + 2 });
+    store.session({ key: 'rev#1#', platform: 'web', kind: 'review', at: at + 3 });
+    expect(store.count()).toBe(3);
+
+    // Verify partial index exists and covers COUNT(*) for kind != 'review'.
+    const raw = new Sqlite(file);
+    const idx = raw
+      .prepare("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'sessions_list_idx'")
+      .all() as Array<{ sql: string }>;
+    expect(idx).toHaveLength(1);
+    expect(idx[0]!.sql).toContain("WHERE kind != 'review'");
+    const plan = raw
+      .prepare("EXPLAIN QUERY PLAN SELECT COUNT(*) FROM sessions WHERE kind != 'review'")
+      .all() as Array<{ detail: string }>;
+    expect(plan.map((r) => r.detail).join(' ')).toContain('sessions_list_idx');
+
+    // Out-of-band insert proves count() serves the cached value until invalidated by a store write.
+    raw
+      .prepare(
+        "INSERT INTO sessions (key, platform, title, agent, host, cwd, kind, started_at, last_at) VALUES ('ext#1', 'web', '', '', '', '', 'normal', ?, ?)"
+      )
+      .run(at + 4, at + 4);
+    expect(store.count()).toBe(3);
+
+    // session() invalidates the cache (re-reads DB: 3 + ext#1 + s2 = 5).
+    store.session({ key: 'web#main#s2', platform: 'web', kind: 'normal', at: at + 5 });
+    expect(store.count()).toBe(5);
+
+    // importSession() invalidates the cache.
+    store.importSession(
+      'web:main:imp1',
+      { key: 'web#main#imp1', platform: 'web', kind: 'normal', at: at + 6 },
+      [{ ts: at + 6, role: 'user', kind: 'normal', text: 'hello' }]
+    );
+    expect(store.count()).toBe(6);
+
+    raw.close();
+    store.close();
+    expect(() => store.count()).toThrow(/unavailable/);
   });
 });
 

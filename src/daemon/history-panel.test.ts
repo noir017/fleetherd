@@ -44,14 +44,31 @@ describe('the web UI history panel', () => {
     const first = panel.list({ limit: 3 });
     expect(first.enabled).toBe(true);
     expect(first.sessions.map((s) => s.title)).toEqual(['t0', 't1', 't2']);
+    expect(first.total).toBe(5);
     expect(first.next).toBeDefined();
     expect(first.sessions[0]).toMatchObject({ agent: 'cc', platform: 'webui', messages: 1 });
     expect(first.sessions[0]!.lastAt).toBe(now);
 
     const second = panel.list({ limit: 3, before: first.next });
     expect(second.sessions.map((s) => s.title)).toEqual(['t3', 'ancient']);
+    expect(second.total).toBe(5);
     // The last page has nowhere to go, so the button that would fetch it is not offered.
     expect(second.next).toBeUndefined();
+    store.close();
+  });
+
+  it('excludes review sessions from the reported total count', () => {
+    const store = tempStore();
+    const now = Date.now();
+    seed(store, 'webui#main#00000001', 'one', now);
+    seed(store, 'webui#main#00000002', 'two', now - 1_000);
+    store.session({ key: 'review#1', platform: 'webui', title: 'auto-review', kind: 'review', at: now - 2_000 });
+    const panel = buildHistoryPanel({ history: store, instance: 'webui' });
+
+    const page = panel.list({ limit: 1 });
+    expect(page.sessions).toHaveLength(1);
+    expect(page.total).toBe(2);
+    expect(page.next).toBeDefined();
     store.close();
   });
 

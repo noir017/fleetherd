@@ -821,6 +821,7 @@ export interface HistoryPanelPage {
   /** `false` when this daemon has no conversation library at all. */
   enabled: boolean;
   sessions: HistoryPanelSession[];
+  total?: number;
   /**
    * Where the next page starts, absent when this page reached the oldest conversation. Opaque to
    * the page — the daemon decides what it means, so the store's ordering can change without the

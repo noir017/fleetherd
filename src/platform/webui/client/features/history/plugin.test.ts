@@ -429,4 +429,88 @@ describe('history built-in plugin', () => {
     view.dispose();
     h.cleanup();
   });
+
+  it('displays exact total count, filtered ratio, and backward-compatible fallback when total is absent', async () => {
+    const sessions = [
+      {
+        id: 10,
+        key: 'web#main#t1',
+        title: 'Build pipeline',
+        agent: 'alpha',
+        platform: 'web',
+        lastAt: 1_700_000_000_000,
+        messages: 4,
+      },
+      {
+        id: 11,
+        key: 'slack#eng#t2',
+        title: 'Incident review',
+        agent: 'beta',
+        platform: 'slack',
+        lastAt: 1_700_000_010_000,
+        messages: 2,
+      },
+    ];
+
+    // 1. Exact total with next cursor -> shows exact total without '+'
+    const h1 = setupHistoryHarness({
+      '/api/history': { enabled: true, sessions, total: 120, next: 'cursor-2' },
+    });
+    await h1.manager.activate('history');
+    const view1 = h1.registry.getView('history')!.component();
+    h1.doc.getElementById('mount')!.appendChild(view1.element);
+    view1.init(undefined, makePanelInitCtx('history').ctx);
+    await flushPromises();
+
+    expect(view1.element.querySelector('.wb-history-count')?.textContent).toBe('120 conversations');
+
+    // 2. Client filter active -> shows visible / total
+    const webChip = view1.element.querySelector<HTMLButtonElement>('[data-fb-group="platform"][data-fb-value="web"]')!;
+    webChip.click();
+    expect(view1.element.querySelector('.wb-history-count')?.textContent).toBe('1 / 120 conversations');
+
+    // Unfilter -> returns to exact total
+    webChip.click();
+    expect(view1.element.querySelector('.wb-history-count')?.textContent).toBe('120 conversations');
+    view1.dispose();
+    h1.cleanup();
+
+    // 3. Singular exact total (1) and empty exact total (0)
+    const h2 = setupHistoryHarness({
+      '/api/history': { enabled: true, sessions: [sessions[0]!], total: 1 },
+    });
+    await h2.manager.activate('history');
+    const view2 = h2.registry.getView('history')!.component();
+    h2.doc.getElementById('mount')!.appendChild(view2.element);
+    view2.init(undefined, makePanelInitCtx('history').ctx);
+    await flushPromises();
+    expect(view2.element.querySelector('.wb-history-count')?.textContent).toBe('1 conversation');
+    view2.dispose();
+    h2.cleanup();
+
+    const h3 = setupHistoryHarness({
+      '/api/history': { enabled: true, sessions: [], total: 0 },
+    });
+    await h3.manager.activate('history');
+    const view3 = h3.registry.getView('history')!.component();
+    h3.doc.getElementById('mount')!.appendChild(view3.element);
+    view3.init(undefined, makePanelInitCtx('history').ctx);
+    await flushPromises();
+    expect(view3.element.querySelector('.wb-history-count')?.textContent).toBe('');
+    view3.dispose();
+    h3.cleanup();
+
+    // 4. Legacy response without total -> falls back to loaded count with '+' when next is present
+    const h4 = setupHistoryHarness({
+      '/api/history': { enabled: true, sessions, next: 'cursor-2' },
+    });
+    await h4.manager.activate('history');
+    const view4 = h4.registry.getView('history')!.component();
+    h4.doc.getElementById('mount')!.appendChild(view4.element);
+    view4.init(undefined, makePanelInitCtx('history').ctx);
+    await flushPromises();
+    expect(view4.element.querySelector('.wb-history-count')?.textContent).toBe('2+ conversations');
+    view4.dispose();
+    h4.cleanup();
+  });
 });

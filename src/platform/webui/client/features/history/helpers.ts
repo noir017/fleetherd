@@ -290,15 +290,38 @@ export function buildHistoryFilterGroups(
   return groups;
 }
 
+export function hasActiveHistoryFilter(state: FilterBarState): boolean {
+  return Boolean((state.sel.platform && state.sel.platform.length > 0) || (state.sel.agent && state.sel.agent.length > 0));
+}
+
+export function formatHistoryCount(opts: {
+  readonly visible: number;
+  readonly total: number | null;
+  readonly next: string | null;
+  readonly filtered: boolean;
+}): string {
+  if (opts.total !== null) {
+    if (opts.total === 0) return '';
+    if (opts.filtered) {
+      return tr('history.convMany', { count: `${opts.visible} / ${opts.total}` });
+    }
+    return tr(opts.total === 1 ? 'history.convOne' : 'history.convMany', { count: String(opts.total) });
+  }
+  const n = opts.visible;
+  if (!n) return '';
+  const countStr = `${n}${opts.next ? '+' : ''}`;
+  return tr(n === 1 && !opts.next ? 'history.convOne' : 'history.convMany', { count: countStr });
+}
+
 export function filterHistoryRecords<T extends { readonly agent?: string; readonly platform?: string }>(
   items: readonly T[],
   state: FilterBarState,
 ): T[] {
-  const platSel = state.sel.platform;
-  const agentSel = state.sel.agent;
-  if ((!platSel || platSel.length === 0) && (!agentSel || agentSel.length === 0)) {
+  if (!hasActiveHistoryFilter(state)) {
     return [...items];
   }
+  const platSel = state.sel.platform;
+  const agentSel = state.sel.agent;
   return items.filter((item) => {
     const platform = item.platform || tr('history.unknown');
     const agent = item.agent || tr('history.noAgent');
