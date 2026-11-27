@@ -28,10 +28,12 @@ const hasGo = (() => {
 const nativeArch: RemoteArch = process.arch === 'arm64' ? 'arm64' : 'amd64';
 let work = '';
 let binDir = '';
+let homeSeq = 0;
 
 beforeAll(() => {
   if (!hasGo) return;
-  work = mkdtempSync(join(tmpdir(), 'tcr-it-'));
+  // Short prefix so `$HOME/.fleetherd/remote/run/gw1/daemon.sock` stays under the 108-byte sun_path limit.
+  work = mkdtempSync(join(tmpdir(), 'r-'));
   binDir = join(work, 'bin');
   mkdirSync(binDir);
   execFileSync('go', ['build', '-o', join(binDir, `fleetherd-remote-linux-${nativeArch}`), '.'], {
@@ -44,7 +46,7 @@ beforeAll(() => {
 afterAll(() => {
   if (!work) return;
   // The daemons outlive their connections by design; stop the ones these tests started.
-  const pidFiles = execFileSync('sh', ['-c', `ls ${work}/home-*/.fleetherd/remote/run/*/daemon.pid 2>/dev/null || true`]);
+  const pidFiles = execFileSync('sh', ['-c', `ls ${work}/h*/.fleetherd/remote/run/*/daemon.pid 2>/dev/null || true`]);
   for (const file of pidFiles.toString().split('\n').filter(Boolean)) {
     try {
       process.kill(Number(readFileSync(file, 'utf8').trim()), 'SIGTERM');
@@ -64,7 +66,7 @@ afterEach(() => {
 });
 
 function newHome(): string {
-  const home = join(work, `home-${Math.random().toString(36).slice(2, 8)}`);
+  const home = join(work, `h${++homeSeq}`);
   mkdirSync(home);
   return home;
 }
@@ -241,20 +243,27 @@ describe.skipIf(!hasGo)('fleetherd-remote, end to end', () => {
 
     // Asked for the moment the connection is gone, so before any reconnect.
     let listing: Promise<Array<{ name: string; dir: boolean }>> | undefined;
-    let fresh: RemoteChild | undefined;
-    host.once('down', () => {
-      listing = host.listDir('~/ws', 15_000);
-      fresh = host.spawn('sh', ['-c', 'echo hi']);
+    let freshDone: Promise<{ out: string; code: number | null; signal: string | null }> | undefined;
+    const downSeen = new Promise<void>((resolve) => {
+      host.once('down', () => {
+        listing = host.listDir('~/ws', 15_000);
+        // Attach collect() on spawn so a fast exit before `await listing` settles is never missed.
+        freshDone = collect(host.spawn('sh', ['-c', 'echo hi']));
+        resolve();
+      });
     });
+    const prevTransports = [...transports];
     const daemonPid = Number(readFileSync(join(home, '.fleetherd/remote/run/gw1/daemon.pid'), 'utf8').trim());
     process.kill(daemonPid, 'SIGTERM');
     await waitFor(() => !pidAlive(daemonPid));
-    for (const p of transports) p.kill('SIGKILL');
-    await waitFor(() => fresh !== undefined);
+    for (const p of prevTransports) {
+      if (p.exitCode === null && p.signalCode === null) p.kill('SIGKILL');
+    }
+    await downSeen;
 
     expect(await oldExit).toBe('SIGKILL');
     expect(await listing).toEqual([{ name: 'proj', dir: true }]);
-    expect(await collect(fresh!)).toMatchObject({ out: 'hi\n', code: 0 });
+    expect(await freshDone).toMatchObject({ out: 'hi\n', code: 0 });
   }, 30_000);
 
   it('runs operations on the host: files, tails, links, commands', async () => {

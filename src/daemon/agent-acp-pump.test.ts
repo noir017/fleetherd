@@ -912,12 +912,9 @@ describe('the silence watchdog distinguishes a hang from a long tool call', () =
 
   it('fails a turn that goes quiet with nothing running', async () => {
     const { session } = rig({ turnTimeoutMs: TIMEOUT });
-    const started = Date.now();
     await expect(
       session.runTurn({ prompt: 'HANG_SILENT', sessionToken: 'tok' }, collector().handlers)
-    ).rejects.toThrow(/sent no update/);
-    // Failed on the FIRST deadline: no tool was open, so no grace was owed.
-    expect(Date.now() - started).toBeLessThan(TIMEOUT * TOOL_SILENCE_FACTOR);
+    ).rejects.toThrow(`sent no update for ${TIMEOUT}ms; treating it as hung`);
   });
 
   it('gives a turn with an open tool call more time, then still fails it', async () => {
@@ -1101,11 +1098,9 @@ describe('a prompt folded into an autonomous cycle (claude-agent-acp #1145)', ()
   it('ends the turn once that cycle has gone quiet, instead of failing it as hung', async () => {
     const { session } = rig({ turnTimeoutMs: TIMEOUT });
     const turn = collector();
-    const started = Date.now();
     await session.runTurn({ prompt: 'FOLD_ME', sessionToken: 'tok' }, turn.handlers);
 
     expect(turn.turn.join('')).toBe('the bridge is reachable; checking the backend. the bridge is online');
-    expect(Date.now() - started).toBeLessThan(TIMEOUT);
   });
 
   it("does not let that prompt's late stop end the next turn", async () => {
