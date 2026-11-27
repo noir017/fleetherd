@@ -974,3 +974,94 @@ describe('placed', () => {
     expect(released).toBe(true);
   });
 });
+
+describe('sealBubble', () => {
+  it('keeps delivered finished lines in the old bubble and opens a new bubble for later updates', async () => {
+    const { sink, sends, edits, flush } = makeSink({ withEdit: true });
+    const r = new ToolRenderer(makeOpts({ grouping: 'accumulate' }), sink);
+
+    r.onToolStart(start('Read', 'src/a.ts', 0));
+    r.onToolFinish(finish('Read', true, 120, 0));
+    r.onToolStart(start('Bash', 'npm test', 1));
+    await flush();
+    expect(sends).toHaveLength(1);
+    const editsBeforeSeal = edits.length;
+
+    r.sealBubble();
+    await flush();
+    // Sealing alone must not send an empty or duplicate bubble.
+    expect(sends).toHaveLength(1);
+    expect(edits).toHaveLength(editsBeforeSeal);
+
+    // Finishing the running tool and starting a new tool must go to a fresh bubble, never editing m1.
+    r.onToolFinish(finish('Bash', true, 400, 1));
+    await flush();
+    r.onToolStart(start('Edit', 'src/b.ts', 2));
+    await flush();
+
+    expect(sends).toHaveLength(2);
+    expect(sends[1]).toBe('💻 Bash: "npm test" ✓ 400ms');
+    expect(sends[1]).not.toContain('Read');
+    const editsAfterSeal = edits.slice(editsBeforeSeal);
+    expect(editsAfterSeal.every((e) => e.ref.messageId === 'm2')).toBe(true);
+    expect(editsAfterSeal[editsAfterSeal.length - 1]!.text).toBe(
+      '💻 Bash: "npm test" ✓ 400ms\n✏️ Edit: "src/b.ts"'
+    );
+  });
+
+  it('does not send an extra bubble when no tool events follow a seal', async () => {
+    const { sink, sends, edits, flush } = makeSink({ withEdit: true });
+    const r = new ToolRenderer(makeOpts({ grouping: 'accumulate' }), sink);
+
+    r.onToolStart(start('Read', 'src/a.ts', 0));
+    r.onToolFinish(finish('Read', true, 100, 0));
+    await flush();
+    expect(sends).toHaveLength(1);
+    const editsBefore = edits.length;
+
+    r.sealBubble();
+    r.resetSegment();
+    await flush();
+
+    expect(sends).toHaveLength(1);
+    expect(edits).toHaveLength(editsBefore);
+  });
+
+  it('defers sealing when the initial sendBubble is still in flight', async () => {
+    let release!: (ref: MessageRef) => void;
+    const sends: string[] = [];
+    const edits: Array<{ ref: MessageRef; text: string }> = [];
+    let seq = 0;
+    const gated: BubbleSink = {
+      sendBubble: (text) => {
+        sends.push(text);
+        const id = `m${++seq}`;
+        if (seq === 1) return new Promise<MessageRef>((r) => (release = r));
+        return Promise.resolve({ address: { channel: 'c' }, messageId: id });
+      },
+      editBubble: async (ref, text) => {
+        edits.push({ ref, text });
+      },
+      now: () => 0,
+      schedule: () => () => undefined,
+    };
+    const r = new ToolRenderer(makeOpts({ grouping: 'accumulate' }), gated);
+
+    r.onToolStart(start('Bash', 'sleep 5', 0));
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+    expect(sends).toHaveLength(1);
+
+    // Seal requested while m1 is still in flight.
+    r.sealBubble();
+    release({ address: { channel: 'c' }, messageId: 'm1' });
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    expect(sends).toHaveLength(1);
+
+    // Next update must send m2 instead of editing m1.
+    r.onToolFinish(finish('Bash', true, 500, 0));
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    expect(sends).toHaveLength(2);
+    expect(sends[1]).toBe('💻 Bash: "sleep 5" ✓ 500ms');
+    expect(edits).toHaveLength(0);
+  });
+});

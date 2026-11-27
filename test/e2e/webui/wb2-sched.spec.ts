@@ -123,7 +123,8 @@ test.describe('wb2-sched schedules, history, and reviews alignment', () => {
     const histOverflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
     expect(histOverflow).toBe(false);
 
-    await page.locator('.wb-stack-tab[data-tab-id="schedules"]').click();
+    await page.locator('.wb-stack-tab[data-tab-id="more"]').click();
+    await page.locator('.wb-stack-more [data-group-item="schedules"]').click();
     await expect(page.locator('.fh-schedules-view .sched-row').first()).toBeVisible();
     await expect(page.locator('.wb-sidebar-head > .wb-part-actions [data-action-id="schedules.refresh"]')).toBeVisible();
     await expect(page.locator('.wb-sidebar-head > .wb-part-actions [data-action-id="schedules.new"]')).toBeVisible();

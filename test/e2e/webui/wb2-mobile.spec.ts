@@ -158,12 +158,15 @@ test.describe('Web UI mobile shell, palette, and login alignment', () => {
     }
     await expect(page.locator('.wb-topics-head')).toBeHidden();
 
-    // Pinned filter chips fit on one row at 360px with zero horizontal scroll
-    const chipsOverflow = await page.evaluate(() => {
-      const wrap = document.querySelector<HTMLElement>('.fh-sidebar-filter .fh-fb-pins .fh-fb-chips');
-      return wrap ? wrap.scrollWidth > wrap.clientWidth : true;
-    });
-    expect(chipsOverflow).toBe(false);
+    // Status chips live inside the collapsible Filter panel; pins stay hidden and panel fits without overflow
+    await expect(page.locator('.fh-sidebar-filter .fh-fb-pins')).toBeHidden();
+    await page.locator('.fh-sidebar-filter .fh-fb-filter').click();
+    const filterPanel = page.locator('.fh-sidebar-filter .fh-fb-panel');
+    await expect(filterPanel).toBeVisible();
+    const panelOverflow = await filterPanel.evaluate((el) => el.scrollWidth > el.clientWidth);
+    expect(panelOverflow).toBe(false);
+    await page.locator('.fh-sidebar-filter .fh-fb-filter').click();
+    await expect(filterPanel).toBeHidden();
 
     const leakedMargin = await page.locator('.wb-sidebar .wb-topic-row').evaluateAll((rows) =>
       rows.some((r) => parseFloat(getComputedStyle(r).marginTop) > 0),

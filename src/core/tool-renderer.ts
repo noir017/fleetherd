@@ -182,6 +182,8 @@ export class ToolRenderer {
   private deliveredRev = -1;
   /** A paint is in flight; a second must not start (one write at a time per bubble). */
   private painting = false;
+  /** Seal requested while a write was in flight; applied as soon as that write settles. */
+  private sealPending = false;
   /** Cancel handle for an armed retry. */
   private cancelRetry: (() => void) | null = null;
   /**
@@ -365,6 +367,20 @@ export class ToolRenderer {
     void this.pump();
   }
 
+  /**
+   * Freeze the open bubble so subsequent tool updates open a new bubble below an external message
+   * (e.g. a reconnect notice or interactive prompt card). Defers until the in-flight write settles
+   * when painting is active, and never emits an empty bubble on its own.
+   */
+  sealBubble(): void {
+    if (this.aborted || !this.accumulateActive) return;
+    if (this.painting) {
+      this.sealPending = true;
+      return;
+    }
+    if (this.bubbleRef !== null) this.seal();
+  }
+
   /** Actually start a fresh segment: empty line set, no open bubble. */
   private rotate(): void {
     this.lines = [];
@@ -372,6 +388,7 @@ export class ToolRenderer {
     this.bubbleEdits = 0;
     this.lastPaintedText = null;
     this.closeAtRev = null;
+    this.sealPending = false;
     this.sentIndexes.clear();
     this.deliveredRev = this.rev;
     // Nothing is owed a send any more — the line set that would have needed one is gone.
@@ -510,13 +527,21 @@ export class ToolRenderer {
         // the seal was the delivery.
         if (outcome === 'delivered') {
           this.deliveredRev = Math.max(this.deliveredRev, target);
+          this.flushPendingSeal();
           if (this.closeAtRev !== null && this.deliveredRev >= this.closeAtRev) this.rotate();
         }
       }
     } finally {
       this.painting = false;
+      this.flushPendingSeal();
       if (this.idle()) this.releaseWaiters();
     }
+  }
+
+  private flushPendingSeal(): void {
+    if (!this.sealPending) return;
+    this.sealPending = false;
+    if (this.bubbleRef !== null) this.seal();
   }
 
   /**

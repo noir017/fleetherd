@@ -530,6 +530,8 @@ interface Render {
   handlers: AgentStreamHandlers;
   /** Queue a side effect onto this render's serial chain (ordering with the stream is preserved). */
   enqueue(fn: () => Promise<void> | void): void;
+  /** Freeze the open tool bubble and rotate the text stream so later output lands below an external message. */
+  sealSegment(wait?: Promise<unknown>): void;
   /** Drain the chain and seal the last message, appending `footer` when there is a body. */
   finalize(footer: string): Promise<void>;
   /** Interrupted: stop the tool painter so an armed retry doesn't outlive the turn. */
@@ -1210,6 +1212,7 @@ export class TurnRunner {
     makeStream: (carry?: OpenFence) => StreamBuffer,
     tools: ToolRenderer,
     enqueue: (fn: () => Promise<void> | void) => void,
+    sealSegment: (wait?: Promise<unknown>) => void,
     /** Where a question to the user is posted — the lane this render is already writing to. */
     platform: PlatformAdapter,
     address: ConversationAddress,
@@ -1275,7 +1278,10 @@ export class TurnRunner {
         else if (unkeyedTools > 0) unkeyedTools--;
         this.deps.onToolActivity?.(conversationId, toolStarts.size + unkeyedTools, true);
         if (start && evt.input !== undefined && evt.input !== start.input) recordTool(start, evt.input);
-        enqueue(() => tools.onToolFinish(evt));
+        enqueue(async () => {
+          tools.onToolFinish(evt);
+          await tools.placed(BUBBLE_PLACEMENT_WAIT_MS);
+        });
       },
       onSegmentBreak: () => {
         rollSegment(ref);
@@ -1328,9 +1334,10 @@ export class TurnRunner {
        * Best-effort like every other side channel here: a failed send is logged and the turn goes on.
        */
       onNotice: (text) => {
-        void platform
+        const sent = platform
           .sendMessage(address, text)
           .catch((e) => console.warn('[turn] failed to deliver a notice:', e instanceof Error ? e.message : e));
+        sealSegment(sent);
       },
       /**
        * The agent stopped to ask the user something. Post it as buttons and block this ACP request
@@ -1353,10 +1360,18 @@ export class TurnRunner {
         } catch (e) {
           console.error('[turn] onElicitRequest hook failed:', e instanceof Error ? e.message : e);
           return { action: 'cancel' };
+        } finally {
+          sealSegment();
         }
       },
       // Off the effects chain for the reason onElicit is: the wait can be an hour.
-      onPermission: (request) => this.askPermission(conversationId, platform, address, request),
+      onPermission: async (request) => {
+        try {
+          return await this.askPermission(conversationId, platform, address, request);
+        } finally {
+          sealSegment();
+        }
+      },
       onImage: (image) => this.sendImage(conversationId, image, ++pictures, { ref, makeStream, tools, enqueue, platform, address }),
     };
   }
@@ -1517,11 +1532,33 @@ export class TurnRunner {
         console.error('[turn] render side effect failed:', describeOutboundError(e))
       );
     };
+    const sealSegment = (wait?: Promise<unknown>): void => {
+      tools.sealBubble();
+      rollSegment(ref);
+      enqueue(async () => {
+        await ref.stream.complete();
+        if (wait) await wait;
+        tools.sealBubble();
+        ref.stream = makeStream(ref.stream.openFence());
+      });
+    };
 
     return {
       ref,
       enqueue,
-      handlers: this.buildStreamHandlers(conversationId, ref, makeStream, tools, enqueue, platform, address, historyKind, turnId),
+      sealSegment,
+      handlers: this.buildStreamHandlers(
+        conversationId,
+        ref,
+        makeStream,
+        tools,
+        enqueue,
+        sealSegment,
+        platform,
+        address,
+        historyKind,
+        turnId
+      ),
       abort: () => tools.abort(),
       finalize: async (footer: string) => {
         await effects; // wait for all queued side effects to land
@@ -1837,19 +1874,24 @@ export class TurnRunner {
           console.warn(`[follow-up] ${conversationId}: no lane for a notice; dropping: ${text}`);
           return;
         }
-        void platform
+        const sent = platform
           .sendMessage(target.address, text)
           .catch((e) => console.warn('[follow-up] failed to deliver a notice:', e instanceof Error ? e.message : e));
+        peek()?.sealSegment(sent);
       },
       // Background work asking leave (a task the agent left running after its turn): asked in the
       // conversation's lane like a notice, and — like a notice — without opening the burst's message.
-      onPermission: (request) => {
+      onPermission: async (request) => {
         const target = this.deps.followUpTarget?.(conversationId);
         const platform = target && this.platforms.get(target.platformId);
         if (!target || !platform) {
-          return Promise.resolve({ kind: 'unavailable', why: 'no chat is known for this conversation' });
+          return { kind: 'unavailable', why: 'no chat is known for this conversation' };
         }
-        return this.askPermission(conversationId, platform, target.address, request);
+        try {
+          return await this.askPermission(conversationId, platform, target.address, request);
+        } finally {
+          peek()?.sealSegment();
+        }
       },
     };
   }
