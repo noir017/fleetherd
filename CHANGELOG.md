@@ -15,6 +15,14 @@ All notable changes to this project are documented here. The format is based on
   now also replays missing `code_execution_call` and `code_execution_result` tool events so tool
   bubbles are not lost when a stream drops mid-execution, and continuation 400/404 errors where the
   upstream interaction still exists now suggest sending `/new` if the failure persists.
+- **Managed skills deleted or renamed in the skills repository are now retracted from every host.**
+  Previously, spawn-time delivery only removed copies and resident links for skills in `archive/`,
+  so a skill deleted or renamed directly in the repository left its old copy under
+  `~/.fleetherd/skills/<old-name>` and its symlinks in harness skill directories behind (putting
+  both the old and new resident skills into agent context). Local and remote delivery now scan
+  `~/.fleetherd/skills/` for copies absent from the active skill set and retract them along with
+  any gateway-owned links across all harness skill directories, while leaving non-gateway files and
+  directories untouched.
 
 ## [3.43.0] - 2026-11-27
 

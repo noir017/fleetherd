@@ -28,7 +28,8 @@ import { envOf } from '../legacy-name.js';
  *
  * Archived skills are taken back: their copy and every link of ours into it are removed on the
  * next spawn, in every directory a link could be in — not only the harness being spawned, since a
- * link made for another harness outlives this spawn.
+ * link made for another harness outlives this spawn. The same applies to any copy in
+ * `~/.fleetherd/skills/` that is no longer in the active set (deleted or renamed in the repo).
  *
  * An unchanged version is not rewritten: local files are compared byte for byte, and the remote
  * side remembers the version it delivered per host and instance.
@@ -63,11 +64,37 @@ export interface ManagedResult {
   source?: string;
 }
 
+function ownedSkillNames(owned: string): string[] {
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(owned, { withFileTypes: true });
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw e;
+  }
+  return entries.filter((e) => e.isDirectory() && !e.name.startsWith('.')).map((e) => e.name);
+}
+
+function retractLocalSkill(name: string, home: string, owned: string, results: ManagedResult[]): void {
+  const copy = path.join(owned, name);
+  try {
+    if (fs.existsSync(copy)) fs.rmSync(copy, { recursive: true, force: true });
+  } catch (e) {
+    results.push({ name, path: copy, outcome: 'failed', detail: e instanceof Error ? e.message : String(e) });
+  }
+  for (const d of allSkillDirs(home)) {
+    const r = removeSkillLink(path.join(d, name), owned);
+    if (r.outcome !== 'skipped') results.push({ name, path: r.link, outcome: r.outcome, ...(r.detail ? { detail: r.detail } : {}) });
+  }
+}
+
 /** Copy `files` into `copy`, touching only what changed. No guard — the tests drive this directly. */
 export function applyManagedSkills(def: AgentDef, home: string, dir?: string): ManagedResult[] {
   const owned = managedSkillsHome(home);
   const results: ManagedResult[] = [];
-  for (const skill of activeSkillFiles(dir)) {
+  const active = activeSkillFiles(dir);
+  const activeNames = new Set(active.map((s) => s.name));
+  for (const skill of active) {
     if (!deliveredTo(skill, def)) continue;
     const copy = path.join(owned, skill.name);
     const files = syncSkillCopy(copy, skill.files);
@@ -88,18 +115,11 @@ export function applyManagedSkills(def: AgentDef, home: string, dir?: string): M
       results.push({ name: skill.name, path: r.link, source: copy, outcome: r.outcome, ...(r.detail ? { detail: r.detail } : {}) });
     }
   }
-  for (const name of archivedSkillNames(dir)) {
-    const copy = path.join(owned, name);
-    try {
-      if (fs.existsSync(copy)) fs.rmSync(copy, { recursive: true, force: true });
-    } catch (e) {
-      results.push({ name, path: copy, outcome: 'failed', detail: e instanceof Error ? e.message : String(e) });
-    }
-    for (const d of allSkillDirs(home)) {
-      const r = removeSkillLink(path.join(d, name), owned);
-      if (r.outcome !== 'skipped') results.push({ name, path: r.link, outcome: r.outcome, ...(r.detail ? { detail: r.detail } : {}) });
-    }
+  const stale = new Set<string>(archivedSkillNames(dir));
+  for (const name of ownedSkillNames(owned)) {
+    if (!activeNames.has(name)) stale.add(name);
   }
+  for (const name of stale) retractLocalSkill(name, home, owned, results);
   return results;
 }
 
@@ -110,7 +130,7 @@ function report(r: ManagedResult): void {
   if (r.outcome === 'placed') console.log(`[skills] placed ${r.name} at ${r.path}`);
   else if (r.outcome === 'linked') console.log(`[skills] linked ${r.path} → ${r.source ?? ''}`);
   else if (r.outcome === 'relinked') console.log(`[skills] repointed ${r.path} → ${r.source ?? ''} (was ${r.detail})`);
-  else if (r.outcome === 'removed') console.log(`[skills] took back ${r.path} (archived, or in the library now)`);
+  else if (r.outcome === 'removed') console.log(`[skills] took back ${r.path} (archived, removed, or in the library now)`);
   else if (r.outcome === 'occupied' || r.outcome === 'failed') {
     const key = `${r.path}:${r.outcome}:${r.detail ?? ''}`;
     if (warned.has(key)) return;
@@ -157,6 +177,18 @@ async function pruneManagedFiles(host: HostFiles, copy: string, skill: { files: 
   }
 }
 
+async function remoteStaleSkillNames(host: HostFiles, owned: string, activeNames: ReadonlySet<string>): Promise<string[]> {
+  const names = new Set<string>();
+  for (const rel of await host.listFiles(owned)) {
+    const slash = rel.indexOf('/');
+    if (slash <= 0) continue;
+    const name = rel.slice(0, slash);
+    if (name.startsWith('.') || activeNames.has(name)) continue;
+    names.add(name);
+  }
+  return [...names];
+}
+
 async function linkManaged(host: HostFiles, copy: string, where: { dir: string; requires: string }, name: string, owned: string): Promise<string> {
   const r = await host.ensureLink(copy, `${where.dir}/${name}`, where.requires, owned);
   if (r.outcome === 'linked' || r.outcome === 'relinked') console.log(`[skills] ${host.id}: ${r.outcome} ${r.link} → ${copy}`);
@@ -171,7 +203,7 @@ async function unlinkManaged(
   dir: string,
   name: string,
   owned: string,
-  why: 'archived' | 'in the library now'
+  why: 'archived' | 'removed' | 'in the library now'
 ): Promise<void> {
   const r = await host.removeLink(`${dir}/${name}`, owned);
   if (r.outcome === 'removed') console.log(`[skills] ${host.id}: took back ${r.link} (${why})`);
@@ -187,6 +219,7 @@ export function createManagedSkillsProvision(dir?: string): AgentProvision<Manag
   const managedFiles = new Map<string, string>();
   const managedLinks = new Map<string, string>();
   const managedArchived = new Set<string>();
+  const ownedCheckedFor = new Map<string, string>();
 
   async function unlinkLibrarySkill(host: HostFiles, home: string, key: string, name: string, owned: string): Promise<void> {
     for (const d of allSkillDirs(home)) {
@@ -201,12 +234,12 @@ export function createManagedSkillsProvision(dir?: string): AgentProvision<Manag
     }
   }
 
-  async function placeActiveManagedSkills(host: HostFiles, def: AgentDef, home: string, owned: string, w: Welcome): Promise<void> {
+  async function placeActiveManagedSkills(host: HostFiles, def: AgentDef, home: string, owned: string, w: Welcome, active: SkillFileSet[]): Promise<void> {
     const homes = skillHomes(def.harness, home, def.command);
-    for (const skill of activeSkillFiles(dir)) {
-      if (!deliveredTo(skill, def)) continue;
+    for (const skill of active) {
       const key = `${host.id}@${w.instance}@${skill.name}`;
       managedArchived.delete(key);
+      if (!deliveredTo(skill, def)) continue;
       const copy = `${owned}/${skill.name}`;
       try {
         if (managedFiles.get(key) !== skill.version) {
@@ -238,22 +271,41 @@ export function createManagedSkillsProvision(dir?: string): AgentProvision<Manag
     }
   }
 
-  async function retireManagedSkills(host: HostFiles, home: string, owned: string, w: Welcome): Promise<void> {
-    for (const name of archivedSkillNames(dir)) {
-      const key = `${host.id}@${w.instance}@${name}`;
+  async function retireManagedSkills(host: HostFiles, home: string, owned: string, w: Welcome, active: SkillFileSet[]): Promise<void> {
+    const activeNames = new Set(active.map((s) => s.name));
+    const archived = new Set(archivedSkillNames(dir));
+    const stale = new Set<string>(archived);
+    const instanceKey = `${host.id}@${w.instance}`;
+    const activeKey = [...activeNames].sort().join('\0');
+    const needScan = ownedCheckedFor.get(instanceKey) !== activeKey;
+    let scanOk = true;
+    if (needScan) {
+      try {
+        for (const name of await remoteStaleSkillNames(host, owned, activeNames)) stale.add(name);
+      } catch (e) {
+        scanOk = false;
+        console.warn(`[skills] ${host.id}: could not list ${owned}:`, e instanceof Error ? e.message : e);
+      }
+    }
+    let allRetired = true;
+    for (const name of stale) {
+      const key = `${instanceKey}@${name}`;
       if (managedArchived.has(key)) continue;
+      const why = archived.has(name) ? 'archived' : 'removed';
       try {
         for (const d of allSkillDirs(home)) {
-          await unlinkManaged(host, d, name, owned, 'archived');
+          await unlinkManaged(host, d, name, owned, why);
           managedLinks.set(`${key}@${d}`, 'absent');
         }
         await host.removePath(`${owned}/${name}`, owned);
         managedFiles.set(key, 'absent');
         managedArchived.add(key);
       } catch (e) {
-        console.warn(`[skills] ${host.id}: could not take back archived "${name}":`, e instanceof Error ? e.message : e);
+        allRetired = false;
+        console.warn(`[skills] ${host.id}: could not take back ${why} "${name}":`, e instanceof Error ? e.message : e);
       }
     }
+    if (needScan && scanOk && allRetired) ownedCheckedFor.set(instanceKey, activeKey);
   }
 
   return {
@@ -262,8 +314,9 @@ export function createManagedSkillsProvision(dir?: string): AgentProvision<Manag
     remote: async (host, def, home, w) => {
       if (envOf('NO_SKILL_LINK')) return;
       const owned = managedSkillsHome(home);
-      await placeActiveManagedSkills(host, def, home, owned, w);
-      await retireManagedSkills(host, home, owned, w);
+      const active = activeSkillFiles(dir);
+      await placeActiveManagedSkills(host, def, home, owned, w, active);
+      await retireManagedSkills(host, home, owned, w, active);
     },
     meta: (def) => {
       const skills = connectResidentSkills(def, dir);
