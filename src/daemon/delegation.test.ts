@@ -19,19 +19,19 @@ import type { PlatformAdapter } from '../platform/adapter.js';
 import { HistoryStore } from '../history/store.js';
 import {
   CARD_DELAY_MS,
-  CARD_ITEM_CHARS,
   CARD_MAX_ENTRIES,
   CARD_SAID_CHARS,
-  CARD_TOTAL_CHARS,
   Delegation,
   PROPOSAL_GATHER_MS,
   type DelegationDeps,
   type TopicAt,
 } from './delegation.js';
+import { CARD_ITEM_CHARS, CARD_TOTAL_CHARS } from './delegation-surface.js';
 import { TurnOutcomes } from './turn-outcomes.js';
 import { TurnFailure } from './agent.js';
 import type { LiveTurn } from './turn-progress.js';
-import { jobInCommand, UPDATE_SENDER } from './turn-runner.js';
+import { jobInCommand } from './turn-runner.js';
+import { UPDATE_SENDER } from './turn-senders.js';
 
 /**
  * Sub-agents (delegation.ts): who may run the task commands and on what, the confirmation card every

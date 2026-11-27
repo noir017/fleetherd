@@ -8,7 +8,7 @@ import type { IpcAction, TaskAgentDetail, TaskAgentsResult, TaskListResult } fro
 import { libraryLine } from '../ipc/tools.js';
 import type { PlatformAdapter } from '../platform/adapter.js';
 import type { ConversationId, InboundMessage } from '../types.js';
-import { formatLaneTitle } from './conversation.js';
+import { formatLaneTitle } from '../core/lane-title.js';
 import type { Delegation, TopicAt } from './delegation.js';
 import type { ExternalCaller } from './external-mcp.js';
 import type { ExternalTopic, ExternalTopics } from './external-topics.js';

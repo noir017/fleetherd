@@ -1,6 +1,6 @@
 import type { Config } from '../config/schema.js';
 import type { HistoryReviewChange, HistoryReviewRecord, HistoryStore, HistorySessionRow, ReviewWindow } from '../history/store.js';
-import type { ReviewFacts } from './conversation.js';
+import type { ConversationId } from '../types.js';
 import {
   buildReviewPrompt,
   parseReviewOutput,
@@ -44,6 +44,19 @@ export {
   type Reviewer,
   type ReviewRun,
 } from './review-run.js';
+
+/** One live conversation as the review sweep sees it (`eligible`). */
+export interface ReviewFacts {
+  key: ConversationId;
+  agentId: string;
+  idleMs: number;
+  busyTurn: boolean;
+  pendingWork: boolean;
+  stopped: boolean;
+  unresumable: boolean;
+  /** Kept in memory past `/new` (which clears the stored record), so a reset topic stays reviewable. */
+  lane?: { platform: string; channel: string; thread?: string };
+}
 
 /**
  * Automatic review of quiet conversations (`docs/skills.md#auto-review`).

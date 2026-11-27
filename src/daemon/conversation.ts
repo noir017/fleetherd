@@ -18,6 +18,7 @@ import { shouldRespond, type GateConfig } from '../core/inbound-gate.js';
 import type { SoloOutcome } from '../core/inbound-merger.js';
 import type { ModelChoiceResult } from '../core/model-menu.js';
 import type { SettingApplyResult, SettingOption, SettingRow } from '../core/settings.js';
+import { parseTextCommand } from '../core/text-command.js';
 import { buildWorkdirScreen, workdirBaseName, type WorkdirChoiceResult } from '../core/workdir-menu.js';
 import type { WorkdirScan } from './workdir-scan.js';
 import type { HistoryStore } from '../history/store.js';
@@ -59,18 +60,16 @@ import {
 import { ConversationHistory } from './conversation-history.js';
 import type { ConversationStore } from './conversation-store.js';
 import { SessionTokenRegistry } from './conversation-token-registry.js';
-import { ConversationTurns, type KillOutcome, type ReviewFacts, type StopOutcome, type StopResult } from './conversation-turns.js';
+import { ConversationTurns, type KillOutcome, type StopOutcome, type StopResult } from './conversation-turns.js';
 import { ModelCatalog } from './model-catalog.js';
-import { parseTextCommand, resolveAgent, resolveScope, routeInputFromMessage, routeInputFromRef, type AgentChoice } from './routing.js';
+import type { ReviewFacts } from './review.js';
+import { resolveAgent, resolveScope, routeInputFromMessage, routeInputFromRef, type AgentChoice } from './routing.js';
 import { StatusBoard } from './status-board.js';
 import { TurnChanges } from './turn-changes.js';
 import type { KeptText } from './turn-outcomes.js';
 import { TurnProgressBoard, type LiveTurn } from './turn-progress.js';
 import type { WorkdirUsageStore } from './workdir-usage.js';
 import { workspaceFor, type Workspace } from './workspace.js';
-
-export { formatLaneTitle, REMOTE_LISTING_WAIT_MS } from './conversation-controls.js';
-export type { ReviewFacts, StopResult } from './conversation-turns.js';
 
 /**
  * A refused agent switch: a handover note carrying what the NEXT agent needs to find this

@@ -21,6 +21,7 @@ import {
 import { addressOf, type ConversationAddress, type ConversationRef } from '../core/conversation.js';
 import { normalizeLocale, localeOf, type Locale } from '../core/i18n/index.js';
 import { formatRuntimeFooter, formatTokens } from '../core/runtime-footer.js';
+import { parseTextCommand } from '../core/text-command.js';
 import {
   modelListAgent,
   resolveSettingKey,
@@ -45,9 +46,9 @@ import { formatAgyCliOutput, runAgyCliFor } from './agy-cli.js';
 import type { ConversationContext, ConversationState } from './conversation-context.js';
 import type { ConversationControls } from './conversation-controls.js';
 import { withInputNote, type ConversationTurns } from './conversation-turns.js';
-import { commandSurface } from './delegation.js';
+import { commandSurface } from './delegation-surface.js';
 import { runQuotaCommandFor } from './quota-meter.js';
-import { parseTextCommand, type AgentChoice } from './routing.js';
+import type { AgentChoice } from './routing.js';
 import { SettingsStore } from './settings-store.js';
 import { sendAside } from './turn-runner.js';
 
