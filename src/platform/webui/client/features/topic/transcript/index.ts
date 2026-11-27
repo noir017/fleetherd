@@ -149,6 +149,7 @@ class TranscriptControllerImpl implements TranscriptController {
   private readonly _disposables = new DisposableStore();
   private _olderBar: HTMLElement | null = null;
   private _olderState: OlderPagingState = { hasMore: false, loading: false };
+  private _actionsOpenKey: string | null = null;
   readonly scroll: ScrollManager;
   readonly codeBlocks: CodeBlocksController;
   readonly btw: BtwController;
@@ -252,8 +253,9 @@ class TranscriptControllerImpl implements TranscriptController {
     }
     const out = this.msgMarkup(key, m, this._deps.isHistory(m));
     if (!this.btw.isNesting()) this.btw.link(key, m);
-    if (this._sig[key] === out.h && el.className === out.cls) return;
-    el.className = out.cls;
+    const cls = key === this._actionsOpenKey ? `${out.cls} actions-open` : out.cls;
+    if (this._sig[key] === out.h && el.className === cls) return;
+    el.className = cls;
     el.innerHTML = out.h;
     this._sig[key] = out.h;
     this.codeBlocks.enhance(
@@ -328,6 +330,7 @@ class TranscriptControllerImpl implements TranscriptController {
     delete data[key];
     delete this._sig[key];
     delete this._opened[key];
+    if (this._actionsOpenKey === key) this._actionsOpenKey = null;
     this.btw.onMessageDropped(key, m);
     this.banners.syncEmptyNote();
   }
@@ -659,11 +662,29 @@ class TranscriptControllerImpl implements TranscriptController {
     }
   }
 
+  private _setActionsOpen(msgEl: HTMLElement | null): void {
+    const nextKey = msgEl ? msgEl.getAttribute('data-k') : null;
+    const resolved = nextKey && nextKey !== this._actionsOpenKey ? nextKey : null;
+    if (this._actionsOpenKey === resolved) return;
+    const els = this._deps.getEls();
+    if (this._actionsOpenKey) {
+      els[this._actionsOpenKey]?.classList.remove('actions-open');
+    }
+    this._actionsOpenKey = resolved;
+    if (resolved) {
+      (els[resolved] ?? msgEl)?.classList.add('actions-open');
+    }
+  }
+
   postButton(btn: HTMLButtonElement, topicId: string): void {
     postButton(btn, topicId);
   }
 
   resetForTopicSwitch(nextTopicId: string): void {
+    if (this._actionsOpenKey) {
+      this._deps.getEls()[this._actionsOpenKey]?.classList.remove('actions-open');
+      this._actionsOpenKey = null;
+    }
     this._deps.log.innerHTML = '';
     this._sig = {};
     this.banners.resetForTopicSwitch();
@@ -686,6 +707,7 @@ class TranscriptControllerImpl implements TranscriptController {
     delete els[pk];
     delete this._sig[pk];
     delete data[pk];
+    if (this._actionsOpenKey === pk) this._actionsOpenKey = key;
     this.btw.transferKey(pk, key);
   }
 
@@ -734,13 +756,14 @@ class TranscriptControllerImpl implements TranscriptController {
           void this.openTurnDiffSideBySide(turn, btn);
         },
         onMessageAction: (action, key, btn) => this._handleMessageAction(action, key, btn),
+        onToggleMessageActions: (msgEl) => this._setActionsOpen(msgEl),
         onHandoff: (key, btn) => {
           const m = this._deps.getData()[key];
           if (m?.handoff) this._deps.onHandoff?.(m.handoff, btn);
         },
         onLoadOlder: this._deps.onLoadOlder,
         onJumpToMessage: this._deps.onJumpToMessage,
-      }),
+      }, doc),
     );
     this._disposables.add(store);
     return store;

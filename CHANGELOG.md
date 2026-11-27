@@ -50,6 +50,18 @@ All notable changes to this project are documented here. The format is based on
   while keeping full-message copy when nothing is selected.
 ### Changed
 
+- **Compact tool-call lists and tap-to-reveal message actions on touch screens in the Web UI.**
+  Consecutive tool calls inside a message previously rendered as individual bordered cards with
+  per-row margins and tall mobile padding, taking up half a phone screen after a handful of calls,
+  while the copy/quote/aside/more action bar stayed permanently visible beneath every message on
+  touch devices (including a permanent 54 px bottom gap under every user bubble). Tool rows in a
+  `.tools` group now share a single compact list container with thin dividers and ~26 px row height
+  on both mobile and desktop while preserving expand-on-click, status icon colors, and Show all. On
+  touch devices (`@media (hover: none)` / touch pointer), message action bars now stay hidden by
+  default (reserving the user-bubble bottom gap only when shown) and reveal on tapping a message,
+  dismissing on tapping elsewhere and ignoring links, buttons, inputs, tool rows, images/attachments,
+  and active text selections so native long-press selection stays unaffected; desktop hover and
+  keyboard `focus-within` behavior are unchanged.
 - **Web UI topic loading now resumes from local cache on direct reloads and pages older messages on demand.**
   Reloading or cold-opening a topic URL previously skipped the IndexedDB transcript cache and
   transferred the entire topic (up to 1,000 messages) in one `sync` frame; initial bootstrap now
