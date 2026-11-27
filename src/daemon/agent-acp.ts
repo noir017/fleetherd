@@ -58,7 +58,7 @@ import {
 import { PreLaunchCancelled, runPreLaunchHook } from './agent-hooks.js';
 import { remoteHosts } from './remote-hosts.js';
 import type { AgyCliRunner } from './agy-cli.js';
-import { agyTurnWatch, agyWindow, takesPromptMidTurn } from './agy-acp.js';
+import { agyTurnWatch, agyWindow } from './agy-acp.js';
 import { createQuotaMeter, hasQuotaSource, type QuotaMeter } from './quota-meter.js';
 import {
   adoptAcpChild,
@@ -85,9 +85,9 @@ import {
 import type { AgentProvision } from './provision.js';
 import {
   AcpOptionState,
-  dshModelSelectorValue,
   reportedModes,
 } from './agent-acp-options.js';
+import { HARNESS_PROFILES } from './harness/index.js';
 import {
   AgentUnreachable,
   canPickUp,
@@ -117,11 +117,11 @@ import {
 // Re-export split submodules so every existing caller and test import path stays unchanged.
 export {
   acpMcpServers, FOLDED_PROMPT_GRACE_MS, isCursorAgent, NATIVE_TOOLS_SERVER, promptBlocks,
-  remoteMcpServers, resolveClaudeAdapterEntry, resolveHarness, startupFailureMessage, type StartupProgress,
+  remoteMcpServers, resolveHarness, startupFailureMessage, type StartupProgress,
 } from './agent-acp-harness.js';
 export {
   applyEffortPreference, applyModelPreference, applyPermissionLevel, applyPinnedOptions,
-  customOptionsOf, dshModelDisplayValue, dshModelSelectorValue, effortSelectorOf, liveEffortName,
+  customOptionsOf, effortSelectorOf, liveEffortName,
   liveModelName, modeControlOf, permissionModesOf, type ModeControl, type ModeState,
 } from './agent-acp-options.js';
 export {
@@ -578,7 +578,7 @@ class AcpSession implements AgentSession {
           ...(hint
             ? {
                 _meta: {
-                  model: this.def.harness === 'dsh' ? dshModelSelectorValue(hint) : hint,
+                  model: HARNESS_PROFILES[this.def.harness].encodeModelWire?.(hint) ?? hint,
                 },
               }
             : {}),
@@ -611,7 +611,7 @@ class AcpSession implements AgentSession {
     progress.answered = true;
     this.loadSessionSupported = initResult.agentCapabilities?.loadSession === true;
     this.resume = readResumeSupport(initResult.agentCapabilities);
-    this.steeringMode = steeringModeOf(initResult, takesPromptMidTurn(this.def));
+    this.steeringMode = steeringModeOf(initResult, Boolean(HARNESS_PROFILES[this.def.harness].takesPromptMidTurn));
     this.imagePrompts = initResult.agentCapabilities?.promptCapabilities?.image === true;
     this.embeddedContext = initResult.agentCapabilities?.promptCapabilities?.embeddedContext === true;
     [this.forkSupport, this.forkKnown] = [forkSupportOf(initResult), true];
@@ -722,7 +722,7 @@ class AcpSession implements AgentSession {
       contextWindow: this.def.contextWindow,
       subagents: this.subagentNames,
       agy:
-        this.def.harness === 'agy'
+        HARNESS_PROFILES[this.def.harness].usesAgyTurnWatch
           ? agyTurnWatch(this.def.id, (text) => handlers.onNotice?.(text), inTurn, {
               onModelCall: () => this.agyMeter.refreshAgyContext(handlers),
               window: (reported) => agyWindow(this.def, this.options.currentModelValue(), reported),

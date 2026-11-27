@@ -1,6 +1,6 @@
 # src/daemon FRAS Map
 src/daemon/acp-fork.ts [Core]: F:ACP session/fork and session/resume copy flow for /fork topics | A:forkInto,forkRefusal
-src/daemon/agent-acp-harness.ts [Core]: F:ACP harness launch resolution, MCP server wiring, startup diagnostics, and harness quirk adapters | R:src/daemon/agent-acp-options.ts,src/daemon/agent-acp-translate.ts | A:resolveHarness,resolveClaudeAdapterEntry,promptBlocks,acpMcpServers
+src/daemon/agent-acp-harness.ts [Core]: F:ACP harness launch dispatch, MCP server wiring, startup diagnostics, and steering/folded-prompt drivers | R:src/daemon/agent-acp-options.ts,src/daemon/agent-acp-translate.ts,src/daemon/harness/index.ts | A:resolveHarness,promptBlocks,acpMcpServers
 src/daemon/agent-acp-options.ts [Core]: F:ACP model, effort, mode, and custom config option parsing, normalization, and permission level mapping | R:src/daemon/agent.ts | A:liveModelName,liveEffortName,applyModelPreference,applyEffortPreference,applyPermissionLevel,AcpOptionState
 src/daemon/agent-acp-translate.ts [Core]: F:Pure ACP session/update, permission, and elicitation translation to AgentStreamHandlers | R:src/daemon/agent-acp-options.ts | A:translateUpdate,decidePermission,permissionRequestOf,permissionResponse,parseFormElicitation,toolLabel
 src/daemon/agent-acp.ts [Core]: F:ACP protocol runtime factory, session lifecycle, timeout watchdogs, reconnecting a lost agent, and permission answering | R:src/daemon/agent.ts,src/daemon/agent-acp-harness.ts,src/daemon/agent-acp-options.ts,src/daemon/agent-acp-translate.ts,src/daemon/agent-reconnect.ts | A:createAcpAgentFactory,resolveHarness | S:See Security invariants item 1
@@ -26,6 +26,15 @@ src/daemon/daemon.ts [Core]: F:Top-level daemon coordinator: dependency wiring, 
 src/daemon/delegation-surface.ts [Core]: F:Sub-agent nesting surface predicate and update card character budgets | A:commandSurface,CARD_ITEM_CHARS,CARD_TOTAL_CHARS
 src/daemon/delegation.ts [Core]: F:Sub-agent task delegation, confirmation card workflows, and the automatic review loop | R:src/daemon/delegation-surface.ts,src/daemon/turn-senders.ts | A:Delegation,DelegationRegistry | S:See Security invariants item 6
 src/daemon/external-mcp.ts [Edge]: F:External HTTP MCP entrance endpoint | A:ExternalMcp | S:See Security invariants item 11
+src/daemon/harness/agy.ts [Core]: F:Antigravity harness profile (launch, review isolation, relay, doctor, skills/instructions/transcript) | R:src/daemon/harness/profile.ts | A:agyProfile,AGY_NO_TOOLS | S:See Security invariants item 8
+src/daemon/harness/claude.ts [Core]: F:Claude Code harness profile (bundled adapter launch, review isolation, doctor, skills/instructions/transcript) | R:src/daemon/harness/profile.ts | A:claudeProfile,CLAUDE_NO_TOOLS_META,resolveClaudeAdapterEntry | S:See Security invariants item 8
+src/daemon/harness/codex.ts [Core]: F:Codex harness profile (launch, review isolation, doctor, skills/instructions) | R:src/daemon/harness/profile.ts | A:codexProfile | S:See Security invariants item 8
+src/daemon/harness/custom.ts [Core]: F:Custom harness profile (CodeBuddy skills/instructions, Cursor capability meta, operator-args review isolation) | R:src/daemon/harness/profile.ts | A:customProfile
+src/daemon/harness/dsh.ts [Core]: F:DeepSeek Harness profile (launch, JSON tuple model codec, operator-args review isolation) | R:src/daemon/harness/profile.ts | A:dshProfile,dshModelSelectorValue,dshModelDisplayValue
+src/daemon/harness/gemini.ts [Core]: F:Gemini CLI harness profile (launch, operator-args review isolation, doctor) | R:src/daemon/harness/profile.ts | A:geminiProfile
+src/daemon/harness/index.ts [Core]: F:Exhaustive harness profile registry and dispatch helpers | R:src/daemon/harness/profile.ts | A:HARNESS_PROFILES,harnessProfile,SKILL_READERS,harnessSources
+src/daemon/harness/opencode.ts [Core]: F:OpenCode harness profile (launch, review isolation, log probe, configured skill dirs) | R:src/daemon/harness/profile.ts | A:opencodeProfile,parseOpencodeLog,opencodeSkillDirs,remoteOpencodeSkillDirs | S:See Security invariants item 8
+src/daemon/harness/profile.ts [Core]: F:HarnessProfile seam interface, ReviewIsolation/Doctor types, and agentHome helper | A:HarnessProfile,ReviewIsolation,HarnessDoctor,SkillHome,HarnessSources,agentHome
 src/daemon/pod-admin.ts [Edge]: F:Host entry and SSH key management | A:addPod,removePod | S:See Security invariants item 5
 src/daemon/pod-peers.ts [Infra]: F:Pod-to-pod SSH mesh configuration generator | A:peerFiles,readKnownHosts | S:See Security invariants item 5
 src/daemon/pods.ts [Infra]: F:Remote host pod declarations scanner | A:hostsWithConfiguredAgents | S:See Security invariants item 5

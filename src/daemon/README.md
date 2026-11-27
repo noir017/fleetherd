@@ -34,7 +34,8 @@ session id, agy's conversation id). One conversation holds one session *per agen
 | `paced-adapter.ts` | Wraps every `PlatformAdapter` in the shared per-chat write budget |
 | `agent.ts` | `AgentFactory` / `AgentSession` / `AgentStreamHandlers` interfaces. Dependency-free. |
 | `agent-acp.ts` | ACP runtime factory, session lifecycle, update pump, watchdogs, and permission/elicitation answering (`session/request_permission`: approve under none/`auto`/`full`, ask via `onPermission` under `plan`/`ask`/`edits`, fail-closed when unanswered). Re-exports its three submodules below. |
-| `agent-acp-harness.ts` | ACP harness launch resolution (`resolveHarness`, `resolveClaudeAdapterEntry`), MCP server wiring, startup diagnostics, steering/folded-prompt drivers, and harness quirk adapters |
+| `agent-acp-harness.ts` | ACP harness launch dispatch (`resolveHarness`), MCP server wiring, startup diagnostics, steering/folded-prompt drivers, and harness quirk adapters |
+| `harness/` | `HarnessProfile` seam (`profile.ts`, `index.ts`, and one file per `Harness`): launch, capability `_meta`, model/option hooks, relay, required `reviewIsolation`, `doctor` checks, skill/instruction/transcript locations, and log probes |
 | `agent-acp-options.ts` | ACP model, effort, mode, and custom config option parsing, normalization, and permission-level mode mapping (`applyPermissionLevel`, `AcpOptionState`) |
 | `agent-acp-translate.ts` | Pure ACP `session/update`, permission, and elicitation translation to `AgentStreamHandlers` (`translateUpdate`, `decidePermission`, `permissionRequestOf`, `permissionResponse`, `parseFormElicitation`) |
 | `session-failure.ts` | Failures read off the ACP wire: claude-agent-acp's typed failure records (the capability that asks for them), and a prompt that ended in `stopReason: "refusal"` with whatever cause the harness attached |
@@ -114,7 +115,7 @@ Daemon.onInbound ─── cross-event dedup (platform:address:message, 15 s TTL
 ConversationRegistry.route
    ├─ access gate        access.allowFrom — `platform:userId`
    ├─ conversationKey    scope + the message's ConversationRef → the conversation id
-   ├─ resolveAgent       routing.pipeline, then HARNESS_COMMANDS → { agentId, explicit }
+   ├─ resolveAgent       routing.pipeline, then HARNESS_FACTS[*].command → { agentId, explicit }
    ├─ response gate      core/inbound-gate shouldRespond
    ├─ /new · /clear      reset the conversation, drop every agent's id, ack. Never forwarded.
    ├─ /stop              cancel the running turn, keep the queued backlog for the next message — or,
@@ -233,8 +234,8 @@ works on every platform regardless of native slash support — `Daemon.onCommand
 synthesizes native invocations into a full inbound message, so one code path covers both.
 
 **Agent commands resolve without a rule.** When no pipeline rule matched on `command`,
-`resolveAgent` falls back to `HARNESS_COMMANDS` (`/cc`, `/oc`, `/agy` — see
-[`core/command-translate.ts`](../core/README.md)) and selects the first configured agent
+`resolveAgent` falls back to `HARNESS_FACTS[*].command` (`/cc`, `/oc`, `/agy` — see
+[`core/harness-facts.ts`](../core/README.md)) and selects the first configured agent
 of that harness. Those names are what gets registered in the platform menu, so without
 this a fresh install advertised commands the daemon did not recognise and forwarded them
 to the bound agent as literal text. Precedence:
@@ -1099,8 +1100,9 @@ renewing on every call.
 
 Everything above this boundary — `ConversationRegistry`, `TurnRunner`, `StreamBuffer`,
 `ToolRenderer` — is **protocol-agnostic** and is not touched by a harness. A harness that speaks
-ACP is an arm of `resolveHarness`; one that ever speaks something else would be a sibling runtime
-implementing `AgentFactory`, not a branch upstream.
+ACP is a profile in `src/daemon/harness/` (dispatched via `HARNESS_PROFILES` and `resolveHarness`);
+one that ever speaks something else would be a sibling runtime implementing `AgentFactory`, not a
+branch upstream.
 
 `agent.ts` holds only interfaces and imports nothing from the project, so either kind of runtime
 can implement it without a cycle.
@@ -1483,7 +1485,9 @@ Since 2026-11-06 `harness: agy` launches `agy acp` (agy 1.5+) and is served by `
 any ACP harness: sessions, `session/load`, the `model` and `thought_level` selectors, permission
 requests (put to the person under a level that asks), `session/cancel` for `/stop`, pictures as image blocks and
 the native tools over MCP. No launch flag from the previous print-mode runtime carries over —
-`resolveHarness` says why each was dropped. What `agy acp` 1.5.1 does its own way is in `agy-acp.ts`, each measured with
+re-measured on 1.5.1 (2026-11-06): there is no print-mode timeout to lift, permissions arrive via
+`session/request_permission` (so `--dangerously-skip-permissions` would bypass permission levels),
+and writes land in cwd (so `--add-dir` is unneeded). What `agy acp` 1.5.1 does its own way is in `agy-acp.ts`, each measured with
 `project-scripts/talkcode-agy-acp/` and recorded in the file header:
 
 - **Model ids.** The selector offers `gemini-3.8-flash` with a separate `thought_level`; configs and
@@ -1837,8 +1841,8 @@ would resolve it against the pipeline instead of the conversation's bound agent,
 on whichever agent config prefers rather than the one whose menu offered it. The clicker
 is re-checked against the allowlist, because a button in a shared channel can be pressed
 by someone other than the person who opened the menu. A harness that reports no list
-(`agy`) acks the binding instead — see `HARNESS_COMMANDS` in
-[`core/command-translate.ts`](../core/README.md).
+(`agy`) acks the binding instead — see `HARNESS_FACTS[*].command` in
+[`core/harness-facts.ts`](../core/README.md).
 
 Two things about a click are worth stating, because every way this path could fail used
 to be a silent `return` — indistinguishable, from the chat, from a dead button:

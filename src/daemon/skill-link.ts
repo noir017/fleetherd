@@ -4,6 +4,8 @@ import { fileURLToPath } from 'node:url';
 import type { AgentDef } from '../config/schema.js';
 import type { Welcome } from '../remote/connection.js';
 import { renderBundledSkill } from './bundled-skill.js';
+import { HARNESS_PROFILES, SKILL_READERS } from './harness/index.js';
+import type { SkillHome } from './harness/profile.js';
 import type { AgentProvision, HostFiles } from './provision.js';
 import { selfInvocation } from './reverse-cli-shim.js';
 import { syncSkillCopy } from './skill-copy.js';
@@ -90,51 +92,10 @@ export function bundledSkillDir(dir = 'skill'): string {
   return fileURLToPath(new URL(`../../${dir}`, import.meta.url));
 }
 
-/** A skills directory to link into, and the harness config directory that must exist first. */
-export interface SkillHome {
-  dir: string;
-  requires: string;
-}
-
 /** Where `harness` reads skills from under `home` (see the header for the evidence per arm). */
 export function skillHomes(harness: AgentDef['harness'], home: string, command?: string): SkillHome[] {
-  const shared = path.join(home, '.agents', 'skills');
-  switch (harness) {
-    case 'claude':
-      return [{ dir: path.join(home, '.claude', 'skills'), requires: path.join(home, '.claude') }];
-    case 'codex':
-      return [{ dir: shared, requires: path.join(home, '.codex') }];
-    case 'agy':
-      return [{ dir: path.join(home, '.gemini', 'config', 'skills'), requires: path.join(home, '.gemini', 'antigravity-cli') }];
-    case 'opencode':
-      return [{ dir: shared, requires: path.join(home, '.config', 'opencode') }];
-    case 'gemini':
-    case 'dsh':
-      return [];
-    case 'custom':
-      // CodeBuddy Code, by the last segment of its command (`/usr/local/bin/codebuddy`), the same
-      // reading agentKindOf gives it. Its skills live in its own directory, not `.agents/skills`.
-      return ((command ?? '').split(/[\\/]/).pop() ?? '').replace(/\.(cmd|exe|bat)$/i, '').toLowerCase() === 'codebuddy'
-        ? [{ dir: path.join(home, '.codebuddy', 'skills'), requires: path.join(home, '.codebuddy') }]
-        : [];
-    default: {
-      const _exhaustive: never = harness;
-      return _exhaustive;
-    }
-  }
+  return HARNESS_PROFILES[harness].skillHomes(home, command);
 }
-
-/**
- * Every harness that has a skills directory, under the name `fleetherd-harnesses` gives it
- * (managed-skills.ts skillHarnessOf), and where that directory is.
- */
-const SKILL_READERS: ReadonlyArray<{ name: string; homes: (home: string) => SkillHome[] }> = [
-  { name: 'claude', homes: (h) => skillHomes('claude', h) },
-  { name: 'codex', homes: (h) => skillHomes('codex', h) },
-  { name: 'agy', homes: (h) => skillHomes('agy', h) },
-  { name: 'opencode', homes: (h) => skillHomes('opencode', h) },
-  { name: 'codebuddy', homes: (h) => skillHomes('custom', h, 'codebuddy') },
-];
 
 /**
  * Every directory a skill of ours could have been linked into under `home` — what a sweep of dead

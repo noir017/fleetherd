@@ -1,6 +1,7 @@
 import type { ClientContext, SessionConfigOption, SessionModeState } from '@agentclientprotocol/sdk';
 import type { SessionOption } from '../types.js';
 import type { AgentDef } from '../config/schema.js';
+import { HARNESS_FACTS } from '../core/harness-facts.js';
 import { levelMode } from '../core/permission-levels.js';
 import type {
   AgentStreamHandlers,
@@ -8,8 +9,8 @@ import type {
   ModelSelector,
   SessionModeSelector,
 } from './agent.js';
-import { agySplitModel, forgetsModelOnLoad } from './agy-acp.js';
 import type { ConversationStore } from './conversation-store.js';
+import { HARNESS_PROFILES } from './harness/index.js';
 
 /** ACP's well-known id for the model selector among a session's config options. */
 export const MODEL_CONFIG_ID = 'model';
@@ -250,46 +251,6 @@ export async function applyEffortPreference(
 }
 
 /**
- * DSH's model selector value: JSON.stringify([provider, model]) — see `modelValue` in
- * @deepseek-ai/dsh-acp (lib/types/model-control.js), where the option's `currentValue` and every
- * choice value carry that exact string and `set` looks the incoming value up in a map keyed by it.
- * fleetherd spells models "provider/model" (the opencode convention), so the pair must be
- * JSON-encoded to cross the wire — a bare "provider/model" is rejected as "unknown model option" —
- * and decoded again to present a readable /model menu (see dshModelDisplayValue).
- */
-export function dshModelSelectorValue(model: string): string {
-  // No provider half (a bare model id): encode with an empty provider. That cannot match DSH's list,
-  // so applyModelPreference's offer check rejects it explicitly with the real choices — a clearer
-  // failure than DSH's opaque "unknown model option".
-  const slash = model.indexOf('/');
-  const provider = slash === -1 ? '' : model.slice(0, slash);
-  const name = slash === -1 ? model : model.slice(slash + 1);
-  return JSON.stringify([provider, name]);
-}
-
-/**
- * Inverse of dshModelSelectorValue: decode DSH's JSON-array selector value back to the
- * "provider/model" spelling config and /model queries use. Anything that isn't a 2-element string
- * array (a non-dsh harness's plain model id) passes through unchanged.
- */
-export function dshModelDisplayValue(value: string): string {
-  try {
-    const parsed: unknown = JSON.parse(value);
-    if (
-      Array.isArray(parsed) &&
-      parsed.length === 2 &&
-      typeof parsed[0] === 'string' &&
-      typeof parsed[1] === 'string'
-    ) {
-      return `${parsed[0]}/${parsed[1]}`;
-    }
-  } catch {
-    // Not JSON (a bare model id from a non-dsh harness) — pass through.
-  }
-  return value;
-}
-
-/**
  * Enforce a model on a started session — `agents[].model` or the conversation's `/model` choice on
  * session/new, the choice alone on session/load — returning the option list the harness reports
  * afterwards (undefined when nothing was applied, so the caller keeps what the session reported).
@@ -320,11 +281,9 @@ export async function applyModelPreference(
   want: string | undefined
 ): Promise<SessionConfigOption[] | undefined> {
   if (!want) return undefined;
-  // DSH's selector values are JSON.stringify([provider, model]) (see dshModelSelectorValue), so
-  // translate the "provider/model" config spelling before comparing against currentValue, checking
-  // the offered list, and setting. Logging keeps the readable spelling throughout.
-  const wireWant = def.harness === 'dsh' ? dshModelSelectorValue(want) : want;
-  const display = (v: string): string => (def.harness === 'dsh' ? dshModelDisplayValue(v) : v);
+  const profile = HARNESS_PROFILES[def.harness];
+  const wireWant = profile.encodeModelWire ? profile.encodeModelWire(want) : want;
+  const display = (v: string): string => (profile.decodeModelDisplay ? profile.decodeModelDisplay(v) : v);
 
   const opt = (options ?? []).find((o) => o.id === MODEL_CONFIG_ID);
   // No model selector at all (the claude harness pins its model via ANTHROPIC_MODEL instead):
@@ -468,7 +427,7 @@ export function modeControlOf(
  * does ask to the person, and its own mode stays as it is (applyPermissionLevel).
  */
 function modesLeftOut(def: AgentDef): boolean {
-  return def.harness === 'agy';
+  return HARNESS_FACTS[def.harness].ignoresSessionModes;
 }
 
 /** The `modes` a session/new or session/load answer carried, if any. */
@@ -618,7 +577,7 @@ export class AcpOptionState {
 
   /** The model to enforce on a reloaded session: the person's choice, or (for agy) the configured one too. */
   modelAfterLoad(): string | undefined {
-    return this.modelPreference ?? (forgetsModelOnLoad(this.def) ? this.def.model : undefined);
+    return this.modelPreference ?? (HARNESS_PROFILES[this.def.harness].forgetsModelOnLoad ? this.def.model : undefined);
   }
 
   /** The model hint to pass on `session/new` / `session/fork`. */
@@ -666,7 +625,7 @@ export class AcpOptionState {
     sessionId: string,
     model: string | undefined
   ): Promise<void> {
-    const split = this.def.harness === 'agy' && model ? agySplitModel(model, this.liveConfigOptions) : undefined;
+    const split = model ? HARNESS_PROFILES[this.def.harness].splitModelOption?.(model, this.liveConfigOptions) : undefined;
     const afterModel = await applyModelPreference(ctx, sessionId, this.def, this.liveConfigOptions, split?.model ?? model);
     if (afterModel) {
       this.liveConfigOptions = afterModel;
@@ -680,7 +639,8 @@ export class AcpOptionState {
   modelSelector(): ModelSelector | undefined {
     const opt = this.liveConfigOptions?.find((o) => o.id === MODEL_CONFIG_ID);
     if (!opt || opt.type !== 'select') return undefined;
-    const display = (v: string): string => (this.def.harness === 'dsh' ? dshModelDisplayValue(v) : v);
+    const decode = HARNESS_PROFILES[this.def.harness].decodeModelDisplay;
+    const display = (v: string): string => (decode ? decode(v) : v);
     const options = opt.options
       .flatMap((entry) => ('group' in entry ? entry.options : [entry]))
       .map((o) => ({ value: display(o.value), name: o.name || display(o.value) }));
@@ -694,7 +654,8 @@ export class AcpOptionState {
     value: string,
     live?: { ctx: Pick<ClientContext, 'request'>; sessionId: string }
   ): Promise<string> {
-    const wire = this.def.harness === 'dsh' ? dshModelSelectorValue(value) : value;
+    const encode = HARNESS_PROFILES[this.def.harness].encodeModelWire;
+    const wire = encode ? encode(value) : value;
     if (!live) {
       this.modelPreference = value;
       console.log(`[acp] agent "${this.def.id}": model "${value}" deferred — no live child, applies on next turn`);

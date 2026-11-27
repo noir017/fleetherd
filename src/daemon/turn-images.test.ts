@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { ConversationRegistry } from './conversation.js';
 import { parseConfig, type Config } from '../config/schema.js';
 import type { PlatformAdapter } from '../platform/adapter.js';
@@ -25,6 +25,7 @@ function inbound(content: string): InboundMessage {
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+const WAIT = { timeout: 5_000, interval: 10 };
 
 function rig(runTurn: (h: AgentStreamHandlers) => Promise<void>, opts: { sendFile?: (name: string) => Promise<void> } = {}) {
   const parsed = parseConfig({
@@ -105,7 +106,9 @@ describe('a picture in the reply', () => {
       t.onText('Revenue doubled.');
     });
     h.reg.route(inbound('chart it'));
-    await sleep(80);
+    await vi.waitFor(() => {
+      expect(h.log).toContain('react:✅');
+    }, WAIT);
 
     expect(h.log.filter((l) => !l.startsWith('react:'))).toEqual(['Here is the chart:', 'file:sales.png', 'Revenue doubled.']);
     expect(h.files).toHaveLength(1);
@@ -123,7 +126,9 @@ describe('a picture in the reply', () => {
       { sendFile: () => sleep(30) }
     );
     h.reg.route(inbound('two pictures'));
-    await sleep(150);
+    await vi.waitFor(() => {
+      expect(h.log).toContain('react:✅');
+    }, WAIT);
 
     const sent = h.log.filter((l) => l.startsWith('file:'));
     expect(sent).toEqual(['file:image-1.png', 'file:image-2.gif']);
@@ -139,7 +144,9 @@ describe('a picture in the reply', () => {
       t.onText('after.');
     });
     h.reg.route(inbound('draw it'));
-    await sleep(80);
+    await vi.waitFor(() => {
+      expect(h.log).toContain('react:✅');
+    }, WAIT);
 
     expect(h.files).toEqual([]);
     expect(h.log.filter((l) => !l.startsWith('react:'))).toEqual(['Before, after.']);
@@ -156,7 +163,9 @@ describe('a picture in the reply', () => {
       }
     );
     h.reg.route(inbound('chart it'));
-    await sleep(80);
+    await vi.waitFor(() => {
+      expect(h.log).toContain('react:✅');
+    }, WAIT);
 
     expect(h.log).toContain('Done.');
     expect(h.log).toContain('react:✅');
@@ -167,7 +176,9 @@ describe('a picture in the reply', () => {
   it('arriving after the turn is sent with the background output', async () => {
     const h = rig(async (t) => t.onText('Started it in the background.'));
     h.reg.route(inbound('render it later'));
-    await sleep(60);
+    await vi.waitFor(() => {
+      expect(h.log).toContain('react:✅');
+    }, WAIT);
 
     const burst = h.sink().handlers();
     burst.onImage?.(png);

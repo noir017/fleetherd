@@ -31,7 +31,7 @@ import type { ForkSupport } from './acp-side-question.js';
  *
  * The source must be between turns (ConversationRegistry.forkConversation refuses otherwise). Taken
  * mid-turn, the copy holds a turn nobody will finish — and opencode's copy carries on with a running
- * turn, its commands included (FORK_CARRIES_ON_RUNNING_TURN) — so a fork is a snapshot of an idle
+ * turn, its commands included (`harness/opencode.ts` `forkCarriesOnRunningTurn`) — so a fork is a snapshot of an idle
  * conversation or nothing.
  *
  * `session/fork` is still UNSTABLE in ACP 0.29.0's schema, so whether an agent can is read off its

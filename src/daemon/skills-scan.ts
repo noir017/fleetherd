@@ -1,10 +1,9 @@
-import { readdir, readFile, stat } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import { isAbsolute, join, resolve } from 'node:path';
+import { readdir, stat } from 'node:fs/promises';
+import { join } from 'node:path';
 
 import type { AgentDef } from '../config/schema.js';
 import type { RemoteHost } from '../remote/host.js';
-import { expandHome } from './agent-common.js';
+import { HARNESS_PROFILES } from './harness/index.js';
 
 /**
  * Where a harness keeps the skills its operator installed, read straight off disk.
@@ -40,18 +39,6 @@ import { expandHome } from './agent-common.js';
 export interface FoundSkill {
   name: string;
   dir: string;
-}
-
-/**
- * The agent's HOME, honouring a `HOME` override in its `env` block.
- *
- * An agent configured to run as a different identity keeps its skills under that identity's home,
- * and the daemon's own `homedir()` would scan the wrong tree — quietly, since the wrong tree
- * usually exists and is simply empty.
- */
-export function agentHome(def: AgentDef | undefined): string {
-  const override = def?.env?.['HOME'];
-  return override && override.length > 0 ? expandHome(override) : homedir();
 }
 
 /**
@@ -115,65 +102,12 @@ export function skillDirsFor(
   def: AgentDef | undefined,
   opts: { home: string; cwd: string; configured?: readonly string[] }
 ): string[] {
-  const dirs: string[] = [];
-  switch (def?.harness) {
-    case 'claude':
-      dirs.push(join(opts.home, '.claude', 'skills'));
-      dirs.push(join(opts.cwd, '.claude', 'skills'));
-      break;
-    case 'codex':
-      dirs.push(join(opts.home, '.codex', 'skills'));
-      dirs.push(join(opts.home, '.agents', 'skills'));
-      dirs.push(join(opts.cwd, '.codex', 'skills'));
-      dirs.push(join(opts.cwd, '.agents', 'skills'));
-      break;
-    case 'opencode':
-      // Relative entries resolve against the agent's working directory, which is how a
-      // project-scoped skills path in opencode.json would be written.
-      for (const p of opts.configured ?? []) {
-        dirs.push(isAbsolute(p) ? p : resolve(opts.cwd, expandHome(p)));
-      }
-      break;
-    case 'agy':
-      dirs.push(join(opts.cwd, '.agents', 'skills'));
-      dirs.push(join(opts.home, '.agents', 'skills'));
-      dirs.push(join(opts.home, '.gemini', 'antigravity-cli', 'skills'));
-      dirs.push(join(opts.home, '.gemini', 'skills'));
-      dirs.push(join(opts.home, '.gemini', 'config', 'skills'));
-      break;
-    default:
-      break;
-  }
+  const dirs = def ? HARNESS_PROFILES[def.harness].skillScanDirs(opts) : [];
   // A conversation that never used /cd sits in the agent's own cwd, so a harness's home-level and
   // project-level paths can be the same directory (claude's two, agy's first two — and on a machine
   // whose trusted workspace is the home directory, agy's are the same path by construction);
   // listing it twice would duplicate every skill in it.
   return [...new Set(dirs)];
-}
-
-/**
- * The `skills` array from opencode's config, or nothing.
- *
- * Located by opencode's own resolution order as observed here (`$XDG_CONFIG_HOME` or `~/.config`,
- * then `opencode.json`). Any failure — absent file, malformed JSON, a `skills` key that is not an
- * array of strings — yields no directories rather than throwing: this runs inside a chat command,
- * and a broken config elsewhere should degrade the catalogue, not the gateway.
- */
-export async function opencodeSkillDirs(home: string, env: NodeJS.ProcessEnv): Promise<string[]> {
-  const base = env['XDG_CONFIG_HOME'] || join(home, '.config');
-  const file = join(base, 'opencode', 'opencode.json');
-  try {
-    const parsed: unknown = JSON.parse(await readFile(file, 'utf8'));
-    const skills = (parsed as { skills?: unknown })?.skills;
-    if (!Array.isArray(skills)) return [];
-    return skills.filter((s): s is string => typeof s === 'string' && s.length > 0);
-  } catch (e) {
-    // Absent is the common case (opencode not configured on this machine) and not worth a line.
-    if ((e as NodeJS.ErrnoException)?.code !== 'ENOENT') {
-      console.warn(`[skills] could not read ${file}:`, e instanceof Error ? e.message : e);
-    }
-    return [];
-  }
 }
 
 /**
@@ -247,16 +181,4 @@ export async function scanRemoteSkillDirs(host: RemoteHost, dirs: readonly strin
     }
   }
   return found;
-}
-
-/** opencodeSkillDirs, reading opencode.json on the agent's host; `env` is the agent's own block. */
-export async function remoteOpencodeSkillDirs(host: RemoteHost, home: string, env: Record<string, string>): Promise<string[]> {
-  const file = join(env['XDG_CONFIG_HOME'] || join(home, '.config'), 'opencode', 'opencode.json');
-  try {
-    const parsed: unknown = JSON.parse((await host.readFile(file, 1 << 20)).toString('utf8'));
-    const skills = (parsed as { skills?: unknown })?.skills;
-    return Array.isArray(skills) ? skills.filter((s): s is string => typeof s === 'string' && s.length > 0) : [];
-  } catch {
-    return [];
-  }
 }

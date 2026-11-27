@@ -1,5 +1,10 @@
-import type { AgentDef, Config } from '../config/schema.js';
-import type { SlashCommandSpec } from '../types.js';
+import type { Config } from '../config/schema.js';
+import type { Harness, SlashCommandSpec } from '../types.js';
+import {
+  HARNESS_FACTS,
+  type GenericCommandName,
+  type HarnessCommand,
+} from './harness-facts.js';
 import { type Locale, tMenus, type MenusMessageKey } from './i18n/menus.js';
 
 /**
@@ -19,7 +24,7 @@ import { type Locale, tMenus, type MenusMessageKey } from './i18n/menus.js';
  * thing everywhere, translated per harness at invocation time. A harness with no
  * equivalent gets an explicit "not supported" reply rather than a prompt it will
  * misread. Harness-specific commands are not registered globally at all; they live
- * behind the bare form of that harness's agent command (see HARNESS_COMMANDS).
+ * behind the bare form of that harness's agent command (see `HARNESS_FACTS[h].command` in `core/harness-facts.ts`).
  *
  * ── Provenance of the table ───────────────────────────────────────────────────
  * `claude` and `opencode` were captured live over ACP (available_commands_update)
@@ -31,9 +36,6 @@ import { type Locale, tMenus, type MenusMessageKey } from './i18n/menus.js';
  * (11 built in, the rest the operator's own skills as `$name`); the entries below are
  * that capture, and the ones deliberately still absent are named at their own keys.
  */
-
-/** Harness kinds an agent can declare (mirrors AgentDefSchema.harness). */
-export type Harness = AgentDef['harness'];
 
 /**
  * Valid slash name: lowercase/digit/_/-, 1-32 chars (Discord constraint). Non-matching names are
@@ -110,43 +112,6 @@ interface GenericCommand {
   /** Menu description, phrased for the generic meaning rather than any one harness. */
   description: string;
   /**
-   * Native name per harness. A MISSING key means that harness has no equivalent — the command is
-   * then answered locally when `local` is set, and rejected otherwise. Never forwarded blind.
-   */
-  native: Partial<Record<Harness, string>>;
-  /**
-   * Harnesses where the DAEMON answers this itself, having no native spelling to translate to.
-   *
-   * These are not translations: they are questions the gateway can answer from what it already
-   * holds, so a harness that never implemented the command still gets a real reply instead of
-   * "not supported". Both current cases come off the ACP session rather than a slash command —
-   * live usage (`usage_update`) and the session's model selector (`session/set_config_option`) —
-   * which is exactly why they had no native name to translate to.
-   *
-   * A native spelling still WINS where one exists — `/context` on claude reaches claude's own
-   * `/context`, which knows more about claude than this gateway does. The fallback fills a hole;
-   * it never covers a harness that solved the problem itself.
-   *
-   * `/model` on claude is the deliberate exception, and it is not a violation of that rule so much
-   * as a finding about what claude's own answer is. Probed live against claude-agent-acp 0.58.1:
-   * `model` is NOT among the commands the adapter advertises (getAvailableSlashCommands), and a
-   * forwarded `/model` is therefore just a prompt — it spends a turn and prints
-   * "Current model: Opus 4.8 (1M context) … Usage: /model <name>", i.e. text you then have to type
-   * against. Meanwhile the same session exposes the selector as a config option that
-   * `session/set_config_option` switches. So the gateway answers it: one tap, no turn. The cost is
-   * that only the five options the protocol lists can be chosen — claude's own prose names more
-   * aliases (`opusplan`, `best`, a full model id) — and those stay reachable through
-   * `agents[].env.ANTHROPIC_MODEL`, which is where this deployment pins its model anyway.
-   *
-   * A LIST rather than a flag, and populated only from what was probed live. `agy` is why that
-   * distinction earns its keep: until 1.5 it spoke no ACP, so for a long time it could claim none of
-   * these, and each entry it has since gained came from finding the channel agy actually publishes
-   * on — `agy -p=/usage` for the quota, and the session's own config options for the model and its
-   * level since `agy acp` (2026-11-06). An honest "not supported" beats an answer that never
-   * arrives, and the way out of one is evidence, not optimism.
-   */
-  local?: Harness[];
-  /**
    * A question ABOUT the session rather than work FOR it — the gateway answers it itself while the
    * conversation is busy, instead of forwarding it (see isSessionQuery).
    *
@@ -214,218 +179,69 @@ function offeredOn(cmd: GenericCommand, surface: CommandSurface | undefined): bo
 /**
  * The generic vocabulary. Deliberately small: a command earns a place here only if
  * it means the same thing on more than one harness, or is common enough that a
- * clear "unsupported" is more useful than nothing.
+ * clear "unsupported" is more useful than nothing. Per-harness native/local mappings
+ * live in `core/harness-facts.ts` (`HARNESS_FACTS`).
  */
-const GENERIC_COMMANDS: Record<string, GenericCommand> = {
+const GENERIC_COMMANDS: Record<GenericCommandName, GenericCommand> = {
   compact: {
     description: 'Compact the conversation to free up context',
-    native: { claude: 'compact', gemini: 'compress', codex: 'compact' },
   },
   context: {
     description: 'Show current context usage',
-    native: { claude: 'context', gemini: 'stats' },
-    // Probed live against opencode 1.18.18: a turn emits `usage_update {used, size, cost}` exactly
-    // as claude's adapter does, so the numbers the footer already shows can answer this with no
-    // harness command involved.
-    //
-    // CONDITIONAL, and the condition is not the harness: opencode sends the notification only for a
-    // model whose context window it knows. Re-probed on 1.18.27 — `opencode/big-pickle` reports
-    // `{used, size: 200000}`, while a model from a custom `provider` block with no `limit.context`
-    // reports nothing at all (not a zero window — no notification), and adding `limit.context` to
-    // that model makes it report. The local answer is still right for the harness; the empty case is
-    // a model-config gap, which is why describeContext names the fix instead of saying "not yet".
-    //
-    // agy arrives at the same place by a different road: `agy acp` sends no `usage_update`, only a
-    // per-turn sum in the prompt response, which is the context for a turn of one model call and
-    // nothing for a turn that ran tools (daemon/agy-acp.ts); the window comes from a table of the
-    // ones measured.
-    //
-    // codex answers locally for the same reason opencode does, and unconditionally: probed on
-    // codex-acp 1.12.0, a turn emits `usage_update {used, size}` with a real window (258400 for
-    // gpt-5.6-terra). Notably this one predates the migration — Zed's adapter reported it too — so
-    // it is the one context-related thing codex did not gain by switching.
-    local: ['opencode', 'dsh', 'agy', 'codex'],
     // Where it IS forwarded (claude's own `/context`, gemini's `stats`), a busy conversation gets
-    // the gateway's copy instead — the same answer the `local` harnesses always get.
+    // the gateway's copy instead — the same answer harnesses listing `context` in `HARNESS_FACTS[h].localCommands` always get.
     query: true,
   },
   model: {
     description: 'Show or change the model',
     customOption: 'model',
-    // No native spelling anywhere, on purpose — see the note on `local` above for why claude's own
-    // `/model` is not one worth translating to.
-    native: {},
-    // Probed live on both: session/new reports a `model` select with the full model list, and
-    // session/set_config_option switches it (the daemon already uses that path to enforce
-    // `agents[].model`). So the gateway can both show and change it without a slash command —
-    // and, where the platform allows, offer the list as a menu instead of a name to type.
-    //
-    // agy: `agy acp` reports the `model` select like the others (bare ids — `gemini-3.8-flash`, with
-    // its level in `thought_level`; daemon/agy-acp.ts agySplitModel reads the older
-    // `gemini-3.8-flash-high` spelling).
-    //
-    // codex: session/new reports both a `models` block and a `model` configOption, switched the
-    // same way. Its selector is two-level in a way the others are not, and the two levels disagree
-    // about what a model id is — `models.availableModels` has 31 entries, one per model per
-    // reasoning effort (`gpt-5.6-terra[medium]`, `[high]`, `[xhigh]`, `[max]`, `[ultra]`), while
-    // `configOptions.model` has 6 bare ids. modelSelector reads configOptions, so the menu is the
-    // 6, which is the right list to put in front of a user.
-    //
-    // The effort half is NOT reachable from here, and that is a harness limit rather than a choice:
-    // probed on 1.12.0, `session/set_config_option {configId:"model", value:"gpt-5.6-terra[high]"}`
-    // is rejected with -32602 Invalid params even though that exact string is a modelId in
-    // availableModels. So `agents[].model` must name a bare id too, and effort is set in codex's
-    // own config.toml (`model_reasoning_effort = "high"` at TOP level — put it after a
-    // `[model_providers.x]` header and TOML silently makes it that table's key, which reads as
-    // "the setting does nothing"). With it set, session/new reports `gpt-5.6-terra[high]`.
-    local: ['opencode', 'claude', 'agy', 'dsh', 'codex'],
   },
   effort: {
     description: 'Show or change the reasoning effort',
-    // No native spelling, for the reason `/model` has none: every harness that has a level exposes
-    // it as an ACP config option, and switching that is one tap with no turn spent. Probed on
-    // 2026-09-23 — claude-agent-acp 0.81.0, codex-acp 1.13.0 and opencode 2.0.14 all file the
-    // option under category `thought_level` (ids `effort`, `reasoning_effort`, `effort`), and
-    // `session/set_config_option` switched it on all three.
-    native: {},
-    // Only where that was probed. `agy acp` 1.5.1 offers a `thought_level` select (low/medium/high)
-    // for Gemini and none for GPT-OSS or Claude, so the menu follows the model. Being local also
-    // keeps `/effort` out of HARNESS_CLI_ANSWERED's one-shot path. dsh and gemini have never been
-    // seen to offer the option and get the explicit "not supported".
-    local: ['claude', 'codex', 'opencode', 'agy'],
   },
   usage: {
     description: 'Show token usage and limits',
-    // codex spells it `status` — "Display session configuration and token usage", a superset of
-    // what was asked for rather than a near-miss, so it is worth the translation.
-    native: { claude: 'usage', codex: 'status' },
-    // agy's CLI answers /usage itself, so forwarding it gets the CLI's answer nowhere: `agy acp`
-    // hands it to the model as a question (see HARNESS_CLI_ANSWERED). The gateway runs it as its own one-shot process instead. Probed on
-    // 1.2.0 — four tab-separated columns of pool, metric, remaining percentage and reset timestamp,
-    // answered from local state with no model invoked; unchanged on 1.5.1.
-    local: ['agy'],
-    // claude and codex forward it, so a busy conversation gets the gateway's snapshot instead.
-    // agy never needed this: its answer is already a separate process that touches no session.
     query: true,
   },
   doctor: {
     description: "Health-check this agent's own setup",
-    // No codex entry: 1.12.0 advertises nothing of the kind, and `status` is already spent on
-    // /usage above. Sending it twice under two names would answer the wrong question the second time.
-    native: { claude: 'doctor' },
   },
   mcp: {
     description: 'Manage MCP servers',
-    native: { claude: 'mcp', gemini: 'mcp', codex: 'mcp' },
   },
   init: {
     description: "Set up this project's agent instructions file",
-    // codex HAD this — Zed's adapter advertised `init`, "create an AGENTS.md file with instructions
-    // for Codex" — and 1.12.0 dropped it. Left unsupported rather than forwarded as plain text: the
-    // harness no longer recognises the name, so `/init` would spend a turn on a model guessing.
-    native: { claude: 'init', opencode: 'init' },
   },
   review: {
     description: 'Review the current changes',
-    // codex also has review-branch and review-commit, which take arguments and stay reachable
-    // through the `/cx` picker; only the bare form means the same thing on every harness.
-    native: { claude: 'review', opencode: 'review', codex: 'review' },
   },
   super: {
     description: 'Split a job across agents working in parallel (sub-agents)',
-    // Not a harness command anywhere: `super` is a skill this gateway ships (skill-super/) and links
-    // into each harness's skill directory (daemon/skill-link.ts). Forwarded unchanged, it reaches the
-    // agent as a message starting with `/super`, which is what the skill's description says to act
-    // on. Listed here so the menu offers it, and so the harnesses that cannot read the skill say so.
-    //
-    // Probed on 2026-11-02 against a test gateway (project-scripts/talkcode-super-menu/), one job
-    // per harness; every one read the skill and put up the card of sub-agents it proposed:
-    //   claude    Claude Code offers a skill as a slash command, so `/super` is one
-    //   codex     codex-acp passes an unknown slash on as text; codex read ~/.agents/skills/super
-    //   opencode  loaded it with its own `skill` tool
-    //   agy       the slash reached it as text; read from ~/.gemini/config/skills (`agy acp` lists
-    //             the same directory's skills as commands)
-    // gemini and dsh are absent because skill-link.ts places no skills for them: nothing would tell
-    // them what `/super` means, and an honest "not supported" beats a turn spent guessing.
-    native: { claude: 'super', codex: 'super', opencode: 'super', agy: 'super' },
     arg: { name: 'job', description: 'The job to split up' },
     nested: true,
   },
   btw: {
     description: 'Ask a side question: answered apart, kept out of the conversation, no turn stopped',
-    // No harness has a slash for this over ACP — Claude Code's own `/btw` is a TUI panel, and
-    // claude-agent-acp says it never issues the side_question request behind it. What ACP has is
-    // `session/fork`: a copy of the session the gateway asks on and deletes afterwards
-    // (daemon/agent-acp.ts sideQuestion), so the conversation's own context never sees the question.
-    native: {},
-    // Only where `initialize` declared `sessionCapabilities.fork` and a fork answered, probed on
-    // 2026-11-13 (project-scripts/fleetherd-btw/): claude-agent-acp 0.81.0, codex-acp 2.5.0 and
-    // opencode 2.2.5 each answered a question about the conversation from a fork taken while a turn
-    // ran, and the conversation's own next turn did not know it had been asked. agy 1.5.7 declares
-    // no fork, and gemini and dsh were never probed; they get the explicit "not supported". The
-    // runtime still checks the capability on the live child, so an older adapter on a remote host
-    // refuses by name too.
-    //
-    // `custom` is here, unlike in every other entry, because what decides it is something the agent
-    // declares rather than a guess about the program: the runtime reads the capability and refuses
-    // when it is absent (CodeBuddy 2.181.0 declares none). Passing `/btw` through, as a custom agent
-    // gets every other command, would put the question into the very context it promised to stay
-    // out of.
-    local: ['claude', 'codex', 'opencode', 'custom'],
     arg: { name: 'question', description: 'What to ask' },
   },
 };
 
-/**
- * The agent command each harness answers to — the single source for what gets registered,
- * which spellings resolve, and whether a bare invocation can offer a command menu.
- *
- * ── Why short names ───────────────────────────────────────────────────────────
- * These are typed on a phone keyboard, in the middle of a conversation, many times a day.
- * `/opencode` was the harness enum value leaking into the UI; `/oc` is what operators
- * actually type. The full harness name stays in `aliases` so existing muscle memory (and
- * any `when.command: opencode` rule already in a config) keeps working — it is simply not
- * registered, so it costs no slot in the platform menu.
- *
- * ── Why `picker` is a separate flag ───────────────────────────────────────────
- * Registering a command and having a command list to show are different questions, and
- * `agy` is the case that proves it: it earns a registered command, because switching a
- * conversation to agy is the useful half, but its picker is off. `agy acp` does report a list
- * (its built-ins — `goal`, `compact`, `schedule`, … — and the skills it found); turning the picker
- * on waits until forwarding those from a menu has been tried. With one flag per concern, a bare
- * `/agy` acks the binding while a bare `/oc` opens opencode's own menu.
- *
- * `custom` is deliberately absent: the harness name carries no meaning to a reader, and a
- * user-supplied executable advertises no stable command set to name.
- */
-interface HarnessCommand {
-  /** Registered name — the short form the platform menu shows. */
-  name: string;
-  /** Additional spellings that resolve here. Accepted when typed, never registered. */
-  aliases: string[];
-  /** Whether a bare invocation can offer this harness's own reported commands. */
-  picker: boolean;
+function isGenericCommandName(name: string): name is GenericCommandName {
+  return Object.hasOwn(GENERIC_COMMANDS, name);
 }
-
-const HARNESS_COMMANDS: Partial<Record<Harness, HarnessCommand>> = {
-  claude: { name: 'cc', aliases: ['claude'], picker: true },
-  opencode: { name: 'oc', aliases: ['opencode'], picker: true },
-  codex: { name: 'cx', aliases: ['codex'], picker: true },
-  gemini: { name: 'gm', aliases: ['gemini'], picker: true },
-  agy: { name: 'agy', aliases: [], picker: false },
-  dsh: { name: 'dsh', aliases: ['deepseek'], picker: true },
-};
 
 /** Reverse index (every accepted spelling → harness), built once. Names are already lowercase. */
 const COMMAND_TO_HARNESS = new Map<string, Harness>(
-  (Object.entries(HARNESS_COMMANDS) as Array<[Harness, HarnessCommand]>).flatMap(([harness, cmd]) =>
-    [cmd.name, ...cmd.aliases].map((spelling) => [spelling, harness] as [string, Harness])
-  )
+  (Object.entries(HARNESS_FACTS) as Array<[Harness, (typeof HARNESS_FACTS)[Harness]]>).flatMap(([harness, facts]) => {
+    const cmd: HarnessCommand | null = facts.command;
+    if (!cmd) return [];
+    return [cmd.name, ...cmd.aliases].map((spelling) => [spelling, harness] as [string, Harness]);
+  })
 );
 
 /** The registered command name for a harness, or undefined when it has none (`custom`). */
 export function harnessCommandName(harness: Harness | undefined): string | undefined {
-  return harness ? HARNESS_COMMANDS[harness]?.name : undefined;
+  return harness ? HARNESS_FACTS[harness]?.command?.name : undefined;
 }
 
 /** The harness a command name addresses, accepting the short form or the full harness name. */
@@ -435,7 +251,7 @@ export function harnessForCommand(name: string): Harness | undefined {
 
 /** Whether a bare `/<command>` for this harness can offer the agent's own command list. */
 export function harnessHasPicker(harness: Harness | undefined): boolean {
-  return harness ? (HARNESS_COMMANDS[harness]?.picker ?? false) : false;
+  return harness ? (HARNESS_FACTS[harness]?.command?.picker ?? false) : false;
 }
 
 /**
@@ -505,15 +321,19 @@ export function translateCommand(
   harness: Harness | undefined,
   declares?: (optionId: string) => boolean
 ): CommandTranslation {
-  const entry = GENERIC_COMMANDS[name.toLowerCase()];
-  if (!entry) return { kind: 'passthrough' };
-  if (harness === 'custom' && entry.customOption && declares?.(entry.customOption)) return { kind: 'local' };
-  // A command whose local answer asks the agent itself whether it can (see `btw`).
-  if (harness === 'custom' && entry.local?.includes('custom')) return { kind: 'local' };
-  if (!harness || harness === 'custom') return { kind: 'passthrough' };
-  const native = entry.native[harness];
+  const key = name.toLowerCase();
+  if (!isGenericCommandName(key)) return { kind: 'passthrough' };
+  if (!harness) return { kind: 'passthrough' };
+  const entry = GENERIC_COMMANDS[key];
+  const facts: (typeof HARNESS_FACTS)[Harness] | undefined = HARNESS_FACTS[harness];
+  if (!facts) return { kind: 'unsupported' };
+  if (facts.passthroughCommands && entry.customOption && declares?.(entry.customOption)) {
+    return { kind: 'local' };
+  }
+  const native = facts.nativeCommands[key];
   if (native) return { kind: 'translated', native };
-  return entry.local?.includes(harness) ? { kind: 'local' } : { kind: 'unsupported' };
+  if (facts.localCommands.includes(key)) return { kind: 'local' };
+  return facts.passthroughCommands ? { kind: 'passthrough' } : { kind: 'unsupported' };
 }
 
 /**
@@ -521,12 +341,13 @@ export function translateCommand(
  * undefined when none would (see GenericCommand.customOption).
  */
 export function customOptionFor(name: string): string | undefined {
-  return GENERIC_COMMANDS[name.toLowerCase()]?.customOption;
+  const key = name.toLowerCase();
+  return isGenericCommandName(key) ? GENERIC_COMMANDS[key].customOption : undefined;
 }
 
 /** Whether a name belongs to the generic vocabulary (i.e. is subject to translation). */
 export function isGenericCommand(name: string): boolean {
-  return Object.hasOwn(GENERIC_COMMANDS, name.toLowerCase());
+  return isGenericCommandName(name.toLowerCase());
 }
 
 /**
@@ -535,54 +356,14 @@ export function isGenericCommand(name: string): boolean {
  * GenericCommand.query for the incident that made this a rule.
  */
 export function isSessionQuery(name: string): boolean {
-  return GENERIC_COMMANDS[name.toLowerCase()]?.query === true;
+  const key = name.toLowerCase();
+  return isGenericCommandName(key) && GENERIC_COMMANDS[key].query === true;
 }
 
-/**
- * Slash names a harness's own CLI intercepts and answers BEFORE the model ever sees them.
- *
- * These are not commands the gateway lacks a translation for — they are commands only the CLI can
- * answer, so writing one into the session gets no answer. `agy acp` survives one, but hands it to
- * the model as an ordinary question (1.5.1, 2026-11-06: `/usage` got "which kind of usage
- * information are you looking for?"), so the one-shot is still the only real answer. An exact list
- * rather than "anything starting with /", because a skill slash and an unrecognized slash are both
- * harmless (verified on agy 1.2.0, 2026-09-17).
- *
- * The list is what `agy -p /help` prints, which is also how to re-derive it (1.5.1 added `/plugin`):
- *
- *   /agents /changelog /config /credits /effort /help /hooks /model /permissions /plugin /skills /usage
- *
- * A STATIC copy of a list the CLI can produce is a deliberate compromise, and the risk is worth
- * naming: if agy adds another command, a user who types it spends a turn on agy's "answered by the
- * CLI itself" text until this list catches up. Discovering it at runtime was the alternative, and
- * it buys a worse trade — the check has to answer synchronously while routing a message, so a
- * discovered list would either block the first message on a subprocess or be empty for the first
- * seconds after a restart, which is exactly when a daemon is most likely to be handed a command.
- *
- * `/help` and `/skills` appear here for completeness and are never reached: both are daemon
- * commands, intercepted upstream and answered by the gateway itself.
- */
-const HARNESS_CLI_ANSWERED: Partial<Record<Harness, readonly string[]>> = {
-  agy: [
-    'agents',
-    'changelog',
-    'config',
-    'credits',
-    'effort',
-    'help',
-    'hooks',
-    'model',
-    'permissions',
-    'plugin',
-    'skills',
-    'usage',
-  ],
-};
-
-/** Whether this harness's CLI would answer `/name` itself — see HARNESS_CLI_ANSWERED. */
+/** Whether this harness's CLI would answer `/name` itself — see `HARNESS_FACTS[harness].cliAnsweredCommands`. */
 export function isCliAnsweredCommand(name: string, harness: Harness | undefined): boolean {
   if (!harness) return false;
-  return HARNESS_CLI_ANSWERED[harness]?.includes(name.toLowerCase()) ?? false;
+  return HARNESS_FACTS[harness]?.cliAnsweredCommands.includes(name.toLowerCase()) ?? false;
 }
 
 /**
@@ -590,7 +371,8 @@ export function isCliAnsweredCommand(name: string, harness: Harness | undefined)
  * refuses the command by name rather than forwarding it into a turn that can only fail.
  */
 export function needsNestedTopics(name: string): boolean {
-  return GENERIC_COMMANDS[name.toLowerCase()]?.nested === true;
+  const key = name.toLowerCase();
+  return isGenericCommandName(key) && GENERIC_COMMANDS[key].nested === true;
 }
 
 /**
@@ -618,13 +400,9 @@ export function genericCommandSpecs(surface?: CommandSurface, locale: Locale = '
  * harness picker from repeating commands that already have a top-level entry.
  */
 export function genericNativeNames(harness: Harness | undefined): Set<string> {
-  const names = new Set<string>();
-  if (!harness || harness === 'custom') return names;
-  for (const cmd of Object.values(GENERIC_COMMANDS)) {
-    const native = cmd.native[harness];
-    if (native) names.add(native);
-  }
-  return names;
+  const facts = harness ? HARNESS_FACTS[harness] : undefined;
+  if (!facts) return new Set();
+  return new Set(Object.values(facts.nativeCommands));
 }
 
 /**
@@ -641,10 +419,10 @@ export function genericNativeNames(harness: Harness | undefined): Set<string> {
 export function agentCommandSpecs(cfg: Pick<Config, 'agents'>, locale: Locale = 'en'): SlashCommandSpec[] {
   const harnesses = new Set<Harness>();
   for (const agent of cfg.agents) {
-    if (HARNESS_COMMANDS[agent.harness]) harnesses.add(agent.harness);
+    if (HARNESS_FACTS[agent.harness]?.command) harnesses.add(agent.harness);
   }
   return [...harnesses]
-    .map((harness) => ({ harness, cmd: HARNESS_COMMANDS[harness]! }))
+    .map((harness) => ({ harness, cmd: HARNESS_FACTS[harness].command! }))
     .sort((a, b) => a.cmd.name.localeCompare(b.cmd.name))
     .map(({ harness, cmd }) => ({
       name: cmd.name,
@@ -706,7 +484,10 @@ function commandRoutes(cfg: Pick<Config, 'routing'>): CommandRoute[] {
 function routeTarget(cfg: Pick<Config, 'agents'>, agentId: string): string {
   const def = cfg.agents.find((a) => a.id === agentId);
   // `custom` is left out for the reason agentCommandSpecs skips it: the word means nothing to a reader.
-  const what = [def && def.harness !== 'custom' ? def.harness : undefined, def?.host ? `on ${def.host}` : undefined]
+  const what = [
+    def && HARNESS_FACTS[def.harness]?.command != null ? def.harness : undefined,
+    def?.host ? `on ${def.host}` : undefined,
+  ]
     .filter(Boolean)
     .join(' ');
   return what ? `${agentId} (${what})` : agentId;

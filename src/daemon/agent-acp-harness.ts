@@ -1,5 +1,4 @@
 import { spawn } from 'node:child_process';
-import { createRequire } from 'node:module';
 import type {
   ActiveSession,
   ClientCapabilities,
@@ -30,10 +29,10 @@ import {
 import type { AgentProvision } from './provision.js';
 import { agyWindow } from './agy-acp.js';
 import { isAgentAnswer } from './agent-reconnect.js';
-import { AGY_COMMAND } from './agy-cli.js';
 import { markActivePools } from './agy-meters.js';
 import { AGY_CONTEXT_REFRESH_MS, readAgyContext } from './agy-transcript.js';
 import { connectAddress, connectHere, connectMeta } from './connect-agent.js';
+import { HARNESS_PROFILES } from './harness/index.js';
 import { harnessLogProbe, readHarnessErrors } from './harness-log.js';
 import { scopeQuotaPools, type QuotaMeter } from './quota-meter.js';
 import { relayEnv } from './relay.js';
@@ -42,7 +41,6 @@ import { selfInvocation } from './reverse-cli-shim.js';
 import {
   describeSessionFailure,
   failureNoticeKey,
-  SESSION_FAILURE_CAPABILITY_META,
   type SessionFailure,
 } from './session-failure.js';
 import { customOptionsOf, type AcpOptionState } from './agent-acp-options.js';
@@ -164,78 +162,9 @@ export function remoteMcpServers(sessionToken: string, paths: { shim: string; so
 
 // ───────────────────────── harness preset → launch command ─────────────────────────
 
-/**
- * Entry of the locally installed claude-agent-acp adapter (a declared dependency, so the version
- * is locked by package-lock and `npm install` surfaces network problems at install time instead
- * of at first message). Exported for the doctor check. Throws if node_modules is incomplete.
- */
-export function resolveClaudeAdapterEntry(): string {
-  // Its bin ("claude-agent-acp": dist/index.js) is reachable via the package's "./*" export.
-  return createRequire(import.meta.url).resolve('@agentclientprotocol/claude-agent-acp/dist/index.js');
-}
-
 /** Resolve an agent def into the actual spawn command + args (presets default; custom self-configures; then append def.args). Exported for the doctor check and the harness unit tests. */
 export function resolveHarness(def: AgentDef, remote = false): { command: string; args: string[] } {
-  switch (def.harness) {
-    case 'claude':
-      // On a remote host the adapter is that host's own install (`npm i -g
-      // @agentclientprotocol/claude-agent-acp`): the bundled one carries a native Claude Code build
-      // for THIS machine (223 MB for linux-arm64 alone), not something to ship to every host.
-      if (remote) return { command: 'claude-agent-acp', args: [...def.args] };
-      // Claude via the official claude-agent-acp adapter (replacing Zed's claude-code-acp): its
-      // @agentclientprotocol/sdk matches ours (protocol aligned), it forwards /usage /status /model
-      // built-in echoes, and is more actively maintained. Login still reuses `claude /login` (no API
-      // key). Spawned with the current node binary — no PATH or shebang dependence.
-      return { command: process.execPath, args: [resolveClaudeAdapterEntry(), ...def.args] };
-    case 'gemini':
-      // Gemini CLI native ACP (exact flag per `gemini --help`; override/extend via def.args).
-      return { command: 'gemini', args: ['--experimental-acp', ...def.args] };
-    case 'codex':
-      // Codex via @agentclientprotocol/codex-acp (the codex CLI itself has no ACP mode — a bare
-      // `codex acp` falls into the TUI and dies with "stdin is not a terminal" when headless).
-      // Auth reuses the codex CLI's own login state (~/.codex), including a custom
-      // `model_providers` gateway, which the adapter reports back as authStatus kind "gateway".
-      //
-      // A PATH command, NOT a bundled dependency, which is the opposite of the claude arm above
-      // and deliberate: the adapter declares `@openai/codex` as a regular dependency, whose
-      // platform binary is ~284 MB unpacked. Bundling that taxes every `npm i -g
-      // fleetherd` for a harness most operators never configure, and the operator who
-      // does configure it already had to install and log into the codex CLI by hand. So codex
-      // follows the same contract as gemini/opencode/dsh — the image (or the operator) installs
-      // `@agentclientprotocol/codex-acp` globally, and doctor reports a missing one.
-      //
-      // The predecessor here was Zed's `@zed-industries/codex-acp`, a declared dependency shipping
-      // a Rust binary. It is deprecated upstream in favour of this package, and was worth leaving
-      // behind on its own merits: probed side by side on 2026-09-20 against the same newapi
-      // gateway, it advertised 6 commands to 1.12.0's 42, reported no model list (so `/model` had
-      // only a stale gpt-5.2-era selector), had no `status`/`skills`/`mcp`, and prefixed its first
-      // answer with "Model metadata for <model> not found. Defaulting to fallback metadata" —
-      // inside the agent's message text, i.e. straight into the user's chat bubble.
-      return { command: 'codex-acp', args: [...def.args] };
-    case 'opencode':
-      // OpenCode native ACP mode (per the ACP registry's official launch spec: `opencode acp`).
-      return { command: 'opencode', args: ['acp', ...def.args] };
-    case 'dsh':
-      // DeepSeek Harness ACP profile (per the ACP registry's official launch spec: `dsh --profile acp`,
-      // the dsh equivalent of opencode's `opencode acp`). Config (provider/model, credentials) comes
-      // from dsh's own profile, not from args.
-      return { command: 'dsh', args: ['--profile', 'acp', ...def.args] };
-    case 'custom':
-      // The schema guarantees a command unless the agent is a connect one, which is dialled, never
-      // started (connect-agent.ts): what could still ask for its command is a review run, which
-      // needs a process of its own it can take the tools from.
-      if (!def.command) throw new Error(`agent "${def.id}" is reached at ${def.connect?.url ?? '?'} (connect), not started`);
-      return { command: def.command, args: [...def.args] };
-    case 'agy':
-      // agy's own ACP server, since 1.5 (`agy acp --help`). None of the flags the old print-mode
-      // launch needed carries over, each re-measured on 1.5.1 (2026-11-06):
-      // there is no print-mode timeout to lift; permissions arrive as `session/request_permission`
-      // and are answered like any harness's (approved or put to the user, as its permission level
-      // says — `--dangerously-skip-permissions` would take that choice away); and a file the
-      // agent writes in an untrusted cwd lands in the cwd, so `--add-dir` has nothing to fix. The
-      // same command on a remote host: agy is a single binary on PATH there too.
-      return { command: AGY_COMMAND, args: ['acp', ...def.args] };
-  }
+  return HARNESS_PROFILES[def.harness].launch(def, remote);
 }
 
 /**
@@ -250,8 +179,7 @@ export function resolveHarness(def: AgentDef, remote = false): { command: string
  * "not offered by this session" in the log.
  */
 export function isCursorAgent(def: Pick<AgentDef, 'harness' | 'command'>): boolean {
-  const base = ((def.command ?? '').split(/[\\/]/).pop() ?? '').replace(/\.(cmd|exe|bat)$/i, '').toLowerCase();
-  return def.harness === 'custom' && base === 'cursor-agent';
+  return Boolean(HARNESS_PROFILES[def.harness].capabilityMeta?.(def)?.parameterizedModelPicker);
 }
 
 /**
@@ -262,10 +190,7 @@ export function isCursorAgent(def: Pick<AgentDef, 'harness' | 'command'>): boole
  *   into separate config options (probed against cursor-agent 2026.11.05-86047df, 2026-11-10).
  */
 export function capabilityMetaOf(def: AgentDef): Record<string, unknown> {
-  return {
-    ...(def.harness === 'claude' ? SESSION_FAILURE_CAPABILITY_META : {}),
-    ...(isCursorAgent(def) ? { parameterizedModelPicker: true } : {}),
-  };
+  return HARNESS_PROFILES[def.harness].capabilityMeta?.(def) ?? {};
 }
 
 /**
@@ -506,9 +431,7 @@ export class StartupTimeout extends Error {
  * a closed connection, so the version to check is named.
  */
 function startupHint(def: AgentDef): string {
-  return def.harness === 'agy'
-    ? ' (`agy acp` needs agy 1.5 or later — check `agy --version` on that machine and upgrade it)'
-    : '';
+  return HARNESS_PROFILES[def.harness].startupHint ?? '';
 }
 
 /**

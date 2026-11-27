@@ -2,6 +2,7 @@ import type { AgentDef } from '../config/schema.js';
 import type { AgentCatalog, OfflineMachine } from '../types.js';
 import { type Locale, tMenus } from './i18n/menus.js';
 import { parseButtonId, formatButtonId } from './button-id.js';
+import { HARNESS_FACTS } from './harness-facts.js';
 import { shortModelName } from './runtime-footer.js';
 import { pageCount, pageSlice, truncateLabel, wrapPage } from './paging.js';
 
@@ -121,7 +122,7 @@ export interface AgentMenuView {
 }
 
 function agentLabel(def: AgentDef, current: string | undefined): string {
-  const harness = def.harness === 'custom' ? '' : ` · ${def.harness}`;
+  const harness = HARNESS_FACTS[def.harness].command !== null ? ` · ${def.harness}` : '';
   return truncateLabel(`${def.id === current ? CURRENT_MARK : ''}${def.id}${harness}`);
 }
 
@@ -190,26 +191,7 @@ export function buildAgentMenu(opts: {
  * The command's last path segment only: `/usr/local/bin/` is where it lives, not what it is.
  */
 export function agentKindOf(def: AgentDef): string {
-  switch (def.harness) {
-    case 'claude':
-      return 'Claude Code';
-    case 'codex':
-      return 'Codex';
-    case 'opencode':
-      return 'OpenCode';
-    case 'agy':
-      return 'Antigravity';
-    case 'gemini':
-      return 'Gemini CLI';
-    case 'dsh':
-      return 'DeepSeek Harness';
-    case 'custom':
-      return def.command?.split(/[\\/]/).pop() || def.id;
-    default: {
-      const _exhaustive: never = def.harness;
-      return _exhaustive;
-    }
-  }
+  return HARNESS_FACTS[def.harness].displayName ?? (def.command?.split(/[\\/]/).pop() || def.id);
 }
 
 /**

@@ -6,13 +6,12 @@ import type { ListChannelsResult } from '../ipc/protocol.js';
 import type { ConversationId } from '../types.js';
 import { expandRemoteHome } from './agent-common.js';
 import {
-  claudeProjectsDir,
   readCacheExpiry,
   readRemoteCacheExpiry,
-  remoteClaudeProjectsDir,
   type CacheReading,
 } from './claude-transcript.js';
 import type { ConversationContext } from './conversation-context.js';
+import { HARNESS_PROFILES } from './harness/index.js';
 import { remoteHosts } from './remote-hosts.js';
 
 /**
@@ -76,14 +75,15 @@ export class ConversationHistory {
   async cacheReading(id: ConversationId): Promise<CacheReading | undefined> {
     const agentId = this.ctx.agentIdOf(id);
     const def = findAgent(this.ctx.config, agentId);
-    if (def?.harness !== 'claude') return undefined;
+    const transcript = def ? HARNESS_PROFILES[def.harness].transcript : undefined;
+    if (!def || !transcript?.projectsDir || !transcript?.remoteProjectsDir) return undefined;
     const sessionId = this.ctx.store?.agentSession(id, agentId);
     const cwd = this.ctx.workdirOf(id, agentId);
     if (!sessionId || !cwd) return undefined;
     const host = remoteHosts.hostFor(def);
     const w = host?.conn.welcome;
-    if (host) return w ? readRemoteCacheExpiry(host, remoteClaudeProjectsDir(def, w), expandRemoteHome(cwd, w.home), sessionId) : undefined;
-    return readCacheExpiry(claudeProjectsDir(def), cwd, sessionId);
+    if (host) return w ? readRemoteCacheExpiry(host, transcript.remoteProjectsDir(def, w), expandRemoteHome(cwd, w.home), sessionId) : undefined;
+    return readCacheExpiry(transcript.projectsDir(def), cwd, sessionId);
   }
 
   /** `fleetherd channels`, read from the store so a restart does not forget every topic. */

@@ -5,7 +5,7 @@ import type { AgentDef } from '../config/schema.js';
 import { expandEnv, expandHome, expandRemoteHome, remoteAgentHome } from './agent-common.js';
 import type { Welcome } from '../remote/connection.js';
 import type { RemoteHost } from '../remote/host.js';
-import { agentHome } from './skills-scan.js';
+import { agentHome } from './harness/profile.js';
 
 /**
  * When a Claude Code session's prompt cache expires, read off the session's own transcript.

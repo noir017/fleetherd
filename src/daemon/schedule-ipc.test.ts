@@ -274,8 +274,26 @@ async function rig(
 
   let n = 0;
   const inbound = async (conversation: InboundMessage['conversation'], content: string): Promise<void> => {
+    const beforeTurns = turns.length;
+    const beforeSent = sent.length;
+    const beforeMenus = menus.length;
+    const beforeModels = models.length;
     (daemon as unknown as { onInbound: (m: InboundMessage) => void }).onInbound({ conversation, messageId: `in_${++n}`, content, timestamp: Date.now() });
-    await settle();
+    if (!content.startsWith('/')) {
+      await vi.waitFor(() => {
+        expect(turns.length).toBeGreaterThan(beforeTurns);
+      }, WAIT);
+    } else if (content.startsWith('/model ')) {
+      await vi.waitFor(() => {
+        expect(models.length).toBeGreaterThan(beforeModels);
+        expect(sent.length).toBeGreaterThan(beforeSent);
+      }, WAIT);
+    } else {
+      await vi.waitFor(() => {
+        expect(sent.length > beforeSent || menus.length > beforeMenus).toBe(true);
+      }, WAIT);
+    }
+    await new Promise((r) => setImmediate(r));
   };
   const call = async (action: IpcAction) => callDaemon(socket, action, tokens[0]!);
   /** A reverse command from the agent of one conversation (its key, e.g. `web#main#t1`). */
@@ -289,8 +307,11 @@ async function rig(
     const menu = menus.at(-1)!;
     const button = menu.buttons.find((b) => (typeof label === 'string' ? b.label === label : label.test(b.label)));
     if (!button) throw new Error(`no button ${label} on: ${menu.buttons.map((b) => b.label).join(' | ')}`);
+    const beforeMenus = menus.length;
     (daemon as unknown as { onButton: (ev: unknown) => void }).onButton({ buttonId: button.id, conversation: WEB, messageId: 'menu' });
-    await settle(20);
+    await vi.waitFor(() => {
+      expect(menus.length).toBeGreaterThan(beforeMenus);
+    }, WAIT);
   };
   /** What the web UI asks before evicting a topic (`WorkbenchHost.useScheduleLookup`). */
   const targets = (ref: InboundMessage['conversation']): boolean => internals.schedules.targets(ref);
@@ -303,7 +324,7 @@ async function rig(
   return { dir, sent, turns, models, ensured, disposed, tg, web, menus, inbound, call, callFrom, tap, targets, stop, openProbe };
 }
 
-const settle = (ms = 60): Promise<void> => new Promise((r) => setTimeout(r, ms));
+const WAIT = { timeout: 5_000, interval: 10 };
 const WEB = { platform: 'web', channel: 'main', thread: 't1', kind: 'direct' as const, user: 'u1' };
 const WEB_KEY = 'web#main#t1';
 /** A topic answered by `remote`, the agent on `box` in cfgHosts. */
@@ -347,7 +368,9 @@ describe('schedule over IPC', () => {
     r.sent.length = 0;
     const task = await added(r, { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'morning brief', session: 'new', name: 'brief' });
     expect(task).toMatchObject({ name: 'brief', state: 'active', runs: 'cc · new session each run', target: 'web:main/t1', prompt: 'morning brief' });
-    await settle();
+    await vi.waitFor(() => {
+      expect(r.sent.some((s) => s.text.includes('Scheduled task registered'))).toBe(true);
+    }, WAIT);
     const card = r.sent.find((s) => s.text.includes('Scheduled task registered'))!;
     expect(card.address).toEqual({ channel: 'main', thread: 't1' });
     expect(card.text).toContain(`#${task.id}`);
@@ -406,7 +429,9 @@ describe('schedule over IPC', () => {
     expect(task.target).toBe('tg:586');
     r.sent.length = 0;
     await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
-    await settle(400);
+    await vi.waitFor(() => {
+      expect(r.sent.some((s) => s.platform === 'tg')).toBe(true);
+    }, WAIT);
     const result = r.sent.find((s) => s.platform === 'tg')!;
     expect(result.address).toEqual({ channel: '586' });
     expect(result.text).toMatch(/✅ exit 0/);
@@ -420,7 +445,10 @@ describe('schedule over IPC', () => {
     const task = await added(r, { kind: 'schedule-add', cron: '*/30 * * * *', prompt: 'check the build' });
     r.sent.length = 0;
     await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
-    await settle();
+    await vi.waitFor(() => {
+      expect(r.turns.at(-1)?.prompt).toBe('check the build');
+      expect(r.sent.length).toBeGreaterThan(0);
+    }, WAIT);
     expect(r.turns.at(-1)).toMatchObject({ conversation: 'web#main#t1', agent: 'cc' });
     // The prompt reaches the agent exactly as registered; only the user's notice says it was scheduled.
     expect(r.turns.at(-1)!.prompt).toBe('check the build');
@@ -432,7 +460,9 @@ describe('schedule over IPC', () => {
     await r.inbound(WEB, 'hello');
     const task = await added(r, { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'brief', session: 'new', agent: 'oc', name: 'brief' });
     await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
-    await settle();
+    await vi.waitFor(() => {
+      expect(r.turns.at(-1)?.conversation).toBe('web#main#new1');
+    }, WAIT);
     expect(r.web.threads).toEqual([expect.stringMatching(/^\[oc\] ⏰ brief · /)]);
     // Marked as a scheduled run of THIS task, so the task's page can list the topic.
     expect(r.web.threadOpts).toEqual([{ scheduled: true, task: task.id }]);
@@ -447,7 +477,9 @@ describe('schedule over IPC', () => {
     const task = await added(r, { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'brief', session: 'new', channelId: 'tg:586' });
     r.sent.length = 0;
     await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
-    await settle();
+    await vi.waitFor(() => {
+      expect(r.disposed.some((id) => id.startsWith(`schedule#${task.id}#`))).toBe(true);
+    }, WAIT);
     const turn = r.turns.at(-1)!;
     expect(turn.conversation).toMatch(new RegExp(`^schedule#${task.id}#`));
     expect(r.sent[0]).toMatchObject({ platform: 'tg', address: { channel: '586' } });
@@ -459,10 +491,14 @@ describe('schedule over IPC', () => {
     await r.inbound(WEB, 'hello');
     const task = await added(r, { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'brief', session: 'daily', name: 'brief' });
     await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
-    await settle();
+    await vi.waitFor(() => {
+      expect(r.turns.filter((t) => t.prompt === 'brief')).toHaveLength(1);
+    }, WAIT);
     const first = r.turns.at(-1)!;
     await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
-    await settle();
+    await vi.waitFor(() => {
+      expect(r.turns.filter((t) => t.prompt === 'brief')).toHaveLength(2);
+    }, WAIT);
     expect(r.web.threads).toHaveLength(1);
     expect(r.web.threads[0]).toMatch(/^\[cc\] ⏰ brief · \d{4}-\d{2}-\d{2}$/);
     expect(r.web.threadOpts).toEqual([{ scheduled: true, task: task.id }]);
@@ -480,14 +516,19 @@ describe('schedule over IPC', () => {
     await r.inbound(WEB, 'hello');
     const task = await added(r, { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'brief', session: 'daily', name: 'brief' });
     await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
-    await settle();
+    await vi.waitFor(() => {
+      expect(r.turns.at(-1)?.prompt).toBe('brief');
+      expect(saved(r)[0]?.['daySession']).toBeDefined();
+    }, WAIT);
     const key = r.turns.at(-1)!.conversation;
     await r.stop();
 
     const again = await rig(r.dir, r.web.alive);
     await again.inbound(WEB, 'hello');
     await again.call({ kind: 'schedule-op', id: task.id, op: 'run' });
-    await settle();
+    await vi.waitFor(() => {
+      expect(again.turns.at(-1)?.prompt).toBe('brief');
+    }, WAIT);
     expect(again.web.threads).toHaveLength(0);
     expect(again.turns.at(-1)).toMatchObject({ conversation: key, prompt: 'brief' });
   });
@@ -497,11 +538,15 @@ describe('schedule over IPC', () => {
     await r.inbound(WEB, 'hello');
     const task = await added(r, { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'brief', session: 'daily', name: 'brief' });
     await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
-    await settle();
+    await vi.waitFor(() => {
+      expect(r.turns.filter((t) => t.prompt === 'brief')).toHaveLength(1);
+    }, WAIT);
     const first = r.turns.at(-1)!.conversation;
     r.web.alive.delete(first.split('#').at(-1)!);
     await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
-    await settle();
+    await vi.waitFor(() => {
+      expect(r.turns.filter((t) => t.prompt === 'brief')).toHaveLength(2);
+    }, WAIT);
     expect(r.web.threads).toHaveLength(2);
     expect(r.turns.at(-1)!.conversation).not.toBe(first);
   });
@@ -513,7 +558,10 @@ describe('schedule over IPC', () => {
     r.web.failCreate('every topic is starred');
     r.sent.length = 0;
     await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
-    await settle();
+    await vi.waitFor(() => {
+      expect(r.sent.some((s) => s.text.includes("could not open a topic for today's session: every topic is starred"))).toBe(true);
+      expect(saved(r)[0]?.['lastRun']).toMatchObject({ status: 'failed' });
+    }, WAIT);
     expect(r.turns.filter((t) => t.prompt === 'brief')).toHaveLength(0);
     expect(r.sent.find((s) => s.text.includes('could not open a topic for today\'s session: every topic is starred'))).toBeDefined();
     const list = await r.call({ kind: 'schedule-list', id: task.id });
@@ -557,13 +605,16 @@ describe('schedule over IPC', () => {
     const task = await added(r, { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'brief', session: 'daily', name: 'brief' });
     r.sent.length = 0;
     await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
-    await settle();
+    await vi.waitFor(() => {
+      expect(r.sent.length).toBeGreaterThan(0);
+      expect(saved(r)[0]?.['lastRun']).toMatchObject({ status: 'failed' });
+    }, WAIT);
     expect(r.turns.filter((t) => t.prompt === 'brief')).toHaveLength(0);
     expect(r.sent[0]!.text).toMatch(/could not open a topic for today's session: .*did not open a topic/);
-    const saved = JSON.parse(fs.readFileSync(path.join(r.dir, 'schedules.json'), 'utf8')) as {
+    const stored = JSON.parse(fs.readFileSync(path.join(r.dir, 'schedules.json'), 'utf8')) as {
       tasks: Array<{ daySession?: unknown }>;
     };
-    expect(saved.tasks[0]!.daySession).toBeUndefined();
+    expect(stored.tasks[0]!.daySession).toBeUndefined();
   });
 
   it('a per-user deployment refuses a daily run before opening a topic it cannot own', async () => {
@@ -572,7 +623,9 @@ describe('schedule over IPC', () => {
     const task = await added(r, { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'brief', session: 'daily', name: 'brief' });
     r.sent.length = 0;
     await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
-    await settle();
+    await vi.waitFor(() => {
+      expect(r.sent.length).toBeGreaterThan(0);
+    }, WAIT);
     // Nothing was created: the refusal is checked before createThread, or every run would leak
     // a topic that no conversation maps to.
     expect(r.web.threads).toHaveLength(0);
@@ -584,18 +637,26 @@ describe('schedule over IPC', () => {
     await r.inbound(WEB, 'hello');
     const task = await added(r, { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'brief', session: 'daily', name: 'brief' });
     await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
-    await settle();
+    await vi.waitFor(() => {
+      expect(r.turns.filter((t) => t.prompt === 'brief')).toHaveLength(1);
+      expect(saved(r)[0]?.['daySession']).toBeDefined();
+    }, WAIT);
     const first = r.turns.at(-1)!.conversation;
     r.web.dead.add('new1');
     await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
-    await settle();
+    await vi.waitFor(() => {
+      expect(saved(r)[0]?.['daySession']).toBeUndefined();
+      expect(saved(r)[0]?.['lastRun']).toMatchObject({ status: 'failed' });
+    }, WAIT);
     expect(r.turns.filter((t) => t.prompt === 'brief')).toHaveLength(1); // the failed run made no turn
-    const saved = JSON.parse(fs.readFileSync(path.join(r.dir, 'schedules.json'), 'utf8')) as {
+    const stored = JSON.parse(fs.readFileSync(path.join(r.dir, 'schedules.json'), 'utf8')) as {
       tasks: Array<{ daySession?: unknown }>;
     };
-    expect(saved.tasks[0]!.daySession).toBeUndefined();
+    expect(stored.tasks[0]!.daySession).toBeUndefined();
     await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
-    await settle();
+    await vi.waitFor(() => {
+      expect(r.turns.filter((t) => t.prompt === 'brief')).toHaveLength(2);
+    }, WAIT);
     expect(r.web.threads).toHaveLength(2);
     expect(r.turns.at(-1)!.conversation).not.toBe(first);
   });
@@ -607,9 +668,13 @@ describe('schedule over IPC', () => {
     r.web.failCreate('every topic is starred');
     r.sent.length = 0;
     await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
-    await settle();
+    await vi.waitFor(() => {
+      expect(saved(r)[0]?.['history']).toHaveLength(1);
+    }, WAIT);
     await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
-    await settle();
+    await vi.waitFor(() => {
+      expect(saved(r)[0]?.['history']).toHaveLength(2);
+    }, WAIT);
     expect(r.sent.filter((s) => s.text.includes('could not open a topic')).length).toBe(1);
   });
 
@@ -622,13 +687,15 @@ describe('schedule over IPC', () => {
     // The caller's own agent is read there; no throwaway session is started for it.
     expect(r.disposed.some((id) => id.startsWith('__schedule-model__#cc#'))).toBe(false);
     await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
-    await settle();
+    await vi.waitFor(() => {
+      expect(r.turns.at(-1)?.prompt).toBe('brief');
+    }, WAIT);
     expect(r.models).toEqual([{ conversation: 'web#main#new1', model: 'fast-model' }]);
     expect(r.turns.at(-1)).toMatchObject({ conversation: 'web#main#new1', prompt: 'brief' });
-    const saved = JSON.parse(fs.readFileSync(path.join(r.dir, 'schedules.json'), 'utf8')) as {
+    const stored = JSON.parse(fs.readFileSync(path.join(r.dir, 'schedules.json'), 'utf8')) as {
       tasks: Array<{ run: { model?: string } }>;
     };
-    expect(saved.tasks[0]!.run.model).toBe('fast-model');
+    expect(stored.tasks[0]!.run.model).toBe('fast-model');
   });
 
   it('refuses a model the agent does not offer, naming the ones it does', async () => {
@@ -648,7 +715,9 @@ describe('schedule over IPC', () => {
     expect(r.disposed.some((id) => id.startsWith('__schedule-model__#oc#'))).toBe(true);
     expect(r.turns).toHaveLength(1); // only the user's own hello; no work in the throwaway session
     await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
-    await settle();
+    await vi.waitFor(() => {
+      expect(r.turns.at(-1)?.conversation).toBe('web#main#new1');
+    }, WAIT);
     expect(r.models).toEqual([{ conversation: 'web#main#new1', model: 'fast-model' }]);
     expect(r.turns.at(-1)).toMatchObject({ conversation: 'web#main#new1', agent: 'oc' });
   });
@@ -667,7 +736,9 @@ describe('schedule over IPC', () => {
     await r.inbound(WEB, 'hello');
     const one = r.call({ kind: 'schedule-add', cron: '0 8 * * *', prompt: 'a', session: 'new', agent: 'lazy', model: 'fast-model' });
     const two = r.call({ kind: 'schedule-add', cron: '0 9 * * *', prompt: 'b', session: 'new', agent: 'lazy', model: 'fast-model' });
-    await settle(); // both are inside ensureSession, waiting on the gate
+    await vi.waitFor(() => {
+      expect(r.ensured.filter((id) => id.startsWith('__schedule-model__#lazy#'))).toHaveLength(2);
+    }, WAIT); // both are inside ensureSession, waiting on the gate
     r.openProbe();
     expect((await one).ok).toBe(true);
     expect((await two).ok).toBe(true);
@@ -695,7 +766,10 @@ describe('schedule over IPC', () => {
     const before = r.turns.length;
     r.sent.length = 0;
     await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
-    await settle();
+    await vi.waitFor(() => {
+      expect(r.sent.length).toBeGreaterThan(0);
+      expect(saved(r)[0]?.['lastRun']).toMatchObject({ status: 'failed' });
+    }, WAIT);
     expect(r.turns).toHaveLength(before);
     // The failure replaces the run notice: the run never announced itself as started.
     expect(r.sent).toHaveLength(1);
@@ -709,14 +783,18 @@ describe('schedule over IPC', () => {
     await r.inbound(WEB, 'hello');
     const task = await added(r, { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'brief', session: 'daily', model: 'fast-model', name: 'brief' });
     await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
-    await settle();
+    await vi.waitFor(() => {
+      expect(r.turns.filter((t) => t.prompt === 'brief')).toHaveLength(1);
+    }, WAIT);
     expect(r.models).toEqual([{ conversation: 'web#main#new1', model: 'fast-model' }]);
 
     await r.inbound({ ...WEB, thread: 'new1' }, '/model base-model');
     expect(r.models.at(-1)).toEqual({ conversation: 'web#main#new1', model: 'base-model' });
 
     await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
-    await settle();
+    await vi.waitFor(() => {
+      expect(r.turns.filter((t) => t.prompt === 'brief')).toHaveLength(2);
+    }, WAIT);
     expect(r.models).toHaveLength(2); // the person's choice stands; the task does not put its own back
     expect(r.turns.filter((t) => t.prompt === 'brief')).toHaveLength(2);
   });
@@ -726,7 +804,10 @@ describe('schedule over IPC', () => {
     await r.inbound(WEB, 'hello');
     const task = await added(r, { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'brief', session: 'daily', model: 'fast-model', name: 'brief' });
     await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
-    await settle();
+    await vi.waitFor(() => {
+      expect(r.turns.at(-1)?.prompt).toBe('brief');
+      expect(saved(r)[0]?.['daySession']).toBeDefined();
+    }, WAIT);
     expect(r.models).toEqual([{ conversation: 'web#main#new1', model: 'fast-model' }]);
     await r.inbound({ ...WEB, thread: 'new1' }, '/model base-model');
     await r.stop();
@@ -734,7 +815,9 @@ describe('schedule over IPC', () => {
     const again = await rig(r.dir, r.web.alive);
     await again.inbound(WEB, 'hello');
     await again.call({ kind: 'schedule-op', id: task.id, op: 'run' });
-    await settle();
+    await vi.waitFor(() => {
+      expect(again.turns.at(-1)?.prompt).toBe('brief');
+    }, WAIT);
     // The in-memory override is gone, but the task remembered the topic was set by hand and
     // leaves its model alone instead of putting its own back.
     expect(again.models).toEqual([]);
@@ -766,7 +849,9 @@ describe('schedule over IPC', () => {
     const paused = await r.call({ kind: 'schedule-op', id: task.id, op: 'pause' });
     expect((paused as { data: { task: ScheduleTaskView } }).data.task.state).toBe('paused');
     await r.call({ kind: 'schedule-op', id: task.id, op: 'remove' });
-    await settle();
+    await vi.waitFor(() => {
+      expect(r.sent).toHaveLength(2);
+    }, WAIT);
     expect(r.sent.map((s) => s.text.split(' — ')[0])).toEqual(['⏰ Scheduled task paused', '⏰ Scheduled task deleted']);
     const gone = await r.call({ kind: 'schedule-op', id: task.id, op: 'pause' });
     expect(gone).toMatchObject({ ok: false, error: `no scheduled task #${task.id}` });
@@ -783,7 +868,9 @@ describe('schedule edit over IPC', () => {
     await r.inbound(WEB, 'hello');
     const task = await added(r, { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'morning brief', session: 'new', name: 'brief' });
     await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
-    await settle();
+    await vi.waitFor(() => {
+      expect(saved(r)[0]).toMatchObject({ runs: 1, lastRun: { status: 'ok' } });
+    }, WAIT);
 
     r.sent.length = 0;
     const resp = await r.call({ kind: 'schedule-edit', id: task.id, agent: 'oc', prompt: 'evening brief' });
@@ -792,7 +879,9 @@ describe('schedule edit over IPC', () => {
     expect(after).toMatchObject({ id: task.id, name: 'brief', runs: 'oc · new session each run', prompt: 'evening brief', count: 1 });
     expect(after.last).toMatch(/^ok /); // the run before the edit is still the task's last
 
-    await settle();
+    await vi.waitFor(() => {
+      expect(r.sent.some((s) => s.text.includes('Scheduled task updated'))).toBe(true);
+    }, WAIT);
     const card = r.sent.find((s) => s.text.includes('Scheduled task updated'))!;
     expect(card.text).toContain(`#${task.id}`);
     expect(card.text).toContain('oc · new session each run');
@@ -833,12 +922,16 @@ describe('schedule edit over IPC', () => {
     await r.inbound(WEB, 'hello');
     const task = await added(r, { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'brief', session: 'daily', name: 'brief' });
     await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
-    await settle();
+    await vi.waitFor(() => {
+      expect(r.turns.filter((t) => t.prompt === 'brief')).toHaveLength(1);
+    }, WAIT);
     const first = r.turns.at(-1)!.conversation;
 
     await r.call({ kind: 'schedule-edit', id: task.id, agent: 'oc' });
     await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
-    await settle();
+    await vi.waitFor(() => {
+      expect(r.turns.filter((t) => t.prompt === 'brief')).toHaveLength(2);
+    }, WAIT);
     expect(r.web.threads).toHaveLength(2);
     expect(r.web.threads[1]).toMatch(/^\[oc\] ⏰ brief · \d{4}-\d{2}-\d{2}$/);
     expect(r.turns.at(-1)).toMatchObject({ conversation: 'web#main#new2', agent: 'oc' });
@@ -850,12 +943,16 @@ describe('schedule edit over IPC', () => {
     await r.inbound(WEB, 'hello');
     const task = await added(r, { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'brief', session: 'daily', name: 'brief' });
     await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
-    await settle();
+    await vi.waitFor(() => {
+      expect(r.turns.filter((t) => t.prompt === 'brief')).toHaveLength(1);
+    }, WAIT);
     const first = r.turns.at(-1)!.conversation;
 
     await r.call({ kind: 'schedule-edit', id: task.id, name: 'the brief' });
     await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
-    await settle();
+    await vi.waitFor(() => {
+      expect(r.turns.filter((t) => t.prompt === 'brief')).toHaveLength(2);
+    }, WAIT);
     expect(r.web.threads).toHaveLength(1);
     expect(r.turns.at(-1)!.conversation).toBe(first);
   });
@@ -867,7 +964,9 @@ describe('schedule edit over IPC', () => {
     await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
     const resp = await r.call({ kind: 'schedule-edit', id: task.id, name: 'renamed' });
     expect(resp).toMatchObject({ ok: true, data: { task: { id: task.id, name: 'renamed' } } });
-    await settle(1_200);
+    await vi.waitFor(() => {
+      expect(saved(r)[0]).toMatchObject({ name: 'renamed', runs: 1, lastRun: { status: 'ok' } });
+    }, WAIT);
     expect(saved(r)[0]).toMatchObject({ name: 'renamed', runs: 1, lastRun: { status: 'ok' } });
   });
 
@@ -878,9 +977,13 @@ describe('schedule edit over IPC', () => {
     // The edit asks about `lazy`'s models, which means bringing a cold session up: the gate holds
     // it there while a run of the task finishes and writes runs/lastRun/lastPlannedAt.
     const pending = r.call({ kind: 'schedule-edit', id: task.id, agent: 'lazy', model: 'fast-model' });
-    await settle();
+    await vi.waitFor(() => {
+      expect(r.ensured.some((id) => id.startsWith('__schedule-model__#lazy#'))).toBe(true);
+    }, WAIT);
     await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
-    await settle(300);
+    await vi.waitFor(() => {
+      expect(saved(r)[0]).toMatchObject({ runs: 1 });
+    }, WAIT);
     expect(saved(r)[0]).toMatchObject({ runs: 1 });
 
     r.sent.length = 0;
@@ -897,7 +1000,9 @@ describe('schedule edit over IPC', () => {
     await r.inbound(WEB, 'hello');
     const task = await added(r, { kind: 'schedule-add', cron: '0 8 * * *', prompt: 'brief', session: 'new', agent: 'cc' });
     const pending = r.call({ kind: 'schedule-edit', id: task.id, agent: 'lazy', model: 'fast-model' });
-    await settle();
+    await vi.waitFor(() => {
+      expect(r.ensured.some((id) => id.startsWith('__schedule-model__#lazy#'))).toBe(true);
+    }, WAIT);
     await r.call({ kind: 'schedule-op', id: task.id, op: 'remove' });
 
     r.sent.length = 0;
@@ -920,7 +1025,9 @@ describe('schedule edit over IPC', () => {
     expect(after).toMatchObject({ id: task.id, runs: 'cc · fixed session', expires: before.expires, prompt: 'check the deploy' });
 
     await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
-    await settle();
+    await vi.waitFor(() => {
+      expect(r.turns.at(-1)?.prompt).toBe('check the deploy');
+    }, WAIT);
     expect(r.turns.at(-1)).toMatchObject({ conversation: 'web#main#t1', agent: 'cc', prompt: 'check the deploy' });
 
     // The conversation still keeps its agent: the edit cannot move a fixed task to another one.
@@ -1039,7 +1146,9 @@ describe('schedule edit over IPC: kind, session, target, machine', () => {
 
     // The next run is a turn in that conversation, as a fixed task registered there would be.
     await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
-    await settle();
+    await vi.waitFor(() => {
+      expect(r.turns.at(-1)?.prompt).toBe('check CI');
+    }, WAIT);
     expect(r.turns.at(-1)).toMatchObject({ conversation: WEB_KEY, agent: 'cc', prompt: 'check CI' });
   });
 
@@ -1052,7 +1161,9 @@ describe('schedule edit over IPC: kind, session, target, machine', () => {
     const resp = await r.call({ kind: 'schedule-edit', id: task.id, channelId: 'tg:586' });
     expect(resp.ok).toBe(true);
     expect(saved(r)[0]).toMatchObject({ target: { platform: 'tg', channel: '586' } });
-    await settle();
+    await vi.waitFor(() => {
+      expect(r.sent.filter((s) => s.text.includes('Scheduled task updated'))).toHaveLength(2);
+    }, WAIT);
     const cards = r.sent.filter((s) => s.text.includes('Scheduled task updated'));
     // Where the edit was asked, which is also where it posted; then where it posts now.
     expect(cards.map((c) => [c.platform, c.address])).toEqual([
@@ -1064,7 +1175,9 @@ describe('schedule edit over IPC: kind, session, target, machine', () => {
     // Its output goes there from now on.
     r.sent.length = 0;
     await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
-    await settle(300);
+    await vi.waitFor(() => {
+      expect(r.sent.some((s) => s.platform === 'tg' && s.text.includes('nightly'))).toBe(true);
+    }, WAIT);
     expect(r.sent.some((s) => s.platform === 'tg' && s.text.includes('nightly'))).toBe(true);
     expect(r.sent.some((s) => s.platform === 'web')).toBe(false);
   });
@@ -1086,7 +1199,9 @@ describe('schedule edit over IPC: kind, session, target, machine', () => {
     await r.inbound(WEB, 'hello');
     const task = await added(r, { kind: 'schedule-add', cron: '0 3 * * *', bash: 'echo hi', tags: ['ops'] });
     await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
-    await settle(300);
+    await vi.waitFor(() => {
+      expect(saved(r)[0]).toMatchObject({ runs: 1 });
+    }, WAIT);
 
     const toPrompt = await r.call({ kind: 'schedule-edit', id: task.id, prompt: 'summarise the disk', session: 'new', agent: 'oc' });
     expect(toPrompt.ok).toBe(true);
@@ -1145,7 +1260,9 @@ describe('schedule runs: what the chat hears', () => {
     await r.inbound(WEB, 'hello');
     r.sent.length = 0;
     await added(r, { kind: 'schedule-add', at: '+1h', bash: 'echo hi', channelId: 'tg:586', name: 'brief' });
-    await settle();
+    await vi.waitFor(() => {
+      expect(r.sent.filter((s) => s.text.includes('Scheduled task registered'))).toHaveLength(2);
+    }, WAIT);
     const cards = r.sent.filter((s) => s.text.includes('Scheduled task registered'));
     expect(cards.map((c) => [c.platform, c.address])).toEqual([
       ['web', { channel: 'main', thread: 't1' }],
@@ -1162,7 +1279,9 @@ describe('schedule runs: what the chat hears', () => {
     // could not see — the change that shipped an unverified prototype (2026-11-13).
     const prompt = `first line\nsecond line ${'z'.repeat(300)}`;
     await r.call({ kind: 'schedule-edit', id: task.id, prompt });
-    await settle();
+    await vi.waitFor(() => {
+      expect(r.sent.filter((s) => s.text.includes('Scheduled task updated'))).toHaveLength(2);
+    }, WAIT);
     const cards = r.sent.filter((s) => s.text.includes('Scheduled task updated'));
     expect(cards.map((c) => c.platform)).toEqual(['web', 'tg']);
     for (const card of cards) expect(card.text).toContain(`• Prompt:\n> first line\n> second line ${'z'.repeat(300)}`);
@@ -1174,7 +1293,10 @@ describe('schedule runs: what the chat hears', () => {
     const task = await added(r, { kind: 'schedule-add', at: '+1h', prompt: 'check the thing', session: 'new', name: 'check' });
     r.sent.length = 0;
     await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
-    await settle(600);
+    await vi.waitFor(() => {
+      expect(r.sent.some((s) => s.text.includes('**check** failed at'))).toBe(true);
+      expect(saved(r)[0]?.['lastRun']).toMatchObject({ status: 'failed' });
+    }, WAIT);
 
     const notice = r.sent.find((s) => s.text.includes('**check** failed at'));
     expect(notice?.text).toMatch(/^⏰ `#[a-z0-9]+` \*\*check\*\* failed at .+ — the turn failed without a reply\.$/);
@@ -1196,9 +1318,13 @@ describe('schedule runs: what the chat hears', () => {
     await r.inbound(WEB, '/agent oc');
     r.sent.length = 0;
     await r.callFrom(WEB_KEY, { kind: 'schedule-op', id: task.id, op: 'run' });
-    await settle(300);
+    await vi.waitFor(() => {
+      expect(saved(r)[0]?.['history']).toHaveLength(1);
+    }, WAIT);
     await r.callFrom(WEB_KEY, { kind: 'schedule-op', id: task.id, op: 'run' });
-    await settle(300);
+    await vi.waitFor(() => {
+      expect(saved(r)[0]?.['history']).toHaveLength(2);
+    }, WAIT);
     const skips = r.sent.filter((s) => s.text.includes('**brief** skipped at'));
     expect(skips).toHaveLength(1);
     expect(skips[0]!.text).toContain('this topic is now answered by oc, not cc');
@@ -1228,7 +1354,9 @@ describe('schedule runs: what the chat hears', () => {
     const resp = (await r.call({ kind: 'schedule-op', id: task.id, op: 'run', waitMs: 50 })) as { data: ScheduleOpResult };
     expect(resp.data.run).toBeUndefined();
     expect(resp.data.note).toMatch(/still running after 50ms/);
-    await settle(1_600);
+    await vi.waitFor(() => {
+      expect(saved(r)[0]?.['lastRun']).toMatchObject({ status: 'ok' });
+    }, WAIT);
     const shown = (await r.call({ kind: 'schedule-list', id: task.id })) as { data: ScheduleListResult };
     expect(shown.data.tasks[0]!.last).toMatch(/^ok /);
   });

@@ -11,9 +11,8 @@ import { defaultIdentityFile, defaultKnownHostsFile } from '../daemon/ssh-identi
 import { gitAsync, gitAvailable } from '../daemon/skills-git.js';
 import { gitSshCommand, redactRepoUrl, skillsRemoteOf } from '../daemon/skills-repo.js';
 import { isLegacyConfig, migrateLegacyConfig } from '../config/migrate.js';
-import { resolveClaudeAdapterEntry } from '../daemon/agent-acp.js';
-import { AGY_COMMAND } from '../daemon/agy-cli.js';
-import { claudeProjectsDir } from '../daemon/claude-transcript.js';
+import { HARNESS_PROFILES } from '../daemon/harness/index.js';
+import type { DoctorCheck } from '../daemon/harness/profile.js';
 import { remoteAgentEnv } from '../daemon/agent-common.js';
 import { hostProbeScript, readHostProbe, type HostProbe } from '../daemon/host-probe.js';
 import { checkWebui } from '../platform/webui/doctor.js';
@@ -94,50 +93,14 @@ function expandLocal(p: string): string {
 }
 
 function harnessCommand(def: import('../config/schema.js').AgentDef): string {
-  switch (def.harness) {
-    case 'claude':
-      return 'claude-agent-acp';
-    case 'gemini':
-      return 'gemini';
-    case 'codex':
-      return 'codex-acp';
-    case 'opencode':
-      return 'opencode';
-    case 'dsh':
-      return 'dsh';
-    case 'agy':
-      return AGY_COMMAND;
-    case 'custom':
-      return def.command ?? '(custom harness: no command configured)';
-  }
-}
-
-/** Whether a local adapter dependency resolves (the claude harness spawns a dependency, not a PATH command). */
-function adapterResolves(resolve: () => string): boolean {
-  try {
-    resolve();
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function authNote(def: import('../config/schema.js').AgentDef, locale: Locale): string {
-  if (def.harness === 'agy' && def.env?.AGY_LLM_GATEWAY_URL) return tCli(locale, 'doctor.auth.agyGateway');
-  if (def.harness === 'agy') return tCli(locale, 'doctor.auth.agyKeyring');
-  if (def.harness !== 'claude') return '';
-  const hasKey = Boolean(def.env?.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY);
-  return hasKey ? tCli(locale, 'doctor.auth.apiKey') : tCli(locale, 'doctor.auth.claudeLogin');
+  return HARNESS_PROFILES[def.harness].doctor.command(def);
 }
 
 /**
  * `fleetherd doctor` — self-check. Each item reports ✅/⚠️/❌; doesn't exit on the first
  * failure, summarizes after running all.
  */
-interface Check {
-  name: string;
-  run(): Promise<{ ok: boolean; level?: 'warn'; detail?: string }>;
-}
+type Check = DoctorCheck;
 
 interface DoctorContext {
   cfg: Config | null;
@@ -351,19 +314,11 @@ function buildRuntimeChecks(ctx: DoctorContext): Check[] {
             lines.push(tCli(locale, 'doctor.detail.agentConnect', { id: def.id, url: def.connect.url }));
             continue;
           }
-          const cmd = harnessCommand(def);
-          const auth = authNote(def, locale);
-          const found =
-            def.harness === 'claude'
-              ? adapterResolves(resolveClaudeAdapterEntry)
-              : Boolean(locateCommand(cmd));
-          const note = !found
-            ? def.harness === 'claude'
-              ? tCli(locale, 'doctor.detail.claudeMissing')
-              : def.harness === 'codex'
-                ? tCli(locale, 'doctor.detail.codexMissing')
-                : ''
-            : '';
+          const doc = HARNESS_PROFILES[def.harness].doctor;
+          const cmd = doc.command(def);
+          const auth = doc.authNote?.(def, locale) ?? '';
+          const found = doc.checkLocal ? doc.checkLocal(cmd, locateCommand) : Boolean(locateCommand(cmd));
+          const note = !found ? (doc.missingNote?.(locale) ?? '') : '';
           if (found) {
             lines.push(`${def.id} (${def.harness}) → ${cmd} ✓${auth}`);
           } else {
@@ -423,29 +378,7 @@ function buildHostAndStoreChecks(ctx: DoctorContext): Check[] {
         }
       },
     },
-    {
-      name: tCli(locale, 'doctor.check.claudeTranscripts'),
-      run: async () => {
-        if (!cfg) return { ok: false, detail: tCli(locale, 'doctor.detail.configUnavailableAgents') };
-        const allClaude = cfg.agents.filter((a) => a.harness === 'claude');
-        if (allClaude.length === 0) return { ok: true, detail: tCli(locale, 'doctor.detail.noClaudeAgent') };
-        const claudeAgents = allClaude.filter((a) => !a.host);
-        const remote = allClaude.filter((a) => Boolean(a.host)).map((a) => tCli(locale, 'doctor.detail.remoteClaude', { id: a.id, host: a.host ?? '' }));
-        const lines: string[] = [...remote];
-        let anyMissing = false;
-        for (const dir of new Set(claudeAgents.map((a) => claudeProjectsDir(a)))) {
-          if (fs.existsSync(dir)) {
-            lines.push(`${dir} ✓`);
-          } else {
-            anyMissing = true;
-            lines.push(tCli(locale, 'doctor.detail.claudeDirMissing', { dir }));
-          }
-        }
-        return anyMissing
-          ? { ok: true, level: 'warn', detail: lines.join('; ') }
-          : { ok: true, detail: lines.join('; ') };
-      },
-    },
+    ...Object.values(HARNESS_PROFILES).flatMap((p) => p.doctor.extraChecks?.({ cfg, locale }) ?? []),
     {
       name: tCli(locale, 'doctor.check.ipcSocket'),
       run: async () => {

@@ -33,7 +33,7 @@ import type { SteerOutcome } from '../types.js';
  *   "Session already has an active ACP prompt" and the message is gone, so it must never be tried.
  *
  * `agy acp` advertises nothing and behaves as `prompt`, so agent-acp.ts says so through
- * steeringModeOf's second argument (agy-acp.ts takesPromptMidTurn has the measurement).
+ * steeringModeOf's second argument (harness/agy.ts takesPromptMidTurn has the measurement).
  *
  * claude-agent-acp advertises `steering` too, and `prompt` is preferred on purpose: its steer is
  * delivered at priority `now`, which pre-empts. Probed with the same script, Claude Code moved the
@@ -59,7 +59,7 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 /**
  * Which mode this harness supports, from what it advertised in `initialize` (see SteeringMode).
  * `promptUnadvertised` is for a harness measured to take a second prompt that says nothing about it
- * (agy-acp.ts takesPromptMidTurn): `prompt` unless it advertised something of its own.
+ * (harness/agy.ts takesPromptMidTurn): `prompt` unless it advertised something of its own.
  */
 export function steeringModeOf(init: Pick<InitializeResponse, '_meta' | 'agentCapabilities'>, promptUnadvertised = false): SteeringMode {
   const claude = init.agentCapabilities?._meta?.['claudeCode'];

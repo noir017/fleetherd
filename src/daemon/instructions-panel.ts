@@ -28,7 +28,9 @@ import type {
 } from '../platform/workbench.js';
 import { buildHarnessEnv, remoteAgentHome } from './agent-common.js';
 import { MAX_EDIT_BYTES, readForEditor } from './file-panel.js';
-import { globBase, globRegex, harnessSources, hasGlob, type HarnessSources } from './instruction-imports.js';
+import { HARNESS_PROFILES, harnessSources } from './harness/index.js';
+import type { HarnessSources } from './harness/profile.js';
+import { globBase, globRegex, hasGlob } from './instruction-imports.js';
 import {
   INSTRUCTIONS_MAX_BYTES,
   instructionsDir,
@@ -222,7 +224,7 @@ async function listAll(env: Env): Promise<InstructionsPanelList> {
     }
     return {
       id: def.id,
-      harness: def.harness === 'custom' && layer ? layer : def.harness,
+      harness: HARNESS_PROFILES[def.harness].instructionDisplayHarness?.(layer) ?? def.harness,
       host: def.host ?? 'local',
       ...(where ? { file: where.file.split(path.sep).join('/') } : {}),
       ...(own ? { own } : {}),

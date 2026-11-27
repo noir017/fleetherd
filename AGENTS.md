@@ -542,12 +542,19 @@ Do not weaken these without saying so explicitly in the PR:
   `PROFILES`, as `platform/webui/` is — read
   [its README](src/platform/webui/README.md) first, because the work is not the adapter but
   the list of things `satori-core.ts` was doing for you.
-- **An agent harness** → an arm in `AgentDefSchema.harness` + `resolveHarness` in
-  `daemon/agent-acp.ts` if it speaks ACP. A harness that did not would need a sibling runtime
-  implementing `AgentFactory`, wired where `start.ts` builds the factory — nothing does today.
-  A service with an HTTP API is neither: it is a backend of `src/api-agent/`, which *is* an ACP
-  agent the daemon spawns as `custom` (see [its README](src/api-agent/README.md)).
-  See [src/daemon/README.md](src/daemon/README.md).
+- **An agent harness** → add the literal to `Harness` (`src/types.ts`) and `HARNESSES` /
+  `AgentDefSchema.harness` (`src/config/schema.ts`), then fill in four places:
+  (1) `src/daemon/harness/<name>.ts` implementing `HarnessProfile` (launch, required
+  `reviewIsolation`, `doctor`, and skill/instruction/transcript/relay/option hooks) + one line in
+  `HARNESS_PROFILES` (`src/daemon/harness/index.ts`, compiler-enforced);
+  (2) `HARNESS_FACTS` in `src/core/harness-facts.ts` (compiler-enforced);
+  (3) `harnessKind` in `src/config/instructions.ts` (compiler-enforced);
+  (4) `REVIEW_ARGS_HARNESSES` in `src/config/schema.ts` when `reviewIsolation` is `'operator-args'`
+  (not compiler-enforced; caught by `src/daemon/harness/index.test.ts`).
+  A harness that does not speak ACP would need a sibling runtime implementing `AgentFactory`, wired where
+  `start.ts` builds the factory — nothing does today. A service with an HTTP API is neither: it is a
+  backend of `src/api-agent/`, which *is* an ACP agent the daemon spawns as `custom` (see
+  [its README](src/api-agent/README.md)). See [src/daemon/README.md](src/daemon/README.md).
 - **A reverse command** → an arm in the `IpcAction` union + an entry in
   `REVERSE_COMMANDS`, whose required `topic` puts it on a `fleetherd help` page; CLI
   registration and the help page follow automatically, and a missing `handleReverse` arm fails

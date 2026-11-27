@@ -3,8 +3,6 @@ import type { CreateElicitationRequest, SessionConfigOption, SessionUpdate } fro
 import {
   acpMcpServers,
   toolLabel,
-  dshModelDisplayValue,
-  dshModelSelectorValue,
   effortSelectorOf,
   liveEffortName,
   liveModelName,
@@ -15,6 +13,7 @@ import {
   translateUpdate,
   type TurnState,
 } from './agent-acp.js';
+import { dshModelDisplayValue, dshModelSelectorValue } from './harness/dsh.js';
 import type { AgentDef } from '../config/schema.js';
 import type { AgentImage, AgentUsage } from './agent.js';
 

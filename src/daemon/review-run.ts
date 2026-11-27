@@ -11,8 +11,10 @@ import { findAgent, REVIEW_ARGS_HARNESSES } from '../config/schema.js';
 import type { RemoteHost } from '../remote/host.js';
 import { applyModelPreference, resolveHarness } from './agent-acp.js';
 import { liveModelName } from './agent-acp-options.js';
-import { buildHarnessEnv, expandEnv, remoteAgentEnv, windowsSpawnOptions, type AgentChild } from './agent-common.js';
+import { buildHarnessEnv, remoteAgentEnv, windowsSpawnOptions, type AgentChild } from './agent-common.js';
 import { AGY_COMMAND } from './agy-cli.js';
+import { HARNESS_PROFILES } from './harness/index.js';
+import type { AcpReviewLaunch } from './harness/profile.js';
 import { remoteHosts } from './remote-hosts.js';
 
 /**
@@ -143,7 +145,8 @@ export function reviewerOf(config: Pick<Config, 'review' | 'agents'>): Reviewer 
 /** One review run, by whichever route the reviewer takes. */
 export async function runReview(reviewer: Reviewer, prompt: string): Promise<ReviewRun> {
   if (reviewer.kind === 'api') return runApiReview(reviewer, prompt);
-  if (reviewer.def.harness === 'agy') return runAgyReview(reviewer.def, reviewer.model, prompt);
+  const iso = HARNESS_PROFILES[reviewer.def.harness].reviewIsolation;
+  if (iso !== 'operator-args' && iso.kind === 'agy-print') return runAgyReview(reviewer.def, reviewer.model, prompt);
   return runAcpReview(reviewer.def, reviewer.model, reviewer.args, prompt);
 }
 
@@ -226,83 +229,16 @@ export async function runApiReview(
 
 // ─────────────────────────────────────── the acp route ───────────────────────────────────────
 
-/** How one review's ACP child is started: the harness's own launch with the review's switches. */
-export interface AcpReviewLaunch {
-  command: string;
-  args: string[];
-  /** Laid over the agent's environment, after its own `env:` block, so these win. */
-  env: Record<string, string>;
-  /** `session/new` `_meta`. */
-  meta?: Record<string, unknown>;
-}
-
-/**
- * claude-agent-acp's per-session SDK options (acp-agent.js: `userProvidedOptions?.tools ?? …`,
- * spread into the query options). `tools: []` is no built-in tool; `settingSources: []` loads no
- * settings, hooks, plugins or skills of the operator's; `strictMcpConfig` takes MCP servers from
- * this request alone, which carries none. `disableBuiltInTools` is the adapter's older spelling of
- * `tools: []`, for a host whose adapter predates the option.
- */
-export const CLAUDE_NO_TOOLS_META: Record<string, unknown> = {
-  claudeCode: { options: { tools: [], settingSources: [], strictMcpConfig: true } },
-  disableBuiltInTools: true,
-};
-
-/** The codex features that are a shell. Off, codex has no way to read or run anything. */
-const CODEX_NO_SHELL = { shell_tool: false, unified_exec: false };
-
 /**
  * The review's launch for an ACP harness. Pure, so the switches are tested without a harness.
  * `remote` picks the host's own adapter for claude, as resolveHarness does for a conversation.
  */
 export function acpReviewLaunch(def: AgentDef, remote: boolean, extraArgs: readonly string[] = []): AcpReviewLaunch {
   const base = resolveHarness(def, remote);
-  switch (def.harness) {
-    case 'claude':
-      return { ...base, env: {}, meta: CLAUDE_NO_TOOLS_META };
-    case 'codex': {
-      // Merged into the agent's own CODEX_CONFIG (a provider, a model), the features last so they win.
-      const own = jsonObject(def.env['CODEX_CONFIG']);
-      const ownFeatures = own['features'];
-      const features = {
-        ...(ownFeatures && typeof ownFeatures === 'object' && !Array.isArray(ownFeatures) ? ownFeatures : {}),
-        ...CODEX_NO_SHELL,
-      };
-      // INITIAL_AGENT_MODE replaces the agent's own (agent-full-access on a host without bwrap):
-      // read-only is the mode whose writes ask, and a refused ask is what stops apply_patch.
-      return { ...base, env: { CODEX_CONFIG: JSON.stringify({ ...own, features }), INITIAL_AGENT_MODE: 'read-only' } };
-    }
-    case 'opencode': {
-      // OPENCODE_CONFIG_CONTENT is read last, over every config file; `permission` as a string
-      // means `{"*": <it>}` (opencode's PermissionConfig), so this is every tool, MCP ones included.
-      const own = jsonObject(def.env['OPENCODE_CONFIG_CONTENT']);
-      return { ...base, env: { OPENCODE_CONFIG_CONTENT: JSON.stringify({ ...own, permission: 'deny' }) } };
-    }
-    case 'custom':
-    case 'gemini':
-    case 'dsh':
-      return { command: base.command, args: [...base.args, ...extraArgs], env: {} };
-    case 'agy':
-      throw new Error('an agy review runs `agy -p` (runAgyReview), not an ACP session');
-    default: {
-      const _exhaustive: never = def.harness;
-      throw new Error(`no review launch for harness ${String(_exhaustive)}`);
-    }
-  }
-}
-
-/**
- * A JSON object from an env value, or `{}`. An unreadable one would have broken that agent's own
- * sessions already; the review's switches still go out whole rather than not at all.
- */
-function jsonObject(raw: string | undefined): Record<string, unknown> {
-  if (!raw) return {};
-  try {
-    const v: unknown = JSON.parse(expandEnv(raw));
-    return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
-  } catch {
-    return {};
-  }
+  const iso = HARNESS_PROFILES[def.harness].reviewIsolation;
+  if (iso === 'operator-args') return { command: base.command, args: [...base.args, ...extraArgs], env: {} };
+  if (iso.kind === 'acp') return iso.build(def, base);
+  throw new Error('an agy review runs `agy -p` (runAgyReview), not an ACP session');
 }
 
 /**
@@ -489,32 +425,6 @@ function stopChild(child: AgentChild): void {
 // ─────────────────────────────────────── the agy route ───────────────────────────────────────
 
 /**
- * Every permission class the CLI knows, denied. `"*"` is NOT a wildcard here — measured on agy
- * 1.5.0, `deny: ["*"]` matched nothing and `write_file` still wrote a file — so each class is
- * named. The reviewer reads nothing and writes nothing: everything it needs is in the prompt.
- *
- * An unknown class in this list is ignored by the CLI (it logs "ignoring invalid deny entry"), so
- * adding one costs nothing; a NEW tool class in a future agy is not covered, which is why the
- * security note in AGENTS.md calls this list part of the contract. On agy 1.5.2 (2026-11-07)
- * `list_dir`, `search`, `url` and `browser` are such unknown entries: listing, searching and
- * fetching all went through `run_command` and `read_file` instead, and were denied there.
- */
-export const AGY_NO_TOOLS = JSON.stringify({
-  permissions: {
-    deny: [
-      'write_file(*)',
-      'read_file(*)',
-      'list_dir(*)',
-      'search(*)',
-      'command(*)',
-      'url(*)',
-      'browser(*)',
-      'mcp(*)',
-    ],
-  },
-});
-
-/**
  * The argv for one review. The prompt is NOT here: a single argv entry is capped at 128 KB
  * (`MAX_ARG_STRLEN`), and a long Chinese conversation (40k characters is ~120 KB) plus the skills
  * it used blows through that — measured: a 360 KB `-p=` fails with "Argument list too long".
@@ -524,9 +434,13 @@ export const AGY_NO_TOOLS = JSON.stringify({
  * write tools ask nobody.
  */
 export function reviewAgyArgs(model: string | undefined): string[] {
+  const iso = HARNESS_PROFILES.agy.reviewIsolation;
+  if (iso === 'operator-args' || iso.kind !== 'agy-print') {
+    throw new Error('agy reviewIsolation must be agy-print');
+  }
   return [
     ...(model ? [`--model=${model}`] : []),
-    `--settings=${AGY_NO_TOOLS}`,
+    `--settings=${iso.settingsJson}`,
     '--disable-slash-commands',
     '--input-format=stream-json',
     '--output-format=stream-json',
