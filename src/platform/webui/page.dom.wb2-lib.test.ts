@@ -144,7 +144,7 @@ describe('wb2-lib: skills, settings, instructions, and device alignment', () => 
     await flush();
 
     expect(editor.element.querySelector('.fh-skill-ed-bar [data-sop="save"]')).not.toBeNull();
-    expect(editor.element.querySelectorAll('.fh-skill-ci')).toHaveLength(3);
+    expect(editor.element.querySelectorAll('.fh-skill-ci')).toHaveLength(4);
     expect(editor.element.querySelectorAll('.fh-skill-file-row')).toHaveLength(3);
     expect(editor.element.querySelector('.fh-skill-hist-action code')?.textContent).toBe('c4f06d7');
 
