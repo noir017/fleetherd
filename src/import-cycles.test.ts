@@ -33,11 +33,6 @@ const ALLOWED_ALL_IMPORT_CYCLES: readonly (readonly string[])[] = [
     'core/conversation.ts',
     'types.ts',
   ],
-  // E: relay.ts <-> agy-relay.ts
-  [
-    'daemon/agy-relay.ts',
-    'daemon/relay.ts',
-  ],
 ];
 
 const ALLOWED_VALUE_IMPORT_CYCLES: readonly (readonly string[])[] = [

@@ -3,7 +3,8 @@ import { gzipSync } from 'node:zlib';
 import type { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { AgentDefSchema } from '../config/schema.js';
-import { harnessRelay, openLocalRelay, relayEnv, type RelaySpec } from './relay.js';
+import { harnessRelay, openLocalRelay, relayEnv } from './relay.js';
+import type { RelaySpec } from './relay-types.js';
 
 /**
  * The local relay against a stand-in upstream on loopback: what an agent on this machine gets. The
