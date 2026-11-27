@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { createSatoriAdapter } from './satori-core.js';
 import type { PlatformProfile } from './profile.js';
-import type { PlatformInstance } from './config-schemas.js';
+import type { PlatformInstance } from '../config/platform-schemas.js';
 import { h } from '@satorijs/core';
 import type { Bot, Context, Session } from '@satorijs/core';
 

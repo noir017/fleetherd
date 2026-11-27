@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { WebuiConfigSchema } from '../config-schemas.js';
+import { WebuiConfigSchema } from '../../config/platform-schemas.js';
 
 /**
  * The `files` block of a webui instance. Only the shape rules are here — what the panel does with

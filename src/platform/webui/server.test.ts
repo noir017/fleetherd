@@ -7,7 +7,7 @@ import path from 'node:path';
 import { brotliDecompressSync, createGunzip, gunzipSync, inflateSync } from 'node:zlib';
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 
-import { WebuiConfigSchema } from '../config-schemas.js';
+import { WebuiConfigSchema } from '../../config/platform-schemas.js';
 import type {
   FilesPanel,
   InstructionsPanel,

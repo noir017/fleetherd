@@ -50,15 +50,14 @@ Three rules keep this from rotting:
 | `satori-file-url.ts` | Repairs an upstream `http.file()` collision that broke every Telegram download |
 | `telegram-start-retry.ts` | Retries a Telegram bot's startup requests, which upstream lets fail once and never again |
 | `platform-factory.ts` | `type` → profile factory dispatch |
-| `config-schemas.ts` | Per-platform credential schemas (+ `ChatGateSchema`) |
 | `profile-helpers.ts` | Shared pure utilities for profiles |
 | `profiles/*.ts` | The eight platform profiles |
 | `webui/` | The ninth platform, which is not a profile — see its [README](webui/README.md) |
 | `*-markdown.ts`, `markdown-tables.ts` | Per-dialect outbound markdown renderers |
 
-`config-schemas.ts` is kept as a sibling module rather than inside each profile so that
-**config loading never imports the heavy Satori adapter chain**. Keep it that way —
-`config/schema.ts` imports this file.
+Per-platform credential schemas live in [`config/platform-schemas.ts`](../config/platform-schemas.ts)
+(outside `platform/`, free of Satori imports) so that **config loading never imports the heavy
+Satori adapter chain** and `platform/` only reads downward from `config/`.
 
 ## Capabilities, not platforms
 
@@ -460,7 +459,7 @@ only the events endpoint.
 
 ## Adding a platform
 
-1. Add a schema to `config-schemas.ts` and one arm to the discriminated union.
+1. Add a schema to `config/platform-schemas.ts` and one arm to the discriminated union.
    Required fields (not wrapped in `optional`/`default`) become **the setup wizard's
    prompts automatically**, using each field's `.describe()` as the label — that is why
    adding a platform needs no wizard change.

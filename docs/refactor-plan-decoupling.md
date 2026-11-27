@@ -234,7 +234,7 @@ src/core/harness-facts.ts   # 纯数据：命令映射、菜单标签、effort/�
 
 | 不做 | 理由 |
 |---|---|
-| 拆开 `config/schema.ts` → `platform/config-schemas.ts` | 校验配置本来就要知道各平台的凭据结构，AGENTS.md 也写明了这条依赖。拆开得引入 schema 注册机制，换来的行为收益是零 |
+| 拆开 `config/schema.ts` → `platform/config-schemas.ts` | 校验配置本来就要知道各平台的凭据结构，AGENTS.md 也写明了这条依赖。拆开得引入 schema 注册机制，换来的行为收益是零（第四批已改为把文件挪进 `config/`） |
 | 打散 `REVERSE_COMMANDS` 的整列依赖 | 有意设计的单一真源，处在下三角 |
 | 消除 `daemon.ts` 作为装配根对所有模块的 import | 装配根就该认识一切；WP4 之后它会少掉面板装配那一块 |
 | 按行数拆 `delegation.ts`（2595 行）、`turn-runner.ts`（2254 行） | 行数不等于耦合。WP1 之后如果出现自然的分界再说 |
@@ -259,7 +259,7 @@ FR10 Web UI     X   .   X   X   X   X   X   X   X   X
 
 剩下 5 个上三角格子，全部有意保留：
 
-- **FR1×DP4、FR1×DP10**：平台凭据和 webui 安全开关的 schema 定义在 `platform/config-schemas.ts`，理由见 §5 第一行。
+- **FR1×DP4、FR1×DP10**：平台凭据和 webui 安全开关的 schema 定义在 `platform/config-schemas.ts`，理由见 §5 第一行（第四批已改为把文件挪进 `config/`）。
 - **FR6×DP9**：记录对话的位置天然在会话层，`history/` 只是被动存储。
 - **FR5×DP9、FR8×DP9（x）**：`conversation-turns.ts` 和 `conversation-delegation.ts` 是 `ConversationRegistry` 的协作者，按设计就共享 `ConversationContext` 类型。如果把这两个文件归到 DP9，这两格也会消失。
 

@@ -3,10 +3,10 @@
 //
 // Multi-platform base: generic Satori core (satori-core.ts) + pluggable PlatformProfile seam
 // (profile.ts) + per-platform profiles (profiles/*.ts). Adding an IM platform needs one
-// profile file + its config schema in config-schemas.ts, reusing all of core.
+// profile file + its config schema in config/platform-schemas.ts, reusing all of core.
 import type { PlatformAdapter } from './adapter.js';
 import type { PlatformProfile } from './profile.js';
-import type { PlatformInstance, PlatformType } from './config-schemas.js';
+import type { PlatformInstance, PlatformType } from '../config/platform-schemas.js';
 import { createSatoriAdapter } from './satori-core.js';
 import { createDiscordProfile } from './profiles/discord.js';
 import { createTelegramProfile } from './profiles/telegram.js';
@@ -22,7 +22,7 @@ export type PlatformAdapterOptions = WebuiAdapterOptions;
 
 /**
  * Platform type → profile factory. Adding a Satori platform = one line here + a schema in
- * config-schemas.ts.
+ * config/platform-schemas.ts.
  *
  * `webui` is excluded because it has no profile: it is not a Satori adapter at all (see
  * webui/index.ts for why) and is dispatched separately below. The `Exclude` rather than a

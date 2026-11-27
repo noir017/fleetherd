@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { WebuiConfigSchema } from '../config-schemas.js';
+import { WebuiConfigSchema } from '../../config/platform-schemas.js';
 import { WebRoom, type TopicNotice, type WebuiInstance } from './room.js';
 import { TopicStore } from './topics.js';
 

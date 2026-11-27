@@ -42,7 +42,7 @@ import type {
   ProfileButtonEvent,
   ResolvedConversation,
 } from '../profile.js';
-import type { SlackPlatformConfig } from '../config-schemas.js';
+import type { SlackPlatformConfig } from '../../config/platform-schemas.js';
 import {
   findAtMention,
   installHttpService,
@@ -514,7 +514,7 @@ export function createSlackProfile(): PlatformProfile<SlackPlatformConfig> {
       // the slack plugin and never instantiates the bot (no bot, no error).
       installHttpService(ctx);
 
-      // Typed credentials (config-schemas.ts): appToken (xapp-, Socket Mode) + botToken
+      // Typed credentials (config/platform-schemas.ts): appToken (xapp-, Socket Mode) + botToken
       // (xoxb-, send/reaction); protocol defaults to 'ws'. signing is schema-enforced
       // when protocol==='http' (ConfigSchema.superRefine).
       const config: Record<string, unknown> = {

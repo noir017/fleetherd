@@ -49,7 +49,7 @@ its primary entrypoints, update the module's `*.fras` in the same commit.
 Module documentation links: [config](src/config/README.md), [core](src/core/README.md), [platform](src/platform/README.md), [daemon](src/daemon/README.md), [api-agent](src/api-agent/README.md), [ipc](src/ipc/README.md), [history](src/history/README.md), [remote](src/remote/README.md), [remote-go](remote/README.md), [commands](src/commands/README.md), [scripts](scripts/README.md).
 
 ```fras
-[config] -> src/config/config.fras | F:Config schema, loading, env expansion, and v0 to v1 migration | R:platform | A:configDir,loadConfig,readConfig,saveConfigPatch | S:See Security invariants items 1, 4
+[config] -> src/config/config.fras | F:Config schema, loading, env expansion, and v0 to v1 migration | A:configDir,loadConfig,readConfig,saveConfigPatch | S:See Security invariants items 1, 4
 [core] -> src/core/core.fras | F:Platform-agnostic pure logic, gating, merging, streaming, and tool bubbles | R:config | A:InboundMerger,StreamBuffer,conversationKey,shouldRespond | S:Pure layer with zero IO and no global dependencies
 [platform] -> src/platform/platform.fras | F:IM adapters, profile seam, per-dialect markdown, and web UI | R:config,core | A:createPlatformAdapter,createWebuiAdapter | S:See Security invariants item 7
 [daemon] -> src/daemon/daemon.fras | F:Daemon coordinator, routing, turn runner, and agent runtimes | R:config,core,history,ipc,platform,remote | A:Daemon,TurnRunner | S:See Security invariants items 1, 2, 3, 5, 6, 8, 11
@@ -101,9 +101,10 @@ Enforced facts, verifiable with grep:
   and the alternative was a second copy of that path. The arrow already allows it
   (`platform ──► core ──► config`); it is named here because nothing else in `platform/`
   reaches for `config/` at runtime.
-- `config/schema.ts` imports `platform/config-schemas.ts` (the per-platform credential
-  schemas). That file is deliberately kept free of Satori imports so config loading
-  never drags in the adapter chain.
+- `config/` imports only `types.ts` and `legacy-name.ts` (never `platform/`). Per-platform
+  credential schemas live in `config/platform-schemas.ts` — deliberately kept free of Satori
+  imports so config loading never drags in the adapter chain — and `platform/` only reads
+  downward from `config/`.
 - `ipc/` imports nothing from other modules except `types.ts` and `legacy-name.ts`.
 - `legacy-name.ts` imports only Node built-ins, and any module but `core/` may import it: it is
   where the old name is read (an environment variable, a directory, a metadata key), and those
@@ -150,7 +151,7 @@ in many places. Extend the source, never a copy:
 - `core/command-translate.ts` `GENERIC_COMMANDS` → the registered slash menu + translation.
 - `core/settings.ts` — the `/setting` table → the menu rows, the text list, value validation,
   the config path patched, and the ack sentence.
-- `platform/config-schemas.ts` → validation, the setup wizard's prompts, doctor.
+- `config/platform-schemas.ts` → validation, the setup wizard's prompts, doctor.
 - `types.ts` domain types → mirrored zod enums with `satisfies` so drift fails to compile.
 
 **Exhaustiveness over defaults.** Discriminated unions are switched exhaustively with a
@@ -535,7 +536,7 @@ Do not weaken these without saying so explicitly in the PR:
 
 ## Adding things
 
-- **A platform** → `platform/config-schemas.ts` (schema) + `platform/profiles/<name>.ts`
+- **A platform** → `config/platform-schemas.ts` (schema) + `platform/profiles/<name>.ts`
   (profile) + one line in `platform-factory.ts`. No wizard or daemon change needed.
   See [src/platform/README.md](src/platform/README.md). A platform that is *not* a chat
   service has no profile: it implements `PlatformAdapter` directly and is dispatched before
