@@ -33,12 +33,6 @@ const ALLOWED_ALL_IMPORT_CYCLES: readonly (readonly string[])[] = [
     'core/conversation.ts',
     'types.ts',
   ],
-  // D: agent-acp.ts -> acp-fork.ts -> acp-side-question.ts -> agent-acp.ts
-  [
-    'daemon/acp-fork.ts',
-    'daemon/acp-side-question.ts',
-    'daemon/agent-acp.ts',
-  ],
   // E: relay.ts <-> agy-relay.ts
   [
     'daemon/agy-relay.ts',
