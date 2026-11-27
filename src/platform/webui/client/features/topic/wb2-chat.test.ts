@@ -139,4 +139,20 @@ describe('wb2-chat topic editor alignment', () => {
     expect(composerCss).toContain('.wb-topic-editor .mp-grab');
     expect(composerCss).toContain('.wb-topic-editor .st-sep{display:none}');
   });
+
+  it('anchors mobile own-message action bars outside the bubble and reserves bottom spacing', () => {
+    const transcriptCss = fs.readFileSync(path.join(STYLES_DIR, 'transcript.css'), 'utf8');
+    const hoverNoneIdx = transcriptCss.indexOf('@media(hover:none){.msg-actions{');
+    const mobileStart = transcriptCss.indexOf('@media (max-width: 640px) {');
+    expect(hoverNoneIdx).toBeGreaterThan(-1);
+    expect(mobileStart).toBeGreaterThan(hoverNoneIdx);
+
+    const mobileBlock = transcriptCss.slice(mobileStart, transcriptCss.indexOf('\n}', mobileStart));
+    expect(mobileBlock).toContain(
+      '.wb-topic-editor .m.own>.msg-actions{position:absolute;top:calc(100% + 4px);right:0;left:auto;margin-top:0;width:max-content}',
+    );
+    expect(mobileBlock).toContain('.wb-topic-editor .m.own:has(>.msg-actions){margin-bottom:54px}');
+    expect(mobileBlock).toContain('flex-wrap:nowrap;white-space:nowrap');
+    expect(mobileBlock).toContain('.wb-topic-editor .msg-act-btn{flex:none;width:28px;height:26px}');
+  });
 });

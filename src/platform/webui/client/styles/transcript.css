@@ -316,7 +316,7 @@
 .tc .add{color:var(--ok)}
 .tc .del{color:var(--err)}
 /* Lightweight hover/focus message action bar, anchored above the top-right edge so it never covers body text. */
-.msg-actions{position:absolute;top:-13px;right:6px;z-index:2;display:inline-flex;align-items:center;gap:2px;padding:2px;background:var(--fh-bg-widget);border:1px solid var(--fh-line);border-radius:var(--fh-radius-card);opacity:0;pointer-events:none;transition:opacity .12s ease}
+.msg-actions{position:absolute;top:-13px;right:6px;z-index:2;display:inline-flex;align-items:center;flex-wrap:nowrap;white-space:nowrap;gap:2px;padding:2px;background:var(--fh-bg-widget);border:1px solid var(--fh-line);border-radius:var(--fh-radius-card);opacity:0;pointer-events:none;transition:opacity .12s ease}
 .m:hover>.msg-actions,.m:focus-within>.msg-actions,.msg-actions:focus-within{opacity:1;pointer-events:auto}
 .msg-act-btn{display:inline-flex;align-items:center;justify-content:center;width:24px;height:22px;padding:0;border:0;border-radius:var(--fh-radius-ctrl);background:transparent;color:var(--fh-fg-dim);cursor:pointer;transition:background .1s ease,color .1s ease}
 .msg-act-btn .ic{width:14px;height:14px}
@@ -432,8 +432,12 @@
   .wb-topic-editor .wb-topic-fork-note{padding:8px 16px;font-size:var(--fh-fs-ui)}
   .wb-topic-editor .m{font-size:var(--fh-fs-body);line-height:1.55;margin-bottom:18px}
   .wb-topic-editor .m.own{width:fit-content;max-width:86%;margin-left:auto;background:var(--fh-own-m);border:0;border-radius:18px 18px 4px 18px;padding:9px 14px;color:var(--fh-fg-hi)}
+  /* Keep the action bar outside the blue bubble (4px gap + 32px bar + 18px base gap = 54px bottom room). */
+  .wb-topic-editor .m.own:has(>.msg-actions){margin-bottom:54px}
   .wb-topic-editor .m.own .t{text-align:right}
-  .wb-topic-editor .msg-actions{position:static;margin-top:6px;width:fit-content;opacity:.9;pointer-events:auto}
+  .wb-topic-editor .msg-actions{position:static;margin-top:6px;width:fit-content;flex-wrap:nowrap;white-space:nowrap;opacity:.9;pointer-events:auto}
+  .wb-topic-editor .m.own>.msg-actions{position:absolute;top:calc(100% + 4px);right:0;left:auto;margin-top:0;width:max-content}
+  .wb-topic-editor .msg-act-btn{flex:none;width:28px;height:26px}
   .wb-topic-editor .tl{border-radius:8px;padding:8px 12px;font-size:var(--fh-fs-ui)}
   .wb-topic-editor .tc{border-radius:10px;padding:11px 12px;font-size:var(--fh-fs-ui)}
   .wb-topic-editor .tc button,
