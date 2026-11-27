@@ -1,5 +1,4 @@
-import type { SessionScope } from '../config/schema.js';
-import type { ConversationAddress, ConversationRef } from '../types.js';
+import type { ConversationAddress, ConversationRef, SessionScope } from '../types.js';
 export type { ConversationAddress, ConversationKind, ConversationRef } from '../types.js';
 
 /**

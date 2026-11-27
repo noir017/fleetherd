@@ -45,6 +45,12 @@ export type PermissionLevel = 'plan' | 'ask' | 'edits' | 'auto' | 'full';
 export type Harness = 'claude' | 'gemini' | 'codex' | 'opencode' | 'dsh' | 'agy' | 'custom';
 
 /**
+ * Conversation session scope (`session.scope`, overridable per route via `use.scope`).
+ * config/schema.ts mirrors this union with `satisfies`.
+ */
+export type SessionScope = 'per_thread' | 'per_channel' | 'per_user' | 'shared';
+
+/**
  * A platform-agnostic message reference, usable for in-place edit / reaction / reply.
  *
  * Carries the full address rather than a channel string so that an operation on a
