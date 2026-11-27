@@ -54,6 +54,7 @@ conversation, not part of its name — see [`daemon/README.md`](../daemon/README
 | `attachment-ingest.ts` | Inbound attachment orchestration (download/save injected) |
 | `voice.ts` | Voice messages as data: what counts as one, container sniffing, the transcriber request and response, the confirmation card, the log fold |
 | `command-translate.ts` | The generic slash vocabulary and its per-harness translation |
+| `harness-facts.ts` | Exhaustive per-harness pure data (`HARNESS_FACTS`): display names, agent switch commands, generic native/local command maps, CLI-answered commands, effort hints, and permission-level mode tables |
 | `skills-catalog.ts` | `/skills`: the bound agent's own commands as text |
 | `settings.ts` | `/setting` as data: which config.yaml fields are editable, what they accept, when a change lands |
 | `permission-levels.ts` | `agents[].permissions` as data: what each level asks of the gateway and which harness mode means it |

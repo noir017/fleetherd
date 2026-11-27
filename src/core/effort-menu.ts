@@ -1,5 +1,5 @@
-import type { EffortSelector } from '../types.js';
-import type { Harness } from './command-translate.js';
+import type { EffortSelector, Harness } from '../types.js';
+import { HARNESS_FACTS } from './harness-facts.js';
 import { type Locale, tMenus } from './i18n/menus.js';
 import { formatButtonId, parseButtonId } from './button-id.js';
 import { resolvePageSize, truncateLabel } from './paging.js';
@@ -163,16 +163,8 @@ export function effortNoSelectorText(
   locale: Locale = 'en'
 ): string {
   const on = model ? `\`${model}\`` : tMenus(locale, 'effort_on_current_model');
-  if (harness === 'codex') {
-    return tMenus(locale, 'effort_no_selector_codex', { on });
-  }
-  if (harness === 'opencode') {
-    return tMenus(locale, 'effort_no_selector_opencode', { on });
-  }
-  if (harness === 'agy') {
-    return tMenus(locale, 'effort_no_selector_agy', { on });
-  }
-  return tMenus(locale, 'effort_no_selector_default', { on });
+  const key = harness ? HARNESS_FACTS[harness].effortNoSelectorKey : 'effort_no_selector_default';
+  return tMenus(locale, key, { on });
 }
 
 /**

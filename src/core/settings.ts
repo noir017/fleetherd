@@ -13,6 +13,7 @@ import type {
 } from '../types.js';
 import { agentGroupOf, agentKindOf } from './agent-menu.js';
 import { formatButtonId, parseButtonId } from './button-id.js';
+import { HARNESS_FACTS } from './harness-facts.js';
 import {
   localeLabel,
   localeOf,
@@ -1106,12 +1107,12 @@ function permissionOptions(
   const modes = knownModes(row, ctx);
   // agy's modes are left out in code (agent-acp.ts modesLeftOut), not because the harness cannot
   // report them — so a probe that failed, its login expired, must not take `ask` off the screen.
-  const ids = def?.harness === 'agy' ? [] : modes?.map((m) => m.value);
+  const ids = def && HARNESS_FACTS[def.harness].ignoresSessionModes ? [] : modes?.map((m) => m.value);
   if (!ids) return [];
   const offered = def ? offeredLevelsFor(def, ids) : offeredLevels(ids);
   const pinned = def?.options['mode'];
   // A harness with no mode the gateway can set: `ask` there is the gateway's half alone.
-  const withoutMode = ids.length === 0 ? (def?.harness === 'agy' ? 'agy' : 'none') : undefined;
+  const withoutMode = ids.length === 0 ? (def ? HARNESS_FACTS[def.harness].withoutModeKind : 'none') : undefined;
   return PERMISSION_LEVELS.filter((l) => offered.includes(l) || (!row.unset && l === row.value)).map((level) => {
     const mode = levelMode(level, ids, pinned === undefined ? undefined : String(pinned));
     const name = mode ? (modes?.find((m) => m.value === mode)?.name ?? mode) : undefined;
@@ -1426,7 +1427,7 @@ function parsePermissionsValue(
   const modes = knownModes(row, ctx);
   // agy's modes are left out whatever a probe says, so the same two levels are accepted for it
   // even while it cannot be asked (permissionOptions).
-  const ids = def?.harness === 'agy' ? [] : modes?.map((m) => m.value);
+  const ids = def && HARNESS_FACTS[def.harness].ignoresSessionModes ? [] : modes?.map((m) => m.value);
   if (!ids) {
     return {
       kind: 'value',
@@ -1783,7 +1784,7 @@ function permissionsHint(row: SettingRow, cfg: Config, ctx: SettingsContext): st
     case 'none':
       // `ask` is offered here because the gateway's half still holds — it says what that half can
       // promise, which for agy is narrower still (measured: commands ask, writes do not).
-      return def?.harness === 'agy'
+      return def && HARNESS_FACTS[def.harness].ignoresSessionModes
         ? `${agentId}'s modes are not used, so \`ask\` puts the requests it does make to you — it asks before a command and writes files without asking. \`auto\` approves everything.`
         : `${agentId}'s harness reports no session mode, so the gateway cannot make it ask: \`ask\` puts only the requests it does make to you, and what it does without asking is not stopped.`;
     case 'loading':
