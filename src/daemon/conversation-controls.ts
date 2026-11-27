@@ -282,6 +282,7 @@ export class ConversationControls {
       return tMenus(locale, 'fork_no_scope');
     }
     this.seedFork(key, conv.key, platformId, agentId);
+    this.ctx.platforms.get(platformId)?.workbench?.refreshWorkdir(opened.address);
     try {
       const fork = this.ctx.agents.getOrCreate(conv.key, agentId);
       if (!fork.forkFrom) throw new Error(`${label} cannot start a session as a copy`);
@@ -946,6 +947,8 @@ export class ConversationControls {
       state.headerSent = false;
       this.ctx.forgetUsage(id, state);
     }
+    const lane = this.ctx.laneFor(id);
+    if (lane) this.ctx.platforms.get(lane.platformId)?.workbench?.refreshWorkdir(lane.address);
     console.log(`[workdir] ${id} → ${path} (agent ${agentId}; every session id dropped)`);
     return { kind: 'applied', path };
   }

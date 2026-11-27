@@ -889,6 +889,13 @@ export class WebRoom {
     this.dirCache.clear();
   }
 
+  /** Drop the memoised workdir/agent for `topicId` and push the fresh row to clients. */
+  refreshWorkdir(topicId: string): void {
+    if (!this.topics.has(topicId)) return;
+    this.dirCache.delete(topicId);
+    this.announceTopics();
+  }
+
   /**
    * Accept the daemon's way of asking whether a topic's agent child is still resident, and start
    * the poll that watches it (see LIVENESS_POLL_MS for why this one is polled and the rest is not).
@@ -983,8 +990,7 @@ export class WebRoom {
     if (!this.topics.has(topic)) return { ok: false, error: 'No such topic.' };
     const res = this.topicSetup(this.conversation(topic), opts);
     if (res.ok) {
-      this.dirCache.delete(topic);
-      this.announceTopics();
+      this.refreshWorkdir(topic);
     }
     return res;
   }

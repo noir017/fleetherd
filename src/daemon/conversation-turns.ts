@@ -759,6 +759,7 @@ export class ConversationTurns {
     if (!conv) return { done: false, text: tRuntime(this.locale, 'retryNewTopicMappingFailed') };
     this.ctx.ensureState(conv.key, lane.platformId, target, { fresh: true, opener: 'retry with another agent' });
     this.carryWorkdir(conv.key, bound, target, this.ctx.workdirOf(key, bound));
+    adapter.workbench?.refreshWorkdir(opened);
     this.enqueueRetry(conv.key, lane.platformId, opened, target, record.input, user);
     return { done: true, text: tRuntime(this.locale, 'retryingInNewTopic', { target, bound }) };
   }

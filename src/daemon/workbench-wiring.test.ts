@@ -6,6 +6,7 @@ import { attachWorkbench, type WorkbenchWiringDeps } from './workbench-wiring.js
 function makeWorkbench() {
   const wb = {
     useWorkdirLookup: vi.fn(),
+    refreshWorkdir: vi.fn(),
     useLivenessLookup: vi.fn(),
     useGitPanel: vi.fn(),
     useScheduleLookup: vi.fn(),

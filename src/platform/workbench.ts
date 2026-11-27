@@ -693,6 +693,8 @@ export interface TopicPresence {
  */
 export interface WorkbenchHost {
   useWorkdirLookup: (lookup: (ref: ConversationRef) => ConversationWorkdir | undefined) => void;
+  /** Drops any cached workdir/agent entry for `address` and re-announces the topic row (e.g. after daemon-side bind/cwd setup). */
+  refreshWorkdir: (address: ConversationAddress) => void;
   useLivenessLookup: (lookup: (ref: ConversationRef) => boolean) => void;
   useGitPanel: (panel: GitPanel) => void;
   useScheduleLookup: (lookup: (ref: ConversationRef) => boolean) => void;
