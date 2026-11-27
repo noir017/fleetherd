@@ -73,17 +73,6 @@ export function agySplitModel(
   return { model: m[1]!, effort: m[2]! };
 }
 
-/**
- * Whether a harness answers `session/load` on its default model rather than the one the session
- * was on — which makes the configured model something to re-apply after every load, not only once
- * at `session/new` (agent-acp.ts reapplyPreferences). Measured on `agy acp` 1.5.1: a session put on
- * `gpt-oss-120b-medium` came back from both `session/load` and `session/resume` with
- * `currentModelId: gemini-3.8-flash-high`, and its next turn ran on Gemini.
- */
-export function forgetsModelOnLoad(def: Pick<AgentDef, 'harness'>): boolean {
-  return def.harness === 'agy';
-}
-
 // ───────────────────────── a message mid-turn ─────────────────────────
 
 /**

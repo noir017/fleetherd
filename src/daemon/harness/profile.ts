@@ -1,4 +1,5 @@
 import { homedir } from 'node:os';
+import type { SessionConfigOption } from '@agentclientprotocol/sdk';
 import type { InstructionsAgent, InstructionsHome } from '../../config/instructions.js';
 import type { AgentDef } from '../../config/schema.js';
 import type { Welcome } from '../../remote/connection.js';
@@ -72,6 +73,19 @@ export interface HarnessProfile {
   readonly launch: (def: AgentDef, remote?: boolean) => HarnessLaunch;
   readonly capabilityMeta?: (def: Pick<AgentDef, 'harness' | 'command'>) => Record<string, unknown>;
   readonly startupHint?: string;
+  /** Encode a config/chat model id into the wire value the harness's ACP selector expects (e.g. DSH JSON tuple). */
+  readonly encodeModelWire?: (model: string) => string;
+  /** Decode a wire selector value back to the human-readable model id. */
+  readonly decodeModelDisplay?: (wire: string) => string;
+  /** Split a combined model+effort config spelling into separate ACP model and effort values (e.g. agy). */
+  readonly splitModelOption?: (
+    want: string,
+    options: SessionConfigOption[] | undefined
+  ) => { model: string; effort: string } | undefined;
+  /** True when `session/load` resets to the harness's default model so the configured model must be re-applied. */
+  readonly forgetsModelOnLoad?: boolean;
+  /** True when the harness's session modes are excluded from permission-level mapping (ask/auto only). */
+  readonly omitPermissionModes?: boolean;
   readonly skillHomes: (home: string, command?: string) => SkillHome[];
   readonly skillReaders?: readonly SkillReaderSpec[];
   readonly skillHarnessName?: (def: Pick<AgentDef, 'harness' | 'command'>) => string;

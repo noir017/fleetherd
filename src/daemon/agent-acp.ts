@@ -85,9 +85,9 @@ import {
 import type { AgentProvision } from './provision.js';
 import {
   AcpOptionState,
-  dshModelSelectorValue,
   reportedModes,
 } from './agent-acp-options.js';
+import { HARNESSES } from './harness/index.js';
 import {
   AgentUnreachable,
   canPickUp,
@@ -121,7 +121,7 @@ export {
 } from './agent-acp-harness.js';
 export {
   applyEffortPreference, applyModelPreference, applyPermissionLevel, applyPinnedOptions,
-  customOptionsOf, dshModelDisplayValue, dshModelSelectorValue, effortSelectorOf, liveEffortName,
+  customOptionsOf, effortSelectorOf, liveEffortName,
   liveModelName, modeControlOf, permissionModesOf, type ModeControl, type ModeState,
 } from './agent-acp-options.js';
 export {
@@ -578,7 +578,7 @@ class AcpSession implements AgentSession {
           ...(hint
             ? {
                 _meta: {
-                  model: this.def.harness === 'dsh' ? dshModelSelectorValue(hint) : hint,
+                  model: HARNESSES[this.def.harness].encodeModelWire?.(hint) ?? hint,
                 },
               }
             : {}),

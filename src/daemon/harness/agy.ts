@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { instructionsHome } from '../../config/instructions.js';
+import { agySplitModel } from '../agy-acp.js';
 import { AGY_COMMAND } from '../agy-cli.js';
 import { agyTranscriptPath, readAgyContext } from '../agy-transcript.js';
 import { agyReferences, agyRuleNote, resolveAgyReference } from '../instruction-imports.js';
@@ -15,6 +16,11 @@ export const agyProfile: HarnessProfile = {
   // agy >= 1.5 native ACP server; permissions arrive via session/request_permission (never --dangerously-skip-permissions).
   launch: (def) => ({ command: AGY_COMMAND, args: ['acp', ...def.args] }),
   startupHint: ' (`agy acp` needs agy 1.5 or later — check `agy --version` on that machine and upgrade it)',
+  splitModelOption: agySplitModel,
+  // Measured on agy 1.5.1: session/load and session/resume answer on agy's default model.
+  forgetsModelOnLoad: true,
+  // Measured 2026-11-06/18: agy's `default` mode writes without asking, so permission levels stay ask/auto only.
+  omitPermissionModes: true,
   skillHomes: (home) => agySkillHomes(home),
   skillReaders: [{ name: 'agy', homes: agySkillHomes }],
   skillScanDirs: (opts) => [
