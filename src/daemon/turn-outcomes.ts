@@ -667,7 +667,7 @@ export class TurnOutcomes {
     const lane = this.deps.laneOf(id);
     if (!lane) return;
     try {
-      this.deps.platforms.get(lane.platformId)?.setActivity?.(lane.address, activity);
+      this.deps.platforms.get(lane.platformId)?.presence?.setActivity(lane.address, activity);
     } catch (e) {
       console.warn('[outcomes] could not push a conversation outcome:', e instanceof Error ? e.message : e);
     }

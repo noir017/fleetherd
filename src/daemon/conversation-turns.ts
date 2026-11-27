@@ -274,7 +274,7 @@ export class ConversationTurns {
     const lane = this.ctx.laneOf(id);
     if (!lane) return;
     try {
-      this.ctx.platforms.get(lane.platformId)?.setPendingQueue?.(lane.address, items);
+      this.ctx.platforms.get(lane.platformId)?.presence?.setPendingQueue(lane.address, items);
     } catch (e) {
       console.warn('[conversation] failed to push pending queue:', e instanceof Error ? e.message : e);
     }
@@ -286,7 +286,7 @@ export class ConversationTurns {
     const ids = msgs.map((m) => m.messageId).filter(Boolean);
     if (ids.length === 0) return;
     try {
-      this.ctx.platforms.get(lane.platformId)?.markPendingDelivered?.(lane.address, ids);
+      this.ctx.platforms.get(lane.platformId)?.presence?.markPendingDelivered(lane.address, ids);
     } catch (e) {
       console.warn('[conversation] failed to mark pending delivered:', e instanceof Error ? e.message : e);
     }
@@ -747,7 +747,7 @@ export class ConversationTurns {
     const adapter = this.ctx.platforms.get(lane.platformId);
     if (!adapter?.capabilities.thread) return { done: false, text: refused };
     this.useRetry(record.id, key);
-    const parent = adapter.parentOf?.(lane.address);
+    const parent = adapter.topics?.parentOf(lane.address);
     // formatLaneTitle drops the old `[agent]` prefix itself.
     const seed = this.ctx.store?.conversationTitle(key) || fallbackTitle(record.input.map((m) => m.content).join('\n'));
     const opened = (

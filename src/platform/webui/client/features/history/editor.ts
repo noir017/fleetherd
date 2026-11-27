@@ -1,4 +1,4 @@
-import type { HistoryPanelSession } from '../../../../adapter.js';
+import type { HistoryPanelSession } from '../../../../workbench.js';
 import type { WebMessage } from '../../../protocol.js';
 import { addDisposableListener } from '../../base/dom.js';
 import { DisposableStore } from '../../base/lifecycle.js';

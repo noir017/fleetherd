@@ -5,7 +5,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AgentDef } from '../config/schema.js';
-import type { InstructionsDelivery, InstructionsRefsResult } from '../platform/adapter.js';
+import type { InstructionsDelivery, InstructionsRefsResult } from '../platform/workbench.js';
 import { buildInstructionsPanel, deliverInstructions, walkSources } from './instructions-panel.js';
 import { harnessSources } from './instruction-imports.js';
 import { HARNESS_LAYERS } from '../config/instructions.js';

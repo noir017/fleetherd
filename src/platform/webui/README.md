@@ -164,7 +164,7 @@ title, since that line is the only way left to find the session it leaves behind
 
 A topic is passed over when evicting it would *break* something rather than merely orphan it:
 mid-turn, asking a question, an agent resident, a terminal attached, or the target of a scheduled
-task that can still run (`PlatformAdapter.useScheduleLookup` — a task posts to a plain address and
+task that can still run (`WorkbenchHost.useScheduleLookup` — a task posts to a plain address and
 nothing rewrites it when the topic goes). Otherwise the only thing that keeps a quiet topic is a
 **star** (☆ beside the `×`). A starred topic is never evicted, survives "Clear all topics" (which
 says "Clear unstarred topics" while any are starred), and leads its unstarred peers inside its
@@ -247,7 +247,7 @@ not tell you when several topics are open on different projects. It is not store
 title, though, and that asymmetry is deliberate: the title is *this module's* (a topic has one
 before a turn has ever run), while the directory is the daemon's and moves under `/cd`, so a
 copy here would be a second answer that outlives the real one. The daemon hands the adapter a
-lookup instead (`PlatformAdapter.useWorkdirLookup`), and `topicList()` asks it — memoised for
+lookup instead (`WorkbenchHost.useWorkdirLookup`), and `topicList()` asks it — memoised for
 `DIR_TTL_MS`, because the list is rebuilt on every posted message and the lookup stats the
 filesystem on the other side. A deployment that never offers one shows no second line at all.
 
@@ -318,7 +318,7 @@ purpose; a runtime that cannot resume leaves its process up, and the page says s
 The header's power button is unchanged: it ends this topic only.
 
 **A fork sits beside its source, not under it** (`Topic.forkOf`, `/fork`, 2026-11-20). The daemon
-opens it through `PlatformAdapter.forkThread` — `WebRoom.forkTopic` names it after the source, with
+opens it through `TopicTree.forkThread` (`adapter.topics`) — `WebRoom.forkTopic` names it after the source, with
 ` (fork)` — and starts its session as a copy of the source's (daemon/README.md). `topicTree` keeps it
 out of the roots while its source is in the same list, and `treeWalker` draws it right after the
 source and everything under it, at the source's depth, whether or not the source is folded: folding
@@ -340,7 +340,7 @@ actually reads that column for:
 | dot | means | where it comes from |
 |---|---|---|
 | grey | nothing resident — history, or a topic that will have to resume from a session id | the absence of the two below |
-| dim blue | an agent child is up and idle | `PlatformAdapter.useLivenessLookup` |
+| dim blue | an agent child is up and idle | `WorkbenchHost.useLivenessLookup` |
 | blue, pulsing | the agent is working — a turn, or background work reporting in after one | `startTyping` / `stopTyping` (the daemon holds typing for both) |
 | amber, pulsing | a question is on screen and nothing moves until it is answered | a message in the room still carrying buttons, posted or re-armed since the operator last wrote |
 
@@ -370,7 +370,7 @@ sidebar footer's Manage menu; the count is on the Manage button itself, and the 
 hidden at zero. Unlike the power button it is
 not a typed command, and that is deliberate: a `/kill` per topic would leave an echo and an ack in
 every room it touched, twenty messages for ten topics. Instead `POST api/topics/close-idle` carries
-the ids, `WebRoom.closeIdle` hands each to the daemon (`PlatformAdapter.useIdleReclaim`), and the
+the ids, `WebRoom.closeIdle` hands each to the daemon (`WorkbenchHost.useIdleReclaim`), and the
 answer says which were closed and which were left running. Four decisions in it:
 
 - **It acts on the list the operator was shown.** The dialog names every topic (title and
@@ -393,7 +393,7 @@ closed topic's next message resumed its conversation.
 
 **The strip above the composer is the agent's live status** — what the footer says once per reply,
 kept current: agent, model and effort; a context meter; session cost; claude's prompt-cache
-countdown; agy's quota pools. The daemon pushes it (`PlatformAdapter.setStatus`, from
+countdown; agy's quota pools. The daemon pushes it (`TopicPresence.setStatus`, from
 `daemon/status-board.ts`, which drops repeats and sends at most one per topic per 2 s), and three
 things about how it travels are deliberate:
 
@@ -486,7 +486,7 @@ the harness as its project names it, a custom harness's command), and its model,
 footer says it. Five decisions in it:
 
 - **The daemon decides whether the question is open; the page only draws it.**
-  `PlatformAdapter.useAgentCatalog` → `ConversationRegistry.agentCatalogForRef` answers undefined
+  `WorkbenchHost.useAgentCatalog` → `ConversationRegistry.agentCatalogForRef` answers undefined
   once the agent that would answer has a session here (chooseAgent refuses to move it then) and
   when there is a single agent. `room.ts` asks only for the sync of an EMPTY room and puts the
   answer in `sync.agents`; it is not polled, not announced and not in the backlog — the first
@@ -513,7 +513,7 @@ but not from the connection's state, which was the first idea and why it was dro
 a host's link closes itself after five idle minutes (`remote/connection.ts` IDLE_CLOSE_MS), so "not
 connected" mostly means "not used lately", and marking it would grey out healthy machines. The
 daemon measures reachability instead (`daemon/host-availability.ts`: a TCP connect to the ssh port
-every minute) and pushes the machines it cannot reach (`PlatformAdapter.setOfflineMachines`), which
+every minute) and pushes the machines it cannot reach (`TopicPresence.setOfflineMachines`), which
 `room.ts` sends as the sync's `offline` and then as `machines` events — state like `status`, outside
 the backlog, to every client. The same list marks the topic rows and puts a line above the composer
 of a topic on such a machine (`paintMachineNote`), since a message there waits or fails with
@@ -557,7 +557,7 @@ menu and idle reclaim must not close the agent under one. Unrecognised buttons c
 so a new kind of ask is announced rather than silently missed.
 
 **Sub-agent topics** (daemon/delegation.ts) carry `parent`, the topic whose agent opened them —
-persisted, and the only record of the relation (`parentOf` / `childrenOf` on the adapter read it back).
+persisted, and the only record of the relation (`adapter.topics.parentOf` / `childrenOf` read it back).
 `TopicStore.orphan` drops a `parent` that names a topic no longer there, on load and after every
 delete or sweep, so the × on a parent never takes its children with it. The page nests them
 (`topicRows`: what needs you first, then each root by state — a root with no title yet first, then
@@ -782,7 +782,7 @@ parses that with `parseReviewOutput`, marks the entry `inferred` and leaves ever
 absent: the row says *unknown* rather than guessing. That is why `HistoryReviewChange.applied` is
 three-state.
 
-**Data.** `useSchedulePanel` (`../adapter.ts`) hands the room the task list and the five
+**Data.** `WorkbenchHost.useSchedulePanel` (`../workbench.ts`) hands the room the task list and the five
 operations (pause, resume, run, remove and `tags`); the daemon builds it in
 `daemon/schedule-panel.ts` from `ScheduleService`, the same
 service the agent's `schedule` commands and `/setting schedule` use, plus `detail(id)`, `form()`,
@@ -830,7 +830,7 @@ and there is no hard delete, here or in the store. Saving `SKILL.md` sends the v
 read, so a stale edit is refused rather than overwriting a newer one; extra files go through
 `write-file`. **Restore this version** is `revert`, and is itself recorded as a new change.
 
-**Data.** `useSkillsPanel` (`../adapter.ts`) hands the room the list and every operation;
+**Data.** `WorkbenchHost.useSkillsPanel` (`../workbench.ts`) hands the room the list and every operation;
 `daemon/skills-panel.ts` builds it from `skills-store.ts`, the same functions the reverse command
 calls, and passes `notifySkillArchived` so an archive made here tells the conversation that created
 the skill exactly as one made from a chat does. Two routes carry it: `GET api/skills` and
@@ -875,7 +875,7 @@ comparison list with files but nothing selected opens its first file on a wide w
 turn-changes view and a phone's list ask the reader to pick one (under 640px the two columns are
 stacked, and an opened diff would push the list out of sight).
 
-**Data.** [`useGitPanel`](../adapter.ts) hands the room `status`, `file` and `branches`;
+**Data.** [`WorkbenchHost.useGitPanel`](../workbench.ts) hands the room `status`, `file` and `branches`;
 [`daemon/git-panel.ts`](../../daemon/git-panel.ts) implements them over
 `ConversationRegistry.workspaceForRef`, so the commands run on whichever machine the conversation's
 agent runs on. Three routes carry it — `GET api/git/status?t=&mode=&base=`,
@@ -999,7 +999,7 @@ box) each tab keeps only its icon (`chat`, `history`), with its name on the titl
 footer's buttons do. Measured in Chromium at 180–240px on 2026-11-11
 (`project-scripts/talkcode-history-tab/shoot.mts`).
 
-**Data.** `useHistoryPanel` (`../adapter.ts`) hands the room `list({before, limit})`,
+**Data.** `WorkbenchHost.useHistoryPanel` (`../workbench.ts`) hands the room `list({before, limit})`,
 `search(query)` and `read(id)`; `daemon/history-panel.ts` builds them from `HistoryStore`, and the
 instance id is only for the topic link. Three routes carry it: `GET api/history`,
 `GET api/history/search?q=` and `GET api/history/read?id=`. All three are reads behind the same
@@ -1096,8 +1096,8 @@ matters here is the page's half:
   The check is at draw time, so a page served without that panel shows no entry at all rather than a
   button that does nothing; the two URLs it hands over are `api/turn-changes/status` and
   `api/turn-changes/file`, and the window appends `&path=<the URL-encoded path>` to `fileUrl`.
-- **Only where something can show it.** The daemon snapshots for a platform that implements
-  `attachTurnChanges`, which is this one; every chat platform skips the work for free.
+- **Only where something can show it.** The daemon snapshots for a platform that provides
+  `adapter.workbench` (`attachTurnChanges`), which is this one; every chat platform skips the work for free.
 - **One directory, two topics, is not separated.** A turn's diff is its own "before" against its
   own "after", so when two topics work in the same directory at the same time each one's diff
   contains the other's edits. Splitting them would need a barrier across agents; the honest answer

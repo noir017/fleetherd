@@ -50,7 +50,7 @@ import type {
   FilesPanelRenameResult,
   FilesPanelSearchResult,
   FilesPanelWriteResult,
-} from '../platform/adapter.js';
+} from '../platform/workbench.js';
 import { renderWebMarkdown } from '../platform/web-markdown.js';
 import { WorkspaceConflictError, type Workspace } from './workspace.js';
 

@@ -1,8 +1,4 @@
-import type {
-  ReviewPanelChange,
-  ReviewPanelEntry,
-  ReviewPanelPreference,
-} from '../../../../adapter.js';
+import type { ReviewPanelChange, ReviewPanelEntry, ReviewPanelPreference } from '../../../../workbench.js';
 import { icon } from '../../../icons.js';
 import { html, nothing, render, type TemplateResult } from '../../base/html.js';
 import { DisposableStore } from '../../base/lifecycle.js';

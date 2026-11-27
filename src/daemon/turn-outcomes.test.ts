@@ -63,8 +63,10 @@ function rig(cfg: Config, store?: ConversationStore) {
       said.push(text);
       return { address: LANE.address, messageId: 'x' };
     },
-    setActivity: (_a: ConversationAddress, activity: TopicActivity | undefined) => {
-      pushed.push(activity);
+    presence: {
+      setActivity: (_a: ConversationAddress, activity: TopicActivity | undefined) => {
+        pushed.push(activity);
+      },
     },
   } as unknown as PlatformAdapter;
   const outcomes = new TurnOutcomes({
@@ -289,7 +291,7 @@ describe('TurnOutcomes — a usage limit cools the whole agent down', () => {
         said.push([a.thread ?? '', text]);
         return { address: a, messageId: 'x' };
       },
-      setActivity: () => {},
+      presence: { setActivity: () => {} },
     } as unknown as PlatformAdapter;
     const outcomes = new TurnOutcomes({
       config: cfg,

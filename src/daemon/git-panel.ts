@@ -10,7 +10,7 @@ import type {
   GitPanel,
   GitStatusFile,
   GitStatusResult,
-} from '../platform/adapter.js';
+} from '../platform/workbench.js';
 import type { Workspace } from './workspace.js';
 
 /**

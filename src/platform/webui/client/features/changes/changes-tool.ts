@@ -1,4 +1,4 @@
-import type { GitCommitSummary, GitMode, GitStatusFile } from '../../../../adapter.js';
+import type { GitCommitSummary, GitMode, GitStatusFile } from '../../../../workbench.js';
 import { icon } from '../../../icons.js';
 import { html, nothing, render, type TemplateResult } from '../../base/html.js';
 import { DisposableStore } from '../../base/lifecycle.js';

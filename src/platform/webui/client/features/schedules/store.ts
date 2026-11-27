@@ -1,8 +1,4 @@
-import type {
-  SchedulePanelAction,
-  SchedulePanelTask,
-  SchedulePanelTaskDetail,
-} from '../../../../adapter.js';
+import type { SchedulePanelAction, SchedulePanelTask, SchedulePanelTaskDetail } from '../../../../workbench.js';
 import { Emitter, type Event } from '../../base/event.js';
 import { type Disposable } from '../../base/lifecycle.js';
 import { t as tr } from '../../i18n/index.js';

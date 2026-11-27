@@ -25,7 +25,7 @@ import type {
   InstructionsRefsResult,
   InstructionsTarget,
   InstructionsWriteResult,
-} from '../platform/adapter.js';
+} from '../platform/workbench.js';
 import { buildHarnessEnv, remoteAgentHome } from './agent-common.js';
 import { MAX_EDIT_BYTES, readForEditor } from './file-panel.js';
 import { globBase, globRegex, harnessSources, hasGlob, type HarnessSources } from './instruction-imports.js';

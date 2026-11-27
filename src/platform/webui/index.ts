@@ -29,6 +29,7 @@ import type { ConversationAddress } from '../../core/conversation.js';
 import { WORKDIR_PAGE_SIZE_MAX } from '../../core/paging.js';
 import type { MessageRef, SettingsScreen, SlashCommandSpec, WorkdirScreen } from '../../types.js';
 import { MESSAGE_KINDS, type MessageKind, type PlatformAdapter, type SendOptions } from '../adapter.js';
+import type { TopicPresence, TopicTree, WorkbenchHost } from '../workbench.js';
 import { renderWebMarkdown } from '../web-markdown.js';
 import { WebAuth, fileSessionStore } from './auth.js';
 import { loadAssets } from './assets.js';
@@ -219,10 +220,16 @@ export function createWebuiAdapter(instance: WebuiInstance, opts?: WebuiAdapterO
     plugins,
     pluginHost
   );
+  const topicOf = makeTopicOf(room, instance);
+  const topicTree = buildTopicTree(room);
+  const presence = buildTopicPresence(room, topicOf);
+  const workbench = buildWorkbenchHost(room);
   return {
     ...describe(instance),
-    ...outbound(room, instance),
-    forkThread: forkTopicThread(room),
+    topics: topicTree,
+    presence,
+    workbench,
+    ...outbound(room, topicOf),
     ...lifecycle(room, server, pluginHost),
   };
 }
@@ -530,20 +537,10 @@ type Outbound = Pick<
   | 'removeReaction'
   | 'startTyping'
   | 'stopTyping'
-  | 'setStatus'
-  | 'setPendingQueue'
-  | 'markPendingDelivered'
-  | 'setActivity'
-  | 'setOfflineMachines'
-  | 'seenAt'
-  | 'parentOf'
-  | 'childrenOf'
-  | 'hasThread'
   | 'createThread'
   | 'renameThread'
   | 'measureRendered'
   | 'fetchHistory'
-  | 'attachTurnChanges'
 >;
 
 /**
@@ -557,34 +554,10 @@ export function hasTopic(topics: { has(id: string): boolean }, address: Conversa
   return address.channel === CHANNEL && address.thread !== undefined && topics.has(address.thread);
 }
 
-/**
- * The adapter's `forkThread`: a topic forked from another (`/fork`), drawn beside its source, marked,
- * never nested. The daemon starts its session as a copy of the source's; `discard` is for when that
- * copy cannot be made, so no topic is left behind claiming to be a fork of something it holds none of.
- */
-function forkTopicThread(room: WebRoom): NonNullable<PlatformAdapter['forkThread']> {
-  return async (source, opts) => {
-    const topic = source.channel === CHANNEL && source.thread ? room.forkTopic(source.thread, opts.turn) : undefined;
-    if (!topic) throw new Error('the topic to fork is gone');
-    return {
-      address: { channel: CHANNEL, thread: topic.id },
-      title: topic.title,
-      discard: () => void room.deleteTopic(topic.id),
-    };
-  };
-}
+type TopicResolver = (address: ConversationAddress, op: string) => string;
 
-function outbound(room: WebRoom, instance: WebuiInstance): Outbound {
-  /**
-   * The topic an address names.
-   *
-   * Every outbound call has to say which room it is for, and the two ways of getting that
-   * wrong both deserve an error rather than a guess: a channel that is not this instance's
-   * (a `--channel` override on a reverse command) and a topic that no longer exists. Posting
-   * either into "the only room there is" would be the wrong kind of helpful — there is now
-   * more than one.
-   */
-  const topicOf = (address: ConversationAddress, op: string): string => {
+function makeTopicOf(room: WebRoom, instance: WebuiInstance): TopicResolver {
+  return (address, op) => {
     const where = `${address.channel}${address.thread ? `/${address.thread}` : ''}`;
     if (address.channel !== CHANNEL || !address.thread) {
       throw new Error(`[webui] ${op}: "${instance.id}" addresses topics as ${CHANNEL}/<topic id>, not ${where}`);
@@ -594,6 +567,73 @@ function outbound(room: WebRoom, instance: WebuiInstance): Outbound {
     }
     return address.thread;
   };
+}
+
+function buildTopicTree(room: WebRoom): TopicTree {
+  return {
+    parentOf: (address) => {
+      const parent = address.channel === CHANNEL && address.thread ? room.parentOf(address.thread) : undefined;
+      return parent ? { channel: CHANNEL, thread: parent } : undefined;
+    },
+    childrenOf: (address) =>
+      address.channel === CHANNEL && address.thread
+        ? room.childrenOf(address.thread).map((thread) => ({ channel: CHANNEL, thread }))
+        : [],
+    hasThread: (address) => hasTopic(room.topics, address),
+    forkThread: async (source, opts) => {
+      const topic = source.channel === CHANNEL && source.thread ? room.forkTopic(source.thread, opts.turn) : undefined;
+      if (!topic) throw new Error('the topic to fork is gone');
+      return {
+        address: { channel: CHANNEL, thread: topic.id },
+        title: topic.title,
+        discard: () => void room.deleteTopic(topic.id),
+      };
+    },
+  };
+}
+
+function buildTopicPresence(room: WebRoom, topicOf: TopicResolver): TopicPresence {
+  return {
+    setStatus: (address, status) => room.setStatus(topicOf(address, 'setStatus'), status),
+    setActivity: (address, activity) => room.setActivity(topicOf(address, 'setActivity'), activity),
+    setPendingQueue: (address, items) => room.setPendingQueue(topicOf(address, 'setPendingQueue'), items),
+    markPendingDelivered: (address, messageIds) =>
+      room.markPendingDelivered(topicOf(address, 'markPendingDelivered'), messageIds),
+    usePendingQueueActions: (actions) => room.usePendingQueueActions(actions),
+    setOfflineMachines: (machines) => room.setOfflineMachines(machines),
+    seenAt: (address) => (address.channel === CHANNEL && address.thread ? room.seenAt(address.thread) : undefined),
+  };
+}
+
+function buildWorkbenchHost(room: WebRoom): WorkbenchHost {
+  return {
+    useWorkdirLookup: (lookup) => room.useWorkdirLookup(lookup),
+    useLivenessLookup: (lookup) => room.useLivenessLookup(lookup),
+    useGitPanel: (panel) => room.useGitPanel(panel),
+    useScheduleLookup: (lookup) => room.useScheduleLookup(lookup),
+    useSchedulePanel: (panel) => room.useSchedulePanel(panel),
+    useSkillsPanel: (panel) => room.useSkillsPanel(panel),
+    useReviewPanel: (panel) => room.useReviewPanel(panel),
+    useHistoryPanel: (panel) => room.useHistoryPanel(panel),
+    useFilesPanel: (panel) => room.useFilesPanel(panel),
+    useInstructionsPanel: (panel) => room.useInstructionsPanel(panel),
+    useIdleReclaim: (reclaim) => room.useIdleReclaim(reclaim),
+    useTopicKill: (kill) => room.useTopicKill(kill),
+    useAgentCatalog: (lookup) => room.useAgentCatalog(lookup),
+    useTopicSetup: (setup) => room.useTopicSetup(setup),
+    useWorkdirBrowser: (browse) => room.useWorkdirBrowser(browse),
+    useModelPicker: (picker) => room.useModelPicker(picker),
+    useOptionPicker: (picker) => room.useOptionPicker(picker),
+    useTurnChanges: (panel) => room.useTurnChanges(panel),
+    useVoiceTranscriber: (transcriber) => room.useVoiceTranscriber(transcriber),
+    attachTurnChanges: (address, entry, reply) => {
+      if (address.channel !== CHANNEL || !address.thread) return;
+      room.attachTurnChanges(address.thread, entry, reply?.messageId);
+    },
+  };
+}
+
+function outbound(room: WebRoom, topicOf: TopicResolver): Outbound {
   const ref = (topic: string, id: string): MessageRef => ({
     address: { channel: CHANNEL, thread: topic },
     messageId: id,
@@ -605,17 +645,6 @@ function outbound(room: WebRoom, instance: WebuiInstance): Outbound {
       const kind = opts?.kind;
       const part = { own: false, html: webMessageHtml(kind, text), ...(kind ? { kind } : {}) };
       return ref(topic, room.post(topic, part, text).id);
-    },
-    /**
-     * The turn's changes, hung off the reply it just ended. Not an outbound message: the entry is
-     * a field the page draws under that one message, so this edits the room's own copy and tells
-     * the page to repaint it. `reply` is the message the turn last posted — without it (a turn that
-     * posted nothing) there is nothing to hang an entry on. Unknown or gone topics are ignored: the
-     * transcript may have been dropped between the turn and its end snapshot.
-     */
-    attachTurnChanges(address, entry, reply) {
-      if (address.channel !== CHANNEL || !address.thread) return;
-      room.attachTurnChanges(address.thread, entry, reply?.messageId);
     },
     async editMessage(r, text) {
       room.revise(topicOf(r.address, 'editMessage'), r.messageId, text);
@@ -702,36 +731,6 @@ function outbound(room: WebRoom, instance: WebuiInstance): Outbound {
       room.setTyping(topicOf(address, 'stopTyping'), false);
     },
     /**
-     * The strip above the composer. The only platform with one, because it is the only one that
-     * draws its own chrome: a chat app's composer belongs to the chat app.
-     */
-    setStatus(address, status) {
-      room.setStatus(topicOf(address, 'setStatus'), status);
-    },
-    setPendingQueue: (address, items) => room.setPendingQueue(topicOf(address, 'setPendingQueue'), items),
-    markPendingDelivered: (address, messageIds) => room.markPendingDelivered(topicOf(address, 'markPendingDelivered'), messageIds),
-    /** How a topic's last turn ended: what its row and the Needs-you list say about it. */
-    setActivity: (address, activity) => room.setActivity(topicOf(address, 'setActivity'), activity),
-    setOfflineMachines: (machines) => room.setOfflineMachines(machines),
-    /** Read, so a topic that is gone answers "never seen" rather than throwing. */
-    seenAt(address) {
-      return address.channel === CHANNEL && address.thread ? room.seenAt(address.thread) : undefined;
-    },
-    /** Topic.parent, read the same forgiving way: asked about conversations that may have gone. */
-    parentOf(address) {
-      const parent = address.channel === CHANNEL && address.thread ? room.parentOf(address.thread) : undefined;
-      return parent ? { channel: CHANNEL, thread: parent } : undefined;
-    },
-    childrenOf(address) {
-      return address.channel === CHANNEL && address.thread
-        ? room.childrenOf(address.thread).map((thread) => ({ channel: CHANNEL, thread }))
-        : [];
-    },
-    /** Asked before a daily-session run rejoins yesterday's topic: a deleted one must be reopened. */
-    hasThread(address) {
-      return hasTopic(room.topics, address);
-    },
-    /**
      * Open a topic.
      *
      * Reached from the reverse command, so an agent can file a side errand into a room of its
@@ -774,27 +773,7 @@ function lifecycle(
   PlatformAdapter,
   | 'onMessage'
   | 'onButton'
-  | 'useGitPanel'
   | 'onCommand'
-  | 'useWorkdirLookup'
-  | 'useLivenessLookup'
-  | 'useScheduleLookup'
-  | 'useSchedulePanel'
-  | 'useSkillsPanel'
-  | 'useReviewPanel'
-  | 'useHistoryPanel'
-  | 'useFilesPanel'
-  | 'useInstructionsPanel'
-  | 'useIdleReclaim'
-  | 'useTopicKill'
-  | 'useAgentCatalog'
-  | 'useTopicSetup'
-  | 'useWorkdirBrowser'
-  | 'useModelPicker'
-  | 'usePendingQueueActions'
-  | 'useOptionPicker'
-  | 'useTurnChanges'
-  | 'useVoiceTranscriber'
   | 'registerCommands'
   | 'start'
   | 'stop'
@@ -802,94 +781,6 @@ function lifecycle(
   return {
     onMessage: (handler) => room.onMessage(handler),
     onButton: (handler) => room.onButton(handler),
-    /**
-     * The one platform that implements this, because it is the one with somewhere to put the
-     * answer: the topic switcher's rows have a second line, and without this several topics
-     * open on different projects are indistinguishable there.
-     */
-    useWorkdirLookup: (lookup) => room.useWorkdirLookup(lookup),
-    /**
-     * Likewise the only implementor: a chat app's conversation list is the platform's, and this
-     * page draws its own — so it is the only one that can show that a topic which stopped talking
-     * an hour ago still has an agent behind it.
-     */
-    useLivenessLookup: (lookup) => room.useLivenessLookup(lookup),
-    /**
-     * The only implementor because it is the only platform that throws topics away by itself:
-     * a chat app's list is the platform's, and this one evicts past its cap. Read only then.
-     */
-    useScheduleLookup: (lookup) => room.useScheduleLookup(lookup),
-    /**
-     * Likewise the only implementor, and for a different reason: a chat app manages tasks through
-     * `/setting schedule`, whose menu is a message. This page has a column to put them in, so the
-     * daemon hands it the list and the four operations instead of a rendered menu.
-     */
-    useSchedulePanel: (panel) => room.useSchedulePanel(panel),
-    /**
-     * Likewise the only implementor, and for the same kind of reason: `fleetherd skills` is how a
-     * chat app manages these, and its answer is a message. This page has room for a file list, an
-     * editor and a history, so the daemon hands it the store's operations instead of a transcript
-     * of them.
-     */
-    useSkillsPanel: (panel) => room.useSkillsPanel(panel),
-    /**
-     * The only implementor, for the same kind of reason again: a chat app already gets the one line
-     * a review posts when it changed a skill, and nothing for the reviews that changed nothing.
-     * This page has a column where the whole history can be read, including the quiet ones.
-     */
-    useReviewPanel: (panel) => room.useReviewPanel(panel),
-    /**
-     * The only implementor, and the same reason once more: `fleetherd sessions list/search/read` is
-     * how a chat app reads the conversation library, and its answer is text in a message. This page
-     * has a window to put the list, the search and the transcript in.
-     */
-    useHistoryPanel: (panel) => room.useHistoryPanel(panel),
-    /**
-     * The only implementor, and the same reason once more: a chat app has no file window, and the
-     * editor's write is a write on the machine the agent runs on — off unless `files.enabled`.
-     */
-    useFilesPanel: (panel) => room.useFilesPanel(panel),
-    /**
-     * The only implementor: the settings page is where these files are listed and opened in the
-     * file window's editor — off unless `instructions.enabled`.
-     */
-    useInstructionsPanel: (panel) => room.useInstructionsPanel(panel),
-    /**
-     * The only implementor because it is the only platform that lists its conversations' agents
-     * (the dots above) and so the only one with somewhere to offer "close the idle ones".
-     */
-    useIdleReclaim: (reclaim) => room.useIdleReclaim(reclaim),
-    /**
-     * The broader half of the same seam: the row menu's "End agent" ends one topic and every topic
-     * its agent opened, mid-turn and without a second question. See WebRoom.killTopic.
-     */
-    useTopicKill: (kill) => room.useTopicKill(kill),
-    /**
-     * The only implementor because a new topic here is a blank page, with room to lay out every
-     * agent as one tap — where a chat app has a message box and the `/agent` menu's two levels.
-     */
-    useAgentCatalog: (lookup) => room.useAgentCatalog(lookup),
-    useTopicSetup: (setup) => room.useTopicSetup(setup),
-    useWorkdirBrowser: (browse) => room.useWorkdirBrowser(browse),
-    /**
-     * The only implementor because it is the only platform with a status line to put a switch
-     * in: a chat app has `/model` and its menu, which is a message.
-     */
-    useModelPicker: (picker) => room.useModelPicker(picker),
-    usePendingQueueActions: (actions) => room.usePendingQueueActions(actions),
-    useOptionPicker: (picker) => room.useOptionPicker(picker),
-    /**
-     * The only implementor because it is the only platform with a window to put a diff in: a chat
-     * app's agent reports what it changed as a message. Read-only; see `useGitPanel`.
-     */
-    useGitPanel: (panel) => room.useGitPanel(panel),
-    /**
-     * The only implementor, and the same reason once more: what a turn changed on disk is shown by
-     * opening a diff, and a chat app has neither a window for one nor a reply that could carry the
-     * link. Read-only — the records are written by the turn itself.
-     */
-    useTurnChanges: (panel) => room.useTurnChanges(panel),
-    useVoiceTranscriber: (transcriber) => room.useVoiceTranscriber(transcriber),
     /**
      * Accepted and never called.
      *

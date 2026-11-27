@@ -3,7 +3,7 @@ import type {
   SkillPanelEntry,
   SkillPanelOp,
   SkillPanelSearches,
-} from '../../../../adapter.js';
+} from '../../../../workbench.js';
 import { Emitter, type Event } from '../../base/event.js';
 import type { Disposable } from '../../base/lifecycle.js';
 import { t as tr } from '../../i18n/index.js';

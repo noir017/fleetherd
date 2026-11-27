@@ -1,4 +1,4 @@
-import type { SkillPanelEntry } from '../../../../adapter.js';
+import type { SkillPanelEntry } from '../../../../workbench.js';
 import type { FilterBarGroup, FilterBarSortDef, FilterBarState } from '../../components/index.js';
 import { t as tr } from '../../i18n/index.js';
 import { isSkillActive } from './types.js';

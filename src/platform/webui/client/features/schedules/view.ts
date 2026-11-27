@@ -1,4 +1,4 @@
-import type { SchedulePanelTask } from '../../../../adapter.js';
+import type { SchedulePanelTask } from '../../../../workbench.js';
 import { icon } from '../../../icons.js';
 import { addDisposableListener } from '../../base/dom.js';
 import { html, nothing, render, type TemplateResult } from '../../base/html.js';

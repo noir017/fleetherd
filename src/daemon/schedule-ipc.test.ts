@@ -130,7 +130,13 @@ function adapter(
     },
     ...(opts.hasThread === false
       ? {}
-      : { hasThread: (address: Sent['address']) => address.thread !== undefined && alive.has(address.thread) }),
+      : {
+          topics: {
+            parentOf: () => undefined,
+            childrenOf: () => [],
+            hasThread: (address: Sent['address']) => address.thread !== undefined && alive.has(address.thread),
+          },
+        }),
     createThread: async (ref: { address: { channel: string } }, name: string, how?: unknown) => {
       if (createError) throw new Error(createError);
       if (opts.emptyThread) return { address: { channel: ref.address.channel, thread: '' } };

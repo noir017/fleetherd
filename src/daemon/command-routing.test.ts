@@ -122,7 +122,7 @@ function rig(
     stopTyping: async () => {},
     measureRendered: (t: string) => t.length,
     // What makes a platform able to hold sub-agents (delegation.ts commandSurface); the web UI's.
-    ...(opts.nested ? { parentOf: () => undefined, childrenOf: () => [] } : {}),
+    ...(opts.nested ? { topics: { parentOf: () => undefined, childrenOf: () => [] } } : {}),
   } as unknown as PlatformAdapter;
 
   const pickerCalls: Array<{ sessionId: ConversationId; agentId: string }> = [];

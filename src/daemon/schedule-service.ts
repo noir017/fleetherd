@@ -782,7 +782,7 @@ export class ScheduleService {
     // Ask the platform whether the topic is still there when it can answer; one that cannot is
     // assumed to have kept it, which is the only honest guess a chat app allows. A platform that
     // cannot answer is caught below, when posting into the topic fails.
-    const reuse = stored?.day === day && (platform.hasThread?.(stored.address) ?? true) ? stored : undefined;
+    const reuse = stored?.day === day && (platform.topics?.hasThread(stored.address) ?? true) ? stored : undefined;
     const reused = reuse !== undefined;
 
     let key: string;

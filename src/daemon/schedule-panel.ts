@@ -20,7 +20,7 @@ import type {
   SchedulePanelRun,
   SchedulePanelTask,
   SchedulePanelTaskDetail,
-} from '../platform/adapter.js';
+} from '../platform/workbench.js';
 import type { Destination } from './schedule-service.js';
 
 /**

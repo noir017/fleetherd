@@ -1,4 +1,4 @@
-import type { SchedulePanelTask } from '../../../../adapter.js';
+import type { SchedulePanelTask } from '../../../../workbench.js';
 import { icon } from '../../../icons.js';
 import { toDisposable } from '../../base/lifecycle.js';
 import { type MenuEntry, openConfirmDialog } from '../../components/index.js';

@@ -13,7 +13,8 @@ import os from 'node:os';
 import path from 'node:path';
 
 import type { ConversationAddress, ConversationRef } from '../core/conversation.js';
-import type { PlatformAdapter, TurnChangeEntry } from '../platform/adapter.js';
+import type { PlatformAdapter } from '../platform/adapter.js';
+import type { TurnChangeEntry } from '../platform/workbench.js';
 import type { MessageRef } from '../types.js';
 import { TurnChanges, type TurnChangesOptions } from './turn-changes.js';
 import { localWorkspace, type Workspace } from './workspace.js';
@@ -74,9 +75,11 @@ function bench(o: { files?: Record<string, string>; ws?: (ws: Workspace) => Work
   const logs: string[] = [];
   const waiting: Array<() => void> = [];
   const platform = {
-    attachTurnChanges(address: ConversationAddress, entry: TurnChangeEntry, reply?: MessageRef) {
-      entries.push({ address, entry, reply });
-      waiting.shift()?.();
+    workbench: {
+      attachTurnChanges(address: ConversationAddress, entry: TurnChangeEntry, reply?: MessageRef) {
+        entries.push({ address, entry, reply });
+        waiting.shift()?.();
+      },
     },
   } as unknown as PlatformAdapter;
   const changes = new TurnChanges({
@@ -674,7 +677,7 @@ describe('turn changes: the repository it keeps', () => {
     const root = repoWith({ 'a.txt': 'one\n' });
     vi.stubEnv('HOME', root);
     try {
-      const shown = { attachTurnChanges: () => {} } as unknown as PlatformAdapter;
+      const shown = { workbench: { attachTurnChanges: () => {} } } as unknown as PlatformAdapter;
       const first = new TurnChanges({
         dir: fs.mkdtempSync(path.join(os.tmpdir(), 'turn-changes-exclude-')),
         clock: { now: () => 0 },
@@ -743,7 +746,7 @@ describe('turn changes: the repository it keeps', () => {
       keepTurns: 2,
       log: () => {},
     });
-    const shown = { attachTurnChanges: () => {} } as unknown as PlatformAdapter;
+    const shown = { workbench: { attachTurnChanges: () => {} } } as unknown as PlatformAdapter;
     for (let i = 0; i < 3; i++) {
       const handle = await changes.start(ID, REF, shown, ADDRESS);
       handle!.reply = { address: ADDRESS, messageId: `r${i}` };

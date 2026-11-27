@@ -36,7 +36,8 @@ import {
   type VoiceOutcome,
   type VoiceStatus,
 } from '../core/voice.js';
-import type { PlatformAdapter, VoiceTranscribeResult } from '../platform/adapter.js';
+import type { PlatformAdapter } from '../platform/adapter.js';
+import type { VoiceTranscribeResult } from '../platform/workbench.js';
 import type { ButtonInteraction, ConversationId, InboundMessage, MessageRef } from '../types.js';
 import { createAttachmentIngestDeps } from './attachment-io.js';
 

@@ -90,7 +90,9 @@ function rig(
       return { address: { channel: 'main', thread: `new${++threads}` } };
     },
     renameThread: async (address: ConversationAddress, name: string) => renamed.push({ to: where(address), name }),
-    setActivity: (address: ConversationAddress, a: TopicActivity | undefined) => activity.push({ to: where(address), a }),
+    presence: {
+      setActivity: (address: ConversationAddress, a: TopicActivity | undefined) => activity.push({ to: where(address), a }),
+    },
   } as unknown as PlatformAdapter;
 
   const script = [...(opts.script ?? [])];
