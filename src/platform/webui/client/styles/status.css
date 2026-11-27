@@ -14,6 +14,8 @@
    a wrapped line with a stray dot). .st-who wraps internally too so a long agent+model+account
    never overflows a narrow viewport. */
 .st-who{color:var(--fg-muted);flex-wrap:wrap;row-gap:1px;max-width:100%}
+/* Desktop keeps info segments in #status's flat flex flow; mobile promotes .st-info to row 2. */
+.st-info{display:contents}
 /* The model in the status line is a switch: /model without typing it (openModelPop). Drawn as the
    text it was with a caret and a background on hover, so the line still reads as a status line;
    the caret is what says it opens. A pseudo-element, so the line's text is still the model's. */

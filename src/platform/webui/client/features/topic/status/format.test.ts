@@ -176,4 +176,42 @@ describe('features/topic/status/format', () => {
     expect(bare).toContain('data-perm="1"');
     expect(bare).toContain('aria-expanded="true"');
   });
+
+  it('groups context, cost, cache, and quota inside .st-info and omits .st-info when absent', () => {
+    const now = 1_700_000_000_000;
+    const withInfo = statusSegments(
+      {
+        agent: 'cc',
+        model: 'opus',
+        effort: 'high',
+        context: { used: 50_000, size: 200_000 },
+        cost: { amount: 0.25, currency: 'USD' },
+        cacheExpiresAt: now + 10 * 60_000,
+        quota: [{ id: '3p-5h', remaining: 0.8, active: true }],
+      },
+      now,
+      false,
+      { fallbackOptions: [], openModel: false, openOptId: null },
+    );
+    const infoStart = withInfo.indexOf('<span class="st-info">');
+    expect(infoStart).toBeGreaterThan(-1);
+    const whoPart = withInfo.slice(0, infoStart);
+    const infoPart = withInfo.slice(infoStart);
+    expect(whoPart).toContain('st-who');
+    expect(whoPart).toContain('opus');
+    expect(whoPart).toContain('high');
+    expect(infoPart).toContain('25%');
+    expect(infoPart).toContain('$0.25');
+    expect(infoPart).toContain('cache 10m');
+    expect(infoPart).toContain('3P 5h 80%');
+
+    const settingsOnly = statusSegments(
+      { agent: 'cc', model: 'opus', effort: 'high' },
+      now,
+      false,
+      { fallbackOptions: [], openModel: false, openOptId: null },
+    );
+    expect(settingsOnly).toContain('st-who');
+    expect(settingsOnly).not.toContain('st-info');
+  });
 });
