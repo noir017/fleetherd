@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.40.0] - 2026-11-27
+
 ### Added
 
 - **Custom skill categories in the web UI, CLI, and external MCP.** Skills already stored free-form
