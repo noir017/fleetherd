@@ -2,7 +2,8 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vites
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ConversationRegistry, REMOTE_LISTING_WAIT_MS } from './conversation.js';
+import { ConversationRegistry } from './conversation.js';
+import { REMOTE_LISTING_WAIT_MS } from './conversation-controls.js';
 import { remoteHosts } from './remote-hosts.js';
 import type { RemoteHost } from '../remote/host.js';
 import { ConversationStore } from './conversation-store.js';

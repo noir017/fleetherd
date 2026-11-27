@@ -8,7 +8,7 @@ import type { PlatformAdapter } from '../platform/adapter.js';
 import type { TopicActivity } from '../types.js';
 import { TurnFailure } from './agent.js';
 import { ConversationStore } from './conversation-store.js';
-import { CARD_ITEM_CHARS } from './delegation.js';
+import { CARD_ITEM_CHARS } from './delegation-surface.js';
 import { TurnOutcomes } from './turn-outcomes.js';
 
 /**

@@ -1,13 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { InboundMessage } from '../types.js';
 import { kindForTrigger } from '../history/record.js';
-import {
-  CONTINUE_SENDER,
-  DELEGATE_SENDER,
-  SCHEDULED_SENDER,
-  UPDATE_SENDER,
-  historyTriggerOf,
-} from './turn-runner.js';
+import { historyTriggerOf } from './turn-runner.js';
+import { CONTINUE_SENDER, DELEGATE_SENDER, SCHEDULED_SENDER, UPDATE_SENDER } from './turn-senders.js';
 
 /**
  * What started a turn, from the sender the daemon puts on the batch. These strings are the wire

@@ -1,5 +1,10 @@
 import { z } from 'zod';
-import type { ToolMode as ToolModeType, TurnFailureReason } from '../types.js';
+import type {
+  Harness as HarnessType,
+  PermissionLevel as PermissionLevelType,
+  ToolMode as ToolModeType,
+  TurnFailureReason,
+} from '../types.js';
 import { PlatformConfigSchema, type PlatformInstance } from '../platform/config-schemas.js';
 import { INSTRUCTION_LAYER_RE, instructionClashes, instructionConflictMessage, isInstructionLayer } from './instructions.js';
 
@@ -53,8 +58,16 @@ void _everyReasonListed;
  * mode it puts the harness in, and whether the gateway puts the harness's requests to the person —
  * is core/permission-levels.ts.
  */
-export const PERMISSION_LEVELS = ['plan', 'ask', 'edits', 'auto', 'full'] as const;
-export type PermissionLevel = (typeof PERMISSION_LEVELS)[number];
+export const PERMISSION_LEVELS = ['plan', 'ask', 'edits', 'auto', 'full'] as const satisfies readonly PermissionLevelType[];
+type _EveryPermissionLevelListed = Exclude<PermissionLevelType, (typeof PERMISSION_LEVELS)[number]> extends never ? true : never;
+const _everyPermissionLevelListed: _EveryPermissionLevelListed = true;
+void _everyPermissionLevelListed;
+export type PermissionLevel = PermissionLevelType;
+
+export const HARNESSES = ['claude', 'gemini', 'codex', 'opencode', 'dsh', 'agy', 'custom'] as const satisfies readonly HarnessType[];
+type _EveryHarnessListed = Exclude<HarnessType, (typeof HARNESSES)[number]> extends never ? true : never;
+const _everyHarnessListed: _EveryHarnessListed = true;
+void _everyHarnessListed;
 export const LOCALES = ['en', 'zh-CN'] as const;
 export const LocaleSchema = z.enum(LOCALES);
 export type Locale = z.infer<typeof LocaleSchema>;
@@ -157,7 +170,7 @@ const AgentDefFields = z
     /** Unique id referenced by routing. */
     id: z.string().min(1),
     /** Preset; command is required when custom. */
-    harness: z.enum(['claude', 'gemini', 'codex', 'opencode', 'dsh', 'agy', 'custom']),
+    harness: z.enum(HARNESSES),
     /** Executable to launch the ACP agent when harness=custom; empty for presets (resolveHarness provides a default). */
     command: z.string().optional(),
     /** harness=custom only, in place of `command`: an ACP agent that is already running (ConnectSchema). */

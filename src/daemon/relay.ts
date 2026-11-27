@@ -3,6 +3,7 @@ import https from 'node:https';
 import type { AgentDef } from '../config/schema.js';
 import type { RelayTransform, RemoteHost } from '../remote/host.js';
 import { agyRelay } from './agy-relay.js';
+import type { HarnessRelay, RelaySpec } from './relay-types.js';
 
 /**
  * Relays: a loopback HTTP listener between an agent and its API, for a harness whose endpoint an
@@ -18,22 +19,6 @@ import { agyRelay } from './agy-relay.js';
  * A relay that cannot be opened is said in the log and the agent starts without one, on its
  * harness's own settings — a degraded agent, not a failed start.
  */
-
-export interface RelaySpec {
-  /** Names the relay; agents with the same spec share one. A safe name (remote/paths.go safeName). */
-  id: string;
-  /** Where it forwards to: https, or http on loopback (a local proxy to chain to, or a test). */
-  upstream: string;
-  /** Responses on these paths are handed to `transform` before the agent sees them. */
-  paths: readonly string[];
-  transform: RelayTransform;
-}
-
-/** A harness's use of a relay: the spec, and the variable that points the harness at it. */
-export interface HarnessRelay {
-  envVar: string;
-  spec: RelaySpec;
-}
 
 /** The relay an agent runs behind, if its harness and settings call for one. */
 export function harnessRelay(def: AgentDef): HarnessRelay | undefined {

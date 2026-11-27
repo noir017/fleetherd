@@ -1,6 +1,6 @@
 import type { ActiveSession, ClientContext, ContentBlock, SessionUpdate } from '@agentclientprotocol/sdk';
 import type { AgentDef } from '../config/schema.js';
-import type { TurnState } from './agent-acp.js';
+import type { TurnState } from './agent-acp-translate.js';
 
 /**
  * A side question (`/btw`) over ACP: ask a copy of the session, then throw the copy away.

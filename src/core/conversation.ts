@@ -1,4 +1,6 @@
 import type { SessionScope } from '../config/schema.js';
+import type { ConversationAddress, ConversationRef } from '../types.js';
+export type { ConversationAddress, ConversationKind, ConversationRef } from '../types.js';
 
 /**
  * Conversation identity — the domain type this whole gateway is organized around.
@@ -17,56 +19,6 @@ import type { SessionScope } from '../config/schema.js';
  * boundaries that genuinely need text (the persisted store key and the `--channel`
  * CLI flag), each with one tested formatter and one validating parser below.
  */
-
-/**
- * WHERE a message lives: identity, not address.
- *
- * Distinct from ConversationAddress because identity carries things the wire does
- * not need (`space`, `kind`, `user`) and routing/gating decisions read them.
- */
-export interface ConversationRef {
-  /** Platform INSTANCE id (the `platforms:` map key) — what routing `when.platform` and `access.allowFrom` match. */
-  platform: string;
-  /**
-   * The platform's real channel/chat id, always a valid API target on its own.
-   *
-   * For Discord this is the thread's own id when in a thread (a Discord thread IS a
-   * channel); for Telegram it is the chat id even inside a topic.
-   */
-  channel: string;
-  /**
-   * Sub-lane WITHIN `channel` that needs an extra wire parameter to address
-   * (Telegram `message_thread_id`, Slack `thread_ts`). Absent on platforms whose
-   * threads are channels in their own right — a Discord thread has `kind: 'thread'`
-   * but no `thread`, because `channel` already addresses it completely.
-   */
-  thread?: string;
-  /** Guild / workspace / team id, when the platform has one. Matched by routing `when.serverId`. */
-  space?: string;
-  /**
-   * Conversation kind. THE single thread/DM witness — it replaces the old separate
-   * `isDirect` + `isThread` booleans, which were derived independently of the
-   * addressing and could therefore disagree with it (a message routed as a thread
-   * but replied to as a plain channel, or the reverse).
-   */
-  kind: ConversationKind;
-  /** Sender id (part of identity under `per_user` scope; also the `access.allowFrom` subject). */
-  user: string;
-}
-
-export type ConversationKind = 'direct' | 'group' | 'thread';
-
-/**
- * WHERE to send: the subset of a ConversationRef the platform layer puts on the wire.
- *
- * Outbound paths take this rather than a whole ref, so a send cannot accidentally
- * depend on `kind` or `user` — and so an outbound-only send (one with no inbound
- * message behind it, e.g. a reverse command) is expressible without inventing them.
- */
-export interface ConversationAddress {
-  channel: string;
-  thread?: string;
-}
 
 /** Narrow a ref to the fields needed for sending. */
 export function addressOf(ref: ConversationRef): ConversationAddress {

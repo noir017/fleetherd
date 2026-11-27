@@ -5,15 +5,16 @@ import type { ConversationAddress } from '../core/conversation.js';
 import { localeOf } from '../core/i18n/index.js';
 import { tWorkflows } from '../core/i18n/workflows.js';
 import type { SoloOutcome } from '../core/inbound-merger.js';
+import { formatLaneTitle } from '../core/lane-title.js';
 import { fallbackTitle } from '../core/title-namer.js';
 import type { PlatformAdapter } from '../platform/adapter.js';
 import type { ConversationId, InboundMessage, ModelSelector, SessionOption } from '../types.js';
 import type { AgentSession } from './agent.js';
 import { expandHome, resolveAgentCwd } from './agent-common.js';
 import type { ConversationClock, ConversationContext } from './conversation-context.js';
-import { formatLaneTitle, type ConversationControls } from './conversation-controls.js';
+import type { ConversationControls } from './conversation-controls.js';
 import type { ConversationTurns } from './conversation-turns.js';
-import { DELEGATE_SENDER, SCHEDULED_SENDER } from './turn-runner.js';
+import { DELEGATE_SENDER, SCHEDULED_SENDER } from './turn-senders.js';
 
 export interface ScheduledConversationOptions {
   platform: string;

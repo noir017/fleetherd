@@ -3,7 +3,7 @@ import type { Config } from '../config/schema.js';
 import { findAgent } from '../config/schema.js';
 import { localeOf, type Locale } from '../core/i18n/index.js';
 import { tRuntime } from '../core/i18n/runtime.js';
-import { looksLikeCommand } from './routing.js';
+import { looksLikeCommand } from '../core/text-command.js';
 import { addressOf, formatTarget, sameAddress, type ConversationAddress, type ConversationRef } from '../core/conversation.js';
 import type {
   AgentCommand,
@@ -20,7 +20,7 @@ import type {
   ToolEvent,
 } from '../types.js';
 import type { PlatformAdapter } from '../platform/adapter.js';
-import { commandSurface } from './delegation.js';
+import { commandSurface } from './delegation-surface.js';
 import type { AgentFactory, AgentImage, AgentSession, AgentStreamHandlers, AgentUsage, FollowUpSink, TurnFile, TurnImage } from './agent.js';
 import { promptUndelivered } from './agent.js';
 import { promptIdOf } from './failed-input.js';
@@ -40,59 +40,15 @@ import { kindForTrigger, toolText } from '../history/record.js';
 import type { HistoryKind, HistoryTurnEnd, HistoryTurnRef, HistoryTurnStart, HistoryTrigger } from '../history/store.js';
 import type { TurnChangesHandle } from './turn-changes.js';
 import { decodeAgentImage, sendBytesAsFile } from './agent-files.js';
-
-/**
- * The sender a scheduled run's message carries (ConversationRegistry.runScheduledPrompt). Exported
- * so the one place that writes it and the ones that read it (historyTriggerOf) cannot drift apart.
- */
-export const SCHEDULED_SENDER = 'schedule';
-
-/**
- * The sender an automatic continue carries (hooks.turnFailed, see turn-outcomes.ts). Distinct from
- * SCHEDULED_SENDER on purpose: a continue is the operator's own word sent on their behalf, and the
- * library files it as one.
- */
-export const CONTINUE_SENDER = 'continue';
-
-/**
- * The sender of what another conversation's agent hands a sub-agent (task-new once the person
- * confirmed it, task-send — daemon/delegation.ts). Attended like CONTINUE_SENDER: the person is
- * there, in the topic that opened this one, and an agent whose permission level asks still asks them.
- */
-export const DELEGATE_SENDER = 'delegated';
-
-/**
- * The sender of a `[sub-agent updates]` card (daemon/delegation.ts), run as a turn in the conversation
- * that opened the sub-agents. Attended like DELEGATE_SENDER; set apart from it because such a turn
- * names nothing — it is the gateway reporting, not anyone saying what the topic is about, and a
- * `/super` topic, whose opening message is a command, would otherwise be named after the first card.
- */
-export const UPDATE_SENDER = 'sub-agent-updates';
-
-/**
- * The sender of a Reconnect turn (clicking Reconnect on a failed or interrupted turn):
- * instructs a reconnect-capable agent to resume streaming/fetching the current turn without resending input.
- */
-export const RECONNECT_SENDER = 'reconnect';
-
-/** The senders the gateway writes as. A message from any other sender is one a person typed. */
-const GATEWAY_SENDERS: ReadonlySet<string> = new Set([SCHEDULED_SENDER, CONTINUE_SENDER, DELEGATE_SENDER, UPDATE_SENDER, RECONNECT_SENDER]);
-
-/**
- * What a person's own messages put in front of an agent, as one turn's batch or a message merged into
- * a running turn (TurnRunnerDeps.recordPersonWords). Built from the person's messages alone: in a batch
- * the merger mixed with a sub-agent task, the task is the gateway's and is left out.
- *
- * `text` is the prompt as the agent read it (mergePrompt: a quoted line kept as its `(replying to: …)`
- * line, a voice message as the transcript the person confirmed), without the attachments' contents;
- * `attachments` are their names. `turn` is the library's number for the turn they went into, when it
- * was recorded.
- */
-export interface PersonWords {
-  text: string;
-  attachments: string[];
-  turn?: number;
-}
+import {
+  CONTINUE_SENDER,
+  DELEGATE_SENDER,
+  GATEWAY_SENDERS,
+  RECONNECT_SENDER,
+  SCHEDULED_SENDER,
+  UPDATE_SENDER,
+  type PersonWords,
+} from './turn-senders.js';
 
 /**
  * How much of a failed turn's reason the ❌ notice in its topic carries.
@@ -115,7 +71,7 @@ export function jobInCommand(text: string): string | undefined {
 
 /**
  * What started a turn, from the sender the daemon put on its batch. The senders are the ones
- * the gateway actually uses (SCHEDULED_SENDER and the two delegation senders above, plus the
+ * the gateway actually uses (SCHEDULED_SENDER and the two delegation senders in turn-senders.ts, plus the
  * automatic continue) — a batch that is not all one of them is a person's, which is also what a
  * mixed batch has to be: someone typed into a conversation, and whoever else wrote there wrote
  * into the same turn.

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { looksLikeCommand } from './routing.js';
+import { looksLikeCommand } from '../core/text-command.js';
 import type { ConversationId, InboundMessage, MessageRef } from '../types.js';
 
 /**

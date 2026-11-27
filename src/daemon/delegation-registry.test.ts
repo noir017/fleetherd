@@ -11,7 +11,7 @@ import type { AgentFactory, AgentSession, AgentStreamHandlers } from './agent.js
 import { TurnFailure } from './agent.js';
 import { readPromptRefusal } from './session-failure.js';
 import type { InboundMessage, SessionOption, TopicActivity } from '../types.js';
-import type { PersonWords } from './turn-runner.js';
+import type { PersonWords } from './turn-senders.js';
 
 /**
  * The turn-outcome and sub-agent wiring through a real registry, merger and turn runner, with a fake

@@ -5,13 +5,14 @@ import { formatTarget, parseTarget, type ConversationAddress } from '../core/con
 import type { Locale } from '../core/i18n/index.js';
 import { localeOf } from '../core/i18n/index.js';
 import { tWorkflows } from '../core/i18n/workflows.js';
-import { stopInputNote } from '../core/inbound-merger.js';
+import { stopInputNote, type SoloOutcome } from '../core/inbound-merger.js';
+import { subjectOf } from '../core/lane-title.js';
 import { formatRuntimeFooter } from '../core/runtime-footer.js';
-import type { CommandSurface } from '../core/command-translate.js';
 import { LINE_MAX, topicStage } from '../core/topic-stage.js';
 import { READ_CHAR_BUDGET, type HistoryReadOptions, type HistoryStore, type HistoryTurnRow } from '../history/store.js';
 import type {
   IpcAction,
+  ListChannelsResult,
   TaskActionResult,
   TaskAgentDetail,
   TaskAgentRow,
@@ -24,11 +25,20 @@ import type {
   TaskVerdict,
 } from '../ipc/protocol.js';
 import type { PlatformAdapter } from '../platform/adapter.js';
-import type { AgentStatus, ConversationId, TopicActivity, TopicKillResult, TopicStage } from '../types.js';
+import type {
+  AgentStatus,
+  ConversationId,
+  InboundMessage,
+  ModelSelector,
+  SessionOption,
+  TopicActivity,
+  TopicKillResult,
+  TopicStage,
+} from '../types.js';
+import { CARD_ITEM_CHARS, CARD_TOTAL_CHARS, commandSurface } from './delegation-surface.js';
 import type { GitHead } from './git-head.js';
 import type { LiveTurn } from './turn-progress.js';
-import type { ConversationRegistry } from './conversation.js';
-import { UPDATE_SENDER, type PersonWords } from './turn-runner.js';
+import { UPDATE_SENDER, type PersonWords } from './turn-senders.js';
 
 /**
  * Sub-agents: an agent in one conversation hands parts of its job to other agents, each in a topic
@@ -125,18 +135,6 @@ export const PROPOSAL_TIMEOUT_MS = 24 * 60 * 60 * 1000;
 export const CARD_DELAY_MS = 5_000;
 
 /**
- * How much of one finished reply, question or error an update card carries, and how much it carries
- * across a burst (several sub-agents' news is one card).
- *
- * A review worth acting on is a few thousand characters, and the card exists so the parent agent
- * does not have to open the topic to get its conclusion; an excerpt that stops before the verdict
- * is worse than no card. An entry longer than its budget is cut, and the cut states its full length
- * and where the rest is read (quotedBlock), so a truncated review cannot pass for a short one.
- */
-export const CARD_ITEM_CHARS = 4_000;
-export const CARD_TOTAL_CHARS = 8_000;
-
-/**
  * How much of what the person wrote in a sub-agent's topic one card entry carries, above the result.
  * Less than a reply's CARD_ITEM_CHARS: the reply is what the parent acts on, the person's words are
  * what it needs to read that reply right, and a pasted log should not crowd the reply off the card.
@@ -182,50 +180,82 @@ const STATUS_REPLY_CHARS = 600;
 const READ_FULL_CHARS = 20_000;
 const READ_TOTAL_CHARS = 80_000;
 
-/**
- * Whether a platform can hold sub-agents: the relation is the platform's own record of which topic
- * opened which (`parentOf`/`childrenOf`), so one without it has nowhere to put them. The one test,
- * shared by the refusal of a task command here, the slash menu (`/super` is registered only where
- * this is true) and the refusal of a typed `/super` (ConversationRegistry.refusedForNesting).
- */
-export function commandSurface(adapter: Pick<PlatformAdapter, 'parentOf' | 'childrenOf'>): CommandSurface {
-  return { nested: Boolean(adapter.parentOf && adapter.childrenOf) };
+/** Narrow port over ConversationRegistry; satisfied structurally at wiring time. */
+export interface DelegationRegistry {
+  openTask: (opts: {
+    platform: string;
+    parent: ConversationAddress;
+    agentId: string;
+    text: string;
+    header: string;
+    cwd?: string;
+    title?: string;
+    model?: string;
+    options?: Record<string, string>;
+    forward?: { heading: string; text: string };
+  }) => Promise<{ key: ConversationId; address: ConversationAddress; title: string }>;
+  handTo: (
+    key: ConversationId,
+    platformId: string,
+    address: ConversationAddress,
+    text: string,
+    header: string,
+    opts?: { queue?: boolean; forward?: { heading: string; text: string } }
+  ) => Promise<'started' | 'joined' | 'queued'>;
+  isBusy: (key: ConversationId) => boolean;
+  isAsking: (key: ConversationId) => boolean;
+  workdirChoices: (agentId: string) => { root: string; dirs: string[] } | undefined;
+  listChannels: (opts: { platform?: string; query?: string; limit: number; currentKey?: ConversationId }) => ListChannelsResult;
+  conversationAt: (platform: string, address: ConversationAddress) => { key: ConversationId; agent?: string } | undefined;
+  laneFor: (key: ConversationId) => { address: ConversationAddress; platformId: string } | undefined;
+  activityOf: (id: ConversationId) => TopicActivity | undefined;
+  replyOf: (id: ConversationId) => { text: string; total: number; turn?: number } | undefined;
+  failureOf: (id: ConversationId) => { text: string; total: number; turn?: number } | undefined;
+  coolingDown: (agentId: string) => boolean;
+  progressOf: (id: ConversationId) => LiveTurn | undefined;
+  runningSince: (id: ConversationId) => number | undefined;
+  statusOf: (id: ConversationId) => AgentStatus | undefined;
+  stopConversation: (id: ConversationId) => 'running' | 'collecting' | 'background' | 'idle';
+  interruptConversation: (id: ConversationId) => {
+    outcome: 'running' | 'collecting' | 'background' | 'idle';
+    kept: InboundMessage[];
+    dropped: InboundMessage[];
+  };
+  stopWithPending: (
+    key: ConversationId,
+    reason: string
+  ) => {
+    outcome: 'running' | 'collecting' | 'background' | 'idle';
+    kept: InboundMessage[];
+    dropped: InboundMessage[];
+    calledOff: number;
+    transcripts: number;
+  };
+  killConversation: (id: ConversationId) => 'running' | 'collecting' | 'background' | 'idle' | 'no-child' | 'unresumable';
+  runScheduledPrompt: (opts: {
+    key: ConversationId;
+    platform: string;
+    address: ConversationAddress;
+    agentId: string;
+    prompt: string;
+    user?: string;
+  }) => Promise<SoloOutcome | { refused: string }>;
+  workdirOf: (id: ConversationId, agentId?: string) => string | undefined;
+  boundAgentOf: (key: ConversationId) => string | undefined;
+  conversationTitle: (key: ConversationId) => string | undefined;
+  scheduledChoicesProblem: (
+    agentId: string,
+    choice: { model?: string; options?: Record<string, string> },
+    from: ConversationId | undefined
+  ) => Promise<string | undefined>;
+  agentLists: (agentId: string) => Promise<{ models?: ModelSelector; settings?: SessionOption[]; error?: string }>;
+  runningOn: (agentId: string) => number;
 }
-
-type Registry = Pick<
-  ConversationRegistry,
-  | 'openTask'
-  | 'handTo'
-  | 'isBusy'
-  | 'isAsking'
-  | 'workdirChoices'
-  | 'listChannels'
-  | 'conversationAt'
-  | 'laneFor'
-  | 'activityOf'
-  | 'replyOf'
-  | 'failureOf'
-  | 'coolingDown'
-  | 'progressOf'
-  | 'runningSince'
-  | 'statusOf'
-  | 'stopConversation'
-  | 'interruptConversation'
-  | 'stopWithPending'
-  | 'killConversation'
-  | 'runScheduledPrompt'
-  | 'workdirOf'
-  | 'boundAgentOf'
-  | 'conversationTitle'
-  | 'scheduledChoicesProblem'
-  | 'agentLists'
-  | 'runningOn'
->;
 
 export interface DelegationDeps {
   config: Config;
   platforms: Map<string, PlatformAdapter>;
-  registry: Registry;
+  registry: DelegationRegistry;
   clock: { now(): number; schedule(fn: () => void, ms: number): () => void };
   /**
    * The conversation library `task-read` reads. Absent means no `history.db` (a Node without
@@ -2502,15 +2532,6 @@ function describeStage(stage: TopicStage, locale: Locale = 'en'): string {
       return String(_exhaustive);
     }
   }
-}
-
-/**
- * A topic's name without the `[agent] ` its lane title starts with (core formatLaneTitle), and with no
- * square brackets left: it is handed to an agent that writes it as link text, `[title](?t=…)`, and
- * the web UI's markdown does not take brackets inside link text. The agent is a column of its own.
- */
-export function subjectOf(title: string): string {
-  return title.replace(/^\[[^\]]*\]\s*/, '').replace(/[[\]]/g, '');
 }
 
 /**

@@ -17,7 +17,7 @@ import { turnFailureReason } from './agent.js';
 import { resolveConversationCwd } from './agent-common.js';
 import { runTurnFailedHook } from './agent-hooks.js';
 import type { ConversationStore } from './conversation-store.js';
-import { CARD_ITEM_CHARS } from './delegation.js';
+import { CARD_ITEM_CHARS } from './delegation-surface.js';
 import type { TurnEnd } from './turn-runner.js';
 
 /** An agent's `hooks.turnFailed.continue` policy, as parsed. */

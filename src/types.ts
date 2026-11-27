@@ -2,8 +2,47 @@
  * Domain types shared across modules. Data shapes only; behavior lives in each module.
  */
 
-import type { ConversationAddress, ConversationRef } from './core/conversation.js';
-import type { PermissionLevel } from './config/schema.js';
+export type ConversationKind = 'direct' | 'group' | 'thread';
+
+/**
+ * WHERE a message lives: identity, not address.
+ * Carries routing/gating fields (`space`, `kind`, `user`) that outbound wire addressing does not need.
+ */
+export interface ConversationRef {
+  /** Platform INSTANCE id (the `platforms:` map key) — what routing `when.platform` and `access.allowFrom` match. */
+  platform: string;
+  /** Real channel/chat id (valid API target on its own): the thread's own id when in a Discord thread; still chat id inside a Telegram topic. */
+  channel: string;
+  /**
+   * Sub-lane needing an extra wire param (Telegram `message_thread_id`, Slack `thread_ts`).
+   * Absent when threads are channels: a Discord thread has `kind: 'thread'` with no `thread` (`channel` addresses it).
+   */
+  thread?: string;
+  /** Guild / workspace / team id, when the platform has one. Matched by routing `when.serverId`. */
+  space?: string;
+  /** Single thread/DM witness for routing and gating. */
+  kind: ConversationKind;
+  /** Sender id (part of identity under `per_user` scope; also the `access.allowFrom` subject). */
+  user: string;
+}
+
+/** WHERE to send: the subset of ConversationRef the platform layer puts on the wire. */
+export interface ConversationAddress {
+  channel: string;
+  thread?: string;
+}
+
+/**
+ * Agent permission tiers, from most to least asked (`agents[].permissions`).
+ * Semantics live in core/permission-levels.ts; config/schema.ts mirrors this union with `satisfies`.
+ */
+export type PermissionLevel = 'plan' | 'ask' | 'edits' | 'auto' | 'full';
+
+/**
+ * Supported agent harness presets (`agents[].harness`), plus `'custom'` for arbitrary ACP commands.
+ * config/schema.ts mirrors this union with `satisfies`.
+ */
+export type Harness = 'claude' | 'gemini' | 'codex' | 'opencode' | 'dsh' | 'agy' | 'custom';
 
 /**
  * A platform-agnostic message reference, usable for in-place edit / reaction / reply.
