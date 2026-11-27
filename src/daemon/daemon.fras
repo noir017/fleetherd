@@ -32,7 +32,7 @@ src/daemon/harness/codex.ts [Core]: F:Codex harness profile (launch, review isol
 src/daemon/harness/custom.ts [Core]: F:Custom harness profile (CodeBuddy skills/instructions, Cursor capability meta, operator-args review isolation) | R:src/daemon/harness/profile.ts | A:customProfile
 src/daemon/harness/dsh.ts [Core]: F:DeepSeek Harness profile (launch, JSON tuple model codec, operator-args review isolation) | R:src/daemon/harness/profile.ts | A:dshProfile,dshModelSelectorValue,dshModelDisplayValue
 src/daemon/harness/gemini.ts [Core]: F:Gemini CLI harness profile (launch, operator-args review isolation, doctor) | R:src/daemon/harness/profile.ts | A:geminiProfile
-src/daemon/harness/index.ts [Core]: F:Exhaustive harness profile registry and dispatch helpers | R:src/daemon/harness/profile.ts | A:HARNESSES,harnessProfile,SKILL_READERS,harnessSources
+src/daemon/harness/index.ts [Core]: F:Exhaustive harness profile registry and dispatch helpers | R:src/daemon/harness/profile.ts | A:HARNESS_PROFILES,harnessProfile,SKILL_READERS,harnessSources
 src/daemon/harness/opencode.ts [Core]: F:OpenCode harness profile (launch, review isolation, log probe, configured skill dirs) | R:src/daemon/harness/profile.ts | A:opencodeProfile,parseOpencodeLog,opencodeSkillDirs,remoteOpencodeSkillDirs | S:See Security invariants item 8
 src/daemon/harness/profile.ts [Core]: F:HarnessProfile seam interface, ReviewIsolation/Doctor types, and agentHome helper | A:HarnessProfile,ReviewIsolation,HarnessDoctor,SkillHome,HarnessSources,agentHome
 src/daemon/pod-admin.ts [Edge]: F:Host entry and SSH key management | A:addPod,removePod | S:See Security invariants item 5

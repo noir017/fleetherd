@@ -3,7 +3,7 @@ import { join } from 'node:path';
 
 import type { AgentDef } from '../config/schema.js';
 import type { RemoteHost } from '../remote/host.js';
-import { HARNESSES } from './harness/index.js';
+import { HARNESS_PROFILES } from './harness/index.js';
 
 /**
  * Where a harness keeps the skills its operator installed, read straight off disk.
@@ -102,7 +102,7 @@ export function skillDirsFor(
   def: AgentDef | undefined,
   opts: { home: string; cwd: string; configured?: readonly string[] }
 ): string[] {
-  const dirs = def ? HARNESSES[def.harness].skillScanDirs(opts) : [];
+  const dirs = def ? HARNESS_PROFILES[def.harness].skillScanDirs(opts) : [];
   // A conversation that never used /cd sits in the agent's own cwd, so a harness's home-level and
   // project-level paths can be the same directory (claude's two, agy's first two — and on a machine
   // whose trusted workspace is the home directory, agy's are the same path by construction);

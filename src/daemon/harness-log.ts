@@ -2,7 +2,7 @@ import { open } from 'node:fs/promises';
 
 import type { AgentDef } from '../config/schema.js';
 import type { RemoteHost } from '../remote/host.js';
-import { HARNESSES } from './harness/index.js';
+import { HARNESS_PROFILES } from './harness/index.js';
 import { agentHome, type HarnessLogEvent, type HarnessLogProbe } from './harness/profile.js';
 import { remoteAgentHome } from './agent-common.js';
 import { remoteHosts } from './remote-hosts.js';
@@ -58,7 +58,7 @@ const TAIL_BYTES = 256 * 1024;
 
 /** Whether this harness keeps a log worth asking, i.e. whether the in-turn poll should run at all. */
 export function harnessLogProbe(harness: Harness): HarnessLogProbe | undefined {
-  return HARNESSES[harness].logProbe;
+  return HARNESS_PROFILES[harness].logProbe;
 }
 
 /**

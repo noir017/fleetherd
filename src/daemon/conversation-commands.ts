@@ -1,6 +1,7 @@
 import type { AgentDef } from '../config/schema.js';
 import { agentDisplayName, findAgent } from '../config/schema.js';
-import { HARNESSES } from './harness/index.js';
+import { HARNESS_FACTS } from '../core/harness-facts.js';
+import { HARNESS_PROFILES } from './harness/index.js';
 import { tMenus } from '../core/i18n/menus.js';
 import { configDir, readRawConfigIfExists } from '../config/load.js';
 import { podAgentModels, readPods } from '../config/pods.js';
@@ -675,7 +676,7 @@ export class ConversationCommands {
     msg: InboundMessage,
     forward: (m: InboundMessage) => void
   ): boolean {
-    const option = def && HARNESSES[def.harness].deferUnknownOptions ? customOptionFor(parsed.name) : undefined;
+    const option = def && HARNESS_FACTS[def.harness].passthroughCommands ? customOptionFor(parsed.name) : undefined;
     if (!option || this.declaresOption(key, state.agentId, option) !== undefined) return false;
     void this.deferCustomCommand(key, state, parsed, msg, forward);
     return true;
@@ -878,7 +879,7 @@ export class ConversationCommands {
         );
     };
     const own = name === 'usage' && def?.quotaCommand !== undefined;
-    if (!def || (!own && !HARNESSES[def.harness].hasBuiltinCli)) {
+    if (!def || (!own && HARNESS_FACTS[def.harness].cliAnsweredCommands.length === 0)) {
       reply(tMenus(locale, 'cmd_harness_cli_outside', { label, name }));
       return;
     }
@@ -906,7 +907,7 @@ export class ConversationCommands {
       if (!state.turnCompleted) {
         return tMenus(locale, 'cmd_context_no_numbers');
       }
-      const fix = def ? (HARNESSES[def.harness].contextMissingHint ?? '') : '';
+      const fix = def ? (HARNESS_PROFILES[def.harness].contextMissingHint ?? '') : '';
       return tMenus(locale, 'cmd_context_not_reported', { name, fix });
     }
     const line = formatRuntimeFooter(

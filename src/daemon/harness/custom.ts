@@ -28,7 +28,6 @@ export const customProfile: HarnessProfile = {
     command: (def) => def.command ?? '(custom harness: no command configured)',
   },
   setup: { promptCommand: true },
-  deferUnknownOptions: true,
   // CodeBuddy Code, by the last segment of its command, has its own skills directory.
   skillHomes: (home, command) => (isCodebuddyCommand(command) ? codebuddySkillHomes(home) : []),
   skillReaders: [{ name: 'codebuddy', homes: codebuddySkillHomes }],

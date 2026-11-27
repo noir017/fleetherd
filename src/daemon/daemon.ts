@@ -33,7 +33,7 @@ import {
   scanSkillDirs,
   skillDirsFor,
 } from './skills-scan.js';
-import { HARNESSES } from './harness/index.js';
+import { HARNESS_PROFILES } from './harness/index.js';
 import { agentHome } from './harness/profile.js';
 import { withOutboundPacing } from './paced-adapter.js';
 import type {
@@ -830,13 +830,13 @@ export class Daemon {
       const home = remoteAgentHome(def, w);
       const cwd = expandRemoteHome(resolveConversationCwd(def, conversationId, this.store), w.home);
       const env = remoteAgentEnv(def);
-      const configured = (await HARNESSES[def.harness].remoteConfiguredSkillDirs?.(host, home, env)) ?? [];
+      const configured = (await HARNESS_PROFILES[def.harness].remoteConfiguredSkillDirs?.(host, home, env)) ?? [];
       const dirs = skillDirsFor(def, { home, cwd, configured });
       return { dirs, found: await scanRemoteSkillDirs(host, dirs) };
     }
     const home = agentHome(def);
     const cwd = def ? resolveConversationCwd(def, conversationId, this.store) : home;
-    const configured = (def ? await HARNESSES[def.harness].configuredSkillDirs?.(home, process.env) : undefined) ?? [];
+    const configured = (def ? await HARNESS_PROFILES[def.harness].configuredSkillDirs?.(home, process.env) : undefined) ?? [];
     const dirs = skillDirsFor(def, { home, cwd, configured });
     return { dirs, found: await scanSkillDirs(dirs) };
   }

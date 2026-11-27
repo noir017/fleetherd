@@ -11,7 +11,7 @@ import { defaultIdentityFile, defaultKnownHostsFile } from '../daemon/ssh-identi
 import { gitAsync, gitAvailable } from '../daemon/skills-git.js';
 import { gitSshCommand, redactRepoUrl, skillsRemoteOf } from '../daemon/skills-repo.js';
 import { isLegacyConfig, migrateLegacyConfig } from '../config/migrate.js';
-import { HARNESSES } from '../daemon/harness/index.js';
+import { HARNESS_PROFILES } from '../daemon/harness/index.js';
 import type { DoctorCheck } from '../daemon/harness/profile.js';
 import { remoteAgentEnv } from '../daemon/agent-common.js';
 import { hostProbeScript, readHostProbe, type HostProbe } from '../daemon/host-probe.js';
@@ -93,7 +93,7 @@ function expandLocal(p: string): string {
 }
 
 function harnessCommand(def: import('../config/schema.js').AgentDef): string {
-  return HARNESSES[def.harness].doctor.command(def);
+  return HARNESS_PROFILES[def.harness].doctor.command(def);
 }
 
 /**
@@ -314,7 +314,7 @@ function buildRuntimeChecks(ctx: DoctorContext): Check[] {
             lines.push(tCli(locale, 'doctor.detail.agentConnect', { id: def.id, url: def.connect.url }));
             continue;
           }
-          const doc = HARNESSES[def.harness].doctor;
+          const doc = HARNESS_PROFILES[def.harness].doctor;
           const cmd = doc.command(def);
           const auth = doc.authNote?.(def, locale) ?? '';
           const found = doc.checkLocal ? doc.checkLocal(cmd, locateCommand) : Boolean(locateCommand(cmd));
@@ -378,7 +378,7 @@ function buildHostAndStoreChecks(ctx: DoctorContext): Check[] {
         }
       },
     },
-    ...Object.values(HARNESSES).flatMap((p) => p.doctor.extraChecks?.({ cfg, locale }) ?? []),
+    ...Object.values(HARNESS_PROFILES).flatMap((p) => p.doctor.extraChecks?.({ cfg, locale }) ?? []),
     {
       name: tCli(locale, 'doctor.check.ipcSocket'),
       run: async () => {

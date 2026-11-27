@@ -9,9 +9,15 @@ import { agyReferences, agyRuleNote, resolveAgyReference } from '../instruction-
 import type { HarnessProfile, SkillHome } from './profile.js';
 
 /**
- * Explicit permission-class deny list for `agy -p --settings` review isolation (AGENTS.md invariant 8).
- * Measured on agy 1.5.0/1.5.2 (2026-11-04/07): `deny: ["*"]` denies nothing (literal class name) and
- * `agy acp` ignores `--settings`, so every class must be listed explicitly on `agy -p`.
+ * Every permission class the CLI knows, denied. `"*"` is NOT a wildcard here — measured on agy
+ * 1.5.0, `deny: ["*"]` matched nothing and `write_file` still wrote a file — so each class is
+ * named. The reviewer reads nothing and writes nothing: everything it needs is in the prompt.
+ *
+ * An unknown class in this list is ignored by the CLI (it logs "ignoring invalid deny entry"), so
+ * adding one costs nothing; a NEW tool class in a future agy is not covered, which is why the
+ * security note in AGENTS.md calls this list part of the contract. On agy 1.5.2 (2026-11-07)
+ * `list_dir`, `search`, `url` and `browser` are such unknown entries: listing, searching and
+ * fetching all went through `run_command` and `read_file` instead, and were denied there.
  */
 export const AGY_NO_TOOLS = JSON.stringify({
   permissions: {
@@ -45,15 +51,16 @@ export const agyProfile: HarnessProfile = {
       def.env?.AGY_LLM_GATEWAY_URL ? tCli(locale, 'doctor.auth.agyGateway') : tCli(locale, 'doctor.auth.agyKeyring'),
   },
   splitModelOption: agySplitModel,
-  // Measured on agy 1.5.1: session/load and session/resume answer on agy's default model.
+  // Measured on agy 1.5.1: `gpt-oss-120b-medium` came back from `session/load` and `session/resume`
+  // on `gemini-3.8-flash-high`, so the configured model must be re-applied after every load.
   forgetsModelOnLoad: true,
-  // Measured 2026-11-06/18: agy's `default` mode writes without asking, so permission levels stay ask/auto only.
-  omitPermissionModes: true,
-  // Measured 2026-11-14 on agy 1.5.8: unadvertised prompt queueing mid-turn.
+  // Measured 2026-11-14 on agy 1.5.8 (project-scripts/agy-bg-probe/probe-hold.mjs): accepts a
+  // second `session/prompt` mid-turn at tool boundaries without advertising `promptQueueing`.
+  // ⚠️ HYRUM'S LAW: unadvertised behaviour. If a release refuses a second prompt like opencode
+  // does, the turn fails with that refusal in chat; this is the line to take out.
   takesPromptMidTurn: true,
   usesAgyTurnWatch: true,
   hasBuiltinQuota: true,
-  hasBuiltinCli: true,
   contextMissingHint:
     ' agy reports usage once per turn, summed over every model call in it, so after a turn that ran tools the count comes from its transcript on the agent\'s machine, and is missing when that cannot be read; and agy never says how big its window is, so the daemon measures the context against where agy compacts, which it knows for the models it was measured on (Gemini 3.8 Flash, Claude Sonnet/Opus 4.6, GPT-OSS 120B) — any other model shows no numbers.',
   relay: agyRelay,

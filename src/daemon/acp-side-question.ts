@@ -1,6 +1,7 @@
 import type { ActiveSession, ClientContext, ContentBlock, SessionUpdate } from '@agentclientprotocol/sdk';
 import type { AgentDef } from '../config/schema.js';
 import type { TurnState } from './agent-acp-translate.js';
+import { HARNESS_PROFILES } from './harness/index.js';
 
 /**
  * A side question (`/btw`) over ACP: ask a copy of the session, then throw the copy away.
@@ -28,7 +29,7 @@ import type { TurnState } from './agent-acp-translate.js';
  *   codex-acp 2.5.0          The fork is live at once; resume is accepted and changes nothing.
  *   opencode 2.2.5           Answers, but the copy carries on with the TURN IN PROGRESS as well: it
  *                            re-ran the running turn's shell command and answered both. Twice, at 1.5 s
- *                            and at 8 s into the turn. See FORK_CARRIES_ON_RUNNING_TURN.
+ *                            and at 8 s into the turn. See `forkCarriesOnRunningTurn` in `harness/opencode.ts`.
  *
  * `session/fork` is still marked UNSTABLE in ACP 0.29.0's schema, which is one more reason the
  * capability is read off `initialize` every time rather than assumed from the harness's name.
@@ -55,15 +56,6 @@ export function forkSupportOf(init: { agentCapabilities?: { sessionCapabilities?
 }
 
 /**
- * Harnesses whose fork, taken while a turn runs, carries on with that turn: the copy holds the
- * unanswered message and the model answers it too — running its commands a second time. A side
- * question there waits for the turn to end rather than risk that; between turns there is nothing in
- * flight to copy. Measured, not guessed (see the header): opencode 2.2.5 did it both times, claude
- * and codex never.
- */
-export const FORK_CARRIES_ON_RUNNING_TURN: ReadonlySet<AgentDef['harness']> = new Set(['opencode']);
-
-/**
  * Why a side question cannot be asked of a live child, in words for the user — or undefined when it
  * can. Asked once the child is up, since both answers come from its `initialize`.
  */
@@ -74,7 +66,7 @@ export function sideQuestionRefusal(
   turnRunning: boolean
 ): string | undefined {
   if (!support.fork) return `${agentId} does not support /btw: its agent declares no session/fork, which a side question is asked on.`;
-  if (turnRunning && FORK_CARRIES_ON_RUNNING_TURN.has(harness)) {
+  if (turnRunning && HARNESS_PROFILES[harness].forkCarriesOnRunningTurn) {
     return `${agentId} cannot take /btw while a turn runs: on ${harness}, a fork taken mid-turn carries on with that turn too and repeats its commands. Ask again when this turn ends.`;
   }
   return undefined;
