@@ -1,4 +1,5 @@
 import { PERMISSION_LEVELS, type AgentDef, type PermissionLevel } from '../config/schema.js';
+import { FULL_ACCESS_MODES, PERMISSION_LEVEL_MODES } from './harness-facts.js';
 import type { Locale } from './i18n/index.js';
 import { tSettings } from './i18n/settings.js';
 
@@ -47,57 +48,29 @@ import { tSettings } from './i18n/settings.js';
 interface LevelSpec {
   /** Whether the gateway puts the harness's permission requests to the person. Otherwise it approves. */
   asks: boolean;
-  /** The session modes that mean this level, by the ids harnesses report; the first one offered wins. */
-  modes: readonly string[];
   /** What the level does, in the clause a settings screen shows under its name. */
   detail: string;
 }
 
-/**
- * Where `auto` puts a session: the mode in which the harness acts on what the gateway answers —
- * asks, and is approved — rather than deciding on its own. claude's and CodeBuddy's standard mode;
- * codex's workspace-write rather than its standard `agent`, whose own reviewer refused the edit and
- * the command (measured above); opencode's standard `build`. An explicit level, so a session that a
- * level moved goes back: opencode keeps a session's mode across `session/load`, and a session left
- * in `plan` would otherwise come back in it.
- */
-const AUTO_MODES = ['default', 'workspace-write', 'build'] as const;
-
-/**
- * The modes that mean `full`, for an agent with no level set: they ask nothing at all, so the
- * gateway's approving half never gets to matter. `fullAccess` is CodeBuddy's own spelling of the
- * same thing, kept out of LEVELS.full.modes so `full` means `bypassPermissions` wherever both exist
- * (the comment there), but a pinned `options.mode: fullAccess` is still a session in full access.
- */
-const FULL_LEVEL_MODES: readonly string[] = ['bypassPermissions', 'agent-full-access', 'fullAccess'];
-
 const LEVELS: Record<PermissionLevel, LevelSpec> = {
   plan: {
     asks: true,
-    modes: ['plan'],
     detail: 'it plans before it acts, and whatever it asks to do waits for your OK',
   },
   ask: {
     asks: true,
-    // claude and CodeBuddy start here; codex's read-only asks before every write.
-    modes: ['default', 'read-only'],
     detail: 'edits and commands wait for your OK',
   },
   edits: {
     asks: true,
-    modes: ['acceptEdits', 'workspace-write'],
     detail: 'edits in its working directory go through; commands wait for your OK',
   },
   auto: {
     asks: false,
-    modes: AUTO_MODES,
     detail: 'whatever it asks to do is approved',
   },
   full: {
     asks: false,
-    // CodeBuddy offers `fullAccess` too, which also skips its dangerous-command checks; the
-    // claude-spelled one comes first so the same word means the same thing on both.
-    modes: ['bypassPermissions', 'agent-full-access'],
     detail: 'its no-prompt mode: nothing is asked, and no sandbox',
   },
 };
@@ -123,7 +96,7 @@ export function levelMode(
   pinned?: string
 ): string | undefined {
   if (level === undefined) return undefined;
-  const candidates = level === 'auto' && pinned !== undefined ? [pinned] : LEVELS[level].modes;
+  const candidates = level === 'auto' && pinned !== undefined ? [pinned] : PERMISSION_LEVEL_MODES[level];
   return candidates.find((m) => offered.includes(m));
 }
 
@@ -136,7 +109,10 @@ export function levelMode(
  */
 export function offeredLevels(offered: readonly string[]): PermissionLevel[] {
   return PERMISSION_LEVELS.filter(
-    (l) => l === 'auto' || (l === 'ask' && offered.length === 0) || LEVELS[l].modes.some((m) => offered.includes(m))
+    (l) =>
+      l === 'auto' ||
+      (l === 'ask' && offered.length === 0) ||
+      PERMISSION_LEVEL_MODES[l].some((m) => offered.includes(m))
   );
 }
 
@@ -200,7 +176,7 @@ export function unsetLevel(def: Pick<AgentDef, 'options'>, current?: string): Un
   const pinned = def.options['mode'];
   const mode = current ?? (pinned === undefined ? undefined : String(pinned));
   const from: UnsetLevelSource = current !== undefined ? 'session' : pinned !== undefined ? 'pin' : 'none';
-  return { level: mode !== undefined && FULL_LEVEL_MODES.includes(mode) ? 'full' : 'auto', from };
+  return { level: mode !== undefined && FULL_ACCESS_MODES.includes(mode) ? 'full' : 'auto', from };
 }
 
 /**
