@@ -207,6 +207,11 @@ export class EditorGroup implements Disposable {
         this._onDidFocus.fire();
       }),
     );
+    this._disposables.add(
+      addDisposableListener(this.element, 'focusin', () => {
+        if (!this._disposed) this._onDidFocus.fire();
+      }),
+    );
 
     this._renderHeader();
   }

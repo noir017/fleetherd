@@ -959,6 +959,32 @@ describe('webui server: topics', () => {
     stream.close();
   });
 
+  it('multiplexes multiple topics over one /api/events stream when repeated t= params are given', async () => {
+    const { base, port, room, topic } = await boot();
+    const cookie = await signIn(base);
+    const other = room.createTopic('other').id;
+    const third = room.createTopic('third').id;
+    const stream = await openStream(port, topic, cookie, undefined, `&t=${other}`);
+    let initial = '';
+    for (let i = 0; i < 4 && (!initial.includes(`"topic":"${topic}"`) || !initial.includes(`"topic":"${other}"`)); i += 1) {
+      initial += await stream.next();
+    }
+    expect(initial).toContain(`"topic":"${topic}"`);
+    expect(initial).toContain(`"topic":"${other}"`);
+
+    room.post(topic, { own: false, html: '<p>alpha-live</p>' }, 'alpha-live');
+    room.post(other, { own: false, html: '<p>beta-live</p>' }, 'beta-live');
+    room.post(third, { own: false, html: '<p>gamma-ignored</p>' }, 'gamma-ignored');
+    let live = '';
+    for (let i = 0; i < 8 && (!live.includes('alpha-live') || !live.includes('beta-live')); i += 1) {
+      live += await stream.next();
+    }
+    expect(live).toContain('alpha-live');
+    expect(live).toContain('beta-live');
+    expect(live).not.toContain('gamma-ignored');
+    stream.close();
+  });
+
   it('answers 404 for a message sent to a topic that does not exist', async () => {
     const { base } = await boot();
     const cookie = await signIn(base);

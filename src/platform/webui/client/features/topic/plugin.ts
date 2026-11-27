@@ -65,6 +65,8 @@ export interface TopicPluginDeps {
   readonly onToggleSidebar?: () => void;
   readonly onTopicChange?: (nextTopicId: string, prevTopicId: string) => void;
   readonly onEditorCreated?: (handle: TopicEditorHandle) => void;
+  readonly onEditorFocused?: (handle: TopicEditorHandle) => void;
+  readonly onEditorDisposed?: (handle: TopicEditorHandle) => void;
   readonly onRegisterInsertHandler?: (handler: (topicId: string, text: string) => boolean) => void;
   readonly controllers?: TopicEditorControllerFactories;
   readonly transcriptDeps?: TopicEditorDeps['transcriptDeps'];
@@ -336,6 +338,88 @@ function registerTopicCommands(
   );
 }
 
+function registerTopicEditor(
+  ctx: PluginContext,
+  deps: TopicPluginDeps,
+  state: {
+    readonly mountedEditors: Set<TopicEditorHandle>;
+    getStreamState: () => TopicStreamState;
+    setLastFocused: (handle: TopicEditorHandle | null) => void;
+    getLastFocused: () => TopicEditorHandle | null;
+    readonly openTurnDiff: (topicId: string, turn: number, panelId?: string) => Promise<number>;
+  },
+): void {
+  const resolveTools = (topic: TopicInfo): readonly TopicEditorToolDescriptor[] => {
+    if (deps.getTopicTools) return deps.getTopicTools(topic);
+    if (!deps.registry) return [];
+    return deps.registry.listAvailableTopicTools(topic).map((tool) => ({
+      id: tool.id,
+      title: tool.title,
+      icon: tool.icon,
+      active: deps.isToolActive?.(tool.id, topic.id) ?? false,
+      badge: deps.getToolBadge?.(tool.id, topic.id) ?? null,
+    }));
+  };
+  const resolveTitleMenus = (topic: TopicInfo): readonly (readonly TopicEditorMenuEntry[])[] =>
+    deps.getTitleMenuGroups ? deps.getTitleMenuGroups(topic) : deps.registry ? deps.registry.listMenuGroups('topic.title', topic) : [];
+  const resolveMessageMenus = (target: MessageMenuTarget): readonly (readonly TopicEditorMenuEntry[])[] =>
+    deps.getMessageMenuGroups ? deps.getMessageMenuGroups(target) : deps.registry ? deps.registry.listMenuGroups('message', target) : [];
+  const canOpenSideDiff = (): boolean =>
+    Boolean(deps.onOpenTurnDiff || deps.registry?.getEditor(DIFF_EDITOR_KIND));
+
+  ctx.editors.register({
+    kind: TOPIC_EDITOR_KIND,
+    title: (input) => {
+      const id = parseTopicEditorInput(input);
+      const topic = resolveTopicById(ctx, id);
+      return topic?.title || id || tr('common.untitled');
+    },
+    component: () =>
+      createTopicEditorPanel({
+        getTopicInfo: (id) => resolveTopicById(ctx, id),
+        getStreamState: state.getStreamState,
+        getTopicTools: resolveTools,
+        onToggleTopicTool: deps.onToggleTopicTool,
+        getTitleMenuGroups: resolveTitleMenus,
+        getMessageMenuGroups: resolveMessageMenus,
+        onOpenTurnDiffSideBySide: async (topicId, turn, panelId) => {
+          await state.openTurnDiff(topicId, turn, panelId);
+        },
+        canOpenSideDiff,
+        onBack: deps.onBack,
+        onToggleSidebar: deps.onToggleSidebar,
+        onTopicChange: deps.onTopicChange,
+        onMount: (handle) => {
+          state.mountedEditors.add(handle);
+          state.setLastFocused(handle);
+          deps.onEditorCreated?.(handle);
+        },
+        onFocus: (handle) => {
+          if (state.mountedEditors.has(handle)) {
+            state.setLastFocused(handle);
+            deps.onEditorFocused?.(handle);
+          }
+        },
+        onDispose: (handle) => {
+          state.mountedEditors.delete(handle);
+          if (state.getLastFocused() === handle) state.setLastFocused(null);
+          deps.onEditorDisposed?.(handle);
+        },
+        resolveIcon: deps.resolveIcon,
+        icons: deps.icons,
+        overlays: deps.overlays,
+        controllers: deps.controllers,
+        transcriptDeps: deps.transcriptDeps,
+        statusDeps: deps.statusDeps,
+        composerDeps: deps.composerDeps,
+        quickPick: deps.quickPick,
+        doc: deps.doc,
+        win: deps.win,
+        storage: deps.storage,
+      }),
+  });
+}
+
 export function createTopicPlugin(deps: TopicPluginDeps = {}): WebuiPlugin {
   return definePlugin({
     id: TOPIC_PLUGIN_ID,
@@ -358,28 +442,6 @@ export function createTopicPlugin(deps: TopicPluginDeps = {}): WebuiPlugin {
         return undefined;
       };
 
-      const resolveTools = (topic: TopicInfo): readonly TopicEditorToolDescriptor[] => {
-        if (deps.getTopicTools) return deps.getTopicTools(topic);
-        if (!deps.registry) return [];
-        return deps.registry.listAvailableTopicTools(topic).map((tool) => ({
-          id: tool.id,
-          title: tool.title,
-          icon: tool.icon,
-          active: deps.isToolActive?.(tool.id, topic.id) ?? false,
-          badge: deps.getToolBadge?.(tool.id, topic.id) ?? null,
-        }));
-      };
-
-      const resolveTitleMenus = (topic: TopicInfo): readonly (readonly TopicEditorMenuEntry[])[] => {
-        if (deps.getTitleMenuGroups) return deps.getTitleMenuGroups(topic);
-        return deps.registry ? deps.registry.listMenuGroups('topic.title', topic) : [];
-      };
-
-      const resolveMessageMenus = (target: MessageMenuTarget): readonly (readonly TopicEditorMenuEntry[])[] => {
-        if (deps.getMessageMenuGroups) return deps.getMessageMenuGroups(target);
-        return deps.registry ? deps.registry.listMenuGroups('message', target) : [];
-      };
-
       const openTurnDiff = async (topicId: string, turn: number, panelId?: string): Promise<number> => {
         if (deps.onOpenTurnDiff) {
           const res = await deps.onOpenTurnDiff(topicId, turn, panelId);
@@ -395,54 +457,14 @@ export function createTopicPlugin(deps: TopicPluginDeps = {}): WebuiPlugin {
         });
       };
 
-      const canOpenSideDiff = (): boolean =>
-        Boolean(deps.onOpenTurnDiff || deps.registry?.getEditor(DIFF_EDITOR_KIND));
-
-      ctx.editors.register({
-        kind: TOPIC_EDITOR_KIND,
-        title: (input) => {
-          const id = parseTopicEditorInput(input);
-          const topic = resolveTopicById(ctx, id);
-          return topic?.title || id || tr('common.untitled');
+      registerTopicEditor(ctx, deps, {
+        mountedEditors,
+        getStreamState: () => streamState,
+        setLastFocused: (h) => {
+          lastFocusedEditor = h;
         },
-        component: () => {
-          const panel = createTopicEditorPanel({
-            getTopicInfo: (id) => resolveTopicById(ctx, id),
-            getStreamState: () => streamState,
-            getTopicTools: resolveTools,
-            onToggleTopicTool: deps.onToggleTopicTool,
-            getTitleMenuGroups: resolveTitleMenus,
-            getMessageMenuGroups: resolveMessageMenus,
-            onOpenTurnDiffSideBySide: async (topicId, turn, panelId) => {
-              await openTurnDiff(topicId, turn, panelId);
-            },
-            canOpenSideDiff,
-            onBack: deps.onBack,
-            onToggleSidebar: deps.onToggleSidebar,
-            onTopicChange: deps.onTopicChange,
-            onMount: (handle) => {
-              mountedEditors.add(handle);
-              lastFocusedEditor = handle;
-              deps.onEditorCreated?.(handle);
-            },
-            onDispose: (handle) => {
-              mountedEditors.delete(handle);
-              if (lastFocusedEditor === handle) lastFocusedEditor = null;
-            },
-            resolveIcon: deps.resolveIcon,
-            icons: deps.icons,
-            overlays: deps.overlays,
-            controllers: deps.controllers,
-            transcriptDeps: deps.transcriptDeps,
-            statusDeps: deps.statusDeps,
-            composerDeps: deps.composerDeps,
-            quickPick: deps.quickPick,
-            doc: deps.doc,
-            win: deps.win,
-            storage: deps.storage,
-          });
-          return panel;
-        },
+        getLastFocused: () => lastFocusedEditor,
+        openTurnDiff,
       });
 
       registerTopicMenus(ctx, deps, instanceId);

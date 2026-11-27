@@ -444,4 +444,42 @@ describe('services/cache', () => {
 
     cache.dispose();
   });
+
+  it('schedules and flushes cache writes independently per open topic', () => {
+    vi.useFakeTimers();
+    const idb = createFakeIdb();
+    const states: Record<string, { synced: boolean; stale: boolean; lastEventId: string; msgs: CacheMessage[] }> = {
+      t1: { synced: true, stale: false, lastEventId: 't1.a.2', msgs: [{ id: 'm1', _g: 10 }] },
+      t2: { synced: true, stale: false, lastEventId: 't2.a.5', msgs: [{ id: 'm2', _g: 10 }] },
+    };
+    const cache = createCacheService({
+      core,
+      getIndexedDB: () => idb.factory,
+      getTopic: () => 't1',
+      getEpoch: () => 10,
+      isSynced: () => true,
+      isStale: () => false,
+      getLastEventId: () => 't1.a.2',
+      collectScreenMessages: () => states.t1!.msgs,
+      getTopicState: (id) => {
+        const s = states[id];
+        return s ? { synced: s.synced, stale: s.stale, lastEventId: s.lastEventId, collectMessages: () => s.msgs } : null;
+      },
+      getOpenTopics: () => ['t1', 't2'],
+      saveMs: 400,
+    });
+
+    cache.scheduleSave('t1');
+    cache.scheduleSave('t2');
+    vi.advanceTimersByTime(400);
+    expect(cache.memCopy('t1')?.last).toBe('t1.a.2');
+    expect(cache.memCopy('t2')?.last).toBe('t2.a.5');
+
+    states.t1!.lastEventId = 't1.a.3';
+    states.t2!.lastEventId = 't2.a.6';
+    cache.leave();
+    expect(cache.memCopy('t1')?.last).toBe('t1.a.3');
+    expect(cache.memCopy('t2')?.last).toBe('t2.a.6');
+    cache.dispose();
+  });
 });
