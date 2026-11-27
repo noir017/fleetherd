@@ -409,6 +409,17 @@ style a line. The name is cut to 16 characters so the preview after it stays vis
 mode compares owner + name, so a subagent's `Bash` right after the main agent's is not swallowed
 as a repeat. Where the attribution comes from is `daemon/agent-acp.ts` `claudeAttribution`.
 
+That prefix is what a subagent's line looks like in a bubble it shares. A `claude` turn gives
+each subagent a renderer of its own (`daemon/subagent-cards.ts`), and such a renderer is given a
+**header** (`setHeader`, written by `subagentHeader`): `↳ {name}` on the first line of every bubble
+it paints, the owner prefix dropped from the lines under it, and — once the subagent has ended —
+the same ` ✓ 13.2s` / ` ✗ 13.2s` a tool line ends with, so the web UI reads it back with the tool
+line's own pattern (`web-markdown.ts` `renderWebSubagent`). Changing the header repaints the open
+bubble with no tool event; a header that changes after a seal took every line still paints, alone,
+in a new bubble, or the sealed one would say the subagent is running for good. A header never
+paints a bubble on its own before the first tool, and `separate` grouping ignores it — every
+standalone bubble keeps its prefix, since there is no bubble to keep a header on.
+
 Four modes: `off`, `all`, `new` (dedupe consecutive same-name calls), `verbose`
 (append full args JSON). Two groupings:
 

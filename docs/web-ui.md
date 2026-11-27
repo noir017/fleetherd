@@ -281,6 +281,16 @@ screen shows as much as fits, and the ✓ and duration at its end always stay vi
 Click a row to read it in full, and again to fold it; **Show all** under the bubble
 opens every row, including the ones the agent adds after you press it.
 
+**Subagents, one card each.** When the agent starts subagents of its own — Claude Code's Agent
+tool, in the foreground or the background — each one's tool calls go into a card of its own
+instead of the agent's tool bubble, and the agent's reply is no longer split wherever a subagent
+happened to run a tool. The card names the subagent, counts its tools, and says **Running**,
+**Done** or **Did not finish**, with how long it took; it stays folded to the newest call, and
+clicking the name opens every row. The card is updated in place for as long as the subagent runs.
+A chat platform gets the same thing as text: one message per subagent, `↳ {name}` on its first
+line and its tools under it, edited as it goes. Only `claude` agents say which subagent ran a
+tool; other harnesses' subagents still share the agent's bubble.
+
 **Sub-agent traffic.** A bubble that is about a sub-agent rather than a reply is marked at its
 top with **Sub-agent task** or **Sub-agent report**, and gets a rail in a colour of its own. A
 task is the hand-off: the card that asks you to start the sub-agents, the record of what started,

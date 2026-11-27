@@ -1210,6 +1210,20 @@ be read as the agent's next reply:
   that decides "line-based or prose", for the send and for every later edit, so a report reaches
   the page as one `.tl` per line exactly as a tool bubble does.
 
+A harness's own subagents (Claude Code's Agent tool — not the gateway's `/super` sub-agents above)
+have a kind of their own, drawn as a card rather than a bubble:
+
+- **`subagent`** — one subagent's tools (`daemon/subagent-cards.ts`), under a `↳ {name}` header that
+  takes ` ✓ 13.2s` / ` ✗ 13.2s` when it ends. The server draws the header as
+  `<div class="sa-h" data-st="run|ok|err" data-d="13.2s">{name}</div>` over the tool rows
+  (`web-markdown.ts` `renderWebSubagent`, the header parsed with the tool line's own pattern); the
+  page builds the card around it (`markup.ts` `subagentCard`): the subagent icon, the name, the
+  tool count and duration, a state chip in the reader's language, and a chevron. The rows are the
+  tool bubble's own, folded and opened the same way, but the card shows only the newest until its
+  header is tapped (`ToolOpenState.card`, kept in script state for the reason a row's is), and it
+  has no **Show all**. The fold is a stylesheet rule (`.sa:not(.open) .tl:not(:last-child)`), so
+  the row count and the "N earlier" line are the only things the script decides.
+
 A third is not about sub-agents but is drawn the same way:
 
 - **`aside`** — the answer to a side question (`/btw`, `turn-runner.ts` `beginAside`). It is

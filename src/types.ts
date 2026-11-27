@@ -392,6 +392,16 @@ export interface ToolEvent {
    */
   agent?: string;
   /**
+   * The id of the Agent/Task call whose subagent ran this tool; undefined for the main agent's own.
+   * What a subagent's tools are grouped by: two subagents can share a name, never a call.
+   */
+  parent?: string;
+  /**
+   * This call starts a subagent: `foreground` when the call lasts as long as the subagent does,
+   * `background` when it returns at once and the subagent goes on without it.
+   */
+  spawns?: 'foreground' | 'background';
+  /**
    * The harness started this call after the turn was stopped (`/stop`) — the cancel had not reached
    * it yet, or it had not acted on it. The bubble line says so, since the stop's ack right under the
    * reply says "Stopped".
@@ -410,6 +420,10 @@ export interface ToolFinishEvent {
   index?: number;
   /** The harness's id for the call, as on its ToolEvent. */
   id?: string;
+  /** As on its ToolEvent: the call that started the subagent which ran this one. */
+  parent?: string;
+  /** As on its ToolEvent, read again from the arguments the call ended with. */
+  spawns?: 'foreground' | 'background';
   /**
    * The call's arguments as they stood when it ended. A start is re-emitted only when what the
    * bubble shows changes, so arguments that keep streaming after that (a Write's content) reach the

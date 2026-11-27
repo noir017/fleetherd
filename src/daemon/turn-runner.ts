@@ -20,6 +20,7 @@ import type {
   ToolEvent,
 } from '../types.js';
 import type { PlatformAdapter } from '../platform/adapter.js';
+import { SubagentCards } from './subagent-cards.js';
 import { commandSurface } from './delegation-surface.js';
 import type { AgentFactory, AgentImage, AgentSession, AgentStreamHandlers, AgentUsage, FollowUpSink, TurnFile, TurnImage } from './agent.js';
 import { promptUndelivered } from './agent.js';
@@ -28,7 +29,7 @@ import { retryButtons } from '../core/turn-retry.js';
 import { undeliveredLine } from '../core/topic-stage.js';
 import { StreamBuffer } from '../core/stream-buffer.js';
 import type { OpenFence } from '../core/code-fence.js';
-import { ToolRenderer } from '../core/tool-renderer.js';
+import { ToolRenderer, type ToolRendererOptions } from '../core/tool-renderer.js';
 import { describeOutboundError, MessageNotEditableError } from '../core/outbound-errors.js';
 import { outboundLane } from './paced-adapter.js';
 import { formatRuntimeFooter } from '../core/runtime-footer.js';
@@ -1166,7 +1167,8 @@ export class TurnRunner {
     conversationId: ConversationId,
     ref: TurnRef,
     makeStream: (carry?: OpenFence) => StreamBuffer,
-    tools: ToolRenderer,
+    /** The reply's tool bubble, and the cards of the subagents the agent started. */
+    { tools, cards }: { tools: ToolRenderer; cards: SubagentCards },
     enqueue: (fn: () => Promise<void> | void) => void,
     sealSegment: (wait?: Promise<unknown>) => void,
     /** Where a question to the user is posted — the lane this render is already writing to. */
@@ -1209,6 +1211,15 @@ export class TurnRunner {
         else unkeyedTools++;
         this.deps.onToolActivity?.(conversationId, toolStarts.size + unkeyedTools, false);
         recordTool(evt, evt.input);
+        // A subagent's tool goes to its card: it does not end the text being written, and nothing
+        // waits for it to take a place in the chat — the card is beside the reply, not in it.
+        if (evt.parent !== undefined) {
+          enqueue(() => {
+            ref.producedOutput = true;
+            cards.onToolStart(evt);
+          });
+          return;
+        }
         rollSegment(ref);
         // Before a tool: finish the current text as its own bubble (no footer: not the last segment), then
         // register the tool. Registering is synchronous — the bubble is delivered by the renderer's own
@@ -1234,8 +1245,13 @@ export class TurnRunner {
         else if (unkeyedTools > 0) unkeyedTools--;
         this.deps.onToolActivity?.(conversationId, toolStarts.size + unkeyedTools, true);
         if (start && evt.input !== undefined && evt.input !== start.input) recordTool(start, evt.input);
+        if (evt.parent !== undefined) {
+          enqueue(() => cards.onToolFinish(evt));
+          return;
+        }
         enqueue(async () => {
           tools.onToolFinish(evt);
+          cards.onToolFinish(evt); // a foreground subagent ends with the call that started it
           await tools.placed(BUBBLE_PLACEMENT_WAIT_MS);
         });
       },
@@ -1380,6 +1396,33 @@ export class TurnRunner {
     });
   }
 
+  /** How this platform's tool bubbles are drawn — the reply's and every subagent card alike. */
+  private toolRendererOptions(platform: PlatformAdapter): ToolRendererOptions {
+    return {
+      mode: this.config.tools.mode,
+      locale: this.locale,
+      // Tool-progress grouping (accumulate = edit one bubble in place; needs editBubble).
+      grouping: this.config.tools.grouping,
+      // A platform that folds long lines itself asks for more of each command than a chat app
+      // can show (PlatformCapabilities.toolPreviewLimit); never less than the operator set.
+      previewLimit: Math.max(this.config.tools.previewLimit, platform.capabilities.toolPreviewLimit ?? 0),
+      defaultEmoji: this.config.tools.defaultEmoji,
+      emojiMap: this.config.tools.emojiMap,
+      // Same edit budget the body stream respects: a long tool run seals its bubble and opens a
+      // new one rather than freezing once the platform stops accepting edits.
+      maxEdits: this.editBudget(platform),
+      // ...and the same length limit, measured the same way. A bubble that accumulates past what
+      // one message can carry is sealed and continued, instead of being rejected on the wire
+      // (Telegram answered MESSAGE_TOO_LONG on the edit and "text is too long" on the send, and
+      // neither is a MessageNotEditableError, so the whole block of progress was dropped).
+      maxMessageLength: platform.capabilities.maxMessageLength,
+      measureLength: (s) => platform.measureRendered(s),
+      retryIntervalMs: this.config.tools.retryIntervalMs,
+      maxRetryMs: this.config.tools.maxRetryMs,
+      maxRetryAfterMs: this.config.outbound.maxRetryAfterMs,
+    };
+  }
+
   /**
    * Build one rendering context for a lane: the text buffer, the tool renderer, the serial effects
    * chain, the stream handlers, and the finalizer that seals it all.
@@ -1431,52 +1474,40 @@ export class TurnRunner {
       replyText: '',
     };
 
-    const tools = new ToolRenderer(
-      {
-        mode: this.config.tools.mode,
-        locale: this.locale,
-        // Tool-progress grouping (accumulate = edit one bubble in place; needs editBubble).
-        grouping: this.config.tools.grouping,
-        // A platform that folds long lines itself asks for more of each command than a chat app
-        // can show (PlatformCapabilities.toolPreviewLimit); never less than the operator set.
-        previewLimit: Math.max(this.config.tools.previewLimit, platform.capabilities.toolPreviewLimit ?? 0),
-        defaultEmoji: this.config.tools.defaultEmoji,
-        emojiMap: this.config.tools.emojiMap,
-        // Same edit budget the body stream respects: a long tool run seals its bubble and opens a
-        // new one rather than freezing once the platform stops accepting edits.
-        maxEdits: this.editBudget(platform),
-        // ...and the same length limit, measured the same way. A bubble that accumulates past what
-        // one message can carry is sealed and continued, instead of being rejected on the wire
-        // (Telegram answered MESSAGE_TOO_LONG on the edit and "text is too long" on the send, and
-        // neither is a MessageNotEditableError, so the whole block of progress was dropped).
-        maxMessageLength: platform.capabilities.maxMessageLength,
-        measureLength: (s) => platform.measureRendered(s),
-        retryIntervalMs: this.config.tools.retryIntervalMs,
-        maxRetryMs: this.config.tools.maxRetryMs,
-        maxRetryAfterMs: this.config.outbound.maxRetryAfterMs,
+    // The 'progress' lane: a tool bubble is a running commentary, so under congestion it may be
+    // superseded or dropped, where the reply may not. Everything else about these sinks is ordinary —
+    // the pacing lives in the adapter (daemon/paced-adapter.ts). Each is marked for the platform
+    // that draws its kind differently (SendOptions); the mark rides on the send alone, since the
+    // edits restate a message whose kind is already known.
+    //
+    // accumulate mode flushes whole tool progress/completion into one bubble (address closure).
+    // Capability-gated: on platforms with editMessage=false (QQ/LINE/WeCom) editMessage throws, so
+    // pass undefined to let ToolRenderer degrade to separate (one new bubble per tool) instead of
+    // throwing on every accumulate edit. Symmetric with StreamBuffer's noEdit inference.
+    const editBubble = platform.capabilities.editMessage
+      ? (bubble: MessageRef, text: string) => progressLane.editMessage(bubble, text)
+      : undefined;
+    const toolOptions = this.toolRendererOptions(platform);
+    const tools = new ToolRenderer(toolOptions, {
+      sendBubble: async (text) => {
+        const bubble = await progressLane.sendMessage(address, text, { kind: 'tools' });
+        ref.lastRef = bubble;
+        return bubble;
       },
-
-      {
-        // The 'progress' lane: a tool bubble is a running commentary, so under congestion it may
-        // be superseded or dropped, where the reply may not. Everything else about this sink is
-        // ordinary — the pacing lives in the adapter (daemon/paced-adapter.ts). Marked as a tool
-        // bubble for the platform that draws one differently (SendOptions); the mark rides on the
-        // send alone, since the edits below restate a message whose kind is already known.
-        sendBubble: async (text) => {
-          const bubble = await progressLane.sendMessage(address, text, { kind: 'tools' });
-          ref.lastRef = bubble;
-          return bubble;
-        },
-        // accumulate mode flushes whole tool progress/completion into one bubble (address closure).
-        // Capability-gated: on platforms with editMessage=false (QQ/LINE/WeCom) editMessage throws, so
-        // pass undefined to let ToolRenderer degrade to separate (one new bubble per tool) instead of
-        // throwing on every accumulate edit. Symmetric with StreamBuffer's noEdit inference.
-        editBubble: platform.capabilities.editMessage
-          ? (bubble, text) => progressLane.editMessage(bubble, text)
-          : undefined,
-        now: this.clock.now,
-        schedule: this.clock.schedule,
-      }
+      editBubble,
+      now: this.clock.now,
+      schedule: this.clock.schedule,
+    });
+    // A subagent's card is not the reply, so it is not what the turn's change entry hangs off (lastRef).
+    const cards = new SubagentCards(
+      () =>
+        new ToolRenderer(toolOptions, {
+          sendBubble: (text) => progressLane.sendMessage(address, text, { kind: 'subagent' }),
+          editBubble,
+          now: this.clock.now,
+          schedule: this.clock.schedule,
+        }),
+      this.clock.now
     );
 
     // Serialize all stream-event side effects into one promise chain: "text push → tool-boundary flush →
@@ -1507,7 +1538,7 @@ export class TurnRunner {
         conversationId,
         ref,
         makeStream,
-        tools,
+        { tools, cards },
         enqueue,
         sealSegment,
         platform,
@@ -1515,9 +1546,15 @@ export class TurnRunner {
         historyKind,
         turnId
       ),
-      abort: () => tools.abort(),
+      // Stopped or failed: the cards still open end with a ✗, and are left to paint it (finalize
+      // stops them) — an edit of their own bubble, never a message below the next turn's.
+      abort: () => {
+        tools.abort();
+        cards.endAll(false);
+      },
       finalize: async (footer: string) => {
         await effects; // wait for all queued side effects to land
+        cards.endAll(true);
         // Submit the segment's final tool state before sealing the body, so the last ✓ is not
         // discarded with the line set that carried it.
         tools.resetSegment();
@@ -1536,12 +1573,16 @@ export class TurnRunner {
         });
         // Then STOP WAITING for the tool bubbles — bounded, because a chat the platform has
         // paused for minutes must not hold the turn (and its ✅) open for the same minutes.
-        await tools.settle(this.config.outbound.finalizeWaitMs);
+        await Promise.all([
+          tools.settle(this.config.outbound.finalizeWaitMs),
+          cards.settle(this.config.outbound.finalizeWaitMs),
+        ]);
         // Past that deadline the renderer is done trying. `settle` returns immediately when
         // everything landed, so this is a no-op in the normal case; it matters when it is not,
         // because an armed retry keeps the whole render alive on a timer and would go on
         // repainting a finished turn's bubble for the life of the process.
         tools.abort();
+        cards.abort();
       },
     };
   }

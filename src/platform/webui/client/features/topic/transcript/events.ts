@@ -73,6 +73,7 @@ export interface LogEventsDeps {
   readonly discardLocal: (nonce: string) => void;
   readonly toggleAll: (key: string) => void;
   readonly toggleLine: (line: HTMLElement) => void;
+  readonly toggleCard: (key: string) => void;
   readonly openTurnChanges: (turn: number) => void;
   readonly openTurnDiffSideBySide?: (turn: number, btn: HTMLButtonElement) => void;
   readonly onMessageAction?: (action: string, key: string, btn: HTMLButtonElement) => void;
@@ -169,6 +170,12 @@ function handleActionClick(target: Element, deps: LogEventsDeps): void {
   const act = target.closest('[data-retry],[data-copy],[data-discard]');
   if (act) {
     handleLocalAction(act as HTMLElement, deps);
+    return;
+  }
+  const card = target.closest('[data-sa]');
+  if (card) {
+    const key = card.getAttribute('data-sa');
+    if (key) deps.toggleCard(key);
     return;
   }
   const all = target.closest('[data-tl-all]');

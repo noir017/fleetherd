@@ -30,7 +30,18 @@ function inbound(content: string): InboundMessage {
 
 const tick = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
-function rig(caps: Partial<PlatformCapabilities> = {}, previewLimit?: number) {
+/** What the agent does in the turn; by default one tool between two stretches of text. */
+type Script = (h: AgentStreamHandlers) => void;
+
+const ONE_TOOL: Script = (h) => {
+  h.onText('Running it.');
+  h.onToolStart({ name: 'Bash', inputPreview: LONG, index: 0 });
+  h.onToolFinish({ name: 'Bash', ok: true, durationMs: 20, index: 0 });
+  h.onSegmentBreak();
+  h.onText('done');
+};
+
+function rig(caps: Partial<PlatformCapabilities> = {}, previewLimit?: number, script: Script = ONE_TOOL) {
   const parsed = parseConfig({
     platforms: { p: { type: 'telegram', token: 't' } },
     agents: [{ id: 'cc', harness: 'claude' }],
@@ -79,13 +90,7 @@ function rig(caps: Partial<PlatformCapabilities> = {}, previewLimit?: number) {
     getOrCreate(conversationId): AgentSession {
       return {
         conversationId,
-        runTurn: async (_input, h: AgentStreamHandlers) => {
-          h.onText('Running it.');
-          h.onToolStart({ name: 'Bash', inputPreview: LONG, index: 0 });
-          h.onToolFinish({ name: 'Bash', ok: true, durationMs: 20, index: 0 });
-          h.onSegmentBreak();
-          h.onText('done');
-        },
+        runTurn: async (_input, h: AgentStreamHandlers) => script(h),
         abort: () => {},
         setFollowUpSink: () => {},
         dispose: () => {},
@@ -99,6 +104,16 @@ function rig(caps: Partial<PlatformCapabilities> = {}, previewLimit?: number) {
   const reg = new ConversationRegistry(cfg, new Map([['p', paced]]), factory, clock);
   return {
     sends,
+    latest,
+    /** Start the turn and wait until `done` says the chat shows what it should. */
+    async until(done: () => boolean): Promise<void> {
+      reg.route(inbound('go'));
+      for (let i = 0; i < 300; i++) {
+        if (done()) return;
+        await tick(10);
+      }
+      throw new Error(`the turn never finished: ${JSON.stringify(sends)}`);
+    },
     /** The tool bubble's final text, once the turn's reply and the bubble's ✓ have both landed. */
     async bubble(): Promise<string> {
       reg.route(inbound('go'));
@@ -142,5 +157,35 @@ describe('how much of a command a bubble line carries', () => {
     // raised previewLimit past it keeps what they chose.
     const line = await rig({ toolPreviewLimit: 20 }, 2_000).bubble();
     expect(line).toContain('--end');
+  });
+});
+
+/**
+ * A subagent's tools, as the translator hands them over (agent-acp-translate.ts): marked with the
+ * call that started it, and with no segment break around them.
+ */
+describe("a subagent's tools", () => {
+  const script: Script = (h) => {
+    h.onToolStart({ name: 'Task', inputPreview: 'back end', index: 0, id: 'A', spawns: 'background' });
+    h.onToolFinish({ name: 'Task', ok: true, durationMs: 5, index: 0, id: 'A', spawns: 'background' });
+    h.onSegmentBreak();
+    h.onText('The 401s cluster at expiry, ');
+    h.onToolStart({ name: 'Bash', inputPreview: 'grep 401', index: 1, id: 'A1', agent: 'back end', parent: 'A' });
+    h.onText('so it is the refresh window.');
+    h.onToolFinish({ name: 'Bash', ok: true, durationMs: 20, index: 1, id: 'A1', parent: 'A' });
+  };
+
+  it('go to a card of their own, which ends with the turn, and leave the reply in one piece', async () => {
+    const h = rig({}, undefined, script);
+    const card = () => h.sends.find((s) => s.opts?.kind === 'subagent');
+    await h.until(() => {
+      const c = card();
+      return c !== undefined && /^↳ back end ✓/.test(h.latest.get(c.id) ?? '') && h.sends.some((s) => s.text.includes('refresh'));
+    });
+    expect(h.latest.get(card()!.id)).toMatch(/^↳ back end ✓ \d+ms\n💻 Bash: "grep 401" ✓ 20ms$/);
+    const tools = h.sends.filter((s) => s.opts?.kind === 'tools');
+    expect(tools.map((s) => h.latest.get(s.id))).toEqual(['⚙️ Task: "back end" ✓ 5ms']);
+    const prose = h.sends.filter((s) => s.opts === undefined).map((s) => h.latest.get(s.id));
+    expect(prose).toEqual(['The 401s cluster at expiry, so it is the refresh window.']);
   });
 });

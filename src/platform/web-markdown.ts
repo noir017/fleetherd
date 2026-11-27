@@ -140,6 +140,25 @@ export function renderWebToolLines(src: string, glyph?: ToolGlyph): string {
   return `<div class="tools">${out.join('')}</div>`;
 }
 
+/**
+ * One subagent's card (kind `subagent`, daemon/subagent-cards.ts): its header line over its tool
+ * lines. The header is `↳ {name}`, with the ✓ / ✗ and duration a tool line takes once the subagent
+ * has ended (core/tool-renderer.ts subagentHeader), so it is read back with the same pattern.
+ *
+ * Only what the header says is drawn here, escaped — the state and duration as attributes, the name
+ * as text; the page builds the card around it (client transcript/markup.ts subagentCard), in the
+ * reader's language. `.sa-h` and its two attributes are that file's to parse; change them together.
+ */
+export function renderWebSubagent(src: string, glyph?: ToolGlyph): string {
+  const nl = src.indexOf('\n');
+  const head = nl < 0 ? src : src.slice(0, nl);
+  const status = TOOL_STATUS_RE.exec(head);
+  const name = (status ? head.slice(0, status.index) : head).replace(/^↳ /, '');
+  const state = !status ? 'run' : status[1] === '✓' ? 'ok' : 'err';
+  const lines = renderWebToolLines(nl < 0 ? '' : src.slice(nl + 1), glyph);
+  return `<div class="sa-h" data-st="${state}" data-d="${escapeHtml(status?.[2] ?? '')}">${escapeHtml(name)}</div>${lines}`;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Block level
 //

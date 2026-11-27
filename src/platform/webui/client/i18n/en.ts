@@ -266,6 +266,12 @@ export const en = {
   // Messages, bubbles, code blocks, btw
   'msg.dispatch': 'Sub-agent task',
   'msg.report': 'Sub-agent report',
+  'msg.subagentToolsOne': '1 tool',
+  'msg.subagentToolsMany': '{count} tools',
+  'msg.subagentRunning': 'Running',
+  'msg.subagentDone': 'Done',
+  'msg.subagentFailed': 'Did not finish',
+  'msg.subagentEarlier': '{count} earlier — tap the name to show all',
   'msg.aside': 'Side question',
   'msg.notConfirmed': 'Not confirmed — the page closed before the daemon answered, so this may not have arrived.',
   'msg.notDelivered': 'Not delivered — the agent never saw this.',

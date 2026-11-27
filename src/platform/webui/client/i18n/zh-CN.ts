@@ -268,6 +268,12 @@ export const zhCN = {
   // Messages, bubbles, code blocks, btw
   'msg.dispatch': '子 Agent 任务',
   'msg.report': '子 Agent 报告',
+  'msg.subagentToolsOne': '1 个工具',
+  'msg.subagentToolsMany': '{count} 个工具',
+  'msg.subagentRunning': '运行中',
+  'msg.subagentDone': '完成',
+  'msg.subagentFailed': '未完成',
+  'msg.subagentEarlier': '还有 {count} 行，点名称展开',
   'msg.aside': '旁白提问',
   'msg.notConfirmed': '未确认 — 页面在守护进程响应前已关闭，消息可能未送达。',
   'msg.notDelivered': '未送达 — Agent 未收到此消息。',
