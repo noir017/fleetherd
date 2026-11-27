@@ -130,6 +130,7 @@ import { escapeHtml, renderWebMarkdown, renderWebSubagent, renderWebToolLines } 
 import { toolGlyph } from './icons.js';
 import type {
   ClickRequest,
+  MessagesPage,
   ReviewOpRequest,
   ScheduleTargetRequest,
   SendRequest,
@@ -176,6 +177,13 @@ export interface TopicNotice {
  * ~460 MB, while actual usage in production is well below that (longest topics ~200 messages).
  */
 const MAX_MESSAGES = 1000;
+
+/** Tail window for initial `sync` / `snapshot` — fits P90 production topics (54 msgs) in one frame while capping long ones. */
+export const SYNC_WINDOW_MESSAGES = 60;
+export const SYNC_WINDOW_MAX_BYTES = 256 * 1024;
+const MIN_WINDOW_MESSAGES = 10;
+export const PAGE_DEFAULT_LIMIT = 50;
+export const PAGE_MAX_LIMIT = 100;
 
 /** How many emitted events a topic keeps so a reconnect can be caught up rather than re-synced. */
 const MAX_BACKLOG = 300;
@@ -270,6 +278,8 @@ interface Stored {
   msg: WebMessage;
   /** The markdown the html was rendered from — what `fetch-messages` must hand back. */
   text: string;
+  /** Strictly increasing room-local sequence number used as the `GET /api/messages?before=` cursor. */
+  seq: number;
 }
 
 /**
@@ -454,6 +464,7 @@ interface Client {
 /** One topic's live state. Created on demand for any topic the store knows. */
 interface Room {
   stored: Map<string, Stored>;
+  nextMsgSeq: number;
   typing: boolean;
   /**
    * When `typing` last went on, by this process's clock; null while it is off.
@@ -617,6 +628,9 @@ export class WebRoom {
   /** A topic-list announcement waiting out `TOPIC_LIST_MS`; see `scheduleTopics`. */
   private topicTimer: NodeJS.Timeout | null = null;
   private readonly dirCache = new Map<string, { at: number; work: Pick<Topic, 'dir' | 'agent'> }>();
+  // Tracks topics whose launcher workdir was explicitly confirmed (covers picking the agent's root,
+  // which ConversationStore clears back to undefined so agents[].cwd edits still apply).
+  private readonly launchCwdChosen = new Set<string>();
   /**
    * Who has a terminal pane attached. Absent when the feature is off, and in every test that
    * does not care — which is why `topicList` reads it through `?.` rather than requiring one.
@@ -792,6 +806,7 @@ export class WebRoom {
       this.rooms.delete(id);
     }
     this.dirCache.delete(id);
+    this.launchCwdChosen.delete(id);
   }
 
   // ── What needs the operator ─────────────────────────────────────────────────────────────────
@@ -889,6 +904,13 @@ export class WebRoom {
     this.dirCache.clear();
   }
 
+  /** Drop the memoised workdir/agent for `topicId` and push the fresh row to clients. */
+  refreshWorkdir(topicId: string): void {
+    if (!this.topics.has(topicId)) return;
+    this.dirCache.delete(topicId);
+    this.announceTopics();
+  }
+
   /**
    * Accept the daemon's way of asking whether a topic's agent child is still resident, and start
    * the poll that watches it (see LIVENESS_POLL_MS for why this one is polled and the rest is not).
@@ -983,8 +1005,9 @@ export class WebRoom {
     if (!this.topics.has(topic)) return { ok: false, error: 'No such topic.' };
     const res = this.topicSetup(this.conversation(topic), opts);
     if (res.ok) {
-      this.dirCache.delete(topic);
-      this.announceTopics();
+      if (opts.cwd !== undefined) this.launchCwdChosen.add(topic);
+      else if (opts.agent !== undefined) this.launchCwdChosen.delete(topic);
+      this.refreshWorkdir(topic);
     }
     return res;
   }
@@ -1422,7 +1445,12 @@ export class WebRoom {
   private catalogFor(topicId: string, room: Room | undefined): AgentCatalog | undefined {
     if (!this.catalog || (room && room.stored.size > 0)) return undefined;
     try {
-      return this.catalog(this.conversation(topicId));
+      const cat = this.catalog(this.conversation(topicId));
+      if (!cat) return undefined;
+      if (!cat.cwdChosen && this.launchCwdChosen.has(topicId)) {
+        return { ...cat, cwdChosen: true };
+      }
+      return cat;
     } catch (e) {
       console.warn(`[webui] agent catalog lookup failed for ${topicId}:`, e instanceof Error ? e.message : e);
       return undefined;
@@ -1786,26 +1814,35 @@ export class WebRoom {
     const client: Client = { topics: new Set(topicIds), multiplexed, send };
     this.clients.add(client);
     let ok = true;
-    let anyFullSync = false;
+    let sentGlobals = false;
     let totalMissed = 0;
-    for (const topicId of topicIds) {
-      if (!ok) break;
+    const plans = topicIds.map((topicId) => {
       const room = this.roomOf(topicId);
       const lastId = this.bestLastEventId(topicId, lastEventIds);
       const missed = this.replayFrom(room, topicId, lastId);
       const replay = missed && mergeReplay(missed);
+      return { topicId, room, replay };
+    });
+    const anyFullSync = plans.some((p) => !p.replay);
+    if (multiplexed && !anyFullSync) {
+      // Deliver shared globals before `resumed` so client resume handlers see populated topics/commands/offline.
+      ok =
+        this.deliver(client, { t: 'machines', offline: [...this.offline] }) &&
+        (topicsVersion !== undefined || this.deliver(client, { t: 'commands', commands: this.commands })) &&
+        (topicsVersion === this.topicsVer || this.deliver(client, { t: 'topics', topics, tv: this.topicsVer }));
+    }
+    // On mixed multiplexed streams, send full-sync topics first so globals land before any `resumed` frame.
+    const ordered = multiplexed && anyFullSync ? [...plans.filter((p) => !p.replay), ...plans.filter((p) => p.replay)] : plans;
+    for (const { topicId, room, replay } of ordered) {
+      if (!ok) break;
       if (replay) {
         totalMissed += replay.length;
         ok = this.deliverResume(client, topicId, room, replay, topics, topicsVersion);
       } else {
-        anyFullSync = true;
-        ok = this.deliver(client, this.syncEvent(topicId, room, topics), room.seq, undefined, topicId);
+        const includeGlobals = !sentGlobals;
+        sentGlobals = true;
+        ok = this.deliver(client, this.syncEvent(topicId, room, topics, includeGlobals), room.seq, undefined, topicId);
       }
-    }
-    if (multiplexed && ok && !anyFullSync) {
-      ok =
-        this.deliver(client, { t: 'machines', offline: [...this.offline] }) &&
-        (topicsVersion === this.topicsVer || this.deliver(client, { t: 'topics', topics, tv: this.topicsVer }));
     }
     if (ok) {
       const label = topicIds.join(',');
@@ -1835,11 +1872,14 @@ export class WebRoom {
     if (!this.deliver(client, { t: 'pending', ...tag, items: room.pending })) return false;
     if (!client.multiplexed) {
       if (!this.deliver(client, { t: 'machines', offline: [...this.offline] })) return false;
+      if (topicsVersion === undefined && !this.deliver(client, { t: 'commands', commands: this.commands })) {
+        return false;
+      }
       if (topicsVersion !== this.topicsVer && !this.deliver(client, { t: 'topics', topics, tv: this.topicsVer })) {
         return false;
       }
     }
-    return this.deliver(client, { t: 'resumed', ...tag });
+    return this.deliver(client, { t: 'resumed', ...tag, epoch: this.startedAt });
   }
 
   /** Events after `lastEventId`, or undefined when a full sync is the only honest answer. */
@@ -1891,20 +1931,39 @@ export class WebRoom {
     };
   }
 
+  /** Return up to `limit` messages strictly older than `before` (by room-local `seq`) in chronological order. */
+  messagesPage(topicId: string, before: number, limit = PAGE_DEFAULT_LIMIT): MessagesPage | undefined {
+    if (!this.topics.has(topicId)) return undefined;
+    const room = this.rooms.get(topicId);
+    const all = room ? [...room.stored.values()] : [];
+    const clamped = Math.max(1, Math.min(PAGE_MAX_LIMIT, Math.trunc(limit)));
+    let end = all.length;
+    while (end > 0 && all[end - 1]!.seq >= before) end -= 1;
+    const start = Math.max(0, end - clamped);
+    const slice = all.slice(start, end);
+    const oldestSeq = slice[0]?.seq;
+    return {
+      topic: topicId,
+      epoch: this.startedAt,
+      messages: slice.map((s) => s.msg),
+      hasMore: start > 0,
+      ...(oldestSeq !== undefined ? { oldestSeq } : {}),
+      totalCount: all.length,
+    };
+  }
+
   /** `topics` is the list as it was just announced to everyone else (see `subscribe`). */
-  private syncEvent(topicId: string, room: Room, topics: Topic[]): WebEvent {
+  private syncEvent(topicId: string, room: Room, topics: Topic[], includeGlobals = true): WebEvent {
     const agents = this.catalogFor(topicId, room);
     return {
       t: 'sync',
       topic: topicId,
       ...this.roomState(topicId, room),
-      commands: this.commands,
-      topics,
-      tv: this.topicsVer,
+      ...(includeGlobals ? { commands: this.commands, topics, tv: this.topicsVer } : {}),
       ...(room.status ? { status: room.status } : {}),
       ...(room.pending.length > 0 ? { pending: room.pending } : {}),
       ...(agents ? { agents } : {}),
-      ...(this.offline.length > 0 ? { offline: [...this.offline] } : {}),
+      ...(includeGlobals && this.offline.length > 0 ? { offline: [...this.offline] } : {}),
     };
   }
 
@@ -1915,13 +1974,43 @@ export class WebRoom {
    * Shared with `snapshot`, so a page that asked for a topic early and the sync it gets on
    * entering it can never disagree about these three.
    */
-  private roomState(topicId: string, room: Room | undefined): Pick<TopicSnapshot, 'messages' | 'epoch' | 'stale'> {
+  private roomState(
+    topicId: string,
+    room: Room | undefined
+  ): Pick<TopicSnapshot, 'messages' | 'epoch' | 'stale' | 'totalCount' | 'hasMore' | 'oldestSeq' | 'recentNonces'> {
+    const all = room ? [...room.stored.values()] : [];
+    let start = Math.max(0, all.length - SYNC_WINDOW_MESSAGES);
+    let bytes = 0;
+    for (let i = all.length - 1; i >= start; i -= 1) {
+      const len = all[i]!.msg.html.length;
+      if (all.length - i > MIN_WINDOW_MESSAGES && bytes + len > SYNC_WINDOW_MAX_BYTES) {
+        start = i + 1;
+        break;
+      }
+      bytes += len;
+    }
+    const slice = all.slice(start);
+    const hasMore = start > 0;
+    const oldestSeq = slice[0]?.seq;
+    let recentNonces: string[] | undefined;
+    if (hasMore) {
+      const hidden: string[] = [];
+      for (let i = Math.max(0, start - MAX_NONCES); i < start; i += 1) {
+        const nonce = all[i]?.msg.nonce;
+        if (nonce) hidden.push(nonce);
+      }
+      if (hidden.length > 0) recentNonces = hidden;
+    }
     return {
-      messages: room ? [...room.stored.values()].map((s) => s.msg) : [],
+      messages: slice.map((s) => s.msg),
       // Which run of the daemon the ids in `messages` belong to. The page caches transcripts
       // and `nextId` restarts at `w1` every process, so without this a cached `w3` and a fresh
       // `w3` are indistinguishable to it — see the field's comment in `protocol.ts`.
       epoch: this.startedAt,
+      totalCount: all.length,
+      ...(hasMore ? { hasMore: true } : {}),
+      ...(oldestSeq !== undefined ? { oldestSeq } : {}),
+      ...(recentNonces ? { recentNonces } : {}),
       ...(this.isStale(topicId, room) ? { stale: true as const } : {}),
     };
   }
@@ -2086,7 +2175,8 @@ export class WebRoom {
         room.awaiting.delete(oldest);
       }
     }
-    room.stored.set(msg.id, { msg, text });
+    room.nextMsgSeq += 1;
+    room.stored.set(msg.id, { msg, text, seq: room.nextMsgSeq });
     // The operator writing into the topic ends every wait that was on screen. Buttons alone could
     // not say that: a `/cd` or `/model` menu is never retired when it is ignored — the user types
     // `hello` instead of tapping, gets an answer, and the menu keeps its buttons (still clickable,
@@ -2473,7 +2563,8 @@ export class WebRoom {
       const room = this.roomOf(topicId);
       for (const k of kept.slice(-MAX_MESSAGES)) {
         const { workdir: _dropped, ...rest } = k.msg;
-        room.stored.set(k.msg.id, { text: k.text, msg: { ...rest, buttons: [] } });
+        room.nextMsgSeq += 1;
+        room.stored.set(k.msg.id, { text: k.text, msg: { ...rest, buttons: [] }, seq: room.nextMsgSeq });
         const n = /^w(\d+)$/.exec(k.msg.id);
         if (n) top = Math.max(top, Number(n[1]));
       }
@@ -2713,6 +2804,7 @@ export class WebRoom {
     if (!room) {
       room = {
         stored: new Map(),
+        nextMsgSeq: 0,
         typing: false,
         typingSince: null,
         seq: 0,

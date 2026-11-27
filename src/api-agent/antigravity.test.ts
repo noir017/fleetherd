@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { BackendEvent, TurnRequest } from './backend.js';
-import { AntigravityEventMapper, createAntigravityBackend, inputOf } from './antigravity.js';
+import { AntigravityEventMapper, createAntigravityBackend, inputOf, type AntigravityOptions } from './antigravity.js';
 import { parseSseText, type SseFrame } from './sse.js';
 
 /**
@@ -158,7 +158,11 @@ async function runTurn(backend: ReturnType<typeof createAntigravityBackend>, req
   return events;
 }
 
-function backendWith(handler: (url: string, init: RequestInit) => Response | Promise<Response>, maxTokens = 20_000) {
+function backendWith(
+  handler: (url: string, init: RequestInit) => Response | Promise<Response>,
+  maxTokens = 20_000,
+  extra: Partial<AntigravityOptions> = {},
+) {
   const recorder = fakeFetch(handler);
   const backend = createAntigravityBackend({
     apiKey: 'test-key',
@@ -167,6 +171,7 @@ function backendWith(handler: (url: string, init: RequestInit) => Response | Pro
     fetch: recorder.fetch,
     baseUrl: 'https://example.test/v1beta',
     log: () => {},
+    ...extra,
   });
   return { backend, calls: recorder.calls };
 }
@@ -276,11 +281,18 @@ describe('AntigravityBackend', () => {
       kind: 'upstream',
       message: expect.stringContaining('Invalid model'),
     });
+    await expect(runTurn(backend, turnRequest({ previousInteractionId: 'v1_prev' }))).rejects.toMatchObject({
+      kind: 'upstream',
+      message: expect.stringContaining('/new'),
+    });
   });
 
   it('a 400 on a fresh turn is an upstream error without an existence check', async () => {
     const { backend, calls } = backendWith(() => jsonResponse({ error: { message: 'bad input' } }, 400));
-    await expect(runTurn(backend, turnRequest())).rejects.toMatchObject({ kind: 'upstream' });
+    const err = await runTurn(backend, turnRequest()).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(err).toMatchObject({ kind: 'upstream' });
+    expect((err as Error).message).not.toContain('/new');
     expect(calls.filter((call) => call.method === 'GET')).toEqual([]);
   });
 
@@ -386,6 +398,188 @@ describe('AntigravityBackend', () => {
       used: 1234,
       size: 1_048_576,
     });
+    expect(events.at(-1)).toEqual({ type: 'done' });
+  });
+
+  it('keeps reconnecting with bounded backoff across a long in_progress pause', async () => {
+    const all = fixture('turn1-thought-and-text.sse').split('\n\n');
+    const partial = `${all.slice(0, 8).join('\n\n')}\n\n`;
+    let nowMs = 0;
+    const sleeps: number[] = [];
+    let streamReads = 0;
+    let statusChecks = 0;
+    const { backend } = backendWith(
+      (url) => {
+        if (url.endsWith('/interactions')) return jsonResponse({ id: 'v1_pause', environment_id: 'env_1' });
+        if (url.includes('?stream=true')) {
+          streamReads += 1;
+          // Initial read + 8 empty reconnects spanning >70s, then the full stream arrives.
+          return sseResponse(streamReads <= 9 ? partial : fixture('turn1-thought-and-text.sse'));
+        }
+        statusChecks += 1;
+        return jsonResponse({ id: 'v1_pause', status: 'in_progress' });
+      },
+      20_000,
+      {
+        now: () => nowMs,
+        sleep: async (ms, signal) => {
+          if (signal.aborted) throw new Error('aborted');
+          sleeps.push(ms);
+          nowMs += ms;
+        },
+      },
+    );
+
+    const events = await runTurn(backend, turnRequest());
+    expect(streamReads).toBe(10);
+    expect(statusChecks).toBeGreaterThanOrEqual(7);
+    expect(nowMs).toBeGreaterThanOrEqual(50_000);
+    expect(Math.max(...sleeps)).toBeLessThanOrEqual(10_000);
+    expect(events.at(-1)).toEqual({ type: 'done' });
+  });
+
+  it('recovers immediately when an empty reconnect discovers the interaction already completed', async () => {
+    const partial =
+      'event: step.delta\ndata: {"index":0,"delta":{"type":"text","text":"hello "},"event_type":"step.delta"}\n\n';
+    let nowMs = 0;
+    const { backend } = backendWith(
+      (url) => {
+        if (url.endsWith('/interactions')) return jsonResponse({ id: 'v1_done', environment_id: 'env_1' });
+        if (url.includes('?stream=true')) return sseResponse(partial);
+        return jsonResponse({
+          id: 'v1_done',
+          status: 'completed',
+          usage: { total_tokens: 42 },
+          steps: [{ type: 'model_output', content: [{ type: 'text', text: 'hello world' }] }],
+        });
+      },
+      20_000,
+      {
+        now: () => nowMs,
+        sleep: async (ms) => {
+          nowMs += ms;
+        },
+      },
+    );
+
+    const events = await runTurn(backend, turnRequest());
+    expect(textOf(events)).toBe('hello world');
+    expect(events.at(-1)).toEqual({ type: 'done' });
+  });
+
+  it('fails once an in_progress stall exceeds the bounded reconnect limit', async () => {
+    const partial =
+      'event: step.delta\ndata: {"index":0,"delta":{"type":"text","text":"hi"},"event_type":"step.delta"}\n\n';
+    let nowMs = 0;
+    const { backend } = backendWith(
+      (url) => {
+        if (url.endsWith('/interactions')) return jsonResponse({ id: 'v1_stuck', environment_id: 'env_1' });
+        if (url.includes('?stream=true')) return sseResponse(partial);
+        return jsonResponse({ id: 'v1_stuck', status: 'in_progress' });
+      },
+      20_000,
+      {
+        now: () => nowMs,
+        sleep: async (ms) => {
+          nowMs += ms;
+        },
+      },
+    );
+
+    await expect(runTurn(backend, turnRequest())).rejects.toMatchObject({
+      kind: 'upstream',
+      message: expect.stringContaining('reconnect limit'),
+    });
+  });
+
+  it('aborts immediately during reconnect backoff', async () => {
+    const partial =
+      'event: step.delta\ndata: {"index":0,"delta":{"type":"text","text":"hi"},"event_type":"step.delta"}\n\n';
+    const controller = new AbortController();
+    let streamReads = 0;
+    const { backend } = backendWith((url) => {
+      if (url.endsWith('/interactions')) return jsonResponse({ id: 'v1_abort', environment_id: 'env_1' });
+      if (url.includes('?stream=true')) {
+        streamReads += 1;
+        if (streamReads === 2) {
+          // Abort right as the second backoff sleep begins.
+          setTimeout(() => controller.abort(), 20);
+        }
+        return sseResponse(partial);
+      }
+      return jsonResponse({ id: 'v1_abort', status: 'in_progress' });
+    });
+
+    const started = Date.now();
+    await expect(runTurn(backend, turnRequest({ signal: controller.signal }))).rejects.toThrow(/aborted/i);
+    expect(Date.now() - started).toBeLessThan(2_000);
+  });
+
+  it('recovers missing tool call and result events when the stream drops mid-execution', async () => {
+    const all = fixture('turn3-code-execution.sse').split('\n\n');
+    // Drop right after step.start(code_execution_call), before code_execution_result arrives.
+    const partial = `${all.slice(0, 3).join('\n\n')}\n\n`;
+    const completedFrame = frames('turn3-code-execution.sse').find((f) => f.data.includes('interaction.completed'))!;
+    const finished = (JSON.parse(completedFrame.data) as { interaction: Record<string, unknown> }).interaction;
+    let reads = 0;
+    const { backend } = backendWith(
+      (url) => {
+        if (url.endsWith('/interactions')) return jsonResponse({ id: 'v1_tool', environment_id: 'env_1' });
+        if (url.includes('?stream=true')) {
+          reads += 1;
+          if (reads === 1) return sseResponse(partial);
+          return jsonResponse({ error: { message: 'Precondition check failed.' } }, 400);
+        }
+        return jsonResponse(finished);
+      },
+      20_000,
+      { sleep: async () => {} },
+    );
+
+    const events = await runTurn(backend, turnRequest());
+    // tool_start arrived from the stream once and must not be duplicated; tool_end is recovered.
+    expect(events.filter((e) => e.type === 'tool_start')).toEqual([
+      {
+        type: 'tool_start',
+        id: '<id:2446b25cce>',
+        title: 'Running bash code',
+        rawInput: { language: 'bash', code: "echo AG_PROBE_OK; uname -s; python3 -c 'print(6*7)'" },
+      },
+    ]);
+    expect(events.filter((e) => e.type === 'tool_end')).toEqual([
+      {
+        type: 'tool_end',
+        id: '<id:2446b25cce>',
+        status: 'completed',
+        output: '[STDOUT]\nAG_PROBE_OK\nLinux\n42\n\n\n[STDERR]\n',
+      },
+    ]);
+    expect(textOf(events)).toBe('```\nAG_PROBE_OK\nLinux\n42\n```');
+    expect(events.at(-1)).toEqual({ type: 'done' });
+  });
+
+  it('recovers both tool_start and tool_end when the stream drops before any tool step', () => {
+    const completedFrame = frames('turn3-code-execution.sse').find((f) => f.data.includes('interaction.completed'))!;
+    const finished = (JSON.parse(completedFrame.data) as { interaction: Record<string, unknown> }).interaction;
+    const mapper = new AntigravityEventMapper(20_000);
+    const events = mapper.recover(finished);
+    expect(events.filter((e) => e.type === 'tool_start')).toEqual([
+      {
+        type: 'tool_start',
+        id: '<id:2446b25cce>',
+        title: 'Running bash code',
+        rawInput: { language: 'bash', code: "echo AG_PROBE_OK; uname -s; python3 -c 'print(6*7)'" },
+      },
+    ]);
+    expect(events.filter((e) => e.type === 'tool_end')).toEqual([
+      {
+        type: 'tool_end',
+        id: '<id:2446b25cce>',
+        status: 'completed',
+        output: '[STDOUT]\nAG_PROBE_OK\nLinux\n42\n\n\n[STDERR]\n',
+      },
+    ]);
+    expect(textOf(events)).toBe('```\nAG_PROBE_OK\nLinux\n42\n```');
     expect(events.at(-1)).toEqual({ type: 'done' });
   });
 

@@ -30,6 +30,7 @@ export interface MessageMenuTarget {
   readonly topicId: string;
   readonly messageKey: string;
   readonly text: string;
+  readonly selectedText?: string;
   readonly element: HTMLElement;
 }
 

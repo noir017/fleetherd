@@ -206,9 +206,10 @@ start would overwrite.
 
 Only a link pointing into `~/.fleetherd/skills` is ever repointed or removed. A real directory, a
 real file, or a link of your own at `~/.claude/skills/<name>` stays as it is, and the log says that
-agent does not get the managed copy. An unchanged version is not written again. An archived skill
-has its copy and every link of the gateway's taken back at the next start; a skill moved to the
-library has its links taken back and keeps its copy.
+agent does not get the managed copy. An unchanged version is not written again. An archived skill —
+or one deleted or renamed directly in the repository — has its old copy and every link of the
+gateway's taken back at the next start; a skill moved to the library has its links taken back and
+keeps its copy.
 
 The bundled `fleetherd` skill is linked the same way, but to a copy the gateway renders: its
 `description` ends with the library skills that reach every harness reading that directory on that

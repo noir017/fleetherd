@@ -202,14 +202,18 @@ function registerTopicMenus(ctx: PluginContext, deps: TopicPluginDeps, instanceI
     icon: 'copy',
     group: '1_clipboard',
     order: 10,
-    when: (target) => Boolean(asMessageTarget(target)?.text),
+    when: (target) => {
+      const msg = asMessageTarget(target);
+      return Boolean(msg?.selectedText || msg?.text);
+    },
     run: (target) => {
       const msg = asMessageTarget(target);
-      if (!msg?.text) return;
+      const toCopy = msg?.selectedText || msg?.text;
+      if (!toCopy) return;
       if (deps.copyText) {
-        deps.copyText(msg.text);
+        deps.copyText(toCopy);
       } else {
-        copyTextToClipboard(msg.text, () => {}, typeof navigator !== 'undefined' ? navigator : undefined, deps.doc);
+        copyTextToClipboard(toCopy, () => {}, typeof navigator !== 'undefined' ? navigator : undefined, deps.doc);
       }
     },
   });

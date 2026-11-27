@@ -5,6 +5,91 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **Compact tool-call lists and tap-to-reveal message actions on touch screens in the Web UI.**
+  Consecutive tool calls inside a message previously rendered as individual bordered cards with
+  per-row margins and tall mobile padding, taking up half a phone screen after a handful of calls,
+  while the copy/quote/aside/more action bar stayed permanently visible beneath every message on
+  touch devices (including a permanent 54 px bottom gap under every user bubble). Tool rows in a
+  `.tools` group now share a single compact list container with thin dividers and ~26 px row height
+  on both mobile and desktop while preserving expand-on-click, status icon colors, and Show all. On
+  touch devices (`@media (hover: none)` / touch pointer), message action bars now stay hidden by
+  default (reserving the user-bubble bottom gap only when shown) and reveal on tapping a message,
+  dismissing on tapping elsewhere and ignoring links, buttons, inputs, tool rows, images/attachments,
+  and active text selections so native long-press selection stays unaffected; desktop hover and
+  keyboard `focus-within` behavior are unchanged.
+- **Web UI topic loading now resumes from local cache on direct reloads and pages older messages on demand.**
+  Reloading or cold-opening a topic URL previously skipped the IndexedDB transcript cache and
+  transferred the entire topic (up to 1,000 messages) in one `sync` frame; initial bootstrap now
+  waits up to 300 ms for `aa_cache` so reloads resume via `?last=` (with `resumed` carrying `epoch`
+  and initial `commands`), falling back cleanly on restart or backlog overflow. When a full `sync`
+  or `GET /api/topic` snapshot is needed, the server now sends only the latest tail window (up to
+  60 messages or 256 KiB, minimum 10) alongside `totalCount`, `hasMore`, `oldestSeq`, and
+  `recentNonces`, and deduplicates the topic list and command table across multiplexed cold syncs.
+  Scrolling near the top fetches earlier pages from `GET /api/messages` (seq-cursor paginated,
+  guarded by session/SSO auth) while preserving scroll position, keeping partial reconciliation,
+  unread counts, outbox confirmation, `/btw` pairing, and quote/message jumps working across
+  unloaded history.
+- **Mobile web UI status strip now wraps into two rows instead of scrolling horizontally.** On
+  narrow viewports (`<= 640px`), the status pills above the composer previously sat in a single
+  `overflow-x: auto` strip that pushed context usage, cost, cache countdown, and quota pools off
+  screen behind long agent, model, and option chips. The strip now groups settings (agent, model,
+  effort, permissions, agent options, and the working directory pill) on the first row—truncating
+  the directory from the left to keep the tail folder name visible, then the model name, and
+  wrapping if space still runs out—and places context, cost, cache, and quota info inside a
+  dedicated `.st-info` second row that wraps cleanly and leaves no blank space when absent, while
+  leaving the desktop layout unchanged.
+- **Relaxed the web UI send timeout for slow uplinks.** `sendLimit` previously budgeted 1 s per
+  64 KiB (~512 kbps) with a 300 s cap, leaving only ~4 s of margin for a 1 MB upload on a 250 kbps
+  link and cutting off larger attachments on slower links. It now budgets 1 s per 16 KiB (~128 kbps)
+  and raises both the client cap and `http.Server.requestTimeout` to 3600 s so uploads up to the
+  36 MiB `MAX_BODY_BYTES` limit can finish without timing out and retrying from byte zero.
+
+### Fixed
+
+- **Web UI status strip and topic state now restore reliably on cached `?last=` stream resumes.**
+  When resuming a cached topic whose room had no live `AgentStatus` push yet, the server's `status`
+  event arrived before `resumed` while `session.synced` was still false, causing `paintStatus()` to
+  skip bare-status rendering and `api/options?peek=1`, and `finishSessionResume()` never repainted
+  the status strip after flipping `synced`. Resume completion now repaints the status strip, pending
+  queue, header, stop button, offline-machine note, and history markers, emits `topic.active` for
+  downstream tools, seeds `epoch` before adopting cached messages on cold reload, and delivers
+  shared globals (`machines`, `commands`, `topics`) before `resumed` on multiplexed streams.
+- **Antigravity stream recovery, long-pause tolerance, and continuation error guidance.** Free-tier
+  turns can pause for over 70 seconds and close the idle SSE stream cleanly, which previously failed
+  after two empty reconnects (~1.5 s); the adapter now checks the interaction status before failing,
+  continues reconnecting with bounded backoff while `in_progress` (with immediate cancellation on
+  abort), and falls back to recovery if the turn already completed. Stream recovery (`recover()`)
+  now also replays missing `code_execution_call` and `code_execution_result` tool events so tool
+  bubbles are not lost when a stream drops mid-execution, and continuation 400/404 errors where the
+  upstream interaction still exists now suggest sending `/new` if the failure persists.
+- **Managed skills deleted or renamed in the skills repository are now retracted from every host.**
+  Previously, spawn-time delivery only removed copies and resident links for skills in `archive/`,
+  so a skill deleted or renamed directly in the repository left its old copy under
+  `~/.fleetherd/skills/<old-name>` and its symlinks in harness skill directories behind (putting
+  both the old and new resident skills into agent context). Local and remote delivery now scan
+  `~/.fleetherd/skills/` for copies absent from the active skill set and retract them along with
+  any gateway-owned links across all harness skill directories, while leaving non-gateway files and
+  directories untouched.
+- **Sub-agent topics now show their own working directory and agent immediately during their first turn.** Opening a topic via `task-new` (with `--cwd`, `--worktree`, or a non-default agent), scheduled runs, `/fork`, or retry-in-new-topic previously announced the topic before the daemon bound its agent and recorded its working directory, caching the default agent's directory in the web UI's `dirCache` across the first turn's messages and typing updates. `WorkbenchHost.refreshWorkdir` now invalidates that cache and pushes the updated topic row as soon as the daemon finishes binding and setting the working directory.
+- **Web UI new-topic launcher now keeps its chosen agent and working directory folded across topic
+  switches and page reloads.** Previously, `BannersControllerImpl` kept the launcher's folded state
+  only in single-topic memory flags and cleared them on every topic switch, so returning to a new
+  topic whose agent and directory were already picked expanded both pickers again even though the
+  server still held the binding. `AgentCatalog` now reports whether the topic already has an
+  explicitly bound agent (`agentChosen`) and chosen working directory (`cwdChosen`, including an
+  explicitly confirmed agent root), and the launcher derives its initial folded state from those
+  server-known fields while leaving untouched new topics expanded.
+- **Web UI message text selection on touch screens and selection-aware Copy.** The transcript's
+  `contextmenu` handler previously intercepted every event with `preventDefault()` and opened the
+  custom message menu, which blocked the native text-selection floating toolbar on Android Chrome
+  when long-pressing message text, while the menu's **Copy** action always copied the entire message
+  markdown. Touch-originated `contextmenu` events now pass through untouched (touch users still have
+  the always-visible `⋯` action button on every message), and **Copy** in the message menu now copies
+  the active plain-text selection when it falls within that message (stripping UI buttons and chrome)
+  while keeping full-message copy when nothing is selected.
+
 ## [3.43.0] - 2026-11-27
 
 ### Added

@@ -77,8 +77,11 @@ export interface LogEventsDeps {
   readonly openTurnChanges: (turn: number) => void;
   readonly openTurnDiffSideBySide?: (turn: number, btn: HTMLButtonElement) => void;
   readonly onMessageAction?: (action: string, key: string, btn: HTMLButtonElement) => void;
+  readonly onToggleMessageActions?: (msgEl: HTMLElement | null) => void;
   readonly onHandoff?: (key: string, btn: HTMLButtonElement) => void;
   readonly postButton?: (btn: HTMLButtonElement, topicId: string) => void;
+  readonly onLoadOlder?: () => void;
+  readonly onJumpToMessage?: (msgId: string) => void;
 }
 
 function handleLocalAction(act: HTMLElement, deps: LogEventsDeps): void {
@@ -157,6 +160,37 @@ function handleNavClick(target: Element, e: MouseEvent, deps: LogEventsDeps): bo
     deps.openReader(view as HTMLAnchorElement);
     return true;
   }
+  const loadOlder = target.closest('button[data-load-older]');
+  if (loadOlder) {
+    deps.onLoadOlder?.();
+    return true;
+  }
+  const jumpQuote = target.closest('[data-jump-msg]');
+  if (jumpQuote) {
+    const msgId = jumpQuote.getAttribute('data-jump-msg');
+    if (msgId) deps.onJumpToMessage?.(msgId);
+    return true;
+  }
+  return false;
+}
+
+function handleTurnAndHandoffClick(target: Element, deps: LogEventsDeps): boolean {
+  const turns = target.closest('button[data-turns]');
+  if (turns) {
+    deps.openTurnChanges(Number(turns.getAttribute('data-turns')));
+    return true;
+  }
+  const splitTurns = target.closest<HTMLButtonElement>('button[data-turns-split]');
+  if (splitTurns) {
+    deps.openTurnDiffSideBySide?.(Number(splitTurns.getAttribute('data-turns-split')), splitTurns);
+    return true;
+  }
+  const handoffBtn = target.closest<HTMLButtonElement>('button[data-handoff-k]');
+  if (handoffBtn) {
+    const key = handoffBtn.getAttribute('data-handoff-k');
+    if (key) deps.onHandoff?.(key, handoffBtn);
+    return true;
+  }
   return false;
 }
 
@@ -190,22 +224,7 @@ function handleActionClick(target: Element, deps: LogEventsDeps): void {
     deps.toggleLine(line as HTMLElement);
     return;
   }
-  const turns = target.closest('button[data-turns]');
-  if (turns) {
-    deps.openTurnChanges(Number(turns.getAttribute('data-turns')));
-    return;
-  }
-  const splitTurns = target.closest<HTMLButtonElement>('button[data-turns-split]');
-  if (splitTurns) {
-    deps.openTurnDiffSideBySide?.(Number(splitTurns.getAttribute('data-turns-split')), splitTurns);
-    return;
-  }
-  const handoffBtn = target.closest<HTMLButtonElement>('button[data-handoff-k]');
-  if (handoffBtn) {
-    const key = handoffBtn.getAttribute('data-handoff-k');
-    if (key) deps.onHandoff?.(key, handoffBtn);
-    return;
-  }
+  if (handleTurnAndHandoffClick(target, deps)) return;
   const btn = target.closest('button[data-btn]');
   if (btn) {
     const runPost = deps.postButton ?? ((el, t) => postButton(el, t));
@@ -213,8 +232,74 @@ function handleActionClick(target: Element, deps: LogEventsDeps): void {
   }
 }
 
-export function attachLogEvents(log: HTMLElement, deps: LogEventsDeps): Disposable {
+const ACTIONS_TAP_IGNORE_SELECTOR =
+  'a, button, input, textarea, select, label, [contenteditable="true"], [role="button"], .msg-actions, .cb-b, .tl, .sa-h, img.shot, .files, [data-jump-msg]';
+
+function isTouchClick(ev: MouseEvent, win: Window | null, lastPointerType: string): boolean {
+  const pt = (ev as MouseEvent & { readonly pointerType?: string }).pointerType || lastPointerType;
+  if (pt === 'mouse' || pt === 'pen') return false;
+  if (pt === 'touch') return true;
+  return Boolean(win?.matchMedia?.('(hover: none)').matches);
+}
+
+function hasNonEmptySelection(win: Window | null): boolean {
+  const sel = win?.getSelection?.();
+  return Boolean(sel && !sel.isCollapsed && String(sel).length > 0);
+}
+
+function attachMessageActionsTap(
+  log: HTMLElement,
+  doc: Document,
+  onToggle: (msgEl: HTMLElement | null) => void,
+): Disposable {
   const store = new DisposableStore();
+  let lastPointerType = '';
+  store.add(
+    addDisposableListener(doc, 'pointerdown', (ev: PointerEvent) => {
+      if (ev.pointerType) lastPointerType = ev.pointerType;
+    }),
+  );
+  store.add(
+    addDisposableListener(
+      doc,
+      'touchstart',
+      () => {
+        lastPointerType = 'touch';
+      },
+      { passive: true },
+    ),
+  );
+  store.add(
+    addDisposableListener(doc, 'click', (e: MouseEvent) => {
+      const target = e.target instanceof Element ? e.target : null;
+      if (!target) return;
+      // Use composedPath too: toggleLine/toggleAll repaints innerHTML on #log before bubbling to doc.
+      const inLog =
+        log.contains(target) || (typeof e.composedPath === 'function' && e.composedPath().includes(log));
+      if (!inLog) {
+        onToggle(null);
+        return;
+      }
+      const win = doc.defaultView;
+      if (!isTouchClick(e, win, lastPointerType)) return;
+      if (hasNonEmptySelection(win)) return;
+      if (target.closest(ACTIONS_TAP_IGNORE_SELECTOR)) return;
+      const msgEl = target.closest<HTMLElement>('.m[data-k]');
+      onToggle(msgEl && msgEl.querySelector('.msg-actions') ? msgEl : null);
+    }),
+  );
+  return store;
+}
+
+export function attachLogEvents(
+  log: HTMLElement,
+  deps: LogEventsDeps,
+  doc: Document = log.ownerDocument,
+): Disposable {
+  const store = new DisposableStore();
+  if (deps.onToggleMessageActions) {
+    store.add(attachMessageActionsTap(log, doc, deps.onToggleMessageActions));
+  }
   store.add(
     addDisposableListener(log, 'click', (e) => {
       const target = e.target instanceof Element ? e.target : null;
@@ -227,7 +312,16 @@ export function attachLogEvents(log: HTMLElement, deps: LogEventsDeps): Disposab
     addDisposableListener(log, 'keydown', (e) => {
       const target = e.target instanceof Element ? e.target : null;
       const toolbar = target?.closest<HTMLElement>('.msg-actions');
-      if (toolbar) handleToolbarKeydown(e, toolbar);
+      if (toolbar) {
+        handleToolbarKeydown(e, toolbar);
+        return;
+      }
+      const jumpQuote = target?.closest<HTMLElement>('[data-jump-msg]');
+      if (jumpQuote && (e.key === 'Enter' || e.key === ' ')) {
+        e.preventDefault();
+        const msgId = jumpQuote.getAttribute('data-jump-msg');
+        if (msgId) deps.onJumpToMessage?.(msgId);
+      }
     }),
   );
   store.add(

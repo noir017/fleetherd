@@ -140,19 +140,45 @@ describe('wb2-chat topic editor alignment', () => {
     expect(composerCss).toContain('.wb-topic-editor .st-sep{display:none}');
   });
 
-  it('anchors mobile own-message action bars outside the bubble and reserves bottom spacing', () => {
+  it('hides touch message action bars by default, reveals on .actions-open/focus-within, and reserves own-bubble spacing only when shown', () => {
     const transcriptCss = fs.readFileSync(path.join(STYLES_DIR, 'transcript.css'), 'utf8');
     const hoverNoneIdx = transcriptCss.indexOf('@media(hover:none){.msg-actions{');
     const mobileStart = transcriptCss.indexOf('@media (max-width: 640px) {');
     expect(hoverNoneIdx).toBeGreaterThan(-1);
     expect(mobileStart).toBeGreaterThan(hoverNoneIdx);
 
+    const hoverNoneLine = transcriptCss.slice(hoverNoneIdx, transcriptCss.indexOf('\n', hoverNoneIdx));
+    expect(hoverNoneLine).toContain('opacity:0;pointer-events:none');
+    expect(hoverNoneLine).toContain('.m.actions-open>.msg-actions,.m:focus-within>.msg-actions,.msg-actions:focus-within{');
+
     const mobileBlock = transcriptCss.slice(mobileStart, transcriptCss.indexOf('\n}', mobileStart));
     expect(mobileBlock).toContain(
       '.wb-topic-editor .m.own>.msg-actions{position:absolute;top:calc(100% + 4px);right:0;left:auto;margin-top:0;width:max-content}',
     );
-    expect(mobileBlock).toContain('.wb-topic-editor .m.own:has(>.msg-actions){margin-bottom:54px}');
+    expect(mobileBlock).not.toContain('.wb-topic-editor .m.own:has(>.msg-actions){margin-bottom:54px}');
+    expect(mobileBlock).toContain('.wb-topic-editor .m.own.actions-open:has(>.msg-actions)');
+    expect(mobileBlock).toContain('.wb-topic-editor .m.own:focus-within:has(>.msg-actions){margin-bottom:54px}');
     expect(mobileBlock).toContain('flex-wrap:nowrap;white-space:nowrap');
     expect(mobileBlock).toContain('.wb-topic-editor .msg-act-btn{flex:none;width:28px;height:26px}');
+    expect(transcriptCss).toContain('.wb-topic-editor .b>.tools{border:1px solid var(--fh-line);');
+  });
+
+  it('lays out mobile status row in two wrapping rows with folder on row 1 and .st-info on row 2', () => {
+    const composerCss = fs.readFileSync(path.join(STYLES_DIR, 'composer.css'), 'utf8');
+    const statusCss = fs.readFileSync(path.join(STYLES_DIR, 'status.css'), 'utf8');
+    expect(statusCss).toContain('.st-info{display:contents}');
+
+    const mobileStart = composerCss.indexOf('@media (max-width: 640px) {');
+    expect(mobileStart).toBeGreaterThan(-1);
+    const mobileBlock = composerCss.slice(mobileStart);
+
+    expect(mobileBlock).toContain('.wb-topic-editor .wb-topic-status-row{flex-wrap:wrap;overflow-x:visible;');
+    expect(mobileBlock).not.toContain('overflow-x:auto');
+    expect(mobileBlock).toContain('.wb-topic-editor #status:not([hidden]){display:contents;');
+    expect(mobileBlock).toContain('.wb-topic-editor .st-who{display:contents}');
+    expect(mobileBlock).toContain('.wb-topic-editor .st-who>*{order:1}');
+    expect(mobileBlock).toContain('.wb-topic-editor .wb-topic-dir{order:2;flex:0 2 auto;');
+    expect(mobileBlock).toContain('direction:rtl;text-align:left}');
+    expect(mobileBlock).toContain('.wb-topic-editor .st-info{order:3;flex:1 0 100%;display:flex;flex-wrap:wrap;');
   });
 });

@@ -22,6 +22,8 @@ import {
   isControlMenuButton,
   mergeReplay,
   OWNER,
+  PAGE_MAX_LIMIT,
+  SYNC_WINDOW_MESSAGES,
   WebRoom,
   type Kept,
   type TranscriptStore,
@@ -102,7 +104,7 @@ const listEvents = (seen: Seen[]): Seen[] => seen.filter((s) => s.ev.t === 'topi
  * against an independent reading of the same rule.
  */
 function applyList(held: Topic[], ev: WebEvent): Topic[] {
-  if (ev.t === 'sync' || ev.t === 'topics') return ev.topics;
+  if (ev.t === 'sync' || ev.t === 'topics') return ev.topics ?? held;
   if (ev.t !== 'topic-rows') return held;
   const gone = new Set(ev.gone ?? []);
   const next = held.filter((t) => !gone.has(t.id));
@@ -488,6 +490,28 @@ describe('WebRoom: the topic list reaching every client', () => {
     const fresh: Seen[] = [];
     room.subscribe(topic, (id, ev) => fresh.push({ id, ev }));
     expect(kinds(fresh)).toEqual(['sync']);
+  });
+
+  it('includes epoch on resumed and sends commands only on first connect without topicsVersion', () => {
+    const { room, topic, seen, off } = attached();
+    room.setCommands([{ name: 'model', description: 'Pick model' }]);
+    room.post(topic, { own: false, html: '<p>one</p>' }, 'one');
+    const lastId = seen.filter((s) => s.id !== '').at(-1)?.id ?? '';
+    const syncEv = seen.find((s) => s.ev.t === 'sync')?.ev as Extract<WebEvent, { t: 'sync' }>;
+    const tv = (listEvents(seen).at(-1)?.ev as { tv: number }).tv;
+    off();
+
+    // Direct reload resume: no topicsVersion yet -> sends commands + topics + resumed(epoch).
+    const coldResume: Seen[] = [];
+    room.subscribe(topic, (id, ev) => coldResume.push({ id, ev }), lastId);
+    expect(lastOf(coldResume, 'commands')).toEqual({ t: 'commands', commands: [{ name: 'model', description: 'Pick model' }] });
+    expect(lastOf(coldResume, 'resumed')).toEqual({ t: 'resumed', epoch: syncEv.epoch });
+
+    // In-session resume with current topicsVersion -> omits commands, still carries epoch.
+    const warmResume: Seen[] = [];
+    room.subscribe(topic, (id, ev) => warmResume.push({ id, ev }), lastId, tv);
+    expect(kinds(warmResume)).not.toContain('commands');
+    expect(lastOf(warmResume, 'resumed')).toEqual({ t: 'resumed', epoch: syncEv.epoch });
   });
 });
 
@@ -1826,6 +1850,28 @@ describe('WebRoom: which agents an empty topic could be given to', () => {
     expect(seen[0]?.ev).toMatchObject({ t: 'sync', topic });
     expect(seen[0]?.ev).not.toHaveProperty('agents');
   });
+
+  it('marks cwdChosen on sync after setupTopic confirms a directory (including root)', () => {
+    const { room, topic } = attached();
+    room.useAgentCatalog(() => ({ ...catalog, agentChosen: true }));
+    room.useTopicSetup((_ref, opts) => ({ ok: true, agent: opts.agent ?? 'cc', cwd: opts.cwd ?? '/home/me/projects' }));
+
+    const before: Seen[] = [];
+    room.subscribe(topic, (id, ev) => before.push({ id, ev }));
+    expect(before[0]?.ev).toMatchObject({ t: 'sync', agents: { current: 'cc', agentChosen: true } });
+    expect((before[0]?.ev as { agents?: { cwdChosen?: boolean } }).agents?.cwdChosen).toBeUndefined();
+
+    expect(room.setupTopic(topic, { agent: 'cc', cwd: '/home/me/projects' }).ok).toBe(true);
+    const afterPick: Seen[] = [];
+    room.subscribe(topic, (id, ev) => afterPick.push({ id, ev }));
+    expect(afterPick[0]?.ev).toMatchObject({ t: 'sync', agents: { current: 'cc', agentChosen: true, cwdChosen: true } });
+
+    // Switching agent without passing cwd clears the root-dir marker.
+    expect(room.setupTopic(topic, { agent: 'oc' }).ok).toBe(true);
+    const afterSwitch: Seen[] = [];
+    room.subscribe(topic, (id, ev) => afterSwitch.push({ id, ev }));
+    expect((afterSwitch[0]?.ev as { agents?: { cwdChosen?: boolean } }).agents?.cwdChosen).toBeUndefined();
+  });
 });
 
 describe('WebRoom: which directory a topic is working in', () => {
@@ -1986,6 +2032,24 @@ describe('WebRoom: which directory a topic is working in', () => {
     where = { path: '/home/u/workspace/shop-api', host: 'buildbox' };
     room.revise(topic, menu.id, 'Now working in shop-api', []);
     expect(sentDir(list(), topic)).toBe('buildbox·shop-api');
+  });
+
+  it('refreshWorkdir drops the cached label within the TTL and announces the new directory and agent', () => {
+    vi.useFakeTimers();
+    const { room, topic, list } = attached();
+    let where: { path: string; host?: string; agent?: { id: string; harness: string } } = { path: '/home/me/projects/parent' };
+    room.useWorkdirLookup(() => where);
+    room.post(topic, { own: false, html: '<p>hi</p>' }, 'hi');
+    expect(sentDir(list(), topic)).toBe('·parent');
+
+    where = { path: '/home/me/projects/child', agent: { id: 'oc', harness: 'opencode' } };
+    // Still cached inside DIR_TTL_MS until refreshWorkdir invalidates it.
+    room.post(topic, { own: false, html: '<p>still</p>' }, 'still');
+    expect(sentDir(list(), topic)).toBe('·parent');
+
+    room.refreshWorkdir(topic);
+    expect(sentDir(list(), topic)).toBe('·child');
+    expect(list().find((t) => t.id === topic)?.agent).toEqual({ id: 'oc', harness: 'opencode' });
   });
 
   it('is corrected by the liveness poll when a move lands after its own announcement', () => {
@@ -3311,6 +3375,7 @@ describe('WebRoom: multiplexed multi-topic streams', () => {
     expect(resumed.some((r) => r.ev.t === 'msg' && r.ev.topic === t1 && r.ev.msg.html.includes('t1-live'))).toBe(true);
     expect(resumed.some((r) => r.ev.t === 'resumed' && r.ev.topic === t1)).toBe(true);
     expect(resumed.some((r) => r.ev.t === 'sync' && r.ev.topic === t2)).toBe(true);
+    expect(resumed.findIndex((r) => r.ev.t === 'sync')).toBeLessThan(resumed.findIndex((r) => r.ev.t === 'resumed'));
     unsub2();
 
     // Reconnect with both last1 and last2 valid: both resume, global machines/topics sent once.
@@ -3324,6 +3389,9 @@ describe('WebRoom: multiplexed multi-topic streams', () => {
     ]);
     expect(bothResumed.filter((r) => r.ev.t === 'machines')).toHaveLength(1);
     expect(bothResumed.filter((r) => r.ev.t === 'topics')).toHaveLength(1);
+    const firstResumedIdx = bothResumed.findIndex((r) => r.ev.t === 'resumed');
+    expect(bothResumed.findIndex((r) => r.ev.t === 'machines')).toBeLessThan(firstResumedIdx);
+    expect(bothResumed.findIndex((r) => r.ev.t === 'topics')).toBeLessThan(firstResumedIdx);
     unsub3();
   });
 });
@@ -3383,5 +3451,109 @@ describe('WebRoom: agent handoff action', () => {
       fromTopicId: topic,
       fromTopicTitle: 'Refactor auth',
     });
+  });
+});
+
+describe('WebRoom: windowed sync, older message paging, and multiplexed topic list dedup', () => {
+  it('windows initial sync and snapshot to the latest tail', () => {
+    const { room, topic } = attached();
+    for (let i = 1; i <= 120; i += 1) {
+      room.post(topic, { own: i % 2 === 1, html: `<p>msg-${i}</p>`, ...(i === 50 ? { nonce: 'n-hidden-50' } : {}) }, `msg-${i}`);
+    }
+
+    const fresh: Seen[] = [];
+    const off = room.subscribe(topic, (id, ev) => fresh.push({ id, ev }));
+    const syncEv = fresh.find((s) => s.ev.t === 'sync')?.ev as Extract<WebEvent, { t: 'sync' }>;
+    expect(syncEv.messages).toHaveLength(SYNC_WINDOW_MESSAGES);
+    expect(syncEv.totalCount).toBe(120);
+    expect(syncEv.hasMore).toBe(true);
+    expect(syncEv.oldestSeq).toBe(120 - SYNC_WINDOW_MESSAGES + 1);
+    expect(syncEv.messages[0]?.html).toBe(`<p>msg-${120 - SYNC_WINDOW_MESSAGES + 1}</p>`);
+    expect(syncEv.messages.at(-1)?.html).toBe('<p>msg-120</p>');
+    expect(syncEv.recentNonces).toContain('n-hidden-50');
+    off();
+
+    // Snapshot shares the same windowing contract.
+    const snap = room.snapshot(topic);
+    expect(snap?.messages).toHaveLength(SYNC_WINDOW_MESSAGES);
+    expect(snap?.hasMore).toBe(true);
+    expect(snap?.oldestSeq).toBe(syncEv.oldestSeq);
+  });
+
+  it('pages older messages by seq cursor and handles boundary cursors cleanly', () => {
+    const { room, topic } = attached();
+    for (let i = 1; i <= 120; i += 1) {
+      room.post(topic, { own: i % 2 === 1, html: `<p>msg-${i}</p>` }, `msg-${i}`);
+    }
+    const snap = room.snapshot(topic)!;
+
+    // Page backwards by seq cursor until the earliest message.
+    const page1 = room.messagesPage(topic, snap.oldestSeq!, 40);
+    expect(page1?.messages).toHaveLength(40);
+    expect(page1?.hasMore).toBe(true);
+    expect(page1?.oldestSeq).toBe(21);
+    expect(page1?.messages[0]?.html).toBe('<p>msg-21</p>');
+    expect(page1?.messages.at(-1)?.html).toBe('<p>msg-60</p>');
+
+    const page2 = room.messagesPage(topic, page1!.oldestSeq!, 40);
+    expect(page2?.messages).toHaveLength(20);
+    expect(page2?.hasMore).toBe(false);
+    expect(page2?.oldestSeq).toBe(1);
+    expect(page2?.messages[0]?.html).toBe('<p>msg-1</p>');
+  });
+
+  it('handles boundary cursors and unknown topics in messagesPage', () => {
+    const { room, topic } = attached();
+    for (let i = 1; i <= 120; i += 1) {
+      room.post(topic, { own: false, html: `<p>msg-${i}</p>` }, `msg-${i}`);
+    }
+
+    // Boundary cursors: at or before oldest returns empty + hasMore=false; beyond newest returns latest clamped.
+    const pastStart = room.messagesPage(topic, 1, 50);
+    expect(pastStart?.messages).toEqual([]);
+    expect(pastStart?.hasMore).toBe(false);
+    expect(pastStart?.oldestSeq).toBeUndefined();
+
+    const pastEnd = room.messagesPage(topic, 999999, PAGE_MAX_LIMIT + 50);
+    expect(pastEnd?.messages).toHaveLength(PAGE_MAX_LIMIT);
+    expect(pastEnd?.hasMore).toBe(true);
+    expect(room.messagesPage('deadbeef', 10, 10)).toBeUndefined();
+  });
+
+  it('caps windowed sync by byte budget while keeping at least 10 messages', () => {
+    const { room, topic } = attached();
+    const big = `<p>${'x'.repeat(25_000)}</p>`;
+    for (let i = 1; i <= 30; i += 1) {
+      room.post(topic, { own: false, html: big }, 'big');
+    }
+    const fresh: Seen[] = [];
+    const off = room.subscribe(topic, (id, ev) => fresh.push({ id, ev }));
+    const syncEv = fresh.find((s) => s.ev.t === 'sync')?.ev as Extract<WebEvent, { t: 'sync' }>;
+    expect(syncEv.messages.length).toBeGreaterThanOrEqual(10);
+    expect(syncEv.messages.length).toBeLessThan(30);
+    expect(syncEv.hasMore).toBe(true);
+    expect(syncEv.totalCount).toBe(30);
+    off();
+  });
+
+  it('sends topics/commands/tv only on the first cold sync of a multiplexed stream', () => {
+    const { room, topic: t1 } = attached();
+    const t2 = room.createTopic('second').id;
+    const t3 = room.createTopic('third').id;
+    room.setCommands([{ name: 'model', description: 'Pick model' }]);
+    const events: Seen[] = [];
+    const off = room.subscribeMany([t1, t2, t3], (id, ev) => events.push({ id, ev }));
+    const syncs = events.filter((e) => e.ev.t === 'sync').map((e) => e.ev as Extract<WebEvent, { t: 'sync' }>);
+    expect(syncs).toHaveLength(3);
+    expect(syncs[0]?.topics).toBeDefined();
+    expect(syncs[0]?.commands).toBeDefined();
+    expect(syncs[0]?.tv).toBeDefined();
+    expect(syncs[1]?.topics).toBeUndefined();
+    expect(syncs[1]?.commands).toBeUndefined();
+    expect(syncs[1]?.tv).toBeUndefined();
+    expect(syncs[2]?.topics).toBeUndefined();
+    expect(syncs[2]?.commands).toBeUndefined();
+    expect(syncs[2]?.tv).toBeUndefined();
+    off();
   });
 });

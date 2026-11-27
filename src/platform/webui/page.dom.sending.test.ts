@@ -296,7 +296,7 @@ describe('webui page: sending', () => {
     const sent = h.calls.filter((c) => c.path === 'api/send');
     expect(sent).toHaveLength(3);
     expect(new Set(sent.map((c) => c.body.nonce)).size).toBe(1);
-    expect(h.longTimers).toEqual([15000, 15000, 15000]);
+    expect(h.longTimers).toEqual([15001, 15001, 15001]);
   });
 
   it('allows an attachment longer in proportion to its size, and does not start an upload over', async () => {
@@ -325,8 +325,8 @@ describe('webui page: sending', () => {
     const sent = h.calls.filter((c) => c.path === 'api/send');
     expect(sent).toHaveLength(1);
     const file = (sent[0]?.body.files as Array<{ name: string; data: string }>)[0]!;
-    // Fifteen seconds, plus one more for every 64 KiB of what is being sent.
-    expect(h.longTimers).toEqual([Math.round(15000 + (file.name.length + file.data.length) / 65.536)]);
+    // Fifteen seconds, plus one more for every 16 KiB of what is being sent.
+    expect(h.longTimers).toEqual([Math.round(15000 + (file.name.length + file.data.length) / 16.384)]);
     expect(h.longTimers[0]).toBeGreaterThan(60000);
     expect(h.doc.querySelector('[data-retry]')).not.toBeNull();
   });
@@ -697,6 +697,44 @@ describe('webui page: the local transcript cache', () => {
     await h.click('#composer button[type="submit"]');
     expect(h.painted()).toBe(2);
     expect(h.calls.find((c) => c.path === 'api/send')?.body.text).toBe('and sending still works');
+  });
+
+  it('resumes directly from aa_cache with ?last= on topic reload without a full sync', async () => {
+    const T = 'a1b2c3d4';
+    const first = await open({ url: `http://localhost:8787/?t=${T}` });
+    first.live().onmessage?.({
+      data: JSON.stringify(sync(T, [message('m1', '<p>cached one</p>'), message('m2', '<p>cached two</p>')], [T], { epoch: 42 })),
+      lastEventId: `${T}.16.2`,
+    });
+    await saved();
+
+    // Reload directly on the same topic URL: the initial stream must carry ?last= from aa_cache.
+    const again = await open({ url: `http://localhost:8787/?t=${T}`, idb: first.idb });
+    const streamUrl = new URL(again.live().url, 'http://localhost:8787');
+    expect(streamUrl.searchParams.get('t')).toBe(T);
+    expect(streamUrl.searchParams.get('last')).toBe(`${T}.16.2`);
+    expect(streamUrl.searchParams.get('tv')).toBeNull();
+    expect(again.painted()).toBe(2);
+
+    // Server replays 1 missed message, commands, topics, and resumed with epoch (no full sync).
+    again.live().onmessage?.({
+      data: JSON.stringify({ t: 'msg', msg: message('m3', '<p>missed three</p>') }),
+      lastEventId: `${T}.16.3`,
+    });
+    await again.emit({ t: 'commands', commands: [{ name: 'model', description: 'Switch model' }] });
+    await again.emit({
+      t: 'topics',
+      tv: 5,
+      topics: [{ id: T, title: 'Topic', createdAt: 1, lastAt: 2, running: false, msgCount: 3 }],
+    });
+    await again.emit({ t: 'resumed', epoch: 42 });
+
+    expect(again.painted()).toBe(3);
+    expect(again.el('log').textContent).toContain('cached one');
+    expect(again.el('log').textContent).toContain('missed three');
+    // Replayed message must be keyed under epoch 42 (not 0 or history).
+    expect(again.doc.querySelector('#log > .m[data-k="42:m3"]')).not.toBeNull();
+    expect(again.doc.querySelectorAll('#log > .m.hist')).toHaveLength(0);
   });
 });
 

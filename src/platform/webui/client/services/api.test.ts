@@ -9,15 +9,23 @@ describe('services/api', () => {
     expect(text('<div title="a&b">hi</div>')).toBe('&lt;div title=&quot;a&amp;b&quot;&gt;hi&lt;/div&gt;');
   });
 
-  it('sendLimit scales 15s + 1s per 64 KiB and caps at 300s', () => {
+  it('sendLimit scales 15s + 1s per 16 KiB and caps at 3600s', () => {
     expect(sendLimit({})).toBe(15000);
-    expect(sendLimit({ text: 'a'.repeat(65536) })).toBe(16000);
+    expect(sendLimit({ text: 'a'.repeat(16384) })).toBe(16000);
+    const tenMiB = 'x'.repeat(10 * 1024 * 1024);
+    // 36 MiB raw framed upload (~48 MiB base64) stays below the 3600 s ceiling.
     expect(
       sendLimit({
         text: '',
-        files: [{ name: 'big.bin', data: 'x'.repeat(25 * 1024 * 1024) }],
+        files: Array.from({ length: 5 }, (_, i) => ({ name: `${i}.bin`, data: tenMiB })),
       }),
-    ).toBe(300000);
+    ).toBeLessThan(3600000);
+    expect(
+      sendLimit({
+        text: '',
+        files: Array.from({ length: 6 }, (_, i) => ({ name: `${i}.bin`, data: tenMiB })),
+      }),
+    ).toBe(3600000);
   });
 
   it('post sends JSON or binary with locale header and retries 5xx', async () => {

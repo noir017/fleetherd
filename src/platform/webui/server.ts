@@ -94,7 +94,7 @@ import {
   type WebEvent,
 } from './protocol.js';
 import { MAX_READ_BYTES, readableKind, renderReading } from './reading.js';
-import { inlineImageType, type WebRoom, type WebuiInstance } from './room.js';
+import { inlineImageType, PAGE_DEFAULT_LIMIT, PAGE_MAX_LIMIT, type WebRoom, type WebuiInstance } from './room.js';
 import type { SsoRefusal, WebSso } from './sso.js';
 import { proxyRequest, proxyUpgrade, type UpstreamSet } from './terminal-proxy.js';
 import type { TerminalSessions } from './terminal-sessions.js';
@@ -212,6 +212,8 @@ export function createWebServer(
       else res.end();
     });
   });
+  // Match client sendLimit's 3600 s cap so slow uploads up to MAX_BODY_BYTES are not cut by Node's 300 s default.
+  server.requestTimeout = 3_600_000;
   server.on('connection', (socket) => {
     sockets.add(socket);
     socket.on('close', () => sockets.delete(socket));
@@ -455,6 +457,8 @@ const GUARDED: Route[] = [
   // One topic's state, whole, without attaching to it — what the page fetches ahead of time for
   // the topics that need a person. Read-only; see `WebRoom.snapshot`.
   { method: 'GET', path: '/api/topic', run: topicSnapshot },
+  // Older messages before a room-local seq cursor for upward transcript paging.
+  { method: 'GET', path: '/api/messages', run: topicMessages },
   { method: 'POST', path: '/api/send', run: submit },
   { method: 'POST', path: '/api/pending/recall', run: recallPending },
   { method: 'POST', path: '/api/pending/send-now', run: sendNowPending },
@@ -918,6 +922,27 @@ async function topicSnapshot({ req, res, url }: Req, ctx: Ctx): Promise<void> {
   const snapshot = ctx.room.snapshot(id);
   if (!snapshot) return send(req, res, 404, { error: 'no such topic' });
   await sendAsyncGzip(req, res, 200, snapshot);
+}
+
+const POSITIVE_INT = /^[1-9]\d{0,15}$/;
+
+async function topicMessages({ req, res, url }: Req, ctx: Ctx): Promise<void> {
+  const id = url.searchParams.get('t') ?? '';
+  if (!TOPIC_ID.test(id)) return send(req, res, 400, { error: 'not a topic id' });
+  const rawBefore = url.searchParams.get('before') ?? '';
+  if (!POSITIVE_INT.test(rawBefore)) return send(req, res, 400, { error: 'invalid before cursor' });
+  const before = Number(rawBefore);
+  if (!Number.isSafeInteger(before)) return send(req, res, 400, { error: 'invalid before cursor' });
+  const rawLimit = url.searchParams.get('limit');
+  let limit = PAGE_DEFAULT_LIMIT;
+  if (rawLimit !== null && rawLimit !== '') {
+    if (!POSITIVE_INT.test(rawLimit)) return send(req, res, 400, { error: 'invalid limit' });
+    limit = Number(rawLimit);
+    if (limit > PAGE_MAX_LIMIT) return send(req, res, 400, { error: 'invalid limit' });
+  }
+  const page = ctx.room.messagesPage(id, before, limit);
+  if (!page) return send(req, res, 404, { error: 'no such topic' });
+  await sendAsyncGzip(req, res, 200, page);
 }
 
 /** Open the response as an event stream, compressed when the client will take it. */

@@ -582,7 +582,10 @@ describe('agentCatalogForRef (what a new topic offers)', () => {
   it('follows a binding made before the first turn, and is still open there', async () => {
     const { reg, send } = rig();
     await send('/agent oc');
-    expect(reg.agentCatalogForRef(ref)?.current).toBe('oc');
+    const cat = reg.agentCatalogForRef(ref);
+    expect(cat?.current).toBe('oc');
+    expect(cat?.agentChosen).toBe(true);
+    expect(cat?.cwdChosen).toBeUndefined();
   });
 
   it('closes once the answering agent has a session here', async () => {
@@ -622,7 +625,10 @@ describe('agentCatalogForRef (what a new topic offers)', () => {
     const target = join(root, 'shop-api');
     const res = reg.setupTopicForRef(ref, { agent: 'oc', cwd: target });
     expect(res).toEqual({ ok: true, agent: 'oc', cwd: target });
-    expect(reg.agentCatalogForRef(ref)?.current).toBe('oc');
+    const cat = reg.agentCatalogForRef(ref);
+    expect(cat?.current).toBe('oc');
+    expect(cat?.agentChosen).toBe(true);
+    expect(cat?.cwdChosen).toBe(true);
     expect(reg.workdirForRef(ref)?.path).toBe(target);
     // Nothing was sent to any agent; the first real user message arrives verbatim.
     expect(prompts).toEqual([]);

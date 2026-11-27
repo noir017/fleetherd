@@ -302,17 +302,17 @@ class BannersControllerImpl implements BannersController {
     const sameTopic = active && topicId === this._launchFoldTopic;
     const keptWd = sameTopic ? this._launchWorkdir : null;
     const keptCwd = sameTopic ? this._launchCwd : '';
-    if (!sameTopic) this._resetLaunchFold(active ? topicId : '');
+    if (!sameTopic) this._resetLaunchFold(active ? topicId : '', active ? launch : null);
     this._teardownLaunchEl();
     if (active && launch) this._mountLaunchEl(launch, topicId, keptWd, keptCwd, s);
     this._deps.paintStatus();
     this.paintMachineNote();
   }
 
-  private _resetLaunchFold(topicId: string): void {
+  private _resetLaunchFold(topicId: string, launch?: LaunchChoice | null): void {
     this._launchFoldTopic = topicId;
-    this._agentsFolded = false;
-    this._wdFolded = false;
+    this._agentsFolded = Boolean(launch?.agentChosen);
+    this._wdFolded = Boolean(launch?.cwdChosen);
     this._launchCwd = '';
   }
 
@@ -420,6 +420,8 @@ class BannersControllerImpl implements BannersController {
     if (!this._launchEl || !cwd) return;
     this._launchCwd = cwd;
     if (opts?.fold !== undefined) this._wdFolded = opts.fold;
+    const launch = this._deps.getLaunch();
+    if (launch) this._launchSig = JSON.stringify(launch) + this._offlineSig;
     if (this._launchWorkdir) {
       this._launchWorkdir = withCurrentWorkdir(this._launchWorkdir, cwd);
       const host = this._launchEl.querySelector<HTMLElement>('.launch-wd');
@@ -510,6 +512,7 @@ class BannersControllerImpl implements BannersController {
     if (!this.takeMachines(list)) return;
     this._deps.paintTopics();
     if (this._launchEl) this.syncLaunch(true);
+    this.paintMachineNote();
   }
 
   paintForkNote(cur: TranscriptTopicLike | null | undefined): void {

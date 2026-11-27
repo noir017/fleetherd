@@ -598,4 +598,164 @@ describe('features/topic/plugin', () => {
     h.events.dispose();
     h.overlays.dispose();
   });
+
+  it('does not intercept touch contextmenu, keeps mouse right-click, and copies selected text when inside the message', async () => {
+    const t1: TopicInfo = { id: 't-sel', title: 'Selection topic', lastAt: 1000, live: true };
+    const h = makeHarness([t1]);
+    const copied: string[] = [];
+
+    h.manager.register(
+      createTopicPlugin({
+        registry: h.registry,
+        overlays: h.overlays,
+        copyText: (text) => copied.push(text),
+      }),
+      { builtin: true },
+    );
+    await h.manager.activate(TOPIC_PLUGIN_ID);
+
+    const panel = h.registry.getEditor(TOPIC_EDITOR_KIND)!.component() as TopicEditorHandle;
+    document.body.appendChild(panel.element);
+    panel.init({ topicId: 't-sel' }, makePanelInitContext('editor-sel').ctx);
+
+    const msg1 = document.createElement('div');
+    msg1.className = 'm';
+    msg1.setAttribute('data-k', '1:m1');
+    msg1.innerHTML =
+      '<div class="b">' +
+      '<p>Alpha beta gamma</p>' +
+      '<div class="cb">' +
+      '<div class="cb-h"><span class="cb-lang">ts</span><button type="button" class="cb-b" data-cb="wrap">Wrap</button><button type="button" class="cb-b" data-cb="copy">Copy</button></div>' +
+      '<pre><code>const a = 1;\n  const b = 2;</code></pre>' +
+      '</div>' +
+      '<p>Delta epsilon</p>' +
+      '</div>' +
+      '<div class="t">10:00</div>' +
+      '<div class="msg-actions" role="toolbar"><button type="button" class="msg-act-btn" data-msg-act="more" data-msg-k="1:m1">More</button></div>';
+    panel.els.log.appendChild(msg1);
+
+    const msg2 = document.createElement('div');
+    msg2.className = 'm';
+    msg2.setAttribute('data-k', '1:m2');
+    msg2.innerHTML = '<div class="b"><p>Second message</p></div>';
+    panel.els.log.appendChild(msg2);
+
+    const msgMenu = document.querySelector<HTMLElement>('.wb-topic-message-menu')!;
+
+    // 1. Touch contextmenu carrying pointerType='touch' must not be preventDefault'd or open custom menu.
+    const touchEv = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 20, clientY: 30 });
+    Object.defineProperty(touchEv, 'pointerType', { value: 'touch' });
+    msg1.querySelector('p')!.dispatchEvent(touchEv);
+    expect(touchEv.defaultPrevented).toBe(false);
+    expect(msgMenu.hidden).toBe(true);
+
+    // 2. Touch contextmenu without pointerType (e.g. Firefox/WebKit) after a touch pointerdown must also pass through.
+    const touchDown = new Event('pointerdown', { bubbles: true });
+    Object.defineProperty(touchDown, 'pointerType', { value: 'touch' });
+    Object.defineProperty(touchDown, 'pointerId', { value: 7 });
+    msg1.querySelector('p')!.dispatchEvent(touchDown);
+    const fallbackTouchCtx = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 20, clientY: 30 });
+    msg1.querySelector('p')!.dispatchEvent(fallbackTouchCtx);
+    expect(fallbackTouchCtx.defaultPrevented).toBe(false);
+    expect(msgMenu.hidden).toBe(true);
+
+    // 3. Mouse right-click after a touch interaction still opens the custom menu and prevents default.
+    const mouseDown = new Event('pointerdown', { bubbles: true });
+    Object.defineProperty(mouseDown, 'pointerType', { value: 'mouse' });
+    msg1.querySelector('p')!.dispatchEvent(mouseDown);
+    const mouseCtx = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 25, clientY: 35 });
+    Object.defineProperty(mouseCtx, 'pointerType', { value: 'mouse' });
+    msg1.querySelector('p')!.dispatchEvent(mouseCtx);
+    expect(mouseCtx.defaultPrevented).toBe(true);
+    expect(msgMenu.hidden).toBe(false);
+
+    // 4. Without selection, Copy copies the whole message.
+    window.getSelection()?.removeAllRanges();
+    msgMenu.querySelector<HTMLButtonElement>('[data-menu-id="topic.message.copy"]')?.click();
+    expect(copied).toHaveLength(1);
+    expect(copied[0]).toContain('Alpha beta gamma');
+    expect(copied[0]).toContain('Delta epsilon');
+
+    // 5. With selection inside a single text node of msg1, Copy copies only that slice.
+    const pText = msg1.querySelector('p')!.firstChild!;
+    const r1 = document.createRange();
+    r1.setStart(pText, 6);
+    r1.setEnd(pText, 10); // "beta"
+    const sel = window.getSelection()!;
+    sel.removeAllRanges();
+    sel.addRange(r1);
+
+    const mouseCtx2 = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 25, clientY: 35 });
+    Object.defineProperty(mouseCtx2, 'pointerType', { value: 'mouse' });
+    msg1.querySelector('p')!.dispatchEvent(mouseCtx2);
+    expect(mouseCtx2.defaultPrevented).toBe(true);
+    expect(msgMenu.hidden).toBe(false);
+    // Even if selection is cleared before click runs (e.g. menu focus), the snapshotted selection is copied.
+    sel.removeAllRanges();
+    msgMenu.querySelector<HTMLButtonElement>('[data-menu-id="topic.message.copy"]')?.click();
+    expect(copied[1]).toBe('beta');
+
+    // 6. Selection spanning paragraph + code block + next paragraph keeps newlines/code and strips UI chrome (Wrap/Copy/lang).
+    const r2 = document.createRange();
+    r2.setStart(msg1.querySelector('p')!.firstChild!, 0);
+    r2.setEnd(msg1.querySelectorAll('p')[1]!.firstChild!, 5); // "Delta"
+    sel.removeAllRanges();
+    sel.addRange(r2);
+
+    const mouseCtx3 = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 25, clientY: 35 });
+    Object.defineProperty(mouseCtx3, 'pointerType', { value: 'mouse' });
+    msg1.querySelector('code')!.dispatchEvent(mouseCtx3);
+    msgMenu.querySelector<HTMLButtonElement>('[data-menu-id="topic.message.copy"]')?.click();
+    expect(copied[2]).toBe('Alpha beta gamma\nconst a = 1;\n  const b = 2;\nDelta');
+    expect(copied[2]).not.toContain('Wrap');
+    expect(copied[2]).not.toContain('Copy');
+    expect(copied[2]).not.toContain('10:00');
+    expect(copied[2]).not.toContain('More');
+
+    // 7. Selection inside another message falls back to copying the right-clicked message in full.
+    const r3 = document.createRange();
+    r3.setStart(msg2.querySelector('p')!.firstChild!, 0);
+    r3.setEnd(msg2.querySelector('p')!.firstChild!, 6);
+    sel.removeAllRanges();
+    sel.addRange(r3);
+
+    const mouseCtx4 = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 25, clientY: 35 });
+    Object.defineProperty(mouseCtx4, 'pointerType', { value: 'mouse' });
+    msg1.querySelector('p')!.dispatchEvent(mouseCtx4);
+    msgMenu.querySelector<HTMLButtonElement>('[data-menu-id="topic.message.copy"]')?.click();
+    expect(copied[3]).toContain('Alpha beta gamma');
+    expect(copied[3]).toContain('Delta epsilon');
+
+    // 8. Selection spanning across two messages does not belong to msg1, so falls back to whole msg1.
+    const r4 = document.createRange();
+    r4.setStart(msg1.querySelector('p')!.firstChild!, 0);
+    r4.setEnd(msg2.querySelector('p')!.firstChild!, 6);
+    sel.removeAllRanges();
+    sel.addRange(r4);
+
+    const mouseCtx5 = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 25, clientY: 35 });
+    Object.defineProperty(mouseCtx5, 'pointerType', { value: 'mouse' });
+    msg1.querySelector('p')!.dispatchEvent(mouseCtx5);
+    msgMenu.querySelector<HTMLButtonElement>('[data-menu-id="topic.message.copy"]')?.click();
+    expect(copied[4]).toContain('Alpha beta gamma');
+    expect(copied[4]).toContain('Delta epsilon');
+
+    // 9. Tapping the message action bar's More button still opens the menu even after a touch interaction.
+    sel.removeAllRanges();
+    const moreBtn = msg1.querySelector<HTMLButtonElement>('[data-msg-act="more"]')!;
+    const touchMoreDown = new Event('pointerdown', { bubbles: true });
+    Object.defineProperty(touchMoreDown, 'pointerType', { value: 'touch' });
+    moreBtn.dispatchEvent(touchMoreDown);
+    // Simulate TranscriptController forwarding [data-msg-act="more"] via openMessageMenu -> _openMessageMenuFromAnchor
+    const openViaAnchor = (panel as unknown as { _openMessageMenuFromAnchor: (k: string, a: HTMLElement) => void })
+      ._openMessageMenuFromAnchor;
+    openViaAnchor.call(panel, '1:m1', moreBtn);
+    expect(msgMenu.hidden).toBe(false);
+
+    panel.dispose();
+    h.manager.dispose();
+    h.registry.dispose();
+    h.events.dispose();
+    h.overlays.dispose();
+  });
 });

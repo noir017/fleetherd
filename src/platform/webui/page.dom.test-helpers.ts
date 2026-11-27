@@ -808,6 +808,7 @@ export async function open(
   onTestFinished(() => closeWindowAfterTest(dom.window));
 
   await tick();
+  await within('initial stream', 1000, () => streams.length > 0);
   const doc = dom.window.document;
   const live = (): Stream => {
     const open = streams.filter((s) => !s.closed);

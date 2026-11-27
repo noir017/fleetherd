@@ -603,6 +603,10 @@ export interface AgentCatalog {
    * default. The page marks it, because "just type" is an answer too and this is who it reaches.
    */
   current: string;
+  /** True when an agent has been explicitly bound to this conversation (not just the route default). */
+  agentChosen?: boolean;
+  /** True when a working directory has been explicitly chosen for this conversation. */
+  cwdChosen?: boolean;
   groups: AgentCatalogGroup[];
 }
 

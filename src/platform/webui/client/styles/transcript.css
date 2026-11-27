@@ -353,7 +353,7 @@
 .msg-act-btn:hover{background:var(--fh-hover);color:var(--fh-fg-hi)}
 .msg-act-btn:focus-visible{outline:1px solid var(--fh-accent);outline-offset:1px;color:var(--fh-fg-hi)}
 .msg-act-btn.is-done{color:var(--fh-ok)}
-@media(hover:none){.msg-actions{position:static;margin-top:6px;opacity:.9;pointer-events:auto}}
+@media(hover:none){.msg-actions{position:static;height:0;overflow:hidden;margin-top:0;padding:0;border-width:0;opacity:0;pointer-events:none}.m:hover>.msg-actions{opacity:0;pointer-events:none}.m.actions-open>.msg-actions,.m:focus-within>.msg-actions,.msg-actions:focus-within{height:auto;overflow:visible;margin-top:6px;padding:2px;border-width:1px;opacity:1;pointer-events:auto}}
 /* A picture the agent sent, drawn in the bubble. Capped in both directions: a screenshot of a
    4K display would otherwise push the timestamp and everything after it off the fold, and the
    point of showing it here is to recognise it, not to read it — that is what tapping is for. */
@@ -396,10 +396,17 @@
 .wb-topic-editor .b :not(pre)>code{background:var(--fh-bg-code);font-size:var(--fh-fs-sm);padding:1px 4px;border-radius:3px}
 .wb-topic-editor .b .cb{background:var(--fh-bg-side);border:1px solid var(--fh-line);border-radius:var(--fh-radius-card);contain:layout style}
 .wb-topic-editor .b .cb .cb-h{background:var(--fh-bg-widget);border-bottom:1px solid var(--fh-line)}
-.wb-topic-editor .tl{border:1px solid var(--fh-line);border-radius:var(--fh-radius-card);padding:5px 10px;color:var(--fh-fg-dim);font-size:var(--fh-fs-sm);margin:6px 0;gap:8px;align-items:center;background:var(--fh-bg-side)}
+.wb-topic-editor .b>.tools{border:1px solid var(--fh-line);border-radius:var(--fh-radius-card);background:var(--fh-bg-side);overflow:hidden}
+.wb-topic-editor .m.report .b>.tools{border:0;border-radius:0;background:transparent}
+.wb-topic-editor .tl{border:0;border-bottom:1px solid var(--fh-line);border-radius:0;padding:3px 10px;color:var(--fh-fg-dim);font-size:var(--fh-fs-sm);line-height:1.5;margin:0;gap:8px;align-items:center;background:transparent}
+.wb-topic-editor .tl:last-child{border-bottom:0}
+.wb-topic-editor .tl-c{flex:1}
+.wb-topic-editor .tl-s .ic-check{color:var(--fh-ok)}
+.wb-topic-editor .tl-s .ic-cross{color:var(--fh-err)}
 .wb-topic-editor .tl:hover{background:var(--fh-hover);color:var(--fh-fg)}
-.wb-topic-editor .tl.open{display:block}
-.wb-topic-editor .sa .tl{margin:4px 0;background:var(--fh-bg)}
+.wb-topic-editor .tl.open{display:block;padding:6px 10px}
+.wb-topic-editor .sa .tools{padding:0;border-top:1px solid var(--fh-line)}
+.wb-topic-editor .sa .tl{margin:0;background:transparent}
 .wb-topic-editor .tc{margin-top:8px;border:1px solid var(--fh-line);border-radius:var(--fh-radius-card);padding:7px 10px;font-size:var(--fh-fs-sm);display:flex;flex-wrap:wrap;gap:10px;align-items:center;background:var(--fh-bg-side)}
 .wb-topic-editor .tc button,
 .wb-topic-editor .tc .tc-summary{padding:0;border:0;background:none;color:var(--fh-fg);font-size:var(--fh-fs-sm);gap:8px}
@@ -463,13 +470,15 @@
   .wb-topic-editor .wb-topic-fork-note{padding:8px 16px;font-size:var(--fh-fs-ui)}
   .wb-topic-editor .m{font-size:var(--fh-fs-body);line-height:1.55;margin-bottom:18px}
   .wb-topic-editor .m.own{width:fit-content;max-width:86%;margin-left:auto;background:var(--fh-own-m);border:0;border-radius:18px 18px 4px 18px;padding:9px 14px;color:var(--fh-fg-hi)}
-  /* Keep the action bar outside the blue bubble (4px gap + 32px bar + 18px base gap = 54px bottom room). */
-  .wb-topic-editor .m.own:has(>.msg-actions){margin-bottom:54px}
+  /* Reserve bottom room under own bubble only while its action bar is revealed. */
+  .wb-topic-editor .m.own.actions-open:has(>.msg-actions),
+  .wb-topic-editor .m.own:focus-within:has(>.msg-actions){margin-bottom:54px}
   .wb-topic-editor .m.own .t{text-align:right}
-  .wb-topic-editor .msg-actions{position:static;margin-top:6px;width:fit-content;flex-wrap:nowrap;white-space:nowrap;opacity:.9;pointer-events:auto}
+  .wb-topic-editor .msg-actions{width:fit-content;flex-wrap:nowrap;white-space:nowrap}
   .wb-topic-editor .m.own>.msg-actions{position:absolute;top:calc(100% + 4px);right:0;left:auto;margin-top:0;width:max-content}
   .wb-topic-editor .msg-act-btn{flex:none;width:28px;height:26px}
-  .wb-topic-editor .tl{border-radius:8px;padding:8px 12px;font-size:var(--fh-fs-ui)}
+  .wb-topic-editor .b>.tools{border-radius:8px}
+  .wb-topic-editor .tl{padding:4px 10px;font-size:var(--fh-fs-sm);line-height:1.45}
   .wb-topic-editor .sa{border-radius:10px}
   .wb-topic-editor .sa-h{padding:9px 12px;font-size:var(--fh-fs-ui)}
   .wb-topic-editor .tc{border-radius:10px;padding:11px 12px;font-size:var(--fh-fs-ui)}
@@ -495,9 +504,22 @@
   .wb-topic-editor .wd-picker .wd-pick-bar{margin-left:auto}
   .wb-topic-editor .wd-picker .wd-list{max-height:260px}
 }
+@media (max-width: 640px) and (hover: hover) {
+  .wb-topic-editor .m.own:hover:has(>.msg-actions){margin-bottom:54px}
+}
 @media (max-width: 640px) and (prefers-color-scheme: light) {
   :root:not([data-theme="dark"]) .wb-topic-editor .m.own{background:var(--fh-own-m)}
 }
 @media (max-width: 640px) {
   [data-theme="light"] .wb-topic-editor .m.own{background:var(--fh-own-m)}
 }
+
+.wb-topic-editor .wb-topic-log,
+.wb-topic-editor #log{overflow-anchor:none}
+.older-bar{display:flex;align-items:center;justify-content:center;gap:8px;padding:6px 12px 12px;color:var(--fh-fg-dim,var(--dim));font-size:var(--fh-fs-sm,12px)}
+.older-bar .older-btn{border:1px solid var(--fh-line,var(--line));background:transparent;color:var(--fh-fg-dim,var(--dim));border-radius:var(--fh-radius-ctrl,6px);padding:4px 10px;font-size:inherit;cursor:pointer}
+.older-bar .older-btn:hover{color:var(--fh-fg-hi,var(--fg));border-color:var(--fh-accent,var(--accent))}
+.q[data-jump-msg]{cursor:pointer}
+.q[data-jump-msg]:hover{opacity:.9;text-decoration:underline}
+@keyframes jumpFlash{0%{background:color-mix(in srgb,var(--fh-accent) 22%,transparent)}100%{background:transparent}}
+.m.jump-flash{animation:jumpFlash 1.5s ease-out}

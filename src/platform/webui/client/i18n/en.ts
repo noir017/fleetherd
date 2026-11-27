@@ -296,6 +296,10 @@ export const en = {
   'btw.notSent': 'Not sent, so nothing is answering it.',
   'btw.restarted': 'No answer came before the daemon restarted.',
   'btw.asking': 'Asking a copy of this conversation…',
+  'transcript.loadOlder': 'Load earlier messages',
+  'transcript.loadingOlder': 'Loading earlier messages…',
+  'transcript.loadOlderFailed': 'Could not load earlier messages.',
+  'transcript.retryOlder': 'Retry',
 
   // Composer & voice
   'composer.placeholder': 'Message',

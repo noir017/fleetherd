@@ -254,6 +254,7 @@ export class ConversationDelegation {
     this.ctx.ensureState(key, opts.platform, opts.agentId, { fresh: true });
     if (opts.cwd) this.ctx.store?.setConversationCwd(key, opts.agentId, opts.cwd);
     if (key !== opts.ephemeralKey) this.ctx.store?.setConversationTitle(key, opts.agentId, title);
+    if (opened && conv) adapter.workbench?.refreshWorkdir(opened);
     return { key, address, ephemeral: key === opts.ephemeralKey };
   }
 
@@ -322,6 +323,8 @@ export class ConversationDelegation {
       if (moved.kind === 'missing') throw new Error(`no directory ${cwd} on the machine "${opts.agentId}" runs on`);
       if (moved.kind === 'failed') throw new Error(moved.reason);
     }
+    // createThread announced the topic before bind/cwd were recorded, caching the default dir.
+    adapter.workbench?.refreshWorkdir(opened);
     await this.applyTaskChoices(conv.key, opts, adapter, opened);
     await this.handTo(conv.key, opts.platform, opened, opts.text, opts.header, opts.forward ? { forward: opts.forward } : {});
     // `name`, not the bare title: formatLaneTitle normalises it, and the card must match the topic.

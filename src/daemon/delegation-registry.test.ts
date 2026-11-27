@@ -1,12 +1,16 @@
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ConversationRegistry } from './conversation.js';
 import { ConversationStore } from './conversation-store.js';
 import { parseConfig, type Config } from '../config/schema.js';
+import { WebuiConfigSchema } from '../config/platform-schemas.js';
 import type { ConversationAddress } from '../core/conversation.js';
 import type { PlatformAdapter } from '../platform/adapter.js';
+import { CHANNEL, WebRoom } from '../platform/webui/room.js';
+import { TopicStore, type Topic } from '../platform/webui/topics.js';
+import type { WebEvent } from '../platform/webui/protocol.js';
 import type { AgentFactory, AgentSession, AgentStreamHandlers } from './agent.js';
 import { TurnFailure } from './agent.js';
 import { readPromptRefusal } from './session-failure.js';
@@ -44,12 +48,19 @@ function rig(
     hangStart?: boolean;
     store?: ConversationStore;
     onPersonWords?: (id: string, words: PersonWords) => void;
+    platform?: PlatformAdapter;
+    ccCwd?: string;
   } = {}
 ) {
   const parsed = parseConfig({
     platforms: { web: { type: 'webui', token: 't' } },
     agents: [
-      { id: 'cc', harness: 'claude', ...(opts.continue ? { hooks: { turnFailed: { continue: opts.continue } } } : {}) },
+      {
+        id: 'cc',
+        harness: 'claude',
+        ...(opts.ccCwd ? { cwd: opts.ccCwd } : {}),
+        ...(opts.continue ? { hooks: { turnFailed: { continue: opts.continue } } } : {}),
+      },
       { id: 'oc', harness: 'opencode' },
     ],
     routing: { default: 'cc', pipeline: [] },
@@ -172,7 +183,7 @@ function rig(
   };
 
   const hooks = opts.onPersonWords ? { onPersonWords: opts.onPersonWords } : undefined;
-  const registry = new ConversationRegistry(cfg, new Map([['web', platform]]), factory, clock, hooks, opts.store);
+  const registry = new ConversationRegistry(cfg, new Map([['web', opts.platform ?? platform]]), factory, clock, hooks, opts.store);
   return { registry, sent, prompts, models, events, ensured, activity, pendingQueue, renamed, nested, scheduled };
 }
 
@@ -384,6 +395,80 @@ describe('a sub-agent’s topic (openTask, handTo)', () => {
     await expect(r.registry.openTask({ platform: 'web', parent, agentId: 'zz', text: 'x', header })).rejects.toThrow(/no agent "zz"/);
     expect(r.sent).toEqual([]);
     expect(r.nested).toEqual([]);
+  });
+
+  it('openTask shows the child topic its own cwd and agent during its first running turn', async () => {
+    const parentDir = join(storeDir, 'parent-repo');
+    const childDir = join(storeDir, 'child-repo');
+    mkdirSync(parentDir, { recursive: true });
+    mkdirSync(childDir, { recursive: true });
+
+    const store = new ConversationStore(join(storeDir, 'first-turn-cwd.json'));
+    const topics = new TopicStore(join(storeDir, 'webui-topics.json'));
+    const room = new WebRoom({ ...WebuiConfigSchema.parse({ type: 'webui', token: 't' }), id: 'web' }, topics);
+    const webAdapter = {
+      platform: 'web',
+      capabilities: { thread: true, renameThread: true, editMessage: true, maxMessageLength: 20_000 },
+      measureRendered: (s: string) => s.length,
+      sendMessage: async (address: ConversationAddress, text: string) => {
+        const msg = room.post(address.thread!, { own: false, html: text }, text);
+        return { address, messageId: msg.id };
+      },
+      editMessage: async () => {},
+      addReaction: async () => {},
+      startTyping: async (address: ConversationAddress) => room.setTyping(address.thread!, true),
+      stopTyping: async (address: ConversationAddress) => room.setTyping(address.thread!, false),
+      createThread: async (_ref: unknown, name: string, o?: { under?: ConversationAddress }) => {
+        const t = room.createTopic(name, o?.under?.thread);
+        return { address: { channel: CHANNEL, thread: t.id } };
+      },
+      renameThread: async (address: ConversationAddress, name: string) => room.renameTopic(address.thread!, name),
+      workbench: {
+        useWorkdirLookup: (lookup: Parameters<WebRoom['useWorkdirLookup']>[0]) => room.useWorkdirLookup(lookup),
+        refreshWorkdir: (address: ConversationAddress) => {
+          if (address.thread) room.refreshWorkdir(address.thread);
+        },
+      },
+    } as unknown as PlatformAdapter;
+
+    const r = rig({ store, hold: true, platform: webAdapter, ccCwd: parentDir });
+    live = r.registry;
+    webAdapter.workbench?.useWorkdirLookup((ref) => r.registry.workdirForRef(ref));
+
+    const parentTopic = room.createTopic('parent');
+    const seen = new Map<string, Topic>();
+    const detach = room.subscribe(parentTopic.id, (_id, ev: WebEvent) => {
+      if (ev.t === 'sync' || ev.t === 'topics') {
+        if (ev.topics) {
+          seen.clear();
+          for (const t of ev.topics) seen.set(t.id, t);
+        }
+      } else if (ev.t === 'topic-rows') {
+        for (const row of ev.rows) seen.set(row.id, row);
+      }
+    });
+    try {
+      const opened = await r.registry.openTask({
+        platform: 'web',
+        parent: { channel: CHANNEL, thread: parentTopic.id },
+        agentId: 'oc',
+        cwd: childDir,
+        text: 'work in child',
+        header,
+      });
+      await vi.waitFor(() => {
+        expect(r.prompts).toHaveLength(1);
+      }, WAIT);
+      const childId = opened.address.thread!;
+      const row = room.topicList().find((t) => t.id === childId);
+      expect(row?.dir?.path).toBe(childDir);
+      expect(row?.agent?.id).toBe('oc');
+      expect(seen.get(childId)?.dir?.path).toBe(childDir);
+      expect(seen.get(childId)?.agent?.id).toBe('oc');
+    } finally {
+      detach();
+      room.dispose();
+    }
   });
 
   it('handTo refuses a conversation nobody has answered yet', async () => {

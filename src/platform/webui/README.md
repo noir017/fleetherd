@@ -1547,8 +1547,9 @@ for the same reason a draft that long is.
 yet noticed was dead — left the bubble dimmed for ever: no error to turn it red, no Retry, and
 nothing in the daemon's log, because a request is only logged once its body has been read. Now
 `post()` takes a `limit` and aborts the attempt through an `AbortController`; the send passes
-`sendLimit(body)` — 15 s plus 1 s per 64 KiB, capped at the 300 s Node's `http.Server.requestTimeout`
-already allows a body. It is scaled because the same page sends a line of text and a 20 MB file. An
+`sendLimit(body)` — 15 s plus 1 s per 16 KiB (~128 kbps), capped at 3600 s (matching the
+`server.requestTimeout` set in `server.ts`, enough to cover `MAX_BODY_BYTES` = 36 MiB on a slow
+uplink). It is scaled because the same page sends a line of text and a 25 MiB file. An
 attempt that was given over a minute was an upload, and is not repeated from byte zero (it fails
 once, and Retry is one tap); a short one is retried under the same nonce like any dropped request.
 `deliver()` also turns a *synchronous* throw from `post()` — `JSON.stringify` on a body too big to
@@ -1599,17 +1600,19 @@ only once its sync, or the copy it was entered from, has said what it is.
 
 **One way into a topic** (`enter`, on a switch and on loading the page). The copy goes up and the
 stream opens with `?last=`: the daemon replays what came after and then sends `resumed`, which ends
-the catch-up as a sync would; when its backlog no longer reaches, it sends the whole topic, reconciled
-over what is on screen. A copy that is its row's latest goes up without "Checking for anything said
-while you were away". With nothing to resume from — no copy, one of another run, one cut to fit, an
-empty room (whose choice of agents only a sync carries), a page before its first sync, so a reload —
-the stream asks for a sync and whatever copy there is is painted as it comes. Memory is put up at
-once; the database is waited on only when it may hold a copy to resume from, for at most 300 ms (a
-read is a few; mobile Safari's has been known to hang). The echoes a copy carries are claimed as a
-sync claims them, and a send the previous page left unsure is judged at the end of the replay
-(`settleOnResume`), never on the copy alone: the copy may predate the send. Switching back to a
-1000-message topic this way went from 85.0 KB and 3.7 s to a few hundred bytes and 1.4 s, at 400 ms /
-500 kbps in Chromium (2026-11-10).
+the catch-up as a sync would (carrying `epoch`, plus `commands` on a client's first connect); when
+its backlog no longer reaches, it falls back to a `sync` frame reconciled over what is on screen.
+Direct page loads and reloads on a topic URL also wait up to 300 ms for `aa_cache` before opening
+the stream so they resume with `?last=` instead of re-downloading the topic. A copy that is its
+row's latest goes up without "Checking for anything said while you were away". With nothing to
+resume from — no copy, one of another run, one cut to fit, or an empty room (whose choice of agents
+only a sync carries) — the stream asks for a windowed `sync` and whatever copy there is is painted
+as it comes. Memory is put up at once; the database is waited on only when it may hold a copy to
+resume from, for at most 300 ms (a read is a few; mobile Safari's has been known to hang). The echoes
+a copy carries are claimed as a sync claims them, and a send the previous page left unsure is judged
+at the end of the replay (`settleOnResume`), never on the copy alone: the copy may predate the send.
+Switching back to a 1000-message topic this way went from 85.0 KB and 3.7 s to a few hundred bytes
+and 1.4 s, at 400 ms / 500 kbps in Chromium (2026-11-10).
 
 **What needs the person is fetched before it is opened.** One rule: a topic whose stage is a question,
 a failure or a finished reply (`NEEDS_ORDER`) — a scheduled run's and a sub-agent's too, each opened
@@ -1806,15 +1809,20 @@ event, and `emit` announces the list on a 300 ms throttle — the first change s
 later ones ride along, so a burst costs one list rather than one per event, and a stream that
 never goes quiet still reports where it stands.
 
-**The page reconciles; it does not rebuild.** A `sync` carries the whole topic, and the obvious
-reading of that — empty `#log`, paint it again — is what made entering a topic jarring: the
-scroll container was destroyed along with its position, so a topic already painted from the
-session cache still flashed through blank on its way to looking identical, and every message
-re-ran its entrance animation. Instead each message in the sync is upserted by id, moved into
-place (`appendChild` on a node that already exists moves it rather than cloning it), and
-anything the sync no longer carries is dropped. `paint` writes no DOM at all when the markup it
-builds matches what is there, so an unchanged message is genuinely untouched — which is also
-what keeps a repaint from undoing the disabled state of a button the click handler just set.
+**The page reconciles; it does not rebuild — and syncs are windowed.** A `sync` (and `GET api/topic`)
+carries only the latest tail window of a topic (up to 60 messages or 256 KiB, with a 10-message
+floor) along with `totalCount`, `hasMore`, `oldestSeq`, and `recentNonces` (and on multiplexed
+cold streams, the shared `topics` list, `tv`, and `commands` are sent only once per stream). Each
+message in the sync is upserted by id and moved into place (`appendChild` on an existing node moves
+it rather than cloning it); when `hasMore` is true, reconciliation runs in partial mode so older
+messages already paged into the DOM above the window are preserved rather than pruned. `paint`
+writes no DOM at all when the markup it builds matches what is there, so an unchanged message is
+genuinely untouched — which also keeps a repaint from undoing the disabled state of a button the
+click handler just set. Scrolling near the top fetches earlier pages via
+`GET api/messages?t=<topic>&before=<seq>&limit=<n>` (strictly validated, capped at 100 per page),
+prepends them while adjusting `scrollTop` by the height delta so the viewport does not jump, and
+stops once `hasMore` reaches false; jumping to an unloaded older message pages backwards until the
+target appears.
 
 While a topic's first sync is in flight the log holds message-shaped placeholders (`.sk`).
 They are only ever shown into an EMPTY log: a topic painted from cache has real content to read,

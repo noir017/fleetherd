@@ -1,7 +1,8 @@
 import { type Disposable, DisposableStore } from '../../../base/lifecycle.js';
 import { t as tr } from '../../../i18n/index.js';
 import { createBannersController, type BannersController } from './banners.js';
-import { btwAsked, createBtwController, type BtwController } from './btw.js';
+import { btwAsked, createBtwController, seqOf, type BtwController } from './btw.js';
+import { text } from '../../../services/api.js';
 import { createCodeBlocksController, type CodeBlocksController } from './code-blocks.js';
 import { attachLogEvents, postButton } from './events.js';
 import { clock, failedActions, renderMsgMarkup, stuck } from './markup.js';
@@ -81,6 +82,14 @@ export interface TranscriptDeps {
   readonly openTurnDiffSideBySide?: (turn: number) => Promise<void> | void;
   readonly canOpenSideDiff?: () => boolean;
   readonly onHandoff?: (handoff: HandoffAction, btn: HTMLButtonElement) => void;
+  readonly onLoadOlder?: () => void;
+  readonly onJumpToMessage?: (msgId: string) => void;
+}
+
+export interface OlderPagingState {
+  readonly hasMore: boolean;
+  readonly loading: boolean;
+  readonly error?: boolean;
 }
 
 export interface TranscriptController extends Disposable {
@@ -98,7 +107,10 @@ export interface TranscriptController extends Disposable {
   forgetOpenedPrefix(prefix: string): void;
   upsert(m: TranscriptMessage): void;
   drop(key: string): void;
-  reconcile(list: readonly TranscriptMessage[]): void;
+  reconcile(list: readonly TranscriptMessage[], opts?: { readonly partial?: boolean }): void;
+  prependOlder(list: readonly TranscriptMessage[]): number;
+  setOlderState(state: OlderPagingState): void;
+  scrollToMessage(msgId: string): HTMLElement | null;
   sinkLocals(): void;
   repaintHistory(): void;
   adopt(list: readonly TranscriptMessage[], current?: boolean): void;
@@ -135,6 +147,9 @@ class TranscriptControllerImpl implements TranscriptController {
   private _sig: Record<string, string> = {};
   private readonly _opened: Record<string, ToolOpenState> = {};
   private readonly _disposables = new DisposableStore();
+  private _olderBar: HTMLElement | null = null;
+  private _olderState: OlderPagingState = { hasMore: false, loading: false };
+  private _actionsOpenKey: string | null = null;
   readonly scroll: ScrollManager;
   readonly codeBlocks: CodeBlocksController;
   readonly btw: BtwController;
@@ -142,7 +157,7 @@ class TranscriptControllerImpl implements TranscriptController {
 
   constructor(deps: TranscriptDeps) {
     this._deps = deps;
-    this.scroll = createScrollManager(deps.log);
+    this.scroll = createScrollManager(deps.log, deps.onLoadOlder);
     this.codeBlocks = createCodeBlocksController({
       log: deps.log,
       getExtraRoots: () => [deps.btwBody, ...deps.getExtraCodeRoots()],
@@ -238,8 +253,9 @@ class TranscriptControllerImpl implements TranscriptController {
     }
     const out = this.msgMarkup(key, m, this._deps.isHistory(m));
     if (!this.btw.isNesting()) this.btw.link(key, m);
-    if (this._sig[key] === out.h && el.className === out.cls) return;
-    el.className = out.cls;
+    const cls = key === this._actionsOpenKey ? `${out.cls} actions-open` : out.cls;
+    if (this._sig[key] === out.h && el.className === cls) return;
+    el.className = cls;
     el.innerHTML = out.h;
     this._sig[key] = out.h;
     this.codeBlocks.enhance(
@@ -314,6 +330,7 @@ class TranscriptControllerImpl implements TranscriptController {
     delete data[key];
     delete this._sig[key];
     delete this._opened[key];
+    if (this._actionsOpenKey === key) this._actionsOpenKey = null;
     this.btw.onMessageDropped(key, m);
     this.banners.syncEmptyNote();
   }
@@ -342,14 +359,37 @@ class TranscriptControllerImpl implements TranscriptController {
     }
   }
 
-  private _pruneGone(keep: Readonly<Record<string, 1>>, epoch: number): void {
+  private _collectAboveWindow(partial: boolean, windowFirstKey: string | null): Set<string> {
+    const above = new Set<string>();
+    if (!partial || !windowFirstKey) return above;
+    for (let n: ChildNode | null = this._deps.log.firstChild; n; n = n.nextSibling) {
+      const k = n instanceof Element ? n.getAttribute('data-k') : null;
+      if (!k) continue;
+      if (k === windowFirstKey) break;
+      above.add(k);
+    }
+    return above;
+  }
+
+  private _pruneGone(
+    keep: Readonly<Record<string, 1>>,
+    epoch: number,
+    partial: boolean,
+    windowFirstKey: string | null,
+    windowFirstSeq: number,
+  ): void {
     const data = this._deps.getData();
     const els = this._deps.getEls();
+    // In partial (windowed) syncs, messages strictly above the window boundary were loaded via
+    // upward paging or cache and must not be treated as server-deleted.
+    const aboveWindow = this._collectAboveWindow(partial, windowFirstKey);
     const gone: string[] = [];
     for (const k of Object.keys(els)) {
       if (keep[k]) continue;
       const held = data[k];
       if (!held || held._local || held._g !== epoch) continue;
+      const olderSeq = windowFirstSeq > 0 && seqOf(held.id) > 0 && seqOf(held.id) < windowFirstSeq;
+      if (partial && (aboveWindow.has(k) || olderSeq)) continue;
       gone.push(k);
     }
     for (let j = 0; j < gone.length; j++) {
@@ -364,7 +404,7 @@ class TranscriptControllerImpl implements TranscriptController {
     else this._deps.log.appendChild(frag);
   }
 
-  reconcile(list: readonly TranscriptMessage[]): void {
+  reconcile(list: readonly TranscriptMessage[], opts?: { readonly partial?: boolean }): void {
     this.banners.clearSkeleton();
     this.banners.clearSyncing();
     const data = this._deps.getData();
@@ -375,6 +415,8 @@ class TranscriptControllerImpl implements TranscriptController {
     const bulk = list.length > 8;
     const batchFrag = bulk ? this._deps.log.ownerDocument.createDocumentFragment() : null;
     const tailStart = list.length - 10;
+    let windowFirstKey: string | null = null;
+    let windowFirstSeq = 0;
     for (let i = 0; i < list.length; i++) {
       const m = list[i];
       if (!m) continue;
@@ -382,6 +424,10 @@ class TranscriptControllerImpl implements TranscriptController {
       if (m.settings || m.wasSettings) continue;
       this._deps.claim(m);
       const key = this._deps.keyOf(m);
+      if (windowFirstKey === null) {
+        windowFirstKey = key;
+        windowFirstSeq = seqOf(m.id);
+      }
       keep[key] = 1;
       data[key] = m;
       this.paint(key, null, batchFrag, bulk, bulk && i < tailStart);
@@ -389,7 +435,7 @@ class TranscriptControllerImpl implements TranscriptController {
       if (el) orderedEls.push(el);
     }
     this._insertBatch(batchFrag, this.banners.getSyncingEl());
-    this._pruneGone(keep, epoch);
+    this._pruneGone(keep, epoch, Boolean(opts?.partial), windowFirstKey, windowFirstSeq);
     if (!areNodesContiguousInParent(this._deps.log, orderedEls)) {
       for (let i = 0; i < orderedEls.length; i++) {
         const el = orderedEls[i];
@@ -398,6 +444,95 @@ class TranscriptControllerImpl implements TranscriptController {
     }
     this.sinkLocals();
     if (bulk) this.codeBlocks.scheduleSweep();
+  }
+
+  private _firstMessageNode(): ChildNode | null {
+    for (let n: ChildNode | null = this._deps.log.firstChild; n; n = n.nextSibling) {
+      if (n instanceof Element && n.getAttribute('data-k')) return n;
+    }
+    return null;
+  }
+
+  prependOlder(list: readonly TranscriptMessage[]): number {
+    if (!list.length) return 0;
+    const log = this._deps.log;
+    const prevHeight = log.scrollHeight;
+    const prevTop = log.scrollTop;
+    const anchor = this._firstMessageNode();
+    const data = this._deps.getData();
+    const els = this._deps.getEls();
+    const epoch = this._deps.getEpoch();
+    const frag = log.ownerDocument.createDocumentFragment();
+    let added = 0;
+    for (let i = 0; i < list.length; i++) {
+      const m = list[i];
+      if (!m || !m.id || m.settings || m.wasSettings) continue;
+      m._g = m.g || epoch;
+      const key = this._deps.keyOf(m);
+      if (data[key] || els[key]) continue;
+      data[key] = m;
+      this.paint(key, anchor, frag, true, true);
+      added++;
+    }
+    if (added > 0) {
+      this._insertBatch(frag, anchor ?? this.banners.getSyncingEl());
+      this.scroll.adjustForPrepend(log.scrollHeight - prevHeight, prevTop);
+      this.banners.placeDivider();
+      this.codeBlocks.scheduleSweep();
+    }
+    return added;
+  }
+
+  setOlderState(state: OlderPagingState): void {
+    this._olderState = state;
+    const log = this._deps.log;
+    if (!state.hasMore) {
+      if (this._olderBar) {
+        this._olderBar.remove();
+        this._olderBar = null;
+      }
+      return;
+    }
+    if (!this._olderBar) {
+      this._olderBar = log.ownerDocument.createElement('div');
+      this._olderBar.className = 'older-bar';
+    }
+    if (state.loading) {
+      this._olderBar.innerHTML = `<span class="set-spin" aria-hidden="true"></span><span>${text(tr('transcript.loadingOlder'))}</span>`;
+    } else if (state.error) {
+      this._olderBar.innerHTML =
+        `<span>${text(tr('transcript.loadOlderFailed'))}</span>` +
+        `<button type="button" class="older-btn" data-load-older="1">${text(tr('transcript.retryOlder'))}</button>`;
+    } else {
+      this._olderBar.innerHTML =
+        `<button type="button" class="older-btn" data-load-older="1">${text(tr('transcript.loadOlder'))}</button>`;
+    }
+    if (this._olderBar.parentNode !== log || log.firstChild !== this._olderBar) {
+      log.insertBefore(this._olderBar, log.firstChild);
+    }
+  }
+
+  scrollToMessage(msgId: string): HTMLElement | null {
+    const els = this._deps.getEls();
+    const exact = els[`${this._deps.getEpoch()}:${msgId}`];
+    let target = exact ?? null;
+    if (!target) {
+      const suffix = `:${msgId}`;
+      for (const k of Object.keys(els)) {
+        if (k === msgId || k.endsWith(suffix)) {
+          target = els[k] ?? null;
+          break;
+        }
+      }
+    }
+    if (!target) return null;
+    if (typeof target.scrollIntoView === 'function') {
+      target.scrollIntoView({ block: 'center' });
+    }
+    target.classList.remove('jump-flash');
+    target.classList.add('jump-flash');
+    setTimeout(() => target?.classList.remove('jump-flash'), 1600);
+    return target;
   }
 
   repaintHistory(): void {
@@ -527,11 +662,29 @@ class TranscriptControllerImpl implements TranscriptController {
     }
   }
 
+  private _setActionsOpen(msgEl: HTMLElement | null): void {
+    const nextKey = msgEl ? msgEl.getAttribute('data-k') : null;
+    const resolved = nextKey && nextKey !== this._actionsOpenKey ? nextKey : null;
+    if (this._actionsOpenKey === resolved) return;
+    const els = this._deps.getEls();
+    if (this._actionsOpenKey) {
+      els[this._actionsOpenKey]?.classList.remove('actions-open');
+    }
+    this._actionsOpenKey = resolved;
+    if (resolved) {
+      (els[resolved] ?? msgEl)?.classList.add('actions-open');
+    }
+  }
+
   postButton(btn: HTMLButtonElement, topicId: string): void {
     postButton(btn, topicId);
   }
 
   resetForTopicSwitch(nextTopicId: string): void {
+    if (this._actionsOpenKey) {
+      this._deps.getEls()[this._actionsOpenKey]?.classList.remove('actions-open');
+      this._actionsOpenKey = null;
+    }
     this._deps.log.innerHTML = '';
     this._sig = {};
     this.banners.resetForTopicSwitch();
@@ -554,6 +707,7 @@ class TranscriptControllerImpl implements TranscriptController {
     delete els[pk];
     delete this._sig[pk];
     delete data[pk];
+    if (this._actionsOpenKey === pk) this._actionsOpenKey = key;
     this.btw.transferKey(pk, key);
   }
 
@@ -602,11 +756,14 @@ class TranscriptControllerImpl implements TranscriptController {
           void this.openTurnDiffSideBySide(turn, btn);
         },
         onMessageAction: (action, key, btn) => this._handleMessageAction(action, key, btn),
+        onToggleMessageActions: (msgEl) => this._setActionsOpen(msgEl),
         onHandoff: (key, btn) => {
           const m = this._deps.getData()[key];
           if (m?.handoff) this._deps.onHandoff?.(m.handoff, btn);
         },
-      }),
+        onLoadOlder: this._deps.onLoadOlder,
+        onJumpToMessage: this._deps.onJumpToMessage,
+      }, doc),
     );
     this._disposables.add(store);
     return store;
@@ -614,6 +771,7 @@ class TranscriptControllerImpl implements TranscriptController {
 
   refreshI18n(): void {
     this.banners.refreshI18n();
+    if (this._olderState.hasMore) this.setOlderState(this._olderState);
   }
 
   setMachines(list: readonly OfflineMachine[] | null | undefined): void {
