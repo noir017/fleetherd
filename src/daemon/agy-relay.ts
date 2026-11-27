@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { AgentDef } from '../config/schema.js';
 import { expandEnv } from './agent-common.js';
-import type { HarnessRelay } from './relay.js';
+import type { HarnessRelay } from './relay-types.js';
 
 /**
  * agy behind a relay (relay.ts), to give it the compaction budget the operator chose

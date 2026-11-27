@@ -1,7 +1,6 @@
-import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { SRC_ROOT, collectImports, resolveTarget, walkProdTs } from './test-utils/import-graph.js';
 
 /**
  * Static enforcement of the one-way dependency graph documented in `AGENTS.md#layering`.
@@ -9,47 +8,6 @@ import { describe, expect, it } from 'vitest';
  * Keeps module boundaries machine-checked so an accidental cross-layer import fails in tests
  * instead of silently drifting.
  */
-const SRC_ROOT = path.dirname(fileURLToPath(import.meta.url));
-
-const IMPORT_RE =
-  /(?:^|[\s;])(?:import|export)\s+(?:type\s+)?(?:[\s\S]*?\s+from\s+)?['"]([^'"]+)['"]/g;
-
-function walkProdTs(dir: string): string[] {
-  const out: string[] = [];
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      out.push(...walkProdTs(full));
-    } else if (
-      entry.isFile() &&
-      entry.name.endsWith('.ts') &&
-      !entry.name.endsWith('.test.ts') &&
-      !entry.name.endsWith('.test-helpers.ts')
-    ) {
-      out.push(full);
-    }
-  }
-  return out;
-}
-
-function collectImports(file: string): string[] {
-  const src = fs.readFileSync(file, 'utf8');
-  // Strip line and block comments so commented-out examples don't trigger false positives.
-  const stripped = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
-  const specs: string[] = [];
-  for (const m of stripped.matchAll(IMPORT_RE)) {
-    if (m[1]) specs.push(m[1]);
-  }
-  return specs;
-}
-
-function resolveTarget(fromFile: string, spec: string): { kind: 'external'; name: string } | { kind: 'src'; rel: string; module: string } {
-  if (!spec.startsWith('.')) return { kind: 'external', name: spec };
-  const resolved = path.resolve(path.dirname(fromFile), spec);
-  const rel = path.relative(SRC_ROOT, resolved).replace(/\\/g, '/');
-  const first = rel.split('/')[0] ?? '';
-  return { kind: 'src', rel, module: first };
-}
 
 interface LayerRule {
   module: string;

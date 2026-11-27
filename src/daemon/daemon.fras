@@ -28,6 +28,7 @@ src/daemon/external-mcp.ts [Edge]: F:External HTTP MCP entrance endpoint | A:Ext
 src/daemon/pod-admin.ts [Edge]: F:Host entry and SSH key management | A:addPod,removePod | S:See Security invariants item 5
 src/daemon/pod-peers.ts [Infra]: F:Pod-to-pod SSH mesh configuration generator | A:peerFiles,readKnownHosts | S:See Security invariants item 5
 src/daemon/pods.ts [Infra]: F:Remote host pod declarations scanner | A:hostsWithConfiguredAgents | S:See Security invariants item 5
+src/daemon/relay-types.ts [Core]: F:Shared RelaySpec and HarnessRelay types for loopback HTTP API relays | A:RelaySpec,HarnessRelay
 src/daemon/remote-hosts.ts [Infra]: F:Remote host manager and reverse CLI shim | R:src/remote/host.ts | A:RemoteHosts,gatewayNamespace | S:See Security invariants item 5
 src/daemon/review.ts [Core]: F:Automated review of idle conversations distilling skills and learned preferences | A:ReviewService
 src/daemon/routing.ts [Core]: F:Inbound message to agent and scope resolution | A:resolveAgent,resolveScope | S:Deterministic pipeline and harness matching [T:resolveAgent]
