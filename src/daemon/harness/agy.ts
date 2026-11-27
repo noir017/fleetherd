@@ -49,6 +49,13 @@ export const agyProfile: HarnessProfile = {
   forgetsModelOnLoad: true,
   // Measured 2026-11-06/18: agy's `default` mode writes without asking, so permission levels stay ask/auto only.
   omitPermissionModes: true,
+  // Measured 2026-11-14 on agy 1.5.8: unadvertised prompt queueing mid-turn.
+  takesPromptMidTurn: true,
+  usesAgyTurnWatch: true,
+  hasBuiltinQuota: true,
+  hasBuiltinCli: true,
+  contextMissingHint:
+    ' agy reports usage once per turn, summed over every model call in it, so after a turn that ran tools the count comes from its transcript on the agent\'s machine, and is missing when that cannot be read; and agy never says how big its window is, so the daemon measures the context against where agy compacts, which it knows for the models it was measured on (Gemini 3.8 Flash, Claude Sonnet/Opus 4.6, GPT-OSS 120B) — any other model shows no numbers.',
   relay: agyRelay,
   skillHomes: (home) => agySkillHomes(home),
   skillReaders: [{ name: 'agy', homes: agySkillHomes }],

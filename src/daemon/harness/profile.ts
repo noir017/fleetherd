@@ -4,6 +4,7 @@ import type { InstructionsAgent, InstructionsHome } from '../../config/instructi
 import type { AgentDef, Config } from '../../config/schema.js';
 import type { Locale } from '../../core/i18n/index.js';
 import type { Welcome } from '../../remote/connection.js';
+import type { RemoteHost } from '../../remote/host.js';
 import type { Harness } from '../../types.js';
 import { expandEnv, expandHome } from '../agent-common.js';
 import type { HarnessRelay } from '../relay-types.js';
@@ -122,6 +123,24 @@ export interface HarnessDoctor {
   readonly extraChecks?: (ctx: { cfg: Config | null; locale: Locale }) => DoctorCheck[];
 }
 
+/** One error a harness logged against a session (`harness-log.ts`). */
+export interface HarnessLogEvent {
+  at: Date;
+  reason: string;
+}
+
+/** How to ask one harness's own log file what went wrong during a silent turn. */
+export interface HarnessLogProbe {
+  logPath: (home: string, env: NodeJS.ProcessEnv) => string;
+  parse: (tail: string, sessionId: string, since: Date) => HarnessLogEvent[];
+}
+
+/** Setup wizard defaults for a harness (`commands/setup.ts`). */
+export interface HarnessSetup {
+  readonly promptCommand?: boolean;
+  readonly defaultModel?: string;
+}
+
 /**
  * Harness seam: everything harness-specific in `daemon/` and `commands/` is funneled here.
  * Adding a harness = one file in `src/daemon/harness/` + one line in `HARNESSES` (`index.ts`).
@@ -135,6 +154,8 @@ export interface HarnessProfile {
   readonly reviewIsolation: ReviewIsolation;
   /** Required self-check hooks for `fleetherd doctor`. */
   readonly doctor: HarnessDoctor;
+  /** Setup wizard defaults (`commands/setup.ts`). */
+  readonly setup?: HarnessSetup;
   /** Encode a config/chat model id into the wire value the harness's ACP selector expects (e.g. DSH JSON tuple). */
   readonly encodeModelWire?: (model: string) => string;
   /** Decode a wire selector value back to the human-readable model id. */
@@ -148,12 +169,32 @@ export interface HarnessProfile {
   readonly forgetsModelOnLoad?: boolean;
   /** True when the harness's session modes are excluded from permission-level mapping (ask/auto only). */
   readonly omitPermissionModes?: boolean;
+  /** True when the harness accepts a second `session/prompt` mid-turn without advertising it in `initialize`. */
+  readonly takesPromptMidTurn?: boolean;
+  /** True when the ACP runtime attaches `agyTurnWatch` for inline warning/context handling. */
+  readonly usesAgyTurnWatch?: boolean;
+  /** True when the harness provides a built-in quota source even without `quotaCommand`. */
+  readonly hasBuiltinQuota?: boolean;
+  /** True when the harness supports one-shot CLI commands (e.g. `/usage` via `agy -p`). */
+  readonly hasBuiltinCli?: boolean;
+  /** True when unknown slash commands that map to an ACP option defer until session options are known. */
+  readonly deferUnknownOptions?: boolean;
+  /** Extra hint appended to `/context` when a turn completed without reporting context numbers. */
+  readonly contextMissingHint?: string;
+  /** Log probe for diagnosing silent turns (e.g. opencode rate-limit retries). */
+  readonly logProbe?: HarnessLogProbe;
   /** Loopback API relay transform for this harness, if the agent's settings require one. */
   readonly relay?: (def: AgentDef) => HarnessRelay | undefined;
   readonly skillHomes: (home: string, command?: string) => SkillHome[];
   readonly skillReaders?: readonly SkillReaderSpec[];
   readonly skillHarnessName?: (def: Pick<AgentDef, 'harness' | 'command'>) => string;
   readonly skillScanDirs: (opts: SkillScanOptions) => string[];
+  readonly configuredSkillDirs?: (home: string, env: NodeJS.ProcessEnv) => Promise<string[]>;
+  readonly remoteConfiguredSkillDirs?: (
+    host: RemoteHost,
+    home: string,
+    env: Record<string, string>
+  ) => Promise<string[]>;
   readonly pluginHome?: (home: string) => SkillHome | undefined;
   readonly instructionsHome: (def: InstructionsAgent, home: string) => InstructionsHome | undefined;
   readonly instructionSources?: (

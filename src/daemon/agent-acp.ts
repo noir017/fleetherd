@@ -58,7 +58,7 @@ import {
 import { PreLaunchCancelled, runPreLaunchHook } from './agent-hooks.js';
 import { remoteHosts } from './remote-hosts.js';
 import type { AgyCliRunner } from './agy-cli.js';
-import { agyTurnWatch, agyWindow, takesPromptMidTurn } from './agy-acp.js';
+import { agyTurnWatch, agyWindow } from './agy-acp.js';
 import { createQuotaMeter, hasQuotaSource, type QuotaMeter } from './quota-meter.js';
 import {
   adoptAcpChild,
@@ -611,7 +611,7 @@ class AcpSession implements AgentSession {
     progress.answered = true;
     this.loadSessionSupported = initResult.agentCapabilities?.loadSession === true;
     this.resume = readResumeSupport(initResult.agentCapabilities);
-    this.steeringMode = steeringModeOf(initResult, takesPromptMidTurn(this.def));
+    this.steeringMode = steeringModeOf(initResult, Boolean(HARNESSES[this.def.harness].takesPromptMidTurn));
     this.imagePrompts = initResult.agentCapabilities?.promptCapabilities?.image === true;
     this.embeddedContext = initResult.agentCapabilities?.promptCapabilities?.embeddedContext === true;
     [this.forkSupport, this.forkKnown] = [forkSupportOf(initResult), true];
@@ -722,7 +722,7 @@ class AcpSession implements AgentSession {
       contextWindow: this.def.contextWindow,
       subagents: this.subagentNames,
       agy:
-        this.def.harness === 'agy'
+        HARNESSES[this.def.harness].usesAgyTurnWatch
           ? agyTurnWatch(this.def.id, (text) => handlers.onNotice?.(text), inTurn, {
               onModelCall: () => this.agyMeter.refreshAgyContext(handlers),
               window: (reported) => agyWindow(this.def, this.options.currentModelValue(), reported),

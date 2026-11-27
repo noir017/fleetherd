@@ -7,8 +7,8 @@ import {
   agyTurnWatch,
   agyWarningOf,
   agyWindow,
-  takesPromptMidTurn,
 } from './agy-acp.js';
+import { HARNESSES } from './harness/index.js';
 import { TurnFailure } from './agent.js';
 import type { AgentDef } from '../config/schema.js';
 
@@ -237,9 +237,9 @@ describe('agyMcpCall', () => {
 
 describe('takesPromptMidTurn', () => {
   it('is agy alone: claude says so itself, and opencode loses a second prompt', () => {
-    expect(takesPromptMidTurn({ harness: 'agy' })).toBe(true);
+    expect(Boolean(HARNESSES.agy.takesPromptMidTurn)).toBe(true);
     for (const harness of ['claude', 'codex', 'opencode', 'gemini', 'dsh', 'custom'] as const) {
-      expect(takesPromptMidTurn({ harness })).toBe(false);
+      expect(Boolean(HARNESSES[harness].takesPromptMidTurn)).toBe(false);
     }
   });
 });

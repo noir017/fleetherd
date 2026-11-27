@@ -1,4 +1,4 @@
-import { readdir, readFile, stat } from 'node:fs/promises';
+import { readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import type { AgentDef } from '../config/schema.js';
@@ -111,31 +111,6 @@ export function skillDirsFor(
 }
 
 /**
- * The `skills` array from opencode's config, or nothing.
- *
- * Located by opencode's own resolution order as observed here (`$XDG_CONFIG_HOME` or `~/.config`,
- * then `opencode.json`). Any failure — absent file, malformed JSON, a `skills` key that is not an
- * array of strings — yields no directories rather than throwing: this runs inside a chat command,
- * and a broken config elsewhere should degrade the catalogue, not the gateway.
- */
-export async function opencodeSkillDirs(home: string, env: NodeJS.ProcessEnv): Promise<string[]> {
-  const base = env['XDG_CONFIG_HOME'] || join(home, '.config');
-  const file = join(base, 'opencode', 'opencode.json');
-  try {
-    const parsed: unknown = JSON.parse(await readFile(file, 'utf8'));
-    const skills = (parsed as { skills?: unknown })?.skills;
-    if (!Array.isArray(skills)) return [];
-    return skills.filter((s): s is string => typeof s === 'string' && s.length > 0);
-  } catch (e) {
-    // Absent is the common case (opencode not configured on this machine) and not worth a line.
-    if ((e as NodeJS.ErrnoException)?.code !== 'ENOENT') {
-      console.warn(`[skills] could not read ${file}:`, e instanceof Error ? e.message : e);
-    }
-    return [];
-  }
-}
-
-/**
  * Every skill under `dirs`, de-duplicated by name, first occurrence winning.
  *
  * First-wins matches how both harnesses resolve a shadowed skill: the earlier directory in their
@@ -206,16 +181,4 @@ export async function scanRemoteSkillDirs(host: RemoteHost, dirs: readonly strin
     }
   }
   return found;
-}
-
-/** opencodeSkillDirs, reading opencode.json on the agent's host; `env` is the agent's own block. */
-export async function remoteOpencodeSkillDirs(host: RemoteHost, home: string, env: Record<string, string>): Promise<string[]> {
-  const file = join(env['XDG_CONFIG_HOME'] || join(home, '.config'), 'opencode', 'opencode.json');
-  try {
-    const parsed: unknown = JSON.parse((await host.readFile(file, 1 << 20)).toString('utf8'));
-    const skills = (parsed as { skills?: unknown })?.skills;
-    return Array.isArray(skills) ? skills.filter((s): s is string => typeof s === 'string' && s.length > 0) : [];
-  } catch {
-    return [];
-  }
 }

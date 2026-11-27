@@ -85,6 +85,7 @@ export const claudeProfile: HarnessProfile = {
       },
     ],
   },
+  setup: { defaultModel: 'claude-opus-4-8' },
   skillHomes: (home) => claudeSkillHomes(home),
   skillReaders: [{ name: 'claude', homes: claudeSkillHomes }],
   skillScanDirs: (opts) => [path.join(opts.home, '.claude', 'skills'), path.join(opts.cwd, '.claude', 'skills')],
