@@ -525,7 +525,7 @@ Do not weaken these without saying so explicitly in the PR:
       `PluginHost.topics.send` is prefixed visibly with `[plugin:<id>]` in the conversation
       transcript; plugins cannot inject hidden text into an agent's prompt (enforcing "Nothing of
       the gateway's in the agent's prompt").
-    - **`doctor` lists every configured plugin** (`commands/doctor.ts` `inspectWebuiPlugins`) and
+    - **`doctor` lists every configured plugin** (`platform/webui/doctor.ts` `inspectWebuiPlugins`) and
       warns explicitly that plugins execute with full gateway/session privileges and no sandbox.
     Plugin static files (`GET /plugins/<id>/<file>`) and API routes (`GET`/`POST /api/plugins/<id>/`)
     sit behind the `GUARDED` session/SSO gate and same-origin POST check; static files serve only
