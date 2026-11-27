@@ -4,6 +4,7 @@ import type { HarnessProfile } from './profile.js';
 export const geminiProfile: HarnessProfile = {
   id: 'gemini',
   launch: (def) => ({ command: 'gemini', args: ['--experimental-acp', ...def.args] }),
+  reviewIsolation: 'operator-args',
   skillHomes: () => [],
   skillScanDirs: () => [],
   instructionsHome,

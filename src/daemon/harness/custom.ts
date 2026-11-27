@@ -23,6 +23,7 @@ export const customProfile: HarnessProfile = {
   },
   // Probed 2026-11-10 on cursor-agent 2026.11.05: splits context/effort/fast into separate config options.
   capabilityMeta: (def) => (isCursorAgentCommand(def.command) ? { parameterizedModelPicker: true } : {}),
+  reviewIsolation: 'operator-args',
   // CodeBuddy Code, by the last segment of its command, has its own skills directory.
   skillHomes: (home, command) => (isCodebuddyCommand(command) ? codebuddySkillHomes(home) : []),
   skillReaders: [{ name: 'codebuddy', homes: codebuddySkillHomes }],

@@ -1,6 +1,9 @@
 import path from 'node:path';
 import { instructionsHome } from '../../config/instructions.js';
-import type { HarnessProfile, SkillHome } from './profile.js';
+import { parseEnvJsonObject, type HarnessProfile, type SkillHome } from './profile.js';
+
+/** The codex features that are a shell. Off, codex has no way to read or run anything (AGENTS.md invariant 8). */
+const CODEX_NO_SHELL = { shell_tool: false, unified_exec: false };
 
 function codexSkillHomes(home: string): SkillHome[] {
   return [{ dir: path.join(home, '.agents', 'skills'), requires: path.join(home, '.codex') }];
@@ -10,6 +13,20 @@ export const codexProfile: HarnessProfile = {
   id: 'codex',
   // PATH command (@agentclientprotocol/codex-acp), not bundled (~284 MB native binary).
   launch: (def) => ({ command: 'codex-acp', args: [...def.args] }),
+  reviewIsolation: {
+    kind: 'acp',
+    build: (def, base) => {
+      // Merged into the agent's own CODEX_CONFIG (provider/model), with shell features off last so they win.
+      const own = parseEnvJsonObject(def.env['CODEX_CONFIG']);
+      const ownFeatures = own['features'];
+      const features = {
+        ...(ownFeatures && typeof ownFeatures === 'object' && !Array.isArray(ownFeatures) ? ownFeatures : {}),
+        ...CODEX_NO_SHELL,
+      };
+      // INITIAL_AGENT_MODE=read-only forces apply_patch to ask; refused permission cancels the turn.
+      return { ...base, env: { CODEX_CONFIG: JSON.stringify({ ...own, features }), INITIAL_AGENT_MODE: 'read-only' } };
+    },
+  },
   skillHomes: (home) => codexSkillHomes(home),
   skillReaders: [{ name: 'codex', homes: codexSkillHomes }],
   skillScanDirs: (opts) => [

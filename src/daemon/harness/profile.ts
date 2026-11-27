@@ -4,7 +4,7 @@ import type { InstructionsAgent, InstructionsHome } from '../../config/instructi
 import type { AgentDef } from '../../config/schema.js';
 import type { Welcome } from '../../remote/connection.js';
 import type { Harness } from '../../types.js';
-import { expandHome } from '../agent-common.js';
+import { expandEnv, expandHome } from '../agent-common.js';
 import type { HarnessRelay } from '../relay-types.js';
 
 /** A skills (or plugins) directory to link into, and the harness config directory that must exist first. */
@@ -65,6 +65,42 @@ export interface HarnessLaunch {
   args: string[];
 }
 
+/** How one review's ACP child is started: the harness's own launch with review isolation switches. */
+export interface AcpReviewLaunch {
+  command: string;
+  args: string[];
+  /** Laid over the agent's environment, after its own `env:` block, so these win. */
+  env: Record<string, string>;
+  /** `session/new` `_meta`. */
+  meta?: Record<string, unknown>;
+}
+
+/**
+ * How a harness's automatic review run is isolated from tools/writes (AGENTS.md security invariant 8).
+ * Required on every `HarnessProfile` so adding a harness forces an explicit isolation decision.
+ */
+export type ReviewIsolation =
+  | {
+      readonly kind: 'acp';
+      readonly build: (def: AgentDef, base: HarnessLaunch) => AcpReviewLaunch;
+    }
+  | {
+      readonly kind: 'agy-print';
+      readonly settingsJson: string;
+    }
+  | 'operator-args';
+
+/** Parse a JSON object from an env value, or `{}` if absent/malformed. */
+export function parseEnvJsonObject(raw: string | undefined): Record<string, unknown> {
+  if (!raw) return {};
+  try {
+    const v: unknown = JSON.parse(expandEnv(raw));
+    return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
 /**
  * Harness seam: everything harness-specific in `daemon/` and `commands/` is funneled here.
  * Adding a harness = one file in `src/daemon/harness/` + one line in `HARNESSES` (`index.ts`).
@@ -74,6 +110,8 @@ export interface HarnessProfile {
   readonly launch: (def: AgentDef, remote?: boolean) => HarnessLaunch;
   readonly capabilityMeta?: (def: Pick<AgentDef, 'harness' | 'command'>) => Record<string, unknown>;
   readonly startupHint?: string;
+  /** Required review-isolation strategy (AGENTS.md invariant 8). */
+  readonly reviewIsolation: ReviewIsolation;
   /** Encode a config/chat model id into the wire value the harness's ACP selector expects (e.g. DSH JSON tuple). */
   readonly encodeModelWire?: (model: string) => string;
   /** Decode a wire selector value back to the human-readable model id. */

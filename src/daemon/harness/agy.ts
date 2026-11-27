@@ -7,6 +7,26 @@ import { agyTranscriptPath, readAgyContext } from '../agy-transcript.js';
 import { agyReferences, agyRuleNote, resolveAgyReference } from '../instruction-imports.js';
 import type { HarnessProfile, SkillHome } from './profile.js';
 
+/**
+ * Explicit permission-class deny list for `agy -p --settings` review isolation (AGENTS.md invariant 8).
+ * Measured on agy 1.5.0/1.5.2 (2026-11-04/07): `deny: ["*"]` denies nothing (literal class name) and
+ * `agy acp` ignores `--settings`, so every class must be listed explicitly on `agy -p`.
+ */
+export const AGY_NO_TOOLS = JSON.stringify({
+  permissions: {
+    deny: [
+      'write_file(*)',
+      'read_file(*)',
+      'list_dir(*)',
+      'search(*)',
+      'command(*)',
+      'url(*)',
+      'browser(*)',
+      'mcp(*)',
+    ],
+  },
+});
+
 function agySkillHomes(home: string): SkillHome[] {
   // Probed 2026-10-09 on agy 1.3.2: `~/.gemini/config/skills` is what agy reads, not `antigravity-cli/skills`.
   return [{ dir: path.join(home, '.gemini', 'config', 'skills'), requires: path.join(home, '.gemini', 'antigravity-cli') }];
@@ -17,6 +37,7 @@ export const agyProfile: HarnessProfile = {
   // agy >= 1.5 native ACP server; permissions arrive via session/request_permission (never --dangerously-skip-permissions).
   launch: (def) => ({ command: AGY_COMMAND, args: ['acp', ...def.args] }),
   startupHint: ' (`agy acp` needs agy 1.5 or later — check `agy --version` on that machine and upgrade it)',
+  reviewIsolation: { kind: 'agy-print', settingsJson: AGY_NO_TOOLS },
   splitModelOption: agySplitModel,
   // Measured on agy 1.5.1: session/load and session/resume answer on agy's default model.
   forgetsModelOnLoad: true,

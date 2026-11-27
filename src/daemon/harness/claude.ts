@@ -11,6 +11,16 @@ export function resolveClaudeAdapterEntry(): string {
   return createRequire(import.meta.url).resolve('@agentclientprotocol/claude-agent-acp/dist/index.js');
 }
 
+/**
+ * claude-agent-acp's per-session SDK options for review isolation (AGENTS.md invariant 8):
+ * `tools: []` disables built-in tools, `settingSources: []` loads no operator settings/hooks/skills,
+ * `strictMcpConfig: true` takes MCP servers from this request alone (none). `disableBuiltInTools` is kept for older adapters.
+ */
+export const CLAUDE_NO_TOOLS_META: Record<string, unknown> = {
+  claudeCode: { options: { tools: [], settingSources: [], strictMcpConfig: true } },
+  disableBuiltInTools: true,
+};
+
 function claudeSkillHomes(home: string): SkillHome[] {
   return [{ dir: path.join(home, '.claude', 'skills'), requires: path.join(home, '.claude') }];
 }
@@ -24,6 +34,10 @@ export const claudeProfile: HarnessProfile = {
       : { command: process.execPath, args: [resolveClaudeAdapterEntry(), ...def.args] },
   // Advertise typed failure records only for claude; opencode validates capabilities strictly.
   capabilityMeta: () => ({ ...SESSION_FAILURE_CAPABILITY_META }),
+  reviewIsolation: {
+    kind: 'acp',
+    build: (_def, base) => ({ ...base, env: {}, meta: CLAUDE_NO_TOOLS_META }),
+  },
   skillHomes: (home) => claudeSkillHomes(home),
   skillReaders: [{ name: 'claude', homes: claudeSkillHomes }],
   skillScanDirs: (opts) => [path.join(opts.home, '.claude', 'skills'), path.join(opts.cwd, '.claude', 'skills')],
