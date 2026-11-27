@@ -134,7 +134,7 @@ export function buildAgentEnv(
   def: AgentDef,
   sessionToken: string,
   socketPath: string,
-  provisions: readonly AgentProvision[] = []
+  provisions: readonly AgentProvision[]
 ): Record<string, string | undefined> {
   const env = buildHarnessEnv(def);
   env.FLEETHERD_TURN_TOKEN = sessionToken;
@@ -264,7 +264,7 @@ export async function prepareRemoteSpawn(
   def: AgentDef,
   host: RemoteHost,
   cwd: string,
-  provisions: readonly AgentProvision[] = []
+  provisions: readonly AgentProvision[]
 ): Promise<{ welcome: Welcome; cwd: string }> {
   const welcome = await host.ready();
   const root = remoteAgentRoot(def, welcome.home);

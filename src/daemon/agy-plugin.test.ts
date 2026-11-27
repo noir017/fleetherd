@@ -119,6 +119,25 @@ describe('agyPluginProvision.remote', () => {
     expect(host.writeFile).not.toHaveBeenCalled();
     expect(host.ensureLink).not.toHaveBeenCalled();
   });
+
+  it('warns and retries on next spawn when the plugin source directory is missing', async () => {
+    const provision = createAgyPluginProvision();
+    const host = fakeHost();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const readdir = vi.spyOn(fs, 'readdirSync').mockImplementationOnce(() => {
+      throw Object.assign(new Error('ENOENT: no such file or directory'), { code: 'ENOENT' });
+    });
+    await provision.remote(host as unknown as HostFiles, agy, '/home/u', welcome);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(host.writeFile).not.toHaveBeenCalled();
+    expect(host.ensureLink).not.toHaveBeenCalled();
+
+    readdir.mockRestore();
+    await provision.remote(host as unknown as HostFiles, agy, '/home/u', welcome);
+    expect(host.writeFile).toHaveBeenCalled();
+    expect(host.ensureLink).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe.skipIf(process.platform === 'win32')('wait-background.sh', () => {

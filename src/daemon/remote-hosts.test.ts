@@ -302,4 +302,22 @@ describe('bundledSkillProvision.remote', () => {
     expect([...host.writes.keys()].some((p) => p.startsWith(`${base}/skill-super/`))).toBe(false);
     expect(host.links.get('/home/me/.agents/skills/super')).toBe(`${base}/skill-super`);
   });
+
+  it('warns and does not mark placed when the bundled skill source directory is missing', async () => {
+    const [provision, host] = [createBundledSkillProvision(), new FakeHost()];
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const readdir = vi.spyOn(fs, 'readdirSync').mockImplementationOnce(() => {
+      throw Object.assign(new Error('ENOENT: no such file or directory'), { code: 'ENOENT' });
+    });
+    await place(provision, host, claude);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(host.writes.size).toBe(0);
+    expect(host.links.size).toBe(0);
+
+    readdir.mockRestore();
+    warn.mockRestore();
+    await place(provision, host, claude);
+    expect(host.writes.has(`${base}/skill-super/SKILL.md`)).toBe(true);
+    expect(host.links.get('/home/me/.claude/skills/super')).toBe(`${base}/skill-super`);
+  });
 });

@@ -191,7 +191,7 @@ describe('a connect agent as a conversation', () => {
     const store = { agentSession: () => undefined, setAgentSession: () => {}, conversationCwd: () => undefined } as unknown as Parameters<
       typeof createAcpAgentFactory
     >[2];
-    const session = createAcpAgentFactory(cfg, join(dir, 'ipc.sock'), store).getOrCreate('conv#1', 'web');
+    const session = createAcpAgentFactory(cfg, join(dir, 'ipc.sock'), store, { provisions: [] }).getOrCreate('conv#1', 'web');
     live = session;
 
     await session.runTurn({ prompt: 'hi', sessionToken: 'tok', topic: 'web:main/3a9f0c12' }, quiet);

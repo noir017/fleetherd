@@ -196,7 +196,7 @@ function rig(mode: SteeringMode, opts: { slowStart?: boolean } = {}): AgentSessi
     setAgentSession: () => {},
     conversationCwd: () => undefined,
   } as unknown as Parameters<typeof createAcpAgentFactory>[2];
-  live = createAcpAgentFactory(cfg, join(dir, 'ipc.sock'), store).getOrCreate('conv#1', 'fake');
+  live = createAcpAgentFactory(cfg, join(dir, 'ipc.sock'), store, { provisions: [] }).getOrCreate('conv#1', 'fake');
   return live;
 }
 

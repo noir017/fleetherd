@@ -110,7 +110,7 @@ function rig(caps: Record<string, object> = { fork: {}, resume: {}, delete: {} }
   const store = new ConversationStore(join(dir, 'conversations.json'));
   store.bind('web#main#source', 'fake');
   store.bind('web#main#fork', 'fake');
-  factory = createAcpAgentFactory(cfg, join(dir, 'ipc.sock'), store);
+  factory = createAcpAgentFactory(cfg, join(dir, 'ipc.sock'), store, { provisions: [] });
   return {
     factory,
     store,
