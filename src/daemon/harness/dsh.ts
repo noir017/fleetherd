@@ -7,6 +7,8 @@ import type { HarnessProfile } from './profile.js';
  */
 export function dshModelSelectorValue(model: string): string {
   const slash = model.indexOf('/');
+  // No provider half (a bare model id): encode with an empty provider so applyModelPreference's
+  // offer-check rejects it explicitly with the real choices instead of DSH's opaque "unknown model option".
   const provider = slash === -1 ? '' : model.slice(0, slash);
   const name = slash === -1 ? model : model.slice(slash + 1);
   return JSON.stringify([provider, name]);

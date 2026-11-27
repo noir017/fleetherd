@@ -115,7 +115,7 @@ Daemon.onInbound ─── cross-event dedup (platform:address:message, 15 s TTL
 ConversationRegistry.route
    ├─ access gate        access.allowFrom — `platform:userId`
    ├─ conversationKey    scope + the message's ConversationRef → the conversation id
-   ├─ resolveAgent       routing.pipeline, then HARNESS_COMMANDS → { agentId, explicit }
+   ├─ resolveAgent       routing.pipeline, then HARNESS_FACTS[*].command → { agentId, explicit }
    ├─ response gate      core/inbound-gate shouldRespond
    ├─ /new · /clear      reset the conversation, drop every agent's id, ack. Never forwarded.
    ├─ /stop              cancel the running turn, keep the queued backlog for the next message — or,
@@ -234,8 +234,8 @@ works on every platform regardless of native slash support — `Daemon.onCommand
 synthesizes native invocations into a full inbound message, so one code path covers both.
 
 **Agent commands resolve without a rule.** When no pipeline rule matched on `command`,
-`resolveAgent` falls back to `HARNESS_COMMANDS` (`/cc`, `/oc`, `/agy` — see
-[`core/command-translate.ts`](../core/README.md)) and selects the first configured agent
+`resolveAgent` falls back to `HARNESS_FACTS[*].command` (`/cc`, `/oc`, `/agy` — see
+[`core/harness-facts.ts`](../core/README.md)) and selects the first configured agent
 of that harness. Those names are what gets registered in the platform menu, so without
 this a fresh install advertised commands the daemon did not recognise and forwarded them
 to the bound agent as literal text. Precedence:
@@ -1841,8 +1841,8 @@ would resolve it against the pipeline instead of the conversation's bound agent,
 on whichever agent config prefers rather than the one whose menu offered it. The clicker
 is re-checked against the allowlist, because a button in a shared channel can be pressed
 by someone other than the person who opened the menu. A harness that reports no list
-(`agy`) acks the binding instead — see `HARNESS_COMMANDS` in
-[`core/command-translate.ts`](../core/README.md).
+(`agy`) acks the binding instead — see `HARNESS_FACTS[*].command` in
+[`core/harness-facts.ts`](../core/README.md).
 
 Two things about a click are worth stating, because every way this path could fail used
 to be a silent `return` — indistinguishable, from the chat, from a dead button:

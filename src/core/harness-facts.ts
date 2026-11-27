@@ -87,7 +87,9 @@ export const HARNESS_FACTS: Readonly<Record<Harness, HarnessFacts>> = {
       review: 'review',
       super: 'super',
     },
-    // Probed: context/model (codex-acp 1.12.0; `model[effort]` is rejected with -32602, so `model_reasoning_effort` must sit at top level in config.toml), effort (1.13.0, 2026-09-23), btw via session/fork (2.5.0, 2026-11-13).
+    // Probed: context/model (codex-acp 1.12.0), effort (1.13.0, 2026-09-23), btw via session/fork (2.5.0, 2026-11-13).
+    // codex-acp rejects effort-suffixed ids with -32602, so `agents[].model` takes the bare id and effort is configured in config.toml.
+    // Separate pitfall: `model_reasoning_effort` must sit at top level in config.toml (not inside a table).
     localCommands: ['context', 'model', 'effort', 'btw'],
     passthroughCommands: false,
     cliAnsweredCommands: [],
@@ -160,7 +162,7 @@ export const HARNESS_FACTS: Readonly<Record<Harness, HarnessFacts>> = {
     command: { name: 'dsh', aliases: ['deepseek'], picker: true },
     // `super` omitted: cross-file contract with skill-link (places no skills for dsh).
     nativeCommands: {},
-    // Bare model ids without a provider encode as `["", model]` (daemon/harness/dsh.ts) so offer-check rejects with real choices instead of DSH's opaque "unknown model option".
+    // Model wire encoding lives in `daemon/harness/dsh.ts`.
     localCommands: ['context', 'model'],
     passthroughCommands: false,
     cliAnsweredCommands: [],
