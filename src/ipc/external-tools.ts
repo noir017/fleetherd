@@ -649,12 +649,18 @@ function parseActionArgs<A extends string>(
   const raw = args ?? {};
   if (typeof raw !== 'object' || Array.isArray(raw)) throw new Error(`${tool}: arguments must be an object`);
   const { action, ...rest } = raw as Record<string, unknown>;
+  const present = Object.keys(rest).filter((k) => rest[k] !== undefined && rest[k] !== null && rest[k] !== '');
+  const choices = names.join(', ');
+  // Models do leave the action out of a call whose other fields are all there (Gemini, 2026-11-27),
+  // then read "must be one of" as a garbled value; naming what arrived lets them see the gap.
+  if (action === undefined || action === null || action === '') {
+    throw new Error(`${tool}: action is required — one of ${choices}${present.length ? `; this call carried only ${present.join(', ')}` : ''}`);
+  }
   if (typeof action !== 'string' || !(names as readonly string[]).includes(action)) {
-    throw new Error(`${tool}: action must be one of ${names.join(', ')}`);
+    throw new Error(`${tool}: action must be one of ${choices}, got ${givenValue(action)}`);
   }
   const which = action as A;
   const params: readonly string[] = actions[which].params;
-  const present = Object.keys(rest).filter((k) => rest[k] !== undefined && rest[k] !== null && rest[k] !== '');
   const stray = present.filter((k) => !params.includes(k));
   if (stray.length) {
     throw new Error(
@@ -662,6 +668,11 @@ function parseActionArgs<A extends string>(
     );
   }
   return { which, given: Object.fromEntries(present.map((k) => [k, rest[k]])) };
+}
+
+function givenValue(v: unknown): string {
+  if (typeof v === 'string') return JSON.stringify(v.length > 40 ? `${v.slice(0, 40)}…` : v);
+  return Array.isArray(v) ? 'a list' : `a ${typeof v}`;
 }
 
 /** The reverse command's own build, through a tool view offering only this action's options. */

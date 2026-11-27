@@ -98,11 +98,26 @@ describe('externalAction: tasks', () => {
     expect(() => externalAction('tasks', { action: 'stop', topic: 't', text: 'go on' })).toThrow(/text does not apply to stop; it takes topic/);
     expect(() => externalAction('tasks', { action: 'read', topic: 't', reply: 'maybe' })).toThrow(/reply is true or false/);
     // task-send is not among the actions: a caller cannot reach a running sub-agent.
-    for (const action of ['send', 'task-send', 'schedule', undefined]) {
-      expect(() => externalAction('tasks', { action, topic: 't', text: 'x' })).toThrow(/action must be one of open, agents, new, list, status, read, stop/);
+    for (const action of ['send', 'task-send', 'schedule']) {
+      expect(() => externalAction('tasks', { action, topic: 't', text: 'x' })).toThrow(
+        `action must be one of open, agents, new, list, status, read, stop, got "${action}"`
+      );
     }
+    expect(() => externalAction('tasks', { action: ['new'], topic: 't' })).toThrow(/must be one of .*, got a list$/);
+    expect(() => externalAction('tasks', { action: 7 })).toThrow(/must be one of .*, got a number$/);
     // Filled-in blanks are no parameter at all.
     expect(externalAction('tasks', { action: 'agents', topic: '', text: null })).toEqual({ kind: 'task', action: { kind: 'task-agents' } });
+  });
+
+  it('says the action is missing, and what the call carried instead, when a model leaves it out', () => {
+    // The shape a web agent sent on 2026-11-27: every field of new but the action.
+    expect(() => externalAction('tasks', { agent: 'cc', cwd: 'repo', text: 'do it', title: '', topic: 'c1000000' }, { trusted: true })).toThrow(
+      'tasks: action is required — one of open, agents, new, send, list, status, read, stop; this call carried only agent, cwd, text, topic'
+    );
+    for (const action of [undefined, null, '']) {
+      expect(() => externalAction('tasks', { action })).toThrow(/^tasks: action is required — one of open, agents, new, list, status, read, stop$/);
+    }
+    expect(() => externalAction('gateway', {}, { trusted: true })).toThrow(/^gateway: action is required — one of pods, pod_add, pod_remove, reload$/);
   });
 });
 
