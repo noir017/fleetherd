@@ -245,7 +245,7 @@ src/core/harness-facts.ts   # 纯数据：命令映射、菜单标签、effort/�
 
 ```
                DP1 DP2 DP3 DP4 DP5 DP6 DP7 DP8 DP9 DP10
-FR1  配置       X   .   .  [X]  .   .   .   .   .  [X]
+FR1  配置       X   .   .   .   .   .   .   .   .   .
 FR2  反向通道   .   X   .   .   .   .   .   .   .   .
 FR3  远程主机   X   X   X   .   .   .   .   .   .   .
 FR4  IM收发     X   .   .   X   .   .   .   .   .   .
@@ -257,9 +257,8 @@ FR9  会话路由   X   X   X   X   X   X   X   X   X   .
 FR10 Web UI     X   .   X   X   X   X   X   X   X   X
 ```
 
-剩下 5 个上三角格子，全部有意保留：
+剩下 3 个上三角格子，全部有意保留（原有的 FR1×DP4、FR1×DP10 在第四批消失：平台凭据和 webui 安全开关的 schema 挪进了 `config/platform-schemas.ts`，`config/` 不再 import `platform/`）：
 
-- **FR1×DP4、FR1×DP10**：平台凭据和 webui 安全开关的 schema 定义在 `platform/config-schemas.ts`，理由见 §5 第一行（第四批已改为把文件挪进 `config/`）。
 - **FR6×DP9**：记录对话的位置天然在会话层，`history/` 只是被动存储。
 - **FR5×DP9、FR8×DP9（x）**：`conversation-turns.ts` 和 `conversation-delegation.ts` 是 `ConversationRegistry` 的协作者，按设计就共享 `ConversationContext` 类型。如果把这两个文件归到 DP9，这两格也会消失。
 
@@ -282,22 +281,27 @@ WP6 随时可做（解环 D、E 的两项在 WP0 之后做）
 
 ## 8. 执行结果（2026-11-27）
 
-三批全部合入 `main`，每批一个检查点 tag（不以 `v` 开头，不触发发版）。全部是行为不变的结构调整，未单独发版。
+四批全部合入 `main`，每批一个检查点 tag（不以 `v` 开头，不触发发版）。全部是行为不变的结构调整，未单独发版。
 
 | tag | 内容 | 合并提交 |
 |---|---|---|
 | `refactor-batch-1` | WP0 环棘轮测试，WP1、WP2，WP6 的解环 D、E | `0c3b9a0` |
 | `refactor-batch-2` | WP3 投放注册表与 `ssh-identity.ts`，WP4 能力子对象与 `workbench-wiring.ts`，doctor 收口到 `platform/webui/doctor.ts`，WP6 的 `shell-run.ts` 与 `DaemonContext` 收窄，`SessionScope` 移入 `types.ts` | `d78ae5d` |
 | `refactor-batch-3` | WP5 `daemon/harness/`（`HARNESS_PROFILES`）与 `core/harness-facts.ts`；三个时序测试改为等条件 | `12d38a3` |
+| `refactor-batch-4` | 补公理设计体检查出的剩余耦合：connect agent 的指令和常驻技能改由投放注册表的 `meta` 分面提供；运行时改依赖 `SessionMemory` 窄端口；平台配置 schema 挪进 `config/platform-schemas.ts` | `72b2556` |
 
 **结果**
 - `src/`（不含 `webui/client/`）的文件级 import 环：4 个强连通分量 → 0。`import-cycles.test.ts` 的两份允许名单都是空的，import 解析改用 TypeScript AST。
 - `remote-hosts.ts` 只剩连接管理和 `runCli`；`agent-common.ts` 不再 import 技能、指令、插件模块；投放列表在 `commands/start.ts` 装配，参数必填。
 - `PlatformAdapter`：56 个成员（32 个可选）→ 3 个只读字段 + 22 个通用方法 + `topics`、`presence`、`workbench` 三个能力子对象。`daemon.ts` 不再 import 任何 `*-panel.ts`。
+- `connect-agent.ts` 不再 import 技能、指令模块；agent 运行时（`agent*.ts`、`acp-*.ts`、`harness/`）不再 import `conversation-store`。
+- `config/` 只 import `types.ts` 和 `legacy-name.ts`，config 与 platform 之间不再有双向依赖，`layering.test.ts` 同时禁止 `config/` import Satori 包。
 - harness 分支只剩在 `daemon/harness/`、`core/harness-facts.ts` 和 `config/` 里。新增 harness 要动的地方见 AGENTS.md「Adding things → An agent harness」。
 
 **与方案的出入**
 - 吸收了另一份对比方案里的一项：`commands/doctor.ts` 不再穿透 `platform/webui/` 内部文件。
+- WP1 的 `SessionMemory` 原计划也给 `turn-outcomes.ts` 用；它属于会话层，还要用 `setInFlight`、`entries`，所以继续依赖 `ConversationStore`，只有运行时改用窄端口（第四批）。
+- §5 第一行原定不拆 `platform/config-schemas.ts`；第四批改为整个挪进 `config/`，不需要注册机制，加平台要改的文件数不变。
 - 仍有按 harness 名字分支、但属于有意保留的例外：
   - `config/schema.ts` 的枚举和 custom/agy 的 refine：config 不能依赖 daemon。
   - `config/instructions.ts` 的 `harnessKind`：加载配置时做路径冲突检测要用。
@@ -305,11 +309,12 @@ WP6 随时可做（解环 D、E 的两项在 WP0 之后做）
   - `daemon/harness/custom.ts` 的 CodeBuddy 判定：合并会改变边界值下 `skillHarnessName` 的结果。
   - Web UI 前端 `banners.ts` 的 custom 判断：浏览器端代码 import 不到 daemon。
 - 未做：
-  - WP1 的 `SessionMemory` 窄端口、WP3b 的 `remoteHosts` 单例注入：方案自己标为可选，目前没有测试需要替换它们。
+  - WP3b 的 `remoteHosts` 单例注入：方案自己标为可选，目前没有测试需要替换它，只有想整块裁掉远程主机时才值得做。
   - `platform/webui` 不依赖 `config/load.ts`：AGENTS.md 明文接受这条依赖。
 
 **验证**
 - 每批都派 cc 审代码，并用隔离网关做新旧对照实测。
 - 第二批：本机 sshd 远程主机的投放结果逐项 diff、各 Web UI 面板、`files.enabled`/`instructions.enabled` 关闭后路由 404、doctor 输出。
 - 第三批：claude、codex、opencode、agy 真跑一轮加一次自动审阅，比对发给 harness 的全部 argv、env、ACP 消息和审阅隔离开关，新旧 diff 为空。
+- 第四批：假 connect 服务下本机和远程 connect agent 收到的 `_meta.fleetherd`（含 token、分层指令、指令超限、常驻技能排序与过滤、topic）、本机和远程投放快照、doctor 输出、7 份坏配置的报错、setup 向导 13 组屏幕文本，新旧一致。
 - 包含 WP3、WP4、WP5 的那个版本，发版前按 §4 各「实测」项已验过。远程主机上的真 harness 实跑、gemini、dsh、cursor-agent 未实跑，只比过纯函数和 doctor 输出。
