@@ -5,6 +5,17 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **Managed skills deleted or renamed in the skills repository are now retracted from every host.**
+  Previously, spawn-time delivery only removed copies and resident links for skills in `archive/`,
+  so a skill deleted or renamed directly in the repository left its old copy under
+  `~/.fleetherd/skills/<old-name>` and its symlinks in harness skill directories behind (putting
+  both the old and new resident skills into agent context). Local and remote delivery now scan
+  `~/.fleetherd/skills/` for copies absent from the active skill set and retract them along with
+  any gateway-owned links across all harness skill directories, while leaving non-gateway files and
+  directories untouched.
+
 ## [3.43.0] - 2026-11-27
 
 ### Added

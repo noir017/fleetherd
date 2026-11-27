@@ -6,7 +6,7 @@ import type { AgentDef } from '../config/schema.js';
 import type { Welcome } from '../remote/connection.js';
 import type { HostFiles } from './provision.js';
 import { applyManagedSkills, createManagedSkillsProvision, managedSkillsHome, placeManagedSkills } from './managed-skills.js';
-import { archiveSkill, createSkill, patchSkill, removeSkillFile, setResident, showSkill, writeSkillFile } from './skills-store.js';
+import { archiveSkill, createSkill, patchSkill, removeSkillFile, setResident, showSkill, skillDir, writeSkillFile } from './skills-store.js';
 
 /**
  * Delivery writes into a throwaway HOME, as skill-link.test.ts does: `applyManagedSkills` is the
@@ -105,6 +105,49 @@ describe('applyManagedSkills', () => {
     expect(results.some((r) => r.outcome === 'removed')).toBe(true);
   });
 
+  it('takes back copies and links when skills are deleted or renamed in the repository, without touching foreign directories', () => {
+    createSkill({ name: 'old-name', description: 'Use when testing rename', now: T0 }, dir);
+    setResident('old-name', true, dir, T0 + 1);
+    createSkill({ name: 'foreign-dir', description: 'Use when testing foreign dir', now: T0 }, dir);
+    setResident('foreign-dir', true, dir, T0 + 1);
+    fs.mkdirSync(path.join(home, '.claude', 'skills', 'foreign-dir'), { recursive: true });
+    fs.writeFileSync(path.join(home, '.claude', 'skills', 'foreign-dir', 'KEEP.md'), 'mine');
+    // A bundled skill link pointing outside owned must never be touched.
+    const bundled = path.join(home, '.fleetherd', 'bundled', 'claude');
+    fs.mkdirSync(bundled, { recursive: true });
+    fs.symlinkSync(bundled, path.join(home, '.claude', 'skills', 'fleetherd'), 'dir');
+
+    applyManagedSkills(claude, home, dir);
+    // A link made for another harness for deploy-check.
+    fs.mkdirSync(path.join(home, '.agents', 'skills'), { recursive: true });
+    fs.symlinkSync(copy(), path.join(home, '.agents', 'skills', 'deploy-check'), 'dir');
+    expect(fs.readlinkSync(path.join(home, '.claude', 'skills', 'old-name'))).toBe(path.join(managedSkillsHome(home), 'old-name'));
+
+    // Delete deploy-check and foreign-dir directly from the repository; rename old-name → new-name.
+    fs.rmSync(skillDir('deploy-check', dir), { recursive: true, force: true });
+    fs.rmSync(skillDir('foreign-dir', dir), { recursive: true, force: true });
+    fs.renameSync(skillDir('old-name', dir), skillDir('new-name', dir));
+    const renamedMd = fs.readFileSync(path.join(skillDir('new-name', dir), 'SKILL.md'), 'utf8').replace('name: old-name', 'name: new-name');
+    fs.writeFileSync(path.join(skillDir('new-name', dir), 'SKILL.md'), renamedMd);
+
+    const results = applyManagedSkills(claude, home, dir);
+    // Deleted and renamed old copies + all their links are gone.
+    expect(fs.existsSync(copy())).toBe(false);
+    expect(fs.existsSync(link())).toBe(false);
+    expect(fs.existsSync(path.join(home, '.agents', 'skills', 'deploy-check'))).toBe(false);
+    expect(fs.existsSync(path.join(managedSkillsHome(home), 'old-name'))).toBe(false);
+    expect(fs.existsSync(path.join(home, '.claude', 'skills', 'old-name'))).toBe(false);
+    // New name is placed and linked.
+    expect(fs.existsSync(path.join(managedSkillsHome(home), 'new-name', 'SKILL.md'))).toBe(true);
+    expect(fs.readlinkSync(path.join(home, '.claude', 'skills', 'new-name'))).toBe(path.join(managedSkillsHome(home), 'new-name'));
+    // Owned copy of foreign-dir is removed, while the operator's real directory stays intact.
+    expect(fs.existsSync(path.join(managedSkillsHome(home), 'foreign-dir'))).toBe(false);
+    expect(fs.readFileSync(path.join(home, '.claude', 'skills', 'foreign-dir', 'KEEP.md'), 'utf8')).toBe('mine');
+    expect(results).toContainEqual(expect.objectContaining({ name: 'foreign-dir', outcome: 'occupied', detail: 'a directory' }));
+    // Bundled skill link stays intact.
+    expect(fs.readlinkSync(path.join(home, '.claude', 'skills', 'fleetherd'))).toBe(bundled);
+  });
+
   it('does nothing from a test worker, which is not the CLI', () => {
     expect(placeManagedSkills(claude, home)).toEqual([]);
     expect(fs.existsSync(managedSkillsHome(home))).toBe(false);
@@ -145,30 +188,42 @@ describe('placeManagedSkills on a remote host', () => {
   class FakeHost {
     readonly id = 'h1';
     readonly writes: string[] = [];
+    readonly files = new Set<string>();
     readonly links = new Map<string, string>();
+    readonly foreignDirs = new Set<string>();
     readonly removed: string[] = [];
     readonly removedPaths: Array<{ path: string; owned: string }> = [];
+    readonly listFilesCalls: string[] = [];
     /** Every write and remove in call order, so a test can pin "write first, prune after". */
     readonly ops: string[] = [];
     /** What the copy looks like on the host; the prune asks for this before removing anything. */
     remoteFiles: string[] = [];
     async writeFile(p: string): Promise<void> {
       this.writes.push(p);
+      this.files.add(p);
       this.ops.push(`write ${p}`);
     }
-    async listFiles(): Promise<string[]> {
-      return this.remoteFiles;
+    async listFiles(dirPath: string): Promise<string[]> {
+      this.listFilesCalls.push(dirPath);
+      if (this.remoteFiles.length > 0 && dirPath !== '/home/u/.fleetherd/skills') return this.remoteFiles;
+      const prefix = `${dirPath}/`;
+      return [...this.files].filter((f) => f.startsWith(prefix)).map((f) => f.slice(prefix.length));
     }
     async removePath(path: string, owned: string): Promise<{ removed: boolean; path: string }> {
       this.removedPaths.push({ path, owned });
+      for (const f of [...this.files]) {
+        if (f === path || f.startsWith(`${path}/`)) this.files.delete(f);
+      }
       this.ops.push(`remove ${path}`);
       return { removed: true, path };
     }
-    async ensureLink(target: string, link: string): Promise<{ outcome: string; link: string }> {
+    async ensureLink(target: string, link: string): Promise<{ outcome: string; detail?: string; link: string }> {
+      if (this.foreignDirs.has(link)) return { outcome: 'occupied', detail: 'a directory', link };
       this.links.set(link, target);
       return { outcome: 'linked', link };
     }
-    async removeLink(link: string): Promise<{ outcome: string; link: string }> {
+    async removeLink(link: string): Promise<{ outcome: string; detail?: string; link: string }> {
+      if (this.foreignDirs.has(link)) return { outcome: 'kept', detail: 'not a link', link };
       this.removed.push(link);
       this.links.delete(link);
       return { outcome: 'removed', link };
@@ -290,5 +345,64 @@ describe('placeManagedSkills on a remote host', () => {
     await provision.remote(host as unknown as HostFiles, claude, '/home/u', welcome('i1'));
     expect(host.removed).toHaveLength(removed);
     expect(host.removedPaths).toHaveLength(removedPaths);
+  });
+
+  it('takes back copies and links when skills are deleted or renamed in the repository, keeps foreign entries, and caches per active set', async () => {
+    createSkill({ name: 'old-name', description: 'Use when testing rename', now: T0 }, dir);
+    setResident('old-name', true, dir, T0 + 1);
+    createSkill({ name: 'foreign-dir', description: 'Use when testing foreign dir', now: T0 }, dir);
+    setResident('foreign-dir', true, dir, T0 + 1);
+
+    const host = new FakeHost();
+    host.foreignDirs.add('/home/u/.claude/skills/foreign-dir');
+    const provision = createManagedSkillsProvision(dir);
+    await provision.remote(host as unknown as HostFiles, claude, '/home/u', welcome('i1'));
+    expect(host.links.get('/home/u/.claude/skills/deploy-check')).toBe('/home/u/.fleetherd/skills/deploy-check');
+    expect(host.links.get('/home/u/.claude/skills/old-name')).toBe('/home/u/.fleetherd/skills/old-name');
+    expect(host.links.has('/home/u/.claude/skills/foreign-dir')).toBe(false);
+
+    // Delete deploy-check and foreign-dir directly from the repository; rename old-name → new-name.
+    fs.rmSync(skillDir('deploy-check', dir), { recursive: true, force: true });
+    fs.rmSync(skillDir('foreign-dir', dir), { recursive: true, force: true });
+    fs.renameSync(skillDir('old-name', dir), skillDir('new-name', dir));
+    const renamedMd = fs.readFileSync(path.join(skillDir('new-name', dir), 'SKILL.md'), 'utf8').replace('name: old-name', 'name: new-name');
+    fs.writeFileSync(path.join(skillDir('new-name', dir), 'SKILL.md'), renamedMd);
+
+    const logged = await takeBacks(() => provision.remote(host as unknown as HostFiles, claude, '/home/u', welcome('i1')));
+    expect(logged).toContain('[skills] h1: took back /home/u/.claude/skills/deploy-check (removed)');
+    expect(logged).toContain('[skills] h1: took back /home/u/.claude/skills/old-name (removed)');
+    expect(logged.filter((l) => l.includes('archived'))).toEqual([]);
+    expect(host.removed).toContain('/home/u/.claude/skills/deploy-check');
+    expect(host.removed).toContain('/home/u/.agents/skills/deploy-check');
+    expect(host.removed).toContain('/home/u/.claude/skills/old-name');
+    expect(host.removedPaths).toContainEqual({ path: '/home/u/.fleetherd/skills/deploy-check', owned: '/home/u/.fleetherd/skills' });
+    expect(host.removedPaths).toContainEqual({ path: '/home/u/.fleetherd/skills/old-name', owned: '/home/u/.fleetherd/skills' });
+    expect(host.removedPaths).toContainEqual({ path: '/home/u/.fleetherd/skills/foreign-dir', owned: '/home/u/.fleetherd/skills' });
+    expect(host.foreignDirs.has('/home/u/.claude/skills/foreign-dir')).toBe(true);
+    expect(host.removed).not.toContain('/home/u/.claude/skills/foreign-dir');
+    // New name is placed and linked.
+    expect(host.writes).toContain('/home/u/.fleetherd/skills/new-name/SKILL.md');
+    expect(host.links.get('/home/u/.claude/skills/new-name')).toBe('/home/u/.fleetherd/skills/new-name');
+
+    // Next spawn with the same active set does not re-scan or re-retract.
+    const removed = host.removed.length;
+    const removedPaths = host.removedPaths.length;
+    const listCalls = host.listFilesCalls.length;
+    await provision.remote(host as unknown as HostFiles, claude, '/home/u', welcome('i1'));
+    expect(host.removed).toHaveLength(removed);
+    expect(host.removedPaths).toHaveLength(removedPaths);
+    expect(host.listFilesCalls).toHaveLength(listCalls);
+
+    // Re-creating a previously deleted skill and deleting it again must still retract it on the same instance.
+    createSkill({ name: 'deploy-check', description: 'Recreated', now: T0 + 10 }, dir);
+    setResident('deploy-check', true, dir, T0 + 11);
+    await provision.remote(host as unknown as HostFiles, claude, '/home/u', welcome('i1'));
+    expect(host.links.get('/home/u/.claude/skills/deploy-check')).toBe('/home/u/.fleetherd/skills/deploy-check');
+
+    fs.rmSync(skillDir('deploy-check', dir), { recursive: true, force: true });
+    const removedBefore = host.removedPaths.length;
+    await provision.remote(host as unknown as HostFiles, claude, '/home/u', welcome('i1'));
+    expect(host.links.has('/home/u/.claude/skills/deploy-check')).toBe(false);
+    expect(host.removedPaths.length).toBeGreaterThan(removedBefore);
   });
 });
