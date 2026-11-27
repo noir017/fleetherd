@@ -178,6 +178,92 @@ export function extractMessageMarkdown(
   return (msgEl?.textContent ?? '').trim();
 }
 
+const SELECTION_CHROME_SELECTOR =
+  'button, svg, .msg-actions, .cb-h, .task-box, .acts, .handoff-acts, .tc, .menu, .t, [aria-hidden="true"]';
+
+const SELECTION_BLOCK_TAGS = new Set([
+  'P',
+  'DIV',
+  'LI',
+  'H1',
+  'H2',
+  'H3',
+  'H4',
+  'H5',
+  'H6',
+  'BLOCKQUOTE',
+  'PRE',
+  'UL',
+  'OL',
+  'TABLE',
+  'TR',
+  'HR',
+]);
+
+function closestElement(node: Node): Element | null {
+  return node.nodeType === 1 ? (node as Element) : node.parentElement;
+}
+
+function renderTableRowPlainText(tr: Element): string {
+  const cells: string[] = [];
+  for (let n: Node | null = tr.firstChild; n; n = n.nextSibling) {
+    if (n.nodeType !== 1) continue;
+    const el = n as Element;
+    const tag = el.tagName.toUpperCase();
+    if (tag !== 'TD' && tag !== 'TH') continue;
+    cells.push(nodeToPlainText(el).trim());
+  }
+  return cells.join('\t');
+}
+
+function nodeToPlainText(node: Node): string {
+  if (node.nodeType === 3) return node.textContent ?? '';
+  if (node.nodeType === 11) return childrenToPlainText(node);
+  if (node.nodeType !== 1) return '';
+  const el = node as Element;
+  if (el.matches(SELECTION_CHROME_SELECTOR)) return '';
+  const tag = el.tagName.toUpperCase();
+  if (tag === 'BR') return '\n';
+  if (tag === 'TR') return renderTableRowPlainText(el);
+  return childrenToPlainText(el);
+}
+
+function childrenToPlainText(parent: Node): string {
+  let out = '';
+  for (let n: Node | null = parent.firstChild; n; n = n.nextSibling) {
+    const isBlock = n.nodeType === 1 && SELECTION_BLOCK_TAGS.has((n as Element).tagName.toUpperCase());
+    const chunk = nodeToPlainText(n);
+    if (!chunk) continue;
+    if (isBlock && out && !out.endsWith('\n')) out += '\n';
+    out += chunk;
+    if (isBlock && !out.endsWith('\n')) out += '\n';
+  }
+  return out;
+}
+
+export function extractSelectedMessageText(
+  msgEl: HTMLElement,
+  win?: Window | null,
+): string {
+  const view = win ?? msgEl.ownerDocument.defaultView;
+  const sel = view?.getSelection?.();
+  if (!sel || sel.isCollapsed || sel.rangeCount === 0) return '';
+
+  const parts: string[] = [];
+  for (let i = 0; i < sel.rangeCount; i++) {
+    const range = sel.getRangeAt(i);
+    if (range.collapsed) continue;
+    if (!msgEl.contains(range.commonAncestorContainer)) return '';
+    const ancestorEl = closestElement(range.commonAncestorContainer);
+    if (ancestorEl?.closest(SELECTION_CHROME_SELECTOR)) continue;
+    const plain = nodeToPlainText(range.cloneContents())
+      .replace(/\r\n/g, '\n')
+      .replace(/^\n+|\n+$/g, '');
+    if (plain.trim()) parts.push(plain);
+  }
+  return parts.join('\n');
+}
+
 export function formatQuoteReply(markdown: string): string {
   const trimmed = markdown.trim();
   if (!trimmed) return '';
