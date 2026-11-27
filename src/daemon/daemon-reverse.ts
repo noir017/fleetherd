@@ -90,6 +90,26 @@ function isSkillRead(action: Extract<IpcAction, { kind: 'skills' }>['action']): 
   return (SKILL_READS as readonly string[]).includes(action);
 }
 
+/** Subset of DaemonContext used by DaemonReverse (narrow consumer port). */
+export type ReverseDeps = Pick<
+  DaemonContext,
+  | 'config'
+  | 'platforms'
+  | 'registry'
+  | 'store'
+  | 'history'
+  | 'voice'
+  | 'schedules'
+  | 'delegation'
+  | 'externalTopics'
+  | 'skillsRepo'
+  | 'skillLibrary'
+  | 'askButtons'
+  | 'notifySkillArchived'
+  | 'reloadAll'
+  | 'podList'
+>;
+
 /** Reverse-command dispatch and grouped IPC handlers (chat actions, gateway queries, schedules, sessions, skills). */
 export class DaemonReverse {
   /**
@@ -99,7 +119,7 @@ export class DaemonReverse {
   private lastResolvedConversationId: ConversationId | undefined;
   private lastResolvedPlatform: string | undefined;
 
-  constructor(private readonly ctx: DaemonContext) {}
+  constructor(private readonly ctx: ReverseDeps) {}
 
   setResolved(conversationId: ConversationId | undefined, platform: string | undefined): void {
     this.lastResolvedConversationId = conversationId;

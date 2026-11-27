@@ -7,7 +7,7 @@ import type { Welcome } from '../remote/connection.js';
 import type { RemoteHost } from '../remote/host.js';
 import { buildAgentEnv, buildHarnessEnv, expandHome, prepareRemoteSpawn, prependPath, windowsSpawnOptions } from './agent-common.js';
 import type { AgentProvision } from './provision.js';
-import { shellLaunch } from './schedule-bash.js';
+import { shellLaunch } from './shell-run.js';
 
 describe('buildHarnessEnv', () => {
   it('strips nested Claude session markers but keeps the configured CLI executable', () => {

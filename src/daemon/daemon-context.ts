@@ -41,8 +41,8 @@ export interface DaemonContext {
   readonly externalTopics: ExternalTopics;
   readonly skillsRepo: SkillsRepo;
   readonly skillLibrary: SkillLibrary;
-  offlineNames(): ReadonlySet<string>;
-  askButtons(
+  offlineNames: () => ReadonlySet<string>;
+  askButtons: (
     platform: PlatformAdapter,
     address: ConversationAddress,
     prompt: string,
@@ -50,8 +50,8 @@ export interface DaemonContext {
     timeoutMs: number,
     conversationId?: ConversationId,
     opts?: AskButtonsOptions
-  ): Promise<AskOutcome | null>;
-  notifySkillArchived(skill: SkillRecord, reason: 'unused' | 'manual'): void;
-  reloadAll(): Promise<{ ok: boolean; summary: string }>;
-  podList(): { gatewayKey: string; pods: Array<Record<string, string>> };
+  ) => Promise<AskOutcome | null>;
+  notifySkillArchived: (skill: SkillRecord, reason: 'unused' | 'manual') => void;
+  reloadAll: () => Promise<{ ok: boolean; summary: string }>;
+  podList: () => { gatewayKey: string; pods: Array<Record<string, string>> };
 }

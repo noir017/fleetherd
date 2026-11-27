@@ -525,7 +525,7 @@ Do not weaken these without saying so explicitly in the PR:
       `PluginHost.topics.send` is prefixed visibly with `[plugin:<id>]` in the conversation
       transcript; plugins cannot inject hidden text into an agent's prompt (enforcing "Nothing of
       the gateway's in the agent's prompt").
-    - **`doctor` lists every configured plugin** (`commands/doctor.ts` `inspectWebuiPlugins`) and
+    - **`doctor` lists every configured plugin** (`platform/webui/doctor.ts` `inspectWebuiPlugins`) and
       warns explicitly that plugins execute with full gateway/session privileges and no sandbox.
     Plugin static files (`GET /plugins/<id>/<file>`) and API routes (`GET`/`POST /api/plugins/<id>/`)
     sit behind the `GUARDED` session/SSO gate and same-origin POST check; static files serve only
@@ -584,6 +584,8 @@ touches one of these places keeps both names working.
 | Transcripts | `talkcode skills …` and `~/.talkcode/skills/…` count as skill use and administration | `skill-usage.ts`, `review-prompt.ts` |
 | Remote host | a `talkcode-remote` daemon or version directory is retired like a `fleetherd-remote` one | `remote/attach.go` |
 | Host wrapper | `TALKCODE_APP_DIR`, `~/apps/talkcode`, a container named `talkcode`, either package's version | `docker/fleetherd-host` |
+
+Also remove `src/history/import-webui.ts` in the next major alongside `src/legacy-name.ts` (one-time, idempotent Web UI transcript migration since 2.13.0).
 
 Not compatibility but history: CHANGELOG entries before 3.0.0, and the name paragraph above.
 

@@ -63,7 +63,7 @@ session id, agy's conversation id). One conversation holds one session *per agen
 | `scheduler.ts` | Scheduled tasks' timing: one re-armed timer, what is due, the bookkeeping that keeps a restart from repeating or losing a run |
 | `schedule-store.ts` | `<configDir>/schedules.json`: 0600, atomic writes, a bad entry dropped loudly |
 | `schedule-service.ts` | Scheduled tasks wired to the rest: a run as a bash process or a turn, the agent's `schedule` commands, the cards |
-| `schedule-bash.ts` | One `--bash` run: its own process group, a bounded output tail, the full log on disk. Also runs `preLaunch` hooks |
+| `shell-run.ts` | General shell command runner (local and remote): its own process group, a bounded output tail, and the full log on disk. Shared by scheduled `--bash` tasks, `agent-hooks.ts`, and `quota-meter.ts` |
 | `restart-drain.ts` | A SIGTERM with turns (an agent's background output counted as one) or scheduled runs in progress: the bounded wait for them before the daemon stops (`Daemon.beginDrain` refuses new turns and holds the scheduler meanwhile) |
 | `reverse-cli-shim.ts` | Guarantees `fleetherd` is on the agent's PATH; `selfInvocation` — how to re-run this CLI, shared with the tool server entry |
 | `provision.ts` | Types only: `AgentProvision` and the narrow `HostFiles` port implemented by `RemoteHost` for spawn-time local and remote provisioning |
@@ -611,7 +611,7 @@ schedule add ──IPC──► ScheduleService.add ── core buildTask (every
                                          └── card posted in the caller's conversation (the daemon's words)
 schedule edit ──IPC──► ScheduleService.edit ── core editTask (the same buildTask, over the old task) ──► ScheduleStore
 Scheduler.look ── core decide ──► run │ skip │ missed │ expire │ done
-      run ─► ScheduleService.run ─┬─ bash  → schedule-bash (process group, tail + log) → result posted
+      run ─► ScheduleService.run ─┬─ bash  → shell-run (process group, tail + log) → result posted
                                   ├─ fixed → notice, then registry.runScheduledPrompt in THAT conversation
                                   └─ new   → registry.openScheduledConversation (new topic, or throwaway)
                                              → notice → runScheduledPrompt → released if throwaway
@@ -1597,7 +1597,7 @@ outage is not the agent being silent). `AgentChild` is what the runtime holds �
 and a `RemoteChild` alike — so it does not branch on where its process is beyond the spawn.
 
 The rest of the daemon follows the same rule — the agent's machine is the one that matters: hooks
-and an agent's scheduled `--bash` tasks run there (`schedule-bash.ts` runRemoteBashCommand),
+and an agent's scheduled `--bash` tasks run there (`shell-run.ts` runRemoteBashCommand),
 inbound files are written there (`attachment-io.ts` remoteAttachmentSave), `send-file` fetches from
 there (`daemon.ts` sendAgentFile), and `/cd`, `/skills`, the claude cache countdown and opencode's
 log are read there. The `/cd` menu code is synchronous, so a remote listing is read into

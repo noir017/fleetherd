@@ -7,7 +7,7 @@ import { runAgyCliCommand, runAgyCliFor, type AgyCliResult, type AgyCliRunner } 
 import { parseAgyUsagePools } from './agy-meters.js';
 import { remoteHosts } from './remote-hosts.js';
 import { agentHome } from './skills-scan.js';
-import { shellLaunch } from './schedule-bash.js';
+import { shellLaunch } from './shell-run.js';
 
 const execFile = promisify(execFileCb);
 

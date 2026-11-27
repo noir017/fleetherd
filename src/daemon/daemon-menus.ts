@@ -299,6 +299,12 @@ interface PendingAgentMenu {
   retry?: string;
 }
 
+/** Subset of DaemonContext used by DaemonMenus (narrow consumer port). */
+export type MenuDeps = Pick<
+  DaemonContext,
+  'config' | 'platforms' | 'registry' | 'voice' | 'schedules' | 'delegation' | 'offlineNames'
+>;
+
 /** Owns all eight pending menu/ask tables, their expiry/retirement, and button click handling. */
 export class DaemonMenus {
   private pendingAsks = new Map<string, PendingAsk>();
@@ -313,7 +319,7 @@ export class DaemonMenus {
   private pendingWorkdirMenus = new Map<string, PendingWorkdirMenu>();
   private pendingAgentMenus = new Map<string, PendingAgentMenu>();
 
-  constructor(private readonly ctx: DaemonContext) {}
+  constructor(private readonly ctx: MenuDeps) {}
 
   setAgentCommands(agentId: string, cmds: AgentCommand[]): void {
     if (cmds.length === 0) this.agentCommands.delete(agentId);

@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type {
   Harness as HarnessType,
   PermissionLevel as PermissionLevelType,
+  SessionScope as SessionScopeType,
   ToolMode as ToolModeType,
   TurnFailureReason,
 } from '../types.js';
@@ -74,8 +75,12 @@ export type Locale = z.infer<typeof LocaleSchema>;
 export const PermissionLevelSchema = z.enum(PERMISSION_LEVELS);
 
 /** Session scope: which agent session an inbound message belongs to (global default, overridable by route use.scope). */
-export const SessionScope = z.enum(['per_thread', 'per_channel', 'per_user', 'shared']);
-export type SessionScope = z.infer<typeof SessionScope>;
+export const SESSION_SCOPES = ['per_thread', 'per_channel', 'per_user', 'shared'] as const satisfies readonly SessionScopeType[];
+type _EverySessionScopeListed = Exclude<SessionScopeType, (typeof SESSION_SCOPES)[number]> extends never ? true : never;
+const _everySessionScopeListed: _EverySessionScopeListed = true;
+void _everySessionScopeListed;
+export const SessionScope = z.enum(SESSION_SCOPES);
+export type SessionScope = SessionScopeType;
 
 /** A user-level instruction file on an agent's host: `~/…` under that home, or an absolute path. */
 const InstructionFileSchema = z
