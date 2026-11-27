@@ -71,7 +71,7 @@ export function jobInCommand(text: string): string | undefined {
 
 /**
  * What started a turn, from the sender the daemon put on its batch. The senders are the ones
- * the gateway actually uses (SCHEDULED_SENDER and the two delegation senders above, plus the
+ * the gateway actually uses (SCHEDULED_SENDER and the two delegation senders in turn-senders.ts, plus the
  * automatic continue) — a batch that is not all one of them is a person's, which is also what a
  * mixed batch has to be: someone typed into a conversation, and whoever else wrote there wrote
  * into the same turn.
