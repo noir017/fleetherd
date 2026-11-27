@@ -35,7 +35,7 @@ export function wait(ms: number): Promise<void> {
   });
 }
 
-// 15 s + 1 s per 64 KiB, capped at Node's 300 s http.Server.requestTimeout.
+// 15 s + 1 s per 16 KiB (~128 kbps), capped at 3600 s (matches server.ts requestTimeout, covers 36 MiB MAX_BODY_BYTES).
 export function sendLimit(body: SendLimitBody): number {
   let n = (body.text || '').length;
   const files = body.files || [];
@@ -43,7 +43,7 @@ export function sendLimit(body: SendLimitBody): number {
     const file = files[i];
     if (file) n += file.data.length + file.name.length;
   }
-  return Math.min(300000, 15000 + Math.round(n / 65.536));
+  return Math.min(3600000, 15000 + Math.round(n / 16.384));
 }
 
 function localeHeader(getLocaleFn: () => string): Record<string, string> {

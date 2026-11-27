@@ -212,6 +212,8 @@ export function createWebServer(
       else res.end();
     });
   });
+  // Match client sendLimit's 3600 s cap so slow uploads up to MAX_BODY_BYTES are not cut by Node's 300 s default.
+  server.requestTimeout = 3_600_000;
   server.on('connection', (socket) => {
     sockets.add(socket);
     socket.on('close', () => sockets.delete(socket));
