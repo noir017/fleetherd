@@ -86,6 +86,7 @@ interface AppState {
   topic: string;
   focusedPanelId: string;
   epoch: number;
+  epochConfirmed: boolean;
   offline: OfflineMachine[];
   commands: SlashCommandSpec[];
   sessions: Map<string, TopicEditorSession>;
@@ -1294,8 +1295,9 @@ function handleSyncEvent(rt: AppRuntime, ev: Extract<WebEvent, { t: 'sync' }>): 
   const { targets, named } = resolveSyncTargets(rt, ev.topic);
   if (targets.length === 0) return;
 
-  if (state.epoch && ev.epoch && ev.epoch !== state.epoch) rt.streamClient.checkBuild();
+  if (state.epochConfirmed && state.epoch && ev.epoch && ev.epoch !== state.epoch) rt.streamClient.checkBuild();
   state.epoch = ev.epoch || 0;
+  state.epochConfirmed = state.epoch !== 0;
   state.topics = ev.topics || [];
   state.offline = ev.offline || [];
   state.commands = ev.commands || [];
@@ -1487,24 +1489,38 @@ function handleTypingEvent(rt: AppRuntime, on: boolean, evTopic?: string): void 
   if (!on) rt.events.emit('topic.turnEnd', { topicId: targetTopic });
 }
 
-function handleResumedEvent(rt: AppRuntime, evTopic?: string): void {
-  const targetTopic = eventTargetTopic(rt.state, evTopic);
-  for (const session of sessionsForTopic(rt.state, targetTopic)) {
-    if (session.synced) continue;
-    const editor = session.editor;
-    session.synced = true;
-    session.entering = false;
-    if (session.settleOnResume) {
-      session.settleOnResume = false;
-      editor?.composer?.settleUnsure();
-    }
-    editor?.transcript?.banners.clearSyncing();
-    editor?.transcript?.banners.placeDivider();
-    editor?.transcript?.banners.syncEmptyNote();
-    editor?.transcript?.scroll.clearView();
-    rt.cacheService.scheduleSave(session.topicId);
-    if (editor) editor.els.noteEl.textContent = '';
+function finishSessionResume(rt: AppRuntime, session: TopicEditorSession): void {
+  if (session.synced) return;
+  const editor = session.editor;
+  session.synced = true;
+  session.entering = false;
+  if (session.settleOnResume) {
+    session.settleOnResume = false;
+    editor?.composer?.settleUnsure();
   }
+  editor?.transcript?.banners.clearSyncing();
+  editor?.transcript?.banners.placeDivider();
+  editor?.transcript?.banners.syncEmptyNote();
+  editor?.transcript?.scroll.clearView();
+  rt.cacheService.scheduleSave(session.topicId);
+  if (editor) editor.els.noteEl.textContent = '';
+}
+
+function handleResumedEvent(rt: AppRuntime, ev: Extract<WebEvent, { t: 'resumed' }>): void {
+  const { state } = rt;
+  if (ev.epoch) {
+    if (state.epochConfirmed && state.epoch && ev.epoch !== state.epoch) rt.streamClient.checkBuild();
+    state.epoch = ev.epoch;
+    state.epochConfirmed = true;
+  }
+  const targetTopic = eventTargetTopic(state, ev.topic);
+  for (const session of sessionsForTopic(rt.state, targetTopic)) {
+    finishSessionResume(rt, session);
+  }
+  if (visibleTopicIds(rt).includes(targetTopic)) {
+    rt.readsService.markTopicFromList(targetTopic, state.topics);
+  }
+  rt.readsService.reportSeen();
 }
 
 function handleStreamEvent(rt: AppRuntime, raw: StreamEventPayload): void {
@@ -1555,7 +1571,7 @@ function handleStreamEvent(rt: AppRuntime, raw: StreamEventPayload): void {
     },
     topics: () => handleTopicsEvent(rt, ev as Extract<WebEvent, { t: 'topics' }>),
     'topic-rows': () => handleTopicsEvent(rt, ev as Extract<WebEvent, { t: 'topic-rows' }>),
-    resumed: () => handleResumedEvent(rt, (ev as Extract<WebEvent, { t: 'resumed' }>).topic),
+    resumed: () => handleResumedEvent(rt, ev as Extract<WebEvent, { t: 'resumed' }>),
     bye: () => {},
   };
   handlers[ev.t]?.();
@@ -1834,6 +1850,7 @@ function bootstrap(): void {
     topic: new URLSearchParams(location.search).get('t') || '',
     focusedPanelId: MAIN_PANEL_ID,
     epoch: 0,
+    epochConfirmed: false,
     offline: [],
     commands: [],
     sessions: new Map(),
@@ -1955,13 +1972,61 @@ function finishBootstrap(rt: AppRuntime): void {
     if (activeSession.topicId) state.topic = activeSession.topicId;
   }
   wireMobileMore(rt);
+  const initialSessions: Array<{ session: TopicEditorSession; topicId: string; token: number }> = [];
   for (const session of state.sessions.values()) {
     if (!session.topicId) continue;
     session.editor?.composer?.loadDraftIfEmpty(session.topicId);
-    adoptCachedTopicMessages(rt, session, session.topicId);
+    initialSessions.push({ session, topicId: session.topicId, token: session.enterToken });
   }
   state.bootstrapped = true;
-  rt.streamClient.connect();
+  startBootstrapStream(rt, initialSessions);
+}
+
+function startBootstrapStream(
+  rt: AppRuntime,
+  initialSessions: ReadonlyArray<{ session: TopicEditorSession; topicId: string; token: number }>,
+): void {
+  if (initialSessions.length === 0 || !rt.cacheService.isDbAvailable()) {
+    rt.streamClient.connect();
+    return;
+  }
+  let connected = false;
+  let resumeAny = false;
+  const startStream = (): void => {
+    if (connected) return;
+    connected = true;
+    rt.streamClient.connect(resumeAny);
+  };
+  const timer = setTimeout(startStream, LOCAL_CACHE_WAIT_MS);
+  void Promise.all(
+    initialSessions.map(({ session, topicId, token }) =>
+      rt.cacheService.get(topicId).then((c) => {
+        if (
+          !c ||
+          !c.msgs.length ||
+          topicId !== session.topicId ||
+          rt.state.sessions.get(session.panelId) !== session ||
+          token !== session.enterToken ||
+          (session.panelId === MAIN_PANEL_ID && rt.state.creatingTopic)
+        ) {
+          return;
+        }
+        const canResume = !connected && Boolean(c.last && c.epoch);
+        adoptCachedCopy(rt, session, topicId, c, canResume);
+        session.editor?.composer?.showUnsent(topicId);
+        if (canResume) {
+          // Seed epoch from the cached copy so replayed events before `resumed` key into the same run.
+          if (c.epoch > rt.state.epoch) rt.state.epoch = c.epoch;
+          rt.streamClient.setLastEventId(c.last, topicId);
+          session.settleOnResume = true;
+          resumeAny = true;
+        }
+      }),
+    ),
+  ).then(() => {
+    clearTimeout(timer);
+    startStream();
+  });
 }
 
 function wireShellEventsAndLocale(rt: AppRuntime): void {

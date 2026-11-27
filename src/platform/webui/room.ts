@@ -1822,6 +1822,7 @@ export class WebRoom {
     if (multiplexed && ok && !anyFullSync) {
       ok =
         this.deliver(client, { t: 'machines', offline: [...this.offline] }) &&
+        (topicsVersion !== undefined || this.deliver(client, { t: 'commands', commands: this.commands })) &&
         (topicsVersion === this.topicsVer || this.deliver(client, { t: 'topics', topics, tv: this.topicsVer }));
     }
     if (ok) {
@@ -1852,11 +1853,14 @@ export class WebRoom {
     if (!this.deliver(client, { t: 'pending', ...tag, items: room.pending })) return false;
     if (!client.multiplexed) {
       if (!this.deliver(client, { t: 'machines', offline: [...this.offline] })) return false;
+      if (topicsVersion === undefined && !this.deliver(client, { t: 'commands', commands: this.commands })) {
+        return false;
+      }
       if (topicsVersion !== this.topicsVer && !this.deliver(client, { t: 'topics', topics, tv: this.topicsVer })) {
         return false;
       }
     }
-    return this.deliver(client, { t: 'resumed', ...tag });
+    return this.deliver(client, { t: 'resumed', ...tag, epoch: this.startedAt });
   }
 
   /** Events after `lastEventId`, or undefined when a full sync is the only honest answer. */

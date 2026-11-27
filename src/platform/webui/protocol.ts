@@ -709,7 +709,7 @@ export type WebEvent =
    * keeps). The answer to a page that asked to resume instead of being sent a sync: one that came
    * back to a topic it still held in memory has no sync coming to say it is caught up.
    */
-  | { t: 'resumed'; topic?: string }
+  | { t: 'resumed'; topic?: string; epoch?: number }
   /**
    * The machines the daemon cannot reach changed — every one of them, so an empty list says they
    * are all back. State like `status`, never sequenced, and to every client like `topics`: the

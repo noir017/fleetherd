@@ -489,6 +489,28 @@ describe('WebRoom: the topic list reaching every client', () => {
     room.subscribe(topic, (id, ev) => fresh.push({ id, ev }));
     expect(kinds(fresh)).toEqual(['sync']);
   });
+
+  it('includes epoch on resumed and sends commands only on first connect without topicsVersion', () => {
+    const { room, topic, seen, off } = attached();
+    room.setCommands([{ name: 'model', description: 'Pick model' }]);
+    room.post(topic, { own: false, html: '<p>one</p>' }, 'one');
+    const lastId = seen.filter((s) => s.id !== '').at(-1)?.id ?? '';
+    const syncEv = seen.find((s) => s.ev.t === 'sync')?.ev as Extract<WebEvent, { t: 'sync' }>;
+    const tv = (listEvents(seen).at(-1)?.ev as { tv: number }).tv;
+    off();
+
+    // Direct reload resume: no topicsVersion yet -> sends commands + topics + resumed(epoch).
+    const coldResume: Seen[] = [];
+    room.subscribe(topic, (id, ev) => coldResume.push({ id, ev }), lastId);
+    expect(lastOf(coldResume, 'commands')).toEqual({ t: 'commands', commands: [{ name: 'model', description: 'Pick model' }] });
+    expect(lastOf(coldResume, 'resumed')).toEqual({ t: 'resumed', epoch: syncEv.epoch });
+
+    // In-session resume with current topicsVersion -> omits commands, still carries epoch.
+    const warmResume: Seen[] = [];
+    room.subscribe(topic, (id, ev) => warmResume.push({ id, ev }), lastId, tv);
+    expect(kinds(warmResume)).not.toContain('commands');
+    expect(lastOf(warmResume, 'resumed')).toEqual({ t: 'resumed', epoch: syncEv.epoch });
+  });
 });
 
 describe('WebRoom: the last event id on a row', () => {

@@ -1191,10 +1191,11 @@ describe('webui server: one topic, fetched before it is opened', () => {
 
     const stream = await openStream(port, topic, cookie, snap.last);
     let seen = '';
-    for (let i = 0; i < 6 && !seen.includes('resumed'); i += 1) seen += await stream.next();
+    for (let i = 0; i < 8 && !seen.includes('resumed'); i += 1) seen += await stream.next();
     expect(seen).not.toContain('"t":"sync"');
     expect(seen).not.toContain('before');
     expect(seen).toContain('after');
+    expect(seen).toContain('"t":"commands"');
     expect(seen).toContain('"t":"resumed"');
     stream.close();
   });
