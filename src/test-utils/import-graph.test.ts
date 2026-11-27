@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { collectImportsFromSource } from './import-graph.js';
+import { collectImportsFromSource } from './import-graph.test-helpers.js';
 
 describe('collectImportsFromSource', () => {
   it('does not swallow imports after /* in a line comment or string literal', () => {

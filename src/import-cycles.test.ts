@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { SRC_ROOT, collectImports, resolveTarget, walkProdTs } from './test-utils/import-graph.js';
+import { SRC_ROOT, collectImports, resolveTarget, walkProdTs } from './test-utils/import-graph.test-helpers.js';
 
 /**
  * Ratchet test for file-level import cycles across `src/` (excluding `src/platform/webui/client/`).
