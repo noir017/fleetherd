@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.44.0] - 2026-11-27
+
 ### Changed
 
 - **Compact tool-call lists and tap-to-reveal message actions on touch screens in the Web UI.**
