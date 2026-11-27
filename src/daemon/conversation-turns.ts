@@ -731,7 +731,7 @@ export class ConversationTurns {
       this.enqueueRetry(key, lane.platformId, lane.address, target, record.input, opts.user);
       return { done: true, text: tRuntime(this.locale, 'retryingWithAnswersTopic', { name }) };
     }
-    return this.retryInNewTopic(record, lane, bound, target, refused, opts.user);
+    return this.retryInNewTopic(record, lane, bound, target, refused.text, opts.user);
   }
 
   /** retryTurn for another agent when this topic keeps its own: a new topic under the same parent. */

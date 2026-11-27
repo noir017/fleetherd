@@ -17,7 +17,7 @@ import type { LocalBubbleMessage } from './features/topic/composer/index.js';
 import type { ComposerTopicStatusBridge } from './features/topic/composer/types.js';
 import type { TopicEditorElements, TopicEditorHandle } from './features/topic/editor/index.js';
 import { stClock } from './features/topic/status/index.js';
-import type { LaunchChoice, TranscriptMessage, WorkdirScreen } from './features/topic/transcript/index.js';
+import type { HandoffAction, LaunchChoice, TranscriptMessage, WorkdirScreen } from './features/topic/transcript/index.js';
 import { isRowCurrent, type TopicSnapshotPayload } from './features/topics/index.js';
 import { applyDomI18n, getLocale, initLocale, onLocaleChange, setLocale, t as tr } from './i18n/index.js';
 import { getTheme, setTheme } from './theme.js';
@@ -343,17 +343,39 @@ function restoreAfterCreateFailure(rt: AppRuntime, prevTopic: string, message?: 
   }
 }
 
-async function createTopic(rt: AppRuntime, seed?: { readonly text?: string; readonly draft?: string }): Promise<boolean> {
+function applyCreatedTopicDraft(rt: AppRuntime, id: string, draft: string | undefined): void {
+  if (!draft) return;
+  if (rt.state.activeEditor?.composer) {
+    rt.state.activeEditor.composer.seedDraft(id, draft);
+  } else {
+    rt.state.activeEditor?.insertIntoComposer(draft);
+  }
+}
+
+async function createTopic(
+  rt: AppRuntime,
+  seed?: {
+    readonly text?: string;
+    readonly draft?: string;
+    readonly agent?: string;
+    readonly cwd?: string;
+    readonly onError?: (err: string) => void;
+  },
+): Promise<boolean> {
   if (rt.state.creatingTopic) return false;
   rt.state.creatingTopic = true;
   const prevTopic = rt.state.topic;
   beginCreateTopicView(rt, prevTopic);
   try {
-    const res = await post('api/topics', {}, 0);
+    const body: Record<string, string> = {};
+    if (seed?.agent) body.agent = seed.agent;
+    if (seed?.cwd) body.cwd = seed.cwd;
+    const res = await post('api/topics', body, 0);
     const data = (await res.json().catch(() => ({}))) as CreateTopicResponse;
     const id = res.ok ? (data.topic?.id ?? data.id) : undefined;
     if (!id) {
       restoreAfterCreateFailure(rt, prevTopic, res.ok ? undefined : data.error || tr('common.networkError'));
+      if (!res.ok) seed?.onError?.(data.error || `HTTP ${res.status}`);
       return false;
     }
     prependCreatedTopic(rt, data.topic);
@@ -363,14 +385,50 @@ async function createTopic(rt: AppRuntime, seed?: { readonly text?: string; read
       ...(data.agents ? { launch: data.agents } : {}),
       ...(data.workdir ? { workdir: data.workdir } : {}),
     });
-    if (seed?.draft) rt.state.activeEditor?.insertIntoComposer(seed.draft);
+    applyCreatedTopicDraft(rt, id, seed?.draft);
     return true;
   } catch {
     restoreAfterCreateFailure(rt, prevTopic, tr('common.networkError'));
+    seed?.onError?.(tr('topic.createReachErr'));
     return false;
   } finally {
     rt.state.creatingTopic = false;
   }
+}
+
+function buildHandoffDraft(
+  handoff: {
+    readonly fromAgent: string;
+    readonly sessionId: string;
+    readonly workdir?: string;
+    readonly fromTopicId?: string;
+    readonly fromTopicTitle?: string;
+  },
+  fallbackTopic: { readonly id: string; readonly title?: string } | null | undefined,
+): string {
+  const lines = [tr('msg.handoffDraftHead', { agent: handoff.fromAgent, sessionId: handoff.sessionId })];
+  if (handoff.workdir) {
+    lines.push(tr('msg.handoffDraftWorkdir', { workdir: handoff.workdir }));
+  }
+  const topicId = handoff.fromTopicId || fallbackTopic?.id;
+  const title = handoff.fromTopicTitle || fallbackTopic?.title;
+  let link: string | undefined;
+  if (topicId) {
+    const rel = `?t=${encodeURIComponent(topicId)}`;
+    try {
+      link = new URL(rel, window.location.href).href;
+    } catch {
+      link = rel;
+    }
+  }
+  if (title && link) {
+    lines.push(tr('msg.handoffDraftTopicWithLink', { title, link }));
+  } else if (link) {
+    lines.push(tr('msg.handoffDraftTopicLinkOnly', { link }));
+  } else if (title) {
+    lines.push(tr('msg.handoffDraftTopicTitleOnly', { title }));
+  }
+  return `${lines.join('\n')}\n\n`;
 }
 
 async function deleteTopic(rt: AppRuntime, id: string): Promise<void> {
@@ -629,6 +687,29 @@ function buildTranscriptDeps(rt: AppRuntime, els: TopicEditorElements, getTopicI
     pickLaunchWorkdir: (cwd: string) => pickLaunchWorkdir(rt, els, getTopicId(), cwd),
     openReader: (link: Element) => {
       void rt.commands.execute(READER_OPEN_COMMAND, link);
+    },
+    onHandoff: (handoff: HandoffAction, btn: HTMLButtonElement) => {
+      if (btn.disabled) return;
+      btn.disabled = true;
+      btn.classList.add('busy');
+      const cur = topicById(state, getTopicId());
+      const draft = buildHandoffDraft(handoff, cur);
+      const cwd = handoff.workdir && handoff.sameHost !== false ? handoff.workdir : undefined;
+      let errMsg: string | undefined;
+      void createTopic(rt, {
+        agent: handoff.agentId,
+        ...(cwd ? { cwd } : {}),
+        draft,
+        onError: (err) => {
+          errMsg = err;
+        },
+      }).then((ok) => {
+        btn.disabled = false;
+        btn.classList.remove('busy');
+        if (!ok) {
+          els.noteEl.textContent = tr('topic.createFailed', { err: errMsg || tr('topic.createReachErr') });
+        }
+      });
     },
     deliverLocal: (nonce: string) => state.activeEditor?.composer?.deliver(nonce),
     copyLocal: (nonce: string, btn: Element) => {

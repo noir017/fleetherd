@@ -335,6 +335,18 @@ export function workdirPicker(m: TranscriptMessage, icons: TranscriptIcons): str
   return workdirPickerHtml(w, icons, { kind: 'msg', msg: text(m.id) });
 }
 
+export function handoffActionRow(key: string, m: TranscriptMessage, icons: TranscriptIcons): string {
+  const ho = m.handoff;
+  if (!ho) return '';
+  const label = tr('msg.continueWithAgent', { agent: ho.agentName });
+  return (
+    `<div class="handoff-acts">` +
+    `<button type="button" class="handoff-btn" data-handoff-k="${text(key)}">` +
+    `${icons.icon.subagent ?? ''}<span>${text(label)}</span>` +
+    '</button></div>'
+  );
+}
+
 function renderFileAttachment(m: TranscriptMessage, hist: boolean): string {
   const f = m.file;
   if (!f) return '';
@@ -393,6 +405,7 @@ function msgBodyHtml(
   if (m.file) h += renderFileAttachment(m, hist);
   if (m.turnChanges) h += turnChangeRow(m, ctx.icons, ctx.canOpenGit, Boolean(ctx.canOpenSideDiff));
   if (!hist && m.buttons && m.buttons.length) h += renderMenu(m, ctx.icons);
+  if (m.handoff) h += handoffActionRow(key, m, ctx.icons);
   return h;
 }
 

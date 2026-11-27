@@ -88,7 +88,7 @@ import {
   DEFAULT_ASK_REMINDER_MS,
 } from '../ipc/protocol.js';
 import { tMenus } from '../core/i18n/menus.js';
-import type { ButtonSpec, PlatformAdapter } from '../platform/adapter.js';
+import type { ButtonSpec, PlatformAdapter, SendOptions } from '../platform/adapter.js';
 import type {
   AgentCommand,
   AgentElicitation,
@@ -1355,11 +1355,16 @@ export class DaemonMenus {
       });
   }
 
-  private editAgentMenu(menu: PendingAgentMenu, text: string, buttons: Array<{ id: string; label: string }>): void {
+  private editAgentMenu(
+    menu: PendingAgentMenu,
+    text: string,
+    buttons: Array<{ id: string; label: string }>,
+    opts?: SendOptions
+  ): void {
     const adapter = this.ctx.platforms.get(menu.conversation.platform);
     if (!adapter || !menu.ref) return;
     void adapter
-      .editButtons(menu.ref, text, buttons)
+      .editButtons(menu.ref, text, buttons, undefined, opts)
       .catch((e) => console.warn('[agent] menu edit failed:', e instanceof Error ? e.message : e));
   }
 
@@ -1400,10 +1405,10 @@ export class DaemonMenus {
       this.runRetry(menu.retry, clicker.user, def.id, (text) => this.editAgentMenu(menu, text, []));
       return;
     }
-    const text = def
+    const result = def
       ? this.ctx.registry.chooseAgent(menu.conversationId, def.id, menu.conversation)
-      : 'That agent is no longer configured.';
-    this.editAgentMenu(menu, text, []);
+      : { text: 'That agent is no longer configured.' };
+    this.editAgentMenu(menu, result.text, [], result.handoff ? { handoff: result.handoff } : undefined);
     if (def) this.ctx.registry.offerPlacement(menu.conversationId, def.id, menu.conversation);
   }
 

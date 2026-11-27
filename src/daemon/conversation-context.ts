@@ -9,6 +9,7 @@ import type { PlatformAdapter } from '../platform/adapter.js';
 import type {
   AgentCommand,
   AgentElicitation,
+  AgentHandoffAction,
   AgentPermissionRequest,
   ConversationId,
   EffortSelector,
@@ -62,6 +63,11 @@ export interface ConversationClock {
 export interface ConversationLane {
   address: ConversationAddress;
   platformId: string;
+}
+
+export interface SwitchRefusal {
+  text: string;
+  handoff?: AgentHandoffAction;
 }
 
 /**
@@ -169,7 +175,12 @@ export interface ConversationContext {
   forgetUsage(id: ConversationId, state: ConversationState): void;
   isBusy(key: ConversationId): boolean;
   adoptThread(id: ConversationId, address: ConversationAddress, platformId: string): void;
-  switchRefusal(key: ConversationId, agentId: string, wantedCommand?: string): string | undefined;
+  switchRefusal(
+    key: ConversationId,
+    agentId: string,
+    wantedCommand?: string,
+    conv?: ConversationRef
+  ): SwitchRefusal | undefined;
   rebind(
     key: ConversationId,
     state: ConversationState,
@@ -178,6 +189,6 @@ export interface ConversationContext {
     address: ConversationAddress,
     announce?: boolean
   ): string;
-  chooseAgent(key: ConversationId, agentId: string, conv: ConversationRef): string;
+  chooseAgent(key: ConversationId, agentId: string, conv: ConversationRef): SwitchRefusal;
   resetConversation(id: ConversationId): void;
 }

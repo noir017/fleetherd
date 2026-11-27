@@ -157,9 +157,14 @@ once that agent has a session in the topic, **the topic keeps it** — naming a
 different agent there is refused, with the session id and working directory of
 the one that is answering. To carry the work on with another agent, open a new
 topic, start it with that agent's command, and hand it the id: it can read the
-earlier conversation itself. `/new` clears a topic, after which any agent can
-take it. The full harness name (`/opencode`) still works if you type it — it is
-just not registered, so it costs no slot in the platform menu.
+earlier conversation itself. In the [web UI](web-ui.md), the refusal also
+carries a **Continue with `<agent>` in a new topic** button that opens a new
+topic bound to the wanted agent in the same working directory and seeds the
+composer with an editable draft naming the earlier agent, session id, working
+directory, and topic link — nothing is sent until you send it. `/new` clears a
+topic, after which any agent can take it. The full harness name (`/opencode`)
+still works if you type it — it is just not registered, so it costs no slot in
+the platform menu.
 
 An agent the harness table cannot name — a second opencode, say, on another
 [host](remote-hosts.md) — gets a name of its own from a routing rule:

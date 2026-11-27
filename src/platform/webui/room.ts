@@ -54,6 +54,7 @@ import { parseRetryButtonId } from '../../core/turn-retry.js';
 import { parseWorkdirButtonId } from '../../core/workdir-menu.js';
 import type {
   AgentCatalog,
+  AgentHandoffAction,
   AgentStatus,
   ButtonInteraction,
   InboundMessage,
@@ -1989,8 +1990,10 @@ export class WebRoom {
   ): WebMessage {
     const room = this.roomOf(topicId);
     this.flush(room, topicId);
+    const handoff = part.handoff ? this.enrichHandoff(topicId, part.handoff) : undefined;
     const msg: WebMessage = {
       ...part,
+      ...(handoff ? { handoff } : {}),
       // Ids are global and never reused, not per topic: the outbound pacer coalesces edits
       // into `edit:<channel>:<messageId>`, and every topic shares the one channel, so an id
       // restarting per topic would let one topic's edits supersede another's.
@@ -2053,7 +2056,8 @@ export class WebRoom {
     text: string,
     buttons?: ButtonSpec[],
     screen?: SettingsScreen,
-    workdir?: WorkdirScreen
+    workdir?: WorkdirScreen,
+    handoff?: AgentHandoffAction
   ): void {
     const room = this.roomOf(topicId);
     const rec = this.mustFind(room, id, 'edit');
@@ -2078,6 +2082,11 @@ export class WebRoom {
     } else {
       delete rec.msg.workdir;
     }
+    if (handoff) {
+      rec.msg.handoff = this.enrichHandoff(topicId, handoff);
+    } else {
+      delete rec.msg.handoff;
+    }
     room.stored.set(id, rec);
     this.enqueue(room, topicId, id);
     this.keep(topicId);
@@ -2087,6 +2096,16 @@ export class WebRoom {
     // topic is waiting on the user. Announced only when the set actually changed: a menu turning
     // its page edits buttons too, and the sidebar has nothing to redraw for that.
     if (buttons && this.setAwaiting(room, id, buttons.length > 0)) this.announceTopics();
+  }
+
+  /** Fill in the web UI topic id and title when the daemon's store did not carry them. */
+  private enrichHandoff(topicId: string, handoff: AgentHandoffAction): AgentHandoffAction {
+    const title = handoff.fromTopicTitle || this.topics.get(topicId)?.title || undefined;
+    return {
+      ...handoff,
+      fromTopicId: handoff.fromTopicId ?? topicId,
+      ...(title ? { fromTopicTitle: title } : {}),
+    };
   }
 
   /** Record whether a message is holding live buttons. Returns whether that changed. */

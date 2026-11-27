@@ -812,3 +812,122 @@ describe('webui page: topic row agent tag and row menu stability', () => {
     expect(menu.hidden).toBe(true);
   });
 });
+
+describe('webui page: agent switch refusal handoff action', () => {
+  const SRC = 'a1b2c3d4';
+  const NEXT = 'b2c3d4e5';
+  const input = (h: Harness): HTMLTextAreaElement => h.el('input') as HTMLTextAreaElement;
+
+  it('opens a new topic bound to the wanted agent and workdir with an unsent editable draft', async () => {
+    const h = await open({
+      replies: {
+        'api/topics': {
+          topic: {
+            id: NEXT,
+            title: '',
+            lastAt: Date.now(),
+            running: false,
+            msgCount: 0,
+            agent: { id: 'oc', harness: 'opencode' },
+            dir: { name: 'app', path: '/home/me/projects/app' },
+          },
+          agent: 'oc',
+          cwd: '/home/me/projects/app',
+        },
+      },
+    });
+
+    const refusal = {
+      ...message('w1', '<p>This topic stays with claude.</p>'),
+      handoff: {
+        agentId: 'oc',
+        agentName: 'opencode',
+        fromAgent: 'claude',
+        sessionId: 'ses_abc123',
+        workdir: '/home/me/projects/app',
+        sameHost: true,
+        fromTopicId: SRC,
+        fromTopicTitle: 'Fix auth flow',
+      },
+    };
+    await h.emit(
+      sync(SRC, [refusal], [], {
+        topics: [
+          {
+            id: SRC,
+            title: 'Fix auth flow',
+            lastAt: Date.now(),
+            running: false,
+            msgCount: 1,
+            agent: { id: 'cc', harness: 'claude' },
+            dir: { name: 'app', path: '/home/me/projects/app' },
+          },
+        ],
+      })
+    );
+
+    const btn = h.doc.querySelector<HTMLButtonElement>('button[data-handoff-k]');
+    expect(btn).not.toBeNull();
+    expect(btn?.textContent).toContain('Continue with opencode in a new topic');
+
+    await h.click('button[data-handoff-k]');
+    await until('switched to the newly created topic', () => h.window.location.search.includes(`t=${NEXT}`));
+
+    // Created with the wanted agent and same working directory.
+    const createCall = h.calls.find((c) => c.path === 'api/topics');
+    expect(createCall?.body).toEqual({ agent: 'oc', cwd: '/home/me/projects/app' });
+
+    // Draft is in the composer, editable, and nothing was sent on the user's behalf.
+    const draft = input(h).value;
+    expect(draft).toContain('claude');
+    expect(draft).toContain('ses_abc123');
+    expect(draft).toContain('/home/me/projects/app');
+    expect(draft).toContain('Fix auth flow');
+    expect(draft).toContain(`?t=${SRC}`);
+    expect(h.calls.filter((c) => c.path === 'api/send')).toEqual([]);
+  });
+
+  it('omits cwd from api/topics when sameHost is false while keeping workdir in the draft, and localizes in zh-CN', async () => {
+    const h = await open({
+      storage: { fh_lang: 'zh-CN' },
+      replies: {
+        'api/topics': {
+          topic: { id: NEXT, title: '', lastAt: Date.now(), running: false, msgCount: 0 },
+          agent: 'oc@myhost',
+        },
+      },
+    });
+
+    const refusal = {
+      ...message('w1', '<p>refused</p>'),
+      handoff: {
+        agentId: 'oc@myhost',
+        agentName: 'opencode',
+        fromAgent: 'claude',
+        sessionId: 'ses_xyz789',
+        workdir: '/home/me/projects/app',
+        sameHost: false,
+        fromTopicId: SRC,
+        fromTopicTitle: '排查问题',
+      },
+    };
+    await h.emit(sync(SRC, [refusal], [SRC]));
+
+    const btn = h.doc.querySelector<HTMLButtonElement>('button[data-handoff-k]');
+    expect(btn?.textContent).toContain('在新话题中用 opencode 继续');
+
+    await h.click('button[data-handoff-k]');
+    await until('switched to new topic', () => h.window.location.search.includes(`t=${NEXT}`));
+
+    const createCall = h.calls.find((c) => c.path === 'api/topics');
+    expect(createCall?.body).toEqual({ agent: 'oc@myhost' });
+
+    const draft = input(h).value;
+    expect(draft).toContain('claude');
+    expect(draft).toContain('ses_xyz789');
+    expect(draft).toContain('/home/me/projects/app');
+    expect(draft).toContain('排查问题');
+    expect(draft).toContain(`?t=${SRC}`);
+    expect(h.calls.filter((c) => c.path === 'api/send')).toEqual([]);
+  });
+});

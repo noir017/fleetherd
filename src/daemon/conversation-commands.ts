@@ -41,7 +41,8 @@ import {
   type SettingRow,
   type SettingsContext,
 } from '../core/settings.js';
-import type { ConversationId, InboundMessage, MessageRef } from '../types.js';
+import type { SendOptions } from '../platform/adapter.js';
+import type { AgentHandoffAction, ConversationId, InboundMessage, MessageRef } from '../types.js';
 import { SideQuestionRefused } from './agent.js';
 import { resolveConversationCwd } from './agent-common.js';
 import { formatAgyCliOutput, runAgyCliFor } from './agy-cli.js';
@@ -121,10 +122,10 @@ export class ConversationCommands {
   ): boolean {
     const text = msg.content.trim();
     const conv = msg.conversation;
-    const ack = (what: string, body: string): void => {
+    const ack = (what: string, body: string, opts?: SendOptions): void => {
       void this.ctx.platforms
         .get(conv.platform)
-        ?.sendMessage(address, body)
+        ?.sendMessage(address, body, opts)
         .catch((e) => console.warn(`[conversation] failed to ack ${what}:`, e instanceof Error ? e.message : e));
     };
 
@@ -270,11 +271,11 @@ export class ConversationCommands {
     msg: InboundMessage
   ): boolean {
     if (!choice.explicit) return false;
-    const text = this.ctx.switchRefusal(key, choice.agentId);
-    if (text === undefined) return false;
+    const refused = this.ctx.switchRefusal(key, choice.agentId, undefined, msg.conversation);
+    if (refused === undefined) return false;
     void this.ctx.platforms
       .get(msg.conversation.platform)
-      ?.sendMessage(address, text)
+      ?.sendMessage(address, refused.text, refused.handoff ? { handoff: refused.handoff } : undefined)
       .catch((e) => console.warn('[conversation] failed to refuse an agent switch:', e instanceof Error ? e.message : e));
     return true;
   }
@@ -310,12 +311,14 @@ export class ConversationCommands {
     setting: { name: string; rest?: string },
     fallbackAgent: string,
     msg: InboundMessage,
-    ack: (what: string, text: string) => void
+    ack: (what: string, text: string, opts?: SendOptions) => void
   ): boolean {
     const name = setting.name.toLowerCase();
     if (AGENT_NAMES.has(name)) {
       const answer = this.applyAgentCommand(key, setting.rest, fallbackAgent, msg);
-      if (answer.text !== undefined) ack('/agent', answer.text);
+      if (answer.text !== undefined) {
+        ack('/agent', answer.text, answer.handoff ? { handoff: answer.handoff } : undefined);
+      }
       // After the ack, so the menu lands under the line saying who it is for.
       if (answer.chosen) this.controls.offerPlacement(key, answer.chosen, msg.conversation);
       return true;
@@ -343,7 +346,7 @@ export class ConversationCommands {
     rest: string | undefined,
     fallbackAgent: string,
     msg: InboundMessage
-  ): { text?: string; chosen?: string } {
+  ): { text?: string; chosen?: string; handoff?: AgentHandoffAction } {
     const locale = localeOf(this.ctx.config);
     const groups = agentGroups(this.ctx.config.agents, this.ctx.hooks?.offlinePlaces?.());
     const current = this.ctx.boundAgentFor(key, fallbackAgent);
@@ -359,7 +362,8 @@ export class ConversationCommands {
     const match = matchAgent(this.ctx.config.agents, query);
     if (match.kind === 'none') return { text: tMenus(locale, 'agent_match_none', { query, list: agentListText(groups, current, locale) }) };
     if (match.kind === 'many') return { text: tMenus(locale, 'agent_match_many', { query, ids: match.ids.join(', ') }) };
-    return { text: this.ctx.chooseAgent(key, match.def.id, msg.conversation), chosen: match.def.id };
+    const chosen = this.ctx.chooseAgent(key, match.def.id, msg.conversation);
+    return { text: chosen.text, chosen: match.def.id, ...(chosen.handoff ? { handoff: chosen.handoff } : {}) };
   }
 
   // ───────────────────────────── `/setting` ─────────────────────────────
