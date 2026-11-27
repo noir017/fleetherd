@@ -35,7 +35,7 @@ import type { MessageRef } from '../../types.js';
 import type { ConversationAddress } from '../../core/conversation.js';
 import type { PlatformCapabilities } from '../adapter.js';
 import type { PlatformProfile, ProfileButtonEvent, ResolvedConversation } from '../profile.js';
-import type { LarkPlatformConfig } from '../config-schemas.js';
+import type { LarkPlatformConfig } from '../../config/platform-schemas.js';
 import { renderLarkMarkdown } from '../lark-markdown.js';
 import { collectErrors, MessageNotEditableError } from '../../core/outbound-errors.js';
 import {
@@ -856,7 +856,7 @@ export function createLarkProfile(): PlatformProfile<LarkPlatformConfig> {
       // silently suspends the lark plugin and never instantiates the bot.
       installHttpService(ctx);
 
-      // Typed config (config-schemas.ts): appId/appSecret required (adapter
+      // Typed config (config/platform-schemas.ts): appId/appSecret required (adapter
       // auto-exchanges for tenant_access_token, 2h, auto-refreshed);
       // endpoint 'feishu'|'lark' only switches the API endpoint; protocol
       // defaults to 'ws' **intentionally** (adapter default is 'http') to skip

@@ -124,7 +124,7 @@ import type {
   VoiceTranscribeResult,
   VoiceTranscriber,
 } from '../workbench.js';
-import type { WebuiPlatformConfig } from '../config-schemas.js';
+import type { WebuiPlatformConfig } from '../../config/platform-schemas.js';
 import { escapeHtml, renderWebMarkdown, renderWebToolLines } from '../web-markdown.js';
 import { toolGlyph } from './icons.js';
 import type {

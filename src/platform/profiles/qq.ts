@@ -34,7 +34,7 @@ import type { MessageRef } from '../../types.js';
 import type { PlatformCapabilities } from '../adapter.js';
 import { flattenMarkdown } from '../plaintext-markdown.js';
 import type { PlatformProfile } from '../profile.js';
-import type { QQPlatformConfig } from '../config-schemas.js';
+import type { QQPlatformConfig } from '../../config/platform-schemas.js';
 import {
   attrAttachmentMeta,
   buildButtonMessageFragment,
@@ -188,7 +188,7 @@ export function createQQProfile(): PlatformProfile<QQPlatformConfig> {
       // cordis silently suspends the qq plugin and never instantiates the bot.
       installHttpService(ctx);
 
-      // Typed config (config-schemas.ts): appId/secret/botType all schema-required.
+      // Typed config (config/platform-schemas.ts): appId/secret/botType all schema-required.
       // secret is AppSecret (clientSecret for access_token), not a platform token.
       // intents: user override if given (must include INTERACTIONS for button
       // clicks), else default by botType.

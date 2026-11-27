@@ -17,14 +17,11 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { PassThrough, Writable } from 'node:stream';
-import { instructionsLayer } from '../config/instructions.js';
 import type { AgentConnect, AgentDef } from '../config/schema.js';
 import type { Welcome } from '../remote/connection.js';
 import type { RemoteHost } from '../remote/host.js';
 import { expandRemoteHome, type AgentChild } from './agent-common.js';
-import { composeInstructions, instructionsDir } from './instructions.js';
-import { deliveredTo } from './managed-skills.js';
-import { activeSkillFiles, frontmatterFields, SKILL_FILE } from './skills-store.js';
+import type { AgentProvision } from './provision.js';
 
 /** `tcp://host:port` → `host:port`, what both sides dial. */
 export function connectAddress(connect: AgentConnect): string {
@@ -101,37 +98,28 @@ export interface ConnectPlace {
 
 /**
  * The `_meta` of a connect agent's `initialize`: its `meta` as written, and the gateway's own
- * `fleetherd` entry — the token from `tokenFile`, read on the agent's machine; the machine's name;
- * and the operator's instructions for it. A harness reads those instructions from its own file
- * (daemon/instructions.ts); a connect agent has no file here, so this is that file's contents,
- * nothing added.
+ * `fleetherd` entry — host name, optional token from `tokenFile` (read on the agent's machine),
+ * metadata contributed by each provision's `meta` facet (for agents that cannot receive files),
+ * and optional topic.
  */
 export async function connectMeta(
   def: AgentDef,
   connect: AgentConnect,
   place: ConnectPlace | undefined,
+  provisions: readonly AgentProvision[],
   topic?: string
 ): Promise<Record<string, unknown>> {
   const gateway: Record<string, unknown> = { host: place ? place.host.id : os.hostname() };
   if (connect.tokenFile) gateway['token'] = await readToken(def, connect.tokenFile, place);
-  const instructions = connectInstructions(def);
-  if (instructions !== undefined) gateway['instructions'] = instructions;
-  const skills = connectResidentSkills(def);
-  if (skills.length > 0) gateway['skills'] = skills;
+  for (const p of provisions) {
+    const fields = p.meta?.(def);
+    if (!fields) continue;
+    for (const [k, v] of Object.entries(fields)) {
+      if (v !== undefined) gateway[k] = v;
+    }
+  }
   if (topic) gateway['topic'] = topic;
   return { ...(connect.meta ?? {}), fleetherd: gateway };
-}
-
-/** Resident skills reaching `def` (sorted by name for stable hashing on the agent side). */
-function connectResidentSkills(def: AgentDef): Array<{ name: string; description: string }> {
-  const out: Array<{ name: string; description: string }> = [];
-  for (const skill of activeSkillFiles()) {
-    if (!skill.meta.resident || !deliveredTo(skill, def)) continue;
-    const raw = skill.files.get(SKILL_FILE)?.toString('utf8') ?? '';
-    const description = frontmatterFields(raw).get('description')?.trim();
-    if (description) out.push({ name: skill.name, description });
-  }
-  return out.sort((a, b) => a.name.localeCompare(b.name));
 }
 
 /** The most a token file may be: a token, not a document. */
@@ -149,16 +137,4 @@ async function readToken(def: AgentDef, file: string, place: ConnectPlace | unde
     const where = place ? ` on host "${place.host.id}"` : '';
     throw new Error(`agent "${def.id}": cannot read connect.tokenFile ${file}${where}: ${e instanceof Error ? e.message : String(e)}`);
   }
-}
-
-/** common.md + its layer (`instructionsLayer`); undefined when there is nothing to give. */
-function connectInstructions(def: AgentDef): string | undefined {
-  const layer = instructionsLayer(def);
-  if (layer === undefined) return undefined;
-  const composed = composeInstructions(instructionsDir(), layer);
-  if (composed.kind === 'too-big') {
-    console.warn(`[connect] ${def.id}: instructions not sent, ${composed.bytes} bytes is over the limit`);
-    return undefined;
-  }
-  return composed.kind === 'text' ? composed.text : undefined;
 }

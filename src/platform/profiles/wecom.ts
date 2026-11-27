@@ -26,7 +26,7 @@ import WecomAdapter from '@satorijs/adapter-wecom';
 import type { PlatformCapabilities } from '../adapter.js';
 import { flattenMarkdown } from '../plaintext-markdown.js';
 import type { PlatformProfile } from '../profile.js';
-import type { WecomPlatformConfig } from '../config-schemas.js';
+import type { WecomPlatformConfig } from '../../config/platform-schemas.js';
 import {
   installHttpService,
   installServerService,
@@ -88,7 +88,7 @@ export function createWecomProfile(): PlatformProfile<WecomPlatformConfig> {
     measureRendered: (text: string) => Buffer.byteLength(toPlainText(text), 'utf8'),
 
     install(ctx, platform) {
-      // Typed config (config-schemas.ts): corpId/agentId/secret/token/aesKey/selfUrl
+      // Typed config (config/platform-schemas.ts): corpId/agentId/secret/token/aesKey/selfUrl
       // are all schema-required. aesKey isn't adapter-Schema-required, but callback
       // decryption needs it — the schema fails early rather than crash at inbound
       // decrypt (stricter than the adapter, same as the old profile check).

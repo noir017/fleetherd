@@ -7,7 +7,7 @@ import type { AgentProvision, HostFiles } from './provision.js';
 import { selfInvocation } from './reverse-cli-shim.js';
 import { syncSkillCopy } from './skill-copy.js';
 import { allSkillDirs, linkSkill, removeSkillLink, skillHomes } from './skill-link.js';
-import { activeSkillFiles, archivedSkillNames, skillReaches, type SkillFileSet } from './skills-store.js';
+import { activeSkillFiles, archivedSkillNames, frontmatterFields, SKILL_FILE, skillReaches, type SkillFileSet } from './skills-store.js';
 import { envOf } from '../legacy-name.js';
 
 /**
@@ -136,6 +136,18 @@ export function placeManagedSkills(def: AgentDef, home: string, dir?: string): M
   return results;
 }
 
+/** Resident skills reaching `def` (sorted by name for stable hashing on the agent side). */
+function connectResidentSkills(def: AgentDef, dir?: string): Array<{ name: string; description: string }> {
+  const out: Array<{ name: string; description: string }> = [];
+  for (const skill of activeSkillFiles(dir)) {
+    if (!skill.meta.resident || !deliveredTo(skill, def)) continue;
+    const raw = skill.files.get(SKILL_FILE)?.toString('utf8') ?? '';
+    const description = frontmatterFields(raw).get('description')?.trim();
+    if (description) out.push({ name: skill.name, description });
+  }
+  return out.sort((a, b) => a.name.localeCompare(b.name));
+}
+
 /** Delete files the copy still has that this version no longer carries (always after writing). */
 async function pruneManagedFiles(host: HostFiles, copy: string, skill: { files: Map<string, Buffer> }): Promise<void> {
   const have = await host.listFiles(copy);
@@ -252,6 +264,10 @@ export function createManagedSkillsProvision(dir?: string): AgentProvision<Manag
       const owned = managedSkillsHome(home);
       await placeActiveManagedSkills(host, def, home, owned, w);
       await retireManagedSkills(host, home, owned, w);
+    },
+    meta: (def) => {
+      const skills = connectResidentSkills(def, dir);
+      return skills.length > 0 ? { skills } : undefined;
     },
   };
 }

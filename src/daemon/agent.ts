@@ -555,6 +555,17 @@ export class ForkRefused extends Error {
   }
 }
 
+/** The runtime choices persisted per conversation for its bound agent. */
+export type ConversationChoice = 'model' | 'effort';
+
+/** Narrow port over persisted conversation state covering what the agent runtime reads and writes. */
+export interface SessionMemory {
+  agentSession: (key: string, agentId: string) => string | undefined;
+  setAgentSession: (key: string, agentId: string, sessionId: string) => void;
+  conversationCwd: (key: string) => string | undefined;
+  conversationChoice?: (key: string, agentId: string, which: ConversationChoice) => string | undefined;
+}
+
 /**
  * Session factory. getOrCreate gets/builds a session by (sessionId, agentId) — agentId selects which
  * agent def (harness/cwd/model/env). The same sessionId reuses the same session handle.

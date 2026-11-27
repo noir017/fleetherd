@@ -308,7 +308,7 @@ export async function launchAcpChild(opts: {
   mcpServers: () => McpServer[];
 }> {
   const { def, cwd, socketPath, sessionToken, place, topic, provisions } = opts;
-  const initExtra = def.connect ? { _meta: await connectMeta(def, def.connect, place, topic) } : {};
+  const initExtra = def.connect ? { _meta: await connectMeta(def, def.connect, place, provisions, topic) } : {};
   const { command, args } = def.connect
     ? { command: def.connect.url, args: [] }
     : resolveHarness(def, place !== undefined);

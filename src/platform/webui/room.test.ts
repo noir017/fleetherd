@@ -12,7 +12,7 @@ import type {
   SchedulePanelTaskDetail,
   SkillPanelEntry,
 } from '../workbench.js';
-import { WebuiConfigSchema } from '../config-schemas.js';
+import { WebuiConfigSchema } from '../../config/platform-schemas.js';
 import {
   CHANNEL,
   DIR_TTL_MS,

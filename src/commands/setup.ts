@@ -1,7 +1,7 @@
 import { input, select, confirm } from '@inquirer/prompts';
 import { z } from 'zod';
 import { ConfigSchema, type UserConfig } from '../config/schema.js';
-import { PLATFORM_SCHEMAS, type PlatformType } from '../platform/config-schemas.js';
+import { PLATFORM_SCHEMAS, type PlatformType } from '../config/platform-schemas.js';
 import { isLegacyConfig, migrateLegacyConfig } from '../config/migrate.js';
 import { saveConfig, saveConfigPatch, configPath, readRawConfigIfExists } from '../config/load.js';
 import { detectEnvLocale, type Locale } from '../core/i18n/index.js';
@@ -14,7 +14,7 @@ import type { Harness } from '../types.js';
  * else uses schema defaults. Experience params (throttle/threshold/emoji…) aren't
  * asked one by one — the defaults match hermes, and advanced users edit the yaml.
  *
- * Platform prompts are DRIVEN BY THE SCHEMA (config-schemas.ts): every required field
+ * Platform prompts are DRIVEN BY THE SCHEMA (config/platform-schemas.ts): every required field
  * of the chosen platform's entry is asked (its zod .describe() is the prompt text);
  * optional/defaulted fields are yaml-only. Adding a platform therefore needs no wizard
  * change — the old per-platform switch (and its lark/qq placeholder-token hack) is gone.

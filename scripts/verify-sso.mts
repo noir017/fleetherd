@@ -11,7 +11,7 @@ import { createServer } from 'node:http';
 import { createSign, generateKeyPairSync } from 'node:crypto';
 import { AddressInfo } from 'node:net';
 
-import { WebuiConfigSchema } from '../src/platform/config-schemas.js';
+import { WebuiConfigSchema } from '../src/config/platform-schemas.js';
 import { createWebuiAdapter } from '../src/platform/webui/index.js';
 
 const provider = generateKeyPairSync('rsa', { modulusLength: 2048 });

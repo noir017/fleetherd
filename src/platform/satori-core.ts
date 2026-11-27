@@ -12,7 +12,7 @@
 import { Context, h } from '@satorijs/core';
 import type { Bot, Session, Universal } from '@satorijs/core';
 
-import type { PlatformInstance } from './config-schemas.js';
+import type { PlatformInstance } from '../config/platform-schemas.js';
 import type {
   ButtonInteraction,
   CommandInteraction,

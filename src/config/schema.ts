@@ -6,7 +6,7 @@ import type {
   ToolMode as ToolModeType,
   TurnFailureReason,
 } from '../types.js';
-import { PlatformConfigSchema, type PlatformInstance } from '../platform/config-schemas.js';
+import { PlatformConfigSchema, type PlatformInstance } from './platform-schemas.js';
 import { INSTRUCTION_LAYER_RE, instructionClashes, instructionConflictMessage, isInstructionLayer } from './instructions.js';
 
 /**
@@ -14,7 +14,7 @@ import { INSTRUCTION_LAYER_RE, instructionClashes, instructionConflictMessage, i
  *
  * The user-facing config surface is deliberately small: only what an operator
  * actually decides per deployment — the platform instances + credentials (typed
- * per-platform schemas, see platform/config-schemas.ts), the agent definitions,
+ * per-platform schemas, see config/platform-schemas.ts), the agent definitions,
  * the routing pipeline, the session scope/lifecycle, and the access allowlist.
  * Everything else (the hermes "experience" tuning: stream throttling, tool-bubble
  * rendering, inbound merging, attachment handling, ipc socket) is NOT configurable;
@@ -630,7 +630,7 @@ const ExperienceSchema = z.object({
        * Frozen half of the gating rules (core/inbound-gate.ts shouldRespond). The
        * deployment-facing half (requireMention/freeResponseChannels/ignoredChannels/
        * allowBots + the listen allowlist) lives per platform instance as
-       * `platforms.<id>.chat` — see ChatGateSchema in platform/config-schemas.ts.
+       * `platforms.<id>.chat` — see ChatGateSchema in config/platform-schemas.ts.
        */
       gating: z
         .object({

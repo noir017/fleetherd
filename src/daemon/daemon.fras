@@ -38,7 +38,7 @@ src/daemon/harness/profile.ts [Core]: F:HarnessProfile seam interface, ReviewIso
 src/daemon/pod-admin.ts [Edge]: F:Host entry and SSH key management | A:addPod,removePod | S:See Security invariants item 5
 src/daemon/pod-peers.ts [Infra]: F:Pod-to-pod SSH mesh configuration generator | A:peerFiles,readKnownHosts | S:See Security invariants item 5
 src/daemon/pods.ts [Infra]: F:Remote host pod declarations scanner | A:hostsWithConfiguredAgents | S:See Security invariants item 5
-src/daemon/provision.ts [Core]: F:AgentProvision and HostFiles port interfaces for spawn-time local and remote provisioning | A:AgentProvision,HostFiles,HostLinkResult
+src/daemon/provision.ts [Core]: F:AgentProvision, ProvisionMeta, and HostFiles port interfaces for spawn-time local, remote, and connect-agent _meta provisioning | A:AgentProvision,ProvisionMeta,HostFiles,HostLinkResult
 src/daemon/relay-types.ts [Core]: F:Shared RelaySpec and HarnessRelay types for loopback HTTP API relays | A:RelaySpec,HarnessRelay
 src/daemon/remote-hosts.ts [Infra]: F:Remote host manager and reverse CLI bridge | R:src/remote/host.ts,src/daemon/ssh-identity.ts | A:RemoteHosts,gatewayNamespace | S:See Security invariants item 5
 src/daemon/review.ts [Core]: F:Automated review of idle conversations distilling skills and learned preferences | A:ReviewService,ReviewFacts

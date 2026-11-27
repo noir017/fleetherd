@@ -7,7 +7,7 @@
 // this repo's platform-agnostic domain types (ConversationAddress/MessageRef/...).
 import type { Context, Session, Bot, h } from '@satorijs/core';
 
-import type { PlatformConfig } from './config-schemas.js';
+import type { PlatformConfig } from '../config/platform-schemas.js';
 import type { ConversationAddress, ConversationRef } from '../core/conversation.js';
 import type { MessageRef, SlashCommandSpec } from '../types.js';
 import type { PlatformCapabilities } from './adapter.js';
@@ -64,7 +64,7 @@ export interface PlatformProfile<P extends PlatformConfig = PlatformConfig> {
 
   /**
    * Mount this platform's Satori adapter plugin on ctx. Receives THIS platform's typed
-   * config entry (the `platforms.<id>` object, schema in config-schemas.ts) — profiles
+   * config entry (the `platforms.<id>` object, schema in config/platform-schemas.ts) — profiles
    * never see the whole Config. Assembly (platform-factory) guarantees the entry's type
    * matches the profile, so profiles read credentials without narrowing. `id` is the
    * `platforms:` key, for log lines that must say which of several instances they mean.

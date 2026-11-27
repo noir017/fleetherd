@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { WebuiConfigSchema } from '../../config-schemas.js';
+import { WebuiConfigSchema } from '../../../config/platform-schemas.js';
 import { loadAssets } from '../assets.js';
 import { WebAuth } from '../auth.js';
 import { WebRoom, type WebuiInstance } from '../room.js';

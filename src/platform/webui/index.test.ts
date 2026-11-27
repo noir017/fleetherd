@@ -5,7 +5,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 import { MessageNotEditableError } from '../../core/outbound-errors.js';
 import { PAGE_SIZE, PAGE_SIZE_MAX, WORKDIR_PAGE_SIZE_MAX, resolvePageSize } from '../../core/paging.js';
-import { WebuiConfigSchema } from '../config-schemas.js';
+import { WebuiConfigSchema } from '../../config/platform-schemas.js';
 import { createWebuiAdapter, diskTranscriptStore, diskUploadStore } from './index.js';
 import { CHANNEL, WebRoom, type Kept } from './room.js';
 import type { ConversationAddress } from '../../core/conversation.js';

@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 import type { AgentDef } from '../config/schema.js';
 import { configDir } from '../config/load.js';
-import { instructionsHome, instructionsOff, isInstructionLayer, type InstructionsHome } from '../config/instructions.js';
+import { instructionsHome, instructionsLayer, instructionsOff, isInstructionLayer, type InstructionsHome } from '../config/instructions.js';
 import type { AgentProvision } from './provision.js';
 import { selfInvocation } from './reverse-cli-shim.js';
 import { envOf, isUnderEitherName } from '../legacy-name.js';
@@ -291,6 +291,18 @@ export function placeInstructions(def: AgentDef, home: string): InstructionsResu
   return r;
 }
 
+/** common.md + its layer (`instructionsLayer`); undefined when there is nothing to give. */
+function connectInstructions(def: AgentDef): string | undefined {
+  const layer = instructionsLayer(def);
+  if (layer === undefined) return undefined;
+  const composed = composeInstructions(instructionsDir(), layer);
+  if (composed.kind === 'too-big') {
+    console.warn(`[connect] ${def.id}: instructions not sent, ${composed.bytes} bytes is over the limit`);
+    return undefined;
+  }
+  return composed.kind === 'text' ? composed.text : undefined;
+}
+
 /**
  * Standing instructions provision (local + remote). Settled remote outcomes are cached per
  * `host@instance@file` so unchanged text costs no round trip; non-settled outcomes retry next spawn.
@@ -333,6 +345,11 @@ export function createInstructionsProvision(): AgentProvision<InstructionsResult
         reportInstructions(r, host.id);
         return r;
       }
+    },
+    // Connect agents have no instruction file on disk; this is that file's contents, nothing added (AGENTS.md).
+    meta: (def) => {
+      const instructions = connectInstructions(def);
+      return instructions !== undefined ? { instructions } : undefined;
     },
   };
 }
