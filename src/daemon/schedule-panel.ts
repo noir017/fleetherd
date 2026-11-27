@@ -5,6 +5,7 @@ import {
   editLockOf,
   formatDuration,
   formatInZone,
+  formatWakeOn,
   nextRunOf,
   SHAPE_SETTINGS,
   targetId,
@@ -49,7 +50,9 @@ export function panelTask(task: ScheduleTask, now: number, running: boolean, ins
     ...(next !== undefined ? { nextAt: next, next: formatInZone(next, task.when.tz) } : {}),
     run:
       run.kind === 'bash'
-        ? `bash · ${formatDuration(run.timeoutMs)}${run.host ? ` · ${run.host}` : ''}`
+        ? `bash · ${formatDuration(run.timeoutMs)}${run.host ? ` · ${run.host}` : ''}${
+            run.wake ? ` · wake (${formatWakeOn(run.wake.on)}, ${task.wakes ?? 0}/${run.wake.max})` : ''
+          }`
         : describeRun(run),
     target: targetId(task.target),
     // Only a lane of THIS instance is a topic the page can look up a title for. A task posting to
@@ -155,7 +158,12 @@ export function panelTaskDetail(task: ScheduleTask, ctx: PanelDetailContext): Sc
       ...when,
       tz: task.when.tz,
       ...(run.kind === 'bash'
-        ? { command: run.command, timeoutMs: run.timeoutMs, ...(run.host ? { host: run.host } : {}) }
+        ? {
+            command: run.command,
+            timeoutMs: run.timeoutMs,
+            ...(run.host ? { host: run.host } : {}),
+            ...(run.wake ? { wake: true, wakeOn: formatWakeOn(run.wake.on), wakeMax: run.wake.max } : {}),
+          }
         : { prompt: run.prompt, agent: run.agent, session: run.session, ...(run.model ? { model: run.model } : {}) }),
       ...(run.cwd ? { cwd: run.cwd } : {}),
       target: targetId(task.target),
@@ -207,12 +215,13 @@ export function panelEditInput(edit: SchedulePanelEdit): EditTaskInput {
  * a new task has nothing to empty. A `null` host stays — it is the gateway's machine, named.
  */
 export function panelNewInput(task: SchedulePanelNew): NewTaskInput {
-  const { command, target: _target, cwd, model, ...rest } = task;
+  const { command, target: _target, cwd, model, wakeOn, ...rest } = task;
   return {
     ...rest,
     ...(command !== undefined ? { bash: command } : {}),
     ...(cwd != null ? { cwd } : {}),
     ...(model != null ? { model } : {}),
+    ...(wakeOn != null ? { wakeOn } : {}),
   };
 }
 

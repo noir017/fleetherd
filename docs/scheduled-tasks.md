@@ -12,7 +12,7 @@ which the harnesses' own schedulers do not.
 | prompt, **fixed session** (default) | a turn in this conversation, by its agent — context accumulates, you can follow up in place | here, for **24 h** from registration; then it is marked expired |
 | prompt, **new session** | a fresh session each run, by any agent | a new topic per run where the platform can open one without a message (the web UI, a Telegram forum group), else this chat; no time limit |
 | prompt, **daily session** | one session per day: the first run opens it, later runs that day join it | its own topic per day, named with the date; needs a platform that can open a topic without a message (the web UI, a Telegram forum group); no time limit |
-| **bash** | a command, run by the gateway itself — no agent | exit code, duration and the end of the output, long output attached |
+| **bash** | a command, run by the gateway itself — no agent (or wakes the conversation's agent with `--wake`) | exit code, duration and the end of the output, long output attached; with `--wake`, matching runs also wake the agent for up to 24 h |
 
 Output can go to any chat the gateway has answered in, on any platform (`fleetherd
 channels` lists them). A run the gateway missed by less than an hour — it was restarting — is
@@ -79,6 +79,55 @@ for the rest of the day, and the earlier one is left as it is.
 leaving you (or an agent) to poll: `--wait 30m` waits that long, and bare `--wait` ten minutes.
 When the wait runs out the answer says the run is still going; it finishes and posts its output as
 any other run does. A wait is at most an hour and at least a second.
+
+### Waking the conversation's agent from a bash task
+
+Add `--wake` (or `--wake-on <rule>`) to a `--bash` task when a command's result should wake the
+conversation's agent as a turn — for example, watching a pull request's checks, a CI run, or a
+deploy — without teaching the gateway about any external service. When a run matches, the gateway
+posts the result card to the chat and sends the run's output tail to that conversation's agent
+under a single source-label line (`↳ Scheduled task "<name>" · exit <code> · <duration>`) and
+nothing else.
+
+- **Which runs wake (`--wake-on <rule>`)**: `any` (the default with `--wake`), `zero` (exit 0),
+  `nonzero` (non-zero exit, signal, timeout, or spawn failure), or comma-separated exit codes such
+  as `1,2`. Runs that do not match stay **quiet** in the chat so polling schedules do not spam the
+  conversation; every run is still recorded in `lastRun` and `schedule show <id>`'s history. Pass
+  `--wake-on off` on `schedule edit` to disable waking while keeping the bash task.
+- **Stop-loss (`--wake-max <n>`)**: caps how many times the task may wake the agent (default **3**,
+  max **100**), after which the task transitions to `done` and posts a notice, preventing an
+  unbounded watch → fix → watch loop.
+- **Lifetime and safety**: like a fixed-session prompt task, a waking bash task targets one
+  conversation, lives **24 h** from registration (or from an edit that enables waking or moves it to
+  another conversation), is refused on external coordination topics, and runs the woken turn under
+  the agent's configured permission level.
+
+Worked examples:
+
+```bash
+# Watch a pull request's checks once and wake the agent when they finish
+fleetherd schedule add \
+  --at +1s \
+  --name "watch PR #42" \
+  --bash 'gh pr checks 42 --watch' \
+  --timeout 30m \
+  --wake
+
+# Fetch the end of a failed CI run's log and hand it back to the agent
+fleetherd schedule add \
+  --at +1s \
+  --name "CI log 123456" \
+  --bash 'gh run view 123456 --log-failed | tail -n 150' \
+  --wake
+
+# Poll every 5 minutes and wake only on failure, stopping after 3 wakes
+fleetherd schedule add \
+  --cron '*/5 * * * *' \
+  --name "staging health" \
+  --bash 'curl -sf https://staging.example.com/health' \
+  --wake-on nonzero \
+  --wake-max 3
+```
 
 Label a task with `--tag ci,release` when it is registered, or with `fleetherd schedule edit <id>
 --tag …` later: up to five tags, each at most 24 characters, lowercased, made of letters (Chinese

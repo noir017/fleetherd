@@ -41,6 +41,7 @@ src/daemon/pods.ts [Infra]: F:Remote host pod declarations scanner | A:hostsWith
 src/daemon/provision.ts [Core]: F:AgentProvision, ProvisionMeta, and HostFiles port interfaces for spawn-time local, remote, and connect-agent _meta provisioning | A:AgentProvision,ProvisionMeta,HostFiles,HostLinkResult
 src/daemon/relay-types.ts [Core]: F:Shared RelaySpec and HarnessRelay types for loopback HTTP API relays | A:RelaySpec,HarnessRelay
 src/daemon/remote-hosts.ts [Infra]: F:Remote host manager and reverse CLI bridge | R:src/remote/host.ts,src/daemon/ssh-identity.ts | A:RemoteHosts,gatewayNamespace | S:See Security invariants item 5
+src/daemon/review-loop-store.ts [Infra]: F:Atomic 0600 JSON persistence for automatic review loops (<configDir>/review-loops.json) | A:ReviewLoopStore,ReviewLoop,ReviewPlan
 src/daemon/review.ts [Core]: F:Automated review of idle conversations distilling skills and learned preferences | A:ReviewService,ReviewFacts
 src/daemon/routing.ts [Core]: F:Inbound message to agent and scope resolution | A:resolveAgent,resolveScope | S:Deterministic pipeline and harness matching [T:resolveAgent]
 src/daemon/schedule-service.ts [Core]: F:Scheduled task execution engine | A:ScheduleService
@@ -52,3 +53,5 @@ src/daemon/subagent-cards.ts [Core]: F:One tool bubble per subagent a harness st
 src/daemon/turn-runner.ts [Core]: F:Turn execution loop with streaming and tool bubble sinks | R:src/daemon/agent-acp.ts,src/daemon/delegation-surface.ts,src/daemon/turn-senders.ts,src/daemon/subagent-cards.ts | A:TurnRunner
 src/daemon/turn-senders.ts [Core]: F:Synthetic gateway sender IDs and PersonWords batch shape | A:SCHEDULED_SENDER,CONTINUE_SENDER,DELEGATE_SENDER,UPDATE_SENDER,RECONNECT_SENDER,GATEWAY_SENDERS,PersonWords
 src/daemon/workbench-wiring.ts [Core]: F:Workbench panel and lookup wiring for WorkbenchHost adapters | R:src/platform/workbench.ts | A:attachWorkbench | S:See Security invariants items 9, 10
+src/daemon/worktree-git.ts [Infra]: F:Git worktree planning, creation, .git/info/exclude update, and safe cleanup checks over Workspace | R:src/daemon/workspace.ts,src/daemon/worktree-store.ts | A:resolveWorktreeName,inspectWorktreePlan,createWorktree,rollbackWorktree,checkWorktreeCleanup,removeWorktree,WORKTREE_CLEANUP_AGE_MS,WORKTREE_SWEEP_MS
+src/daemon/worktree-store.ts [Infra]: F:Atomic 0600 JSON persistence for gateway-created sub-agent worktrees (<configDir>/worktrees.json) | A:WorktreeStore,ManagedWorktree

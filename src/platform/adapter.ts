@@ -1,5 +1,6 @@
 import type { ConversationAddress } from '../core/conversation.js';
 import type {
+  AgentHandoffAction,
   ButtonInteraction,
   CommandInteraction,
   InboundMessage,
@@ -244,6 +245,7 @@ export const MESSAGE_KINDS = ['tools', 'subagent', 'dispatch', 'report', 'aside'
 export interface SendOptions {
   kind?: MessageKind;
   workdir?: WorkdirScreen;
+  handoff?: AgentHandoffAction;
 }
 
 export interface PlatformCapabilities {
@@ -332,6 +334,8 @@ export interface PlatformCapabilities {
   settingsScreen?: boolean;
   /** Whether `/cd` is drawn as an interactive directory browser (`WorkdirScreen`) instead of flat buttons. */
   workdirScreen?: boolean;
+  /** Whether the platform can render a one-tap handoff action on a refused agent switch (opening a new topic with an unsent draft). */
+  handoffAction?: boolean;
   /**
    * How many items one page of a button menu may hold here (`/cd`, `/model`, `/setting`).
    *

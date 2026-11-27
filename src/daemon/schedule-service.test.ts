@@ -672,3 +672,94 @@ describe('ScheduleService: an external caller\'s coordination topic', () => {
     await expect(service.runTask('5c0pe0', undefined, 0)).rejects.toThrow(/coordination topic an external caller opened/);
   });
 });
+
+describe('ScheduleService waking bash tasks', () => {
+  function wakeFixture(input: { bash: string; wake?: boolean; wakeOn?: string; wakeMax?: number; name?: string }) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aa-schedule-wake-'));
+    dirs.push(dir);
+    const store = new ScheduleStore(path.join(dir, 'schedules.json'));
+    const built = buildTask(
+      { cron: '*/5 * * * *', name: input.name ?? 'watch', ...input },
+      {
+        now: NOW,
+        id: 'wa1e01',
+        defaultTz: 'Asia/Shanghai',
+        agents: ['cc'],
+        from: { key: 'web#main#t1', platform: 'web', agent: 'cc' },
+        target: { platform: 'web', address: { channel: 'main', thread: 't1' } },
+        targetConversation: { key: 'web#main#t1', agent: 'cc' },
+        canOpenTopic: true,
+      }
+    );
+    if (!built.ok) throw new Error(built.error);
+    store.put(built.task);
+    const posted: string[] = [];
+    const woken: Array<{ key: string; agentId: string; prompt: string }> = [];
+    const platform = {
+      capabilities: { thread: true, standaloneThread: true, maxMessageLength: 4000 },
+      measureRendered: (s: string) => s.length,
+      sendMessage: async (_addr: unknown, text: string) => {
+        posted.push(text);
+        return { messageId: 'm1' };
+      },
+      sendFile: async () => ({ messageId: 'f1' }),
+    };
+    const registry = {
+      boundAgentOf: () => 'cc',
+      runScheduledPrompt: async (opts: { key: string; agentId: string; prompt: string }) => {
+        woken.push({ key: opts.key, agentId: opts.agentId, prompt: opts.prompt });
+        return 'ok' as const;
+      },
+    };
+    const config = parseConfig({
+      platforms: { web: { type: 'webui', token: 'w' } },
+      agents: [{ id: 'cc', harness: 'claude' }],
+      routing: { default: 'cc' },
+    });
+    const service = new ScheduleService(
+      config,
+      new Map([['web', platform as never]]),
+      registry as never,
+      { now: () => NOW, schedule: () => () => {} },
+      store,
+      path.join(dir, 'runs')
+    );
+    return { service, store, posted, woken };
+  }
+
+  it('stays quiet in chat and does not wake when the outcome does not match --wake-on', async () => {
+    const { service, store, posted, woken } = wakeFixture({ bash: 'echo ok && exit 0', wakeOn: 'nonzero' });
+
+    await service.runTask('wa1e01', undefined, 5_000);
+
+    expect(posted).toEqual([]);
+    expect(woken).toEqual([]);
+    const saved = store.get('wa1e01')!;
+    expect(saved.runs).toBe(1);
+    expect(saved.wakes).toBeUndefined();
+    expect(saved.state).toBe('active');
+  });
+
+  it('posts the result, wakes the conversation agent with label + tail, and ends at wakeMax', async () => {
+    const { service, store, posted, woken } = wakeFixture({
+      name: 'ci-watch',
+      bash: 'echo "check failed line" && exit 1',
+      wakeOn: 'nonzero',
+      wakeMax: 2,
+    });
+
+    await service.runTask('wa1e01', undefined, 5_000);
+    expect(woken).toHaveLength(1);
+    expect(woken[0]!.key).toBe('web#main#t1');
+    expect(woken[0]!.agentId).toBe('cc');
+    expect(woken[0]!.prompt).toMatch(/^↳ Scheduled task "ci-watch" · exit 1 · .+\n\ncheck failed line$/);
+    expect(store.get('wa1e01')!.wakes).toBe(1);
+    expect(store.get('wa1e01')!.state).toBe('active');
+
+    await service.runTask('wa1e01', undefined, 5_000);
+    expect(woken).toHaveLength(2);
+    expect(store.get('wa1e01')!.wakes).toBe(2);
+    expect(store.get('wa1e01')!.state).toBe('done');
+    expect(posted.some((m) => m.includes('reached its wake limit (2/2)'))).toBe(true);
+  });
+});

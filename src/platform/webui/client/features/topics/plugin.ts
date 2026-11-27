@@ -76,6 +76,7 @@ export interface TopicsPluginDeps {
   readonly offSince?: (host: string) => number;
   readonly offTitle?: (host: string) => string;
   readonly onSelectTopic?: (id: string) => void;
+  readonly canOpenInNewTab?: () => boolean;
   readonly onCreateTopic?: () => void | Promise<unknown>;
   readonly onStarTopic?: (id: string, nextStarred: boolean) => void | Promise<void>;
   readonly onCopyTopicRef?: (id: string) => void | Promise<void>;
@@ -776,6 +777,7 @@ class TopicsViewPanel implements TopicsViewInstance {
 
   private openNewTabOnCtrlClick(e: MouseEvent, el: Element): void {
     if (!(e.ctrlKey || e.metaKey) || e.shiftKey || this.listNav.isBatchMode()) return;
+    if (this.rt.deps.canOpenInNewTab && !this.rt.deps.canOpenInNewTab()) return;
     const id = el.closest<HTMLElement>('[data-topic]')?.getAttribute('data-topic');
     if (!id) return;
     e.stopPropagation();
@@ -1152,7 +1154,7 @@ function registerTopicMenus(rt: TopicsRuntime, bucket: DisposableStore): void {
       title: tr('topics.openInNewTabTitle'),
       group: '1_primary',
       order: 40,
-      when: isTopicTarget,
+      when: (target) => isTopicTarget(target) && (rt.deps.canOpenInNewTab ? rt.deps.canOpenInNewTab() : true),
       run: (target) => {
         if (!isTopicTarget(target)) return;
         rt.ctx.editors.open('topic', { topicId: target.id }, { preview: false });

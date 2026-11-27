@@ -5,6 +5,52 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **Scheduled bash tasks can now wake the conversation's agent with their output tail.** Passing
+  `--wake` (or `--wake-on any|zero|nonzero|<codes>`) on `fleetherd schedule add` / `edit` (and the
+  web UI's task form) turns a bash task into a generic watcher: when a run matches `--wake-on`, the
+  gateway posts the result card and sends the run's output tail to the target conversation's agent
+  under a single `↳ Scheduled task "<name>" · exit <code> · <duration>` source label with no extra
+  gateway prose. Non-waking runs stay quiet in chat while still recording into run history, and a
+  stop-loss cap (`--wake-max`, default 3, max 100) plus the 24-hour fixed-session window keep watch
+  loops bounded.
+- **Gateway-managed git worktrees for sub-agents (`fleetherd task-new --worktree [<name>]`).**
+  Coordinators previously had to run `git worktree add` by hand and pass `--cwd <absolute path>`
+  when splitting work in one repository. `task-new --worktree [<name>]` now validates the target
+  repository and name at proposal time without touching disk, shows the planned worktree path and
+  branch on the confirmation card, and creates `<repo root>/.worktrees/<name>` on a new branch from
+  `HEAD` on the agent's machine (local or remote) only when the part starts — adding `.worktrees/`
+  to `.git/info/exclude` if needed rather than editing `.gitignore`. Created worktrees are persisted
+  in `<configDir>/worktrees.json`, listed in `fleetherd tasks`, and cleaned up by a periodic
+  15-minute sweep (`git worktree remove` without `--force` and `git branch -d`) only when merged
+  into the base branch, completely clean, idle, and at least 1 hour past the last turn's end.
+- **One-tap handoff to another agent in a new web UI topic.** When an agent switch is refused
+  because the current topic already has a session (via `/cc`-style command, `/agent <id>`, or the
+  `/agent` menu), the web UI now attaches a **Continue with `<agent>` in a new topic** action to the
+  refusal message (`PlatformCapabilities.handoffAction`). Tapping it opens a new topic bound to the
+  wanted agent in the same working directory and seeds the composer with an editable, unsent draft
+  naming the earlier agent, session id, working directory, and earlier topic link — keeping the
+  gateway out of the new agent's prompt. Other platforms keep the plain refusal text unchanged.
+- **Side-by-side live topic editors in the desktop web UI.** Opening a topic via **Open in new
+  tab** (sidebar context menu or `Ctrl/Cmd`-click) now keeps that editor pinned to its topic and
+  fully live alongside the main sidebar-driven topic tab, whether split side by side (`Ctrl/Cmd+\`
+  or tab drag) or stacked in tabs. All open topic editors share a single multiplexed
+  `/api/events?t=...&t=...` SSE stream (keeping HTTP/1.1 connection usage to one per browser tab
+  while preserving the unchanged single-topic wire format), maintain independent transcripts,
+  composers, unsent/outbox retries, pending queues, status strips, and scroll positions, route
+  keyboard shortcuts and global commands to the focused editor, mark every visible topic as seen,
+  and restore pinned topic editors from `aa_layout` on reload (tablet and mobile stay single-topic).
+
+### Changed
+
+- **Automatic review loops now survive gateway restarts.** Review loops (`task-new --review-by`)
+  previously lived only in memory, so every gateway update broke any loop in flight and caused the
+  reviewer's `task-verdict` to be refused. Loops are now persisted atomically (`0600`) to
+  `<configDir>/review-loops.json` on every state change and restored at startup (dropping with a log
+  line any loop whose topics no longer exist), so `task-verdict`, subsequent commit reviews, and the
+  `review` column in `fleetherd tasks` carry on across restarts.
+
 ## [3.42.0] - 2026-11-27
 
 ### Changed

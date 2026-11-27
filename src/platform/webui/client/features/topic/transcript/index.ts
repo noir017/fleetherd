@@ -9,6 +9,7 @@ import { extractMessageMarkdown, formatQuoteReply, polishLabel } from './message
 import { createScrollManager, type ScrollManager } from './scroll.js';
 import type {
   CodeViewModule,
+  HandoffAction,
   LaunchChoice,
   MsgMarkupResult,
   OfflineMachine,
@@ -79,6 +80,7 @@ export interface TranscriptDeps {
   readonly openMessageMenu?: (key: string, anchor: HTMLElement) => void;
   readonly openTurnDiffSideBySide?: (turn: number) => Promise<void> | void;
   readonly canOpenSideDiff?: () => boolean;
+  readonly onHandoff?: (handoff: HandoffAction, btn: HTMLButtonElement) => void;
 }
 
 export interface TranscriptController extends Disposable {
@@ -600,6 +602,10 @@ class TranscriptControllerImpl implements TranscriptController {
           void this.openTurnDiffSideBySide(turn, btn);
         },
         onMessageAction: (action, key, btn) => this._handleMessageAction(action, key, btn),
+        onHandoff: (key, btn) => {
+          const m = this._deps.getData()[key];
+          if (m?.handoff) this._deps.onHandoff?.(m.handoff, btn);
+        },
       }),
     );
     this._disposables.add(store);

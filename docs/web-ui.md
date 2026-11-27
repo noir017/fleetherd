@@ -56,6 +56,14 @@ Reader, and Status):
   automatically in this browser (`localStorage['aa_layout']`) and restored on reload (corrupt state
   falls back to the default layout). On tablet widths (`640–1023px`), editor splitting is disabled
   while tab reordering stays enabled.
+- **Side-by-side live topics**: on desktop (`≥ 1024px`), right-click a topic in the sidebar and
+  choose **Open in new tab** (or `Ctrl/Cmd`-click it) to open a pinned topic editor alongside the
+  main topic tab, then split it (`Ctrl/Cmd+\` or drag the tab to an edge). Regular clicks in the
+  sidebar still navigate the main tab while pinned tabs stay on their topic. Every open topic
+  editor stays live over a single multiplexed `/api/events` stream — streaming replies, typing,
+  status, pending queue, unsent/outbox retries, and scroll position stay independent per editor,
+  focus chooses where keyboard shortcuts and global commands apply, every visible topic counts as
+  seen, and pinned tabs restore after a reload. Tablet and mobile remain single-topic.
 - **Layout keyboard shortcuts**: `Ctrl/Cmd+\` splits the active editor right; `Ctrl/Cmd+1`,
   `Ctrl/Cmd+2`, and `Ctrl/Cmd+3` focus editor groups 1–3; `Ctrl/Cmd+B` toggles the primary sidebar;
   `Ctrl/Cmd+Alt+B` toggles the secondary sidebar; `Ctrl/Cmd+J` toggles the bottom panel. The

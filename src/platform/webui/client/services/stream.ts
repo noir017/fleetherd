@@ -58,13 +58,27 @@ export function applyTopicRows<T extends TopicRowLike>(
 
 export function buildEventsUrl(params: {
   readonly topic?: string;
+  readonly topics?: readonly string[];
   readonly last?: string;
+  readonly lasts?: readonly string[];
   readonly tv?: number;
 }): string {
   const qs: string[] = [];
-  if (params.topic) qs.push(`t=${encodeURIComponent(params.topic)}`);
-  if (params.last) qs.push(`last=${encodeURIComponent(params.last)}`);
-  if (params.last && params.tv) qs.push(`tv=${params.tv}`);
+  const topics =
+    params.topics && params.topics.length > 0
+      ? params.topics.filter(Boolean)
+      : params.topic
+        ? [params.topic]
+        : [];
+  for (const t of topics) qs.push(`t=${encodeURIComponent(t)}`);
+  const lasts =
+    params.lasts && params.lasts.length > 0
+      ? params.lasts.filter(Boolean)
+      : params.last
+        ? [params.last]
+        : [];
+  for (const l of lasts) qs.push(`last=${encodeURIComponent(l)}`);
+  if (lasts.length > 0 && params.tv) qs.push(`tv=${params.tv}`);
   return `api/events${qs.length ? `?${qs.join('&')}` : ''}`;
 }
 
@@ -84,6 +98,7 @@ export interface StreamEventPayload {
 
 export interface StreamClientDeps {
   readonly getTopic: () => string;
+  readonly getTopics?: () => readonly string[];
   readonly isLoggedOut: () => boolean;
   readonly getBuild: () => string;
   readonly onBeforeConnect?: () => void;
@@ -109,8 +124,9 @@ export interface StreamClient extends Disposable {
   resumeStream(force?: boolean): void;
   checkBuild(): void;
   signedIn(): Promise<boolean>;
-  getLastEventId(): string;
-  setLastEventId(id: string): void;
+  getLastEventId(topicId?: string): string;
+  setLastEventId(id: string, topicId?: string): void;
+  clearLastEventId(topicId?: string): void;
   getTopicsVersion(): number;
   setTopicsVersion(tv: number): void;
   isParked(): boolean;
@@ -142,6 +158,7 @@ class StreamClientImpl implements StreamClient {
   private _parked = false;
   private _hiddenAt = 0;
   private _lastEv = '';
+  private readonly _lastByTopic = new Map<string, string>();
   private _lastActivityAt = 0;
   private _docRef: Document | undefined = typeof document !== 'undefined' ? document : undefined;
 
@@ -242,7 +259,7 @@ class StreamClientImpl implements StreamClient {
   private _handleMessage(es: EventSourceLike, e: MessageEvent): void {
     if (es === this._stream) {
       this._lastActivityAt = this._now();
-      if (e.lastEventId) this._lastEv = e.lastEventId;
+      if (e.lastEventId) this.setLastEventId(e.lastEventId);
     }
     let parsed: StreamEventPayload | undefined;
     try {
@@ -267,9 +284,23 @@ class StreamClientImpl implements StreamClient {
     this._parked = false;
     this._lastActivityAt = this._now();
     this._deps.onBeforeConnect?.();
-    const from = resume ? this._lastEv : '';
-    this._lastEv = from;
-    const url = buildEventsUrl({ topic: this._deps.getTopic(), last: from, tv: this._topicsV });
+    const topics = this._resolveTopics();
+    if (!resume) {
+      this._lastEv = '';
+      this._lastByTopic.clear();
+    }
+    let url: string;
+    if (topics.length <= 1) {
+      const only = topics[0] ?? '';
+      const from = resume ? (only ? this._lastByTopic.get(only) || this._lastEv : this._lastEv) : '';
+      this._lastEv = from;
+      url = buildEventsUrl({ topic: only, last: from, tv: this._topicsV });
+    } else {
+      const lasts = resume
+        ? topics.map((t) => this._lastByTopic.get(t) || '').filter(Boolean)
+        : [];
+      url = buildEventsUrl({ topics, lasts, tv: this._topicsV });
+    }
     const es = this._createES(url);
     this._stream = es;
 
@@ -353,12 +384,36 @@ class StreamClientImpl implements StreamClient {
     return this._disposables.add(sub);
   }
 
-  getLastEventId(): string {
+  private _resolveTopics(): string[] {
+    if (this._deps.getTopics) {
+      const list = [...new Set(this._deps.getTopics().filter(Boolean))];
+      if (list.length > 0) return list;
+    }
+    const primary = this._deps.getTopic();
+    return primary ? [primary] : [];
+  }
+
+  getLastEventId(topicId?: string): string {
+    if (topicId) return this._lastByTopic.get(topicId) || '';
     return this._lastEv;
   }
 
-  setLastEventId(id: string): void {
+  setLastEventId(id: string, topicId?: string): void {
     this._lastEv = id;
+    if (!id) return;
+    const dot = id.indexOf('.');
+    const key = topicId || (dot > 0 ? id.slice(0, dot) : '');
+    if (key) this._lastByTopic.set(key, id);
+  }
+
+  clearLastEventId(topicId?: string): void {
+    if (topicId) {
+      this._lastByTopic.delete(topicId);
+      if (this._lastEv.startsWith(`${topicId}.`)) this._lastEv = '';
+      return;
+    }
+    this._lastEv = '';
+    this._lastByTopic.clear();
   }
 
   getTopicsVersion(): number {

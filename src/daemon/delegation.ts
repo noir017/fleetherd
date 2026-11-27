@@ -36,9 +36,24 @@ import type {
   TopicStage,
 } from '../types.js';
 import { CARD_ITEM_CHARS, CARD_TOTAL_CHARS, commandSurface } from './delegation-surface.js';
+import { resolveAgentCwd } from './agent-common.js';
+import { taskDirectory } from './conversation-delegation.js';
 import type { GitHead } from './git-head.js';
 import type { LiveTurn } from './turn-progress.js';
 import { UPDATE_SENDER, type PersonWords } from './turn-senders.js';
+import { workspaceFor, type Workspace } from './workspace.js';
+import {
+  checkWorktreeCleanup,
+  createWorktree,
+  inspectWorktreePlan,
+  removeWorktree,
+  resolveWorktreeName,
+  rollbackWorktree,
+  WORKTREE_SWEEP_MS,
+  type WorktreePlan,
+} from './worktree-git.js';
+import { WorktreeStore, type ManagedWorktree } from './worktree-store.js';
+import { ReviewLoopStore, type ReviewLoop, type ReviewPlan } from './review-loop-store.js';
 
 /**
  * Sub-agents: an agent in one conversation hands parts of its job to other agents, each in a topic
@@ -113,8 +128,10 @@ import { UPDATE_SENDER, type PersonWords } from './turn-senders.js';
  * the reviewer and its text on the same card as the work (invariant 6), so a reviewer the loop opens
  * later was already started by that tap. Nothing of this is offered to an external caller: sending a
  * verdict into a running author is `task-send`, which invariant 11 keeps from it. The loops live in
- * memory: after a restart, a reviewer's `task-verdict` is refused and the ends reach the asking agent
- * as ordinary updates again.
+ * `<configDir>/review-loops.json` (0600, atomic rename on every change) and are restored at startup,
+ * dropping any loop whose topics no longer exist: after a restart, a reviewer's `task-verdict` is
+ * still accepted, the work's next commits still go to the reviewer, and `tasks` still shows the loop.
+ * A turn cut off by a restart is handled as any cut-off turn is today.
  */
 
 /**
@@ -285,6 +302,12 @@ export interface DelegationDeps {
    * repository there, the machine did not answer), and the loop then starts no review and says why.
    */
   headOf?(key: ConversationId): Promise<GitHead | undefined>;
+  /** Path to `<configDir>/worktrees.json` for persisting gateway-created worktrees; in-memory when omitted. */
+  worktreesFile?: string;
+  /** Path to `<configDir>/review-loops.json` for persisting active/ended review loops; in-memory when omitted. */
+  reviewLoopsFile?: string;
+  /** Workspace factory for git worktree operations on local or remote machines (defaults to `workspaceFor`). */
+  workspaceFor?(def: AgentDef, root: string): Workspace;
   /**
    * Put the card up as a question with buttons, in the conversation that proposed it, and resolve
    * with the label tapped — null when it was called off (`signal`, `/stop`, `/new`) or ran out of time.
@@ -346,46 +369,8 @@ interface Item {
   /** `--option`: the agent's own settings, shown after the model on both cards. */
   options?: Record<string, string>;
   review?: ReviewPlan;
-}
-
-/** `task-new --review-by`: who reviews the work, what it is told, and how often it may send it back. */
-interface ReviewPlan {
-  agent: string;
-  text: string;
-  rounds: number;
-}
-
-/**
- * One review loop (see "The review loop" above), keyed by the work's topic. Kept after it ends, so
- * `tasks` and the card can still say how it ended.
- */
-interface ReviewLoop {
-  work: ConversationId;
-  /** The work's topic id, as `tasks` prints it. */
-  workTopic: string;
-  plan: ReviewPlan;
-  /** Times the review has sent the work back so far. */
-  sentBack: number;
-  /**
-   * The commit already reviewed — at first the one the work started from. Undefined until it is
-   * read, and for good when it cannot be: the first commit range is then just the commit reviewed.
-   */
-  reviewed?: string;
-  /** The commit handed to the review now running. */
-  pending?: string;
-  /** The reviewer's topic, once the first review opened it. */
-  review?: { key: ConversationId; address: ConversationAddress; topic: string };
-  /**
-   * Whose turn end the loop is waiting for: the work's (`work`; `finish` after a `nits`, which ends
-   * the loop whatever it committed) or the reviewer's (`review`). Any other end is ordinary news.
-   */
-  phase: 'work' | 'review' | 'finish';
-  /** What the reviewer answered with `task-verdict` in the turn now running; read once, at its end. */
-  verdict?: TaskVerdict;
-  /** How it ended, once it has — the line `tasks` and the card show. */
-  outcome?: { passed: boolean; line: string };
-  /** Why the last end did not move it on (no commit, no reply): said on the next card, then dropped. */
-  note?: string;
+  /** `--worktree [name]`: resolved at proposal time (read-only); created only when the part starts. */
+  worktree?: WorktreePlan;
 }
 
 /** What `task-send --forward` (and the review loop) attaches: a reply under the heading naming it. */
@@ -411,6 +396,8 @@ interface OpenedTask {
   options?: Record<string, string>;
   /** The agent reviewing it, when it has a review loop. */
   review?: string;
+  /** Gateway-created worktree path and branch (`task-new --worktree`). */
+  worktree?: { path: string; branch: string };
 }
 
 /** What one sub-agent said — or the person said to it — as the card quotes it. */
@@ -532,11 +519,44 @@ export class Delegation {
   private readonly loops = new Map<ConversationId, ReviewLoop>();
   /** A reviewer's topic → the work it reviews, the key `loops` is under. */
   private readonly reviewerOf = new Map<ConversationId, ConversationId>();
+  /** Persisted review loops (`<configDir>/review-loops.json`), when configured. */
+  private readonly reviewLoopsStore?: ReviewLoopStore;
+  /** Persisted worktrees created by `task-new --worktree`, or an in-memory map when no file is given. */
+  private readonly worktreesStore?: WorktreeStore;
+  private readonly worktreesMem = new Map<ConversationId, ManagedWorktree>();
+  private worktreeSweepCancel?: () => void;
+  private sweepingWorktrees = false;
+  private disposed = false;
 
-  constructor(private readonly deps: DelegationDeps) {}
+  constructor(private readonly deps: DelegationDeps) {
+    if (deps.worktreesFile) {
+      this.worktreesStore = new WorktreeStore(deps.worktreesFile);
+    }
+    if (deps.reviewLoopsFile) {
+      this.reviewLoopsStore = new ReviewLoopStore(deps.reviewLoopsFile);
+      this.restoreLoops();
+    }
+  }
+
+  /** Start background maintenance (periodic worktree cleanup sweep). */
+  startSweep(): void {
+    if (this.disposed || this.worktreeSweepCancel) return;
+    this.scheduleWorktreeSweep();
+  }
+
+  private scheduleWorktreeSweep(): void {
+    if (this.disposed) return;
+    this.worktreeSweepCancel = this.deps.clock.schedule(() => {
+      this.worktreeSweepCancel = undefined;
+      void this.sweepWorktrees().finally(() => this.scheduleWorktreeSweep());
+    }, WORKTREE_SWEEP_MS);
+  }
 
   /** Shutdown: drop what is gathering, and take every card off the screen. */
   dispose(): void {
+    this.disposed = true;
+    this.worktreeSweepCancel?.();
+    this.worktreeSweepCancel = undefined;
     for (const g of this.gathering.values()) g.cancel();
     for (const s of this.started.values()) s.cancel();
     for (const u of this.updates.values()) u.cancel();
@@ -810,15 +830,25 @@ export class Delegation {
       if (why) throw new Error(why);
     }
     const review = !ext || allowReview ? this.reviewPlanOf(a, def) : undefined;
-    return {
-      agent,
-      text: a.text,
-      ...(a.cwd ? { cwd: a.cwd } : {}),
-      ...(a.title ? { title: a.title } : {}),
-      ...(a.model ? { model: a.model } : {}),
-      ...(a.options ? { options: a.options } : {}),
-      ...(review ? { review } : {}),
-    };
+    const worktree = a.worktree !== undefined ? await this.worktreePlanOf(here, a, def) : undefined;
+    return buildProposedItem(agent, a, review, worktree);
+  }
+
+  /** Read-only validation for `--worktree [name]`; nothing is created until the sub-task starts. */
+  private async worktreePlanOf(
+    here: Place,
+    a: Extract<TaskAction, { kind: 'task-new' }>,
+    def: AgentDef
+  ): Promise<WorktreePlan> {
+    const name = resolveWorktreeName(a.worktree!, a.title);
+    const baseCwd = a.cwd ? taskDirectory(def, a.cwd) : resolveAgentCwd(def);
+    const ws = (this.deps.workspaceFor ?? workspaceFor)(def, baseCwd);
+    const plan = await inspectWorktreePlan(ws, name, def.host);
+    const pending = this.gathering.get(this.cardKey(here))?.items ?? [];
+    if (pending.some((p) => p.worktree && (p.worktree.host ?? '') === (plan.host ?? '') && p.worktree.repoRoot === plan.repoRoot && p.worktree.name === plan.name)) {
+      throw new Error(`worktree "${plan.name}" is already proposed for ${plan.repoRoot}; choose a different --worktree name`);
+    }
+    return plan;
   }
 
   /**
@@ -1015,7 +1045,11 @@ export class Delegation {
       const where = def?.host ? ` @ ${def.host}` : '';
       const model = item.model ? ` · model \`${item.model}\`` : '';
       const options = item.options ? ` · ${optionsLabel(item.options)}` : '';
-      const dir = item.cwd ? ` · \`${item.cwd}\`` : '';
+      const dir = item.worktree
+        ? ` · worktree \`${item.worktree.path}\` (branch \`${item.worktree.branch}\`)`
+        : item.cwd
+          ? ` · \`${item.cwd}\``
+          : '';
       const title = item.title ? ` — ${item.title}` : '';
       lines.push('', `${i + 1}. **${item.agent}**${model}${where}${options}${dir}${title}`, ...quoteLines(item.text));
       if (item.review) {
@@ -1057,34 +1091,7 @@ export class Delegation {
     // same — handTo starts one and returns.
     for (const [i, item] of items.entries()) {
       try {
-        const { key, address, title: named } = await this.deps.registry.openTask({
-          platform: here.platformId,
-          parent: here.address,
-          agentId: item.agent,
-          text: item.text,
-          header,
-          ...(item.cwd ? { cwd: item.cwd } : {}),
-          ...(item.title ? { title: item.title } : {}),
-          ...(item.model ? { model: item.model } : {}),
-          ...(item.options ? { options: item.options } : {}),
-        });
-        this.owed.add(key);
-        const title = subjectOf(named);
-        const host = findAgent(this.deps.config, item.agent)?.host;
-        const topic = topicOf(here.platformId, address);
-        if (item.review) this.arm(key, topic, item.review);
-        opened.push({
-          title,
-          topic,
-          ...(address.thread ? { link: `?t=${address.thread}` } : {}),
-          agent: item.agent,
-          ...(host ? { host } : {}),
-          ...(item.cwd ? { cwd: item.cwd } : {}),
-          ...(item.model ? { model: item.model } : {}),
-          ...(item.options ? { options: item.options } : {}),
-          ...(item.review ? { review: item.review.agent } : {}),
-        });
-        console.log(`[delegation] ${here.key} opened ${key} for "${item.agent}"`);
+        opened.push(await this.startOne(here, item, header));
       } catch (e) {
         const why = e instanceof Error ? e.message : String(e);
         failed.push(`- ${i + 1}. ${item.agent}: ${why}`);
@@ -1092,6 +1099,63 @@ export class Delegation {
       }
     }
     return { opened, failed };
+  }
+
+  private async startOne(here: Place, item: Item, header: string): Promise<OpenedTask> {
+    const created = item.worktree ? await this.createItemWorktree(item.agent, item.worktree) : undefined;
+    const openOpts = {
+      platform: here.platformId,
+      parent: here.address,
+      agentId: item.agent,
+      text: item.text,
+      header,
+      cwd: created ? created.wt.path : item.cwd,
+      title: item.title,
+      model: item.model,
+      options: item.options,
+    };
+    let openedTask: { key: ConversationId; address: ConversationAddress; title: string };
+    try {
+      openedTask = await this.deps.registry.openTask(openOpts);
+    } catch (e) {
+      if (created) {
+        await rollbackWorktree(created.ws, created.wt.repoRoot, created.wt.path, created.wt.branch).catch(() => undefined);
+      }
+      throw e;
+    }
+    const { key, address, title: named } = openedTask;
+    this.owed.add(key);
+    const title = subjectOf(named);
+    const host = findAgent(this.deps.config, item.agent)?.host;
+    const topic = topicOf(here.platformId, address);
+    if (created && item.worktree) {
+      this.saveWorktree({
+        topicKey: key,
+        topic,
+        agent: item.agent,
+        ...(host ? { host } : {}),
+        repoRoot: created.wt.repoRoot,
+        path: created.wt.path,
+        name: item.worktree.name,
+        branch: created.wt.branch,
+        ...(created.wt.baseBranch ? { baseBranch: created.wt.baseBranch } : {}),
+        baseSha: created.wt.baseSha,
+        createdAt: this.deps.clock.now(),
+      });
+    }
+    if (item.review) this.arm(key, topic, item.review);
+    console.log(`[delegation] ${here.key} opened ${key} for "${item.agent}"`);
+    return buildOpenedTask(title, topic, address, item, host, created?.wt);
+  }
+
+  private async createItemWorktree(
+    agentId: string,
+    plan: WorktreePlan
+  ): Promise<{ ws: Workspace; wt: Awaited<ReturnType<typeof createWorktree>> }> {
+    const def = findAgent(this.deps.config, agentId);
+    if (!def) throw new Error(`no agent "${agentId}" is configured`);
+    const ws = (this.deps.workspaceFor ?? workspaceFor)(def, plan.repoRoot);
+    return { ws, wt: await createWorktree(ws, plan) };
   }
 
   /** The confirmed card's answer: where every sub-task went, and the agent told of any that failed. */
@@ -1597,6 +1661,7 @@ export class Delegation {
       cost: status?.cost ? formatCost(status.cost) : '',
       lastAt: lastAtOf(activity, live),
       review: this.reviewLine(c.key),
+      worktree: this.worktreeLine(c.key),
       ...(c.address.thread ? { link: `?t=${c.address.thread}` } : {}),
     };
   }
@@ -1636,6 +1701,7 @@ export class Delegation {
    * finishes is one card rather than one turn each.
    */
   childChanged(id: ConversationId): void {
+    this.recordWorktreeTurnEnd(id);
     if (!this.owed.has(id)) return;
     const parent = this.parentOf(id);
     if (!parent) return;
@@ -1821,7 +1887,10 @@ export class Delegation {
     const quote = this.quoteOf(c, row, stage);
     // `row.review` already carries the one-off note (no commit, no reply); this card is where it is said.
     const loop = this.loopOf(c.key);
-    if (loop) loop.note = undefined;
+    if (loop && loop.note !== undefined) {
+      loop.note = undefined;
+      this.persistLoops();
+    }
     return {
       topic: row.topic,
       head: `- topic ${row.topic} · "${row.title}" · ${row.agent}${row.cwd ? ` in ${row.cwd}` : ''} · ${describeStage(stage)}${
@@ -1958,12 +2027,46 @@ export class Delegation {
   private arm(work: ConversationId, workTopic: string, plan: ReviewPlan): void {
     const loop: ReviewLoop = { work, workTopic, plan, sentBack: 0, phase: 'work' };
     this.loops.set(work, loop);
+    this.persistLoops();
     void this.deps
       .headOf?.(work)
       .then((head) => {
-        if (head && loop.reviewed === undefined) loop.reviewed = head.sha;
+        if (head && loop.reviewed === undefined) {
+          loop.reviewed = head.sha;
+          this.persistLoops();
+        }
       })
       .catch(() => undefined);
+  }
+
+  private persistLoops(): void {
+    this.reviewLoopsStore?.save(this.loops.values());
+  }
+
+  private restoreLoops(): void {
+    const loaded = this.reviewLoopsStore?.load() ?? [];
+    let dropped = 0;
+    for (const loop of loaded) {
+      if (!this.loopTopicsExist(loop)) {
+        dropped++;
+        console.log(`[delegation] dropped stale review loop for ${loop.workTopic}: topic no longer exists`);
+        continue;
+      }
+      this.loops.set(loop.work, loop);
+      if (loop.review) this.reviewerOf.set(loop.review.key, loop.work);
+      if (!loop.outcome) {
+        // Keep the active loop's topics owed across restart so a continued/next turn still advances it.
+        this.owed.add(loop.work);
+        if (loop.review) this.owed.add(loop.review.key);
+      }
+    }
+    if (dropped > 0) this.persistLoops();
+  }
+
+  private loopTopicsExist(loop: ReviewLoop): boolean {
+    if (!this.place(loop.work) || !this.parentOf(loop.work)) return false;
+    if (loop.review && (!this.place(loop.review.key) || !this.parentOf(loop.review.key))) return false;
+    return true;
   }
 
   /** The loop a topic is part of — as the work or as its reviewer. */
@@ -1983,7 +2086,10 @@ export class Delegation {
     const at = this.place(id);
     const stage = at ? this.stageOf(at) : undefined;
     // A verdict belongs to the turn that gave it; one that failed takes it along.
-    if (stage === 'failed' && id !== loop.work) loop.verdict = undefined;
+    if (stage === 'failed' && id !== loop.work && loop.verdict !== undefined) {
+      loop.verdict = undefined;
+      this.persistLoops();
+    }
     if (stage !== 'review') return undefined;
     if (id === loop.work ? loop.phase === 'review' : loop.phase !== 'review') return undefined;
     return loop;
@@ -2020,6 +2126,7 @@ export class Delegation {
     if ('problem' in forward) return this.hold(loop, parent, `no review started — ${forward.problem}`);
     loop.pending = head.sha;
     loop.phase = 'review';
+    this.persistLoops();
     const header = this.loopHeaderOf(parent);
     const round = loop.sentBack + 1;
     const worked = subjectOf(this.titleOf(work.key, work));
@@ -2038,6 +2145,7 @@ export class Delegation {
       });
       loop.review = { key: opened.key, address: opened.address, topic: topicOf(parent.platformId, opened.address) };
       this.reviewerOf.set(opened.key, loop.work);
+      this.persistLoops();
     } else {
       await this.deps.registry.handTo(loop.review.key, parent.platformId, loop.review.address, '', header, { forward });
     }
@@ -2063,6 +2171,7 @@ export class Delegation {
     loop.verdict = undefined;
     const round = loop.sentBack + 1;
     if (loop.pending) loop.reviewed = loop.pending;
+    this.persistLoops();
     if (verdict === 'pass') return this.finish(loop, parent, true, round === 1 ? 'passed' : `passed in round ${round}`);
     if (verdict === 'changes' && loop.sentBack >= loop.plan.rounds) {
       return this.finish(loop, parent, false, `stopped: the review still asks for changes after ${loop.plan.rounds} round${loop.plan.rounds === 1 ? '' : 's'} sent back`);
@@ -2071,6 +2180,7 @@ export class Delegation {
     if (!work) throw new Error('the work\'s topic is gone');
     if (verdict === 'changes') loop.sentBack++;
     loop.phase = verdict === 'nits' ? 'finish' : 'work';
+    this.persistLoops();
     await this.deps.registry.handTo(loop.work, work.platformId, work.address, '', this.loopHeaderOf(parent), { forward: reply });
     this.owed.add(loop.work);
     const names = `"${subjectOf(this.titleOf(review.key, review))}"`;
@@ -2086,6 +2196,7 @@ export class Delegation {
   /** The loop is over: say how, and tell the asking agent about the work and its review together. */
   private finish(loop: ReviewLoop, parent: Place, passed: boolean, line: string): void {
     loop.outcome = { passed, line };
+    this.persistLoops();
     console.log(`[delegation] ${loop.work}: the review loop ended — ${line}`);
     this.report(parent, loop.review ? [loop.work, loop.review.key] : [loop.work]);
   }
@@ -2093,6 +2204,7 @@ export class Delegation {
   /** The loop cannot move on by itself this time: the asking agent is told why, and it stays armed. */
   private hold(loop: ReviewLoop, parent: Place, note: string, about: ConversationId = loop.work): void {
     loop.note = note;
+    this.persistLoops();
     this.report(parent, [about]);
   }
 
@@ -2109,6 +2221,7 @@ export class Delegation {
     const loop = this.loopOf(id);
     if (!loop || loop.outcome) return;
     loop.outcome = { passed: false, line: `stopped: ${why}` };
+    this.persistLoops();
     console.log(`[delegation] ${loop.work}: the review loop stopped — ${why}`);
   }
 
@@ -2128,6 +2241,7 @@ export class Delegation {
       throw new Error('no review of yours is waiting on a verdict: the work has not come back to you since your last one');
     }
     loop.verdict = verdict;
+    this.persistLoops();
     const topic = topicOf(here.platformId, here.address);
     const last = loop.sentBack >= loop.plan.rounds;
     const result =
@@ -2187,6 +2301,113 @@ export class Delegation {
     void parent.adapter
       .sendMessage(parent.address, line, { kind: 'report' })
       .catch((e) => console.warn('[delegation] could not show a review step:', e instanceof Error ? e.message : e));
+  }
+
+  // ── Managed worktrees ─────────────────────────────────────────────────────────────────────────
+
+  private getWorktree(id: ConversationId): ManagedWorktree | undefined {
+    return this.worktreesStore ? this.worktreesStore.get(id) : this.worktreesMem.get(id);
+  }
+
+  private allWorktrees(): ManagedWorktree[] {
+    return this.worktreesStore ? this.worktreesStore.all() : [...this.worktreesMem.values()];
+  }
+
+  private saveWorktree(wt: ManagedWorktree): void {
+    if (this.worktreesStore) this.worktreesStore.set(wt);
+    else this.worktreesMem.set(wt.topicKey, { ...wt });
+  }
+
+  private touchWorktreeEnded(id: ConversationId, at: number): void {
+    if (this.worktreesStore) this.worktreesStore.touchEnded(id, at);
+    else {
+      const wt = this.worktreesMem.get(id);
+      if (wt) wt.lastEndedAt = at;
+    }
+  }
+
+  private deleteWorktree(id: ConversationId): void {
+    if (this.worktreesStore) this.worktreesStore.remove(id);
+    else this.worktreesMem.delete(id);
+  }
+
+  private recordWorktreeTurnEnd(id: ConversationId): void {
+    if (!this.getWorktree(id)) return;
+    if (this.deps.registry.isBusy(id) || this.deps.registry.isAsking(id)) return;
+    const endedAt = this.deps.registry.activityOf(id)?.outcome?.at;
+    if (endedAt !== undefined) this.touchWorktreeEnded(id, endedAt);
+  }
+
+  private worktreeLine(id: ConversationId): string {
+    const wt = this.getWorktree(id);
+    return wt ? `${shortenHome(wt.path)} (${wt.branch})` : '';
+  }
+
+  /**
+   * Check every gateway-created worktree and remove only those whose branch is merged into its base
+   * branch, whose tree is clean, whose topic is idle, and whose last turn ended at least 1h ago.
+   */
+  async sweepWorktrees(): Promise<{ removed: string[]; kept: Array<{ path: string; reason: string }>; pruned: string[] }> {
+    const out: { removed: string[]; kept: Array<{ path: string; reason: string }>; pruned: string[] } = {
+      removed: [],
+      kept: [],
+      pruned: [],
+    };
+    if (this.sweepingWorktrees) return out;
+    this.sweepingWorktrees = true;
+    try {
+      const now = this.deps.clock.now();
+      for (const wt of this.allWorktrees()) {
+        await this.sweepOneWorktree(wt, now, out);
+      }
+    } finally {
+      this.sweepingWorktrees = false;
+    }
+    return out;
+  }
+
+  private async sweepOneWorktree(
+    wt: ManagedWorktree,
+    now: number,
+    out: { removed: string[]; kept: Array<{ path: string; reason: string }>; pruned: string[] }
+  ): Promise<void> {
+    const liveEnded = this.deps.registry.activityOf(wt.topicKey)?.outcome?.at;
+    if (liveEnded !== undefined && liveEnded !== wt.lastEndedAt) {
+      this.touchWorktreeEnded(wt.topicKey, liveEnded);
+    }
+    const def = findAgent(this.deps.config, wt.agent);
+    if (wt.host && (!def || def.host !== wt.host)) {
+      out.kept.push({ path: wt.path, reason: `host ${wt.host} not configured` });
+      return;
+    }
+    const targetDef: AgentDef = def ?? ({ id: wt.agent, harness: 'claude' } as AgentDef);
+    const ws = (this.deps.workspaceFor ?? workspaceFor)(targetDef, wt.repoRoot);
+    const decision = await checkWorktreeCleanup(ws, wt, {
+      busy: this.deps.registry.isBusy(wt.topicKey),
+      asking: this.deps.registry.isAsking(wt.topicKey),
+      lastEndedAt: liveEnded ?? wt.lastEndedAt,
+      now,
+    });
+    if (decision.action === 'prune-missing') {
+      this.deleteWorktree(wt.topicKey);
+      out.pruned.push(wt.path);
+      console.log(`[delegation] pruned missing worktree record ${wt.path} (topic ${wt.topic})`);
+      return;
+    }
+    if (decision.action === 'keep') {
+      out.kept.push({ path: wt.path, reason: decision.reason });
+      return;
+    }
+    const res = await removeWorktree(ws, wt);
+    if (res.removed) {
+      this.deleteWorktree(wt.topicKey);
+      out.removed.push(wt.path);
+      const branchNote = res.branchDeleted ? ' deleted' : ` kept: ${res.error ?? 'not deleted'}`;
+      console.log(`[delegation] removed worktree ${wt.path} (branch ${wt.branch}${branchNote}, merged into ${wt.baseBranch}, topic ${wt.topic})`);
+    } else {
+      out.kept.push({ path: wt.path, reason: res.error ?? 'git worktree remove failed' });
+      console.warn(`[delegation] could not remove worktree ${wt.path}: ${res.error ?? 'unknown error'}`);
+    }
   }
 
   // ── Lookups ───────────────────────────────────────────────────────────────────────────────────
@@ -2577,7 +2798,11 @@ function startedRow(t: OpenedTask, lead: boolean, locale: Locale = 'en'): string
   const options = t.options ? optionsLabel(t.options) : '';
   // A host names its own agents `<id>@<host>` (daemon/pods.ts), so that id already says the machine.
   const machine = t.host && !t.agent.endsWith(`@${t.host}`) ? ` @ ${t.host}` : '';
-  const dir = t.cwd ? `\`${t.cwd}\`` : '';
+  const dir = t.worktree
+    ? `worktree \`${t.worktree.path}\` (branch \`${t.worktree.branch}\`)`
+    : t.cwd
+      ? `\`${t.cwd}\``
+      : '';
   const name = t.link ? `[${t.title}](${t.link})` : t.title;
   const review = t.review ? tWorkflows(locale, 'delegation.started.reviewedBy', { reviewer: t.review }) : '';
   // The machine hangs off whichever of name/model comes first, so no row ever starts with "@ host".
@@ -2613,4 +2838,43 @@ function short(sha: string): string {
 function quoteLines(text: string): string[] {
   const shown = text.length > PROPOSAL_TEXT_CHARS ? `${text.slice(0, PROPOSAL_TEXT_CHARS - 1)}…` : text;
   return shown.split('\n').map((l) => `> ${l}`);
+}
+
+function buildProposedItem(
+  agent: string,
+  a: Extract<TaskAction, { kind: 'task-new' }>,
+  review: ReviewPlan | undefined,
+  worktree: WorktreePlan | undefined
+): Item {
+  return {
+    agent,
+    text: a.text,
+    ...(a.cwd ? { cwd: a.cwd } : {}),
+    ...(a.title ? { title: a.title } : {}),
+    ...(a.model ? { model: a.model } : {}),
+    ...(a.options ? { options: a.options } : {}),
+    ...(review ? { review } : {}),
+    ...(worktree ? { worktree } : {}),
+  };
+}
+
+function buildOpenedTask(
+  title: string,
+  topic: string,
+  address: ConversationAddress,
+  item: Item,
+  host: string | undefined,
+  createdWt: { path: string; branch: string } | undefined
+): OpenedTask {
+  return {
+    title,
+    topic,
+    ...(address.thread ? { link: `?t=${address.thread}` } : {}),
+    agent: item.agent,
+    ...(host ? { host } : {}),
+    ...(createdWt ? { worktree: { path: createdWt.path, branch: createdWt.branch } } : item.cwd ? { cwd: item.cwd } : {}),
+    ...(item.model ? { model: item.model } : {}),
+    ...(item.options ? { options: item.options } : {}),
+    ...(item.review ? { review: item.review.agent } : {}),
+  };
 }

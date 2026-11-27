@@ -48,6 +48,49 @@ export const CATCH_UP_GRACE_MS = 3_600_000;
 export const DEFAULT_BASH_TIMEOUT_MS = 10 * 60_000;
 export const MAX_BASH_TIMEOUT_MS = 6 * 3_600_000;
 
+/** Default and maximum times a waking bash task may wake its conversation's agent before ending. */
+export const DEFAULT_WAKE_MAX = 3;
+export const MAX_WAKE_MAX = 100;
+
+export type BashWakeOn = 'any' | 'zero' | 'nonzero' | number[];
+
+export interface BashWake {
+  on: BashWakeOn;
+  max: number;
+}
+
+export function parseWakeOn(raw: string): { ok: true; rule: BashWakeOn } | { ok: false; error: string } {
+  const s = raw.trim().toLowerCase();
+  if (s === 'any' || s === 'zero' || s === 'nonzero') return { ok: true, rule: s };
+  if (!s) return { ok: false, error: '--wake-on is empty; use any, zero, nonzero, or exit codes such as 1,2' };
+  const codes: number[] = [];
+  for (const part of s.split(',')) {
+    const p = part.trim();
+    if (!/^\d+$/.test(p)) {
+      return { ok: false, error: `--wake-on "${raw}" is invalid; use any, zero, nonzero, or comma-separated exit codes 0-255 (e.g. 1,2)` };
+    }
+    const n = Number(p);
+    if (n < 0 || n > 255) {
+      return { ok: false, error: `--wake-on exit code ${n} is out of range (0-255)` };
+    }
+    if (!codes.includes(n)) codes.push(n);
+  }
+  codes.sort((a, b) => a - b);
+  return { ok: true, rule: codes };
+}
+
+export function formatWakeOn(rule: BashWakeOn): string {
+  return Array.isArray(rule) ? rule.join(',') : rule;
+}
+
+export function shouldWake(rule: BashWakeOn, outcome: BashOutcome): boolean {
+  if (outcome.aborted) return false;
+  if (rule === 'any') return true;
+  if (rule === 'zero') return outcome.exitCode === 0 && !outcome.timedOut && !outcome.spawnError;
+  if (rule === 'nonzero') return outcome.exitCode !== 0 || outcome.timedOut || Boolean(outcome.spawnError);
+  return outcome.exitCode !== null && !outcome.timedOut && !outcome.spawnError && rule.includes(outcome.exitCode);
+}
+
 /**
  * A task's labels: at most five, each at most this long, lowercase, and made of Unicode letters
  * and digits plus `- _ . /`. Chinese tags are letters, so they work; whitespace, commas and the
@@ -139,7 +182,7 @@ export type ScheduleRun =
    * `host`: the `hosts:` entry the registering agent ran on. A command an agent wrote names that
    * agent's machine — its paths, its tools — so it runs there, not on the gateway.
    */
-  | { kind: 'bash'; command: string; cwd?: string; timeoutMs: number; host?: string };
+  | { kind: 'bash'; command: string; cwd?: string; timeoutMs: number; host?: string; wake?: BashWake };
 
 /** Where a task's output goes: a platform instance and an address on it. */
 export interface ScheduleTarget {
@@ -234,6 +277,8 @@ export interface ScheduleTask {
   /** The last MAX_RUN_HISTORY runs, newest first. Absent on tasks written before it existed. */
   history?: ScheduleRunRecord[];
   runs: number;
+  /** How many times a waking bash task has woken its conversation's agent. */
+  wakes?: number;
 }
 
 /** `history` with `record` at the front, cut to MAX_RUN_HISTORY. */
@@ -408,6 +453,9 @@ export type ScheduleDecision =
 const MAX_CATCH_UP_STEPS = 100_000;
 
 export function decide(task: ScheduleTask, now: number, graceMs = CATCH_UP_GRACE_MS): ScheduleDecision {
+  if (task.run.kind === 'bash' && task.run.wake && (task.wakes ?? 0) >= task.run.wake.max) {
+    return { kind: 'done' };
+  }
   // Strictly after registration: a task added at 10:00:00.000 sharp for `*/10` first runs at 10:10,
   // not the instant it is saved (which would read as the act of registering having run it).
   const from = task.lastPlannedAt ?? task.createdAt;
@@ -460,6 +508,9 @@ export interface NewTaskInput {
   host?: string | null;
   model?: string;
   timeoutMs?: number;
+  wake?: boolean;
+  wakeOn?: string;
+  wakeMax?: number;
 }
 
 /** What the daemon knows that the input does not. */
@@ -535,6 +586,9 @@ export function buildTask(input: NewTaskInput, ctx: NewTaskContext): Built {
   };
   if (input.bash !== undefined) return buildBashTask(input, input.bash, ctx, base);
   if (input.timeoutMs !== undefined) return fail('--timeout is for --bash tasks; an agent turn is bounded by the gateway itself');
+  if (hasWakeFlags(input)) {
+    return fail('--wake, --wake-on and --wake-max are for --bash tasks; a --prompt task already runs an agent');
+  }
   const prompt = input.prompt!;
   if (!prompt.trim()) return fail('--prompt is empty');
   switch (input.session ?? 'fixed') {
@@ -580,6 +634,29 @@ function parseWhen(input: NewTaskInput, ctx: NewTaskContext): ScheduleWhen | { e
   return { at, tz };
 }
 
+function hasWakeFlags(input: NewTaskInput): boolean {
+  return input.wake !== undefined || input.wakeOn !== undefined || input.wakeMax !== undefined;
+}
+
+function buildWakingBashTask(
+  name: string,
+  run: Extract<ScheduleRun, { kind: 'bash' }>,
+  ctx: NewTaskContext,
+  base: TaskBase
+): Built {
+  const conv = ctx.targetConversation;
+  if (!conv) {
+    return fail('a waking --bash task needs one conversation to wake, and this target does not name one under the current session scope');
+  }
+  const expiresAt = ctx.now + FIXED_SESSION_WINDOW_MS;
+  const task: ScheduleTask = { ...base, name, run, conversation: conv.key, expiresAt };
+  if (nextRunOf(task, ctx.now) === undefined) {
+    const tz = task.when.tz;
+    return fail(`a waking --bash task only lives ${FIXED_SESSION_WINDOW_MS / 3_600_000}h (until ${formatInZone(expiresAt, tz)} ${tz}) and this schedule has no run before then`);
+  }
+  return { ok: true, task };
+}
+
 function buildBashTask(input: NewTaskInput, command: string, ctx: NewTaskContext, base: TaskBase): Built {
   if (input.session === 'daily') {
     return fail('--session daily is for --prompt tasks: a --bash task is run by the daemon and has no conversation to keep for the day');
@@ -595,18 +672,42 @@ function buildBashTask(input: NewTaskInput, command: string, ctx: NewTaskContext
   if (timeoutMs < 1_000 || timeoutMs > MAX_BASH_TIMEOUT_MS) {
     return fail(`--timeout must be between 1s and ${MAX_BASH_TIMEOUT_MS / 3_600_000}h`);
   }
+  const wakeRes = resolveBashWake(input);
+  if (!wakeRes.ok) return wakeRes;
   // The machine it runs on: the one named, else the registering agent's. Its directory follows the
   // same rule a `new` task's does (taskCwd): named machine, nothing inferred from the caller.
   const host = input.host !== undefined ? (input.host ?? undefined) : ctx.from.host;
   const cwd = taskCwd(input, ctx);
-  return firstRunCheck(
-    {
-      ...base,
-      name: input.name?.trim() || defaultName(command),
-      run: { kind: 'bash', command, timeoutMs, ...(cwd ? { cwd } : {}), ...(host ? { host } : {}) },
-    },
-    ctx.now
-  );
+  const run: Extract<ScheduleRun, { kind: 'bash' }> = {
+    kind: 'bash',
+    command,
+    timeoutMs,
+    ...(cwd ? { cwd } : {}),
+    ...(host ? { host } : {}),
+    ...(wakeRes.wake ? { wake: wakeRes.wake } : {}),
+  };
+  const name = input.name?.trim() || defaultName(command);
+  if (wakeRes.wake) return buildWakingBashTask(name, run, ctx, base);
+  return firstRunCheck({ ...base, name, run }, ctx.now);
+}
+
+function resolveBashWake(input: NewTaskInput): { ok: true; wake?: BashWake } | { ok: false; error: string } {
+  const rawOn = input.wakeOn?.trim().toLowerCase();
+  const isOff = rawOn === 'off';
+  if (input.wake === true && isOff) return fail('--wake and --wake-on off contradict each other');
+  if (input.wake === false && rawOn !== undefined && !isOff) return fail('--wake off and --wake-on contradict each other');
+  const enabled = input.wake === true || (rawOn !== undefined && !isOff);
+  if (!enabled) {
+    if (input.wakeMax !== undefined) return fail('--wake-max is for a waking --bash task (pass --wake or --wake-on)');
+    return { ok: true };
+  }
+  const parsedOn = input.wakeOn !== undefined ? parseWakeOn(input.wakeOn) : ({ ok: true, rule: 'any' } as const);
+  if (!parsedOn.ok) return parsedOn;
+  const max = input.wakeMax ?? DEFAULT_WAKE_MAX;
+  if (!Number.isInteger(max) || max < 1 || max > MAX_WAKE_MAX) {
+    return fail(`--wake-max must be an integer between 1 and ${MAX_WAKE_MAX}`);
+  }
+  return { ok: true, wake: { on: parsedOn.rule, max } };
 }
 
 function checkAgent(agent: string, ctx: NewTaskContext): string | undefined {
@@ -715,7 +816,7 @@ function firstRunCheck(task: ScheduleTask, now: number): Built {
 export type TaskShape = 'bash' | 'fixed' | 'new' | 'daily';
 
 /** The settings a task keeps beyond its name, time, text, target and tags. */
-export type TaskSetting = 'agent' | 'model' | 'cwd' | 'host' | 'timeout' | 'at';
+export type TaskSetting = 'agent' | 'model' | 'cwd' | 'host' | 'timeout' | 'wake' | 'at';
 
 /**
  * Which settings each shape keeps — `at` meaning it may be a one-shot rather than a cron.
@@ -730,7 +831,7 @@ export type TaskSetting = 'agent' | 'model' | 'cwd' | 'host' | 'timeout' | 'at';
  * `--host` there only says which machine a `--cwd` is on.
  */
 export const SHAPE_SETTINGS: Readonly<Record<TaskShape, readonly TaskSetting[]>> = {
-  bash: ['cwd', 'host', 'timeout', 'at'],
+  bash: ['cwd', 'host', 'timeout', 'wake', 'at'],
   fixed: ['agent', 'at'],
   new: ['agent', 'model', 'cwd', 'at'],
   daily: ['agent', 'model', 'cwd'],
@@ -775,6 +876,10 @@ export interface EditTaskInput {
   /** `null` drops the task's model, so its conversations start on the agent's own; see `cwd`. */
   model?: string | null;
   timeoutMs?: number;
+  wake?: boolean;
+  /** `'off'` or `null` disables waking on an existing bash task. */
+  wakeOn?: string | null;
+  wakeMax?: number;
 }
 
 /**
@@ -816,6 +921,9 @@ export function editTask(task: ScheduleTask, input: EditTaskInput, ctx: NewTaskC
 
   const windowProblem = fixedWindowProblem(next, ctx.now);
   if (windowProblem) return fail(windowProblem);
+  if (next.run.kind === 'bash' && next.run.wake && (next.wakes ?? 0) >= next.run.wake.max) {
+    return fail(`#${task.id} has already woken ${next.wakes} time(s); raise --wake-max above ${next.wakes}`);
+  }
   return { ok: true, task: withoutStaleDayTopic(task, next) };
 }
 
@@ -836,6 +944,7 @@ export function rebaseEdit(before: ScheduleTask, edited: ScheduleTask, current: 
     ...config,
     state: current.state,
     runs: current.runs,
+    ...(config.run.kind === 'bash' && config.run.wake && current.wakes !== undefined ? { wakes: current.wakes } : {}),
     ...(current.lastRun !== undefined ? { lastRun: current.lastRun } : {}),
     ...(current.history !== undefined ? { history: current.history } : {}),
     ...(lastPlannedAt !== undefined ? { lastPlannedAt } : {}),
@@ -853,6 +962,9 @@ export function editLockOf(task: ScheduleTask): string | undefined {
     return `#${task.id} has expired (a fixed-session task lives ${FIXED_SESSION_WINDOW_MS / 3_600_000}h); add a new task instead`;
   }
   if (task.state === 'done') {
+    if (task.run.kind === 'bash' && task.run.wake && (task.wakes ?? 0) >= task.run.wake.max) {
+      return `#${task.id} reached its wake limit (${task.run.wake.max}) and has ended; add a new task instead`;
+    }
     return `#${task.id} was a one-time task and has already had its run; add a new task instead`;
   }
   return undefined;
@@ -876,9 +988,12 @@ function editRefusal(task: ScheduleTask, input: EditTaskInput): string | undefin
  */
 function preserveTask(task: ScheduleTask, built: ScheduleTask): ScheduleTask {
   const { expiresAt: newWindow, conversation, daySession: _none, ...fresh } = built;
-  const sameSession =
-    conversation !== undefined && task.run.kind === 'agent' && task.run.session === 'fixed' && task.conversation === conversation;
+  const wasBound =
+    task.conversation !== undefined &&
+    ((task.run.kind === 'agent' && task.run.session === 'fixed') || (task.run.kind === 'bash' && task.run.wake !== undefined));
+  const sameSession = conversation !== undefined && wasBound && task.conversation === conversation;
   const window = sameSession ? task.expiresAt : newWindow;
+  const keepWakes = sameSession && built.run.kind === 'bash' && built.run.wake !== undefined && task.wakes !== undefined;
   return {
     ...fresh,
     id: task.id,
@@ -886,6 +1001,7 @@ function preserveTask(task: ScheduleTask, built: ScheduleTask): ScheduleTask {
     createdBy: task.createdBy,
     state: task.state,
     runs: task.runs,
+    ...(keepWakes ? { wakes: task.wakes } : {}),
     ...(task.lastRun !== undefined ? { lastRun: task.lastRun } : {}),
     ...(task.history !== undefined ? { history: task.history } : {}),
     ...(conversation !== undefined ? { conversation } : {}),
@@ -900,9 +1016,15 @@ function preserveTask(task: ScheduleTask, built: ScheduleTask): ScheduleTask {
  * one it was registered with may have less left. Returns the refusal, or undefined.
  */
 function fixedWindowProblem(task: ScheduleTask, now: number): string | undefined {
-  if (task.run.kind !== 'agent' || task.run.session !== 'fixed' || task.expiresAt === undefined) return undefined;
+  if (task.expiresAt === undefined) return undefined;
   const first = nextRunOf({ ...task, state: 'active' }, now);
   if (first !== undefined && first <= task.expiresAt) return undefined;
+  if (task.run.kind === 'bash') {
+    return (
+      `a waking --bash task lives until ${formatInZone(task.expiresAt, task.when.tz)} ${task.when.tz} (24h from registration) and the new schedule has no run before then; ` +
+      `\`fleetherd schedule rm ${task.id}\` and add a new task instead`
+    );
+  }
   return (
     `a fixed-session task lives until ${formatInZone(task.expiresAt, task.when.tz)} ${task.when.tz} (24h from registration) and the new schedule has no run before then; ` +
     `\`fleetherd schedule rm ${task.id}\` and add it again with --session new for a longer-lived one`
@@ -980,7 +1102,22 @@ type Carry = <V>(setting: TaskSetting, own: V | undefined) => V | undefined;
 function mergedBash(common: NewTaskInput, run: ScheduleRun, input: EditTaskInput, carry: Carry): NewTaskInput {
   const own = run.kind === 'bash' ? run : undefined;
   const timeoutMs = input.timeoutMs ?? carry('timeout', own?.timeoutMs);
-  return { ...common, bash: input.bash ?? own?.command ?? '', ...(timeoutMs !== undefined ? { timeoutMs } : {}) };
+  const ownWake = carry('wake', own?.wake);
+  const turningOff = input.wake === false || input.wakeOn === null || input.wakeOn?.trim().toLowerCase() === 'off';
+  const wakeFields: Pick<NewTaskInput, 'wake' | 'wakeOn' | 'wakeMax'> =
+    !turningOff && ownWake
+      ? {
+          wake: true,
+          wakeOn: input.wakeOn ?? formatWakeOn(ownWake.on),
+          wakeMax: input.wakeMax ?? ownWake.max,
+        }
+      : {};
+  return {
+    ...common,
+    ...wakeFields,
+    bash: input.bash ?? own?.command ?? '',
+    ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+  };
 }
 
 /** The prompt half of mergedInput: a prompt, its session, and the agent and model it keeps. */
@@ -1017,6 +1154,9 @@ function givenInput(input: EditTaskInput): NewTaskInput {
     ...(input.agent !== undefined ? { agent: input.agent } : {}),
     ...(typeof input.model === 'string' ? { model: input.model } : {}),
     ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : {}),
+    ...(input.wake !== undefined ? { wake: input.wake } : {}),
+    ...(typeof input.wakeOn === 'string' ? { wakeOn: input.wakeOn } : {}),
+    ...(input.wakeMax !== undefined ? { wakeMax: input.wakeMax } : {}),
   };
 }
 
@@ -1059,7 +1199,10 @@ export function describeWhen(when: ScheduleWhen, plain = false, locale: Locale =
 }
 
 export function describeRun(run: ScheduleRun, locale: Locale = 'en'): string {
-  if (run.kind === 'bash') return 'bash';
+  if (run.kind === 'bash') {
+    if (!run.wake) return 'bash';
+    return tWorkflows(locale, 'schedule.run.bashWake', { rule: formatWakeOn(run.wake.on), max: run.wake.max });
+  }
   const sessionKey: WorkflowMessageKey =
     run.session === 'fixed'
       ? 'schedule.run.fixed'
@@ -1216,6 +1359,17 @@ export function taskExpiredText(task: ScheduleTask, locale: Locale = 'en'): stri
   });
 }
 
+/** Posted where a waking bash task ran, when it hits its wake cap and ends. */
+export function taskWakeCapText(task: ScheduleTask, locale: Locale = 'en'): string {
+  const max = task.run.kind === 'bash' && task.run.wake ? task.run.wake.max : 0;
+  return tWorkflows(locale, 'schedule.wakeCap', {
+    id: task.id,
+    name: task.name,
+    wakes: task.wakes ?? max,
+    max,
+  });
+}
+
 /**
  * A task flattened for the CLI's TOON table: every value a string, number or boolean, the same keys
  * on every row. `detail` adds what it does and where, for `schedule show`; `here` marks the tasks
@@ -1242,7 +1396,11 @@ export function taskView(task: ScheduleTask, now: number, opts: { detail?: boole
   return {
     ...view,
     ...(task.run.kind === 'bash'
-      ? { command: task.run.command, timeout: formatDuration(task.run.timeoutMs) }
+      ? {
+          command: task.run.command,
+          timeout: formatDuration(task.run.timeoutMs),
+          ...(task.run.wake ? { wakeOn: formatWakeOn(task.run.wake.on), wakeMax: task.run.wake.max, wakes: task.wakes ?? 0 } : {}),
+        }
       : { prompt: task.run.prompt, ...(task.run.model ? { model: task.run.model } : {}) }),
     cwd: task.run.cwd ?? '',
     // `schedule show` is where the audit happens: the last MAX_RUN_HISTORY runs, newest first,
@@ -1314,4 +1472,25 @@ export function bashResultText(task: ScheduleTask, r: BashOutcome, timeoutMs: nu
   const fence = '`'.repeat(Math.max(3, longest + 1));
   const note = cut ? tWorkflows(locale, 'schedule.bash.attachedNote', { shown: shown.length, bytes: r.bytes }) : '';
   return { text: `${head}\n${fence}\n${shown}\n${fence}${note}`, attach: cut };
+}
+
+/**
+ * The turn text sent to a conversation's agent when a waking bash task matches its rule: one
+ * source-label line and the same output tail the chat card shows — nothing else from the gateway.
+ */
+export function bashWakeText(task: ScheduleTask, r: BashOutcome, timeoutMs: number): string {
+  const status = r.spawnError
+    ? r.spawnError
+    : r.aborted
+      ? 'interrupted'
+      : r.timedOut
+        ? `timed out (${formatDuration(timeoutMs)})`
+        : r.exitCode === null
+          ? 'signal'
+          : `exit ${r.exitCode}`;
+  const head = `↳ Scheduled task "${task.name}" · ${status} · ${formatDuration(r.durationMs)}`;
+  const out = r.tail.replace(/\s+$/, '');
+  if (!out) return head;
+  const shown = out.length > BASH_INLINE_LIMIT ? out.slice(out.length - BASH_INLINE_LIMIT) : out;
+  return `${head}\n\n${shown}`;
 }

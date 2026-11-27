@@ -3,6 +3,7 @@
 // Bundled by `scripts/webui-client.mjs` into `dist/webui-assets/app-<hash>.js` with two build-time
 // markers replaced before bundling with `clientIcons()` (`icons.ts`) and `CACHE_CORE` (`cache-script.ts`).
 
+import type { OfflineMachine, SlashCommandSpec } from '../../../types.js';
 import type { WebEvent, WebMessage } from '../protocol.js';
 import type { Topic } from '../topics.js';
 import { Emitter } from './base/event.js';
@@ -17,7 +18,7 @@ import type { LocalBubbleMessage } from './features/topic/composer/index.js';
 import type { ComposerTopicStatusBridge } from './features/topic/composer/types.js';
 import type { TopicEditorElements, TopicEditorHandle } from './features/topic/editor/index.js';
 import { stClock } from './features/topic/status/index.js';
-import type { LaunchChoice, TranscriptMessage, WorkdirScreen } from './features/topic/transcript/index.js';
+import type { HandoffAction, LaunchChoice, TranscriptMessage, WorkdirScreen } from './features/topic/transcript/index.js';
 import { isRowCurrent, type TopicSnapshotPayload } from './features/topics/index.js';
 import { applyDomI18n, getLocale, initLocale, onLocaleChange, setLocale, t as tr } from './i18n/index.js';
 import { getTheme, setTheme } from './theme.js';
@@ -61,12 +62,13 @@ interface CacheCoreBundle extends CacheCore {
   readonly snapshotMsgs: (d: TopicSnapshotPayload) => CacheMessage[];
 }
 
-interface AppState {
+interface TopicEditorSession {
+  panelId: string;
+  pinned: boolean;
+  editor: TopicEditorHandle | null;
+  topicId: string;
   data: Record<string, TranscriptMessage | undefined>;
   els: Record<string, HTMLElement | undefined>;
-  topics: Topic[];
-  topic: string;
-  epoch: number;
   synced: boolean;
   entering: boolean;
   stale: boolean;
@@ -74,12 +76,23 @@ interface AppState {
   launchWdSeq: number;
   launchSetupTopic: string;
   launchSetupSeq: number;
-  creatingTopic: boolean;
   seedWorkdir: WorkdirScreen | null;
-  readonly workdirCache: Map<string, WorkdirScreen>;
   settleOnResume: boolean;
   enterToken: number;
-  activeEditor: TopicEditorHandle | null;
+}
+
+interface AppState {
+  topics: Topic[];
+  topic: string;
+  focusedPanelId: string;
+  epoch: number;
+  offline: OfflineMachine[];
+  commands: SlashCommandSpec[];
+  sessions: Map<string, TopicEditorSession>;
+  sessionByRoot: WeakMap<HTMLElement, TopicEditorSession>;
+  bootstrapped: boolean;
+  creatingTopic: boolean;
+  readonly workdirCache: Map<string, WorkdirScreen>;
   insertHandler: ((topicId: string, text: string) => boolean) | null;
   settingsBridge: SettingsPluginBridge | null;
   streamConnected: boolean;
@@ -145,37 +158,138 @@ function currentTopicUrl(topicId: string): string {
   return `${url.pathname}${url.search}${url.hash}`;
 }
 
+const MAIN_PANEL_ID = 'topic:active';
+
+function createSession(): TopicEditorSession {
+  return {
+    panelId: '',
+    pinned: false,
+    editor: null,
+    topicId: '',
+    data: {},
+    els: {},
+    synced: false,
+    entering: true,
+    stale: false,
+    launch: null,
+    launchWdSeq: 0,
+    launchSetupTopic: '',
+    launchSetupSeq: 0,
+    seedWorkdir: null,
+    settleOnResume: false,
+    enterToken: 0,
+  };
+}
+
+function getOrCreateSession(state: AppState, root: HTMLElement): TopicEditorSession {
+  let session = state.sessionByRoot.get(root);
+  if (!session) {
+    session = createSession();
+    state.sessionByRoot.set(root, session);
+  }
+  return session;
+}
+
+function mainSession(state: AppState): TopicEditorSession | null {
+  return state.sessions.get(MAIN_PANEL_ID) ?? null;
+}
+
+function focusedSession(state: AppState): TopicEditorSession | null {
+  const focused = state.sessions.get(state.focusedPanelId);
+  if (focused) return focused;
+  const main = mainSession(state);
+  if (main) return main;
+  for (const s of state.sessions.values()) return s;
+  return null;
+}
+
+function sessionsForTopic(state: AppState, topicId: string): TopicEditorSession[] {
+  const out: TopicEditorSession[] = [];
+  for (const s of state.sessions.values()) {
+    if (s.topicId === topicId) out.push(s);
+  }
+  return out;
+}
+
+function subscribedTopics(state: AppState): string[] {
+  const out: string[] = [];
+  const main = mainSession(state);
+  if (main?.topicId) out.push(main.topicId);
+  for (const s of state.sessions.values()) {
+    if (s.topicId && !out.includes(s.topicId)) out.push(s.topicId);
+  }
+  if (out.length === 0 && state.topic) out.push(state.topic);
+  return out;
+}
+
+function visibleTopicIds(rt: AppRuntime): string[] {
+  const out: string[] = [];
+  for (const group of rt.shell.dock.getGroups()) {
+    const panelId = group.activePanelId;
+    if (!panelId) continue;
+    const session = rt.state.sessions.get(panelId);
+    if (session?.topicId && !out.includes(session.topicId)) out.push(session.topicId);
+  }
+  if (out.length === 0 && rt.state.topic) out.push(rt.state.topic);
+  return out;
+}
+
+function setFocusedTopicSession(rt: AppRuntime, panelId: string): void {
+  const session = rt.state.sessions.get(panelId);
+  if (!session) return;
+  const changed = rt.state.focusedPanelId !== panelId || rt.state.topic !== session.topicId;
+  rt.state.focusedPanelId = panelId;
+  if (session.topicId) rt.state.topic = session.topicId;
+  if (!changed) return;
+  if (session.topicId) {
+    rt.readsService.markTopicFromList(session.topicId, rt.state.topics);
+    rt.readsService.reportSeen();
+    const active = topicById(rt.state, session.topicId);
+    rt.events.emit('topic.active', { id: session.topicId, topic: active as unknown as TopicInfo | undefined });
+  }
+}
+
+function markVisibleTopicsRead(rt: AppRuntime): void {
+  for (const id of visibleTopicIds(rt)) {
+    rt.readsService.markTopicFromList(id, rt.state.topics);
+  }
+  rt.readsService.reportSeen();
+}
+
 function ensureTopicEditorOpen(rt: AppRuntime, topicId: string): void {
-  const panel = rt.shell.dock.getPanel('topic:active');
-  const existing = rt.state.activeEditor;
+  const panel = rt.shell.dock.getPanel(MAIN_PANEL_ID);
+  const session = mainSession(rt.state);
+  const existing = session?.editor ?? null;
   if (panel && existing) {
-    existing.update?.({ topicId });
-    if (rt.shell.getMode() !== 'mobile') {
+    if (existing.getTopicId() !== topicId) {
+      rt.shell.editors.open('topic', { topicId }, { id: MAIN_PANEL_ID });
+    } else if (rt.shell.getMode() !== 'mobile' || rt.shell.dock.getActiveGroupPanel() !== MAIN_PANEL_ID) {
+      existing.update?.({ topicId });
       panel.focus();
-    } else if (rt.shell.dock.getActiveGroupPanel() !== 'topic:active') {
-      panel.focus();
-      if (document.activeElement === existing.els.input) {
-        existing.els.input.blur();
-      }
+    } else {
+      existing.update?.({ topicId });
+    }
+    if (rt.shell.getMode() === 'mobile' && document.activeElement === existing.els.input) {
+      existing.els.input.blur();
     }
     return;
   }
-  rt.state.activeEditor = null;
-  rt.shell.editors.open('topic', { topicId }, { id: 'topic:active' });
+  rt.shell.editors.open('topic', { topicId }, { id: MAIN_PANEL_ID });
 }
 
-function resetTopicView(rt: AppRuntime, id: string): void {
-  const editor = rt.state.activeEditor;
-  rt.state.topic = id;
-  rt.state.data = {};
-  rt.state.els = {};
-  rt.state.stale = false;
-  rt.state.entering = true;
-  rt.state.synced = false;
-  rt.state.launch = null;
-  rt.state.launchSetupTopic = '';
-  rt.state.launchSetupSeq = 0;
-  rt.state.seedWorkdir = null;
+function resetSessionView(session: TopicEditorSession, id: string): void {
+  const editor = session.editor;
+  session.topicId = id;
+  session.data = {};
+  session.els = {};
+  session.stale = false;
+  session.entering = true;
+  session.synced = false;
+  session.launch = null;
+  session.launchSetupTopic = '';
+  session.launchSetupSeq = 0;
+  session.seedWorkdir = null;
+  session.settleOnResume = false;
   if (editor) {
     editor.els.log.replaceChildren();
     editor.status?.closeModelPop();
@@ -188,43 +302,69 @@ function canResumeFromCache(c: CacheCopy | null, epoch: number): c is CacheCopy 
   return Boolean(c && c.msgs.length && c.last && epoch && c.epoch === epoch);
 }
 
-function adoptCachedCopy(rt: AppRuntime, id: string, c: CacheCopy, resume: boolean): void {
-  const editor = rt.state.activeEditor;
+function adoptCachedCopy(
+  rt: AppRuntime,
+  session: TopicEditorSession,
+  id: string,
+  c: CacheCopy,
+  resume: boolean,
+): void {
+  const editor = session.editor;
   const composer = editor?.composer;
   if (composer) {
     for (const msg of c.msgs) composer.claim(msg as unknown as WebMessage);
   }
-  if (resume) rt.state.stale = c.stale;
+  if (resume) session.stale = c.stale;
   if (!c.msgs.length) return;
   const row = topicById(rt.state, id);
   const current = resume && isRowCurrent(row, c.last, (a, b) => rt.cacheService.isNewer(a, b));
   editor?.transcript?.adopt(c.msgs as unknown as readonly TranscriptMessage[], current);
 }
 
-function applyCachedTopicEntry(rt: AppRuntime, id: string, c: CacheCopy | null): boolean {
+function applyCachedTopicEntry(
+  rt: AppRuntime,
+  session: TopicEditorSession,
+  id: string,
+  c: CacheCopy | null,
+): boolean {
   const resume = canResumeFromCache(c, rt.state.epoch);
-  if (c) adoptCachedCopy(rt, id, c, resume);
-  if (id) rt.state.activeEditor?.composer?.showUnsent(id);
+  if (c) adoptCachedCopy(rt, session, id, c, resume);
+  if (id) session.editor?.composer?.showUnsent(id);
   if (resume && c) {
-    rt.streamClient.setLastEventId(c.last);
-    rt.state.settleOnResume = true;
+    rt.streamClient.setLastEventId(c.last, id);
+    session.settleOnResume = true;
+  } else if (id) {
+    rt.streamClient.clearLastEventId(id);
   }
   return resume;
 }
 
-function enterTopic(rt: AppRuntime, id: string, opts?: { readonly skipCache?: boolean }): void {
-  const mine = ++rt.state.enterToken;
+function enterSession(
+  rt: AppRuntime,
+  session: TopicEditorSession,
+  id: string,
+  opts?: { readonly skipCache?: boolean },
+): void {
+  const mine = ++session.enterToken;
   let used = false;
+  const multi = rt.state.sessions.size > 1;
   const v = id ? rt.cacheService.getVersion(id) : undefined;
-  rt.streamClient.close();
-  const here = (): boolean => mine === rt.state.enterToken && id === rt.state.topic;
+  if (!multi) rt.streamClient.close();
+  const here = (): boolean =>
+    mine === session.enterToken &&
+    id === session.topicId &&
+    rt.state.sessions.get(session.panelId) === session;
 
   const go = (c: CacheCopy | null): void => {
     if (used) return;
     used = true;
     if (!here()) return;
-    const resume = applyCachedTopicEntry(rt, id, c);
-    rt.streamClient.connect(resume);
+    const resume = applyCachedTopicEntry(rt, session, id, c);
+    if (multi) {
+      rt.streamClient.connect(true, true);
+    } else {
+      rt.streamClient.connect(resume);
+    }
   };
 
   if (opts?.skipCache || !id) {
@@ -242,7 +382,7 @@ function enterTopic(rt: AppRuntime, id: string, opts?: { readonly skipCache?: bo
       return;
     }
     if (c && c.msgs.length && here()) {
-      rt.state.activeEditor?.transcript?.adopt(c.msgs as unknown as readonly TranscriptMessage[]);
+      session.editor?.transcript?.adopt(c.msgs as unknown as readonly TranscriptMessage[]);
     }
   });
   const epoch = rt.state.epoch;
@@ -260,23 +400,23 @@ interface SwitchTopicOptions {
   readonly workdir?: WorkdirScreen;
 }
 
-function leaveCurrentTopic(rt: AppRuntime, topicId: string): void {
-  rt.cacheService.leave();
-  rt.state.activeEditor?.transcript?.scroll.saveView(topicId, rt.state.entering);
-  rt.state.activeEditor?.composer?.stashDraft(topicId);
+function leaveSessionTopic(rt: AppRuntime, session: TopicEditorSession | null, topicId: string): void {
+  rt.cacheService.leave(topicId);
+  session?.editor?.transcript?.scroll.saveView(topicId, session.entering);
+  session?.editor?.composer?.stashDraft(topicId);
 }
 
-function mountSeededLaunch(rt: AppRuntime, opts: SwitchTopicOptions): void {
+function mountSeededLaunch(rt: AppRuntime, session: TopicEditorSession, opts: SwitchTopicOptions): void {
   if (!opts.launch) {
-    rt.state.activeEditor?.transcript?.banners.showSkeleton();
+    session.editor?.transcript?.banners.showSkeleton();
     return;
   }
-  rt.state.launch = opts.launch;
+  session.launch = opts.launch;
   if (opts.workdir) {
     cacheWorkdirScreen(rt.state, opts.workdir);
-    rt.state.seedWorkdir = opts.workdir;
+    session.seedWorkdir = opts.workdir;
   }
-  rt.state.activeEditor?.transcript?.banners.syncLaunch(true);
+  session.editor?.transcript?.banners.syncLaunch(true);
 }
 
 function closeMobileSidebar(rt: AppRuntime): void {
@@ -287,21 +427,29 @@ function closeMobileSidebar(rt: AppRuntime): void {
 
 function switchTopic(rt: AppRuntime, id: string, opts?: SwitchTopicOptions): void {
   if (!id) return;
-  const prev = rt.state.topic;
-  if (prev && prev !== id && !opts?.alreadyLeft) leaveCurrentTopic(rt, prev);
+  const session = mainSession(rt.state);
+  const prev = session ? session.topicId : rt.state.topic;
+  if (prev && prev !== id && !opts?.alreadyLeft) leaveSessionTopic(rt, session, prev);
+  rt.state.topic = id;
+  rt.state.focusedPanelId = MAIN_PANEL_ID;
   if (prev !== id) {
-    resetTopicView(rt, id);
+    if (session) resetSessionView(session, id);
     history.replaceState(null, '', currentTopicUrl(id));
     ensureTopicEditorOpen(rt, id);
+    const activeMain = mainSession(rt.state);
     rt.readsService.markTopicFromList(id, rt.state.topics);
     rt.readsService.reportSeen();
     const active = topicById(rt.state, id);
     rt.events.emit('topic.active', { id, topic: active as unknown as TopicInfo | undefined });
-    mountSeededLaunch(rt, opts ?? {});
-    enterTopic(rt, id, opts?.fresh ? { skipCache: true } : undefined);
+    if (activeMain) {
+      mountSeededLaunch(rt, activeMain, opts ?? {});
+      enterSession(rt, activeMain, id, opts?.fresh ? { skipCache: true } : undefined);
+    }
   } else {
     ensureTopicEditorOpen(rt, id);
     rt.readsService.reportSeen();
+    const active = topicById(rt.state, id);
+    rt.events.emit('topic.active', { id, topic: active as unknown as TopicInfo | undefined });
   }
   closeMobileSidebar(rt);
 }
@@ -316,11 +464,12 @@ interface CreateTopicResponse {
 
 function beginCreateTopicView(rt: AppRuntime, prevTopic: string): void {
   closeMobileSidebar(rt);
-  ++rt.state.enterToken;
+  const session = mainSession(rt.state);
+  if (session) ++session.enterToken;
   if (!prevTopic) return;
-  leaveCurrentTopic(rt, prevTopic);
+  leaveSessionTopic(rt, session, prevTopic);
   ensureTopicEditorOpen(rt, prevTopic);
-  const editor = rt.state.activeEditor;
+  const editor = mainSession(rt.state)?.editor;
   if (!editor) return;
   editor.els.log.replaceChildren();
   editor.transcript?.banners.resetForTopicSwitch();
@@ -334,43 +483,119 @@ function prependCreatedTopic(rt: AppRuntime, topic: Topic | undefined): void {
 }
 
 function restoreAfterCreateFailure(rt: AppRuntime, prevTopic: string, message?: string): void {
-  if (prevTopic && prevTopic === rt.state.topic) {
+  const session = mainSession(rt.state);
+  const current = session ? session.topicId : rt.state.topic;
+  if (prevTopic && prevTopic === current) {
+    if (session) session.topicId = '';
     rt.state.topic = '';
     switchTopic(rt, prevTopic);
   }
-  if (message && rt.state.activeEditor) {
-    rt.state.activeEditor.els.noteEl.textContent = message;
+  const editor = mainSession(rt.state)?.editor;
+  if (message && editor) {
+    editor.els.noteEl.textContent = message;
   }
 }
 
-async function createTopic(rt: AppRuntime, seed?: { readonly text?: string; readonly draft?: string }): Promise<boolean> {
+function applyCreatedTopicDraft(rt: AppRuntime, id: string, draft: string | undefined): void {
+  if (!draft) return;
+  const editor = mainSession(rt.state)?.editor;
+  if (editor?.composer) {
+    editor.composer.seedDraft(id, draft);
+  } else {
+    editor?.insertIntoComposer(draft);
+  }
+}
+
+interface CreateTopicSeed {
+  readonly text?: string;
+  readonly draft?: string;
+  readonly agent?: string;
+  readonly cwd?: string;
+  readonly onError?: (err: string) => void;
+}
+
+function buildCreateTopicBody(seed?: CreateTopicSeed): Record<string, string> {
+  const body: Record<string, string> = {};
+  if (seed?.agent) body.agent = seed.agent;
+  if (seed?.cwd) body.cwd = seed.cwd;
+  return body;
+}
+
+function finishCreatedTopic(
+  rt: AppRuntime,
+  id: string,
+  prevTopic: string,
+  data: CreateTopicResponse,
+  draft: string | undefined,
+): void {
+  prependCreatedTopic(rt, data.topic);
+  switchTopic(rt, id, {
+    fresh: true,
+    alreadyLeft: Boolean(prevTopic),
+    ...(data.agents ? { launch: data.agents } : {}),
+    ...(data.workdir ? { workdir: data.workdir } : {}),
+  });
+  applyCreatedTopicDraft(rt, id, draft);
+}
+
+async function createTopic(rt: AppRuntime, seed?: CreateTopicSeed): Promise<boolean> {
   if (rt.state.creatingTopic) return false;
   rt.state.creatingTopic = true;
-  const prevTopic = rt.state.topic;
+  const prevTopic = mainSession(rt.state)?.topicId || rt.state.topic;
   beginCreateTopicView(rt, prevTopic);
   try {
-    const res = await post('api/topics', {}, 0);
+    const res = await post('api/topics', buildCreateTopicBody(seed), 0);
     const data = (await res.json().catch(() => ({}))) as CreateTopicResponse;
     const id = res.ok ? (data.topic?.id ?? data.id) : undefined;
     if (!id) {
       restoreAfterCreateFailure(rt, prevTopic, res.ok ? undefined : data.error || tr('common.networkError'));
+      if (!res.ok) seed?.onError?.(data.error || `HTTP ${res.status}`);
       return false;
     }
-    prependCreatedTopic(rt, data.topic);
-    switchTopic(rt, id, {
-      fresh: true,
-      alreadyLeft: Boolean(prevTopic),
-      ...(data.agents ? { launch: data.agents } : {}),
-      ...(data.workdir ? { workdir: data.workdir } : {}),
-    });
-    if (seed?.draft) rt.state.activeEditor?.insertIntoComposer(seed.draft);
+    finishCreatedTopic(rt, id, prevTopic, data, seed?.draft);
     return true;
   } catch {
     restoreAfterCreateFailure(rt, prevTopic, tr('common.networkError'));
+    seed?.onError?.(tr('topic.createReachErr'));
     return false;
   } finally {
     rt.state.creatingTopic = false;
   }
+}
+
+function buildHandoffDraft(
+  handoff: {
+    readonly fromAgent: string;
+    readonly sessionId: string;
+    readonly workdir?: string;
+    readonly fromTopicId?: string;
+    readonly fromTopicTitle?: string;
+  },
+  fallbackTopic: { readonly id: string; readonly title?: string } | null | undefined,
+): string {
+  const lines = [tr('msg.handoffDraftHead', { agent: handoff.fromAgent, sessionId: handoff.sessionId })];
+  if (handoff.workdir) {
+    lines.push(tr('msg.handoffDraftWorkdir', { workdir: handoff.workdir }));
+  }
+  const topicId = handoff.fromTopicId || fallbackTopic?.id;
+  const title = handoff.fromTopicTitle || fallbackTopic?.title;
+  let link: string | undefined;
+  if (topicId) {
+    const rel = `?t=${encodeURIComponent(topicId)}`;
+    try {
+      link = new URL(rel, window.location.href).href;
+    } catch {
+      link = rel;
+    }
+  }
+  if (title && link) {
+    lines.push(tr('msg.handoffDraftTopicWithLink', { title, link }));
+  } else if (link) {
+    lines.push(tr('msg.handoffDraftTopicLinkOnly', { link }));
+  } else if (title) {
+    lines.push(tr('msg.handoffDraftTopicTitleOnly', { title }));
+  }
+  return `${lines.join('\n')}\n\n`;
 }
 
 async function deleteTopic(rt: AppRuntime, id: string): Promise<void> {
@@ -413,19 +638,20 @@ function cacheWorkdirScreen(state: AppState, screen: WorkdirScreen, isRoot = fal
 
 function loadLaunchWorkdirs(
   rt: AppRuntime,
+  session: TopicEditorSession,
   tid: string,
   agentId: string,
   opts?: { readonly dir?: string; readonly atRoot?: boolean; readonly silent?: boolean },
 ): void {
-  const seq = ++rt.state.launchWdSeq;
+  const seq = ++session.launchWdSeq;
   const params = new URLSearchParams({ t: tid, agent: agentId });
   if (opts?.dir) params.set('dir', opts.dir);
   if (opts?.atRoot) params.set('root', '1');
   void fetch(`api/topics/workdirs?${params.toString()}`, { credentials: 'same-origin' })
     .then((r) => (r.ok ? (r.json() as Promise<WorkdirScreen>) : null))
     .then((screen) => {
-      if (seq !== rt.state.launchWdSeq || rt.state.topic !== tid) return;
-      const banners = rt.state.activeEditor?.transcript?.banners;
+      if (seq !== session.launchWdSeq || session.topicId !== tid) return;
+      const banners = session.editor?.transcript?.banners;
       if (screen && typeof screen.browsing === 'string') {
         cacheWorkdirScreen(rt.state, screen, Boolean(opts?.atRoot || !opts?.dir));
         banners?.setLaunchWorkdir(screen, false);
@@ -436,8 +662,8 @@ function loadLaunchWorkdirs(
       }
     })
     .catch(() => {
-      if (seq !== rt.state.launchWdSeq || rt.state.topic !== tid) return;
-      const banners = rt.state.activeEditor?.transcript?.banners;
+      if (seq !== session.launchWdSeq || session.topicId !== tid) return;
+      const banners = session.editor?.transcript?.banners;
       if (opts?.silent) banners?.clearLaunchWorkdirLoading();
       else banners?.setLaunchWorkdir(null, false);
     });
@@ -452,11 +678,11 @@ function normalizeCachedWorkdir(screen: WorkdirScreen, cwd: string): WorkdirScre
   };
 }
 
-function handleLaunchShown(rt: AppRuntime, tid: string, agentId: string): void {
+function handleLaunchShown(rt: AppRuntime, session: TopicEditorSession, tid: string, agentId: string): void {
   if (!tid) return;
-  const banners = rt.state.activeEditor?.transcript?.banners;
-  const seeded = rt.state.seedWorkdir;
-  rt.state.seedWorkdir = null;
+  const banners = session.editor?.transcript?.banners;
+  const seeded = session.seedWorkdir;
+  session.seedWorkdir = null;
   if (seeded && seeded.agentId === agentId) {
     banners?.setLaunchWorkdir(seeded, false);
     return;
@@ -465,23 +691,23 @@ function handleLaunchShown(rt: AppRuntime, tid: string, agentId: string): void {
   if (cached) {
     const cwd = topicById(rt.state, tid)?.dir?.path || cached.root || cached.browsing;
     banners?.setLaunchWorkdir(normalizeCachedWorkdir(cached, cwd), false);
-    loadLaunchWorkdirs(rt, tid, agentId, { silent: true });
+    loadLaunchWorkdirs(rt, session, tid, agentId, { silent: true });
     return;
   }
-  loadLaunchWorkdirs(rt, tid, agentId);
+  loadLaunchWorkdirs(rt, session, tid, agentId);
 }
 
 function rollbackAgentChoice(
-  rt: AppRuntime,
+  session: TopicEditorSession,
   els: TopicEditorElements,
   prevAgent: string | undefined,
   prevScreen: WorkdirScreen | null,
   errorMsg: string,
 ): void {
-  ++rt.state.launchWdSeq;
-  const banners = rt.state.activeEditor?.transcript?.banners;
-  if (prevAgent && rt.state.launch) {
-    rt.state.launch = { ...rt.state.launch, current: prevAgent };
+  ++session.launchWdSeq;
+  const banners = session.editor?.transcript?.banners;
+  if (prevAgent && session.launch) {
+    session.launch = { ...session.launch, current: prevAgent };
     banners?.setLaunchAgent(prevAgent, { fold: false });
   }
   if (prevScreen) banners?.setLaunchWorkdir(prevScreen, false);
@@ -491,94 +717,100 @@ function rollbackAgentChoice(
 
 function selectLaunchAgent(
   rt: AppRuntime,
+  session: TopicEditorSession,
   els: TopicEditorElements,
   tid: string,
   agentId: string,
 ): void {
   const { state } = rt;
-  const banners = state.activeEditor?.transcript?.banners;
-  const prevAgent = state.launch?.current;
+  const banners = session.editor?.transcript?.banners;
+  const prevAgent = session.launch?.current;
   const prevScreen = banners?.getLaunchWorkdir() ?? null;
   const sameAgent = prevAgent === agentId;
-  const setupSeq = ++state.launchSetupSeq;
-  state.launchSetupTopic = tid;
+  const setupSeq = ++session.launchSetupSeq;
+  session.launchSetupTopic = tid;
 
-  if (state.launch) state.launch = { ...state.launch, current: agentId };
+  if (session.launch) session.launch = { ...session.launch, current: agentId };
   banners?.setLaunchAgent(agentId, { fold: true });
-  state.activeEditor?.status?.onAgentChosen();
+  session.editor?.status?.onAgentChosen();
 
   // Keep the picker interactive when re-confirming the current agent or hitting client cache.
   const keepCurrent = sameAgent && prevScreen?.agentId === agentId;
   const cached = keepCurrent ? null : state.workdirCache.get(agentId);
   if (cached) {
     banners?.setLaunchWorkdir(normalizeCachedWorkdir(cached, cached.root || cached.browsing), false);
-    loadLaunchWorkdirs(rt, tid, agentId, { atRoot: true, silent: true });
+    loadLaunchWorkdirs(rt, session, tid, agentId, { atRoot: true, silent: true });
   } else if (!keepCurrent) {
     banners?.setLaunchWorkdir(null, true);
-    loadLaunchWorkdirs(rt, tid, agentId, { atRoot: true });
+    loadLaunchWorkdirs(rt, session, tid, agentId, { atRoot: true });
   }
 
   void post('api/topics/setup', { topic: tid, agent: agentId }, 1)
     .then((r) => r.json().then((j: { ok?: boolean; agent?: string; cwd?: string; error?: string }) => ({ r, j })))
     .then(({ r, j }) => {
-      if (state.topic !== tid || setupSeq !== state.launchSetupSeq) return;
+      if (session.topicId !== tid || setupSeq !== session.launchSetupSeq) return;
       if (!r.ok || !j.ok) {
-        rollbackAgentChoice(rt, els, prevAgent, prevScreen, j.error || tr('common.networkError'));
+        rollbackAgentChoice(session, els, prevAgent, prevScreen, j.error || tr('common.networkError'));
         return;
       }
       if (j.cwd) banners?.setLaunchCwd(j.cwd);
-      state.activeEditor?.status?.peekOptions();
+      session.editor?.status?.peekOptions();
     })
     .catch(() => {
-      if (state.topic !== tid || setupSeq !== state.launchSetupSeq) return;
-      rollbackAgentChoice(rt, els, prevAgent, prevScreen, tr('common.networkError'));
+      if (session.topicId !== tid || setupSeq !== session.launchSetupSeq) return;
+      rollbackAgentChoice(session, els, prevAgent, prevScreen, tr('common.networkError'));
     });
 }
 
-function browseLaunchWorkdir(rt: AppRuntime, tid: string, dir: string): void {
-  const agentId = rt.state.launch?.current;
+function browseLaunchWorkdir(rt: AppRuntime, session: TopicEditorSession, tid: string, dir: string): void {
+  const agentId = session.launch?.current;
   if (!tid || !agentId) return;
-  const banners = rt.state.activeEditor?.transcript?.banners;
+  const banners = session.editor?.transcript?.banners;
   const cached = rt.state.workdirCache.get(`${agentId}\0${dir}`);
   if (cached) {
     const cwd = banners?.getLaunchWorkdir()?.current || cached.root || cached.browsing;
     banners?.setLaunchWorkdir(normalizeCachedWorkdir(cached, cwd), false);
-    loadLaunchWorkdirs(rt, tid, agentId, { dir, silent: true });
+    loadLaunchWorkdirs(rt, session, tid, agentId, { dir, silent: true });
     return;
   }
   banners?.setLaunchWorkdir(null, true);
-  loadLaunchWorkdirs(rt, tid, agentId, { dir });
+  loadLaunchWorkdirs(rt, session, tid, agentId, { dir });
 }
 
-function pickLaunchWorkdir(rt: AppRuntime, els: TopicEditorElements, tid: string, cwd: string): void {
-  const { state } = rt;
-  const agentId = state.launch?.current;
+function pickLaunchWorkdir(
+  session: TopicEditorSession,
+  els: TopicEditorElements,
+  tid: string,
+  cwd: string,
+): void {
+  const agentId = session.launch?.current;
   if (!tid || !agentId) return;
-  const setupSeq = ++state.launchSetupSeq;
-  state.launchSetupTopic = tid;
+  const setupSeq = ++session.launchSetupSeq;
+  session.launchSetupTopic = tid;
   // Cancel any in-flight background directory refresh so it cannot overwrite the chosen path.
-  ++state.launchWdSeq;
-  state.activeEditor?.transcript?.banners.setLaunchCwd(cwd, { fold: true });
-  state.activeEditor?.status?.onAgentChosen();
+  ++session.launchWdSeq;
+  session.editor?.transcript?.banners.setLaunchCwd(cwd, { fold: true });
+  session.editor?.status?.onAgentChosen();
   void post('api/topics/setup', { topic: tid, agent: agentId, cwd }, 1)
     .then((r) => r.json().then((j: { ok?: boolean; agent?: string; cwd?: string; error?: string }) => ({ r, j })))
     .then(({ r, j }) => {
-      if (state.topic !== tid || setupSeq !== state.launchSetupSeq) return;
+      if (session.topicId !== tid || setupSeq !== session.launchSetupSeq) return;
       if (!r.ok || !j.ok) {
         els.noteEl.textContent = j.error || tr('common.networkError');
         return;
       }
-      if (j.cwd) state.activeEditor?.transcript?.banners.setLaunchCwd(j.cwd);
-      state.activeEditor?.status?.peekOptions();
+      if (j.cwd) session.editor?.transcript?.banners.setLaunchCwd(j.cwd);
+      session.editor?.status?.peekOptions();
     })
     .catch(() => {
-      if (state.topic !== tid || setupSeq !== state.launchSetupSeq) return;
+      if (session.topicId !== tid || setupSeq !== session.launchSetupSeq) return;
       els.noteEl.textContent = tr('common.networkError');
     });
 }
 
 function buildTranscriptDeps(rt: AppRuntime, els: TopicEditorElements, getTopicId: () => string) {
   const { state, icons, codeView } = rt;
+  const session = getOrCreateSession(state, els.root);
   return {
     log: els.log,
     btwBox: els.btwBox,
@@ -588,58 +820,82 @@ function buildTranscriptDeps(rt: AppRuntime, els: TopicEditorElements, getTopicI
     machineNoteEl: els.machineNoteEl,
     forkNote: els.forkNote,
     getExtraCodeRoots: () => Array.from(document.querySelectorAll<HTMLElement>('.wb-reader-editor')),
-    getData: () => state.data,
-    getEls: () => state.els,
+    getData: () => session.data,
+    getEls: () => session.els,
     getTopic: getTopicId,
     getTopics: () => state.topics,
     topicById: (id: string) => topicById(state, id) ?? null,
     getEpoch: () => state.epoch,
-    isSynced: () => state.synced,
-    isStale: () => state.stale,
-    isEntering: () => state.entering,
-    getLaunch: () => state.launch,
+    isSynced: () => session.synced,
+    isStale: () => session.stale,
+    isEntering: () => session.entering,
+    getLaunch: () => session.launch,
     keyOf,
     isHistory: (m: TranscriptMessage | undefined) => isHistory(state, m),
     getIcons: () => icons,
     formatStatusClock: stClock,
     codeView,
-    copyText: (s: string, cb: (ok: boolean) => void) => state.activeEditor?.composer?.copyText(s, cb),
-    hasOutbox: (nonce: string) => Boolean(state.activeEditor?.composer?.hasOutbox(nonce)),
-    claim: (m: TranscriptMessage) => Boolean(state.activeEditor?.composer?.claim(m as unknown as WebMessage)),
-    adoptLegacy: (m: TranscriptMessage) => Boolean(state.activeEditor?.composer?.adoptLegacy(m as unknown as WebMessage)),
-    showUnsent: (tId: string) => state.activeEditor?.composer?.showUnsent(tId),
-    cacheSave: () => rt.cacheService.scheduleSave(),
+    copyText: (s: string, cb: (ok: boolean) => void) => session.editor?.composer?.copyText(s, cb),
+    hasOutbox: (nonce: string) => Boolean(session.editor?.composer?.hasOutbox(nonce)),
+    claim: (m: TranscriptMessage) => Boolean(session.editor?.composer?.claim(m as unknown as WebMessage)),
+    adoptLegacy: (m: TranscriptMessage) => Boolean(session.editor?.composer?.adoptLegacy(m as unknown as WebMessage)),
+    showUnsent: (tId: string) => session.editor?.composer?.showUnsent(tId),
+    cacheSave: () => rt.cacheService.scheduleSave(session.topicId),
     getHistoryMessage: () => undefined,
     repaintHistoryMessage: () => {},
     paintTopics: () => rt.events.emit('topic.list', { topics: toTopicInfos(state.topics) }),
-    paintStatus: () => state.activeEditor?.status?.paintStatus(),
+    paintStatus: () => session.editor?.status?.paintStatus(),
     switchTopic: (id: string) => switchTopic(rt, id),
     isNarrow: () => rt.shell.getMode() !== 'desktop',
     setSidebar: (open: boolean) => rt.shell.setPartVisible('sidebar', open),
     openShot: (img: HTMLImageElement) => {
       void rt.commands.execute(READER_OPEN_IMAGE_COMMAND, { src: img.src, alt: img.alt, restoreFocus: img });
     },
-    sendCommand: (cmd: string) => state.activeEditor?.composer?.command(cmd),
-    onLaunchShown: (agentId: string) => handleLaunchShown(rt, getTopicId(), agentId),
+    sendCommand: (cmd: string) => session.editor?.composer?.command(cmd),
+    onLaunchShown: (agentId: string) => handleLaunchShown(rt, session, getTopicId(), agentId),
     selectLaunchAgent: (agentId: string) => {
       const tid = getTopicId();
-      if (tid) selectLaunchAgent(rt, els, tid, agentId);
+      if (tid) selectLaunchAgent(rt, session, els, tid, agentId);
     },
-    browseLaunchWorkdir: (dir: string) => browseLaunchWorkdir(rt, getTopicId(), dir),
-    pickLaunchWorkdir: (cwd: string) => pickLaunchWorkdir(rt, els, getTopicId(), cwd),
+    browseLaunchWorkdir: (dir: string) => browseLaunchWorkdir(rt, session, getTopicId(), dir),
+    pickLaunchWorkdir: (cwd: string) => pickLaunchWorkdir(session, els, getTopicId(), cwd),
     openReader: (link: Element) => {
       void rt.commands.execute(READER_OPEN_COMMAND, link);
     },
-    deliverLocal: (nonce: string) => state.activeEditor?.composer?.deliver(nonce),
-    copyLocal: (nonce: string, btn: Element) => {
-      if (btn instanceof HTMLElement) state.activeEditor?.composer?.copyLocal(nonce, btn);
+    onHandoff: (handoff: HandoffAction, btn: HTMLButtonElement) => {
+      if (btn.disabled) return;
+      btn.disabled = true;
+      btn.classList.add('busy');
+      const cur = topicById(state, session.topicId || getTopicId());
+      const draft = buildHandoffDraft(handoff, cur);
+      const cwd = handoff.workdir && handoff.sameHost !== false ? handoff.workdir : undefined;
+      let errMsg: string | undefined;
+      void createTopic(rt, {
+        agent: handoff.agentId,
+        ...(cwd ? { cwd } : {}),
+        draft,
+        onError: (err) => {
+          errMsg = err;
+        },
+      }).then((ok) => {
+        btn.disabled = false;
+        btn.classList.remove('busy');
+        if (!ok) {
+          els.noteEl.textContent = tr('topic.createFailed', { err: errMsg || tr('topic.createReachErr') });
+        }
+      });
     },
-    discardLocal: (nonce: string) => state.activeEditor?.composer?.discardLocal(nonce),
+    deliverLocal: (nonce: string) => session.editor?.composer?.deliver(nonce),
+    copyLocal: (nonce: string, btn: Element) => {
+      if (btn instanceof HTMLElement) session.editor?.composer?.copyLocal(nonce, btn);
+    },
+    discardLocal: (nonce: string) => session.editor?.composer?.discardLocal(nonce),
   };
 }
 
 function buildStatusDeps(rt: AppRuntime, els: TopicEditorElements, getTopicId: () => string) {
   const { state, icons } = rt;
+  const session = getOrCreateSession(state, els.root);
   return {
     statusEl: els.statusEl,
     pendingQueueEl: els.pendingQueueEl,
@@ -653,8 +909,8 @@ function buildStatusDeps(rt: AppRuntime, els: TopicEditorElements, getTopicId: (
       mpClose: els.mpClose,
     },
     getTopic: getTopicId,
-    isSynced: () => state.synced,
-    hasLauncher: () => Boolean(state.activeEditor?.transcript?.banners.hasLaunch()),
+    isSynced: () => session.synced,
+    hasLauncher: () => Boolean(session.editor?.transcript?.banners.hasLaunch()),
     hasMessages: () => Boolean(els.log.querySelector('.m')),
     narrow: () => rt.shell.getMode() !== 'desktop',
     getIcons: () => icons.icon,
@@ -662,13 +918,14 @@ function buildStatusDeps(rt: AppRuntime, els: TopicEditorElements, getTopicId: (
     setNote: (msg: string) => {
       els.noteEl.textContent = msg;
     },
-    onRetireLocalNonce: (nonce: string) => state.activeEditor?.composer?.retireLocalNonce(nonce),
-    onRecallContent: (content: string) => state.activeEditor?.composer?.recallContent(content),
+    onRetireLocalNonce: (nonce: string) => session.editor?.composer?.retireLocalNonce(nonce),
+    onRecallContent: (content: string) => session.editor?.composer?.recallContent(content),
   };
 }
 
 function buildComposerDeps(rt: AppRuntime, els: TopicEditorElements, getTopicId: () => string) {
   const { state, icons, boot, overlays } = rt;
+  const session = getOrCreateSession(state, els.root);
   return {
     els: {
       input: els.input,
@@ -697,40 +954,40 @@ function buildComposerDeps(rt: AppRuntime, els: TopicEditorElements, getTopicId:
       void rt.commands.execute(READER_OPEN_IMAGE_COMMAND, { src: img.src, alt: img.alt, restoreFocus: img });
     },
     settleAdopted: () => {},
-    cacheSave: () => rt.cacheService.scheduleSave(),
+    cacheSave: () => rt.cacheService.scheduleSave(session.topicId),
     topicStatus: ({
-      addLocalPending: (item) => state.activeEditor?.status?.addLocalPending(item),
-      removeLocalPending: (nonce) => state.activeEditor?.status?.removeLocalPending(nonce) ?? false,
-      hasLocalPending: (nonce) => state.activeEditor?.status?.hasLocalPending(nonce) ?? false,
+      addLocalPending: (item) => session.editor?.status?.addLocalPending(item),
+      removeLocalPending: (nonce) => session.editor?.status?.removeLocalPending(nonce) ?? false,
+      hasLocalPending: (nonce) => session.editor?.status?.hasLocalPending(nonce) ?? false,
     }) satisfies ComposerTopicStatusBridge,
     transcript: {
-      getMessage: (key: string) => state.data[key] as unknown as LocalBubbleMessage | undefined,
+      getMessage: (key: string) => session.data[key] as unknown as LocalBubbleMessage | undefined,
       setMessage: (key: string, msg: LocalBubbleMessage) => {
-        state.data[key] = msg as unknown as TranscriptMessage;
+        session.data[key] = msg as unknown as TranscriptMessage;
       },
-      deleteMessage: (key: string) => state.activeEditor?.transcript?.retireLocalKey(key),
-      hasElement: (key: string) => Boolean(state.els[key]),
+      deleteMessage: (key: string) => session.editor?.transcript?.retireLocalKey(key),
+      hasElement: (key: string) => Boolean(session.els[key]),
       removeElement: (key: string) => {
-        const el = state.els[key];
+        const el = session.els[key];
         if (el) {
           el.remove();
-          delete state.els[key];
+          delete session.els[key];
         }
       },
-      adoptElement: (fromKey: string, toKey: string) => state.activeEditor?.transcript?.transferLocalKey(fromKey, toKey),
-      paint: (key: string) => state.activeEditor?.transcript?.paint(key),
-      drop: (key: string) => state.activeEditor?.transcript?.drop(key),
-      sinkLocals: () => state.activeEditor?.transcript?.sinkLocals(),
-      syncEmptyNote: () => state.activeEditor?.transcript?.banners.syncEmptyNote(),
-      atBottom: () => Boolean(state.activeEditor?.transcript?.scroll.atBottom()),
-      toBottom: () => state.activeEditor?.transcript?.scroll.toBottom(),
+      adoptElement: (fromKey: string, toKey: string) => session.editor?.transcript?.transferLocalKey(fromKey, toKey),
+      paint: (key: string) => session.editor?.transcript?.paint(key),
+      drop: (key: string) => session.editor?.transcript?.drop(key),
+      sinkLocals: () => session.editor?.transcript?.sinkLocals(),
+      syncEmptyNote: () => session.editor?.transcript?.banners.syncEmptyNote(),
+      atBottom: () => Boolean(session.editor?.transcript?.scroll.atBottom()),
+      toBottom: () => session.editor?.transcript?.scroll.toBottom(),
       onBtwAsked: (key: string, msg: LocalBubbleMessage) => {
-        const trCtrl = state.activeEditor?.transcript;
+        const trCtrl = session.editor?.transcript;
         if (trCtrl && trCtrl.btwAsked(key, msg as unknown as TranscriptMessage) !== null) {
           trCtrl.btw.open(key);
         }
       },
-      onClaimKeyMoved: (fromKey: string, toKey: string) => state.activeEditor?.transcript?.btw.transferKey(fromKey, toKey),
+      onClaimKeyMoved: (fromKey: string, toKey: string) => session.editor?.transcript?.btw.transferKey(fromKey, toKey),
     },
   };
 }
@@ -747,6 +1004,7 @@ function buildTopicPluginDeps(rt: AppRuntime): Pick<BuiltinPluginsDeps, 'topics'
       getActiveTopicId: () => state.topic,
       unreadOf: (t) => rt.readsService.unreadOf(t),
       needsRead: (t) => rt.readsService.needsRead(t),
+      canOpenInNewTab: () => shell.getMode() === 'desktop',
       onCreateTopic: () => createTopic(rt),
       prefetchDeps: {
         isDbAvailable: () => rt.cacheService.isDbAvailable(),
@@ -790,7 +1048,7 @@ function buildTopicPluginDeps(rt: AppRuntime): Pick<BuiltinPluginsDeps, 'topics'
         })),
       onToggleTopicTool: (toolId, topicId) => {
         shell.tools.toggle(toolId, { topicId });
-        state.activeEditor?.refreshHeader();
+        for (const s of state.sessions.values()) s.editor?.refreshHeader();
       },
       onToggleSidebar: () => {
         shell.setPartVisible('sidebar', !shell.isPartVisible('sidebar'));
@@ -798,9 +1056,12 @@ function buildTopicPluginDeps(rt: AppRuntime): Pick<BuiltinPluginsDeps, 'topics'
       onForkTopic: (id) => void forkTopic(rt, id),
       onDeleteTopic: (id) => void deleteTopic(rt, id),
       onCloseIdle: () => void rt.commands.execute('status.closeIdle'),
-      onEditorCreated: (handle) => {
-        state.activeEditor = handle;
+      onEditorCreated: (handle) => handleEditorMounted(rt, handle),
+      onEditorFocused: (handle) => {
+        const pid = handle.getPanelId();
+        if (pid) setFocusedTopicSession(rt, pid);
       },
+      onEditorDisposed: (handle) => handleEditorDisposed(rt, handle),
       onRegisterInsertHandler: (handler) => {
         state.insertHandler = handler;
       },
@@ -816,7 +1077,7 @@ function buildBuiltinDeps(rt: AppRuntime): BuiltinPluginsDeps {
     history: {
       getIcons: () => icons.icon,
       codeBlocks: (root) => {
-        state.activeEditor?.transcript?.codeBlocks.enhance(root);
+        focusedSession(state)?.editor?.transcript?.codeBlocks.enhance(root);
       },
       openShot: (img) => {
         if (img instanceof HTMLImageElement) {
@@ -871,7 +1132,7 @@ function buildBuiltinDeps(rt: AppRuntime): BuiltinPluginsDeps {
       api,
       codeView,
       codeBlocks: (root) => {
-        state.activeEditor?.transcript?.codeBlocks.enhance(root);
+        focusedSession(state)?.editor?.transcript?.codeBlocks.enhance(root);
       },
       overlays,
     },
@@ -891,7 +1152,7 @@ function buildBuiltinDeps(rt: AppRuntime): BuiltinPluginsDeps {
       overlays,
       codeView,
       codeBlocks: (root) => {
-        state.activeEditor?.transcript?.codeBlocks.enhance(root);
+        focusedSession(state)?.editor?.transcript?.codeBlocks.enhance(root);
       },
     },
     status: {
@@ -913,7 +1174,9 @@ function buildBuiltinDeps(rt: AppRuntime): BuiltinPluginsDeps {
       },
       onUpdateAvailable: (cb) => rt.updateEmitter.event(cb),
       onBeforeReload: () => {
-        if (state.topic) state.activeEditor?.composer?.stashDraft(state.topic);
+        for (const s of state.sessions.values()) {
+          if (s.topicId) s.editor?.composer?.stashDraft(s.topicId);
+        }
       },
       onResetLayout: () => shell.resetLayout(),
       onRefreshStatusBar: (id) => shell.statusBarApi.refresh(id),
@@ -928,61 +1191,140 @@ function buildBuiltinDeps(rt: AppRuntime): BuiltinPluginsDeps {
   };
 }
 
-function mergeSyncLaunch(state: AppState, ev: Extract<WebEvent, { t: 'sync' }>): LaunchChoice | null {
-  if (ev.agents && state.launch && state.launchSetupTopic === ev.topic && state.launchSetupSeq > 0) {
-    return { ...ev.agents, current: state.launch.current };
+function handleEditorMounted(rt: AppRuntime, handle: TopicEditorHandle): void {
+  const { state } = rt;
+  const session = getOrCreateSession(state, handle.els.root);
+  const panelId = handle.getPanelId() || MAIN_PANEL_ID;
+  session.panelId = panelId;
+  session.pinned = panelId !== MAIN_PANEL_ID;
+  session.editor = handle;
+  session.topicId = handle.getTopicId();
+  state.sessions.set(panelId, session);
+  if (state.commands.length > 0) handle.composer?.setCommands(state.commands);
+  if (state.offline.length > 0) handle.transcript?.takeMachines(state.offline);
+  if (!session.pinned) {
+    if (session.topicId) state.topic = session.topicId;
+    state.focusedPanelId = panelId;
+    return;
+  }
+  if (state.bootstrapped && session.topicId) {
+    setFocusedTopicSession(rt, panelId);
+    handle.composer?.loadDraftIfEmpty(session.topicId);
+    handle.transcript?.banners.showSkeleton();
+    enterSession(rt, session, session.topicId);
+  }
+}
+
+function handleEditorDisposed(rt: AppRuntime, handle: TopicEditorHandle): void {
+  const { state } = rt;
+  const panelId = handle.getPanelId() || MAIN_PANEL_ID;
+  const session = state.sessions.get(panelId);
+  if (!session || session.editor !== handle) return;
+  if (session.topicId) rt.cacheService.leave(session.topicId);
+  state.sessions.delete(panelId);
+  if (state.focusedPanelId === panelId) {
+    const next = focusedSession(state);
+    state.focusedPanelId = next?.panelId || MAIN_PANEL_ID;
+    if (next?.topicId) {
+      state.topic = next.topicId;
+      const active = topicById(state, next.topicId);
+      rt.events.emit('topic.active', { id: next.topicId, topic: active as unknown as TopicInfo | undefined });
+    }
+  }
+  if (state.bootstrapped && session.topicId && sessionsForTopic(state, session.topicId).length === 0) {
+    rt.streamClient.connect(true, true);
+  }
+}
+
+function resolveSyncTargets(rt: AppRuntime, topicId: string): { targets: TopicEditorSession[]; named: boolean } {
+  const { state } = rt;
+  const matched = sessionsForTopic(state, topicId);
+  if (matched.length > 0) return { targets: matched, named: false };
+  const main = mainSession(state);
+  if (main && !main.topicId) {
+    main.topicId = topicId;
+    if (!state.topic) state.topic = topicId;
+    ensureTopicEditorOpen(rt, topicId);
+    history.replaceState(null, '', currentTopicUrl(topicId));
+    return { targets: [main], named: true };
+  }
+  if (!state.topic) {
+    state.topic = topicId;
+    ensureTopicEditorOpen(rt, topicId);
+    history.replaceState(null, '', currentTopicUrl(topicId));
+    const created = mainSession(state);
+    return { targets: created ? [created] : [], named: true };
+  }
+  return { targets: [], named: false };
+}
+
+function syncSessionFromEvent(
+  rt: AppRuntime,
+  session: TopicEditorSession,
+  ev: Extract<WebEvent, { t: 'sync' }>,
+  named: boolean,
+): void {
+  const scroll = session.editor?.transcript?.scroll;
+  const arriving = scroll ? scroll.isArriving(session.entering) : false;
+  const stick = scroll ? scroll.atBottom() : false;
+  session.entering = false;
+  session.settleOnResume = false;
+  session.synced = true;
+  session.stale = Boolean(ev.stale);
+  session.launch = mergeSyncLaunch(session, ev);
+  applySyncToSession(rt, session, ev, named, arriving, stick);
+  if (named) adoptCachedTopicMessages(rt, session, ev.topic);
+}
+
+function mergeSyncLaunch(session: TopicEditorSession, ev: Extract<WebEvent, { t: 'sync' }>): LaunchChoice | null {
+  if (ev.agents && session.launch && session.launchSetupTopic === ev.topic && session.launchSetupSeq > 0) {
+    return { ...ev.agents, current: session.launch.current };
   }
   return ev.agents || null;
 }
 
 function handleSyncEvent(rt: AppRuntime, ev: Extract<WebEvent, { t: 'sync' }>): void {
   const { state } = rt;
-  if (state.topic && ev.topic !== state.topic) return;
-  const named = !state.topic;
-  state.topic = ev.topic;
-  ensureTopicEditorOpen(rt, state.topic);
-  const editor = state.activeEditor;
-  history.replaceState(null, '', currentTopicUrl(state.topic));
+  const { targets, named } = resolveSyncTargets(rt, ev.topic);
+  if (targets.length === 0) return;
 
-  const scroll = editor?.transcript?.scroll;
-  const arriving = scroll ? scroll.isArriving(state.entering) : false;
-  const stick = scroll ? scroll.atBottom() : false;
-  state.entering = false;
   if (state.epoch && ev.epoch && ev.epoch !== state.epoch) rt.streamClient.checkBuild();
-  state.settleOnResume = false;
   state.epoch = ev.epoch || 0;
-  state.synced = true;
-  state.stale = Boolean(ev.stale);
-  state.launch = mergeSyncLaunch(state, ev);
-
-  applySyncToEditor(rt, editor, ev, named, arriving, stick);
-  if (named) adoptCachedTopicMessages(rt, ev.topic);
-  rt.readsService.setCount(state.topic, ev.messages.length);
   state.topics = ev.topics || [];
+  state.offline = ev.offline || [];
+  state.commands = ev.commands || [];
   rt.streamClient.setTopicsVersion(ev.tv || 0);
-  const active = topicById(state, state.topic);
+
+  for (const session of targets) syncSessionFromEvent(rt, session, ev, named);
+
+  if (visibleTopicIds(rt).includes(ev.topic)) {
+    rt.readsService.setCount(ev.topic, ev.messages.length);
+  }
+  const activeId = focusedSession(state)?.topicId || ev.topic;
+  state.topic = activeId;
   rt.events.emit('topic.list', { topics: toTopicInfos(state.topics) });
-  rt.events.emit('topic.active', { id: state.topic, topic: active as unknown as TopicInfo | undefined });
+  rt.events.emit('topic.active', { id: activeId, topic: topicById(state, activeId) as unknown as TopicInfo | undefined });
   rt.readsService.reportSeen();
   rt.registry.refreshActivityBadges();
 }
 
-function applySyncToEditor(
+function applySyncToSession(
   rt: AppRuntime,
-  editor: TopicEditorHandle | null,
+  session: TopicEditorSession,
   ev: Extract<WebEvent, { t: 'sync' }>,
   named: boolean,
   arriving: boolean,
   stick: boolean,
 ): void {
+  const editor = session.editor;
   if (!editor) return;
   const { transcript, composer, status } = editor;
-  if (named && composer) composer.loadDraftIfEmpty(rt.state.topic);
+  if (named && composer) composer.loadDraftIfEmpty(session.topicId);
   if (transcript) {
     transcript.takeMachines(ev.offline || []);
     transcript.repaintHistory();
   }
-  if (composer) composer.showUnsent(rt.state.topic);
+  if (composer) composer.showUnsent(session.topicId);
   if (transcript) transcript.reconcile(ev.messages);
   if (composer) {
     composer.settleUnsure();
@@ -993,48 +1335,60 @@ function applySyncToEditor(
     transcript.banners.syncEmptyNote();
     if (transcript.btw.isOpen()) transcript.btw.render(false);
   }
-  rt.cacheService.scheduleSave();
+  rt.cacheService.scheduleSave(session.topicId);
   if (status) {
     status.setStatus(ev.status);
     status.setPending(ev.pending || []);
   }
   editor.els.noteEl.textContent = '';
   if (transcript) {
-    if (arriving) transcript.scroll.land(rt.state.els);
+    if (arriving) transcript.scroll.land(session.els);
     else if (stick) transcript.scroll.toBottom();
     transcript.scroll.clearView();
   }
   editor.refreshHeader();
+  syncSessionStopButton(rt, session);
 }
 
-function adoptCachedTopicMessages(rt: AppRuntime, topicId: string): void {
-  const token = rt.state.enterToken;
+function adoptCachedTopicMessages(rt: AppRuntime, session: TopicEditorSession, topicId: string): void {
+  const token = session.enterToken;
   void rt.cacheService.get(topicId).then((c) => {
     if (
       c &&
       c.msgs.length &&
-      topicId === rt.state.topic &&
-      token === rt.state.enterToken &&
-      !rt.state.creatingTopic
+      topicId === session.topicId &&
+      rt.state.sessions.get(session.panelId) === session &&
+      token === session.enterToken &&
+      !(session.panelId === MAIN_PANEL_ID && rt.state.creatingTopic)
     ) {
-      rt.state.activeEditor?.transcript?.adopt(c.msgs as unknown as readonly TranscriptMessage[]);
+      session.editor?.transcript?.adopt(c.msgs as unknown as readonly TranscriptMessage[]);
     }
   });
 }
 
-function handleMessageEvent(rt: AppRuntime, msg: WebMessage): void {
+function eventTargetTopic(state: AppState, evTopic?: string): string {
+  return evTopic || mainSession(state)?.topicId || state.topic;
+}
+
+function handleMessageEvent(rt: AppRuntime, msg: WebMessage, evTopic?: string): void {
   const { state } = rt;
   if (state.settingsBridge?.handleMessage(msg)) return;
-  const editor = state.activeEditor;
-  editor?.composer?.claim(msg);
-  editor?.transcript?.upsert(msg);
-  editor?.transcript?.btw.onArrived(msg);
-  rt.cacheService.scheduleSave();
-  editor?.status?.onMessageArrived();
-  rt.readsService.increment(state.topic);
-  const cur = topicById(state, state.topic);
+  const targetTopic = eventTargetTopic(state, evTopic);
+  const targets = sessionsForTopic(state, targetTopic);
+  for (const session of targets) {
+    const editor = session.editor;
+    editor?.composer?.claim(msg);
+    editor?.transcript?.upsert(msg);
+    editor?.transcript?.btw.onArrived(msg);
+    editor?.status?.onMessageArrived();
+  }
+  rt.cacheService.scheduleSave(targetTopic);
+  if (visibleTopicIds(rt).includes(targetTopic)) {
+    rt.readsService.increment(targetTopic);
+  }
+  const cur = topicById(state, targetTopic);
   if (cur) cur.msgCount = (cur.msgCount || 0) + 1;
-  rt.events.emit('topic.message', { topicId: state.topic, message: msg });
+  rt.events.emit('topic.message', { topicId: targetTopic, message: msg });
   rt.events.emit('topic.list', { topics: toTopicInfos(state.topics) });
   rt.registry.refreshActivityBadges();
 }
@@ -1048,21 +1402,30 @@ function handleTopicsEvent(
   rt.streamClient.setTopicsVersion(ev.tv || 0);
   rt.events.emit('topic.list', { topics: toTopicInfos(state.topics) });
   rt.readsService.reportSeen();
-  if (state.topic && !state.topics.some((t) => t.id === state.topic)) {
+  const known = new Set(state.topics.map((t) => t.id));
+  for (const session of [...state.sessions.values()]) {
+    if (session.pinned && session.topicId && !known.has(session.topicId)) {
+      rt.shell.dock.removePanel(session.panelId);
+    }
+  }
+  const main = mainSession(state);
+  if (main?.topicId && !known.has(main.topicId)) {
     const first = state.topics[0];
     if (first) switchTopic(rt, first.id);
     else void createTopic(rt);
   }
   rt.registry.refreshActivityBadges();
-  state.activeEditor?.refreshHeader();
-  syncActiveStopButton(rt);
+  for (const session of state.sessions.values()) {
+    session.editor?.refreshHeader();
+    syncSessionStopButton(rt, session);
+  }
 }
 
-function syncActiveStopButton(rt: AppRuntime): void {
-  const editor = rt.state.activeEditor;
-  if (!editor || !rt.state.topic) return;
-  const cur = topicById(rt.state, rt.state.topic);
-  const childRunning = hasRunningDescendant(rt.state.topics, rt.state.topic);
+function syncSessionStopButton(rt: AppRuntime, session: TopicEditorSession): void {
+  const editor = session.editor;
+  if (!editor || !session.topicId) return;
+  const cur = topicById(rt.state, session.topicId);
+  const childRunning = hasRunningDescendant(rt.state.topics, session.topicId);
   const showStop = Boolean(cur?.running || childRunning);
   editor.els.stopBtn.hidden = !showStop;
   if (childRunning && !cur?.running) {
@@ -1089,43 +1452,53 @@ function hasRunningDescendant(topics: readonly Topic[], rootId: string): boolean
 }
 
 function handleReactEvent(rt: AppRuntime, ev: Extract<WebEvent, { t: 'react' }>): void {
+  const targetTopic = eventTargetTopic(rt.state, ev.topic);
   const rk = `${rt.state.epoch}:${ev.id}`;
-  const m = rt.state.data[rk];
-  if (!m) return;
-  const kept = (m.reactions || []).filter((e) => e !== ev.emoji);
-  m.reactions = ev.on ? kept.concat([ev.emoji]) : kept;
-  rt.state.activeEditor?.transcript?.paint(rk);
-  rt.cacheService.scheduleSave();
+  let updated = false;
+  for (const session of sessionsForTopic(rt.state, targetTopic)) {
+    const m = session.data[rk];
+    if (!m) continue;
+    const kept = (m.reactions || []).filter((e) => e !== ev.emoji);
+    m.reactions = ev.on ? kept.concat([ev.emoji]) : kept;
+    session.editor?.transcript?.paint(rk);
+    updated = true;
+  }
+  if (updated) rt.cacheService.scheduleSave(targetTopic);
 }
 
-function handleTypingEvent(rt: AppRuntime, on: boolean): void {
-  const editor = rt.state.activeEditor;
-  if (editor) editor.els.typingEl.hidden = !on;
-  const cur = topicById(rt.state, rt.state.topic);
+function handleTypingEvent(rt: AppRuntime, on: boolean, evTopic?: string): void {
+  const targetTopic = eventTargetTopic(rt.state, evTopic);
+  const cur = topicById(rt.state, targetTopic);
   if (cur) cur.running = on;
   rt.events.emit('topic.list', { topics: toTopicInfos(rt.state.topics) });
-  if (!on) {
-    editor?.transcript?.codeBlocks.sweep();
-    rt.events.emit('topic.turnEnd', { topicId: rt.state.topic });
+  for (const session of sessionsForTopic(rt.state, targetTopic)) {
+    const editor = session.editor;
+    if (editor) editor.els.typingEl.hidden = !on;
+    if (!on) editor?.transcript?.codeBlocks.sweep();
+    editor?.refreshHeader();
+    syncSessionStopButton(rt, session);
   }
-  editor?.refreshHeader();
+  if (!on) rt.events.emit('topic.turnEnd', { topicId: targetTopic });
 }
 
-function handleResumedEvent(rt: AppRuntime): void {
-  if (rt.state.synced) return;
-  const editor = rt.state.activeEditor;
-  rt.state.synced = true;
-  rt.state.entering = false;
-  if (rt.state.settleOnResume) {
-    rt.state.settleOnResume = false;
-    editor?.composer?.settleUnsure();
+function handleResumedEvent(rt: AppRuntime, evTopic?: string): void {
+  const targetTopic = eventTargetTopic(rt.state, evTopic);
+  for (const session of sessionsForTopic(rt.state, targetTopic)) {
+    if (session.synced) continue;
+    const editor = session.editor;
+    session.synced = true;
+    session.entering = false;
+    if (session.settleOnResume) {
+      session.settleOnResume = false;
+      editor?.composer?.settleUnsure();
+    }
+    editor?.transcript?.banners.clearSyncing();
+    editor?.transcript?.banners.placeDivider();
+    editor?.transcript?.banners.syncEmptyNote();
+    editor?.transcript?.scroll.clearView();
+    rt.cacheService.scheduleSave(session.topicId);
+    if (editor) editor.els.noteEl.textContent = '';
   }
-  editor?.transcript?.banners.clearSyncing();
-  editor?.transcript?.banners.placeDivider();
-  editor?.transcript?.banners.syncEmptyNote();
-  editor?.transcript?.scroll.clearView();
-  rt.cacheService.scheduleSave();
-  if (editor) editor.els.noteEl.textContent = '';
 }
 
 function handleStreamEvent(rt: AppRuntime, raw: StreamEventPayload): void {
@@ -1134,26 +1507,49 @@ function handleStreamEvent(rt: AppRuntime, raw: StreamEventPayload): void {
     rt.events.emit(ev.t as `plugin:${string}:${string}`, (ev as { readonly data?: unknown }).data);
     return;
   }
-  const editor = rt.state.activeEditor;
-  const trCtrl = editor ? editor.transcript : null;
-  const stCtrl = editor ? editor.status : null;
-  const cpCtrl = editor ? editor.composer : null;
+  const { state } = rt;
   const handlers: Record<WebEvent['t'], () => void> = {
     sync: () => handleSyncEvent(rt, ev as Extract<WebEvent, { t: 'sync' }>),
-    msg: () => handleMessageEvent(rt, (ev as Extract<WebEvent, { t: 'msg' }>).msg),
+    msg: () => {
+      const e = ev as Extract<WebEvent, { t: 'msg' }>;
+      handleMessageEvent(rt, e.msg, e.topic);
+    },
     del: () => {
-      trCtrl?.drop(`${rt.state.epoch}:${(ev as Extract<WebEvent, { t: 'del' }>).id}`);
-      rt.cacheService.scheduleSave();
+      const e = ev as Extract<WebEvent, { t: 'del' }>;
+      const targetTopic = eventTargetTopic(state, e.topic);
+      for (const s of sessionsForTopic(state, targetTopic)) {
+        s.editor?.transcript?.drop(`${state.epoch}:${e.id}`);
+      }
+      rt.cacheService.scheduleSave(targetTopic);
     },
     react: () => handleReactEvent(rt, ev as Extract<WebEvent, { t: 'react' }>),
-    typing: () => handleTypingEvent(rt, (ev as Extract<WebEvent, { t: 'typing' }>).on),
-    commands: () => cpCtrl?.setCommands((ev as Extract<WebEvent, { t: 'commands' }>).commands || []),
-    status: () => stCtrl?.setStatus((ev as Extract<WebEvent, { t: 'status' }>).status),
-    pending: () => stCtrl?.setPending((ev as Extract<WebEvent, { t: 'pending' }>).items || []),
-    machines: () => trCtrl?.setMachines((ev as Extract<WebEvent, { t: 'machines' }>).offline || []),
+    typing: () => {
+      const e = ev as Extract<WebEvent, { t: 'typing' }>;
+      handleTypingEvent(rt, e.on, e.topic);
+    },
+    commands: () => {
+      const cmds = (ev as Extract<WebEvent, { t: 'commands' }>).commands || [];
+      state.commands = cmds;
+      for (const s of state.sessions.values()) s.editor?.composer?.setCommands(cmds);
+    },
+    status: () => {
+      const e = ev as Extract<WebEvent, { t: 'status' }>;
+      const targetTopic = eventTargetTopic(state, e.topic);
+      for (const s of sessionsForTopic(state, targetTopic)) s.editor?.status?.setStatus(e.status);
+    },
+    pending: () => {
+      const e = ev as Extract<WebEvent, { t: 'pending' }>;
+      const targetTopic = eventTargetTopic(state, e.topic);
+      for (const s of sessionsForTopic(state, targetTopic)) s.editor?.status?.setPending(e.items || []);
+    },
+    machines: () => {
+      const offline = (ev as Extract<WebEvent, { t: 'machines' }>).offline || [];
+      state.offline = offline;
+      for (const s of state.sessions.values()) s.editor?.transcript?.setMachines(offline);
+    },
     topics: () => handleTopicsEvent(rt, ev as Extract<WebEvent, { t: 'topics' }>),
     'topic-rows': () => handleTopicsEvent(rt, ev as Extract<WebEvent, { t: 'topic-rows' }>),
-    resumed: () => handleResumedEvent(rt),
+    resumed: () => handleResumedEvent(rt, (ev as Extract<WebEvent, { t: 'resumed' }>).topic),
     bye: () => {},
   };
   handlers[ev.t]?.();
@@ -1162,32 +1558,41 @@ function handleStreamEvent(rt: AppRuntime, raw: StreamEventPayload): void {
 function wireStreamAndCache(rt: AppRuntime): void {
   const { state, boot, cacheCore } = rt;
   rt.streamClient = createStreamClient({
-    getTopic: () => state.topic,
+    getTopic: () => mainSession(state)?.topicId || state.topic,
+    getTopics: () => subscribedTopics(state),
     isLoggedOut: () => rt.workbenchRoot.hidden && Boolean(rt.gateForm && !rt.gateForm.hidden),
     getBuild: () => boot.build,
     onBeforeConnect: () => {
       rt.events.emit('stream.state', { state: 'connecting' });
-      state.activeEditor?.transcript?.banners.showSkeleton();
+      for (const s of state.sessions.values()) {
+        if (!s.synced) s.editor?.transcript?.banners.showSkeleton();
+      }
     },
     onOpen: (info) => {
       const fresh = rt.workbenchRoot.hidden || !info.quiet;
       if (rt.gateForm) rt.gateForm.hidden = true;
       if (rt.gate) rt.gate.hidden = true;
       rt.workbenchRoot.hidden = false;
-      if (state.activeEditor) state.activeEditor.els.noteEl.textContent = '';
+      for (const s of state.sessions.values()) {
+        if (s.editor) s.editor.els.noteEl.textContent = '';
+      }
       rt.events.emit('stream.state', { state: 'open' });
       startExternalPlugins(rt);
       if (fresh && rt.shell.getMode() === 'desktop') {
-        state.activeEditor?.focus?.();
+        focusedSession(state)?.editor?.focus?.();
       }
     },
     onReconnecting: () => {
       rt.events.emit('stream.state', { state: 'reconnecting' });
-      if (state.activeEditor) state.activeEditor.els.noteEl.textContent = tr('chat.reconnecting');
+      for (const s of state.sessions.values()) {
+        if (s.editor) s.editor.els.noteEl.textContent = tr('chat.reconnecting');
+      }
     },
     onRestarting: () => {
       rt.events.emit('stream.state', { state: 'reconnecting' });
-      if (state.activeEditor) state.activeEditor.els.noteEl.textContent = tr('chat.restarting');
+      for (const s of state.sessions.values()) {
+        if (s.editor) s.editor.els.noteEl.textContent = tr('chat.restarting');
+      }
     },
     onAuthExpired: () => {
       rt.workbenchRoot.hidden = true;
@@ -1206,16 +1611,32 @@ function wireStreamAndCache(rt: AppRuntime): void {
   rt.cacheService = createCacheService({
     core: cacheCore,
     getIndexedDB: () => window.indexedDB,
-    getTopic: () => state.topic,
+    getTopic: () => mainSession(state)?.topicId || state.topic,
     getEpoch: () => state.epoch,
-    isSynced: () => state.synced,
-    isStale: () => state.stale,
-    getLastEventId: () => rt.streamClient.getLastEventId(),
+    isSynced: () => Boolean(mainSession(state)?.synced),
+    isStale: () => Boolean(mainSession(state)?.stale),
+    getLastEventId: () => rt.streamClient.getLastEventId(mainSession(state)?.topicId || state.topic),
     collectScreenMessages: () => {
-      const log = state.activeEditor?.els.log;
-      if (!log) return [];
-      return collectCacheableMessages(log, state.data as Record<string, CacheMessage | undefined>);
+      const s = mainSession(state);
+      const log = s?.editor?.els.log;
+      if (!s || !log) return [];
+      return collectCacheableMessages(log, s.data as Record<string, CacheMessage | undefined>);
     },
+    getTopicState: (topicId) => {
+      const s = sessionsForTopic(state, topicId)[0];
+      if (!s) return null;
+      return {
+        synced: s.synced,
+        stale: s.stale,
+        lastEventId: rt.streamClient.getLastEventId(topicId),
+        collectMessages: () => {
+          const log = s.editor?.els.log;
+          if (!log) return [];
+          return collectCacheableMessages(log, s.data as Record<string, CacheMessage | undefined>);
+        },
+      };
+    },
+    getOpenTopics: () => subscribedTopics(state),
   });
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') rt.cacheService.leave();
@@ -1226,6 +1647,7 @@ function wireStreamAndCache(rt: AppRuntime): void {
 
   rt.readsService = createReadsService({
     getActiveTopic: () => state.topic,
+    getVisibleTopics: () => visibleTopicIds(rt),
     getTopics: () => state.topics,
     isOverlayBlocking: () => false,
     postSeen: (topicId) => post('api/seen', { topic: topicId }, 0),
@@ -1402,24 +1824,17 @@ function bootstrap(): void {
   if (!shell) throw new Error('Failed to mount WorkbenchShell');
 
   const state: AppState = {
-    data: {},
-    els: {},
     topics: [],
     topic: new URLSearchParams(location.search).get('t') || '',
+    focusedPanelId: MAIN_PANEL_ID,
     epoch: 0,
-    synced: false,
-    entering: true,
-    stale: false,
-    launch: null,
-    launchWdSeq: 0,
-    launchSetupTopic: '',
-    launchSetupSeq: 0,
+    offline: [],
+    commands: [],
+    sessions: new Map(),
+    sessionByRoot: new WeakMap(),
+    bootstrapped: false,
     creatingTopic: false,
-    seedWorkdir: null,
     workdirCache: new Map<string, WorkdirScreen>(),
-    settleOnResume: false,
-    enterToken: 0,
-    activeEditor: null,
     insertHandler: null,
     settingsBridge: null,
     streamConnected: false,
@@ -1465,7 +1880,7 @@ function bootstrap(): void {
       insertIntoComposer: (id, text) => {
         if (state.insertHandler?.(id, text)) return;
         if (id && id !== state.topic) switchTopic(rt, id);
-        state.activeEditor?.insertIntoComposer(text);
+        focusedSession(state)?.editor?.insertIntoComposer(text);
       },
     },
     api,
@@ -1474,35 +1889,14 @@ function bootstrap(): void {
   (rt as { pluginManager: PluginManager }).pluginManager = pluginManager;
 
   registerBuiltinPlugins(pluginManager, createDefaultBuiltinPluginFactories(buildBuiltinDeps(rt)));
-  void pluginManager.activateAll().then(() => {
-    const restored = shell.restoreLayout();
-    shell.views.reveal('topics', { openPart: !restored && shell.getMode() === 'desktop' });
-    ensureTopicEditorOpen(rt, state.topic);
-    wireMobileMore(rt);
-    if (state.topic) {
-      state.activeEditor?.composer?.loadDraftIfEmpty(state.topic);
-      adoptCachedTopicMessages(rt, state.topic);
-    }
-    rt.streamClient.connect();
-  });
-
-  onLocaleChange((locale) => {
-    applyDomI18n(document);
-    events.emit('locale.change', { locale });
-    state.activeEditor?.transcript?.refreshI18n();
-    state.activeEditor?.composer?.onLocaleChange();
-    state.activeEditor?.status?.onLocaleChange();
-    state.activeEditor?.refreshHeader();
-    shell.statusBarApi.refresh();
-    shell.refreshMobileTabs();
-    syncMobileMoreState(rt);
-  });
+  void pluginManager.activateAll().then(() => finishBootstrap(rt));
+  wireShellEventsAndLocale(rt);
 
   commands.register('workbench.resetLayout', () => shell.resetLayout(), { title: 'Reset Layout' });
   commands.register('workbench.toggleTerminal', () => void commands.execute(TERMINAL_TOGGLE_COMMAND));
 
   overlays.registerFallback(() => {
-    const editor = state.activeEditor;
+    const editor = focusedSession(state)?.editor ?? null;
     if (editor?.composer?.isHintsOpen()) {
       editor.composer.closeHints();
       return true;
@@ -1515,6 +1909,77 @@ function bootstrap(): void {
   });
 
   wireLoginGate(rt);
+}
+
+function dropPinnedIfNonDesktop(rt: AppRuntime): void {
+  if (rt.shell.getMode() === 'desktop') return;
+  for (const s of [...rt.state.sessions.values()]) {
+    if (s.pinned) rt.shell.dock.removePanel(s.panelId);
+  }
+}
+
+function reconcileRestoredMainSession(rt: AppRuntime, urlTopic: string): void {
+  const { state } = rt;
+  const restoredMain = mainSession(state);
+  if (restoredMain) {
+    const targetId = urlTopic || restoredMain.topicId;
+    if (targetId && targetId !== restoredMain.topicId) {
+      resetSessionView(restoredMain, targetId);
+      ensureTopicEditorOpen(rt, targetId);
+    } else if (targetId) {
+      state.topic = targetId;
+    }
+    return;
+  }
+  if (state.sessions.size === 0 || (urlTopic && sessionsForTopic(state, urlTopic).length === 0)) {
+    ensureTopicEditorOpen(rt, urlTopic || state.topic);
+  }
+}
+
+function finishBootstrap(rt: AppRuntime): void {
+  const { shell, state } = rt;
+  const restored = shell.restoreLayout();
+  dropPinnedIfNonDesktop(rt);
+  shell.views.reveal('topics', { openPart: !restored && shell.getMode() === 'desktop' });
+  reconcileRestoredMainSession(rt, new URLSearchParams(location.search).get('t') || '');
+  const activePanel = shell.dock.getActiveGroupPanel();
+  const activeSession = activePanel ? state.sessions.get(activePanel) : undefined;
+  if (activePanel && activeSession) {
+    state.focusedPanelId = activePanel;
+    if (activeSession.topicId) state.topic = activeSession.topicId;
+  }
+  wireMobileMore(rt);
+  for (const session of state.sessions.values()) {
+    if (!session.topicId) continue;
+    session.editor?.composer?.loadDraftIfEmpty(session.topicId);
+    adoptCachedTopicMessages(rt, session, session.topicId);
+  }
+  state.bootstrapped = true;
+  rt.streamClient.connect();
+}
+
+function wireShellEventsAndLocale(rt: AppRuntime): void {
+  const { shell, state, events } = rt;
+  shell.dock.onDidActivePanelChange((ref) => {
+    if (ref && state.sessions.has(ref.id)) setFocusedTopicSession(rt, ref.id);
+  });
+  shell.dock.onDidLayoutChange(() => {
+    if (state.bootstrapped) markVisibleTopicsRead(rt);
+  });
+  shell.onDidModeChange(() => dropPinnedIfNonDesktop(rt));
+  onLocaleChange((locale) => {
+    applyDomI18n(document);
+    events.emit('locale.change', { locale });
+    for (const s of state.sessions.values()) {
+      s.editor?.transcript?.refreshI18n();
+      s.editor?.composer?.onLocaleChange();
+      s.editor?.status?.onLocaleChange();
+      s.editor?.refreshHeader();
+    }
+    shell.statusBarApi.refresh();
+    shell.refreshMobileTabs();
+    syncMobileMoreState(rt);
+  });
 }
 
 bootstrap();

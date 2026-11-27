@@ -339,6 +339,8 @@ export class Daemon {
         const ws = this.registry.workspaceOf(id);
         return ws ? readHead(ws) : undefined;
       },
+      worktreesFile: path.join(configDir(), 'worktrees.json'),
+      reviewLoopsFile: path.join(configDir(), 'review-loops.json'),
       // Buttons only (security invariant 6): a typed reply is the user's next message to the agent, never a start confirmation.
       confirm: async ({ adapter, address, conversation, text, labels, timeoutMs, signal }) => {
         const outcome = await this.menus.askButtons(adapter, address, text, labels, timeoutMs, conversation, {
@@ -446,6 +448,7 @@ export class Daemon {
     // After platforms and IPC are up: notices need adapters, and scheduled continues need working reverse commands.
     const interrupted = this.registry.recoverInterruptedTurns();
     if (interrupted > 0) console.log(`[daemon] ${interrupted} turn(s) were cut off by the last shutdown`);
+    this.delegation.startSweep();
     // After platforms and IPC are up: catch-up runs need somewhere to post and working reverse commands.
     this.schedules?.scheduler.start();
     this.reviews?.start();

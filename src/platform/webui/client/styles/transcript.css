@@ -273,6 +273,10 @@
 /* Paging and the way back: under the items, spanning the grid, and quieter than they are. */
 .btns .nav{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:4px}
 .btns .nav button{background:none;color:var(--dim);padding:3px 10px}
+.handoff-acts{margin-top:8px;display:flex;flex-wrap:wrap;gap:6px}
+.handoff-btn{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:5px;font-size:var(--fh-fs-ui);line-height:1.35;background:var(--own);border-color:var(--own-edge);color:var(--fg);cursor:pointer;transition:background .12s,border-color .12s}
+.handoff-btn:hover:not(:disabled){background:var(--hover-1)}
+.handoff-btn.busy{opacity:.7}
 .btns .nav button:hover:not(:disabled){color:var(--fg);background:var(--field)}
 /* A finger, not a pointer: the cells keep roughly the height they had as loose buttons, and the
    gap between two choices is what a near miss lands in. */

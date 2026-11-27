@@ -39,6 +39,9 @@ export interface TaskEditPayload {
   cwd?: string | null;
   host?: string | null;
   timeoutMs?: number;
+  wake?: boolean;
+  wakeOn?: string | null;
+  wakeMax?: number;
   tags?: string[];
   target?: ScheduleTargetRequest;
 }

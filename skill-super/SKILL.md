@@ -21,8 +21,12 @@ confirms every start, and can talk to any of them directly.
   repositories, different files, or questions that can be answered apart. One part is fine when
   the job does not split; do not invent parts.
 - Two sub-agents in the same checkout edit the same working tree. Give parts in one repository
-  disjoint files, or make each its own `git worktree` on the machine that will run it and start the
-  part there with `task-new --cwd <absolute path>` (an agent with here=true is on your machine).
+  disjoint files, or pass `task-new --worktree [<name>]` (with `--cwd` pointing at the repository
+  when it is not the agent's default directory): the gateway creates `<repo>/.worktrees/<name>` on
+  a new branch from HEAD on the agent's machine when the part starts (default `<name>`: a slug of
+  `--title`), adds `.worktrees/` to `.git/info/exclude` if needed, and cleans it up once merged,
+  clean, and idle for 1h. Only create a worktree by hand with `--cwd <absolute path>` when you need
+  a custom base ref or layout.
 - A part that changes code needs a review before you call it done. Attach it when you propose the
   part: `task-new ... --review-by <agent> --review "<what to check>"`. The gateway runs it — each
   time a turn of the part ends with new commits, the reviewer (an agent on the same machine, in the
@@ -43,14 +47,14 @@ confirms every start, and can talk to any of them directly.
   running on it now and whether it is cooling down from a usage limit. It starts that agent to ask,
   so run it for the agent you mean to use when a part needs `--model` or `--option`, or when you
   want to know whether it is free — not for every row of the list.
-- One `fleetherd task-new [--agent <id>] [--cwd <dir>] --title "<short name>" "<text>"` per part.
+- One `fleetherd task-new [--agent <id>] [--cwd <dir>] [--worktree [name]] --title "<short name>" "<text>"` per part.
   Pass `-` for `<text>` (or `--review -`) to read long prompts from stdin via heredoc
   (`fleetherd task-new --title "<short name>" - <<'EOF'`), avoiding temp files and shell quoting.
   When proposing multiple independent parts, dispatch them in parallel in the same turn (or chain
   multiple `task-new` commands in one shell call) instead of spending a separate model turn per
   `task-new`. `--cwd` is a path on the machine that runs the part: a directory name from `task-agents`, or an
-  absolute path such as a worktree you made there, so the part starts in it instead of the main
-  checkout. With confirmation on, they all land on the card waiting for the person, however far
+  absolute path; with `--worktree [name]`, the gateway creates `<repo>/.worktrees/<name>` on a new
+  branch when the part starts (nothing is created at proposal time) and starts the part there. With confirmation on, they all land on the card waiting for the person, however far
   apart you send them; only the first waits a few seconds for the rest. With it off where the
   person talks to you directly, each starts at once and the card lists what started.
 - `--model <id>` runs a part on another model from that agent's `/model` list — when the person

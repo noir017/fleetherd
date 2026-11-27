@@ -9,6 +9,7 @@ import { splitByMeasure } from '../core/stream-buffer.js';
 import {
   bashResultText,
   bashStatus,
+  bashWakeText,
   buildTask,
   editTask,
   formatDay,
@@ -20,9 +21,11 @@ import {
   runNoticeText,
   runView,
   sameDailyTopicScope,
+  shouldWake,
   targetId,
   taskCardText,
   taskExpiredText,
+  taskWakeCapText,
   taskView,
   type EditTaskInput,
   type NewTaskContext,
@@ -94,6 +97,11 @@ export class ScheduleService {
         if (notice.event === 'expired') {
           const locale = localeOf(this.config);
           this.post(task.target.platform, targetAddress(task), taskExpiredText(task, locale), 'expiry notice');
+          return;
+        }
+        if (notice.event === 'wake-cap') {
+          const locale = localeOf(this.config);
+          this.post(task.target.platform, targetAddress(task), taskWakeCapText(task, locale), 'wake-cap notice');
           return;
         }
         // Skipped and missed: the run that never was. Nothing else in the gateway says a word about
@@ -353,7 +361,10 @@ export class ScheduleService {
    * with the agent bound there now; anything else is asked of the target, as add asks.
    */
   private fixedConversation(task: ScheduleTask, moved: boolean, target: Destination): NewTaskContext['targetConversation'] {
-    if (!moved && task.run.kind === 'agent' && task.run.session === 'fixed' && task.conversation !== undefined) {
+    const boundToConv =
+      task.conversation !== undefined &&
+      ((task.run.kind === 'agent' && task.run.session === 'fixed') || (task.run.kind === 'bash' && task.run.wake !== undefined));
+    if (!moved && boundToConv && task.conversation !== undefined) {
       const bound = this.registry.boundAgentOf(task.conversation);
       return { key: task.conversation, ...(bound !== undefined ? { agent: bound } : {}) };
     }
@@ -685,6 +696,11 @@ export class ScheduleService {
       r = await runBashCommand(opts);
     }
     const outcome = { ...r, durationMs: this.clock.now() - started };
+    const { status, error } = bashStatus(outcome, run.timeoutMs);
+    const wake = run.wake !== undefined;
+    if (wake && !shouldWake(run.wake!.on, outcome)) {
+      return { status, ...optional('exitCode', r.exitCode ?? undefined), ...optional('error', error) };
+    }
     const locale = localeOf(this.config);
     const { text, attach } = bashResultText(task, outcome, run.timeoutMs, locale);
     const address = targetAddress(task);
@@ -692,7 +708,27 @@ export class ScheduleService {
     if (attach && r.logFile) {
       await platform.sendFile(address, { path: r.logFile, name: `${task.id}-${stamp}.log` }).catch((e) => warn('bash log', e));
     }
-    const { status, error } = bashStatus(outcome, run.timeoutMs);
+    if (wake) {
+      const key = task.conversation!;
+      const agentId = this.registry.boundAgentOf(key) ?? this.config.routing.default;
+      const turnResult = toResult(
+        await this.registry.runScheduledPrompt({
+          key,
+          platform: task.target.platform,
+          address,
+          agentId,
+          prompt: bashWakeText(task, outcome, run.timeoutMs),
+        })
+      );
+      await this.reportTurn(task, platform, address, turnResult, planned);
+      return {
+        status,
+        ...optional('exitCode', r.exitCode ?? undefined),
+        ...optional('error', error),
+        conversation: key,
+        woke: true,
+      };
+    }
     return { status, ...optional('exitCode', r.exitCode ?? undefined), ...optional('error', error) };
   }
 

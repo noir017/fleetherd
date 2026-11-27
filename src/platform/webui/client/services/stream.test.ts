@@ -151,4 +151,38 @@ describe('services/stream', () => {
     expect(onBuildOutdated).toHaveBeenCalledTimes(1);
     client.dispose();
   });
+
+  it('builds multiplexed URLs and tracks per-topic lastEventId across reconnects', () => {
+    expect(buildEventsUrl({ topics: ['a1', 'b2'], lasts: ['a1.r.2', 'b2.r.5'], tv: 9 })).toBe(
+      'api/events?t=a1&t=b2&last=a1.r.2&last=b2.r.5&tv=9',
+    );
+    const sources: FakeEventSource[] = [];
+    let topics = ['a1', 'b2'];
+    const client = createStreamClient({
+      getTopic: () => topics[0] || '',
+      getTopics: () => topics,
+      isLoggedOut: () => false,
+      getBuild: () => 'v1',
+      createEventSource: (url) => {
+        const es = new FakeEventSource(url);
+        sources.push(es);
+        return es;
+      },
+    });
+    client.connect();
+    expect(sources[0]?.url).toBe('api/events?t=a1&t=b2');
+    sources[0]!.emitMessage({ t: 'msg', topic: 'a1' }, 'a1.r.4');
+    sources[0]!.emitMessage({ t: 'msg', topic: 'b2' }, 'b2.r.7');
+    expect(client.getLastEventId('a1')).toBe('a1.r.4');
+    expect(client.getLastEventId('b2')).toBe('b2.r.7');
+
+    client.setTopicsVersion(12);
+    client.connect(true, true);
+    expect(sources[1]?.url).toBe('api/events?t=a1&t=b2&last=a1.r.4&last=b2.r.7&tv=12');
+
+    topics = ['a1'];
+    client.connect(true, true);
+    expect(sources[2]?.url).toBe('api/events?t=a1&last=a1.r.4&tv=12');
+    client.dispose();
+  });
 });

@@ -54,6 +54,7 @@ import { parseRetryButtonId } from '../../core/turn-retry.js';
 import { parseWorkdirButtonId } from '../../core/workdir-menu.js';
 import type {
   AgentCatalog,
+  AgentHandoffAction,
   AgentStatus,
   ButtonInteraction,
   InboundMessage,
@@ -445,7 +446,8 @@ interface Download {
 }
 
 interface Client {
-  topic: string;
+  topics: Set<string>;
+  multiplexed: boolean;
   send: Sink;
 }
 
@@ -1737,48 +1739,107 @@ export class WebRoom {
    * handed the list only when it has moved since.
    */
   subscribe(topicId: string, send: Sink, lastEventId?: string, topicsVersion?: number): () => void {
+    return this.subscribeTopics([topicId], send, lastEventId ? [lastEventId] : [], topicsVersion, false);
+  }
+
+  subscribeMany(
+    topicIds: readonly string[],
+    send: Sink,
+    lastEventIds: readonly string[] = [],
+    topicsVersion?: number
+  ): () => void {
+    const unique = [...new Set(topicIds.filter(Boolean))];
+    if (unique.length <= 1) {
+      const only = unique[0] ?? this.topics.current().id;
+      return this.subscribe(only, send, this.bestLastEventId(only, lastEventIds), topicsVersion);
+    }
+    return this.subscribeTopics(unique, send, lastEventIds, topicsVersion, true);
+  }
+
+  private bestLastEventId(topicId: string, ids: readonly string[]): string | undefined {
+    let best: string | undefined;
+    let bestSeq = -1;
+    for (const raw of ids) {
+      if (!raw) continue;
+      const [topic, run, seq, ...more] = raw.split('.');
+      if (more.length > 0 || topic !== topicId || run !== this.run) continue;
+      const n = Number(seq);
+      if (!Number.isInteger(n) || n < 0) continue;
+      if (n > bestSeq) {
+        bestSeq = n;
+        best = raw;
+      }
+    }
+    return best;
+  }
+
+  private subscribeTopics(
+    topicIds: readonly string[],
+    send: Sink,
+    lastEventIds: readonly string[],
+    topicsVersion: number | undefined,
+    multiplexed: boolean
+  ): () => void {
     // Everyone already attached is brought up to the list as it is now, BEFORE this client is
     // handed it: they then all hold the same list, which is what the next change is sent against.
     const topics = this.announceTopics();
-    const client: Client = { topic: topicId, send };
+    const client: Client = { topics: new Set(topicIds), multiplexed, send };
     this.clients.add(client);
-    const room = this.roomOf(topicId);
-    const missed = this.replayFrom(room, topicId, lastEventId);
-    // A message edited N times while the stream was away left N copies of a growing body in the
-    // backlog; the page only ever needs the last (see `mergeReplay`).
-    const replay = missed && mergeReplay(missed);
-    const ok = replay
-      ? replay.every((entry) => this.deliver(client, entry.ev, entry.seq)) &&
-        // Status is state and is not in the backlog (see the `status` event), so a resumed stream
-        // is told the current one outright — it may have changed, or been cleared, during the gap.
-        this.deliver(client, { t: 'status', ...(room.status ? { status: room.status } : {}) }) &&
-        this.deliver(client, { t: 'pending', items: room.pending }) &&
-        // The machine list likewise, for the same reason: a machine can come or go in the gap.
+    let ok = true;
+    let anyFullSync = false;
+    let totalMissed = 0;
+    for (const topicId of topicIds) {
+      if (!ok) break;
+      const room = this.roomOf(topicId);
+      const lastId = this.bestLastEventId(topicId, lastEventIds);
+      const missed = this.replayFrom(room, topicId, lastId);
+      const replay = missed && mergeReplay(missed);
+      if (replay) {
+        totalMissed += replay.length;
+        ok = this.deliverResume(client, topicId, room, replay, topics, topicsVersion);
+      } else {
+        anyFullSync = true;
+        ok = this.deliver(client, this.syncEvent(topicId, room, topics), room.seq, undefined, topicId);
+      }
+    }
+    if (multiplexed && ok && !anyFullSync) {
+      ok =
         this.deliver(client, { t: 'machines', offline: [...this.offline] }) &&
-        // And the topic list, which is in no backlog either. A blip's gap is short, but a page put
-        // in the background closes its stream and resumes it minutes later (`?last=`), and a
-        // sidebar from before that would be wrong until something else was posted. A client that
-        // says it holds this very version is not sent it. Rows carrying `last` cost this: `tv` now
-        // moves on every event, so resuming any topic that saw one since the client's list was
-        // sent carries the whole list again — about 2.5 KB gzipped at 200 topics. Accepted as the
-        // price of a row being a version; changed rows on a resume would be a second protocol.
-        (topicsVersion === this.topicsVer || this.deliver(client, { t: 'topics', topics, tv: this.topicsVer })) &&
-        // Last, so the page knows the replay is over: a page that entered the topic from what it
-        // kept in memory has no sync coming to say it is caught up.
-        this.deliver(client, { t: 'resumed' })
-      : // Numbered with the room's position, so the stream has a resume point from the start: a
-        // blip straight after a sync — or a tab put away before anything else was said — resumes
-        // from here instead of taking the whole topic again. The sync is the room's state as of
-        // that number; anything held back and sent later is numbered after it.
-        this.deliver(client, this.syncEvent(topicId, room, topics), room.seq);
+        (topicsVersion === this.topicsVer || this.deliver(client, { t: 'topics', topics, tv: this.topicsVer }));
+    }
     if (ok) {
-      console.log(
-        `[webui] client attached to ${topicId}${replay ? ` (resumed, ${replay.length} missed)` : ' (full sync)'}; ${this.clients.size} watching`
-      );
+      const label = topicIds.join(',');
+      const mode = anyFullSync ? 'full sync' : `resumed, ${totalMissed} missed`;
+      console.log(`[webui] client attached to ${label} (${mode}); ${this.clients.size} watching`);
     }
     return () => {
       if (this.clients.delete(client)) console.log(`[webui] client left (${this.clients.size} watching)`);
     };
+  }
+
+  private deliverResume(
+    client: Client,
+    topicId: string,
+    room: Room,
+    replay: ReadonlyArray<{ seq: number; ev: WebEvent }>,
+    topics: Topic[],
+    topicsVersion: number | undefined
+  ): boolean {
+    const tag = client.multiplexed ? { topic: topicId } : {};
+    const sentReplay = replay.every((entry) => {
+      const ev = client.multiplexed ? ({ ...entry.ev, topic: topicId } as WebEvent) : entry.ev;
+      return this.deliver(client, ev, entry.seq, undefined, topicId);
+    });
+    if (!sentReplay) return false;
+    if (!this.deliver(client, { t: 'status', ...tag, ...(room.status ? { status: room.status } : {}) })) return false;
+    if (!this.deliver(client, { t: 'pending', ...tag, items: room.pending })) return false;
+    if (!client.multiplexed) {
+      if (!this.deliver(client, { t: 'machines', offline: [...this.offline] })) return false;
+      if (topicsVersion !== this.topicsVer && !this.deliver(client, { t: 'topics', topics, tv: this.topicsVer })) {
+        return false;
+      }
+    }
+    return this.deliver(client, { t: 'resumed', ...tag });
   }
 
   /** Events after `lastEventId`, or undefined when a full sync is the only honest answer. */
@@ -1902,8 +1963,16 @@ export class WebRoom {
     room.backlog.push({ seq: room.seq, ev });
     if (room.backlog.length > MAX_BACKLOG) room.backlog.shift();
     let data: string | undefined;
+    let muxData: string | undefined;
+    let muxEv: WebEvent | undefined;
     for (const client of this.clients) {
-      if (client.topic === topicId) this.deliver(client, ev, room.seq, (data ??= JSON.stringify(ev)));
+      if (!client.topics.has(topicId)) continue;
+      if (client.multiplexed) {
+        muxEv ??= { ...ev, topic: topicId } as WebEvent;
+        this.deliver(client, muxEv, room.seq, (muxData ??= JSON.stringify(muxEv)), topicId);
+      } else {
+        this.deliver(client, ev, room.seq, (data ??= JSON.stringify(ev)), topicId);
+      }
     }
     // The row's `last` just moved. Held briefly so a burst is one list (see `TOPIC_LIST_MS`).
     this.scheduleTopics();
@@ -1918,9 +1987,16 @@ export class WebRoom {
    * `data` is the event as JSON, passed in by a caller fanning one event out to several clients so
    * it is made once (`emit`, `sendTopics`); left out, it is made here.
    */
-  private deliver(client: Client, ev: WebEvent, seq?: number, data = JSON.stringify(ev)): boolean {
+  private deliver(
+    client: Client,
+    ev: WebEvent,
+    seq?: number,
+    data = JSON.stringify(ev),
+    topicId?: string
+  ): boolean {
     try {
-      client.send(seq === undefined ? '' : `${client.topic}.${this.run}.${seq}`, ev, data);
+      const idPrefix = topicId ?? client.topics.values().next().value ?? '';
+      client.send(seq === undefined ? '' : `${idPrefix}.${this.run}.${seq}`, ev, data);
       return true;
     } catch (e) {
       console.warn('[webui] dropping a client that failed to receive:', e instanceof Error ? e.message : e);
@@ -1989,8 +2065,10 @@ export class WebRoom {
   ): WebMessage {
     const room = this.roomOf(topicId);
     this.flush(room, topicId);
+    const handoff = part.handoff ? this.enrichHandoff(topicId, part.handoff) : undefined;
     const msg: WebMessage = {
       ...part,
+      ...(handoff ? { handoff } : {}),
       // Ids are global and never reused, not per topic: the outbound pacer coalesces edits
       // into `edit:<channel>:<messageId>`, and every topic shares the one channel, so an id
       // restarting per topic would let one topic's edits supersede another's.
@@ -2053,7 +2131,8 @@ export class WebRoom {
     text: string,
     buttons?: ButtonSpec[],
     screen?: SettingsScreen,
-    workdir?: WorkdirScreen
+    workdir?: WorkdirScreen,
+    handoff?: AgentHandoffAction
   ): void {
     const room = this.roomOf(topicId);
     const rec = this.mustFind(room, id, 'edit');
@@ -2078,6 +2157,11 @@ export class WebRoom {
     } else {
       delete rec.msg.workdir;
     }
+    if (handoff) {
+      rec.msg.handoff = this.enrichHandoff(topicId, handoff);
+    } else {
+      delete rec.msg.handoff;
+    }
     room.stored.set(id, rec);
     this.enqueue(room, topicId, id);
     this.keep(topicId);
@@ -2087,6 +2171,16 @@ export class WebRoom {
     // topic is waiting on the user. Announced only when the set actually changed: a menu turning
     // its page edits buttons too, and the sidebar has nothing to redraw for that.
     if (buttons && this.setAwaiting(room, id, buttons.length > 0)) this.announceTopics();
+  }
+
+  /** Fill in the web UI topic id and title when the daemon's store did not carry them. */
+  private enrichHandoff(topicId: string, handoff: AgentHandoffAction): AgentHandoffAction {
+    const title = handoff.fromTopicTitle || this.topics.get(topicId)?.title || undefined;
+    return {
+      ...handoff,
+      fromTopicId: handoff.fromTopicId ?? topicId,
+      ...(title ? { fromTopicTitle: title } : {}),
+    };
   }
 
   /** Record whether a message is holding live buttons. Returns whether that changed. */
@@ -2158,8 +2252,16 @@ export class WebRoom {
     room.statusKey = key;
     const ev: WebEvent = { t: 'status', ...(status ? { status } : {}) };
     const data = JSON.stringify(ev);
+    let muxEv: WebEvent | undefined;
+    let muxData: string | undefined;
     for (const client of [...this.clients]) {
-      if (client.topic === topicId) this.deliver(client, ev, undefined, data);
+      if (!client.topics.has(topicId)) continue;
+      if (client.multiplexed) {
+        muxEv ??= { t: 'status', topic: topicId, ...(status ? { status } : {}) };
+        this.deliver(client, muxEv, undefined, (muxData ??= JSON.stringify(muxEv)));
+      } else {
+        this.deliver(client, ev, undefined, data);
+      }
     }
   }
 
@@ -2175,8 +2277,16 @@ export class WebRoom {
     room.pending = next;
     const ev: WebEvent = { t: 'pending', items: next };
     const data = JSON.stringify(ev);
+    let muxEv: WebEvent | undefined;
+    let muxData: string | undefined;
     for (const client of [...this.clients]) {
-      if (client.topic === topicId) this.deliver(client, ev, undefined, data);
+      if (!client.topics.has(topicId)) continue;
+      if (client.multiplexed) {
+        muxEv ??= { t: 'pending', topic: topicId, items: next };
+        this.deliver(client, muxEv, undefined, (muxData ??= JSON.stringify(muxEv)));
+      } else {
+        this.deliver(client, ev, undefined, data);
+      }
     }
   }
 

@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { parseConfig, type Config } from '../config/schema.js';
 import type { ConversationAddress } from '../core/conversation.js';
 import type { AgentStatus, InboundMessage, TopicActivity } from '../types.js';
@@ -27,6 +27,9 @@ import {
   type TopicAt,
 } from './delegation.js';
 import { CARD_ITEM_CHARS, CARD_TOTAL_CHARS } from './delegation-surface.js';
+import { execFileSync } from 'node:child_process';
+import { localWorkspace } from './workspace.js';
+import { WORKTREE_CLEANUP_AGE_MS } from './worktree-git.js';
 import { TurnOutcomes } from './turn-outcomes.js';
 import { TurnFailure } from './agent.js';
 import type { LiveTurn } from './turn-progress.js';
@@ -2760,5 +2763,189 @@ describe('Delegation: the review loop (task-new --review-by)', () => {
       /an automatic review is not offered to an external caller/
     );
     await expect(r.d.handleExternal(E, { kind: 'task-verdict', verdict: 'pass' }, at)).rejects.toThrow(/task-verdict is not offered/);
+  });
+});
+
+describe('Delegation: managed git worktrees (task-new --worktree)', () => {
+  function makeLocalRepo(): string {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fleetherd-deleg-wt-'));
+    dirs.push(dir);
+    const env = {
+      ...process.env,
+      GIT_AUTHOR_NAME: 'alice',
+      GIT_AUTHOR_EMAIL: 'alice@example.com',
+      GIT_COMMITTER_NAME: 'alice',
+      GIT_COMMITTER_EMAIL: 'alice@example.com',
+    };
+    execFileSync('git', ['init', '-b', 'main'], { cwd: dir, env });
+    fs.writeFileSync(path.join(dir, 'app.txt'), 'v1\n');
+    execFileSync('git', ['add', 'app.txt'], { cwd: dir, env });
+    execFileSync('git', ['commit', '-m', 'init'], { cwd: dir, env });
+    return dir;
+  }
+
+  it('validates at proposal time, shows path and branch on card, and creates only on Start', async () => {
+    const repo = makeLocalRepo();
+    const wtFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'fleetherd-wtfile-')), 'worktrees.json');
+    dirs.push(path.dirname(wtFile));
+
+    const r = rig({ answer: 'manual' });
+    const d = new Delegation({
+      ...r.deps,
+      worktreesFile: wtFile,
+      workspaceFor: (_def, root) => localWorkspace(root),
+    });
+
+    // Non-git directory is refused at proposal time
+    const plain = fs.mkdtempSync(path.join(os.tmpdir(), 'fleetherd-nogit-'));
+    dirs.push(plain);
+    await expect(
+      d.handle(P, { kind: 'task-new', agent: 'local', cwd: plain, title: 'Fix A', worktree: true, text: 'do it' })
+    ).rejects.toThrow(/not inside a git repository/);
+
+    // Proposing valid --worktree creates nothing on disk yet
+    await d.handle(P, { kind: 'task-new', agent: 'local', cwd: repo, title: 'Fix Auth', worktree: true, text: 'fix auth' });
+    const expectedPath = path.join(repo, '.worktrees', 'fix-auth');
+    expect(fs.existsSync(expectedPath)).toBe(false);
+
+    // Duplicate worktree name in the same pending batch is refused
+    await expect(
+      d.handle(P, { kind: 'task-new', agent: 'local', cwd: repo, title: 'Fix Auth', worktree: true, text: 'dup' })
+    ).rejects.toThrow(/already proposed/);
+
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    expect(r.cards[0]?.text).toContain(`worktree \`${expectedPath}\` (branch \`fix-auth\`)`);
+    expect(fs.existsSync(expectedPath)).toBe(false);
+
+    // Tap Start -> worktree is created and passed as cwd to openTask
+    r.pending[0]!.resolve('Start it');
+    await vi.waitFor(() => {
+      expect(r.calls.some(([c]) => c === 'openTask')).toBe(true);
+    });
+    expect(fs.existsSync(expectedPath)).toBe(true);
+    const openCall = r.calls.find(([c]) => c === 'openTask');
+    expect(openCall?.[1]).toMatchObject({ cwd: expectedPath });
+
+    // `tasks` shows the managed worktree
+    const listed = (await d.handle(P, { kind: 'task-list' })) as TaskListResult;
+    expect(listed.tasks[0]?.worktree).toContain('fix-auth');
+
+    // Sweep leaves it alone while unmerged / <1h, then removes once merged + clean + idle >= 1h
+    const childKey = 'web#main#c1000000';
+    const endedAt = 10_000;
+    r.activity.set(childKey, { outcome: { kind: 'done', at: endedAt, line: 'done' } });
+    d.childChanged(childKey);
+
+    r.clock.advance(WORKTREE_CLEANUP_AGE_MS - 1_000);
+    let swept = await d.sweepWorktrees();
+    expect(swept.removed).toEqual([]);
+    expect(fs.existsSync(expectedPath)).toBe(true);
+
+    r.clock.advance(20_000);
+    swept = await d.sweepWorktrees();
+    expect(swept.removed).toEqual([expectedPath]);
+    expect(fs.existsSync(expectedPath)).toBe(false);
+    const afterList = (await d.handle(P, { kind: 'task-list' })) as TaskListResult;
+    expect(afterList.tasks[0]?.worktree).toBe('');
+  });
+});
+
+describe('Delegation: persisted review loops across restarts', () => {
+  const W = 'web#main#c1000000';
+  const R = 'web#main#c2000000';
+  const REVIEW = 'Check diff; end with `fleetherd task-verdict pass|nits|changes`.';
+  const sha = (ch: string): string => ch.repeat(40);
+
+  it('restores active loops after restart, accepts task-verdict, forwards next commits, shows in tasks, and drops stale entries', async () => {
+    const loopsFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'fleetherd-loop-restart-')), 'review-loops.json');
+    dirs.push(path.dirname(loopsFile));
+
+    const r = rig();
+    const heads = new Map<string, string>([[W, sha('a')]]);
+    const deps: DelegationDeps = {
+      ...r.deps,
+      reviewLoopsFile: loopsFile,
+      headOf: async (k) => {
+        const s = heads.get(k);
+        return s ? { sha: s, branch: 'feat/x' } : undefined;
+      },
+    };
+    const d1 = new Delegation(deps);
+
+    await d1.handle(P, task('cc', 'build', { reviewBy: 'cx', review: REVIEW, rounds: 3 }));
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    await settle();
+
+    // Work commits and opens reviewer topic R
+    heads.set(W, sha('b'));
+    r.activity.set(W, { outcome: { kind: 'done', at: r.clock.now(), line: 'built' } });
+    seedTurn(r.history, W, [{ role: 'agent', text: 'Built v1.' }]);
+    d1.childChanged(W);
+    r.clock.advance(CARD_DELAY_MS);
+    await settle();
+    await settle();
+    expect(fs.existsSync(loopsFile)).toBe(true);
+    expect(fs.statSync(loopsFile).mode & 0o777).toBe(0o600);
+
+    // Simulate a gateway restart: dispose d1, construct fresh Delegation over the same persisted file
+    d1.dispose();
+    const d2 = new Delegation(deps);
+
+    // `tasks` still shows the restored loop
+    const listed = (await d2.handle(P, { kind: 'task-list' })) as TaskListResult;
+    expect(listed.tasks.find((t) => t.topic === 'web:main/c1000000')?.review).toContain('round 1 under review');
+
+    // Reviewer's `task-verdict changes` is accepted after restart and sends work back
+    await expect(d2.handle(R, { kind: 'task-verdict', verdict: 'changes' })).resolves.toMatchObject({
+      topic: 'web:main/c2000000',
+    });
+    r.activity.set(R, { outcome: { kind: 'done', at: r.clock.now(), line: 'fix x' } });
+    seedTurn(r.history, R, [{ role: 'agent', text: 'Please fix X.' }]);
+    d2.childChanged(R);
+    r.clock.advance(CARD_DELAY_MS);
+    await settle();
+    await settle();
+
+    // Simulate a second restart while waiting for the work's fix commits
+    d2.dispose();
+    const d3 = new Delegation(deps);
+    heads.set(W, sha('c'));
+    r.activity.set(W, { outcome: { kind: 'done', at: r.clock.now(), line: 'fixed' } });
+    seedTurn(r.history, W, [{ role: 'agent', text: 'Fixed X.' }]);
+    d3.childChanged(W);
+    r.clock.advance(CARD_DELAY_MS);
+    await settle();
+    await settle();
+    const handToReviewer = r.calls.filter(([c, arg]) => c === 'handTo' && (arg as { key?: string }).key === R);
+    expect(handToReviewer.length).toBeGreaterThanOrEqual(1);
+
+    // Reviewer passes after restart
+    await d3.handle(R, { kind: 'task-verdict', verdict: 'pass' });
+    r.activity.set(R, { outcome: { kind: 'done', at: r.clock.now(), line: 'lgtm' } });
+    seedTurn(r.history, R, [{ role: 'agent', text: 'Looks good.' }]);
+    d3.childChanged(R);
+    r.clock.advance(CARD_DELAY_MS);
+    await settle();
+    await settle();
+    const listedDone = (await d3.handle(P, { kind: 'task-list' })) as TaskListResult;
+    expect(listedDone.tasks.find((t) => t.topic === 'web:main/c1000000')?.review).toContain('passed in round 2');
+
+    // Stale entry whose topic no longer exists is dropped on startup with a log line
+    d3.dispose();
+    r.parents.delete(W);
+    const logs: string[] = [];
+    const origLog = console.log;
+    console.log = (...args: unknown[]) => logs.push(args.map(String).join(' '));
+    try {
+      const d4 = new Delegation(deps);
+      expect(logs.some((l) => l.includes('dropped stale review loop'))).toBe(true);
+      const persisted = JSON.parse(fs.readFileSync(loopsFile, 'utf8')) as { loops: unknown[] };
+      expect(persisted.loops).toEqual([]);
+      d4.dispose();
+    } finally {
+      console.log = origLog;
+    }
   });
 });

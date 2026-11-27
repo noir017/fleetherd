@@ -20,6 +20,7 @@ import type { ButtonSpec, MessageKind } from '../adapter.js';
 import type { TurnChangeEntry } from '../workbench.js';
 import type {
   AgentCatalog,
+  AgentHandoffAction,
   AgentStatus,
   OfflineMachine,
   PendingQueueItem,
@@ -284,6 +285,9 @@ const ScheduleFormFields = z
     cwd: z.string().max(4096).nullable(),
     host: z.string().max(64).nullable(),
     timeoutMs: z.number().int().positive().max(1e9),
+    wake: z.boolean(),
+    wakeOn: z.string().max(100).nullable(),
+    wakeMax: z.number().int().positive().max(100),
     // Shape only, as for the tag editor's op: normalizeTags owns the rule.
     tags: z.array(z.string().max(200)).max(50),
     target: ScheduleTargetRequestSchema,
@@ -668,10 +672,10 @@ export type WebEvent =
       /** Messages currently held in the gateway's mid-turn pending queue for this topic. */
       pending?: WebPendingItem[];
     }
-  | { t: 'msg'; msg: WebMessage }
-  | { t: 'del'; id: string }
-  | { t: 'react'; id: string; emoji: string; on: boolean }
-  | { t: 'typing'; on: boolean }
+  | { t: 'msg'; topic?: string; msg: WebMessage }
+  | { t: 'del'; topic?: string; id: string }
+  | { t: 'react'; topic?: string; id: string; emoji: string; on: boolean }
+  | { t: 'typing'; topic?: string; on: boolean }
   /**
    * The topic's agent status changed — the strip above the composer. Absent `status` clears it.
    *
@@ -679,8 +683,8 @@ export type WebEvent =
    * stream of them cannot push the messages a reconnect needs out of it. A resumed stream is handed
    * the current one after its replay instead (see `WebRoom.subscribe`) — the only one it needs.
    */
-  | { t: 'status'; status?: AgentStatus }
-  | { t: 'pending'; items: WebPendingItem[] }
+  | { t: 'status'; topic?: string; status?: AgentStatus }
+  | { t: 'pending'; topic?: string; items: WebPendingItem[] }
   | { t: 'commands'; commands: SlashCommandSpec[] }
   /**
    * The whole topic list, at version `tv`: in a sync, and to a resumed stream whose list is older.
@@ -705,7 +709,7 @@ export type WebEvent =
    * keeps). The answer to a page that asked to resume instead of being sent a sync: one that came
    * back to a topic it still held in memory has no sync coming to say it is caught up.
    */
-  | { t: 'resumed' }
+  | { t: 'resumed'; topic?: string }
   /**
    * The machines the daemon cannot reach changed — every one of them, so an empty list says they
    * are all back. State like `status`, never sequenced, and to every client like `topics`: the
@@ -796,6 +800,8 @@ export interface WebMessage {
   wasSettings?: boolean;
   /** Structured directory browser payload for live `/cd` and post-`/agent` placement menus. */
   workdir?: WorkdirScreen;
+  /** Structured handoff action attached to a refused agent switch so the page can open a new topic with an unsent draft. */
+  handoff?: AgentHandoffAction;
   /** Lifecycle reactions currently on this message (👀 / ✅ / ❌). Empty, never absent, for the same reason. */
   reactions: string[];
   /**
