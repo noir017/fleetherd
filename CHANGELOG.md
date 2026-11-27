@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.42.0] - 2026-11-27
+
 ### Changed
 
 - **Each subagent gets a card of its own.** When a Claude Code agent started subagents, their tool
