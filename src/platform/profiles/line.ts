@@ -27,7 +27,7 @@ import type { Bot } from '@satorijs/core';
 import type { PlatformCapabilities } from '../adapter.js';
 import { flattenMarkdown } from '../plaintext-markdown.js';
 import type { PlatformProfile } from '../profile.js';
-import type { LinePlatformConfig } from '../config-schemas.js';
+import type { LinePlatformConfig } from '../../config/platform-schemas.js';
 import {
   buildButtonMessageFragment,
   installHttpService,
@@ -155,7 +155,7 @@ export function createLineProfile(): PlatformProfile<LinePlatformConfig> {
     measureRendered: (text: string) => toPlainText(text).length,
 
     install(ctx, platform) {
-      // Typed config (config-schemas.ts): token (channel access token), secret
+      // Typed config (config/platform-schemas.ts): token (channel access token), secret
       // (channel secret, webhook signature) and selfUrl are all schema-required —
       // the adapter only warns on a missing selfUrl but registers "undefined/line"
       // and breaks media, so the schema fails fast instead.
