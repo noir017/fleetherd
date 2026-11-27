@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { WebuiConfigSchema } from '../../config-schemas.js';
+import { WebuiConfigSchema } from '../../../config/platform-schemas.js';
 import {
   isSafeAssetPattern,
   isSafeRelativePath,

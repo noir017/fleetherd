@@ -9,7 +9,7 @@ import type { Bot, Session, Universal } from '@satorijs/core';
 import type { SlashCommandSpec } from '../../types.js';
 import type { PlatformCapabilities } from '../adapter.js';
 import type { PlatformProfile, ResolvedConversation } from '../profile.js';
-import type { DiscordPlatformConfig } from '../config-schemas.js';
+import type { DiscordPlatformConfig } from '../../config/platform-schemas.js';
 import { renderDiscordMarkdown } from '../discord-markdown.js';
 import {
   attrAttachmentMeta,

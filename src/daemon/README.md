@@ -67,7 +67,7 @@ session id, agy's conversation id). One conversation holds one session *per agen
 | `shell-run.ts` | General shell command runner (local and remote): its own process group, a bounded output tail, and the full log on disk. Shared by scheduled `--bash` tasks, `agent-hooks.ts`, and `quota-meter.ts` |
 | `restart-drain.ts` | A SIGTERM with turns (an agent's background output counted as one) or scheduled runs in progress: the bounded wait for them before the daemon stops (`Daemon.beginDrain` refuses new turns and holds the scheduler meanwhile) |
 | `reverse-cli-shim.ts` | Guarantees `fleetherd` is on the agent's PATH; `selfInvocation` — how to re-run this CLI, shared with the tool server entry |
-| `provision.ts` | Types only: `AgentProvision` and the narrow `HostFiles` port implemented by `RemoteHost` for spawn-time local and remote provisioning |
+| `provision.ts` | Types only: `AgentProvision`, `ProvisionMeta`, and the narrow `HostFiles` port implemented by `RemoteHost` for spawn-time local, remote, and connect-agent `_meta` provisioning |
 | `ssh-identity.ts` | Leaf helper: gateway default SSH identity file, `known_hosts` path resolution, and local `~` expansion |
 | `agy-plugin.ts` | Links the bundled agy plugin (`agy-plugin/`: a Stop hook that keeps a turn open while a background command runs) into `~/.gemini/config/plugins` |
 | `skill-link.ts` | Links the bundled skills (`fleetherd`, `super`) into the skill directories the harnesses read (`~/.claude/skills`, `~/.agents/skills`, `~/.gemini/config/skills`); `fleetherd` through its rendered copy in `~/.fleetherd/bundled/<readers>` |
@@ -1016,7 +1016,9 @@ of it: the daemon keeps none, so deleting a topic on the page is what ends it. T
   increment (`handTo` with no text, only the forward); the verdict goes back the same way. The parent
   is told through the ordinary `queueUpdates` — once at the end, about both topics, or with a `note`
   when the loop holds (no commit, no reply). `personWrote`, `task-stop`, `/stop` and "End agent"
-  disarm it. In memory only, like `owed`.
+  disarm it. Persisted atomically (0600) in `<configDir>/review-loops.json` (`review-loop-store.ts`)
+  and restored at startup (dropping loops whose topics no longer exist, and re-arming `owed` for
+  active loops so post-restart turns still advance the loop).
 - A conversation acts only on topics it opened (`Delegation.child` checks `parentOf`).
 - Updates come back through `childChanged` — TurnOutcomes' `onNeedsPerson`, and a sub-agent's ask —
   for turns the parent is owed (`owed`, in memory): one it handed out (task-new, task-send), or one
@@ -1156,6 +1158,33 @@ Neither field is in the ACP schema; the contract test in `agent-acp.test.ts` rep
 claude-agent-acp 0.81.2 sent on 2026-10-10. The adapter keeps a subagent's own text internal for
 a client that declares neither ACP `subagents` nor `subagent-transcript`, and this one declares
 neither — declaring either would start delivering it, and it would then need somewhere to go.
+
+**Subagent cards.** A subagent's tools also carry `ToolEvent.parent` (the spawning call's id —
+two subagents can share a description, never a call), and the spawning call carries `spawns`:
+`background` when Claude Code's Agent input says `run_in_background`, else `foreground`. They do
+not break the reply's segments either way (`maybeStartTool`, `finishTool`): a subagent's Bash in
+the middle of the main agent's sentence used to end that message and start another. `TurnRunner`
+routes them off the reply's tool bubble into `SubagentCards`, one `ToolRenderer` per subagent
+with a header (core README, Tool bubbles), sent with `kind: 'subagent'`. They still ride the
+render's effects chain, so a card is never posted ahead of what came before it, but nothing waits
+for a card's placement, and a card is not `ref.lastRef` — it is not the reply. A card ends:
+- with the call that started it, for a foreground subagent — that call lasts as long as it does;
+- with the render, for a background one. claude-agent-acp 0.81 holds a turn open until the
+  background subagents it spawned are done (`Turn.deferredSettle`, `turnAwaitingSubagents`), so
+  their tools arrive inside the turn and the turn's end is theirs;
+- with a ✗ when the render is stopped or fails (`Render.abort`): the cards are not aborted there,
+  so that ✗ still paints, and `finalize` stops them after its bounded settle.
+With subagent tools no longer cutting the reply, what tells two of the main agent's messages apart
+is ACP's own `messageId` (`ingestText`): a text chunk whose id differs from the last one's starts a
+new segment, as a tool between them would. A held turn needs it — each background subagent's report
+starts a cycle of its own, whose text otherwise ran on from the last cycle's mid-line. A harness
+that sends no id is unaffected; claude-agent-acp, opencode and codex-acp all send one per message.
+A tool for a card that has ended reopens it. The cards are per render: a subagent whose tools
+outlive the render that started it — an adapter that does not hold the turn — gets a new card
+under the same name in the follow-up's render. The adapter's own subagent sessions (AIR
+`nativeSubagentSessions` / ACP `subagents`, which would report each subagent's end) are not used:
+they move a subagent's updates to a child session id, hide the spawning call, and drop updates
+past a buffer, and the schema is not published yet (ACP PR #1992).
 
 The `claude` adapter is **bundled** as a dependency and resolved via
 `resolveClaudeAdapterEntry`, so it needs no separate install. Every other harness —

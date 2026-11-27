@@ -1066,9 +1066,11 @@ async function createTopic({ req, res }: Req, ctx: Ctx): Promise<void> {
         return send(req, res, 409, { error: setup.error });
       }
       const enriched = ctx.room.topicList().find((t) => t.id === created.id) ?? created;
-      return send(req, res, 201, { topic: enriched, agent: setup.agent, cwd: setup.cwd });
+      const launch = await ctx.room.launchData(created.id);
+      return send(req, res, 201, { topic: enriched, agent: setup.agent, cwd: setup.cwd, ...launch });
     }
-    send(req, res, 201, { topic: created });
+    const launch = await ctx.room.launchData(created.id);
+    send(req, res, 201, { topic: created, ...launch });
   } catch (e) {
     // The room evicts the oldest topic to make room, so reaching this means every topic is starred
     // or in use. The message says which and what to do; the page shows it. Logged as well, since a

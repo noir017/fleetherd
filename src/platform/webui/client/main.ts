@@ -18,7 +18,7 @@ import type { LocalBubbleMessage } from './features/topic/composer/index.js';
 import type { ComposerTopicStatusBridge } from './features/topic/composer/types.js';
 import type { TopicEditorElements, TopicEditorHandle } from './features/topic/editor/index.js';
 import { stClock } from './features/topic/status/index.js';
-import type { LaunchChoice, TranscriptMessage, WorkdirScreen } from './features/topic/transcript/index.js';
+import type { HandoffAction, LaunchChoice, TranscriptMessage, WorkdirScreen } from './features/topic/transcript/index.js';
 import { isRowCurrent, type TopicSnapshotPayload } from './features/topics/index.js';
 import { applyDomI18n, getLocale, initLocale, onLocaleChange, setLocale, t as tr } from './i18n/index.js';
 import { getTheme, setTheme } from './theme.js';
@@ -74,6 +74,9 @@ interface TopicEditorSession {
   stale: boolean;
   launch: LaunchChoice | null;
   launchWdSeq: number;
+  launchSetupTopic: string;
+  launchSetupSeq: number;
+  seedWorkdir: WorkdirScreen | null;
   settleOnResume: boolean;
   enterToken: number;
 }
@@ -88,6 +91,8 @@ interface AppState {
   sessions: Map<string, TopicEditorSession>;
   sessionByRoot: WeakMap<HTMLElement, TopicEditorSession>;
   bootstrapped: boolean;
+  creatingTopic: boolean;
+  readonly workdirCache: Map<string, WorkdirScreen>;
   insertHandler: ((topicId: string, text: string) => boolean) | null;
   settingsBridge: SettingsPluginBridge | null;
   streamConnected: boolean;
@@ -168,6 +173,9 @@ function createSession(): TopicEditorSession {
     stale: false,
     launch: null,
     launchWdSeq: 0,
+    launchSetupTopic: '',
+    launchSetupSeq: 0,
+    seedWorkdir: null,
     settleOnResume: false,
     enterToken: 0,
   };
@@ -278,6 +286,9 @@ function resetSessionView(session: TopicEditorSession, id: string): void {
   session.entering = true;
   session.synced = false;
   session.launch = null;
+  session.launchSetupTopic = '';
+  session.launchSetupSeq = 0;
+  session.seedWorkdir = null;
   session.settleOnResume = false;
   if (editor) {
     editor.els.log.replaceChildren();
@@ -328,7 +339,12 @@ function applyCachedTopicEntry(
   return resume;
 }
 
-function enterSession(rt: AppRuntime, session: TopicEditorSession, id: string): void {
+function enterSession(
+  rt: AppRuntime,
+  session: TopicEditorSession,
+  id: string,
+  opts?: { readonly skipCache?: boolean },
+): void {
   const mine = ++session.enterToken;
   let used = false;
   const multi = rt.state.sessions.size > 1;
@@ -351,8 +367,12 @@ function enterSession(rt: AppRuntime, session: TopicEditorSession, id: string): 
     }
   };
 
-  const m = id ? rt.cacheService.memCopy(id) : null;
-  if (m || !id) {
+  if (opts?.skipCache || !id) {
+    go(null);
+    return;
+  }
+  const m = rt.cacheService.memCopy(id);
+  if (m) {
     go(m);
     return;
   }
@@ -373,15 +393,43 @@ function enterSession(rt: AppRuntime, session: TopicEditorSession, id: string): 
   }
 }
 
-function switchTopic(rt: AppRuntime, id: string): void {
+interface SwitchTopicOptions {
+  readonly fresh?: boolean;
+  readonly alreadyLeft?: boolean;
+  readonly launch?: LaunchChoice;
+  readonly workdir?: WorkdirScreen;
+}
+
+function leaveSessionTopic(rt: AppRuntime, session: TopicEditorSession | null, topicId: string): void {
+  rt.cacheService.leave(topicId);
+  session?.editor?.transcript?.scroll.saveView(topicId, session.entering);
+  session?.editor?.composer?.stashDraft(topicId);
+}
+
+function mountSeededLaunch(rt: AppRuntime, session: TopicEditorSession, opts: SwitchTopicOptions): void {
+  if (!opts.launch) {
+    session.editor?.transcript?.banners.showSkeleton();
+    return;
+  }
+  session.launch = opts.launch;
+  if (opts.workdir) {
+    cacheWorkdirScreen(rt.state, opts.workdir);
+    session.seedWorkdir = opts.workdir;
+  }
+  session.editor?.transcript?.banners.syncLaunch(true);
+}
+
+function closeMobileSidebar(rt: AppRuntime): void {
+  if (rt.shell.getMode() === 'mobile' && rt.shell.isPartVisible('sidebar')) {
+    rt.shell.setPartVisible('sidebar', false);
+  }
+}
+
+function switchTopic(rt: AppRuntime, id: string, opts?: SwitchTopicOptions): void {
   if (!id) return;
   const session = mainSession(rt.state);
   const prev = session ? session.topicId : rt.state.topic;
-  if (prev && prev !== id) {
-    rt.cacheService.leave(prev);
-    session?.editor?.transcript?.scroll.saveView(prev, session.entering);
-    session?.editor?.composer?.stashDraft(prev);
-  }
+  if (prev && prev !== id && !opts?.alreadyLeft) leaveSessionTopic(rt, session, prev);
   rt.state.topic = id;
   rt.state.focusedPanelId = MAIN_PANEL_ID;
   if (prev !== id) {
@@ -394,8 +442,8 @@ function switchTopic(rt: AppRuntime, id: string): void {
     const active = topicById(rt.state, id);
     rt.events.emit('topic.active', { id, topic: active as unknown as TopicInfo | undefined });
     if (activeMain) {
-      activeMain.editor?.transcript?.banners.showSkeleton();
-      enterSession(rt, activeMain, id);
+      mountSeededLaunch(rt, activeMain, opts ?? {});
+      enterSession(rt, activeMain, id, opts?.fresh ? { skipCache: true } : undefined);
     }
   } else {
     ensureTopicEditorOpen(rt, id);
@@ -403,26 +451,151 @@ function switchTopic(rt: AppRuntime, id: string): void {
     const active = topicById(rt.state, id);
     rt.events.emit('topic.active', { id, topic: active as unknown as TopicInfo | undefined });
   }
-  if (rt.shell.getMode() === 'mobile' && rt.shell.isPartVisible('sidebar')) {
-    rt.shell.setPartVisible('sidebar', false);
+  closeMobileSidebar(rt);
+}
+
+interface CreateTopicResponse {
+  readonly id?: string;
+  readonly topic?: Topic;
+  readonly agents?: LaunchChoice;
+  readonly workdir?: WorkdirScreen;
+  readonly error?: string;
+}
+
+function beginCreateTopicView(rt: AppRuntime, prevTopic: string): void {
+  closeMobileSidebar(rt);
+  const session = mainSession(rt.state);
+  if (session) ++session.enterToken;
+  if (!prevTopic) return;
+  leaveSessionTopic(rt, session, prevTopic);
+  ensureTopicEditorOpen(rt, prevTopic);
+  const editor = mainSession(rt.state)?.editor;
+  if (!editor) return;
+  editor.els.log.replaceChildren();
+  editor.transcript?.banners.resetForTopicSwitch();
+  editor.transcript?.banners.showSkeleton();
+}
+
+function prependCreatedTopic(rt: AppRuntime, topic: Topic | undefined): void {
+  if (!topic || rt.state.topics.some((t) => t.id === topic.id)) return;
+  rt.state.topics = [topic, ...rt.state.topics];
+  rt.events.emit('topic.list', { topics: toTopicInfos(rt.state.topics) });
+}
+
+function restoreAfterCreateFailure(rt: AppRuntime, prevTopic: string, message?: string): void {
+  const session = mainSession(rt.state);
+  const current = session ? session.topicId : rt.state.topic;
+  if (prevTopic && prevTopic === current) {
+    if (session) session.topicId = '';
+    rt.state.topic = '';
+    switchTopic(rt, prevTopic);
+  }
+  const editor = mainSession(rt.state)?.editor;
+  if (message && editor) {
+    editor.els.noteEl.textContent = message;
   }
 }
 
-async function createTopic(rt: AppRuntime, seed?: { readonly text?: string; readonly draft?: string }): Promise<boolean> {
+function applyCreatedTopicDraft(rt: AppRuntime, id: string, draft: string | undefined): void {
+  if (!draft) return;
+  const editor = mainSession(rt.state)?.editor;
+  if (editor?.composer) {
+    editor.composer.seedDraft(id, draft);
+  } else {
+    editor?.insertIntoComposer(draft);
+  }
+}
+
+interface CreateTopicSeed {
+  readonly text?: string;
+  readonly draft?: string;
+  readonly agent?: string;
+  readonly cwd?: string;
+  readonly onError?: (err: string) => void;
+}
+
+function buildCreateTopicBody(seed?: CreateTopicSeed): Record<string, string> {
+  const body: Record<string, string> = {};
+  if (seed?.agent) body.agent = seed.agent;
+  if (seed?.cwd) body.cwd = seed.cwd;
+  return body;
+}
+
+function finishCreatedTopic(
+  rt: AppRuntime,
+  id: string,
+  prevTopic: string,
+  data: CreateTopicResponse,
+  draft: string | undefined,
+): void {
+  prependCreatedTopic(rt, data.topic);
+  switchTopic(rt, id, {
+    fresh: true,
+    alreadyLeft: Boolean(prevTopic),
+    ...(data.agents ? { launch: data.agents } : {}),
+    ...(data.workdir ? { workdir: data.workdir } : {}),
+  });
+  applyCreatedTopicDraft(rt, id, draft);
+}
+
+async function createTopic(rt: AppRuntime, seed?: CreateTopicSeed): Promise<boolean> {
+  if (rt.state.creatingTopic) return false;
+  rt.state.creatingTopic = true;
+  const prevTopic = mainSession(rt.state)?.topicId || rt.state.topic;
+  beginCreateTopicView(rt, prevTopic);
   try {
-    const res = await post('api/topics', {}, 0);
-    if (!res.ok) return false;
-    const data = (await res.json()) as { id?: string; topic?: { id?: string } };
-    const id = data.topic?.id ?? data.id;
-    if (!id) return false;
-    switchTopic(rt, id);
-    if (seed?.draft) {
-      mainSession(rt.state)?.editor?.insertIntoComposer(seed.draft);
+    const res = await post('api/topics', buildCreateTopicBody(seed), 0);
+    const data = (await res.json().catch(() => ({}))) as CreateTopicResponse;
+    const id = res.ok ? (data.topic?.id ?? data.id) : undefined;
+    if (!id) {
+      restoreAfterCreateFailure(rt, prevTopic, res.ok ? undefined : data.error || tr('common.networkError'));
+      if (!res.ok) seed?.onError?.(data.error || `HTTP ${res.status}`);
+      return false;
     }
+    finishCreatedTopic(rt, id, prevTopic, data, seed?.draft);
     return true;
   } catch {
+    restoreAfterCreateFailure(rt, prevTopic, tr('common.networkError'));
+    seed?.onError?.(tr('topic.createReachErr'));
     return false;
+  } finally {
+    rt.state.creatingTopic = false;
   }
+}
+
+function buildHandoffDraft(
+  handoff: {
+    readonly fromAgent: string;
+    readonly sessionId: string;
+    readonly workdir?: string;
+    readonly fromTopicId?: string;
+    readonly fromTopicTitle?: string;
+  },
+  fallbackTopic: { readonly id: string; readonly title?: string } | null | undefined,
+): string {
+  const lines = [tr('msg.handoffDraftHead', { agent: handoff.fromAgent, sessionId: handoff.sessionId })];
+  if (handoff.workdir) {
+    lines.push(tr('msg.handoffDraftWorkdir', { workdir: handoff.workdir }));
+  }
+  const topicId = handoff.fromTopicId || fallbackTopic?.id;
+  const title = handoff.fromTopicTitle || fallbackTopic?.title;
+  let link: string | undefined;
+  if (topicId) {
+    const rel = `?t=${encodeURIComponent(topicId)}`;
+    try {
+      link = new URL(rel, window.location.href).href;
+    } catch {
+      link = rel;
+    }
+  }
+  if (title && link) {
+    lines.push(tr('msg.handoffDraftTopicWithLink', { title, link }));
+  } else if (link) {
+    lines.push(tr('msg.handoffDraftTopicLinkOnly', { link }));
+  } else if (title) {
+    lines.push(tr('msg.handoffDraftTopicTitleOnly', { title }));
+  }
+  return `${lines.join('\n')}\n\n`;
 }
 
 async function deleteTopic(rt: AppRuntime, id: string): Promise<void> {
@@ -445,12 +618,30 @@ function buildTopicEditorDeps(rt: AppRuntime) {
   };
 }
 
+const MAX_WORKDIR_CACHE = 40;
+
+function cacheWorkdirScreen(state: AppState, screen: WorkdirScreen, isRoot = false): void {
+  if (screen.error) return;
+  const dirKey = `${screen.agentId}\0${screen.browsing}`;
+  if (state.workdirCache.has(dirKey)) state.workdirCache.delete(dirKey);
+  state.workdirCache.set(dirKey, screen);
+  if (isRoot || (screen.root && screen.browsing === screen.root)) {
+    if (state.workdirCache.has(screen.agentId)) state.workdirCache.delete(screen.agentId);
+    state.workdirCache.set(screen.agentId, screen);
+  }
+  while (state.workdirCache.size > MAX_WORKDIR_CACHE) {
+    const oldest = state.workdirCache.keys().next().value;
+    if (oldest === undefined) break;
+    state.workdirCache.delete(oldest);
+  }
+}
+
 function loadLaunchWorkdirs(
   rt: AppRuntime,
   session: TopicEditorSession,
   tid: string,
   agentId: string,
-  opts?: { readonly dir?: string; readonly atRoot?: boolean },
+  opts?: { readonly dir?: string; readonly atRoot?: boolean; readonly silent?: boolean },
 ): void {
   const seq = ++session.launchWdSeq;
   const params = new URLSearchParams({ t: tid, agent: agentId });
@@ -460,16 +651,160 @@ function loadLaunchWorkdirs(
     .then((r) => (r.ok ? (r.json() as Promise<WorkdirScreen>) : null))
     .then((screen) => {
       if (seq !== session.launchWdSeq || session.topicId !== tid) return;
+      const banners = session.editor?.transcript?.banners;
       if (screen && typeof screen.browsing === 'string') {
-        session.editor?.transcript?.banners.setLaunchWorkdir(screen, false);
+        cacheWorkdirScreen(rt.state, screen, Boolean(opts?.atRoot || !opts?.dir));
+        banners?.setLaunchWorkdir(screen, false);
+      } else if (opts?.silent) {
+        banners?.clearLaunchWorkdirLoading();
       } else {
-        session.editor?.transcript?.banners.setLaunchWorkdir(null, false);
+        banners?.setLaunchWorkdir(null, false);
       }
     })
     .catch(() => {
-      if (seq === session.launchWdSeq && session.topicId === tid) {
-        session.editor?.transcript?.banners.setLaunchWorkdir(null, false);
+      if (seq !== session.launchWdSeq || session.topicId !== tid) return;
+      const banners = session.editor?.transcript?.banners;
+      if (opts?.silent) banners?.clearLaunchWorkdirLoading();
+      else banners?.setLaunchWorkdir(null, false);
+    });
+}
+
+function normalizeCachedWorkdir(screen: WorkdirScreen, cwd: string): WorkdirScreen {
+  return {
+    ...screen,
+    current: cwd,
+    selectCurrent: { ...screen.selectCurrent, current: screen.selectCurrent.path === cwd },
+    entries: (screen.entries ?? []).map((e) => ({ ...e, current: e.path === cwd })),
+  };
+}
+
+function handleLaunchShown(rt: AppRuntime, session: TopicEditorSession, tid: string, agentId: string): void {
+  if (!tid) return;
+  const banners = session.editor?.transcript?.banners;
+  const seeded = session.seedWorkdir;
+  session.seedWorkdir = null;
+  if (seeded && seeded.agentId === agentId) {
+    banners?.setLaunchWorkdir(seeded, false);
+    return;
+  }
+  const cached = rt.state.workdirCache.get(agentId);
+  if (cached) {
+    const cwd = topicById(rt.state, tid)?.dir?.path || cached.root || cached.browsing;
+    banners?.setLaunchWorkdir(normalizeCachedWorkdir(cached, cwd), false);
+    loadLaunchWorkdirs(rt, session, tid, agentId, { silent: true });
+    return;
+  }
+  loadLaunchWorkdirs(rt, session, tid, agentId);
+}
+
+function rollbackAgentChoice(
+  session: TopicEditorSession,
+  els: TopicEditorElements,
+  prevAgent: string | undefined,
+  prevScreen: WorkdirScreen | null,
+  errorMsg: string,
+): void {
+  ++session.launchWdSeq;
+  const banners = session.editor?.transcript?.banners;
+  if (prevAgent && session.launch) {
+    session.launch = { ...session.launch, current: prevAgent };
+    banners?.setLaunchAgent(prevAgent, { fold: false });
+  }
+  if (prevScreen) banners?.setLaunchWorkdir(prevScreen, false);
+  else banners?.setLaunchWorkdir(null, false);
+  els.noteEl.textContent = errorMsg;
+}
+
+function selectLaunchAgent(
+  rt: AppRuntime,
+  session: TopicEditorSession,
+  els: TopicEditorElements,
+  tid: string,
+  agentId: string,
+): void {
+  const { state } = rt;
+  const banners = session.editor?.transcript?.banners;
+  const prevAgent = session.launch?.current;
+  const prevScreen = banners?.getLaunchWorkdir() ?? null;
+  const sameAgent = prevAgent === agentId;
+  const setupSeq = ++session.launchSetupSeq;
+  session.launchSetupTopic = tid;
+
+  if (session.launch) session.launch = { ...session.launch, current: agentId };
+  banners?.setLaunchAgent(agentId, { fold: true });
+  session.editor?.status?.onAgentChosen();
+
+  // Keep the picker interactive when re-confirming the current agent or hitting client cache.
+  const keepCurrent = sameAgent && prevScreen?.agentId === agentId;
+  const cached = keepCurrent ? null : state.workdirCache.get(agentId);
+  if (cached) {
+    banners?.setLaunchWorkdir(normalizeCachedWorkdir(cached, cached.root || cached.browsing), false);
+    loadLaunchWorkdirs(rt, session, tid, agentId, { atRoot: true, silent: true });
+  } else if (!keepCurrent) {
+    banners?.setLaunchWorkdir(null, true);
+    loadLaunchWorkdirs(rt, session, tid, agentId, { atRoot: true });
+  }
+
+  void post('api/topics/setup', { topic: tid, agent: agentId }, 1)
+    .then((r) => r.json().then((j: { ok?: boolean; agent?: string; cwd?: string; error?: string }) => ({ r, j })))
+    .then(({ r, j }) => {
+      if (session.topicId !== tid || setupSeq !== session.launchSetupSeq) return;
+      if (!r.ok || !j.ok) {
+        rollbackAgentChoice(session, els, prevAgent, prevScreen, j.error || tr('common.networkError'));
+        return;
       }
+      if (j.cwd) banners?.setLaunchCwd(j.cwd);
+      session.editor?.status?.peekOptions();
+    })
+    .catch(() => {
+      if (session.topicId !== tid || setupSeq !== session.launchSetupSeq) return;
+      rollbackAgentChoice(session, els, prevAgent, prevScreen, tr('common.networkError'));
+    });
+}
+
+function browseLaunchWorkdir(rt: AppRuntime, session: TopicEditorSession, tid: string, dir: string): void {
+  const agentId = session.launch?.current;
+  if (!tid || !agentId) return;
+  const banners = session.editor?.transcript?.banners;
+  const cached = rt.state.workdirCache.get(`${agentId}\0${dir}`);
+  if (cached) {
+    const cwd = banners?.getLaunchWorkdir()?.current || cached.root || cached.browsing;
+    banners?.setLaunchWorkdir(normalizeCachedWorkdir(cached, cwd), false);
+    loadLaunchWorkdirs(rt, session, tid, agentId, { dir, silent: true });
+    return;
+  }
+  banners?.setLaunchWorkdir(null, true);
+  loadLaunchWorkdirs(rt, session, tid, agentId, { dir });
+}
+
+function pickLaunchWorkdir(
+  session: TopicEditorSession,
+  els: TopicEditorElements,
+  tid: string,
+  cwd: string,
+): void {
+  const agentId = session.launch?.current;
+  if (!tid || !agentId) return;
+  const setupSeq = ++session.launchSetupSeq;
+  session.launchSetupTopic = tid;
+  // Cancel any in-flight background directory refresh so it cannot overwrite the chosen path.
+  ++session.launchWdSeq;
+  session.editor?.transcript?.banners.setLaunchCwd(cwd, { fold: true });
+  session.editor?.status?.onAgentChosen();
+  void post('api/topics/setup', { topic: tid, agent: agentId, cwd }, 1)
+    .then((r) => r.json().then((j: { ok?: boolean; agent?: string; cwd?: string; error?: string }) => ({ r, j })))
+    .then(({ r, j }) => {
+      if (session.topicId !== tid || setupSeq !== session.launchSetupSeq) return;
+      if (!r.ok || !j.ok) {
+        els.noteEl.textContent = j.error || tr('common.networkError');
+        return;
+      }
+      if (j.cwd) session.editor?.transcript?.banners.setLaunchCwd(j.cwd);
+      session.editor?.status?.peekOptions();
+    })
+    .catch(() => {
+      if (session.topicId !== tid || setupSeq !== session.launchSetupSeq) return;
+      els.noteEl.textContent = tr('common.networkError');
     });
 }
 
@@ -517,72 +852,38 @@ function buildTranscriptDeps(rt: AppRuntime, els: TopicEditorElements, getTopicI
       void rt.commands.execute(READER_OPEN_IMAGE_COMMAND, { src: img.src, alt: img.alt, restoreFocus: img });
     },
     sendCommand: (cmd: string) => session.editor?.composer?.command(cmd),
-    onLaunchShown: (agentId: string) => {
-      const tid = getTopicId();
-      if (tid) loadLaunchWorkdirs(rt, session, tid, agentId);
-    },
+    onLaunchShown: (agentId: string) => handleLaunchShown(rt, session, getTopicId(), agentId),
     selectLaunchAgent: (agentId: string) => {
       const tid = getTopicId();
-      if (!tid) return;
-      const prevAgent = session.launch?.current;
-      if (session.launch) session.launch = { ...session.launch, current: agentId };
-      session.editor?.transcript?.banners.setLaunchAgent(agentId, { fold: true });
-      session.editor?.transcript?.banners.setLaunchWorkdir(null, true);
-      session.editor?.status?.onAgentChosen();
-      void post('api/topics/setup', { topic: tid, agent: agentId }, 1)
-        .then((r) => r.json().then((j: { ok?: boolean; agent?: string; cwd?: string; error?: string }) => ({ r, j })))
-        .then(({ r, j }) => {
-          if (session.topicId !== tid) return;
-          if (!r.ok || !j.ok) {
-            if (prevAgent && session.launch) {
-              session.launch = { ...session.launch, current: prevAgent };
-              session.editor?.transcript?.banners.setLaunchAgent(prevAgent, { fold: false });
-            }
-            session.editor?.transcript?.banners.setLaunchWorkdir(null, false);
-            els.noteEl.textContent = j.error || tr('common.networkError');
-            return;
-          }
-          const chosen = j.agent || agentId;
-          if (j.cwd) session.editor?.transcript?.banners.setLaunchCwd(j.cwd);
-          session.editor?.status?.peekOptions();
-          loadLaunchWorkdirs(rt, session, tid, chosen, { atRoot: true });
-        })
-        .catch(() => {
-          if (session.topicId !== tid) return;
-          els.noteEl.textContent = tr('common.networkError');
-        });
+      if (tid) selectLaunchAgent(rt, session, els, tid, agentId);
     },
-    browseLaunchWorkdir: (dir: string) => {
-      const tid = getTopicId();
-      const agentId = session.launch?.current;
-      if (!tid || !agentId) return;
-      session.editor?.transcript?.banners.setLaunchWorkdir(null, true);
-      loadLaunchWorkdirs(rt, session, tid, agentId, { dir });
-    },
-    pickLaunchWorkdir: (cwd: string) => {
-      const tid = getTopicId();
-      const agentId = session.launch?.current;
-      if (!tid || !agentId) return;
-      session.editor?.transcript?.banners.setLaunchCwd(cwd, { fold: true });
-      session.editor?.status?.onAgentChosen();
-      void post('api/topics/setup', { topic: tid, agent: agentId, cwd }, 1)
-        .then((r) => r.json().then((j: { ok?: boolean; agent?: string; cwd?: string; error?: string }) => ({ r, j })))
-        .then(({ r, j }) => {
-          if (session.topicId !== tid) return;
-          if (!r.ok || !j.ok) {
-            els.noteEl.textContent = j.error || tr('common.networkError');
-            return;
-          }
-          if (j.cwd) session.editor?.transcript?.banners.setLaunchCwd(j.cwd);
-          session.editor?.status?.peekOptions();
-        })
-        .catch(() => {
-          if (session.topicId !== tid) return;
-          els.noteEl.textContent = tr('common.networkError');
-        });
-    },
+    browseLaunchWorkdir: (dir: string) => browseLaunchWorkdir(rt, session, getTopicId(), dir),
+    pickLaunchWorkdir: (cwd: string) => pickLaunchWorkdir(session, els, getTopicId(), cwd),
     openReader: (link: Element) => {
       void rt.commands.execute(READER_OPEN_COMMAND, link);
+    },
+    onHandoff: (handoff: HandoffAction, btn: HTMLButtonElement) => {
+      if (btn.disabled) return;
+      btn.disabled = true;
+      btn.classList.add('busy');
+      const cur = topicById(state, session.topicId || getTopicId());
+      const draft = buildHandoffDraft(handoff, cur);
+      const cwd = handoff.workdir && handoff.sameHost !== false ? handoff.workdir : undefined;
+      let errMsg: string | undefined;
+      void createTopic(rt, {
+        agent: handoff.agentId,
+        ...(cwd ? { cwd } : {}),
+        draft,
+        onError: (err) => {
+          errMsg = err;
+        },
+      }).then((ok) => {
+        btn.disabled = false;
+        btn.classList.remove('busy');
+        if (!ok) {
+          els.noteEl.textContent = tr('topic.createFailed', { err: errMsg || tr('topic.createReachErr') });
+        }
+      });
     },
     deliverLocal: (nonce: string) => session.editor?.composer?.deliver(nonce),
     copyLocal: (nonce: string, btn: Element) => {
@@ -970,9 +1271,16 @@ function syncSessionFromEvent(
   session.settleOnResume = false;
   session.synced = true;
   session.stale = Boolean(ev.stale);
-  session.launch = ev.agents || null;
+  session.launch = mergeSyncLaunch(session, ev);
   applySyncToSession(rt, session, ev, named, arriving, stick);
   if (named) adoptCachedTopicMessages(rt, session, ev.topic);
+}
+
+function mergeSyncLaunch(session: TopicEditorSession, ev: Extract<WebEvent, { t: 'sync' }>): LaunchChoice | null {
+  if (ev.agents && session.launch && session.launchSetupTopic === ev.topic && session.launchSetupSeq > 0) {
+    return { ...ev.agents, current: session.launch.current };
+  }
+  return ev.agents || null;
 }
 
 function handleSyncEvent(rt: AppRuntime, ev: Extract<WebEvent, { t: 'sync' }>): void {
@@ -1043,8 +1351,16 @@ function applySyncToSession(
 }
 
 function adoptCachedTopicMessages(rt: AppRuntime, session: TopicEditorSession, topicId: string): void {
+  const token = session.enterToken;
   void rt.cacheService.get(topicId).then((c) => {
-    if (c && c.msgs.length && topicId === session.topicId && rt.state.sessions.get(session.panelId) === session) {
+    if (
+      c &&
+      c.msgs.length &&
+      topicId === session.topicId &&
+      rt.state.sessions.get(session.panelId) === session &&
+      token === session.enterToken &&
+      !(session.panelId === MAIN_PANEL_ID && rt.state.creatingTopic)
+    ) {
       session.editor?.transcript?.adopt(c.msgs as unknown as readonly TranscriptMessage[]);
     }
   });
@@ -1517,6 +1833,8 @@ function bootstrap(): void {
     sessions: new Map(),
     sessionByRoot: new WeakMap(),
     bootstrapped: false,
+    creatingTopic: false,
+    workdirCache: new Map<string, WorkdirScreen>(),
     insertHandler: null,
     settingsBridge: null,
     streamConnected: false,

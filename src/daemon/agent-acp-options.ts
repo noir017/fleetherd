@@ -7,9 +7,9 @@ import type {
   AgentStreamHandlers,
   EffortSelector,
   ModelSelector,
+  SessionMemory,
   SessionModeSelector,
 } from './agent.js';
-import type { ConversationStore } from './conversation-store.js';
 import { HARNESS_PROFILES } from './harness/index.js';
 
 /** ACP's well-known id for the model selector among a session's config options. */
@@ -539,7 +539,7 @@ export class AcpOptionState {
   constructor(
     private readonly def: AgentDef,
     conversationId: string,
-    store?: ConversationStore
+    store?: SessionMemory
   ) {
     this.modelPreference = store?.conversationChoice?.(conversationId, def.id, 'model');
     this.effortPreference = store?.conversationChoice?.(conversationId, def.id, 'effort');

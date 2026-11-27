@@ -1,7 +1,7 @@
 # fleetherd config file reference
 
 Everything the operator can set lives in **one YAML file**. This document mirrors the
-validation schema in the source (`src/config/schema.ts`, `src/platform/config-schemas.ts`);
+validation schema in the source (`src/config/schema.ts`, `src/config/platform-schemas.ts`);
 keys not listed here do not exist — the loader rejects unknown or invalid fields with a
 per-field error message, so don't invent keys.
 

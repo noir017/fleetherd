@@ -4,6 +4,7 @@ import { MessageNotEditableError, RateLimitedError, WriteDroppedError } from './
 import {
   ToolRenderer,
   formatDuration,
+  subagentHeader,
   type BubbleSink,
   type ToolRendererOptions,
 } from './tool-renderer.js';
@@ -846,6 +847,74 @@ describe('subagent tools', () => {
     await flush();
 
     expect(sends).toEqual(['↳ probe · 💻 Bash: "one"', '↳ probe · 📖 Read: "two"']);
+  });
+});
+
+/**
+ * A subagent's card (daemon/subagent-cards.ts): one renderer per subagent, its name said once in a
+ * header, which takes the ✓ / ✗ and duration a tool line does once the subagent ends.
+ */
+describe('header (a subagent card)', () => {
+  it('formats as a tool line does: the name, then its finish mark once it has ended', () => {
+    expect(subagentHeader('look behind')).toBe('↳ look behind');
+    expect(subagentHeader('look behind', { ok: true, durationMs: 13_200 })).toBe('↳ look behind ✓ 13.2s');
+    expect(subagentHeader('look  behind\n', { ok: false, durationMs: 800 })).toBe('↳ look behind ✗ 800ms');
+    expect(subagentHeader('x'.repeat(80))).toBe(`↳ ${'x'.repeat(59)}…`);
+  });
+
+  it('names the subagent once, above its tools, instead of on every line', async () => {
+    const { sink, sends, flush } = makeSink({ withEdit: true });
+    const r = new ToolRenderer(makeOpts({ grouping: 'accumulate' }), sink);
+    r.setHeader(subagentHeader('probe'));
+    r.onToolStart({ ...start('Bash', 'one', 0), agent: 'probe' });
+    r.onToolStart({ ...start('Read', 'two', 1), agent: 'probe' });
+    r.onToolFinish(finish('Bash', true, 500, 0));
+    await flush();
+    expect(sends).toEqual(['↳ probe\n💻 Bash: "one" ✓ 500ms\n📖 Read: "two"']);
+  });
+
+  it('repaints when the header changes, with no tool event', async () => {
+    const { sink, edits, flush } = makeSink({ withEdit: true });
+    const r = new ToolRenderer(makeOpts({ grouping: 'accumulate' }), sink);
+    r.setHeader(subagentHeader('probe'));
+    r.onToolStart({ ...start('Bash', 'one', 0), agent: 'probe' });
+    r.onToolFinish(finish('Bash', true, 500, 0));
+    await flush();
+    r.setHeader(subagentHeader('probe', { ok: true, durationMs: 4_000 }));
+    await flush();
+    expect(edits.at(-1)!.text).toBe('↳ probe ✓ 4.0s\n💻 Bash: "one" ✓ 500ms');
+  });
+
+  it('still says the subagent ended when a seal took every line with it', async () => {
+    // Without this the sealed bubble would read as running for good: nothing is left to paint.
+    const { sink, sends, flush } = makeSink({ withEdit: true });
+    const r = new ToolRenderer(makeOpts({ grouping: 'accumulate', maxEdits: 1 }), sink);
+    r.setHeader(subagentHeader('probe'));
+    r.onToolStart({ ...start('Bash', 'one', 0), agent: 'probe' });
+    await flush();
+    r.onToolFinish(finish('Bash', true, 500, 0)); // its one edit
+    await flush();
+    r.setHeader(subagentHeader('probe', { ok: true, durationMs: 2_000 })); // budget spent → a new bubble
+    await flush();
+    expect(sends).toEqual(['↳ probe\n💻 Bash: "one"', '↳ probe ✓ 2.0s']);
+  });
+
+  it('sends nothing for a header alone before any tool', async () => {
+    const { sink, sends, flush } = makeSink({ withEdit: true });
+    const r = new ToolRenderer(makeOpts({ grouping: 'accumulate' }), sink);
+    r.setHeader(subagentHeader('probe'));
+    await flush();
+    expect(sends).toEqual([]);
+  });
+
+  it('in separate grouping keeps the name on each bubble, as without a header', async () => {
+    const { sink, sends, flush } = makeSink({ withEdit: false });
+    const r = new ToolRenderer(makeOpts({ grouping: 'accumulate' }), sink);
+    r.setHeader(subagentHeader('probe'));
+    r.onToolStart({ ...start('Bash', 'one', 0), agent: 'probe' });
+    r.setHeader(subagentHeader('probe', { ok: true, durationMs: 1_000 }));
+    await flush();
+    expect(sends).toEqual(['↳ probe · 💻 Bash: "one"']);
   });
 });
 

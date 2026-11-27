@@ -114,6 +114,7 @@ export const HELP_TOPICS: HelpTopic[] = [
       '--prompt with --session daily: the first run of each day opens a new topic, and later runs that day join it — one conversation per day, named with the date. The day is counted in --tz, by each run\'s planned time, so a catch-up after midnight joins the day it was meant for. Needs --cron and a platform that can open a topic with no message to reply to (web UI, Telegram forum groups); --agent and --cwd work as with new.',
       '--model names the model a --session new or daily task\'s conversations use. A fixed-session task runs in this conversation and keeps the model /model set here, so --model there is refused. The id must be in the agent\'s own /model list: a name it does not offer is refused when the task is added, with the list, and a run that cannot apply the model fails with the reason instead of quietly using another.',
       '--bash: the gateway runs the command with `bash -lc` in --cwd (default: your working directory) and posts the exit code, duration and the end of the output; long output is attached as a file. --timeout defaults to 10m, at most 6h.',
+      '--wake (on --bash): wake the target conversation\'s agent with the run\'s output tail under a one-line `↳ Scheduled task "<name>" · exit <code> · <duration>` label. --wake-on picks which runs wake it: any (default with --wake), zero, nonzero, or comma-separated exit codes such as 1,2 (non-waking runs stay quiet in chat and are still recorded in history; pass --wake-on off on edit to disable waking). --wake-max caps how many times the task may wake the agent before ending (default 3, max 100). Lifetime (24h) and target follow --session fixed.',
       '--at takes +30m / +2h / 08:00 (the next time the clock reads that) / "2026-10-01 08:00" / an ISO time with a zone. --cron takes 5 fields (minute hour day month weekday); several 5-field expressions separated by `;` are one schedule that runs at whichever comes next (`0 9 * * *; 0 15 * * *` is twice a day). Both are read in --tz, default the gateway\'s own zone.',
       'For a long prompt, pass `--prompt -` and pipe it or use a heredoc (`fleetherd schedule add ... --prompt - <<\'EOF\'` or `< prompt.md`). Works on both local and remote hosts.',
       '--channel is where output goes (ids from `fleetherd channels`); default this conversation. On edit it moves the task there.',
@@ -228,6 +229,7 @@ export const HELP_TOPICS: HelpTopic[] = [
       'task-send only reaches a turn that is still running when the harness accepts input mid-turn (claude and codex do; agy does not). The answer says which happened: joined, queued behind the turn, or started. To redirect a harness that is not listening, `--interrupt` stops the turn and sends the message as the next one — its context is kept.',
       '`task-send <topic> --forward <other>` sends <text> with <other>\'s last normally-ended reply attached whole, under a heading naming the topic and its turn: a review verdict reaches the agent that must act on it without being retyped. Both topics must be ones this conversation opened; a topic with no normally-ended reply yet is refused.',
       '`task-new --review-by <agent> --review "<what to check>"` gives a part that changes code a review that runs without you: whenever one of its turns ends with new commits in its directory, the reviewer gets your --review text (the first time), the author\'s reply and the commit range, in a topic of its own beside it. The reviewer ends its turn with `fleetherd task-verdict pass|nits|changes`: pass ends the loop; nits sends its reply to the author to fix, with no further review; changes sends it back, and the author\'s fix returns to the same reviewer — at most --rounds times (default 3). You are told once, when it passes or when the loop stops: a turn that ends with no new commits, a review with no verdict, the rounds used up, a failure or question, the person writing in either topic, task-stop. Leave --review-by out for parts that change nothing or need no review. The reviewer must be on the author\'s machine; the person confirms both on one card.',
+      '`task-new --worktree [name]` asks the gateway to create `<repo>/.worktrees/<name>` on a new branch from HEAD on the agent\'s machine when the part starts (nothing is created at proposal time; the card shows the path and branch). `<name>` defaults to a slug of `--title`. The directory (`--cwd` or the agent\'s root) must be inside a git repository, and an existing worktree or branch name is refused. Merged, clean worktrees are removed automatically once idle for 1h; unmerged or dirty ones stay and appear in `tasks`.',
       'A reply that says it will carry on, or is only waiting for a command in the background, is not a finished job: the update card says `turn ended`, not done.',
     ],
   },
@@ -601,7 +603,24 @@ const waitArg = (value: string): number => {
 };
 
 /** `schedule add`'s own options, by commander's camel-cased key — refused on every other action. */
-const SCHEDULE_ADD_KEYS = ['cron', 'at', 'tz', 'name', 'tag', 'prompt', 'bash', 'agent', 'session', 'cwd', 'host', 'model', 'timeout'] as const;
+const SCHEDULE_ADD_KEYS = [
+  'cron',
+  'at',
+  'tz',
+  'name',
+  'tag',
+  'prompt',
+  'bash',
+  'agent',
+  'session',
+  'cwd',
+  'host',
+  'model',
+  'timeout',
+  'wake',
+  'wakeOn',
+  'wakeMax',
+] as const;
 
 /** What `schedule edit` may set: every one of add's options, `--channel` included (see buildScheduleEdit). */
 const SCHEDULE_EDIT_KEYS = SCHEDULE_ADD_KEYS;
@@ -663,6 +682,9 @@ function buildScheduleAdd(opts: Record<string, unknown>): IpcAction {
     host: str(opts.host),
     model: str(opts.model),
     timeoutMs: typeof opts.timeout === 'number' ? opts.timeout : undefined,
+    wake: opts.wake === true ? true : undefined,
+    wakeOn: str(opts.wakeOn),
+    wakeMax: typeof opts.wakeMax === 'number' ? opts.wakeMax : undefined,
   };
 }
 
@@ -702,11 +724,14 @@ function buildScheduleEdit(p: string[], opts: Record<string, unknown>): IpcActio
     host: str(opts.host),
     model: str(opts.model),
     timeoutMs: typeof opts.timeout === 'number' ? opts.timeout : undefined,
+    wake: opts.wake === true ? true : undefined,
+    wakeOn: str(opts.wakeOn),
+    wakeMax: typeof opts.wakeMax === 'number' ? opts.wakeMax : undefined,
   };
   const changed = SCHEDULE_EDIT_KEYS.some((k) => opts[k] !== undefined) || str(opts.channel) !== undefined;
   if (!changed) {
     throw new Error(
-      'schedule edit needs something to change: --prompt or --bash, --session, --agent, --model, --cwd, --host, --cron, --at, --tz, --name, --tag, --timeout or --channel'
+      'schedule edit needs something to change: --prompt or --bash, --session, --agent, --model, --cwd, --host, --cron, --at, --tz, --name, --tag, --timeout, --wake, --wake-on, --wake-max or --channel'
     );
   }
   return action;
@@ -1244,6 +1269,20 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
       },
       { flags: '--timeout <duration>', description: 'add/edit: --bash time limit, e.g. 90s, 10m (default 10m, max 6h)', parse: durationArg },
       {
+        flags: '--wake',
+        description: "add/edit: --bash only — wake this conversation's agent with the output tail on matching runs (24h max, like --session fixed)",
+      },
+      {
+        flags: '--wake-on <rule>',
+        description:
+          'add/edit: which --bash runs wake the agent — any (default with --wake), zero, nonzero, or exit codes e.g. 1,2; off disables waking on edit (non-waking runs stay quiet in chat)',
+      },
+      {
+        flags: '--wake-max <n>',
+        description: 'add/edit: max times a waking --bash task may wake the agent before ending (default 3, max 100)',
+        parse: intArg('--wake-max'),
+      },
+      {
         flags: '--wait [duration]',
         description: `run only: wait for the run to end and print its result (default ${DEFAULT_RUN_WAIT_MS / 60_000}m, at most ${MAX_RUN_WAIT_MS / 60_000}h)`,
         parse: waitArg,
@@ -1312,6 +1351,11 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
         description: 'with --review-by: how many times the review may send the work back on its own (default 3)',
         parse: intArg('--rounds'),
       },
+      {
+        flags: '--worktree [name]',
+        description:
+          'create <repo>/.worktrees/<name> on a new branch from HEAD when the part starts (default <name>: slug of --title)',
+      },
     ],
     build: (positionals, opts) => {
       refuseChannel('task-new', opts);
@@ -1322,6 +1366,14 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
         throw new Error('--review-by and --review go together: who reviews, and the whole of what it checks');
       }
       if (opts.rounds !== undefined && reviewBy === undefined) throw new Error('--rounds applies only with --review-by');
+      let worktree: true | string | undefined;
+      if (opts.worktree === true) {
+        worktree = true;
+      } else if (typeof opts.worktree === 'string') {
+        const trimmed = opts.worktree.trim();
+        if (!trimmed) throw new Error('--worktree name cannot be empty');
+        worktree = trimmed;
+      }
       return {
         kind: 'task-new',
         agent: str(opts.agent),
@@ -1333,6 +1385,7 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
         reviewBy,
         review,
         rounds: typeof opts.rounds === 'number' ? opts.rounds : undefined,
+        ...(worktree !== undefined ? { worktree } : {}),
       };
     },
   },

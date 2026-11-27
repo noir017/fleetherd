@@ -27,18 +27,18 @@ const RULES: readonly LayerRule[] = [
   },
   {
     module: 'config',
-    allowedSrc: new Set(['platform', 'types.js', 'legacy-name.js']),
-    checkAllowedSrc: (rel) =>
-      rel.startsWith('platform/') && rel !== 'platform/config-schemas.js'
-        ? `config/ may only import platform/config-schemas.js, not ${rel}`
-        : undefined,
+    allowedSrc: new Set(['types.js', 'legacy-name.js']),
+    forbiddenExternalPrefixes: ['@satorijs/', '@koishijs/'],
   },
   {
     module: 'platform',
     allowedSrc: new Set(['config', 'core', 'types.js', 'legacy-name.js']),
     checkAllowedSrc: (rel) =>
-      rel.startsWith('config/') && rel !== 'config/load.js' && rel !== 'config/schema.js'
-        ? `platform/ may only import config/load.js or config/schema.js, not ${rel}`
+      rel.startsWith('config/') &&
+      rel !== 'config/load.js' &&
+      rel !== 'config/schema.js' &&
+      rel !== 'config/platform-schemas.js'
+        ? `platform/ may only import config/load.js, config/schema.js, or config/platform-schemas.js, not ${rel}`
         : undefined,
   },
   {

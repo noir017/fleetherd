@@ -26,6 +26,8 @@ export interface ScheduleRunResult {
   error?: string;
   /** The conversation the output went to, when it ran in one — a `new` or `daily` run opens one. */
   conversation?: string;
+  /** True when a waking bash run matched its rule and woke the conversation's agent. */
+  woke?: boolean;
 }
 
 /**
@@ -36,7 +38,7 @@ export interface ScheduleRunResult {
  * — the run that never was. `error` is what the task's record says, so both read the same.
  */
 export interface ScheduleNotice {
-  event: 'expired' | 'failed' | 'skipped' | 'missed';
+  event: 'expired' | 'wake-cap' | 'failed' | 'skipped' | 'missed';
   /** When it was recorded. */
   at: number;
   /** The time it was due, when the notice is about a run — what the chat says instead of `at`. */
@@ -153,7 +155,12 @@ export class Scheduler {
     const task = this.store.get(id);
     if (!task) return `no scheduled task #${id}`;
     if (task.state === 'expired') return `#${id} has expired (fixed-session tasks live 24h); register a new one instead`;
-    if (task.state === 'done') return `#${id} was a one-time task and has already had its run`;
+    if (task.state === 'done') {
+      if (task.run.kind === 'bash' && task.run.wake && (task.wakes ?? 0) >= task.run.wake.max) {
+        return `#${id} reached its wake limit (${task.run.wake.max}) and has ended`;
+      }
+      return `#${id} was a one-time task and has already had its run`;
+    }
     if (paused === (task.state === 'paused')) return `#${id} is already ${task.state}`;
     const now = this.clock.now();
     const next: ScheduleTask = paused
@@ -274,39 +281,46 @@ export class Scheduler {
     }
     const current = this.store.get(task.id);
     if (!current) return undefined; // removed while it ran
+    return this.finishRun(current, started, result, opts.manual);
+  }
+
+  private finishRun(current: ScheduleTask, started: number, result: ScheduleRunResult, manual: boolean): ScheduleRunRecord {
     const durationMs = this.clock.now() - started;
     const error = result.error && result.error.length > ERROR_LIMIT ? `${result.error.slice(0, ERROR_LIMIT - 1)}…` : result.error;
-    const record: ScheduleRunRecord = {
+    const lastRun: NonNullable<ScheduleTask['lastRun']> = {
       at: started,
       status: result.status,
       durationMs,
       ...(result.exitCode !== undefined ? { exitCode: result.exitCode } : {}),
       ...(error ? { error } : {}),
+    };
+    const record: ScheduleRunRecord = {
+      ...lastRun,
       ...(result.conversation !== undefined ? { conversation: result.conversation } : {}),
     };
-    this.store.put({
+    const wakes = result.woke ? (current.wakes ?? 0) + 1 : current.wakes;
+    const oneShotDone = !manual && 'at' in current.when;
+    const hitWakeCap = isWakeCapReached(current, result.woke, wakes);
+    const saved: ScheduleTask = {
       ...current,
       runs: current.runs + 1,
-      // Built field by field, not spread from `record`: lastRun's schema is strict, and the
-      // conversation a run used is history, not part of "how did it go".
-      lastRun: {
-        at: started,
-        status: result.status,
-        durationMs,
-        ...(result.exitCode !== undefined ? { exitCode: result.exitCode } : {}),
-        ...(error ? { error } : {}),
-      },
+      ...(wakes !== undefined ? { wakes } : {}),
+      lastRun,
       history: withRun(current.history, record),
-      // A one-shot is done once its scheduled run has been made; a manual try leaves it pending.
-      ...(!opts.manual && 'at' in current.when ? { state: 'done' as const } : {}),
-    });
-    console.log(`[schedule] #${task.id} finished: ${result.status}${error ? ` (${error})` : ''} in ${durationMs}ms`);
+      ...(oneShotDone || hitWakeCap ? { state: 'done' as const } : {}),
+    };
+    this.store.put(saved);
+    if (hitWakeCap && !oneShotDone) this.executor.notify?.(saved, { event: 'wake-cap', at: this.clock.now() });
+    console.log(`[schedule] #${current.id} finished: ${result.status}${error ? ` (${error})` : ''} in ${durationMs}ms`);
     this.look();
     return record;
   }
-
   /** When an active task runs next — for the list and the cards. */
   nextRun(task: ScheduleTask): number | undefined {
     return nextRunOf(task, this.clock.now());
   }
+}
+
+function isWakeCapReached(task: ScheduleTask, woke: boolean | undefined, wakes: number | undefined): boolean {
+  return woke === true && task.run.kind === 'bash' && task.run.wake !== undefined && (wakes ?? 0) >= task.run.wake.max;
 }

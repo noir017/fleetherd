@@ -2,7 +2,6 @@
 src/platform/*-markdown.ts [Infra]: F:Platform-specific outbound markdown renderers and degraders | A:flattenMarkdown,renderDingtalkMarkdown,renderDiscordMarkdown,renderLarkMarkdown,renderSlackMarkdown,renderTelegramMarkdown,renderWebMarkdown | S:Streaming safe and escapes unsupported markdown constructs
 src/platform/adapter.ts [Core]: F:PlatformAdapter interface and PlatformCapabilities matrix | A:PlatformAdapter,PlatformCapabilities
 src/platform/workbench.ts [Core]: F:Workbench capability sub-interfaces (TopicTree, TopicPresence, WorkbenchHost) and panel DTOs | A:TopicTree,TopicPresence,WorkbenchHost
-src/platform/config-schemas.ts [Infra]: F:Credential schemas for supported chat platforms | A:ChatGateSchema,PLATFORM_SCHEMAS | S:Free of Satori imports so config loading avoids heavy dependency chain
 src/platform/markdown-tables.ts [Infra]: F:GFM table degradation to bold row headers and bullet lines | A:renderTableBlock,splitTableRow
 src/platform/platform-factory.ts [Core]: F:Platform adapter dispatch and instantiation | R:src/platform/adapter.ts,src/platform/satori-core.ts | A:createPlatformAdapter
 src/platform/profile-helpers.ts [Infra]: F:Common normalization helpers for platform profiles | A:findAtMention,installHttpService,plainConversation

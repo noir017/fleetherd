@@ -90,6 +90,7 @@ export async function runStart(): Promise<void> {
   // configures them again; that keeps every live connection (RemoteHosts.configure).
   remoteHosts.configure(cfg, socket);
   remoteHosts.serveMcpWith(mcpSession);
+  // Order sets the key order in connect agents' `_meta.fleetherd` (`instructions` before `skills`).
   const provisions = [bundledSkillProvision, agyPluginProvision, instructionsProvision, managedSkillsProvision];
   const agents = createAcpAgentFactory(cfg, socket, store, { provisions });
   // Scheduled tasks: their own file (a task is not a property of a conversation), and a directory

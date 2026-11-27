@@ -38,7 +38,7 @@ import type { PlatformCapabilities } from '../adapter.js';
 import { renderDingtalkMarkdown } from '../dingtalk-markdown.js';
 import { flattenMarkdown } from '../plaintext-markdown.js';
 import type { PlatformProfile } from '../profile.js';
-import type { DingtalkPlatformConfig } from '../config-schemas.js';
+import type { DingtalkPlatformConfig } from '../../config/platform-schemas.js';
 import {
   installHttpService,
   installServerService,
@@ -139,7 +139,7 @@ export function createDingtalkProfile(): PlatformProfile<DingtalkPlatformConfig>
         });
       }
 
-      // Typed config (config-schemas.ts): appkey/secret schema-required; the
+      // Typed config (config/platform-schemas.ts): appkey/secret schema-required; the
       // adapter exchanges them for an access token (auto-refreshed). agentId is
       // optional and only resolves the bot's display name/avatar in getLogin.
       ctx.plugin(resolveDefaultPlugin(DingtalkAdapter), {

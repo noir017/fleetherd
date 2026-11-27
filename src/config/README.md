@@ -2,14 +2,14 @@
 
 Owns the config file: its schema, loading, validation, `${VAR}` expansion, and the
 v0→v1 migration. This is the bottom of the [dependency stack](../../AGENTS.md#layering) —
-it imports only `platform/config-schemas.ts` (the per-platform credential schemas) and
-nothing else from the project.
+it imports only `types.ts` and `legacy-name.ts`, never `platform/` or any other module.
 
 ## Files
 
 | File | Role |
 |---|---|
 | `schema.ts` | The zod schema, the frozen `EXPERIENCE` block, `Config` type, and accessor helpers |
+| `platform-schemas.ts` | Per-platform credential schemas (+ `ChatGateSchema`), kept free of Satori imports |
 | `load.ts` | Path resolution (`configDir`/`configPath`/`defaultSocketPath`), `loadConfig`, `readConfig` (validate without committing, for a live reload), `saveConfig`, `saveConfigPatch` |
 | `env-expand.ts` | `${VAR}` expansion over the parsed tree + the `.env` sidecar loader |
 | `migrate.ts` | v0 (`platform:` object) → v1 (`platforms:` map). Disposable by design. |
@@ -216,7 +216,7 @@ happens in. Two constraints from that path land here:
 Without these, a typo surfaces much later as an obscure runtime error in whichever code
 path first touches that id. Add new cross-field rules here, in `superRefine` — zod's
 `discriminatedUnion` requires plain `ZodObject` members, so they cannot go in
-`platform/config-schemas.ts`.
+`config/platform-schemas.ts`.
 
 ## Helpers other modules use
 

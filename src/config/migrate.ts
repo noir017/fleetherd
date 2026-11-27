@@ -4,7 +4,7 @@
  * v0: single `platform:` object — discord fields on the top level, other platforms'
  * credentials in the untyped `options` pocket, lark/qq forced to carry a placeholder
  * `token` (schema required it), gating frozen in code.
- * v1: `platforms:` map of typed instances (see platform/config-schemas.ts) + `version: 1`.
+ * v1: `platforms:` map of typed instances (see config/platform-schemas.ts) + `version: 1`.
  *
  * loadConfig migrates IN MEMORY (with a one-line warning) so old files keep working;
  * `fleetherd doctor --migrate-config` rewrites the file. This module is deliberately

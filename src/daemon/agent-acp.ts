@@ -29,6 +29,7 @@ import type {
   ModelSelector,
   ReclaimState,
   RunTurnInput,
+  SessionMemory,
   SessionModeSelector,
 } from './agent.js';
 import { asUndelivered, ForkRefused, SideQuestionRefused, TurnFailure } from './agent.js';
@@ -47,7 +48,6 @@ import {
   failureReasonOf,
   readSessionFailure,
 } from './session-failure.js';
-import type { ConversationStore } from './conversation-store.js';
 import {
   killChildProcess,
   resolveConversationCwd,
@@ -203,7 +203,7 @@ export interface AcpFactoryOptions {
 export function createAcpAgentFactory(
   cfg: Config,
   socketPath: string,
-  store: ConversationStore | undefined,
+  store: SessionMemory | undefined,
   opts: AcpFactoryOptions
 ): AgentFactory {
   const sessions = new Map<string, AgentSession>();
@@ -320,7 +320,7 @@ class AcpSession implements AgentSession {
     conversationId: string,
     private readonly turnTimeoutMs: number,
     private readonly provisions: readonly AgentProvision[],
-    private readonly store?: ConversationStore,
+    private readonly store?: SessionMemory,
     quota?: QuotaMeter,
     private readonly redialTiming?: RedialTiming,
     private readonly locale: Locale = 'en'

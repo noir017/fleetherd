@@ -48,6 +48,17 @@ export interface TurnChangeEntry {
   readonly truncated?: boolean;
 }
 
+export interface HandoffAction {
+  readonly agentId: string;
+  readonly agentName: string;
+  readonly fromAgent: string;
+  readonly sessionId: string;
+  readonly workdir?: string;
+  readonly sameHost?: boolean;
+  readonly fromTopicId?: string;
+  readonly fromTopicTitle?: string;
+}
+
 export interface MessageQuote {
   readonly html: string;
   readonly id?: string;
@@ -69,6 +80,7 @@ export interface TranscriptMessage {
   readonly settings?: unknown;
   readonly wasSettings?: boolean;
   readonly workdir?: WorkdirScreen;
+  readonly handoff?: HandoffAction;
   reactions?: string[];
   readonly quote?: MessageQuote;
   readonly file?: MessageFile;
@@ -130,6 +142,8 @@ export interface CodeViewModule {
 export interface ToolOpenState {
   all: boolean;
   lines: Record<string, boolean>;
+  /** A subagent card shows all its lines, not only the newest (markup.ts subagentCard). */
+  card?: boolean;
 }
 
 export interface ViewPosition {

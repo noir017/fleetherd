@@ -12,7 +12,7 @@ import type {
   SchedulePanelTaskDetail,
   SkillPanelEntry,
 } from '../workbench.js';
-import { WebuiConfigSchema } from '../config-schemas.js';
+import { WebuiConfigSchema } from '../../config/platform-schemas.js';
 import {
   CHANNEL,
   DIR_TTL_MS,
@@ -3325,5 +3325,63 @@ describe('WebRoom: multiplexed multi-topic streams', () => {
     expect(bothResumed.filter((r) => r.ev.t === 'machines')).toHaveLength(1);
     expect(bothResumed.filter((r) => r.ev.t === 'topics')).toHaveLength(1);
     unsub3();
+  });
+});
+
+describe('WebRoom: agent handoff action', () => {
+  it('enriches handoff with topic id and title, keeps it out of awaitingQuestion, and attaches via revise', () => {
+    const { room, topic, seen } = attached();
+    room.renameTopic(topic, 'Refactor auth');
+    const posted = room.post(
+      topic,
+      {
+        own: false,
+        html: '<p>refused</p>',
+        handoff: {
+          agentId: 'oc',
+          agentName: 'opencode',
+          fromAgent: 'claude',
+          sessionId: 'ses_123',
+          workdir: '/home/me/projects/app',
+          sameHost: true,
+        },
+      },
+      'refused'
+    );
+    expect(posted.handoff).toEqual({
+      agentId: 'oc',
+      agentName: 'opencode',
+      fromAgent: 'claude',
+      sessionId: 'ses_123',
+      workdir: '/home/me/projects/app',
+      sameHost: true,
+      fromTopicId: topic,
+      fromTopicTitle: 'Refactor auth',
+    });
+    // Must not put the topic into amber "waiting on your answer" state.
+    expect(room.topicList().find((t) => t.id === topic)?.stage).not.toBe('answer');
+
+    const menuMsg = room.post(
+      topic,
+      { own: false, html: '<p>pick</p>', buttons: [{ id: 'ag:1:0', label: 'oc' }] },
+      'pick'
+    );
+    room.revise(topic, menuMsg.id, 'refused', [], undefined, undefined, {
+      agentId: 'oc',
+      agentName: 'opencode',
+      fromAgent: 'claude',
+      sessionId: 'ses_456',
+      sameHost: true,
+    });
+    const lastMsg = [...seen].reverse().find((s) => s.ev.t === 'msg' && s.ev.msg.id === menuMsg.id);
+    expect(lastMsg?.ev.t === 'msg' && lastMsg.ev.msg.handoff).toEqual({
+      agentId: 'oc',
+      agentName: 'opencode',
+      fromAgent: 'claude',
+      sessionId: 'ses_456',
+      sameHost: true,
+      fromTopicId: topic,
+      fromTopicTitle: 'Refactor auth',
+    });
   });
 });

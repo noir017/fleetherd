@@ -6,6 +6,7 @@ const en = {
   'schedule.run.fixed': 'fixed session',
   'schedule.run.daily': 'one session a day',
   'schedule.run.new': 'new session each run',
+  'schedule.run.bashWake': 'bash · wake ({rule}, max {max})',
   'schedule.nextSuffix': ' · next {time}',
 
   // Schedule - Last Run & States & Statuses
@@ -48,6 +49,8 @@ const en = {
   'schedule.runNotice': '⏰ Scheduled task `#{id}` **{name}** · {planned}\n> {body}',
   'schedule.expired':
     '⌛ Scheduled task `#{id}` **{name}** has expired — a fixed-session task lives {hours}h. It ran {runs} time(s). Ask for it again with a new session if it should keep going.',
+  'schedule.wakeCap':
+    '⏹ Scheduled task `#{id}` **{name}** reached its wake limit ({wakes}/{max}) and ended.',
 
   // Schedule - Bash Result
   'schedule.bash.stopped': 'the gateway stopped while it ran',
@@ -169,6 +172,7 @@ const zhCN: DictOf<typeof en> = {
   'schedule.run.fixed': '固定会话',
   'schedule.run.daily': '每天一个会话',
   'schedule.run.new': '每次新建会话',
+  'schedule.run.bashWake': 'bash · 唤醒（{rule}，最多 {max} 次）',
   'schedule.nextSuffix': ' · 下次执行 {time}',
 
   // Schedule - Last Run & States & Statuses
@@ -211,6 +215,8 @@ const zhCN: DictOf<typeof en> = {
   'schedule.runNotice': '⏰ 定时任务 `#{id}` **{name}** · {planned}\n> {body}',
   'schedule.expired':
     '⌛ 定时任务 `#{id}` **{name}** 已过期 — 固定会话任务有效期为 {hours} 小时。共运行了 {runs} 次。如需继续运行，请以新会话模式重新创建。',
+  'schedule.wakeCap':
+    '⏹ 定时任务 `#{id}` **{name}** 已达到唤醒上限（{wakes}/{max}）并结束。',
 
   // Schedule - Bash Result
   'schedule.bash.stopped': '网关在运行期间已停止',

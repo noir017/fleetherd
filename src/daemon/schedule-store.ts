@@ -27,6 +27,13 @@ const WhenSchema = z.union([
   z.object({ at: z.number().finite(), tz: z.string().min(1) }).strict(),
 ]);
 
+const BashWakeSchema = z
+  .object({
+    on: z.union([z.enum(['any', 'zero', 'nonzero']), z.array(z.number().int().min(0).max(255)).min(1)]),
+    max: z.number().int().positive(),
+  })
+  .strict();
+
 const RunSchema = z.discriminatedUnion('kind', [
   z
     .object({
@@ -45,6 +52,7 @@ const RunSchema = z.discriminatedUnion('kind', [
       cwd: z.string().min(1).optional(),
       timeoutMs: z.number().int().positive(),
       host: z.string().min(1).optional(),
+      wake: BashWakeSchema.optional(),
     })
     .strict(),
 ]);
@@ -100,11 +108,15 @@ const TaskSchema = z
     // Absent in every file written before run history existed — optional is the migration.
     history: z.array(RunRecordSchema).optional(),
     runs: z.number().int().nonnegative(),
+    wakes: z.number().int().nonnegative().optional(),
   })
   .superRefine((t, ctx) => {
     // The one cross-field rule the scheduler depends on: a fixed-session run has to know where.
     if (t.run.kind === 'agent' && t.run.session === 'fixed' && !t.conversation) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'a fixed-session task has no conversation' });
+    }
+    if (t.run.kind === 'bash' && t.run.wake && !t.conversation) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'a waking bash task has no conversation' });
     }
     // A daily task's day comes from its cron; a one-shot has no second run to join.
     if (t.run.kind === 'agent' && t.run.session === 'daily' && 'at' in t.when) {

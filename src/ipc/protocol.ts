@@ -158,6 +158,9 @@ const IpcActionSchema = z.discriminatedUnion('kind', [
       host: z.string().min(1).max(64).optional(),
       model: z.string().min(1).max(200).optional(),
       timeoutMs: z.number().int().positive().optional(),
+      wake: z.boolean().optional(),
+      wakeOn: z.string().min(1).max(100).optional(),
+      wakeMax: z.number().int().positive().max(100).optional(),
     })
     .strict(),
   // The same fields as schedule-add, plus the task's id. `channelId` moves the task: it is where its
@@ -183,6 +186,9 @@ const IpcActionSchema = z.discriminatedUnion('kind', [
       host: z.string().min(1).max(64).optional(),
       model: z.string().min(1).max(200).optional(),
       timeoutMs: z.number().int().positive().optional(),
+      wake: z.boolean().optional(),
+      wakeOn: z.string().min(1).max(100).optional(),
+      wakeMax: z.number().int().positive().max(100).optional(),
     })
     .strict(),
   z.object({ kind: z.literal('schedule-list'), id: z.string().min(1).optional() }).strict(),
@@ -268,6 +274,11 @@ const IpcActionSchema = z.discriminatedUnion('kind', [
       review: z.string().min(1).max(20_000).optional(),
       /** How many times the review may send the work back on its own before the asking agent is told. */
       rounds: z.number().int().min(1).max(10).optional(),
+      /**
+       * `--worktree [name]`: create `<repo>/.worktrees/<name>` on a new branch when the part starts.
+       * `true` derives the name from `title`; a string names it explicitly.
+       */
+      worktree: z.union([z.literal(true), z.string().min(1).max(120)]).optional(),
     })
     .strict(),
   // A reviewer the review loop started answers with this, from its own topic, before its turn ends.
@@ -403,6 +414,9 @@ export type IpcAction =
       host?: string;
       model?: string;
       timeoutMs?: number;
+      wake?: boolean;
+      wakeOn?: string;
+      wakeMax?: number;
     }
   | {
       kind: 'schedule-edit';
@@ -421,6 +435,9 @@ export type IpcAction =
       host?: string;
       model?: string;
       timeoutMs?: number;
+      wake?: boolean;
+      wakeOn?: string;
+      wakeMax?: number;
     }
   | { kind: 'schedule-list'; id?: string }
   | { kind: 'reload-config' }
@@ -472,6 +489,7 @@ export type IpcAction =
       reviewBy?: string;
       review?: string;
       rounds?: number;
+      worktree?: true | string;
     }
   | { kind: 'task-verdict'; verdict: TaskVerdict }
   | { kind: 'task-send'; topic: string; text: string; interrupt?: boolean; forward?: string }
@@ -607,6 +625,9 @@ export interface ScheduleTaskView {
   model?: string;
   command?: string;
   timeout?: string;
+  wakeOn?: string;
+  wakeMax?: number;
+  wakes?: number;
   cwd?: string;
   /** `show` only: the last runs, newest first (core/schedule.ts MAX_RUN_HISTORY). */
   history?: ScheduleRunView[];
@@ -663,6 +684,11 @@ export interface TaskRow {
    * TOON table needs every row to carry the same columns and a missing one turns it into a list.
    */
   review: string;
+  /**
+   * A gateway-created worktree (`task-new --worktree`) still present for this topic: its path and
+   * branch. Empty when the topic has none — always present for TOON table alignment.
+   */
+  worktree: string;
   /** A link that opens it on the platform it is on, where there is one (the web UI's `?t=<topic>`). */
   link?: string;
 }

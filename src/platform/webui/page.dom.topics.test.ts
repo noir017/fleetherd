@@ -562,6 +562,117 @@ describe('webui page: choosing an agent for a new topic', () => {
     expect(h.el('log').querySelector('.launch img, .launch b:not(.launch-sub b), .launch i:not(.ac-dot), .launch u')).toBeNull();
     expect(cards(h)[0]!.getAttribute('data-agent')).toBe('x"><img src=x>');
   });
+
+  it('renders launcher and seeded workdir immediately on new-topic creation before SSE sync and deduplicates clicks', async () => {
+    let releaseCreate!: () => void;
+    const createGate = new Promise<void>((r) => { releaseCreate = r; });
+    const seededWd = {
+      agentId: 'cc',
+      root: '/work',
+      current: '/work',
+      browsing: '/work',
+      breadcrumbs: [{ name: '/', path: '/', buttonId: 'wdb:launch:0' }, { name: 'work', path: '/work', buttonId: 'wdb:launch:1' }],
+      selectCurrent: { path: '/work', buttonId: 'wdr:launch:0', current: true, root: true },
+      entries: [{ name: 'sub-a', path: '/work/sub-a', enterId: 'wde:launch:1', pickId: 'wdr:launch:1' }],
+      truncated: 0,
+    };
+    const h = await open({
+      url: 'http://localhost:8787/?t=a1b2c3d4',
+      held: { 'api/topics': createGate },
+      replies: {
+        'api/topics': { topic: { id: 'c3d4e5f6', title: '', lastAt: Date.now() }, agents, workdir: seededWd },
+      },
+    });
+    await h.emit(sync('a1b2c3d4', [message('w1', '<p>old</p>')], ['a1b2c3d4']));
+    expect(h.painted()).toBe(1);
+
+    // Click new topic twice while POST /api/topics is in flight: immediate skeleton + single POST.
+    await h.click('[data-action-id="topics.new"]');
+    await h.click('[data-action-id="topics.new"]');
+    expect(h.calls.filter((c) => c.path === 'api/topics')).toHaveLength(1);
+    expect(h.skeletons()).toBeGreaterThan(0);
+
+    // Once POST /api/topics resolves, launcher + workdir render immediately without waiting for SSE sync.
+    releaseCreate();
+    await tick();
+    await tick();
+    const launchEl = launch(h);
+    expect(launchEl).not.toBeNull();
+    expect(launchEl!.querySelector('.launch-wd .wd-picker')?.getAttribute('data-browsing')).toBe('/work');
+    expect(h.calls.filter((c) => c.path.startsWith('api/topics/workdirs'))).toHaveLength(0);
+    // Stream reconnects to the new topic without waiting on IndexedDB.
+    expect(h.live().url).toContain('t=c3d4e5f6');
+
+    // Subsequent SSE sync preserves the already-mounted launcher DOM in place.
+    await h.emit(sync('c3d4e5f6', [], ['c3d4e5f6', 'a1b2c3d4'], { agents }));
+    expect(launch(h)).toBe(launchEl);
+  });
+
+  it('fetches workdirs in parallel with setup on agent switch, avoids locking cached/same agent, and unlocks on setup failure', async () => {
+    let releaseSetup!: () => void;
+    const setupGate = new Promise<void>((r) => { releaseSetup = r; });
+    const wdScreen = (agentId: string, root: string) => ({
+      agentId,
+      root,
+      current: root,
+      browsing: root,
+      breadcrumbs: [{ name: '/', path: '/', buttonId: 'wdb:launch:0' }],
+      selectCurrent: { path: root, buttonId: 'wdr:launch:0', current: true, root: true },
+      entries: [{ name: 'app', path: `${root}/app`, enterId: 'wde:launch:1', pickId: 'wdr:launch:1' }],
+      truncated: 0,
+    });
+    const h = await open({
+      url: 'http://localhost:8787/?t=a1b2c3d4',
+      held: { 'api/topics/setup': setupGate },
+      replies: {
+        'api/topics/workdirs?t=a1b2c3d4&agent=cc': wdScreen('cc', '/work'),
+        'api/topics/workdirs?t=a1b2c3d4&agent=oc2&root=1': wdScreen('oc2', '/srv'),
+        'api/topics/workdirs?t=a1b2c3d4&agent=cc&root=1': wdScreen('cc', '/work'),
+        'api/topics/setup': { ok: true, agent: 'oc2', cwd: '/srv' },
+      },
+    });
+    await h.emit(sync('a1b2c3d4', [], ['a1b2c3d4'], { agents }));
+    await tick();
+
+    // Clicking the already-selected agent folds cards without locking or re-fetching workdirs.
+    const wdCallsBefore = h.calls.filter((c) => c.path.startsWith('api/topics/workdirs')).length;
+    await h.click('.agent-card[data-agent="cc"]');
+    expect(launch(h)!.querySelector('.launch-wd')!.classList.contains('loading')).toBe(false);
+    expect(h.calls.filter((c) => c.path.startsWith('api/topics/workdirs')).length).toBe(wdCallsBefore);
+
+    // Unfold and switch to oc2 while POST /api/topics/setup is held: workdirs loads in parallel and unlocks immediately.
+    await h.click('[data-launch-unfold="agents"]');
+    await h.click('.agent-card[data-agent="oc2"]');
+    await tick();
+    expect(launch(h)!.querySelector('.launch-wd .wd-picker')?.getAttribute('data-browsing')).toBe('/srv');
+    expect(launch(h)!.querySelector('.launch-wd')!.classList.contains('loading')).toBe(false);
+    releaseSetup();
+    await tick();
+
+    // Switching back to cached cc renders immediately with no loading lock.
+    await h.click('[data-launch-unfold="agents"]');
+    await h.click('.agent-card[data-agent="cc"]');
+    expect(launch(h)!.querySelector('.launch-wd')!.classList.contains('loading')).toBe(false);
+    expect(launch(h)!.querySelector('.launch-wd .wd-picker')?.getAttribute('data-browsing')).toBe('/work');
+
+    // A failing setup request (badJson → catch) rolls back and never leaves .launch-wd stuck in .loading.
+    const hFail = await open({
+      url: 'http://localhost:8787/?t=a1b2c3d4',
+      badJson: ['api/topics/setup'],
+      replies: {
+        'api/topics/workdirs?t=a1b2c3d4&agent=cc': wdScreen('cc', '/work'),
+        'api/topics/workdirs?t=a1b2c3d4&agent=oc2&root=1': wdScreen('oc2', '/srv'),
+      },
+    });
+    await hFail.emit(sync('a1b2c3d4', [], ['a1b2c3d4'], { agents }));
+    await tick();
+    await hFail.click('.agent-card[data-agent="oc2"]');
+    await tick();
+    await tick();
+    expect(launch(hFail)!.querySelector('.launch-wd')!.classList.contains('loading')).toBe(false);
+    expect(launch(hFail)!.querySelector('.agent-card.def')?.getAttribute('data-agent')).toBe('cc');
+    expect(launch(hFail)!.querySelector('.launch-wd .wd-picker')?.getAttribute('data-browsing')).toBe('/work');
+  });
 });
 
 describe('webui page: a machine the gateway cannot reach', () => {
@@ -699,5 +810,124 @@ describe('webui page: topic row agent tag and row menu stability', () => {
     // Removing the topic closes the open menu
     await h.emit({ t: 'topics', topics: [t2] });
     expect(menu.hidden).toBe(true);
+  });
+});
+
+describe('webui page: agent switch refusal handoff action', () => {
+  const SRC = 'a1b2c3d4';
+  const NEXT = 'b2c3d4e5';
+  const input = (h: Harness): HTMLTextAreaElement => h.el('input') as HTMLTextAreaElement;
+
+  it('opens a new topic bound to the wanted agent and workdir with an unsent editable draft', async () => {
+    const h = await open({
+      replies: {
+        'api/topics': {
+          topic: {
+            id: NEXT,
+            title: '',
+            lastAt: Date.now(),
+            running: false,
+            msgCount: 0,
+            agent: { id: 'oc', harness: 'opencode' },
+            dir: { name: 'app', path: '/home/me/projects/app' },
+          },
+          agent: 'oc',
+          cwd: '/home/me/projects/app',
+        },
+      },
+    });
+
+    const refusal = {
+      ...message('w1', '<p>This topic stays with claude.</p>'),
+      handoff: {
+        agentId: 'oc',
+        agentName: 'opencode',
+        fromAgent: 'claude',
+        sessionId: 'ses_abc123',
+        workdir: '/home/me/projects/app',
+        sameHost: true,
+        fromTopicId: SRC,
+        fromTopicTitle: 'Fix auth flow',
+      },
+    };
+    await h.emit(
+      sync(SRC, [refusal], [], {
+        topics: [
+          {
+            id: SRC,
+            title: 'Fix auth flow',
+            lastAt: Date.now(),
+            running: false,
+            msgCount: 1,
+            agent: { id: 'cc', harness: 'claude' },
+            dir: { name: 'app', path: '/home/me/projects/app' },
+          },
+        ],
+      })
+    );
+
+    const btn = h.doc.querySelector<HTMLButtonElement>('button[data-handoff-k]');
+    expect(btn).not.toBeNull();
+    expect(btn?.textContent).toContain('Continue with opencode in a new topic');
+
+    await h.click('button[data-handoff-k]');
+    await until('switched to the newly created topic', () => h.window.location.search.includes(`t=${NEXT}`));
+
+    // Created with the wanted agent and same working directory.
+    const createCall = h.calls.find((c) => c.path === 'api/topics');
+    expect(createCall?.body).toEqual({ agent: 'oc', cwd: '/home/me/projects/app' });
+
+    // Draft is in the composer, editable, and nothing was sent on the user's behalf.
+    const draft = input(h).value;
+    expect(draft).toContain('claude');
+    expect(draft).toContain('ses_abc123');
+    expect(draft).toContain('/home/me/projects/app');
+    expect(draft).toContain('Fix auth flow');
+    expect(draft).toContain(`?t=${SRC}`);
+    expect(h.calls.filter((c) => c.path === 'api/send')).toEqual([]);
+  });
+
+  it('omits cwd from api/topics when sameHost is false while keeping workdir in the draft, and localizes in zh-CN', async () => {
+    const h = await open({
+      storage: { fh_lang: 'zh-CN' },
+      replies: {
+        'api/topics': {
+          topic: { id: NEXT, title: '', lastAt: Date.now(), running: false, msgCount: 0 },
+          agent: 'oc@myhost',
+        },
+      },
+    });
+
+    const refusal = {
+      ...message('w1', '<p>refused</p>'),
+      handoff: {
+        agentId: 'oc@myhost',
+        agentName: 'opencode',
+        fromAgent: 'claude',
+        sessionId: 'ses_xyz789',
+        workdir: '/home/me/projects/app',
+        sameHost: false,
+        fromTopicId: SRC,
+        fromTopicTitle: '排查问题',
+      },
+    };
+    await h.emit(sync(SRC, [refusal], [SRC]));
+
+    const btn = h.doc.querySelector<HTMLButtonElement>('button[data-handoff-k]');
+    expect(btn?.textContent).toContain('在新话题中用 opencode 继续');
+
+    await h.click('button[data-handoff-k]');
+    await until('switched to new topic', () => h.window.location.search.includes(`t=${NEXT}`));
+
+    const createCall = h.calls.find((c) => c.path === 'api/topics');
+    expect(createCall?.body).toEqual({ agent: 'oc@myhost' });
+
+    const draft = input(h).value;
+    expect(draft).toContain('claude');
+    expect(draft).toContain('ses_xyz789');
+    expect(draft).toContain('/home/me/projects/app');
+    expect(draft).toContain('排查问题');
+    expect(draft).toContain(`?t=${SRC}`);
+    expect(h.calls.filter((c) => c.path === 'api/send')).toEqual([]);
   });
 });

@@ -399,7 +399,7 @@ export class ConversationDelegation {
 }
 
 /** A task's directory as named: absolute, `~`-relative, or a name inside the agent's root (what task-agents lists). */
-function taskDirectory(def: AgentDef, given: string): string {
+export function taskDirectory(def: AgentDef, given: string): string {
   if (given.startsWith('/') || given === '~' || given.startsWith('~/')) {
     return def.host ? given : expandHome(given);
   }

@@ -5,11 +5,11 @@ import { z } from 'zod';
  *
  * Design: every platform owns a typed schema here — credentials are required fields
  * validated at load time (no more untyped `options` pocket where lark/qq credentials
- * hid without validation while discord fields squatted on the top level). The platform
- * layer owns this file; the central config schema (config/schema.ts) only composes the
- * discriminated union. Adding a platform = profile file + one schema + one line in the
- * union below. Kept as ONE sibling module (not inside each profile) so that config
- * loading never has to import the heavy satori adapter chain.
+ * hid without validation while discord fields squatted on the top level). These schemas
+ * live in `config/` (rather than inside `platform/` or each profile) so `config/` never
+ * imports `platform/` or drags in the heavy Satori adapter chain when loading config,
+ * and `platform/` only reads downward. Adding a platform = profile file + one schema +
+ * one line in the union below.
  *
  * zod note: z.discriminatedUnion requires plain ZodObject members, so cross-field rules
  * (e.g. slack protocol=http needs signing) live in ConfigSchema.superRefine, not here.

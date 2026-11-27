@@ -54,6 +54,7 @@ import { parseRetryButtonId } from '../../core/turn-retry.js';
 import { parseWorkdirButtonId } from '../../core/workdir-menu.js';
 import type {
   AgentCatalog,
+  AgentHandoffAction,
   AgentStatus,
   ButtonInteraction,
   InboundMessage,
@@ -124,8 +125,8 @@ import type {
   VoiceTranscribeResult,
   VoiceTranscriber,
 } from '../workbench.js';
-import type { WebuiPlatformConfig } from '../config-schemas.js';
-import { escapeHtml, renderWebMarkdown, renderWebToolLines } from '../web-markdown.js';
+import type { WebuiPlatformConfig } from '../../config/platform-schemas.js';
+import { escapeHtml, renderWebMarkdown, renderWebSubagent, renderWebToolLines } from '../web-markdown.js';
 import { toolGlyph } from './icons.js';
 import type {
   ClickRequest,
@@ -274,7 +275,8 @@ interface Stored {
 /**
  * One message body's html, from its kind and its text.
  *
- * A line-based kind is one row per line: a tool's progress, and a sub-agent report, whose whole
+ * A line-based kind is one row per line: a tool's progress, a subagent's card (under its header),
+ * and a sub-agent report, whose whole
  * point is that a burst of `🔔` lines folds to one row each. Markdown would merge them into one
  * paragraph. Shared by the send path (`index.ts`) and every later edit (`revise`) because a
  * bubble's kind is given once and both ends must render the same way.
@@ -282,6 +284,7 @@ interface Stored {
 export function webMessageHtml(kind: MessageKind | undefined, text: string): string {
   // Only a tool bubble's glyphs become icons: a report's lines are sub-agent updates, not tools.
   if (kind === 'tools') return renderWebToolLines(text, toolGlyph);
+  if (kind === 'subagent') return renderWebSubagent(text, toolGlyph);
   return kind === 'report' ? renderWebToolLines(text) : renderWebMarkdown(text);
 }
 
@@ -578,7 +581,10 @@ export class WebRoom {
     | null = null;
   /** Browse one level of directories for a topic's selected agent. */
   private workdirBrowser:
-    | ((ref: ConversationRef, opts?: { agent?: string; dir?: string; atRoot?: boolean }) => Promise<WorkdirBrowseResult>)
+    | ((
+        ref: ConversationRef,
+        opts?: { agent?: string; dir?: string; atRoot?: boolean; cachedOnly?: boolean }
+      ) => Promise<WorkdirBrowseResult>)
     | null = null;
   /** Machines the daemon cannot reach — see `setOfflineMachines`. */
   private offline: readonly OfflineMachine[] = [];
@@ -984,18 +990,37 @@ export class WebRoom {
   }
 
   useWorkdirBrowser(
-    browse: (ref: ConversationRef, opts?: { agent?: string; dir?: string; atRoot?: boolean }) => Promise<WorkdirBrowseResult>
+    browse: (
+      ref: ConversationRef,
+      opts?: { agent?: string; dir?: string; atRoot?: boolean; cachedOnly?: boolean }
+    ) => Promise<WorkdirBrowseResult>
   ): void {
     this.workdirBrowser = browse;
   }
 
   async browseWorkdir(
     topic: string,
-    opts?: { agent?: string; dir?: string; atRoot?: boolean }
+    opts?: { agent?: string; dir?: string; atRoot?: boolean; cachedOnly?: boolean }
   ): Promise<WorkdirBrowseResult> {
     if (!this.workdirBrowser) return { ok: false, error: 'This daemon does not support directory browsing.' };
     if (!this.topics.has(topic)) return { ok: false, error: 'No such topic.' };
     return this.workdirBrowser(this.conversation(topic), opts);
+  }
+
+  /**
+   * Launcher payload for a newly created empty topic: the agent catalog plus the default agent's
+   * directory screen when already local or cached (never blocks on a cold remote host scan).
+   */
+  async launchData(topicId: string): Promise<{ agents?: AgentCatalog; workdir?: WorkdirScreen }> {
+    const agents = this.catalogFor(topicId, this.rooms.get(topicId));
+    if (!agents) return {};
+    if (!this.workdirBrowser) return { agents };
+    try {
+      const res = await this.workdirBrowser(this.conversation(topicId), { agent: agents.current, cachedOnly: true });
+      return res.ok ? { agents, workdir: res.screen } : { agents };
+    } catch {
+      return { agents };
+    }
   }
 
   /**
@@ -1394,8 +1419,8 @@ export class WebRoom {
    * The agents for an empty room's sync, or nothing. Best-effort like the directory: a lookup that
    * throws costs the page its choice of agent, never the sync that carries the transcript.
    */
-  private catalogFor(topicId: string, room: Room): AgentCatalog | undefined {
-    if (!this.catalog || room.stored.size > 0) return undefined;
+  private catalogFor(topicId: string, room: Room | undefined): AgentCatalog | undefined {
+    if (!this.catalog || (room && room.stored.size > 0)) return undefined;
     try {
       return this.catalog(this.conversation(topicId));
     } catch (e) {
@@ -2040,8 +2065,10 @@ export class WebRoom {
   ): WebMessage {
     const room = this.roomOf(topicId);
     this.flush(room, topicId);
+    const handoff = part.handoff ? this.enrichHandoff(topicId, part.handoff) : undefined;
     const msg: WebMessage = {
       ...part,
+      ...(handoff ? { handoff } : {}),
       // Ids are global and never reused, not per topic: the outbound pacer coalesces edits
       // into `edit:<channel>:<messageId>`, and every topic shares the one channel, so an id
       // restarting per topic would let one topic's edits supersede another's.
@@ -2104,7 +2131,8 @@ export class WebRoom {
     text: string,
     buttons?: ButtonSpec[],
     screen?: SettingsScreen,
-    workdir?: WorkdirScreen
+    workdir?: WorkdirScreen,
+    handoff?: AgentHandoffAction
   ): void {
     const room = this.roomOf(topicId);
     const rec = this.mustFind(room, id, 'edit');
@@ -2129,6 +2157,11 @@ export class WebRoom {
     } else {
       delete rec.msg.workdir;
     }
+    if (handoff) {
+      rec.msg.handoff = this.enrichHandoff(topicId, handoff);
+    } else {
+      delete rec.msg.handoff;
+    }
     room.stored.set(id, rec);
     this.enqueue(room, topicId, id);
     this.keep(topicId);
@@ -2138,6 +2171,16 @@ export class WebRoom {
     // topic is waiting on the user. Announced only when the set actually changed: a menu turning
     // its page edits buttons too, and the sidebar has nothing to redraw for that.
     if (buttons && this.setAwaiting(room, id, buttons.length > 0)) this.announceTopics();
+  }
+
+  /** Fill in the web UI topic id and title when the daemon's store did not carry them. */
+  private enrichHandoff(topicId: string, handoff: AgentHandoffAction): AgentHandoffAction {
+    const title = handoff.fromTopicTitle || this.topics.get(topicId)?.title || undefined;
+    return {
+      ...handoff,
+      fromTopicId: handoff.fromTopicId ?? topicId,
+      ...(title ? { fromTopicTitle: title } : {}),
+    };
   }
 
   /** Record whether a message is holding live buttons. Returns whether that changed. */

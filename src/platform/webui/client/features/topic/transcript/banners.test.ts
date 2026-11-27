@@ -127,6 +127,7 @@ describe('banners pure helpers', () => {
       discardLocal: () => {},
       toggleAll: () => {},
       toggleLine: () => {},
+      toggleCard: () => {},
       openTurnChanges: () => {},
     });
     log.querySelector<HTMLButtonElement>('button[data-agent="oc"]')?.click();

@@ -5,7 +5,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 import { MessageNotEditableError } from '../../core/outbound-errors.js';
 import { PAGE_SIZE, PAGE_SIZE_MAX, WORKDIR_PAGE_SIZE_MAX, resolvePageSize } from '../../core/paging.js';
-import { WebuiConfigSchema } from '../config-schemas.js';
+import { WebuiConfigSchema } from '../../config/platform-schemas.js';
 import { createWebuiAdapter, diskTranscriptStore, diskUploadStore } from './index.js';
 import { CHANNEL, WebRoom, type Kept } from './room.js';
 import type { ConversationAddress } from '../../core/conversation.js';
@@ -219,18 +219,21 @@ describe('webui adapter: outbound', () => {
     // Buttons and a line-based kind together: still rows, so the page never shows a "Show all"
     // over a body that has no `.tl` to open.
     await a.sendButtons(address, '🔔 a (cc) — done.', [{ id: 'ask:r:1', label: 'OK' }], undefined, { kind: 'report' });
+    // A subagent's card: rows under the header the page builds its card from.
+    await a.sendMessage(address, '↳ back end ✓ 2.0s\n💻 Bash: "ls" ✓ 5ms', { kind: 'subagent' });
     await a.stop();
 
     const at = path.join(dir, 'webui-transcripts-webui', `${address.thread ?? ''}.json`);
     const written = JSON.parse(fs.readFileSync(at, 'utf8')) as Kept[];
-    expect(written.map((k) => k.msg.kind)).toEqual(['dispatch', 'report', 'dispatch', 'report']);
+    expect(written.map((k) => k.msg.kind)).toEqual(['dispatch', 'report', 'dispatch', 'report', 'subagent']);
+    expect(written[4]?.msg.html).toMatch(/^<div class="sa-h" data-st="ok" data-d="2\.0s">back end<\/div><div class="tools"><div class="tl">/);
     // A dispatch is prose (the card, or the task text) and stays markdown; a report is rows.
     expect(written[0]?.msg.html).not.toContain('class="tl"');
     expect(written[1]?.msg.html).toContain('<div class="tools"><div class="tl">');
     expect(written[3]?.msg.html).toContain('<div class="tools"><div class="tl">');
     // And the transcript store carries the kinds across a restart, which is what a reload paints.
     const restored = diskTranscriptStore(path.dirname(at)).load().get(address.thread ?? '') ?? [];
-    expect(restored.map((k) => k.msg.kind)).toEqual(['dispatch', 'report', 'dispatch', 'report']);
+    expect(restored.map((k) => k.msg.kind)).toEqual(['dispatch', 'report', 'dispatch', 'report', 'subagent']);
   });
 
   it('quotes the message a reply answers', async () => {

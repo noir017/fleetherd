@@ -79,10 +79,12 @@ describe('toolInputSchema', () => {
     expect(flags).not.toContain('--prompt-file');
   });
 
-  it('declares every parameter a string, the type every option is parsed from', () => {
+  it('declares every parameter as string or boolean for switches', () => {
     for (const t of NATIVE_TOOLS) {
+      const spec = REVERSE_COMMANDS.find((c) => c.usage.split(' ')[0] === t.command)!;
+      const switches = new Set(spec.options.filter((o) => !/[<[]/.test(o.flags)).map(optionKey));
       for (const [key, p] of Object.entries(toolInputSchema(t).properties as Record<string, { type: string }>)) {
-        expect(p.type, `${t.name}.${key}`).toBe('string');
+        expect(p.type, `${t.name}.${key}`).toBe(switches.has(key) ? 'boolean' : 'string');
       }
     }
   });

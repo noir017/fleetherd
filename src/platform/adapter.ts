@@ -1,5 +1,6 @@
 import type { ConversationAddress } from '../core/conversation.js';
 import type {
+  AgentHandoffAction,
   ButtonInteraction,
   CommandInteraction,
   InboundMessage,
@@ -213,6 +214,9 @@ export interface PlatformAdapter {
  *   line per tool call, edited in place as they finish. The web UI draws each line folded to one
  *   row and lets the reader open it, which is only possible if it knows the lines are tool lines
  *   and not prose — by the time it reaches an adapter, a bubble is otherwise just text.
+ * - `subagent` — one subagent's card (daemon/subagent-cards.ts): the same tool lines, all of one
+ *   subagent the harness started, under a `↳ {name}` header that takes ✓ / ✗ when it ends. The web
+ *   UI draws it as a card, folded to its newest line.
  * - `dispatch` — work handed to a sub-agent (`daemon/delegation.ts`): the confirmation card and
  *   the "started" card in the parent topic, and the task text a sub-agent's topic is handed
  *   (whose first message opens with `↳ From …`). The web UI marks these so a hand-off does not
@@ -229,18 +233,19 @@ export interface PlatformAdapter {
  * Every other platform ignores this: a chat app shows the text as sent, so the distinction is
  * the web UI's alone to draw.
  */
-export type MessageKind = 'tools' | 'dispatch' | 'report' | 'aside';
+export type MessageKind = 'tools' | 'subagent' | 'dispatch' | 'report' | 'aside';
 
 /**
  * `MessageKind`'s values at runtime, for code that has to recognise a kind it was handed as data —
  * a transcript file read back from disk. `satisfies` pins every entry to the type, so a typo or a
  * renamed kind fails to compile rather than silently matching nothing.
  */
-export const MESSAGE_KINDS = ['tools', 'dispatch', 'report', 'aside'] as const satisfies readonly MessageKind[];
+export const MESSAGE_KINDS = ['tools', 'subagent', 'dispatch', 'report', 'aside'] as const satisfies readonly MessageKind[];
 
 export interface SendOptions {
   kind?: MessageKind;
   workdir?: WorkdirScreen;
+  handoff?: AgentHandoffAction;
 }
 
 export interface PlatformCapabilities {
@@ -329,6 +334,8 @@ export interface PlatformCapabilities {
   settingsScreen?: boolean;
   /** Whether `/cd` is drawn as an interactive directory browser (`WorkdirScreen`) instead of flat buttons. */
   workdirScreen?: boolean;
+  /** Whether the platform can render a one-tap handoff action on a refused agent switch (opening a new topic with an unsent draft). */
+  handoffAction?: boolean;
   /**
    * How many items one page of a button menu may hold here (`/cd`, `/model`, `/setting`).
    *

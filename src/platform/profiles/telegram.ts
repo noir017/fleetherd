@@ -30,7 +30,7 @@ import { collectErrors, RateLimitedError } from '../../core/outbound-errors.js';
 import type { MessageRef, SlashCommandSpec } from '../../types.js';
 import type { PlatformCapabilities } from '../adapter.js';
 import type { PlatformProfile, ResolvedConversation } from '../profile.js';
-import type { TelegramPlatformConfig } from '../config-schemas.js';
+import type { TelegramPlatformConfig } from '../../config/platform-schemas.js';
 import { installTelegramStartRetry } from '../telegram-start-retry.js';
 import {
   deferUntilLogin,
