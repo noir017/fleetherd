@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import type { ConversationChoice } from './agent.js';
 
 /**
  * Persistent conversation state (`<configDir>/conversations.json`).
@@ -146,9 +147,6 @@ export interface ConversationRecord {
   model?: string;
   effort?: string;
 }
-
-/** The runtime choices a ConversationRecord carries for its bound agent. */
-export type ConversationChoice = 'model' | 'effort';
 
 export class ConversationStore {
   private map = new Map<string, ConversationRecord>();

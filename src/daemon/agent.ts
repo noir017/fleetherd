@@ -555,12 +555,15 @@ export class ForkRefused extends Error {
   }
 }
 
+/** The runtime choices persisted per conversation for its bound agent. */
+export type ConversationChoice = 'model' | 'effort';
+
 /** Narrow port over persisted conversation state covering what the agent runtime reads and writes. */
 export interface SessionMemory {
   agentSession: (key: string, agentId: string) => string | undefined;
   setAgentSession: (key: string, agentId: string, sessionId: string) => void;
   conversationCwd: (key: string) => string | undefined;
-  conversationChoice?: (key: string, agentId: string, which: 'model' | 'effort') => string | undefined;
+  conversationChoice?: (key: string, agentId: string, which: ConversationChoice) => string | undefined;
 }
 
 /**

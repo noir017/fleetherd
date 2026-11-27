@@ -13,6 +13,7 @@ import { composeInstructions, INSTRUCTIONS_MAX_BYTES, instructionsDir, instructi
 import { deliveredTo, managedSkillsProvision } from './managed-skills.js';
 import { bundledSkillProvision } from './skill-link.js';
 import { activeSkillFiles, frontmatterFields, SKILL_FILE } from './skills-store.js';
+import type { AgentProvision } from './provision.js';
 import { useTempDirs } from '../test-utils/temp-dir.test-helpers.js';
 
 const makeTempDir = useTempDirs();
@@ -82,14 +83,14 @@ describe('what a connect agent is told in initialize', () => {
       agents: [{ id: 'web', harness: 'custom', connect }],
       routing: { default: 'web', pipeline: [] },
     }).agents[0]!;
-    expect(await connectMeta(def, connect, undefined, undefined, allProvisions)).toEqual({
+    expect(await connectMeta(def, connect, undefined, allProvisions)).toEqual({
       wad: { site: 'gemini-task', profile: 'main' },
       fleetherd: { token: 's3cret-token', host: hostname(), instructions: 'Be brief.\n\nSay where.\n' },
     });
     // A pod's agent gets the layer of its own id, without the host.
     const pod = { ...def, id: 'web@box', host: 'box' };
     const place = { host: { id: 'box', readFile: async () => Buffer.from('remote-token') }, welcome: { home: '/home/u' } };
-    const meta = await connectMeta(pod, connect, place as unknown as Parameters<typeof connectMeta>[2], undefined, allProvisions);
+    const meta = await connectMeta(pod, connect, place as unknown as Parameters<typeof connectMeta>[2], allProvisions);
     expect(meta['fleetherd']).toEqual({ token: 'remote-token', host: 'box', instructions: 'Be brief.\n\nSay where.\n' });
   });
 
@@ -114,7 +115,7 @@ describe('what a connect agent is told in initialize', () => {
       agents: [{ id: 'web', harness: 'custom', connect }],
       routing: { default: 'web', pipeline: [] },
     }).agents[0]!;
-    const meta = await connectMeta(def, connect, undefined, undefined, allProvisions);
+    const meta = await connectMeta(def, connect, undefined, allProvisions);
     expect((meta['fleetherd'] as Record<string, unknown>)['skills']).toEqual([
       { name: 'server-ops', description: 'Use when operating servers over SSH' },
     ]);
@@ -203,7 +204,7 @@ describe('what a connect agent is told in initialize', () => {
       process.env.FLEETHERD_CONFIG_DIR = configDir;
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
       try {
-        const actual = await connectMeta(def, connect, place, opts.topic, allProvisions);
+        const actual = await connectMeta(def, connect, place, allProvisions, opts.topic);
         const expected = await legacyConnectMeta(def, connect, place, opts.topic, opts.withToken ? 'tok-123' : undefined);
         expect(actual).toEqual(expected);
         expect(Object.keys(actual['fleetherd'] as Record<string, unknown>)).toEqual(
@@ -235,7 +236,7 @@ describe('what a connect agent is told in initialize', () => {
   it('says which file it could not read', async () => {
     const connect = { url: 'tcp://127.0.0.1:1', tokenFile: '/nonexistent/token' };
     const def = { id: 'web', connect } as unknown as Parameters<typeof connectMeta>[0];
-    await expect(connectMeta(def, connect, undefined)).rejects.toThrow('agent "web": cannot read connect.tokenFile /nonexistent/token');
+    await expect(connectMeta(def, connect, undefined, [])).rejects.toThrow('agent "web": cannot read connect.tokenFile /nonexistent/token');
   });
 });
 
@@ -311,11 +312,20 @@ describe('a connect agent as a conversation', () => {
     const store = { agentSession: () => undefined, setAgentSession: () => {}, conversationCwd: () => undefined } as unknown as Parameters<
       typeof createAcpAgentFactory
     >[2];
-    const session = createAcpAgentFactory(cfg, join(dir, 'ipc.sock'), store, { provisions: [] }).getOrCreate('conv#1', 'web');
+    const stubProvision: AgentProvision = {
+      name: 'stub',
+      local: () => {},
+      remote: async () => {},
+      meta: () => ({ instructions: 'x' }),
+    };
+    const session = createAcpAgentFactory(cfg, join(dir, 'ipc.sock'), store, { provisions: [stubProvision] }).getOrCreate('conv#1', 'web');
     live = session;
 
     await session.runTurn({ prompt: 'hi', sessionToken: 'tok', topic: 'web:main/3a9f0c12' }, quiet);
-    expect(agent.meta()).toEqual({ wad: { site: 'x', profile: 'p' }, fleetherd: { host: hostname(), topic: 'web:main/3a9f0c12' } });
+    expect(agent.meta()).toEqual({
+      wad: { site: 'x', profile: 'p' },
+      fleetherd: { host: hostname(), instructions: 'x', topic: 'web:main/3a9f0c12' },
+    });
 
     // End agent: the turn is interrupted (a session/cancel), and the session disposed at once.
     const turn = session.runTurn({ prompt: 'slow work', sessionToken: 'tok' }, quiet);
