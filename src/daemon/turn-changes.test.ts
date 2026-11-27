@@ -13,7 +13,8 @@ import os from 'node:os';
 import path from 'node:path';
 
 import type { ConversationAddress, ConversationRef } from '../core/conversation.js';
-import type { PlatformAdapter, TurnChangeEntry } from '../platform/adapter.js';
+import type { PlatformAdapter } from '../platform/adapter.js';
+import type { TurnChangeEntry } from '../platform/workbench.js';
 import type { MessageRef } from '../types.js';
 import { TurnChanges, type TurnChangesOptions } from './turn-changes.js';
 import { localWorkspace, type Workspace } from './workspace.js';

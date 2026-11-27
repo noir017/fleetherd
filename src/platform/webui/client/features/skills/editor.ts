@@ -1,8 +1,4 @@
-import type {
-  SkillPanelDetail,
-  SkillPanelEntry,
-  SkillPanelHistoryEntry,
-} from '../../../../adapter.js';
+import type { SkillPanelDetail, SkillPanelEntry, SkillPanelHistoryEntry } from '../../../../workbench.js';
 import type { EditorHandle } from '../../../codeview/app.js';
 import { html, nothing, render, type TemplateResult } from '../../base/html.js';
 import { DisposableStore } from '../../base/lifecycle.js';

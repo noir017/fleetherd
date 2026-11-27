@@ -6,7 +6,7 @@ import type {
   SkillPanelSearch,
   SkillPanelSearches,
   SkillsPanel,
-} from '../platform/adapter.js';
+} from '../platform/workbench.js';
 import { readQueryEvents, summarizeQueries, type SearchOutcome } from './skill-queries.js';
 
 /** How many of each kind of search the page lists. */

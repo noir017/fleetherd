@@ -17,16 +17,16 @@ import { parsePickButtonId } from '../core/button-id.js';
 import { offlinePlaces } from '../core/agent-menu.js';
 import { canReach } from '../remote/reachable.js';
 import { HostAvailability } from './host-availability.js';
+import type { PlatformAdapter } from '../platform/adapter.js';
 import type {
   HistoryPanel,
-  PlatformAdapter,
   ReviewPanel,
   SchedulePanel,
   SchedulePanelDetailResult,
   SchedulePanelFormContext,
   SchedulePanelTask,
   SchedulePanelTaskDetail,
-} from '../platform/adapter.js';
+} from '../platform/workbench.js';
 import { OutboundPacer } from '../core/outbound-pacer.js';
 import { splitIntoChunks } from '../core/stream-buffer.js';
 import { formatEmptyCatalog, formatSkillCatalog } from '../core/skills-catalog.js';

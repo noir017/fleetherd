@@ -1,4 +1,4 @@
-import type { GitMode, GitStatusFile } from '../../../../adapter.js';
+import type { GitMode, GitStatusFile } from '../../../../workbench.js';
 import type { OpenEditorOptions, PluginContext } from '../../plugins/api.js';
 import { createApiClient, type ApiClient } from '../../services/api.js';
 import type {

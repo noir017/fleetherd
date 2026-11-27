@@ -3,13 +3,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { ConversationAddress, ConversationRef } from '../core/conversation.js';
+import type { PlatformAdapter } from '../platform/adapter.js';
 import type {
-  PlatformAdapter,
   TurnChangeEntry,
   TurnChangeFile,
   TurnChangeFileResult,
   TurnChangeStatusResult,
-} from '../platform/adapter.js';
+} from '../platform/workbench.js';
 import type { MessageRef } from '../types.js';
 import { DEFAULT_RUN_TIMEOUT_MS, type Workspace, type WorkspaceRunResult, type WorkspaceStat } from './workspace.js';
 

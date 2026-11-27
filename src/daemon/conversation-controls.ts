@@ -40,13 +40,13 @@ import {
   workdirUnreadableText,
   type WorkdirChoiceResult,
 } from '../core/workdir-menu.js';
+import type { PlatformAdapter } from '../platform/adapter.js';
 import type {
   ModelPickerList,
   ModelPickerResult,
-  PlatformAdapter,
   SessionOptionList,
   SessionOptionResult,
-} from '../platform/adapter.js';
+} from '../platform/workbench.js';
 import type {
   ConversationId,
   EffortSelector,

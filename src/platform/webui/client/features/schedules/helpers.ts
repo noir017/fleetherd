@@ -4,7 +4,7 @@ import type {
   SchedulePanelShape,
   SchedulePanelTask,
   SchedulePanelTaskDetail,
-} from '../../../../adapter.js';
+} from '../../../../workbench.js';
 import { icon } from '../../../icons.js';
 import type { ScheduleTargetRequest } from '../../../protocol.js';
 import type { FilterBarGroup, FilterBarOption, FilterBarState } from '../../components/index.js';

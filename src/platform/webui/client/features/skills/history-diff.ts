@@ -1,4 +1,4 @@
-import type { SkillPanelEntry, SkillPanelHistoryEntry } from '../../../../adapter.js';
+import type { SkillPanelEntry, SkillPanelHistoryEntry } from '../../../../workbench.js';
 
 export type DiffLineKind = 'context' | 'add' | 'del' | 'hunk';
 

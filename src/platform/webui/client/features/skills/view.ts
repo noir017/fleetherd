@@ -1,4 +1,4 @@
-import type { SkillPanelEntry, SkillPanelSearch, SkillPanelSearches } from '../../../../adapter.js';
+import type { SkillPanelEntry, SkillPanelSearch, SkillPanelSearches } from '../../../../workbench.js';
 import { html, nothing, render, type TemplateResult } from '../../base/html.js';
 import { DisposableStore } from '../../base/lifecycle.js';
 import {

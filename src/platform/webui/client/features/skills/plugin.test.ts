@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { SkillPanelDetail, SkillPanelEntry, SkillPanelOp } from '../../../../adapter.js';
+import type { SkillPanelDetail, SkillPanelEntry, SkillPanelOp } from '../../../../workbench.js';
 import type { CodeViewApi, EditorHandle, EditorOptions } from '../../../codeview/app.js';
 import { Emitter } from '../../base/event.js';
 import { PluginManager } from '../../plugins/host.js';

@@ -5,7 +5,13 @@ import { RETRY_PREFIX } from '../../core/turn-retry.js';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 import { MessageNotEditableError } from '../../core/outbound-errors.js';
-import type { SchedulePanel, SchedulePanelFormContext, SchedulePanelTask, SchedulePanelTaskDetail, SkillPanelEntry } from '../adapter.js';
+import type {
+  SchedulePanel,
+  SchedulePanelFormContext,
+  SchedulePanelTask,
+  SchedulePanelTaskDetail,
+  SkillPanelEntry,
+} from '../workbench.js';
 import { WebuiConfigSchema } from '../config-schemas.js';
 import {
   CHANNEL,

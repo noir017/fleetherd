@@ -5,7 +5,7 @@ import type {
   HistoryPanelRead,
   HistoryPanelSearch,
   HistoryPanelSession,
-} from '../platform/adapter.js';
+} from '../platform/workbench.js';
 
 /**
  * The daemon's side of the web UI's history page: `history.db` read the way `fleetherd sessions`

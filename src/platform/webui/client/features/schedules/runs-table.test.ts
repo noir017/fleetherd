@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { SchedulePanelRun, SchedulePanelTask, SchedulePanelTaskDetail } from '../../../../adapter.js';
+import type { SchedulePanelRun, SchedulePanelTask, SchedulePanelTaskDetail } from '../../../../workbench.js';
 import { Emitter } from '../../base/event.js';
 import { setLocale } from '../../i18n/index.js';
 import type { TopicInfo } from '../../plugins/api.js';

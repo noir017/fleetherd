@@ -68,8 +68,8 @@ import type {
   TopicStage,
   WorkdirScreen,
 } from '../../types.js';
+import type { ButtonSpec, MessageKind } from '../adapter.js';
 import type {
-  ButtonSpec,
   ConversationWorkdir,
   GitBranchesResult,
   GitCommitResult,
@@ -93,7 +93,6 @@ import type {
   HistoryPanelPage,
   HistoryPanelRead,
   HistoryPanelSession,
-  MessageKind,
   SchedulePanel,
   ModelPicker,
   ModelPickerList,
@@ -124,7 +123,7 @@ import type {
   TurnChangeStatusResult,
   VoiceTranscribeResult,
   VoiceTranscriber,
-} from '../adapter.js';
+} from '../workbench.js';
 import type { WebuiPlatformConfig } from '../config-schemas.js';
 import { escapeHtml, renderWebMarkdown, renderWebToolLines } from '../web-markdown.js';
 import { toolGlyph } from './icons.js';

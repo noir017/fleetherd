@@ -1,4 +1,4 @@
-import type { FileGitStatus, FilesPanelEntry, FilesPanelHit } from '../../../../adapter.js';
+import type { FileGitStatus, FilesPanelEntry, FilesPanelHit } from '../../../../workbench.js';
 import { icon } from '../../../icons.js';
 import { html, nothing, render } from '../../base/html.js';
 import { DisposableStore } from '../../base/lifecycle.js';

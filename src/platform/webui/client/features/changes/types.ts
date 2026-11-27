@@ -1,4 +1,4 @@
-import type { GitCommitSummary, GitMode, GitStatusFile } from '../../../../adapter.js';
+import type { GitCommitSummary, GitMode, GitStatusFile } from '../../../../workbench.js';
 import type { CodeViewApi, DiffSelection } from '../../../codeview/app.js';
 import type { TopicToolContribution } from '../../plugins/api.js';
 import type { ApiClient } from '../../services/api.js';

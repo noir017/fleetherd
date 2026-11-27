@@ -16,7 +16,8 @@
  */
 import { z } from 'zod';
 
-import type { ButtonSpec, MessageKind, TurnChangeEntry } from '../adapter.js';
+import type { ButtonSpec, MessageKind } from '../adapter.js';
+import type { TurnChangeEntry } from '../workbench.js';
 import type {
   AgentCatalog,
   AgentStatus,

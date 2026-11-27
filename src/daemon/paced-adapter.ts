@@ -120,6 +120,9 @@ const PACING = {
   platform: 'unpaced',
   platformType: 'unpaced',
   capabilities: 'unpaced',
+  topics: 'unpaced',
+  presence: 'unpaced',
+  workbench: 'unpaced',
 } satisfies Record<keyof PlatformAdapter, 'write' | 'edit' | 'unpaced'>;
 
 /** A paced adapter, plus a way to ask for a view of it in a different lane. */

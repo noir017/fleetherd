@@ -5,7 +5,8 @@ import { execFileSync } from 'node:child_process';
 
 import { ConversationRegistry } from './conversation.js';
 import { parseConfig, type Config } from '../config/schema.js';
-import type { PlatformAdapter, TurnChangeEntry } from '../platform/adapter.js';
+import type { PlatformAdapter } from '../platform/adapter.js';
+import type { TurnChangeEntry } from '../platform/workbench.js';
 import type { AgentFactory, AgentSession, AgentStreamHandlers } from './agent.js';
 import type { ConversationAddress } from '../core/conversation.js';
 import type { InboundMessage } from '../types.js';
