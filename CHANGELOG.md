@@ -5,6 +5,17 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **Antigravity stream recovery, long-pause tolerance, and continuation error guidance.** Free-tier
+  turns can pause for over 70 seconds and close the idle SSE stream cleanly, which previously failed
+  after two empty reconnects (~1.5 s); the adapter now checks the interaction status before failing,
+  continues reconnecting with bounded backoff while `in_progress` (with immediate cancellation on
+  abort), and falls back to recovery if the turn already completed. Stream recovery (`recover()`)
+  now also replays missing `code_execution_call` and `code_execution_result` tool events so tool
+  bubbles are not lost when a stream drops mid-execution, and continuation 400/404 errors where the
+  upstream interaction still exists now suggest sending `/new` if the failure persists.
+
 ## [3.43.0] - 2026-11-27
 
 ### Added

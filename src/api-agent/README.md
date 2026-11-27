@@ -106,12 +106,12 @@ else becomes a bare "Internal error" on the wire, which is the one thing the use
 | Case | What the chat says |
 |---|---|
 | continuation rejected **and the previous interaction is gone** (GET on it answers 404) | `context expired: … the session was reset, send the message again` |
-| continuation rejected for any other reason (bad model/image/input) | the upstream error as-is; the session keeps its state, because the conversation is still usable |
+| continuation rejected for any other reason (bad model/image/input) | the upstream error as-is with a `/new` hint; the session keeps its state, because the conversation is still usable |
 | `status: "incomplete"` | `hit this turn's N-token cap … raise --max-tokens or ask for less at once` (the final usage is sent first) |
 | 429 | `rate limited by the Antigravity API (429): <upstream message> (retry after Ns)` |
 | 401/403 | `the Antigravity API rejected GEMINI_API_KEY …` |
 | no key | `GEMINI_API_KEY is not set for this agent; add it to the agent's env in config.yaml` |
-| stream lost | retried six times with backoff; a reconnect that delivers nothing twice ends it |
+| stream lost | retried with bounded backoff; after two empty reconnects, checks interaction status — keeps waiting while `in_progress`, recovers if finished |
 
 ## Session state
 
@@ -152,8 +152,9 @@ persists them and hands them back next turn. Images arrive base64-encoded.
   `Precondition check failed` — transient right after an abort, permanent once the interaction
   finished. The transient case is retried; the finished case is delivered from the interaction's
   own `steps[]`, so a stream lost after the answer was ready still ends the turn normally.
-  A clean EOF before `[DONE]` is retried too, and a reconnect that delivers no new frames twice in
-  a row ends the turn.
+  A clean EOF before `[DONE]` is retried too; after two empty reconnects it inspects the
+  interaction status, continuing with bounded backoff while `in_progress` and recovering tool
+  steps plus text if already finished.
 - **Text is `step.delta[text]`**; `thought_summary` becomes a thought (kept out of the reply);
   `thought_signature` is dropped — 172–1016 opaque characters per recorded turn.
 - **Tools** are the sandbox's `code_execution_call` / `code_execution_result` steps, drawn as a

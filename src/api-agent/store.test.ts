@@ -121,9 +121,16 @@ describe('SessionStore', () => {
   });
 
   it('refuses a session id that is not a plain filename', () => {
-    const store = new SessionStore({ dir: storeDir(), log: () => {} });
+    const dir = storeDir();
+    const store = new SessionStore({ dir, log: () => {} });
     expect(() => store.put({ sessionId: '../escape' })).toThrow(/invalid session id/);
+    // A rejected put must not leave an unpersisted entry in the in-memory cache or create the dir.
+    expect(() => store.get('../escape')).toThrow(/invalid session id/);
     expect(() => store.get('..')).toThrow(/invalid session id/);
+    expect(() => store.patch('../escape', { lastInteractionId: 'v1_a' })).toThrow(/invalid session id/);
+    expect(() => store.clearContext('../escape')).toThrow(/invalid session id/);
+    expect(() => store.delete('../escape')).toThrow(/invalid session id/);
+    expect(() => statSync(dir)).toThrow();
   });
 
   it('deletes a record and its file', () => {
