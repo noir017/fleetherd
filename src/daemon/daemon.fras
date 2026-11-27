@@ -41,6 +41,7 @@ src/daemon/pods.ts [Infra]: F:Remote host pod declarations scanner | A:hostsWith
 src/daemon/provision.ts [Core]: F:AgentProvision and HostFiles port interfaces for spawn-time local and remote provisioning | A:AgentProvision,HostFiles,HostLinkResult
 src/daemon/relay-types.ts [Core]: F:Shared RelaySpec and HarnessRelay types for loopback HTTP API relays | A:RelaySpec,HarnessRelay
 src/daemon/remote-hosts.ts [Infra]: F:Remote host manager and reverse CLI bridge | R:src/remote/host.ts,src/daemon/ssh-identity.ts | A:RemoteHosts,gatewayNamespace | S:See Security invariants item 5
+src/daemon/review-loop-store.ts [Infra]: F:Atomic 0600 JSON persistence for automatic review loops (<configDir>/review-loops.json) | A:ReviewLoopStore,ReviewLoop,ReviewPlan
 src/daemon/review.ts [Core]: F:Automated review of idle conversations distilling skills and learned preferences | A:ReviewService,ReviewFacts
 src/daemon/routing.ts [Core]: F:Inbound message to agent and scope resolution | A:resolveAgent,resolveScope | S:Deterministic pipeline and harness matching [T:resolveAgent]
 src/daemon/schedule-service.ts [Core]: F:Scheduled task execution engine | A:ScheduleService

@@ -2850,3 +2850,102 @@ describe('Delegation: managed git worktrees (task-new --worktree)', () => {
     expect(afterList.tasks[0]?.worktree).toBe('');
   });
 });
+
+describe('Delegation: persisted review loops across restarts', () => {
+  const W = 'web#main#c1000000';
+  const R = 'web#main#c2000000';
+  const REVIEW = 'Check diff; end with `fleetherd task-verdict pass|nits|changes`.';
+  const sha = (ch: string): string => ch.repeat(40);
+
+  it('restores active loops after restart, accepts task-verdict, forwards next commits, shows in tasks, and drops stale entries', async () => {
+    const loopsFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'fleetherd-loop-restart-')), 'review-loops.json');
+    dirs.push(path.dirname(loopsFile));
+
+    const r = rig();
+    const heads = new Map<string, string>([[W, sha('a')]]);
+    const deps: DelegationDeps = {
+      ...r.deps,
+      reviewLoopsFile: loopsFile,
+      headOf: async (k) => {
+        const s = heads.get(k);
+        return s ? { sha: s, branch: 'feat/x' } : undefined;
+      },
+    };
+    const d1 = new Delegation(deps);
+
+    await d1.handle(P, task('cc', 'build', { reviewBy: 'cx', review: REVIEW, rounds: 3 }));
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    await settle();
+
+    // Work commits and opens reviewer topic R
+    heads.set(W, sha('b'));
+    r.activity.set(W, { outcome: { kind: 'done', at: r.clock.now(), line: 'built' } });
+    seedTurn(r.history, W, [{ role: 'agent', text: 'Built v1.' }]);
+    d1.childChanged(W);
+    r.clock.advance(CARD_DELAY_MS);
+    await settle();
+    await settle();
+    expect(fs.existsSync(loopsFile)).toBe(true);
+    expect(fs.statSync(loopsFile).mode & 0o777).toBe(0o600);
+
+    // Simulate a gateway restart: dispose d1, construct fresh Delegation over the same persisted file
+    d1.dispose();
+    const d2 = new Delegation(deps);
+
+    // `tasks` still shows the restored loop
+    const listed = (await d2.handle(P, { kind: 'task-list' })) as TaskListResult;
+    expect(listed.tasks.find((t) => t.topic === 'web:main/c1000000')?.review).toContain('round 1 under review');
+
+    // Reviewer's `task-verdict changes` is accepted after restart and sends work back
+    await expect(d2.handle(R, { kind: 'task-verdict', verdict: 'changes' })).resolves.toMatchObject({
+      topic: 'web:main/c2000000',
+    });
+    r.activity.set(R, { outcome: { kind: 'done', at: r.clock.now(), line: 'fix x' } });
+    seedTurn(r.history, R, [{ role: 'agent', text: 'Please fix X.' }]);
+    d2.childChanged(R);
+    r.clock.advance(CARD_DELAY_MS);
+    await settle();
+    await settle();
+
+    // Simulate a second restart while waiting for the work's fix commits
+    d2.dispose();
+    const d3 = new Delegation(deps);
+    heads.set(W, sha('c'));
+    r.activity.set(W, { outcome: { kind: 'done', at: r.clock.now(), line: 'fixed' } });
+    seedTurn(r.history, W, [{ role: 'agent', text: 'Fixed X.' }]);
+    d3.childChanged(W);
+    r.clock.advance(CARD_DELAY_MS);
+    await settle();
+    await settle();
+    const handToReviewer = r.calls.filter(([c, arg]) => c === 'handTo' && (arg as { key?: string }).key === R);
+    expect(handToReviewer.length).toBeGreaterThanOrEqual(1);
+
+    // Reviewer passes after restart
+    await d3.handle(R, { kind: 'task-verdict', verdict: 'pass' });
+    r.activity.set(R, { outcome: { kind: 'done', at: r.clock.now(), line: 'lgtm' } });
+    seedTurn(r.history, R, [{ role: 'agent', text: 'Looks good.' }]);
+    d3.childChanged(R);
+    r.clock.advance(CARD_DELAY_MS);
+    await settle();
+    await settle();
+    const listedDone = (await d3.handle(P, { kind: 'task-list' })) as TaskListResult;
+    expect(listedDone.tasks.find((t) => t.topic === 'web:main/c1000000')?.review).toContain('passed in round 2');
+
+    // Stale entry whose topic no longer exists is dropped on startup with a log line
+    d3.dispose();
+    r.parents.delete(W);
+    const logs: string[] = [];
+    const origLog = console.log;
+    console.log = (...args: unknown[]) => logs.push(args.map(String).join(' '));
+    try {
+      const d4 = new Delegation(deps);
+      expect(logs.some((l) => l.includes('dropped stale review loop'))).toBe(true);
+      const persisted = JSON.parse(fs.readFileSync(loopsFile, 'utf8')) as { loops: unknown[] };
+      expect(persisted.loops).toEqual([]);
+      d4.dispose();
+    } finally {
+      console.log = origLog;
+    }
+  });
+});

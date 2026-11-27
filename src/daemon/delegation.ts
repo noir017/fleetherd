@@ -53,6 +53,7 @@ import {
   type WorktreePlan,
 } from './worktree-git.js';
 import { WorktreeStore, type ManagedWorktree } from './worktree-store.js';
+import { ReviewLoopStore, type ReviewLoop, type ReviewPlan } from './review-loop-store.js';
 
 /**
  * Sub-agents: an agent in one conversation hands parts of its job to other agents, each in a topic
@@ -127,8 +128,10 @@ import { WorktreeStore, type ManagedWorktree } from './worktree-store.js';
  * the reviewer and its text on the same card as the work (invariant 6), so a reviewer the loop opens
  * later was already started by that tap. Nothing of this is offered to an external caller: sending a
  * verdict into a running author is `task-send`, which invariant 11 keeps from it. The loops live in
- * memory: after a restart, a reviewer's `task-verdict` is refused and the ends reach the asking agent
- * as ordinary updates again.
+ * `<configDir>/review-loops.json` (0600, atomic rename on every change) and are restored at startup,
+ * dropping any loop whose topics no longer exist: after a restart, a reviewer's `task-verdict` is
+ * still accepted, the work's next commits still go to the reviewer, and `tasks` still shows the loop.
+ * A turn cut off by a restart is handled as any cut-off turn is today.
  */
 
 /**
@@ -301,6 +304,8 @@ export interface DelegationDeps {
   headOf?(key: ConversationId): Promise<GitHead | undefined>;
   /** Path to `<configDir>/worktrees.json` for persisting gateway-created worktrees; in-memory when omitted. */
   worktreesFile?: string;
+  /** Path to `<configDir>/review-loops.json` for persisting active/ended review loops; in-memory when omitted. */
+  reviewLoopsFile?: string;
   /** Workspace factory for git worktree operations on local or remote machines (defaults to `workspaceFor`). */
   workspaceFor?(def: AgentDef, root: string): Workspace;
   /**
@@ -366,46 +371,6 @@ interface Item {
   review?: ReviewPlan;
   /** `--worktree [name]`: resolved at proposal time (read-only); created only when the part starts. */
   worktree?: WorktreePlan;
-}
-
-/** `task-new --review-by`: who reviews the work, what it is told, and how often it may send it back. */
-interface ReviewPlan {
-  agent: string;
-  text: string;
-  rounds: number;
-}
-
-/**
- * One review loop (see "The review loop" above), keyed by the work's topic. Kept after it ends, so
- * `tasks` and the card can still say how it ended.
- */
-interface ReviewLoop {
-  work: ConversationId;
-  /** The work's topic id, as `tasks` prints it. */
-  workTopic: string;
-  plan: ReviewPlan;
-  /** Times the review has sent the work back so far. */
-  sentBack: number;
-  /**
-   * The commit already reviewed — at first the one the work started from. Undefined until it is
-   * read, and for good when it cannot be: the first commit range is then just the commit reviewed.
-   */
-  reviewed?: string;
-  /** The commit handed to the review now running. */
-  pending?: string;
-  /** The reviewer's topic, once the first review opened it. */
-  review?: { key: ConversationId; address: ConversationAddress; topic: string };
-  /**
-   * Whose turn end the loop is waiting for: the work's (`work`; `finish` after a `nits`, which ends
-   * the loop whatever it committed) or the reviewer's (`review`). Any other end is ordinary news.
-   */
-  phase: 'work' | 'review' | 'finish';
-  /** What the reviewer answered with `task-verdict` in the turn now running; read once, at its end. */
-  verdict?: TaskVerdict;
-  /** How it ended, once it has — the line `tasks` and the card show. */
-  outcome?: { passed: boolean; line: string };
-  /** Why the last end did not move it on (no commit, no reply): said on the next card, then dropped. */
-  note?: string;
 }
 
 /** What `task-send --forward` (and the review loop) attaches: a reply under the heading naming it. */
@@ -554,6 +519,8 @@ export class Delegation {
   private readonly loops = new Map<ConversationId, ReviewLoop>();
   /** A reviewer's topic → the work it reviews, the key `loops` is under. */
   private readonly reviewerOf = new Map<ConversationId, ConversationId>();
+  /** Persisted review loops (`<configDir>/review-loops.json`), when configured. */
+  private readonly reviewLoopsStore?: ReviewLoopStore;
   /** Persisted worktrees created by `task-new --worktree`, or an in-memory map when no file is given. */
   private readonly worktreesStore?: WorktreeStore;
   private readonly worktreesMem = new Map<ConversationId, ManagedWorktree>();
@@ -564,6 +531,10 @@ export class Delegation {
   constructor(private readonly deps: DelegationDeps) {
     if (deps.worktreesFile) {
       this.worktreesStore = new WorktreeStore(deps.worktreesFile);
+    }
+    if (deps.reviewLoopsFile) {
+      this.reviewLoopsStore = new ReviewLoopStore(deps.reviewLoopsFile);
+      this.restoreLoops();
     }
   }
 
@@ -1916,7 +1887,10 @@ export class Delegation {
     const quote = this.quoteOf(c, row, stage);
     // `row.review` already carries the one-off note (no commit, no reply); this card is where it is said.
     const loop = this.loopOf(c.key);
-    if (loop) loop.note = undefined;
+    if (loop && loop.note !== undefined) {
+      loop.note = undefined;
+      this.persistLoops();
+    }
     return {
       topic: row.topic,
       head: `- topic ${row.topic} · "${row.title}" · ${row.agent}${row.cwd ? ` in ${row.cwd}` : ''} · ${describeStage(stage)}${
@@ -2053,12 +2027,46 @@ export class Delegation {
   private arm(work: ConversationId, workTopic: string, plan: ReviewPlan): void {
     const loop: ReviewLoop = { work, workTopic, plan, sentBack: 0, phase: 'work' };
     this.loops.set(work, loop);
+    this.persistLoops();
     void this.deps
       .headOf?.(work)
       .then((head) => {
-        if (head && loop.reviewed === undefined) loop.reviewed = head.sha;
+        if (head && loop.reviewed === undefined) {
+          loop.reviewed = head.sha;
+          this.persistLoops();
+        }
       })
       .catch(() => undefined);
+  }
+
+  private persistLoops(): void {
+    this.reviewLoopsStore?.save(this.loops.values());
+  }
+
+  private restoreLoops(): void {
+    const loaded = this.reviewLoopsStore?.load() ?? [];
+    let dropped = 0;
+    for (const loop of loaded) {
+      if (!this.loopTopicsExist(loop)) {
+        dropped++;
+        console.log(`[delegation] dropped stale review loop for ${loop.workTopic}: topic no longer exists`);
+        continue;
+      }
+      this.loops.set(loop.work, loop);
+      if (loop.review) this.reviewerOf.set(loop.review.key, loop.work);
+      if (!loop.outcome) {
+        // Keep the active loop's topics owed across restart so a continued/next turn still advances it.
+        this.owed.add(loop.work);
+        if (loop.review) this.owed.add(loop.review.key);
+      }
+    }
+    if (dropped > 0) this.persistLoops();
+  }
+
+  private loopTopicsExist(loop: ReviewLoop): boolean {
+    if (!this.place(loop.work) || !this.parentOf(loop.work)) return false;
+    if (loop.review && (!this.place(loop.review.key) || !this.parentOf(loop.review.key))) return false;
+    return true;
   }
 
   /** The loop a topic is part of — as the work or as its reviewer. */
@@ -2078,7 +2086,10 @@ export class Delegation {
     const at = this.place(id);
     const stage = at ? this.stageOf(at) : undefined;
     // A verdict belongs to the turn that gave it; one that failed takes it along.
-    if (stage === 'failed' && id !== loop.work) loop.verdict = undefined;
+    if (stage === 'failed' && id !== loop.work && loop.verdict !== undefined) {
+      loop.verdict = undefined;
+      this.persistLoops();
+    }
     if (stage !== 'review') return undefined;
     if (id === loop.work ? loop.phase === 'review' : loop.phase !== 'review') return undefined;
     return loop;
@@ -2115,6 +2126,7 @@ export class Delegation {
     if ('problem' in forward) return this.hold(loop, parent, `no review started — ${forward.problem}`);
     loop.pending = head.sha;
     loop.phase = 'review';
+    this.persistLoops();
     const header = this.loopHeaderOf(parent);
     const round = loop.sentBack + 1;
     const worked = subjectOf(this.titleOf(work.key, work));
@@ -2133,6 +2145,7 @@ export class Delegation {
       });
       loop.review = { key: opened.key, address: opened.address, topic: topicOf(parent.platformId, opened.address) };
       this.reviewerOf.set(opened.key, loop.work);
+      this.persistLoops();
     } else {
       await this.deps.registry.handTo(loop.review.key, parent.platformId, loop.review.address, '', header, { forward });
     }
@@ -2158,6 +2171,7 @@ export class Delegation {
     loop.verdict = undefined;
     const round = loop.sentBack + 1;
     if (loop.pending) loop.reviewed = loop.pending;
+    this.persistLoops();
     if (verdict === 'pass') return this.finish(loop, parent, true, round === 1 ? 'passed' : `passed in round ${round}`);
     if (verdict === 'changes' && loop.sentBack >= loop.plan.rounds) {
       return this.finish(loop, parent, false, `stopped: the review still asks for changes after ${loop.plan.rounds} round${loop.plan.rounds === 1 ? '' : 's'} sent back`);
@@ -2166,6 +2180,7 @@ export class Delegation {
     if (!work) throw new Error('the work\'s topic is gone');
     if (verdict === 'changes') loop.sentBack++;
     loop.phase = verdict === 'nits' ? 'finish' : 'work';
+    this.persistLoops();
     await this.deps.registry.handTo(loop.work, work.platformId, work.address, '', this.loopHeaderOf(parent), { forward: reply });
     this.owed.add(loop.work);
     const names = `"${subjectOf(this.titleOf(review.key, review))}"`;
@@ -2181,6 +2196,7 @@ export class Delegation {
   /** The loop is over: say how, and tell the asking agent about the work and its review together. */
   private finish(loop: ReviewLoop, parent: Place, passed: boolean, line: string): void {
     loop.outcome = { passed, line };
+    this.persistLoops();
     console.log(`[delegation] ${loop.work}: the review loop ended — ${line}`);
     this.report(parent, loop.review ? [loop.work, loop.review.key] : [loop.work]);
   }
@@ -2188,6 +2204,7 @@ export class Delegation {
   /** The loop cannot move on by itself this time: the asking agent is told why, and it stays armed. */
   private hold(loop: ReviewLoop, parent: Place, note: string, about: ConversationId = loop.work): void {
     loop.note = note;
+    this.persistLoops();
     this.report(parent, [about]);
   }
 
@@ -2204,6 +2221,7 @@ export class Delegation {
     const loop = this.loopOf(id);
     if (!loop || loop.outcome) return;
     loop.outcome = { passed: false, line: `stopped: ${why}` };
+    this.persistLoops();
     console.log(`[delegation] ${loop.work}: the review loop stopped — ${why}`);
   }
 
@@ -2223,6 +2241,7 @@ export class Delegation {
       throw new Error('no review of yours is waiting on a verdict: the work has not come back to you since your last one');
     }
     loop.verdict = verdict;
+    this.persistLoops();
     const topic = topicOf(here.platformId, here.address);
     const last = loop.sentBack >= loop.plan.rounds;
     const result =

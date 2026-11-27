@@ -340,6 +340,7 @@ export class Daemon {
         return ws ? readHead(ws) : undefined;
       },
       worktreesFile: path.join(configDir(), 'worktrees.json'),
+      reviewLoopsFile: path.join(configDir(), 'review-loops.json'),
       // Buttons only (security invariant 6): a typed reply is the user's next message to the agent, never a start confirmation.
       confirm: async ({ adapter, address, conversation, text, labels, timeoutMs, signal }) => {
         const outcome = await this.menus.askButtons(adapter, address, text, labels, timeoutMs, conversation, {

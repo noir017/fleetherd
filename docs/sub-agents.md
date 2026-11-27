@@ -116,9 +116,11 @@ covers both. From then on the review runs without the agent that set it up:
 What the gateway sends in the loop is the other side's reply under a heading — the topic, its
 turn, and the commit range or the verdict — and nothing of its own. Each step is shown in the topic
 that set it up as a folded 🔁 line, without running a turn there; `tasks` has a `review` column
-saying where each loop stands. The reviewer must run on the part's machine. Loops live in the
-gateway's process: after a restart the parts and reviewers carry on as ordinary sub-agents, and
-`task-verdict` is refused.
+saying where each loop stands. The reviewer must run on the part's machine. Loops are persisted in
+`<configDir>/review-loops.json` (0600, atomic rename on every change) and restored at startup,
+dropping any loop whose topics no longer exist: after a restart, `task-verdict` is still accepted,
+the work's next commits still go to the reviewer, and `tasks` still shows the loop. A turn cut off
+by a restart is handled as any cut-off turn is today.
 
 ## In the sidebar
 

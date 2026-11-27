@@ -18,6 +18,15 @@ All notable changes to this project are documented here. The format is based on
   15-minute sweep (`git worktree remove` without `--force` and `git branch -d`) only when merged
   into the base branch, completely clean, idle, and at least 1 hour past the last turn's end.
 
+### Changed
+
+- **Automatic review loops now survive gateway restarts.** Review loops (`task-new --review-by`)
+  previously lived only in memory, so every gateway update broke any loop in flight and caused the
+  reviewer's `task-verdict` to be refused. Loops are now persisted atomically (`0600`) to
+  `<configDir>/review-loops.json` on every state change and restored at startup (dropping with a log
+  line any loop whose topics no longer exist), so `task-verdict`, subsequent commit reviews, and the
+  `review` column in `fleetherd tasks` carry on across restarts.
+
 ## [3.41.2] - 2026-11-27
 
 ### Fixed

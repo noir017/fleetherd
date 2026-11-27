@@ -1016,7 +1016,9 @@ of it: the daemon keeps none, so deleting a topic on the page is what ends it. T
   increment (`handTo` with no text, only the forward); the verdict goes back the same way. The parent
   is told through the ordinary `queueUpdates` — once at the end, about both topics, or with a `note`
   when the loop holds (no commit, no reply). `personWrote`, `task-stop`, `/stop` and "End agent"
-  disarm it. In memory only, like `owed`.
+  disarm it. Persisted atomically (0600) in `<configDir>/review-loops.json` (`review-loop-store.ts`)
+  and restored at startup (dropping loops whose topics no longer exist, and re-arming `owed` for
+  active loops so post-restart turns still advance the loop).
 - A conversation acts only on topics it opened (`Delegation.child` checks `parentOf`).
 - Updates come back through `childChanged` — TurnOutcomes' `onNeedsPerson`, and a sub-agent's ask —
   for turns the parent is owed (`owed`, in memory): one it handed out (task-new, task-send), or one
