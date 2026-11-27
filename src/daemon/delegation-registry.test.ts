@@ -103,6 +103,8 @@ function rig(
       setActivity: (address: ConversationAddress, a: TopicActivity | undefined) => activity.push({ to: where(address), a }),
       setPendingQueue: (address: ConversationAddress, items: readonly PendingQueueItem[]) =>
         pendingQueue.push({ to: where(address), items }),
+      markPendingDelivered: () => {},
+      setStatus: () => {},
     },
   } as unknown as PlatformAdapter;
 

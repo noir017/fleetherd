@@ -414,7 +414,7 @@ describe('buildHelpText', () => {
 
   it('drops the whole generic section for a harness that supports none of it', () => {
     // codex used to be this case and no longer is, and nothing shipped replaces it: every harness
-    // in HARNESS_COMMANDS now claims at least one generic command, and `custom` passes everything
+    // in HARNESS_FACTS with a command now claims at least one generic command, and `custom` passes everything
     // through by design. So the empty-section branch is reached here with a harness value that is
     // not in the table — it guards a real code path against the next preset added with nothing
     // probed yet, which is the state every harness here started in.
