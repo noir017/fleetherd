@@ -298,6 +298,10 @@ export const zhCN = {
   'btw.notSent': '消息未发送，暂无回复。',
   'btw.restarted': '守护进程重启前未收到回复。',
   'btw.asking': '正在基于当前对话副本提问…',
+  'transcript.loadOlder': '加载更早消息',
+  'transcript.loadingOlder': '正在加载更早消息…',
+  'transcript.loadOlderFailed': '无法加载更早消息。',
+  'transcript.retryOlder': '重试',
 
   // Composer & voice
   'composer.placeholder': '输入消息',

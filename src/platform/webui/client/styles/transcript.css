@@ -501,3 +501,13 @@
 @media (max-width: 640px) {
   [data-theme="light"] .wb-topic-editor .m.own{background:var(--fh-own-m)}
 }
+
+.wb-topic-editor .wb-topic-log,
+.wb-topic-editor #log{overflow-anchor:none}
+.older-bar{display:flex;align-items:center;justify-content:center;gap:8px;padding:6px 12px 12px;color:var(--fh-fg-dim,var(--dim));font-size:var(--fh-fs-sm,12px)}
+.older-bar .older-btn{border:1px solid var(--fh-line,var(--line));background:transparent;color:var(--fh-fg-dim,var(--dim));border-radius:var(--fh-radius-ctrl,6px);padding:4px 10px;font-size:inherit;cursor:pointer}
+.older-bar .older-btn:hover{color:var(--fh-fg-hi,var(--fg));border-color:var(--fh-accent,var(--accent))}
+.q[data-jump-msg]{cursor:pointer}
+.q[data-jump-msg]:hover{opacity:.9;text-decoration:underline}
+@keyframes jumpFlash{0%{background:color-mix(in srgb,var(--fh-accent) 22%,transparent)}100%{background:transparent}}
+.m.jump-flash{animation:jumpFlash 1.5s ease-out}

@@ -631,10 +631,20 @@ export type WebEvent =
       t: 'sync';
       topic: string;
       messages: WebMessage[];
-      commands: SlashCommandSpec[];
-      topics: Topic[];
-      /** The version of `topics` (see the `topics` event); what a later `topic-rows` applies to. */
-      tv: number;
+      /** Present on the first `sync` of a stream; omitted on subsequent `sync`s of a multiplexed stream. */
+      commands?: SlashCommandSpec[];
+      /** Present on the first `sync` of a stream; omitted on subsequent `sync`s of a multiplexed stream. */
+      topics?: Topic[];
+      /** The version of `topics` (see the `topics` event); omitted when `topics` is omitted. */
+      tv?: number;
+      /** Total messages stored in the room ring (may exceed `messages.length` when windowed). */
+      totalCount?: number;
+      /** True when older messages exist before `messages[0]` and can be paged via `GET /api/messages`. */
+      hasMore?: boolean;
+      /** Monotonic room-local sequence cursor of `messages[0]` for `GET /api/messages?before=`. */
+      oldestSeq?: number;
+      /** Send nonces confirmed in messages older than the tail window, so `settleUnsure` does not misclassify them. */
+      recentNonces?: string[];
       /**
        * Which run of the daemon these messages come from — `WebRoom`'s construction time.
        *
@@ -709,7 +719,7 @@ export type WebEvent =
    * keeps). The answer to a page that asked to resume instead of being sent a sync: one that came
    * back to a topic it still held in memory has no sync coming to say it is caught up.
    */
-  | { t: 'resumed'; topic?: string }
+  | { t: 'resumed'; topic?: string; epoch?: number }
   /**
    * The machines the daemon cannot reach changed — every one of them, so an empty list says they
    * are all back. State like `status`, never sequenced, and to every client like `topics`: the
@@ -758,6 +768,20 @@ export interface TopicSnapshot {
   /** The room is empty because the topic predates this daemon (the sync's `stale`). */
   stale?: boolean;
   messages: WebMessage[];
+  totalCount?: number;
+  hasMore?: boolean;
+  oldestSeq?: number;
+  recentNonces?: string[];
+}
+
+/** One older page returned by `GET /api/messages?t=<topic>&before=<seq>&limit=<n>`. */
+export interface MessagesPage {
+  topic: string;
+  epoch: number;
+  messages: WebMessage[];
+  hasMore: boolean;
+  oldestSeq?: number;
+  totalCount: number;
 }
 
 /** One message as the page holds it. `html` is already rendered and escaped by web-markdown. */

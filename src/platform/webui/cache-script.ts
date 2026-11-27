@@ -88,7 +88,11 @@ export const CACHE_CORE = `
     if(meta.stale) rec.stale = true;
     var whole = true;
     for(var i=0;i<msgs.length-out.length;i++) if(msgs[i]._g === meta.epoch){ whole = false; break; }
-    if(whole && meta.last) rec.last = meta.last;
+    if(whole && meta.last) {
+      rec.last = meta.last;
+      if(meta.hasMore) rec.hasMore = true;
+      if(meta.oldestSeq) rec.oldestSeq = meta.oldestSeq;
+    }
     return rec;
   }
 

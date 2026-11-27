@@ -79,6 +79,8 @@ export interface LogEventsDeps {
   readonly onMessageAction?: (action: string, key: string, btn: HTMLButtonElement) => void;
   readonly onHandoff?: (key: string, btn: HTMLButtonElement) => void;
   readonly postButton?: (btn: HTMLButtonElement, topicId: string) => void;
+  readonly onLoadOlder?: () => void;
+  readonly onJumpToMessage?: (msgId: string) => void;
 }
 
 function handleLocalAction(act: HTMLElement, deps: LogEventsDeps): void {
@@ -157,6 +159,37 @@ function handleNavClick(target: Element, e: MouseEvent, deps: LogEventsDeps): bo
     deps.openReader(view as HTMLAnchorElement);
     return true;
   }
+  const loadOlder = target.closest('button[data-load-older]');
+  if (loadOlder) {
+    deps.onLoadOlder?.();
+    return true;
+  }
+  const jumpQuote = target.closest('[data-jump-msg]');
+  if (jumpQuote) {
+    const msgId = jumpQuote.getAttribute('data-jump-msg');
+    if (msgId) deps.onJumpToMessage?.(msgId);
+    return true;
+  }
+  return false;
+}
+
+function handleTurnAndHandoffClick(target: Element, deps: LogEventsDeps): boolean {
+  const turns = target.closest('button[data-turns]');
+  if (turns) {
+    deps.openTurnChanges(Number(turns.getAttribute('data-turns')));
+    return true;
+  }
+  const splitTurns = target.closest<HTMLButtonElement>('button[data-turns-split]');
+  if (splitTurns) {
+    deps.openTurnDiffSideBySide?.(Number(splitTurns.getAttribute('data-turns-split')), splitTurns);
+    return true;
+  }
+  const handoffBtn = target.closest<HTMLButtonElement>('button[data-handoff-k]');
+  if (handoffBtn) {
+    const key = handoffBtn.getAttribute('data-handoff-k');
+    if (key) deps.onHandoff?.(key, handoffBtn);
+    return true;
+  }
   return false;
 }
 
@@ -190,22 +223,7 @@ function handleActionClick(target: Element, deps: LogEventsDeps): void {
     deps.toggleLine(line as HTMLElement);
     return;
   }
-  const turns = target.closest('button[data-turns]');
-  if (turns) {
-    deps.openTurnChanges(Number(turns.getAttribute('data-turns')));
-    return;
-  }
-  const splitTurns = target.closest<HTMLButtonElement>('button[data-turns-split]');
-  if (splitTurns) {
-    deps.openTurnDiffSideBySide?.(Number(splitTurns.getAttribute('data-turns-split')), splitTurns);
-    return;
-  }
-  const handoffBtn = target.closest<HTMLButtonElement>('button[data-handoff-k]');
-  if (handoffBtn) {
-    const key = handoffBtn.getAttribute('data-handoff-k');
-    if (key) deps.onHandoff?.(key, handoffBtn);
-    return;
-  }
+  if (handleTurnAndHandoffClick(target, deps)) return;
   const btn = target.closest('button[data-btn]');
   if (btn) {
     const runPost = deps.postButton ?? ((el, t) => postButton(el, t));
@@ -227,7 +245,16 @@ export function attachLogEvents(log: HTMLElement, deps: LogEventsDeps): Disposab
     addDisposableListener(log, 'keydown', (e) => {
       const target = e.target instanceof Element ? e.target : null;
       const toolbar = target?.closest<HTMLElement>('.msg-actions');
-      if (toolbar) handleToolbarKeydown(e, toolbar);
+      if (toolbar) {
+        handleToolbarKeydown(e, toolbar);
+        return;
+      }
+      const jumpQuote = target?.closest<HTMLElement>('[data-jump-msg]');
+      if (jumpQuote && (e.key === 'Enter' || e.key === ' ')) {
+        e.preventDefault();
+        const msgId = jumpQuote.getAttribute('data-jump-msg');
+        if (msgId) deps.onJumpToMessage?.(msgId);
+      }
     }),
   );
   store.add(
