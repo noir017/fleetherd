@@ -34,6 +34,7 @@ src/daemon/remote-hosts.ts [Infra]: F:Remote host manager and reverse CLI shim |
 src/daemon/review.ts [Core]: F:Automated review of idle conversations distilling skills and learned preferences | A:ReviewService,ReviewFacts
 src/daemon/routing.ts [Core]: F:Inbound message to agent and scope resolution | A:resolveAgent,resolveScope | S:Deterministic pipeline and harness matching [T:resolveAgent]
 src/daemon/schedule-service.ts [Core]: F:Scheduled task execution engine | A:ScheduleService
+src/daemon/shell-run.ts [Infra]: F:Local and remote shell command runner with process-group teardown and bounded output logging | A:BashRunResult,shellLaunch,runBashCommand,runRemoteBashCommand
 src/daemon/skill-copy.ts [Infra]: F:Keeps a gateway-owned directory equal to a map of files, writing only what differs | A:syncSkillCopy,listTree
 src/daemon/skills-store.ts [Infra]: F:Managed skill repository storage and git tracking | A:createSkill,listSkills,showSkill | S:See Security invariants item 8
 src/daemon/turn-runner.ts [Core]: F:Turn execution loop with streaming and tool bubble sinks | R:src/daemon/agent-acp.ts,src/daemon/delegation-surface.ts,src/daemon/turn-senders.ts | A:TurnRunner

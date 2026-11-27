@@ -37,7 +37,7 @@ import type { PlatformAdapter } from '../platform/adapter.js';
 import type { ConversationId } from '../types.js';
 import type { ScheduleListResult, ScheduleOpResult, ScheduleTaskView } from '../ipc/protocol.js';
 import type { ConversationRegistry } from './conversation.js';
-import { runBashCommand, runRemoteBashCommand, type BashRunResult } from './schedule-bash.js';
+import { runBashCommand, runRemoteBashCommand, type BashRunResult } from './shell-run.js';
 import { remoteHosts } from './remote-hosts.js';
 import type { ScheduleStore } from './schedule-store.js';
 import { Scheduler, ERROR_LIMIT, type ScheduleRunResult } from './scheduler.js';

@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { buildHarnessEnv, expandHome, prependPath, windowsSpawnOptions } from './agent-common.js';
-import { shellLaunch } from './schedule-bash.js';
+import { shellLaunch } from './shell-run.js';
 
 describe('buildHarnessEnv', () => {
   it('strips nested Claude session markers but keeps the configured CLI executable', () => {
