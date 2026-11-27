@@ -109,6 +109,8 @@ export interface LaunchGroup {
 
 export interface LaunchChoice {
   readonly current: string;
+  readonly agentChosen?: boolean;
+  readonly cwdChosen?: boolean;
   readonly groups: readonly LaunchGroup[];
 }
 

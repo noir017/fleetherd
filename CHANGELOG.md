@@ -5,6 +5,17 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **Web UI new-topic launcher now keeps its chosen agent and working directory folded across topic
+  switches and page reloads.** Previously, `BannersControllerImpl` kept the launcher's folded state
+  only in single-topic memory flags and cleared them on every topic switch, so returning to a new
+  topic whose agent and directory were already picked expanded both pickers again even though the
+  server still held the binding. `AgentCatalog` now reports whether the topic already has an
+  explicitly bound agent (`agentChosen`) and chosen working directory (`cwdChosen`, including an
+  explicitly confirmed agent root), and the launcher derives its initial folded state from those
+  server-known fields while leaving untouched new topics expanded.
+
 ## [3.43.0] - 2026-11-27
 
 ### Added

@@ -694,9 +694,13 @@ export class ConversationRegistry {
   agentCatalogForRef(ref: ConversationRef): AgentCatalog | undefined {
     if (this.config.agents.length < 2) return undefined;
     const id = this.idForRef(ref);
-    const current = this.boundAgentFor(id, resolveAgent(this.config, routeInputFromRef(ref)).agentId);
+    const bound = this.boundAgentFor(id, '');
+    const current = bound || resolveAgent(this.config, routeInputFromRef(ref)).agentId;
     if (this.store?.agentSession(id, current) !== undefined) return undefined;
-    return agentCatalog(agentGroups(this.config.agents), current);
+    return agentCatalog(agentGroups(this.config.agents), current, {
+      agentChosen: Boolean(bound),
+      cwdChosen: this.store?.conversationCwd(id) !== undefined,
+    });
   }
 
   /** Bind a new/empty topic's agent and working directory in one step; never adds prompt text. */

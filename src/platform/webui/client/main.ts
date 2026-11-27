@@ -700,15 +700,15 @@ function handleLaunchShown(rt: AppRuntime, session: TopicEditorSession, tid: str
 function rollbackAgentChoice(
   session: TopicEditorSession,
   els: TopicEditorElements,
-  prevAgent: string | undefined,
+  prevLaunch: LaunchChoice | null,
   prevScreen: WorkdirScreen | null,
   errorMsg: string,
 ): void {
   ++session.launchWdSeq;
   const banners = session.editor?.transcript?.banners;
-  if (prevAgent && session.launch) {
-    session.launch = { ...session.launch, current: prevAgent };
-    banners?.setLaunchAgent(prevAgent, { fold: false });
+  if (prevLaunch && session.launch) {
+    session.launch = prevLaunch;
+    banners?.setLaunchAgent(prevLaunch.current, { fold: Boolean(prevLaunch.agentChosen) });
   }
   if (prevScreen) banners?.setLaunchWorkdir(prevScreen, false);
   else banners?.setLaunchWorkdir(null, false);
@@ -724,13 +724,13 @@ function selectLaunchAgent(
 ): void {
   const { state } = rt;
   const banners = session.editor?.transcript?.banners;
-  const prevAgent = session.launch?.current;
+  const prevLaunch = session.launch;
   const prevScreen = banners?.getLaunchWorkdir() ?? null;
-  const sameAgent = prevAgent === agentId;
+  const sameAgent = prevLaunch?.current === agentId;
   const setupSeq = ++session.launchSetupSeq;
   session.launchSetupTopic = tid;
 
-  if (session.launch) session.launch = { ...session.launch, current: agentId };
+  if (session.launch) session.launch = { ...session.launch, current: agentId, agentChosen: true };
   banners?.setLaunchAgent(agentId, { fold: true });
   session.editor?.status?.onAgentChosen();
 
@@ -750,7 +750,7 @@ function selectLaunchAgent(
     .then(({ r, j }) => {
       if (session.topicId !== tid || setupSeq !== session.launchSetupSeq) return;
       if (!r.ok || !j.ok) {
-        rollbackAgentChoice(session, els, prevAgent, prevScreen, j.error || tr('common.networkError'));
+        rollbackAgentChoice(session, els, prevLaunch, prevScreen, j.error || tr('common.networkError'));
         return;
       }
       if (j.cwd) banners?.setLaunchCwd(j.cwd);
@@ -758,7 +758,7 @@ function selectLaunchAgent(
     })
     .catch(() => {
       if (session.topicId !== tid || setupSeq !== session.launchSetupSeq) return;
-      rollbackAgentChoice(session, els, prevAgent, prevScreen, tr('common.networkError'));
+      rollbackAgentChoice(session, els, prevLaunch, prevScreen, tr('common.networkError'));
     });
 }
 
@@ -789,6 +789,7 @@ function pickLaunchWorkdir(
   session.launchSetupTopic = tid;
   // Cancel any in-flight background directory refresh so it cannot overwrite the chosen path.
   ++session.launchWdSeq;
+  if (session.launch) session.launch = { ...session.launch, agentChosen: true, cwdChosen: true };
   session.editor?.transcript?.banners.setLaunchCwd(cwd, { fold: true });
   session.editor?.status?.onAgentChosen();
   void post('api/topics/setup', { topic: tid, agent: agentId, cwd }, 1)
@@ -1278,7 +1279,12 @@ function syncSessionFromEvent(
 
 function mergeSyncLaunch(session: TopicEditorSession, ev: Extract<WebEvent, { t: 'sync' }>): LaunchChoice | null {
   if (ev.agents && session.launch && session.launchSetupTopic === ev.topic && session.launchSetupSeq > 0) {
-    return { ...ev.agents, current: session.launch.current };
+    return {
+      ...ev.agents,
+      current: session.launch.current,
+      ...(session.launch.agentChosen ? { agentChosen: true } : {}),
+      ...(session.launch.cwdChosen ? { cwdChosen: true } : {}),
+    };
   }
   return ev.agents || null;
 }
