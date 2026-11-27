@@ -5,6 +5,14 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **The external MCP tools say when a call left out its `action`.** A web agent sent `tasks` four
+  `new` calls in a row with every field but `action`, and was told only "action must be one of
+  open, agents, new, …"; it took that for its `"new"` arriving garbled, blamed the proxy and stopped.
+  `tasks`, `sessions`, `messages` and `gateway` now answer a missing action with "action is
+  required" and the parameters the call did carry, and an unknown one with the value that came.
+
 ## [3.41.1] - 2026-11-27
 
 ### Fixed
