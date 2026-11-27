@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.43.0] - 2026-11-27
+
 ### Added
 
 - **Scheduled bash tasks can now wake the conversation's agent with their output tail.** Passing
