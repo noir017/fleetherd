@@ -5,6 +5,18 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **Side-by-side live topic editors in the desktop web UI.** Opening a topic via **Open in new
+  tab** (sidebar context menu or `Ctrl/Cmd`-click) now keeps that editor pinned to its topic and
+  fully live alongside the main sidebar-driven topic tab, whether split side by side (`Ctrl/Cmd+\`
+  or tab drag) or stacked in tabs. All open topic editors share a single multiplexed
+  `/api/events?t=...&t=...` SSE stream (keeping HTTP/1.1 connection usage to one per browser tab
+  while preserving the unchanged single-topic wire format), maintain independent transcripts,
+  composers, unsent/outbox retries, pending queues, status strips, and scroll positions, route
+  keyboard shortcuts and global commands to the focused editor, mark every visible topic as seen,
+  and restore pinned topic editors from `aa_layout` on reload (tablet and mobile stay single-topic).
+
 ## [3.41.2] - 2026-11-27
 
 ### Fixed
