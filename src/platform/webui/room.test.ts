@@ -3375,6 +3375,7 @@ describe('WebRoom: multiplexed multi-topic streams', () => {
     expect(resumed.some((r) => r.ev.t === 'msg' && r.ev.topic === t1 && r.ev.msg.html.includes('t1-live'))).toBe(true);
     expect(resumed.some((r) => r.ev.t === 'resumed' && r.ev.topic === t1)).toBe(true);
     expect(resumed.some((r) => r.ev.t === 'sync' && r.ev.topic === t2)).toBe(true);
+    expect(resumed.findIndex((r) => r.ev.t === 'sync')).toBeLessThan(resumed.findIndex((r) => r.ev.t === 'resumed'));
     unsub2();
 
     // Reconnect with both last1 and last2 valid: both resume, global machines/topics sent once.
@@ -3388,6 +3389,9 @@ describe('WebRoom: multiplexed multi-topic streams', () => {
     ]);
     expect(bothResumed.filter((r) => r.ev.t === 'machines')).toHaveLength(1);
     expect(bothResumed.filter((r) => r.ev.t === 'topics')).toHaveLength(1);
+    const firstResumedIdx = bothResumed.findIndex((r) => r.ev.t === 'resumed');
+    expect(bothResumed.findIndex((r) => r.ev.t === 'machines')).toBeLessThan(firstResumedIdx);
+    expect(bothResumed.findIndex((r) => r.ev.t === 'topics')).toBeLessThan(firstResumedIdx);
     unsub3();
   });
 });

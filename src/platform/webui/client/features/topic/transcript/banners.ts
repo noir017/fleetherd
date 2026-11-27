@@ -512,6 +512,7 @@ class BannersControllerImpl implements BannersController {
     if (!this.takeMachines(list)) return;
     this._deps.paintTopics();
     if (this._launchEl) this.syncLaunch(true);
+    this.paintMachineNote();
   }
 
   paintForkNote(cur: TranscriptTopicLike | null | undefined): void {

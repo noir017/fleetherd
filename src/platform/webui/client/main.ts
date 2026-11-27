@@ -1645,17 +1645,31 @@ function finishSessionResume(rt: AppRuntime, session: TopicEditorSession): void 
   const editor = session.editor;
   session.synced = true;
   session.entering = false;
-  if (session.settleOnResume) {
-    session.settleOnResume = false;
-    editor?.composer?.settleUnsure();
+  const settle = session.settleOnResume;
+  session.settleOnResume = false;
+  if (editor) {
+    const { transcript, composer, status } = editor;
+    if (settle && composer) composer.settleUnsure();
+    if (transcript) {
+      transcript.repaintHistory();
+      transcript.banners.clearSyncing();
+      transcript.banners.placeDivider();
+      transcript.banners.syncEmptyNote();
+      transcript.banners.paintMachineNote();
+      if (transcript.btw.isOpen()) transcript.btw.render(false);
+      transcript.scroll.clearView();
+    }
+    // Re-evaluate status now that session.synced is true: `status` events arrive before `resumed`.
+    if (status) {
+      status.paintStatus();
+      status.paintPending();
+    }
+    editor.els.noteEl.textContent = '';
+    editor.refreshHeader();
   }
-  editor?.transcript?.banners.clearSyncing();
-  editor?.transcript?.banners.placeDivider();
-  editor?.transcript?.banners.syncEmptyNote();
-  editor?.transcript?.scroll.clearView();
   syncOlderIndicator(session);
   rt.cacheService.scheduleSave(session.topicId);
-  if (editor) editor.els.noteEl.textContent = '';
+  syncSessionStopButton(rt, session);
   consumePendingJump(rt, session);
 }
 
@@ -1673,7 +1687,13 @@ function handleResumedEvent(rt: AppRuntime, ev: Extract<WebEvent, { t: 'resumed'
   if (visibleTopicIds(rt).includes(targetTopic)) {
     rt.readsService.markTopicFromList(targetTopic, state.topics);
   }
+  const activeId = focusedSession(state)?.topicId || targetTopic;
+  if (activeId) {
+    state.topic = activeId;
+    rt.events.emit('topic.active', { id: activeId, topic: topicById(state, activeId) as unknown as TopicInfo | undefined });
+  }
   rt.readsService.reportSeen();
+  rt.registry.refreshActivityBadges();
 }
 
 function handleStreamEvent(rt: AppRuntime, raw: StreamEventPayload): void {
@@ -2168,11 +2188,13 @@ function startBootstrapStream(
           return;
         }
         const canResume = !connected && Boolean(c.last && c.epoch);
+        if (canResume && c.epoch > rt.state.epoch) {
+          // Seed epoch before adopting so older-run history messages and pre-`resumed` replays key accurately.
+          rt.state.epoch = c.epoch;
+        }
         adoptCachedCopy(rt, session, topicId, c, canResume);
         session.editor?.composer?.showUnsent(topicId);
         if (canResume) {
-          // Seed epoch from the cached copy so replayed events before `resumed` key into the same run.
-          if (c.epoch > rt.state.epoch) rt.state.epoch = c.epoch;
           rt.streamClient.setLastEventId(c.last, topicId);
           session.settleOnResume = true;
           resumeAny = true;
