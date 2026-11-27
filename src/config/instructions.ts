@@ -1,6 +1,6 @@
 import os from 'node:os';
 import path from 'node:path';
-import type { AgentDef } from './schema.js';
+import type { Harness } from '../types.js';
 
 /**
  * Where each harness reads its USER-level instruction file, and the layer of
@@ -63,7 +63,7 @@ export function isInstructionLayer(layer: string): boolean {
 }
 
 /** The harness a preset or a known `custom` command is, or undefined when nothing is known of it. */
-export function harnessKind(harness: AgentDef['harness'], command?: string): HarnessLayer | undefined {
+export function harnessKind(harness: Harness, command?: string): HarnessLayer | undefined {
   switch (harness) {
     case 'claude':
     case 'codex':
@@ -85,7 +85,12 @@ export function harnessKind(harness: AgentDef['harness'], command?: string): Har
 }
 
 /** The agent fields `instructionsHome` reads. */
-export type InstructionsAgent = Pick<AgentDef, 'id' | 'harness' | 'command' | 'instructions'>;
+export interface InstructionsAgent {
+  id: string;
+  harness: Harness;
+  command?: string;
+  instructions?: { file: string; layer?: string; off?: true };
+}
 
 /** Where one harness reads its user-level instructions. */
 export interface InstructionsHome {
@@ -149,7 +154,10 @@ export function instructionsHome(def: InstructionsAgent, home: string): Instruct
 }
 
 /** The agent fields `instructionsLayer` reads. */
-export type LayeredInstructionsAgent = InstructionsAgent & Pick<AgentDef, 'host' | 'connect'>;
+export interface LayeredInstructionsAgent extends InstructionsAgent {
+  host?: string;
+  connect?: unknown;
+}
 
 /**
  * The layer `def` reads, whether or not anything is placed for it: its harness file's layer
