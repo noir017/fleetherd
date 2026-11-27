@@ -329,8 +329,12 @@ describe('webui page', () => {
     // A visit with no ?t= starts with topic === '', and the server answers by picking a topic
     // for the client — so a bare `ev.topic !== topic` drops the only sync that visit will ever
     // get and the page stays an empty shell with a healthy event stream behind it. The guard
-    // must only fire once we are actually on a topic.
-    expect(APP_SOURCE).toContain('if (state.topic && ev.topic !== state.topic) return;');
+    // lives in resolveSyncTargets: adopt the server-picked topic when the main session / state
+    // has no topic yet, and ignore syncs for topics no open editor shows once topics are bound.
+    expect(APP_SOURCE).toContain('if (main && !main.topicId)');
+    expect(APP_SOURCE).toContain('if (!state.topic)');
+    expect(APP_SOURCE).toContain('return { targets: [], named: false };');
+    expect(APP_SOURCE).toContain('if (targets.length === 0) return;');
   });
 
   it('adapts to a screen held upright', () => {
