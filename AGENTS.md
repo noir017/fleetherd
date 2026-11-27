@@ -585,6 +585,8 @@ touches one of these places keeps both names working.
 | Remote host | a `talkcode-remote` daemon or version directory is retired like a `fleetherd-remote` one | `remote/attach.go` |
 | Host wrapper | `TALKCODE_APP_DIR`, `~/apps/talkcode`, a container named `talkcode`, either package's version | `docker/fleetherd-host` |
 
+Also remove `src/history/import-webui.ts` in the next major alongside `src/legacy-name.ts` (one-time, idempotent Web UI transcript migration since 2.13.0).
+
 Not compatibility but history: CHANGELOG entries before 3.0.0, and the name paragraph above.
 
 ## Git
