@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { message, open, saved, sync, until } from './page.dom.test-helpers.js';
+import { message, open, saved, sync, until, within } from './page.dom.test-helpers.js';
 
 function makeMessages(from: number, to: number) {
   return Array.from({ length: to - from + 1 }, (_, i) => {
@@ -173,5 +173,63 @@ describe('webui page: windowed sync and upward history paging', () => {
     await again.click('.older-bar button[data-load-older]');
     await until('older loaded after cache resume', () => again.painted() === 100);
     expect(again.doc.querySelector('.older-bar')).toBeNull();
+  });
+
+  it('paints the status bar permission chip and pending queue on direct cached resume without live AgentStatus', async () => {
+    const T = 'a1b2c3d4';
+    const first = await open({ url: `http://localhost:8787/?t=${T}` });
+    first.live().onmessage?.({
+      data: JSON.stringify(sync(T, [message('m1', '<p>hello</p>')], [T], { epoch: 77 })),
+      lastEventId: `${T}.25.5`,
+    });
+    await saved();
+
+    const again = await open({
+      url: `http://localhost:8787/?t=${T}`,
+      idb: first.idb,
+      replies: {
+        [`api/options?peek=1&t=${T}`]: {
+          agent: 'alpha',
+          model: 'm1',
+          permissions: { level: 'auto', unset: false, configurable: true },
+        },
+      },
+    });
+
+    const streamUrl = new URL(again.live().url, 'http://localhost:8787');
+    expect(streamUrl.searchParams.get('last')).toBe(`${T}.25.5`);
+
+    // Mirror deliverResume() order when room.status is undefined: status/pending/globals arrive before resumed.
+    await again.emit({ t: 'status' });
+    await again.emit({
+      t: 'pending',
+      items: [{ id: 'p1', content: 'queued msg', at: 2000, canSendNow: true, reason: 'turn' }],
+    });
+    await again.emit({ t: 'machines', offline: [] });
+    await again.emit({ t: 'commands', commands: [{ name: 'help', description: 'Help' }] });
+    await again.emit({
+      t: 'topics',
+      topics: [
+        {
+          id: T,
+          title: 'Active',
+          lastAt: 1000,
+          msgCount: 1,
+          dir: { name: 'app', path: '/home/me/projects/app' },
+        },
+      ],
+      tv: 2,
+    });
+    await again.emit({ t: 'resumed', epoch: 77 });
+
+    expect(again.el('status').hidden).toBe(false);
+    await within('permission chip rendered after resume', 1500, () =>
+      Boolean(again.doc.querySelector('#status .st-perm')),
+    );
+    expect(again.el('status').hidden).toBe(false);
+    expect(again.doc.querySelector('#status .st-perm')?.textContent).toContain('auto');
+    expect(again.doc.querySelector('#status .st-model')?.textContent).toContain('m1');
+    expect(again.el('pending-queue').hidden).toBe(false);
+    expect(again.el('pending-queue').textContent).toContain('queued msg');
   });
 });

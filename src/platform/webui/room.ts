@@ -1814,30 +1814,35 @@ export class WebRoom {
     const client: Client = { topics: new Set(topicIds), multiplexed, send };
     this.clients.add(client);
     let ok = true;
-    let anyFullSync = false;
     let sentGlobals = false;
     let totalMissed = 0;
-    for (const topicId of topicIds) {
-      if (!ok) break;
+    const plans = topicIds.map((topicId) => {
       const room = this.roomOf(topicId);
       const lastId = this.bestLastEventId(topicId, lastEventIds);
       const missed = this.replayFrom(room, topicId, lastId);
       const replay = missed && mergeReplay(missed);
-      if (replay) {
-        totalMissed += replay.length;
-        ok = this.deliverResume(client, topicId, room, replay, topics, topicsVersion);
-      } else {
-        anyFullSync = true;
-        const includeGlobals = !sentGlobals;
-        sentGlobals = true;
-        ok = this.deliver(client, this.syncEvent(topicId, room, topics, includeGlobals), room.seq, undefined, topicId);
-      }
-    }
-    if (multiplexed && ok && !anyFullSync) {
+      return { topicId, room, replay };
+    });
+    const anyFullSync = plans.some((p) => !p.replay);
+    if (multiplexed && !anyFullSync) {
+      // Deliver shared globals before `resumed` so client resume handlers see populated topics/commands/offline.
       ok =
         this.deliver(client, { t: 'machines', offline: [...this.offline] }) &&
         (topicsVersion !== undefined || this.deliver(client, { t: 'commands', commands: this.commands })) &&
         (topicsVersion === this.topicsVer || this.deliver(client, { t: 'topics', topics, tv: this.topicsVer }));
+    }
+    // On mixed multiplexed streams, send full-sync topics first so globals land before any `resumed` frame.
+    const ordered = multiplexed && anyFullSync ? [...plans.filter((p) => !p.replay), ...plans.filter((p) => p.replay)] : plans;
+    for (const { topicId, room, replay } of ordered) {
+      if (!ok) break;
+      if (replay) {
+        totalMissed += replay.length;
+        ok = this.deliverResume(client, topicId, room, replay, topics, topicsVersion);
+      } else {
+        const includeGlobals = !sentGlobals;
+        sentGlobals = true;
+        ok = this.deliver(client, this.syncEvent(topicId, room, topics, includeGlobals), room.seq, undefined, topicId);
+      }
     }
     if (ok) {
       const label = topicIds.join(',');

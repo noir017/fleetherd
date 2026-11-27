@@ -7,6 +7,14 @@ All notable changes to this project are documented here. The format is based on
 
 ### Fixed
 
+- **Web UI status strip and topic state now restore reliably on cached `?last=` stream resumes.**
+  When resuming a cached topic whose room had no live `AgentStatus` push yet, the server's `status`
+  event arrived before `resumed` while `session.synced` was still false, causing `paintStatus()` to
+  skip bare-status rendering and `api/options?peek=1`, and `finishSessionResume()` never repainted
+  the status strip after flipping `synced`. Resume completion now repaints the status strip, pending
+  queue, header, stop button, offline-machine note, and history markers, emits `topic.active` for
+  downstream tools, seeds `epoch` before adopting cached messages on cold reload, and delivers
+  shared globals (`machines`, `commands`, `topics`) before `resumed` on multiplexed streams.
 - **Antigravity stream recovery, long-pause tolerance, and continuation error guidance.** Free-tier
   turns can pause for over 70 seconds and close the idle SSE stream cleanly, which previously failed
   after two empty reconnects (~1.5 s); the adapter now checks the interaction status before failing,
