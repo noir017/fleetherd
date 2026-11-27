@@ -11,7 +11,7 @@ export type ConversationKind = 'direct' | 'group' | 'thread';
 export interface ConversationRef {
   /** Platform INSTANCE id (the `platforms:` map key) — what routing `when.platform` and `access.allowFrom` match. */
   platform: string;
-  /** Real channel/chat id (valid API target on its own): thread id on Discord; still chat id inside a Telegram topic. */
+  /** Real channel/chat id (valid API target on its own): the thread's own id when in a Discord thread; still chat id inside a Telegram topic. */
   channel: string;
   /**
    * Sub-lane needing an extra wire param (Telegram `message_thread_id`, Slack `thread_ts`).
