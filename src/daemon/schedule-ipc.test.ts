@@ -360,7 +360,6 @@ const saved = (r: Awaited<ReturnType<typeof rig>>): Array<Record<string, unknown
   if (!fs.existsSync(file)) return [];
   return (JSON.parse(fs.readFileSync(file, 'utf8')) as { tasks: Array<Record<string, unknown>> }).tasks;
 };
-const savedTasks = saved;
 
 describe('schedule over IPC', () => {
   it('registers a task and posts the gateway\'s own card where the user is talking', async () => {
@@ -608,14 +607,14 @@ describe('schedule over IPC', () => {
     await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
     await vi.waitFor(() => {
       expect(r.sent.length).toBeGreaterThan(0);
-      expect(savedTasks(r)[0]?.['lastRun']).toMatchObject({ status: 'failed' });
+      expect(saved(r)[0]?.['lastRun']).toMatchObject({ status: 'failed' });
     }, WAIT);
     expect(r.turns.filter((t) => t.prompt === 'brief')).toHaveLength(0);
     expect(r.sent[0]!.text).toMatch(/could not open a topic for today's session: .*did not open a topic/);
-    const saved = JSON.parse(fs.readFileSync(path.join(r.dir, 'schedules.json'), 'utf8')) as {
+    const stored = JSON.parse(fs.readFileSync(path.join(r.dir, 'schedules.json'), 'utf8')) as {
       tasks: Array<{ daySession?: unknown }>;
     };
-    expect(saved.tasks[0]!.daySession).toBeUndefined();
+    expect(stored.tasks[0]!.daySession).toBeUndefined();
   });
 
   it('a per-user deployment refuses a daily run before opening a topic it cannot own', async () => {
@@ -640,20 +639,20 @@ describe('schedule over IPC', () => {
     await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
     await vi.waitFor(() => {
       expect(r.turns.filter((t) => t.prompt === 'brief')).toHaveLength(1);
-      expect(savedTasks(r)[0]?.['daySession']).toBeDefined();
+      expect(saved(r)[0]?.['daySession']).toBeDefined();
     }, WAIT);
     const first = r.turns.at(-1)!.conversation;
     r.web.dead.add('new1');
     await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
     await vi.waitFor(() => {
-      expect(savedTasks(r)[0]?.['daySession']).toBeUndefined();
-      expect(savedTasks(r)[0]?.['lastRun']).toMatchObject({ status: 'failed' });
+      expect(saved(r)[0]?.['daySession']).toBeUndefined();
+      expect(saved(r)[0]?.['lastRun']).toMatchObject({ status: 'failed' });
     }, WAIT);
     expect(r.turns.filter((t) => t.prompt === 'brief')).toHaveLength(1); // the failed run made no turn
-    const saved = JSON.parse(fs.readFileSync(path.join(r.dir, 'schedules.json'), 'utf8')) as {
+    const stored = JSON.parse(fs.readFileSync(path.join(r.dir, 'schedules.json'), 'utf8')) as {
       tasks: Array<{ daySession?: unknown }>;
     };
-    expect(saved.tasks[0]!.daySession).toBeUndefined();
+    expect(stored.tasks[0]!.daySession).toBeUndefined();
     await r.call({ kind: 'schedule-op', id: task.id, op: 'run' });
     await vi.waitFor(() => {
       expect(r.turns.filter((t) => t.prompt === 'brief')).toHaveLength(2);
@@ -693,10 +692,10 @@ describe('schedule over IPC', () => {
     }, WAIT);
     expect(r.models).toEqual([{ conversation: 'web#main#new1', model: 'fast-model' }]);
     expect(r.turns.at(-1)).toMatchObject({ conversation: 'web#main#new1', prompt: 'brief' });
-    const saved = JSON.parse(fs.readFileSync(path.join(r.dir, 'schedules.json'), 'utf8')) as {
+    const stored = JSON.parse(fs.readFileSync(path.join(r.dir, 'schedules.json'), 'utf8')) as {
       tasks: Array<{ run: { model?: string } }>;
     };
-    expect(saved.tasks[0]!.run.model).toBe('fast-model');
+    expect(stored.tasks[0]!.run.model).toBe('fast-model');
   });
 
   it('refuses a model the agent does not offer, naming the ones it does', async () => {

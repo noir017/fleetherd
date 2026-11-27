@@ -10,7 +10,7 @@ import type { PlatformAdapter } from '../platform/adapter.js';
 import type { AgentFactory, AgentSession, AgentStreamHandlers } from './agent.js';
 import { TurnFailure } from './agent.js';
 import { readPromptRefusal } from './session-failure.js';
-import type { InboundMessage, SessionOption, TopicActivity } from '../types.js';
+import type { InboundMessage, PendingQueueItem, SessionOption, TopicActivity } from '../types.js';
 import type { PersonWords } from './turn-senders.js';
 
 /**
@@ -57,7 +57,6 @@ function rig(
   });
   const cfg: Config = { ...parsed, inbound: { ...parsed.inbound, mergeWindowMs: 1, maxMergeWindowMs: 1 } };
   const scheduled: Array<{ delay: number; cancelled: boolean }> = [];
-  let timersFired = 0;
   // Every wait shortened, so a backoff is a test step rather than a test timeout: a minute or more to
   // 1 s (time enough for the person to write first), anything shorter to 5 ms.
   const clock = {
@@ -66,7 +65,6 @@ function rig(
       const entry = { delay: ms, cancelled: false };
       scheduled.push(entry);
       const t = setTimeout(() => {
-        timersFired++;
         fn();
       }, ms >= 60_000 ? 1_000 : Math.min(ms, 5));
       return () => {
@@ -79,6 +77,7 @@ function rig(
   const sent: Array<{ to: string; text: string; kind?: string }> = [];
   const renamed: Array<{ to: string; name: string }> = [];
   const activity: Array<{ to: string; a: TopicActivity | undefined }> = [];
+  const pendingQueue: Array<{ to: string; items: readonly PendingQueueItem[] }> = [];
   const nested: Array<{ name: string; under: string }> = [];
   let seq = 0;
   let threads = 0;
@@ -102,6 +101,8 @@ function rig(
     renameThread: async (address: ConversationAddress, name: string) => renamed.push({ to: where(address), name }),
     presence: {
       setActivity: (address: ConversationAddress, a: TopicActivity | undefined) => activity.push({ to: where(address), a }),
+      setPendingQueue: (address: ConversationAddress, items: readonly PendingQueueItem[]) =>
+        pendingQueue.push({ to: where(address), items }),
     },
   } as unknown as PlatformAdapter;
 
@@ -170,7 +171,7 @@ function rig(
 
   const hooks = opts.onPersonWords ? { onPersonWords: opts.onPersonWords } : undefined;
   const registry = new ConversationRegistry(cfg, new Map([['web', platform]]), factory, clock, hooks, opts.store);
-  return { registry, sent, prompts, models, events, ensured, activity, renamed, nested, scheduled, timersFired: () => timersFired };
+  return { registry, sent, prompts, models, events, ensured, activity, pendingQueue, renamed, nested, scheduled };
 }
 
 const storeDir = mkdtempSync(join(tmpdir(), 'delegation-registry-'));
@@ -197,18 +198,18 @@ describe('hooks.turnFailed.continue through a real turn', () => {
   });
 
   it('a message from the person calls the continue off', async () => {
-    const r = rig({ continue: { on: ['service'], backoffMs: 60_000 }, script: ['fail'] });
+    const r = rig({ continue: { on: ['service'], backoffMs: 120_000 }, script: ['fail'] });
     live = r.registry;
     r.registry.route(inbound('build it'));
     await vi.waitFor(() => {
       expect(r.activity[r.activity.length - 1]?.a?.retry).toBeDefined();
     }, WAIT);
-    const retryTimer = r.scheduled.filter((s) => s.delay >= 60_000).at(-1)!;
+    const retryTimer = r.scheduled.filter((s) => s.delay >= 120_000).at(-1)!;
     r.registry.route(inbound('/stop'));
     await vi.waitFor(() => {
       expect(retryTimer.cancelled).toBe(true);
     }, WAIT);
-    expect(r.prompts.map((p) => p.prompt)).not.toContain('continue');
+    expect(r.scheduled.filter((s) => s.delay >= 120_000 && !s.cancelled)).toEqual([]);
   });
 
   it('does nothing extra without a policy', async () => {
@@ -512,10 +513,9 @@ describe('what a person writes reaches delegation (recordPersonWords)', () => {
     await vi.waitFor(() => {
       expect(b.prompts).toHaveLength(1);
     }, WAIT);
-    const before = b.timersFired();
     b.registry.route(inbound('and keep it short', 'new1'));
     await vi.waitFor(() => {
-      expect(b.timersFired()).toBeGreaterThan(before);
+      expect(b.pendingQueue.at(-1)?.items.some((i) => i.content === 'and keep it short')).toBe(true);
     }, WAIT);
     // Waiting behind a turn that never ends here: nothing has reached the agent, so nothing is reported.
     expect(queued).toEqual([]);
