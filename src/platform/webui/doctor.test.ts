@@ -25,6 +25,22 @@ async function allocateFreePort(): Promise<number> {
   return port;
 }
 
+/** Retry with a fresh ephemeral port if another process claims the port between release and probe. */
+async function checkWebuiOnFreePort(
+  build: (port: number) => Config,
+  locale: 'en' | 'zh-CN' = 'en',
+  attempts = 5
+): Promise<{ port: number; res: Awaited<ReturnType<typeof checkWebui>> }> {
+  let last: { port: number; res: Awaited<ReturnType<typeof checkWebui>> } | undefined;
+  for (let i = 0; i < attempts; i++) {
+    const port = await allocateFreePort();
+    const res = await checkWebui(build(port), locale);
+    last = { port, res };
+    if (!res.detail?.includes('is already in use')) return last;
+  }
+  return last!;
+}
+
 async function startHttpServer(
   handler: http.RequestListener
 ): Promise<{ url: string; close: () => Promise<void> }> {
@@ -124,9 +140,7 @@ describe('platform/webui/doctor', () => {
   });
 
   it('checks owner allowFrom identity and free port without warning when properly configured', async () => {
-    const port = await allocateFreePort();
-    const okCfg = makeWebuiConfig({ port, allowFrom: ['web:owner'] });
-    const okRes = await checkWebui(okCfg, 'en');
+    const { port, res: okRes } = await checkWebuiOnFreePort((p) => makeWebuiConfig({ port: p, allowFrom: ['web:owner'] }));
     expect(okRes.ok).toBe(true);
     expect(okRes.level).toBeUndefined();
     expect(okRes.detail).toBe(`web: 127.0.0.1:${port} is free`);
@@ -171,14 +185,11 @@ describe('platform/webui/doctor', () => {
     });
 
     try {
-      const port = await allocateFreePort();
-
-      const withPassword = await checkWebui(
+      const { port, res: withPassword } = await checkWebuiOnFreePort((p) =>
         makeWebuiConfig({
-          port,
+          port: p,
           sso: { jwksUrl: goodJwks.url, header: 'X-Test-Jwt', from: ['127.0.0.1/32'], password: true },
-        }),
-        'en'
+        })
       );
       expect(withPassword.ok).toBe(true);
       expect(withPassword.level).toBeUndefined();
@@ -187,12 +198,11 @@ describe('platform/webui/doctor', () => {
       );
       expect(withPassword.detail).toContain('set sso.password: false');
 
-      const withoutPassword = await checkWebui(
+      const { res: withoutPassword } = await checkWebuiOnFreePort((p) =>
         makeWebuiConfig({
-          port,
+          port: p,
           sso: { jwksUrl: goodJwks.url, from: ['127.0.0.1/32'], password: false },
-        }),
-        'en'
+        })
       );
       expect(withoutPassword.ok).toBe(true);
       expect(withoutPassword.level).toBeUndefined();
