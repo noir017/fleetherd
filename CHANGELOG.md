@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.41.2] - 2026-11-27
+
 ### Fixed
 
 - **The external MCP tools say when a call left out its `action`.** A web agent sent `tasks` four
