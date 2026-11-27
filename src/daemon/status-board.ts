@@ -8,7 +8,7 @@ import type { CacheReading } from './claude-transcript.js';
 
 /**
  * The live status of each conversation's agent, pushed to any platform that can show one
- * (`PlatformAdapter.setStatus` — the web UI's strip above its composer).
+ * (`TopicPresence.setStatus` — the web UI's strip above its composer).
  *
  * ── What it costs, which is the design constraint ─────────────────────────────
  * Nothing is polled. Every value here arrives on an event the daemon was already handling — an

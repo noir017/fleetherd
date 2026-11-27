@@ -108,7 +108,7 @@ nowhere to put the answer, while the page's topic switcher has a second line per
 without this, nothing to put in it. Optional rather than flagged — an adapter that does not
 implement it is simply never asked, the same shape `fetchAttachment` uses. Pull rather than
 push because the answer moves (`/cd`, a rebind) and because a restart leaves conversations that
-have a directory and no in-memory state at all; see the doc comment on the method for the rest.
+have a directory and no in-memory state at all — best-effort decoration read while rendering the topic list (see `ConversationWorkdir` in `workbench.ts`).
 
 `workbench.useLivenessLookup` is the same seam for a different question: is an agent child still resident
 behind this conversation? A turn ending does not end the agent, so without it a topic that went

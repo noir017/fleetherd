@@ -98,7 +98,8 @@ session id, agy's conversation id). One conversation holds one session *per agen
 | `pod-admin.ts` | `fleetherd pod-add` / `pod-remove`: a `hosts:` entry in config.yaml and its pinned host key, changed together and refused before anything is written when either would end up wrong; and the authorized_keys line `fleetherd pods` offers a new host |
 | `pod-peers.ts` | The pod-to-pod ssh mesh (`peer:` in pod.yaml): the `authorized_keys`, `known_hosts` and `config` it writes into each member's `~/.fleetherd/ssh/` after every read of the pods. Host keys come from the gateway's own known_hosts, never the network |
 | `host-probe.ts` | The `command -v` script run on a host in the PATH an agent will have: `fleetherd doctor`'s check of each host, and `pods.ts`'s look at a host with no `pod.yaml` |
-| `host-availability.ts` | Which hosts can be reached now: a TCP connect to each ssh port every minute (`remote/reachable.ts`), offline after two failures in a row, a live connection taken as proof. `Daemon.pushOfflineMachines` turns it into `OfflineMachine`s (`core/agent-menu.ts` offlinePlaces) for `PlatformAdapter.setOfflineMachines` and the `/agent` menu |
+| `host-availability.ts` | Which hosts can be reached now: a TCP connect to each ssh port every minute (`remote/reachable.ts`), offline after two failures in a row, a live connection taken as proof. `Daemon.pushOfflineMachines` turns it into `OfflineMachine`s (`core/agent-menu.ts` offlinePlaces) for `TopicPresence.setOfflineMachines` and the `/agent` menu |
+| `workbench-wiring.ts` | Wires `WorkbenchHost` lookup and panel hooks (`attachWorkbench`) at daemon startup, enforcing opt-in gates for `files.enabled` and `instructions.enabled` (security invariants 9 & 10) |
 | `agent-renames.ts` | `agent-renames.json`: new ids for agents, applied at startup to config.yaml, `conversations.json` and `schedules.json` together (after backing them up), because an id is also the key each conversation and task remembers its agent by |
 
 ## Inbound flow
@@ -907,7 +908,7 @@ prototype, which refuses to infer "waiting on a person" from prose.
 the last one left: a finished reply in full — its first line for a platform's list, the text for
 the update card — or a failure, its reason and the whole error (`TurnFailure`, thrown by the
 runtimes wherever they know why; anything else is `other`). It pushes that to the platform
-(`PlatformAdapter.setActivity`) and tells delegation. A start supersedes the last outcome; a
+(`TopicPresence.setActivity`) and tells delegation. A start supersedes the last outcome; a
 `/stop` leaves none.
 
 - **`hooks.turnFailed.continue`** schedules the operator's message after a failure whose reason it
@@ -962,7 +963,7 @@ notice says what became of it.
 
 **Sub-agents** (`delegation.ts`) are an agent handing parts of its job to other agents, each in a
 topic of its own nested under the asking one — on a platform that records that relation
-(`PlatformAdapter.parentOf` / `childrenOf`, today the web UI's `Topic.parent`), which is the only copy
+(`TopicTree.parentOf` / `childrenOf` via `adapter.topics`, today the web UI's `Topic.parent`), which is the only copy
 of it: the daemon keeps none, so deleting a topic on the page is what ends it. Three structural rules:
 
 - By default (`delegation.confirm: true`) `task-new` only proposes. The proposal stays open until the
@@ -1053,7 +1054,7 @@ of it: the daemon keeps none, so deleting a topic on the page is what ends it. T
 ## The status strip (`status-board.ts`)
 
 What the footer says once per reply, kept current between replies, for a platform with somewhere to
-put it — `PlatformAdapter.setStatus`, which only the web UI implements (the strip above its
+put it — `TopicPresence.setStatus`, which only the web UI implements (the strip above its
 composer). The registry owns a `StatusBoard` and feeds it from the same `TurnRunnerDeps` that feed
 `/context`: `recordUsage` (context and cost), `recordModel`, `recordEffort`, `recordQuota`, and
 `recordTurnComplete`. `forgetUsage` — `/new`, `/cd`, a rebind — resets it, which clears the strip.
@@ -1431,7 +1432,7 @@ DAEMON_COMMAND, answered in `answerDaemonCommand` before the merger (`forkAndRep
 person can reach it: there is no reverse command or tool, because a conversation an agent could
 open for itself would be a sub-agent without the card (Security invariant 6).
 
-The order is: refuse off a platform without `PlatformAdapter.forkThread` (every one but the web
+The order is: refuse off a platform without `TopicTree.forkThread` (`adapter.topics`, every one but the web
 UI), with no stored session, while a turn or a background burst runs, and when the agent declares
 no fork — `AgentSession.canFork`, which needs an `initialize`, so a conversation with no child is
 started first, as `/btw` does. Only then is the topic opened (`forkThread`, named and drawn by the

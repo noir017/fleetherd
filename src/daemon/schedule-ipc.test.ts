@@ -292,7 +292,7 @@ async function rig(
     (daemon as unknown as { onButton: (ev: unknown) => void }).onButton({ buttonId: button.id, conversation: WEB, messageId: 'menu' });
     await settle(20);
   };
-  /** What the web UI asks before evicting a topic (`PlatformAdapter.useScheduleLookup`). */
+  /** What the web UI asks before evicting a topic (`WorkbenchHost.useScheduleLookup`). */
   const targets = (ref: InboundMessage['conversation']): boolean => internals.schedules.targets(ref);
   /** Stop this daemon (a restart is another rig() on the same dir). */
   const stop = async (): Promise<void> => {

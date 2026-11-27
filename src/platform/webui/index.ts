@@ -556,6 +556,7 @@ export function hasTopic(topics: { has(id: string): boolean }, address: Conversa
 
 type TopicResolver = (address: ConversationAddress, op: string) => string;
 
+/** Refuse wrong channel or deleted topic instead of guessing a default room (guards `--channel` overrides and stale refs). */
 function makeTopicOf(room: WebRoom, instance: WebuiInstance): TopicResolver {
   return (address, op) => {
     const where = `${address.channel}${address.thread ? `/${address.thread}` : ''}`;
@@ -571,6 +572,7 @@ function makeTopicOf(room: WebRoom, instance: WebuiInstance): TopicResolver {
 
 function buildTopicTree(room: WebRoom): TopicTree {
   return {
+    // Bypass `topicOf`: callers ask about topics that may already have been deleted, so reads must be forgiving.
     parentOf: (address) => {
       const parent = address.channel === CHANNEL && address.thread ? room.parentOf(address.thread) : undefined;
       return parent ? { channel: CHANNEL, thread: parent } : undefined;
@@ -601,6 +603,7 @@ function buildTopicPresence(room: WebRoom, topicOf: TopicResolver): TopicPresenc
       room.markPendingDelivered(topicOf(address, 'markPendingDelivered'), messageIds),
     usePendingQueueActions: (actions) => room.usePendingQueueActions(actions),
     setOfflineMachines: (machines) => room.setOfflineMachines(machines),
+    // Bypass `topicOf`: a deleted topic answers "never seen" (`undefined`) rather than throwing.
     seenAt: (address) => (address.channel === CHANNEL && address.thread ? room.seenAt(address.thread) : undefined),
   };
 }

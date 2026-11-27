@@ -202,7 +202,7 @@ interface GenericCommand {
  * Omitted, a caller means the whole vocabulary regardless of platform (what a reload compares).
  */
 export interface CommandSurface {
-  /** Whether one topic can be nested under another (`PlatformAdapter.parentOf`). */
+  /** Whether one topic can be nested under another (`adapter.topics` / `TopicTree`). */
   nested: boolean;
 }
 

@@ -65,7 +65,7 @@ import { UPDATE_SENDER, type PersonWords } from './turn-senders.js';
  * `delegation.confirm: false`, `task-new` opens each sub-task at once and a card — the same list,
  * without buttons — is posted for the record. A conversation acts only on topics it opened; a
  * sub-agent's topic is an ordinary topic the person can walk into; and the relation is the
- * platform's own record (`PlatformAdapter.parentOf`), so deleting a topic ends it. The switch is a
+ * platform's own record (`TopicTree.parentOf`), so deleting a topic ends it. The switch is a
  * person's decision only: `/setting delegation` writes it, and no reverse command reaches it.
  * Instruction, in the skills (`skill/`): how to split a job, which agent to prefer, what to do with
  * the updates.
@@ -1428,7 +1428,7 @@ export class Delegation {
 
   /**
    * End the agent process behind this conversation and every sub-agent topic under it — the web
-   * UI's "End agent" (`PlatformAdapter.useTopicKill`). `/kill` applied to a tree.
+   * UI's "End agent" (`WorkbenchHost.useTopicKill`). `/kill` applied to a tree.
    *
    * The walk is `stopOpened`'s, for the same reason: the relation is the platform's record
    * (`childrenOf`), and a topic acts only on the topics under it. Unlike `/stop`, which records a

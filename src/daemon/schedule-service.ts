@@ -618,7 +618,7 @@ export class ScheduleService {
 
   /**
    * Whether a task that can still run posts into the conversation at `ref` — what keeps the web
-   * UI from evicting that topic (`PlatformAdapter.useScheduleLookup`).
+   * UI from evicting that topic (`WorkbenchHost.useScheduleLookup`).
    *
    * Paused counts: resuming it would otherwise find its topic gone. Expired and done do not; an
    * expired task has already posted its notice and runs no more.

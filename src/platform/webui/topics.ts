@@ -82,7 +82,7 @@ export interface Topic {
   /**
    * An agent child process is resident for this topic's conversation, whether or not a turn is
    * running. Derived like `running` and never persisted; absent when no daemon offered the
-   * lookup (`PlatformAdapter.useLivenessLookup`), which is every platform but this one.
+   * lookup (`WorkbenchHost.useLivenessLookup`), which is every platform but this one.
    *
    * The distinction it exists for: a turn ending does not end the agent, so "quiet for a minute
    * with its context in memory" and "reclaimed an hour ago, nothing left running" are the same
@@ -101,7 +101,7 @@ export interface Topic {
   term?: boolean;
   /**
    * Where this topic's conversation is working, when the daemon gave the adapter a way to ask
-   * (`PlatformAdapter.useWorkdirLookup`). Both halves are sent because they answer different
+   * (`WorkbenchHost.useWorkdirLookup`). Both halves are sent because they answer different
    * questions: `name` is the project you recognise at a glance in a 240px column, and `path` is
    * the one that tells two checkouts of the same name apart, so the page hangs it off the title
    * attribute. Derived on every render like `running` and `msgCount` — never persisted, because
@@ -122,7 +122,7 @@ export interface Topic {
   /**
    * The topic whose agent opened this one (`fleetherd task-new`, started once the operator confirmed
    * it — daemon/delegation.ts). The switcher nests it there, and the daemon reads it back to know
-   * whom to tell when this topic's agent finishes (`PlatformAdapter.parentOf`), so this field is the
+   * whom to tell when this topic's agent finishes (`TopicTree.parentOf`), so this field is the
    * one record of the relation. Persisted, and dropped when the parent goes — deleted, evicted or
    * swept — so a child is never nested under nothing, and keeps its work as a topic of its own.
    */

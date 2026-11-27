@@ -646,8 +646,11 @@ export type WorkdirBrowseResult = { ok: true; screen: WorkdirScreen } | { ok: fa
  * nesting (`commandSurface`), `/fork`, and daily-session topic existence checks.
  */
 export interface TopicTree {
+  /** Platform's sole record of which conversation opened `address`; must not throw on deleted topics. */
   parentOf: (address: ConversationAddress) => ConversationAddress | undefined;
+  /** Conversations opened under `address`, most recently active first; must not throw on deleted topics. */
   childrenOf: (address: ConversationAddress) => ConversationAddress[];
+  /** Whether the lane still exists. When `adapter.topics` is absent, the daemon assumes the lane is still there. */
   hasThread: (address: ConversationAddress) => boolean;
   forkThread: (
     source: ConversationAddress,
@@ -658,6 +661,10 @@ export interface TopicTree {
 /**
  * Live presence & queue state pushed to or read from a workbench UI (status strip, topic activity,
  * offline machines, read watermark, and mid-turn pending queue).
+ *
+ * Forwarded verbatim by `paced-adapter.ts` (`unpaced`): members here bypass `OutboundPacer` and
+ * MUST NOT generate chat traffic. Anything that sends/edits chat messages belongs on `PlatformAdapter`
+ * so `PACING` enforces an explicit pacing decision.
  */
 export interface TopicPresence {
   setStatus: (address: ConversationAddress, status: AgentStatus | undefined) => void;
@@ -666,12 +673,17 @@ export interface TopicPresence {
   markPendingDelivered: (address: ConversationAddress, messageIds: readonly string[]) => void;
   usePendingQueueActions: (actions: PendingQueueActions) => void;
   setOfflineMachines: (machines: readonly OfflineMachine[]) => void;
+  /** Epoch ms when the operator last viewed `address`; must return `undefined` (not throw) for deleted topics. */
   seenAt: (address: ConversationAddress) => number | undefined;
 }
 
 /**
  * Workbench panel & lookup hooks wired at daemon startup (`daemon/workbench-wiring.ts`), plus
  * `attachTurnChanges` whose presence gates turn-change snapshotting.
+ *
+ * Forwarded verbatim by `paced-adapter.ts` (`unpaced`): members here bypass `OutboundPacer` and
+ * MUST NOT generate chat traffic. Before adding a member, verify it belongs on the workbench
+ * rather than on `PlatformAdapter` itself.
  */
 export interface WorkbenchHost {
   useWorkdirLookup: (lookup: (ref: ConversationRef) => ConversationWorkdir | undefined) => void;
@@ -680,13 +692,17 @@ export interface WorkbenchHost {
   useScheduleLookup: (lookup: (ref: ConversationRef) => boolean) => void;
   useSchedulePanel: (panel: SchedulePanel) => void;
   useSkillsPanel: (panel: SkillsPanel) => void;
+  /** Deliberately read-only: only dismisses pending suggestions or reverts via `skills-store` (invariant 8); never runs or edits reviews. */
   useReviewPanel: (panel: ReviewPanel) => void;
+  /** Read-only by construction; lists recorded conversations and excludes background review sessions. */
   useHistoryPanel: (panel: HistoryPanel) => void;
   /** Opt-in write panel: only wired when `platforms.<id>.files.enabled` is true (security invariant 9). */
   useFilesPanel: (panel: FilesPanel) => void;
   /** Opt-in write panel: only wired when `platforms.<id>.instructions.enabled` is true (security invariant 10). */
   useInstructionsPanel: (panel: InstructionsPanel) => void;
+  /** Ends an idle agent process only within the idle sweeper's own gates (no active turn/pending question, resumable runtime). */
   useIdleReclaim: (reclaim: (ref: ConversationRef) => boolean) => void;
+  /** Ends a topic's agent and its subtree via the platform's own `childrenOf`, intersecting with `confirmed` so newcomers since the click are untouched. */
   useTopicKill: (kill: (ref: ConversationRef, confirmed: ReadonlySet<string>) => TopicKillResult[]) => void;
   useAgentCatalog: (lookup: (ref: ConversationRef) => AgentCatalog | undefined) => void;
   useTopicSetup: (
@@ -699,5 +715,6 @@ export interface WorkbenchHost {
   useOptionPicker: (picker: SessionOptionPicker) => void;
   useTurnChanges: (panel: TurnChangesPanel) => void;
   useVoiceTranscriber: (transcriber: VoiceTranscriber) => void;
+  /** Hangs a turn's change summary off `reply` captured at turn end so a slow snapshot never lands under a later turn's answer. */
   attachTurnChanges: (address: ConversationAddress, entry: TurnChangeEntry, reply?: MessageRef) => void;
 }
