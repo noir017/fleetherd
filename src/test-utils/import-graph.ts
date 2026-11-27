@@ -1,14 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import ts from 'typescript';
 
 export const SRC_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-
-export const IMPORT_RE =
-  /(?:^|[\s;])(?:import|export)\s+(?:type\s+)?(?:[\s\S]*?\s+from\s+)?['"]([^'"]+)['"]/g;
-
-const STATEMENT_RE =
-  /(?:^|[\s;])(?:import|export)\s+(type\s+)?([\s\S]*?\s+from\s+)?['"]([^'"]+)['"]/g;
 
 export interface WalkOptions {
   /** Relative paths under `dir` (POSIX slashes) to skip when walking. */
@@ -40,35 +35,64 @@ export function walkProdTs(dir: string, options?: WalkOptions): string[] {
   return out;
 }
 
-function isAllTypeSpecifiers(clauseWithFrom: string | undefined): boolean {
-  if (!clauseWithFrom) return false;
-  const clause = clauseWithFrom.replace(/\s+from\s+$/, '').trim();
-  const braced = /^\{([\s\S]*)\}$/.exec(clause);
-  if (!braced) return false;
-  const items = (braced[1] ?? '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
-  return items.length > 0 && items.every((item) => /^type\s+/.test(item));
+function isTypeOnlyImport(node: ts.ImportDeclaration): boolean {
+  const clause = node.importClause;
+  if (!clause) return false;
+  if (clause.isTypeOnly) return true;
+  if (clause.name) return false;
+  const bindings = clause.namedBindings;
+  if (!bindings || !ts.isNamedImports(bindings) || bindings.elements.length === 0) return false;
+  return bindings.elements.every((el) => el.isTypeOnly);
+}
+
+function isTypeOnlyExport(node: ts.ExportDeclaration): boolean {
+  if (node.isTypeOnly) return true;
+  const clause = node.exportClause;
+  if (!clause || !ts.isNamedExports(clause) || clause.elements.length === 0) return false;
+  return clause.elements.every((el) => el.isTypeOnly);
+}
+
+export function collectImportsFromSource(
+  src: string,
+  fileName = 'file.ts',
+  options?: { valuesOnly?: boolean }
+): string[] {
+  const valuesOnly = options?.valuesOnly ?? false;
+  const sf = ts.createSourceFile(fileName, src, ts.ScriptTarget.Latest, false);
+  const specs: string[] = [];
+
+  const record = (spec: string, typeOnly: boolean): void => {
+    if (!valuesOnly || !typeOnly) specs.push(spec);
+  };
+
+  const visit = (node: ts.Node): void => {
+    if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
+      record(node.moduleSpecifier.text, isTypeOnlyImport(node));
+      return;
+    }
+    if (ts.isExportDeclaration(node) && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) {
+      record(node.moduleSpecifier.text, isTypeOnlyExport(node));
+      return;
+    }
+    if (
+      ts.isImportTypeNode(node) &&
+      ts.isLiteralTypeNode(node.argument) &&
+      ts.isStringLiteral(node.argument.literal)
+    ) {
+      record(node.argument.literal.text, true);
+    } else if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
+      const arg = node.arguments[0];
+      if (arg && ts.isStringLiteralLike(arg)) record(arg.text, false);
+    }
+    ts.forEachChild(node, visit);
+  };
+
+  visit(sf);
+  return specs;
 }
 
 export function collectImports(file: string, options?: { valuesOnly?: boolean }): string[] {
-  const src = fs.readFileSync(file, 'utf8');
-  // Strip line and block comments so commented-out examples don't trigger false positives.
-  const stripped = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
-  const specs: string[] = [];
-  if (!options?.valuesOnly) {
-    for (const m of stripped.matchAll(IMPORT_RE)) {
-      if (m[1]) specs.push(m[1]);
-    }
-    return specs;
-  }
-  for (const m of stripped.matchAll(STATEMENT_RE)) {
-    if (m[1]) continue;
-    if (isAllTypeSpecifiers(m[2])) continue;
-    if (m[3]) specs.push(m[3]);
-  }
-  return specs;
+  return collectImportsFromSource(fs.readFileSync(file, 'utf8'), file, options);
 }
 
 export function resolveTarget(
