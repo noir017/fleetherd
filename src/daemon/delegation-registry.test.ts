@@ -1,4 +1,4 @@
-import { afterAll, afterEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -19,7 +19,7 @@ import type { PersonWords } from './turn-senders.js';
  * sub-agent's topic (openTask, handTo — daemon/delegation.ts) does to real conversations.
  */
 
-const wait = (ms = 80): Promise<void> => new Promise((r) => setTimeout(r, ms));
+const WAIT = { timeout: 5_000, interval: 10 };
 
 function inbound(content: string, thread = 'tt'): InboundMessage {
   return {
@@ -56,13 +56,23 @@ function rig(
     display: { header: { enabled: false }, footer: { enabled: false } },
   });
   const cfg: Config = { ...parsed, inbound: { ...parsed.inbound, mergeWindowMs: 1, maxMergeWindowMs: 1 } };
+  const scheduled: Array<{ delay: number; cancelled: boolean }> = [];
+  let timersFired = 0;
   // Every wait shortened, so a backoff is a test step rather than a test timeout: a minute or more to
-  // 200 ms (time enough for the person to write first), anything shorter to 5 ms.
+  // 1 s (time enough for the person to write first), anything shorter to 5 ms.
   const clock = {
     now: () => Date.now(),
     schedule: (fn: () => void, ms: number) => {
-      const t = setTimeout(fn, ms >= 60_000 ? 200 : Math.min(ms, 5));
-      return () => clearTimeout(t);
+      const entry = { delay: ms, cancelled: false };
+      scheduled.push(entry);
+      const t = setTimeout(() => {
+        timersFired++;
+        fn();
+      }, ms >= 60_000 ? 1_000 : Math.min(ms, 5));
+      return () => {
+        entry.cancelled = true;
+        clearTimeout(t);
+      };
     },
   };
 
@@ -160,7 +170,7 @@ function rig(
 
   const hooks = opts.onPersonWords ? { onPersonWords: opts.onPersonWords } : undefined;
   const registry = new ConversationRegistry(cfg, new Map([['web', platform]]), factory, clock, hooks, opts.store);
-  return { registry, sent, prompts, models, events, ensured, activity, renamed, nested };
+  return { registry, sent, prompts, models, events, ensured, activity, renamed, nested, scheduled, timersFired: () => timersFired };
 }
 
 const storeDir = mkdtempSync(join(tmpdir(), 'delegation-registry-'));
@@ -177,8 +187,9 @@ describe('hooks.turnFailed.continue through a real turn', () => {
     const r = rig({ continue: { on: ['service'], message: '继续', max: 3, backoffMs: 1_000 }, script: ['fail', 'fail', 'ok'] });
     live = r.registry;
     r.registry.route(inbound('build it'));
-    for (let i = 0; i < 20 && r.prompts.length < 3; i++) await wait(20);
-    await wait();
+    await vi.waitFor(() => {
+      expect(r.activity[r.activity.length - 1]?.a?.outcome).toMatchObject({ kind: 'done', line: 'Done: all green.' });
+    }, WAIT);
     expect(r.prompts.map((p) => p.prompt)).toEqual(['build it', '继续', '继续']);
     expect(r.sent.filter((m) => m.text.startsWith('↻')).map((m) => m.text.match(/\(\d\/3\)/)?.[0])).toEqual(['(1/3)', '(2/3)']);
     expect(r.sent.filter((m) => m.text.startsWith('❌'))).toHaveLength(2);
@@ -189,9 +200,14 @@ describe('hooks.turnFailed.continue through a real turn', () => {
     const r = rig({ continue: { on: ['service'], backoffMs: 60_000 }, script: ['fail'] });
     live = r.registry;
     r.registry.route(inbound('build it'));
-    await wait(30);
+    await vi.waitFor(() => {
+      expect(r.activity[r.activity.length - 1]?.a?.retry).toBeDefined();
+    }, WAIT);
+    const retryTimer = r.scheduled.filter((s) => s.delay >= 60_000).at(-1)!;
     r.registry.route(inbound('/stop'));
-    await wait(300);
+    await vi.waitFor(() => {
+      expect(retryTimer.cancelled).toBe(true);
+    }, WAIT);
     expect(r.prompts.map((p) => p.prompt)).not.toContain('continue');
   });
 
@@ -199,7 +215,9 @@ describe('hooks.turnFailed.continue through a real turn', () => {
     const r = rig({ script: ['fail'] });
     live = r.registry;
     r.registry.route(inbound('build it'));
-    await wait();
+    await vi.waitFor(() => {
+      expect(r.activity[r.activity.length - 1]?.a?.outcome).toMatchObject({ kind: 'failed', reason: 'service', line: 'upstream 503' });
+    }, WAIT);
     expect(r.prompts.map((p) => p.prompt)).toEqual(['build it']);
     expect(r.activity[r.activity.length - 1]?.a?.outcome).toMatchObject({ kind: 'failed', reason: 'service', line: 'upstream 503' });
   });
@@ -208,8 +226,9 @@ describe('hooks.turnFailed.continue through a real turn', () => {
     const r = rig({ continue: { on: ['limit'], message: '继续', max: 3, backoffMs: 1_000 }, script: ['refuse', 'ok'] });
     live = r.registry;
     r.registry.route(inbound('build it'));
-    for (let i = 0; i < 20 && r.prompts.length < 2; i++) await wait(20);
-    await wait();
+    await vi.waitFor(() => {
+      expect(r.activity[r.activity.length - 1]?.a?.outcome).toMatchObject({ kind: 'done', line: 'Done: all green.' });
+    }, WAIT);
 
     const message = 'the agent refused this request: Quota exceeded: request rejected by the upstream gateway';
     // The failure was listed with its reason (that is what the card shows), and a retry was scheduled.
@@ -237,8 +256,9 @@ describe('hooks.turnFailed.continue through a real turn', () => {
     });
     live = r.registry;
     r.registry.route(inbound('build it'));
-    for (let i = 0; i < 40 && r.prompts.length < 4; i++) await wait(20);
-    await wait(80);
+    await vi.waitFor(() => {
+      expect(r.sent.some((m) => m.text.startsWith('↻ Not continuing again: 3 automatic continues'))).toBe(true);
+    }, WAIT);
 
     // The initial turn and exactly three continues — the fourth refusal ends the run.
     expect(r.prompts.map((p) => p.prompt)).toEqual(['build it', '继续', '继续', '继续']);
@@ -257,7 +277,9 @@ describe('a sub-agent’s topic (openTask, handTo)', () => {
     // The name it gave the topic comes back with it: the card cannot read it off `channels` yet.
     expect(opened).toEqual({ key: 'web#main#new1', address: { channel: 'main', thread: 'new1' }, title: '[oc] 修一下 bump' });
     expect(r.nested).toEqual([{ name: expect.stringContaining('修一下 bump'), under: 'main/aaaaaaaa' }]);
-    await wait();
+    await vi.waitFor(() => {
+      expect(r.prompts).toHaveLength(1);
+    }, WAIT);
     expect(r.registry.boundAgentOf(opened.key)).toBe('oc');
     // The `↳ From …` header and the task text are a dispatch, so the web UI draws them as a
     // hand-off rather than as the agent's own words.
@@ -284,7 +306,9 @@ describe('a sub-agent’s topic (openTask, handTo)', () => {
     const r = rig({ store });
     live = r.registry;
     const opened = await r.registry.openTask({ platform: 'web', parent, agentId: 'oc', text: 'go', header, model: 'fast-model' });
-    await wait();
+    await vi.waitFor(() => {
+      expect(r.events.length).toBeGreaterThanOrEqual(2);
+    }, WAIT);
     expect(r.models).toEqual([{ conversation: opened.key, model: 'fast-model' }]);
     expect(r.events.slice(0, 2)).toEqual(['model:fast-model', 'turn:go']);
     // On record like a /model choice: a later task-send, /new or restart reads it back.
@@ -296,7 +320,9 @@ describe('a sub-agent’s topic (openTask, handTo)', () => {
     const r = rig({ store });
     live = r.registry;
     const opened = await r.registry.openTask({ platform: 'web', parent, agentId: 'oc', text: 'go', header });
-    await wait();
+    await vi.waitFor(() => {
+      expect(r.prompts).toHaveLength(1);
+    }, WAIT);
     expect(r.models).toEqual([]);
     expect(store.conversationChoice(opened.key, 'oc', 'model')).toBeUndefined();
   });
@@ -308,7 +334,9 @@ describe('a sub-agent’s topic (openTask, handTo)', () => {
     await expect(
       r.registry.openTask({ platform: 'web', parent, agentId: 'oc', text: 'go', header, model: 'runtime-fail' })
     ).rejects.toThrow('could not set model "runtime-fail": the harness refused this model');
-    await wait();
+    await vi.waitFor(() => {
+      expect(r.sent).toHaveLength(1);
+    }, WAIT);
     expect(r.prompts).toEqual([]);
     expect(r.sent).toEqual([
       { to: 'main/new1', text: 'Not started — could not set model "runtime-fail": the harness refused this model.' },
@@ -322,7 +350,9 @@ describe('a sub-agent’s topic (openTask, handTo)', () => {
     live = r.registry;
     const options = { account: 'alice@example.com', region: 'eu' };
     const opened = await r.registry.openTask({ platform: 'web', parent, agentId: 'oc', text: 'go', header, model: 'fast-model', options });
-    await wait();
+    await vi.waitFor(() => {
+      expect(r.events.length).toBeGreaterThanOrEqual(4);
+    }, WAIT);
     expect(r.events.slice(0, 4)).toEqual(['model:fast-model', 'option:account=alice@example.com', 'option:region=eu', 'turn:go']);
     expect(store.conversationChoice(opened.key, 'oc', 'model')).toBe('fast-model');
   });
@@ -334,7 +364,9 @@ describe('a sub-agent’s topic (openTask, handTo)', () => {
     await expect(
       r.registry.openTask({ platform: 'web', parent, agentId: 'oc', text: 'go', header, model: 'fast-model', options: { account: 'bob@example.com' } })
     ).rejects.toThrow("could not set account=bob@example.com: that account's quota is used up");
-    await wait();
+    await vi.waitFor(() => {
+      expect(r.sent).toHaveLength(1);
+    }, WAIT);
     // Not started on the default account instead: no turn, and the model is not kept for a topic that never ran.
     expect(r.prompts).toEqual([]);
     expect(r.sent).toEqual([
@@ -361,7 +393,9 @@ describe('a sub-agent’s topic (openTask, handTo)', () => {
     const r = rig({ hold: true });
     live = r.registry;
     const opened = await r.registry.openTask({ platform: 'web', parent, agentId: 'oc', text: 'go', header });
-    await wait(20);
+    await vi.waitFor(() => {
+      expect(r.prompts).toHaveLength(1);
+    }, WAIT);
     expect(r.registry.canSteer(opened.key)).toBe(false);
     await expect(r.registry.handTo(opened.key, 'web', opened.address, 'stop that', header)).resolves.toBe('queued');
     // A later task-send is the same dispatch as the first message.
@@ -372,7 +406,9 @@ describe('a sub-agent’s topic (openTask, handTo)', () => {
     const r = rig({ hold: true, steer: true });
     live = r.registry;
     const opened = await r.registry.openTask({ platform: 'web', parent, agentId: 'cc', text: 'go', header });
-    await wait(20);
+    await vi.waitFor(() => {
+      expect(r.prompts).toHaveLength(1);
+    }, WAIT);
     expect(r.registry.canSteer(opened.key)).toBe(true);
     await expect(r.registry.handTo(opened.key, 'web', opened.address, 'also the docs', header)).resolves.toBe('joined');
     expect(r.sent.at(-1)).toEqual({ to: 'main/new1', text: `${header}\n\nalso the docs`, kind: 'dispatch' });
@@ -382,12 +418,16 @@ describe('a sub-agent’s topic (openTask, handTo)', () => {
     const r = rig();
     live = r.registry;
     const opened = await r.registry.openTask({ platform: 'web', parent, agentId: 'oc', text: 'go', header });
-    await wait();
+    await vi.waitFor(() => {
+      expect(r.activity[r.activity.length - 1]?.a?.outcome?.kind).toBe('done');
+    }, WAIT);
     const heading = '↳ Forwarded from "Review" · web:main/new1 · turn 1';
     await r.registry.handTo(opened.key, 'web', opened.address, 'fix it', header, {
       forward: { heading, text: 'Verdict: one fix.' },
     });
-    await wait();
+    await vi.waitFor(() => {
+      expect(r.prompts).toHaveLength(2);
+    }, WAIT);
     // A report bubble: line-based, so the page folds it to one row per line instead of a wall of
     // prose in the middle of the topic. Posted before the task that refers to it.
     const report = r.sent.findIndex((m) => m.kind === 'report');
@@ -411,10 +451,14 @@ describe('a sub-agent’s topic (openTask, handTo)', () => {
       header: loopHeader,
       forward: { heading, text: 'Built.' },
     });
-    await wait();
+    await vi.waitFor(() => {
+      expect(r.activity[r.activity.length - 1]?.a?.outcome?.kind).toBe('done');
+    }, WAIT);
     expect(r.prompts.at(-1)!.prompt).toBe(`Review it.\n\n${heading}\n\nBuilt.`);
     await r.registry.handTo(opened.key, 'web', opened.address, '', loopHeader, { forward: { heading, text: 'Rename the flag.' } });
-    await wait();
+    await vi.waitFor(() => {
+      expect(r.prompts).toHaveLength(2);
+    }, WAIT);
     // The topic shows the header alone above nothing; the agent reads the heading and the reply.
     expect(r.sent.filter((m) => m.kind === 'dispatch').at(-1)).toEqual({ to: 'main/new1', text: loopHeader, kind: 'dispatch' });
     expect(r.prompts.at(-1)!.prompt).toBe(`${heading}\n\nRename the flag.`);
@@ -431,10 +475,15 @@ describe('what a person writes reaches delegation (recordPersonWords)', () => {
     const r = rig({ onPersonWords: (id, w) => words.push({ id, words: w }) });
     live = r.registry;
     const opened = await r.registry.openTask({ platform: 'web', parent, agentId: 'oc', text: 'the task', header });
-    await wait();
+    await vi.waitFor(() => {
+      expect(r.activity[r.activity.length - 1]?.a?.outcome?.kind).toBe('done');
+    }, WAIT);
     expect(words).toEqual([]);
     r.registry.route({ ...inbound('use sqlite instead', 'new1'), quotedContent: 'Which database?' });
-    await wait();
+    await vi.waitFor(() => {
+      expect(r.prompts).toHaveLength(2);
+      expect(words).toHaveLength(1);
+    }, WAIT);
     expect(r.prompts.map((p) => p.prompt)).toEqual(['the task', '(replying to: "Which database?")\nuse sqlite instead']);
     expect(words).toEqual([
       { id: opened.key, words: { text: '(replying to: "Which database?")\nuse sqlite instead', attachments: [] } },
@@ -446,9 +495,13 @@ describe('what a person writes reaches delegation (recordPersonWords)', () => {
     const a = rig({ hold: true, steer: true, onPersonWords: (_id, w) => joined.push(w) });
     live = a.registry;
     await a.registry.openTask({ platform: 'web', parent, agentId: 'cc', text: 'go', header });
-    await wait(20);
+    await vi.waitFor(() => {
+      expect(a.prompts).toHaveLength(1);
+    }, WAIT);
     a.registry.route(inbound('and keep it short', 'new1'));
-    await wait();
+    await vi.waitFor(() => {
+      expect(joined).toHaveLength(1);
+    }, WAIT);
     expect(joined.map((w) => w.text)).toEqual(['and keep it short']);
     a.registry.dispose();
 
@@ -456,9 +509,14 @@ describe('what a person writes reaches delegation (recordPersonWords)', () => {
     const b = rig({ hold: true, onPersonWords: (_id, w) => queued.push(w) });
     live = b.registry;
     await b.registry.openTask({ platform: 'web', parent, agentId: 'oc', text: 'go', header });
-    await wait(20);
+    await vi.waitFor(() => {
+      expect(b.prompts).toHaveLength(1);
+    }, WAIT);
+    const before = b.timersFired();
     b.registry.route(inbound('and keep it short', 'new1'));
-    await wait();
+    await vi.waitFor(() => {
+      expect(b.timersFired()).toBeGreaterThan(before);
+    }, WAIT);
     // Waiting behind a turn that never ends here: nothing has reached the agent, so nothing is reported.
     expect(queued).toEqual([]);
   });
@@ -482,7 +540,10 @@ describe('scheduledChoicesProblem: a sub-task’s model and settings checked bef
     const r = rig({ settings: ACCOUNT });
     live = r.registry;
     r.registry.route(inbound('hello', 'own'));
-    await wait();
+    await vi.waitFor(() => {
+      expect(r.prompts).toHaveLength(1);
+      expect(r.registry.boundAgentOf('web#main#own')).toBe('cc');
+    }, WAIT);
     const from = 'web#main#own';
     expect(r.registry.boundAgentOf(from)).toBe('cc');
     r.ensured.length = 0;
@@ -522,7 +583,9 @@ describe('agentLists and runningOn: one agent in full (task-agents <id>)', () =>
     const r = rig({ settings: ACCOUNT });
     live = r.registry;
     r.registry.route(inbound('hello', 'own'));
-    await wait();
+    await vi.waitFor(() => {
+      expect(r.prompts).toHaveLength(1);
+    }, WAIT);
     r.ensured.length = 0;
     const [a, b] = await Promise.all([r.registry.agentLists('cc'), r.registry.agentLists('cc')]);
     expect(a).toBe(b);
@@ -546,7 +609,9 @@ describe('agentLists and runningOn: one agent in full (task-agents <id>)', () =>
     live = r.registry;
     r.registry.route(inbound('one', 't1'));
     r.registry.route(inbound('two', 't2'));
-    await wait();
+    await vi.waitFor(() => {
+      expect(r.registry.runningOn('cc')).toBe(2);
+    }, WAIT);
     expect(r.registry.runningOn('cc')).toBe(2);
     expect(r.registry.runningOn('oc')).toBe(0);
   });
