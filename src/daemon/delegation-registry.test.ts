@@ -439,8 +439,10 @@ describe('a sub-agent’s topic (openTask, handTo)', () => {
     const seen = new Map<string, Topic>();
     const detach = room.subscribe(parentTopic.id, (_id, ev: WebEvent) => {
       if (ev.t === 'sync' || ev.t === 'topics') {
-        seen.clear();
-        for (const t of ev.topics) seen.set(t.id, t);
+        if (ev.topics) {
+          seen.clear();
+          for (const t of ev.topics) seen.set(t.id, t);
+        }
       } else if (ev.t === 'topic-rows') {
         for (const row of ev.rows) seen.set(row.id, row);
       }

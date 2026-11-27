@@ -5,6 +5,7 @@ import type { ViewPosition } from './types.js';
 export interface ScrollManager {
   atBottom(): boolean;
   toBottom(): void;
+  adjustForPrepend(delta: number, prevScrollTop: number): void;
   firstVisible(): Element | null;
   saveView(id: string, entering: boolean): void;
   prepareEnter(id: string): void;
@@ -19,6 +20,7 @@ export interface ScrollManager {
 }
 
 const BOTTOM_THRESHOLD_PX = 80;
+const TOP_LOAD_THRESHOLD_PX = 240;
 
 function findLogChildByKey(
   log: HTMLElement,
@@ -55,6 +57,7 @@ function findFirstVisibleMessage(log: HTMLElement): Element | null {
 
 class ScrollManagerImpl implements ScrollManager {
   private readonly _log: HTMLElement;
+  private readonly _onNearTop?: () => void;
   private readonly _views: Record<string, ViewPosition> = {};
   private readonly _disposables = new DisposableStore();
   private _view: ViewPosition | null = null;
@@ -65,8 +68,9 @@ class ScrollManagerImpl implements ScrollManager {
   private _lastClientHeight: number;
   private _suppressScroll = false;
 
-  constructor(log: HTMLElement) {
+  constructor(log: HTMLElement, onNearTop?: () => void) {
     this._log = log;
+    this._onNearTop = onNearTop;
     this._lastClientHeight = log.clientHeight;
     this._disposables.add(
       addDisposableListener(
@@ -75,6 +79,9 @@ class ScrollManagerImpl implements ScrollManager {
         () => {
           if (this._suppressScroll || log.clientHeight === 0 || this._pendingLand) return;
           this._pinned = this.atBottom();
+          if (this._onNearTop && log.scrollTop <= TOP_LOAD_THRESHOLD_PX && log.scrollHeight > log.clientHeight) {
+            this._onNearTop();
+          }
         },
         { passive: true },
       ),
@@ -132,6 +139,12 @@ class ScrollManagerImpl implements ScrollManager {
     this._pinned = true;
     this._pendingLand = this._log.clientHeight === 0 || !this._log.isConnected;
     this._pendingView = null;
+  }
+
+  adjustForPrepend(delta: number, prevScrollTop: number): void {
+    if (delta <= 0) return;
+    this._setScrollTop(prevScrollTop + delta);
+    this._pinned = this._log.clientHeight === 0 ? false : this.atBottom();
   }
 
   firstVisible(): Element | null {
@@ -216,6 +229,6 @@ class ScrollManagerImpl implements ScrollManager {
   }
 }
 
-export function createScrollManager(log: HTMLElement): ScrollManager {
-  return new ScrollManagerImpl(log);
+export function createScrollManager(log: HTMLElement, onNearTop?: () => void): ScrollManager {
+  return new ScrollManagerImpl(log, onNearTop);
 }

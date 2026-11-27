@@ -11,6 +11,8 @@ export interface CacheMeta {
   readonly epoch: number;
   readonly last?: string;
   readonly stale?: boolean;
+  readonly hasMore?: boolean;
+  readonly oldestSeq?: number;
 }
 
 export interface CacheCopy {
@@ -19,6 +21,8 @@ export interface CacheCopy {
   readonly epoch: number;
   readonly last: string;
   readonly stale: boolean;
+  readonly hasMore?: boolean;
+  readonly oldestSeq?: number;
   readonly at?: number;
 }
 
@@ -34,6 +38,8 @@ export interface CacheStoredRecord {
   readonly epoch?: number;
   readonly last?: string;
   readonly stale?: boolean;
+  readonly hasMore?: boolean;
+  readonly oldestSeq?: number;
 }
 
 export interface CacheOpenResult {
@@ -71,6 +77,8 @@ export interface CacheTopicState {
   readonly synced: boolean;
   readonly stale: boolean;
   readonly lastEventId: string;
+  readonly hasMore?: boolean;
+  readonly oldestSeq?: number;
   readonly collectMessages: () => CacheMessage[];
 }
 
@@ -303,6 +311,8 @@ class CacheServiceImpl implements CacheService {
       epoch: meta.epoch,
       last: meta.last || '',
       stale: Boolean(meta.stale),
+      ...(meta.hasMore ? { hasMore: true } : {}),
+      ...(meta.oldestSeq ? { oldestSeq: meta.oldestSeq } : {}),
       at: ++this._copySeq,
     };
     const existing = this._copies[id];
@@ -376,6 +386,8 @@ class CacheServiceImpl implements CacheService {
           epoch: v.epoch || 0,
           last: v.last || '',
           stale: Boolean(v.stale),
+          ...(v.hasMore ? { hasMore: true } : {}),
+          ...(v.oldestSeq ? { oldestSeq: v.oldestSeq } : {}),
         };
       },
     );
@@ -439,7 +451,14 @@ class CacheServiceImpl implements CacheService {
     const synced = state ? state.synced : this._deps.isSynced();
     const stale = state ? state.stale : this._deps.isStale();
     const last = lastEv && topic && lastEv.startsWith(`${topic}.`) ? lastEv : '';
-    return topic && epoch && (synced || last) ? { epoch, stale, last } : null;
+    if (!topic || !epoch || !(synced || last)) return null;
+    return {
+      epoch,
+      stale,
+      last,
+      ...(state?.hasMore ? { hasMore: true } : {}),
+      ...(state?.oldestSeq ? { oldestSeq: state.oldestSeq } : {}),
+    };
   }
 
   keepScreen(topicId?: string): void {

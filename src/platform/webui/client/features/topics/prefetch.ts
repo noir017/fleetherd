@@ -101,6 +101,8 @@ export function createTopicPrefetcher(deps: TopicPrefetchDeps): TopicPrefetcher 
       epoch: d.epoch,
       last: d.last,
       stale: Boolean(d.stale),
+      ...(d.hasMore ? { hasMore: true } : {}),
+      ...(d.oldestSeq ? { oldestSeq: d.oldestSeq } : {}),
     });
   }
 

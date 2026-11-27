@@ -427,7 +427,10 @@ export function renderMsgMarkup(
   const cls = msgClassName(m, hist, tag, isStuck);
   let h = '';
   if (tag) h += `<div class="sub-k">${tag}</div>`;
-  if (m.quote && m.quote.html) h += `<div class="q">${m.quote.html}</div>`;
+  if (m.quote && m.quote.html) {
+    const jumpAttr = m.quote.id ? ` data-jump-msg="${text(m.quote.id)}" role="button" tabindex="0"` : '';
+    h += `<div class="q"${jumpAttr}>${m.quote.html}</div>`;
+  }
   h += msgBodyHtml(key, m, hist, folded, ctx);
   if (isStuck) h += failedActions(m, Boolean(m._nonce && ctx.hasOutbox(m._nonce)));
   const reactions =

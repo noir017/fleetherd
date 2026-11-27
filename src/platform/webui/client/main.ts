@@ -79,6 +79,10 @@ interface TopicEditorSession {
   seedWorkdir: WorkdirScreen | null;
   settleOnResume: boolean;
   enterToken: number;
+  hasMore: boolean;
+  oldestSeq: number;
+  loadingOlder: boolean;
+  olderError: boolean;
 }
 
 interface AppState {
@@ -97,6 +101,7 @@ interface AppState {
   insertHandler: ((topicId: string, text: string) => boolean) | null;
   settingsBridge: SettingsPluginBridge | null;
   streamConnected: boolean;
+  pendingJumpMsgId: string;
 }
 
 interface AppRuntime {
@@ -159,6 +164,13 @@ function currentTopicUrl(topicId: string): string {
   return `${url.pathname}${url.search}${url.hash}`;
 }
 
+function readInitialJumpMsgId(): string {
+  const fromQuery = new URLSearchParams(location.search).get('m');
+  if (fromQuery) return fromQuery;
+  const hash = location.hash;
+  return hash.startsWith('#m=') ? decodeURIComponent(hash.slice(3)) : '';
+}
+
 const MAIN_PANEL_ID = 'topic:active';
 
 function createSession(): TopicEditorSession {
@@ -179,6 +191,10 @@ function createSession(): TopicEditorSession {
     seedWorkdir: null,
     settleOnResume: false,
     enterToken: 0,
+    hasMore: false,
+    oldestSeq: 0,
+    loadingOlder: false,
+    olderError: false,
   };
 }
 
@@ -291,7 +307,12 @@ function resetSessionView(session: TopicEditorSession, id: string): void {
   session.launchSetupSeq = 0;
   session.seedWorkdir = null;
   session.settleOnResume = false;
+  session.hasMore = false;
+  session.oldestSeq = 0;
+  session.loadingOlder = false;
+  session.olderError = false;
   if (editor) {
+    editor.transcript?.setOlderState({ hasMore: false, loading: false });
     editor.els.log.replaceChildren();
     editor.status?.closeModelPop();
     editor.status?.setStatus(null);
@@ -315,11 +336,91 @@ function adoptCachedCopy(
   if (composer) {
     for (const msg of c.msgs) composer.claim(msg as unknown as WebMessage);
   }
-  if (resume) session.stale = c.stale;
+  if (resume) {
+    session.stale = c.stale;
+    session.hasMore = Boolean(c.hasMore);
+    session.oldestSeq = c.oldestSeq || 0;
+    session.olderError = false;
+  }
   if (!c.msgs.length) return;
   const row = topicById(rt.state, id);
   const current = resume && isRowCurrent(row, c.last, (a, b) => rt.cacheService.isNewer(a, b));
   editor?.transcript?.adopt(c.msgs as unknown as readonly TranscriptMessage[], current);
+  if (resume) syncOlderIndicator(session);
+}
+
+function syncOlderIndicator(session: TopicEditorSession): void {
+  session.editor?.transcript?.setOlderState({
+    hasMore: session.hasMore && session.oldestSeq > 0,
+    loading: session.loadingOlder,
+    error: session.olderError,
+  });
+}
+
+interface OlderMessagesPage {
+  readonly topic: string;
+  readonly epoch: number;
+  readonly messages: readonly WebMessage[];
+  readonly hasMore: boolean;
+  readonly oldestSeq?: number;
+  readonly totalCount: number;
+}
+
+async function loadOlderPage(
+  rt: AppRuntime,
+  session: TopicEditorSession,
+  opts?: { readonly limit?: number },
+): Promise<boolean> {
+  const topicId = session.topicId;
+  if (!topicId || !session.hasMore || session.loadingOlder || session.oldestSeq <= 0) return false;
+  const token = session.enterToken;
+  const before = session.oldestSeq;
+  const limit = opts?.limit ?? 50;
+  session.loadingOlder = true;
+  session.olderError = false;
+  syncOlderIndicator(session);
+  try {
+    const res = await fetch(
+      `api/messages?t=${encodeURIComponent(topicId)}&before=${encodeURIComponent(String(before))}&limit=${limit}`,
+      { credentials: 'same-origin', cache: 'no-store' },
+    );
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const page = (await res.json()) as OlderMessagesPage;
+    if (token !== session.enterToken || topicId !== session.topicId) return false;
+    session.loadingOlder = false;
+    session.hasMore = Boolean(page.hasMore);
+    session.oldestSeq = page.oldestSeq ?? 0;
+    session.editor?.transcript?.prependOlder(page.messages as unknown as readonly TranscriptMessage[]);
+    syncOlderIndicator(session);
+    rt.cacheService.scheduleSave(topicId);
+    return true;
+  } catch {
+    if (token !== session.enterToken || topicId !== session.topicId) return false;
+    session.loadingOlder = false;
+    session.olderError = true;
+    syncOlderIndicator(session);
+    return false;
+  }
+}
+
+async function jumpToMessage(rt: AppRuntime, session: TopicEditorSession, msgId: string): Promise<boolean> {
+  if (!msgId || !session.editor?.transcript) return false;
+  if (session.editor.transcript.scrollToMessage(msgId)) return true;
+  const topicId = session.topicId;
+  const token = session.enterToken;
+  while (session.hasMore && session.oldestSeq > 0 && topicId === session.topicId && token === session.enterToken) {
+    const ok = await loadOlderPage(rt, session, { limit: 100 });
+    if (!ok) return false;
+    if (session.editor?.transcript?.scrollToMessage(msgId)) return true;
+  }
+  return Boolean(session.editor?.transcript?.scrollToMessage(msgId));
+}
+
+function consumePendingJump(rt: AppRuntime, session: TopicEditorSession): void {
+  const target = rt.state.pendingJumpMsgId;
+  if (!target || session.panelId !== MAIN_PANEL_ID) return;
+  rt.state.pendingJumpMsgId = '';
+  void jumpToMessage(rt, session, target);
 }
 
 function applyCachedTopicEntry(
@@ -892,6 +993,12 @@ function buildTranscriptDeps(rt: AppRuntime, els: TopicEditorElements, getTopicI
       if (btn instanceof HTMLElement) session.editor?.composer?.copyLocal(nonce, btn);
     },
     discardLocal: (nonce: string) => session.editor?.composer?.discardLocal(nonce),
+    onLoadOlder: () => {
+      void loadOlderPage(rt, session);
+    },
+    onJumpToMessage: (msgId: string) => {
+      void jumpToMessage(rt, session, msgId);
+    },
   };
 }
 
@@ -1290,30 +1397,76 @@ function mergeSyncLaunch(session: TopicEditorSession, ev: Extract<WebEvent, { t:
   return ev.agents || null;
 }
 
+function applySyncGlobals(
+  rt: AppRuntime,
+  ev: Extract<WebEvent, { t: 'sync' }>,
+): { epochChanged: boolean; hasGlobals: boolean } {
+  const { state } = rt;
+  const prevEpoch = state.epoch;
+  if (state.epochConfirmed && state.epoch && ev.epoch && ev.epoch !== state.epoch) rt.streamClient.checkBuild();
+  state.epoch = ev.epoch || 0;
+  state.epochConfirmed = state.epoch !== 0;
+  const hasGlobals = ev.topics !== undefined;
+  if (hasGlobals) {
+    state.topics = ev.topics || [];
+    state.offline = ev.offline || [];
+  }
+  if (ev.commands !== undefined) state.commands = ev.commands;
+  if (ev.tv !== undefined) rt.streamClient.setTopicsVersion(ev.tv);
+  return { epochChanged: Boolean(prevEpoch && state.epoch && prevEpoch !== state.epoch), hasGlobals };
+}
+
 function handleSyncEvent(rt: AppRuntime, ev: Extract<WebEvent, { t: 'sync' }>): void {
   const { state } = rt;
   const { targets, named } = resolveSyncTargets(rt, ev.topic);
   if (targets.length === 0) return;
 
-  if (state.epochConfirmed && state.epoch && ev.epoch && ev.epoch !== state.epoch) rt.streamClient.checkBuild();
-  state.epoch = ev.epoch || 0;
-  state.epochConfirmed = state.epoch !== 0;
-  state.topics = ev.topics || [];
-  state.offline = ev.offline || [];
-  state.commands = ev.commands || [];
-  rt.streamClient.setTopicsVersion(ev.tv || 0);
-
-  for (const session of targets) syncSessionFromEvent(rt, session, ev, named);
+  const { epochChanged, hasGlobals } = applySyncGlobals(rt, ev);
+  for (const session of targets) {
+    updateSessionPagingFromSync(session, ev, epochChanged);
+    syncSessionFromEvent(rt, session, ev, named);
+    consumePendingJump(rt, session);
+  }
 
   if (visibleTopicIds(rt).includes(ev.topic)) {
-    rt.readsService.setCount(ev.topic, ev.messages.length);
+    const count = ev.totalCount ?? topicById(state, ev.topic)?.msgCount ?? ev.messages.length;
+    rt.readsService.setCount(ev.topic, count);
   }
   const activeId = focusedSession(state)?.topicId || ev.topic;
   state.topic = activeId;
-  rt.events.emit('topic.list', { topics: toTopicInfos(state.topics) });
+  if (hasGlobals) rt.events.emit('topic.list', { topics: toTopicInfos(state.topics) });
   rt.events.emit('topic.active', { id: activeId, topic: topicById(state, activeId) as unknown as TopicInfo | undefined });
   rt.readsService.reportSeen();
   rt.registry.refreshActivityBadges();
+}
+
+function updateSessionPagingFromSync(
+  session: TopicEditorSession,
+  ev: Extract<WebEvent, { t: 'sync' }>,
+  epochChanged: boolean,
+): void {
+  const incomingHasMore = Boolean(ev.hasMore);
+  const incomingOldest = ev.oldestSeq || 0;
+  if (epochChanged || !incomingHasMore || session.oldestSeq <= 0) {
+    session.hasMore = incomingHasMore;
+    session.oldestSeq = incomingOldest;
+  } else if (incomingOldest > 0 && incomingOldest < session.oldestSeq) {
+    session.oldestSeq = incomingOldest;
+  }
+  session.loadingOlder = false;
+  session.olderError = false;
+}
+
+function syncComposerAfterReconcile(
+  composer: NonNullable<TopicEditorSession['editor']>['composer'],
+  ev: Extract<WebEvent, { t: 'sync' }>,
+): void {
+  if (!composer) return;
+  if (ev.recentNonces) {
+    for (const nonce of ev.recentNonces) composer.retireLocalNonce(nonce);
+  }
+  composer.settleUnsure();
+  if (ev.commands !== undefined) composer.setCommands(ev.commands);
 }
 
 function applySyncToSession(
@@ -1329,16 +1482,14 @@ function applySyncToSession(
   const { transcript, composer, status } = editor;
   if (named && composer) composer.loadDraftIfEmpty(session.topicId);
   if (transcript) {
-    transcript.takeMachines(ev.offline || []);
+    if (ev.topics !== undefined) transcript.takeMachines(ev.offline || []);
     transcript.repaintHistory();
   }
   if (composer) composer.showUnsent(session.topicId);
-  if (transcript) transcript.reconcile(ev.messages);
-  if (composer) {
-    composer.settleUnsure();
-    composer.setCommands(ev.commands || []);
-  }
+  if (transcript) transcript.reconcile(ev.messages, { partial: Boolean(ev.hasMore) });
+  syncComposerAfterReconcile(composer, ev);
   if (transcript) {
+    syncOlderIndicator(session);
     transcript.banners.placeDivider();
     transcript.banners.syncEmptyNote();
     if (transcript.btw.isOpen()) transcript.btw.render(false);
@@ -1502,8 +1653,10 @@ function finishSessionResume(rt: AppRuntime, session: TopicEditorSession): void 
   editor?.transcript?.banners.placeDivider();
   editor?.transcript?.banners.syncEmptyNote();
   editor?.transcript?.scroll.clearView();
+  syncOlderIndicator(session);
   rt.cacheService.scheduleSave(session.topicId);
   if (editor) editor.els.noteEl.textContent = '';
+  consumePendingJump(rt, session);
 }
 
 function handleResumedEvent(rt: AppRuntime, ev: Extract<WebEvent, { t: 'resumed' }>): void {
@@ -1651,6 +1804,8 @@ function wireStreamAndCache(rt: AppRuntime): void {
         synced: s.synced,
         stale: s.stale,
         lastEventId: rt.streamClient.getLastEventId(topicId),
+        hasMore: s.hasMore,
+        oldestSeq: s.oldestSeq,
         collectMessages: () => {
           const log = s.editor?.els.log;
           if (!log) return [];
@@ -1861,6 +2016,7 @@ function bootstrap(): void {
     insertHandler: null,
     settingsBridge: null,
     streamConnected: false,
+    pendingJumpMsgId: readInitialJumpMsgId(),
   };
 
   const notifyBridge = createStatusNotifyBridge({ doc: document, win: window, postFn: post });

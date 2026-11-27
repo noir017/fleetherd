@@ -198,6 +198,8 @@ export interface TopicSnapshotPayload {
   readonly last?: string;
   readonly stale?: boolean;
   readonly messages?: readonly unknown[];
+  readonly hasMore?: boolean;
+  readonly oldestSeq?: number;
 }
 
 export interface ScheduleTaskLike {

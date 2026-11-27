@@ -34,6 +34,18 @@ All notable changes to this project are documented here. The format is based on
   server-known fields while leaving untouched new topics expanded.
 ### Changed
 
+- **Web UI topic loading now resumes from local cache on direct reloads and pages older messages on demand.**
+  Reloading or cold-opening a topic URL previously skipped the IndexedDB transcript cache and
+  transferred the entire topic (up to 1,000 messages) in one `sync` frame; initial bootstrap now
+  waits up to 300 ms for `aa_cache` so reloads resume via `?last=` (with `resumed` carrying `epoch`
+  and initial `commands`), falling back cleanly on restart or backlog overflow. When a full `sync`
+  or `GET /api/topic` snapshot is needed, the server now sends only the latest tail window (up to
+  60 messages or 256 KiB, minimum 10) alongside `totalCount`, `hasMore`, `oldestSeq`, and
+  `recentNonces`, and deduplicates the topic list and command table across multiplexed cold syncs.
+  Scrolling near the top fetches earlier pages from `GET /api/messages` (seq-cursor paginated,
+  guarded by session/SSO auth) while preserving scroll position, keeping partial reconciliation,
+  unread counts, outbox confirmation, `/btw` pairing, and quote/message jumps working across
+  unloaded history.
 - **Relaxed the web UI send timeout for slow uplinks.** `sendLimit` previously budgeted 1 s per
   64 KiB (~512 kbps) with a 300 s cap, leaving only ~4 s of margin for a 1 MB upload on a 250 kbps
   link and cutting off larger attachments on slower links. It now budgets 1 s per 16 KiB (~128 kbps)

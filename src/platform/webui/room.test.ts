@@ -22,6 +22,8 @@ import {
   isControlMenuButton,
   mergeReplay,
   OWNER,
+  PAGE_MAX_LIMIT,
+  SYNC_WINDOW_MESSAGES,
   WebRoom,
   type Kept,
   type TranscriptStore,
@@ -102,7 +104,7 @@ const listEvents = (seen: Seen[]): Seen[] => seen.filter((s) => s.ev.t === 'topi
  * against an independent reading of the same rule.
  */
 function applyList(held: Topic[], ev: WebEvent): Topic[] {
-  if (ev.t === 'sync' || ev.t === 'topics') return ev.topics;
+  if (ev.t === 'sync' || ev.t === 'topics') return ev.topics ?? held;
   if (ev.t !== 'topic-rows') return held;
   const gone = new Set(ev.gone ?? []);
   const next = held.filter((t) => !gone.has(t.id));
@@ -3445,5 +3447,109 @@ describe('WebRoom: agent handoff action', () => {
       fromTopicId: topic,
       fromTopicTitle: 'Refactor auth',
     });
+  });
+});
+
+describe('WebRoom: windowed sync, older message paging, and multiplexed topic list dedup', () => {
+  it('windows initial sync and snapshot to the latest tail', () => {
+    const { room, topic } = attached();
+    for (let i = 1; i <= 120; i += 1) {
+      room.post(topic, { own: i % 2 === 1, html: `<p>msg-${i}</p>`, ...(i === 50 ? { nonce: 'n-hidden-50' } : {}) }, `msg-${i}`);
+    }
+
+    const fresh: Seen[] = [];
+    const off = room.subscribe(topic, (id, ev) => fresh.push({ id, ev }));
+    const syncEv = fresh.find((s) => s.ev.t === 'sync')?.ev as Extract<WebEvent, { t: 'sync' }>;
+    expect(syncEv.messages).toHaveLength(SYNC_WINDOW_MESSAGES);
+    expect(syncEv.totalCount).toBe(120);
+    expect(syncEv.hasMore).toBe(true);
+    expect(syncEv.oldestSeq).toBe(120 - SYNC_WINDOW_MESSAGES + 1);
+    expect(syncEv.messages[0]?.html).toBe(`<p>msg-${120 - SYNC_WINDOW_MESSAGES + 1}</p>`);
+    expect(syncEv.messages.at(-1)?.html).toBe('<p>msg-120</p>');
+    expect(syncEv.recentNonces).toContain('n-hidden-50');
+    off();
+
+    // Snapshot shares the same windowing contract.
+    const snap = room.snapshot(topic);
+    expect(snap?.messages).toHaveLength(SYNC_WINDOW_MESSAGES);
+    expect(snap?.hasMore).toBe(true);
+    expect(snap?.oldestSeq).toBe(syncEv.oldestSeq);
+  });
+
+  it('pages older messages by seq cursor and handles boundary cursors cleanly', () => {
+    const { room, topic } = attached();
+    for (let i = 1; i <= 120; i += 1) {
+      room.post(topic, { own: i % 2 === 1, html: `<p>msg-${i}</p>` }, `msg-${i}`);
+    }
+    const snap = room.snapshot(topic)!;
+
+    // Page backwards by seq cursor until the earliest message.
+    const page1 = room.messagesPage(topic, snap.oldestSeq!, 40);
+    expect(page1?.messages).toHaveLength(40);
+    expect(page1?.hasMore).toBe(true);
+    expect(page1?.oldestSeq).toBe(21);
+    expect(page1?.messages[0]?.html).toBe('<p>msg-21</p>');
+    expect(page1?.messages.at(-1)?.html).toBe('<p>msg-60</p>');
+
+    const page2 = room.messagesPage(topic, page1!.oldestSeq!, 40);
+    expect(page2?.messages).toHaveLength(20);
+    expect(page2?.hasMore).toBe(false);
+    expect(page2?.oldestSeq).toBe(1);
+    expect(page2?.messages[0]?.html).toBe('<p>msg-1</p>');
+  });
+
+  it('handles boundary cursors and unknown topics in messagesPage', () => {
+    const { room, topic } = attached();
+    for (let i = 1; i <= 120; i += 1) {
+      room.post(topic, { own: false, html: `<p>msg-${i}</p>` }, `msg-${i}`);
+    }
+
+    // Boundary cursors: at or before oldest returns empty + hasMore=false; beyond newest returns latest clamped.
+    const pastStart = room.messagesPage(topic, 1, 50);
+    expect(pastStart?.messages).toEqual([]);
+    expect(pastStart?.hasMore).toBe(false);
+    expect(pastStart?.oldestSeq).toBeUndefined();
+
+    const pastEnd = room.messagesPage(topic, 999999, PAGE_MAX_LIMIT + 50);
+    expect(pastEnd?.messages).toHaveLength(PAGE_MAX_LIMIT);
+    expect(pastEnd?.hasMore).toBe(true);
+    expect(room.messagesPage('deadbeef', 10, 10)).toBeUndefined();
+  });
+
+  it('caps windowed sync by byte budget while keeping at least 10 messages', () => {
+    const { room, topic } = attached();
+    const big = `<p>${'x'.repeat(25_000)}</p>`;
+    for (let i = 1; i <= 30; i += 1) {
+      room.post(topic, { own: false, html: big }, 'big');
+    }
+    const fresh: Seen[] = [];
+    const off = room.subscribe(topic, (id, ev) => fresh.push({ id, ev }));
+    const syncEv = fresh.find((s) => s.ev.t === 'sync')?.ev as Extract<WebEvent, { t: 'sync' }>;
+    expect(syncEv.messages.length).toBeGreaterThanOrEqual(10);
+    expect(syncEv.messages.length).toBeLessThan(30);
+    expect(syncEv.hasMore).toBe(true);
+    expect(syncEv.totalCount).toBe(30);
+    off();
+  });
+
+  it('sends topics/commands/tv only on the first cold sync of a multiplexed stream', () => {
+    const { room, topic: t1 } = attached();
+    const t2 = room.createTopic('second').id;
+    const t3 = room.createTopic('third').id;
+    room.setCommands([{ name: 'model', description: 'Pick model' }]);
+    const events: Seen[] = [];
+    const off = room.subscribeMany([t1, t2, t3], (id, ev) => events.push({ id, ev }));
+    const syncs = events.filter((e) => e.ev.t === 'sync').map((e) => e.ev as Extract<WebEvent, { t: 'sync' }>);
+    expect(syncs).toHaveLength(3);
+    expect(syncs[0]?.topics).toBeDefined();
+    expect(syncs[0]?.commands).toBeDefined();
+    expect(syncs[0]?.tv).toBeDefined();
+    expect(syncs[1]?.topics).toBeUndefined();
+    expect(syncs[1]?.commands).toBeUndefined();
+    expect(syncs[1]?.tv).toBeUndefined();
+    expect(syncs[2]?.topics).toBeUndefined();
+    expect(syncs[2]?.commands).toBeUndefined();
+    expect(syncs[2]?.tv).toBeUndefined();
+    off();
   });
 });

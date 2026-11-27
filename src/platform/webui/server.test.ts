@@ -3789,3 +3789,50 @@ describe('external plugin routes (/api/plugins/ and /plugins/)', () => {
     expect((await fetch(`${base}/api/plugins/hello/%2e%2e/topics`, { headers: { cookie } })).status).toBe(404);
   });
 });
+
+describe('webui server: GET /api/messages paging', () => {
+  it('pages older messages by seq cursor, enforces auth and strict parameter validation', async () => {
+    const { base, room, topic } = await boot();
+    for (let i = 1; i <= 85; i += 1) {
+      room.post(topic, { own: false, html: `<p>m${i}</p>` }, `m${i}`);
+    }
+
+    // Guarded behind session auth.
+    expect((await fetch(`${base}/api/messages?t=${topic}&before=26&limit=20`)).status).toBe(401);
+
+    const cookie = await signIn(base);
+    // Parameter validation: malformed topic, missing/invalid before, invalid/over-cap limit, unknown topic.
+    expect((await fetch(`${base}/api/messages?t=bad&before=10`, { headers: { cookie } })).status).toBe(400);
+    expect((await fetch(`${base}/api/messages?t=${topic}`, { headers: { cookie } })).status).toBe(400);
+    expect((await fetch(`${base}/api/messages?t=${topic}&before=0`, { headers: { cookie } })).status).toBe(400);
+    expect((await fetch(`${base}/api/messages?t=${topic}&before=-5`, { headers: { cookie } })).status).toBe(400);
+    expect((await fetch(`${base}/api/messages?t=${topic}&before=1.5`, { headers: { cookie } })).status).toBe(400);
+    expect((await fetch(`${base}/api/messages?t=${topic}&before=26&limit=0`, { headers: { cookie } })).status).toBe(400);
+    expect((await fetch(`${base}/api/messages?t=${topic}&before=26&limit=101`, { headers: { cookie } })).status).toBe(400);
+    expect((await fetch(`${base}/api/messages?t=deadbeef&before=26`, { headers: { cookie } })).status).toBe(404);
+
+    // Valid cursor walk from snapshot.oldestSeq back to message 1.
+    const snapRes = await fetch(`${base}/api/topic?t=${topic}`, { headers: { cookie } });
+    const snap = (await snapRes.json()) as { messages: Array<{ html: string }>; hasMore: boolean; oldestSeq: number; totalCount: number };
+    expect(snap.messages).toHaveLength(60);
+    expect(snap.hasMore).toBe(true);
+    expect(snap.totalCount).toBe(85);
+    expect(snap.oldestSeq).toBe(26);
+
+    const p1Res = await fetch(`${base}/api/messages?t=${topic}&before=${snap.oldestSeq}&limit=15`, { headers: { cookie } });
+    expect(p1Res.status).toBe(200);
+    const p1 = (await p1Res.json()) as { messages: Array<{ html: string }>; hasMore: boolean; oldestSeq: number };
+    expect(p1.messages).toHaveLength(15);
+    expect(p1.messages[0]?.html).toBe('<p>m11</p>');
+    expect(p1.messages.at(-1)?.html).toBe('<p>m25</p>');
+    expect(p1.hasMore).toBe(true);
+    expect(p1.oldestSeq).toBe(11);
+
+    const p2Res = await fetch(`${base}/api/messages?t=${topic}&before=${p1.oldestSeq}&limit=15`, { headers: { cookie } });
+    const p2 = (await p2Res.json()) as { messages: Array<{ html: string }>; hasMore: boolean; oldestSeq: number };
+    expect(p2.messages).toHaveLength(10);
+    expect(p2.messages[0]?.html).toBe('<p>m1</p>');
+    expect(p2.hasMore).toBe(false);
+    expect(p2.oldestSeq).toBe(1);
+  });
+});
