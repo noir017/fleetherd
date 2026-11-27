@@ -59,14 +59,14 @@ svg.ic{
   stroke-width:var(--fh-icon-stroke);
 }
 
-/* ── §4.2 Scrollbar (10px, rgba(121,121,121,.4)) ─────────────────────────── */
+/* ── §4.2 Scrollbar (7px, rgba(121,121,121,.4)) ──────────────────────────── */
 @supports not selector(::-webkit-scrollbar){
   *{
-    scrollbar-width:auto;
+    scrollbar-width:thin;
     scrollbar-color:var(--fh-scroll-thumb) transparent;
   }
 }
-::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar{width:7px;height:7px}
 ::-webkit-scrollbar-track{background:transparent}
 ::-webkit-scrollbar-thumb{background:var(--fh-scroll-thumb);border-radius:0}
 ::-webkit-scrollbar-thumb:hover{background:var(--fh-scroll-thumb-hover)}

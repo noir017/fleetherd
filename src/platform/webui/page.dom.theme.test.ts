@@ -286,7 +286,8 @@ describe('webui page: theme system', () => {
     expect(wbDark).toContain('--fh-font-mono:"Cascadia Code","JetBrains Mono",Consolas,monospace');
     expect(wbDark).toContain('--fh-scroll-thumb:rgba(121,121,121,.4)');
     expect(wbDark).toContain('--fh-icon-stroke:1.5');
-    expect(STYLE_SOURCE).toContain('::-webkit-scrollbar{width:10px;height:10px}');
+    expect(STYLE_SOURCE).toContain('::-webkit-scrollbar{width:7px;height:7px}');
+    expect(STYLE_SOURCE).toContain('scrollbar-width:thin;');
     expect(STYLE_SOURCE).toContain('svg.ic{\n  stroke-width:var(--fh-icon-stroke);');
     expect(STYLE_SOURCE).toContain('letter-spacing:0.05em');
     expect(STYLE_SOURCE).not.toContain('data-workbench="1"');

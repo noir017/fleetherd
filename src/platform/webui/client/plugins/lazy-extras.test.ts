@@ -11,7 +11,10 @@ import {
   createExtrasLoader,
   createLazyHistoryPlugin,
   createLazyPalettePlugin,
+  createLazyReviewsPlugin,
+  createLazySchedulesPlugin,
   createLazySettingsPlugin,
+  createLazySkillsPlugin,
   type WorkbenchExtrasModule,
 } from './lazy-extras.js';
 import { ContributionRegistry, type PluginTopicsBridge, WebuiEventBus } from './registry.js';
@@ -257,6 +260,32 @@ describe('lazy-extras', () => {
       expect(received).toHaveLength(1);
     });
     expect(received[0]).toBe(fakeSettingsMsg);
+
+    manager.dispose();
+    events.dispose();
+    registry.dispose();
+  });
+
+  it('registers lazy sidebar activities in order: history(20), reviews(30), skills(40), schedules(50), settings(100)', async () => {
+    const { registry, events, manager } = makeHarness();
+    const loader = createExtrasLoader({ bundleUrl: null });
+    manager.register(createLazyHistoryPlugin(loader), { builtin: true });
+    manager.register(createLazySchedulesPlugin(loader), { builtin: true });
+    manager.register(createLazyReviewsPlugin(loader), { builtin: true });
+    manager.register(createLazySkillsPlugin(loader), { builtin: true });
+    manager.register(
+      createLazySettingsPlugin(loader, { instrOk: false, listDeviceSections: () => [] }),
+      { builtin: true },
+    );
+    await manager.activateAll();
+
+    expect(registry.listActivities().map((a) => [a.id, a.order])).toEqual([
+      ['history', 20],
+      ['reviews', 30],
+      ['skills', 40],
+      ['schedules', 50],
+      ['settings', 100],
+    ]);
 
     manager.dispose();
     events.dispose();

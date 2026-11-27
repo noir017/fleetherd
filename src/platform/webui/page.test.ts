@@ -293,7 +293,8 @@ describe('webui page', () => {
   it('styles scrollbars to blend with the dark background', () => {
     expect(html).toContain('color-scheme:dark');
     expect(html).toContain('scrollbar-color:');
-    expect(html).toContain('scrollbar-width:auto');
+    expect(html).toContain('scrollbar-width:thin');
+    expect(html).toContain('::-webkit-scrollbar{width:7px;height:7px}');
     expect(html).toContain('::-webkit-scrollbar');
     expect(html).toContain('::-webkit-scrollbar-thumb');
   });

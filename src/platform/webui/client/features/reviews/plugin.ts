@@ -52,7 +52,7 @@ export function createReviewsPlugin(deps: ReviewsPluginDeps = {}): WebuiPlugin {
         title: tr('sideTasks.tabReviews'),
         icon: 'eye',
         view: 'reviews',
-        order: 40,
+        order: 30,
         badge: () => store.pendingCount(),
       });
 

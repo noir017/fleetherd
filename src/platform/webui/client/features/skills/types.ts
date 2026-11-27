@@ -141,7 +141,7 @@ export function resolveSkillsDeps(deps: SkillsPluginDeps = {}): ResolvedSkillsDe
     doc: deps.doc ?? document,
     overlays: deps.overlays,
     enabled: deps.enabled,
-    activityOrder: deps.activityOrder ?? 50,
+    activityOrder: deps.activityOrder ?? 40,
     loadHistoryContent: deps.loadHistoryContent,
   };
 }

@@ -831,6 +831,7 @@ export const en = {
   'mobile.reviews': 'Reviews',
   'mobile.prefs': 'Preferences',
   'mobile.skills': 'Skills',
+  'mobile.schedules': 'Scheduled',
   'mobile.settings': 'Settings',
   'mobile.deviceSection': 'This device',
   'mobile.deviceFooter': 'Stored in this browser only',

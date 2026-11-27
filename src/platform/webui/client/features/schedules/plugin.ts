@@ -225,7 +225,7 @@ export function createSchedulesPlugin(deps: SchedulesPluginDeps = {}): WebuiPlug
         title: ctx.i18n.t('wb.sched.activityTitle'),
         icon: 'clock',
         view: 'schedules',
-        order: 30,
+        order: 50,
         badge: () => {
           const sessions = scheduledSessions(ctx.topics.list());
           const waiting = sessions.some((t) => t.asking || t.stage === 'answer');

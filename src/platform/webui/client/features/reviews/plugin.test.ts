@@ -158,6 +158,7 @@ describe('features/reviews plugin', () => {
     expect(active).toEqual(['reviews']);
 
     expect(registry.getActivity('reviews')?.icon).toBe('eye');
+    expect(registry.getActivity('reviews')?.order).toBe(30);
     expect(registry.getView('reviews')?.part).toBe('sidebar');
     expect(registry.commands.has('reviews.refresh')).toBe(true);
     expect(registry.getActivityBadge('reviews')).toBeNull();

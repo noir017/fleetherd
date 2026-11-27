@@ -1,6 +1,6 @@
 *{box-sizing:border-box}
-@supports not selector(::-webkit-scrollbar){*{scrollbar-width:auto;scrollbar-color:var(--fh-scroll-thumb) transparent}}
-::-webkit-scrollbar{width:10px;height:10px}
+@supports not selector(::-webkit-scrollbar){*{scrollbar-width:thin;scrollbar-color:var(--fh-scroll-thumb) transparent}}
+::-webkit-scrollbar{width:7px;height:7px}
 ::-webkit-scrollbar-track{background:transparent}
 ::-webkit-scrollbar-thumb{background:var(--fh-scroll-thumb);border-radius:0}
 ::-webkit-scrollbar-thumb:hover{background:var(--fh-scroll-thumb-hover)}

@@ -833,6 +833,7 @@ export const zhCN = {
   'mobile.reviews': '复盘',
   'mobile.prefs': '偏好建议',
   'mobile.skills': '技能',
+  'mobile.schedules': '定时',
   'mobile.settings': '设置',
   'mobile.deviceSection': '本设备',
   'mobile.deviceFooter': '只存在这个浏览器里',

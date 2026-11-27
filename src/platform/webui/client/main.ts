@@ -1034,12 +1034,14 @@ function wireStreamAndCache(rt: AppRuntime): void {
   rt.readsService.attachWindowEvents(document, window);
 }
 
-const BUILTIN_MORE_IDS = new Set(['reviews', 'skills', 'settings']);
+const BUILTIN_MORE_IDS = new Set(['skills', 'schedules', 'settings']);
 
 function syncMobileMoreState(rt: AppRuntime): void {
   const activities = rt.registry.listActivities();
   const revAct = activities.find((a) => a.id === 'reviews');
   const revCount = revAct?.badge?.();
+  const schedAct = activities.find((a) => a.id === 'schedules');
+  const schedBadge = schedAct?.badge?.();
   const extraItems = activities
     .slice(3)
     .filter((a) => !BUILTIN_MORE_IDS.has(a.id))
@@ -1060,8 +1062,13 @@ function syncMobileMoreState(rt: AppRuntime): void {
     else if (topic.live) idleCount += 1;
   }
   rt.shell.setMobileMoreState({
-    reviewsBadge: undefined,
     prefsBadge: typeof revCount === 'number' && revCount > 0 ? String(revCount) : undefined,
+    schedulesBadge:
+      typeof schedBadge === 'number' && schedBadge > 0
+        ? String(schedBadge)
+        : schedBadge === 'dot'
+          ? 'dot'
+          : undefined,
     extraItems,
     notificationsEnabled: rt.notifyBridge.getState().enabled,
     lowAttention: rt.workbenchRoot.classList.contains('calm'),
@@ -1071,13 +1078,13 @@ function syncMobileMoreState(rt: AppRuntime): void {
     version: rt.boot.version ? `v${rt.boot.version}` : rt.boot.build ? rt.boot.build.slice(0, 7) : undefined,
     runningCount,
     idleCount,
-    onOpenReviews: () => { rt.shell.views.reveal('reviews'); },
     onOpenPrefs: () => {
       if (!rt.shell.editors.open('review-prefs', {})) {
         rt.shell.views.reveal('reviews');
       }
     },
     onOpenSkills: () => { rt.shell.views.reveal('skills'); },
+    onOpenSchedules: () => { rt.shell.views.reveal('schedules'); },
     onOpenSettings: () => { rt.shell.views.reveal('settings'); },
     onOpenExtra: (viewId) => { rt.shell.views.reveal(viewId); },
     onToggleNotifications: () => {

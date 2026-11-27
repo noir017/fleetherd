@@ -442,7 +442,7 @@ export function createLazySchedulesPlugin(loader: ExtrasLoader, deps?: Schedules
     id: 'schedules',
     loadPlugin: async () => (await loader())?.createSchedulesPlugin(deps) ?? null,
     activities: [
-      { id: 'schedules', title: tr('sideTasks.tabScheduled'), icon: 'clock', view: 'schedules', order: 30, hasBadge: true },
+      { id: 'schedules', title: tr('sideTasks.tabScheduled'), icon: 'clock', view: 'schedules', order: 50, hasBadge: true },
     ],
     views: [{ id: 'schedules', title: tr('sideTasks.tabScheduled'), icon: 'clock', part: 'sidebar' }],
     editors: [
@@ -468,7 +468,7 @@ export function createLazyReviewsPlugin(loader: ExtrasLoader, deps?: ReviewsPlug
     id: 'reviews',
     loadPlugin: async () => (await loader())?.createReviewsPlugin(deps) ?? null,
     activities: [
-      { id: 'reviews', title: tr('sideTasks.tabReviews'), icon: 'eye', view: 'reviews', order: 40, hasBadge: true },
+      { id: 'reviews', title: tr('sideTasks.tabReviews'), icon: 'eye', view: 'reviews', order: 30, hasBadge: true },
     ],
     views: [{ id: 'reviews', title: tr('sideTasks.tabReviews'), icon: 'eye', part: 'sidebar' }],
     editors: [
@@ -543,7 +543,7 @@ export function createLazySkillsPlugin(loader: ExtrasLoader, deps?: SkillsPlugin
     id: 'skills',
     loadPlugin: async () => (await loader())?.createSkillsPlugin(deps) ?? null,
     activities: [
-      { id: 'skills', title: tr('skills.title'), icon: 'book', view: 'skills', order: deps?.activityOrder ?? 50 },
+      { id: 'skills', title: tr('skills.title'), icon: 'book', view: 'skills', order: deps?.activityOrder ?? 40 },
     ],
     views: [{ id: 'skills', title: tr('skills.title'), icon: 'book', part: 'sidebar', when: deps?.enabled }],
     editors: [{ kind: 'skill', title: (input) => stringField(input, 'name') ?? tr('skills.title') }],

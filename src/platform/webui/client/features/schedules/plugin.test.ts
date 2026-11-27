@@ -219,6 +219,7 @@ describe('features/schedules plugin', () => {
     expect(active).toEqual(['schedules']);
 
     expect(registry.getActivity('schedules')?.icon).toBe('clock');
+    expect(registry.getActivity('schedules')?.order).toBe(50);
     expect(registry.getView('schedules')?.part).toBe('sidebar');
     expect(registry.getEditor('schedule')).toBeDefined();
     expect(registry.commands.has('schedules.new')).toBe(true);
