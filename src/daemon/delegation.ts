@@ -182,7 +182,7 @@ const READ_TOTAL_CHARS = 80_000;
 
 /** Narrow port over ConversationRegistry; satisfied structurally at wiring time. */
 export interface DelegationRegistry {
-  openTask(opts: {
+  openTask: (opts: {
     platform: string;
     parent: ConversationAddress;
     agentId: string;
@@ -193,63 +193,63 @@ export interface DelegationRegistry {
     model?: string;
     options?: Record<string, string>;
     forward?: { heading: string; text: string };
-  }): Promise<{ key: ConversationId; address: ConversationAddress; title: string }>;
-  handTo(
+  }) => Promise<{ key: ConversationId; address: ConversationAddress; title: string }>;
+  handTo: (
     key: ConversationId,
     platformId: string,
     address: ConversationAddress,
     text: string,
     header: string,
     opts?: { queue?: boolean; forward?: { heading: string; text: string } }
-  ): Promise<'started' | 'joined' | 'queued'>;
-  isBusy(key: ConversationId): boolean;
-  isAsking(key: ConversationId): boolean;
-  workdirChoices(agentId: string): { root: string; dirs: string[] } | undefined;
-  listChannels(opts: { platform?: string; query?: string; limit: number; currentKey?: ConversationId }): ListChannelsResult;
-  conversationAt(platform: string, address: ConversationAddress): { key: ConversationId; agent?: string } | undefined;
-  laneFor(key: ConversationId): { address: ConversationAddress; platformId: string } | undefined;
-  activityOf(id: ConversationId): TopicActivity | undefined;
-  replyOf(id: ConversationId): { text: string; total: number; turn?: number } | undefined;
-  failureOf(id: ConversationId): { text: string; total: number; turn?: number } | undefined;
-  coolingDown(agentId: string): boolean;
-  progressOf(id: ConversationId): LiveTurn | undefined;
-  runningSince(id: ConversationId): number | undefined;
-  statusOf(id: ConversationId): AgentStatus | undefined;
-  stopConversation(id: ConversationId): 'running' | 'collecting' | 'background' | 'idle';
-  interruptConversation(id: ConversationId): {
+  ) => Promise<'started' | 'joined' | 'queued'>;
+  isBusy: (key: ConversationId) => boolean;
+  isAsking: (key: ConversationId) => boolean;
+  workdirChoices: (agentId: string) => { root: string; dirs: string[] } | undefined;
+  listChannels: (opts: { platform?: string; query?: string; limit: number; currentKey?: ConversationId }) => ListChannelsResult;
+  conversationAt: (platform: string, address: ConversationAddress) => { key: ConversationId; agent?: string } | undefined;
+  laneFor: (key: ConversationId) => { address: ConversationAddress; platformId: string } | undefined;
+  activityOf: (id: ConversationId) => TopicActivity | undefined;
+  replyOf: (id: ConversationId) => { text: string; total: number; turn?: number } | undefined;
+  failureOf: (id: ConversationId) => { text: string; total: number; turn?: number } | undefined;
+  coolingDown: (agentId: string) => boolean;
+  progressOf: (id: ConversationId) => LiveTurn | undefined;
+  runningSince: (id: ConversationId) => number | undefined;
+  statusOf: (id: ConversationId) => AgentStatus | undefined;
+  stopConversation: (id: ConversationId) => 'running' | 'collecting' | 'background' | 'idle';
+  interruptConversation: (id: ConversationId) => {
     outcome: 'running' | 'collecting' | 'background' | 'idle';
     kept: InboundMessage[];
     dropped: InboundMessage[];
   };
-  stopWithPending(
+  stopWithPending: (
     key: ConversationId,
     reason: string
-  ): {
+  ) => {
     outcome: 'running' | 'collecting' | 'background' | 'idle';
     kept: InboundMessage[];
     dropped: InboundMessage[];
     calledOff: number;
     transcripts: number;
   };
-  killConversation(id: ConversationId): 'running' | 'collecting' | 'background' | 'idle' | 'no-child' | 'unresumable';
-  runScheduledPrompt(opts: {
+  killConversation: (id: ConversationId) => 'running' | 'collecting' | 'background' | 'idle' | 'no-child' | 'unresumable';
+  runScheduledPrompt: (opts: {
     key: ConversationId;
     platform: string;
     address: ConversationAddress;
     agentId: string;
     prompt: string;
     user?: string;
-  }): Promise<SoloOutcome | { refused: string }>;
-  workdirOf(id: ConversationId, agentId?: string): string | undefined;
-  boundAgentOf(key: ConversationId): string | undefined;
-  conversationTitle(key: ConversationId): string | undefined;
-  scheduledChoicesProblem(
+  }) => Promise<SoloOutcome | { refused: string }>;
+  workdirOf: (id: ConversationId, agentId?: string) => string | undefined;
+  boundAgentOf: (key: ConversationId) => string | undefined;
+  conversationTitle: (key: ConversationId) => string | undefined;
+  scheduledChoicesProblem: (
     agentId: string,
     choice: { model?: string; options?: Record<string, string> },
     from: ConversationId | undefined
-  ): Promise<string | undefined>;
-  agentLists(agentId: string): Promise<{ models?: ModelSelector; settings?: SessionOption[]; error?: string }>;
-  runningOn(agentId: string): number;
+  ) => Promise<string | undefined>;
+  agentLists: (agentId: string) => Promise<{ models?: ModelSelector; settings?: SessionOption[]; error?: string }>;
+  runningOn: (agentId: string) => number;
 }
 
 export interface DelegationDeps {

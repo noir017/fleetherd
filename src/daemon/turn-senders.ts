@@ -1,4 +1,8 @@
-/** Synthetic sender IDs written by the gateway; any other sender is a person's message. */
+/**
+ * Wire-format sender IDs written to the history library (a typo records a scheduled run as a person's).
+ * DELEGATE_SENDER and UPDATE_SENDER are attended turns, so permission levels that ask still ask the person (invariant 1);
+ * UPDATE_SENDER stays distinct so a `/super` topic is not named after its first update card.
+ */
 export const SCHEDULED_SENDER = 'schedule';
 export const CONTINUE_SENDER = 'continue';
 export const DELEGATE_SENDER = 'delegated';
@@ -14,7 +18,10 @@ export const GATEWAY_SENDERS: ReadonlySet<string> = new Set([
   RECONNECT_SENDER,
 ]);
 
-/** A person's own messages in a turn batch or merged into a running turn (excludes gateway senders). */
+/**
+ * A person's own messages in a turn batch or merged into a running turn (excludes gateway senders).
+ * `text` is the prompt as the agent read it (including quoted lines and voice transcripts); `attachments` are filenames only.
+ */
 export interface PersonWords {
   text: string;
   attachments: string[];
