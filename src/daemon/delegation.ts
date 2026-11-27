@@ -863,7 +863,7 @@ export class Delegation {
    * those more — with nobody asked, which is the spend the default exists to bound.
    */
   private nested(here: Place): boolean {
-    return here.adapter.parentOf?.(here.address) !== undefined;
+    return here.adapter.topics?.parentOf(here.address) !== undefined;
   }
 
   /**
@@ -1550,7 +1550,7 @@ export class Delegation {
         address = undefined;
       }
     }
-    const parent = address ? here.adapter.parentOf?.(address) : undefined;
+    const parent = address ? here.adapter.topics?.parentOf(address) : undefined;
     if (!address || !parent || parent.channel !== here.address.channel || parent.thread !== here.address.thread) {
       throw new Error(
         this.externalOf(here)
@@ -1566,7 +1566,7 @@ export class Delegation {
   /** The topics a conversation opened, as places. */
   private childrenOf(here: Place): Place[] {
     const out: Place[] = [];
-    for (const address of here.adapter.childrenOf?.(here.address) ?? []) {
+    for (const address of here.adapter.topics?.childrenOf(here.address) ?? []) {
       const conv = this.deps.registry.conversationAt(here.platformId, address);
       if (conv) out.push({ key: conv.key, platformId: here.platformId, address, adapter: here.adapter });
     }
@@ -1740,7 +1740,7 @@ export class Delegation {
   private parentOf(id: ConversationId): Place | undefined {
     const lane = this.deps.registry.laneFor(id);
     const adapter = lane ? this.deps.platforms.get(lane.platformId) : undefined;
-    const address = lane && adapter?.parentOf?.(lane.address);
+    const address = lane && adapter?.topics?.parentOf(lane.address);
     const conv = address && lane ? this.deps.registry.conversationAt(lane.platformId, address) : undefined;
     if (!lane || !adapter || !address || !conv) return undefined;
     return { key: conv.key, platformId: lane.platformId, address, adapter };

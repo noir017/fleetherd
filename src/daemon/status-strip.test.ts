@@ -48,7 +48,7 @@ function rig(opts: { canShow: boolean }) {
     startTyping: async () => {},
     stopTyping: async () => {},
     measureRendered: (t: string) => t.length,
-    ...(opts.canShow ? { setStatus: (_a: unknown, s: AgentStatus | undefined) => void shown.push(s) } : {}),
+    ...(opts.canShow ? { presence: { setStatus: (_a: unknown, s: AgentStatus | undefined) => void shown.push(s) } } : {}),
   } as unknown as PlatformAdapter;
 
   const config = parseConfig({

@@ -262,7 +262,7 @@ export class TurnChanges {
     address: ConversationAddress
   ): Promise<TurnChangesHandle | undefined> {
     // Only a page can show the result; a chat platform has nowhere to put it and no file route.
-    if (typeof platform.attachTurnChanges !== 'function') return undefined;
+    if (!platform.workbench) return undefined;
     const ws = this.opts.workspaceFor(ref);
     if (!ws) return undefined;
     const key = `${ws.host}\u0000${ws.root}`;
@@ -855,7 +855,7 @@ export class TurnChanges {
 
   private attach(handle: TurnChangesHandle, entry: TurnChangeEntry): void {
     try {
-      handle.platform.attachTurnChanges?.(handle.address, entry, handle.reply);
+      handle.platform.workbench?.attachTurnChanges(handle.address, entry, handle.reply);
     } catch (e) {
       this.log(`[changes] ${handle.id}: could not attach turn ${entry.turn} to its reply (${reasonOf(e)})`);
     }

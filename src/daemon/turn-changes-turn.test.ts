@@ -80,9 +80,11 @@ function rig(cwd: string, runTurn: (h: AgentStreamHandlers) => Promise<void>) {
     addReaction: async () => {},
     startTyping: async () => {},
     stopTyping: async () => {},
-    attachTurnChanges: (address: ConversationAddress, entry: TurnChangeEntry, reply?: { messageId: string }) => {
-      addresses.push(address);
-      entries.push({ entry, ...(reply ? { reply: reply.messageId } : {}) });
+    workbench: {
+      attachTurnChanges: (address: ConversationAddress, entry: TurnChangeEntry, reply?: { messageId: string }) => {
+        addresses.push(address);
+        entries.push({ entry, ...(reply ? { reply: reply.messageId } : {}) });
+      },
     },
   } as unknown as PlatformAdapter;
 

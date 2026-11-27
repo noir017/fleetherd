@@ -118,7 +118,7 @@ describe('webui adapter: the daemon\'s panels', () => {
       commit: async () => ({ ok: false as const, reason: 'not-git' as const, text: 'no' }),
       commitFile: async () => ({ ok: false as const, text: 'no' }),
     };
-    a.useGitPanel?.(panel);
+    a.workbench?.useGitPanel(panel);
     expect(handed).toHaveBeenCalledWith(panel);
     handed.mockRestore();
   });
@@ -178,10 +178,10 @@ describe('webui adapter: topics', () => {
     // The one platform that implements setStatus. It throws on a bad address like every outbound
     // method here; the daemon's status board is what swallows that.
     const a = adapter();
-    expect(typeof a.setStatus).toBe('function');
+    expect(typeof a.presence?.setStatus).toBe('function');
     const address = await somewhere(a);
-    expect(() => a.setStatus!(address, { agent: 'cc' })).not.toThrow();
-    expect(() => a.setStatus!({ channel: CHANNEL, thread: 'deadbeef' }, { agent: 'cc' })).toThrow(/no such topic/);
+    expect(() => a.presence!.setStatus(address, { agent: 'cc' })).not.toThrow();
+    expect(() => a.presence!.setStatus({ channel: CHANNEL, thread: 'deadbeef' }, { agent: 'cc' })).toThrow(/no such topic/);
   });
 });
 

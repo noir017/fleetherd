@@ -151,12 +151,14 @@ function rig(
   const history = tempHistory();
   const platform = {
     capabilities: { thread: true },
-    parentOf: (a: ConversationAddress) => {
-      const p = parents.get(keyOf(a));
-      return p ? addrOf(p) : undefined;
+    topics: {
+      parentOf: (a: ConversationAddress) => {
+        const p = parents.get(keyOf(a));
+        return p ? addrOf(p) : undefined;
+      },
+      childrenOf: (a: ConversationAddress) =>
+        [...parents.entries()].filter(([, p]) => p === keyOf(a)).map(([c]) => addrOf(c)),
     },
-    childrenOf: (a: ConversationAddress) =>
-      [...parents.entries()].filter(([, p]) => p === keyOf(a)).map(([c]) => addrOf(c)),
     sendMessage: async (a: ConversationAddress, text: string, o?: { kind?: string }) => {
       posted.push({ to: keyOf(a), text, ...(o?.kind ? { kind: o.kind } : {}) });
       return { address: a, messageId: 'm' };

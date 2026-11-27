@@ -46,6 +46,7 @@ import type {
   ModelPickerResult,
   SessionOptionList,
   SessionOptionResult,
+  TopicTree,
 } from '../platform/workbench.js';
 import type {
   ConversationId,
@@ -231,7 +232,7 @@ export class ConversationControls {
     const locale = localeOf(this.ctx.config);
     const platformId = msg.conversation.platform;
     const adapter = this.ctx.platforms.get(platformId);
-    const forkThread = adapter?.forkThread?.bind(adapter);
+    const forkThread = adapter?.topics?.forkThread;
     if (!forkThread) return tMenus(locale, 'fork_web_only');
     const agentId = this.ctx.boundAgentFor(key, fallbackAgent);
     const label = agentDisplayName(findAgent(this.ctx.config, agentId), agentId);
@@ -252,7 +253,7 @@ export class ConversationControls {
     key: ConversationId;
     address: ConversationAddress;
     platformId: string;
-    forkThread: NonNullable<PlatformAdapter['forkThread']>;
+    forkThread: TopicTree['forkThread'];
     agentId: string;
     label: string;
     sourceId: string;
