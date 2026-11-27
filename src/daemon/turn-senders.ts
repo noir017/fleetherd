@@ -1,7 +1,8 @@
 /**
- * Wire-format sender IDs written to the history library (a typo records a scheduled run as a person's).
- * DELEGATE_SENDER and UPDATE_SENDER are attended turns, so permission levels that ask still ask the person (invariant 1);
- * UPDATE_SENDER stays distinct so a `/super` topic is not named after its first update card.
+ * Synthetic sender IDs mapped to history-library triggers by `historyTriggerOf` (a typo records a
+ * scheduled run as a person's). Turns of every sender follow the agent's permission level and still
+ * ask the person when that level asks (invariant 1; see turn-runner.ts:122); UPDATE_SENDER stays
+ * distinct so a `/super` topic is not named after its first update card.
  */
 export const SCHEDULED_SENDER = 'schedule';
 export const CONTINUE_SENDER = 'continue';
