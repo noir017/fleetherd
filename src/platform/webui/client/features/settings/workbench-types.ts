@@ -57,6 +57,7 @@ export interface SettingsEditorHandler {
   handleMessage(msg: SettingsWebMessage | null | undefined): boolean;
   refresh(): void;
   focusSection(input: SettingsEditorInput): void;
+  getUpdateSeq(): number;
 }
 
 export interface SettingsRuntime extends Disposable {

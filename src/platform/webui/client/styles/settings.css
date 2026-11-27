@@ -215,7 +215,6 @@
 
 /* ── Workbench settings editor ────────────────────────────────────────────── */
 .wb-set-editor{display:flex;flex-direction:column;height:100%;min-height:0;background:var(--fh-bg,var(--bg))}
-.wb-set-editor[data-settings-scope="device"] .wb-set-gateway,.wb-set-editor[data-settings-scope="device"] .wb-set-empty{display:none}
 .wb-set-head{flex:none;display:flex;align-items:center;gap:10px;height:48px;padding:0 10px 0 18px;border-bottom:1px solid var(--fh-line,var(--line));background:var(--fh-bg,var(--bg))}
 .wb-set-titles{flex:1;min-width:0;display:flex;align-items:center;gap:8px}
 .wb-set-title{margin:0;font-size:var(--fh-fs-ui);font-weight:600;color:var(--fh-fg-hi,var(--fg));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -225,6 +224,7 @@
 .wb-set-col{max-width:820px;margin:0 auto;padding:22px 28px}
 .wb-set-empty{padding:24px 0;font-size:var(--fh-fs-ui);color:var(--fh-fg-dim,var(--dim))}
 .wb-set-col .set-sec:first-child .set-group{margin-top:0}
+.wb-set-col .set-sec,.wb-set-device-sec{scroll-margin-top:16px}
 .wb-set-col .set-group{margin:20px 2px 8px;font-size:var(--fh-fs-xs);font-weight:600;color:var(--fh-fg-dim,var(--dim));text-transform:uppercase;letter-spacing:.05em}
 .wb-set-col .set-card{border:1px solid var(--fh-line,var(--line));border-radius:4px;background:var(--fh-card,var(--surface));margin-bottom:14px}
 .wb-set-col .set-item{padding:10px 14px;min-height:44px;gap:2px 16px}

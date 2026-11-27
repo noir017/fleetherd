@@ -98,6 +98,19 @@ function selectedKeyFrom(input: SettingsEditorInput | undefined): string | null 
   return itemKey(input.scope, input.sectionId);
 }
 
+function ensureSelectedRowVisible(container: HTMLElement): void {
+  const row = container.querySelector<HTMLElement>('[role="option"][aria-selected="true"]');
+  if (!row) return;
+  const cRect = container.getBoundingClientRect();
+  const rRect = row.getBoundingClientRect();
+  if (cRect.height > 0 && rRect.height > 0 && rRect.top >= cRect.top && rRect.bottom <= cRect.bottom) {
+    return;
+  }
+  if (typeof row.scrollIntoView === 'function') {
+    row.scrollIntoView({ block: 'nearest' });
+  }
+}
+
 export function createSettingsCatalogComponent(
   ctx: PluginContext,
   runtime: SettingsRuntime,
@@ -170,9 +183,14 @@ export function createSettingsCatalogComponent(
     list.setSelected(selectedKeyFrom(runtime.getSelection()));
   };
 
+  const syncSelection = (): void => {
+    list.setSelected(selectedKeyFrom(runtime.getSelection()));
+    ensureSelectedRowVisible(listHost);
+  };
+
   disposables.add(addDisposableListener(searchInput, 'input', refresh));
   disposables.add(runtime.onDidChangeGateway(refresh));
-  disposables.add(runtime.onDidChangeSelection(refresh));
+  disposables.add(runtime.onDidChangeSelection(syncSelection));
   if (runtime.onDidChangeDeviceSections) {
     disposables.add(runtime.onDidChangeDeviceSections(refresh));
   }

@@ -26,6 +26,8 @@ export type {
   SettingsPluginDeps,
 } from './workbench-types.js';
 
+export const SETTINGS_EDITOR_ID = 'editor:settings';
+
 const SETTINGS_EN_STRINGS: Record<string, string> = {
   'wb.settings.gatewayGroup': 'Gateway · config.yaml',
   'wb.settings.deviceGroup': 'This device',
@@ -105,6 +107,13 @@ function isSettingsWebMessage(value: unknown): value is SettingsWebMessage {
   if (!value || typeof value !== 'object') return false;
   const msg = value as Record<string, unknown>;
   return typeof msg.id === 'string' && ('settings' in msg || 'wasSettings' in msg);
+}
+
+function sameSelection(
+  a: SettingsEditorInput | undefined,
+  b: SettingsEditorInput | undefined,
+): boolean {
+  return a?.scope === b?.scope && a?.sectionId === b?.sectionId && a?.agentId === b?.agentId;
 }
 
 function createSettingsRuntime(ctx: PluginContext, deps: SettingsPluginDeps): SettingsRuntime {
@@ -192,6 +201,7 @@ function createSettingsRuntime(ctx: PluginContext, deps: SettingsPluginDeps): Se
     listDeviceSections,
     getSelection: () => selection,
     setSelection(input) {
+      if (sameSelection(selection, input)) return;
       selection = input;
       onDidChangeSelection.fire(input);
     },
@@ -202,9 +212,15 @@ function createSettingsRuntime(ctx: PluginContext, deps: SettingsPluginDeps): Se
       });
     },
     openSettings(input) {
-      ctx.editors.open('settings', input ?? {});
+      const before = new Map<SettingsEditorHandler, number>();
+      for (const editor of editors) before.set(editor, editor.getUpdateSeq());
+      ctx.editors.open('settings', input ?? {}, { id: SETTINGS_EDITOR_ID });
       if (input) {
-        for (const editor of editors) editor.focusSection(input);
+        for (const editor of editors) {
+          if (editor.getUpdateSeq() === before.get(editor)) {
+            editor.focusSection(input);
+          }
+        }
       }
     },
     openInstruction(input) {
@@ -273,7 +289,7 @@ export function createSettingsPlugin(deps: SettingsPluginDeps): WebuiPlugin {
 
       ctx.editors.register({
         kind: 'settings',
-        title: (input) => resolveSettingsEditorTitle(ctx, runtime, input),
+        title: () => resolveSettingsEditorTitle(ctx),
         component: () => createSettingsEditorComponent(ctx, runtime, deps),
       });
 

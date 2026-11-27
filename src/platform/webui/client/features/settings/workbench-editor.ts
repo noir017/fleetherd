@@ -60,7 +60,7 @@ function buildSettingsEditorDom(doc: Document, ctx: PluginContext): SettingsEdit
   head.innerHTML =
     '<div class="wb-set-titles">' +
     '<h2 class="wb-set-title">' +
-    text(ctx.i18n.t('wb.settings.gatewayTitle')) +
+    text(ctx.i18n.t('settings.title')) +
     '</h2>' +
     '</div>' +
     '<div class="wb-set-actions">' +
@@ -162,8 +162,28 @@ function buildSettingsEditorDom(doc: Document, ctx: PluginContext): SettingsEdit
     hiddenOpenBtn,
   };
 }
-function scrollTargetIntoView(el: HTMLElement | null): void {
-  if (!el) return;
+const SCROLL_SPY_THRESHOLD_PX = 24;
+const SCROLL_LOCK_MS = 450;
+
+interface ScrollSpySection {
+  readonly el: HTMLElement;
+  readonly scope: 'gateway' | 'device';
+  readonly sectionId: string;
+}
+
+interface ScrollSpyHandle {
+  lock(): void;
+  dispose(): void;
+}
+
+function scrollSectionIntoPage(pageEl: HTMLElement, el: HTMLElement): void {
+  if (typeof pageEl.scrollTo === 'function') {
+    const pageRect = pageEl.getBoundingClientRect();
+    const elRect = el.getBoundingClientRect();
+    const top = Math.max(0, pageEl.scrollTop + (elRect.top - pageRect.top) - 16);
+    pageEl.scrollTo({ top, behavior: 'smooth' });
+    return;
+  }
   if (typeof el.scrollIntoView === 'function') {
     el.scrollIntoView({ block: 'start' });
   }
@@ -185,7 +205,7 @@ function locateSectionElement(dom: SettingsEditorDom, input: SettingsEditorInput
     }
     return null;
   }
-  if (!input.sectionId) return dom.gatewayBodyEl;
+  if (!input.sectionId) return dom.gatewayPageEl.hidden ? null : dom.gatewayBodyEl;
   if (input.sectionId === 'orphans') {
     return dom.gatewayBodyEl.querySelector<HTMLElement>('[data-instr-orphans]');
   }
@@ -195,6 +215,124 @@ function locateSectionElement(dom: SettingsEditorDom, input: SettingsEditorInput
     if (heading?.textContent?.trim() === input.sectionId) return sections[i] ?? null;
   }
   return null;
+}
+
+function isTargetHiddenByFilter(
+  dom: SettingsEditorDom,
+  el: HTMLElement | null,
+  input: SettingsEditorInput,
+): boolean {
+  if (input.scope === 'device' && dom.deviceWrapEl.hidden) return true;
+  return el ? el.hidden : false;
+}
+
+function collectVisibleSections(dom: SettingsEditorDom): ScrollSpySection[] {
+  const out: ScrollSpySection[] = [];
+  if (!dom.gatewayPageEl.hidden) {
+    const gwSections = dom.gatewayBodyEl.querySelectorAll<HTMLElement>('.set-sec');
+    for (let i = 0; i < gwSections.length; i++) {
+      const sec = gwSections[i];
+      if (!sec || sec.hidden) continue;
+      const heading = sec.querySelector<HTMLElement>('.set-group')?.textContent?.trim();
+      if (heading) out.push({ el: sec, scope: 'gateway', sectionId: heading });
+    }
+  }
+  if (!dom.deviceWrapEl.hidden) {
+    const devSections = dom.deviceListEl.querySelectorAll<HTMLElement>('.wb-set-device-sec');
+    for (let i = 0; i < devSections.length; i++) {
+      const sec = devSections[i];
+      if (!sec || sec.hidden) continue;
+      const sectionId = sec.getAttribute('data-section-id')?.trim();
+      if (sectionId) out.push({ el: sec, scope: 'device', sectionId });
+    }
+  }
+  return out;
+}
+
+function pickActiveSection(
+  pageEl: HTMLElement,
+  sections: readonly ScrollSpySection[],
+  threshold: number,
+): ScrollSpySection | undefined {
+  if (sections.length === 0) return undefined;
+  const scrollable = pageEl.scrollHeight > pageEl.clientHeight;
+  if (scrollable && pageEl.scrollTop + pageEl.clientHeight >= pageEl.scrollHeight - 2) {
+    return sections[sections.length - 1];
+  }
+  const containerTop = pageEl.getBoundingClientRect().top;
+  let active = sections[0];
+  for (let i = 0; i < sections.length; i++) {
+    const sec = sections[i];
+    if (!sec) continue;
+    if (sec.el.getBoundingClientRect().top - containerTop <= threshold) {
+      active = sec;
+    }
+  }
+  return active;
+}
+
+function createScrollSpy(
+  dom: SettingsEditorDom,
+  runtime: SettingsRuntime,
+  isValuesScreen: () => boolean,
+): ScrollSpyHandle {
+  const subs = new DisposableStore();
+  let locked = false;
+  let lockTimer: ReturnType<typeof setTimeout> | null = null;
+  let rafId: number | null = null;
+
+  const clearLockTimer = (): void => {
+    if (lockTimer !== null) {
+      clearTimeout(lockTimer);
+      lockTimer = null;
+    }
+  };
+
+  const unlock = (): void => {
+    locked = false;
+    clearLockTimer();
+  };
+
+  const lock = (): void => {
+    locked = true;
+    clearLockTimer();
+    lockTimer = setTimeout(() => {
+      locked = false;
+      lockTimer = null;
+    }, SCROLL_LOCK_MS);
+  };
+
+  const syncFromScroll = (): void => {
+    rafId = null;
+    if (locked || isValuesScreen()) return;
+    const active = pickActiveSection(dom.pageEl, collectVisibleSections(dom), SCROLL_SPY_THRESHOLD_PX);
+    if (!active) return;
+    const cur = runtime.getSelection();
+    if (cur?.scope === active.scope && cur.sectionId === active.sectionId) return;
+    runtime.setSelection({ scope: active.scope, sectionId: active.sectionId });
+  };
+
+  const onScroll = (): void => {
+    if (locked || rafId !== null) return;
+    rafId = globalThis.requestAnimationFrame(syncFromScroll);
+  };
+
+  subs.add(addDisposableListener(dom.pageEl, 'scroll', onScroll, { passive: true }));
+  subs.add(addDisposableListener(dom.pageEl, 'wheel', unlock, { passive: true }));
+  subs.add(addDisposableListener(dom.pageEl, 'touchstart', unlock, { passive: true }));
+  subs.add(addDisposableListener(dom.pageEl, 'pointerdown', unlock, { passive: true }));
+
+  return {
+    lock,
+    dispose() {
+      unlock();
+      if (rafId !== null) {
+        globalThis.cancelAnimationFrame(rafId);
+        rafId = null;
+      }
+      subs.dispose();
+    },
+  };
 }
 
 function reconcileDeviceSections(
@@ -241,20 +379,7 @@ function reconcileDeviceSections(
   dom.deviceWrapEl.hidden = allowed.length === 0;
 }
 
-export function resolveSettingsEditorTitle(
-  ctx: PluginContext,
-  runtime: SettingsRuntime,
-  input: unknown,
-): string {
-  if (isSettingsEditorInput(input) && input.sectionId) {
-    if (input.scope === 'device') {
-      const found = runtime.listDeviceSections().find((s) => s.id === input.sectionId);
-      if (found) return `${ctx.i18n.t('settings.title')} · ${found.title}`;
-    }
-    if (input.scope === 'gateway' && input.sectionId !== 'all') {
-      return `${ctx.i18n.t('settings.title')} · ${input.sectionId}`;
-    }
-  }
+export function resolveSettingsEditorTitle(ctx: PluginContext): string {
   return ctx.i18n.t('settings.title');
 }
 
@@ -391,33 +516,116 @@ function bindResetClickHandler(
   );
 }
 
-function applySettingsScopeUi(
-  ctx: PluginContext,
-  dom: SettingsEditorDom,
-  feature: SettingsFeature,
-  mountedDeviceCount: number,
-  input: SettingsEditorInput | undefined,
-): void {
-  const isDevice = input?.scope === 'device';
-  dom.root.dataset.settingsScope = isDevice ? 'device' : 'gateway';
-  dom.titleEl.textContent = isDevice
-    ? ctx.i18n.t('wb.settings.deviceGroup')
-    : ctx.i18n.t('wb.settings.gatewayTitle');
-  dom.topicEl.textContent = isDevice
-    ? ctx.i18n.t('wb.settings.deviceSubtitle')
-    : ctx.i18n.t('wb.settings.gatewaySubtitle');
-  dom.refreshBtn.hidden = isDevice;
-  if (isDevice) {
-    dom.deviceWrapEl.hidden = mountedDeviceCount === 0;
-  } else if (feature.getMessage()) {
-    dom.gatewayPageEl.hidden = false;
+function applyLocaleStrings(ctx: PluginContext, dom: SettingsEditorDom): void {
+  dom.titleEl.textContent = ctx.i18n.t('settings.title');
+  dom.topicEl.textContent = ctx.i18n.t('wb.settings.gatewaySubtitle');
+  dom.deviceHeadingEl.textContent = ctx.i18n.t('wb.settings.deviceGroup');
+  dom.refreshBtn.title = ctx.i18n.t('common.refresh');
+  dom.refreshBtn.setAttribute('aria-label', ctx.i18n.t('common.refresh'));
+  dom.searchInput.placeholder = ctx.i18n.t('wb.settings.searchPlaceholder');
+  dom.searchInput.setAttribute('aria-label', ctx.i18n.t('wb.settings.searchPlaceholder'));
+  dom.searchClearBtn.title = ctx.i18n.t('wb.settings.clearSearch');
+  dom.searchClearBtn.setAttribute('aria-label', ctx.i18n.t('wb.settings.clearSearch'));
+  dom.searchEmptyEl.textContent = ctx.i18n.t('wb.settings.noMatch');
+}
+
+interface EditorListenerBindings {
+  readonly ctx: PluginContext;
+  readonly dom: SettingsEditorDom;
+  readonly runtime: SettingsRuntime;
+  readonly feature: SettingsFeature;
+  readonly postFn: NonNullable<SettingsPluginDeps['post']>;
+  readonly waitMs?: number;
+  readonly requestGateway: () => void;
+  readonly refreshSearchState: () => void;
+  readonly clearSearchFilter: () => void;
+  readonly toggleModifiedFilter: () => void;
+  readonly syncDeviceSections: () => void;
+}
+
+function bindEditorListeners(disposables: DisposableStore, b: EditorListenerBindings): void {
+  disposables.add(addDisposableListener(b.dom.refreshBtn, 'click', b.requestGateway));
+  disposables.add(addDisposableListener(b.dom.searchInput, 'input', b.refreshSearchState));
+  disposables.add(addDisposableListener(b.dom.searchClearBtn, 'click', b.clearSearchFilter));
+  disposables.add(addDisposableListener(b.dom.modFilterBtn, 'click', b.toggleModifiedFilter));
+  disposables.add(bindResetClickHandler(b.dom.gatewayBodyEl, b.feature, b.runtime, b.postFn, b.waitMs));
+  if (b.runtime.onDidChangeDeviceSections) {
+    disposables.add(b.runtime.onDidChangeDeviceSections(b.syncDeviceSections));
   }
-  if (!input) return;
-  clearTargetHighlights(dom.root);
-  const el = locateSectionElement(dom, input);
-  if (!el) return;
-  el.classList.add('is-target');
-  scrollTargetIntoView(el);
+  disposables.add(
+    b.ctx.events.on('locale.change', () => {
+      applyLocaleStrings(b.ctx, b.dom);
+      b.feature.onLocaleChange();
+      b.refreshSearchState();
+    }),
+  );
+}
+
+interface TargetNavigator {
+  applyTarget(input: SettingsEditorInput | undefined): void;
+  selectFirstVisibleIfUnset(): void;
+  onGatewayRendered(): void;
+  onDeviceSynced(gatewayReady: boolean): void;
+}
+
+function createTargetNavigator(
+  dom: SettingsEditorDom,
+  runtime: SettingsRuntime,
+  scrollSpy: ScrollSpyHandle,
+  hasActiveFilter: () => boolean,
+  clearFilter: () => void,
+): TargetNavigator {
+  let pendingScrollTarget: SettingsEditorInput | undefined;
+  let hasInitialSelection = Boolean(runtime.getSelection()?.sectionId);
+
+  const selectFirstVisibleIfUnset = (): void => {
+    if (hasInitialSelection || runtime.getSelection()?.sectionId) return;
+    const first = collectVisibleSections(dom)[0];
+    if (!first) return;
+    hasInitialSelection = true;
+    runtime.setSelection({ scope: first.scope, sectionId: first.sectionId });
+  };
+
+  const applyTarget = (input: SettingsEditorInput | undefined): void => {
+    if (!input || (input.scope === undefined && input.sectionId === undefined)) {
+      pendingScrollTarget = undefined;
+      return;
+    }
+    if (input.sectionId) hasInitialSelection = true;
+    let el = locateSectionElement(dom, input);
+    if (hasActiveFilter() && isTargetHiddenByFilter(dom, el, input)) {
+      clearFilter();
+      el = locateSectionElement(dom, input);
+    }
+    if (!el) {
+      pendingScrollTarget = input;
+      return;
+    }
+    pendingScrollTarget = undefined;
+    clearTargetHighlights(dom.root);
+    el.classList.add('is-target');
+    scrollSpy.lock();
+    scrollSectionIntoPage(dom.pageEl, el);
+  };
+
+  return {
+    applyTarget,
+    selectFirstVisibleIfUnset,
+    onGatewayRendered() {
+      if (pendingScrollTarget?.scope === 'gateway') {
+        applyTarget(pendingScrollTarget);
+      } else {
+        selectFirstVisibleIfUnset();
+      }
+    },
+    onDeviceSynced(gatewayReady) {
+      if (pendingScrollTarget?.scope === 'device') {
+        applyTarget(pendingScrollTarget);
+      } else if (gatewayReady) {
+        selectFirstVisibleIfUnset();
+      }
+    },
+  };
 }
 
 export function createSettingsEditorComponent(
@@ -433,9 +641,9 @@ export function createSettingsEditorComponent(
   const postFn = deps.post ?? defaultPost;
 
   let panelCtx: WorkbenchPanelInitContext | null = null;
-  let pendingTarget: SettingsEditorInput | undefined;
   let modifiedOnly = false;
   let featureRef: SettingsFeature | null = null;
+  let updateSeq = 0;
 
   const refreshSearchState = (): void => {
     if (!featureRef) return;
@@ -443,28 +651,38 @@ export function createSettingsEditorComponent(
     modifiedOnly = res.modifiedOnly;
   };
 
+  const clearFilters = (): void => {
+    dom.searchInput.value = '';
+    modifiedOnly = false;
+    refreshSearchState();
+  };
+
   const { feature } = createSettingsPair(doc, dom, runtime, deps, refreshSearchState);
   featureRef = feature;
   disposables.add(feature);
 
-  const applyTarget = (input: SettingsEditorInput | undefined): void => {
-    pendingTarget = input;
-    applySettingsScopeUi(ctx, dom, feature, mountedDevice.size, input);
-  };
+  const scrollSpy = createScrollSpy(dom, runtime, () => feature.getMessage()?.settings?.level === 'values');
+  disposables.add(scrollSpy);
+
+  const nav = createTargetNavigator(
+    dom,
+    runtime,
+    scrollSpy,
+    () => dom.searchInput.value.trim().length > 0 || modifiedOnly,
+    clearFilters,
+  );
 
   const syncDeviceSections = (): void => {
     reconcileDeviceSections(doc, dom, mountedDevice, runtime.listDeviceSections(), panelCtx);
     refreshSearchState();
-    if (pendingTarget?.scope === 'device') applyTarget(pendingTarget);
+    nav.onDeviceSynced(!runtime.getTopic() || Boolean(feature.getMessage()));
   };
 
   const requestGateway = (): void => {
     const topic = runtime.getTopic();
     if (!topic) {
-      if (pendingTarget?.scope !== 'device') {
-        dom.emptyGatewayEl.textContent = ctx.i18n.t('wb.settings.noTopic');
-        dom.emptyGatewayEl.hidden = false;
-      }
+      dom.emptyGatewayEl.textContent = ctx.i18n.t('wb.settings.noTopic');
+      dom.emptyGatewayEl.hidden = false;
       return;
     }
     dom.emptyGatewayEl.hidden = true;
@@ -475,61 +693,46 @@ export function createSettingsEditorComponent(
     const handled = feature.handleMessage(msg);
     if (handled) {
       dom.emptyGatewayEl.hidden = true;
+      if (feature.getMessage()) dom.gatewayPageEl.hidden = false;
       runtime.setGatewayMessage(feature.getMessage());
       refreshSearchState();
-      if (pendingTarget?.scope === 'gateway') {
-        applyTarget(pendingTarget);
-      }
+      nav.onGatewayRendered();
     }
     return handled;
   };
 
-  disposables.add(runtime.registerEditor({ handleMessage, refresh: requestGateway, focusSection: applyTarget }));
-  disposables.add(addDisposableListener(dom.refreshBtn, 'click', requestGateway));
-  disposables.add(addDisposableListener(dom.searchInput, 'input', refreshSearchState));
   disposables.add(
-    addDisposableListener(dom.searchClearBtn, 'click', () => {
-      dom.searchInput.value = '';
-      modifiedOnly = false;
-      refreshSearchState();
-      focusSafely(dom.searchInput);
+    runtime.registerEditor({
+      handleMessage,
+      refresh: requestGateway,
+      focusSection: nav.applyTarget,
+      getUpdateSeq: () => updateSeq,
     }),
   );
-  disposables.add(
-    addDisposableListener(dom.modFilterBtn, 'click', () => {
+  bindEditorListeners(disposables, {
+    ctx,
+    dom,
+    runtime,
+    feature,
+    postFn,
+    waitMs: deps.waitMs,
+    requestGateway,
+    refreshSearchState,
+    clearSearchFilter: () => {
+      clearFilters();
+      focusSafely(dom.searchInput);
+    },
+    toggleModifiedFilter: () => {
       modifiedOnly = !modifiedOnly;
       refreshSearchState();
-    }),
-  );
-  disposables.add(bindResetClickHandler(dom.gatewayBodyEl, feature, runtime, postFn, deps.waitMs));
-  if (runtime.onDidChangeDeviceSections) {
-    disposables.add(runtime.onDidChangeDeviceSections(() => syncDeviceSections()));
-  }
-  disposables.add(
-    ctx.events.on('locale.change', () => {
-      const isDevice = pendingTarget?.scope === 'device';
-      dom.titleEl.textContent = isDevice
-        ? ctx.i18n.t('wb.settings.deviceGroup')
-        : ctx.i18n.t('wb.settings.gatewayTitle');
-      dom.topicEl.textContent = isDevice
-        ? ctx.i18n.t('wb.settings.deviceSubtitle')
-        : ctx.i18n.t('wb.settings.gatewaySubtitle');
-      dom.deviceHeadingEl.textContent = ctx.i18n.t('wb.settings.deviceGroup');
-      dom.refreshBtn.title = ctx.i18n.t('common.refresh');
-      dom.refreshBtn.setAttribute('aria-label', ctx.i18n.t('common.refresh'));
-      dom.searchInput.placeholder = ctx.i18n.t('wb.settings.searchPlaceholder');
-      dom.searchInput.setAttribute('aria-label', ctx.i18n.t('wb.settings.searchPlaceholder'));
-      dom.searchClearBtn.title = ctx.i18n.t('wb.settings.clearSearch');
-      dom.searchClearBtn.setAttribute('aria-label', ctx.i18n.t('wb.settings.clearSearch'));
-      dom.searchEmptyEl.textContent = ctx.i18n.t('wb.settings.noMatch');
-      feature.onLocaleChange();
-      refreshSearchState();
-    }),
-  );
+    },
+    syncDeviceSections,
+  });
 
   return {
     element: dom.root,
     init(params, initCtx) {
+      updateSeq++;
       panelCtx = initCtx;
       const input = isSettingsEditorInput(params) ? params : undefined;
       syncDeviceSections();
@@ -537,16 +740,21 @@ export function createSettingsEditorComponent(
       if (cached) {
         dom.emptyGatewayEl.hidden = true;
         feature.take(cached);
+        dom.gatewayPageEl.hidden = false;
         refreshSearchState();
       } else {
         requestGateway();
       }
-      applyTarget(input);
+      nav.applyTarget(input);
+      if (!input?.sectionId && (cached || !runtime.getTopic())) {
+        nav.selectFirstVisibleIfUnset();
+      }
     },
     update(params) {
+      updateSeq++;
       const input = isSettingsEditorInput(params) ? params : undefined;
-      panelCtx?.api.setTitle(resolveSettingsEditorTitle(ctx, runtime, input));
-      applyTarget(input);
+      panelCtx?.api.setTitle(resolveSettingsEditorTitle(ctx));
+      nav.applyTarget(input);
     },
     focus() {
       focusSafely(dom.refreshBtn);

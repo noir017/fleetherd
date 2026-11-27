@@ -8,7 +8,12 @@ import { PluginManager } from '../../plugins/host.js';
 import { ContributionRegistry, WebuiEventBus } from '../../plugins/registry.js';
 import { createApiClient } from '../../services/api.js';
 import { StorageService } from '../../services/storage.js';
-import { createSettingsPlugin, type SettingsPluginBridge, type SettingsPluginDeps } from './plugin.js';
+import {
+  createSettingsPlugin,
+  SETTINGS_EDITOR_ID,
+  type SettingsPluginBridge,
+  type SettingsPluginDeps,
+} from './plugin.js';
 import type { SettingsWebMessage } from './types.js';
 import type { WorkbenchPanelInitContext } from './workbench-types.js';
 
@@ -83,9 +88,9 @@ async function makeHarness(options: TestHarnessOptions = {}) {
   const registry = new ContributionRegistry();
   const events = new WebuiEventBus();
   const storage = new StorageService();
-  const openedEditors: Array<{ kind: string; input: unknown }> = [];
-  registry.setEditorOpener((kind, input) => {
-    openedEditors.push({ kind, input });
+  const openedEditors: Array<{ kind: string; input: unknown; opts?: unknown }> = [];
+  registry.setEditorOpener((kind, input, opts) => {
+    openedEditors.push({ kind, input, opts });
   });
 
   const topics: readonly TopicInfo[] = options.topics ?? [
@@ -174,7 +179,7 @@ describe('features/settings/plugin', () => {
 
     await h.registry.executeCommand('settings.open', { scope: 'gateway', sectionId: 'Agents' });
     expect(h.openedEditors).toEqual([
-      { kind: 'settings', input: { scope: 'gateway', sectionId: 'Agents' } },
+      { kind: 'settings', input: { scope: 'gateway', sectionId: 'Agents' }, opts: { id: SETTINGS_EDITOR_ID } },
     ]);
 
     h.pluginReg.dispose();
@@ -221,6 +226,7 @@ describe('features/settings/plugin', () => {
     expect(h.openedEditors[h.openedEditors.length - 1]).toEqual({
       kind: 'settings',
       input: { scope: 'device', sectionId: 'device-notify' },
+      opts: { id: SETTINGS_EDITOR_ID },
     });
 
     // Click gateway section -> opens settings editor targeting Agents.
@@ -230,6 +236,7 @@ describe('features/settings/plugin', () => {
     expect(h.openedEditors[h.openedEditors.length - 1]).toEqual({
       kind: 'settings',
       input: { scope: 'gateway', sectionId: 'Agents' },
+      opts: { id: SETTINGS_EDITOR_ID },
     });
 
     // Search filters catalog rows locally.
@@ -492,6 +499,233 @@ describe('features/settings/plugin', () => {
 
     instrEditor.dispose();
     settingsEditor.dispose();
+    h.cleanup();
+  });
+
+  it('reuses singleton editor id, shows gateway and device together, and deduplicates update scrolling', async () => {
+    const h = await makeHarness();
+    const devDisp = h.registry.registerSettingsSection({
+      id: 'device-prefs',
+      title: 'Preferences',
+      scope: 'device',
+      component: () => {
+        const el = document.createElement('div');
+        el.textContent = 'Device prefs body';
+        return { element: el, init() {}, dispose() {} };
+      },
+    });
+
+    const editorDef = h.registry.getEditor('settings')!;
+    expect(editorDef.title({ scope: 'gateway', sectionId: 'Agents' })).toBe(
+      editorDef.title({ scope: 'device', sectionId: 'device-prefs' }),
+    );
+
+    const editor = editorDef.component();
+    document.body.appendChild(editor.element);
+    const panelInit = makePanelInitCtx(SETTINGS_EDITOR_ID);
+    editor.init({ scope: 'device', sectionId: 'device-prefs' }, panelInit.ctx);
+    h.events.emit('topic.message', { topicId: 'topic-1', message: listMessage('m1') });
+
+    // Unified page displays both gateway and device sections and keeps refresh button visible.
+    expect(editor.element.querySelector<HTMLElement>('.wb-set-gateway')!.hidden).toBe(false);
+    expect(editor.element.querySelector<HTMLElement>('.wb-set-device')!.hidden).toBe(false);
+    expect(editor.element.querySelector<HTMLButtonElement>('.wb-set-refresh')!.hidden).toBe(false);
+    expect(editor.element.dataset.settingsScope).toBeUndefined();
+
+    // Simulate DynamicDockEngine reusing the singleton panel and calling editor.update(input).
+    const pageEl = editor.element.querySelector<HTMLElement>('.wb-set-page')!;
+    const scrollToSpy = vi.fn();
+    pageEl.scrollTo = scrollToSpy;
+    h.registry.setEditorOpener((kind, input, opts) => {
+      h.openedEditors.push({ kind, input, opts });
+      if (kind === 'settings') editor.update?.(input);
+    });
+
+    await h.registry.executeCommand('settings.open', { scope: 'gateway', sectionId: 'Agents' });
+    expect(h.openedEditors[h.openedEditors.length - 1]).toEqual({
+      kind: 'settings',
+      input: { scope: 'gateway', sectionId: 'Agents' },
+      opts: { id: SETTINGS_EDITOR_ID },
+    });
+    // update() already scrolled once; openSettings() must not trigger a duplicate scroll.
+    expect(scrollToSpy).toHaveBeenCalledTimes(1);
+
+    editor.dispose();
+    devDisp.dispose();
+    h.cleanup();
+  });
+
+  it('retains pending scroll target until gateway loads and clears active filters when jumping to hidden section', async () => {
+    const h = await makeHarness();
+    const devDisp = h.registry.registerSettingsSection({
+      id: 'device-prefs',
+      title: 'Preferences',
+      scope: 'device',
+      component: () => {
+        const el = document.createElement('div');
+        el.textContent = 'Device prefs body';
+        return { element: el, init() {}, dispose() {} };
+      },
+    });
+
+    const editor = h.registry.getEditor('settings')!.component();
+    document.body.appendChild(editor.element);
+    const pageEl = editor.element.querySelector<HTMLElement>('.wb-set-page')!;
+    const scrollToSpy = vi.fn();
+    pageEl.scrollTo = scrollToSpy;
+
+    // Open targeting a gateway section before gateway data arrives.
+    editor.init({ scope: 'gateway', sectionId: 'Agents' }, makePanelInitCtx(SETTINGS_EDITOR_ID).ctx);
+    expect(scrollToSpy).not.toHaveBeenCalled();
+
+    // Once gateway message arrives, editor scrolls to Agents and clears pending target.
+    h.events.emit('topic.message', { topicId: 'topic-1', message: listMessage('m1') });
+    expect(scrollToSpy).toHaveBeenCalledTimes(1);
+    const agentsSec = Array.from(editor.element.querySelectorAll<HTMLElement>('.set-sec')).find(
+      (sec) => sec.querySelector('.set-group')?.textContent?.trim() === 'Agents',
+    )!;
+    expect(agentsSec.classList.contains('is-target')).toBe(true);
+
+    // Subsequent gateway message does not re-scroll because pending target was cleared.
+    h.events.emit('topic.message', { topicId: 'topic-1', message: listMessage('m1') });
+    expect(scrollToSpy).toHaveBeenCalledTimes(1);
+
+    // Filter hides device section; jumping to device section clears filter and scrolls to it.
+    const searchInput = editor.element.querySelector<HTMLInputElement>('.wb-set-search-input')!;
+    searchInput.value = 'Feature';
+    searchInput.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(editor.element.querySelector<HTMLElement>('.wb-set-device')!.hidden).toBe(true);
+
+    editor.update?.({ scope: 'device', sectionId: 'device-prefs' });
+    expect(searchInput.value).toBe('');
+    expect(editor.element.querySelector<HTMLElement>('.wb-set-device')!.hidden).toBe(false);
+    expect(editor.element.querySelector('[data-section-id="device-prefs"]')?.classList.contains('is-target')).toBe(
+      true,
+    );
+    expect(scrollToSpy).toHaveBeenCalledTimes(2);
+
+    editor.dispose();
+    devDisp.dispose();
+    h.cleanup();
+  });
+
+  it('syncs catalog selection via scroll-spy, handles bottom reach and click lock, without rebuilding catalog DOM', async () => {
+    vi.useFakeTimers();
+    const rafQueue: FrameRequestCallback[] = [];
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
+      rafQueue.push(cb);
+      return rafQueue.length;
+    });
+    vi.stubGlobal('cancelAnimationFrame', vi.fn());
+    const flushRaf = (): void => {
+      while (rafQueue.length > 0) rafQueue.shift()?.(0);
+    };
+
+    const h = await makeHarness();
+    const devDisp = h.registry.registerSettingsSection({
+      id: 'device-prefs',
+      title: 'Preferences',
+      scope: 'device',
+      component: () => {
+        const el = document.createElement('div');
+        el.textContent = 'Device prefs body';
+        return { element: el, init() {}, dispose() {} };
+      },
+    });
+
+    const catalog = h.registry.getView('settings')!.component();
+    document.body.appendChild(catalog.element);
+    catalog.init(undefined, makePanelInitCtx('view:settings').ctx);
+
+    const editor = h.registry.getEditor('settings')!.component();
+    document.body.appendChild(editor.element);
+    editor.init({}, makePanelInitCtx(SETTINGS_EDITOR_ID).ctx);
+    h.events.emit('topic.message', { topicId: 'topic-1', message: listMessage('m1') });
+
+    // Default initial highlight selects the first visible section (General).
+    const getSelectedText = (): string | null =>
+      catalog.element.querySelector<HTMLElement>('[role="option"][aria-selected="true"]')?.textContent?.trim() ?? null;
+    expect(getSelectedText()).toContain('General');
+
+    // Capture existing DOM node reference to verify scroll-spy does not rebuild the list.
+    const agentsRowBefore = Array.from(catalog.element.querySelectorAll<HTMLElement>('[role="option"]')).find((r) =>
+      r.textContent?.includes('Agents'),
+    )!;
+
+    const pageEl = editor.element.querySelector<HTMLElement>('.wb-set-page')!;
+    const sections = Array.from(editor.element.querySelectorAll<HTMLElement>('.set-sec'));
+    const generalSec = sections[0]!;
+    const agentsSec = sections[1]!;
+    const deviceSec = editor.element.querySelector<HTMLElement>('.wb-set-device-sec')!;
+
+    let scrollTop = 0;
+    const clientHeight = 400;
+    const scrollHeight = 1000;
+    Object.defineProperty(pageEl, 'scrollTop', { get: () => scrollTop, set: (v: number) => { scrollTop = v; }, configurable: true });
+    Object.defineProperty(pageEl, 'clientHeight', { get: () => clientHeight, configurable: true });
+    Object.defineProperty(pageEl, 'scrollHeight', { get: () => scrollHeight, configurable: true });
+    const makeRect = (top: number, height: number): DOMRect =>
+      ({ x: 0, y: top, top, left: 0, right: 800, bottom: top + height, width: 800, height, toJSON: () => ({}) }) as DOMRect;
+    pageEl.getBoundingClientRect = () => makeRect(0, clientHeight);
+
+    let generalTop = 0;
+    let agentsTop = 300;
+    let deviceTop = 700;
+    generalSec.getBoundingClientRect = () => makeRect(generalTop, 280);
+    agentsSec.getBoundingClientRect = () => makeRect(agentsTop, 380);
+    deviceSec.getBoundingClientRect = () => makeRect(deviceTop, 120);
+
+    // Scroll down to Agents -> catalog highlights Agents without recreating row DOM.
+    scrollTop = 300;
+    generalTop = -300;
+    agentsTop = 0;
+    deviceTop = 400;
+    pageEl.dispatchEvent(new Event('scroll'));
+    flushRaf();
+    expect(getSelectedText()).toContain('Agents');
+    const agentsRowAfter = Array.from(catalog.element.querySelectorAll<HTMLElement>('[role="option"]')).find((r) =>
+      r.textContent?.includes('Agents'),
+    )!;
+    expect(agentsRowAfter).toBe(agentsRowBefore);
+
+    // Scroll to bottom -> highlights last visible section (Preferences) even if top > threshold.
+    scrollTop = 600;
+    generalTop = -600;
+    agentsTop = -300;
+    deviceTop = 280;
+    pageEl.dispatchEvent(new Event('scroll'));
+    flushRaf();
+    expect(getSelectedText()).toContain('Preferences');
+
+    // Clicking General engages programmatic scroll lock (450ms) so intermediate scroll does not flicker highlight back.
+    const generalRow = Array.from(catalog.element.querySelectorAll<HTMLElement>('[role="option"]')).find((r) =>
+      r.textContent?.includes('General'),
+    )!;
+    generalRow.click();
+    expect(getSelectedText()).toContain('General');
+
+    // Scroll event while locked is ignored.
+    pageEl.dispatchEvent(new Event('scroll'));
+    flushRaf();
+    expect(getSelectedText()).toContain('General');
+
+    // Manual wheel immediately unlocks scroll-spy.
+    pageEl.dispatchEvent(new Event('wheel'));
+    pageEl.dispatchEvent(new Event('scroll'));
+    flushRaf();
+    expect(getSelectedText()).toContain('Preferences');
+
+    // Lock expires automatically after 450ms as well.
+    generalRow.click();
+    expect(getSelectedText()).toContain('General');
+    vi.advanceTimersByTime(460);
+    pageEl.dispatchEvent(new Event('scroll'));
+    flushRaf();
+    expect(getSelectedText()).toContain('Preferences');
+
+    editor.dispose();
+    catalog.dispose();
+    devDisp.dispose();
     h.cleanup();
   });
 });
