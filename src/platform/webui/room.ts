@@ -617,6 +617,9 @@ export class WebRoom {
   /** A topic-list announcement waiting out `TOPIC_LIST_MS`; see `scheduleTopics`. */
   private topicTimer: NodeJS.Timeout | null = null;
   private readonly dirCache = new Map<string, { at: number; work: Pick<Topic, 'dir' | 'agent'> }>();
+  // Tracks topics whose launcher workdir was explicitly confirmed (covers picking the agent's root,
+  // which ConversationStore clears back to undefined so agents[].cwd edits still apply).
+  private readonly launchCwdChosen = new Set<string>();
   /**
    * Who has a terminal pane attached. Absent when the feature is off, and in every test that
    * does not care — which is why `topicList` reads it through `?.` rather than requiring one.
@@ -792,6 +795,7 @@ export class WebRoom {
       this.rooms.delete(id);
     }
     this.dirCache.delete(id);
+    this.launchCwdChosen.delete(id);
   }
 
   // ── What needs the operator ─────────────────────────────────────────────────────────────────
@@ -990,6 +994,8 @@ export class WebRoom {
     if (!this.topics.has(topic)) return { ok: false, error: 'No such topic.' };
     const res = this.topicSetup(this.conversation(topic), opts);
     if (res.ok) {
+      if (opts.cwd !== undefined) this.launchCwdChosen.add(topic);
+      else if (opts.agent !== undefined) this.launchCwdChosen.delete(topic);
       this.refreshWorkdir(topic);
     }
     return res;
@@ -1428,7 +1434,12 @@ export class WebRoom {
   private catalogFor(topicId: string, room: Room | undefined): AgentCatalog | undefined {
     if (!this.catalog || (room && room.stored.size > 0)) return undefined;
     try {
-      return this.catalog(this.conversation(topicId));
+      const cat = this.catalog(this.conversation(topicId));
+      if (!cat) return undefined;
+      if (!cat.cwdChosen && this.launchCwdChosen.has(topicId)) {
+        return { ...cat, cwdChosen: true };
+      }
+      return cat;
     } catch (e) {
       console.warn(`[webui] agent catalog lookup failed for ${topicId}:`, e instanceof Error ? e.message : e);
       return undefined;

@@ -489,6 +489,46 @@ describe('webui page: choosing an agent for a new topic', () => {
       wdSelected: true,
       wdChange: true,
     });
+
+    // Switch back to the configured topic: both agent and workdir stay folded with their chosen values.
+    await h.click('[data-topic="a1b2c3d4"]');
+    await h.emit(
+      sync('a1b2c3d4', [], ['a1b2c3d4', 'b2c3d4e5'], {
+        agents: { ...agents, current: 'oc2', agentChosen: true, cwdChosen: true },
+      }),
+    );
+    await tick();
+    expect(foldState()).toEqual({
+      agents: true,
+      agentRow: false,
+      wdBody: true,
+      wdHint: true,
+      wdSelected: false,
+      wdChange: false,
+    });
+    expect(launch(h)!.querySelector('.launch-choice-agent')!.textContent).toBe('oc2');
+    expect(launch(h)!.querySelector('.launch-wd .wd-selected .wd-path')!.textContent).toBe('/srv/sub-a');
+
+    // Full page reload onto a topic with already-chosen agent & workdir also renders folded.
+    const h2 = await open({
+      url: 'http://localhost:8787/?t=a1b2c3d4',
+      replies: {
+        'api/topics/workdirs?t=a1b2c3d4&agent=oc2': wdScreen('oc2', '/srv', '/srv', '/srv/sub-a'),
+      },
+    });
+    await h2.emit(
+      sync('a1b2c3d4', [], ['a1b2c3d4', 'b2c3d4e5'], {
+        agents: { ...agents, current: 'oc2', agentChosen: true, cwdChosen: true },
+      }),
+    );
+    await tick();
+    const root2 = launch(h2)!;
+    expect(root2.querySelector<HTMLElement>('.launch-agents')!.hidden).toBe(true);
+    expect(root2.querySelector<HTMLElement>('.launch-choice')!.hidden).toBe(false);
+    expect(root2.querySelector('.launch-choice-agent')!.textContent).toBe('oc2');
+    expect(root2.querySelector<HTMLElement>('.launch-wd .wd-body')!.hidden).toBe(true);
+    expect(root2.querySelector<HTMLElement>('.launch-wd .wd-selected')!.hidden).toBe(false);
+    expect(root2.querySelector('.launch-wd .wd-selected .wd-path')!.textContent).toBe('/srv/sub-a');
   });
 
   it('goes as soon as anything is said, typed or not, and comes back if the room empties again', async () => {

@@ -278,7 +278,7 @@ describe('createBannersController', () => {
     const machineNoteEl = document.createElement('div');
     const forkNote = document.createElement('button');
     let curTopic = 't1';
-    const launch: LaunchChoice = {
+    let launch: LaunchChoice = {
       current: 'cc@myhost',
       groups: [{ name: 'myhost', agents: [{ id: 'cc@myhost', harness: 'claude', kind: 'Claude' }] }],
     };
@@ -373,6 +373,16 @@ describe('createBannersController', () => {
     banners.syncLaunch(true);
     banners.setLaunchWorkdir(screen);
     expect([hiddenOf('.launch-agents'), hiddenOf('.launch-choice'), hiddenOf('.wd-body'), hiddenOf('.wd-selected')]).toEqual([false, true, false, true]);
+
+    // Returning to a topic with server-known choices derives folded state directly from LaunchChoice.
+    curTopic = 't1';
+    launch = { ...launch, agentChosen: true, cwdChosen: true };
+    log.innerHTML = '';
+    banners.resetForTopicSwitch();
+    banners.syncLaunch(true);
+    banners.setLaunchWorkdir({ ...screen, current: '/home/me/projects/sub-a' });
+    expect([hiddenOf('.launch-agents'), hiddenOf('.launch-choice'), hiddenOf('.wd-body'), hiddenOf('.wd-selected')]).toEqual([true, false, true, false]);
+    expect(log.querySelector('.wd-selected .wd-path')?.textContent).toBe('/home/me/projects/sub-a');
     banners.dispose();
   });
 });

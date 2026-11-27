@@ -1826,6 +1826,28 @@ describe('WebRoom: which agents an empty topic could be given to', () => {
     expect(seen[0]?.ev).toMatchObject({ t: 'sync', topic });
     expect(seen[0]?.ev).not.toHaveProperty('agents');
   });
+
+  it('marks cwdChosen on sync after setupTopic confirms a directory (including root)', () => {
+    const { room, topic } = attached();
+    room.useAgentCatalog(() => ({ ...catalog, agentChosen: true }));
+    room.useTopicSetup((_ref, opts) => ({ ok: true, agent: opts.agent ?? 'cc', cwd: opts.cwd ?? '/home/me/projects' }));
+
+    const before: Seen[] = [];
+    room.subscribe(topic, (id, ev) => before.push({ id, ev }));
+    expect(before[0]?.ev).toMatchObject({ t: 'sync', agents: { current: 'cc', agentChosen: true } });
+    expect((before[0]?.ev as { agents?: { cwdChosen?: boolean } }).agents?.cwdChosen).toBeUndefined();
+
+    expect(room.setupTopic(topic, { agent: 'cc', cwd: '/home/me/projects' }).ok).toBe(true);
+    const afterPick: Seen[] = [];
+    room.subscribe(topic, (id, ev) => afterPick.push({ id, ev }));
+    expect(afterPick[0]?.ev).toMatchObject({ t: 'sync', agents: { current: 'cc', agentChosen: true, cwdChosen: true } });
+
+    // Switching agent without passing cwd clears the root-dir marker.
+    expect(room.setupTopic(topic, { agent: 'oc' }).ok).toBe(true);
+    const afterSwitch: Seen[] = [];
+    room.subscribe(topic, (id, ev) => afterSwitch.push({ id, ev }));
+    expect((afterSwitch[0]?.ev as { agents?: { cwdChosen?: boolean } }).agents?.cwdChosen).toBeUndefined();
+  });
 });
 
 describe('WebRoom: which directory a topic is working in', () => {

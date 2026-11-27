@@ -201,9 +201,15 @@ export function agentKindOf(def: AgentDef): string {
  * Not the menu's two levels: a page has room to show every machine at once, and a choice that
  * takes one tap where the menu takes two is the reason for laying it out at all.
  */
-export function agentCatalog(groups: readonly AgentGroup[], current: string): AgentCatalog {
+export function agentCatalog(
+  groups: readonly AgentGroup[],
+  current: string,
+  chosen?: { agentChosen?: boolean; cwdChosen?: boolean },
+): AgentCatalog {
   return {
     current,
+    ...(chosen?.agentChosen ? { agentChosen: true } : {}),
+    ...(chosen?.cwdChosen ? { cwdChosen: true } : {}),
     groups: groups.map((g) => ({
       name: g.name,
       agents: g.agents.map((def) => {

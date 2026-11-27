@@ -24,6 +24,14 @@ All notable changes to this project are documented here. The format is based on
   any gateway-owned links across all harness skill directories, while leaving non-gateway files and
   directories untouched.
 - **Sub-agent topics now show their own working directory and agent immediately during their first turn.** Opening a topic via `task-new` (with `--cwd`, `--worktree`, or a non-default agent), scheduled runs, `/fork`, or retry-in-new-topic previously announced the topic before the daemon bound its agent and recorded its working directory, caching the default agent's directory in the web UI's `dirCache` across the first turn's messages and typing updates. `WorkbenchHost.refreshWorkdir` now invalidates that cache and pushes the updated topic row as soon as the daemon finishes binding and setting the working directory.
+- **Web UI new-topic launcher now keeps its chosen agent and working directory folded across topic
+  switches and page reloads.** Previously, `BannersControllerImpl` kept the launcher's folded state
+  only in single-topic memory flags and cleared them on every topic switch, so returning to a new
+  topic whose agent and directory were already picked expanded both pickers again even though the
+  server still held the binding. `AgentCatalog` now reports whether the topic already has an
+  explicitly bound agent (`agentChosen`) and chosen working directory (`cwdChosen`, including an
+  explicitly confirmed agent root), and the launcher derives its initial folded state from those
+  server-known fields while leaving untouched new topics expanded.
 
 ## [3.43.0] - 2026-11-27
 
