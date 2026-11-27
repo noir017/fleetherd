@@ -4,7 +4,6 @@ import type { AgentDef } from '../config/schema.js';
 import { envOf } from '../legacy-name.js';
 import type { AgentProvision } from './provision.js';
 import { selfInvocation } from './reverse-cli-shim.js';
-import { listTree } from './skill-copy.js';
 import { bundledSkillDir, linkSkill, type SkillHome, type SkillLinkResult } from './skill-link.js';
 
 /**
@@ -113,6 +112,16 @@ export function ensureAgyPlugin(harness: AgentDef['harness'], home: string): Ski
   return r;
 }
 
+function listFiles(dir: string, prefix = ''): string[] {
+  const out: string[] = [];
+  for (const e of fs.readdirSync(path.join(dir, prefix), { withFileTypes: true })) {
+    const rel = prefix ? `${prefix}/${e.name}` : e.name;
+    if (e.isDirectory()) out.push(...listFiles(dir, rel));
+    else if (e.isFile()) out.push(rel);
+  }
+  return out;
+}
+
 /**
  * Bundled agy plugin provision (local + remote). Remote files live under the version directory
  * once per `host@version@instance`; dead links from older versions are swept before linking.
@@ -131,7 +140,7 @@ export function createAgyPluginProvision(): AgentProvision<SkillLinkResult | und
       try {
         if (!placed.has(key)) {
           const source = agyPluginSource();
-          for (const rel of listTree(source)) {
+          for (const rel of listFiles(source)) {
             await host.writeFile(`${target}/${rel}`, fs.readFileSync(path.join(source, ...rel.split('/'))), 0o644);
           }
           for (const link of await host.sweepSkillLinks(where.dir)) console.log(`[agy] ${host.id}: removed dead link ${link}`);

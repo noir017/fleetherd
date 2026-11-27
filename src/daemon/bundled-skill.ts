@@ -18,7 +18,7 @@ import { SkillLibrary } from './skill-library.js';
  * can point at one copy — so the line names what reaches every harness reading that directory.
  *
  * The package's own file is never written: the rendered copy goes to a directory of the gateway's
- * (skill-link.ts locally, remote-hosts.ts on a host), with every other file of the skill beside it.
+ * (skill-link.ts bundledSkillProvision, locally and on a host), with every other file of the skill beside it.
  */
 
 /** The Agent Skills specification's longest description. Past it: counts, then no line at all. */

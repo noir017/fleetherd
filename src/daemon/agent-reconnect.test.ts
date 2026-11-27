@@ -195,7 +195,7 @@ describe('a connect agent whose connection goes away', () => {
       conversationCwd: () => undefined,
       conversationChoice: () => undefined,
     } as unknown as Parameters<typeof createAcpAgentFactory>[2];
-    live = createAcpAgentFactory(cfg, join(dir, 'ipc.sock'), store, undefined, timing).getOrCreate('conv#1', 'web');
+    live = createAcpAgentFactory(cfg, join(dir, 'ipc.sock'), store, { redial: timing, provisions: [] }).getOrCreate('conv#1', 'web');
     return live;
   }
 

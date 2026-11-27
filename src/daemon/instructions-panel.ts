@@ -626,7 +626,7 @@ function sha(data: Buffer): string {
 /**
  * Place the composed text for `layers` for every configured agent that reads one of them, now, and
  * say what each placement came to — one line per machine and file, the agents that share it named
- * together. The placing is instructions.ts's and remote-hosts.ts's, unchanged: the same rules about
+ * together. The placing is instructions.ts's (instructionsProvision), unchanged: the same rules about
  * what is never overwritten, the same log lines. A remote host that does not answer within
  * `timeoutMs` is reported as not reached; the next agent start there places the text, as it always
  * did. An agent whose delivery the merge turned off (config/pods.ts) is reported as `not-delivered`

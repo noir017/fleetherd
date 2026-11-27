@@ -96,7 +96,7 @@ function sessionFor(source: string): AgentSession {
   const store = { agentSession: () => undefined, setAgentSession: () => {}, conversationCwd: () => undefined } as unknown as Parameters<
     typeof createAcpAgentFactory
   >[2];
-  const s = createAcpAgentFactory(cfg, join(dir, 'ipc.sock'), store).getOrCreate('c1', 'fake');
+  const s = createAcpAgentFactory(cfg, join(dir, 'ipc.sock'), store, { provisions: [] }).getOrCreate('c1', 'fake');
   live.push(s);
   return s;
 }

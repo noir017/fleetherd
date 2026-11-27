@@ -6,7 +6,7 @@ import type { Welcome } from '../remote/connection.js';
 import { renderBundledSkill } from './bundled-skill.js';
 import type { AgentProvision, HostFiles } from './provision.js';
 import { selfInvocation } from './reverse-cli-shim.js';
-import { listTree, syncSkillCopy } from './skill-copy.js';
+import { syncSkillCopy } from './skill-copy.js';
 import { LEGACY_SKILL_LINK, envOf, isUnderEitherName } from '../legacy-name.js';
 
 /**
@@ -309,11 +309,21 @@ function report(r: SkillLinkResult, source: string): void {
   }
 }
 
+function listFiles(dir: string, prefix = ''): string[] {
+  const out: string[] = [];
+  for (const e of fs.readdirSync(path.join(dir, prefix), { withFileTypes: true })) {
+    const rel = prefix ? `${prefix}/${e.name}` : e.name;
+    if (e.isDirectory()) out.push(...listFiles(dir, rel));
+    else if (e.isFile()) out.push(rel);
+  }
+  return out;
+}
+
 async function placeSkillFiles(host: HostFiles, base: string): Promise<void> {
   for (const skill of BUNDLED_SKILLS) {
     if (skill.library) continue; // rendered per skill directory (placeRemoteRendered)
     const source = bundledSkillDir(skill.dir);
-    for (const rel of listTree(source)) {
+    for (const rel of listFiles(source)) {
       await host.writeFile(`${base}/${skill.dir}/${rel}`, fs.readFileSync(path.join(source, ...rel.split('/'))), 0o644);
     }
   }

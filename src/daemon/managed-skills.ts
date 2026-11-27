@@ -12,7 +12,7 @@ import { envOf } from '../legacy-name.js';
 /**
  * Delivering the gateway's managed skills to the machine an agent runs on.
  *
- * Each spawn (local `agent-common.ts` `buildAgentEnv`, remote `remote-hosts.ts` `placeManagedSkills`)
+ * Each spawn (via `managedSkillsProvision`, run by `agent-common.ts` `buildAgentEnv` locally and `prepareRemoteSpawn` remotely)
  * copies the active skills to `<home>/.fleetherd/skills/<name>/` and links each one into the
  * directories that harness reads skills from (`skill-link.ts`). The copy is read-only, so an agent
  * that wants a change has to go through `fleetherd skills` — where it is versioned and can be
@@ -127,10 +127,10 @@ function report(r: ManagedResult): void {
  * like `placeInstructions`: it writes into the operator's directories, so a test worker must never
  * reach it, and FLEETHERD_NO_SKILL_LINK=1 keeps a test daemon off the live files.
  */
-export function placeManagedSkills(def: AgentDef, home: string): ManagedResult[] {
+export function placeManagedSkills(def: AgentDef, home: string, dir?: string): ManagedResult[] {
   if (envOf('NO_SKILL_LINK')) return [];
   if (!selfInvocation()) return [];
-  const results = applyManagedSkills(def, home);
+  const results = applyManagedSkills(def, home, dir);
   for (const r of results) report(r);
   return results;
 }
@@ -166,8 +166,9 @@ async function unlinkManaged(
 }
 
 /**
- * Managed skills provision (local + remote). Remote files and links are cached separately per
- * `host@instance@skill` and `host@instance@skill@dir`; archived skills are retired once per instance.
+ * Managed skills provision (local + remote). Remote files (`host@instance@skill`) and links
+ * (`host@instance@skill@dir`) are cached separately — a single key caused a second harness on the
+ * same host to skip linking entirely; archived skills are retired once per instance.
  */
 export function createManagedSkillsProvision(dir?: string): AgentProvision<ManagedResult[], void> {
   const managedFiles = new Map<string, string>();
@@ -244,7 +245,7 @@ export function createManagedSkillsProvision(dir?: string): AgentProvision<Manag
 
   return {
     name: 'managed-skills',
-    local: (def, home) => placeManagedSkills(def, home),
+    local: (def, home) => placeManagedSkills(def, home, dir),
     remote: async (host, def, home, w) => {
       if (envOf('NO_SKILL_LINK')) return;
       const owned = managedSkillsHome(home);

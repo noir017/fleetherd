@@ -354,7 +354,7 @@ export interface RemotePlace {
 export async function placeOnHost(
   def: AgentDef,
   cwd: string,
-  provisions: readonly AgentProvision[] = []
+  provisions: readonly AgentProvision[]
 ): Promise<{ place: RemotePlace; cwd: string } | undefined> {
   const host = remoteHosts.hostFor(def);
   if (!host) return undefined;
@@ -374,7 +374,7 @@ export async function launchAcpChild(opts: {
   sessionToken: string;
   place: RemotePlace | undefined;
   topic?: string;
-  provisions?: readonly AgentProvision[];
+  provisions: readonly AgentProvision[];
 }): Promise<{
   command: string;
   args: string[];
@@ -382,7 +382,7 @@ export async function launchAcpChild(opts: {
   child: AgentChild;
   mcpServers: () => McpServer[];
 }> {
-  const { def, cwd, socketPath, sessionToken, place, topic, provisions = [] } = opts;
+  const { def, cwd, socketPath, sessionToken, place, topic, provisions } = opts;
   const initExtra = def.connect ? { _meta: await connectMeta(def, def.connect, place, topic) } : {};
   const { command, args } = def.connect
     ? { command: def.connect.url, args: [] }
