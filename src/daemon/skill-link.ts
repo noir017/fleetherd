@@ -309,7 +309,7 @@ function report(r: SkillLinkResult, source: string): void {
   }
 }
 
-function listFiles(dir: string, prefix = ''): string[] {
+export function listFiles(dir: string, prefix = ''): string[] {
   const out: string[] = [];
   for (const e of fs.readdirSync(path.join(dir, prefix), { withFileTypes: true })) {
     const rel = prefix ? `${prefix}/${e.name}` : e.name;
