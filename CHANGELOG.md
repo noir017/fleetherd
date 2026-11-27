@@ -5,6 +5,47 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **Compact tool-call lists and tap-to-reveal message actions on touch screens in the Web UI.**
+  Consecutive tool calls inside a message previously rendered as individual bordered cards with
+  per-row margins and tall mobile padding, taking up half a phone screen after a handful of calls,
+  while the copy/quote/aside/more action bar stayed permanently visible beneath every message on
+  touch devices (including a permanent 54 px bottom gap under every user bubble). Tool rows in a
+  `.tools` group now share a single compact list container with thin dividers and ~26 px row height
+  on both mobile and desktop while preserving expand-on-click, status icon colors, and Show all. On
+  touch devices (`@media (hover: none)` / touch pointer), message action bars now stay hidden by
+  default (reserving the user-bubble bottom gap only when shown) and reveal on tapping a message,
+  dismissing on tapping elsewhere and ignoring links, buttons, inputs, tool rows, images/attachments,
+  and active text selections so native long-press selection stays unaffected; desktop hover and
+  keyboard `focus-within` behavior are unchanged.
+- **Web UI topic loading now resumes from local cache on direct reloads and pages older messages on demand.**
+  Reloading or cold-opening a topic URL previously skipped the IndexedDB transcript cache and
+  transferred the entire topic (up to 1,000 messages) in one `sync` frame; initial bootstrap now
+  waits up to 300 ms for `aa_cache` so reloads resume via `?last=` (with `resumed` carrying `epoch`
+  and initial `commands`), falling back cleanly on restart or backlog overflow. When a full `sync`
+  or `GET /api/topic` snapshot is needed, the server now sends only the latest tail window (up to
+  60 messages or 256 KiB, minimum 10) alongside `totalCount`, `hasMore`, `oldestSeq`, and
+  `recentNonces`, and deduplicates the topic list and command table across multiplexed cold syncs.
+  Scrolling near the top fetches earlier pages from `GET /api/messages` (seq-cursor paginated,
+  guarded by session/SSO auth) while preserving scroll position, keeping partial reconciliation,
+  unread counts, outbox confirmation, `/btw` pairing, and quote/message jumps working across
+  unloaded history.
+- **Mobile web UI status strip now wraps into two rows instead of scrolling horizontally.** On
+  narrow viewports (`<= 640px`), the status pills above the composer previously sat in a single
+  `overflow-x: auto` strip that pushed context usage, cost, cache countdown, and quota pools off
+  screen behind long agent, model, and option chips. The strip now groups settings (agent, model,
+  effort, permissions, agent options, and the working directory pill) on the first row—truncating
+  the directory from the left to keep the tail folder name visible, then the model name, and
+  wrapping if space still runs out—and places context, cost, cache, and quota info inside a
+  dedicated `.st-info` second row that wraps cleanly and leaves no blank space when absent, while
+  leaving the desktop layout unchanged.
+- **Relaxed the web UI send timeout for slow uplinks.** `sendLimit` previously budgeted 1 s per
+  64 KiB (~512 kbps) with a 300 s cap, leaving only ~4 s of margin for a 1 MB upload on a 250 kbps
+  link and cutting off larger attachments on slower links. It now budgets 1 s per 16 KiB (~128 kbps)
+  and raises both the client cap and `http.Server.requestTimeout` to 3600 s so uploads up to the
+  36 MiB `MAX_BODY_BYTES` limit can finish without timing out and retrying from byte zero.
+
 ### Fixed
 
 - **Web UI status strip and topic state now restore reliably on cached `?last=` stream resumes.**
@@ -48,46 +89,6 @@ All notable changes to this project are documented here. The format is based on
   the always-visible `⋯` action button on every message), and **Copy** in the message menu now copies
   the active plain-text selection when it falls within that message (stripping UI buttons and chrome)
   while keeping full-message copy when nothing is selected.
-### Changed
-
-- **Compact tool-call lists and tap-to-reveal message actions on touch screens in the Web UI.**
-  Consecutive tool calls inside a message previously rendered as individual bordered cards with
-  per-row margins and tall mobile padding, taking up half a phone screen after a handful of calls,
-  while the copy/quote/aside/more action bar stayed permanently visible beneath every message on
-  touch devices (including a permanent 54 px bottom gap under every user bubble). Tool rows in a
-  `.tools` group now share a single compact list container with thin dividers and ~26 px row height
-  on both mobile and desktop while preserving expand-on-click, status icon colors, and Show all. On
-  touch devices (`@media (hover: none)` / touch pointer), message action bars now stay hidden by
-  default (reserving the user-bubble bottom gap only when shown) and reveal on tapping a message,
-  dismissing on tapping elsewhere and ignoring links, buttons, inputs, tool rows, images/attachments,
-  and active text selections so native long-press selection stays unaffected; desktop hover and
-  keyboard `focus-within` behavior are unchanged.
-- **Web UI topic loading now resumes from local cache on direct reloads and pages older messages on demand.**
-  Reloading or cold-opening a topic URL previously skipped the IndexedDB transcript cache and
-  transferred the entire topic (up to 1,000 messages) in one `sync` frame; initial bootstrap now
-  waits up to 300 ms for `aa_cache` so reloads resume via `?last=` (with `resumed` carrying `epoch`
-  and initial `commands`), falling back cleanly on restart or backlog overflow. When a full `sync`
-  or `GET /api/topic` snapshot is needed, the server now sends only the latest tail window (up to
-  60 messages or 256 KiB, minimum 10) alongside `totalCount`, `hasMore`, `oldestSeq`, and
-  `recentNonces`, and deduplicates the topic list and command table across multiplexed cold syncs.
-  Scrolling near the top fetches earlier pages from `GET /api/messages` (seq-cursor paginated,
-  guarded by session/SSO auth) while preserving scroll position, keeping partial reconciliation,
-  unread counts, outbox confirmation, `/btw` pairing, and quote/message jumps working across
-  unloaded history.
-- **Mobile web UI status strip now wraps into two rows instead of scrolling horizontally.** On
-  narrow viewports (`<= 640px`), the status pills above the composer previously sat in a single
-  `overflow-x: auto` strip that pushed context usage, cost, cache countdown, and quota pools off
-  screen behind long agent, model, and option chips. The strip now groups settings (agent, model,
-  effort, permissions, agent options, and the working directory pill) on the first row—truncating
-  the directory from the left to keep the tail folder name visible, then the model name, and
-  wrapping if space still runs out—and places context, cost, cache, and quota info inside a
-  dedicated `.st-info` second row that wraps cleanly and leaves no blank space when absent, while
-  leaving the desktop layout unchanged.
-- **Relaxed the web UI send timeout for slow uplinks.** `sendLimit` previously budgeted 1 s per
-  64 KiB (~512 kbps) with a 300 s cap, leaving only ~4 s of margin for a 1 MB upload on a 250 kbps
-  link and cutting off larger attachments on slower links. It now budgets 1 s per 16 KiB (~128 kbps)
-  and raises both the client cap and `http.Server.requestTimeout` to 3600 s so uploads up to the
-  36 MiB `MAX_BODY_BYTES` limit can finish without timing out and retrying from byte zero.
 
 ## [3.43.0] - 2026-11-27
 
