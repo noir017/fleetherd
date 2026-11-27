@@ -6,6 +6,8 @@ import { isLegacyConfig, migrateLegacyConfig } from '../config/migrate.js';
 import { saveConfig, saveConfigPatch, configPath, readRawConfigIfExists } from '../config/load.js';
 import { detectEnvLocale, type Locale } from '../core/i18n/index.js';
 import { tCli, type CliMessageKey } from '../core/i18n/cli.js';
+import { HARNESSES } from '../daemon/harness/index.js';
+import type { Harness } from '../types.js';
 
 /**
  * `fleetherd setup` — interactive wizard. Asks the minimal required items; everything
@@ -50,7 +52,7 @@ async function promptPlatformFields(type: PlatformType, locale: Locale): Promise
 }
 
 async function promptHarnessAndModel(locale: Locale): Promise<{ harness: string; command?: string; model: string }> {
-  const harness = await select({
+  const harness = await select<Harness>({
     message: tCli(locale, 'setup.prompt.harness'),
     choices: [
       { name: tCli(locale, 'setup.harness.claude'), value: 'claude' },
@@ -63,7 +65,7 @@ async function promptHarnessAndModel(locale: Locale): Promise<{ harness: string;
   });
 
   const command =
-    harness === 'custom'
+    HARNESSES[harness].setup?.promptCommand
       ? await input({
           message: tCli(locale, 'setup.prompt.customCommand'),
           validate: (v) => (v.trim().length > 0 ? true : tCli(locale, 'setup.prompt.customCommandRequired')),
@@ -72,7 +74,7 @@ async function promptHarnessAndModel(locale: Locale): Promise<{ harness: string;
 
   const model = await input({
     message: tCli(locale, 'setup.prompt.model'),
-    default: harness === 'claude' ? 'claude-opus-4-8' : '',
+    default: HARNESSES[harness].setup?.defaultModel ?? '',
   });
 
   return { harness, command, model };

@@ -2,9 +2,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { AgentDef } from '../config/schema.js';
 import { envOf } from '../legacy-name.js';
+import { HARNESSES } from './harness/index.js';
+import type { SkillHome } from './harness/profile.js';
 import type { AgentProvision } from './provision.js';
 import { selfInvocation } from './reverse-cli-shim.js';
-import { bundledSkillDir, linkSkill, listFiles, type SkillHome, type SkillLinkResult } from './skill-link.js';
+import { bundledSkillDir, linkSkill, listFiles, type SkillLinkResult } from './skill-link.js';
 
 /**
  * The agy plugin the package ships (`agy-plugin/` at its root): one Stop hook that keeps an agy turn
@@ -82,8 +84,7 @@ export function agyPluginSource(): string {
 
 /** Where agy looks for plugins under `home`, for an agy agent; undefined for every other harness. */
 export function agyPluginHome(harness: AgentDef['harness'], home: string): SkillHome | undefined {
-  if (harness !== 'agy') return undefined;
-  return { dir: path.join(home, '.gemini', 'config', 'plugins'), requires: path.join(home, '.gemini', 'antigravity-cli') };
+  return HARNESSES[harness].pluginHome?.(home);
 }
 
 /** Links already reported as occupied or failed, so a spawn does not repeat the warning. */

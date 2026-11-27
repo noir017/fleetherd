@@ -3,7 +3,8 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { harnessLogProbe, parseOpencodeLog, readHarnessErrors } from './harness-log.js';
+import { harnessLogProbe, readHarnessErrors } from './harness-log.js';
+import { parseOpencodeLog } from './harness/opencode.js';
 import type { AgentDef } from '../config/schema.js';
 import { useTempDirs } from '../test-utils/temp-dir.test-helpers.js';
 

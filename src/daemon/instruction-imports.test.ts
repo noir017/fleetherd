@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { harnessSources } from './harness/index.js';
 import {
   IMPORT_TEXT_EXTENSIONS,
   agyReferences,
@@ -8,7 +9,6 @@ import {
   codebuddyReferences,
   globBase,
   globRegex,
-  harnessSources,
   opencodeInstructions,
   resolveAgyReference,
   resolveClaudeReference,

@@ -4,8 +4,8 @@ import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { parseConfig, type AgentDef, type Config } from '../config/schema.js';
 import { expandEnvVars } from '../config/env-expand.js';
+import { CLAUDE_NO_TOOLS_META } from './harness/claude.js';
 import {
-  CLAUDE_NO_TOOLS_META,
   acpReviewLaunch,
   apiReviewAnswer,
   apiReviewBody,

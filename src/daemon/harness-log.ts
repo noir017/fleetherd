@@ -1,9 +1,9 @@
 import { open } from 'node:fs/promises';
-import { join } from 'node:path';
 
 import type { AgentDef } from '../config/schema.js';
 import type { RemoteHost } from '../remote/host.js';
-import { agentHome } from './skills-scan.js';
+import { HARNESSES } from './harness/index.js';
+import { agentHome, type HarnessLogEvent, type HarnessLogProbe } from './harness/profile.js';
 import { remoteAgentHome } from './agent-common.js';
 import { remoteHosts } from './remote-hosts.js';
 
@@ -47,27 +47,6 @@ type Harness = AgentDef['harness'];
  * harness that goes silent is a table entry, not a new seam.
  */
 
-/** One error a harness logged against a session. */
-export interface HarnessLogEvent {
-  /** When the harness recorded it, used to keep this turn's errors and drop older ones. */
-  at: Date;
-  /** The reason, already unquoted and trimmed — safe to put straight into a chat message. */
-  reason: string;
-}
-
-/** How to ask one harness what went wrong. */
-export interface HarnessLogProbe {
-  /** Where this harness writes the log, given the agent's home and the daemon's environment. */
-  logPath(home: string, env: NodeJS.ProcessEnv): string;
-  /**
-   * The events for `sessionId` recorded at or after `since`.
-   *
-   * Pure, so the per-harness log format is testable without a filesystem — the same split
-   * `skills-scan.ts` makes between `skillDirsFor` and the scan around it.
-   */
-  parse(tail: string, sessionId: string, since: Date): HarnessLogEvent[];
-}
-
 /**
  * How much of the tail to read.
  *
@@ -77,67 +56,9 @@ export interface HarnessLogProbe {
  */
 const TAIL_BYTES = 256 * 1024;
 
-/**
- * opencode's log line, as captured above: space-separated `key=value`, values quoted when they
- * contain spaces, with `"` inside a quoted value backslash-escaped.
- *
- * Anchored on the three fields that carry the answer and tolerant of everything else, because field
- * ORDER is the part most likely to drift: each is matched independently rather than as one line
- * pattern. A line missing any of them is simply not an event.
- */
-const OC_TIMESTAMP = /(?:^|\s)timestamp=(\S+)/;
-const OC_SESSION = /(?:^|\s)session\.id=(\S+)/;
-const OC_ERROR = /(?:^|\s)error\.error="((?:[^"\\]|\\.)*)"/;
-/**
- * opencode's own auxiliary calls (it titles a session with a second, smaller model) carry
- * `small=true`. They are excluded: a failed title is not a failed turn, and during the rate-limit
- * incident it doubled every notice. Absence of the field means "not an auxiliary call" so that a
- * future opencode dropping it degrades to reporting everything rather than nothing.
- */
-const OC_SMALL = /(?:^|\s)small=true(?:\s|$)/;
-
-/** Undo the backslash escaping inside a quoted value (`\"` → `"`, `\\` → `\`). */
-function unescape(value: string): string {
-  return value.replace(/\\(.)/g, '$1');
-}
-
-/**
- * Pull one session's errors out of a chunk of opencode's log.
- *
- * Exported for its tests, which drive it with lines captured verbatim from the live log.
- */
-export function parseOpencodeLog(tail: string, sessionId: string, since: Date): HarnessLogEvent[] {
-  const events: HarnessLogEvent[] = [];
-  const lines = tail.split('\n');
-  // The first line of a tail read starts mid-line whenever the file is larger than the window, so
-  // it is dropped: a half line cannot be parsed, and guessing at one risks a truncated reason.
-  for (const line of lines.slice(1)) {
-    if (!line.includes('level=ERROR')) continue;
-    if (OC_SMALL.test(line)) continue;
-    if (OC_SESSION.exec(line)?.[1] !== sessionId) continue;
-    const stamp = OC_TIMESTAMP.exec(line)?.[1];
-    const reason = OC_ERROR.exec(line)?.[1];
-    if (!stamp || !reason) continue;
-    const at = new Date(stamp);
-    if (Number.isNaN(at.getTime()) || at.getTime() < since.getTime()) continue;
-    const text = unescape(reason).trim();
-    if (text.length > 0) events.push({ at, reason: text });
-  }
-  return events;
-}
-
-const PROBES: Partial<Record<Harness, HarnessLogProbe>> = {
-  opencode: {
-    // opencode's data directory, by its own XDG resolution as observed on this machine
-    // (`XDG_DATA_HOME` unset here, so `~/.local/share`). One file, no rotation seen.
-    logPath: (home, env) => join(env['XDG_DATA_HOME'] || join(home, '.local', 'share'), 'opencode', 'log', 'opencode.log'),
-    parse: parseOpencodeLog,
-  },
-};
-
 /** Whether this harness keeps a log worth asking, i.e. whether the in-turn poll should run at all. */
 export function harnessLogProbe(harness: Harness): HarnessLogProbe | undefined {
-  return PROBES[harness];
+  return HARNESSES[harness].logProbe;
 }
 
 /**

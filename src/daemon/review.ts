@@ -35,7 +35,6 @@ import {
 
 // The reviewer's routes moved to review-run.ts; these stay importable from here.
 export {
-  AGY_NO_TOOLS,
   REVIEW_TIMEOUT_MS,
   agyReviewAnswer,
   isCapacityFailure,

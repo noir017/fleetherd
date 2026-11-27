@@ -29,13 +29,12 @@ import { peerName, readKnownHosts, syncPeers } from './pod-peers.js';
 import { gatewayKeyLine } from './pod-admin.js';
 import { readPods } from '../config/pods.js';
 import {
-  agentHome,
-  opencodeSkillDirs,
-  remoteOpencodeSkillDirs,
   scanRemoteSkillDirs,
   scanSkillDirs,
   skillDirsFor,
 } from './skills-scan.js';
+import { HARNESSES } from './harness/index.js';
+import { agentHome } from './harness/profile.js';
 import { withOutboundPacing } from './paced-adapter.js';
 import type {
   AgentCommand,
@@ -831,13 +830,13 @@ export class Daemon {
       const home = remoteAgentHome(def, w);
       const cwd = expandRemoteHome(resolveConversationCwd(def, conversationId, this.store), w.home);
       const env = remoteAgentEnv(def);
-      const configured = def.harness === 'opencode' ? await remoteOpencodeSkillDirs(host, home, env) : [];
+      const configured = (await HARNESSES[def.harness].remoteConfiguredSkillDirs?.(host, home, env)) ?? [];
       const dirs = skillDirsFor(def, { home, cwd, configured });
       return { dirs, found: await scanRemoteSkillDirs(host, dirs) };
     }
     const home = agentHome(def);
     const cwd = def ? resolveConversationCwd(def, conversationId, this.store) : home;
-    const configured = def?.harness === 'opencode' ? await opencodeSkillDirs(home, process.env) : [];
+    const configured = (def ? await HARNESSES[def.harness].configuredSkillDirs?.(home, process.env) : undefined) ?? [];
     const dirs = skillDirsFor(def, { home, cwd, configured });
     return { dirs, found: await scanSkillDirs(dirs) };
   }

@@ -542,12 +542,15 @@ Do not weaken these without saying so explicitly in the PR:
   `PROFILES`, as `platform/webui/` is — read
   [its README](src/platform/webui/README.md) first, because the work is not the adapter but
   the list of things `satori-core.ts` was doing for you.
-- **An agent harness** → an arm in `AgentDefSchema.harness` + `resolveHarness` in
-  `daemon/agent-acp.ts` if it speaks ACP. A harness that did not would need a sibling runtime
-  implementing `AgentFactory`, wired where `start.ts` builds the factory — nothing does today.
-  A service with an HTTP API is neither: it is a backend of `src/api-agent/`, which *is* an ACP
-  agent the daemon spawns as `custom` (see [its README](src/api-agent/README.md)).
-  See [src/daemon/README.md](src/daemon/README.md).
+- **An agent harness** → add the literal to `Harness` (`src/types.ts`) and `AgentDefSchema.harness`
+  (`src/config/schema.ts`), add its file under `src/daemon/harness/<name>.ts` implementing
+  `HarnessProfile` (launch, required `reviewIsolation`, `doctor`, skill/instruction/transcript/relay/option
+  hooks), and register one line in `HARNESSES` (`src/daemon/harness/index.ts`, `satisfies Record<Harness, HarnessProfile>`),
+  plus pure data entries in `core/` and `config/instructions.ts` if it has a user-level instruction file.
+  A harness that does not speak ACP would need a sibling runtime implementing `AgentFactory`, wired where
+  `start.ts` builds the factory — nothing does today. A service with an HTTP API is neither: it is a
+  backend of `src/api-agent/`, which *is* an ACP agent the daemon spawns as `custom` (see
+  [its README](src/api-agent/README.md)). See [src/daemon/README.md](src/daemon/README.md).
 - **A reverse command** → an arm in the `IpcAction` union + an entry in
   `REVERSE_COMMANDS`, whose required `topic` puts it on a `fleetherd help` page; CLI
   registration and the help page follow automatically, and a missing `handleReverse` arm fails
