@@ -54,9 +54,11 @@ function rig(
   let scope = '';
   const adapter = {
     capabilities: { thread: true },
-    parentOf: (a: ConversationAddress) => (a.thread && parents.has(a.thread) ? { channel: 'main', thread: parents.get(a.thread)! } : undefined),
-    childrenOf: () => [],
-    hasThread: (a: ConversationAddress) => threads.has(a.thread ?? ''),
+    topics: {
+      parentOf: (a: ConversationAddress) => (a.thread && parents.has(a.thread) ? { channel: 'main', thread: parents.get(a.thread)! } : undefined),
+      childrenOf: () => [],
+      hasThread: (a: ConversationAddress) => threads.has(a.thread ?? ''),
+    },
     createThread: async (_r: unknown, name: string) => {
       // e1000000, e2000000, … ef000000, f0000000: unique and eight hex digits up to 31 topics.
       const thread = (0xe0000000 + ++next * 0x1000000).toString(16);

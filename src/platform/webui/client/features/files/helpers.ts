@@ -1,4 +1,4 @@
-import type { FilesPanelEntry } from '../../../../adapter.js';
+import type { FilesPanelEntry } from '../../../../workbench.js';
 import { icon } from '../../../icons.js';
 import type { TreeNode } from '../../components/index.js';
 import type { PluginContext } from '../../plugins/api.js';

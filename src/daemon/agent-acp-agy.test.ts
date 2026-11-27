@@ -258,7 +258,7 @@ function rig(
     await opts.quotaGate;
     return name === 'usage' ? { ok: true, output: QUOTA_OUTPUT } : { ok: false, error: `unexpected /${name}` };
   };
-  const session = createAcpAgentFactory(cfg, join(dir, 'ipc.sock'), store, cli).getOrCreate('conv#1', 'agy');
+  const session = createAcpAgentFactory(cfg, join(dir, 'ipc.sock'), store, { agyCli: cli, provisions: [] }).getOrCreate('conv#1', 'agy');
   live = session;
   const log = () =>
     existsSync(logPath)

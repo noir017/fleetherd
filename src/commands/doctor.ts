@@ -7,7 +7,7 @@ import { ConfigSchema, accessUnrestricted, platformInstances, type Config, type 
 import { isNamedPipe } from '../ipc/server.js';
 import { spawnSync } from 'node:child_process';
 import { sshArgs } from '../remote/binaries.js';
-import { defaultIdentityFile, defaultKnownHostsFile } from '../daemon/remote-hosts.js';
+import { defaultIdentityFile, defaultKnownHostsFile } from '../daemon/ssh-identity.js';
 import { gitAsync, gitAvailable } from '../daemon/skills-git.js';
 import { gitSshCommand, redactRepoUrl, skillsRemoteOf } from '../daemon/skills-repo.js';
 import { isLegacyConfig, migrateLegacyConfig } from '../config/migrate.js';
@@ -16,21 +16,9 @@ import { AGY_COMMAND } from '../daemon/agy-cli.js';
 import { claudeProjectsDir } from '../daemon/claude-transcript.js';
 import { remoteAgentEnv } from '../daemon/agent-common.js';
 import { hostProbeScript, readHostProbe, type HostProbe } from '../daemon/host-probe.js';
-import { OWNER } from '../platform/webui/room.js';
-import { loadJwks } from '../platform/webui/sso.js';
-import { loadSinglePlugin } from '../platform/webui/plugins/loader.js';
+import { checkWebui } from '../platform/webui/doctor.js';
 import { detectEnvLocale, type Locale } from '../core/i18n/index.js';
 import { tCli } from '../core/i18n/cli.js';
-
-/** Whether a host:port can be bound right now. Binds and releases; never leaves it held. */
-async function portFree(host: string, port: number): Promise<boolean> {
-  return new Promise((resolve) => {
-    const probe = net.createServer();
-    probe.once('error', () => resolve(false));
-    probe.once('listening', () => probe.close(() => resolve(true)));
-    probe.listen(port, host);
-  });
-}
 
 /**
  * Locate an executable: if it contains a path separator, check the file directly;
@@ -318,33 +306,6 @@ function buildConfigChecks(ctx: DoctorContext): Check[] {
   ];
 }
 
-function inspectWebuiPlugins(
-  id: string,
-  plugins: readonly { path: string; config?: unknown }[],
-  filesRoots: readonly string[],
-  cfg: Config,
-  locale: Locale
-): string {
-  const agentRoots = cfg.agents
-    .filter((a) => !a.host)
-    .flatMap((a) => [a.cwd, path.join(os.homedir(), '.fleetherd', 'agents', a.id)].filter((x): x is string => Boolean(x)));
-  const forbiddenRoots = [...filesRoots, ...agentRoots];
-  const seenIds = new Set<string>();
-  const items = plugins.map((entry) => {
-    const result = loadSinglePlugin(entry, forbiddenRoots, seenIds);
-    if (result.ok) {
-      seenIds.add(result.plugin.id);
-      return `${entry.path} (${result.plugin.id}@${result.plugin.version} ✓)`;
-    }
-    return `${entry.path} (✗ ${result.reason})`;
-  });
-  return tCli(locale, 'doctor.detail.webuiPlugins', {
-    id,
-    count: plugins.length,
-    list: items.join(', '),
-  });
-}
-
 function buildRuntimeChecks(ctx: DoctorContext): Check[] {
   const { cfg, locale } = ctx;
   return [
@@ -364,63 +325,7 @@ function buildRuntimeChecks(ctx: DoctorContext): Check[] {
     },
     {
       name: tCli(locale, 'doctor.check.webui'),
-      run: async () => {
-        if (!cfg) return { ok: false, detail: tCli(locale, 'doctor.detail.configUnavailableWebui') };
-        const uis = Object.entries(cfg.platforms).filter(([, p]) => p.type === 'webui');
-        if (uis.length === 0) return { ok: true, detail: tCli(locale, 'doctor.detail.webuiSkipped') };
-        const lines: string[] = [];
-        let warn = false;
-        for (const [id, p] of uis) {
-          if (p.type !== 'webui') continue;
-          const free = await portFree(p.host, p.port);
-          if (!free) {
-            warn = true;
-            lines.push(tCli(locale, 'doctor.detail.webuiPortInUse', { id, host: p.host, port: p.port }));
-          } else {
-            lines.push(tCli(locale, 'doctor.detail.webuiPortFree', { id, host: p.host, port: p.port }));
-          }
-          const identity = `${id}:${OWNER}`;
-          if (cfg.access.allowFrom.length > 0 && !cfg.access.allowFrom.includes(identity)) {
-            warn = true;
-            lines.push(tCli(locale, 'doctor.detail.webuiAllowFromMissing', { id, identity }));
-          }
-          if (p.host !== '127.0.0.1' && p.host !== 'localhost' && p.host !== '::1') {
-            warn = true;
-            lines.push(tCli(locale, 'doctor.detail.webuiPlainHttp', { id, host: p.host }));
-          }
-          if (p.sso) {
-            try {
-              const keys = await loadJwks(p.sso.jwksUrl);
-              lines.push(
-                tCli(locale, 'doctor.detail.webuiSsoKeys', {
-                  id,
-                  header: p.sso.header,
-                  from: p.sso.from.join(', '),
-                  count: keys.size,
-                  url: p.sso.jwksUrl,
-                })
-              );
-            } catch (e) {
-              warn = true;
-              lines.push(
-                tCli(locale, 'doctor.detail.webuiSsoError', {
-                  id,
-                  url: p.sso.jwksUrl,
-                  error: e instanceof Error ? e.message : String(e),
-                })
-              );
-            }
-            if (p.sso.password) {
-              lines.push(tCli(locale, 'doctor.detail.webuiSsoPassword', { id }));
-            }
-          }
-          if (p.plugins.length > 0) {
-            warn = true;
-            lines.push(inspectWebuiPlugins(id, p.plugins, p.files.roots, cfg, locale));
-          }
-        }
-        return { ok: true, ...(warn ? { level: 'warn' as const } : {}), detail: lines.join('; ') };
-      },
+      run: () => checkWebui(cfg, locale),
     },
     {
       name: tCli(locale, 'doctor.check.acpSdk'),

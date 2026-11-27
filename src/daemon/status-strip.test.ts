@@ -2,12 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { ConversationRegistry } from './conversation.js';
 import { parseConfig } from '../config/schema.js';
 import type { PlatformAdapter } from '../platform/adapter.js';
+import type { TopicPresence } from '../platform/workbench.js';
 import type { AgentFactory, AgentSession, AgentStreamHandlers } from './agent.js';
 import type { AgentStatus, InboundMessage } from '../types.js';
 
 /**
  * The web UI's status strip, end to end through the registry: what a harness reports during a turn
- * reaches `PlatformAdapter.setStatus` for the conversation's lane, and a reset takes it down.
+ * reaches `TopicPresence.setStatus` for the conversation's lane, and a reset takes it down.
  *
  * status-board.test.ts pins the board's own rules (throttle, dedupe, cache reads). This pins the
  * WIRING — that the TurnRunner deps feed the board and that `/new` reaches it — which is the part a
@@ -40,6 +41,15 @@ function rig(opts: { canShow: boolean }) {
     dispose: (id) => void sessions.delete(id),
   };
 
+  const presence = {
+    setStatus: (_a, s) => void shown.push(s),
+    setActivity: () => {},
+    setPendingQueue: () => {},
+    markPendingDelivered: () => {},
+    usePendingQueueActions: () => {},
+    setOfflineMachines: () => {},
+    seenAt: () => undefined,
+  } satisfies TopicPresence;
   const platform = {
     capabilities: { thread: false, editMessage: true },
     sendMessage: async (address: { channel: string }) => ({ address, messageId: 'm1' }),
@@ -48,7 +58,7 @@ function rig(opts: { canShow: boolean }) {
     startTyping: async () => {},
     stopTyping: async () => {},
     measureRendered: (t: string) => t.length,
-    ...(opts.canShow ? { setStatus: (_a: unknown, s: AgentStatus | undefined) => void shown.push(s) } : {}),
+    ...(opts.canShow ? { presence } : {}),
   } as unknown as PlatformAdapter;
 
   const config = parseConfig({

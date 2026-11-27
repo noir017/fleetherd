@@ -165,7 +165,7 @@ function rig(preLaunch: string): { session: AgentSession; events: () => string[]
     setAgentSession: () => {},
     conversationCwd: () => undefined,
   } as unknown as Parameters<typeof createAcpAgentFactory>[2];
-  const session = createAcpAgentFactory(cfg, join(dir, 'ipc.sock'), store).getOrCreate('conv#1', 'fake');
+  const session = createAcpAgentFactory(cfg, join(dir, 'ipc.sock'), store, { provisions: [] }).getOrCreate('conv#1', 'fake');
   live = session;
   const events = (): string[] => (existsSync(log) ? readFileSync(log, 'utf8').split('\n').filter(Boolean) : []);
   return { session, events };

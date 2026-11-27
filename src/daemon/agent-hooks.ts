@@ -4,7 +4,7 @@ import { configDir } from '../config/load.js';
 import { TurnFailure } from './agent.js';
 import { buildHarnessEnv, remoteAgentEnv } from './agent-common.js';
 import { remoteHosts } from './remote-hosts.js';
-import { runBashCommand, runRemoteBashCommand, type BashRunResult } from './schedule-bash.js';
+import { runBashCommand, runRemoteBashCommand, type BashRunResult } from './shell-run.js';
 import { withLegacyNames } from '../legacy-name.js';
 
 /**
@@ -21,7 +21,7 @@ import { withLegacyNames } from '../legacy-name.js';
  * the next message tries again from the top.
  *
  * ── What it gets ──────────────────────────────────────────────────────────────────────────────
- * `bash -lc`, through the same runner as a scheduled `--bash` task (schedule-bash.ts): its own
+ * `bash -lc`, through the same runner as a scheduled `--bash` task (shell-run.ts): its own
  * process group, killed whole on timeout. The working directory and environment are the ones the
  * agent is about to get, minus the reverse-command token — the hook runs before the session it
  * would belong to, so it has nothing to call back into (buildHarnessEnv's reasoning). Full output

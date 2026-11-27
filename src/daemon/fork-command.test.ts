@@ -100,10 +100,12 @@ function rig(opts: RigOpts = {}) {
   };
   const web = {
     ...base,
-    forkThread: async (source: ConversationAddress, o: { turn?: number }) => {
-      forkCalls.push({ source, ...(o.turn !== undefined ? { turn: o.turn } : {}) });
-      const thread = `f${++nextFork}`.padEnd(8, '0');
-      return { address: { channel: 'main', thread }, title: '[cc] fix login (fork)', discard: () => void discarded.push(thread) };
+    topics: {
+      forkThread: async (source: ConversationAddress, o: { turn?: number }) => {
+        forkCalls.push({ source, ...(o.turn !== undefined ? { turn: o.turn } : {}) });
+        const thread = `f${++nextFork}`.padEnd(8, '0');
+        return { address: { channel: 'main', thread }, title: '[cc] fix login (fork)', discard: () => void discarded.push(thread) };
+      },
     },
   } as unknown as PlatformAdapter;
   const discord = base as unknown as PlatformAdapter;

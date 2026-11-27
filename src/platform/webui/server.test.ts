@@ -18,7 +18,7 @@ import type {
   SchedulePanelTask,
   SchedulePanelTaskDetail,
   SkillPanelEntry,
-} from '../adapter.js';
+} from '../workbench.js';
 import { WebAuth } from './auth.js';
 import { loadAssets, type WebAssets } from './assets.js';
 import { diskUploadStore } from './index.js';

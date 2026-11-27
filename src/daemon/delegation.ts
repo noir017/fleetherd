@@ -65,7 +65,7 @@ import { UPDATE_SENDER, type PersonWords } from './turn-senders.js';
  * `delegation.confirm: false`, `task-new` opens each sub-task at once and a card — the same list,
  * without buttons — is posted for the record. A conversation acts only on topics it opened; a
  * sub-agent's topic is an ordinary topic the person can walk into; and the relation is the
- * platform's own record (`PlatformAdapter.parentOf`), so deleting a topic ends it. The switch is a
+ * platform's own record (`TopicTree.parentOf`), so deleting a topic ends it. The switch is a
  * person's decision only: `/setting delegation` writes it, and no reverse command reaches it.
  * Instruction, in the skills (`skill/`): how to split a job, which agent to prefer, what to do with
  * the updates.
@@ -863,7 +863,7 @@ export class Delegation {
    * those more — with nobody asked, which is the spend the default exists to bound.
    */
   private nested(here: Place): boolean {
-    return here.adapter.parentOf?.(here.address) !== undefined;
+    return here.adapter.topics?.parentOf(here.address) !== undefined;
   }
 
   /**
@@ -1428,7 +1428,7 @@ export class Delegation {
 
   /**
    * End the agent process behind this conversation and every sub-agent topic under it — the web
-   * UI's "End agent" (`PlatformAdapter.useTopicKill`). `/kill` applied to a tree.
+   * UI's "End agent" (`WorkbenchHost.useTopicKill`). `/kill` applied to a tree.
    *
    * The walk is `stopOpened`'s, for the same reason: the relation is the platform's record
    * (`childrenOf`), and a topic acts only on the topics under it. Unlike `/stop`, which records a
@@ -1550,7 +1550,7 @@ export class Delegation {
         address = undefined;
       }
     }
-    const parent = address ? here.adapter.parentOf?.(address) : undefined;
+    const parent = address ? here.adapter.topics?.parentOf(address) : undefined;
     if (!address || !parent || parent.channel !== here.address.channel || parent.thread !== here.address.thread) {
       throw new Error(
         this.externalOf(here)
@@ -1566,7 +1566,7 @@ export class Delegation {
   /** The topics a conversation opened, as places. */
   private childrenOf(here: Place): Place[] {
     const out: Place[] = [];
-    for (const address of here.adapter.childrenOf?.(here.address) ?? []) {
+    for (const address of here.adapter.topics?.childrenOf(here.address) ?? []) {
       const conv = this.deps.registry.conversationAt(here.platformId, address);
       if (conv) out.push({ key: conv.key, platformId: here.platformId, address, adapter: here.adapter });
     }
@@ -1740,7 +1740,7 @@ export class Delegation {
   private parentOf(id: ConversationId): Place | undefined {
     const lane = this.deps.registry.laneFor(id);
     const adapter = lane ? this.deps.platforms.get(lane.platformId) : undefined;
-    const address = lane && adapter?.parentOf?.(lane.address);
+    const address = lane && adapter?.topics?.parentOf(lane.address);
     const conv = address && lane ? this.deps.registry.conversationAt(lane.platformId, address) : undefined;
     if (!lane || !adapter || !address || !conv) return undefined;
     return { key: conv.key, platformId: lane.platformId, address, adapter };

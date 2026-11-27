@@ -206,6 +206,41 @@ describe('withOutboundPacing — pass-through fidelity', () => {
 
     await expect(paced.sendMessage({ channel: 'c1' }, 'hi')).rejects.toBe(boom);
   });
+
+  it('forwards topics, presence, and workbench sub-objects verbatim without wrapping or pacing', () => {
+    const inner = makeAdapter();
+    const topics: NonNullable<PlatformAdapter['topics']> = {
+      parentOf: () => undefined,
+      childrenOf: () => [],
+      hasThread: () => true,
+      forkThread: async (source) => ({ address: source, title: 'fork', discard: () => {} }),
+    };
+    const presence: NonNullable<PlatformAdapter['presence']> = {
+      setStatus: () => inner.calls.push('setStatus'),
+      setActivity: () => {},
+      setPendingQueue: () => {},
+      markPendingDelivered: () => {},
+      usePendingQueueActions: () => {},
+      setOfflineMachines: () => {},
+      seenAt: () => undefined,
+    };
+    const workbench = {
+      attachTurnChanges: () => inner.calls.push('attachTurnChanges'),
+    } as unknown as NonNullable<PlatformAdapter['workbench']>;
+    const withSub = Object.assign(inner, { topics, presence, workbench });
+    const paced = withOutboundPacing(withSub, new OutboundPacer(makeOpts({ burst: 0 }), makeClock()));
+
+    expect(paced.topics).toBe(topics);
+    expect(paced.presence).toBe(presence);
+    expect(paced.workbench).toBe(workbench);
+    expect(outboundLane(paced, 'progress').topics).toBe(topics);
+    expect(outboundLane(paced, 'progress').presence).toBe(presence);
+    expect(outboundLane(paced, 'progress').workbench).toBe(workbench);
+
+    paced.presence?.setStatus({ channel: 'c1' }, { agent: 'cc' });
+    paced.workbench?.attachTurnChanges({ channel: 'c1' }, { turn: 1, files: 1, additions: 1, deletions: 0 });
+    expect(inner.calls).toEqual(['setStatus', 'attachTurnChanges']);
+  });
 });
 
 describe('withOutboundPacing — one budget per CHAT', () => {

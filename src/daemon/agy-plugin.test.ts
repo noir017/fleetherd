@@ -6,10 +6,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentDef } from '../config/schema.js';
 import { EXPERIENCE } from '../config/schema.js';
 import type { Welcome } from '../remote/connection.js';
-import type { RemoteHost } from '../remote/host.js';
 import { TOOL_SILENCE_FACTOR } from './agent-acp.js';
-import { AGY_PLUGIN_NAME, AGY_WAIT_WINDOW_S, agyPluginHome, agyPluginSource, ensureAgyPlugin } from './agy-plugin.js';
-import { RemoteHosts } from './remote-hosts.js';
+import { AGY_PLUGIN_NAME, AGY_WAIT_WINDOW_S, agyPluginHome, agyPluginSource, createAgyPluginProvision, ensureAgyPlugin } from './agy-plugin.js';
+import type { HostFiles } from './provision.js';
 import { linkSkill } from './skill-link.js';
 
 /**
@@ -78,7 +77,7 @@ describe('where it goes', () => {
   });
 });
 
-describe('RemoteHosts.placeAgyPlugin', () => {
+describe('agyPluginProvision.remote', () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
@@ -94,11 +93,11 @@ describe('RemoteHosts.placeAgyPlugin', () => {
   const welcome = { instance: 'i1', home: '/home/u', version: '9.9.9' } as unknown as Welcome;
 
   it('copies the files into the version directory once, and links them at every spawn', async () => {
-    const hosts = new RemoteHosts();
+    const provision = createAgyPluginProvision();
     const host = fakeHost();
     vi.spyOn(console, 'log').mockImplementation(() => {});
-    await hosts.placeAgyPlugin(host as unknown as RemoteHost, agy, '/home/u', welcome);
-    await hosts.placeAgyPlugin(host as unknown as RemoteHost, agy, '/home/u', welcome);
+    await provision.remote(host as unknown as HostFiles, agy, '/home/u', welcome);
+    await provision.remote(host as unknown as HostFiles, agy, '/home/u', welcome);
     const written = host.writeFile.mock.calls.map((c) => (c as unknown[])[0]);
     expect(written.sort()).toEqual(
       ['hooks.json', 'plugin.json', 'wait-background.sh'].map((f) => `/home/u/.fleetherd/remote/9.9.9/agy-plugin/${f}`)
@@ -114,11 +113,30 @@ describe('RemoteHosts.placeAgyPlugin', () => {
   });
 
   it('places nothing for any other harness', async () => {
-    const hosts = new RemoteHosts();
+    const provision = createAgyPluginProvision();
     const host = fakeHost();
-    await hosts.placeAgyPlugin(host as unknown as RemoteHost, { ...agy, harness: 'claude' } as AgentDef, '/home/u', welcome);
+    await provision.remote(host as unknown as HostFiles, { ...agy, harness: 'claude' } as AgentDef, '/home/u', welcome);
     expect(host.writeFile).not.toHaveBeenCalled();
     expect(host.ensureLink).not.toHaveBeenCalled();
+  });
+
+  it('warns and retries on next spawn when the plugin source directory is missing', async () => {
+    const provision = createAgyPluginProvision();
+    const host = fakeHost();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const readdir = vi.spyOn(fs, 'readdirSync').mockImplementationOnce(() => {
+      throw Object.assign(new Error('ENOENT: no such file or directory'), { code: 'ENOENT' });
+    });
+    await provision.remote(host as unknown as HostFiles, agy, '/home/u', welcome);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(host.writeFile).not.toHaveBeenCalled();
+    expect(host.ensureLink).not.toHaveBeenCalled();
+
+    readdir.mockRestore();
+    await provision.remote(host as unknown as HostFiles, agy, '/home/u', welcome);
+    expect(host.writeFile).toHaveBeenCalled();
+    expect(host.ensureLink).toHaveBeenCalledTimes(1);
   });
 });
 

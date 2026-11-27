@@ -383,7 +383,7 @@ function rig(permissions: 'auto' | 'ask', turnTimeoutMs?: number) {
   const store = { agentSession: () => undefined, setAgentSession: () => {}, conversationCwd: () => undefined } as unknown as Parameters<
     typeof createAcpAgentFactory
   >[2];
-  const session = createAcpAgentFactory(cfg, join(dir, 'ipc.sock'), store).getOrCreate('conv#1', 'fake');
+  const session = createAcpAgentFactory(cfg, join(dir, 'ipc.sock'), store, { provisions: [] }).getOrCreate('conv#1', 'fake');
   live = session;
   const answers = (): unknown[] => (existsSync(log) ? readFileSync(log, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)) : []);
   return { session, answers };

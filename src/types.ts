@@ -45,6 +45,12 @@ export type PermissionLevel = 'plan' | 'ask' | 'edits' | 'auto' | 'full';
 export type Harness = 'claude' | 'gemini' | 'codex' | 'opencode' | 'dsh' | 'agy' | 'custom';
 
 /**
+ * Conversation session scope (`session.scope`, overridable per route via `use.scope`).
+ * config/schema.ts mirrors this union with `satisfies`.
+ */
+export type SessionScope = 'per_thread' | 'per_channel' | 'per_user' | 'shared';
+
+/**
  * A platform-agnostic message reference, usable for in-place edit / reaction / reply.
  *
  * Carries the full address rather than a channel string so that an operation on a
@@ -670,7 +676,7 @@ export interface TurnOutcome {
 /**
  * What the gateway knows about a conversation that a platform does not: how its last turn ended, and
  * whether a turn is about to be continued automatically (`hooks.turnFailed.continue`). Pushed to a
- * platform that lists its conversations (`PlatformAdapter.setActivity`); whether a turn is running
+ * platform that lists its conversations (`TopicPresence.setActivity`); whether a turn is running
  * or a question is on screen the platform already knows from typing and buttons.
  */
 export interface TopicActivity {
@@ -916,7 +922,7 @@ export interface WorkdirScreen {
 
 /**
  * One topic in an "end this topic and everything under it" answer, from
- * `PlatformAdapter.useTopicKill` (the web UI's row menu).
+ * `WorkbenchHost.useTopicKill` (the web UI's row menu).
  *
  * `ended` covers every StopOutcome — a turn, a background burst or an idle child — because the
  * page only needs to know whether a process was ended and the conversation kept. The other two

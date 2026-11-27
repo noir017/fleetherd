@@ -1,7 +1,4 @@
-import type {
-  ReviewPanelList,
-  ReviewPanelPreference,
-} from '../../../../adapter.js';
+import type { ReviewPanelList, ReviewPanelPreference } from '../../../../workbench.js';
 import type { ReviewOpRequest, SkillOpRequest } from '../../../protocol.js';
 import { Emitter, type Event } from '../../base/event.js';
 import { type Disposable } from '../../base/lifecycle.js';

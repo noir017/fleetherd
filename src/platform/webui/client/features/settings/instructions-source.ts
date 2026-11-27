@@ -4,7 +4,7 @@ import type {
   InstructionsGlobalFile,
   InstructionsPanelList,
   InstructionsRef,
-} from '../../../../adapter.js';
+} from '../../../../workbench.js';
 import { icon } from '../../../icons.js';
 import type { WebMessage } from '../../../protocol.js';
 import { t } from '../../i18n/index.js';

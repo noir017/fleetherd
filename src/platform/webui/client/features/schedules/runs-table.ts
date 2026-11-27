@@ -1,4 +1,4 @@
-import type { SchedulePanelRun } from '../../../../adapter.js';
+import type { SchedulePanelRun } from '../../../../workbench.js';
 import { html, type TemplateResult } from '../../base/html.js';
 import { renderStatusDot } from '../../components/index.js';
 import { t as tr } from '../../i18n/index.js';

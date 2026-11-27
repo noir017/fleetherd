@@ -28,7 +28,7 @@ type TurnFailedContinue = NonNullable<NonNullable<NonNullable<AgentDef['hooks']>
  * one. One object for the three things that all start from "a turn ended":
  *
  *  1. **Activity** — the outcome (a reply to read, a failure) and any scheduled continue, pushed to a
- *     platform that lists conversations (`PlatformAdapter.setActivity`), so the person can see which
+ *     platform that lists conversations (`TopicPresence.setActivity`), so the person can see which
  *     of them need them without opening each. Super-agent's lesson, built from facts only (see
  *     core/topic-stage.ts): one person watching N conversations is the bottleneck, so the gateway's
  *     job is to make the N cost nothing until one needs them.
@@ -667,7 +667,7 @@ export class TurnOutcomes {
     const lane = this.deps.laneOf(id);
     if (!lane) return;
     try {
-      this.deps.platforms.get(lane.platformId)?.setActivity?.(lane.address, activity);
+      this.deps.platforms.get(lane.platformId)?.presence?.setActivity(lane.address, activity);
     } catch (e) {
       console.warn('[outcomes] could not push a conversation outcome:', e instanceof Error ? e.message : e);
     }

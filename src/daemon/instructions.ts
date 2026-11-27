@@ -1,8 +1,10 @@
 import fs from 'node:fs';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import type { AgentDef } from '../config/schema.js';
 import { configDir } from '../config/load.js';
 import { instructionsHome, instructionsOff, isInstructionLayer, type InstructionsHome } from '../config/instructions.js';
+import type { AgentProvision } from './provision.js';
 import { selfInvocation } from './reverse-cli-shim.js';
 import { envOf, isUnderEitherName } from '../legacy-name.js';
 
@@ -288,3 +290,51 @@ export function placeInstructions(def: AgentDef, home: string): InstructionsResu
   reportInstructions(r);
   return r;
 }
+
+/**
+ * Standing instructions provision (local + remote). Settled remote outcomes are cached per
+ * `host@instance@file` so unchanged text costs no round trip; non-settled outcomes retry next spawn.
+ */
+export function createInstructionsProvision(): AgentProvision<InstructionsResult | undefined, InstructionsResult | undefined> {
+  const placed = new Map<string, string>();
+
+  return {
+    name: 'instructions',
+    local: (def, home) => placeInstructions(def, home),
+    remote: async (host, def, home, w) => {
+      if (envOf('NO_SKILL_LINK')) return undefined;
+      // The merge turned delivery off for this agent (config/pods.ts): leave its file and link alone.
+      if (instructionsOff(def)) return undefined;
+      const where = instructionsHome(def, home);
+      if (!where) return undefined;
+      const key = `${host.id}@${w.instance}@${where.file}`;
+      try {
+        const composed = composeInstructions(instructionsDir(), where.name);
+        const state = composed.kind === 'text' ? createHash('sha256').update(composed.text).digest('hex') : composed.kind;
+        if (placed.get(key) === state) {
+          return { link: where.file, outcome: composed.kind === 'text' ? 'current' : composed.kind === 'none' ? 'absent' : 'too-big' };
+        }
+        const owned = ownedDir(home);
+        let r: InstructionsResult;
+        if (composed.kind === 'none') {
+          r = (await host.removeLink(where.file, owned)) as InstructionsResult;
+        } else if (composed.kind === 'too-big') {
+          r = { link: where.file, outcome: 'too-big', detail: `${composed.bytes} bytes, over the ${INSTRUCTIONS_MAX_BYTES}-byte limit` };
+        } else {
+          const copy = path.join(owned, `${where.name}.md`);
+          await host.writeFile(copy, Buffer.from(composed.text, 'utf8'), 0o444, { atomic: true });
+          r = (await host.ensureLink(copy, where.file, where.requires, owned)) as InstructionsResult;
+        }
+        reportInstructions(r, host.id);
+        if (SETTLED.has(r.outcome)) placed.set(key, state);
+        return r;
+      } catch (e) {
+        const r: InstructionsResult = { link: where.file, outcome: 'failed', detail: e instanceof Error ? e.message : String(e) };
+        reportInstructions(r, host.id);
+        return r;
+      }
+    },
+  };
+}
+
+export const instructionsProvision = createInstructionsProvision();

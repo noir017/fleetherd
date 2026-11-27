@@ -45,7 +45,7 @@ import type { Socket } from 'node:net';
 import path from 'node:path';
 import { brotliCompress, constants as zlibConstants, createGzip, gzip, gzipSync } from 'node:zlib';
 
-import type { InstructionsPanel, InstructionsTarget } from '../adapter.js';
+import type { InstructionsPanel, InstructionsTarget } from '../workbench.js';
 import { ASSET_FILE, loadAssets, type WebAssets } from './assets.js';
 import { SESSION_COOKIE, readCookie, sessionCookie, type WebAuth } from './auth.js';
 import { ICON_PNG, ICON_SVG, renderManifest } from './manifest.js';

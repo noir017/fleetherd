@@ -52,7 +52,9 @@ function rig(
   const shown: Array<AgentStatus | undefined> = [];
   const platform = {
     platform: 'web',
-    ...(opts.canShow === false ? {} : { setStatus: (_a: ConversationAddress, s: AgentStatus | undefined) => shown.push(s) }),
+    ...(opts.canShow === false
+      ? {}
+      : { presence: { setStatus: (_a: ConversationAddress, s: AgentStatus | undefined) => shown.push(s) } }),
   } as unknown as PlatformAdapter;
   const cacheReading = vi.fn(async () => opts.reading);
   const deps: StatusBoardDeps = {
@@ -207,7 +209,7 @@ describe('StatusBoard', () => {
     const { board } = rig();
     const deps = (board as unknown as { deps: StatusBoardDeps }).deps;
     const platform = deps.platforms.get('web') as PlatformAdapter;
-    platform.setStatus = () => {
+    platform.presence!.setStatus = () => {
       throw new Error('topic gone');
     };
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});

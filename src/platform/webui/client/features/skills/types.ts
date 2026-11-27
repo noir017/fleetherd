@@ -3,7 +3,7 @@ import type {
   SkillPanelEntry,
   SkillPanelHistoryEntry,
   SkillPanelSearches,
-} from '../../../../adapter.js';
+} from '../../../../workbench.js';
 import type { CodeViewApi } from '../../../codeview/app.js';
 import type { ViewContribution } from '../../plugins/api.js';
 import type { OverlayManager } from '../../services/overlays.js';

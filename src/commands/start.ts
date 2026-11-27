@@ -6,6 +6,10 @@ import { HostDefSchema, type Config } from '../config/schema.js';
 import { Daemon } from '../daemon/daemon.js';
 import { createPlatformAdapters } from '../platform/platform-factory.js';
 import { createAcpAgentFactory } from '../daemon/agent-acp.js';
+import { agyPluginProvision } from '../daemon/agy-plugin.js';
+import { instructionsProvision } from '../daemon/instructions.js';
+import { managedSkillsProvision } from '../daemon/managed-skills.js';
+import { bundledSkillProvision } from '../daemon/skill-link.js';
 import { ConversationStore, migrateLegacySessions } from '../daemon/conversation-store.js';
 import { WorkdirUsageStore } from '../daemon/workdir-usage.js';
 import { ScheduleStore } from '../daemon/schedule-store.js';
@@ -86,7 +90,8 @@ export async function runStart(): Promise<void> {
   // configures them again; that keeps every live connection (RemoteHosts.configure).
   remoteHosts.configure(cfg, socket);
   remoteHosts.serveMcpWith(mcpSession);
-  const agents = createAcpAgentFactory(cfg, socket, store);
+  const provisions = [bundledSkillProvision, agyPluginProvision, instructionsProvision, managedSkillsProvision];
+  const agents = createAcpAgentFactory(cfg, socket, store, { provisions });
   // Scheduled tasks: their own file (a task is not a property of a conversation), and a directory
   // of bash-run logs beside it. See daemon/schedule-store.ts for why that file is 0600 and atomic.
   const schedules = {

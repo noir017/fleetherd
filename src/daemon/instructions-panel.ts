@@ -25,16 +25,16 @@ import type {
   InstructionsRefsResult,
   InstructionsTarget,
   InstructionsWriteResult,
-} from '../platform/adapter.js';
+} from '../platform/workbench.js';
 import { buildHarnessEnv, remoteAgentHome } from './agent-common.js';
 import { MAX_EDIT_BYTES, readForEditor } from './file-panel.js';
 import { globBase, globRegex, harnessSources, hasGlob, type HarnessSources } from './instruction-imports.js';
 import {
   INSTRUCTIONS_MAX_BYTES,
   instructionsDir,
+  instructionsProvision,
   joinLayers,
   ownedDir,
-  placeInstructions,
   readLayer,
   type InstructionsResult,
 } from './instructions.js';
@@ -626,7 +626,7 @@ function sha(data: Buffer): string {
 /**
  * Place the composed text for `layers` for every configured agent that reads one of them, now, and
  * say what each placement came to — one line per machine and file, the agents that share it named
- * together. The placing is instructions.ts's and remote-hosts.ts's, unchanged: the same rules about
+ * together. The placing is instructions.ts's (instructionsProvision), unchanged: the same rules about
  * what is never overwritten, the same log lines. A remote host that does not answer within
  * `timeoutMs` is reported as not reached; the next agent start there places the text, as it always
  * did. An agent whose delivery the merge turned off (config/pods.ts) is reported as `not-delivered`
@@ -702,12 +702,12 @@ function liveDeliver(agents: readonly AgentDef[], layers: ReadonlySet<string>): 
   return deliverInstructions({
     agents,
     layers,
-    local: (def) => placeInstructions(def, localHome(def)),
+    local: (def) => instructionsProvision.local(def, localHome(def)),
     remote: async (def) => {
       const host = remoteHosts.hostFor(def);
       if (!host) throw new Error(`host "${def.host}" is not configured`);
       const w = await host.ready();
-      return remoteHosts.placeInstructions(host, def, remoteAgentHome(def, w), w);
+      return instructionsProvision.remote(host, def, remoteAgentHome(def, w), w);
     },
   });
 }

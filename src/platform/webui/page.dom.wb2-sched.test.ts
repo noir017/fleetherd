@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { ReviewPanelList } from '../adapter.js';
+import type { ReviewPanelList } from '../workbench.js';
 import { Emitter } from './client/base/event.js';
 import { groupHistoryByDate, historyAgentClass } from './client/features/history/helpers.js';
 import { createHistoryPlugin } from './client/features/history/plugin.js';

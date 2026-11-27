@@ -1,8 +1,4 @@
-import type {
-  HistoryPanelHit,
-  HistoryPanelPage,
-  HistoryPanelSession,
-} from '../../../../adapter.js';
+import type { HistoryPanelHit, HistoryPanelPage, HistoryPanelSession } from '../../../../workbench.js';
 import { icon } from '../../../icons.js';
 import type { WebMessage } from '../../../protocol.js';
 import type { WebHistoryRead } from '../../../room.js';

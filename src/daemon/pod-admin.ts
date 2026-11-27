@@ -5,7 +5,7 @@ import { readRawConfigIfExists, saveConfigPatch } from '../config/load.js';
 import { HostDefSchema } from '../config/schema.js';
 import { parseDestination } from '../remote/binaries.js';
 import { pinnedHostKey, PRIVATE_SOURCES, readKnownHosts } from './pod-peers.js';
-import { defaultIdentityFile, defaultKnownHostsFile } from './remote-hosts.js';
+import { defaultIdentityFile, defaultKnownHostsFile } from './ssh-identity.js';
 
 /**
  * Adding and removing hosts (pods) from a chat, as an agent would: `fleetherd pod-add`, `pod-remove`

@@ -4,7 +4,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { buildSkillsPanel } from './skills-panel.js';
-import type { SkillPanelDetail, SkillPanelResult } from '../platform/adapter.js';
+import type { SkillPanelDetail, SkillPanelResult } from '../platform/workbench.js';
 import { skillDir, type SkillRecord } from './skills-store.js';
 
 /**

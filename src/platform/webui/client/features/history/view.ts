@@ -1,4 +1,4 @@
-import type { HistoryPanelHit, HistoryPanelSession } from '../../../../adapter.js';
+import type { HistoryPanelHit, HistoryPanelSession } from '../../../../workbench.js';
 import { icon } from '../../../icons.js';
 import { addDisposableListener } from '../../base/dom.js';
 import { DisposableStore } from '../../base/lifecycle.js';

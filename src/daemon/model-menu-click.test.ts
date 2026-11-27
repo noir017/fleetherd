@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { Daemon } from './daemon.js';
 import { parseConfig, type Config } from '../config/schema.js';
-import type { ModelPickerList, ModelPickerResult, PlatformAdapter } from '../platform/adapter.js';
+import type { PlatformAdapter } from '../platform/adapter.js';
+import type { ModelPickerList, ModelPickerResult } from '../platform/workbench.js';
 import type { AgentFactory, AgentSession } from './agent.js';
 import type { ButtonInteraction, InboundMessage, MessageRef, ModelSelector } from '../types.js';
 

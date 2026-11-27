@@ -1,4 +1,9 @@
-import type { FileGitStatus, FilesPanelEntry, FilesPanelFile, FilesPanelKind } from '../../../../adapter.js';
+import type {
+  FileGitStatus,
+  FilesPanelEntry,
+  FilesPanelFile,
+  FilesPanelKind,
+} from '../../../../workbench.js';
 import type { CodeViewApi } from '../../../codeview/app.js';
 import type { TopicToolContribution } from '../../plugins/api.js';
 import type { ApiClient } from '../../services/api.js';

@@ -7,11 +7,8 @@ import type { Welcome } from '../remote/connection.js';
 import type { RemoteHost } from '../remote/host.js';
 import type { AgentStreamHandlers } from './agent.js';
 import { remoteHosts } from './remote-hosts.js';
-import { placeInstructions } from './instructions.js';
-import { placeManagedSkills } from './managed-skills.js';
+import type { AgentProvision } from './provision.js';
 import { ensureReverseCliShim } from './reverse-cli-shim.js';
-import { ensureSkillLink } from './skill-link.js';
-import { ensureAgyPlugin } from './agy-plugin.js';
 import { withLegacyNames } from '../legacy-name.js';
 import type { Locale } from '../core/i18n/index.js';
 import { tRuntime } from '../core/i18n/runtime.js';
@@ -136,7 +133,8 @@ export function buildHarnessEnv(def: AgentDef): Record<string, string | undefine
 export function buildAgentEnv(
   def: AgentDef,
   sessionToken: string,
-  socketPath: string
+  socketPath: string,
+  provisions: readonly AgentProvision[]
 ): Record<string, string | undefined> {
   const env = buildHarnessEnv(def);
   env.FLEETHERD_TURN_TOKEN = sessionToken;
@@ -147,15 +145,9 @@ export function buildAgentEnv(
   // `fleetherd` resolves to THIS daemon's own entry regardless of launch mode (see reverse-cli-shim).
   const shimDir = ensureReverseCliShim();
   if (shimDir) prependPath(env, shimDir);
-  // The skill goes under the home THIS agent runs as — an `env.HOME` override included — because
-  // that is where its harness will look (see skill-link). The operator's instructions likewise.
+  // Provisions go under the home THIS agent runs as — an `env.HOME` override included.
   const home = env.HOME || env.USERPROFILE || homedir();
-  ensureSkillLink(def.harness, home, def.command);
-  // agy's background results come back only through its plugin (agy-plugin.ts).
-  ensureAgyPlugin(def.harness, home);
-  placeInstructions(def, home);
-  // The skills the gateway keeps itself, delivered the same way and from the same moment.
-  placeManagedSkills(def, home);
+  for (const p of provisions) p.local(def, home);
   return env;
 }
 
@@ -271,7 +263,8 @@ export function remoteAgentEnv(def: AgentDef, sessionToken?: string): Record<str
 export async function prepareRemoteSpawn(
   def: AgentDef,
   host: RemoteHost,
-  cwd: string
+  cwd: string,
+  provisions: readonly AgentProvision[]
 ): Promise<{ welcome: Welcome; cwd: string }> {
   const welcome = await host.ready();
   const root = remoteAgentRoot(def, welcome.home);
@@ -290,10 +283,8 @@ export async function prepareRemoteSpawn(
       if (!st.exists || !st.dir) throw new Error(`agent "${def.id}": working directory ${root} does not exist on host "${host.id}"`);
     }
   }
-  await remoteHosts.placeSkill(host, def, remoteAgentHome(def, welcome), welcome);
-  await remoteHosts.placeAgyPlugin(host, def, remoteAgentHome(def, welcome), welcome);
-  await remoteHosts.placeInstructions(host, def, remoteAgentHome(def, welcome), welcome);
-  await remoteHosts.placeManagedSkills(host, def, remoteAgentHome(def, welcome), welcome);
+  const home = remoteAgentHome(def, welcome);
+  for (const p of provisions) await p.remote(host, def, home, welcome);
   return { welcome, cwd: dir };
 }
 

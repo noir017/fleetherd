@@ -16,7 +16,8 @@
  */
 import { z } from 'zod';
 
-import type { ButtonSpec, MessageKind, TurnChangeEntry } from '../adapter.js';
+import type { ButtonSpec, MessageKind } from '../adapter.js';
+import type { TurnChangeEntry } from '../workbench.js';
 import type {
   AgentCatalog,
   AgentStatus,
@@ -219,7 +220,7 @@ export const CloseIdleRequestSchema = z.object({ topics: z.array(TopicId).min(1)
  * End the agent process behind one topic and the sub-agent topics under it — the row menu's
  * "End agent", which acts on the click. `topic` is the row the menu was opened on and `topics`
  * is the list the page held then: the daemon walks `topic`'s subtree from its own record
- * (`PlatformAdapter.childrenOf`) and ends only the intersection. That is what keeps a sub-agent
+ * (`TopicTree.childrenOf`) and ends only the intersection. That is what keeps a sub-agent
  * opened since out of the kill, and it is why the list travels rather than being re-derived from
  * the page. Bounded by the store's cap, as a topic cannot be listed that the store does not hold.
  */
@@ -659,7 +660,7 @@ export type WebEvent =
        * The agents this topic could be given to, for a room with nothing in it yet: the page lays
        * them out in place of the empty transcript, and a tap sends `/agent <id>`. Only on a sync,
        * and only for an empty room — once anything has been said the transcript is the page, and a
-       * topic that has started with its agent cannot move (see `PlatformAdapter.useAgentCatalog`).
+       * topic that has started with its agent cannot move (see `WorkbenchHost.useAgentCatalog`).
        */
       agents?: AgentCatalog;
       /** Machines the daemon cannot reach right now (`machines` below); absent when there are none. */

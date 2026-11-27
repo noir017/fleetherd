@@ -467,7 +467,7 @@ describe('resolveConversationCwd (read by the runtime at spawn)', () => {
 
 /**
  * `workdirForRef` — the lookup handed to a platform that can SHOW where a conversation works
- * (`PlatformAdapter.useWorkdirLookup`, implemented only by the web UI's topic list).
+ * (`WorkbenchHost.useWorkdirLookup`, implemented only by the web UI's topic list).
  *
  * The reason it exists rather than the platform forming a key itself: the key depends on the
  * session scope and on the alias table, and a platform that guessed would be right about the
@@ -556,7 +556,7 @@ describe('workdirForRef (what a platform is told to display)', () => {
 
 /**
  * `agentCatalogForRef` — the lookup the web UI's empty topic lays out as a choice of agent
- * (`PlatformAdapter.useAgentCatalog`). What it pins is when the question is still open: until the
+ * (`WorkbenchHost.useAgentCatalog`). What it pins is when the question is still open: until the
  * agent a first message would reach has a session here, since chooseAgent refuses to move one.
  */
 describe('agentCatalogForRef (what a new topic offers)', () => {

@@ -37,7 +37,7 @@ import type { PlatformAdapter } from '../platform/adapter.js';
 import type { ConversationId } from '../types.js';
 import type { ScheduleListResult, ScheduleOpResult, ScheduleTaskView } from '../ipc/protocol.js';
 import type { ConversationRegistry } from './conversation.js';
-import { runBashCommand, runRemoteBashCommand, type BashRunResult } from './schedule-bash.js';
+import { runBashCommand, runRemoteBashCommand, type BashRunResult } from './shell-run.js';
 import { remoteHosts } from './remote-hosts.js';
 import type { ScheduleStore } from './schedule-store.js';
 import { Scheduler, ERROR_LIMIT, type ScheduleRunResult } from './scheduler.js';
@@ -618,7 +618,7 @@ export class ScheduleService {
 
   /**
    * Whether a task that can still run posts into the conversation at `ref` — what keeps the web
-   * UI from evicting that topic (`PlatformAdapter.useScheduleLookup`).
+   * UI from evicting that topic (`WorkbenchHost.useScheduleLookup`).
    *
    * Paused counts: resuming it would otherwise find its topic gone. Expired and done do not; an
    * expired task has already posted its notice and runs no more.
@@ -782,7 +782,7 @@ export class ScheduleService {
     // Ask the platform whether the topic is still there when it can answer; one that cannot is
     // assumed to have kept it, which is the only honest guess a chat app allows. A platform that
     // cannot answer is caught below, when posting into the topic fails.
-    const reuse = stored?.day === day && (platform.hasThread?.(stored.address) ?? true) ? stored : undefined;
+    const reuse = stored?.day === day && (platform.topics?.hasThread(stored.address) ?? true) ? stored : undefined;
     const reused = reuse !== undefined;
 
     let key: string;

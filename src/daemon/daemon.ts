@@ -17,21 +17,13 @@ import { parsePickButtonId } from '../core/button-id.js';
 import { offlinePlaces } from '../core/agent-menu.js';
 import { canReach } from '../remote/reachable.js';
 import { HostAvailability } from './host-availability.js';
-import type {
-  HistoryPanel,
-  PlatformAdapter,
-  ReviewPanel,
-  SchedulePanel,
-  SchedulePanelDetailResult,
-  SchedulePanelFormContext,
-  SchedulePanelTask,
-  SchedulePanelTaskDetail,
-} from '../platform/adapter.js';
+import type { PlatformAdapter } from '../platform/adapter.js';
 import { OutboundPacer } from '../core/outbound-pacer.js';
 import { splitIntoChunks } from '../core/stream-buffer.js';
 import { formatEmptyCatalog, formatSkillCatalog } from '../core/skills-catalog.js';
 import { expandRemoteHome, remoteAgentEnv, remoteAgentHome, resolveConversationCwd } from './agent-common.js';
-import { knownHostsFileOf, remoteHosts } from './remote-hosts.js';
+import { remoteHosts } from './remote-hosts.js';
+import { knownHostsFileOf } from './ssh-identity.js';
 import { hostsWithConfiguredAgents, refreshPods } from './pods.js';
 import { peerName, readKnownHosts, syncPeers } from './pod-peers.js';
 import { gatewayKeyLine } from './pod-admin.js';
@@ -69,20 +61,14 @@ import { IpcServer } from '../ipc/server.js';
 import { startSkillSweep } from './skill-lifecycle.js';
 import { ReviewService, reviewCandidatesFrom, type ReviewCandidate, type ReviewLane } from './review.js';
 import { ReviewStateStore } from './review-state.js';
-import { buildReviewPanel } from './review-panel.js';
-import { buildHistoryPanel } from './history-panel.js';
-import { buildFilesPanel } from './file-panel.js';
-import { buildInstructionsPanel } from './instructions-panel.js';
 import { standingInstructions } from './instructions.js';
 import { selfInvocation } from './reverse-cli-shim.js';
-import { activeSkillNames, type SkillRecord } from './skills-store.js';
+import type { SkillRecord } from './skills-store.js';
 import type { IpcAction } from '../ipc/protocol.js';
 import { VoiceIntake } from './voice.js';
 import { ScheduleService } from './schedule-service.js';
-import { panelEditInput, panelForm, panelNewInput, panelTarget, panelTaskDetail, panelTasks } from './schedule-panel.js';
-import { buildSkillsPanel } from './skills-panel.js';
-import { buildGitPanel } from './git-panel.js';
 import { readHead } from './git-head.js';
+import { attachWorkbench } from './workbench-wiring.js';
 import { SkillsRepo, prepareSkillsRepo, skillsRemoteOf } from './skills-repo.js';
 import { SkillLibrary } from './skill-library.js';
 import { Delegation, type ExternalOwner } from './delegation.js';
@@ -126,7 +112,6 @@ export {
 // messageId; dedup within this window so one `/cmd` routes once.
 const DEDUP_TTL_MS = 15_000;
 const STARTUP_POD_TIMEOUT_MS = 60_000;
-const PANEL_CHANNEL_LIMIT = 50;
 
 export function buildRegisteredSpecs(cfg: Pick<Config, 'agents' | 'routing'>, surface?: CommandSurface): SlashCommandSpec[] {
   const specs = [...DAEMON_COMMANDS, ...genericCommandSpecs(surface), ...agentCommandSpecs(cfg), ...routeCommandSpecs(cfg)];
@@ -431,16 +416,25 @@ export class Daemon {
       adapter.onMessage((msg) => this.onInbound(msg));
       adapter.onButton((ev) => this.onButton(ev));
       adapter.onCommand((ev) => this.onCommand(ev));
-      adapter.useWorkdirLookup?.((ref) => this.registry.workdirForRef(ref));
-      adapter.useLivenessLookup?.((ref) => this.registry.liveForRef(ref));
-      adapter.useIdleReclaim?.((ref) => this.registry.reclaimIdleForRef(ref));
-      this.wireTopicKill(adapter);
-      adapter.useScheduleLookup?.((ref) => this.schedules?.targets(ref) ?? false);
-      adapter.usePendingQueueActions?.({
+      adapter.presence?.usePendingQueueActions({
         recall: (ref, messageId) => this.registry.recallPendingForRef(ref, messageId),
         sendNow: (ref, messageId, opts) => this.registry.sendNowPendingForRef(ref, messageId, opts),
       });
-      this.wirePanels(adapter, id);
+      if (adapter.workbench) {
+        attachWorkbench(adapter.workbench, {
+          instance: id,
+          config: () => this.config,
+          registry: this.registry,
+          schedules: this.schedules,
+          history: this.history,
+          reviews: this.reviews,
+          reviewState: this.reviewState,
+          skillsRepo: this.skillsRepo,
+          voice: this.voice,
+          killTopicTree: (ref, confirmed) => this.killTopicTree(ref, confirmed),
+          notifySkillArchived: (skill) => this.notifySkillArchived(skill, 'manual'),
+        });
+      }
       await adapter.start();
       console.log(`[daemon] platform instance "${id}" (${adapter.platformType}) started`);
     }
@@ -469,10 +463,6 @@ export class Daemon {
     this.installSignalHandlers();
   }
 
-  private wireTopicKill(adapter: PlatformAdapter): void {
-    adapter.useTopicKill?.((ref, confirmed) => this.killTopicTree(ref, confirmed));
-  }
-
   private watchHosts(): void {
     remoteHosts.onConnection((id, up) => (up ? this.availability.connected(id) : this.availability.dropped(id)));
     this.availability.configure(this.config.hosts ?? {});
@@ -487,7 +477,7 @@ export class Daemon {
     this.offlineNames = names;
     for (const [id, adapter] of this.platforms) {
       try {
-        adapter.setOfflineMachines?.(machines);
+        adapter.presence?.setOfflineMachines(machines);
       } catch (e) {
         console.warn(`[remote] could not tell ${id} which machines are offline:`, e instanceof Error ? e.message : e);
       }
@@ -764,146 +754,6 @@ export class Daemon {
     const adapter = this.platforms.get(lane.platform);
     if (!adapter) throw new Error(`platform "${lane.platform}" is not configured any more`);
     await adapter.sendMessage(lane.thread ? { channel: lane.channel, thread: lane.thread } : { channel: lane.channel }, text);
-  }
-
-  private schedulePanel(instance: string): SchedulePanel | undefined {
-    const schedules = this.schedules;
-    if (!schedules) return undefined;
-    const list = (): SchedulePanelTask[] =>
-      panelTasks(schedules.tasks(), schedules.now(), (id) => schedules.scheduler.isRunning(id), instance);
-    const form = (): SchedulePanelFormContext =>
-      panelForm({
-        agents: this.config.agents,
-        hosts: Object.keys(this.config.hosts ?? {}),
-        channels: this.registry.listChannels({ limit: PANEL_CHANNEL_LIMIT }).channels,
-        instance,
-        tz: schedules.defaultZone(),
-        agent: this.config.routing.default,
-      });
-    const detail = (id: string): SchedulePanelTaskDetail | undefined => {
-      const task = schedules.get(id);
-      if (!task) return undefined;
-      return panelTaskDetail(task, {
-        now: schedules.now(),
-        running: schedules.scheduler.isRunning(id),
-        instance,
-        form: form(),
-        laneOf: (key) => this.registry.laneFor(key),
-      });
-    };
-    const instances = new Set(Object.keys(this.config.platforms));
-    const answer = async (write: () => Promise<{ id: string }>): Promise<SchedulePanelDetailResult> => {
-      try {
-        const { id } = await write();
-        const page = detail(id);
-        if (!page) return { ok: false, error: `#${id} was removed just after this change` };
-        return { ok: true, detail: page, tasks: list() };
-      } catch (e) {
-        return { ok: false, error: e instanceof Error ? e.message : String(e) };
-      }
-    };
-    return {
-      list,
-      op: (id, action, tags) => {
-        try {
-          if (action === 'tags') schedules.setTags(id, tags ?? []);
-          else schedules.op(id, action, undefined, false);
-          return { ok: true, tasks: list() };
-        } catch (e) {
-          return { ok: false, error: e instanceof Error ? e.message : String(e) };
-        }
-      },
-      detail,
-      form,
-      add: (task) => answer(() => schedules.addFromPanel(panelNewInput(task), panelTarget(task.target, instance, instances))),
-      edit: (id, change) =>
-        answer(() =>
-          schedules.editFromPanel(
-            id,
-            panelEditInput(change),
-            change.target !== undefined ? panelTarget(change.target, instance, instances) : undefined
-          )
-        ),
-    };
-  }
-
-  private wirePanels(adapter: PlatformAdapter, id: string): void {
-    const schedulePanel = this.schedulePanel(id);
-    if (schedulePanel) adapter.useSchedulePanel?.(schedulePanel);
-    adapter.useSkillsPanel?.(
-      buildSkillsPanel({
-        notifyArchived: (skill) => this.notifySkillArchived(skill, 'manual'),
-        write: (fn) => this.skillsRepo.write(fn),
-      })
-    );
-    const reviewPanel = this.reviewPanel(id);
-    if (reviewPanel) adapter.useReviewPanel?.(reviewPanel);
-    const historyPanel = this.historyPanel(id);
-    if (historyPanel) adapter.useHistoryPanel?.(historyPanel);
-    adapter.useAgentCatalog?.((ref) => this.registry.agentCatalogForRef(ref));
-    adapter.useTopicSetup?.((ref, opts) => this.registry.setupTopicForRef(ref, opts));
-    adapter.useWorkdirBrowser?.((ref, opts) => this.registry.browseWorkdirForRef(ref, opts));
-    adapter.useModelPicker?.({
-      list: (ref) => this.registry.modelPickerForRef(ref),
-      choose: (ref, value) => this.registry.chooseModelForRef(ref, value),
-    });
-    adapter.useOptionPicker?.({
-      peek: (ref) => this.registry.optionStatusForRef(ref),
-      list: (ref) => this.registry.optionsForRef(ref),
-      choose: (ref, optId, value) => this.registry.chooseOptionForRef(ref, optId, value),
-    });
-    adapter.useTurnChanges?.({
-      status: (ref, turn) => this.registry.turnChangesStatusForRef(ref, turn),
-      file: (ref, turn, filePath) => this.registry.turnChangesFileForRef(ref, turn, filePath),
-      forget: (ref) => this.registry.turnChangesForgetForRef(ref),
-    });
-    adapter.useGitPanel?.(buildGitPanel((ref) => this.registry.workspaceForRef(ref)));
-    adapter.useVoiceTranscriber?.({
-      enabled: () => this.voice.isConfigured(),
-      transcribe: (bytes, mime) => this.voice.transcribeBuffer(bytes, mime),
-    });
-    this.wireWritingPanels(adapter, id);
-  }
-
-  /** Opt-in write panels: never injected while disabled (security invariants 9 & 10). */
-  private wireWritingPanels(adapter: PlatformAdapter, id: string): void {
-    const platform = this.config.platforms[id];
-    if (platform?.type !== 'webui') return;
-    if (platform.files.enabled) {
-      adapter.useFilesPanel?.(
-        buildFilesPanel({
-          instance: id,
-          roots: platform.files.roots,
-          workspaceForRef: (ref) => this.registry.workspaceForRef(ref),
-        })
-      );
-    }
-    if (platform.instructions.enabled) {
-      adapter.useInstructionsPanel?.(buildInstructionsPanel({ instance: id, agents: () => this.config.agents }));
-    }
-  }
-
-  private reviewPanel(instance: string): ReviewPanel | undefined {
-    const history = this.history;
-    const reviews = this.reviews;
-    if (!history || !reviews) return undefined;
-    const state = this.reviewState;
-    return buildReviewPanel({
-      history,
-      instance,
-      enabled: () => reviews.enabled(),
-      dismissed: () => state?.dismissedPreferences() ?? new Set<string>(),
-      dismiss: (text) => state?.dismissPreference(text),
-      standing: () => standingInstructions(),
-      activeSkills: () => new Set(activeSkillNames()),
-      writeSkills: (fn) => this.skillsRepo.write(fn),
-    });
-  }
-
-  private historyPanel(instance: string): HistoryPanel | undefined {
-    const history = this.history;
-    if (!history) return undefined;
-    return buildHistoryPanel({ history, instance });
   }
 
   private onButton(ev: ButtonInteraction): void {

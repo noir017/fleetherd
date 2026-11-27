@@ -118,8 +118,10 @@ function rig() {
     measureRendered: (t: string) => t.length,
     // Both present, so `commandSurface(adapter).nested` is true and task-new can reach putUp —
     // which is where the confirmation card's kind is decided.
-    parentOf: () => undefined,
-    childrenOf: () => [],
+    topics: {
+      parentOf: () => undefined,
+      childrenOf: () => [],
+    },
   } as unknown as PlatformAdapter;
 
   const daemon = new Daemon(

@@ -1,13 +1,14 @@
 import { shortModelName } from '../core/runtime-footer.js';
 import type { ConversationAddress } from '../core/conversation.js';
 import type { PlatformAdapter } from '../platform/adapter.js';
+import type { TopicPresence } from '../platform/workbench.js';
 import type { AgentStatus, ConversationId, QuotaPool, SessionOption, StatusOption, StatusPermissions } from '../types.js';
 import type { AgentUsage } from './agent.js';
 import type { CacheReading } from './claude-transcript.js';
 
 /**
  * The live status of each conversation's agent, pushed to any platform that can show one
- * (`PlatformAdapter.setStatus` — the web UI's strip above its composer).
+ * (`TopicPresence.setStatus` — the web UI's strip above its composer).
  *
  * ── What it costs, which is the design constraint ─────────────────────────────
  * Nothing is polled. Every value here arrives on an event the daemon was already handling — an
@@ -266,11 +267,11 @@ export class StatusBoard {
   }
 
   /** The adapter and address a status for this conversation goes to, if any platform can show it. */
-  private target(id: ConversationId): { platform: PlatformAdapter; address: ConversationAddress } | undefined {
+  private target(id: ConversationId): { presence: TopicPresence; address: ConversationAddress } | undefined {
     const lane = this.deps.laneOf(id);
     if (!lane) return undefined;
-    const platform = this.deps.platforms.get(lane.platformId);
-    return platform?.setStatus ? { platform, address: lane.address } : undefined;
+    const presence = this.deps.platforms.get(lane.platformId)?.presence;
+    return presence ? { presence, address: lane.address } : undefined;
   }
 
   /** Hand a status to the platform. Swallows a throw (best-effort, see setStatus); false if not shown. */
@@ -278,7 +279,7 @@ export class StatusBoard {
     const t = this.target(id);
     if (!t) return false;
     try {
-      t.platform.setStatus!(t.address, status);
+      t.presence.setStatus(t.address, status);
       return true;
     } catch (err) {
       console.warn(`[status] ${id}: could not show the agent status:`, err instanceof Error ? err.message : err);

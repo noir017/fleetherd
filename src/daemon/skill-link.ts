@@ -2,7 +2,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { AgentDef } from '../config/schema.js';
+import type { Welcome } from '../remote/connection.js';
 import { renderBundledSkill } from './bundled-skill.js';
+import type { AgentProvision, HostFiles } from './provision.js';
 import { selfInvocation } from './reverse-cli-shim.js';
 import { syncSkillCopy } from './skill-copy.js';
 import { LEGACY_SKILL_LINK, envOf, isUnderEitherName } from '../legacy-name.js';
@@ -306,3 +308,102 @@ function report(r: SkillLinkResult, source: string): void {
     );
   }
 }
+
+export function listFiles(dir: string, prefix = ''): string[] {
+  const out: string[] = [];
+  for (const e of fs.readdirSync(path.join(dir, prefix), { withFileTypes: true })) {
+    const rel = prefix ? `${prefix}/${e.name}` : e.name;
+    if (e.isDirectory()) out.push(...listFiles(dir, rel));
+    else if (e.isFile()) out.push(rel);
+  }
+  return out;
+}
+
+async function placeSkillFiles(host: HostFiles, base: string): Promise<void> {
+  for (const skill of BUNDLED_SKILLS) {
+    if (skill.library) continue; // rendered per skill directory (placeRemoteRendered)
+    const source = bundledSkillDir(skill.dir);
+    for (const rel of listFiles(source)) {
+      await host.writeFile(`${base}/${skill.dir}/${rel}`, fs.readFileSync(path.join(source, ...rel.split('/'))), 0o644);
+    }
+  }
+}
+
+async function sweepDeadSkillLinks(host: HostFiles, home: string): Promise<void> {
+  for (const dir of allSkillDirs(home)) {
+    for (const link of await host.sweepSkillLinks(dir)) console.log(`[skill] ${host.id}: removed dead link ${link}`);
+  }
+}
+
+async function removeRemoteLegacySkillLinks(host: HostFiles, homes: SkillHome[], w: Welcome): Promise<void> {
+  // Pre-3.0.0 link (`talkcode` → ~/.talkcode/remote/<version>/skill), removed only if ours (remote/legacy.go).
+  for (const h of homes) {
+    const r = await host.removeLink(`${h.dir}/${LEGACY_SKILL_LINK}`, `${w.home}/.fleetherd/remote`);
+    if (r.outcome === 'removed') console.log(`[skill] ${host.id}: removed ${r.link}, the skill's link before 3.0.0`);
+  }
+}
+
+/**
+ * Bundled skills provision (local + remote). Remote files live under `<w.home>/.fleetherd/remote/<version>`
+ * so upgrades retire them with the build; caches are keyed per `host@version@instance`.
+ */
+export function createBundledSkillProvision(): AgentProvision<SkillLinkResult[], void> {
+  const skillPlaced = new Set<string>();
+  const skillSwept = new Set<string>();
+  const renderedPlaced = new Map<string, string>();
+
+  async function placeRemoteRendered(
+    host: HostFiles,
+    source: string,
+    where: SkillHome,
+    home: string,
+    base: string,
+    key: string
+  ): Promise<string> {
+    const rendered = renderBundledSkill(source, host.id, skillReaders(where.dir, home));
+    const target = `${base}/bundled/${rendered.key}`;
+    const placedKey = `${key}@${rendered.key}`;
+    if (renderedPlaced.get(placedKey) !== rendered.digest) {
+      for (const [rel, data] of rendered.files) await host.writeFile(`${target}/${rel}`, data, 0o444, { atomic: true });
+      renderedPlaced.set(placedKey, rendered.digest);
+      console.log(`[skill] ${host.id}: wrote ${target} for ${where.dir}`);
+    }
+    return target;
+  }
+
+  return {
+    name: 'bundled-skill',
+    local: (def, home) => ensureSkillLink(def.harness, home, def.command),
+    remote: async (host, def, home, w) => {
+      if (envOf('NO_SKILL_LINK')) return;
+      const base = `${w.home}/.fleetherd/remote/${w.version}`;
+      const key = `${host.id}@${w.version}@${w.instance}`;
+      const homes = skillHomes(def.harness, home, def.command);
+      try {
+        if (homes.length > 0 && !skillPlaced.has(key)) {
+          await placeSkillFiles(host, base);
+          skillPlaced.add(key);
+        }
+        if (!skillSwept.has(key)) {
+          await sweepDeadSkillLinks(host, home);
+          skillSwept.add(key);
+        }
+        for (const skill of BUNDLED_SKILLS) {
+          for (const h of homes) {
+            const target = skill.library
+              ? await placeRemoteRendered(host, bundledSkillDir(skill.dir), h, home, base, key)
+              : `${base}/${skill.dir}`;
+            const r = await host.ensureLink(target, `${h.dir}/${skill.name}`, h.requires);
+            if (r.outcome === 'linked' || r.outcome === 'relinked') console.log(`[skill] ${host.id}: linked ${r.link} → ${target}`);
+            else if (r.outcome === 'occupied' || r.outcome === 'failed') console.warn(`[skill] ${host.id}: ${r.link}: ${r.outcome} (${r.detail ?? ''})`);
+          }
+        }
+        await removeRemoteLegacySkillLinks(host, homes, w);
+      } catch (e) {
+        console.warn(`[skill] ${host.id}: could not place the skill:`, e instanceof Error ? e.message : e);
+      }
+    },
+  };
+}
+
+export const bundledSkillProvision = createBundledSkillProvision();

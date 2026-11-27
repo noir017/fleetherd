@@ -79,7 +79,7 @@ describe('cold-start concurrency', () => {
       setAgentSession: () => {},
       conversationCwd: () => undefined,
     } as unknown as Parameters<typeof createAcpAgentFactory>[2];
-    const factory = createAcpAgentFactory(cfg, join(dir, 'ipc.sock'), store);
+    const factory = createAcpAgentFactory(cfg, join(dir, 'ipc.sock'), store, { provisions: [] });
 
     const sessions = Array.from({ length: 6 }, (_, i) => factory.getOrCreate(`conv#${i}`, 'fake'));
     live = sessions;

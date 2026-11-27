@@ -137,7 +137,7 @@ export class ExternalCalls {
       this.deps.config.mcp?.platform ?? Object.entries(this.deps.config.platforms).find(([, p]) => p.type === 'webui')?.[0];
     const adapter = id ? this.deps.platforms.get(id) : undefined;
     if (!id || !adapter) throw new Error('the web UI this gateway would open your topic in is not running');
-    if (!adapter.capabilities.thread || !adapter.parentOf || !adapter.childrenOf) {
+    if (!adapter.capabilities.thread || !adapter.topics) {
       throw new Error(`platform instance "${id}" cannot hold topics nested under one another`);
     }
     return { id, adapter };
@@ -275,7 +275,7 @@ export class ExternalCalls {
   /** Whether a recorded topic is still on its platform; a deleted one is forgotten. */
   private present(t: ExternalTopic): boolean {
     const adapter = this.deps.platforms.get(t.platform);
-    if (adapter?.hasThread?.(t.address) !== false) return adapter !== undefined;
+    if (adapter?.topics?.hasThread(t.address) !== false) return adapter !== undefined;
     this.deps.topics.remove(t.platform, t.address);
     console.log(`[external-mcp] forgot ${t.key}: the topic was deleted`);
     return false;
@@ -296,7 +296,7 @@ export class ExternalCalls {
     if (key && t && t.caller === caller.name && t.platform === id && this.present(t)) {
       return { key, at: { platform: id, address }, hosted: false };
     }
-    if (key && conv?.agent && caller.agents?.length && adapter.hasThread?.(address) !== false && matchesCallerAgent(conv.agent, caller.agents)) {
+    if (key && conv?.agent && caller.agents?.length && adapter.topics?.hasThread(address) !== false && matchesCallerAgent(conv.agent, caller.agents)) {
       return { key, at: { platform: id, address }, hosted: true };
     }
     throw notYours(topic);
@@ -306,7 +306,7 @@ export class ExternalCalls {
   private parentOwned(caller: ExternalCaller, topic: string): { key: ConversationId; at: TopicAt; hosted: boolean } {
     const { id, adapter } = this.platform();
     const address = this.addressOf(caller, topic, id);
-    const parent = address ? adapter.parentOf?.(address) : undefined;
+    const parent = address ? adapter.topics?.parentOf(address) : undefined;
     if (!parent) throw notYours(topic);
     try {
       return this.owned(caller, `${id}:${formatAddress(parent)}`);

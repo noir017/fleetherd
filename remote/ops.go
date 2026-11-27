@@ -816,7 +816,7 @@ type runResult struct {
 }
 
 // opRun runs a command to completion: `argv` directly, or `bash` as `bash -lc` — the gateway's own
-// runner for preLaunch hooks, scheduled `--bash` tasks (schedule-bash.ts) and the automatic
+// runner for preLaunch hooks, scheduled `--bash` tasks (shell-run.ts) and the automatic
 // review's `agy -p`. Its own process group, killed whole (SIGTERM, then SIGKILL) on timeout or on
 // an `rpc-cancel`. Output beyond `max` keeps its END, which is where a failing script says why.
 // A non-empty request body is written to the child's stdin and then closed; an empty one leaves

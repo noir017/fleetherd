@@ -176,7 +176,7 @@ function rig(opts: { caps?: Record<string, object>; turnTimeoutMs?: number; stor
     setAgentSession: () => {},
     conversationCwd: () => undefined,
   } as unknown as Parameters<typeof createAcpAgentFactory>[2];
-  const session = createAcpAgentFactory(cfg, join(dir, 'ipc.sock'), store).getOrCreate('conv#1', 'fake');
+  const session = createAcpAgentFactory(cfg, join(dir, 'ipc.sock'), store, { provisions: [] }).getOrCreate('conv#1', 'fake');
   live = session;
   return {
     session,

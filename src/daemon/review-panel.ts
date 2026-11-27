@@ -1,5 +1,10 @@
 import type { HistoryReviewChange, HistoryReviewRecord, HistoryReviewRow, HistorySessionRow, HistoryStore } from '../history/store.js';
-import type { ReviewPanel, ReviewPanelEntry, ReviewPanelList, ReviewPanelPreference } from '../platform/adapter.js';
+import type {
+  ReviewPanel,
+  ReviewPanelEntry,
+  ReviewPanelList,
+  ReviewPanelPreference,
+} from '../platform/workbench.js';
 import { parseReviewOutput } from './review-prompt.js';
 import { commandOf, inferOutcome, recordedAction, summaryOf, undoOf, type AppliedChange } from './review-result.js';
 import { preferenceKey } from './review-state.js';

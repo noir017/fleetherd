@@ -63,9 +63,11 @@ session id, agy's conversation id). One conversation holds one session *per agen
 | `scheduler.ts` | Scheduled tasks' timing: one re-armed timer, what is due, the bookkeeping that keeps a restart from repeating or losing a run |
 | `schedule-store.ts` | `<configDir>/schedules.json`: 0600, atomic writes, a bad entry dropped loudly |
 | `schedule-service.ts` | Scheduled tasks wired to the rest: a run as a bash process or a turn, the agent's `schedule` commands, the cards |
-| `schedule-bash.ts` | One `--bash` run: its own process group, a bounded output tail, the full log on disk. Also runs `preLaunch` hooks |
+| `shell-run.ts` | General shell command runner (local and remote): its own process group, a bounded output tail, and the full log on disk. Shared by scheduled `--bash` tasks, `agent-hooks.ts`, and `quota-meter.ts` |
 | `restart-drain.ts` | A SIGTERM with turns (an agent's background output counted as one) or scheduled runs in progress: the bounded wait for them before the daemon stops (`Daemon.beginDrain` refuses new turns and holds the scheduler meanwhile) |
 | `reverse-cli-shim.ts` | Guarantees `fleetherd` is on the agent's PATH; `selfInvocation` — how to re-run this CLI, shared with the tool server entry |
+| `provision.ts` | Types only: `AgentProvision` and the narrow `HostFiles` port implemented by `RemoteHost` for spawn-time local and remote provisioning |
+| `ssh-identity.ts` | Leaf helper: gateway default SSH identity file, `known_hosts` path resolution, and local `~` expansion |
 | `agy-plugin.ts` | Links the bundled agy plugin (`agy-plugin/`: a Stop hook that keeps a turn open while a background command runs) into `~/.gemini/config/plugins` |
 | `skill-link.ts` | Links the bundled skills (`fleetherd`, `super`) into the skill directories the harnesses read (`~/.claude/skills`, `~/.agents/skills`, `~/.gemini/config/skills`); `fleetherd` through its rendered copy in `~/.fleetherd/bundled/<readers>` |
 | `bundled-skill.ts` | The `fleetherd` skill rendered for one skill directory: the library skills reaching every harness that reads it (`ipc/tools.ts` libraryLine) appended to the frontmatter description, checked by parsing it back as YAML |
@@ -91,12 +93,13 @@ session id, agy's conversation id). One conversation holds one session *per agen
 | `external-mcp.ts` | The external MCP entrance: MCP over HTTP (POST `/mcp`, JSON only), a bearer token per caller compared in constant time, each caller's tool list — security invariant 11 |
 | `external-calls.ts` | What an external caller's calls do: skills search/show as from no host and outside the gateway (no path, no resident note), `tasks open`, ownership of coordination topics (a sub-task reached only through its parent), and the answer to the person typing in such a topic |
 | `external-topics.ts` | `<configDir>/external-topics.json`: which coordination topics each caller opened — the one record of ownership, keyed by the topic's own id rather than the scope-dependent conversation id |
-| `remote-hosts.ts` | The `hosts:` table: one `RemoteHost` (src/remote/) per entry, shared by its agents; this gateway's namespace; running an agent's `fleetherd …` back here (the allowlisted bridge); placing the skill on a host |
+| `remote-hosts.ts` | The `hosts:` table: one `RemoteHost` (src/remote/) per entry, shared by its agents; this gateway's namespace; running an agent's `fleetherd …` back here (the allowlisted bridge) |
 | `pods.ts` | What each host's pod declares: its `~/.fleetherd/pod.yaml`, or the harness commands on its login PATH when it has none. Read at startup and on every `/reload` (`Daemon.reloadAll`) into `pods.json`, which `config/pods.ts` merges into `agents` as `<id>@<host>`. A host that cannot be read, or whose file does not validate, keeps what it had |
 | `pod-admin.ts` | `fleetherd pod-add` / `pod-remove`: a `hosts:` entry in config.yaml and its pinned host key, changed together and refused before anything is written when either would end up wrong; and the authorized_keys line `fleetherd pods` offers a new host |
 | `pod-peers.ts` | The pod-to-pod ssh mesh (`peer:` in pod.yaml): the `authorized_keys`, `known_hosts` and `config` it writes into each member's `~/.fleetherd/ssh/` after every read of the pods. Host keys come from the gateway's own known_hosts, never the network |
 | `host-probe.ts` | The `command -v` script run on a host in the PATH an agent will have: `fleetherd doctor`'s check of each host, and `pods.ts`'s look at a host with no `pod.yaml` |
-| `host-availability.ts` | Which hosts can be reached now: a TCP connect to each ssh port every minute (`remote/reachable.ts`), offline after two failures in a row, a live connection taken as proof. `Daemon.pushOfflineMachines` turns it into `OfflineMachine`s (`core/agent-menu.ts` offlinePlaces) for `PlatformAdapter.setOfflineMachines` and the `/agent` menu |
+| `host-availability.ts` | Which hosts can be reached now: a TCP connect to each ssh port every minute (`remote/reachable.ts`), offline after two failures in a row, a live connection taken as proof. `Daemon.pushOfflineMachines` turns it into `OfflineMachine`s (`core/agent-menu.ts` offlinePlaces) for `TopicPresence.setOfflineMachines` and the `/agent` menu |
+| `workbench-wiring.ts` | Wires `WorkbenchHost` lookup and panel hooks (`attachWorkbench`) at daemon startup, enforcing opt-in gates for `files.enabled` and `instructions.enabled` (security invariants 9 & 10) |
 | `agent-renames.ts` | `agent-renames.json`: new ids for agents, applied at startup to config.yaml, `conversations.json` and `schedules.json` together (after backing them up), because an id is also the key each conversation and task remembers its agent by |
 
 ## Inbound flow
@@ -609,7 +612,7 @@ schedule add ──IPC──► ScheduleService.add ── core buildTask (every
                                          └── card posted in the caller's conversation (the daemon's words)
 schedule edit ──IPC──► ScheduleService.edit ── core editTask (the same buildTask, over the old task) ──► ScheduleStore
 Scheduler.look ── core decide ──► run │ skip │ missed │ expire │ done
-      run ─► ScheduleService.run ─┬─ bash  → schedule-bash (process group, tail + log) → result posted
+      run ─► ScheduleService.run ─┬─ bash  → shell-run (process group, tail + log) → result posted
                                   ├─ fixed → notice, then registry.runScheduledPrompt in THAT conversation
                                   └─ new   → registry.openScheduledConversation (new topic, or throwaway)
                                              → notice → runScheduledPrompt → released if throwaway
@@ -905,7 +908,7 @@ prototype, which refuses to infer "waiting on a person" from prose.
 the last one left: a finished reply in full — its first line for a platform's list, the text for
 the update card — or a failure, its reason and the whole error (`TurnFailure`, thrown by the
 runtimes wherever they know why; anything else is `other`). It pushes that to the platform
-(`PlatformAdapter.setActivity`) and tells delegation. A start supersedes the last outcome; a
+(`TopicPresence.setActivity`) and tells delegation. A start supersedes the last outcome; a
 `/stop` leaves none.
 
 - **`hooks.turnFailed.continue`** schedules the operator's message after a failure whose reason it
@@ -960,7 +963,7 @@ notice says what became of it.
 
 **Sub-agents** (`delegation.ts`) are an agent handing parts of its job to other agents, each in a
 topic of its own nested under the asking one — on a platform that records that relation
-(`PlatformAdapter.parentOf` / `childrenOf`, today the web UI's `Topic.parent`), which is the only copy
+(`TopicTree.parentOf` / `childrenOf` via `adapter.topics`, today the web UI's `Topic.parent`), which is the only copy
 of it: the daemon keeps none, so deleting a topic on the page is what ends it. Three structural rules:
 
 - By default (`delegation.confirm: true`) `task-new` only proposes. The proposal stays open until the
@@ -1051,7 +1054,7 @@ of it: the daemon keeps none, so deleting a topic on the page is what ends it. T
 ## The status strip (`status-board.ts`)
 
 What the footer says once per reply, kept current between replies, for a platform with somewhere to
-put it — `PlatformAdapter.setStatus`, which only the web UI implements (the strip above its
+put it — `TopicPresence.setStatus`, which only the web UI implements (the strip above its
 composer). The registry owns a `StatusBoard` and feeds it from the same `TurnRunnerDeps` that feed
 `/context`: `recordUsage` (context and cost), `recordModel`, `recordEffort`, `recordQuota`, and
 `recordTurnComplete`. `forgetUsage` — `/new`, `/cd`, a rebind — resets it, which clears the strip.
@@ -1429,7 +1432,7 @@ DAEMON_COMMAND, answered in `answerDaemonCommand` before the merger (`forkAndRep
 person can reach it: there is no reverse command or tool, because a conversation an agent could
 open for itself would be a sub-agent without the card (Security invariant 6).
 
-The order is: refuse off a platform without `PlatformAdapter.forkThread` (every one but the web
+The order is: refuse off a platform without `TopicTree.forkThread` (`adapter.topics`, every one but the web
 UI), with no stored session, while a turn or a background burst runs, and when the agent declares
 no fork — `AgentSession.canFork`, which needs an `initialize`, so a conversation with no child is
 started first, as `/btw` does. Only then is the topic opened (`forkThread`, named and drawn by the
@@ -1529,8 +1532,8 @@ them but hands them to the model as a question.
 - **A background command ends the prompt**, and what agy does when it finishes is never sent: its
   own turn has no prompt to stream under, and its first permission request waits for the next one.
   `agy-plugin.ts` ships a Stop hook (`agy-plugin/` at the package root) that holds the turn open,
-  silently, until agy's mailbox has something new. Linked like the skills: `ensureAgyPlugin` here,
-  `RemoteHosts.placeAgyPlugin` on a host. The file header has the measurements and the limits.
+  silently, until agy's mailbox has something new. Linked like the skills via `agyPluginProvision`
+  (local and remote). The file header has the measurements and the limits.
 
 ### An agent that goes away mid-turn (`agent-reconnect.ts`)
 
@@ -1577,10 +1580,10 @@ environment, working-directory resolution (`agents[].cwd`, or an auto-created
 SIGKILL after `KILL_GRACE_MS` — harness CLIs may ignore SIGTERM mid-turn).
 
 `buildAgentEnv` runs at every spawn, which makes it the one place that provisions
-what the reverse CLI depends on: the shim at the front of `PATH`, the skill link
-(`skill-link.ts`) and, for agy, its plugin (`agy-plugin.ts`) under the home this agent runs as, and the gateway's own managed skills
-(`managed-skills.ts`). It also places the operator's instructions (`instructions.ts`) there; an
-agent on a remote host gets all of them from `prepareRemoteSpawn`.
+what the reverse CLI depends on: the shim at the front of `PATH`, followed by the injected
+`AgentProvision` list assembled in `commands/start.ts` (`bundledSkillProvision`, `agyPluginProvision`,
+`instructionsProvision`, `managedSkillsProvision`) under the home this agent runs as. An agent on a
+remote host runs the same list through `prepareRemoteSpawn`.
 
 #### Agents on a remote host
 
@@ -1595,7 +1598,7 @@ outage is not the agent being silent). `AgentChild` is what the runtime holds �
 and a `RemoteChild` alike — so it does not branch on where its process is beyond the spawn.
 
 The rest of the daemon follows the same rule — the agent's machine is the one that matters: hooks
-and an agent's scheduled `--bash` tasks run there (`schedule-bash.ts` runRemoteBashCommand),
+and an agent's scheduled `--bash` tasks run there (`shell-run.ts` runRemoteBashCommand),
 inbound files are written there (`attachment-io.ts` remoteAttachmentSave), `send-file` fetches from
 there (`daemon.ts` sendAgentFile), and `/cd`, `/skills`, the claude cache countdown and opencode's
 log are read there. The `/cd` menu code is synchronous, so a remote listing is read into
@@ -1734,8 +1737,8 @@ degradation that needs no code.
 `<configDir>/skills/` is a second kind of skill, beside the two the package bundles: one an agent
 writes through `fleetherd skills` (`skills-store.ts`) or a person commits to the shared repository
 (`skills-repo.ts`), delivered to every agent on every host at
-spawn (`managed-skills.ts`, and `remote-hosts.ts` `placeManagedSkills` for an agent on another
-machine). The copy lives in `~/.fleetherd/skills/<name>/` — never under a version directory — and is
+spawn (`managed-skills.ts` `managedSkillsProvision`, locally and on a remote host). The copy lives
+in `~/.fleetherd/skills/<name>/` — never under a version directory — and is
 read-only; the link into each harness's skill directory is made only when the harness's own config
 directory exists, and is repointed or removed only when it points back into that copy. A real
 directory, a real file, or the operator's own link at the same name is left alone and logged.

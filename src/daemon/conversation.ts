@@ -23,18 +23,18 @@ import { buildWorkdirScreen, workdirBaseName, type WorkdirChoiceResult } from '.
 import type { WorkdirScan } from './workdir-scan.js';
 import type { HistoryStore } from '../history/store.js';
 import type { ListChannelsResult } from '../ipc/protocol.js';
+import type { PlatformAdapter } from '../platform/adapter.js';
 import type {
   ConversationWorkdir,
   ModelPickerList,
   ModelPickerResult,
-  PlatformAdapter,
   SessionOptionList,
   SessionOptionResult,
   TopicSetupResult,
   TurnChangeFileResult,
   TurnChangeStatusResult,
   WorkdirBrowseResult,
-} from '../platform/adapter.js';
+} from '../platform/workbench.js';
 import type { AgentCatalog, AgentStatus, ConversationId, InboundMessage, StatusOption, StatusPermissions, TopicActivity } from '../types.js';
 import type { AgentFactory } from './agent.js';
 import { resolveAgentCwd, resolveConversationCwd } from './agent-common.js';

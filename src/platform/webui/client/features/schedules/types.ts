@@ -3,7 +3,7 @@ import type {
   SchedulePanelFormContext,
   SchedulePanelTask,
   SchedulePanelTaskDetail,
-} from '../../../../adapter.js';
+} from '../../../../workbench.js';
 import type { ScheduleTargetRequest } from '../../../protocol.js';
 import type { MenuEntry } from '../../components/index.js';
 import type { MenuLocation, TopicInfo, ViewContribution } from '../../plugins/api.js';
