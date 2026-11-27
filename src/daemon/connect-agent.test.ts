@@ -2,11 +2,17 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import net from 'node:net';
 import { hostname } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
-import { parseConfig, type Config } from '../config/schema.js';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { instructionsLayer } from '../config/instructions.js';
+import { parseConfig, type AgentConnect, type AgentDef, type Config } from '../config/schema.js';
 import type { AgentSession, AgentStreamHandlers } from './agent.js';
 import { createAcpAgentFactory } from './agent-acp.js';
-import { connectHere, connectMeta } from './connect-agent.js';
+import { agyPluginProvision } from './agy-plugin.js';
+import { connectHere, connectMeta, type ConnectPlace } from './connect-agent.js';
+import { composeInstructions, INSTRUCTIONS_MAX_BYTES, instructionsDir, instructionsProvision } from './instructions.js';
+import { deliveredTo, managedSkillsProvision } from './managed-skills.js';
+import { bundledSkillProvision } from './skill-link.js';
+import { activeSkillFiles, frontmatterFields, SKILL_FILE } from './skills-store.js';
 import { useTempDirs } from '../test-utils/temp-dir.test-helpers.js';
 
 const makeTempDir = useTempDirs();
@@ -58,6 +64,8 @@ describe('a connection as an agent process', () => {
 });
 
 describe('what a connect agent is told in initialize', () => {
+  const allProvisions = [bundledSkillProvision, agyPluginProvision, instructionsProvision, managedSkillsProvision];
+
   it('its meta as written, and the token, machine and instructions under fleetherd', async () => {
     const dir = makeTempDir('fh-connect-');
     const token = join(dir, 'token');
@@ -74,14 +82,14 @@ describe('what a connect agent is told in initialize', () => {
       agents: [{ id: 'web', harness: 'custom', connect }],
       routing: { default: 'web', pipeline: [] },
     }).agents[0]!;
-    expect(await connectMeta(def, connect, undefined)).toEqual({
+    expect(await connectMeta(def, connect, undefined, undefined, allProvisions)).toEqual({
       wad: { site: 'gemini-task', profile: 'main' },
       fleetherd: { token: 's3cret-token', host: hostname(), instructions: 'Be brief.\n\nSay where.\n' },
     });
     // A pod's agent gets the layer of its own id, without the host.
     const pod = { ...def, id: 'web@box', host: 'box' };
     const place = { host: { id: 'box', readFile: async () => Buffer.from('remote-token') }, welcome: { home: '/home/u' } };
-    const meta = await connectMeta(pod, connect, place as unknown as Parameters<typeof connectMeta>[2]);
+    const meta = await connectMeta(pod, connect, place as unknown as Parameters<typeof connectMeta>[2], undefined, allProvisions);
     expect(meta['fleetherd']).toEqual({ token: 'remote-token', host: 'box', instructions: 'Be brief.\n\nSay where.\n' });
   });
 
@@ -106,10 +114,122 @@ describe('what a connect agent is told in initialize', () => {
       agents: [{ id: 'web', harness: 'custom', connect }],
       routing: { default: 'web', pipeline: [] },
     }).agents[0]!;
-    const meta = await connectMeta(def, connect, undefined);
+    const meta = await connectMeta(def, connect, undefined, undefined, allProvisions);
     expect((meta['fleetherd'] as Record<string, unknown>)['skills']).toEqual([
       { name: 'server-ops', description: 'Use when operating servers over SSH' },
     ]);
+  });
+
+  it('matches the pre-provision connectMeta output verbatim across token/instructions/skills/topic combinations and over-limit instructions', async () => {
+    // Reference implementation matching the pre-refactor connectMeta behavior.
+    const legacyConnectMeta = async (
+      def: AgentDef,
+      connect: AgentConnect,
+      place: ConnectPlace | undefined,
+      topic?: string,
+      tokenValue?: string
+    ): Promise<Record<string, unknown>> => {
+      const gateway: Record<string, unknown> = { host: place ? place.host.id : hostname() };
+      if (connect.tokenFile && tokenValue !== undefined) gateway['token'] = tokenValue;
+      const layer = instructionsLayer(def);
+      if (layer !== undefined) {
+        const composed = composeInstructions(instructionsDir(), layer);
+        if (composed.kind === 'text') gateway['instructions'] = composed.text;
+      }
+      const skills: Array<{ name: string; description: string }> = [];
+      for (const skill of activeSkillFiles()) {
+        if (!skill.meta.resident || !deliveredTo(skill, def)) continue;
+        const raw = skill.files.get(SKILL_FILE)?.toString('utf8') ?? '';
+        const description = frontmatterFields(raw).get('description')?.trim();
+        if (description) skills.push({ name: skill.name, description });
+      }
+      skills.sort((a, b) => a.name.localeCompare(b.name));
+      if (skills.length > 0) gateway['skills'] = skills;
+      if (topic) gateway['topic'] = topic;
+      return { ...(connect.meta ?? {}), fleetherd: gateway };
+    };
+
+    const makeDef = (connect: AgentConnect): AgentDef =>
+      parseConfig({
+        platforms: { discord: { type: 'discord', token: 't' } },
+        agents: [{ id: 'web', harness: 'custom', connect }],
+        routing: { default: 'web', pipeline: [] },
+      }).agents[0]!;
+
+    const writeSkill = (configDir: string, name: string, description: string, resident: boolean): void => {
+      const dir = join(configDir, 'skills', 'skills', name);
+      mkdirSync(dir, { recursive: true });
+      const residentLine = resident ? 'metadata:\n  fleetherd-resident: "true"\n' : '';
+      writeFileSync(join(dir, 'SKILL.md'), `---\nname: ${name}\ndescription: ${description}\n${residentLine}---\n# Body\n`);
+    };
+
+    const runCase = async (opts: {
+      withToken: boolean;
+      instructions: 'none' | 'normal' | 'too-big';
+      withSkills: boolean;
+      topic?: string;
+      remoteHost?: string;
+    }): Promise<void> => {
+      const dir = makeTempDir('fh-connect-equiv-');
+      const configDir = join(dir, 'config');
+      mkdirSync(configDir, { recursive: true });
+      if (opts.instructions === 'normal') {
+        mkdirSync(join(configDir, 'instructions'), { recursive: true });
+        writeFileSync(join(configDir, 'instructions', 'common.md'), 'Keep replies concise.');
+        writeFileSync(join(configDir, 'instructions', 'web.md'), 'Include source paths.');
+      } else if (opts.instructions === 'too-big') {
+        mkdirSync(join(configDir, 'instructions'), { recursive: true });
+        writeFileSync(join(configDir, 'instructions', 'common.md'), 'x'.repeat(INSTRUCTIONS_MAX_BYTES + 16));
+      }
+      if (opts.withSkills) {
+        // Deliberately write out of alphabetical order to verify stable name sorting.
+        writeSkill(configDir, 'zeta-tool', 'Zeta resident skill', true);
+        writeSkill(configDir, 'alpha-tool', 'Alpha resident skill', true);
+        writeSkill(configDir, 'library-only', 'Non-resident skill', false);
+      }
+      const tokenFile = opts.withToken ? join(dir, 'token') : undefined;
+      if (tokenFile) writeFileSync(tokenFile, '  tok-123\n');
+      const connect: AgentConnect = {
+        url: 'tcp://127.0.0.1:1',
+        ...(tokenFile ? { tokenFile } : {}),
+        meta: { custom: { profile: 'default' } },
+      };
+      const def = makeDef(connect);
+      const place = opts.remoteHost
+        ? ({ host: { id: opts.remoteHost, readFile: async () => Buffer.from('tok-123') }, welcome: { home: '/home/me' } } as unknown as ConnectPlace)
+        : undefined;
+
+      const prevConfigDir = process.env.FLEETHERD_CONFIG_DIR;
+      process.env.FLEETHERD_CONFIG_DIR = configDir;
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      try {
+        const actual = await connectMeta(def, connect, place, opts.topic, allProvisions);
+        const expected = await legacyConnectMeta(def, connect, place, opts.topic, opts.withToken ? 'tok-123' : undefined);
+        expect(actual).toEqual(expected);
+        expect(Object.keys(actual['fleetherd'] as Record<string, unknown>)).toEqual(
+          Object.keys(expected['fleetherd'] as Record<string, unknown>)
+        );
+        if (opts.instructions === 'too-big') {
+          expect((actual['fleetherd'] as Record<string, unknown>)['instructions']).toBeUndefined();
+          expect(warnSpy).toHaveBeenCalledWith(
+            expect.stringMatching(/^\[connect\] web: instructions not sent, \d+ bytes is over the limit$/)
+          );
+        } else {
+          expect(warnSpy).not.toHaveBeenCalled();
+        }
+      } finally {
+        warnSpy.mockRestore();
+        if (prevConfigDir === undefined) delete process.env.FLEETHERD_CONFIG_DIR;
+        else process.env.FLEETHERD_CONFIG_DIR = prevConfigDir;
+      }
+    };
+
+    await runCase({ withToken: false, instructions: 'none', withSkills: false });
+    await runCase({ withToken: true, instructions: 'normal', withSkills: true, topic: 'web:main/0123abcd' });
+    await runCase({ withToken: true, instructions: 'normal', withSkills: true, topic: 'web:main/0123abcd', remoteHost: 'myhost' });
+    await runCase({ withToken: false, instructions: 'normal', withSkills: false, topic: 'web:main/deadbeef' });
+    await runCase({ withToken: true, instructions: 'none', withSkills: true });
+    await runCase({ withToken: true, instructions: 'too-big', withSkills: true, topic: 'web:main/cafebabe' });
   });
 
   it('says which file it could not read', async () => {

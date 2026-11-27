@@ -23,4 +23,6 @@ export interface AgentProvision<TLocal = unknown, TRemote = unknown> {
   readonly name: string;
   local: (def: AgentDef, home: string) => TLocal;
   remote: (host: HostFiles, def: AgentDef, home: string, w: Welcome) => Promise<TRemote>;
+  /** Fields contributed to `_meta.fleetherd` for connect agents that cannot receive files. */
+  meta?: (def: AgentDef) => Record<string, unknown> | undefined;
 }
