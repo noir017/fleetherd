@@ -32,8 +32,6 @@ export type EffortNoSelectorKey = Extract<
   | 'effort_no_selector_default'
 >;
 
-export type WithoutModeKind = 'none' | 'agy';
-
 export interface HarnessFacts {
   /** Project display name (`Claude Code`), or null for `custom` (falls back to command basename / agent id). */
   displayName: string | null;
@@ -51,13 +49,6 @@ export interface HarnessFacts {
   effortNoSelectorKey: EffortNoSelectorKey;
   /** Whether the gateway ignores session modes reported by this harness (agy: modes left out, ask/auto still offered). */
   ignoresSessionModes: boolean;
-  /** Wording variant for `ask` when no session mode is used (`'agy'` vs `'none'`). */
-  withoutModeKind: WithoutModeKind;
-  /**
-   * Known preset mapping from permission level to harness session mode id (empty when unprobed or dynamic).
-   * Security invariant 1: never maps any level to a self-answering mode (`auto`, `agent`, `dontAsk`).
-   */
-  permissionModes: Partial<Record<PermissionLevel, string>>;
 }
 
 /**
@@ -84,20 +75,11 @@ export const HARNESS_FACTS: Readonly<Record<Harness, HarnessFacts>> = {
     cliAnsweredCommands: [],
     effortNoSelectorKey: 'effort_no_selector_default',
     ignoresSessionModes: false,
-    withoutModeKind: 'none',
-    // Measured 2026-11-18 (claude-agent-acp 0.81.0); never maps to self-answering `auto`.
-    permissionModes: {
-      plan: 'plan',
-      ask: 'default',
-      edits: 'acceptEdits',
-      auto: 'default',
-      full: 'bypassPermissions',
-    },
   },
   codex: {
     displayName: 'Codex',
     command: { name: 'cx', aliases: ['codex'], picker: true },
-    // Probed 2026-09-20 (codex-acp 1.12.0): `usage` -> `status`; `init` was dropped in 1.12.0.
+    // Probed 2026-09-20 (codex-acp 1.12.0): `usage` -> `status` (`doctor` left unmapped so `status` is not double-mapped); `init` dropped in 1.12.0.
     nativeCommands: {
       compact: 'compact',
       usage: 'status',
@@ -105,21 +87,13 @@ export const HARNESS_FACTS: Readonly<Record<Harness, HarnessFacts>> = {
       review: 'review',
       super: 'super',
     },
-    // Probed: context/model (codex-acp 1.12.0), effort (1.13.0, 2026-09-23), btw via session/fork (2.5.0, 2026-11-13).
+    // Probed: context/model (codex-acp 1.12.0; `model[effort]` is rejected with -32602, so `model_reasoning_effort` must sit at top level in config.toml), effort (1.13.0, 2026-09-23), btw via session/fork (2.5.0, 2026-11-13).
     localCommands: ['context', 'model', 'effort', 'btw'],
     passthroughCommands: false,
     cliAnsweredCommands: [],
     // codex-acp builds effort options from codex-cli's model catalog (probed 2026-09-23).
     effortNoSelectorKey: 'effort_no_selector_codex',
     ignoresSessionModes: false,
-    withoutModeKind: 'none',
-    // Measured 2026-11-18 (codex-acp 2.5.0); `auto` uses `workspace-write`, never self-reviewing `agent`.
-    permissionModes: {
-      ask: 'read-only',
-      edits: 'workspace-write',
-      auto: 'workspace-write',
-      full: 'agent-full-access',
-    },
   },
   opencode: {
     displayName: 'OpenCode',
@@ -135,12 +109,6 @@ export const HARNESS_FACTS: Readonly<Record<Harness, HarnessFacts>> = {
     cliAnsweredCommands: [],
     effortNoSelectorKey: 'effort_no_selector_opencode',
     ignoresSessionModes: false,
-    withoutModeKind: 'none',
-    // Measured 2026-11-18 (opencode 2.2.5).
-    permissionModes: {
-      plan: 'plan',
-      auto: 'build',
-    },
   },
   agy: {
     displayName: 'Antigravity',
@@ -171,13 +139,11 @@ export const HARNESS_FACTS: Readonly<Record<Harness, HarnessFacts>> = {
     effortNoSelectorKey: 'effort_no_selector_agy',
     // agy's modes are left out in code (`modesLeftOut`); measured 1.5.1 (2026-11-06): commands ask, writes do not.
     ignoresSessionModes: true,
-    withoutModeKind: 'agy',
-    permissionModes: {},
   },
   gemini: {
     displayName: 'Gemini CLI',
     command: { name: 'gm', aliases: ['gemini'], picker: true },
-    // Best-effort / unverified from CLI docs (no install to probe).
+    // Best-effort / unverified from CLI docs; `super` omitted (cross-file contract: skill-link places no skills for gemini).
     nativeCommands: {
       compact: 'compress',
       context: 'stats',
@@ -188,20 +154,18 @@ export const HARNESS_FACTS: Readonly<Record<Harness, HarnessFacts>> = {
     cliAnsweredCommands: [],
     effortNoSelectorKey: 'effort_no_selector_default',
     ignoresSessionModes: false,
-    withoutModeKind: 'none',
-    permissionModes: {},
   },
   dsh: {
     displayName: 'DeepSeek Harness',
     command: { name: 'dsh', aliases: ['deepseek'], picker: true },
+    // `super` omitted: cross-file contract with skill-link (places no skills for dsh).
     nativeCommands: {},
+    // Bare model ids without a provider encode as `["", model]` (daemon/harness/dsh.ts) so offer-check rejects with real choices instead of DSH's opaque "unknown model option".
     localCommands: ['context', 'model'],
     passthroughCommands: false,
     cliAnsweredCommands: [],
     effortNoSelectorKey: 'effort_no_selector_default',
     ignoresSessionModes: false,
-    withoutModeKind: 'none',
-    permissionModes: {},
   },
   custom: {
     displayName: null,
@@ -213,8 +177,6 @@ export const HARNESS_FACTS: Readonly<Record<Harness, HarnessFacts>> = {
     cliAnsweredCommands: [],
     effortNoSelectorKey: 'effort_no_selector_default',
     ignoresSessionModes: false,
-    withoutModeKind: 'none',
-    permissionModes: {},
   },
 } satisfies Record<Harness, HarnessFacts>;
 
@@ -233,6 +195,7 @@ export const PERMISSION_LEVEL_MODES = {
   plan: ['plan'],
   ask: ['default', 'read-only'],
   edits: ['acceptEdits', 'workspace-write'],
+  // Explicit mode so a session moved to `plan` returns on reload (opencode persists mode across `session/load`).
   auto: ['default', 'workspace-write', 'build'],
   // CodeBuddy also offers `fullAccess`; `bypassPermissions` comes first so both use the same mode when both exist.
   full: ['bypassPermissions', 'agent-full-access'],

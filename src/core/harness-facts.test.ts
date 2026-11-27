@@ -43,14 +43,12 @@ describe('HARNESS_FACTS', () => {
 
   it('marks agy as ignoring session modes and carrying CLI-answered slash commands', () => {
     expect(HARNESS_FACTS.agy.ignoresSessionModes).toBe(true);
-    expect(HARNESS_FACTS.agy.withoutModeKind).toBe('agy');
     expect(HARNESS_FACTS.agy.cliAnsweredCommands).toContain('usage');
     expect(HARNESS_FACTS.agy.cliAnsweredCommands).toContain('plugin');
 
     for (const harness of ALL_HARNESSES) {
       if (harness === 'agy') continue;
       expect(HARNESS_FACTS[harness].ignoresSessionModes).toBe(false);
-      expect(HARNESS_FACTS[harness].withoutModeKind).toBe('none');
       expect(HARNESS_FACTS[harness].cliAnsweredCommands).toEqual([]);
     }
   });
@@ -73,24 +71,8 @@ describe('permission mode mappings (Security invariant 1)', () => {
       }
     }
 
-    for (const harness of ALL_HARNESSES) {
-      const modes = Object.values(HARNESS_FACTS[harness].permissionModes);
-      for (const forbidden of FORBIDDEN_SELF_ANSWERING_MODES) {
-        expect(modes).not.toContain(forbidden);
-      }
-    }
-
     for (const forbidden of FORBIDDEN_SELF_ANSWERING_MODES) {
       expect(FULL_ACCESS_MODES).not.toContain(forbidden);
-    }
-  });
-
-  it('keeps per-harness permissionModes consistent with PERMISSION_LEVEL_MODES', () => {
-    for (const harness of ALL_HARNESSES) {
-      for (const [level, mode] of Object.entries(HARNESS_FACTS[harness].permissionModes)) {
-        const candidates = PERMISSION_LEVEL_MODES[level as keyof typeof PERMISSION_LEVEL_MODES];
-        expect(candidates).toContain(mode);
-      }
     }
   });
 });

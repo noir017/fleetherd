@@ -514,7 +514,7 @@ The fix, four layers, all fixed at startup from config alone:
    on the platform: `/super` (`nested`) needs topics nested under one another, so it is registered,
    listed in `/help` and accepted only where the platform has them (`CommandSurface`, which
    `daemon/delegation.ts` `commandSurface` reads off the adapter) — the web UI.
-3. `HARNESS_COMMANDS` — one agent command per configured harness (`/cc`, `/oc`, `/agy`).
+3. `HARNESS_FACTS[h].command` (in `core/harness-facts.ts`) — one agent command per configured harness (`/cc`, `/oc`, `/agy`).
    `/oc <prompt>` switches the conversation and asks; bare `/oc` switches and offers that
    agent's own commands, which are the ones not registered globally.
 4. `routeCommandSpecs` — the names `routing.pipeline` gives particular agents
@@ -556,7 +556,7 @@ it declares at `initialize`, and the runtime refuses by name when it does not. F
 every other command to a custom agent is, the question would land in the very context it promises
 to stay out of.
 
-### `HARNESS_CLI_ANSWERED` — the names that must not be forwarded
+### `HARNESS_FACTS[h].cliAnsweredCommands` — the names that must not be forwarded
 
 A separate list from the vocabulary above, answering a different question: not "can this
 be translated" but "would sending this anywhere near the agent break it". On `agy` the
@@ -660,7 +660,7 @@ sentence naming the model and the way out, not one line for everyone.
 `custom` always passes through — nothing is known about a user-supplied executable, so
 rejecting its commands would break a working setup on a guess.
 
-### `HARNESS_COMMANDS`
+### `HARNESS_FACTS[h].command`
 
 The single source for what each harness's command is called, which spellings resolve to
 it, and whether a bare invocation can show a menu.
@@ -713,6 +713,14 @@ platform menu without reaching the help text. It filters the generic section to 
 *currently bound* harness actually supports, because listing `/compact` to an opencode
 user who will be told "not supported" the moment they tap it is precisely the silent
 degradation this project avoids.
+
+### Per-harness caveats recorded in `harness-facts.ts`
+
+- **codex `/model` & effort**: `codex-acp` 1.12.0 rejects `session/set_config_option` with `-32602` when given an effort-suffixed id such as `gpt-5.6-terra[high]`, even though `availableModels` lists it. `agents[].model` must be a bare id; when setting effort via `~/.codex/config.toml`, `model_reasoning_effort` must sit at top level (placing it after a `[model_providers.x]` table silently scopes it to that table).
+- **codex `/doctor`**: left unmapped because `status` is already used for `/usage`; mapping both to `status` would answer the wrong question.
+- **`/super` on `gemini` / `dsh`**: omitted as a cross-file contract with skill linking — neither harness receives linked skills, so forwarding `/super` would spend a turn on an unknown command.
+- **dsh model wire encoding**: `dshModelSelectorValue` (`daemon/harness/dsh.ts`) encodes a bare model id without a provider as `["", model]` so `applyModelPreference`'s offer check rejects it with the real choices instead of DSH's opaque `"unknown model option"`.
+- **permission level `auto`**: explicitly maps to a mode (`default` / `workspace-write` / `build`) rather than leaving the session untouched, because `opencode` persists a session's mode across `session/load` and a session previously moved to `plan` would otherwise stay in `plan`.
 
 ## `settings.ts`
 
