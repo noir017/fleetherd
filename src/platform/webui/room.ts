@@ -652,7 +652,7 @@ export class WebRoom {
   }
 
   /**
-   * Open a topic forked from `sourceId` (`/fork`, PlatformAdapter.forkThread), named after it, and
+   * Open a topic forked from `sourceId` (`/fork`, TopicTree.forkThread), named after it, and
    * announce it. Undefined when there is no such source: a topic deleted while the daemon was deciding
    * has nothing left to put a fork beside.
    *
@@ -795,12 +795,12 @@ export class WebRoom {
     return parent !== undefined && this.topics.has(parent) ? parent : undefined;
   }
 
-  /** The topics this one opened (PlatformAdapter.childrenOf). */
+  /** The topics this one opened (TopicTree.childrenOf). */
   childrenOf(topicId: string): string[] {
     return this.topics.children(topicId).map((t) => t.id);
   }
 
-  /** How a topic's last turn ended (PlatformAdapter.setActivity). */
+  /** How a topic's last turn ended (TopicPresence.setActivity). */
   setActivity(topicId: string, activity: TopicActivity | undefined): void {
     if (!this.topics.setActivity(topicId, activity?.outcome, activity?.retry)) return;
     this.announceTopics();
@@ -818,7 +818,7 @@ export class WebRoom {
     return true;
   }
 
-  /** When the operator last looked at a topic (PlatformAdapter.seenAt). */
+  /** When the operator last looked at a topic (TopicPresence.seenAt). */
   seenAt(topicId: string): number | undefined {
     return this.topics.get(topicId)?.seenAt;
   }
@@ -873,7 +873,7 @@ export class WebRoom {
   /**
    * Accept the daemon's way of asking where a topic's conversation is working.
    *
-   * Pull, not push — see `PlatformAdapter.useWorkdirLookup` for why the daemon does not simply
+   * Pull, not push — see `WorkbenchHost.useWorkdirLookup` for why the daemon does not simply
    * tell us. Everything cached under a previous lookup is dropped, since the new one is by
    * definition a different daemon's answer.
    */
