@@ -4,7 +4,7 @@ import type { AgentDef } from '../config/schema.js';
 import { remoteAgentHome } from './agent-common.js';
 import { readTailLines } from './claude-transcript.js';
 import { remoteHosts } from './remote-hosts.js';
-import { agentHome } from './skills-scan.js';
+import { agentHome } from './harness/profile.js';
 
 /**
  * agy's context, read off the session's own transcript — for the turns whose ACP usage cannot say.

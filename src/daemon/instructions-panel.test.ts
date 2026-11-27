@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentDef } from '../config/schema.js';
 import type { InstructionsDelivery, InstructionsRefsResult } from '../platform/workbench.js';
 import { buildInstructionsPanel, deliverInstructions, walkSources } from './instructions-panel.js';
-import { harnessSources } from './instruction-imports.js';
+import { harnessSources } from './harness/index.js';
 import { HARNESS_LAYERS } from '../config/instructions.js';
 import { INSTRUCTIONS_MAX_BYTES } from './instructions.js';
 import { localWorkspace } from './workspace.js';

@@ -26,6 +26,15 @@ src/daemon/daemon.ts [Core]: F:Top-level daemon coordinator: dependency wiring, 
 src/daemon/delegation-surface.ts [Core]: F:Sub-agent nesting surface predicate and update card character budgets | A:commandSurface,CARD_ITEM_CHARS,CARD_TOTAL_CHARS
 src/daemon/delegation.ts [Core]: F:Sub-agent task delegation, confirmation card workflows, and the automatic review loop | R:src/daemon/delegation-surface.ts,src/daemon/turn-senders.ts | A:Delegation,DelegationRegistry | S:See Security invariants item 6
 src/daemon/external-mcp.ts [Edge]: F:External HTTP MCP entrance endpoint | A:ExternalMcp | S:See Security invariants item 11
+src/daemon/harness/agy.ts [Core]: F:Antigravity harness profile | R:src/daemon/harness/profile.ts | A:agyProfile
+src/daemon/harness/claude.ts [Core]: F:Claude Code harness profile | R:src/daemon/harness/profile.ts | A:claudeProfile
+src/daemon/harness/codex.ts [Core]: F:Codex harness profile | R:src/daemon/harness/profile.ts | A:codexProfile
+src/daemon/harness/custom.ts [Core]: F:Custom harness profile | R:src/daemon/harness/profile.ts | A:customProfile
+src/daemon/harness/dsh.ts [Core]: F:DeepSeek Harness profile | R:src/daemon/harness/profile.ts | A:dshProfile
+src/daemon/harness/gemini.ts [Core]: F:Gemini CLI harness profile | R:src/daemon/harness/profile.ts | A:geminiProfile
+src/daemon/harness/index.ts [Core]: F:Exhaustive harness profile registry and dispatch helpers | R:src/daemon/harness/profile.ts | A:HARNESSES,harnessProfile,SKILL_READERS,harnessSources
+src/daemon/harness/opencode.ts [Core]: F:OpenCode harness profile | R:src/daemon/harness/profile.ts | A:opencodeProfile
+src/daemon/harness/profile.ts [Core]: F:HarnessProfile seam interface and agentHome helper | A:HarnessProfile,SkillHome,HarnessSources,agentHome
 src/daemon/pod-admin.ts [Edge]: F:Host entry and SSH key management | A:addPod,removePod | S:See Security invariants item 5
 src/daemon/pod-peers.ts [Infra]: F:Pod-to-pod SSH mesh configuration generator | A:peerFiles,readKnownHosts | S:See Security invariants item 5
 src/daemon/pods.ts [Infra]: F:Remote host pod declarations scanner | A:hostsWithConfiguredAgents | S:See Security invariants item 5

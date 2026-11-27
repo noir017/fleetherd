@@ -1,5 +1,4 @@
 import path from 'node:path';
-import { harnessKind, instructionsHome, type InstructionsAgent } from '../config/instructions.js';
 
 /**
  * Where an agent's OWN instructions are — the files its harness reads at user level besides the one
@@ -61,100 +60,6 @@ export const IMPORT_TEXT_EXTENSIONS: ReadonlySet<string> = new Set(
     '.f .f90 .f95 .for .cmake .make .makefile .gradle .sbt .rst .adoc .asciidoc .org .tex .latex .lock .log .diff .patch'
   ).split(' ')
 );
-
-/** A harness's syntax for one file pulling in another. */
-export interface RefSyntax {
-  /** The references in one file's text, as written, in order, once each. */
-  references(text: string): string[];
-  /**
-   * Where one reference points, or undefined when the harness would not follow it. `file` is the
-   * file that holds it, as named and as its real path (after symlinks).
-   */
-  resolve(ref: string, file: { path: string; real: string }, home: string): string | undefined;
-  /** How many hops a chain is followed: 1 reads a start file's references and no further. */
-  hops: number;
-}
-
-/** Everything a harness reads at user level besides what the gateway places, and how to find it. */
-export interface HarnessSources {
-  /** The delivered file (instructions.ts): its references count, the file itself is the gateway's. */
-  delivered: string;
-  /** One line for the settings page: what this harness's own instructions are. */
-  summary: string;
-  /** Other files the harness reads by itself, listed when they exist; `note` says what to know. */
-  files: Array<{ path: string; note?: string }>;
-  /** Directories whose `.md` files, at any depth, the harness reads. */
-  ruleDirs: string[];
-  /** Why a rule file is not read at start, from its text — or undefined when it is. */
-  ruleNote?: (text: string) => string | undefined;
-  syntax?: RefSyntax;
-  /** Config files listing more files (opencode's `instructions`); each read when it exists. */
-  lists?: { configs: string[]; entries(text: string): string[] };
-}
-
-/**
- * The one dispatch: `def`'s harness's own instruction sources under `home`, or undefined for a
- * harness with none known. Paths are POSIX — every machine an agent runs on here is Linux or macOS.
- */
-export function harnessSources(def: InstructionsAgent, home: string): HarnessSources | undefined {
-  const where = instructionsHome(def, home);
-  if (!where) return undefined;
-  const P = path.posix;
-  const at = (...p: string[]): string => P.join(home, ...p);
-  // The delivered file as the page names it: an agent's `instructions.file` may have moved it, and
-  // a summary that kept naming the harness's default file would send the person to the wrong one.
-  const delivered = home && where.file.startsWith(`${home}/`) ? `~/${where.file.slice(home.length + 1)}` : where.file;
-  switch (harnessKind(def.harness, def.command)) {
-    case 'claude':
-      return {
-        delivered: where.file,
-        summary: `\`@\` references in \`${delivered}\`, and \`~/.claude/rules\``,
-        files: [],
-        ruleDirs: [at('.claude', 'rules')],
-        syntax: { references: claudeReferences, resolve: resolveClaudeReference, hops: 4 },
-      };
-    case 'codebuddy':
-      return {
-        delivered: where.file,
-        summary: `\`@\` references in \`${delivered}\`, and \`~/.codebuddy/rules\``,
-        files: [],
-        ruleDirs: [at('.codebuddy', 'rules')],
-        syntax: { references: codebuddyReferences, resolve: resolveAgainstFile, hops: 4 },
-      };
-    case 'agy':
-      return {
-        delivered: where.file,
-        summary: '`~/.gemini` instruction files and rules, and their `@[label](path)` includes',
-        files: [{ path: at('.gemini', 'AGENTS.md') }, { path: at('.gemini', 'GEMINI.md') }, { path: at('.gemini', 'config', 'GEMINI.md') }],
-        ruleDirs: [at('.gemini', 'config', 'rules')],
-        ruleNote: agyRuleNote,
-        syntax: { references: agyReferences, resolve: (ref, file, h) => resolveAgyReference(ref, file, h), hops: 1 },
-      };
-    case 'opencode':
-      return {
-        delivered: where.file,
-        summary: 'the files `instructions` lists in `~/.config/opencode/opencode.json`',
-        files: [],
-        ruleDirs: [],
-        lists: { configs: [at('.config', 'opencode', 'opencode.json'), at('.config', 'opencode', 'opencode.jsonc')], entries: opencodeInstructions },
-      };
-    case 'codex':
-      return {
-        delivered: where.file,
-        summary: '`~/.codex/AGENTS.override.md`, when there is one',
-        files: [
-          {
-            path: at('.codex', 'AGENTS.override.md'),
-            note: 'codex reads this instead of AGENTS.md: while it exists, the gateway’s instructions do not reach codex',
-          },
-        ],
-        ruleDirs: [],
-      };
-    case 'atomcode':
-    case undefined:
-      return undefined;
-  }
-}
 
 // ── markdown ────────────────────────────────────────────────────────────────────────────────────
 
@@ -246,7 +151,7 @@ export function codebuddyReferences(text: string): string[] {
   return [...seen];
 }
 
-function resolveAgainstFile(ref: string, file: { real: string }, home: string): string | undefined {
+export function resolveAgainstFile(ref: string, file: { real: string }, home: string): string | undefined {
   return againstFile(ref, file.real, home);
 }
 

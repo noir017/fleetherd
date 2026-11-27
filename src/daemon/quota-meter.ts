@@ -6,7 +6,7 @@ import { buildHarnessEnv, remoteAgentEnv } from './agent-common.js';
 import { runAgyCliCommand, runAgyCliFor, type AgyCliResult, type AgyCliRunner } from './agy-cli.js';
 import { parseAgyUsagePools } from './agy-meters.js';
 import { remoteHosts } from './remote-hosts.js';
-import { agentHome } from './skills-scan.js';
+import { agentHome } from './harness/profile.js';
 import { shellLaunch } from './shell-run.js';
 
 const execFile = promisify(execFileCb);

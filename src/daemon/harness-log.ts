@@ -3,7 +3,7 @@ import { join } from 'node:path';
 
 import type { AgentDef } from '../config/schema.js';
 import type { RemoteHost } from '../remote/host.js';
-import { agentHome } from './skills-scan.js';
+import { agentHome } from './harness/profile.js';
 import { remoteAgentHome } from './agent-common.js';
 import { remoteHosts } from './remote-hosts.js';
 

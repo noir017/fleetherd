@@ -1,10 +1,9 @@
 import { readdir, readFile, stat } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import { isAbsolute, join, resolve } from 'node:path';
+import { join } from 'node:path';
 
 import type { AgentDef } from '../config/schema.js';
 import type { RemoteHost } from '../remote/host.js';
-import { expandHome } from './agent-common.js';
+import { HARNESSES } from './harness/index.js';
 
 /**
  * Where a harness keeps the skills its operator installed, read straight off disk.
@@ -40,18 +39,6 @@ import { expandHome } from './agent-common.js';
 export interface FoundSkill {
   name: string;
   dir: string;
-}
-
-/**
- * The agent's HOME, honouring a `HOME` override in its `env` block.
- *
- * An agent configured to run as a different identity keeps its skills under that identity's home,
- * and the daemon's own `homedir()` would scan the wrong tree — quietly, since the wrong tree
- * usually exists and is simply empty.
- */
-export function agentHome(def: AgentDef | undefined): string {
-  const override = def?.env?.['HOME'];
-  return override && override.length > 0 ? expandHome(override) : homedir();
 }
 
 /**
@@ -115,35 +102,7 @@ export function skillDirsFor(
   def: AgentDef | undefined,
   opts: { home: string; cwd: string; configured?: readonly string[] }
 ): string[] {
-  const dirs: string[] = [];
-  switch (def?.harness) {
-    case 'claude':
-      dirs.push(join(opts.home, '.claude', 'skills'));
-      dirs.push(join(opts.cwd, '.claude', 'skills'));
-      break;
-    case 'codex':
-      dirs.push(join(opts.home, '.codex', 'skills'));
-      dirs.push(join(opts.home, '.agents', 'skills'));
-      dirs.push(join(opts.cwd, '.codex', 'skills'));
-      dirs.push(join(opts.cwd, '.agents', 'skills'));
-      break;
-    case 'opencode':
-      // Relative entries resolve against the agent's working directory, which is how a
-      // project-scoped skills path in opencode.json would be written.
-      for (const p of opts.configured ?? []) {
-        dirs.push(isAbsolute(p) ? p : resolve(opts.cwd, expandHome(p)));
-      }
-      break;
-    case 'agy':
-      dirs.push(join(opts.cwd, '.agents', 'skills'));
-      dirs.push(join(opts.home, '.agents', 'skills'));
-      dirs.push(join(opts.home, '.gemini', 'antigravity-cli', 'skills'));
-      dirs.push(join(opts.home, '.gemini', 'skills'));
-      dirs.push(join(opts.home, '.gemini', 'config', 'skills'));
-      break;
-    default:
-      break;
-  }
+  const dirs = def ? HARNESSES[def.harness].skillScanDirs(opts) : [];
   // A conversation that never used /cd sits in the agent's own cwd, so a harness's home-level and
   // project-level paths can be the same directory (claude's two, agy's first two — and on a machine
   // whose trusted workspace is the home directory, agy's are the same path by construction);

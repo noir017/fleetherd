@@ -3,7 +3,8 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { agentHome, opencodeSkillDirs, scanSkillDirs, skillDirsFor } from './skills-scan.js';
+import { agentHome } from './harness/profile.js';
+import { opencodeSkillDirs, scanSkillDirs, skillDirsFor } from './skills-scan.js';
 import type { AgentDef } from '../config/schema.js';
 import { useTempDirs } from '../test-utils/temp-dir.test-helpers.js';
 

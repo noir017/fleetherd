@@ -29,13 +29,13 @@ import { peerName, readKnownHosts, syncPeers } from './pod-peers.js';
 import { gatewayKeyLine } from './pod-admin.js';
 import { readPods } from '../config/pods.js';
 import {
-  agentHome,
   opencodeSkillDirs,
   remoteOpencodeSkillDirs,
   scanRemoteSkillDirs,
   scanSkillDirs,
   skillDirsFor,
 } from './skills-scan.js';
+import { agentHome } from './harness/profile.js';
 import { withOutboundPacing } from './paced-adapter.js';
 import type {
   AgentCommand,
