@@ -4,7 +4,7 @@ import type { AgentDef } from '../config/schema.js';
 import { envOf } from '../legacy-name.js';
 import type { AgentProvision } from './provision.js';
 import { selfInvocation } from './reverse-cli-shim.js';
-import { bundledSkillDir, linkSkill, type SkillHome, type SkillLinkResult } from './skill-link.js';
+import { bundledSkillDir, linkSkill, listFiles, type SkillHome, type SkillLinkResult } from './skill-link.js';
 
 /**
  * The agy plugin the package ships (`agy-plugin/` at its root): one Stop hook that keeps an agy turn
@@ -110,16 +110,6 @@ export function ensureAgyPlugin(harness: AgentDef['harness'], home: string): Ski
     console.warn(`[agy] could not link the plugin at ${r.link} (${r.outcome}: ${r.detail ?? ''}); background results will not reach the chat`);
   }
   return r;
-}
-
-function listFiles(dir: string, prefix = ''): string[] {
-  const out: string[] = [];
-  for (const e of fs.readdirSync(path.join(dir, prefix), { withFileTypes: true })) {
-    const rel = prefix ? `${prefix}/${e.name}` : e.name;
-    if (e.isDirectory()) out.push(...listFiles(dir, rel));
-    else if (e.isFile()) out.push(rel);
-  }
-  return out;
 }
 
 /**
