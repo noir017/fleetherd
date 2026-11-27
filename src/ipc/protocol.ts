@@ -158,6 +158,9 @@ const IpcActionSchema = z.discriminatedUnion('kind', [
       host: z.string().min(1).max(64).optional(),
       model: z.string().min(1).max(200).optional(),
       timeoutMs: z.number().int().positive().optional(),
+      wake: z.boolean().optional(),
+      wakeOn: z.string().min(1).max(100).optional(),
+      wakeMax: z.number().int().positive().max(100).optional(),
     })
     .strict(),
   // The same fields as schedule-add, plus the task's id. `channelId` moves the task: it is where its
@@ -183,6 +186,9 @@ const IpcActionSchema = z.discriminatedUnion('kind', [
       host: z.string().min(1).max(64).optional(),
       model: z.string().min(1).max(200).optional(),
       timeoutMs: z.number().int().positive().optional(),
+      wake: z.boolean().optional(),
+      wakeOn: z.string().min(1).max(100).optional(),
+      wakeMax: z.number().int().positive().max(100).optional(),
     })
     .strict(),
   z.object({ kind: z.literal('schedule-list'), id: z.string().min(1).optional() }).strict(),
@@ -403,6 +409,9 @@ export type IpcAction =
       host?: string;
       model?: string;
       timeoutMs?: number;
+      wake?: boolean;
+      wakeOn?: string;
+      wakeMax?: number;
     }
   | {
       kind: 'schedule-edit';
@@ -421,6 +430,9 @@ export type IpcAction =
       host?: string;
       model?: string;
       timeoutMs?: number;
+      wake?: boolean;
+      wakeOn?: string;
+      wakeMax?: number;
     }
   | { kind: 'schedule-list'; id?: string }
   | { kind: 'reload-config' }
@@ -607,6 +619,9 @@ export interface ScheduleTaskView {
   model?: string;
   command?: string;
   timeout?: string;
+  wakeOn?: string;
+  wakeMax?: number;
+  wakes?: number;
   cwd?: string;
   /** `show` only: the last runs, newest first (core/schedule.ts MAX_RUN_HISTORY). */
   history?: ScheduleRunView[];

@@ -489,6 +489,48 @@ function renderFormRuntimeFields(
             @input=${(ev: Event) => onPatch({ timeout: (ev.currentTarget as HTMLInputElement).value })}
           />
           <div class="tp-hint">${tr('taskPage.timeoutHint')}</div>`
+      : nothing}
+    ${has('wake')
+      ? html`<label class="tp-label" for="tp-wake">
+            <input
+              id="tp-wake"
+              type="checkbox"
+              .checked=${values.wake}
+              @change=${(ev: Event) => onPatch({ wake: (ev.currentTarget as HTMLInputElement).checked })}
+            />
+            ${tr('taskPage.wakeAgent')}
+          </label>
+          <div class="tp-hint">${tr('taskPage.wakeHint')}</div>
+          ${values.wake
+            ? html`<div class="tp-row2">
+                  <div>
+                    <label class="tp-label" for="tp-wake-on">${tr('taskPage.wakeOn')}</label>
+                    <input
+                      id="tp-wake-on"
+                      class="skill-field tp-mono"
+                      type="text"
+                      placeholder="any"
+                      autocomplete="off"
+                      spellcheck="false"
+                      .value=${values.wakeOn}
+                      @input=${(ev: Event) => onPatch({ wakeOn: (ev.currentTarget as HTMLInputElement).value })}
+                    />
+                  </div>
+                  <div>
+                    <label class="tp-label" for="tp-wake-max">${tr('taskPage.wakeMax')}</label>
+                    <input
+                      id="tp-wake-max"
+                      class="skill-field"
+                      type="number"
+                      min="1"
+                      max="100"
+                      .value=${values.wakeMax}
+                      @input=${(ev: Event) => onPatch({ wakeMax: (ev.currentTarget as HTMLInputElement).value })}
+                    />
+                  </div>
+                </div>
+                <div class="tp-hint">${tr('taskPage.wakeRuleHint')}</div>`
+            : nothing}`
       : nothing}`;
 }
 

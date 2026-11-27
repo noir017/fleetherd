@@ -5,6 +5,17 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **Scheduled bash tasks can now wake the conversation's agent with their output tail.** Passing
+  `--wake` (or `--wake-on any|zero|nonzero|<codes>`) on `fleetherd schedule add` / `edit` (and the
+  web UI's task form) turns a bash task into a generic watcher: when a run matches `--wake-on`, the
+  gateway posts the result card and sends the run's output tail to the target conversation's agent
+  under a single `↳ Scheduled task "<name>" · exit <code> · <duration>` source label with no extra
+  gateway prose. Non-waking runs stay quiet in chat while still recording into run history, and a
+  stop-loss cap (`--wake-max`, default 3, max 100) plus the 24-hour fixed-session window keep watch
+  loops bounded.
+
 ## [3.42.0] - 2026-11-27
 
 ### Changed

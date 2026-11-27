@@ -173,7 +173,7 @@ gateway puts in front of the work tells the model what kind of job this is befor
 job, and no wording avoids that. A change that adds text to what an agent receives needs to say
 why the harness could not carry it.
 
-Four things reach an agent that the person did not type in that conversation. Two were decided on
+Five things reach an agent that the person did not type in that conversation. Two were decided on
 2026-11-02, each kept to the one place it is for. An agent that started **sub-agents**
 (`daemon/delegation.ts`) is told what they did in a `[sub-agent updates]` card, because no harness
 can carry another conversation's state; it goes only to the conversation that opened those topics,
@@ -192,7 +192,12 @@ coordinator — a part's reply to its reviewer, the reviewer's reply back to the
 heading with the commit range or the verdict added to it, and no words of the gateway's around it.
 It replaced the hops coordinators only relayed (126 of the 218 turns update cards woke them into, in
 a week); the
-reviewer and its text are on the card the person confirms. A sub-agent gets the task text it was
+reviewer and its text are on the card the person confirms. The fifth, decided with the operator on
+2026-11-27, is a waking scheduled bash task's (`schedule add --bash … --wake`, `schedule-service.ts`):
+when a run matches its `--wake-on` rule, the run's output tail arrives in the conversation it was
+registered in under a one-line `↳ Scheduled task "<name>" · exit <code> · <duration>` source label
+and nothing else from the gateway — no instructions, no explanation — because the agent itself asked
+to be told that command's result. A sub-agent gets the task text it was
 handed — and, when one is forwarded, that heading and the reply under it — and nothing else; how to
 split a job and use the updates is
 the `super` skill's

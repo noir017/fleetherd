@@ -244,7 +244,7 @@ export interface SchedulePanelRun {
 
 export type SchedulePanelShape = 'bash' | 'fixed' | 'new' | 'daily';
 
-export type SchedulePanelSetting = 'agent' | 'model' | 'cwd' | 'host' | 'timeout' | 'at';
+export type SchedulePanelSetting = 'agent' | 'model' | 'cwd' | 'host' | 'timeout' | 'wake' | 'at';
 
 export interface SchedulePanelFormContext {
   agents: string[];
@@ -271,6 +271,9 @@ export interface SchedulePanelTaskDetail extends SchedulePanelFormContext {
     cwd?: string;
     timeoutMs?: number;
     host?: string;
+    wake?: boolean;
+    wakeOn?: string;
+    wakeMax?: number;
     target: string;
   };
   locked?: string;
@@ -290,6 +293,9 @@ export interface SchedulePanelEdit {
   cwd?: string | null;
   host?: string | null;
   timeoutMs?: number;
+  wake?: boolean;
+  wakeOn?: string | null;
+  wakeMax?: number;
   tags?: string[];
   target?: string;
 }

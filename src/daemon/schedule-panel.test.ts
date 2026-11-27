@@ -74,6 +74,23 @@ describe('the web UI task panel', () => {
     expect(view.running).toBe(true);
   });
 
+  it('exposes wake fields on panelTask, panelTaskDetail, and panel input mappers', () => {
+    const t = { ...task({ cron: '*/5 * * * *', bash: 'check', wakeOn: 'nonzero', wakeMax: 4 }), wakes: 1 };
+    const view = panelTask(t, NOW, false, 'web');
+    expect(view.run).toBe('bash · 10m · wake (nonzero, 1/4)');
+
+    const form = panelForm({ agents: [{ id: 'cc' }], hosts: [], channels: [], instance: 'web', tz: 'Asia/Shanghai', agent: 'cc' });
+    const detail = panelTaskDetail(t, { now: NOW, running: false, instance: 'web', form, laneOf: () => undefined });
+    expect(detail.fields).toMatchObject({ wake: true, wakeOn: 'nonzero', wakeMax: 4 });
+    expect(panelEditInput({ wake: false })).toEqual({ wake: false });
+    expect(panelNewInput({ command: 'ls', wake: true, wakeOn: '1,2', wakeMax: 2, target: 'web:main/t1' })).toEqual({
+      bash: 'ls',
+      wake: true,
+      wakeOn: '1,2',
+      wakeMax: 2,
+    });
+  });
+
   it('formats the last run in the task zone, error and all', () => {
     const t = task({ cron: '0 8 * * *', prompt: 'x' });
     const withRun: ScheduleTask = {
