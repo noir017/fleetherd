@@ -36,9 +36,23 @@ import type {
   TopicStage,
 } from '../types.js';
 import { CARD_ITEM_CHARS, CARD_TOTAL_CHARS, commandSurface } from './delegation-surface.js';
+import { resolveAgentCwd } from './agent-common.js';
+import { taskDirectory } from './conversation-delegation.js';
 import type { GitHead } from './git-head.js';
 import type { LiveTurn } from './turn-progress.js';
 import { UPDATE_SENDER, type PersonWords } from './turn-senders.js';
+import { workspaceFor, type Workspace } from './workspace.js';
+import {
+  checkWorktreeCleanup,
+  createWorktree,
+  inspectWorktreePlan,
+  removeWorktree,
+  resolveWorktreeName,
+  rollbackWorktree,
+  WORKTREE_SWEEP_MS,
+  type WorktreePlan,
+} from './worktree-git.js';
+import { WorktreeStore, type ManagedWorktree } from './worktree-store.js';
 
 /**
  * Sub-agents: an agent in one conversation hands parts of its job to other agents, each in a topic
@@ -285,6 +299,10 @@ export interface DelegationDeps {
    * repository there, the machine did not answer), and the loop then starts no review and says why.
    */
   headOf?(key: ConversationId): Promise<GitHead | undefined>;
+  /** Path to `<configDir>/worktrees.json` for persisting gateway-created worktrees; in-memory when omitted. */
+  worktreesFile?: string;
+  /** Workspace factory for git worktree operations on local or remote machines (defaults to `workspaceFor`). */
+  workspaceFor?(def: AgentDef, root: string): Workspace;
   /**
    * Put the card up as a question with buttons, in the conversation that proposed it, and resolve
    * with the label tapped — null when it was called off (`signal`, `/stop`, `/new`) or ran out of time.
@@ -346,6 +364,8 @@ interface Item {
   /** `--option`: the agent's own settings, shown after the model on both cards. */
   options?: Record<string, string>;
   review?: ReviewPlan;
+  /** `--worktree [name]`: resolved at proposal time (read-only); created only when the part starts. */
+  worktree?: WorktreePlan;
 }
 
 /** `task-new --review-by`: who reviews the work, what it is told, and how often it may send it back. */
@@ -411,6 +431,8 @@ interface OpenedTask {
   options?: Record<string, string>;
   /** The agent reviewing it, when it has a review loop. */
   review?: string;
+  /** Gateway-created worktree path and branch (`task-new --worktree`). */
+  worktree?: { path: string; branch: string };
 }
 
 /** What one sub-agent said — or the person said to it — as the card quotes it. */
@@ -532,11 +554,38 @@ export class Delegation {
   private readonly loops = new Map<ConversationId, ReviewLoop>();
   /** A reviewer's topic → the work it reviews, the key `loops` is under. */
   private readonly reviewerOf = new Map<ConversationId, ConversationId>();
+  /** Persisted worktrees created by `task-new --worktree`, or an in-memory map when no file is given. */
+  private readonly worktreesStore?: WorktreeStore;
+  private readonly worktreesMem = new Map<ConversationId, ManagedWorktree>();
+  private worktreeSweepCancel?: () => void;
+  private sweepingWorktrees = false;
+  private disposed = false;
 
-  constructor(private readonly deps: DelegationDeps) {}
+  constructor(private readonly deps: DelegationDeps) {
+    if (deps.worktreesFile) {
+      this.worktreesStore = new WorktreeStore(deps.worktreesFile);
+    }
+  }
+
+  /** Start background maintenance (periodic worktree cleanup sweep). */
+  startSweep(): void {
+    if (this.disposed || this.worktreeSweepCancel) return;
+    this.scheduleWorktreeSweep();
+  }
+
+  private scheduleWorktreeSweep(): void {
+    if (this.disposed) return;
+    this.worktreeSweepCancel = this.deps.clock.schedule(() => {
+      this.worktreeSweepCancel = undefined;
+      void this.sweepWorktrees().finally(() => this.scheduleWorktreeSweep());
+    }, WORKTREE_SWEEP_MS);
+  }
 
   /** Shutdown: drop what is gathering, and take every card off the screen. */
   dispose(): void {
+    this.disposed = true;
+    this.worktreeSweepCancel?.();
+    this.worktreeSweepCancel = undefined;
     for (const g of this.gathering.values()) g.cancel();
     for (const s of this.started.values()) s.cancel();
     for (const u of this.updates.values()) u.cancel();
@@ -810,15 +859,25 @@ export class Delegation {
       if (why) throw new Error(why);
     }
     const review = !ext || allowReview ? this.reviewPlanOf(a, def) : undefined;
-    return {
-      agent,
-      text: a.text,
-      ...(a.cwd ? { cwd: a.cwd } : {}),
-      ...(a.title ? { title: a.title } : {}),
-      ...(a.model ? { model: a.model } : {}),
-      ...(a.options ? { options: a.options } : {}),
-      ...(review ? { review } : {}),
-    };
+    const worktree = a.worktree !== undefined ? await this.worktreePlanOf(here, a, def) : undefined;
+    return buildProposedItem(agent, a, review, worktree);
+  }
+
+  /** Read-only validation for `--worktree [name]`; nothing is created until the sub-task starts. */
+  private async worktreePlanOf(
+    here: Place,
+    a: Extract<TaskAction, { kind: 'task-new' }>,
+    def: AgentDef
+  ): Promise<WorktreePlan> {
+    const name = resolveWorktreeName(a.worktree!, a.title);
+    const baseCwd = a.cwd ? taskDirectory(def, a.cwd) : resolveAgentCwd(def);
+    const ws = (this.deps.workspaceFor ?? workspaceFor)(def, baseCwd);
+    const plan = await inspectWorktreePlan(ws, name, def.host);
+    const pending = this.gathering.get(this.cardKey(here))?.items ?? [];
+    if (pending.some((p) => p.worktree && (p.worktree.host ?? '') === (plan.host ?? '') && p.worktree.repoRoot === plan.repoRoot && p.worktree.name === plan.name)) {
+      throw new Error(`worktree "${plan.name}" is already proposed for ${plan.repoRoot}; choose a different --worktree name`);
+    }
+    return plan;
   }
 
   /**
@@ -1015,7 +1074,11 @@ export class Delegation {
       const where = def?.host ? ` @ ${def.host}` : '';
       const model = item.model ? ` · model \`${item.model}\`` : '';
       const options = item.options ? ` · ${optionsLabel(item.options)}` : '';
-      const dir = item.cwd ? ` · \`${item.cwd}\`` : '';
+      const dir = item.worktree
+        ? ` · worktree \`${item.worktree.path}\` (branch \`${item.worktree.branch}\`)`
+        : item.cwd
+          ? ` · \`${item.cwd}\``
+          : '';
       const title = item.title ? ` — ${item.title}` : '';
       lines.push('', `${i + 1}. **${item.agent}**${model}${where}${options}${dir}${title}`, ...quoteLines(item.text));
       if (item.review) {
@@ -1057,34 +1120,7 @@ export class Delegation {
     // same — handTo starts one and returns.
     for (const [i, item] of items.entries()) {
       try {
-        const { key, address, title: named } = await this.deps.registry.openTask({
-          platform: here.platformId,
-          parent: here.address,
-          agentId: item.agent,
-          text: item.text,
-          header,
-          ...(item.cwd ? { cwd: item.cwd } : {}),
-          ...(item.title ? { title: item.title } : {}),
-          ...(item.model ? { model: item.model } : {}),
-          ...(item.options ? { options: item.options } : {}),
-        });
-        this.owed.add(key);
-        const title = subjectOf(named);
-        const host = findAgent(this.deps.config, item.agent)?.host;
-        const topic = topicOf(here.platformId, address);
-        if (item.review) this.arm(key, topic, item.review);
-        opened.push({
-          title,
-          topic,
-          ...(address.thread ? { link: `?t=${address.thread}` } : {}),
-          agent: item.agent,
-          ...(host ? { host } : {}),
-          ...(item.cwd ? { cwd: item.cwd } : {}),
-          ...(item.model ? { model: item.model } : {}),
-          ...(item.options ? { options: item.options } : {}),
-          ...(item.review ? { review: item.review.agent } : {}),
-        });
-        console.log(`[delegation] ${here.key} opened ${key} for "${item.agent}"`);
+        opened.push(await this.startOne(here, item, header));
       } catch (e) {
         const why = e instanceof Error ? e.message : String(e);
         failed.push(`- ${i + 1}. ${item.agent}: ${why}`);
@@ -1092,6 +1128,63 @@ export class Delegation {
       }
     }
     return { opened, failed };
+  }
+
+  private async startOne(here: Place, item: Item, header: string): Promise<OpenedTask> {
+    const created = item.worktree ? await this.createItemWorktree(item.agent, item.worktree) : undefined;
+    const openOpts = {
+      platform: here.platformId,
+      parent: here.address,
+      agentId: item.agent,
+      text: item.text,
+      header,
+      cwd: created ? created.wt.path : item.cwd,
+      title: item.title,
+      model: item.model,
+      options: item.options,
+    };
+    let openedTask: { key: ConversationId; address: ConversationAddress; title: string };
+    try {
+      openedTask = await this.deps.registry.openTask(openOpts);
+    } catch (e) {
+      if (created) {
+        await rollbackWorktree(created.ws, created.wt.repoRoot, created.wt.path, created.wt.branch).catch(() => undefined);
+      }
+      throw e;
+    }
+    const { key, address, title: named } = openedTask;
+    this.owed.add(key);
+    const title = subjectOf(named);
+    const host = findAgent(this.deps.config, item.agent)?.host;
+    const topic = topicOf(here.platformId, address);
+    if (created && item.worktree) {
+      this.saveWorktree({
+        topicKey: key,
+        topic,
+        agent: item.agent,
+        ...(host ? { host } : {}),
+        repoRoot: created.wt.repoRoot,
+        path: created.wt.path,
+        name: item.worktree.name,
+        branch: created.wt.branch,
+        ...(created.wt.baseBranch ? { baseBranch: created.wt.baseBranch } : {}),
+        baseSha: created.wt.baseSha,
+        createdAt: this.deps.clock.now(),
+      });
+    }
+    if (item.review) this.arm(key, topic, item.review);
+    console.log(`[delegation] ${here.key} opened ${key} for "${item.agent}"`);
+    return buildOpenedTask(title, topic, address, item, host, created?.wt);
+  }
+
+  private async createItemWorktree(
+    agentId: string,
+    plan: WorktreePlan
+  ): Promise<{ ws: Workspace; wt: Awaited<ReturnType<typeof createWorktree>> }> {
+    const def = findAgent(this.deps.config, agentId);
+    if (!def) throw new Error(`no agent "${agentId}" is configured`);
+    const ws = (this.deps.workspaceFor ?? workspaceFor)(def, plan.repoRoot);
+    return { ws, wt: await createWorktree(ws, plan) };
   }
 
   /** The confirmed card's answer: where every sub-task went, and the agent told of any that failed. */
@@ -1597,6 +1690,7 @@ export class Delegation {
       cost: status?.cost ? formatCost(status.cost) : '',
       lastAt: lastAtOf(activity, live),
       review: this.reviewLine(c.key),
+      worktree: this.worktreeLine(c.key),
       ...(c.address.thread ? { link: `?t=${c.address.thread}` } : {}),
     };
   }
@@ -1636,6 +1730,7 @@ export class Delegation {
    * finishes is one card rather than one turn each.
    */
   childChanged(id: ConversationId): void {
+    this.recordWorktreeTurnEnd(id);
     if (!this.owed.has(id)) return;
     const parent = this.parentOf(id);
     if (!parent) return;
@@ -2189,6 +2284,113 @@ export class Delegation {
       .catch((e) => console.warn('[delegation] could not show a review step:', e instanceof Error ? e.message : e));
   }
 
+  // ── Managed worktrees ─────────────────────────────────────────────────────────────────────────
+
+  private getWorktree(id: ConversationId): ManagedWorktree | undefined {
+    return this.worktreesStore ? this.worktreesStore.get(id) : this.worktreesMem.get(id);
+  }
+
+  private allWorktrees(): ManagedWorktree[] {
+    return this.worktreesStore ? this.worktreesStore.all() : [...this.worktreesMem.values()];
+  }
+
+  private saveWorktree(wt: ManagedWorktree): void {
+    if (this.worktreesStore) this.worktreesStore.set(wt);
+    else this.worktreesMem.set(wt.topicKey, { ...wt });
+  }
+
+  private touchWorktreeEnded(id: ConversationId, at: number): void {
+    if (this.worktreesStore) this.worktreesStore.touchEnded(id, at);
+    else {
+      const wt = this.worktreesMem.get(id);
+      if (wt) wt.lastEndedAt = at;
+    }
+  }
+
+  private deleteWorktree(id: ConversationId): void {
+    if (this.worktreesStore) this.worktreesStore.remove(id);
+    else this.worktreesMem.delete(id);
+  }
+
+  private recordWorktreeTurnEnd(id: ConversationId): void {
+    if (!this.getWorktree(id)) return;
+    if (this.deps.registry.isBusy(id) || this.deps.registry.isAsking(id)) return;
+    const endedAt = this.deps.registry.activityOf(id)?.outcome?.at;
+    if (endedAt !== undefined) this.touchWorktreeEnded(id, endedAt);
+  }
+
+  private worktreeLine(id: ConversationId): string {
+    const wt = this.getWorktree(id);
+    return wt ? `${shortenHome(wt.path)} (${wt.branch})` : '';
+  }
+
+  /**
+   * Check every gateway-created worktree and remove only those whose branch is merged into its base
+   * branch, whose tree is clean, whose topic is idle, and whose last turn ended at least 1h ago.
+   */
+  async sweepWorktrees(): Promise<{ removed: string[]; kept: Array<{ path: string; reason: string }>; pruned: string[] }> {
+    const out: { removed: string[]; kept: Array<{ path: string; reason: string }>; pruned: string[] } = {
+      removed: [],
+      kept: [],
+      pruned: [],
+    };
+    if (this.sweepingWorktrees) return out;
+    this.sweepingWorktrees = true;
+    try {
+      const now = this.deps.clock.now();
+      for (const wt of this.allWorktrees()) {
+        await this.sweepOneWorktree(wt, now, out);
+      }
+    } finally {
+      this.sweepingWorktrees = false;
+    }
+    return out;
+  }
+
+  private async sweepOneWorktree(
+    wt: ManagedWorktree,
+    now: number,
+    out: { removed: string[]; kept: Array<{ path: string; reason: string }>; pruned: string[] }
+  ): Promise<void> {
+    const liveEnded = this.deps.registry.activityOf(wt.topicKey)?.outcome?.at;
+    if (liveEnded !== undefined && liveEnded !== wt.lastEndedAt) {
+      this.touchWorktreeEnded(wt.topicKey, liveEnded);
+    }
+    const def = findAgent(this.deps.config, wt.agent);
+    if (wt.host && (!def || def.host !== wt.host)) {
+      out.kept.push({ path: wt.path, reason: `host ${wt.host} not configured` });
+      return;
+    }
+    const targetDef: AgentDef = def ?? ({ id: wt.agent, harness: 'claude' } as AgentDef);
+    const ws = (this.deps.workspaceFor ?? workspaceFor)(targetDef, wt.repoRoot);
+    const decision = await checkWorktreeCleanup(ws, wt, {
+      busy: this.deps.registry.isBusy(wt.topicKey),
+      asking: this.deps.registry.isAsking(wt.topicKey),
+      lastEndedAt: liveEnded ?? wt.lastEndedAt,
+      now,
+    });
+    if (decision.action === 'prune-missing') {
+      this.deleteWorktree(wt.topicKey);
+      out.pruned.push(wt.path);
+      console.log(`[delegation] pruned missing worktree record ${wt.path} (topic ${wt.topic})`);
+      return;
+    }
+    if (decision.action === 'keep') {
+      out.kept.push({ path: wt.path, reason: decision.reason });
+      return;
+    }
+    const res = await removeWorktree(ws, wt);
+    if (res.removed) {
+      this.deleteWorktree(wt.topicKey);
+      out.removed.push(wt.path);
+      const branchNote = res.branchDeleted ? ' deleted' : ` kept: ${res.error ?? 'not deleted'}`;
+      console.log(`[delegation] removed worktree ${wt.path} (branch ${wt.branch}${branchNote}, merged into ${wt.baseBranch}, topic ${wt.topic})`);
+    } else {
+      out.kept.push({ path: wt.path, reason: res.error ?? 'git worktree remove failed' });
+      console.warn(`[delegation] could not remove worktree ${wt.path}: ${res.error ?? 'unknown error'}`);
+    }
+  }
+
   // ── Lookups ───────────────────────────────────────────────────────────────────────────────────
 
   /**
@@ -2577,7 +2779,11 @@ function startedRow(t: OpenedTask, lead: boolean, locale: Locale = 'en'): string
   const options = t.options ? optionsLabel(t.options) : '';
   // A host names its own agents `<id>@<host>` (daemon/pods.ts), so that id already says the machine.
   const machine = t.host && !t.agent.endsWith(`@${t.host}`) ? ` @ ${t.host}` : '';
-  const dir = t.cwd ? `\`${t.cwd}\`` : '';
+  const dir = t.worktree
+    ? `worktree \`${t.worktree.path}\` (branch \`${t.worktree.branch}\`)`
+    : t.cwd
+      ? `\`${t.cwd}\``
+      : '';
   const name = t.link ? `[${t.title}](${t.link})` : t.title;
   const review = t.review ? tWorkflows(locale, 'delegation.started.reviewedBy', { reviewer: t.review }) : '';
   // The machine hangs off whichever of name/model comes first, so no row ever starts with "@ host".
@@ -2613,4 +2819,43 @@ function short(sha: string): string {
 function quoteLines(text: string): string[] {
   const shown = text.length > PROPOSAL_TEXT_CHARS ? `${text.slice(0, PROPOSAL_TEXT_CHARS - 1)}…` : text;
   return shown.split('\n').map((l) => `> ${l}`);
+}
+
+function buildProposedItem(
+  agent: string,
+  a: Extract<TaskAction, { kind: 'task-new' }>,
+  review: ReviewPlan | undefined,
+  worktree: WorktreePlan | undefined
+): Item {
+  return {
+    agent,
+    text: a.text,
+    ...(a.cwd ? { cwd: a.cwd } : {}),
+    ...(a.title ? { title: a.title } : {}),
+    ...(a.model ? { model: a.model } : {}),
+    ...(a.options ? { options: a.options } : {}),
+    ...(review ? { review } : {}),
+    ...(worktree ? { worktree } : {}),
+  };
+}
+
+function buildOpenedTask(
+  title: string,
+  topic: string,
+  address: ConversationAddress,
+  item: Item,
+  host: string | undefined,
+  createdWt: { path: string; branch: string } | undefined
+): OpenedTask {
+  return {
+    title,
+    topic,
+    ...(address.thread ? { link: `?t=${address.thread}` } : {}),
+    agent: item.agent,
+    ...(host ? { host } : {}),
+    ...(createdWt ? { worktree: { path: createdWt.path, branch: createdWt.branch } } : item.cwd ? { cwd: item.cwd } : {}),
+    ...(item.model ? { model: item.model } : {}),
+    ...(item.options ? { options: item.options } : {}),
+    ...(item.review ? { review: item.review.agent } : {}),
+  };
 }

@@ -5,6 +5,19 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **Gateway-managed git worktrees for sub-agents (`fleetherd task-new --worktree [<name>]`).**
+  Coordinators previously had to run `git worktree add` by hand and pass `--cwd <absolute path>`
+  when splitting work in one repository. `task-new --worktree [<name>]` now validates the target
+  repository and name at proposal time without touching disk, shows the planned worktree path and
+  branch on the confirmation card, and creates `<repo root>/.worktrees/<name>` on a new branch from
+  `HEAD` on the agent's machine (local or remote) only when the part starts — adding `.worktrees/`
+  to `.git/info/exclude` if needed rather than editing `.gitignore`. Created worktrees are persisted
+  in `<configDir>/worktrees.json`, listed in `fleetherd tasks`, and cleaned up by a periodic
+  15-minute sweep (`git worktree remove` without `--force` and `git branch -d`) only when merged
+  into the base branch, completely clean, idle, and at least 1 hour past the last turn's end.
+
 ## [3.41.2] - 2026-11-27
 
 ### Fixed

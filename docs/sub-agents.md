@@ -163,6 +163,19 @@ gateway's process: after a restart the parts and reviewers carry on as ordinary 
   offer is refused when proposed, with the choices it does offer and their notes (an account's quota,
   say); one the agent refuses when the part starts fails that part, with the reason — it never runs
   on the agent's default instead. The model is `--model`'s, not `--option`'s.
+- **Isolated git worktrees (`task-new --worktree [<name>]`)**: when two parts work in the same
+  repository, passing `--worktree` (optionally naming it; defaults to a slug of `--title`) tells the
+  gateway to create `<repo root>/.worktrees/<name>` on a new branch `<name>` from the repository's
+  current `HEAD` on the machine that runs the part, and start the part there. Validation runs at
+  proposal time (refusing non-git directories and existing worktree or branch names), but nothing is
+  created until the part actually starts; the confirmation card shows the planned path and branch.
+  If `.worktrees/` is not already ignored, the gateway adds it to `.git/info/exclude` without
+  editing a tracked `.gitignore`. Created worktrees are persisted in `<configDir>/worktrees.json`
+  and checked by a periodic 15-minute sweep: a worktree is removed (`git worktree remove` without
+  `--force`, then `git branch -d`) only when its branch is merged into the branch it was made from,
+  its tree has no uncommitted or untracked changes, no turn is running or waiting on a question, and
+  at least 1 hour has passed since its last turn ended. Everything else is left untouched and shown
+  in the `worktree` column of `fleetherd tasks`.
 - An agent can look one agent up before it proposes: `task-agents <agent>` lists that agent's
   models (marking the default), every setting with its values and the agent's note on each, its
   permission level, how many turns are running on it right now, and whether it is waiting out a

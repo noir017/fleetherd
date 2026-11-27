@@ -624,6 +624,9 @@ function renderTaskList(data: unknown): string {
   if (result.tasks.some((t) => t.review)) {
     help.push('The review column is a topic\'s part in an automatic review (task-new --review-by): who reviews it and where that stands, or which work it reviews.');
   }
+  if (result.tasks.some((t) => t.worktree)) {
+    help.push('The worktree column is a gateway-created git worktree (task-new --worktree) still on disk; merged, clean ones are removed once idle for 1h.');
+  }
   return toon({ tasks: result.tasks, help });
 }
 
