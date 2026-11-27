@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.41.0] - 2026-11-27
+
 ### Changed
 
 - **Unified settings editor with bidirectional scroll-spy.** Clicking any gateway or device section
