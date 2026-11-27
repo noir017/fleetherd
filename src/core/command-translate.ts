@@ -24,7 +24,7 @@ import { type Locale, tMenus, type MenusMessageKey } from './i18n/menus.js';
  * thing everywhere, translated per harness at invocation time. A harness with no
  * equivalent gets an explicit "not supported" reply rather than a prompt it will
  * misread. Harness-specific commands are not registered globally at all; they live
- * behind the bare form of that harness's agent command (see HARNESS_COMMANDS).
+ * behind the bare form of that harness's agent command (see `HARNESS_FACTS[h].command` in `core/harness-facts.ts`).
  *
  * ── Provenance of the table ───────────────────────────────────────────────────
  * `claude` and `opencode` were captured live over ACP (available_commands_update)
@@ -189,7 +189,7 @@ const GENERIC_COMMANDS: Record<GenericCommandName, GenericCommand> = {
   context: {
     description: 'Show current context usage',
     // Where it IS forwarded (claude's own `/context`, gemini's `stats`), a busy conversation gets
-    // the gateway's copy instead — the same answer the `local` harnesses always get.
+    // the gateway's copy instead — the same answer harnesses listing `context` in `HARNESS_FACTS[h].localCommands` always get.
     query: true,
   },
   model: {
@@ -485,7 +485,7 @@ function routeTarget(cfg: Pick<Config, 'agents'>, agentId: string): string {
   const def = cfg.agents.find((a) => a.id === agentId);
   // `custom` is left out for the reason agentCommandSpecs skips it: the word means nothing to a reader.
   const what = [
-    def && HARNESS_FACTS[def.harness]?.displayName != null ? def.harness : undefined,
+    def && HARNESS_FACTS[def.harness]?.command != null ? def.harness : undefined,
     def?.host ? `on ${def.host}` : undefined,
   ]
     .filter(Boolean)

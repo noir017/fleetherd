@@ -1112,7 +1112,8 @@ function permissionOptions(
   const offered = def ? offeredLevelsFor(def, ids) : offeredLevels(ids);
   const pinned = def?.options['mode'];
   // A harness with no mode the gateway can set: `ask` there is the gateway's half alone.
-  const withoutMode = ids.length === 0 ? (def ? HARNESS_FACTS[def.harness].withoutModeKind : 'none') : undefined;
+  const withoutMode =
+    ids.length === 0 ? (def && HARNESS_FACTS[def.harness].ignoresSessionModes ? 'agy' : 'none') : undefined;
   return PERMISSION_LEVELS.filter((l) => offered.includes(l) || (!row.unset && l === row.value)).map((level) => {
     const mode = levelMode(level, ids, pinned === undefined ? undefined : String(pinned));
     const name = mode ? (modes?.find((m) => m.value === mode)?.name ?? mode) : undefined;

@@ -122,7 +122,7 @@ export interface AgentMenuView {
 }
 
 function agentLabel(def: AgentDef, current: string | undefined): string {
-  const harness = HARNESS_FACTS[def.harness].displayName !== null ? ` · ${def.harness}` : '';
+  const harness = HARNESS_FACTS[def.harness].command !== null ? ` · ${def.harness}` : '';
   return truncateLabel(`${def.id === current ? CURRENT_MARK : ''}${def.id}${harness}`);
 }
 
