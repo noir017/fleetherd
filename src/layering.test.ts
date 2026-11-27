@@ -28,6 +28,7 @@ const RULES: readonly LayerRule[] = [
   {
     module: 'config',
     allowedSrc: new Set(['types.js', 'legacy-name.js']),
+    forbiddenExternalPrefixes: ['@satorijs/', '@koishijs/'],
   },
   {
     module: 'platform',
