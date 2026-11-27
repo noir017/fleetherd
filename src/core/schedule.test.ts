@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   bashResultText,
+  bashWakeText,
   buildTask,
   CATCH_UP_GRACE_MS,
   cleanTags,
@@ -9,15 +10,19 @@ import {
   FIXED_SESSION_WINDOW_MS,
   formatDay,
   formatInZone,
+  formatWakeOn,
   MAX_TAG_LENGTH,
   MAX_TASK_TAGS,
   nextRunOf,
   normalizeTags,
   parseAt,
+  parseWakeOn,
   rebaseEdit,
   SHAPE_SETTINGS,
   shapeOf,
+  shouldWake,
   taskCardText,
+  taskWakeCapText,
   taskView,
   zonedToEpoch,
   type BashOutcome,
@@ -495,6 +500,7 @@ describe('editTask: kind, session and target', () => {
       cwd: { cwd: '/srv' },
       host: { host: 'box' },
       timeout: { timeoutMs: 60_000 },
+      wake: { wake: true },
       at: { at: '+1h', cron: undefined },
     };
     const base: Record<TaskShape, Parameters<typeof buildTask>[0]> = {
@@ -903,5 +909,106 @@ describe('task tags', () => {
   it('writes the tags on the card posted for a change', () => {
     const t = built({ cron: '0 8 * * *', prompt: 'x', tags: ['ci', 'release'] });
     expect(taskCardText(t, 'registered', NOW)).toContain('• Tags: `ci`, `release`');
+  });
+});
+
+describe('waking bash tasks', () => {
+  it('parses and formats --wake-on rules', () => {
+    expect(parseWakeOn('any')).toEqual({ ok: true, rule: 'any' });
+    expect(parseWakeOn(' ZERO ')).toEqual({ ok: true, rule: 'zero' });
+    expect(parseWakeOn('nonzero')).toEqual({ ok: true, rule: 'nonzero' });
+    expect(parseWakeOn('2, 1, 2, 0')).toEqual({ ok: true, rule: [0, 1, 2] });
+    expect(formatWakeOn([1, 2])).toBe('1,2');
+    expect(formatWakeOn('nonzero')).toBe('nonzero');
+    expect(parseWakeOn('')).toMatchObject({ ok: false });
+    expect(parseWakeOn('abc')).toMatchObject({ ok: false });
+    expect(parseWakeOn('256')).toMatchObject({ ok: false });
+    expect(parseWakeOn('-1')).toMatchObject({ ok: false });
+  });
+
+  it('matches outcomes according to shouldWake and never wakes on abort', () => {
+    const ok: BashOutcome = { exitCode: 0, timedOut: false, aborted: false, tail: 'ok', bytes: 2, durationMs: 100 };
+    const fail1: BashOutcome = { exitCode: 1, timedOut: false, aborted: false, tail: 'err', bytes: 3, durationMs: 100 };
+    const fail2: BashOutcome = { exitCode: 2, timedOut: false, aborted: false, tail: 'err2', bytes: 4, durationMs: 100 };
+    const timedOut: BashOutcome = { exitCode: null, timedOut: true, aborted: false, tail: '', bytes: 0, durationMs: 10_000 };
+    const aborted: BashOutcome = { exitCode: null, timedOut: false, aborted: true, tail: '', bytes: 0, durationMs: 50 };
+
+    expect(shouldWake('any', ok)).toBe(true);
+    expect(shouldWake('any', fail1)).toBe(true);
+    expect(shouldWake('any', aborted)).toBe(false);
+    expect(shouldWake('zero', ok)).toBe(true);
+    expect(shouldWake('zero', fail1)).toBe(false);
+    expect(shouldWake('nonzero', ok)).toBe(false);
+    expect(shouldWake('nonzero', fail1)).toBe(true);
+    expect(shouldWake('nonzero', timedOut)).toBe(true);
+    expect(shouldWake([1, 2], ok)).toBe(false);
+    expect(shouldWake([1, 2], fail1)).toBe(true);
+    expect(shouldWake([1, 2], fail2)).toBe(true);
+    expect(shouldWake([1, 2], timedOut)).toBe(false);
+  });
+
+  it('formats the wake turn with only the source label and output tail', () => {
+    const t = built({ at: '+5m', bash: 'echo hi', name: 'watch PR #42', wake: true });
+    const text = bashWakeText(t, { exitCode: 0, timedOut: false, aborted: false, tail: 'all green\n', bytes: 10, durationMs: 1_500 }, 60_000);
+    expect(text).toBe('↳ Scheduled task "watch PR #42" · exit 0 · 1.5s\n\nall green');
+
+    const quiet = bashWakeText(t, { exitCode: 1, timedOut: false, aborted: false, tail: '   \n', bytes: 4, durationMs: 500 }, 60_000);
+    expect(quiet).toBe('↳ Scheduled task "watch PR #42" · exit 1 · 500ms');
+
+    const longTail = 'x'.repeat(3_500);
+    const cut = bashWakeText(t, { exitCode: 1, timedOut: false, aborted: false, tail: longTail, bytes: 3_500, durationMs: 2_000 }, 60_000);
+    expect(cut).toBe(`↳ Scheduled task "watch PR #42" · exit 1 · 2.0s\n\n${'x'.repeat(3_000)}`);
+  });
+
+  it('builds a waking bash task with 24h lifetime, conversation binding, and default cap 3', () => {
+    const t = built({ cron: '*/5 * * * *', bash: 'check', wake: true });
+    expect(t.run).toMatchObject({ kind: 'bash', wake: { on: 'any', max: 3 } });
+    expect(t.conversation).toBe('web#main#t1');
+    expect(t.expiresAt).toBe(NOW + FIXED_SESSION_WINDOW_MS);
+
+    const byRule = built({ cron: '*/5 * * * *', bash: 'check', wakeOn: 'nonzero', wakeMax: 5 });
+    expect(byRule.run).toMatchObject({ kind: 'bash', wake: { on: 'nonzero', max: 5 } });
+
+    const detail = taskView({ ...byRule, wakes: 1 }, NOW, { detail: true });
+    expect(detail).toMatchObject({ wakeOn: 'nonzero', wakeMax: 5, wakes: 1 });
+    expect(detail.runs).toContain('wake (nonzero, max 5)');
+  });
+
+  it('refuses invalid wake combinations and missing conversation', () => {
+    expect(refusal({ cron: '0 8 * * *', prompt: 'hi', wake: true })).toMatch(/for --bash tasks/);
+    expect(refusal({ cron: '0 8 * * *', bash: 'ls', wakeMax: 5 })).toMatch(/--wake-max is for a waking/);
+    expect(refusal({ cron: '0 8 * * *', bash: 'ls', wake: true, wakeOn: 'off' })).toMatch(/contradict/);
+    expect(refusal({ cron: '0 8 * * *', bash: 'ls', wake: true, wakeMax: 0 })).toMatch(/between 1 and 100/);
+    expect(refusal({ cron: '0 8 * * *', bash: 'ls', wake: true }, ctx({ targetConversation: undefined }))).toMatch(/needs one conversation/);
+    expect(refusal({ at: '+48h', bash: 'ls', wake: true })).toMatch(/only lives 24h/);
+  });
+
+  it('keeps wake fields across unrelated edits, updates them, and clears on --wake-on off', () => {
+    const t = { ...built({ cron: '*/5 * * * *', bash: 'check', wakeOn: 'nonzero', wakeMax: 4 }), wakes: 2 };
+    const renamed = editTask(t, { name: 'new name' }, ctx({ now: NOW + 3_600_000 }));
+    expect(renamed.ok).toBe(true);
+    if (renamed.ok) {
+      expect(renamed.task.run).toMatchObject({ kind: 'bash', wake: { on: 'nonzero', max: 4 } });
+      expect(renamed.task.wakes).toBe(2);
+      expect(renamed.task.expiresAt).toBe(t.expiresAt);
+    }
+
+    const tooLow = editTask(t, { wakeMax: 2 }, ctx());
+    expect(tooLow.ok).toBe(false);
+
+    const turnedOff = editTask(t, { wakeOn: 'off' }, ctx());
+    expect(turnedOff.ok).toBe(true);
+    if (turnedOff.ok) {
+      expect(turnedOff.task.run.kind === 'bash' && turnedOff.task.run.wake).toBeUndefined();
+      expect(turnedOff.task.expiresAt).toBeUndefined();
+      expect(turnedOff.task.conversation).toBeUndefined();
+      expect(turnedOff.task.wakes).toBeUndefined();
+    }
+  });
+
+  it('marks a waking task done in decide once wakes reach wake.max', () => {
+    const t = { ...built({ cron: '*/5 * * * *', bash: 'check', wake: true, wakeMax: 2 }), wakes: 2 };
+    expect(decide(t, NOW + 600_000)).toEqual({ kind: 'done' });
+    expect(taskWakeCapText(t)).toContain('reached its wake limit (2/2)');
   });
 });

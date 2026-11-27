@@ -114,6 +114,7 @@ export const HELP_TOPICS: HelpTopic[] = [
       '--prompt with --session daily: the first run of each day opens a new topic, and later runs that day join it — one conversation per day, named with the date. The day is counted in --tz, by each run\'s planned time, so a catch-up after midnight joins the day it was meant for. Needs --cron and a platform that can open a topic with no message to reply to (web UI, Telegram forum groups); --agent and --cwd work as with new.',
       '--model names the model a --session new or daily task\'s conversations use. A fixed-session task runs in this conversation and keeps the model /model set here, so --model there is refused. The id must be in the agent\'s own /model list: a name it does not offer is refused when the task is added, with the list, and a run that cannot apply the model fails with the reason instead of quietly using another.',
       '--bash: the gateway runs the command with `bash -lc` in --cwd (default: your working directory) and posts the exit code, duration and the end of the output; long output is attached as a file. --timeout defaults to 10m, at most 6h.',
+      '--wake (on --bash): wake the target conversation\'s agent with the run\'s output tail under a one-line `↳ Scheduled task "<name>" · exit <code> · <duration>` label. --wake-on picks which runs wake it: any (default with --wake), zero, nonzero, or comma-separated exit codes such as 1,2 (non-waking runs stay quiet in chat and are still recorded in history; pass --wake-on off on edit to disable waking). --wake-max caps how many times the task may wake the agent before ending (default 3, max 100). Lifetime (24h) and target follow --session fixed.',
       '--at takes +30m / +2h / 08:00 (the next time the clock reads that) / "2026-10-01 08:00" / an ISO time with a zone. --cron takes 5 fields (minute hour day month weekday); several 5-field expressions separated by `;` are one schedule that runs at whichever comes next (`0 9 * * *; 0 15 * * *` is twice a day). Both are read in --tz, default the gateway\'s own zone.',
       'For a long prompt, pass `--prompt -` and pipe it or use a heredoc (`fleetherd schedule add ... --prompt - <<\'EOF\'` or `< prompt.md`). Works on both local and remote hosts.',
       '--channel is where output goes (ids from `fleetherd channels`); default this conversation. On edit it moves the task there.',
@@ -601,7 +602,24 @@ const waitArg = (value: string): number => {
 };
 
 /** `schedule add`'s own options, by commander's camel-cased key — refused on every other action. */
-const SCHEDULE_ADD_KEYS = ['cron', 'at', 'tz', 'name', 'tag', 'prompt', 'bash', 'agent', 'session', 'cwd', 'host', 'model', 'timeout'] as const;
+const SCHEDULE_ADD_KEYS = [
+  'cron',
+  'at',
+  'tz',
+  'name',
+  'tag',
+  'prompt',
+  'bash',
+  'agent',
+  'session',
+  'cwd',
+  'host',
+  'model',
+  'timeout',
+  'wake',
+  'wakeOn',
+  'wakeMax',
+] as const;
 
 /** What `schedule edit` may set: every one of add's options, `--channel` included (see buildScheduleEdit). */
 const SCHEDULE_EDIT_KEYS = SCHEDULE_ADD_KEYS;
@@ -663,6 +681,9 @@ function buildScheduleAdd(opts: Record<string, unknown>): IpcAction {
     host: str(opts.host),
     model: str(opts.model),
     timeoutMs: typeof opts.timeout === 'number' ? opts.timeout : undefined,
+    wake: opts.wake === true ? true : undefined,
+    wakeOn: str(opts.wakeOn),
+    wakeMax: typeof opts.wakeMax === 'number' ? opts.wakeMax : undefined,
   };
 }
 
@@ -702,11 +723,14 @@ function buildScheduleEdit(p: string[], opts: Record<string, unknown>): IpcActio
     host: str(opts.host),
     model: str(opts.model),
     timeoutMs: typeof opts.timeout === 'number' ? opts.timeout : undefined,
+    wake: opts.wake === true ? true : undefined,
+    wakeOn: str(opts.wakeOn),
+    wakeMax: typeof opts.wakeMax === 'number' ? opts.wakeMax : undefined,
   };
   const changed = SCHEDULE_EDIT_KEYS.some((k) => opts[k] !== undefined) || str(opts.channel) !== undefined;
   if (!changed) {
     throw new Error(
-      'schedule edit needs something to change: --prompt or --bash, --session, --agent, --model, --cwd, --host, --cron, --at, --tz, --name, --tag, --timeout or --channel'
+      'schedule edit needs something to change: --prompt or --bash, --session, --agent, --model, --cwd, --host, --cron, --at, --tz, --name, --tag, --timeout, --wake, --wake-on, --wake-max or --channel'
     );
   }
   return action;
@@ -1243,6 +1267,20 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
           'add/edit: the machine --cwd is on (a hosts: id, or gateway), for a task whose agent runs there; with no --cwd the task starts in that machine\'s own directory. Without it a --cwd is read as this machine\'s. For --bash, the machine that runs it',
       },
       { flags: '--timeout <duration>', description: 'add/edit: --bash time limit, e.g. 90s, 10m (default 10m, max 6h)', parse: durationArg },
+      {
+        flags: '--wake',
+        description: "add/edit: --bash only — wake this conversation's agent with the output tail on matching runs (24h max, like --session fixed)",
+      },
+      {
+        flags: '--wake-on <rule>',
+        description:
+          'add/edit: which --bash runs wake the agent — any (default with --wake), zero, nonzero, or exit codes e.g. 1,2; off disables waking on edit (non-waking runs stay quiet in chat)',
+      },
+      {
+        flags: '--wake-max <n>',
+        description: 'add/edit: max times a waking --bash task may wake the agent before ending (default 3, max 100)',
+        parse: intArg('--wake-max'),
+      },
       {
         flags: '--wait [duration]',
         description: `run only: wait for the run to end and print its result (default ${DEFAULT_RUN_WAIT_MS / 60_000}m, at most ${MAX_RUN_WAIT_MS / 60_000}h)`,

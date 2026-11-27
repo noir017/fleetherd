@@ -59,6 +59,9 @@ export interface TaskFormValues {
   readonly host: string;
   readonly cwd: string;
   readonly timeout: string;
+  readonly wake: boolean;
+  readonly wakeOn: string;
+  readonly wakeMax: string;
   readonly targetKind: string;
   readonly targetOther: string;
   readonly tags: string;
@@ -437,6 +440,14 @@ function resolveInitialTargetKind(
   return first ? `topic:${first.id}` : 'other';
 }
 
+function initialWakeFields(f: TaskPageDetail['fields']): Pick<TaskFormValues, 'wake' | 'wakeOn' | 'wakeMax'> {
+  return {
+    wake: Boolean(f.wake),
+    wakeOn: f.wakeOn ?? 'any',
+    wakeMax: f.wakeMax !== undefined ? String(f.wakeMax) : '3',
+  };
+}
+
 export function initialFormValues(
   detail: TaskPageDetail,
   topics: readonly TopicInfo[],
@@ -462,6 +473,7 @@ export function initialFormValues(
     host: f.host ?? defaultHost ?? '',
     cwd: f.cwd ?? '',
     timeout: f.timeoutMs ? formatDurationInput(f.timeoutMs) : '',
+    ...initialWakeFields(f),
     targetKind,
     targetOther: targetKind === 'other' ? f.target : '',
     tags: detail.task ? detail.task.tags.join(', ') : '',
@@ -507,6 +519,33 @@ function diffTimeoutSetting(
   return null;
 }
 
+function diffWakeSetting(
+  values: TaskFormValues,
+  prev: TaskPageDetail['fields'],
+  isNew: boolean,
+  turned: boolean,
+  out: TaskEditPayload,
+): string | null {
+  if (!values.wake) {
+    if (!isNew && !turned && prev.wake) out.wake = false;
+    return null;
+  }
+  const wakeOn = values.wakeOn.trim() || 'any';
+  const wakeMax = Number(values.wakeMax.trim() || '3');
+  if (!Number.isInteger(wakeMax) || wakeMax < 1 || wakeMax > 100) {
+    return tr('taskPage.wakeMaxErr');
+  }
+  if (isNew || turned || !prev.wake) {
+    out.wake = true;
+    out.wakeOn = wakeOn;
+    out.wakeMax = wakeMax;
+    return null;
+  }
+  if (wakeOn !== (prev.wakeOn ?? 'any')) out.wakeOn = wakeOn;
+  if (wakeMax !== (prev.wakeMax ?? 3)) out.wakeMax = wakeMax;
+  return null;
+}
+
 function diffShapeSettings(
   values: TaskFormValues,
   prev: TaskPageDetail['fields'],
@@ -531,7 +570,11 @@ function diffShapeSettings(
     const next = diffNullableStr(values.cwd.trim(), prev.cwd, isNew, false);
     if (next !== undefined) out.cwd = next;
   }
-  return has('timeout') ? diffTimeoutSetting(values.timeout, prev.timeoutMs, isNew, turned, out) : null;
+  if (has('timeout')) {
+    const err = diffTimeoutSetting(values.timeout, prev.timeoutMs, isNew, turned, out);
+    if (err) return err;
+  }
+  return has('wake') ? diffWakeSetting(values, prev, isNew, turned, out) : null;
 }
 
 function resolveTargetRequest(values: TaskFormValues): ScheduleTargetRequest | null {

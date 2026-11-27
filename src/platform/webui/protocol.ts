@@ -284,6 +284,9 @@ const ScheduleFormFields = z
     cwd: z.string().max(4096).nullable(),
     host: z.string().max(64).nullable(),
     timeoutMs: z.number().int().positive().max(1e9),
+    wake: z.boolean(),
+    wakeOn: z.string().max(100).nullable(),
+    wakeMax: z.number().int().positive().max(100),
     // Shape only, as for the tag editor's op: normalizeTags owns the rule.
     tags: z.array(z.string().max(200)).max(50),
     target: ScheduleTargetRequestSchema,
