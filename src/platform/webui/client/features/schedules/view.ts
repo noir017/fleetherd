@@ -360,6 +360,7 @@ class SchedulesView implements SchedulesViewController {
         key: 'aa_sched_filter',
         placeholder: tr('sched.searchTasks'),
         groups: [],
+        overlays: deps.overlays,
         icons: {
           search: icon('search'),
           cross: icon('cross'),

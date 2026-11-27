@@ -146,6 +146,7 @@ describe('topics/tree', () => {
 
     const fg = buildTopicFilterGroups(topicsTab, 'topics');
     expect(fg.groups.map((g) => g.id)).toEqual(['state', 'starred', 'agent', 'host']);
+    expect(fg.groups.every((g) => !g.pinned)).toBe(true);
     expect(buildTopicFilterGroups(starredTab, 'starred').groups.map((g) => g.id)).toEqual([
       'state',
       'agent',

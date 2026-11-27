@@ -511,17 +511,13 @@
   font-size: var(--fh-fs-lg);
 }
 .wb-root[data-wb-mode="mobile"] .fh-sidebar-filter .fh-fb-filter,
-.wb-root[data-wb-mode="mobile"] .fh-sidebar-filter .fh-fb-sort,
-.wb-root[data-wb-mode="mobile"] .fh-sidebar-filter .fh-fb-dir {
+.wb-root[data-wb-mode="mobile"] .fh-sidebar-filter .fh-fb-sort-btn {
   height: 38px;
   min-height: 38px;
   border-radius: 10px;
 }
-.wb-root[data-wb-mode="mobile"] .fh-sidebar-filter .fh-fb-dir {
+.wb-root[data-wb-mode="mobile"] .fh-sidebar-filter .fh-fb-sort-btn {
   width: 38px;
-}
-.wb-root[data-wb-mode="mobile"] .fh-sidebar-filter .fh-fb-sortsel {
-  font-size: var(--fh-fs-lg);
 }
 .wb-root[data-wb-mode="mobile"] .fh-sidebar-filter .fh-fb-pins .fh-fb-chips {
   flex-wrap: nowrap;

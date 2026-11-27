@@ -1,3 +1,5 @@
+import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
+import { icon } from '../../../icons.js';
 import { addDisposableListener, focusSafely } from '../../base/dom.js';
 import { html, nothing, render } from '../../base/html.js';
 import { type Disposable, DisposableStore, MutableDisposable } from '../../base/lifecycle.js';
@@ -136,11 +138,13 @@ function renderMenuEntries(
       return html`<div class="fh-menu-header" role="presentation">${entry.label}</div>`;
     }
     const cls = `fh-menu-item${entry.danger ? ' is-danger' : ''}${entry.checked ? ' is-checked' : ''}`;
+    const ariaChecked = typeof entry.checked === 'boolean' ? (entry.checked ? 'true' : 'false') : nothing;
     return html`<button
       type="button"
       class=${cls}
       role="menuitem"
       data-menu-id=${entry.id}
+      aria-checked=${ariaChecked}
       ?disabled=${Boolean(entry.disabled)}
       title=${entry.title ?? nothing}
       @click=${() => {
@@ -149,6 +153,7 @@ function renderMenuEntries(
     >
       ${renderIcon(entry.icon, 'fh-menu-icon')}
       <span class="fh-menu-label">${entry.label}</span>
+      ${entry.checked ? html`<span class="fh-menu-check" aria-hidden="true">${unsafeHTML(icon('check'))}</span>` : nothing}
       ${entry.shortcut ? html`<kbd class="fh-menu-kbd">${entry.shortcut}</kbd>` : nothing}
     </button>`;
   });

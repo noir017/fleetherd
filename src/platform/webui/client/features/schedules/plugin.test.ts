@@ -491,4 +491,64 @@ describe('features/schedules plugin', () => {
       registry.dispose();
     }
   });
+
+  it('keeps status chips in the filter panel and exposes sort options via popup menu', async () => {
+    const tasks: SchedulePanelTask[] = [
+      SAMPLE_TASK,
+      { ...SAMPLE_TASK, id: 'task-2', name: 'beta-paused', state: 'paused', nextAt: 1700000200000 },
+    ];
+    const { registry, events, manager } = makeHarness({
+      getJson: async (path: string) => {
+        if (path === '/api/schedules') return { enabled: true, tasks };
+        return {};
+      },
+    });
+    manager.register(createSchedulesPlugin({ now: () => 1700000100000 }), { builtin: true });
+    await manager.activateAll();
+
+    const view = registry.getView('schedules')!.component();
+    document.body.appendChild(view.element);
+    view.init(undefined, makePanelInitContext('schedules').ctx);
+    await flushMicrotasks();
+
+    try {
+      const pinsEl = view.element.querySelector<HTMLElement>('.fh-fb-pins')!;
+      expect(pinsEl.hidden).toBe(true);
+      expect(pinsEl.querySelectorAll('.fh-fb-chip').length).toBe(0);
+
+      const pausedChip = view.element.querySelector<HTMLButtonElement>(
+        '.fh-fb-panel [data-fb-group="status"][data-fb-value="paused"]',
+      )!;
+      expect(pausedChip).not.toBeNull();
+      pausedChip.click();
+      expect(view.element.querySelector<HTMLElement>('.fh-fb-dot')!.hidden).toBe(false);
+      expect(Array.from(view.element.querySelectorAll('.sched-item')).map((el) => el.getAttribute('data-id'))).toEqual([
+        'task-2',
+      ]);
+      pausedChip.click();
+
+      const sortBtn = view.element.querySelector<HTMLButtonElement>('.fh-fb-sort-btn')!;
+      expect(sortBtn).not.toBeNull();
+      sortBtn.click();
+      const sortMenu = document.querySelector<HTMLElement>('.fh-fb-sort-menu:not([hidden])')!;
+      expect(sortMenu).not.toBeNull();
+      expect(
+        Array.from(sortMenu.querySelectorAll<HTMLElement>('[data-menu-id^="sort:"]')).map((el) =>
+          el.getAttribute('data-menu-id'),
+        ),
+      ).toEqual(['sort:status', 'sort:next', 'sort:last', 'sort:created']);
+      expect(sortMenu.querySelector('[data-menu-id="sort:status"]')?.classList.contains('is-checked')).toBe(true);
+      expect(sortMenu.querySelector('[data-menu-id="dir:asc"]')?.classList.contains('is-checked')).toBe(true);
+      sortMenu.querySelector<HTMLButtonElement>('[data-menu-id="dir:desc"]')!.click();
+      expect(Array.from(view.element.querySelectorAll('.sched-item')).map((el) => el.getAttribute('data-id'))).toEqual([
+        'task-2',
+        'task-1',
+      ]);
+    } finally {
+      view.dispose();
+      manager.dispose();
+      events.dispose();
+      registry.dispose();
+    }
+  });
 });

@@ -133,4 +133,33 @@ describe('components/menu', () => {
       overlays.dispose();
     }
   });
+
+  it('renders checkmark indicator and aria-checked for checkable menu items', () => {
+    const anchor = document.createElement('button');
+    document.body.appendChild(anchor);
+    const menu = createMenu();
+
+    menu.open(anchor, [
+      { id: 'a', label: 'Alpha', checked: true },
+      { id: 'b', label: 'Beta', checked: false },
+      { id: 'c', label: 'Gamma' },
+    ]);
+
+    const itemA = menu.el.querySelector<HTMLButtonElement>('[data-menu-id="a"]')!;
+    const itemB = menu.el.querySelector<HTMLButtonElement>('[data-menu-id="b"]')!;
+    const itemC = menu.el.querySelector<HTMLButtonElement>('[data-menu-id="c"]')!;
+
+    expect(itemA.classList.contains('is-checked')).toBe(true);
+    expect(itemA.getAttribute('aria-checked')).toBe('true');
+    expect(itemA.querySelector('.fh-menu-check svg.ic-check')).not.toBeNull();
+
+    expect(itemB.classList.contains('is-checked')).toBe(false);
+    expect(itemB.getAttribute('aria-checked')).toBe('false');
+    expect(itemB.querySelector('.fh-menu-check')).toBeNull();
+
+    expect(itemC.hasAttribute('aria-checked')).toBe(false);
+    expect(itemC.querySelector('.fh-menu-check')).toBeNull();
+
+    menu.dispose();
+  });
 });

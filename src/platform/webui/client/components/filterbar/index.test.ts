@@ -74,10 +74,50 @@ describe('components/filterbar', () => {
     expect(bar.el.querySelector<HTMLElement>('.fh-fb-sum')!.hidden).toBe(false);
     expect(bar.el.querySelector('.fh-fb-sumtext')?.textContent).toBe('Showing 1 of 5');
 
-    // Toggle sort direction
-    const dirBtn = bar.el.querySelector<HTMLButtonElement>('.fh-fb-dir')!;
-    dirBtn.click();
+    // Opening sort menu closes open filter panel and shows sort options + separator + directions
+    const sortBtn = bar.el.querySelector<HTMLButtonElement>('.fh-fb-sort-btn')!;
+    expect(sortBtn.getAttribute('aria-haspopup')).toBe('menu');
+    expect(sortBtn.getAttribute('aria-expanded')).toBe('false');
+    expect(sortBtn.title).toContain('Recent');
+    expect(sortBtn.title).toContain('Descending');
+
+    sortBtn.click();
+    expect(bar.state().open).toBe(false);
+    expect(sortBtn.getAttribute('aria-expanded')).toBe('true');
+
+    const sortMenu = document.querySelector<HTMLElement>('.fh-fb-sort-menu')!;
+    expect(sortMenu.hidden).toBe(false);
+    expect(sortMenu.querySelector('[role="separator"]')).not.toBeNull();
+    expect(sortMenu.querySelector('[data-menu-id="sort:recent"]')?.classList.contains('is-checked')).toBe(true);
+    expect(sortMenu.querySelector('[data-menu-id="sort:recent"] .fh-menu-check')).not.toBeNull();
+    expect(sortMenu.querySelector('[data-menu-id="dir:desc"]')?.classList.contains('is-checked')).toBe(true);
+    expect(sortMenu.querySelector('[data-menu-id="dir:asc"]')?.classList.contains('is-checked')).toBe(false);
+
+    // Selecting direction updates state, persists, and closes menu
+    sortMenu.querySelector<HTMLButtonElement>('[data-menu-id="dir:asc"]')!.click();
     expect(bar.state().dir).toBe('asc');
+    expect(sortMenu.hidden).toBe(true);
+    expect(sortBtn.getAttribute('aria-expanded')).toBe('false');
+    expect(JSON.parse(storage.getItem('test_fb')!)).toMatchObject({ sort: 'recent', dir: 'asc' });
+
+    // Selecting sort field updates state and persists
+    sortBtn.click();
+    expect(sortMenu.querySelector('[data-menu-id="dir:asc"]')?.classList.contains('is-checked')).toBe(true);
+    sortMenu.querySelector<HTMLButtonElement>('[data-menu-id="sort:name"]')!.click();
+    expect(bar.state().sort).toBe('name');
+    expect(JSON.parse(storage.getItem('test_fb')!)).toMatchObject({ sort: 'name', dir: 'asc' });
+
+    // Opening filter panel closes open sort menu; clicking sort button again toggles close
+    sortBtn.click();
+    expect(sortMenu.hidden).toBe(false);
+    filterBtn.click();
+    expect(sortMenu.hidden).toBe(true);
+    expect(bar.state().open).toBe(true);
+    sortBtn.click();
+    expect(sortMenu.hidden).toBe(false);
+    expect(bar.state().open).toBe(false);
+    sortBtn.click();
+    expect(sortMenu.hidden).toBe(true);
 
     // Pruning drops selections removed from groups
     bar.setGroups([{ id: 'state', label: 'State', pinned: true, options: [{ value: 'run', label: 'Running' }] }]);
@@ -86,13 +126,16 @@ describe('components/filterbar', () => {
     // i18n refresh updates placeholder and sort option labels
     bar.refreshI18n('Find tasks', { recent: 'Latest', name: 'Title' });
     expect(bar.el.querySelector<HTMLInputElement>('.fh-fb-q')!.placeholder).toBe('Find tasks');
-    const labels = Array.from(bar.el.querySelectorAll<HTMLOptionElement>('.fh-fb-sortsel option')).map(
-      (o) => o.textContent,
+    sortBtn.click();
+    const labels = Array.from(sortMenu.querySelectorAll<HTMLElement>('[data-menu-id^="sort:"] .fh-menu-label')).map(
+      (el) => el.textContent,
     );
     expect(labels).toEqual(['Latest', 'Title']);
+    sortBtn.click();
 
     bar.clear();
     expect(bar.active()).toBe(false);
     bar.dispose();
+    expect(document.querySelector('.fh-fb-sort-menu')).toBeNull();
   });
 });

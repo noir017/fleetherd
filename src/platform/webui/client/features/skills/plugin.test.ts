@@ -258,12 +258,20 @@ describe('features/skills plugin', () => {
     expect(visibleNames()).toEqual(['beta-library', 'gamma-archived']);
 
     // Filter by archived status chip
+    const pinsEl = panel.element.querySelector<HTMLElement>('.fh-fb-pins')!;
+    expect(pinsEl.hidden).toBe(true);
+    expect(pinsEl.querySelectorAll('.fh-fb-chip').length).toBe(0);
+    const panelGroups = panel.element.querySelectorAll<HTMLElement>('.fh-fb-panel .fh-fb-group');
+    expect(panelGroups[0]?.querySelector('.fh-fb-label')?.textContent).toBe('State');
+
     const archivedChip = panel.element.querySelector<HTMLButtonElement>(
-      '[data-fb-group="status"][data-fb-value="archived"]',
+      '.fh-fb-panel [data-fb-group="status"][data-fb-value="archived"]',
     )!;
     archivedChip.click();
     expect(visibleNames()).toEqual(['gamma-archived']);
+    expect(panel.element.querySelector<HTMLElement>('.fh-fb-dot')!.hidden).toBe(false);
     archivedChip.click();
+    expect(panel.element.querySelector<HTMLElement>('.fh-fb-dot')!.hidden).toBe(true);
 
     // Filter by category chip in filter panel
     const opsChip = panel.element.querySelector<HTMLButtonElement>(

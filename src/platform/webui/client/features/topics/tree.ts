@@ -340,7 +340,7 @@ export function buildTopicFilterGroups(
     }));
 
   const groups: FilterBarGroup[] = [
-    { id: 'state', label: tr('filter.state'), pinned: true, options: stateOpts },
+    { id: 'state', label: tr('filter.state'), options: stateOpts },
   ];
   if (tab !== 'starred') groups.push({ id: 'starred', label: tr('filter.starred'), options: starredOpts });
   if (agentOpts.length) groups.push({ id: 'agent', label: tr('filter.agent'), options: agentOpts });

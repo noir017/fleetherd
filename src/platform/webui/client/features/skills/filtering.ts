@@ -53,8 +53,7 @@ export function buildSkillFilterGroups(
   const groups: FilterBarGroup[] = [
     {
       id: 'status',
-      label: tr('common.filter'),
-      pinned: true,
+      label: tr('filter.state'),
       options: [
         { value: 'active', label: tr('common.onCap'), count: activeCount },
         { value: 'archived', label: tr('common.offCap'), count: archivedCount },

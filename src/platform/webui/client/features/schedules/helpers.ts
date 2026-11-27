@@ -215,7 +215,6 @@ export function buildFilterGroups(tasks: readonly SchedulePanelTask[]): FilterBa
     {
       id: 'status',
       label: tr('sched.sortStatus'),
-      pinned: true,
       options: [
         { value: 'running', label: tr('sched.statusRunning'), short: tr('filter.runShort'), icon: icon('play'), count: counts.running },
         { value: 'active', label: tr('sched.statusActive'), short: tr('sched.statusActive'), icon: icon('clock'), count: counts.active },

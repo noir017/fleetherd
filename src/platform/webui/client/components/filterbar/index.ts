@@ -1,8 +1,11 @@
+import { icon } from '../../../icons.js';
 import { addDisposableListener, focusSafely } from '../../base/dom.js';
 import { html, nothing, render, type TemplateResult } from '../../base/html.js';
 import { type Disposable, DisposableStore } from '../../base/lifecycle.js';
 import { t as tr } from '../../i18n/index.js';
+import type { OverlayManager } from '../../services/overlays.js';
 import type { StorageService } from '../../services/storage.js';
+import { createMenu, type MenuController, type MenuEntry } from '../menu/index.js';
 import { asNode, type IconInput, renderIcon } from '../shared.js';
 
 export type FilterBarSortDir = 'asc' | 'desc' | '';
@@ -61,6 +64,7 @@ export interface FilterBarOptions {
   readonly groups?: readonly FilterBarGroup[];
   readonly sort?: FilterBarSortDef | null;
   readonly icons?: FilterBarIcons;
+  readonly overlays?: OverlayManager;
   readonly storage?: StorageService | FilterBarStorageAdapter | null;
   readonly onChange?: (state: FilterBarState) => void;
   readonly onPersist?: (state: FilterBarState) => void;
@@ -214,45 +218,69 @@ interface FilterBarViewModel {
   readonly panelActive: boolean;
   readonly sortDef: FilterBarSortDef | null;
   readonly sortOptions: readonly FilterBarSortOption[];
+  readonly sortMenuOpen: boolean;
   readonly counts: { shown: number; total: number } | null;
   readonly showSummary: boolean;
   readonly onQueryInput: (val: string) => void;
   readonly onQueryClear: () => void;
   readonly onTogglePanel: () => void;
-  readonly onSortChange: (val: string) => void;
-  readonly onToggleDir: () => void;
+  readonly onToggleSort: (anchor: HTMLElement) => void;
   readonly onToggleChip: (groupId: string, value: string) => void;
   readonly onClearAll: () => void;
 }
 
+function formatSortButtonTitle(
+  st: FilterBarState,
+  sortOptions: readonly FilterBarSortOption[],
+): string {
+  const current = sortOptions.find((o) => o.value === st.sort)?.label;
+  const dirLabel = st.dir === 'desc' ? tr('common.descending') : tr('common.ascending');
+  return current ? `${tr('common.sort')}: ${current} (${dirLabel})` : `${tr('common.sort')} (${dirLabel})`;
+}
+
+function buildSortMenuEntries(
+  st: FilterBarState,
+  sortOptions: readonly FilterBarSortOption[],
+  onPickSort: (value: string) => void,
+  onPickDir: (dir: 'asc' | 'desc') => void,
+): MenuEntry[] {
+  const entries: MenuEntry[] = sortOptions.map((so) => ({
+    id: `sort:${so.value}`,
+    label: so.label,
+    checked: so.value === st.sort,
+    onSelect: () => onPickSort(so.value),
+  }));
+  entries.push(
+    { kind: 'separator' },
+    {
+      id: 'dir:asc',
+      label: tr('common.ascending'),
+      checked: st.dir !== 'desc',
+      onSelect: () => onPickDir('asc'),
+    },
+    {
+      id: 'dir:desc',
+      label: tr('common.descending'),
+      checked: st.dir === 'desc',
+      onSelect: () => onPickDir('desc'),
+    },
+  );
+  return entries;
+}
+
 function renderFilterBarSort(vm: FilterBarViewModel): TemplateResult | typeof nothing {
   if (!vm.sortDef) return nothing;
-  const dirLabel = vm.st.dir === 'desc' ? tr('common.descending') : tr('common.ascending');
-  const dirIcon = vm.st.dir === 'desc'
-    ? (vm.icons.arrowDown ? renderIcon(vm.icons.arrowDown, 'fh-icon') : html`<span>↓</span>`)
-    : (vm.icons.arrowUp ? renderIcon(vm.icons.arrowUp, 'fh-icon') : html`<span>↑</span>`);
-  return html`<span class="fh-fb-tools">
-    <span class="fh-fb-sort" title=${tr('common.sort')}>
-      ${renderIcon(vm.icons.sort, 'fh-icon')}
-      <select
-        class="fh-fb-sortsel"
-        aria-label=${tr('common.sort')}
-        .value=${vm.st.sort}
-        @change=${(ev: Event) => vm.onSortChange((ev.currentTarget as HTMLSelectElement).value)}
-      >
-        ${vm.sortOptions.map(
-          (so) => html`<option value=${so.value} ?selected=${so.value === vm.st.sort}>${so.label}</option>`,
-        )}
-      </select>
-    </span>
-    <button
-      type="button"
-      class="fh-fb-dir fh-btn fh-btn--secondary fh-btn--icon"
-      title=${dirLabel}
-      aria-label=${dirLabel}
-      @click=${vm.onToggleDir}
-    >${dirIcon}</button>
-  </span>`;
+  const sortTitle = formatSortButtonTitle(vm.st, vm.sortOptions);
+  const sortIcon = vm.icons.sort ? renderIcon(vm.icons.sort, 'fh-icon') : renderIcon(icon('sort'), 'fh-icon');
+  return html`<button
+    type="button"
+    class="fh-fb-sort-btn fh-btn fh-btn--secondary fh-btn--icon"
+    aria-haspopup="menu"
+    aria-expanded=${vm.sortMenuOpen ? 'true' : 'false'}
+    title=${sortTitle}
+    aria-label=${sortTitle}
+    @click=${(ev: MouseEvent) => vm.onToggleSort(ev.currentTarget as HTMLElement)}
+  >${sortIcon}</button>`;
 }
 
 function renderFilterBarTemplate(vm: FilterBarViewModel): TemplateResult {
@@ -325,6 +353,78 @@ function applySortOptionsUpdate(
   return current.map((o) => ({ value: o.value, label: map[o.value] ?? o.label }));
 }
 
+function snapshotFilterState(st: FilterBarState, groups: readonly FilterBarGroup[]): FilterBarState {
+  const sel: Record<string, string[] | undefined> = {};
+  for (const g of groups) {
+    const vals = st.sel[g.id];
+    if (vals && vals.length > 0) sel[g.id] = vals.slice();
+  }
+  return { q: st.q, sel, sort: st.sort, dir: st.dir, open: st.open };
+}
+
+function toggleFilterSelection(st: FilterBarState, groupId: string, value: string): void {
+  const arr = st.sel[groupId] ?? (st.sel[groupId] = []);
+  const idx = arr.indexOf(value);
+  if (idx >= 0) arr.splice(idx, 1);
+  else arr.push(value);
+  if (arr.length === 0) delete st.sel[groupId];
+}
+
+function handleFilterBarKeydown(
+  ev: KeyboardEvent,
+  root: HTMLElement,
+  st: FilterBarState,
+  onClearQuery: () => void,
+  onClosePanel: () => void,
+): void {
+  if (ev.isComposing || ev.key !== 'Escape') return;
+  const input = root.querySelector<HTMLInputElement>('.fh-fb-q');
+  if (st.q && ev.target === input) {
+    onClearQuery();
+    ev.preventDefault();
+    ev.stopPropagation();
+    return;
+  }
+  if (!st.open) return;
+  onClosePanel();
+  const targetNode = asNode(ev.target);
+  const panel = root.querySelector('.fh-fb-panel');
+  if (targetNode && panel?.contains(targetNode)) {
+    focusSafely(root.querySelector<HTMLElement>('.fh-fb-filter'));
+  }
+  ev.preventDefault();
+  ev.stopPropagation();
+}
+
+function handleFilterBarOutsideClick(
+  ev: MouseEvent,
+  root: HTMLElement,
+  st: FilterBarState,
+  onClosePanel: () => void,
+): void {
+  if (!st.open) return;
+  const path = ev.composedPath ? ev.composedPath() : [];
+  const targetNode = asNode(ev.target);
+  if (path.includes(root) || (targetNode && root.contains(targetNode))) return;
+  onClosePanel();
+}
+
+function createSortMenu(
+  opts: FilterBarOptions,
+  doc: Document,
+  onClose: () => void,
+): MenuController | null {
+  if (!opts.sort) return null;
+  return createMenu({
+    overlays: opts.overlays,
+    doc,
+    win: doc.defaultView ?? window,
+    align: 'end',
+    className: 'fh-fb-sort-menu',
+    onClose,
+  });
+}
+
 export function createFilterBar(
   opts: FilterBarOptions,
   doc: Document = document,
@@ -339,17 +439,10 @@ export function createFilterBar(
   let sortOptions: readonly FilterBarSortOption[] = opts.sort ? [...opts.sort.options] : [];
   const sortDef = opts.sort ?? null;
   let counts: { shown: number; total: number } | null = null;
+  let disposed = false;
   const st = loadState(opts.key, sortDef, opts.storage);
 
-  const snapshot = (): FilterBarState => {
-    const sel: Record<string, string[] | undefined> = {};
-    for (const g of groups) {
-      const vals = st.sel[g.id];
-      if (vals && vals.length > 0) sel[g.id] = vals.slice();
-    }
-    return { q: st.q, sel, sort: st.sort, dir: st.dir, open: st.open };
-  };
-
+  const snapshot = (): FilterBarState => snapshotFilterState(st, groups);
   const hasSel = (): boolean => groups.some((g) => Boolean(st.sel[g.id]?.length));
   const panelHasSel = (): boolean => groups.some((g) => !g.pinned && Boolean(st.sel[g.id]?.length));
   const isActive = (): boolean => st.q.trim() !== '' || hasSel();
@@ -365,12 +458,46 @@ export function createFilterBar(
     opts.onChange?.(snapshot());
   };
 
+  const closePanel = (): void => {
+    st.open = false;
+    persist();
+    paint();
+  };
+
+  const sortMenu = createSortMenu(opts, doc, () => { if (!disposed) paint(); });
+  if (sortMenu) listeners.add(sortMenu);
+
+  const togglePanel = (): void => {
+    if (sortMenu?.isOpen()) sortMenu.close(false);
+    st.open = !st.open;
+    persist();
+    paint();
+  };
+
+  const toggleSort = (anchor: HTMLElement): void => {
+    if (!sortMenu) return;
+    if (sortMenu.isOpen()) {
+      sortMenu.close(true);
+      return;
+    }
+    if (st.open) {
+      st.open = false;
+      persist();
+    }
+    sortMenu.open(
+      anchor,
+      buildSortMenuEntries(
+        st,
+        sortOptions,
+        (val) => { st.sort = val; emit(); },
+        (dir) => { st.dir = dir; emit(); },
+      ),
+    );
+    paint();
+  };
+
   const toggleChip = (groupId: string, value: string): void => {
-    const arr = st.sel[groupId] ?? (st.sel[groupId] = []);
-    const idx = arr.indexOf(value);
-    if (idx >= 0) arr.splice(idx, 1);
-    else arr.push(value);
-    if (arr.length === 0) delete st.sel[groupId];
+    toggleFilterSelection(st, groupId, value);
     emit();
   };
 
@@ -380,41 +507,13 @@ export function createFilterBar(
     emit();
   };
 
-  const handleKeydown = (ev: KeyboardEvent): void => {
-    if (ev.isComposing || ev.key !== 'Escape') return;
-    const input = root.querySelector<HTMLInputElement>('.fh-fb-q');
-    if (st.q && ev.target === input) {
-      st.q = '';
-      emit();
-      ev.preventDefault();
-      ev.stopPropagation();
-      return;
-    }
-    if (st.open) {
-      st.open = false;
-      persist();
-      paint();
-      const targetNode = asNode(ev.target);
-      const panel = root.querySelector('.fh-fb-panel');
-      if (targetNode && panel?.contains(targetNode)) {
-        focusSafely(root.querySelector<HTMLElement>('.fh-fb-filter'));
-      }
-      ev.preventDefault();
-      ev.stopPropagation();
-    }
-  };
-
-  listeners.add(addDisposableListener(root, 'keydown', handleKeydown));
   listeners.add(
-    addDisposableListener(doc, 'click', (ev: MouseEvent) => {
-      if (!st.open) return;
-      const path = ev.composedPath ? ev.composedPath() : [];
-      const targetNode = asNode(ev.target);
-      if (path.includes(root) || (targetNode && root.contains(targetNode))) return;
-      st.open = false;
-      persist();
-      paint();
-    }),
+    addDisposableListener(root, 'keydown', (ev: KeyboardEvent) =>
+      handleFilterBarKeydown(ev, root, st, () => { st.q = ''; emit(); }, closePanel),
+    ),
+  );
+  listeners.add(
+    addDisposableListener(doc, 'click', (ev: MouseEvent) => handleFilterBarOutsideClick(ev, root, st, closePanel)),
   );
 
   const paint = (): void => {
@@ -428,13 +527,13 @@ export function createFilterBar(
         panelActive: panelHasSel(),
         sortDef,
         sortOptions,
+        sortMenuOpen: sortMenu?.isOpen() ?? false,
         counts,
         showSummary: isActive() && counts !== null,
         onQueryInput: (val) => { st.q = val; emit(); },
         onQueryClear: () => { st.q = ''; emit(); focusSafely(root.querySelector<HTMLElement>('.fh-fb-q')); },
-        onTogglePanel: () => { st.open = !st.open; persist(); paint(); },
-        onSortChange: (val) => { st.sort = val; emit(); },
-        onToggleDir: () => { st.dir = st.dir === 'desc' ? 'asc' : 'desc'; emit(); },
+        onTogglePanel: togglePanel,
+        onToggleSort: toggleSort,
         onToggleChip: toggleChip,
         onClearAll: clear,
       }),
@@ -465,6 +564,7 @@ export function createFilterBar(
       paint();
     },
     dispose(): void {
+      disposed = true;
       listeners.dispose();
       render(nothing, root);
       root.remove();
