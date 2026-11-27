@@ -245,10 +245,10 @@ const TRUSTED_SKILLS_TOOL: NativeTool = {
   name: 'skills',
   command: 'skills',
   description:
-    'The skill library: read and manage gateway skills (search, show, list, categories, create, patch, write-file, remove-file, archive, restore, pin, unpin, history, revert). ' +
+    'The skill library: read and manage gateway skills (search, show, list, categories, create, category, patch, write-file, remove-file, archive, restore, pin, unpin, history, revert). ' +
     SKILLS_TOOL_ACTIONS,
   positionals: {
-    action: 'search | show | list | categories | create | patch | write-file | remove-file | archive | restore | pin | unpin | history | revert',
+    action: 'search | show | list | categories | create | category | patch | write-file | remove-file | archive | restore | pin | unpin | history | revert',
     name: 'search: query words; show/write/admin: skill name',
     file: 'show/write-file/remove-file: relative file path; revert: history commit id',
   },
@@ -259,6 +259,7 @@ const TRUSTED_SKILLS_TOOL: NativeTool = {
       'list',
       'categories',
       'create',
+      'category',
       'patch',
       'write-file',
       'remove-file',
@@ -270,7 +271,7 @@ const TRUSTED_SKILLS_TOOL: NativeTool = {
       'revert',
     ],
   },
-  options: ['again', 'description', 'body', 'version', 'content'],
+  options: ['again', 'description', 'body', 'category', 'version', 'content'],
 };
 
 interface ParamSpec {

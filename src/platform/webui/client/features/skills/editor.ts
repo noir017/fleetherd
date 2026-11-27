@@ -43,6 +43,7 @@ interface SkillEditorState {
   newFileMode: boolean;
   draftPath: string;
   draftContent: string;
+  draftCategory: string;
   copied: boolean;
   usingCodeMirror: boolean;
   selectedHistoryId: string | null;
@@ -95,6 +96,8 @@ interface EditorCallbacks {
   readonly onCopyName: () => void;
   readonly onToggleEnabled: (enabled: boolean) => void;
   readonly onChangeTier: (resident: boolean) => void;
+  readonly onCategoryInput: (category: string) => void;
+  readonly onApplyCategory: () => void;
   readonly onTogglePin: () => void;
   readonly onRefresh: () => void;
   readonly onSelectFile: (path: string) => void;
@@ -163,10 +166,14 @@ function renderPropertiesCard(
   st: SkillEditorState,
   deps: ResolvedSkillsDeps,
   cb: EditorCallbacks,
+  categories: readonly string[],
   tSkill: (key: string, fallback: string, vars?: Record<string, unknown>) => string,
 ): TemplateResult {
   const skill = st.detail!.skill;
   const active = isSkillActive(skill);
+  const currentCategory = (skill.category ?? '').trim();
+  const categoryChanged = st.draftCategory.trim() !== currentCategory;
+  const datalistId = `fh-skill-cat-list-${skill.name}`;
   return html`
     <div class="fh-skill-ed-sub">${detailSubText(skill, deps.formatAgo, tSkill)}</div>
     ${skill.warning ? renderNotice({ tone: 'warn', message: skill.warning }) : nothing}
@@ -174,6 +181,40 @@ function renderPropertiesCard(
       ? renderNotice({ tone: 'err', message: `${tr('skills.notDelivered')}${skill.problem}` })
       : nothing}
     <div class="fh-skill-card">
+      <div class="fh-skill-ci">
+        <span class="fh-skill-ci-l">${tSkill('wb.skills.categoryField', 'Category')}</span>
+        <div class="fh-skill-ci-ctl fh-skill-cat-ctl">
+          <input
+            type="text"
+            class="fh-input fh-skill-cat-input"
+            data-sop="category-input"
+            list=${datalistId}
+            .value=${st.draftCategory}
+            placeholder=${tSkill('wb.skills.categoryPlaceholder', 'Choose or type a category…')}
+            aria-label=${tSkill('wb.skills.categoryField', 'Category')}
+            autocomplete="off"
+            ?disabled=${!active || st.saving}
+            @input=${(ev: Event) => cb.onCategoryInput((ev.currentTarget as HTMLInputElement).value)}
+            @keydown=${(ev: KeyboardEvent) => {
+              if (ev.key === 'Enter' && categoryChanged && active && !st.saving) {
+                ev.preventDefault();
+                cb.onApplyCategory();
+              }
+            }}
+          />
+          <datalist id=${datalistId}>
+            ${categories.map((cat) => html`<option value=${cat}></option>`)}
+          </datalist>
+          <button
+            type="button"
+            class="fh-btn fh-btn--secondary"
+            data-sop="category-apply"
+            ?disabled=${!active || st.saving || !categoryChanged}
+            @click=${cb.onApplyCategory}
+          >${tSkill('wb.skills.categoryApply', 'Set')}</button>
+        </div>
+        <span class="fh-skill-ci-h">${tSkill('wb.skills.categoryHint', 'Pick an existing group or type a new one; clear to uncategorize.')}</span>
+      </div>
       <div class="fh-skill-ci">
         <span class="fh-skill-ci-l">${tSkill('wb.skills.tierLabel', 'Tier')}</span>
         <div class="fh-skill-ci-ctl">
@@ -500,6 +541,7 @@ class SkillEditorPanel implements SkillPanelComponent {
     newFileMode: false,
     draftPath: '',
     draftContent: '',
+    draftCategory: '',
     copied: false,
     usingCodeMirror: false,
     selectedHistoryId: null,
@@ -710,6 +752,7 @@ class SkillEditorPanel implements SkillPanelComponent {
     this._st.newFileMode = false;
     this._st.draftPath = outcome.detail.file.path;
     this._st.draftContent = outcome.detail.file.content;
+    this._st.draftCategory = outcome.detail.skill.category ?? '';
     this._st.selectedHistoryId = null;
     this._st.historyDiffLoading = false;
     this._st.historyDiff = null;
@@ -929,11 +972,46 @@ class SkillEditorPanel implements SkillPanelComponent {
     });
   }
 
+  private _handleApplyCategory(): void {
+    if (!this._st.detail || !isSkillActive(this._st.detail.skill) || this._st.saving) return;
+    const skillName = this._st.detail.skill.name;
+    const nextCategory = this._st.draftCategory.trim();
+    if (nextCategory === (this._st.detail.skill.category ?? '').trim()) return;
+    const dirty = isEditorDirty(this._st);
+    this._st.saving = true;
+    this._st.error = null;
+    this._paint();
+    void this._store.setCategory(skillName, nextCategory).then((outcome) => {
+      if (this._disposed) return;
+      this._st.saving = false;
+      if (!outcome.ok) {
+        this._st.error = outcome.error || tr('common.didNotWork');
+        this._paint();
+        return;
+      }
+      const fresh = this._store.find(skillName);
+      if (fresh && this._st.detail) {
+        this._st.detail = { ...this._st.detail, skill: fresh };
+        this._st.draftCategory = fresh.category ?? '';
+      }
+      if (!dirty) {
+        void this._loadSkill(skillName, this._st.detail?.file.path);
+      } else {
+        this._paint();
+      }
+    });
+  }
+
   private _buildCallbacks(): EditorCallbacks {
     return {
       onCopyName: () => this._handleCopyName(),
       onToggleEnabled: (enabled) => this._handleToggleEnabled(enabled),
       onChangeTier: (resident) => this._handleChangeTier(resident),
+      onCategoryInput: (category) => {
+        this._st.draftCategory = category;
+        this._paint();
+      },
+      onApplyCategory: () => this._handleApplyCategory(),
       onTogglePin: () => this._handleTogglePin(),
       onRefresh: () => {
         if (this._st.name) void this._loadSkill(this._st.name, this._st.detail?.file.path ?? this._st.requestedFile);
@@ -1041,7 +1119,7 @@ class SkillEditorPanel implements SkillPanelComponent {
               onDismiss: this._cb.onDismissError,
             })
           : nothing}
-        ${renderPropertiesCard(this._st, this._deps, this._cb, tSkill)}
+        ${renderPropertiesCard(this._st, this._deps, this._cb, this._store.categories(), tSkill)}
         ${renderFilesBar(this._st, this._deps, this._cb, tSkill)}
       `,
       this._chromeHost,

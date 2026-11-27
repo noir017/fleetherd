@@ -428,6 +428,7 @@ export const SkillOpRequestSchema = z.discriminatedUnion('action', [
       name: SkillName,
       description: z.string().min(1).max(2000),
       body: SkillMd.optional(),
+      category: z.string().max(64).optional(),
     })
     .strict(),
   z
@@ -444,6 +445,7 @@ export const SkillOpRequestSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('restore'), name: SkillName }).strict(),
   z.object({ action: z.literal('pin'), name: SkillName, pinned: z.boolean() }).strict(),
   z.object({ action: z.literal('resident'), name: SkillName, resident: z.boolean() }).strict(),
+  z.object({ action: z.literal('category'), name: SkillName, category: z.string().max(64) }).strict(),
   z.object({ action: z.literal('revert'), name: SkillName, id: SkillHistoryId }).strict(),
 ]);
 

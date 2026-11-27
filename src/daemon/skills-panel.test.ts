@@ -168,6 +168,35 @@ describe('skills panel', () => {
     expect(await panel.op({ action: 'resident', name: 'nope', resident: true })).toMatchObject({ ok: false, error: expect.stringMatching(/no skill named/) });
   });
 
+  it('creates a skill with a custom category and updates or clears it with history', async () => {
+    const panel = build();
+    const created = await panel.op({
+      action: 'create',
+      name: 'net-helper',
+      description: 'Use when debugging network',
+      category: '网络工具',
+    });
+    expect(created).toMatchObject({
+      ok: true,
+      skills: [expect.objectContaining({ name: 'net-helper', category: '网络工具' })],
+    });
+
+    const renamed = await panel.op({ action: 'category', name: 'net-helper', category: '移动通信' });
+    expect(renamed).toMatchObject({
+      ok: true,
+      skills: [expect.objectContaining({ name: 'net-helper', category: '移动通信' })],
+    });
+    expect(detail(await panel.op({ action: 'show', name: 'net-helper' })).history[0]).toMatchObject({
+      action: 'category',
+      author: 'fleetherd-web',
+      note: '移动通信',
+    });
+
+    const cleared = await panel.op({ action: 'category', name: 'net-helper', category: '' });
+    expect(cleared.ok).toBe(true);
+    expect(panel.list()[0]?.category).toBeUndefined();
+  });
+
   it('lists the searches worth a look, from the query log', () => {
     fs.writeFileSync(
       path.join(dir, 'skills-queries.jsonl'),

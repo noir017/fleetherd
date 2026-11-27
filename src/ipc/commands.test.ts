@@ -250,6 +250,30 @@ describe('skills <action>', () => {
     for (const action of ['archive', 'restore', 'pin', 'unpin', 'history']) {
       expect(skills([action, 'deploy-check'])).toEqual({ kind: 'skills', action, name: 'deploy-check' });
     }
+    expect(skills(['create', 'deploy-check'], { description: 'check deploy', category: '自定义' })).toEqual({
+      kind: 'skills',
+      action: 'create',
+      name: 'deploy-check',
+      description: 'check deploy',
+      category: '自定义',
+    });
+    expect(skills(['category', 'deploy-check', '自定义'])).toEqual({
+      kind: 'skills',
+      action: 'category',
+      name: 'deploy-check',
+      category: '自定义',
+    });
+    expect(skills(['category', 'deploy-check'], { category: '运维' })).toEqual({
+      kind: 'skills',
+      action: 'category',
+      name: 'deploy-check',
+      category: '运维',
+    });
+    expect(skills(['category', 'deploy-check'])).toEqual({
+      kind: 'skills',
+      action: 'category',
+      name: 'deploy-check',
+    });
   });
 
   it('refuses a write without the version show printed, and a create without a description', () => {

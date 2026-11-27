@@ -5,6 +5,24 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **Custom skill categories in the web UI, CLI, and external MCP.** Skills already stored free-form
+  categories in `metadata.fleetherd-category`, but only manual frontmatter edits or auto-review
+  could assign one. The skill editor now includes a Category control (with existing-category
+  suggestions and custom input; clearing it returns a skill to uncategorized), the New Skill dialog
+  accepts an optional category, and `fleetherd skills create --category <group>` /
+  `fleetherd skills category <name> [group]` (plus the trusted MCP `skills` tool) expose the same
+  path.
+
+### Fixed
+
+- **The web UI skills list now refreshes on mount even when cached.** Loading the cached list from
+  `localStorage` set `fetchedAt`, which caused `SkillsViewPanel.init()` to skip calling `/api/skills`
+  until the user clicked Refresh manually; newly added skills now appear automatically while still
+  rendering the cached list immediately. Uncategorized skills are now labelled "Other" / "其他" and
+  can be filtered directly in the category filter bar.
+
 ## [3.39.1] - 2026-11-26
 
 ### Fixed

@@ -17,6 +17,7 @@ import {
   removeSkillFile,
   repoRoot,
   restoreSkill,
+  setCategory,
   setResident,
   frontmatterMetadata,
   skillMetaOf,
@@ -480,5 +481,37 @@ describe('the metadata keys under their names before 3.0.0', () => {
 
   it('keeps the bundled skill’s old name reserved, since a link by that name is taken back', () => {
     expect(() => validateSkillName('talkcode')).toThrow(/bundled/);
+  });
+
+  it('sets, replaces (dropping legacy talkcode-category), and clears custom categories via setCategory', () => {
+    const skill = create();
+    const updated = setCategory(skill.name, '网络通信', dir, T0 + 1);
+    expect(updated.category).toBe('网络通信');
+    expect(showSkill(skill.name, undefined, dir).content).toContain('fleetherd-category: "网络通信"');
+
+    // Idempotent call with the same category creates no extra commit.
+    const histBefore = skillHistory(skill.name, dir).length;
+    setCategory(skill.name, '网络通信', dir, T0 + 2);
+    expect(skillHistory(skill.name, dir).length).toBe(histBefore);
+
+    // Replaces legacy talkcode-category cleanly and preserves other metadata.
+    patchSkill(
+      { name: skill.name, version: showSkill(skill.name, undefined, dir).version, content: md('metadata:\n  talkcode-category: "旧分类"\n  fleetherd-resident: "true"\n'), by: { kind: 'person' }, now: T0 + 3 },
+      dir
+    );
+    const renamed = setCategory(skill.name, '自定义组', dir, T0 + 4);
+    expect(renamed).toMatchObject({ category: '自定义组', resident: true });
+    const renamedMd = showSkill(skill.name, undefined, dir).content;
+    expect(renamedMd).toContain('fleetherd-category: "自定义组"');
+    expect(renamedMd).not.toContain('talkcode-category');
+
+    // Empty string clears the category while preserving resident metadata.
+    const cleared = setCategory(skill.name, '', dir, T0 + 5);
+    expect(cleared.category).toBeUndefined();
+    expect(cleared.resident).toBe(true);
+    expect(showSkill(skill.name, undefined, dir).content).not.toMatch(/category/);
+
+    // Invalid characters are rejected by validateCategory.
+    expect(() => setCategory(skill.name, 'bad:cat', dir, T0 + 6)).toThrow(/may not contain/);
   });
 });

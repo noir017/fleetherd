@@ -538,4 +538,33 @@ describe('features/skills plugin', () => {
     editor.dispose();
     h.cleanup();
   });
+
+  it('sets a custom category from the editor properties card and refreshes cached list on view init', async () => {
+    const h = createHarness();
+    await h.manager.activate(SKILLS_PLUGIN_ID);
+
+    const editor = h.registry.getEditor(SKILL_EDITOR_KIND)!.component();
+    document.body.appendChild(editor.element);
+    editor.init({ name: 'beta-library' }, makePanelInitCtx('skill:beta-library').ctx);
+    await flushMicrotasks();
+
+    const catInput = editor.element.querySelector<HTMLInputElement>('[data-sop="category-input"]')!;
+    const applyBtn = editor.element.querySelector<HTMLButtonElement>('[data-sop="category-apply"]')!;
+    expect(applyBtn.disabled).toBe(true);
+
+    catInput.value = '移动通信';
+    catInput.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(applyBtn.disabled).toBe(false);
+
+    applyBtn.click();
+    await flushMicrotasks();
+    expect(h.opCalls).toContainEqual({
+      action: 'category',
+      name: 'beta-library',
+      category: '移动通信',
+    });
+
+    editor.dispose();
+    h.cleanup();
+  });
 });

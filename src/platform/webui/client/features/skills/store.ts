@@ -112,6 +112,15 @@ export class SkillsStore implements Disposable {
     return this._list.find((s) => s.name === name);
   }
 
+  categories(): string[] {
+    const set = new Set<string>();
+    for (const s of this._list) {
+      const cat = s.category?.trim();
+      if (cat) set.add(cat);
+    }
+    return [...set].sort((a, b) => a.localeCompare(b));
+  }
+
   recordSnapshot(name: string, filePath: string, versionOrId: string, content: string): void {
     if (!name || !filePath || !versionOrId) return;
     this._snapshots.set(`${name}\0${filePath}\0${versionOrId}`, content);
@@ -291,10 +300,26 @@ export class SkillsStore implements Disposable {
     return this.execOp({ action: 'pin', name, pinned });
   }
 
-  create(params: { name: string; description: string; body?: string }): Promise<SkillOpOutcome> {
+  setCategory(name: string, category: string): Promise<SkillOpOutcome> {
+    return this.execOp({ action: 'category', name, category });
+  }
+
+  create(params: { name: string; description: string; body?: string; category?: string }): Promise<SkillOpOutcome> {
+    const category = params.category?.trim();
     const op: SkillPanelOp = params.body
-      ? { action: 'create', name: params.name, description: params.description, body: params.body }
-      : { action: 'create', name: params.name, description: params.description };
+      ? {
+          action: 'create',
+          name: params.name,
+          description: params.description,
+          body: params.body,
+          ...(category ? { category } : {}),
+        }
+      : {
+          action: 'create',
+          name: params.name,
+          description: params.description,
+          ...(category ? { category } : {}),
+        };
     return this.execOp(op);
   }
 

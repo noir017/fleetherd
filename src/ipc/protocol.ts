@@ -215,6 +215,7 @@ const IpcActionSchema = z.discriminatedUnion('kind', [
         'patch',
         'write-file',
         'remove-file',
+        'category',
         'archive',
         'restore',
         'pin',
@@ -228,6 +229,7 @@ const IpcActionSchema = z.discriminatedUnion('kind', [
       content: z.string().max(1_048_576).optional(),
       description: z.string().min(1).max(2_000).optional(),
       body: z.string().max(32_000).optional(),
+      category: z.string().max(64).optional(),
       id: z.string().min(1).max(64).optional(),
       query: z.string().min(1).max(500).optional(),
       again: z.boolean().optional(),
@@ -436,6 +438,7 @@ export type IpcAction =
         | 'patch'
         | 'write-file'
         | 'remove-file'
+        | 'category'
         | 'archive'
         | 'restore'
         | 'pin'
@@ -448,6 +451,7 @@ export type IpcAction =
       content?: string;
       description?: string;
       body?: string;
+      category?: string;
       id?: string;
       /** search: what the agent needs, in its own words. */
       query?: string;

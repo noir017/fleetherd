@@ -244,9 +244,8 @@ class SkillsViewPanel implements SkillPanelComponent {
     this._disposables.add(this._actionBarHost);
     this._disposables.add(this._store.onDidChange(() => this._syncAll()));
     this._syncAll();
-    if (!this._store.snapshot().fetchedAt) {
-      void this._store.refresh(false);
-    }
+    // Always revalidate against /api/skills on mount so cached lists pick up newly added skills.
+    void this._store.refresh(false);
   }
 
   focus(): void {
@@ -361,11 +360,15 @@ class SkillsViewPanel implements SkillPanelComponent {
     });
   }
 
+  private _uncategorizedLabel(): string {
+    return this._ctx.i18n.t('wb.skills.uncategorized') || tr('skills.tabLibrary');
+  }
+
   private _syncAll(): void {
     if (this._disposed) return;
     const snap = this._store.snapshot();
     const tabSkills = this._skillsForTier(snap.list);
-    this._filterBar.setGroups(buildSkillFilterGroups(tabSkills));
+    this._filterBar.setGroups(buildSkillFilterGroups(tabSkills, this._uncategorizedLabel()));
     this._paintList();
   }
 
@@ -407,7 +410,7 @@ class SkillsViewPanel implements SkillPanelComponent {
     const filtered = filterSkills(tabSkills, this._filterBar.state());
     this._filterBar.setCounts(filtered.length, tabSkills.length);
 
-    const groups: ListGroup<SkillPanelEntry>[] = groupSkills(filtered).map((bucket) => ({
+    const groups: ListGroup<SkillPanelEntry>[] = groupSkills(filtered, this._uncategorizedLabel()).map((bucket) => ({
       id: bucket.id,
       label: bucket.label,
       items: bucket.items.map(
