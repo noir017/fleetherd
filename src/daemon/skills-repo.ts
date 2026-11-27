@@ -15,7 +15,7 @@ import {
   isRepo,
 } from './skills-git.js';
 import type { Config } from '../config/schema.js';
-import { defaultIdentityFile, defaultKnownHostsFile, expandLocalHome } from './remote-hosts.js';
+import { defaultIdentityFile, defaultKnownHostsFile, expandLocalHome } from './ssh-identity.js';
 import { ARCHIVE_DIR, SKILLS_DIR, isSkillName, repoRoot, usagePath } from './skills-store.js';
 
 /**

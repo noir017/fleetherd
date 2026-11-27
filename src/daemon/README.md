@@ -66,6 +66,8 @@ session id, agy's conversation id). One conversation holds one session *per agen
 | `schedule-bash.ts` | One `--bash` run: its own process group, a bounded output tail, the full log on disk. Also runs `preLaunch` hooks |
 | `restart-drain.ts` | A SIGTERM with turns (an agent's background output counted as one) or scheduled runs in progress: the bounded wait for them before the daemon stops (`Daemon.beginDrain` refuses new turns and holds the scheduler meanwhile) |
 | `reverse-cli-shim.ts` | Guarantees `fleetherd` is on the agent's PATH; `selfInvocation` — how to re-run this CLI, shared with the tool server entry |
+| `provision.ts` | Types only: `AgentProvision` and the narrow `HostFiles` port implemented by `RemoteHost` for spawn-time local and remote provisioning |
+| `ssh-identity.ts` | Leaf helper: gateway default SSH identity file, `known_hosts` path resolution, and local `~` expansion |
 | `agy-plugin.ts` | Links the bundled agy plugin (`agy-plugin/`: a Stop hook that keeps a turn open while a background command runs) into `~/.gemini/config/plugins` |
 | `skill-link.ts` | Links the bundled skills (`fleetherd`, `super`) into the skill directories the harnesses read (`~/.claude/skills`, `~/.agents/skills`, `~/.gemini/config/skills`); `fleetherd` through its rendered copy in `~/.fleetherd/bundled/<readers>` |
 | `bundled-skill.ts` | The `fleetherd` skill rendered for one skill directory: the library skills reaching every harness that reads it (`ipc/tools.ts` libraryLine) appended to the frontmatter description, checked by parsing it back as YAML |
@@ -91,7 +93,7 @@ session id, agy's conversation id). One conversation holds one session *per agen
 | `external-mcp.ts` | The external MCP entrance: MCP over HTTP (POST `/mcp`, JSON only), a bearer token per caller compared in constant time, each caller's tool list — security invariant 11 |
 | `external-calls.ts` | What an external caller's calls do: skills search/show as from no host and outside the gateway (no path, no resident note), `tasks open`, ownership of coordination topics (a sub-task reached only through its parent), and the answer to the person typing in such a topic |
 | `external-topics.ts` | `<configDir>/external-topics.json`: which coordination topics each caller opened — the one record of ownership, keyed by the topic's own id rather than the scope-dependent conversation id |
-| `remote-hosts.ts` | The `hosts:` table: one `RemoteHost` (src/remote/) per entry, shared by its agents; this gateway's namespace; running an agent's `fleetherd …` back here (the allowlisted bridge); placing the skill on a host |
+| `remote-hosts.ts` | The `hosts:` table: one `RemoteHost` (src/remote/) per entry, shared by its agents; this gateway's namespace; running an agent's `fleetherd …` back here (the allowlisted bridge) |
 | `pods.ts` | What each host's pod declares: its `~/.fleetherd/pod.yaml`, or the harness commands on its login PATH when it has none. Read at startup and on every `/reload` (`Daemon.reloadAll`) into `pods.json`, which `config/pods.ts` merges into `agents` as `<id>@<host>`. A host that cannot be read, or whose file does not validate, keeps what it had |
 | `pod-admin.ts` | `fleetherd pod-add` / `pod-remove`: a `hosts:` entry in config.yaml and its pinned host key, changed together and refused before anything is written when either would end up wrong; and the authorized_keys line `fleetherd pods` offers a new host |
 | `pod-peers.ts` | The pod-to-pod ssh mesh (`peer:` in pod.yaml): the `authorized_keys`, `known_hosts` and `config` it writes into each member's `~/.fleetherd/ssh/` after every read of the pods. Host keys come from the gateway's own known_hosts, never the network |
@@ -1529,8 +1531,8 @@ them but hands them to the model as a question.
 - **A background command ends the prompt**, and what agy does when it finishes is never sent: its
   own turn has no prompt to stream under, and its first permission request waits for the next one.
   `agy-plugin.ts` ships a Stop hook (`agy-plugin/` at the package root) that holds the turn open,
-  silently, until agy's mailbox has something new. Linked like the skills: `ensureAgyPlugin` here,
-  `RemoteHosts.placeAgyPlugin` on a host. The file header has the measurements and the limits.
+  silently, until agy's mailbox has something new. Linked like the skills via `agyPluginProvision`
+  (local and remote). The file header has the measurements and the limits.
 
 ### An agent that goes away mid-turn (`agent-reconnect.ts`)
 
@@ -1577,10 +1579,10 @@ environment, working-directory resolution (`agents[].cwd`, or an auto-created
 SIGKILL after `KILL_GRACE_MS` — harness CLIs may ignore SIGTERM mid-turn).
 
 `buildAgentEnv` runs at every spawn, which makes it the one place that provisions
-what the reverse CLI depends on: the shim at the front of `PATH`, the skill link
-(`skill-link.ts`) and, for agy, its plugin (`agy-plugin.ts`) under the home this agent runs as, and the gateway's own managed skills
-(`managed-skills.ts`). It also places the operator's instructions (`instructions.ts`) there; an
-agent on a remote host gets all of them from `prepareRemoteSpawn`.
+what the reverse CLI depends on: the shim at the front of `PATH`, followed by the injected
+`AgentProvision` list assembled in `commands/start.ts` (`bundledSkillProvision`, `agyPluginProvision`,
+`instructionsProvision`, `managedSkillsProvision`) under the home this agent runs as. An agent on a
+remote host runs the same list through `prepareRemoteSpawn`.
 
 #### Agents on a remote host
 
@@ -1734,8 +1736,8 @@ degradation that needs no code.
 `<configDir>/skills/` is a second kind of skill, beside the two the package bundles: one an agent
 writes through `fleetherd skills` (`skills-store.ts`) or a person commits to the shared repository
 (`skills-repo.ts`), delivered to every agent on every host at
-spawn (`managed-skills.ts`, and `remote-hosts.ts` `placeManagedSkills` for an agent on another
-machine). The copy lives in `~/.fleetherd/skills/<name>/` — never under a version directory — and is
+spawn (`managed-skills.ts` `managedSkillsProvision`, locally and on a remote host). The copy lives
+in `~/.fleetherd/skills/<name>/` — never under a version directory — and is
 read-only; the link into each harness's skill directory is made only when the harness's own config
 directory exists, and is repointed or removed only when it points back into that copy. A real
 directory, a real file, or the operator's own link at the same name is left alone and logged.

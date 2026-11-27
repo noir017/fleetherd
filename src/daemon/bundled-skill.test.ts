@@ -6,10 +6,9 @@ import { parse } from 'yaml';
 import type { AgentDef } from '../config/schema.js';
 import { LIBRARY_NAMES_MAX } from '../ipc/tools.js';
 import type { Welcome } from '../remote/connection.js';
-import type { RemoteHost } from '../remote/host.js';
 import { DESCRIPTION_MAX, appendToDescription, renderBundledSkill, withLibraryLine } from './bundled-skill.js';
-import { RemoteHosts } from './remote-hosts.js';
-import { bundledSkillDir, bundledSkillsHome, linkSkill, placeRendered, skillHomes, skillReaders } from './skill-link.js';
+import type { HostFiles } from './provision.js';
+import { bundledSkillDir, bundledSkillsHome, createBundledSkillProvision, linkSkill, placeRendered, skillHomes, skillReaders } from './skill-link.js';
 import { frontmatterFields, skillDir } from './skills-store.js';
 
 /**
@@ -260,7 +259,7 @@ describe('the rendered copy on this machine (skill-link.ts placeRendered)', () =
   });
 });
 
-describe('the rendered copy on a host (RemoteHosts.placeSkill)', () => {
+describe('the rendered copy on a host (bundledSkillProvision.remote)', () => {
   const cfg = useConfigDir();
 
   class FakeHost {
@@ -285,10 +284,10 @@ describe('the rendered copy on a host (RemoteHosts.placeSkill)', () => {
   const welcome: Welcome = { version: '9.0.0', instance: 'i1', home: '/home/u', pid: 1, os: 'linux', arch: 'amd64', resumed: false };
   const codex = { id: 'cx', harness: 'codex', host: 'h1', env: {} } as unknown as AgentDef;
   const base = '/home/u/.fleetherd/remote/9.0.0';
-  const place = async (hosts: RemoteHosts, host: FakeHost, def = codex): Promise<void> => {
+  const place = async (provision: ReturnType<typeof createBundledSkillProvision>, host: FakeHost, def = codex): Promise<void> => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     try {
-      await hosts.placeSkill(host as unknown as RemoteHost, def, '/home/u', welcome);
+      await provision.remote(host as unknown as HostFiles, def, '/home/u', welcome);
     } finally {
       log.mockRestore();
     }
@@ -297,8 +296,8 @@ describe('the rendered copy on a host (RemoteHosts.placeSkill)', () => {
   it('links the harness to a copy rendered for its directory, and super to the version\'s own files', async () => {
     cfg.add('deploy-check');
     cfg.add('elsewhere', '  fleetherd-hosts: "h2"\n');
-    const [hosts, host] = [new RemoteHosts(), new FakeHost()];
-    await place(hosts, host);
+    const [provision, host] = [createBundledSkillProvision(), new FakeHost()];
+    await place(provision, host);
     expect(host.links.get('/home/u/.agents/skills/fleetherd')).toBe(`${base}/bundled/codex+opencode`);
     expect(host.links.get('/home/u/.agents/skills/super')).toBe(`${base}/skill-super`);
     expect(host.writes.has(`${base}/bundled/codex+opencode/references/config.md`)).toBe(true);
@@ -310,13 +309,13 @@ describe('the rendered copy on a host (RemoteHosts.placeSkill)', () => {
 
   it('sends the copy again only when the library line changed', async () => {
     cfg.add('deploy-check');
-    const [hosts, host] = [new RemoteHosts(), new FakeHost()];
-    await place(hosts, host);
+    const [provision, host] = [createBundledSkillProvision(), new FakeHost()];
+    await place(provision, host);
     host.writes.clear();
-    await place(hosts, host);
+    await place(provision, host);
     expect(host.writes.size).toBe(0);
     cfg.add('log-check');
-    await place(hosts, host);
+    await place(provision, host);
     expect(String(yamlOf(host.writes.get(`${base}/bundled/codex+opencode/SKILL.md`)!).description)).toMatch(/deploy-check, log-check\.$/);
   });
 });

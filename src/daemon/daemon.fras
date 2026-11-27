@@ -29,12 +29,14 @@ src/daemon/external-mcp.ts [Edge]: F:External HTTP MCP entrance endpoint | A:Ext
 src/daemon/pod-admin.ts [Edge]: F:Host entry and SSH key management | A:addPod,removePod | S:See Security invariants item 5
 src/daemon/pod-peers.ts [Infra]: F:Pod-to-pod SSH mesh configuration generator | A:peerFiles,readKnownHosts | S:See Security invariants item 5
 src/daemon/pods.ts [Infra]: F:Remote host pod declarations scanner | A:hostsWithConfiguredAgents | S:See Security invariants item 5
+src/daemon/provision.ts [Core]: F:AgentProvision and HostFiles port interfaces for spawn-time local and remote provisioning | A:AgentProvision,HostFiles,HostLinkResult
 src/daemon/relay-types.ts [Core]: F:Shared RelaySpec and HarnessRelay types for loopback HTTP API relays | A:RelaySpec,HarnessRelay
-src/daemon/remote-hosts.ts [Infra]: F:Remote host manager and reverse CLI shim | R:src/remote/host.ts | A:RemoteHosts,gatewayNamespace | S:See Security invariants item 5
+src/daemon/remote-hosts.ts [Infra]: F:Remote host manager and reverse CLI bridge | R:src/remote/host.ts,src/daemon/ssh-identity.ts | A:RemoteHosts,gatewayNamespace | S:See Security invariants item 5
 src/daemon/review.ts [Core]: F:Automated review of idle conversations distilling skills and learned preferences | A:ReviewService,ReviewFacts
 src/daemon/routing.ts [Core]: F:Inbound message to agent and scope resolution | A:resolveAgent,resolveScope | S:Deterministic pipeline and harness matching [T:resolveAgent]
 src/daemon/schedule-service.ts [Core]: F:Scheduled task execution engine | A:ScheduleService
 src/daemon/skill-copy.ts [Infra]: F:Keeps a gateway-owned directory equal to a map of files, writing only what differs | A:syncSkillCopy,listTree
 src/daemon/skills-store.ts [Infra]: F:Managed skill repository storage and git tracking | A:createSkill,listSkills,showSkill | S:See Security invariants item 8
+src/daemon/ssh-identity.ts [Infra]: F:Gateway default SSH identity, known_hosts path resolution, and local tilde expansion | A:defaultIdentityFile,defaultKnownHostsFile,knownHostsFileOf,expandLocalHome | S:See Security invariants item 5
 src/daemon/turn-runner.ts [Core]: F:Turn execution loop with streaming and tool bubble sinks | R:src/daemon/agent-acp.ts,src/daemon/delegation-surface.ts,src/daemon/turn-senders.ts | A:TurnRunner
 src/daemon/turn-senders.ts [Core]: F:Synthetic gateway sender IDs and PersonWords batch shape | A:SCHEDULED_SENDER,CONTINUE_SENDER,DELEGATE_SENDER,UPDATE_SENDER,RECONNECT_SENDER,GATEWAY_SENDERS,PersonWords

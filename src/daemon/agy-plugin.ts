@@ -2,7 +2,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { AgentDef } from '../config/schema.js';
 import { envOf } from '../legacy-name.js';
+import type { AgentProvision } from './provision.js';
 import { selfInvocation } from './reverse-cli-shim.js';
+import { listTree } from './skill-copy.js';
 import { bundledSkillDir, linkSkill, type SkillHome, type SkillLinkResult } from './skill-link.js';
 
 /**
@@ -110,3 +112,39 @@ export function ensureAgyPlugin(harness: AgentDef['harness'], home: string): Ski
   }
   return r;
 }
+
+/**
+ * Bundled agy plugin provision (local + remote). Remote files live under the version directory
+ * once per `host@version@instance`; dead links from older versions are swept before linking.
+ */
+export function createAgyPluginProvision(): AgentProvision<SkillLinkResult | undefined, void> {
+  const placed = new Set<string>();
+
+  return {
+    name: 'agy-plugin',
+    local: (def, home) => ensureAgyPlugin(def.harness, home),
+    remote: async (host, def, home, w) => {
+      const where = agyPluginHome(def.harness, home);
+      if (!where || envOf('NO_SKILL_LINK')) return;
+      const target = `${w.home}/.fleetherd/remote/${w.version}/${AGY_PLUGIN_DIR}`;
+      const key = `${host.id}@${w.version}@${w.instance}`;
+      try {
+        if (!placed.has(key)) {
+          const source = agyPluginSource();
+          for (const rel of listTree(source)) {
+            await host.writeFile(`${target}/${rel}`, fs.readFileSync(path.join(source, ...rel.split('/'))), 0o644);
+          }
+          for (const link of await host.sweepSkillLinks(where.dir)) console.log(`[agy] ${host.id}: removed dead link ${link}`);
+          placed.add(key);
+        }
+        const r = await host.ensureLink(target, `${where.dir}/${AGY_PLUGIN_NAME}`, where.requires);
+        if (r.outcome === 'linked' || r.outcome === 'relinked') console.log(`[agy] ${host.id}: linked ${r.link} → ${target}`);
+        else if (r.outcome === 'occupied' || r.outcome === 'failed') console.warn(`[agy] ${host.id}: ${r.link}: ${r.outcome} (${r.detail ?? ''})`);
+      } catch (e) {
+        console.warn(`[agy] ${host.id}: could not place the plugin:`, e instanceof Error ? e.message : e);
+      }
+    },
+  };
+}
+
+export const agyPluginProvision = createAgyPluginProvision();

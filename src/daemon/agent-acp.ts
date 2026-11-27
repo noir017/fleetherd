@@ -82,6 +82,7 @@ import {
   watchHarnessLog,
   type StartupProgress,
 } from './agent-acp-harness.js';
+import type { AgentProvision } from './provision.js';
 import {
   AcpOptionState,
   dshModelSelectorValue,
@@ -197,7 +198,9 @@ export function createAcpAgentFactory(
   /** How agy's one-shot `agy -p=/usage` is run — injectable so the tests never start a real agy. */
   agyCli?: AgyCliRunner,
   /** How long a lost agent is tried again, and how often (agent-reconnect.ts); for the tests. */
-  redial?: RedialTiming
+  redial?: RedialTiming,
+  /** Provisions delivered to each agent's machine on spawn (assembled by commands/start.ts). */
+  provisions: readonly AgentProvision[] = []
 ): AgentFactory {
   const sessions = new Map<string, AgentSession>();
   const turnTimeoutMs = cfg.session.turnTimeoutMs;
@@ -211,7 +214,7 @@ export function createAcpAgentFactory(
       if (!s) {
         const def = findAgent(cfg, agentId);
         if (!def) throw new Error(`unknown agent id: ${agentId} (check the routing and agents config)`);
-        s = new AcpSession(def, socketPath, sessionId, turnTimeoutMs, store, hasQuotaSource(def) ? quota : undefined, redial, locale);
+        s = new AcpSession(def, socketPath, sessionId, turnTimeoutMs, store, hasQuotaSource(def) ? quota : undefined, redial, locale, provisions);
         sessions.set(sessionId, s);
       }
       return s;
@@ -305,7 +308,8 @@ class AcpSession implements AgentSession {
     private readonly store?: ConversationStore,
     quota?: QuotaMeter,
     private readonly redialTiming?: RedialTiming,
-    private readonly locale: Locale = 'en'
+    private readonly locale: Locale = 'en',
+    private readonly provisions: readonly AgentProvision[] = []
   ) {
     this.conversationId = conversationId;
     this.cwd = resolveConversationCwd(def, conversationId, store);
@@ -613,7 +617,7 @@ class AcpSession implements AgentSession {
     if (this.active) return;
 
     this.cwd = resolveConversationCwd(this.def, this.conversationId, this.store);
-    const placed = await placeOnHost(this.def, this.cwd);
+    const placed = await placeOnHost(this.def, this.cwd, this.provisions);
     if (placed) this.cwd = placed.cwd;
     const place = placed?.place;
 
@@ -626,6 +630,7 @@ class AcpSession implements AgentSession {
       sessionToken,
       place,
       topic,
+      provisions: this.provisions,
     });
     this.proc = child;
     const { spawnError, stderrTail } = adoptAcpChild(

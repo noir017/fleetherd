@@ -32,9 +32,9 @@ import { globBase, globRegex, harnessSources, hasGlob, type HarnessSources } fro
 import {
   INSTRUCTIONS_MAX_BYTES,
   instructionsDir,
+  instructionsProvision,
   joinLayers,
   ownedDir,
-  placeInstructions,
   readLayer,
   type InstructionsResult,
 } from './instructions.js';
@@ -702,12 +702,12 @@ function liveDeliver(agents: readonly AgentDef[], layers: ReadonlySet<string>): 
   return deliverInstructions({
     agents,
     layers,
-    local: (def) => placeInstructions(def, localHome(def)),
+    local: (def) => instructionsProvision.local(def, localHome(def)),
     remote: async (def) => {
       const host = remoteHosts.hostFor(def);
       if (!host) throw new Error(`host "${def.host}" is not configured`);
       const w = await host.ready();
-      return remoteHosts.placeInstructions(host, def, remoteAgentHome(def, w), w);
+      return instructionsProvision.remote(host, def, remoteAgentHome(def, w), w);
     },
   });
 }
