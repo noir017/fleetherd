@@ -491,6 +491,8 @@ export function parseFormElicitation(params: CreateElicitationRequest): AgentEli
 
 export interface TurnState {
   handlers: AgentStreamHandlers;
+  /** The ACP `messageId` of the main agent's last text chunk, when the harness sends one. */
+  textMessageId?: string;
   /** 'none' start / 'text' streaming body / 'tool' just had a tool. Used for onSegmentBreak. */
   lastSegment: 'none' | 'text' | 'tool';
   /** toolCallId → evolving tool state (accumulated across tool_call ↔ tool_call_update). */
@@ -706,7 +708,13 @@ function ingestText(u: Extract<SessionUpdate, { sessionUpdate: 'agent_message_ch
     console.debug(`[acp] not rendering ${text.length} chars of subagent text into the reply`);
     return;
   }
-  if (st.lastSegment === 'tool') st.handlers.onSegmentBreak(); // tool → text boundary
+  // A new message from the agent (ACP `messageId` changed, schema: "a new message has started") is
+  // a new segment too. Two replies with nothing of the main agent's between them — the cycles a
+  // held turn runs as its background subagents report back — otherwise ran together mid-line.
+  const id = typeof u.messageId === 'string' && u.messageId !== '' ? u.messageId : undefined;
+  const newMessage = id !== undefined && st.textMessageId !== undefined && id !== st.textMessageId;
+  if (st.lastSegment === 'tool' || (st.lastSegment === 'text' && newMessage)) st.handlers.onSegmentBreak();
+  if (id !== undefined) st.textMessageId = id;
   st.lastSegment = 'text';
   st.handlers.onText(text);
 }
@@ -886,11 +894,13 @@ function maybeStartTool(st: TurnState, id: string, force: boolean): void {
   // nothing on screen said which subagent the `↳` lines below it belonged to.
   if (!force && rec.spawns && !subagentDescription(rec)) return;
   rec.started = true;
-  if (st.lastSegment === 'text') st.handlers.onSegmentBreak(); // text → tool boundary
+  // A subagent's tools go to a card of their own, so they neither end the main agent's paragraph
+  // nor start a new one after it.
+  if (!rec.parent && st.lastSegment === 'text') st.handlers.onSegmentBreak(); // text → tool boundary
   const evt = toolStartEvent(st, rec);
   rec.rendered = { name: evt.name, preview: evt.inputPreview };
   st.handlers.onToolStart(evt);
-  st.lastSegment = 'tool';
+  if (!rec.parent) st.lastSegment = 'tool';
 }
 
 /** The row a call would draw now, from everything known about it. */
@@ -911,8 +921,19 @@ function toolStartEvent(st: TurnState, rec: ToolRec): ToolEvent {
     id: rec.id,
     // The spawning call always precedes its subagent's first tool, so its name is known by now.
     agent: rec.parent ? (st.subagents?.get(rec.parent) ?? UNNAMED_SUBAGENT) : undefined,
+    ...(rec.parent ? { parent: rec.parent } : {}),
+    ...(rec.spawns ? { spawns: spawnMode(rec) } : {}),
     ...(rec.afterStop ? { afterStop: true } : {}),
   };
+}
+
+/**
+ * Whether an Agent/Task call put its subagent in the background, where the call returns at once.
+ * ⚠️ Claude Code's own input field (`run_in_background`), not ACP: a rename makes every subagent
+ * look foreground, so its card ends when the call does — contract test in agent-acp.test.ts.
+ */
+function spawnMode(rec: ToolRec): 'foreground' | 'background' {
+  return isRecord(rec.rawInput) && rec.rawInput.run_in_background === true ? 'background' : 'foreground';
 }
 
 /**
@@ -951,10 +972,13 @@ function finishTool(st: TurnState, id: string, ok: boolean): void {
     name: rec.label ?? toolLabel(rec.kind, rec.title), // same name as onToolStart, so findLine's index fallback stays consistent
     index: rec.index,
     id: rec.id,
+    ...(rec.parent ? { parent: rec.parent } : {}),
+    ...(rec.spawns ? { spawns: spawnMode(rec) } : {}),
     input: rec.rawInput,
     ok,
     durationMs: nowMs() - rec.startAt,
   });
+  if (rec.parent) return;
   // A call that ends after the agent has spoken — a command agy put in the background, finishing
   // while the turn waits for it (agy-plugin.ts) — puts what comes next in a segment of its own: that
   // text answers the result. Run on after the words before it, it read "…report its

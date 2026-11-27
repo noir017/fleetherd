@@ -17,6 +17,9 @@ const SUB_K: Readonly<Record<string, 'msg.dispatch' | 'msg.report' | 'msg.aside'
   aside: 'msg.aside',
 };
 
+/** Kinds drawn a row per line, each row folded until opened: how each folds as a whole differs. */
+const LINE_KINDS: ReadonlySet<string> = new Set(['tools', 'report', 'subagent']);
+
 const MARK = /^([●☑☐⌂]) /;
 const NAV = /^[◀‹]|[▶›]$/;
 
@@ -80,6 +83,51 @@ export function allToggle(
     text(st && st.all ? tr('msg.collapse') : tr('msg.showAll')) +
     '</button>'
   );
+}
+
+/** The header web-markdown.ts renderWebSubagent draws: state, duration, and the escaped name. */
+const SA_HEAD = /^<div class="sa-h" data-st="(run|ok|err)" data-d="([^"]*)">([\s\S]*?)<\/div>/;
+
+/**
+ * A subagent's card around what the server drew for it: a header that names the subagent, counts
+ * its tools and says whether it is still running, then its tool lines — folded to the newest one
+ * until the header is tapped (`ToolOpenState.card`). The name and duration arrive escaped.
+ */
+export function subagentCard(
+  key: string,
+  html: string,
+  opened: Readonly<Record<string, ToolOpenState | undefined>>,
+  icons: TranscriptIcons,
+): string {
+  const head = SA_HEAD.exec(html);
+  if (!head) return html;
+  const [, st, dur, name] = head;
+  const body = html.slice(head[0].length);
+  const n = (body.match(/<div class="tl[ "]/g) || []).length;
+  const open = Boolean(opened[key]?.card);
+  const count = n === 1 ? tr('msg.subagentToolsOne') : tr('msg.subagentToolsMany', { count: n });
+  const state =
+    st === 'ok'
+      ? (icons.icon.check ?? '') + text(tr('msg.subagentDone'))
+      : st === 'err'
+        ? (icons.icon.cross ?? '') + text(tr('msg.subagentFailed'))
+        : '<span class="sa-spin"></span>' + text(tr('msg.subagentRunning'));
+  const earlier = !open && n > 1 ? `<div class="sa-more">${text(tr('msg.subagentEarlier', { count: n - 1 }))}</div>` : '';
+  return (
+    `<div class="sa st-${st}${open ? ' open' : ''}">` +
+    `<button type="button" class="sa-h" data-sa="${text(key)}" aria-expanded="${open}">` +
+    `${icons.icon.subagent ?? ''}<span class="sa-n">${name}</span>` +
+    `<span class="sa-m">${text(count)}${dur ? ' · ' + dur : ''}</span>` +
+    `<span class="sa-s">${state}</span>${icons.icon.chevronDown ?? ''}</button>` +
+    earlier +
+    body +
+    '</div>'
+  );
+}
+
+/** "Show all" under a line-based message — except a subagent card, which folds by its header. */
+function linesToggle(key: string, kind: string | undefined, opened: Readonly<Record<string, ToolOpenState | undefined>>): string {
+  return kind !== undefined && kind !== 'subagent' && LINE_KINDS.has(kind) ? allToggle(key, opened) : '';
 }
 
 export function stuck(m: TranscriptMessage | null | undefined): boolean {
@@ -339,7 +387,9 @@ function msgBodyHtml(
   ctx: MsgMarkupContext,
 ): string {
   if (!hist && m.workdir) return workdirPicker(m, ctx.icons);
-  let h = `<div class="b">${folded ? foldLines(key, m.html, ctx.opened) : m.html}</div>`;
+  let body = folded ? foldLines(key, m.html, ctx.opened) : m.html;
+  if (m.kind === 'subagent') body = subagentCard(key, body, ctx.opened, ctx.icons);
+  let h = `<div class="b">${body}</div>`;
   if (m.file) h += renderFileAttachment(m, hist);
   if (m.turnChanges) h += turnChangeRow(m, ctx.icons, ctx.canOpenGit, Boolean(ctx.canOpenSideDiff));
   if (!hist && m.buttons && m.buttons.length) h += renderMenu(m, ctx.icons);
@@ -357,7 +407,7 @@ export function renderMsgMarkup(
   if (ctx.isBtwHeld(key, m)) return { cls: 'm aside-held', h: '' };
 
   const kind = m.kind;
-  const folded = kind === 'tools' || kind === 'report';
+  const folded = kind !== undefined && LINE_KINDS.has(kind);
   const subKey = kind && Object.prototype.hasOwnProperty.call(SUB_K, kind) ? SUB_K[kind] : undefined;
   const tag = subKey ? tr(subKey) : '';
   const isStuck = stuck(m);
@@ -371,7 +421,7 @@ export function renderMsgMarkup(
     m.reactions && m.reactions.length
       ? '  ' + m.reactions.map((e) => reactionMark(e, ctx.icons)).join(' ')
       : '';
-  h += `<div class="t">${text(clock(m.at))}${reactions}${folded ? allToggle(key, ctx.opened) : ''}</div>`;
+  h += `<div class="t">${text(clock(m.at))}${reactions}${linesToggle(key, kind, ctx.opened)}</div>`;
   if (ctx.showMessageActions !== false && !(!hist && m.workdir)) {
     h += messageActionsMarkup(key, m, ctx.icons, hist);
   }

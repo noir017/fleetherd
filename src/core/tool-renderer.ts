@@ -71,6 +71,18 @@ const DEFAULT_MAX_RETRY_AFTER_MS = 300_000;
  * carries it (see ownerPrefix).
  */
 const AGENT_LABEL_LIMIT = 16;
+/** Longest subagent name a card's header carries: a line of its own, so it can afford more. */
+const HEADER_NAME_LIMIT = 60;
+
+/**
+ * The first line of a subagent's card (see setHeader): `↳ {name}`, and once the subagent has ended
+ * the same ` ✓ 1.2s` / ` ✗ 1.2s` a tool line ends with. ⚠️ web-markdown.ts renderWebSubagent
+ * parses it back with the tool line's own pattern; keep the two in step.
+ */
+export function subagentHeader(name: string, end?: { ok: boolean; durationMs: number }): string {
+  const head = `↳ ${flatten(name, HEADER_NAME_LIMIT)}`;
+  return end ? `${head} ${end.ok ? '✓' : '✗'} ${formatDuration(end.durationMs)}` : head;
+}
 
 export interface ToolRendererOptions {
   mode: ToolMode;
@@ -174,6 +186,10 @@ export class ToolRenderer {
   private bubbleEdits = 0;
   /** Exactly the text the platform currently shows for the open bubble. */
   private lastPaintedText: string | null = null;
+  /** A line above every bubble's tools (setHeader); undefined for none. */
+  private header: string | undefined;
+  /** Some bubble has been sent: a header that changes after a seal left no lines still has news. */
+  private sentAny = false;
 
   // ---- painter state ----
   /** Bumped on every mutation of the line set; the version a paint is trying to deliver. */
@@ -291,6 +307,17 @@ export class ToolRenderer {
     // accumulate: add the tool to the line set and re-render the whole bubble.
     this.lines.push({ index: evt.index, name: evt.name, agent: evt.agent, body, json });
     this.touch();
+  }
+
+  /**
+   * Put `text` above the tools in every bubble this renderer paints, in place of the owner prefix on
+   * each line — a renderer that draws one subagent's card names it once, at the top. Changing it
+   * repaints the open bubble. Accumulate only: a separate bubble per tool keeps its prefix.
+   */
+  setHeader(text: string | undefined): void {
+    if (this.aborted || text === this.header) return;
+    this.header = text;
+    if (this.accumulateActive) this.touch();
   }
 
   /** A call's row, without its owner prefix or its ✓/✗. */
@@ -558,7 +585,9 @@ export class ToolRenderer {
     // uses, so the overflow continues in a fresh bubble instead of being rejected on the wire.
     if (this.bubbleRef !== null && this.overflows(this.renderBlock())) this.seal();
 
-    if (this.lines.length === 0) return 'delivered'; // nothing to say; don't send an empty bubble
+    // Nothing to say; don't send an empty bubble — unless a header changed after a seal took every
+    // line, which would otherwise leave the sealed bubble saying the subagent is still running.
+    if (this.lines.length === 0 && !(this.header !== undefined && this.sentAny)) return 'delivered';
 
     const editing = this.bubbleRef !== null;
     const text = this.fitBlock();
@@ -570,6 +599,7 @@ export class ToolRenderer {
       if (!editing) {
         this.bubbleRef = await this.sink.sendBubble(text);
         this.bubbleEdits = 0;
+        this.sentAny = true;
         // The bubble now holds a position in the chat, so whatever is waiting to write BELOW it
         // may go (see placed()). Released here rather than at the end of the paint loop: the
         // ordering constraint is satisfied by the send, not by the rest of the painting.
@@ -719,10 +749,10 @@ export class ToolRenderer {
 
   /** Render the line set into one block (lines joined by \n; verbose JSON under its line). */
   private renderBlock(): string {
-    const parts: string[] = [];
+    const parts: string[] = this.header !== undefined ? [this.header] : [];
     let above: ToolLine | undefined;
     for (const l of this.lines) {
-      let row = this.ownerPrefix(l.agent, above?.agent) + l.body;
+      let row = (this.header !== undefined ? '' : this.ownerPrefix(l.agent, above?.agent)) + l.body;
       above = l;
       if (l.finish) {
         const mark = l.finish.ok ? '✓' : '✗';
@@ -735,8 +765,7 @@ export class ToolRenderer {
   }
 
   private truncate(s: string, n: number): string {
-    const flat = s.replace(/\s+/g, ' ').trim();
-    return flat.length <= n ? flat : flat.slice(0, n - 1) + '…';
+    return flatten(s, n);
   }
 
   /**
@@ -770,6 +799,12 @@ export class ToolRenderer {
  */
 function dedupeKeyOf(evt: ToolEvent): string {
   return `${evt.agent ?? ''}\u0000${evt.name}${evt.afterStop ? '\u0000after-stop' : ''}`;
+}
+
+/** `s` on one line, cut to `n` characters with an ellipsis. */
+function flatten(s: string, n: number): string {
+  const flat = s.replace(/\s+/g, ' ').trim();
+  return flat.length <= n ? flat : flat.slice(0, n - 1) + '…';
 }
 
 /** Duration formatting: <1000ms → "832ms"; otherwise "1.2s" (one decimal). */

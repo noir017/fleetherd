@@ -91,6 +91,7 @@ export interface TranscriptController extends Disposable {
   msgMarkup(key: string, m: TranscriptMessage, hist: boolean): MsgMarkupResult;
   toggleAll(key: string): void;
   toggleLine(line: HTMLElement): void;
+  toggleCard(key: string): void;
   repaintKey(key: string): void;
   forgetOpenedPrefix(prefix: string): void;
   upsert(m: TranscriptMessage): void;
@@ -258,6 +259,14 @@ class TranscriptControllerImpl implements TranscriptController {
     if (!this._msgAt(key)) return;
     const st = this._opened[key];
     this._opened[key] = { all: !(st && st.all), lines: {} };
+    this.repaintKey(key);
+  }
+
+  /** Unfold a subagent card to all its lines, or fold it back to the newest. Line state is kept. */
+  toggleCard(key: string): void {
+    if (!this._msgAt(key)) return;
+    const st = this._opened[key] || (this._opened[key] = { all: false, lines: {} });
+    st.card = !st.card;
     this.repaintKey(key);
   }
 
@@ -585,6 +594,7 @@ class TranscriptControllerImpl implements TranscriptController {
         discardLocal: this._deps.discardLocal,
         toggleAll: (key) => this.toggleAll(key),
         toggleLine: (line) => this.toggleLine(line),
+        toggleCard: (key) => this.toggleCard(key),
         openTurnChanges: (turn) => this.openTurnChanges(turn),
         openTurnDiffSideBySide: (turn, btn) => {
           void this.openTurnDiffSideBySide(turn, btn);

@@ -16,6 +16,7 @@ import {
 import { dshModelDisplayValue, dshModelSelectorValue } from './harness/dsh.js';
 import type { AgentDef } from '../config/schema.js';
 import type { AgentImage, AgentUsage } from './agent.js';
+import type { ToolEvent, ToolFinishEvent } from '../types.js';
 
 /** Recording TurnState: capture handler calls as an event string for order assertions. */
 function recorder(): {
@@ -119,6 +120,32 @@ describe('translateUpdate tool state machine (ACP generic)', () => {
     feed(st, { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'Also: 6 times 7?' } });
     feed(st, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '42' } });
     expect(events).toEqual(['text:Started.', 'seg', 'text:42']);
+  });
+
+  /**
+   * claude-agent-acp 0.81 stamps every chunk with its API message id (ACP `messageId`), and holds a
+   * turn open while its background subagents run: each one's report starts a cycle of its own, with
+   * no tool of the main agent's in between. Live 2026-11-27: "…I'll wait for them to finish.The
+   * backend agent has finished."
+   */
+  it('starts a new segment when the agent starts a new message', () => {
+    const { st, events } = recorder();
+    const chunk = (text: string, messageId?: string) =>
+      feed(st, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text }, ...(messageId ? { messageId } : {}) });
+    chunk('I will wait ', 'msg_1');
+    chunk('for them.', 'msg_1');
+    chunk('The backend agent has finished.', 'msg_2');
+    chunk(' Still waiting.'); // no id: nothing to compare
+    chunk('Both are done.', 'msg_3');
+    expect(events).toEqual([
+      'text:I will wait ',
+      'text:for them.',
+      'seg',
+      'text:The backend agent has finished.',
+      'text: Still waiting.',
+      'seg',
+      'text:Both are done.',
+    ]);
   });
 
   it('a call that ends after the agent spoke, with nothing said after it, splits nothing', () => {
@@ -320,6 +347,69 @@ describe('translateUpdate subagent attribution (claude adapter _meta)', () => {
     expect(names.size).toBe(64);
     expect(names.has('agent-0')).toBe(false);
     expect(names.get('agent-69')).toBe('job 69');
+  });
+
+  it("leaves the main agent's paragraph whole when a subagent's tool runs in the middle of it", () => {
+    const { st, events } = recorder();
+    spawn(st);
+    feed(st, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'The 401s cluster at expiry, ' } });
+    subagentBash(st, 'sub-1', 'grep -rn refresh web/src');
+    feed(st, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'so it is the refresh window.' } });
+    // Before: `seg` on both sides of the subagent's Bash — one sentence in three messages.
+    expect(events).toEqual([
+      'start:Task|probe subagent',
+      'seg',
+      'text:The 401s cluster at expiry, ',
+      'start:Bash|grep -rn refresh web/src',
+      'finish:Bash|true',
+      'text:so it is the refresh window.',
+    ]);
+  });
+
+  it("names the call that started the subagent on each of its tools' start and finish", () => {
+    const { st } = recorder();
+    const starts: ToolEvent[] = [];
+    const finishes: ToolFinishEvent[] = [];
+    st.handlers.onToolStart = (e) => starts.push(e);
+    st.handlers.onToolFinish = (e) => finishes.push(e);
+    spawn(st);
+    subagentBash(st, 'sub-1', 'ls');
+    feed(st, { sessionUpdate: 'tool_call', toolCallId: 'main-read', kind: 'read', rawInput: { file_path: 'a.ts' }, status: 'completed' });
+    expect(starts.map((e) => e.parent)).toEqual([undefined, AGENT, undefined]);
+    expect(finishes.map((e) => e.parent)).toEqual([AGENT, undefined]);
+  });
+
+  /**
+   * CONTRACT: `run_in_background` is Claude Code's own Agent-tool input, as the main agent sent it in
+   * a live conversation (2026-11-14, fleetherd's library). Renamed, every subagent reads as
+   * foreground and its card ends when the call that launched it returns — at once.
+   */
+  it('says whether the spawning call runs its subagent in the foreground or the background', () => {
+    const { st } = recorder();
+    const starts: ToolEvent[] = [];
+    const finishes: ToolFinishEvent[] = [];
+    st.handlers.onToolStart = (e) => starts.push(e);
+    st.handlers.onToolFinish = (e) => finishes.push(e);
+    spawn(st, 'fg', 'look in front');
+    feed(st, {
+      _meta: agentMeta,
+      toolCallId: 'bg',
+      sessionUpdate: 'tool_call',
+      rawInput: { description: 'look behind', subagent_type: 'claude', run_in_background: true, prompt: '…' },
+      status: 'pending',
+      title: 'look behind',
+      kind: 'think',
+    });
+    feed(st, { _meta: { claudeCode: { toolName: 'Agent' } }, toolCallId: 'bg', sessionUpdate: 'tool_call_update', status: 'completed' });
+    feed(st, { _meta: { claudeCode: { toolName: 'Agent' } }, toolCallId: 'fg', sessionUpdate: 'tool_call_update', status: 'completed' });
+    expect(starts.map((e) => [e.id, e.spawns])).toEqual([
+      ['fg', 'foreground'],
+      ['bg', 'background'],
+    ]);
+    expect(finishes.map((e) => [e.id, e.spawns])).toEqual([
+      ['bg', 'background'],
+      ['fg', 'foreground'],
+    ]);
   });
 
   it('keeps subagent-attributed text out of the reply body', () => {

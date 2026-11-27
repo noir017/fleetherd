@@ -659,6 +659,70 @@ describe('webui page: tool bubbles fold and open', () => {
 });
 
 /**
+ * A subagent's card (kind `subagent`, markup.ts subagentCard): the server draws its header and rows,
+ * the page builds the card — the count and state in the reader's language, and a fold to the newest
+ * row that the header opens.
+ */
+describe('webui page: subagent cards', () => {
+  const T = 'a1b2c3d4';
+
+  function card(id: string, text: string): Record<string, unknown> {
+    return { ...message(id, webMessageHtml('subagent', text)), kind: 'subagent' };
+  }
+
+  const head = (h: Harness): HTMLElement | null => h.doc.querySelector<HTMLElement>('#log .sa-h');
+  /** The rows the stylesheet leaves in view: a folded card hides all but its last (asserted below). */
+  const shown = (h: Harness): string[] =>
+    Array.from(h.doc.querySelectorAll<HTMLElement>('#log .sa .tl'))
+      .filter((r) => !(r.closest('.sa')?.classList.contains('open') === false && r !== r.parentElement?.lastElementChild))
+      .map(face);
+
+  it('names the subagent, counts its tools, and shows the newest one while it runs', async () => {
+    const h = await open();
+    await h.emit(sync(T, [card('m1', '↳ back end\n💻 Bash: "grep 401" ✓ 1.2s\n📖 Read: "auth.go"')], [T]));
+
+    expect(face(head(h))).toBe('[subagent]back end2 toolsRunning[chevronDown]');
+    expect(head(h)?.getAttribute('aria-expanded')).toBe('false');
+    expect(shown(h)).toEqual(['[book] Read: "auth.go"']);
+    expect(h.doc.querySelector('#log .sa-more')?.textContent).toBe('1 earlier — tap the name to show all');
+    // The card folds by its header, so the tool bubble's own "Show all" is not offered on it.
+    expect(h.doc.querySelector('#log [data-tl-all]')).toBeNull();
+  });
+
+  it('opens to every row on a tap of the header, and stays open as the card is edited', async () => {
+    const h = await open();
+    await h.emit(sync(T, [card('m1', '↳ back end\n💻 Bash: "grep 401" ✓ 1.2s\n📖 Read: "auth.go"')], [T]));
+
+    await h.click('#log .sa-h');
+    expect(head(h)?.getAttribute('aria-expanded')).toBe('true');
+    expect(shown(h)).toEqual(['[terminal] Bash: "grep 401" [check] 1.2s', '[book] Read: "auth.go"']);
+    expect(h.doc.querySelector('#log .sa-more')).toBeNull();
+    // Answered in the page, as a row's fold is.
+    expect(h.calls.filter((c) => c.path === 'api/click')).toEqual([]);
+
+    await h.emit({ t: 'msg', msg: card('m1', '↳ back end ✓ 13.0s\n💻 Bash: "grep 401" ✓ 1.2s\n📖 Read: "auth.go" ✓ 90ms') });
+    expect(h.doc.querySelector('#log .sa')?.className).toBe('sa st-ok open');
+    expect(face(head(h))).toBe('[subagent]back end2 tools · 13.0s[check]Done[chevronDown]');
+
+    await h.click('#log .sa-h');
+    expect(shown(h)).toEqual(['[book] Read: "auth.go" [check] 90ms']);
+  });
+
+  it('says a subagent that ended badly did not finish', async () => {
+    const h = await open();
+    await h.emit(sync(T, [card('m1', '↳ back end ✗ 3.0s\n💻 Bash: "go test"')], [T]));
+    expect(h.doc.querySelector('#log .sa')?.classList.contains('st-err')).toBe(true);
+    expect(face(head(h))).toBe('[subagent]back end1 tool · 3.0s[cross]Did not finish[chevronDown]');
+  });
+
+  it('folds by the stylesheet: a closed card shows its newest row only', () => {
+    // Served text, not the CSSOM (see the README); without the rule `shown` above would be a fiction.
+    const html = renderPage('Chat', false, true, false);
+    expect(html).toContain('.sa:not(.open) .tl:not(:last-child){display:none}');
+  });
+});
+
+/**
  * A reply's code blocks (web-markdown.ts codeBlock, page.ts "Code blocks"): the bar's Copy and Wrap,
  * and the colours the code view's grammars put on once a message has stopped changing.
  *

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 
-import { renderWebMarkdown, renderWebToolLines, escapeHtml, inline } from './web-markdown.js';
-import { formatDuration } from '../core/tool-renderer.js';
+import { renderWebMarkdown, renderWebSubagent, renderWebToolLines, escapeHtml, inline } from './web-markdown.js';
+import { formatDuration, subagentHeader } from '../core/tool-renderer.js';
 import { icon } from './webui/icons.js';
 
 /** A fenced block as codeBlock frames it: the bar (language, Wrap, Copy) over the pre. */
@@ -412,6 +412,28 @@ describe('web-markdown: inline', () => {
 
   it('handles a longer backtick run around a span containing backticks', () => {
     expect(renderWebMarkdown('``a ` b``')).toContain('<code>a ` b</code>');
+  });
+});
+
+describe('web-markdown: a subagent card', () => {
+  it('reads the header the renderer writes: its name, and once it has ended, how and how long', () => {
+    // Written by subagentHeader itself, so a change to its format fails here, not on screen.
+    const lines = '💻 Bash: "ls" ✓ 5ms';
+    expect(renderWebSubagent(`${subagentHeader('back end')}\n${lines}`)).toBe(
+      `<div class="sa-h" data-st="run" data-d="">back end</div>${renderWebToolLines(lines)}`
+    );
+    expect(renderWebSubagent(`${subagentHeader('back end', { ok: true, durationMs: 61_000 })}\n${lines}`)).toMatch(
+      /^<div class="sa-h" data-st="ok" data-d="61\.0s">back end<\/div>/
+    );
+    expect(renderWebSubagent(subagentHeader('back end', { ok: false, durationMs: 900 }))).toBe(
+      '<div class="sa-h" data-st="err" data-d="900ms">back end</div><div class="tools"></div>'
+    );
+  });
+
+  it('escapes the name: it is the model’s own words', () => {
+    const html = renderWebSubagent(subagentHeader('<img src=x onerror=alert(1)> "q"'));
+    expect(html).not.toContain('<img');
+    expect(html).toContain('&lt;img src=x onerror=alert(1)&gt; &quot;q&quot;</div>');
   });
 });
 

@@ -125,7 +125,7 @@ import type {
   VoiceTranscriber,
 } from '../workbench.js';
 import type { WebuiPlatformConfig } from '../config-schemas.js';
-import { escapeHtml, renderWebMarkdown, renderWebToolLines } from '../web-markdown.js';
+import { escapeHtml, renderWebMarkdown, renderWebSubagent, renderWebToolLines } from '../web-markdown.js';
 import { toolGlyph } from './icons.js';
 import type {
   ClickRequest,
@@ -274,7 +274,8 @@ interface Stored {
 /**
  * One message body's html, from its kind and its text.
  *
- * A line-based kind is one row per line: a tool's progress, and a sub-agent report, whose whole
+ * A line-based kind is one row per line: a tool's progress, a subagent's card (under its header),
+ * and a sub-agent report, whose whole
  * point is that a burst of `🔔` lines folds to one row each. Markdown would merge them into one
  * paragraph. Shared by the send path (`index.ts`) and every later edit (`revise`) because a
  * bubble's kind is given once and both ends must render the same way.
@@ -282,6 +283,7 @@ interface Stored {
 export function webMessageHtml(kind: MessageKind | undefined, text: string): string {
   // Only a tool bubble's glyphs become icons: a report's lines are sub-agent updates, not tools.
   if (kind === 'tools') return renderWebToolLines(text, toolGlyph);
+  if (kind === 'subagent') return renderWebSubagent(text, toolGlyph);
   return kind === 'report' ? renderWebToolLines(text) : renderWebMarkdown(text);
 }
 

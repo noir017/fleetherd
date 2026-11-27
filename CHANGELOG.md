@@ -5,6 +5,21 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **Each subagent gets a card of its own.** When a Claude Code agent started subagents, their tool
+  calls went into the agent's own tool bubble, one line after another with the agent's calls, and
+  every time a subagent ran a tool in the middle of the agent's sentence that sentence was cut and
+  carried on in a new message — on 2026-11-14 a background subagent's run read as one bubble of
+  three owners' commands between the halves of the agent's replies. Now each subagent's calls go
+  into a message of their own, headed `↳ {name}`, edited in place while it runs and marked ✓ or ✗
+  with how long it took when it ends; the agent's reply is no longer split by them. The web UI
+  draws it as a card — the name, the tool count, Running / Done / Did not finish — folded to the
+  newest call until the name is clicked. A foreground subagent ends with the call that started it,
+  a background one with the turn (claude-agent-acp keeps that turn open until its background
+  subagents are done). Only `claude` agents say which subagent ran a tool, so other harnesses are
+  unchanged.
+
 ## [3.41.2] - 2026-11-27
 
 ### Fixed
