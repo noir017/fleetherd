@@ -1,6 +1,7 @@
 import type { Config, SessionScope } from '../config/schema.js';
 import { agentForCommand } from '../core/command-translate.js';
 import type { ConversationRef, ConversationKind } from '../core/conversation.js';
+import { parseTextCommand } from '../core/text-command.js';
 import type { InboundMessage } from '../types.js';
 
 /**
@@ -65,31 +66,6 @@ export function routeInputFromMessage(msg: InboundMessage): RouteInput {
 /** Normalize a command name: strip leading /, lowercase. */
 function normCommand(c: string): string {
   return c.replace(/^\//, '').toLowerCase();
-}
-
-/** Leading `/name` + rest-of-text (name of alnum/_/-/:; colon admits MCP names like /mcp:server:cmd). */
-const TEXT_COMMAND_RE = /^\/([a-zA-Z0-9_:-]+)(?:\s+([\s\S]*))?$/;
-
-/**
- * Parse a leading `/name` off message text: `{ name, rest }`, or null when the text isn't
- * command-shaped. `rest` is the text after the command (trimmed; '' for a bare `/name`).
- */
-export function parseTextCommand(text: string): { name: string; rest: string } | null {
-  const m = TEXT_COMMAND_RE.exec(text.trim());
-  if (!m) return null;
-  const [, name = '', rest = ''] = m;
-  return { name, rest: rest.trim() };
-}
-
-/**
- * Whether text "looks like a slash command" (starts with `/name`, name of alnum/_/-/:).
- *
- * Rationale: whether the agent (claude-code-acp / SDK) executes input as a native slash command depends
- * on whether the first text block starts with `/`. So when fleetherd assembles the prompt, a message
- * matching this must stay clean `/cmd args` — no quote prefix, no reverse-command hint.
- */
-export function looksLikeCommand(text: string): boolean {
-  return parseTextCommand(text) !== null;
 }
 
 /**

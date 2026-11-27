@@ -25,7 +25,7 @@ import type { ModelCatalog } from './model-catalog.js';
 import type { StatusBoard } from './status-board.js';
 import type { TurnChanges } from './turn-changes.js';
 import type { TurnProgressBoard } from './turn-progress.js';
-import type { PersonWords } from './turn-runner.js';
+import type { PersonWords } from './turn-senders.js';
 import type { WorkdirUsageStore } from './workdir-usage.js';
 
 /** All per-conversation runtime state; the reverse-command token lives in SessionTokenRegistry. */

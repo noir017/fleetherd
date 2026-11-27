@@ -3,25 +3,25 @@ import { localeOf, type Locale } from '../core/i18n/index.js';
 import { tRuntime } from '../core/i18n/runtime.js';
 import { addressOf, type ConversationAddress, type ConversationRef } from '../core/conversation.js';
 import { InboundMerger, quoteMessages, stopInputNote } from '../core/inbound-merger.js';
+import { formatLaneTitle } from '../core/lane-title.js';
 import { fallbackTitle } from '../core/title-namer.js';
 import type { PlatformAdapter } from '../platform/adapter.js';
 import type { ConversationId, InboundMessage, PendingQueueItem, ToolEvent } from '../types.js';
 import { resolveAgentCwd } from './agent-common.js';
 import type { RespawnCounts } from './config-reload.js';
 import type { ConversationContext, ConversationLane, ConversationState } from './conversation-context.js';
-import { formatLaneTitle, type ConversationControls } from './conversation-controls.js';
+import type { ConversationControls } from './conversation-controls.js';
 import type { ConversationHistory } from './conversation-history.js';
 import { deliveryIdOf, FailedInputs, type RetryRecord } from './failed-input.js';
+import type { ReviewFacts } from './review.js';
 import { beginSkillTurn, recordToolUse } from './skill-usage.js';
 import { TurnOutcomes } from './turn-outcomes.js';
 import {
-  CONTINUE_SENDER,
-  RECONNECT_SENDER,
-  SCHEDULED_SENDER,
   TurnRunner,
   type TurnEnd,
   type TurnRunnerDeps,
 } from './turn-runner.js';
+import { CONTINUE_SENDER, RECONNECT_SENDER, SCHEDULED_SENDER } from './turn-senders.js';
 
 /** What `/stop` found; `background` is what the merger cannot see (AgentSession.stopBackground). */
 export type StopOutcome = 'running' | 'collecting' | 'background' | 'idle';
@@ -96,19 +96,6 @@ function stopHead(outcome: StopOutcome, calledOff: number, transcripts: number, 
 }
 
 const SWEEP_INTERVAL_MS = 60_000;
-
-/** One live conversation as the review sweep sees it (daemon/review.ts `eligible`). */
-export interface ReviewFacts {
-  key: ConversationId;
-  agentId: string;
-  idleMs: number;
-  busyTurn: boolean;
-  pendingWork: boolean;
-  stopped: boolean;
-  unresumable: boolean;
-  /** Kept in memory past `/new` (which clears the stored record), so a reset topic stays reviewable. */
-  lane?: { platform: string; channel: string; thread?: string };
-}
 
 /**
  * How turns run: each conversation's merger and the TurnRunner behind it, delivery into the merger,

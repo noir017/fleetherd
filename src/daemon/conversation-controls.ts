@@ -15,6 +15,7 @@ import {
   type EffortChoiceResult,
 } from '../core/effort-menu.js';
 import { rankByFrecency } from '../core/frecency.js';
+import { formatLaneTitle, subjectOf } from '../core/lane-title.js';
 import {
   matchModels,
   modelAmbiguousText,
@@ -61,7 +62,6 @@ import { ForkRefused, type AgentSession } from './agent.js';
 import { resolveAgentCwd } from './agent-common.js';
 import type { ConversationContext, ConversationState } from './conversation-context.js';
 import type { ConversationHistory } from './conversation-history.js';
-import { subjectOf } from './delegation.js';
 import { remoteHosts } from './remote-hosts.js';
 import { resolveAgent, routeInputFromRef } from './routing.js';
 import { statusOptions } from './status-board.js';
@@ -69,22 +69,6 @@ import { isDirectory, scanWorkdirs, workdirScanFrom, type WorkdirScan } from './
 
 /** How long a menu offered on the side (a bare `/cc`, `/new`) waits for a remote root's first listing. */
 export const REMOTE_LISTING_WAIT_MS = 5_000;
-
-/**
- * Shape a lane name: `[<agent>] <subject>`. Leading bracketed groups are stripped repeatedly, so
- * re-titling replaces the tag instead of stacking a second one.
- */
-export function formatLaneTitle(agentId: string, raw: string): string {
-  let subject = raw.replace(/\s+/g, ' ').trim();
-  while (subject.startsWith('[')) {
-    const close = subject.indexOf(']');
-    if (close < 0) break;
-    subject = subject.slice(close + 1).trimStart();
-  }
-  // Nothing but brackets: keep the original rather than name every such conversation identically.
-  if (!subject) subject = raw.replace(/\s+/g, ' ').trim();
-  return `[${agentId}] ${subject}`.trim();
-}
 
 /**
  * The per-conversation controls: `/model`, `/effort`, `/cd`, `/fork`, `/title`, and the web UI's
