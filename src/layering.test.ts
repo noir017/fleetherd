@@ -96,11 +96,11 @@ describe('module layering (AGENTS.md)', () => {
       expect(violations).toEqual([]);
     });
   }
-});
 
-it('src/types.ts imports nothing from src/ or third-party packages (only node: built-ins)', () => {
-  const violations = collectImports(path.join(SRC_ROOT, 'types.ts'))
-    .filter((spec) => !spec.startsWith('node:'))
-    .map((spec) => `types.ts imports ${spec} (only node: built-ins allowed)`);
-  expect(violations).toEqual([]);
+  it('src/types.ts imports nothing from src/ or third-party packages (only node: built-ins)', () => {
+    const violations = collectImports(path.join(SRC_ROOT, 'types.ts'))
+      .filter((spec) => !spec.startsWith('node:'))
+      .map((spec) => `types.ts imports ${spec} (only node: built-ins allowed)`);
+    expect(violations).toEqual([]);
+  });
 });
