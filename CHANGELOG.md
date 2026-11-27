@@ -5,6 +5,32 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **Unified settings editor with bidirectional scroll-spy.** Clicking any gateway or device section
+  in the Settings sidebar now opens and focuses a single unified Settings tab (`editor:settings`)
+  containing all gateway sections and device preferences on one scrollable page, clearing active
+  filters when needed to scroll to the target section; scrolling the page updates the highlighted
+  sidebar item automatically (instruction files remain in their dedicated multi-file editor).
+- **Exact total conversation count in the History sidebar.** `HistoryStore.count()` (backed by a
+  partial `sessions_list_idx` index excluding review sessions and a write-invalidated in-memory
+  cache) and `HistoryPanelPage.total` now supply the library's exact conversation count instead of
+  showing only the loaded page floor (`50+`).
+- **Compact sidebar filter and sort controls.** Status chips in Topics, Scheduled, and Skills now
+  live inside the collapsible Filter panel rather than occupying an always-visible pinned row, and
+  `FilterBar` replaces the separate sort `<select>` and direction button with a compact sort button
+  beside Filter that opens a checked menu (`sort fields`, separator, `Ascending` / `Descending`).
+- **Scheduled moved after Skills, and narrower scrollbars.** The activity bar now orders views as
+  Topics → History → Reviews → Skills → Scheduled (promoting Reviews to the mobile bottom bar and
+  placing Scheduled after Skills in More), and scrollbars are narrowed from `10px` to `7px`
+  (`scrollbar-width: thin` fallback).
+
+### Fixed
+
+- **Mobile own-message action bar no longer renders inside the user bubble.** Below `640px`,
+  `.m.own > .msg-actions` is anchored outside and right-aligned beneath the blue message bubble with
+  matching bottom spacing instead of sitting inside the bubble and widening short messages.
+
 ## [3.40.0] - 2026-11-27
 
 ### Added
