@@ -204,7 +204,7 @@ export const HELP_TOPICS: HelpTopic[] = [
       'Most skills are in the library, not in your skill list: `search <what you need>` finds them (up to 5), and `show <name>` reads one — SKILL.md whole, with the list of its other files. A skill already in your list says so; use it from there. `show` of a version this conversation already read answers "unchanged"; add --again if it is no longer in your context. Resident skills — the ones in every agent\'s list — carry `fleetherd-resident: "true"` in frontmatter metadata (kept to a short description).',
       'Names are lowercase words joined by hyphens (a-z, 0-9). `fleetherd` and `super` are the bundled skills and cannot be reused. `SKILL.md` is at most 64 KB and must begin with frontmatter naming the skill and a one-line description of when to use it; files beyond it go only in references/, templates/ or scripts/.',
       'Read before you write: `show <name>` prints the content and a version. `patch <name> --version <that version> --content <full SKILL.md>` is refused if the skill has changed since — run show again, re-apply your edit, and patch with the new version.',
-      '`create <name> --description "<when to use it>" [--body <markdown>]` starts a skill; `write-file` and `remove-file` add or remove a reference, template or script. Pass `-` to `--body` (create) or `--content` (patch / write-file) to read from stdin (`<<\'EOF\'` or `< file`). Every change is a commit in the skills repository, a person\'s included; `history <name>` lists them and `revert <name> <id>` puts back the files as they were before that one.',
+      '`create <name> --description "<when to use it>" [--category <group>] [--body <markdown>]` starts a skill; `category <name> [group]` (or `--category <group>`, omit to clear) sets a custom category; `write-file` and `remove-file` add or remove a reference, template or script. Pass `-` to `--body` (create) or `--content` (patch / write-file) to read from stdin (`<<\'EOF\'` or `< file`). Every change is a commit in the skills repository, a person\'s included; `history <name>` lists them and `revert <name> <id>` puts back the files as they were before that one.',
       '14 days without a use marks a skill an agent created expired; 30 days moves it to the archive and takes it off every agent at its next start. A skill a person wrote is never expired. `pin` keeps a skill out of that check; `restore` brings an archived one back. Nothing is deleted.',
       'A skill counts as used when an agent calls it as a Skill tool, when a message starts with /<name>, or when a tool call touches a file under ~/.fleetherd/skills/<name>/. Running `fleetherd skills` itself does not count.',
     ],
@@ -941,7 +941,15 @@ type SkillsAction = Extract<IpcAction, { kind: 'skills' }>;
 function skillsCreate(name: string, opts: Record<string, unknown>): SkillsAction {
   const description = str(opts.description);
   if (!description) throw new Error('skills create needs --description "<when to use it>"');
-  return { kind: 'skills', action: 'create', name, description, ...(str(opts.body) !== undefined ? { body: str(opts.body) } : {}) };
+  const category = str(opts.category);
+  return {
+    kind: 'skills',
+    action: 'create',
+    name,
+    description,
+    ...(str(opts.body) !== undefined ? { body: str(opts.body) } : {}),
+    ...(category !== undefined ? { category } : {}),
+  };
 }
 
 function skillsPatch(name: string, opts: Record<string, unknown>): SkillsAction {
@@ -998,6 +1006,10 @@ function buildSkills(p: string[], opts: Record<string, unknown>): IpcAction {
       return skillsWriteFile(need(1, 'name'), need(2, 'file'), opts);
     case 'remove-file':
       return { kind: 'skills', action, name: need(1, 'name'), file: need(2, 'file') };
+    case 'category': {
+      const category = p[2] ?? str(opts.category);
+      return { kind: 'skills', action, name: need(1, 'name'), ...(category !== undefined ? { category } : {}) };
+    }
     case 'revert':
       return { kind: 'skills', action, name: need(1, 'name'), id: need(2, 'id') };
     case 'archive':
@@ -1007,7 +1019,7 @@ function buildSkills(p: string[], opts: Record<string, unknown>): IpcAction {
     case 'history':
       return { kind: 'skills', action, name: need(1, 'name') };
     default:
-      throw new Error(`unknown skills action "${action}"; use list | search | categories | show | create | patch | write-file | remove-file | archive | restore | pin | unpin | history | revert`);
+      throw new Error(`unknown skills action "${action}"; use list | search | categories | show | create | patch | write-file | remove-file | category | archive | restore | pin | unpin | history | revert`);
   }
 }
 
@@ -1450,7 +1462,7 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
     topic: 'skills',
     channel: false,
     description:
-      'The skills the gateway keeps for every agent: search <what you need> | show <name> [file] | list | categories | create <name> --description … | patch <name> --version … --content … | write-file | remove-file | archive | restore | pin | unpin | history | revert <name> <id>',
+      'The skills the gateway keeps for every agent: search <what you need> | show <name> [file] | list | categories | create <name> --description … [--category …] | category <name> [group] | patch <name> --version … --content … | write-file | remove-file | archive | restore | pin | unpin | history | revert <name> <id>',
     stdin: [
       { kind: 'option', key: 'body', flag: '--body', actions: ['create'] },
       { kind: 'option', key: 'content', flag: '--content', actions: ['patch', 'write-file'] },
@@ -1459,6 +1471,7 @@ export const REVERSE_COMMANDS: ReverseCommandSpec[] = [
       { flags: '--again', description: 'show: read it whole even if this conversation already read this version' },
       { flags: '--description <text>', description: 'create: one line on when to use the skill (required)' },
       { flags: '--body <markdown>', description: 'create: the SKILL.md body' },
+      { flags: '--category <name>', description: 'create / category: custom group name (omit or empty on category to clear)' },
       { flags: '--version <version>', description: 'patch: the version `show` printed (required; the write is refused if it changed)' },
       { flags: '--content <text>', description: 'patch / write-file: the file content (required)' },
     ],

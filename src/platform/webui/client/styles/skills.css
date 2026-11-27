@@ -158,6 +158,8 @@
 .fh-skill-ci-l{font-weight:500;font-size:var(--fh-fs-ui);color:var(--fh-fg-hi,var(--fg))}
 .fh-skill-ci-h{grid-column:1;color:var(--fh-fg-dim,var(--dim));font-size:var(--fh-fs-sm);line-height:1.45}
 .fh-skill-ci-ctl{grid-row:span 2;display:flex;align-items:center;justify-content:flex-end}
+.fh-skill-cat-ctl{gap:6px}
+.fh-skill-cat-input{width:170px}
 .fh-skill-pin-btn.is-pinned{background:var(--fh-accent,var(--accent));color:var(--fh-on-accent);border-color:transparent}
 .fh-skill-ed-section{font-size:var(--fh-fs-xs);font-weight:600;color:var(--fh-fg-dim,var(--dim));text-transform:uppercase;letter-spacing:.05em;margin:20px 2px 8px}
 .fh-skill-files-box{border:1px solid var(--fh-line,var(--line));border-bottom:0;border-radius:4px 4px 0 0;background:var(--fh-card,var(--surface));overflow:hidden}
@@ -195,6 +197,7 @@
   .fh-skill-ci{min-height:50px;padding:11px 14px}
   .fh-skill-ci-l{font-size:var(--fh-fs-body)}
   .fh-skill-ci-h{font-size:var(--fh-fs-sm)}
+  .fh-skill-cat-input{width:130px}
   .fh-skill-files-box{border-radius:12px 12px 0 0}
   .fh-skill-file-row{min-height:46px;padding:8px 14px;font-size:var(--fh-fs-ui)}
   .fh-skill-ed-box{border-radius:0 0 12px 12px}

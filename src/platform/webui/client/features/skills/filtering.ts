@@ -5,6 +5,8 @@ import { isSkillActive } from './types.js';
 
 export type SkillGroupId = string;
 
+export const UNCATEGORIZED_FILTER_VALUE = '__uncategorized__';
+
 export interface SkillGroupBucket {
   readonly id: SkillGroupId;
   readonly label: string;
@@ -24,11 +26,15 @@ export function buildSkillSortDef(): FilterBarSortDef {
   };
 }
 
-export function buildSkillFilterGroups(skills: readonly SkillPanelEntry[]): FilterBarGroup[] {
+export function buildSkillFilterGroups(
+  skills: readonly SkillPanelEntry[],
+  uncategorizedLabel = tr('skills.tabLibrary'),
+): FilterBarGroup[] {
   let activeCount = 0;
   let archivedCount = 0;
   let expiredCount = 0;
   let pinnedCount = 0;
+  let uncategorizedCount = 0;
   const categoryCounts = new Map<string, number>();
 
   for (const skill of skills) {
@@ -36,8 +42,11 @@ export function buildSkillFilterGroups(skills: readonly SkillPanelEntry[]): Filt
     else archivedCount++;
     if (skill.status === 'expired') expiredCount++;
     if (skill.pinned) pinnedCount++;
-    if (skill.category) {
-      categoryCounts.set(skill.category, (categoryCounts.get(skill.category) ?? 0) + 1);
+    const cat = skill.category?.trim();
+    if (cat) {
+      categoryCounts.set(cat, (categoryCounts.get(cat) ?? 0) + 1);
+    } else {
+      uncategorizedCount++;
     }
   }
 
@@ -59,6 +68,9 @@ export function buildSkillFilterGroups(skills: readonly SkillPanelEntry[]): Filt
     const categories = [...categoryCounts.entries()]
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([cat, count]) => ({ value: cat, label: cat, count }));
+    if (uncategorizedCount > 0) {
+      categories.push({ value: UNCATEGORIZED_FILTER_VALUE, label: uncategorizedLabel, count: uncategorizedCount });
+    }
     groups.push({
       id: 'category',
       label: tr('skills.tabLibrary'),
@@ -92,7 +104,9 @@ function matchesStatus(skill: SkillPanelEntry, statuses: readonly string[] | und
 
 function matchesCategory(skill: SkillPanelEntry, categories: readonly string[] | undefined): boolean {
   if (!categories || categories.length === 0) return true;
-  return Boolean(skill.category && categories.includes(skill.category));
+  const cat = skill.category?.trim();
+  if (!cat) return categories.includes(UNCATEGORIZED_FILTER_VALUE);
+  return categories.includes(cat);
 }
 
 function parseTs(iso: string | undefined): number {
@@ -131,7 +145,10 @@ export function filterSkills(skills: readonly SkillPanelEntry[], state: FilterBa
   return filtered.sort((a, b) => compareSkills(a, b, state.sort, state.dir));
 }
 
-export function groupSkills(skills: readonly SkillPanelEntry[]): SkillGroupBucket[] {
+export function groupSkills(
+  skills: readonly SkillPanelEntry[],
+  uncategorizedLabel = tr('skills.tabLibrary'),
+): SkillGroupBucket[] {
   const byCategory = new Map<string, SkillPanelEntry[]>();
   const uncategorized: SkillPanelEntry[] = [];
   const archived: SkillPanelEntry[] = [];
@@ -158,7 +175,7 @@ export function groupSkills(skills: readonly SkillPanelEntry[]): SkillGroupBucke
   if (uncategorized.length > 0) {
     buckets.push({
       id: 'uncategorized',
-      label: buckets.length > 0 ? tr('skills.tabLibrary') : tr('skills.title'),
+      label: buckets.length > 0 ? uncategorizedLabel : tr('skills.title'),
       items: uncategorized,
     });
   }

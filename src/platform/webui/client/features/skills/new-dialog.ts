@@ -17,7 +17,12 @@ export function openNewSkillDialog(
 ): DialogController {
   let name = '';
   let description = '';
+  let category = '';
   let body = '';
+  const categories = store.categories();
+  const catListId = 'fh-skill-new-cat-list';
+  const catLabel = ctx.i18n.t('wb.skills.categoryField') || 'Category';
+  const catPlaceholder = ctx.i18n.t('wb.skills.categoryPlaceholder') || 'Choose or type a category…';
 
   const icons = deps.icons();
   const dlg = openDialog({
@@ -60,6 +65,28 @@ export function openNewSkillDialog(
           }),
         })}
         ${renderFieldRow({
+          id: 'fh-skill-new-cat',
+          label: catLabel,
+          control: html`
+            <input
+              id="fh-skill-new-cat"
+              type="text"
+              class="fh-input"
+              list=${catListId}
+              .value=${category}
+              placeholder=${catPlaceholder}
+              aria-label=${catLabel}
+              autocomplete="off"
+              @input=${(ev: Event) => {
+                category = (ev.currentTarget as HTMLInputElement).value;
+              }}
+            />
+            <datalist id=${catListId}>
+              ${categories.map((cat) => html`<option value=${cat}></option>`)}
+            </datalist>
+          `,
+        })}
+        ${renderFieldRow({
           id: 'fh-skill-new-body',
           label: tr('skills.newBodyPlaceholder'),
           control: html`<textarea
@@ -88,6 +115,7 @@ export function openNewSkillDialog(
       const outcome = await store.create({
         name: trimmedName,
         description: trimmedDesc,
+        ...(category.trim() ? { category: category.trim() } : {}),
         ...(body ? { body } : {}),
       });
       if (!outcome.ok) {

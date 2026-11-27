@@ -32,6 +32,7 @@ import {
   removeSkillFile,
   restoreSkill,
   revertSkill,
+  setCategory,
   skillHistory,
   writeSkillFile,
   type SkillChangeBy,
@@ -409,8 +410,19 @@ export class DaemonReverse {
               agent: by.agent ?? this.ctx.config.routing.default,
             }
           : undefined;
-        return write(() => createSkill({ name: name(), description: action.description ?? '', body: action.body, source, by }));
+        return write(() =>
+          createSkill({
+            name: name(),
+            description: action.description ?? '',
+            body: action.body,
+            ...(action.category !== undefined ? { category: action.category } : {}),
+            source,
+            by,
+          })
+        );
       }
+      case 'category':
+        return write(() => setCategory(name(), action.category, undefined, Date.now(), by));
       case 'patch':
         return write(() =>
           patchSkill({ name: name(), version: need(action.version, '--version'), content: need(action.content, '--content'), by })

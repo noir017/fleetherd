@@ -33,6 +33,7 @@ const SKILLS_WRITES: ReadonlySet<string> = new Set([
   'patch',
   'write-file',
   'remove-file',
+  'category',
   'archive',
   'restore',
   'pin',

@@ -455,29 +455,42 @@ function assertResidentDescription(meta: SkillMeta, content: string): void {
   }
 }
 
+function withMetadataKey(content: string, key: string, encodedValue: string | undefined, missingError: string): string {
+  const match = /^(---\r?\n)([\s\S]*?)(\r?\n---(?:\r?\n|$))/.exec(content);
+  if (!match) throw new Error(missingError);
+  const lines = match[2]!.split(/\r?\n/);
+  const start = lines.findIndex((l) => /^metadata:\s*$/.test(l));
+  const isKeyLine = (l: string): boolean => metaKeys(key).some((k) => new RegExp(`^\\s+${k}:`).test(l));
+  let next: string[];
+  if (start < 0) {
+    next = encodedValue !== undefined ? [...lines, 'metadata:', `  ${key}: ${encodedValue}`] : lines;
+  } else {
+    let end = start + 1;
+    while (end < lines.length && (!lines[end]!.trim() || /^\s/.test(lines[end]!))) end++;
+    const block = lines.slice(start + 1, end).filter((l) => !isKeyLine(l));
+    const indent = /^(\s+)/.exec(block.find((l) => l.trim()) ?? '  ')?.[1] ?? '  ';
+    const kept = encodedValue !== undefined ? [`${indent}${key}: ${encodedValue}`, ...block] : block;
+    next = [...lines.slice(0, start), ...(kept.some((l) => l.trim()) ? ['metadata:', ...kept] : []), ...lines.slice(end)];
+  }
+  return `${match[1]}${next.join('\n')}${match[3]}${content.slice(match[0].length)}`;
+}
+
 /**
  * SKILL.md with `fleetherd-resident` set or removed. Removed rather than set to "false": absence is
  * the library tier, so a skill that was never promoted and one that was demoted read the same. The
  * old spelling, `talkcode-resident`, is removed either way: the line written is the only one left.
  */
 export function withResident(content: string, resident: boolean): string {
-  const match = /^(---\r?\n)([\s\S]*?)(\r?\n---(?:\r?\n|$))/.exec(content);
-  if (!match) throw new Error('SKILL.md has no frontmatter to set the tier in');
-  const lines = match[2]!.split(/\r?\n/);
-  const start = lines.findIndex((l) => /^metadata:\s*$/.test(l));
-  const isResidentLine = (l: string): boolean => metaKeys(META_RESIDENT).some((k) => new RegExp(`^\\s+${k}:`).test(l));
-  let next: string[];
-  if (start < 0) {
-    next = resident ? [...lines, 'metadata:', `  ${META_RESIDENT}: "true"`] : lines;
-  } else {
-    let end = start + 1;
-    while (end < lines.length && (!lines[end]!.trim() || /^\s/.test(lines[end]!))) end++;
-    const block = lines.slice(start + 1, end).filter((l) => !isResidentLine(l));
-    const indent = /^(\s+)/.exec(block.find((l) => l.trim()) ?? '  ')?.[1] ?? '  ';
-    const kept = resident ? [`${indent}${META_RESIDENT}: "true"`, ...block] : block;
-    next = [...lines.slice(0, start), ...(kept.some((l) => l.trim()) ? ['metadata:', ...kept] : []), ...lines.slice(end)];
-  }
-  return `${match[1]}${next.join('\n')}${match[3]}${content.slice(match[0].length)}`;
+  return withMetadataKey(content, META_RESIDENT, resident ? '"true"' : undefined, 'SKILL.md has no frontmatter to set the tier in');
+}
+
+/**
+ * SKILL.md with `fleetherd-category` set or removed. Any old `talkcode-category` line is replaced
+ * or dropped alongside it so only one canonical key remains.
+ */
+export function withCategory(content: string, category: string | undefined): string {
+  const encoded = category !== undefined ? JSON.stringify(validateCategory(category)) : undefined;
+  return withMetadataKey(content, META_CATEGORY, encoded, 'SKILL.md has no frontmatter to set the category in');
 }
 
 function composeSkillMd(name: string, description: string, body: string, category?: string): string {
@@ -1109,6 +1122,36 @@ export function setResident(name: string, resident: boolean, dir = configDir(), 
   next.set(SKILL_FILE, Buffer.from(content));
   writeAtomic(path.join(skillDir(clean, dir), SKILL_FILE), content, 0o600);
   commit(dir, clean, { action: resident ? 'resident' : 'library', before, after: skillVersionOf(next), by, now });
+  return recordOf(clean, readUsage(dir).skills[clean] ?? defaultUsage(clean, dir), next, false, now);
+}
+
+/**
+ * Set or clear a skill's category (`fleetherd-category`). Passing an empty string or undefined
+ * removes the category so the skill falls back to uncategorized ("other").
+ */
+export function setCategory(
+  name: string,
+  category: string | undefined,
+  dir = configDir(),
+  now = Date.now(),
+  by: SkillChangeBy = AGENT
+): SkillRecord {
+  const clean = validateSkillName(name);
+  requireActive(clean, dir);
+  const normalized = category !== undefined && category.trim() !== '' ? validateCategory(category) : undefined;
+  const files = readSkillFiles(clean, dir);
+  const md = files.get(SKILL_FILE)?.toString('utf8') ?? '';
+  if (skillMetaOf(files).category === normalized) {
+    return recordOf(clean, readUsage(dir).skills[clean] ?? defaultUsage(clean, dir), files, false, now);
+  }
+  const content = withCategory(md, normalized);
+  assertSkillMd(content, clean);
+  ensureRepo(dir);
+  const before = skillVersionOf(files);
+  const next = new Map(files);
+  next.set(SKILL_FILE, Buffer.from(content));
+  writeAtomic(path.join(skillDir(clean, dir), SKILL_FILE), content, 0o600);
+  commit(dir, clean, { action: 'category', note: normalized ?? 'clear', before, after: skillVersionOf(next), by, now });
   return recordOf(clean, readUsage(dir).skills[clean] ?? defaultUsage(clean, dir), next, false, now);
 }
 

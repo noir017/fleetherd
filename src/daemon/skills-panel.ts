@@ -21,6 +21,7 @@ import {
   removeSkillFile,
   restoreSkill,
   revertSkill,
+  setCategory,
   setResident,
   showSkill,
   skillHistory,
@@ -117,7 +118,16 @@ export function buildSkillsPanel(options: SkillsPanelOptions = {}): SkillsPanel 
             return { ok: true, skills: list(), detail: detailOf(request.name, request.file) };
           case 'create':
             return await write(() =>
-              createSkill({ name: request.name, description: request.description, body: request.body, by: PERSON }, root())
+              createSkill(
+                {
+                  name: request.name,
+                  description: request.description,
+                  body: request.body,
+                  ...(request.category?.trim() ? { category: request.category } : {}),
+                  by: PERSON,
+                },
+                root()
+              )
             );
           case 'patch':
             return await write(() =>
@@ -148,6 +158,8 @@ export function buildSkillsPanel(options: SkillsPanelOptions = {}): SkillsPanel 
             return done();
           case 'resident':
             return await write(() => setResident(request.name, request.resident, root(), Date.now(), PERSON));
+          case 'category':
+            return await write(() => setCategory(request.name, request.category, root(), Date.now(), PERSON));
           case 'revert':
             return await write(() => revertSkill(request.name, request.id, root(), Date.now(), PERSON));
           default: {

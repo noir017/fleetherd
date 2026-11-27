@@ -631,7 +631,7 @@ export interface SkillPanelDetail {
  */
 export type SkillPanelOp =
   | { action: 'show'; name: string; file?: string }
-  | { action: 'create'; name: string; description: string; body?: string }
+  | { action: 'create'; name: string; description: string; body?: string; category?: string }
   | { action: 'patch'; name: string; version: string; content: string }
   | { action: 'write-file'; name: string; file: string; content: string }
   | { action: 'remove-file'; name: string; file: string }
@@ -640,6 +640,7 @@ export type SkillPanelOp =
   | { action: 'pin'; name: string; pinned: boolean }
   /** In every agent's context, or back to the library — a person's call, so only the page has it. */
   | { action: 'resident'; name: string; resident: boolean }
+  | { action: 'category'; name: string; category: string }
   | { action: 'revert'; name: string; id: string };
 
 /**

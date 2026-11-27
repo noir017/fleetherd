@@ -35,6 +35,10 @@ const SKILLS_EN_STRINGS: Record<string, string> = {
   'wb.skills.discard': 'Discard',
   'wb.skills.current': 'Current',
   'wb.skills.categoryLabel': 'Category {category}',
+  'wb.skills.categoryField': 'Category',
+  'wb.skills.categoryPlaceholder': 'Choose or type a category…',
+  'wb.skills.categoryHint': 'Pick an existing group or type a new one; clear to uncategorize.',
+  'wb.skills.categoryApply': 'Set',
   'wb.skills.agentsLabel': 'Sent to {agents}',
 };
 
@@ -60,6 +64,10 @@ const SKILLS_ZH_STRINGS: Record<string, string> = {
   'wb.skills.discard': '撤销',
   'wb.skills.current': '当前',
   'wb.skills.categoryLabel': '分类 {category}',
+  'wb.skills.categoryField': '分类',
+  'wb.skills.categoryPlaceholder': '选择或输入自定义分类…',
+  'wb.skills.categoryHint': '选已有分类或直接输入新分类名；留空则归入其他',
+  'wb.skills.categoryApply': '设置',
   'wb.skills.agentsLabel': '发给 {agents}',
 };
 
