@@ -5,6 +5,13 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **Sidebar activity bar order corrected.** Reordered the top activity bar to
+  Topics → Scheduled → Reviews → Skills → History (with Scheduled, Reviews, and Topics on the
+  mobile bottom bar and History under More), correcting the `3.41.0` placement that swapped
+  Scheduled and History.
+
 ## [3.41.0] - 2026-11-27
 
 ### Changed
