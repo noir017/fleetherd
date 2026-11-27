@@ -14,7 +14,11 @@ import { createComposerController } from '../composer/index.js';
 import type { TopicStatusController } from '../status/index.js';
 import { createTopicStatusController } from '../status/index.js';
 import type { TranscriptController } from '../transcript/index.js';
-import { createTranscriptController, extractMessageMarkdown } from '../transcript/index.js';
+import {
+  createTranscriptController,
+  extractMessageMarkdown,
+  extractSelectedMessageText,
+} from '../transcript/index.js';
 import { buildTopicEditorDom, resolveTopicEditorIcons } from './dom.js';
 import { createTopicHeaderController, type TopicHeaderController } from './header.js';
 import {
@@ -60,6 +64,8 @@ function buildMessageMenuEntries(
   return entries;
 }
 
+const TOUCH_CONTEXTMENU_WINDOW_MS = 1500;
+
 export class TopicEditorPanel implements TopicEditorHandle {
   readonly element: HTMLElement;
   readonly els: TopicEditorElements;
@@ -75,6 +81,9 @@ export class TopicEditorPanel implements TopicEditorHandle {
   private _topicId = '';
   private _streamState: TopicStreamState;
   private _disposed = false;
+  private _lastPointerType = '';
+  private _lastTouchTime = 0;
+  private readonly _activeTouchIds = new Set<number>();
 
   private _transcript: TranscriptController | null = null;
   private _status: TopicStatusController | null = null;
@@ -416,7 +425,44 @@ export class TopicEditorPanel implements TopicEditorHandle {
       className: 'wb-topic-message-menu',
     });
     this._listeners.add(
+      addDisposableListener(this.els.log, 'pointerdown', (ev: PointerEvent) => {
+        if (ev.pointerType === 'touch') {
+          this._lastPointerType = 'touch';
+          this._lastTouchTime = Date.now();
+          if (typeof ev.pointerId === 'number') this._activeTouchIds.add(ev.pointerId);
+        } else if (ev.pointerType) {
+          this._lastPointerType = ev.pointerType;
+          this._lastTouchTime = 0;
+        }
+      }),
+    );
+    const onTouchPointerEnd = (ev: PointerEvent): void => {
+      if (ev.pointerType !== 'touch') return;
+      // Android Chrome fires pointercancel right before long-press contextmenu; keep timestamp fresh.
+      this._lastTouchTime = Date.now();
+      if (typeof ev.pointerId === 'number') this._activeTouchIds.delete(ev.pointerId);
+    };
+    this._listeners.add(addDisposableListener(this.els.log, 'pointerup', onTouchPointerEnd));
+    this._listeners.add(addDisposableListener(this.els.log, 'pointercancel', onTouchPointerEnd));
+    this._listeners.add(
+      addDisposableListener(
+        this.els.log,
+        'touchstart',
+        () => {
+          this._lastPointerType = 'touch';
+          this._lastTouchTime = Date.now();
+        },
+        { passive: true },
+      ),
+    );
+    const onTouchEnd = (): void => {
+      this._lastTouchTime = Date.now();
+    };
+    this._listeners.add(addDisposableListener(this.els.log, 'touchend', onTouchEnd, { passive: true }));
+    this._listeners.add(addDisposableListener(this.els.log, 'touchcancel', onTouchEnd, { passive: true }));
+    this._listeners.add(
       addDisposableListener(this.els.log, 'contextmenu', (ev: MouseEvent) => {
+        if (this._isTouchContextMenu(ev)) return;
         const target = ev.target;
         if (!(target instanceof Element)) return;
         const msgEl = target.closest<HTMLElement>('[data-k]');
@@ -425,6 +471,22 @@ export class TopicEditorPanel implements TopicEditorHandle {
           ev.preventDefault();
         }
       }),
+    );
+  }
+
+  private _isTouchContextMenu(ev: MouseEvent): boolean {
+    const pt = (ev as MouseEvent & { readonly pointerType?: string }).pointerType;
+    if (pt === 'touch') return true;
+    if (pt === 'mouse' || pt === 'pen') return false;
+    const sc = (
+      ev as MouseEvent & {
+        readonly sourceCapabilities?: { readonly firesTouchEvents?: boolean };
+      }
+    ).sourceCapabilities;
+    if (sc?.firesTouchEvents) return true;
+    return (
+      this._lastPointerType === 'touch' &&
+      (this._activeTouchIds.size > 0 || Date.now() - this._lastTouchTime < TOUCH_CONTEXTMENU_WINDOW_MS)
     );
   }
 
@@ -449,10 +511,12 @@ export class TopicEditorPanel implements TopicEditorHandle {
       messageKey && typeof this._transcript?.getMessage === 'function'
         ? this._transcript.getMessage(messageKey)
         : undefined;
+    const selectedText = extractSelectedMessageText(msgEl, this._win);
     const payload: MessageMenuTarget = {
       topicId: this._topicId,
       messageKey,
       text: msg ? extractMessageMarkdown(msg, msgEl) : (msgEl.textContent ?? '').trim(),
+      selectedText: selectedText || undefined,
       element: msgEl,
     };
     const groups = this._deps.getMessageMenuGroups(payload);

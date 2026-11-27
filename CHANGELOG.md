@@ -32,6 +32,14 @@ All notable changes to this project are documented here. The format is based on
   explicitly bound agent (`agentChosen`) and chosen working directory (`cwdChosen`, including an
   explicitly confirmed agent root), and the launcher derives its initial folded state from those
   server-known fields while leaving untouched new topics expanded.
+- **Web UI message text selection on touch screens and selection-aware Copy.** The transcript's
+  `contextmenu` handler previously intercepted every event with `preventDefault()` and opened the
+  custom message menu, which blocked the native text-selection floating toolbar on Android Chrome
+  when long-pressing message text, while the menu's **Copy** action always copied the entire message
+  markdown. Touch-originated `contextmenu` events now pass through untouched (touch users still have
+  the always-visible `⋯` action button on every message), and **Copy** in the message menu now copies
+  the active plain-text selection when it falls within that message (stripping UI buttons and chrome)
+  while keeping full-message copy when nothing is selected.
 ### Changed
 
 - **Relaxed the web UI send timeout for slow uplinks.** `sendLimit` previously budgeted 1 s per
