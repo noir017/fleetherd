@@ -692,7 +692,7 @@ export interface WorkbenchHost {
   useScheduleLookup: (lookup: (ref: ConversationRef) => boolean) => void;
   useSchedulePanel: (panel: SchedulePanel) => void;
   useSkillsPanel: (panel: SkillsPanel) => void;
-  /** Deliberately read-only: only dismisses pending suggestions or reverts via `skills-store` (invariant 8); never runs or edits reviews. */
+  /** No write of its own: never runs or edits reviews; only dismisses pending suggestions (`reviews.json`) or reverts applied skill changes via `skills-store` (security invariant 8). */
   useReviewPanel: (panel: ReviewPanel) => void;
   /** Read-only by construction; lists recorded conversations and excludes background review sessions. */
   useHistoryPanel: (panel: HistoryPanel) => void;
