@@ -5,6 +5,7 @@ import type { AgentDef } from '../../config/schema.js';
 import type { Welcome } from '../../remote/connection.js';
 import type { Harness } from '../../types.js';
 import { expandHome } from '../agent-common.js';
+import type { HarnessRelay } from '../relay-types.js';
 
 /** A skills (or plugins) directory to link into, and the harness config directory that must exist first. */
 export interface SkillHome {
@@ -86,6 +87,8 @@ export interface HarnessProfile {
   readonly forgetsModelOnLoad?: boolean;
   /** True when the harness's session modes are excluded from permission-level mapping (ask/auto only). */
   readonly omitPermissionModes?: boolean;
+  /** Loopback API relay transform for this harness, if the agent's settings require one. */
+  readonly relay?: (def: AgentDef) => HarnessRelay | undefined;
   readonly skillHomes: (home: string, command?: string) => SkillHome[];
   readonly skillReaders?: readonly SkillReaderSpec[];
   readonly skillHarnessName?: (def: Pick<AgentDef, 'harness' | 'command'>) => string;

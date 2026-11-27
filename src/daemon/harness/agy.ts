@@ -2,6 +2,7 @@ import path from 'node:path';
 import { instructionsHome } from '../../config/instructions.js';
 import { agySplitModel } from '../agy-acp.js';
 import { AGY_COMMAND } from '../agy-cli.js';
+import { agyRelay } from '../agy-relay.js';
 import { agyTranscriptPath, readAgyContext } from '../agy-transcript.js';
 import { agyReferences, agyRuleNote, resolveAgyReference } from '../instruction-imports.js';
 import type { HarnessProfile, SkillHome } from './profile.js';
@@ -21,6 +22,7 @@ export const agyProfile: HarnessProfile = {
   forgetsModelOnLoad: true,
   // Measured 2026-11-06/18: agy's `default` mode writes without asking, so permission levels stay ask/auto only.
   omitPermissionModes: true,
+  relay: agyRelay,
   skillHomes: (home) => agySkillHomes(home),
   skillReaders: [{ name: 'agy', homes: agySkillHomes }],
   skillScanDirs: (opts) => [

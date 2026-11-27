@@ -2,7 +2,7 @@ import http from 'node:http';
 import https from 'node:https';
 import type { AgentDef } from '../config/schema.js';
 import type { RelayTransform, RemoteHost } from '../remote/host.js';
-import { agyRelay } from './agy-relay.js';
+import { HARNESSES } from './harness/index.js';
 import type { HarnessRelay, RelaySpec } from './relay-types.js';
 
 /**
@@ -22,21 +22,7 @@ import type { HarnessRelay, RelaySpec } from './relay-types.js';
 
 /** The relay an agent runs behind, if its harness and settings call for one. */
 export function harnessRelay(def: AgentDef): HarnessRelay | undefined {
-  switch (def.harness) {
-    case 'agy':
-      return agyRelay(def);
-    case 'claude':
-    case 'gemini':
-    case 'codex':
-    case 'opencode':
-    case 'dsh':
-    case 'custom':
-      return undefined;
-    default: {
-      const _exhaustive: never = def.harness;
-      return _exhaustive;
-    }
-  }
+  return HARNESSES[def.harness].relay?.(def);
 }
 
 /**
