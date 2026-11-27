@@ -1547,8 +1547,9 @@ for the same reason a draft that long is.
 yet noticed was dead — left the bubble dimmed for ever: no error to turn it red, no Retry, and
 nothing in the daemon's log, because a request is only logged once its body has been read. Now
 `post()` takes a `limit` and aborts the attempt through an `AbortController`; the send passes
-`sendLimit(body)` — 15 s plus 1 s per 64 KiB, capped at the 300 s Node's `http.Server.requestTimeout`
-already allows a body. It is scaled because the same page sends a line of text and a 20 MB file. An
+`sendLimit(body)` — 15 s plus 1 s per 16 KiB (~128 kbps), capped at 3600 s (matching the
+`server.requestTimeout` set in `server.ts`, enough to cover `MAX_BODY_BYTES` = 36 MiB on a slow
+uplink). It is scaled because the same page sends a line of text and a 25 MiB file. An
 attempt that was given over a minute was an upload, and is not repeated from byte zero (it fails
 once, and Retry is one tap); a short one is retried under the same nonce like any dropped request.
 `deliver()` also turns a *synchronous* throw from `post()` — `JSON.stringify` on a body too big to

@@ -5,6 +5,14 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **Relaxed the web UI send timeout for slow uplinks.** `sendLimit` previously budgeted 1 s per
+  64 KiB (~512 kbps) with a 300 s cap, leaving only ~4 s of margin for a 1 MB upload on a 250 kbps
+  link and cutting off larger attachments on slower links. It now budgets 1 s per 16 KiB (~128 kbps)
+  and raises both the client cap and `http.Server.requestTimeout` to 3600 s so uploads up to the
+  36 MiB `MAX_BODY_BYTES` limit can finish without timing out and retrying from byte zero.
+
 ## [3.43.0] - 2026-11-27
 
 ### Added

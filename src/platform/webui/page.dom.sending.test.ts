@@ -296,7 +296,7 @@ describe('webui page: sending', () => {
     const sent = h.calls.filter((c) => c.path === 'api/send');
     expect(sent).toHaveLength(3);
     expect(new Set(sent.map((c) => c.body.nonce)).size).toBe(1);
-    expect(h.longTimers).toEqual([15000, 15000, 15000]);
+    expect(h.longTimers).toEqual([15001, 15001, 15001]);
   });
 
   it('allows an attachment longer in proportion to its size, and does not start an upload over', async () => {
@@ -325,8 +325,8 @@ describe('webui page: sending', () => {
     const sent = h.calls.filter((c) => c.path === 'api/send');
     expect(sent).toHaveLength(1);
     const file = (sent[0]?.body.files as Array<{ name: string; data: string }>)[0]!;
-    // Fifteen seconds, plus one more for every 64 KiB of what is being sent.
-    expect(h.longTimers).toEqual([Math.round(15000 + (file.name.length + file.data.length) / 65.536)]);
+    // Fifteen seconds, plus one more for every 16 KiB of what is being sent.
+    expect(h.longTimers).toEqual([Math.round(15000 + (file.name.length + file.data.length) / 16.384)]);
     expect(h.longTimers[0]).toBeGreaterThan(60000);
     expect(h.doc.querySelector('[data-retry]')).not.toBeNull();
   });
