@@ -493,4 +493,71 @@ describe('topics built-in plugin', () => {
       h.cleanup();
     }
   });
+
+  it('wakes prefetch when stream.state returns to open or the tab becomes visible again', async () => {
+    vi.useFakeTimers({ now: 1_700_000_060_000 });
+    let streamOpen = false;
+    const fetched: string[] = [];
+    const t1 = makeTopic({ id: 't1', title: 'Active', lastAt: 1_700_000_050_000, last: 't1.1.1' });
+    const t2 = makeTopic({ id: 't2', title: 'Recent', lastAt: 1_700_000_040_000, last: 't2.1.5' });
+    const t3 = makeTopic({ id: 't3', title: 'HiddenRecent', lastAt: 1_700_000_030_000, last: 't3.1.2' });
+    const putCache = vi.fn(async () => true);
+    const fetchFn = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      fetched.push(url);
+      const id = new URL(url, 'http://localhost/').searchParams.get('t') ?? '';
+      return {
+        ok: true,
+        json: async () => ({ topic: id, epoch: 1, last: id === 't2' ? 't2.1.5' : 't3.1.2', messages: [] }),
+      } as unknown as Response;
+    });
+
+    const h = setupHarness([t1, t2], 't1', {
+      prefetchDeps: {
+        isDbAvailable: () => true,
+        isStreamParked: () => false,
+        isStreamOpen: () => streamOpen,
+        getEpoch: () => 1,
+        getVersion: () => undefined,
+        isNewer: (a, b) => a !== b,
+        peekCache: async () => null,
+        putCache,
+        snapshotMsgs: () => [],
+        fetchFn: fetchFn as unknown as typeof fetch,
+      },
+    });
+
+    const visDesc = Object.getOwnPropertyDescriptor(h.doc, 'visibilityState');
+    try {
+      await h.manager.activate('topics');
+
+      // List arrives while the stream is still down: prefetch bails out.
+      h.setTopics([t1, t2]);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(fetched).toEqual([]);
+
+      // Stream reopens quietly (no new topic.list event): prefetch wakes and fetches t2.
+      streamOpen = true;
+      h.events.emit('stream.state', { state: 'open' });
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(fetched).toEqual(['api/topic?t=t2']);
+
+      // Tab hides briefly (< parkMs, stream stays open) while t3 updates.
+      Object.defineProperty(h.doc, 'visibilityState', { value: 'hidden', configurable: true });
+      h.setTopics([t1, t2, t3]);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(fetched).toEqual(['api/topic?t=t2']);
+
+      // Tab becomes visible again without reconnecting: visibilitychange wakes prefetch for t3.
+      Object.defineProperty(h.doc, 'visibilityState', { value: 'visible', configurable: true });
+      h.doc.dispatchEvent(new Event('visibilitychange'));
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(fetched).toEqual(['api/topic?t=t2', 'api/topic?t=t3']);
+    } finally {
+      if (visDesc) Object.defineProperty(h.doc, 'visibilityState', visDesc);
+      else delete (h.doc as unknown as Record<string, unknown>).visibilityState;
+      vi.useRealTimers();
+      h.cleanup();
+    }
+  });
 });
