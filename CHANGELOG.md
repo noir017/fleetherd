@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.51.1] - 2026-11-28
+
 ### Fixed
 
 - **Scrolling up in the web UI after a finished turn now loads older history reliably, including on
