@@ -356,6 +356,7 @@ export const zhCN = {
   'status.optSwitchTitle': '切换当前话题的 {name}{note}',
   'status.effortLabel': '思考程度',
   'status.effortTitle': '切换当前话题的思考程度（/effort）',
+  'status.effortAria': '思考程度：{level}',
   'modelPop.headingModel': '当前话题模型',
   'modelPop.headingOpt': '当前话题 {name}',
   'modelPop.settingFallback': '设置',

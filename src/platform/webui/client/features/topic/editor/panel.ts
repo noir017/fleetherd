@@ -221,7 +221,10 @@ export class TopicEditorPanel implements TopicEditorHandle {
     harness: string | undefined,
   ): void {
     const full = dir?.path || dir?.name || '';
-    this.els.dirNameEl.textContent = dir?.name || lastFolder(full);
+    const name = dir?.name || lastFolder(full);
+    this.els.dirNameEl.textContent = name;
+    // Its length, for the phone's shrink floor (composer.css), as agentChip does for the agent.
+    this.els.dirEl.style.setProperty('--n', String([...name].length));
     this.els.dirFullEl.textContent = full ? tr('status.dirAria', { path: full }) : '';
     this.els.dirEl.title = full;
     this.els.dirEl.hidden = !full;

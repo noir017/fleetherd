@@ -154,7 +154,8 @@ button:disabled{opacity:.5;cursor:default}
      The directory gives way first, down to a few letters, then the agent's name; only then does
      the line scroll. That order is the flex below: both start from a basis of 0, so neither can
      push the other onto a second line, and the chips grow a thousand times faster, up to what
-     they need, before the directory gets any of what is left. */
+     they need, before the directory gets any of what is left. Each floor is min(fixed, the name's
+     own width), from the --n length format.ts and panel.ts set, so a short name is never padded. */
   .wb-topic-editor .wb-topic-status-row{flex-wrap:wrap;gap:0 6px;margin:-4px 0 4px}
   .wb-topic-editor .wb-topic-status-row:not(:has(> :not([hidden]):not(.wb-topic-power))){display:none}
   /* :not([hidden]) guards display:contents so hidden status strips stay display:none. */
@@ -170,20 +171,17 @@ button:disabled{opacity:.5;cursor:default}
   /* A chip is a 24px pill in a 32px box: the clear band above and below it is still the button,
      so it is easier to hit than the 28px pill it replaced while taking less of the screen. */
   .wb-topic-editor .st-agent,
-  .wb-topic-editor .st-effort,
   .wb-topic-editor .st-model,
   .wb-topic-editor .wb-topic-dir{box-sizing:border-box;height:32px;min-height:32px;margin:0;padding:0 8px;border:solid transparent;border-width:4px 0;border-radius:999px;background-clip:padding-box;font-size:var(--fh-fs-xs);line-height:24px}
-  .wb-topic-editor .st-effort,
   .wb-topic-editor .st-model,
   .wb-topic-editor .wb-topic-dir{background-color:var(--fh-btn2);color:var(--fh-fg)}
   .wb-topic-editor .st-model:hover,
   .wb-topic-editor .st-model[aria-expanded="true"]{background-clip:padding-box}
   .wb-topic-editor .st-model:focus-visible{outline-offset:-3px}
-  .wb-topic-editor .st-agent{flex:0 1 auto;min-width:56px;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .wb-topic-editor .st-effort,
+  .wb-topic-editor .st-agent{flex:0 1 auto;min-width:min(56px,calc(var(--n,99)*1ch + 16px));display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .wb-topic-editor .st-model{display:inline-flex;align-items:center}
   .wb-topic-editor .st-model:not(.st-opt){max-width:150px}
-  .wb-topic-editor .wb-topic-dir{order:2;flex:1 1 0;max-width:max-content;min-width:64px;justify-content:center}
+  .wb-topic-editor .wb-topic-dir{order:2;flex:1 1 0;max-width:max-content;min-width:min(64px,calc(var(--n,99)*1ch + 32px));justify-content:center}
   .wb-topic-editor .wb-topic-status:not([hidden])+.wb-topic-dir::before{content:none}
   .wb-topic-editor .st-info{order:3;flex:1 0 100%;column-gap:10px;height:20px;font-size:var(--fh-fs-2xs);color:var(--fh-fg-dim);font-variant-numeric:tabular-nums;cursor:pointer;user-select:none;-webkit-user-select:none}
   .wb-topic-editor .st-info>.st{flex:none}

@@ -32,8 +32,9 @@ All notable changes to this project are documented here. The format is based on
   since it is the one reading nobody acts on mid-conversation, so a narrow screen loses that
   rather than the cache countdown or a quota pool. Everywhere, desktop included, the directory
   chip shows just the last folder — the whole path cut from the left read as `…orkspace/fleetherd`
-  — with the full path in its tooltip and for screen readers, and the permission chip shows a
-  shield instead of the word "Permissions". The desktop row keeps its layout.
+  — with the full path in its tooltip and for screen readers, and the permission and effort chips
+  show a shield and a gauge instead of the words "Permissions" and "Effort", which stay in their
+  tooltips and for screen readers. The desktop row keeps its layout.
 
 ## [3.45.0] - 2026-11-28
 

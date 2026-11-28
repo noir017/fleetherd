@@ -82,6 +82,7 @@ describe('wb2-chat topic editor alignment', () => {
     expect(panel.els.dirEl.hidden).toBe(false);
     // The chip shows the last folder; the whole path is the title and what a screen reader hears.
     expect(panel.els.dirNameEl.textContent).toBe('fleetherd');
+    expect(panel.els.dirEl.style.getPropertyValue('--n')).toBe('9');
     expect(panel.els.dirNameEl.getAttribute('aria-hidden')).toBe('true');
     expect(panel.els.dirEl.title).toBe('~/work/fleetherd');
     expect(panel.els.dirFullEl.textContent).toBe('Working directory: ~/work/fleetherd');
@@ -119,7 +120,8 @@ describe('wb2-chat topic editor alignment', () => {
       false,
       { fallbackOptions: [], openModel: false, openOptId: null },
     );
-    expect(html).toContain('<span class="st-agent">claude</span>');
+    // Its length rides along, for the phone's shrink floor (composer.css).
+    expect(html).toContain('<span class="st-agent" style="--n:6">claude</span>');
     expect(html).toContain('<span class="st-sep"> · </span>');
     expect(html).toContain('<button type="button" class="st-model st-opt st-eff" data-effort="1"');
     expect(html).toContain('<span class="st-mtext">high</span>');
@@ -250,8 +252,9 @@ describe('wb2-chat topic editor alignment', () => {
     expect(mobileBlock).toContain('.wb-topic-editor .st-info::-webkit-scrollbar{display:none}');
     // Both start from nothing, so neither pushes the other to a new line; the chips grow first.
     expect(mobileBlock).toContain('.wb-topic-editor .st-who{order:1;flex:1000 1 0;max-width:max-content;');
-    expect(mobileBlock).toContain('.wb-topic-editor .wb-topic-dir{order:2;flex:1 1 0;max-width:max-content;min-width:64px;');
-    expect(mobileBlock).toContain('.wb-topic-editor .st-agent{flex:0 1 auto;min-width:56px;');
+    // Floors of 64px and 56px, or the name's own width when it is shorter, so a short one is not padded.
+    expect(mobileBlock).toContain('.wb-topic-editor .wb-topic-dir{order:2;flex:1 1 0;max-width:max-content;min-width:min(64px,calc(var(--n,99)*1ch + 32px));');
+    expect(mobileBlock).toContain('.wb-topic-editor .st-agent{flex:0 1 auto;min-width:min(56px,calc(var(--n,99)*1ch + 16px));');
     expect(mobileBlock).toContain('.wb-topic-editor .st-info{order:3;flex:1 0 100%;');
     expect(mobileBlock).toContain('.wb-topic-editor .st-info>.st-cost{order:1}');
     // A 24px pill in a 32px target: the band above and below is transparent border, not margin.
@@ -259,6 +262,8 @@ describe('wb2-chat topic editor alignment', () => {
     expect(mobileBlock).toContain('.wb-topic-editor .st-model[aria-expanded="true"]{background-clip:padding-box}');
     // The left-ellipsis trick for a whole path is gone with the path.
     expect(composerCss).not.toContain('direction:rtl');
+    // The effort level is a switch (.st-eff, a .st-model) now; the plain-text pill's rules went with it.
+    expect(composerCss).not.toContain('.st-effort');
     // None of it leaks onto the desktop row, which wraps as it did.
     expect(desktop).not.toContain('overflow-x:auto');
     expect(desktop).not.toContain('flex:1000 1 0');

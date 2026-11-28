@@ -229,7 +229,13 @@ describe('features/topic/status/format', () => {
   it('draws the effort switch as a chip like the permission one, and nothing without a level', () => {
     const chip = effortChip('high', false);
     expect(chip).toContain('<button type="button" class="st-model st-opt st-eff" data-effort="1" aria-haspopup="dialog" aria-expanded="false"');
-    expect(chip).toContain('<span class="st-olabel">Effort</span> <span class="st-mtext">high</span>');
+    // A gauge in place of the word, which the title and a screen reader still carry.
+    expect(chip).toContain('<svg class="ic ic-gauge st-picon"');
+    expect(chip).toContain('aria-label="Effort: high"');
+    expect(chip).toContain('title="Switch the reasoning effort for this topic (/effort)"');
+    expect(chip).toContain('<span class="st-mtext">high</span></button>');
+    expect(chip).not.toContain('st-olabel');
+    expect(chip.replace(/<[^>]*>/g, '')).toBe(' · high');
     expect(effortChip('high', true)).toContain('aria-expanded="true"');
     expect(effortChip(undefined, false)).toBe('');
     expect(effortChip(null, false)).toBe('');

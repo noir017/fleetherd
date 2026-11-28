@@ -354,6 +354,7 @@ export const en = {
   'status.optSwitchTitle': 'Switch {name} for this topic{note}',
   'status.effortLabel': 'Effort',
   'status.effortTitle': 'Switch the reasoning effort for this topic (/effort)',
+  'status.effortAria': 'Effort: {level}',
   'modelPop.headingModel': 'Model for this topic',
   'modelPop.headingOpt': '{name} for this topic',
   'modelPop.settingFallback': 'Setting',

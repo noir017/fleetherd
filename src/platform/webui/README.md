@@ -510,8 +510,8 @@ one. Decisions in it:
   mid-conversation; the rest keep the desktop's order.
 - **The directory is its last folder** (`dir.name`, which the room already sends as the basename),
   on the desktop too; the path is the title and a visually hidden span, since a generic span cannot
-  carry an `aria-label`. The permission switch is a shield and the level, with an `aria-label`
-  naming it.
+  carry an `aria-label`. The permission and effort switches are an icon (a shield, a gauge) and
+  the value, with an `aria-label` naming them; the word stays in the title.
 - Measured in Chromium on 2026-11-28 against the real `WebRoom` at 360, 390, 412 and 1280px: one
   line at every phone width with an effort switch and two quota pools in place, a tap in the
   transparent band opening the permission list, both lines scrolled by a real touch drag and kept
