@@ -5,6 +5,18 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **Scrolling up in the web UI after a finished turn now loads older history reliably, including on
+  mobile portrait screens.** Three gaps could strand a topic without upward paging: the service
+  worker's push-triggered background cache dropped `hasMore` and `oldestSeq` when storing a
+  windowed snapshot, a disconnected windowed `sync` after backlog overflow kept pre-gap messages
+  and the old `oldestSeq` (leaving an unloadable hole in the middle), and a tall portrait viewport
+  whose compact tail did not overflow its container could not trigger a scroll event. The service
+  worker now stores the paging cursor, disconnected `sync` windows drop stranded pre-gap rows and
+  adopt the server's cursor, `resumed` carries `visibleCount` so previously poisoned caches
+  self-heal once, and short viewports auto-backfill up to three older pages when history remains.
+
 ## [3.51.0] - 2026-11-28
 
 ### Changed
