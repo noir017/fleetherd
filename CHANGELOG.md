@@ -7,6 +7,12 @@ All notable changes to this project are documented here. The format is based on
 
 ### Changed
 
+- **The web UI keeps recent topics current with `?since=` deltas instead of full reloads.** The
+  sidebar's topic-row updates act as a lightweight version signal; when a recent topic changes in
+  the background, the client fetches only the new turns (`?since=`) and merges them into its local
+  cache, expanding preloading beyond "Needs you" to active and recently finished topics. Idle
+  traffic stays around 2.6 KB/h, background updates drop by ~76–83%, and opening a recent topic
+  paints from cache with only a ~600 B delta check.
 - **The web UI's page script is back under its size budget.** `app-*.js` had grown to 167 KiB
   gzipped against a budget of 160. Its two dictionaries carried every string of the views that load
   on demand (settings, schedules, reviews, skills, history, files, changes, terminal), and those
