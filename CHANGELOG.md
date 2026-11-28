@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.46.0] - 2026-11-28
+
 ### Added
 
 - **The Web UI's status line switches the reasoning effort, the way it switches the model.** The
