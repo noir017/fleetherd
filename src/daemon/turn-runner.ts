@@ -1501,9 +1501,9 @@ export class TurnRunner {
     });
     // A subagent's card is not the reply, so it is not what the turn's change entry hangs off (lastRef).
     const cards = new SubagentCards(
-      () =>
+      (series) =>
         new ToolRenderer(toolOptions, {
-          sendBubble: (text) => progressLane.sendMessage(address, text, { kind: 'subagent' }),
+          sendBubble: (text) => progressLane.sendMessage(address, text, { kind: 'subagent', series }),
           editBubble,
           now: this.clock.now,
           schedule: this.clock.schedule,

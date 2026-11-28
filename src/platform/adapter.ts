@@ -244,6 +244,13 @@ export const MESSAGE_KINDS = ['tools', 'subagent', 'dispatch', 'report', 'aside'
 
 export interface SendOptions {
   kind?: MessageKind;
+  /**
+   * Messages sent under one series are one item, continued: a subagent's card (kind `subagent`,
+   * keyed by the call that started it) whose tools went on in another message — one that outgrew
+   * its bubble, or a later render the subagent was resumed in. The web UI draws a series as one
+   * subagent; a platform with no such list ignores it.
+   */
+  series?: string;
   workdir?: WorkdirScreen;
   handoff?: AgentHandoffAction;
 }

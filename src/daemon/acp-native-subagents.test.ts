@@ -215,3 +215,88 @@ describe('native subagent sessions, through the translator', () => {
     expect(run().text).toEqual(['launched']);
   });
 });
+
+/**
+ * A subagent resumed after it ended (SendMessage to its agent id, in a later turn). claude-agent-acp
+ * starts a new generation of the same task, `<task>:generation:N`, and the resumed run's own updates
+ * keep the FIRST run's call as `parentToolUseId` — 0.81.0 looks them up under the first run, finds it
+ * ended and drops them ("ignoring late update for terminal subagent"). So the call that started the
+ * subagent is what stays the same, and it is the card's key (SendOptions.series).
+ * project-scripts/fleetherd-subagent-resume/probe.mjs, 2026-11-28.
+ */
+describe('a subagent resumed after it ended', () => {
+  const AGENT = 'ac080fcf96e30cae5';
+  const CALL = 'toolu_011jAArTU2WkCBUh1wYyigXz';
+  const GEN2 = `${AGENT}:generation:2`;
+  const bash = (sid: string, id: string, command: string, status?: string): Message =>
+    note(sid, {
+      sessionUpdate: status ? 'tool_call_update' : 'tool_call',
+      toolCallId: id,
+      ...(status ? { status } : { status: 'pending', kind: 'execute', title: command, rawInput: { command } }),
+      _meta: { claudeCode: { toolName: 'Bash', parentToolUseId: CALL } },
+    });
+  const FIRST_RUN: Message[] = [
+    note(ROOT, { sessionUpdate: 'subagent_spawned', subagentSessionId: AGENT, name: 'resume probe', capabilities: {} }),
+    bash(AGENT, 'toolu_first', 'sleep 3; echo first-ok'),
+    bash(AGENT, 'toolu_first', '', 'completed'),
+    note(ROOT, { sessionUpdate: 'subagent_state_update', subagentSessionId: AGENT, state: 'completed' }),
+    note(ROOT, {
+      sessionUpdate: 'tool_call',
+      toolCallId: 'toolu_send',
+      status: 'pending',
+      kind: 'other',
+      title: 'SendMessage',
+      _meta: { claudeCode: { toolName: 'SendMessage' } },
+    }),
+  ];
+  /** CONTRACT: the resumed run as 0.81.0 sent it — announced and ended at once, its tools dropped. */
+  const RESUMED_081: Message[] = [
+    note(ROOT, { sessionUpdate: 'subagent_spawned', subagentSessionId: GEN2, name: 'resume probe', capabilities: {} }),
+    note(ROOT, { sessionUpdate: 'subagent_state_update', subagentSessionId: GEN2, state: 'completed' }),
+  ];
+  /** The resumed run with its tools let through, as they reached the client before 3.48.0. */
+  const RESUMED_WITH_TOOLS: Message[] = [
+    note(ROOT, { sessionUpdate: 'subagent_spawned', subagentSessionId: GEN2, name: 'resume probe', capabilities: {} }),
+    bash(GEN2, 'toolu_second', 'sleep 3; echo second-ok'),
+    bash(GEN2, 'toolu_second', '', 'completed'),
+    note(ROOT, { sessionUpdate: 'subagent_state_update', subagentSessionId: GEN2, state: 'completed' }),
+  ];
+
+  function translate(msgs: readonly Message[]): { starts: ToolEvent[]; ends: Array<[string, boolean]> } {
+    const starts: ToolEvent[] = [];
+    const ends: Array<[string, boolean]> = [];
+    const st: TurnState = {
+      handlers: {
+        onText: () => {},
+        onToolStart: (e) => starts.push(e),
+        onToolFinish: () => {},
+        onSegmentBreak: () => {},
+        onSubagentEnd: (parent, ok) => ends.push([parent, ok]),
+      },
+      lastSegment: 'none',
+      toolLedger: new Map(),
+      toolIndexSeq: 0,
+      subagents: new Map(),
+    };
+    for (const m of relayAll(msgs)) translateUpdate(updateOf(m) as unknown as SessionUpdate, st);
+    return { starts, ends };
+  }
+
+  it('leaves no second subagent behind when the adapter sends only the resumed run’s start and end', () => {
+    const { starts, ends } = translate([...FIRST_RUN, ...RESUMED_081]);
+    expect(starts.filter((e) => e.parent).map((e) => [e.parent, e.agent])).toEqual([[CALL, 'resume probe']]);
+    expect(ends).toEqual([[CALL, true]]);
+  });
+
+  it('keys the resumed run’s tools and its end by the call that first started it', () => {
+    const { starts, ends } = translate([...FIRST_RUN, ...RESUMED_WITH_TOOLS]);
+    expect(starts.filter((e) => e.parent).map((e) => [e.parent, e.agent, e.inputPreview])).toEqual([
+      [CALL, 'resume probe', 'sleep 3; echo first-ok'],
+      [CALL, 'resume probe', 'sleep 3; echo second-ok'],
+    ]);
+    expect(ends).toEqual([
+      [CALL, true],
+      [CALL, true],
+    ]);
+  });
+});

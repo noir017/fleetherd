@@ -318,6 +318,9 @@ topic, newest first, scrolling on its own so the message box stays in view. Tap 
 subagent's calls, and a call to read it in full; tapping a subagent's line in the transcript opens
 the bar on it. Each subagent is marked done the moment it finishes, not when the agent's turn ends,
 so a background one that finished early no longer reads **Running** while its siblings work.
+A subagent is one line and one row however it was drawn: one that ran so many tools its calls went
+on in another message, or one the agent picked up again in a later turn — which puts it back to
+**Running** until it is done again.
 A chat platform gets the same thing as text: one message per subagent, `↳ {name}` on its first
 line and its tools under it, edited as it goes. Only `claude` agents say which subagent ran a
 tool; other harnesses' subagents still share the agent's bubble.

@@ -19,10 +19,10 @@ import type { InboundMessage } from '../types.js';
 
 const LONG = `cd /home/user/workspace/project-scripts/dividend-backtest && python3 run.py ${'--flag '.repeat(40)}--end`;
 
-function inbound(content: string): InboundMessage {
+function inbound(content: string, messageId = 'm1'): InboundMessage {
   return {
     conversation: { platform: 'p', channel: 'c1', kind: 'direct', user: 'u1' },
-    messageId: 'm1',
+    messageId,
     content,
     timestamp: 0,
   };
@@ -31,7 +31,7 @@ function inbound(content: string): InboundMessage {
 const tick = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 /** What the agent does in the turn; by default one tool between two stretches of text. */
-type Script = (h: AgentStreamHandlers) => void;
+type Script = (h: AgentStreamHandlers) => void | Promise<void>;
 
 const ONE_TOOL: Script = (h) => {
   h.onText('Running it.');
@@ -106,8 +106,12 @@ function rig(caps: Partial<PlatformCapabilities> = {}, previewLimit?: number, sc
     sends,
     latest,
     /** Start the turn and wait until `done` says the chat shows what it should. */
-    async until(done: () => boolean): Promise<void> {
-      reg.route(inbound('go'));
+    async until(done: () => boolean, messageId?: string): Promise<void> {
+      reg.route(inbound('go', messageId));
+      await this.wait(done);
+    },
+    /** Wait, sending nothing, until `done` says the chat shows what it should. */
+    async wait(done: () => boolean): Promise<void> {
       for (let i = 0; i < 300; i++) {
         if (done()) return;
         await tick(10);
@@ -187,5 +191,44 @@ describe("a subagent's tools", () => {
     expect(tools.map((s) => h.latest.get(s.id))).toEqual(['⚙️ Task: "back end" ✓ 5ms']);
     const prose = h.sends.filter((s) => s.opts === undefined).map((s) => h.latest.get(s.id));
     expect(prose).toEqual(['The 401s cluster at expiry, so it is the refresh window.']);
+    // Sent under the call that started it, the key every later message of this subagent shares.
+    expect(card()?.opts).toEqual({ kind: 'subagent', series: 'A' });
+  });
+
+  it('keep one series for a subagent paused with its turn and resumed in the next: running again, then ✓', async () => {
+    let turn = 0;
+    let resume = (): void => undefined;
+    const resumed = new Promise<void>((r) => (resume = r));
+    const paused: Script = async (h) => {
+      turn++;
+      if (turn === 1) {
+        h.onToolStart({ name: 'Task', inputPreview: 'probe', index: 0, id: 'A', spawns: 'background' });
+        h.onToolFinish({ name: 'Task', ok: true, durationMs: 5, index: 0, id: 'A', spawns: 'background' });
+        h.onToolStart({ name: 'Bash', inputPreview: 'ls', index: 1, id: 'A1', agent: 'probe', parent: 'A' });
+        h.onToolFinish({ name: 'Bash', ok: true, durationMs: 20, index: 1, id: 'A1', parent: 'A' });
+        h.onText('launched');
+        return;
+      }
+      h.onToolStart({ name: 'Bash', inputPreview: 'pwd', index: 0, id: 'A2', agent: 'probe', parent: 'A' });
+      await resumed;
+      h.onToolFinish({ name: 'Bash', ok: true, durationMs: 30, index: 0, id: 'A2', parent: 'A' });
+      h.onSubagentEnd?.('A', true);
+      h.onText('resumed');
+    };
+    const h = rig({}, undefined, paused);
+    const cards = () => h.sends.filter((s) => s.opts?.kind === 'subagent');
+    const shows = (i: number) => h.latest.get(cards()[i]?.id ?? '') ?? '';
+
+    // Turn 1 ends with the subagent alive: its card ends with the turn.
+    await h.until(() => /^↳ probe ✓/.test(shows(0)) && h.sends.some((s) => s.text === 'launched'), 'm1');
+    // Turn 2 resumes it: a card of the new render, under the same series, running again…
+    await h.until(() => shows(1) === '↳ probe\n💻 Bash: "pwd"', 'm2');
+    resume();
+    // …and ✓ when the harness says it ended.
+    await h.wait(() => /^↳ probe ✓ \d+ms\n💻 Bash: "pwd" ✓ 30ms$/.test(shows(1)));
+    expect(cards().map((s) => s.opts)).toEqual([
+      { kind: 'subagent', series: 'A' },
+      { kind: 'subagent', series: 'A' },
+    ]);
   });
 });

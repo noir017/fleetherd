@@ -225,6 +225,7 @@ class TranscriptControllerImpl implements TranscriptController {
       canOpenSideDiff,
       hasOutbox: this._deps.hasOutbox,
       isBtwHeld: (k, msg) => this.btw.isHeld(k, msg),
+      subagentRow: (k) => this.subagents.rowOf(k),
       btwLineMarkup: (k, msg, asked, h) => this.btw.lineMarkup(k, msg, asked, h),
     });
   }
@@ -259,18 +260,26 @@ class TranscriptControllerImpl implements TranscriptController {
       }
       els[key] = el;
     }
-    const out = this.msgMarkup(key, m, this._deps.isHistory(m));
     if (m.kind === 'subagent') this.subagents.refresh();
+    const out = this.msgMarkup(key, m, this._deps.isHistory(m));
     if (!this.btw.isNesting()) this.btw.link(key, m);
     const cls = key === this._actionsOpenKey ? `${out.cls} actions-open` : out.cls;
-    if (this._sig[key] === out.h && el.className === cls) return;
-    el.className = cls;
-    el.innerHTML = out.h;
-    this._sig[key] = out.h;
-    this.codeBlocks.enhance(
-      el,
-      deferHighlight ? { defer: true, skipHighlight, liveEl: null } : undefined,
-    );
+    if (this._sig[key] !== out.h || el.className !== cls) {
+      el.className = cls;
+      el.innerHTML = out.h;
+      this._sig[key] = out.h;
+      this.codeBlocks.enhance(
+        el,
+        deferHighlight ? { defer: true, skipHighlight, liveEl: null } : undefined,
+      );
+    }
+    if (m.kind === 'subagent') this._repaintSubagentLine(key);
+  }
+
+  /** A subagent's later message changed: its line in the transcript is its first message's. */
+  private _repaintSubagentLine(key: string): void {
+    const first = this.subagents.rowOf(key)?.key;
+    if (first && first !== key && this._deps.getEls()[first]) this.paint(first);
   }
 
   private _msgAt(key: string): TranscriptMessage | undefined {
@@ -333,7 +342,14 @@ class TranscriptControllerImpl implements TranscriptController {
     delete this._opened[key];
     if (this._actionsOpenKey === key) this._actionsOpenKey = null;
     this.btw.onMessageDropped(key, m);
-    if (m?.kind === 'subagent') this.subagents.refresh();
+    if (m?.kind === 'subagent') {
+      this.subagents.refresh();
+      // The first message gone, the next one draws the subagent's line.
+      const series = m.series;
+      const rest = series ? Object.keys(data).find((k) => data[k]?.series === series) : undefined;
+      const first = rest ? this.subagents.rowOf(rest)?.key : undefined;
+      if (first && els[first]) this.paint(first);
+    }
     this.banners.syncEmptyNote();
   }
 

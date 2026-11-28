@@ -858,6 +858,12 @@ export interface WebMessage {
    */
   nonce?: string;
   /**
+   * The item this message continues (SendOptions.series): every message of one subagent carries
+   * the call that started it, so the page draws a card that overflowed into another message, or
+   * one resumed in a later turn, as one subagent. A grouping key only — never drawn.
+   */
+  series?: string;
+  /**
    * What the message is beyond its text (SendOptions.kind): a tool-progress bubble, a sub-agent
    * dispatch, or a sub-agent report.
    *

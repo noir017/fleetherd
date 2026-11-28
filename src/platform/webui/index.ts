@@ -463,7 +463,7 @@ function parseKept(value: unknown): Kept | null {
   if (!value || typeof value !== 'object') return null;
   const { msg, text } = value as { msg?: Record<string, unknown>; text?: unknown };
   if (!msg || typeof text !== 'string') return null;
-  const { id, own, html, at, g, reactions, quote, file, nonce, kind, turnChanges, handoff } = msg;
+  const { id, own, html, at, g, reactions, quote, file, nonce, kind, series, turnChanges, handoff } = msg;
   if (typeof id !== 'string' || typeof html !== 'string' || typeof at !== 'number' || typeof g !== 'number') return null;
   const k = keptKind(kind);
   const q = keptQuote(quote);
@@ -488,6 +488,7 @@ function parseKept(value: unknown): Kept | null {
       // The kinds the page draws differently, restored across a restart so the marking — and a
       // report's folding — survives a reload exactly as it was.
       ...(k ? { kind: k } : {}),
+      ...seriesOf({ series }),
       // A turn's change entry is part of its reply: without it a restart would take the line, and
       // the way into that turn's diff, off every reply that had one.
       ...(tc ? { turnChanges: tc } : {}),
@@ -553,6 +554,15 @@ function keptQuote(quote: unknown): WebMessage['quote'] {
  */
 function keptKind(kind: unknown): MessageKind | undefined {
   return (MESSAGE_KINDS as readonly unknown[]).includes(kind) ? (kind as MessageKind) : undefined;
+}
+
+/** Longer than any key the daemon sends (a tool call's id); a kept value past it is not one. */
+const MAX_SERIES = 256;
+
+/** The series a message belongs to (SendOptions.series), on a send or read back from the file. */
+function seriesOf(opts: { series?: unknown } | undefined): { series?: string } {
+  const s = opts?.series;
+  return typeof s === 'string' && s !== '' && s.length <= MAX_SERIES ? { series: s } : {};
 }
 
 type Outbound = Pick<
@@ -685,6 +695,7 @@ function outbound(room: WebRoom, topicOf: TopicResolver): Outbound {
         own: false,
         html: webMessageHtml(kind, text),
         ...(kind ? { kind } : {}),
+        ...seriesOf(opts),
         ...(handoff ? { handoff } : {}),
       };
       return ref(topic, room.post(topic, part, text).id);
@@ -733,6 +744,7 @@ function outbound(room: WebRoom, topicOf: TopicResolver): Outbound {
         html: webMessageHtml(kind, text),
         quote: { html: quote, id: r.messageId },
         ...(kind ? { kind } : {}),
+        ...seriesOf(opts),
       };
       return ref(topic, room.post(topic, part, text).id);
     },
@@ -754,6 +766,7 @@ function outbound(room: WebRoom, topicOf: TopicResolver): Outbound {
             ...(screen ? { settings: screen } : {}),
             ...(workdir ? { workdir } : {}),
             ...(kind ? { kind } : {}),
+            ...seriesOf(opts),
             ...(handoff ? { handoff } : {}),
           },
           text

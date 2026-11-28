@@ -1280,6 +1280,15 @@ have a kind of their own, drawn in two places rather than as a bubble:
     running subagent's edits do not reset its scroll. A tap on the transcript's line
     (`[data-sa-jump]`) opens the bar on that row. What is open is the bar's own state, not
     `ToolOpenState` in the transcript's.
+  - One subagent can be several messages: a card that outgrew `maxMessageLength` goes on in a new
+    one (`core/tool-renderer.ts` seal), and a subagent resumed after its turn ended gets a card in
+    the next turn's render. Every one carries the spawning call's id as `series`
+    (`SendOptions.series`, kept across a restart), and `transcript/subagent-series.ts`
+    (`SubagentIndex`) makes each series one row: name, state and duration from the newest message,
+    the tool lines of all of them in order — less a line an older message showed still running,
+    which the sealed card repeated in the next one. The row is keyed by the first message, which
+    also keeps the transcript's line; a later message is an empty `.m.sa-cont`, and its edits
+    repaint the first one's line (`transcript/index.ts` `_repaintSubagentLine`).
 
 A third is not about sub-agents but is drawn the same way:
 
