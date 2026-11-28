@@ -87,14 +87,16 @@ export interface SessionFailure {
   details?: string;
 }
 
+/** The AIR capability that asks for failure records (AIR extension version 1). */
+export const SESSION_FAILURE_CAPABILITY = 'sessionFailure';
+
 /**
- * The `_meta` that goes in `initialize`'s `clientCapabilities` to receive failure records: AIR
- * extension version 1, advertising `sessionFailure` and nothing else. The adapter gates other
- * behaviour (subagent sessions, async tasks, file-change reports) on other names in the same list,
- * so this list is kept to exactly the one this module handles.
+ * The `_meta` that goes in `initialize`'s `clientCapabilities` to receive failure records and nothing
+ * else. The adapter gates other behaviour (subagent sessions, async tasks, file-change reports) on
+ * other names in the same list; claude's profile adds only the ones the gateway handles.
  */
 export const SESSION_FAILURE_CAPABILITY_META = {
-  jetbrains: { air: { version: 1, capabilities: ['sessionFailure'] } },
+  jetbrains: { air: { version: 1, capabilities: [SESSION_FAILURE_CAPABILITY] } },
 };
 
 /**

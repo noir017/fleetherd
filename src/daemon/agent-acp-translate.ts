@@ -23,6 +23,7 @@ import { TurnFailure } from './agent.js';
 import { buildInputPreview, isNonEmptyObject, stripCode, truncateToolName } from './agent-common.js';
 import { agyAcpToolLabel, agyMcpCall, agyMcpLabel, type AgyTurnWatch } from './agy-acp.js';
 import { readPromptRefusal, readSessionFailure, type SessionFailure } from './session-failure.js';
+import { readSubagentStamp } from './acp-native-subagents.js';
 import { claudeRateLimitPools } from './claude-rate-limit.js';
 import { customOptionsOf, liveEffortName, liveModelName } from './agent-acp-options.js';
 
@@ -675,16 +676,22 @@ export function translateUpdate(u: SessionUpdate, st: TurnState): void {
     // A `session_info_update` with no record carries the harness's own name for the conversation,
     // and is ignored on purpose: the gateway names a conversation once from its opening message
     // (see ConversationRegistry.nameConversation) rather than following a title that keeps moving.
-    case 'session_info_update': {
-      const failure = readSessionFailure(u._meta);
-      if (failure) st.onSessionFailure?.(failure);
+    case 'session_info_update':
+      ingestSessionInfo(u._meta, st);
       break;
-    }
 
     // agent_thought_chunk / plan* / *_update etc.: not rendered.
     default:
       break;
   }
+}
+
+/** A failure record, or the end of a subagent as acp-native-subagents.ts relays it. */
+function ingestSessionInfo(meta: unknown, st: TurnState): void {
+  const failure = readSessionFailure(meta);
+  if (failure) st.onSessionFailure?.(failure);
+  const ended = readSubagentStamp(meta)?.ended;
+  if (ended) st.handlers.onSubagentEnd?.(ended.parent, ended.state === 'completed');
 }
 
 /** The fields of a tool call (or of an update to one) the ledger keeps. */
@@ -708,13 +715,9 @@ function ingestText(u: Extract<SessionUpdate, { sessionUpdate: 'agent_message_ch
   if (typeof text !== 'string' || text.length === 0) return;
   // agy's own diagnostic ("⚠ API error (attempt 1) …"), said as a notice rather than as the agent.
   if (st.agy?.text(text)) return;
-  // The body is the main agent's words. A subagent's text does not reach a client like this one
-  // (see claudeAttribution), but the adapter's streaming path stamps it rather than filtering it, so
-  // should it ever arrive it is kept out of the reply instead of being read as the answer.
-  if (claudeAttribution(u._meta).parent) {
-    console.debug(`[acp] not rendering ${text.length} chars of subagent text into the reply`);
-    return;
-  }
+  // The body is the main agent's words. A subagent's own text arrives under native subagent
+  // sessions (acp-native-subagents.ts) and is kept out: the main agent's relay of it is the reply.
+  if (claudeAttribution(u._meta).parent) return;
   // A new message from the agent (ACP `messageId` changed, schema: "a new message has started") is
   // a new segment too. Two replies with nothing of the main agent's between them — the cycles a
   // held turn runs as its background subagents report back — otherwise ran together mid-line.
@@ -815,7 +818,10 @@ function ingestTool(st: TurnState, id: string, f: ToolFields, meta?: unknown): v
 
   // Read before maybeStartTool below, which is where the bubble is drawn: it has to know whose it is.
   const { parent, spawnsSubagent } = claudeAttribution(meta);
-  if (parent) rec.parent = parent;
+  if (parent) {
+    rec.parent = parent;
+    nameFromRelay(st, parent, meta);
+  }
   // Sticky: only the call's early updates carry the flag (the adapter drops it from the result's).
   if (spawnsSubagent) rec.spawns = true;
   if (rec.spawns) nameSubagent(st, id, rec);
@@ -834,12 +840,9 @@ function ingestTool(st: TurnState, id: string, f: ToolFields, meta?: unknown): v
  *   and a half-hour background run reads as the main agent doing eighty things it never did.
  * - `subagent: true` — on that Agent/Task call itself.
  *
- * Only tools are affected in practice. The adapter keeps a subagent's own text internal unless the
- * client declares ACP `subagents` or `_meta["subagent-transcript"]` (claude-agent-acp 0.81.2
- * dist/acp-agent.js:4549, the `forwardSubagentText` filter), and this client declares neither — so
- * the main agent's relay of what the subagent found is what the user reads, which is the point.
- * Probed 2026-10-10 with a foreground and a background subagent: tools arrived attributed, no
- * subagent text arrived at all. `project-scripts/subagent-output/probe.mjs` reruns it.
+ * A subagent's own text is attributed too, and arrives since the client declared native subagent
+ * sessions (acp-native-subagents.ts); ingestText keeps it out of the reply, so the main agent's
+ * relay of what the subagent found is what the user reads, which is the point.
  *
  * ⚠️ HYRUM'S LAW: neither field is in the ACP schema. claude-agent-acp 0.81.2 stamps
  * `parentToolUseId` from the SDK's `parent_tool_use_id` in toAcpNotifications (dist/acp-agent.js
@@ -879,12 +882,22 @@ const UNNAMED_SUBAGENT = 'subagent';
 function nameSubagent(st: TurnState, id: string, rec: ToolRec): void {
   if (!st.subagents) return;
   const name = subagentDescription(rec) || stripCode(rec.title);
-  if (!name) return;
-  if (!st.subagents.has(id) && st.subagents.size >= MAX_SUBAGENT_NAMES) {
-    const oldest = st.subagents.keys().next().value;
-    if (oldest !== undefined) st.subagents.delete(oldest);
+  if (name) rememberSubagentName(st.subagents, id, name);
+}
+
+/** Under native subagent sessions the spawning call never reaches the client; the relay names it. */
+function nameFromRelay(st: TurnState, parent: string, meta: unknown): void {
+  if (!st.subagents || st.subagents.has(parent)) return;
+  const name = readSubagentStamp(meta)?.name;
+  if (name) rememberSubagentName(st.subagents, parent, name);
+}
+
+function rememberSubagentName(names: Map<string, string>, id: string, name: string): void {
+  if (!names.has(id) && names.size >= MAX_SUBAGENT_NAMES) {
+    const oldest = names.keys().next().value;
+    if (oldest !== undefined) names.delete(oldest);
   }
-  st.subagents.set(id, name);
+  names.set(id, name);
 }
 
 /** The `description` an Agent/Task call was given: the model's own short label for the job. */

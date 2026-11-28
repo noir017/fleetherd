@@ -1181,9 +1181,9 @@ the subagent's tools go out with `ToolEvent.agent` set to the spawning call's `d
 any subagent text is kept out of the reply body. The name map is session-scoped, not per turn,
 because a background subagent's tools keep arriving after the turn that launched it has ended.
 Neither field is in the ACP schema; the contract test in `agent-acp.test.ts` replays the shapes
-claude-agent-acp 0.81.2 sent on 2026-10-10. The adapter keeps a subagent's own text internal for
-a client that declares neither ACP `subagents` nor `subagent-transcript`, and this one declares
-neither — declaring either would start delivering it, and it would then need somewhere to go.
+claude-agent-acp 0.81.2 sent on 2026-10-10. A subagent's own text arrives too, since the client
+declares native subagent sessions (below), and is dropped in `ingestText`: the main agent's relay
+of it is the reply.
 
 **Subagent cards.** A subagent's tools also carry `ToolEvent.parent` (the spawning call's id —
 two subagents can share a description, never a call), and the spawning call carries `spawns`:
@@ -1194,10 +1194,13 @@ routes them off the reply's tool bubble into `SubagentCards`, one `ToolRenderer`
 with a header (core README, Tool bubbles), sent with `kind: 'subagent'`. They still ride the
 render's effects chain, so a card is never posted ahead of what came before it, but nothing waits
 for a card's placement, and a card is not `ref.lastRef` — it is not the reply. A card ends:
+- when the adapter says that subagent ended (`onSubagentEnd`, native subagent sessions below) —
+  the only per-subagent end it sends, and the one that ends a background subagent's card when it
+  finishes rather than when the turn does;
 - with the call that started it, for a foreground subagent — that call lasts as long as it does;
-- with the render, for a background one. claude-agent-acp 0.81 holds a turn open until the
+- with the render, for any still open. claude-agent-acp 0.81 holds a turn open until the
   background subagents it spawned are done (`Turn.deferredSettle`, `turnAwaitingSubagents`), so
-  their tools arrive inside the turn and the turn's end is theirs;
+  their tools arrive inside the turn;
 - with a ✗ when the render is stopped or fails (`Render.abort`): the cards are not aborted there,
   so that ✗ still paints, and `finalize` stops them after its bounded settle.
 With subagent tools no longer cutting the reply, what tells two of the main agent's messages apart
@@ -1206,11 +1209,23 @@ new segment, as a tool between them would. A held turn needs it — each backgro
 starts a cycle of its own, whose text otherwise ran on from the last cycle's mid-line. A harness
 that sends no id is unaffected; claude-agent-acp, opencode and codex-acp all send one per message.
 A tool for a card that has ended reopens it. The cards are per render: a subagent whose tools
-outlive the render that started it — an adapter that does not hold the turn — gets a new card
-under the same name in the follow-up's render. The adapter's own subagent sessions (AIR
-`nativeSubagentSessions` / ACP `subagents`, which would report each subagent's end) are not used:
-they move a subagent's updates to a child session id, hide the spawning call, and drop updates
-past a buffer, and the schema is not published yet (ACP PR #1992).
+outlive the render that started it — one resumed after the turn ended — gets a new card under the
+same name in the follow-up's render.
+
+**Native subagent sessions** (`acp-native-subagents.ts`, since 3.48.0). claude's profile declares
+AIR `nativeSubagentSessions`, the one way claude-agent-acp reports each subagent's end
+(`subagent_state_update`); without it a background subagent's card could only end with the turn,
+and read **Running** for as long as its slowest sibling. The rest of that extension is undone at
+the stream, before the SDK reads it (`relayNativeSubagents`, wrapped around `ndJsonStream`):
+`subagent_spawned` is remembered and dropped; everything under a subagent's own session id is put
+back on the session that owns the conversation, still carrying `parentToolUseId` and stamped with
+the subagent's name (the spawning call no longer reaches the client, so it cannot name it); and the
+end becomes a `session_info_update` stamped with the call it ends, read in `translateUpdate`. In
+the stream rather than in a handler because the SDK (0.29) parses both new updates against a schema
+that has neither — it logs and drops them — and routes by session id, so a subagent's tools would
+otherwise go nowhere; and in-band so an end never overtakes the subagent's last tool in the queue.
+Shapes recorded by `project-scripts/fleetherd-subagent-end/probe.mjs` (2026-11-28), replayed in
+`acp-native-subagents.test.ts`. The draft schema is ACP PR #1992.
 
 The `claude` adapter is **bundled** as a dependency and resolved via
 `resolveClaudeAdapterEntry`, so it needs no separate install. Every other harness —

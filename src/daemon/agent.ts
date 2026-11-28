@@ -38,6 +38,11 @@ export interface AgentStreamHandlers {
   /** Body segment switch (around tools) → flush current buffer and start a new segment */
   onSegmentBreak(): void;
   /**
+   * A subagent ended, named by the call that started it (`ToolEvent.parent`) — claude's native
+   * subagent sessions (acp-native-subagents.ts). Optional: without it a card ends with its call or turn.
+   */
+  onSubagentEnd?(parent: string, ok: boolean): void;
+  /**
    * Agent dynamically reports its available-commands list (ACP `available_commands_update`).
    * Optional: not every harness / turn sends it (usually once after first-turn startup, then on change).
    * The daemon registers native platform slash from it.

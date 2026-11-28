@@ -97,6 +97,22 @@ describe('SubagentCards', () => {
     expect(shown[0]).toBe('↳ probe ✓ 5.0s\n💻 Bash: "ls"');
   });
 
+  it('ends a background subagent’s card when the harness says it ended, and leaves the others running', async () => {
+    const { cards, shown, flush, at } = setup();
+    cards.onToolStart(sub('a', 'short', 1, 'ls'));
+    cards.onToolStart(sub('b', 'long', 2, 'sleep 40'));
+    at(3_000);
+    cards.onSubagentEnd('a', true);
+    cards.onSubagentEnd('never-seen', true);
+    await flush();
+    expect(shown).toEqual(['↳ short ✓ 3.0s\n💻 Bash: "ls"', '↳ long\n💻 Bash: "sleep 40"']);
+    at(9_000);
+    cards.onSubagentEnd('b', false);
+    cards.endAll(true);
+    await flush();
+    expect(shown[1]).toBe('↳ long ✗ 9.0s\n💻 Bash: "sleep 40"');
+  });
+
   it('marks what was still running ✗ when the render is stopped, and keeps what had ended', async () => {
     const { cards, shown, flush, at } = setup();
     cards.onToolStart(sub('a', 'first', 1, 'ls'));

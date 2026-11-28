@@ -18,6 +18,7 @@ interface Card {
  *
  * A card opens with its subagent's first tool, keyed by the call that started it (ToolEvent.parent).
  * It ends — its header takes ✓ or ✗ and how long it ran — when:
+ * - the harness says so (claude's native subagent sessions, acp-native-subagents.ts);
  * - the call that started it finishes, for a foreground subagent (that call lasts as long as it);
  * - the render ends, for a background one. claude-agent-acp holds a turn open until the background
  *   subagents it spawned are done (Turn.deferredSettle, 0.81), so the turn's end is theirs;
@@ -52,6 +53,11 @@ export class SubagentCards {
       return;
     }
     if (evt.spawns === 'foreground' && evt.id !== undefined) this.end(evt.id, evt.ok);
+  }
+
+  /** The harness said this subagent ended (AgentStreamHandlers.onSubagentEnd). */
+  onSubagentEnd(parent: string, ok: boolean): void {
+    this.end(parent, ok);
   }
 
   /** The render is over: every card still open ends with it — ✓ when it ended normally, ✗ when stopped. */

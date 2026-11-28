@@ -1255,6 +1255,7 @@ export class TurnRunner {
           await tools.placed(BUBBLE_PLACEMENT_WAIT_MS);
         });
       },
+      onSubagentEnd: (parent, ok) => enqueue(() => cards.onSubagentEnd(parent, ok)),
       onSegmentBreak: () => {
         rollSegment(ref);
         // Tool→text boundary: finish the current (pre-tool) buffer, reset the tool segment, then start a
