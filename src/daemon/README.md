@@ -1494,7 +1494,9 @@ ran.
 `onEffort` is the same idea for reasoning effort, read from the option in ACP's
 `thought_level` category rather than by id, because the ids differ (`effort` on claude and
 opencode, `reasoning_effort` on codex). It is re-reported with `undefined` when an update
-drops the level, so the footer never keeps showing a level the session left.
+drops the level, so the footer never keeps showing a level the session left, and at a turn's start
+whenever the model has levels — `undefined` for `default`, which the status strip then reads off the
+selector, since its effort switch shows `default` where the footer shows nothing.
 
 `/effort` writes that same option (`setEffort`, sent to whatever id the harness gave it), and
 the choice is held beside `modelPreference` as `effortPreference`, surviving `resetHandles`.

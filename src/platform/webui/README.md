@@ -468,6 +468,27 @@ the account a session runs on. Decisions in it:
   older and loses to it on specificity). The list spans the composer, and the filter is not
   focused on open, for the reason the composer is not.
 
+**The reasoning effort is a switch too** (`effortChip`, `openEffort`), right after the model: `/effort`
+as a control, on the same route as the settings rather than a route of its own. Decisions in it:
+
+- **`/effort`'s path, under a reserved id.** `GET api/options` carries the current model's levels as
+  `effort` beside the settings — on a `reason: 'none'` answer too, since claude has no settings of its
+  own and still has levels — and `POST api/options` with id `__effort__` (`EFFORT_OPTION_ID`,
+  `platform/workbench.ts`; `EFFORT_OPT_ID` on the page) is `applyEffortChoice`: the same check against
+  what the model offers now, the same memory (`setConversationChoice`) and the same sentences. An
+  agent setting with that literal id would be shadowed; ids are agents' own and none uses it.
+- **`AgentStatus.effort` includes `default`.** The footer drops `default` because it names no level;
+  a switch must show where you are, so the strip's value is read off the session's selector
+  (`conversation-turns.ts` recordEffort), and `reportSessionFacts` reports it at a turn's start
+  whenever the model has levels. Absent means the model has none, and the chip is not drawn.
+- **The levels follow the model.** `setModelOn` pushes the new model's level (or none); before the
+  first message, where no status reaches the page, a model pick asks the peek again.
+- **Before the first message only what is known.** The peek gives the live session's level, else
+  the topic's own `/effort`, a level pinned in `agents[].options` under the option's id, or — for a
+  new topic on the configured model — what a fresh session of the agent starts at
+  (`ModelCatalog.learnEffort`, the same once-per-agent ask). Anything else is left out rather than
+  guessed.
+
 Its own Escape and outside click close it, rather than joining the page-wide overlay handling — it
 is a menu in the composer, not a window over the page.
 

@@ -463,6 +463,8 @@ export interface ModelSelector {
  * level; a selector must not, because on claude and opencode it is one of the choices.
  */
 export interface EffortSelector {
+  /** The config option's id (`effort`, `reasoning_effort`): the key a pin in `agents[].options` uses. */
+  id?: string;
   /** The level this session is on right now. */
   current?: string;
   /** Selectable levels with the display names the harness gave them. */
@@ -522,7 +524,10 @@ export interface AgentStatus {
   agent: string;
   /** Short model name, as the footer prints it. */
   model?: string;
-  /** Reasoning effort the harness reports. */
+  /**
+   * The reasoning-effort level in force, as the harness spells it — `default` included, since the
+   * strip shows it as a switch; absent while the current model offers no levels.
+   */
   effort?: string;
   /** Tokens in context over the window — the same pair `/context` quotes. */
   context?: { used: number; size: number };

@@ -29,13 +29,14 @@ import type {
   ModelPickerList,
   ModelPickerResult,
   SessionOptionList,
+  SessionOptionPeek,
   SessionOptionResult,
   TopicSetupResult,
   TurnChangeFileResult,
   TurnChangeStatusResult,
   WorkdirBrowseResult,
 } from '../platform/workbench.js';
-import type { AgentCatalog, AgentHandoffAction, AgentStatus, ConversationId, InboundMessage, StatusOption, StatusPermissions, TopicActivity } from '../types.js';
+import type { AgentCatalog, AgentHandoffAction, AgentStatus, ConversationId, InboundMessage, TopicActivity } from '../types.js';
 import type { AgentFactory } from './agent.js';
 import { resolveAgentCwd, resolveConversationCwd } from './agent-common.js';
 import { isDirectory } from './workdir-scan.js';
@@ -214,6 +215,7 @@ export class ConversationRegistry {
         }),
       liveOptions: (agentId) => live(agentId, (id) => this.agents.peek(id)?.sessionOptions?.()),
       liveCanFork: (agentId) => live(agentId, (id) => this.agents.peek(id)?.canFork?.()),
+      liveEffort: (agentId) => live(agentId, (id) => this.agents.peek(id)?.effortSelector?.()),
       tokenFor: (sid) => this.tokens.tokenFor(sid as ConversationId),
       forget: (sid) => {
         this.store?.clear(sid);
@@ -926,9 +928,7 @@ export class ConversationRegistry {
     return this.controls.chooseModelForRef(ref, value);
   }
 
-  optionStatusForRef(
-    ref: ConversationRef
-  ): Promise<{ agent: string; model?: string; options: StatusOption[]; permissions?: StatusPermissions }> {
+  optionStatusForRef(ref: ConversationRef): Promise<SessionOptionPeek> {
     return this.controls.optionStatusForRef(ref);
   }
 

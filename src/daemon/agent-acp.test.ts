@@ -13,6 +13,7 @@ import {
   translateUpdate,
   type TurnState,
 } from './agent-acp.js';
+import { AcpOptionState } from './agent-acp-options.js';
 import { dshModelDisplayValue, dshModelSelectorValue } from './harness/dsh.js';
 import type { AgentDef } from '../config/schema.js';
 import type { AgentImage, AgentUsage } from './agent.js';
@@ -860,6 +861,7 @@ describe('effortSelectorOf (the /effort menu’s view of the same option)', () =
   it('finds codex’s differently named option, and falls back to the value for a blank name', () => {
     const sel = effortSelectorOf(opts([effort('reasoning_effort', 'high', ['low', 'high', 'xhigh'])]));
     expect(sel).toEqual({
+      id: 'reasoning_effort',
       current: 'high',
       options: [
         { value: 'low', name: 'low' },
@@ -875,6 +877,42 @@ describe('effortSelectorOf (the /effort menu’s view of the same option)', () =
       effortSelectorOf(opts([{ id: 'effort', category: 'thought_level', type: 'boolean', name: 'E', currentValue: true }])),
     ).toBeUndefined();
     expect(effortSelectorOf(opts([effort('effort', 'high', [])]))).toBeUndefined();
+  });
+});
+
+describe('the facts a new turn is told about its session', () => {
+  const def = { id: 'cc', harness: 'claude' } as AgentDef;
+  const effort = (currentValue: string) =>
+    ({
+      id: 'effort',
+      name: 'Effort',
+      category: 'thought_level',
+      type: 'select',
+      currentValue,
+      options: ['default', 'low', 'high'].map((v) => ({ value: v, name: v })),
+    }) as SessionConfigOption;
+  const told = (options: SessionConfigOption[] | undefined): Array<string | undefined> => {
+    const state = new AcpOptionState(def, 'conv');
+    state.captureOpened(options, undefined);
+    const efforts: Array<string | undefined> = [];
+    state.reportSessionFacts({
+      onText: () => {},
+      onToolStart: () => {},
+      onToolFinish: () => {},
+      onSegmentBreak: () => {},
+      onEffort: (e) => void efforts.push(e),
+    });
+    return efforts;
+  };
+
+  it('tells the level, and `default` as no level while the model has levels: the strip shows its switch', () => {
+    expect(told([effort('high')])).toEqual(['high']);
+    expect(told([effort('default')])).toEqual([undefined]);
+  });
+
+  it('tells nothing about effort for a model without levels', () => {
+    expect(told([])).toEqual([]);
+    expect(told(undefined)).toEqual([]);
   });
 });
 

@@ -1,6 +1,6 @@
 import type { AgentDef } from '../config/schema.js';
 import type { AgentModelList, AgentModes } from '../core/settings.js';
-import type { ModelSelector, SessionModeSelector, SessionOption } from '../types.js';
+import type { EffortSelector, ModelSelector, SessionModeSelector, SessionOption } from '../types.js';
 import type { AgentFactory } from './agent.js';
 
 /**
@@ -42,6 +42,11 @@ import type { AgentFactory } from './agent.js';
  * no session yet to read it from (ConversationRegistry.optionStatusForRef). Learned from any live
  * session of the agent, else from the same ask; a failed ask counts as "none", since the status line
  * asks unprompted and must not start a failing agent again every time a topic is drawn.
+ *
+ * ── And its reasoning effort ──────────────────────────────────────────────────
+ * The same status line draws an effort switch before the first message. The levels belong to the
+ * model, so only the ask's fresh session (the configured model, pins applied) says what a new topic
+ * starts at; a live session elsewhere gives the option's id alone, which is what a pin is keyed by.
  */
 
 /** How long an agent may take to come up before the answer is "it did not". */
@@ -72,6 +77,8 @@ export interface ModelCatalogDeps {
   liveOptions?(agentId: string): SessionOption[] | undefined;
   /** Whether a live session of this agent declared `session/fork` in `initialize`. */
   liveCanFork?(agentId: string): boolean | undefined;
+  /** The effort selector a live session of this agent reports, in some conversation, if any does. */
+  liveEffort?(agentId: string): EffortSelector | undefined;
   /** A token for the session the catalog starts itself (its MCP bridge needs one). */
   tokenFor(sessionId: string): string;
   /** Forget what that session left behind: its store entry, its token. */
@@ -86,6 +93,8 @@ export class ModelCatalog {
   private readonly knownOptions = new WeakMap<AgentDef, OptionKind[]>();
   private readonly knownDefaultModel = new WeakMap<AgentDef, string>();
   private readonly knownCanFork = new WeakMap<AgentDef, boolean>();
+  /** A fresh session's effort selector; null when its model offers no levels. Set by an ask only. */
+  private readonly knownEffort = new WeakMap<AgentDef, EffortSelector | null>();
   private readonly probed = new WeakSet<AgentDef>();
   private readonly failedAt = new WeakMap<AgentDef, number>();
   private readonly asking = new WeakMap<AgentDef, Promise<AgentModelList>>();
@@ -219,6 +228,29 @@ export class ModelCatalog {
   }
 
   /**
+   * The agent's effort option without asking: a fresh session's (null: no levels) once an ask has
+   * run, else a live session's with no `current`, since that is another conversation's level.
+   */
+  effort(agentId: string): EffortSelector | null | undefined {
+    const def = this.deps.defOf(agentId);
+    if (!def) return undefined;
+    if (this.probed.has(def)) return this.knownEffort.get(def) ?? null;
+    const live = this.deps.liveEffort?.(agentId);
+    return live ? { ...(live.id ? { id: live.id } : {}), options: live.options } : undefined;
+  }
+
+  /** `effort`, asking when no ask has run yet — once per definition, like `learnOptions`. Never rejects. */
+  async learnEffort(agentId: string): Promise<EffortSelector | null | undefined> {
+    const def = this.deps.defOf(agentId);
+    if (!def) return undefined;
+    if (this.probed.has(def)) return this.effort(agentId);
+    const failed = this.failedAt.get(def);
+    if (failed !== undefined && this.now() - failed < FAILED_PROBE_COOLDOWN_MS) return this.effort(agentId);
+    await this.ask(agentId);
+    return this.effort(agentId);
+  }
+
+  /**
    * The agent's own settings, asking when nothing is known (once at a time, sharing an ask already
    * running for the models). Never rejects; empty when the agent has none or could not be asked.
    */
@@ -242,7 +274,7 @@ export class ModelCatalog {
     if (!def) return Promise.resolve({ kind: 'error', reason: `no agent named ${agentId}` });
     const running = this.asking.get(def);
     if (running) return running;
-    const p = this.probe(def).then(({ models, modes, options, defaultModel, canFork }) => {
+    const p = this.probe(def).then(({ models, modes, options, defaultModel, canFork, effort }) => {
       this.known.set(def, models);
       this.knownModes.set(def, modes);
       if (models.kind === 'error') {
@@ -252,6 +284,7 @@ export class ModelCatalog {
         if (options.length > 0 || !this.knownOptions.has(def)) this.knownOptions.set(def, options);
         if (defaultModel) this.knownDefaultModel.set(def, defaultModel);
         if (canFork !== undefined) this.knownCanFork.set(def, canFork);
+        this.knownEffort.set(def, effort ?? null);
         this.probed.add(def);
       }
       this.asking.delete(def);
@@ -262,9 +295,7 @@ export class ModelCatalog {
   }
 
   /** Start a session of the agent under an id no conversation has, read its selectors, dispose it. */
-  private async probe(
-    def: AgentDef,
-  ): Promise<{ models: AgentModelList; modes: AgentModes; options: OptionKind[]; defaultModel?: string; canFork?: boolean }> {
+  private async probe(def: AgentDef): Promise<ProbeResult> {
     const sid = `models:${def.id}`;
     const started = Date.now();
     let session;
@@ -276,7 +307,7 @@ export class ModelCatalog {
         selector = session.modelSelector?.();
       }
       const result = readProbeResult(session, selector);
-      console.log(`[models] asked ${def.id} ${answerLine(result.models, result.modes, result.options)} (${Date.now() - started}ms)`);
+      console.log(`[models] asked ${def.id} ${answerLine(result)} (${Date.now() - started}ms)`);
       return result;
     } catch (e) {
       const reason = (e instanceof Error ? e.message : String(e)).split('\n')[0] ?? 'unknown';
@@ -289,10 +320,19 @@ export class ModelCatalog {
   }
 }
 
+interface ProbeResult {
+  models: AgentModelList;
+  modes: AgentModes;
+  options: OptionKind[];
+  defaultModel?: string;
+  canFork?: boolean;
+  effort?: EffortSelector;
+}
+
 function readProbeResult(
-  session: Pick<import('./agent.js').AgentSession, 'permissionModes' | 'sessionOptions' | 'canFork'>,
+  session: Pick<import('./agent.js').AgentSession, 'permissionModes' | 'sessionOptions' | 'canFork' | 'effortSelector'>,
   selector: ModelSelector | undefined
-): { models: AgentModelList; modes: AgentModes; options: OptionKind[]; defaultModel?: string; canFork?: boolean } {
+): ProbeResult {
   const models: AgentModelList =
     selector && selector.options.length > 0 ? { kind: 'list', options: selector.options } : { kind: 'none' };
   const defaultModel = selector ? currentModelLabel(selector) : undefined;
@@ -303,7 +343,15 @@ function readProbeResult(
       : { kind: 'none' };
   const options = optionKinds(session.sessionOptions?.(), true);
   const canFork = session.canFork?.();
-  return { models, modes, options, ...(defaultModel ? { defaultModel } : {}), ...(canFork !== undefined ? { canFork } : {}) };
+  const effort = session.effortSelector?.();
+  return {
+    models,
+    modes,
+    options,
+    ...(defaultModel ? { defaultModel } : {}),
+    ...(canFork !== undefined ? { canFork } : {}),
+    ...(effort ? { effort } : {}),
+  };
 }
 
 function currentModelLabel(selector: ModelSelector): string | undefined {
@@ -328,12 +376,13 @@ function optionKinds(options: SessionOption[] | undefined, fresh: boolean): Opti
 }
 
 /** What one ask learned, for its log line. */
-function answerLine(models: AgentModelList, modes: AgentModes, options: OptionKind[]): string {
+function answerLine({ models, modes, options, effort }: ProbeResult): string {
   const list = (xs: string[]): string => (xs.length > 0 ? xs.join(' ') : 'none');
   return (
     `for its models: ${models.kind === 'list' ? `${models.options.length}` : 'none offered'}, ` +
     `modes: ${list(modes.kind === 'list' ? modes.options.map((m) => m.value) : [])}, ` +
-    `settings: ${list(options.map((o) => o.id))}`
+    `settings: ${list(options.map((o) => o.id))}, ` +
+    `effort: ${list(effort?.options.map((o) => o.value) ?? [])}`
   );
 }
 

@@ -5,6 +5,20 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **The Web UI's status line switches the reasoning effort, the way it switches the model.** The
+  level sat beside the model as plain text, and only once the harness had reported one — so `default`
+  never showed, and a new topic had no way to pick a level before its first message short of typing
+  `/effort`. It is now a button right after the model's, drawn like the permission chip, opening the
+  current model's levels in the same popover (a bottom sheet on a phone) with the one in use ticked.
+  A tap goes through `/effort`'s own path: the same checks and sentences, and the choice is kept with
+  the topic. The levels belong to the model, so a model switch redraws the button or takes it away,
+  and a model without levels has none. Before the first message it shows what the gateway already
+  knows without starting the topic's agent — the topic's own choice, a level pinned in the agent's
+  `options`, or what a fresh session of that agent starts at, read once per agent alongside its
+  settings. Nothing is per-harness: any agent that reports a `thought_level` option over ACP gets it.
+
 ### Changed
 
 - **The Web UI's status chips above the composer take one line on a phone.** On a 390 px screen
