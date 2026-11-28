@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.45.0] - 2026-11-28
+
 ### Changed
 
 - **Skills takes Reviews' place in the Web UI's mobile bottom tab bar.** The phone drawer's bottom
