@@ -162,7 +162,7 @@ const FOLLOW_UP_QUIET_MS = 180_000;
  * Grace period after the harness reports a completed result before a burst of out-of-turn output
  * is sealed and decorated (shortens `FOLLOW_UP_QUIET_MS` without fragmenting per-snapshot cost).
  */
-const FOLLOW_UP_SEAL_GRACE_MS = 1_500;
+export const FOLLOW_UP_SEAL_GRACE_MS = 1_500;
 
 /**
  * Consecutive queue rejections the reader tolerates before tearing down the connection.
@@ -199,7 +199,21 @@ export interface AcpFactoryOptions {
   harnessQuota?: (def: AgentDef) => HarnessQuota | undefined;
   /** How long a lost agent is tried again, and how often (agent-reconnect.ts); for the tests. */
   redial?: RedialTiming;
+  /** What the follow-up seal, the `/stop` grace and the silence watchdog wait on; for the tests. */
+  clock?: AcpClock;
 }
+
+export interface AcpClock {
+  /** Run `fn` after `ms`; returns its cancel. */
+  schedule(fn: () => void, ms: number): () => void;
+}
+
+const REAL_CLOCK: AcpClock = {
+  schedule: (fn, ms) => {
+    const timer = setTimeout(fn, ms);
+    return () => clearTimeout(timer);
+  },
+};
 
 export function createAcpAgentFactory(
   cfg: Config,
@@ -228,7 +242,8 @@ export function createAcpAgentFactory(
           store,
           hasQuotaSource(def) ? quota : undefined,
           opts.redial,
-          locale
+          locale,
+          opts.clock
         );
         sessions.set(sessionId, s);
       }
@@ -324,7 +339,8 @@ class AcpSession implements AgentSession {
     private readonly store?: SessionMemory,
     quota?: QuotaMeter,
     private readonly redialTiming?: RedialTiming,
-    private readonly locale: Locale = 'en'
+    private readonly locale: Locale = 'en',
+    private readonly clock: AcpClock = REAL_CLOCK
   ) {
     this.conversationId = conversationId;
     this.cwd = resolveConversationCwd(def, conversationId, store);
@@ -754,11 +770,10 @@ class AcpSession implements AgentSession {
 
   private armFollowUpQuiet(ms: number): void {
     this.cancelFollowUpQuiet?.();
-    const timer = setTimeout(() => {
+    this.cancelFollowUpQuiet = this.clock.schedule(() => {
       console.log(`[acp] ${this.conversationId}: follow-up output went quiet; closing it`);
       void this.closeFollowUp();
     }, ms);
-    this.cancelFollowUpQuiet = () => clearTimeout(timer);
   }
 
   private isWreckage(update: SessionUpdate): boolean {
@@ -888,7 +903,7 @@ class AcpSession implements AgentSession {
     handlers: AgentStreamHandlers,
     endTurn: (err: Error) => void
   ): { stopped: () => void; clear: () => void } {
-    let deadline: ReturnType<typeof setTimeout> | undefined;
+    let deadline: (() => void) | undefined;
     const onIgnored = (): void => {
       const secs = Math.max(1, Math.round(this.stopGraceMs / 1000));
       if (!this.canResume()) {
@@ -912,10 +927,10 @@ class AcpSession implements AgentSession {
     return {
       stopped: () => {
         state.stopped = true;
-        deadline ??= setTimeout(onIgnored, this.stopGraceMs);
+        deadline ??= this.clock.schedule(onIgnored, this.stopGraceMs);
       },
       clear: () => {
-        if (deadline) clearTimeout(deadline);
+        deadline?.();
       },
     };
   }
@@ -927,11 +942,11 @@ class AcpSession implements AgentSession {
     clear: () => void;
   } {
     let hung: ((err: Error) => void) | undefined;
-    let watchdog: ReturnType<typeof setTimeout> | undefined;
+    let watchdog: (() => void) | undefined;
     let toolGraceUsed = false;
     const arm = (ms: number): void => {
-      if (watchdog) clearTimeout(watchdog);
-      watchdog = setTimeout(() => onSilence(ms), ms);
+      watchdog?.();
+      watchdog = this.clock.schedule(() => onSilence(ms), ms);
     };
     const onSilence = (waited: number): void => {
       if (host && !host.isUp) {
@@ -971,7 +986,7 @@ class AcpSession implements AgentSession {
       },
       trigger: (err: Error) => hung?.(err),
       clear: () => {
-        if (watchdog) clearTimeout(watchdog);
+        watchdog?.();
       },
     };
   }

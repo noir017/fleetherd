@@ -3,7 +3,13 @@ import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { SessionUpdate } from '@agentclientprotocol/sdk';
-import { autonomousResultOrigin, createAcpAgentFactory, TOOL_SILENCE_FACTOR } from './agent-acp.js';
+import {
+  type AcpClock,
+  autonomousResultOrigin,
+  createAcpAgentFactory,
+  FOLLOW_UP_SEAL_GRACE_MS,
+  TOOL_SILENCE_FACTOR,
+} from './agent-acp.js';
 import { parseConfig, type Config } from '../config/schema.js';
 import type { AgentSession, AgentStreamHandlers } from './agent.js';
 import { useTempDirs } from '../test-utils/temp-dir.test-helpers.js';
@@ -26,7 +32,22 @@ const makeTempDir = useTempDirs();
  */
 
 const FAKE_AGENT = /* js */ `
+const fs = require('node:fs');
+const path = require('node:path');
 const readline = require('node:readline');
+
+// Runs \`then\` once the test has written \`name\` beside this script: a step the test paces, because
+// its clock is not this process's (see manualClock).
+const whenGo = (name, then) => {
+  const file = path.join(__dirname, name);
+  const poll = setInterval(() => {
+    if (!fs.existsSync(file)) return;
+    clearInterval(poll);
+    then();
+  }, 5);
+};
+// A SLOW prompt still waiting for its answer: a cancel answers it at once.
+let slowPrompt = null;
 
 const send = (obj) => process.stdout.write(JSON.stringify(obj) + '\\n');
 const reply = (id, result) => send({ jsonrpc: '2.0', id, result });
@@ -154,12 +175,19 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
     // what was cancelled was background output, after the gateway has already sealed it.
     const doomed = openTool;
     reply(msg.id, {});
+    if (slowPrompt) {
+      clearTimeout(slowPrompt.timer);
+      reply(slowPrompt.id, { stopReason: 'cancelled' });
+      slowPrompt = null;
+    }
     setTimeout(() => {
       notify(sessionId, {
         sessionUpdate: 'tool_call_update',
         toolCallId: doomed,
         status: 'failed',
       });
+      // The title report that follows a cycle: a test waits for it to know the update above is in.
+      notify(sessionId, { sessionUpdate: 'session_info_update', title: 'Cancelled' });
     }, 40);
     if (doomed === 'bg-1') {
       // A DIFFERENT background task finishing later. Stopping one burst must not blind the
@@ -255,23 +283,26 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
       // The 2026-10-06 shape: the API fails and Claude Code retries. Each attempt is a warning
       // record, spaced closer than the test's watchdog but adding up to well past it, and then the
       // provider recovers. A timeout comes first (no HTTP status, so "connection"), then 5xx.
+      // The test spaces them: go-1 … go-4 release the records, go-5 the answer.
       const steps = [
         ['connection', 'Reconnecting to Claude, attempt 1 of 10.'],
         ['service', 'Retrying Claude, attempt 2 of 10.'],
         ['service', 'Retrying Claude, attempt 3 of 10.'],
         ['service', 'Retrying Claude, attempt 4 of 10.'],
       ];
-      steps.forEach(([category, title], i) =>
-        setTimeout(
-          () => failureRecord(sessionId, { id: 'p1:error', revision: i + 1, severity: 'warning', category, title }),
-          150 * i
-        )
-      );
-      setTimeout(() => {
-        text(sessionId, 'recovered and answered');
-        resultUsage(sessionId, 1000);
-        reply(msg.id, { stopReason: 'end_turn' });
-      }, 150 * steps.length);
+      const step = (i) =>
+        whenGo('go-' + (i + 1), () => {
+          if (i === steps.length) {
+            text(sessionId, 'recovered and answered');
+            resultUsage(sessionId, 1000);
+            reply(msg.id, { stopReason: 'end_turn' });
+            return;
+          }
+          const [category, title] = steps[i];
+          failureRecord(sessionId, { id: 'p1:error', revision: i + 1, severity: 'warning', category, title });
+          step(i + 1);
+        });
+      step(0);
       return;
     }
     if (asked.includes('REFUSE_TOOL_THEN_QUOTA')) {
@@ -439,7 +470,13 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
         status: 'in_progress',
         rawInput: { command: './long.sh' },
       });
-      setTimeout(() => reply(msg.id, { stopReason: 'cancelled' }), 80);
+      slowPrompt = {
+        id: msg.id,
+        timer: setTimeout(() => {
+          slowPrompt = null;
+          reply(msg.id, { stopReason: 'cancelled' });
+        }, 80),
+      };
       return;
     }
     // The turn's own answer, then its result, then the prompt response — in that order, which is
@@ -492,7 +529,11 @@ afterEach(() => {
   live = undefined;
 });
 
-function rig(opts: { resumeFrom?: string; turnTimeoutMs?: number } = {}): { session: AgentSession } {
+function rig(opts: { resumeFrom?: string; turnTimeoutMs?: number; clock?: AcpClock } = {}): {
+  session: AgentSession;
+  /** Lets the fake agent take its next paced step (see whenGo). */
+  go: (step: number) => void;
+} {
   const dir = makeTempDir('aa-acp-pump-');
   const script = join(dir, 'fake-acp-agent.cjs');
   writeFileSync(script, FAKE_AGENT);
@@ -516,10 +557,50 @@ function rig(opts: { resumeFrom?: string; turnTimeoutMs?: number } = {}): { sess
     conversationCwd: () => undefined,
   } as unknown as Parameters<typeof createAcpAgentFactory>[2];
 
-  const session = createAcpAgentFactory(cfg, join(dir, 'ipc.sock'), store, { provisions: [] }).getOrCreate('conv#1', 'fake');
+  const session = createAcpAgentFactory(cfg, join(dir, 'ipc.sock'), store, { provisions: [], clock: opts.clock }).getOrCreate('conv#1', 'fake');
   live = session;
-  return { session };
+  return { session, go: (step) => writeFileSync(join(dir, `go-${step}`), '') };
 }
+
+/**
+ * The runtime's own deadlines (follow-up seal, /stop grace, silence watchdog) on a clock the test
+ * moves by hand, so nothing waits on the wall clock and no load on the machine can make one fire
+ * early or late. The fake agent still runs in real time; the tests wait for what it sends.
+ */
+function manualClock() {
+  let now = 0;
+  let timers: Array<{ at: number; ms: number; fn: () => void; live: boolean }> = [];
+  return {
+    clock: {
+      schedule(fn: () => void, ms: number) {
+        const timer = { at: now + ms, ms, fn, live: true };
+        timers = [...timers.filter((t) => t.live), timer];
+        return () => void (timer.live = false);
+      },
+    } satisfies AcpClock,
+    now: () => now,
+    /** A deadline of `ms` was set at the present moment and is still pending. */
+    armedNow: (ms: number) => timers.some((t) => t.live && t.ms === ms && t.at === now + ms),
+    /** Move time on by `ms`, firing every deadline that falls due, in order. */
+    advance(ms: number) {
+      const end = now + ms;
+      for (;;) {
+        const due = timers.filter((t) => t.live && t.at <= end).sort((a, b) => a.at - b.at)[0];
+        if (!due) break;
+        due.live = false;
+        now = due.at;
+        due.fn();
+      }
+      now = end;
+    },
+  };
+}
+
+/** Poll for what the fake agent sends rather than guessing how long its process takes to send it. */
+const until = async (cond: () => boolean): Promise<void> => {
+  for (let i = 0; i < 400 && !cond(); i++) await new Promise((r) => setTimeout(r, 10));
+  if (!cond()) throw new Error(`never happened: ${cond.toString()}`);
+};
 
 /** A sink that records what it is handed, shaped like the real one. */
 function sinkSpy(): {
@@ -563,15 +644,13 @@ function sinkSpy(): {
   };
 }
 
-/** Wait for the fake agent's delayed notifications to arrive and be pumped. */
-const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 300));
-
-/** ...and then for the post-result grace window to elapse and seal the burst. */
-const sealed = (): Promise<void> => new Promise((r) => setTimeout(r, 1_700));
+/** The default turn's background report, which the fake sends after everything else it sends. */
+const BACKGROUND_REPORT = 'the script finished: all green';
 
 describe('the ACP update reader keeps reading after a turn ends', () => {
   it('delivers post-turn output to the follow-up sink, not into the void', async () => {
-    const { session } = rig();
+    const time = manualClock();
+    const { session } = rig({ clock: time.clock });
     const captured: { text: string[]; closes: number } = {
       text: [],
       closes: 0,
@@ -593,15 +672,17 @@ describe('the ACP update reader keeps reading after a turn ends', () => {
     expect(turn.turn.join('')).toBe('started the script in the background');
     expect(captured.text).toEqual([]);
 
-    await settle();
+    // The report's result marker is the last thing it sends; it is in once the grace is armed.
+    await until(() => time.armedNow(FOLLOW_UP_SEAL_GRACE_MS));
 
     // The whole point: output produced after the turn settled reached the conversation.
-    expect(captured.text.join('')).toBe('the script finished: all green');
+    expect(captured.text.join('')).toBe(BACKGROUND_REPORT);
     // Not sealed yet — the result marker only shortens the timer, because `usage_update.cost` is
     // documented as a cumulative total and a harness may report it on every snapshot.
+    time.advance(FOLLOW_UP_SEAL_GRACE_MS - 1);
     expect(captured.closes).toBe(0);
 
-    await sealed();
+    time.advance(1);
 
     // And the burst IS eventually closed, which is what makes it visible at all in the default
     // `once` delivery mode (nothing is sent until the buffer completes).
@@ -622,7 +703,7 @@ describe('the ACP update reader keeps reading after a turn ends', () => {
     });
 
     await session.runTurn({ prompt: 'first', sessionToken: 'tok' }, collector().handlers);
-    await settle();
+    await until(() => strayed.join('') === BACKGROUND_REPORT);
     strayed.length = 0;
 
     // The handover a between-turns drain could not do safely: the SDK's queue has exactly one
@@ -649,7 +730,7 @@ describe('what must NOT be rendered as background output', () => {
     // The replay is emitted during startup, i.e. before this turn's prompt is even sent.
     const turn = collector();
     await session.runTurn({ prompt: 'carry on', sessionToken: 'tok' }, turn.handlers);
-    await settle();
+    await until(() => sink.text.join('') === BACKGROUND_REPORT);
 
     const everything = [...sink.text, ...turn.turn].join(' ');
     expect(everything).not.toContain('REPLAYED HISTORY');
@@ -670,7 +751,7 @@ describe('what must NOT be rendered as background output', () => {
 
     const turn = collector();
     await session.runTurn({ prompt: 'carry on', sessionToken: 'tok' }, turn.handlers);
-    await settle();
+    await until(() => sink.text.join('') === BACKGROUND_REPORT);
 
     const everything = [...sink.text, ...turn.turn].join(' ');
     expect(everything).not.toContain('REPLAYED HISTORY');
@@ -690,17 +771,17 @@ describe('what must NOT be rendered as background output', () => {
     // Wait for the tool to actually be RUNNING rather than for a wall-clock guess: the child has
     // to spawn and handshake first, and a fixed sleep here was long enough to abort before the
     // ledger had anything in it — which is a real window the runtime has to cover too.
-    for (let i = 0; i < 200 && turn.tools.length === 0; i++) {
-      await new Promise((r) => setTimeout(r, 10));
-    }
+    await until(() => turn.tools.length > 0);
     expect(turn.tools).toEqual(['Bash']); // the turn itself did render the tool it was running
     session.abort();
     await running;
-    await settle();
+    // The title report right behind the trailing update opens the (silent) follow-up state.
+    await until(() => sink.facts.length > 0);
 
     // The trailing `tool_call_update` for the killed tool arrived with no turn running; rendering
     // it would have posted a "background update" about the tool the user just stopped.
     expect(sink.tools).toEqual([]);
+    expect(sink.finishes).toEqual([]);
     expect(sink.closes()).toBe(0);
   });
 });
@@ -711,11 +792,6 @@ describe('what must NOT be rendered as background output', () => {
  * prompt to cancel, and leave the conversation able to hear the NEXT background report.
  */
 describe('stopping background output', () => {
-  /** Poll for a condition rather than guessing how long the child takes to get there. */
-  const until = async (cond: () => boolean): Promise<void> => {
-    for (let i = 0; i < 300 && !cond(); i++) await new Promise((r) => setTimeout(r, 10));
-  };
-
   it('cancels a burst that is still running, seals it, and still hears the next one', async () => {
     const { session } = rig();
     const sink = sinkSpy();
@@ -737,7 +813,7 @@ describe('stopping background output', () => {
     // harness's own "failed" update for it is about to be dropped, so this is the last word.
     expect(sink.finishes).toEqual([false]);
 
-    await settle();
+    await until(() => sink.text.join('').includes('the other job finished too'));
     // Exactly one more bubble, and it is the LATER job's. The deploy's trailing update was dropped
     // as wreckage rather than opening a burst of its own; the unrelated report that followed was
     // not — which is what reusing the turn's `aborting` flag would have got wrong, and kept wrong
@@ -753,7 +829,7 @@ describe('stopping background output', () => {
     expect(session.stopBackground?.()).toBe(false); // nothing has ever run
 
     await session.runTurn({ prompt: 'META_ONLY', sessionToken: 'tok' }, collector().handlers);
-    await settle();
+    await until(() => sink.facts.length > 0);
     // The post-turn title report opened a follow-up state — it does on every conversation after
     // every turn — but nothing is working, so "stopped the background work" would be untrue.
     expect(session.stopBackground?.()).toBe(false);
@@ -779,9 +855,7 @@ describe('stopping background output', () => {
     sink.install(session);
 
     await session.runTurn({ prompt: 'run the long script', sessionToken: 'tok' }, collector().handlers);
-    await settle();
-
-    expect(sink.text.join('')).toBe('the script finished: all green');
+    await until(() => sink.text.join('') === BACKGROUND_REPORT);
     // Reported by session/new and never again: without the runtime handing them on, the burst's
     // footer fell back to config — which for the `claude` harness names no model at all.
     expect(sink.facts).toEqual(['model:Opus', 'effort:high']);
@@ -798,9 +872,6 @@ describe('a turn the harness will not stop', () => {
   /** turnTimeoutMs 600 → a 300 ms stop grace (STOP_GRACE_MS is capped at half the watchdog). */
   const TIMEOUT = 600;
   const GRACE = TIMEOUT / 2;
-  const until = async (cond: () => boolean): Promise<void> => {
-    for (let i = 0; i < 300 && !cond(); i++) await new Promise((r) => setTimeout(r, 10));
-  };
   /** Like collector(), but keeping each tool start whole: the after-stop mark is what is under test. */
   function recorder() {
     const base = collector();
@@ -819,13 +890,13 @@ describe('a turn the harness will not stop', () => {
   }
 
   it('shows what it does after the stop, ends its process after the grace, and resumes on the next message', async () => {
-    const { session } = rig({ turnTimeoutMs: TIMEOUT, resumeFrom: 'stored-1' });
+    const time = manualClock();
+    const { session } = rig({ turnTimeoutMs: TIMEOUT, resumeFrom: 'stored-1', clock: time.clock });
     const turn = recorder();
     const running = session.runTurn({ prompt: 'STUBBORN', sessionToken: 'tok' }, turn.handlers);
     await until(() => turn.tools.length > 0);
     const before = turn.turn.join('');
 
-    const stoppedAt = Date.now();
     session.abort();
     // Shown, and marked: the tool it STARTED after the stop says so; the one it was in does not.
     // The tool call and the text after it are two notifications: wait for both.
@@ -836,13 +907,15 @@ describe('a turn the harness will not stop', () => {
     ]);
     expect(turn.turn.join('')).toContain('still going');
 
-    // A second /stop does not restart the clock.
-    await new Promise((r) => setTimeout(r, GRACE / 2));
+    // A second /stop does not restart the clock: the grace still ends GRACE after the first.
+    time.advance(GRACE / 2);
     session.abort();
+    time.advance(GRACE / 2 - 1);
+    expect(turn.notices).toEqual([]);
+    expect(session.reclaimState?.()).toBe('resumable');
+    time.advance(1);
 
     await running; // a stop, not a failure
-    expect(Date.now() - stoppedAt).toBeGreaterThanOrEqual(GRACE - 20);
-    expect(Date.now() - stoppedAt).toBeLessThan(GRACE * 2);
     expect(turn.notices).toEqual([expect.stringMatching(/^⏹ fake was still running \ds after \/stop, so its process was ended\. The conversation is kept/)]);
     expect(session.reclaimState?.()).toBe('no-child');
 
@@ -857,12 +930,13 @@ describe('a turn the harness will not stop', () => {
 
   it('leaves a harness that cannot resume running, and says how to end it', async () => {
     // No stored session id: ending the child would start the conversation over.
-    const { session } = rig({ turnTimeoutMs: TIMEOUT });
+    const time = manualClock();
+    const { session } = rig({ turnTimeoutMs: TIMEOUT, clock: time.clock });
     const turn = recorder();
     const running = session.runTurn({ prompt: 'STUBBORN', sessionToken: 'tok' }, turn.handlers);
     await until(() => turn.tools.length > 0);
     session.abort();
-    await until(() => turn.notices.length > 0);
+    time.advance(GRACE);
     expect(turn.notices).toEqual([expect.stringContaining('cannot resume a stored session')]);
     expect(session.reclaimState?.()).toBe('unresumable'); // still up
     session.dispose();
@@ -870,13 +944,14 @@ describe('a turn the harness will not stop', () => {
   });
 
   it('changes nothing for a harness that does stop: no notice, no process ended', async () => {
-    const { session } = rig({ turnTimeoutMs: TIMEOUT, resumeFrom: 'stored-1' });
+    const time = manualClock();
+    const { session } = rig({ turnTimeoutMs: TIMEOUT, resumeFrom: 'stored-1', clock: time.clock });
     const turn = collector();
     const running = session.runTurn({ prompt: 'SLOW: run the long script', sessionToken: 'tok' }, turn.handlers);
     await until(() => turn.tools.length > 0);
     session.abort();
     await running;
-    await new Promise((r) => setTimeout(r, GRACE + 100)); // past where the deadline would have fired
+    time.advance(GRACE * 10); // well past where the deadline would have fired
     expect(turn.notices).toEqual([]);
     expect(session.reclaimState?.()).toBe('resumable');
   });
@@ -889,14 +964,14 @@ describe('a turn the harness will not stop', () => {
     const running = session.runTurn({ prompt: 'STUBBORN', sessionToken: 'tok' }, turn.handlers);
     session.abort();
     await running;
-    await settle();
-    expect(turn.turn).toEqual([]);
-    expect(turn.tools).toEqual([]);
 
     // The session itself is fine: the next message is answered as usual.
     const next = collector();
     await session.runTurn({ prompt: 'WHO_ARE_YOU', sessionToken: 'tok' }, next.handlers);
     expect(next.turn.join('')).toMatch(/^pid \d+ resumed null$/);
+    // Anything a STUBBORN prompt had set off would have come in ahead of that answer.
+    expect(turn.turn).toEqual([]);
+    expect(turn.tools).toEqual([]);
   });
 });
 
@@ -1023,13 +1098,25 @@ describe('failure records from the harness', () => {
   const TIMEOUT = 200;
 
   it('keeps a retrying turn alive past the watchdog, and says so once per cause', async () => {
-    const { session } = rig({ turnTimeoutMs: TIMEOUT });
+    const time = manualClock();
+    const { session, go } = rig({ turnTimeoutMs: TIMEOUT, clock: time.clock });
     const turn = collector();
-    const started = Date.now();
-    await session.runTurn({ prompt: 'RETRY_THEN_ANSWER', sessionToken: 'tok' }, turn.handlers);
+    const running = session.runTurn({ prompt: 'RETRY_THEN_ANSWER', sessionToken: 'tok' }, turn.handlers);
+
+    // Four records SPACED under the watchdog and adding up to well past it: each must re-arm it.
+    const SPACING = (TIMEOUT * 3) / 4;
+    await until(() => time.armedNow(TIMEOUT)); // the prompt is out
+    for (let record = 1; record <= 4; record++) {
+      time.advance(SPACING);
+      go(record);
+      await until(() => time.armedNow(TIMEOUT));
+    }
+    time.advance(SPACING);
+    go(5);
+    await running;
 
     // Longer than the watchdog allows any silence, so it was the records that kept it alive.
-    expect(Date.now() - started).toBeGreaterThan(TIMEOUT * 2);
+    expect(time.now()).toBeGreaterThan(TIMEOUT * 2);
     expect(turn.turn.join('')).toBe('recovered and answered');
     // Four attempts, two causes: one notice each, never folded into the reply.
     expect(turn.notices).toEqual([
@@ -1039,7 +1126,8 @@ describe('failure records from the harness', () => {
   });
 
   it('fails a turn the harness settled as end_turn with an error record', async () => {
-    const { session } = rig({ turnTimeoutMs: TIMEOUT });
+    // The watchdog on a clock nobody moves: what fails this turn must be the record, never silence.
+    const { session } = rig({ turnTimeoutMs: TIMEOUT, clock: manualClock().clock });
     const turn = collector();
     await expect(session.runTurn({ prompt: 'FAIL_TYPED', sessionToken: 'tok' }, turn.handlers)).rejects.toThrow(
       /^API Error: 503 no available channel$/
@@ -1050,15 +1138,16 @@ describe('failure records from the harness', () => {
   });
 
   it('announces a background failure without opening a follow-up message for it', async () => {
-    const { session } = rig();
+    const time = manualClock();
+    const { session } = rig({ clock: time.clock });
     const sink = sinkSpy();
     sink.install(session);
     await session.runTurn({ prompt: 'BG_FAILURE', sessionToken: 'tok' }, collector().handlers);
-    await settle();
+    await until(() => sink.notices.length > 0);
 
     expect(sink.notices).toEqual(['❌ fake: API Error: 500 Database error']);
     expect(sink.text).toEqual([]);
-    await sealed();
+    time.advance(60 * 60_000); // past every deadline that could seal a burst
     expect(sink.closes()).toBe(0);
   });
 
@@ -1068,7 +1157,7 @@ describe('failure records from the harness', () => {
     sink.install(session);
     const turn = collector();
     await session.runTurn({ prompt: 'an ordinary question', sessionToken: 'tok' }, turn.handlers);
-    await settle();
+    await until(() => sink.text.join('') === BACKGROUND_REPORT);
 
     expect([...turn.notices, ...sink.notices].join('\n')).not.toContain('OLD usage limit');
   });
@@ -1114,7 +1203,6 @@ describe('a prompt folded into an autonomous cycle (claude-agent-acp #1145)', ()
     // be posted as a "background update".
     const next = collector();
     await session.runTurn({ prompt: 'NEXT_PROMPT', sessionToken: 'tok' }, next.handlers);
-    await settle();
 
     const whole = Array.from({ length: 400 }, (_, i) => `part${i} `).join('');
     expect(next.turn.join('')).toBe(whole);
