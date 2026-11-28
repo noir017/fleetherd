@@ -17,7 +17,8 @@ lives in one directory on the gateway, so moving the gateway moves it.
   <layer>.md     any other agent, by its instructions.layer (its id by default)
 ```
 
-An agent gets `common.md` followed by its own file. Either may be missing. The per-agent file is
+An agent gets `common.md` followed by its own file — a [private agent](agents.md#private-agents) its own
+file alone. Either may be missing. The per-agent file is
 for rules that only make sense for one harness — say, one about its prompt cache that another
 agent, billed differently, should not follow.
 

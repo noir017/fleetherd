@@ -5,6 +5,29 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **Private agents (`private: true`).** Some work should not meet what every agent shares — the
+  skill library, the standing instructions, a long-term memory wired into the harness — nor leave
+  anything behind in it. A private agent is given no skill (none placed, no `skills` tool,
+  `fleetherd skills` refused) and no `common.md`, only its own instruction layer; its sub-tasks and
+  their reviewers must be private too; the automatic review skips its conversations; and `sessions`
+  hides them from every agent that is not private and from external callers, so another agent
+  cannot carry them into memory either. What its harness loads by itself — MCP servers, hooks and
+  skills installed in its home — is the harness's config, so a private agent is meant to run with a
+  home of its own (`env.HOME`), and the gateway warns when one does not. A private agent and a
+  shared one writing the same instruction file are refused like two different layers, because one
+  file cannot hold both texts. See docs/agents.md#private-agents.
+
+### Fixed
+
+- **A local agent with a home of its own can run reverse commands again.** The `fleetherd` CLI
+  found the daemon by loading the gateway's config from `~/.config/fleetherd` under its own HOME —
+  so an agent with `env.HOME` set got "config not found" for every `send-file`, `schedule` or
+  `sessions` — although every agent is handed its socket in `FLEETHERD_SOCKET`. It now uses that,
+  and loads the config only when it was not given one; an agent on a host also stops seeing the
+  gateway's config warnings on stderr after each command.
+
 ## [3.47.0] - 2026-11-28
 
 ### Added

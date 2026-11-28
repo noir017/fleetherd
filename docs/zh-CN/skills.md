@@ -3,7 +3,7 @@
 [English](../skills.md) | 简体中文
 
 自管技能由网关自己保存，并下发给每台主机上的每个智能体——Claude Code、Codex、OpenCode、Antigravity、
-CodeBuddy 和 AtomCode，本机的和远程的都算。你说「把这个记成技能」，当前智能体就能写一个；其他智能体下次启动时读到它。
+CodeBuddy 和 AtomCode，本机的和远程的都算；[私有智能体](agents.md#私有智能体)除外，它什么都不拿。你说「把这个记成技能」，当前智能体就能写一个；其他智能体下次启动时读到它。
 
 ```text
 <配置目录>/skills/                 （~/.config/fleetherd/skills/）—— 一个 git 仓库

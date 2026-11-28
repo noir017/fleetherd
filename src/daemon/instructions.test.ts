@@ -54,6 +54,13 @@ describe('composeInstructions', () => {
     expect(composeInstructions(dir, 'agy')).toEqual({ kind: 'text', text: '# Mine\n\n1. Answer in Chinese.\n' });
   });
 
+  it('gives a private agent its own layer alone, never the common one', () => {
+    fs.writeFileSync(path.join(dir, 'common.md'), 'Ask the shared memory first.\n');
+    fs.writeFileSync(path.join(dir, 'claude.md'), 'Only for Claude.\n');
+    expect(composeInstructions(dir, 'claude', false)).toEqual({ kind: 'text', text: 'Only for Claude.\n' });
+    expect(composeInstructions(dir, 'codex', false)).toEqual({ kind: 'none' });
+  });
+
   it('delivers an agent\'s own layer without a common one', () => {
     fs.writeFileSync(path.join(dir, 'claude.md'), 'Only for Claude.');
     expect(composeInstructions(dir, 'claude')).toEqual({ kind: 'text', text: 'Only for Claude.\n' });

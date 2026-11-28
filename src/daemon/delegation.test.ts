@@ -636,6 +636,21 @@ describe('Delegation: proposing, and the card every start waits on', () => {
     await expect(r.d.handle(P, task('zz', 'x'))).rejects.toThrow(/no agent "zz".*oc2, cc, cx, local/);
   });
 
+  it("hands a private agent's work only to private agents, worker and reviewer alike", async () => {
+    const r = rig();
+    const def = (id: string) => r.deps.config.agents.find((a) => a.id === id)!;
+    def('cc').private = true;
+    await expect(r.d.handle(P, task('cx', 'x'))).rejects.toThrow(/cc is a private agent, so a sub-task goes to a private agent too: "cx" is not/);
+    def('cx').private = true;
+    await expect(r.d.handle(P, task('cx', 'x', { reviewBy: 'local', review: 'end with `fleetherd task-verdict pass`' }))).rejects.toThrow(
+      /so its review goes to a private agent too: "local" is not/
+    );
+    await expect(r.d.handle(P, task('cx', 'x'))).resolves.toBeDefined();
+    // A conversation that is not private hands work to anyone, private agents included.
+    def('cc').private = undefined;
+    await expect(r.d.handle(P, task('cx', 'y'))).resolves.toBeDefined();
+  });
+
   it('says which could not start, and tells the asking agent', async () => {
     const r = rig({ failOpen: 'cx' });
     await r.d.handle(P, task('cc', 'a'));

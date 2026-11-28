@@ -3,7 +3,8 @@
 English | [简体中文](zh-CN/skills.md)
 
 A managed skill is a skill the gateway stores itself and gives to every agent on every host —
-Claude Code, Codex, OpenCode, Antigravity, CodeBuddy and AtomCode, local or remote. An agent can
+Claude Code, Codex, OpenCode, Antigravity, CodeBuddy and AtomCode, local or remote — except a
+[private agent](agents.md#private-agents), which is given none. An agent can
 write one when you say "remember this as a skill", and every agent reads it from its next start.
 
 ```text

@@ -69,7 +69,7 @@ session id, agy's conversation id). One conversation holds one session *per agen
 | `shell-run.ts` | General shell command runner (local and remote): its own process group, a bounded output tail, and the full log on disk. Shared by scheduled `--bash` tasks, `agent-hooks.ts`, and `quota-meter.ts` |
 | `restart-drain.ts` | A SIGTERM with turns (an agent's background output counted as one) or scheduled runs in progress: the bounded wait for them before the daemon stops (`Daemon.beginDrain` refuses new turns and holds the scheduler meanwhile) |
 | `reverse-cli-shim.ts` | Guarantees `fleetherd` is on the agent's PATH; `selfInvocation` — how to re-run this CLI, shared with the tool server entry |
-| `provision.ts` | Types only: `AgentProvision`, `ProvisionMeta`, and the narrow `HostFiles` port implemented by `RemoteHost` for spawn-time local, remote, and connect-agent `_meta` provisioning |
+| `provision.ts` | `AgentProvision`, `ProvisionMeta`, and the narrow `HostFiles` port implemented by `RemoteHost` for spawn-time local, remote, and connect-agent `_meta` provisioning; `provisionsFor` drops the provisions marked `skills` for a private agent (docs/agents.md#private-agents) |
 | `ssh-identity.ts` | Leaf helper: gateway default SSH identity file, `known_hosts` path resolution, and local `~` expansion |
 | `agy-plugin.ts` | Links the bundled agy plugin (`agy-plugin/`: a Stop hook that keeps a turn open while a background command runs) into `~/.gemini/config/plugins` |
 | `skill-link.ts` | Links the bundled skills (`fleetherd`, `super`) into the skill directories the harnesses read (`~/.claude/skills`, `~/.agents/skills`, `~/.gemini/config/skills`); `fleetherd` through its rendered copy in `~/.fleetherd/bundled/<readers>` |

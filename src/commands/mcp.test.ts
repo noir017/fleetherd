@@ -5,6 +5,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { decode } from '@toon-format/toon';
 import type { IpcAction, IpcRequest, IpcResponse } from '../ipc/protocol.js';
+import { PRIVATE_NO_SKILLS } from '../ipc/tools.js';
 import {
   LIBRARY_NAMES_MAX,
   MAX_SESSION_LINE_BYTES,
@@ -112,6 +113,11 @@ describe('tools/list', () => {
     const r = await result(req('tools/list'), d);
     const skills = (r.tools as { name: string; description: string }[]).find((t) => t.name === 'skills')!;
     expect(skills.description).not.toMatch(/In the library/);
+  });
+
+  it("leaves the skills tool out of a private agent's session, the daemon's refusal being the sign", async () => {
+    const r = await result(req('tools/list'), deps({ ok: false, error: PRIVATE_NO_SKILLS }));
+    expect((r.tools as { name: string }[]).map((t) => t.name)).toEqual(['send_file', 'schedule']);
   });
 });
 

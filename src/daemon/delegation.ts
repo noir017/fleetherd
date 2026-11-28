@@ -822,6 +822,7 @@ export class Delegation {
     if (!def) {
       throw new Error(`no agent "${agent}"; task-agents lists them: ${this.deps.config.agents.map((d) => d.id).join(', ')}`);
     }
+    if (!ext) this.assertPrivateHandOff(here, def, a.reviewBy);
     if (a.model || a.options) {
       // Refuse a typo while the asking agent can still retry in this turn, using the same lists
       // /model and the settings switch use. Applying them later is strict too (openTask).
@@ -832,6 +833,15 @@ export class Delegation {
     const review = !ext || allowReview ? this.reviewPlanOf(a, def) : undefined;
     const worktree = a.worktree !== undefined ? await this.worktreePlanOf(here, a, def) : undefined;
     return buildProposedItem(agent, a, review, worktree);
+  }
+
+  /** A private agent's task text and topics go only to private agents: the worker and its reviewer. */
+  private assertPrivateHandOff(here: Place, worker: AgentDef, reviewBy: string | undefined): void {
+    const asker = this.deps.registry.boundAgentOf(here.key);
+    if (!asker || !findAgent(this.deps.config, asker)?.private) return;
+    if (!worker.private) throw new Error(privateHandOff(asker, worker.id, 'a sub-task'));
+    const reviewer = reviewBy ? findAgent(this.deps.config, reviewBy) : undefined;
+    if (reviewer && !reviewer.private) throw new Error(privateHandOff(asker, reviewer.id, 'its review'));
   }
 
   /** Read-only validation for `--worktree [name]`; nothing is created until the sub-task starts. */
@@ -2832,6 +2842,14 @@ function topicOf(platformId: string, address: ConversationAddress): string {
 /** A commit as the review loop names it: the 12 characters `git diff a..b` takes as well as the whole. */
 function short(sha: string): string {
   return sha.slice(0, 12);
+}
+
+/** Why a private agent's conversation cannot hand `what` to `to`. */
+function privateHandOff(asker: string, to: string, what: string): string {
+  return (
+    `${asker} is a private agent, so ${what} goes to a private agent too: "${to}" is not, and would read the task ` +
+    'and the topic with everything it shares (skills, memory). Name a private agent (docs/agents.md#private-agents)'
+  );
 }
 
 /** A text quoted on the confirmation card, cut to what the card shows of one. */

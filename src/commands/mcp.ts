@@ -13,7 +13,7 @@ import {
   type McpToolText,
 } from '../ipc/mcp-rpc.js';
 import type { IpcAction, IpcResponse } from '../ipc/protocol.js';
-import { findNativeTool, libraryLine, NATIVE_TOOLS, toolAction, toolInputSchema } from '../ipc/tools.js';
+import { findNativeTool, libraryLine, NATIVE_TOOLS, PRIVATE_NO_SKILLS, toolAction, toolInputSchema } from '../ipc/tools.js';
 import { friendlyError, normalizeActionPaths, renderResult } from './reverse.js';
 import { envOf } from '../legacy-name.js';
 
@@ -102,16 +102,19 @@ function nativeServer(deps: McpDeps): McpServer {
  */
 async function listTools(deps: McpDeps): Promise<McpTool[]> {
   let library = '';
+  let noSkills = false;
   try {
     const res = await Promise.race([
       deps.call({ kind: 'skills', action: 'categories' }),
       new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 3000).unref?.()),
     ]);
     if (res?.ok) library = libraryLine(res.data);
+    else if (res && res.error === PRIVATE_NO_SKILLS) noSkills = true;
   } catch {
     // no daemon, or no answer: the tool still works, its description just says less
   }
-  return NATIVE_TOOLS.map((t) => ({
+  const tools = noSkills ? NATIVE_TOOLS.filter((t) => t.name !== 'skills') : NATIVE_TOOLS;
+  return tools.map((t) => ({
     name: t.name,
     description: t.name === 'skills' && library ? `${t.description} ${library}` : t.description,
     inputSchema: toolInputSchema(t),

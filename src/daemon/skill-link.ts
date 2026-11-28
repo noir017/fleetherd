@@ -334,6 +334,7 @@ export function createBundledSkillProvision(): AgentProvision<SkillLinkResult[],
 
   return {
     name: 'bundled-skill',
+    skills: true,
     local: (def, home) => ensureSkillLink(def.harness, home, def.command),
     remote: async (host, def, home, w) => {
       if (envOf('NO_SKILL_LINK')) return;

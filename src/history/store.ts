@@ -179,6 +179,8 @@ export interface HistoryListOptions {
    * one place; an id the library does not hold throws, like `read` does.
    */
   beforeId?: number;
+  /** Leave out conversations whose agent is one of these (the private agents, for a reader that is not). */
+  hideAgents?: readonly string[];
 }
 
 export interface HistoryHit {
@@ -385,6 +387,15 @@ export interface HistorySearchOptions {
    * to contain it.
    */
   tools?: boolean;
+  /** Leave out conversations whose agent is one of these (the private agents, for a reader that is not). */
+  hideAgents?: readonly string[];
+}
+
+/** `s.agent NOT IN (…)` for `hideAgents`, or nothing when there are none. */
+function hiddenAgentsClause(hide: readonly string[] | undefined, where: string[], params: Array<string | number>): void {
+  if (!hide || hide.length === 0) return;
+  where.push(`s.agent NOT IN (${hide.map(() => '?').join(', ')})`);
+  params.push(...hide);
 }
 
 /** What one review reads: a tail of a conversation plus the two facts its trigger decides on. */
@@ -888,6 +899,7 @@ export class HistoryStore {
       where.push('s.agent = ?');
       params.push(opts.agent);
     }
+    hiddenAgentsClause(opts.hideAgents, where, params);
     if (opts.days !== undefined && opts.days > 0) {
       where.push('m.ts >= ?');
       params.push(Date.now() - opts.days * 86_400_000);
@@ -1368,6 +1380,7 @@ export class HistoryStore {
       where.push('(s.last_at < ? OR (s.last_at = ? AND s.id < ?))');
       params.push(cursor.last_at, cursor.last_at, cursor.id);
     }
+    hiddenAgentsClause(opts.hideAgents, where, params);
     params.push(limit);
     const rows = db
       .prepare(

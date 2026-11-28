@@ -257,6 +257,13 @@ export function findNativeTool(name: string): NativeTool | undefined {
 export const LIBRARY_NAMES_MAX = 40;
 
 /**
+ * The daemon's refusal of every `skills` action from a private agent's session (daemon-reverse.ts),
+ * matched verbatim by `fleetherd mcp` (commands/mcp.ts listTools) to leave the tool out: the server
+ * cannot otherwise tell whose session it serves, locally or through a host's shim.
+ */
+export const PRIVATE_NO_SKILLS = 'skills are not available to a private agent';
+
+/**
  * From the daemon's `skills categories` answer: `In the library: 协作: grilling, siyuan-notes;
  * other: email-reader.` — the library skills that reach this agent, by category — or
  * `In the library: 运维 6, 开发 2, other 3.` past `maxNames` names, or from a daemon that

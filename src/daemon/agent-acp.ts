@@ -82,7 +82,7 @@ import {
   watchHarnessLog,
   type StartupProgress,
 } from './agent-acp-harness.js';
-import type { AgentProvision } from './provision.js';
+import { type AgentProvision, provisionsFor } from './provision.js';
 import {
   AcpOptionState,
   reportedModes,
@@ -631,7 +631,8 @@ class AcpSession implements AgentSession {
     if (this.active) return;
 
     this.cwd = resolveConversationCwd(this.def, this.conversationId, this.store);
-    const placed = await placeOnHost(this.def, this.cwd, this.provisions);
+    const provisions = provisionsFor(this.def, this.provisions);
+    const placed = await placeOnHost(this.def, this.cwd, provisions);
     if (placed) this.cwd = placed.cwd;
     const place = placed?.place;
 
@@ -644,7 +645,7 @@ class AcpSession implements AgentSession {
       sessionToken,
       place,
       topic,
-      provisions: this.provisions,
+      provisions,
     });
     this.proc = child;
     const { spawnError, stderrTail } = adoptAcpChild(

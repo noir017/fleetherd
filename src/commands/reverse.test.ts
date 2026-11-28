@@ -1,8 +1,9 @@
 import fs from 'node:fs';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
-import { afterAll, describe, expect, it } from 'vitest';
-import { renderResult } from './reverse.js';
+import { afterAll, describe, expect, it, vi } from 'vitest';
+import { renderResult, runReverse } from './reverse.js';
 import type { ScheduleTaskView, SessionListResult, SessionReadResult, SessionSearchResult, TaskReadResult } from '../ipc/protocol.js';
 import { SkillLibrary } from '../daemon/skill-library.js';
 import { createSkill, writeSkillFile } from '../daemon/skills-store.js';
@@ -338,5 +339,43 @@ describe('schedule run --wait output', () => {
     const out = renderResult({ kind: 'schedule-op', id: 'a1b2c3', op: 'run', waitMs: 600_000 }, { task, note }).stdout;
     expect(out).toContain(note);
     expect(out).not.toContain('run:');
+  });
+});
+
+describe('runReverse', () => {
+  it("dials the socket it was handed, with no gateway config under the agent's HOME", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fleetherd-reverse-'));
+    const sock = path.join(dir, 'd.sock');
+    const asked: unknown[] = [];
+    const server = net.createServer((c) => {
+      let buf = '';
+      c.on('data', (d) => {
+        buf += String(d);
+        if (!buf.includes('\n')) return;
+        asked.push(JSON.parse(buf.slice(0, buf.indexOf('\n'))));
+        c.end(JSON.stringify({ ok: true, data: { sessions: [], days: 7, limit: 30 } }) + '\n');
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(sock, resolve));
+    const saved = { ...process.env };
+    const exitCode = process.exitCode;
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      Object.assign(process.env, {
+        FLEETHERD_SOCKET: sock,
+        FLEETHERD_TURN_TOKEN: 'tok',
+        FLEETHERD_CONFIG_DIR: path.join(dir, 'no-config-here'),
+      });
+      await runReverse({ kind: 'sessions-list' });
+      expect(process.exitCode).toBe(exitCode);
+      expect(asked).toEqual([{ token: 'tok', action: { kind: 'sessions-list' } }]);
+    } finally {
+      log.mockRestore();
+      process.exitCode = exitCode;
+      for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k];
+      Object.assign(process.env, saved);
+      server.close();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

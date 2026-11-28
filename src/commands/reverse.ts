@@ -94,7 +94,9 @@ export function normalizeActionPaths(
  * convert it to token-efficient TOON on stdout here (errors included, so the agent can read them).
  */
 export async function runReverse(rawAction: IpcAction): Promise<void> {
-  const socket = resolveSocketPath(loadConfig());
+  // Every agent is handed its socket (agent-common.ts, remote-hosts.ts). Loading the config instead
+  // would look for it under the agent's HOME, which a private agent's is not, and validate it there.
+  const socket = envOf('SOCKET') || resolveSocketPath(loadConfig());
 
   // Resolve send-file paths to absolute here (CWD == agent CWD) to avoid the daemon building
   // file://./x.png (malformed) or a path relative to the daemon CWD (wrong). For an agent on a

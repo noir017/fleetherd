@@ -15,7 +15,7 @@ ACP 智能体，按 `custom` 启动。本身已经在 TCP 上讲 ACP 的服务�
 直接连过去，不用启动。
 
 每个智能体可设 `cwd`、`env`、`args`、尽力传递的 `model`、[固定会话选项](#固定会话选项)、
-[启动前钩子](#启动前钩子)、[权限等级](#权限等级)、[额度命令](#额度命令)，以及——网关不认识的 harness 用的——
+[启动前钩子](#启动前钩子)、[权限等级](#权限等级)、[额度命令](#额度命令)、[私有](#私有智能体)开关，以及——网关不认识的 harness 用的——
 [自己的指令文件](#自己的指令文件)。设了 `host:` 就跑在另一台机器上、经 ssh 连接，见[远程主机](remote-hosts.md)。
 支持会话恢复的智能体，上下文可跨重启保留；智能体自己声明的斜杠命令不会全局注册，而是通过
 它的 `/<agent>` 菜单调出（见[聊天命令](chat-commands.md#智能体命令)）。
@@ -63,6 +63,41 @@ agents:
 
 `~` 按智能体运行时的 home 解析（`env.HOME` 覆盖也算）；`layer` 不写就用智能体的 id，pod 里的智能体用
 `pod.yaml` 里的 id、不带 `@host`。文件所在目录不存在就什么都不放。见[写给所有智能体的工作偏好](instructions.md)。
+
+## 私有智能体
+
+私有智能体不用其他智能体共用的任何东西，也不给它们留下任何东西。
+
+```yaml
+agents:
+  - id: cc-private
+    harness: claude
+    private: true
+    env:
+      HOME: /home/me/private-home
+    instructions:
+      file: ~/.claude/CLAUDE.md
+      layer: cc-private
+```
+
+- **不给它任何技能。** 自带技能和[托管技能](skills.md)都不放给它，它的 `skills` 工具不提供，
+  `fleetherd skills` 也拒绝它。
+- **只给它自己的指令。** 不给 `common.md`，只给它那一层：harness 的那层（`claude.md`），或者
+  `instructions.layer` 指定的那层——想让它有自己的一层就这么设。
+- **共用的东西都读不到它。** 它派的子任务和审核者也必须是私有智能体；[自动复盘](skills.md#auto-review)
+  跳过它的会话；`fleetherd sessions` 对所有不是私有的智能体、以及[外部调用方](external-mcp.md)隐藏它的会话。
+
+它的 harness 自己读的东西不归网关管：装在它所在 home 里的 MCP 服务、钩子和技能——比如以钩子加 MCP
+服务接入的记忆服务。所以用 `env.HOME` 给它一个自己的 home：harness 从那里读配置，网关也把这个智能体的
+文件放到那里。那个 home 里只放它该有的：去掉那些服务和钩子的 harness 配置，以及它需要的你那边东西的链接
+（`~/.gitconfig`、`~/.ssh`）。私有智能体没设 `env.HOME` 时，网关加载配置会告警。
+
+[`connect`](#已经在运行的智能体connect) 智能体在这里没有 home：除了指令，它有的是它自己的服务给的东西，
+所以在它那一层里写明不该用什么。
+
+这只是不把东西递给它，不是沙箱。它仍以你的用户身份运行，有 shell 就能读你的 home、访问你能访问的任何服务。
+私有的活也请放在单独的话题里：复盘和 `sessions` 按会话里最后回答的智能体判断，同一个话题在私有和非私有
+智能体之间切换，两边就混在一起了。
 
 ## 已经在运行的智能体（`connect`）
 

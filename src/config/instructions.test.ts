@@ -161,6 +161,13 @@ describe('instructionClashes', () => {
     );
   });
 
+  it('tells a private agent from a shared one on the same layer: one file cannot hold both texts', () => {
+    const [message, ...rest] = conflicts([claude('cc'), claude('secret', { private: true })]);
+    expect(rest).toEqual([]);
+    expect(message).toContain('agents "cc" (layer "claude") and "secret" (layer "claude", private: without common.md)');
+    expect(conflicts([claude('a', { private: true }), claude('b', { private: true })])).toEqual([]);
+  });
+
   it('names the host, and every agent in a group of three', () => {
     const custom = (id: string, layer?: string): PlacedInstructionsAgent => ({
       id,
