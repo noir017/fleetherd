@@ -152,7 +152,7 @@ access:
 
 ## 参与开发
 
-[AGENTS.md](AGENTS.md) 记录了代码约定、分层规则、测试规范与安全不变量，并附有 FRAS 代码地图及各模块文档（[config](src/config/README.md) · [core](src/core/README.md) · [platform](src/platform/README.md) · [daemon](src/daemon/README.md) · [ipc](src/ipc/README.md) · [commands](src/commands/README.md)）。改代码前请先阅读。
+[AGENTS.md](AGENTS.md) 记录了代码约定、分层规则、测试规范与安全不变量，并附有模块地图及各模块文档（[config](src/config/README.md) · [core](src/core/README.md) · [platform](src/platform/README.md) · [daemon](src/daemon/README.md) · [ipc](src/ipc/README.md) · [commands](src/commands/README.md)）。改代码前请先阅读。
 
 ## 许可证
 

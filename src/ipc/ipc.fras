@@ -1,8 +1,0 @@
-# src/ipc FRAS Map
-src/ipc/client.ts [Infra]: F:Unix socket client for reverse CLI commands | A:callDaemon,clientTimeoutFor | S:Enforces timeout per action type [T:clientTimeoutFor]
-src/ipc/commands.ts [Core]: F:Single source of truth reverse command catalog and specifications | A:HELP_TOPICS,REVERSE_COMMANDS,isBridgedCommand | S:Missing handleReverse arm fails compilation
-src/ipc/external-tools.ts [Edge]: F:External MCP tool exposure adapter (skills, sessions, tasks) | A:EXTERNAL_TOOL_NAMES,externalToolDefinition,externalAction
-src/ipc/mcp-rpc.ts [Infra]: F:JSON-RPC 2.0 message handler for stdio and HTTP MCP
-src/ipc/protocol.ts [Core]: F:Zod schema validation and IPC action discriminator | A:parseIpcRequest | S:See Security invariants item 2 [T:parseIpcRequest]
-src/ipc/server.ts [Infra]: F:Daemon-side Unix domain socket server | A:IpcServer | S:See Security invariants item 2
-src/ipc/tools.ts [Edge]: F:Native MCP tools definitions and parameter schemas | A:NATIVE_TOOLS,findNativeTool

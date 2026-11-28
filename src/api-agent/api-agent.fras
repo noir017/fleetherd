@@ -1,8 +1,0 @@
-# src/api-agent FRAS Map
-src/api-agent/antigravity.ts [Core]: F:Antigravity Interactions API HTTP adapter and event mapping | A:AntigravityEventMapper,createAntigravityBackend
-src/api-agent/backend.ts [Core]: F:ApiBackend interface and error types | A:ApiAgentError,ApiBackend
-src/api-agent/mailbox-relay.ts [Infra]: F:Agent-mailbox relay HTTP client | A:RelayClient
-src/api-agent/mailbox.ts [Core]: F:Mailbox asynchronous relay backend implementation | R:src/api-agent/mailbox-relay.ts | A:createMailboxBackend
-src/api-agent/server.ts [Edge]: F:ACP server facade over HTTP API backends | R:src/api-agent/backend.ts,src/api-agent/store.ts | A:createApiAgentApp,serveApiAgent
-src/api-agent/sse.ts [Infra]: F:Server-Sent Events parser for API streams | A:parseSseText,readSse
-src/api-agent/store.ts [Infra]: F:Session state disk persistence | A:SessionStore

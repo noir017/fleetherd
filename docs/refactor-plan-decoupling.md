@@ -79,7 +79,7 @@ FR10 Web UI     X   .   X   X   X   X   X   X   X   X
 3. **棘轮防回退**：WP0 先把「不许出现新环」变成测试，后面每个工作包只能让允许名单变短。
 4. **不为矩阵好看而拆**：搬一处依赖要换来真实收益——少改文件、能单测、能裁剪。§5 列出明确不做的事。
 5. **只用显式注入，不引入 DI 容器或事件总线**。端口一律定义在消费方，提供方用结构类型满足它。
-6. **文档同步**：新增、改名文件要在同一提交里更新对应模块的 `*.fras`。契约有变（WP4、WP5）时同步更新模块 README 和 `AGENTS.md` 的 Adding things 一节。
+6. **文档同步**：新增、改名文件或契约有变（WP4、WP5）时，在同一提交里同步更新对应模块的 README 和 `AGENTS.md` 的 Adding things 一节。
 
 ## 4. 工作包
 
@@ -109,7 +109,7 @@ FR10 Web UI     X   .   X   X   X   X   X   X   X   X
 
 - 所有 importer 直接改成从新位置 import，**不留 re-export**（`conversation.ts:72` 现有的那个 re-export 也一起删掉）。留着 re-export，依赖边其实没断。
 - 模拟结果：环 A、B 消失，`turn-runner.ts` 不再依赖任何 `conversation*` 或 `delegation` 文件。
-- 验收：从 WP0 的允许名单删去 A、B；`npx vitest run` 跑被改文件对应的测试，以及 `src/daemon/delegation*.test.ts`、`turn-runner*.test.ts`；更新 daemon、core 两个模块的 `*.fras`。
+- 验收：从 WP0 的允许名单删去 A、B；`npx vitest run` 跑被改文件对应的测试，以及 `src/daemon/delegation*.test.ts`、`turn-runner*.test.ts`；更新 daemon、core 两个模块的 README。
 
 ### WP2 让 `types.ts` 成为真正的底层（0.5 天，低风险）
 

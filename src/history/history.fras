@@ -1,5 +1,0 @@
-# src/history FRAS Map
-src/history/import-webui.ts [Infra]: F:Idempotent import of web UI transcripts into SQLite history | A:importWebuiTranscripts
-src/history/record.ts [Core]: F:History event types and tool text formatting | A:HistoryRecorder,toolText
-src/history/store.ts [Core]: F:SQLite conversation history store and FTS5 search engine | R:src/history/tokenize.ts | A:HistoryStore | S:Duplicate tool call id updates existing row in place [T:HistoryStore]
-src/history/tokenize.ts [Infra]: F:Han bigram tokenization and BM25 FTS5 query builder | A:ftsQuery,indexText,queryTerms | S:Bigram segmentation enables CJK search in SQLite FTS5 [T:indexText]

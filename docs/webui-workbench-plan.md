@@ -432,7 +432,7 @@ export interface PluginHost {
 | P0-6 | 状态行、排队消息、模型和选项弹层 → `features/topic/status/` | 4675–5219 | P0-1 | M |
 | P0-7 | 输入框 → `features/topic/composer/`（附件标签、草稿、图片压缩、录音、斜杠提示、未发送消息、发送、复制引用） | 6600–7885 | P0-1 | L |
 | P0-8 | 其余 → `features/{notify,terminal,reader}/`，以及 `workbench/legacy-shell.ts`（`makePanel`、菜单、低打扰、主题、语言，P1 会被替换） | 629–890、4132–4412、6426–6599 | P0-1 | M |
-| P0-9 | 收尾：legacy-app → `main.ts`（只剩 DOM 引用、各模块的装配、末尾 7886–7954 的启动顺序）；client 全部开启 tsc 和 eslint；删掉排除项；更新 fras 和 README | `main.ts`、tsconfig、eslint 配置 | P0-2…P0-8 | S |
+| P0-9 | 收尾：legacy-app → `main.ts`（只剩 DOM 引用、各模块的装配、末尾 7886–7954 的启动顺序）；client 全部开启 tsc 和 eslint；删掉排除项；更新 README | `main.ts`、tsconfig、eslint 配置 | P0-2…P0-8 | S |
 
 - **行号以 3.38.0 为准**，是函数起点划出的大致范围，开工前先确认。文件里另有 64 处顶层事件绑定（`addEventListener`，其中 20 处挂在 `document` 或 `window` 上），散在各处：每个包用 grep 找出调用自己函数的绑定，一起搬走。`document` 上的 Esc 处理（6445–6478）归 P0-1 的浮层栈。
 - legacy-app 的冲突规则：每个包只删自己的行段，并在文件顶部的 `// WIRING` 区追加自己的装配调用。合并顺序固定：P0-1 → P0-2 → P0-5 → P0-6 → P0-8 → P0-4 → P0-3 → P0-7 → P0-9，后合并的先 rebase。
@@ -504,7 +504,7 @@ P3: 全部并行 → 发版        P4: P4-1 → [P4-2 ∥ P4-3] → P4-4 → P4-
 2. **只改独占文件。** 要改共享文件按下面的协议来；要改契约（`workbench/contracts.ts`、`plugins/api.ts`）就停下，向协调者提出。
 3. **分支和工作树**：分支 `wb/<包号>-<短名>`，工作树 `.worktrees/wb-<包号>`。
 4. **门禁**（本地，不跑全量测试）：`npm run typecheck`、`npm run lint`、`npx vitest run <相关测试>` 或 `npx vitest related <改动文件> --run`；动了界面的再跑 `npm run test:e2e` 的相关用例。
-5. **交付**：提交信息不加 AI 署名；更新 webui README 的对应章节和 `platform.fras`；汇报内容为改了什么（file:line）、测试结果、没做的项。
+5. **交付**：提交信息不加 AI 署名；更新 webui README 的对应章节；汇报内容为改了什么（file:line）、测试结果、没做的项。
 6. **开发开关**：P1、P2 期内，新外壳只在 `localStorage['aa_workbench'] === '1'` 时挂载，不写进文档，由该期的切换包删除。P0 和 P3 不需要开关。
 7. **合并和发版**：协调者按依赖顺序把分支 `--no-ff` 合进 `main`，合并前由另一个代理审查。包不单独发版，每期末由协调者发版（AGENTS.md 的 Shipping 一节，第 1、2 步）。
 8. **共享文件协议**
