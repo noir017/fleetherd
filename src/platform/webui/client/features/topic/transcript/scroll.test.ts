@@ -198,4 +198,40 @@ describe('createScrollManager', () => {
       globalThis.ResizeObserver = origRO;
     }
   });
+
+  it('calls onViewportShown when log transitions from hidden (0px) to visible', () => {
+    type RoCb = (entries: readonly { target: Element; contentRect: { width: number; height: number } }[]) => void;
+    const holder: { cb: RoCb | null } = { cb: null };
+    const origRO = globalThis.ResizeObserver;
+    class FakeResizeObserver {
+      constructor(cb: RoCb) {
+        holder.cb = cb;
+      }
+      observe() {}
+      unobserve() {}
+      disconnect() {
+        holder.cb = null;
+      }
+    }
+    globalThis.ResizeObserver = FakeResizeObserver as unknown as typeof ResizeObserver;
+    try {
+      const log = setupLog(200, 0, 0);
+      document.body.appendChild(log);
+      let shownCalls = 0;
+      const scroll = createScrollManager(log, undefined, () => {
+        shownCalls += 1;
+      });
+      Object.defineProperty(log, 'clientHeight', { value: 700, configurable: true });
+      holder.cb?.([{ target: log, contentRect: { width: 390, height: 700 } }]);
+      expect(shownCalls).toBe(1);
+      // Subsequent resize while already visible does not re-fire onViewportShown.
+      Object.defineProperty(log, 'clientHeight', { value: 650, configurable: true });
+      holder.cb?.([{ target: log, contentRect: { width: 390, height: 650 } }]);
+      expect(shownCalls).toBe(1);
+      scroll.dispose();
+      log.remove();
+    } finally {
+      globalThis.ResizeObserver = origRO;
+    }
+  });
 });

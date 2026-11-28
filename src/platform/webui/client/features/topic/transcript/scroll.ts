@@ -58,6 +58,7 @@ function findFirstVisibleMessage(log: HTMLElement): Element | null {
 class ScrollManagerImpl implements ScrollManager {
   private readonly _log: HTMLElement;
   private readonly _onNearTop?: () => void;
+  private readonly _onViewportShown?: () => void;
   private readonly _views: Record<string, ViewPosition> = {};
   private readonly _disposables = new DisposableStore();
   private _view: ViewPosition | null = null;
@@ -68,9 +69,10 @@ class ScrollManagerImpl implements ScrollManager {
   private _lastClientHeight: number;
   private _suppressScroll = false;
 
-  constructor(log: HTMLElement, onNearTop?: () => void) {
+  constructor(log: HTMLElement, onNearTop?: () => void, onViewportShown?: () => void) {
     this._log = log;
     this._onNearTop = onNearTop;
+    this._onViewportShown = onViewportShown;
     this._lastClientHeight = log.clientHeight;
     this._disposables.add(
       addDisposableListener(
@@ -98,6 +100,9 @@ class ScrollManagerImpl implements ScrollManager {
             // Shown again, or shrunk under a bottom bar that grew (the subagent bar, the queue): a
             // log that was at its newest line stays there.
             this.toBottom();
+          }
+          if (this._lastClientHeight === 0) {
+            this._onViewportShown?.();
           }
         }
         this._lastClientHeight = nextH;
@@ -231,6 +236,10 @@ class ScrollManagerImpl implements ScrollManager {
   }
 }
 
-export function createScrollManager(log: HTMLElement, onNearTop?: () => void): ScrollManager {
-  return new ScrollManagerImpl(log, onNearTop);
+export function createScrollManager(
+  log: HTMLElement,
+  onNearTop?: () => void,
+  onViewportShown?: () => void,
+): ScrollManager {
+  return new ScrollManagerImpl(log, onNearTop, onViewportShown);
 }

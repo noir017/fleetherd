@@ -85,6 +85,7 @@ export interface TranscriptDeps {
   readonly canOpenSideDiff?: () => boolean;
   readonly onHandoff?: (handoff: HandoffAction, btn: HTMLButtonElement) => void;
   readonly onLoadOlder?: () => void;
+  readonly onViewportShown?: () => void;
   readonly onJumpToMessage?: (msgId: string) => void;
 }
 
@@ -109,7 +110,10 @@ export interface TranscriptController extends Disposable {
   forgetOpenedPrefix(prefix: string): void;
   upsert(m: TranscriptMessage): void;
   drop(key: string): void;
-  reconcile(list: readonly TranscriptMessage[], opts?: { readonly partial?: boolean }): void;
+  reconcile(
+    list: readonly TranscriptMessage[],
+    opts?: { readonly partial?: boolean; readonly dropDisconnected?: boolean },
+  ): void;
   prependOlder(list: readonly TranscriptMessage[]): number;
   setOlderState(state: OlderPagingState): void;
   scrollToMessage(msgId: string): HTMLElement | null;
@@ -160,7 +164,7 @@ class TranscriptControllerImpl implements TranscriptController {
 
   constructor(deps: TranscriptDeps) {
     this._deps = deps;
-    this.scroll = createScrollManager(deps.log, deps.onLoadOlder);
+    this.scroll = createScrollManager(deps.log, deps.onLoadOlder, deps.onViewportShown);
     this.codeBlocks = createCodeBlocksController({
       log: deps.log,
       getExtraRoots: () => [deps.btwBody, ...deps.getExtraCodeRoots()],
@@ -395,6 +399,8 @@ class TranscriptControllerImpl implements TranscriptController {
     partial: boolean,
     windowFirstKey: string | null,
     windowFirstSeq: number,
+    windowFirstEpoch: number,
+    dropDisconnected: boolean,
   ): void {
     const data = this._deps.getData();
     const els = this._deps.getEls();
@@ -405,7 +411,9 @@ class TranscriptControllerImpl implements TranscriptController {
     for (const k of Object.keys(els)) {
       if (keep[k]) continue;
       const held = data[k];
-      if (!held || held._local || held._g !== epoch) continue;
+      if (!held || held._local) continue;
+      const sameRestoredRun = dropDisconnected && windowFirstEpoch > 0 && held._g === windowFirstEpoch;
+      if (held._g !== epoch && !sameRestoredRun) continue;
       const olderSeq = windowFirstSeq > 0 && seqOf(held.id) > 0 && seqOf(held.id) < windowFirstSeq;
       if (partial && (aboveWindow.has(k) || olderSeq)) continue;
       gone.push(k);
@@ -422,7 +430,10 @@ class TranscriptControllerImpl implements TranscriptController {
     else this._deps.log.appendChild(frag);
   }
 
-  reconcile(list: readonly TranscriptMessage[], opts?: { readonly partial?: boolean }): void {
+  reconcile(
+    list: readonly TranscriptMessage[],
+    opts?: { readonly partial?: boolean; readonly dropDisconnected?: boolean },
+  ): void {
     this.banners.clearSkeleton();
     this.banners.clearSyncing();
     const data = this._deps.getData();
@@ -435,6 +446,7 @@ class TranscriptControllerImpl implements TranscriptController {
     const tailStart = list.length - 10;
     let windowFirstKey: string | null = null;
     let windowFirstSeq = 0;
+    let windowFirstEpoch = 0;
     for (let i = 0; i < list.length; i++) {
       const m = list[i];
       if (!m) continue;
@@ -445,6 +457,7 @@ class TranscriptControllerImpl implements TranscriptController {
       if (windowFirstKey === null) {
         windowFirstKey = key;
         windowFirstSeq = seqOf(m.id);
+        windowFirstEpoch = m._g;
       }
       keep[key] = 1;
       data[key] = m;
@@ -453,7 +466,15 @@ class TranscriptControllerImpl implements TranscriptController {
       if (el) orderedEls.push(el);
     }
     this._insertBatch(batchFrag, this.banners.getSyncingEl());
-    this._pruneGone(keep, epoch, Boolean(opts?.partial), windowFirstKey, windowFirstSeq);
+    this._pruneGone(
+      keep,
+      epoch,
+      Boolean(opts?.partial),
+      windowFirstKey,
+      windowFirstSeq,
+      windowFirstEpoch,
+      Boolean(opts?.dropDisconnected),
+    );
     if (!areNodesContiguousInParent(this._deps.log, orderedEls)) {
       for (let i = 0; i < orderedEls.length; i++) {
         const el = orderedEls[i];

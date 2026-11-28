@@ -232,4 +232,131 @@ describe('webui page: windowed sync and upward history paging', () => {
     expect(again.el('pending-queue').hidden).toBe(false);
     expect(again.el('pending-queue').textContent).toContain('queued msg');
   });
+
+  it('resets disconnected old messages and restores paging cursor when a windowed sync jumps past prior messages', async () => {
+    const T = 'a1b2c3d4';
+    const initial = makeMessages(1, 2);
+    const tail = makeMessages(45, 104);
+    const older = makeMessages(1, 44);
+
+    const h = await open({
+      url: `http://localhost:8787/?t=${T}`,
+      replies: {
+        [`api/messages?t=${T}&before=45&limit=50`]: {
+          topic: T,
+          epoch: 1,
+          messages: older,
+          hasMore: false,
+          oldestSeq: 1,
+          totalCount: 104,
+        },
+      },
+    });
+
+    // Topic starts small (1..2): roomState sends oldestSeq: 1, hasMore omitted.
+    await h.emit({ ...sync(T, initial, [T]), totalCount: 2, oldestSeq: 1 });
+    expect(h.painted()).toBe(2);
+    expect(h.doc.querySelector('.older-bar')).toBeNull();
+
+    // After sleeping/switching away during a long turn, backlog overflowed -> windowed sync (45..104).
+    await h.emit({ ...sync(T, tail, [T]), totalCount: 104, hasMore: true, oldestSeq: 45 });
+
+    // Disconnected m1..m2 are pruned rather than leaving a permanent 3..44 hole, and paging is enabled.
+    expect(h.painted()).toBe(60);
+    expect(h.doc.querySelector('#log > .m[data-k="1:m1"]')).toBeNull();
+    expect(h.doc.querySelector('.older-bar')).not.toBeNull();
+
+    await h.click('.older-bar button[data-load-older]');
+    await until('older execution record loaded in order', () => h.painted() === 104);
+    const keys = Array.from(h.doc.querySelectorAll('#log > .m')).map((el) => el.getAttribute('data-k'));
+    expect(keys[0]).toBe('1:m1');
+    expect(keys[1]).toBe('1:m2');
+    expect(keys[44]).toBe('1:m45');
+    expect(keys[103]).toBe('1:m104');
+  });
+
+  it('self-heals a cached transcript missing hasMore/oldestSeq when resumed reports more visible messages', async () => {
+    const T = 'a1b2c3d4';
+    const tail = makeMessages(41, 100);
+    const older = makeMessages(1, 40);
+
+    // Seed IndexedDB as pre-fix sw.ts wrote it: windowed tail with last+epoch, but no hasMore/oldestSeq.
+    const first = await open({ url: `http://localhost:8787/?t=${T}` });
+    first.live().onmessage?.({
+      data: JSON.stringify({ ...sync(T, tail, [T], { epoch: 77 }), totalCount: 60 }),
+      lastEventId: `${T}.25.100`,
+    });
+    await saved();
+
+    const again = await open({
+      url: `http://localhost:8787/?t=${T}`,
+      idb: first.idb,
+      replies: {
+        [`api/messages?t=${T}&before=41&limit=50`]: {
+          topic: T,
+          epoch: 77,
+          messages: older,
+          hasMore: false,
+          oldestSeq: 1,
+          totalCount: 100,
+        },
+      },
+    });
+
+    expect(again.painted()).toBe(60);
+    expect(again.doc.querySelector('.older-bar')).toBeNull();
+
+    // Server resumes and reports 100 visible messages while client only has 60 and no paging cursor.
+    await again.emit({ t: 'resumed', epoch: 77, visibleCount: 100 });
+
+    // Client clears lastEventId and reconnects without ?last= to get an authoritative windowed sync.
+    const healedUrl = new URL(again.live().url, 'http://localhost:8787');
+    expect(healedUrl.searchParams.get('last')).toBeNull();
+
+    await again.emit({ ...sync(T, tail, [T], { epoch: 77 }), totalCount: 100, hasMore: true, oldestSeq: 41 });
+    expect(again.doc.querySelector('.older-bar')).not.toBeNull();
+
+    await again.click('.older-bar button[data-load-older]');
+    await until('older messages loaded after self-heal', () => again.painted() === 100);
+  });
+
+  it('auto-backfills older pages when the initial window does not fill a tall portrait viewport', async () => {
+    const T = 'a1b2c3d4';
+    const tail = makeMessages(91, 100);
+    const page1 = makeMessages(41, 90);
+
+    const h = await open({
+      url: `http://localhost:8787/?t=${T}`,
+      replies: {
+        [`api/messages?t=${T}&before=91&limit=50`]: {
+          topic: T,
+          epoch: 1,
+          messages: page1,
+          hasMore: true,
+          oldestSeq: 41,
+          totalCount: 100,
+        },
+      },
+    });
+
+    // Portrait viewport: 750px tall, while 10 compact/collapsed messages render only 250px total (25px each).
+    const log = h.el('log');
+    Object.defineProperty(log, 'clientHeight', { value: 750, configurable: true });
+    Object.defineProperty(log, 'scrollHeight', {
+      get: () => h.doc.querySelectorAll('#log > .m').length * 25,
+      configurable: true,
+    });
+
+    await h.emit({
+      ...sync(T, tail, [T]),
+      totalCount: 100,
+      hasMore: true,
+      oldestSeq: 91,
+    });
+
+    // Should auto-load page1 (60 * 25 = 1500px > 750 + 240) without needing a manual scroll event.
+    await until('short portrait viewport auto-backfilled', () => h.painted() === 60);
+    expect(h.doc.querySelector('.older-bar')).not.toBeNull();
+    expect(h.calls.filter((c) => c.path.startsWith('api/messages'))).toHaveLength(1);
+  });
 });

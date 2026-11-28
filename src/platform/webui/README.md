@@ -1881,15 +1881,20 @@ carries only the latest tail window of a topic (up to 60 messages or 256 KiB, wi
 floor) along with `totalCount`, `hasMore`, `oldestSeq`, and `recentNonces` (and on multiplexed
 cold streams, the shared `topics` list, `tv`, and `commands` are sent only once per stream). Each
 message in the sync is upserted by id and moved into place (`appendChild` on an existing node moves
-it rather than cloning it); when `hasMore` is true, reconciliation runs in partial mode so older
-messages already paged into the DOM above the window are preserved rather than pruned. `paint`
+it rather than cloning it); when `hasMore` is true and the incoming window overlaps what is already
+on screen, reconciliation runs in partial mode so older messages already paged into the DOM above
+the window are preserved rather than pruned — while a disconnected window (after a backlog overflow
+or stale cache) resets the stranded pre-gap nodes and adopts the incoming `hasMore`/`oldestSeq`
+cursor so upward paging fills the whole gap in order. `paint`
 writes no DOM at all when the markup it builds matches what is there, so an unchanged message is
 genuinely untouched — which also keeps a repaint from undoing the disabled state of a button the
-click handler just set. Scrolling near the top fetches earlier pages via
+click handler just set. Scrolling near the top (or landing on a short window whose rendered height
+does not fill the viewport) fetches earlier pages via
 `GET api/messages?t=<topic>&before=<seq>&limit=<n>` (strictly validated, capped at 100 per page),
 prepends them while adjusting `scrollTop` by the height delta so the viewport does not jump, and
 stops once `hasMore` reaches false; jumping to an unloaded older message pages backwards until the
-target appears.
+target appears. `resumed` also carries `visibleCount` so a cached copy that lost its paging cursor
+self-heals by re-syncing once.
 
 While a topic's first sync is in flight the log holds message-shaped placeholders (`.sk`).
 They are only ever shown into an EMPTY log: a topic painted from cache has real content to read,

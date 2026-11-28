@@ -38,7 +38,13 @@ function keepTopic(topic){
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (d) {
         if (!d || d.topic !== topic || !d.epoch) return null;
-        var rec = cacheRecord(topic, snapshotMsgs(d), { epoch: d.epoch, last: d.last, stale: Boolean(d.stale) });
+        var rec = cacheRecord(topic, snapshotMsgs(d), {
+          epoch: d.epoch,
+          last: d.last,
+          stale: Boolean(d.stale),
+          hasMore: Boolean(d.hasMore),
+          oldestSeq: d.oldestSeq,
+        });
         return cacheOpen(self.indexedDB).then(function (o) {
           if (!o.db) return null;
           return new Promise(function (res) {

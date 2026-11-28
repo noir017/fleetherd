@@ -1879,7 +1879,11 @@ export class WebRoom {
         return false;
       }
     }
-    return this.deliver(client, { t: 'resumed', ...tag, epoch: this.startedAt });
+    let visibleCount = 0;
+    for (const s of room.stored.values()) {
+      if (!s.msg.settings && !s.msg.wasSettings) visibleCount += 1;
+    }
+    return this.deliver(client, { t: 'resumed', ...tag, epoch: this.startedAt, visibleCount });
   }
 
   /** Events after `lastEventId`, or undefined when a full sync is the only honest answer. */

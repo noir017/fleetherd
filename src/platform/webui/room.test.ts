@@ -501,17 +501,17 @@ describe('WebRoom: the topic list reaching every client', () => {
     const tv = (listEvents(seen).at(-1)?.ev as { tv: number }).tv;
     off();
 
-    // Direct reload resume: no topicsVersion yet -> sends commands + topics + resumed(epoch).
+    // Direct reload resume: no topicsVersion yet -> sends commands + topics + resumed(epoch, visibleCount).
     const coldResume: Seen[] = [];
     room.subscribe(topic, (id, ev) => coldResume.push({ id, ev }), lastId);
     expect(lastOf(coldResume, 'commands')).toEqual({ t: 'commands', commands: [{ name: 'model', description: 'Pick model' }] });
-    expect(lastOf(coldResume, 'resumed')).toEqual({ t: 'resumed', epoch: syncEv.epoch });
+    expect(lastOf(coldResume, 'resumed')).toEqual({ t: 'resumed', epoch: syncEv.epoch, visibleCount: 1 });
 
-    // In-session resume with current topicsVersion -> omits commands, still carries epoch.
+    // In-session resume with current topicsVersion -> omits commands, still carries epoch + visibleCount.
     const warmResume: Seen[] = [];
     room.subscribe(topic, (id, ev) => warmResume.push({ id, ev }), lastId, tv);
     expect(kinds(warmResume)).not.toContain('commands');
-    expect(lastOf(warmResume, 'resumed')).toEqual({ t: 'resumed', epoch: syncEv.epoch });
+    expect(lastOf(warmResume, 'resumed')).toEqual({ t: 'resumed', epoch: syncEv.epoch, visibleCount: 1 });
   });
 });
 

@@ -57,6 +57,8 @@ import { mountWorkbench, type WorkbenchShell } from './workbench/shell.js';
 const READER_OPEN_COMMAND = 'reader.open';
 const READER_OPEN_IMAGE_COMMAND = 'reader.openImage';
 const LOCAL_CACHE_WAIT_MS = 300;
+const AUTO_FILL_TOP_BUFFER_PX = 240;
+const MAX_AUTO_FILL_PAGES = 3;
 
 interface CacheCoreBundle extends CacheCore {
   readonly snapshotMsgs: (d: TopicSnapshotPayload) => CacheMessage[];
@@ -83,6 +85,8 @@ interface TopicEditorSession {
   oldestSeq: number;
   loadingOlder: boolean;
   olderError: boolean;
+  autoFillPages: number;
+  resumeHealAttempted: boolean;
 }
 
 interface AppState {
@@ -195,6 +199,8 @@ function createSession(): TopicEditorSession {
     oldestSeq: 0,
     loadingOlder: false,
     olderError: false,
+    autoFillPages: 0,
+    resumeHealAttempted: false,
   };
 }
 
@@ -311,6 +317,8 @@ function resetSessionView(session: TopicEditorSession, id: string): void {
   session.oldestSeq = 0;
   session.loadingOlder = false;
   session.olderError = false;
+  session.autoFillPages = 0;
+  session.resumeHealAttempted = false;
   if (editor) {
     editor.transcript?.setOlderState({ hasMore: false, loading: false });
     editor.els.log.replaceChildren();
@@ -402,6 +410,21 @@ async function loadOlderPage(
     syncOlderIndicator(session);
     return false;
   }
+}
+
+function maybeFillShortViewport(rt: AppRuntime, session: TopicEditorSession): void {
+  const log = session.editor?.els.log;
+  if (!log || log.clientHeight <= 0) return;
+  if (!session.hasMore || session.oldestSeq <= 0 || session.loadingOlder || session.olderError) return;
+  if (session.autoFillPages >= MAX_AUTO_FILL_PAGES) return;
+  if (log.scrollHeight > log.clientHeight + AUTO_FILL_TOP_BUFFER_PX) return;
+  const token = session.enterToken;
+  const topicId = session.topicId;
+  session.autoFillPages += 1;
+  void loadOlderPage(rt, session).then((ok) => {
+    if (!ok || token !== session.enterToken || topicId !== session.topicId) return;
+    maybeFillShortViewport(rt, session);
+  });
 }
 
 async function jumpToMessage(rt: AppRuntime, session: TopicEditorSession, msgId: string): Promise<boolean> {
@@ -998,6 +1021,9 @@ function buildTranscriptDeps(rt: AppRuntime, els: TopicEditorElements, getTopicI
     onLoadOlder: () => {
       void loadOlderPage(rt, session);
     },
+    onViewportShown: () => {
+      maybeFillShortViewport(rt, session);
+    },
     onJumpToMessage: (msgId: string) => {
       void jumpToMessage(rt, session, msgId);
     },
@@ -1371,11 +1397,25 @@ function resolveSyncTargets(rt: AppRuntime, topicId: string): { targets: TopicEd
   return { targets: [], named: false };
 }
 
+function windowOverlapsSession(
+  session: TopicEditorSession,
+  ev: Extract<WebEvent, { t: 'sync' }>,
+  epoch: number,
+): boolean {
+  for (let i = 0; i < ev.messages.length; i++) {
+    const m = ev.messages[i];
+    if (!m || !m.id || m.settings || m.wasSettings) continue;
+    if (session.els[`${m.g || epoch}:${m.id}`]) return true;
+  }
+  return false;
+}
+
 function syncSessionFromEvent(
   rt: AppRuntime,
   session: TopicEditorSession,
   ev: Extract<WebEvent, { t: 'sync' }>,
   named: boolean,
+  overlaps: boolean,
 ): void {
   const scroll = session.editor?.transcript?.scroll;
   const arriving = scroll ? scroll.isArriving(session.entering) : false;
@@ -1385,7 +1425,7 @@ function syncSessionFromEvent(
   session.synced = true;
   session.stale = Boolean(ev.stale);
   session.launch = mergeSyncLaunch(session, ev);
-  applySyncToSession(rt, session, ev, named, arriving, stick);
+  applySyncToSession(rt, session, ev, named, arriving, stick, overlaps);
   if (named) adoptCachedTopicMessages(rt, session, ev.topic);
 }
 
@@ -1427,9 +1467,12 @@ function handleSyncEvent(rt: AppRuntime, ev: Extract<WebEvent, { t: 'sync' }>): 
 
   const { epochChanged, hasGlobals } = applySyncGlobals(rt, ev);
   for (const session of targets) {
-    updateSessionPagingFromSync(session, ev, epochChanged);
-    syncSessionFromEvent(rt, session, ev, named);
+    const overlaps = !epochChanged && windowOverlapsSession(session, ev, state.epoch);
+    session.autoFillPages = 0;
+    updateSessionPagingFromSync(session, ev, epochChanged, overlaps);
+    syncSessionFromEvent(rt, session, ev, named, overlaps);
     consumePendingJump(rt, session);
+    maybeFillShortViewport(rt, session);
   }
 
   if (visibleTopicIds(rt).includes(ev.topic)) {
@@ -1448,10 +1491,11 @@ function updateSessionPagingFromSync(
   session: TopicEditorSession,
   ev: Extract<WebEvent, { t: 'sync' }>,
   epochChanged: boolean,
+  overlaps: boolean,
 ): void {
   const incomingHasMore = Boolean(ev.hasMore);
   const incomingOldest = ev.oldestSeq || 0;
-  if (epochChanged || !incomingHasMore || session.oldestSeq <= 0) {
+  if (epochChanged || !incomingHasMore || !overlaps || session.oldestSeq <= 0) {
     session.hasMore = incomingHasMore;
     session.oldestSeq = incomingOldest;
   } else if (incomingOldest > 0 && incomingOldest < session.oldestSeq) {
@@ -1480,6 +1524,7 @@ function applySyncToSession(
   named: boolean,
   arriving: boolean,
   stick: boolean,
+  overlaps: boolean,
 ): void {
   const editor = session.editor;
   if (!editor) return;
@@ -1490,7 +1535,9 @@ function applySyncToSession(
     transcript.repaintHistory();
   }
   if (composer) composer.showUnsent(session.topicId);
-  if (transcript) transcript.reconcile(ev.messages, { partial: Boolean(ev.hasMore) });
+  const partial = Boolean(ev.hasMore) && overlaps;
+  const dropDisconnected = Boolean(ev.hasMore) && !overlaps;
+  if (transcript) transcript.reconcile(ev.messages, { partial, dropDisconnected });
   syncComposerAfterReconcile(composer, ev);
   if (transcript) {
     syncOlderIndicator(session);
@@ -1644,11 +1691,33 @@ function handleTypingEvent(rt: AppRuntime, on: boolean, evTopic?: string): void 
   if (!on) rt.events.emit('topic.turnEnd', { topicId: targetTopic });
 }
 
-function finishSessionResume(rt: AppRuntime, session: TopicEditorSession): void {
+function countLoadedMessages(session: TopicEditorSession): number {
+  let count = 0;
+  for (const k of Object.keys(session.els)) {
+    const m = session.data[k];
+    if (m && !m._local) count += 1;
+  }
+  return count;
+}
+
+function finishSessionResume(rt: AppRuntime, session: TopicEditorSession, visibleCount?: number): void {
   if (session.synced) return;
+  // Self-heal cached transcripts whose paging cursor was lost (e.g. written before sw.ts kept hasMore/oldestSeq).
+  if (
+    !(session.hasMore && session.oldestSeq > 0) &&
+    !session.resumeHealAttempted &&
+    typeof visibleCount === 'number' &&
+    visibleCount > countLoadedMessages(session)
+  ) {
+    session.resumeHealAttempted = true;
+    rt.streamClient.clearLastEventId(session.topicId);
+    rt.streamClient.connect(rt.state.sessions.size > 1, true);
+    return;
+  }
   const editor = session.editor;
   session.synced = true;
   session.entering = false;
+  session.autoFillPages = 0;
   const settle = session.settleOnResume;
   session.settleOnResume = false;
   if (editor) {
@@ -1675,6 +1744,7 @@ function finishSessionResume(rt: AppRuntime, session: TopicEditorSession): void 
   rt.cacheService.scheduleSave(session.topicId);
   syncSessionStopButton(rt, session);
   consumePendingJump(rt, session);
+  maybeFillShortViewport(rt, session);
 }
 
 function handleResumedEvent(rt: AppRuntime, ev: Extract<WebEvent, { t: 'resumed' }>): void {
@@ -1686,7 +1756,7 @@ function handleResumedEvent(rt: AppRuntime, ev: Extract<WebEvent, { t: 'resumed'
   }
   const targetTopic = eventTargetTopic(state, ev.topic);
   for (const session of sessionsForTopic(rt.state, targetTopic)) {
-    finishSessionResume(rt, session);
+    finishSessionResume(rt, session, ev.visibleCount);
   }
   if (visibleTopicIds(rt).includes(targetTopic)) {
     rt.readsService.markTopicFromList(targetTopic, state.topics);

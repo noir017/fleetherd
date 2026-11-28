@@ -40,8 +40,9 @@ const snapshot = {
   ],
 };
 
-function worker(opts: { visible?: boolean; status?: number; idb?: boolean; db?: IDBFactory } = {}): Worker {
+function worker(opts: { visible?: boolean; status?: number; idb?: boolean; db?: IDBFactory; snapshot?: Record<string, unknown> } = {}): Worker {
   const idb = opts.db ?? new IDBFactory();
+  const payloadSnapshot = opts.snapshot ?? snapshot;
   const fetched: string[] = [];
   const shown: Array<{ title: string; tag: string }> = [];
   const handlers: Record<string, (e: unknown) => void> = {};
@@ -69,7 +70,7 @@ function worker(opts: { visible?: boolean; status?: number; idb?: boolean; db?: 
   const fetch = (url: string): Promise<unknown> => {
     fetched.push(url);
     const status = opts.status ?? 200;
-    return Promise.resolve({ ok: status === 200, json: () => Promise.resolve(JSON.parse(JSON.stringify(snapshot))) });
+    return Promise.resolve({ ok: status === 200, json: () => Promise.resolve(JSON.parse(JSON.stringify(payloadSnapshot))) });
   };
   vm.runInNewContext(SERVICE_WORKER, { self, fetch, Promise, JSON, Date, Math, encodeURIComponent });
   return {
@@ -234,6 +235,25 @@ describe('service worker: the topic a push is about', () => {
     await w.push({ topic: TOPIC, title: 'Topic', body: 'done' });
     expect(w.shown).toHaveLength(1);
     expect(w.fetched).toEqual([]);
+  });
+
+  it('preserves hasMore and oldestSeq when caching a windowed snapshot', async () => {
+    const w = worker({
+      snapshot: {
+        ...snapshot,
+        hasMore: true,
+        oldestSeq: 41,
+      },
+    });
+    await w.push({ topic: TOPIC, title: 'Topic', body: 'done' });
+    const rec = await record(w.idb, TOPIC);
+    expect(rec).toMatchObject({
+      topic: TOPIC,
+      epoch: 7,
+      last: snapshot.last,
+      hasMore: true,
+      oldestSeq: 41,
+    });
   });
 
   it('fetches nothing for a push that names no topic', async () => {
