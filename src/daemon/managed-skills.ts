@@ -310,6 +310,7 @@ export function createManagedSkillsProvision(dir?: string): AgentProvision<Manag
 
   return {
     name: 'managed-skills',
+    skills: true,
     local: (def, home) => placeManagedSkills(def, home, dir),
     remote: async (host, def, home, w) => {
       if (envOf('NO_SKILL_LINK')) return;

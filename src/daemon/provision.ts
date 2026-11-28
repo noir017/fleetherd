@@ -27,8 +27,15 @@ export interface ProvisionMeta {
 /** Something delivered to an agent at spawn time (locally, over SSH, or via connect `_meta`). */
 export interface AgentProvision<TLocal = unknown, TRemote = unknown> {
   readonly name: string;
+  /** It delivers skills, which a private agent is never given (`provisionsFor`). */
+  readonly skills?: true;
   local: (def: AgentDef, home: string) => TLocal;
   remote: (host: HostFiles, def: AgentDef, home: string, w: Welcome) => Promise<TRemote>;
   /** Fields contributed to `_meta.fleetherd` for connect agents that cannot receive files. */
   meta?: (def: AgentDef) => ProvisionMeta | undefined;
+}
+
+/** What `def` is given at spawn: every provision, less those carrying skills for a private agent. */
+export function provisionsFor(def: AgentDef, all: readonly AgentProvision[]): readonly AgentProvision[] {
+  return def.private ? all.filter((p) => !p.skills) : all;
 }

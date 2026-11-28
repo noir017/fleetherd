@@ -178,6 +178,8 @@ export type PlacedInstructionsAgent = InstructionsAgent & {
   host?: string;
   /** Its `env` block — `HOME` is the home its `~` resolves against (daemon/agent-common.ts). */
   env?: Record<string, string>;
+  /** A private agent's file holds its layer without common.md (daemon/instructions.ts). */
+  private?: boolean;
 };
 
 /** `~` and `~/…` against `home`; anything else as written (config/load.ts expandHome's rule). */
@@ -216,7 +218,19 @@ export interface InstructionGroup {
   /** The file as the operator would write it (`~/…`). */
   file: string;
   /** Every agent resolving to it, in the order the check was given them. */
-  members: Array<{ id: string; layer: string }>;
+  members: InstructionMember[];
+}
+
+/** One agent of a group: the layer it takes, and whether it takes it without common.md. */
+export interface InstructionMember {
+  id: string;
+  layer: string;
+  private?: true;
+}
+
+/** Whether two members would place the same text: the same layer, both with common.md or both without. */
+export function sameInstructions(a: InstructionMember, b: InstructionMember): boolean {
+  return a.layer === b.layer && Boolean(a.private) === Boolean(b.private);
 }
 
 /**
@@ -239,17 +253,18 @@ export function instructionClashes(agents: readonly PlacedInstructionsAgent[]): 
     const where = instructionsHome(def, home);
     if (!where) continue;
     const key = `${machine}\u0000${where.file}`;
+    const member: InstructionMember = { id: def.id, layer: where.name, ...(def.private ? { private: true as const } : {}) };
     const g = groups.get(key);
-    if (g) g.members.push({ id: def.id, layer: where.name });
-    else groups.set(key, { machine, file: displayFile(where.file, home), members: [{ id: def.id, layer: where.name }] });
+    if (g) g.members.push(member);
+    else groups.set(key, { machine, file: displayFile(where.file, home), members: [member] });
   }
-  return [...groups.values()].filter((g) => new Set(g.members.map((m) => m.layer)).size > 1);
+  return [...groups.values()].filter((g) => g.members.some((m) => !sameInstructions(m, g.members[0]!)));
 }
 
 /** A clash as one sentence, naming every agent in it with its layer. */
 export function instructionConflictMessage(g: InstructionGroup): string {
   const where = g.machine ? `on host "${g.machine}"` : 'on this machine';
-  const members = g.members.map((m) => `"${m.id}" (layer "${m.layer}")`);
+  const members = g.members.map((m) => `"${m.id}" (layer "${m.layer}"${m.private ? ', private: without common.md' : ''})`);
   return (
     `agents ${listed(members)} deliver the same file ${g.file} ${where}, but their layers differ; ` +
     'one file can only hold one layer — give them the same instructions.layer, or different files'

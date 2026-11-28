@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { AgentDefSchema, PodAgentSchema, podAgentId, type PodAgent } from './schema.js';
-import { instructionClashes, instructionsHome } from './instructions.js';
+import { instructionClashes, instructionsHome, sameInstructions } from './instructions.js';
 
 /**
  * What each host's pod declared, as the gateway last read it — `<config dir>/pods.json`, written by
@@ -157,14 +157,14 @@ function offInstructionClashes(
     const where = g.machine ? `on host "${g.machine}"` : 'on this machine';
     for (const m of g.members) {
       const agent = byId.get(m.id);
-      if (!agent || m.layer === keep.layer) continue;
+      if (!agent || sameInstructions(m, keep)) continue;
       // The placement as the agent would write it (`~/…` against its own home), so the marker keeps
       // meaning the same file if its `env.HOME` is resolved later.
       const at = instructionsHome(agent, '~');
       if (!at) continue;
       off.set(m.id, { file: at.file, layer: at.name, off: true });
       skipped.push(
-        `instructions.${m.id}: "${m.id}" (layer "${m.layer}") and "${keep.id}" (layer "${keep.layer}") ` +
+        `instructions.${m.id}: "${m.id}" (layer "${m.layer}"${m.private ? ', private' : ''}) and "${keep.id}" (layer "${keep.layer}"${keep.private ? ', private' : ''}) ` +
           `both deliver ${g.file} ${where}; "${keep.id}" keeps it, so nothing is delivered to "${m.id}"`
       );
     }

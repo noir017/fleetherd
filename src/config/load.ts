@@ -6,6 +6,7 @@ import { isScalar, parse, parseDocument, stringify } from 'yaml';
 import {
   ConfigSchema,
   accessUnrestricted,
+  privateAgentWarnings,
   withExperienceDefaults,
   type Config,
   type UserConfig,
@@ -172,6 +173,7 @@ export function readConfig(): ReadConfig {
         });
     throw new ConfigValidationError(`config validation failed ${p}:\n${[...lines, ...off].join('\n')}`);
   }
+  for (const line of privateAgentWarnings(result.data)) console.warn(line);
   return {
     // The file only carries the slim user surface; merge in the frozen experience defaults.
     config: withExperienceDefaults(result.data),

@@ -9,6 +9,7 @@ import {
 } from '../core/conversation.js';
 import { DEFAULT_LIST_LIMIT, DEFAULT_SEARCH_LIMIT, type HistoryStore } from '../history/store.js';
 import type { IpcAction, VoiceLogResult } from '../ipc/protocol.js';
+import { PRIVATE_NO_SKILLS } from '../ipc/tools.js';
 import {
   DEFAULT_ASK_TIMEOUT_MS as PROTOCOL_DEFAULT_ASK_TIMEOUT_MS,
   DEFAULT_CHANNEL_LIMIT,
@@ -178,7 +179,7 @@ export class DaemonReverse {
     // Mark the conversation active on reverse commands so background jobs reporting between turns aren't idle-reclaimed.
     if (this.lastResolvedConversationId) this.ctx.registry.touch(this.lastResolvedConversationId);
     if (isTaskAction(action)) return this.ctx.delegation.handle(conversation, action);
-    if (isSessionsQuery(action)) return this.handleSessionsQuery(action);
+    if (isSessionsQuery(action)) return this.handleSessionsQuery(action, this.isPrivateCaller(conversation));
     if (isGatewayQuery(action)) return this.handleGatewayQuery(action, address);
     this.assertAgentMayWrite(platformId, address, action);
     switch (action.kind) {
@@ -319,7 +320,12 @@ export class DaemonReverse {
     }
   }
 
-  handleSessionsQuery(action: SessionsQuery): unknown {
+  /**
+   * `sessions` for one reader. Only a private agent reads a private agent's conversations: every
+   * other agent, and a caller from outside, could carry them into what is shared (memory, skills).
+   */
+  handleSessionsQuery(action: SessionsQuery, readerPrivate = false): unknown {
+    const hideAgents = readerPrivate ? [] : this.ctx.config.agents.filter((d) => d.private).map((d) => d.id);
     switch (action.kind) {
       case 'sessions-search': {
         const history = this.requireHistory();
@@ -328,15 +334,18 @@ export class DaemonReverse {
           days: action.days,
           limit: action.limit,
           tools: action.tools,
+          hideAgents,
         });
         return {
           hits,
           limit: action.limit ?? DEFAULT_SEARCH_LIMIT,
-          ...(action.agent !== undefined && hits.length === 0 ? { agents: history.agents() } : {}),
+          ...(action.agent !== undefined && hits.length === 0
+            ? { agents: history.agents().filter((a) => !hideAgents.includes(a)) }
+            : {}),
         };
       }
-      case 'sessions-read':
-        return this.requireHistory().read(this.sessionRef(action.session), {
+      case 'sessions-read': {
+        const read = this.requireHistory().read(this.sessionRef(action.session), {
           around: action.around,
           window: action.window,
           role: action.role,
@@ -352,12 +361,18 @@ export class DaemonReverse {
             return { agent, generation: this.ctx.store?.conversationGeneration(key) ?? 0 };
           },
         });
+        if (hideAgents.includes(read.session.agent)) {
+          throw new Error(`conversation #${read.session.id} is private agent ${read.session.agent}'s; only a private agent reads it`);
+        }
+        return read;
+      }
       case 'sessions-list':
         return {
           sessions: this.requireHistory().list({
             days: action.days,
             limit: action.limit,
             beforeId: action.before,
+            hideAgents,
           }),
           days: action.days ?? 7,
           limit: action.limit ?? DEFAULT_LIST_LIMIT,
@@ -401,6 +416,13 @@ export class DaemonReverse {
     };
   }
 
+  /** Whether the conversation a reverse command came from is answered by a private agent. */
+  private isPrivateCaller(conversationId: ConversationId | undefined): boolean {
+    if (!conversationId) return false;
+    const agent = this.ctx.registry.boundAgentOf(conversationId) ?? this.ctx.config.routing.default;
+    return findAgent(this.ctx.config, agent)?.private === true;
+  }
+
   private skillChangeBy(conversationId: ConversationId | undefined): SkillChangeBy {
     if (!conversationId) return { kind: 'agent' };
     const agent = this.ctx.registry.boundAgentOf(conversationId) ?? this.ctx.config.routing.default;
@@ -416,6 +438,7 @@ export class DaemonReverse {
       if (value === undefined || value === '') throw new Error(`skills ${action.action} needs ${what}`);
       return value;
     };
+    if (this.isPrivateCaller(conversationId)) throw new Error(PRIVATE_NO_SKILLS);
     const name = (): string => need(action.name, 'a <name>');
     const by = this.skillChangeBy(conversationId);
     const write = <T>(fn: () => T): Promise<T> => this.ctx.skillsRepo.write(fn);

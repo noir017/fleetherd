@@ -1,4 +1,4 @@
-import type { Config } from '../config/schema.js';
+import { type Config, findAgent } from '../config/schema.js';
 import type { HistoryReviewChange, HistoryReviewRecord, HistoryStore, HistorySessionRow, ReviewWindow } from '../history/store.js';
 import type { ConversationId } from '../types.js';
 import {
@@ -308,6 +308,8 @@ export class ReviewService {
   private plan(candidate: ReviewCandidate, now: number): Plan | undefined {
     const session = this.deps.history.sessionOf(candidate.key);
     if (!session || EXCLUDED_KINDS.has(session.kind)) return undefined;
+    // A private agent's conversation feeds nothing shared, and skills reach every agent.
+    if (findAgent(this.deps.config, session.agent)?.private) return undefined;
     if (!this.deps.state.ready(candidate.key, now)) return undefined;
     const mark = this.deps.state.markOf(candidate.key);
     const window = this.deps.history.reviewWindow(candidate.key, mark?.messageId ?? 0, REVIEW_CONVERSATION_CHARS);

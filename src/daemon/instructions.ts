@@ -89,10 +89,11 @@ export type Composed = { kind: 'text'; text: string } | { kind: 'none' } | { kin
  * is an empty layer; any other read error is thrown — an unreadable file must not read as "nothing
  * to deliver", which would take the link back. A name that is not a layer is nothing to deliver:
  * `readLayer` joins it to `dir`, so `../x` would otherwise read outside the gateway's directory.
+ * A private agent (`common: false`) gets its own layer alone.
  */
-export function composeInstructions(dir: string, name: string): Composed {
+export function composeInstructions(dir: string, name: string, common = true): Composed {
   if (!isInstructionLayer(name)) return { kind: 'none' };
-  return joinLayers(['common.md', `${name}.md`].map((file) => readLayer(dir, file)));
+  return joinLayers([...(common ? ['common.md'] : []), `${name}.md`].map((file) => readLayer(dir, file)));
 }
 
 /** One layer's text, or undefined when the file is not there. Any other read error is thrown. */
@@ -280,7 +281,7 @@ export function placeInstructions(def: AgentDef, home: string): InstructionsResu
   if (!where) return undefined;
   let composed: Composed;
   try {
-    composed = composeInstructions(instructionsDir(), where.name);
+    composed = composeInstructions(instructionsDir(), where.name, !def.private);
   } catch (e) {
     const r: InstructionsResult = { link: where.file, outcome: 'failed', detail: e instanceof Error ? e.message : String(e) };
     reportInstructions(r);
@@ -291,11 +292,11 @@ export function placeInstructions(def: AgentDef, home: string): InstructionsResu
   return r;
 }
 
-/** common.md + its layer (`instructionsLayer`); undefined when there is nothing to give. */
+/** common.md (not for a private agent) + its layer (`instructionsLayer`); undefined when there is nothing to give. */
 function connectInstructions(def: AgentDef): string | undefined {
   const layer = instructionsLayer(def);
   if (layer === undefined) return undefined;
-  const composed = composeInstructions(instructionsDir(), layer);
+  const composed = composeInstructions(instructionsDir(), layer, !def.private);
   if (composed.kind === 'too-big') {
     console.warn(`[connect] ${def.id}: instructions not sent, ${composed.bytes} bytes is over the limit`);
     return undefined;
@@ -321,7 +322,7 @@ export function createInstructionsProvision(): AgentProvision<InstructionsResult
       if (!where) return undefined;
       const key = `${host.id}@${w.instance}@${where.file}`;
       try {
-        const composed = composeInstructions(instructionsDir(), where.name);
+        const composed = composeInstructions(instructionsDir(), where.name, !def.private);
         const state = composed.kind === 'text' ? createHash('sha256').update(composed.text).digest('hex') : composed.kind;
         if (placed.get(key) === state) {
           return { link: where.file, outcome: composed.kind === 'text' ? 'current' : composed.kind === 'none' ? 'absent' : 'too-big' };

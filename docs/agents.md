@@ -17,8 +17,9 @@ instead of started.
 
 Each agent takes `cwd`, `env`, `args`, a best-effort `model`, pinned
 [session options](#pinned-session-options), a [pre-launch hook](#pre-launch-hook), a
-[permission level](#permission-levels), a [quota command](#quota-command), and — for a harness the
-gateway does not know — [its own instruction file](#its-own-instruction-file). With
+[permission level](#permission-levels), a [quota command](#quota-command), a
+[private](#private-agents) flag, and — for a harness the gateway does not know —
+[its own instruction file](#its-own-instruction-file). With
 `host:` it runs on another machine, reached over ssh — see [Remote hosts](remote-hosts.md). Sessions
 persist where the agent supports it; the commands an agent advertises are
 reachable through its own `/<agent>` menu rather than registered globally (see
@@ -71,6 +72,45 @@ agents:
 `~` is resolved against the home the agent runs as (`env.HOME` included); `layer` defaults to the
 agent's id, and a pod's agent uses its `pod.yaml` id without `@host`. Nothing is placed unless the
 file's directory exists. See [Your instructions, for every agent](instructions.md).
+
+## Private agents
+
+A private agent works without anything the other agents share, and leaves nothing behind for them.
+
+```yaml
+agents:
+  - id: cc-private
+    harness: claude
+    private: true
+    env:
+      HOME: /home/me/private-home
+    instructions:
+      file: ~/.claude/CLAUDE.md
+      layer: cc-private
+```
+
+- **It is given no skill.** Neither the bundled skills nor the [managed](skills.md) ones are placed
+  for it, its `skills` tool is left out, and `fleetherd skills` refuses it.
+- **It gets its own instructions alone.** No `common.md`: only its layer — the harness's
+  (`claude.md`), or the one `instructions.layer` names, which is how it gets a layer of its own.
+- **Nothing shared reads it.** Its sub-tasks, and their reviewers, must be private agents too; the
+  [automatic review](skills.md#auto-review) skips its conversations; and `fleetherd sessions` hides
+  them from every agent that is not private, and from [external callers](external-mcp.md).
+
+What its harness reads by itself is not the gateway's to withhold: the MCP servers, hooks and skills
+installed in the home it runs in — a memory service wired in as a hook and an MCP server, say. So
+give it a home of its own with `env.HOME`. Its harness reads its config there, and the gateway
+places the agent's files there too. Put in that home only what it should have: its harness's config
+without those servers and hooks, and links to what it needs of yours (`~/.gitconfig`, `~/.ssh`).
+The gateway warns when it loads a private agent with no `env.HOME`.
+
+A [`connect`](#an-agent-that-is-already-running-connect) agent reads no home here: beside its
+instructions it has whatever its own service gives it, so say in its layer what it should not use.
+
+This keeps things from being handed to the agent; it is not a sandbox. The agent still runs as your
+user, and with a shell it can read your home and reach any service you can. Keep private work in a
+topic of its own, too: the review and `sessions` judge a conversation by the agent that last
+answered in it, so switching one topic between a private agent and another mixes the two.
 
 ## An agent that is already running (`connect`)
 

@@ -15,7 +15,7 @@ Claude Code、Codex、OpenCode、Antigravity、CodeBuddy 和 AtomCode，本机�
   <layer>.md     其它智能体，按它的 instructions.layer（默认用它的 id）
 ```
 
-每个智能体拿到的是 `common.md` 加上它自己那份，前者在前。两份都可以没有。按智能体分的那份，放只对某一种智能体
+每个智能体拿到的是 `common.md` 加上它自己那份，前者在前；[私有智能体](agents.md#私有智能体)只拿它自己那份。两份都可以没有。按智能体分的那份，放只对某一种智能体
 才说得通的规矩——比如一条为了它的 prompt 缓存定的规矩，计费方式不同的别的智能体不该照着做。
 
 没有配置项：目录在，就启用；删掉目录，就关闭。

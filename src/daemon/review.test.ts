@@ -265,6 +265,27 @@ describe('ReviewService', () => {
     expect(h.calls).toHaveLength(0);
   });
 
+  it("never reviews a private agent's conversation", async () => {
+    seed('telegram:chat:1', 5);
+    history.session({ key: 'telegram:chat:1', platform: 'telegram', agent: 'secret', at: now - 2 * 3_600_000 });
+    const cfg = parseConfig({
+      platforms: { telegram: { type: 'telegram', token: 'x' } },
+      agents: [
+        { id: 'cc', harness: 'claude' },
+        { id: 'secret', harness: 'codex', private: true, env: { HOME: '/home/u/private' } },
+      ],
+      routing: { default: 'cc' },
+      review: { agent: 'cc' },
+    });
+    const h = harness({ cfg });
+    await h.service.sweep();
+    expect(h.calls).toHaveLength(0);
+    // The same conversation, answered by an agent that is not private, is reviewed.
+    history.session({ key: 'telegram:chat:1', platform: 'telegram', agent: 'cc', at: now - 2 * 3_600_000 });
+    await h.service.sweep();
+    expect(h.calls).toHaveLength(1);
+  });
+
   it('skips a conversation the library has never seen', async () => {
     const h = harness();
     await h.service.sweep();

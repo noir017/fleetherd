@@ -251,6 +251,15 @@ const AgentDefFields = z
     /** Env vars injected into the subprocess (credentials etc.); supports ${VAR} expansion. */
     env: z.record(z.string()).default({}),
     /**
+     * A private agent (docs/agents.md#private-agents): the gateway hands it nothing shared — no skill
+     * (bundled, resident or library, and no `skills` tool or command), no `common.md`, only its own
+     * instruction layer — and lets nothing shared read it: its sub-tasks and reviewers must be
+     * private too, the automatic review skips its conversations, and `sessions` hides them from
+     * every agent that is not private. What its harness reads by itself (MCP servers, hooks, skills
+     * the operator installed) is the harness's own config: give it a home of its own (`env.HOME`).
+     */
+    private: z.boolean().optional(),
+    /**
      * Operator commands run at points in this agent's life that its harness cannot see (see
      * daemon/agent-hooks.ts). Strict, so a misspelled hook name fails the load instead of silently
      * never running. Deliberately absent from the `/setting` table: a chat-side edit here would be
@@ -1456,4 +1465,19 @@ export function agentDisplayName(def: AgentDef | undefined, fallbackId: string):
  */
 export function accessUnrestricted(cfg: Pick<UserConfig, 'access'>): boolean {
   return cfg.access.allowFrom.length === 0;
+}
+
+/**
+ * One line per private agent that still runs in its account's own home: the gateway gives it
+ * nothing shared, but its harness reads the MCP servers, hooks and skills installed there by
+ * itself (docs/agents.md#private-agents). A `connect` agent reads no home of the gateway's.
+ */
+export function privateAgentWarnings(cfg: Pick<UserConfig, 'agents'>): string[] {
+  return cfg.agents
+    .filter((a) => a.private && !a.connect && !a.env['HOME'])
+    .map(
+      (a) =>
+        `[config] ⚠️  agent "${a.id}" is private but has no env.HOME of its own: its harness still reads ` +
+        'the MCP servers, hooks and skills installed in the home it shares (docs/agents.md#private-agents)'
+    );
 }
