@@ -17,7 +17,7 @@ import {
   createLazySkillsPlugin,
   type WorkbenchExtrasModule,
 } from './lazy-extras.js';
-import { ContributionRegistry, type PluginTopicsBridge, WebuiEventBus } from './registry.js';
+import { ContributionRegistry, PluginI18nRegistry, type PluginTopicsBridge, WebuiEventBus } from './registry.js';
 
 function makeMemoryStorage(): StorageLike {
   const data = new Map<string, string>();
@@ -116,6 +116,19 @@ describe('lazy-extras', () => {
     expect(importModule).toHaveBeenCalledTimes(1);
     expect(initLocale).toHaveBeenCalledTimes(1);
     expect(setLocale).toHaveBeenCalledTimes(1);
+  });
+
+  it("hands the chunk's strings to the page's i18n, which plugins reach through ctx.i18n", async () => {
+    const key = 'lazyExtrasTest.only';
+    const ctxI18n = new PluginI18nRegistry(() => 'en');
+    expect(ctxI18n.t(key)).toBe(key);
+    const loader = createExtrasLoader({
+      bundleUrl: 'assets/workbench-extras-test.js',
+      importModule: async () => dummyExtras({ extrasMessages: { en: { [key]: 'From the chunk' } } }),
+      doc: document,
+    });
+    await loader();
+    expect(ctxI18n.t(key)).toBe('From the chunk');
   });
 
   it('registers palette commands & allowInInput keybindings eagerly and loads real plugin on first trigger', async () => {

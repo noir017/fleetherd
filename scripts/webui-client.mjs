@@ -37,8 +37,24 @@ const EXTRAS_SOURCE = [
   "export { createSettingsPlugin } from './features/settings/plugin.js';",
   "export { createSkillsPlugin } from './features/skills/index.js';",
   "export { createTerminalPlugin } from './features/terminal/plugin.js';",
-  "export { initLocale, setLocale } from './i18n/index.js';",
+  "export { extrasMessages, initLocale, setLocale } from './i18n/index.js';",
 ].join('\n');
+
+/**
+ * The strings only the extras chunk shows, emptied in `app`: the chunk carries them and hands them to
+ * the page's i18n when it loads (`extrasMessages`, plugins/lazy-extras.ts). page.test.ts checks that
+ * the page script never names one of their keys.
+ */
+const EXTRAS_DICTS = /[\\/]client[\\/]i18n[\\/](en|zh-CN)-extras\.ts$/;
+const deferExtrasMessages = {
+  name: 'defer-extras-messages',
+  setup(b) {
+    b.onLoad({ filter: EXTRAS_DICTS }, (args) => {
+      const name = path.basename(args.path) === 'en-extras.ts' ? 'enExtras' : 'zhCNExtras';
+      return { contents: `export const ${name} = {};`, loader: 'ts' };
+    });
+  },
+};
 
 /**
  * What the script takes from TypeScript at build time: the icon table and the cache core. Both live
@@ -116,6 +132,7 @@ export async function buildClient({ outdir } = {}) {
     stdin: { contents: source, loader: 'ts', resolveDir: path.dirname(APP_ENTRY), sourcefile: path.basename(APP_ENTRY) },
     format: 'iife',
     minify: true,
+    plugins: [deferExtrasMessages],
     define: {
       __WEBUI_EXTRAS_ASSET__: JSON.stringify(outdir ? `assets/${extrasFile}` : null),
     },

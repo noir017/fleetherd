@@ -5,6 +5,14 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **The web UI's page script is back under its size budget.** `app-*.js` had grown to 167 KiB
+  gzipped against a budget of 160. Its two dictionaries carried every string of the views that load
+  on demand (settings, schedules, reviews, skills, history, files, changes, terminal), and those
+  strings now arrive with the chunk that brings the views; 69 strings nothing showed any more are
+  gone. The page script is 149.5 KiB, and nothing on screen changes.
+
 ## [3.50.0] - 2026-11-28
 
 ### Changed
