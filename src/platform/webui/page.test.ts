@@ -3,6 +3,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { enExtras } from './client/i18n/en-extras.js';
+import { en } from './client/i18n/en.js';
 import { NO_ASSETS, servePage as serveShell } from './page.js';
 import { APP_SOURCE, CLIENT, renderPage, testAssets } from './page.test-helpers.js';
 
@@ -244,6 +246,20 @@ describe('webui page', () => {
     expect(CLIENT.extras.text).toContain('api/schedules');
     expect(CLIENT.extras.text).toContain('api/schedules/op');
     expect(SHELL_SOURCE).toContain('aa_split_sizes');
+  });
+
+  it('leaves the strings only the extras chunk shows out of the page script', () => {
+    // app-*.js is built with en-extras / zh-CN-extras emptied (scripts/webui-client.mjs); they arrive
+    // with the chunk. A key the page script names would show as the key itself until then: it
+    // belongs in en.ts / zh-CN.ts.
+    const quoted = (key: string): RegExp => new RegExp(`["'\`]${key.replace(/\./g, '\\.')}["'\`]`);
+    expect(Object.keys(enExtras).filter((key) => quoted(key).test(CLIENT.app.text))).toEqual([]);
+    expect(CLIENT.app.text).not.toContain(enExtras['sched.searchTasks']);
+    expect(CLIENT.extras.text).toContain(enExtras['sched.searchTasks']);
+    const pageSource = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'page.ts'), 'utf8');
+    const pageKeys = [...pageSource.matchAll(/data-i18n(?:-[a-z]+)?="([^"]+)"/g)].map((m) => m[1]!);
+    expect(pageKeys.length).toBeGreaterThan(0);
+    expect(pageKeys.filter((key) => !(key in en))).toEqual([]);
   });
 
   it('sends a nonce, without which its own retry would double-post', () => {

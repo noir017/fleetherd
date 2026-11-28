@@ -10,7 +10,7 @@ import type { SchedulesPluginDeps } from '../features/schedules/types.js';
 import type { SettingsPluginBridge, SettingsPluginDeps } from '../features/settings/workbench-types.js';
 import type { SkillsPluginDeps } from '../features/skills/types.js';
 import type { TerminalPluginDeps } from '../features/terminal/plugin.js';
-import { getLocale, type Locale, onLocaleChange, t as tr } from '../i18n/index.js';
+import { extendMessages, getLocale, type Locale, onLocaleChange, t as tr } from '../i18n/index.js';
 import type { PanelComponent, PanelInitContext, PartId } from '../workbench/contracts.js';
 import {
   type ActivityContribution,
@@ -39,6 +39,7 @@ export interface WorkbenchExtrasModule {
   readonly createTerminalPlugin?: (deps?: TerminalPluginDeps) => WebuiPlugin;
   readonly initLocale?: () => void;
   readonly setLocale?: (locale: Locale) => void;
+  readonly extrasMessages?: Partial<Record<Locale, Readonly<Record<string, string>>>>;
 }
 
 export interface ExtrasLoaderOptions {
@@ -84,6 +85,8 @@ export function createExtrasLoader(opts: ExtrasLoaderOptions = {}): ExtrasLoader
   let localeSynced = false;
 
   const syncLocale = (mod: WorkbenchExtrasModule): void => {
+    // The page's own copy of i18n: plugins resolve through ctx.i18n, which falls back to it.
+    if (mod.extrasMessages) extendMessages(mod.extrasMessages);
     mod.initLocale?.();
     mod.setLocale?.(getLocale());
     if (!localeSynced) {

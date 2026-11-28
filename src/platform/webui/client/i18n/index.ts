@@ -1,7 +1,9 @@
-import { en, type MessageKey } from './en.js';
+import { en } from './en.js';
+import { enExtras } from './en-extras.js';
 import { zhCN } from './zh-CN.js';
+import { zhCNExtras } from './zh-CN-extras.js';
 
-export type { MessageKey };
+export type MessageKey = keyof typeof en | keyof typeof enExtras;
 
 export type Locale = 'en' | 'zh-CN';
 
@@ -17,10 +19,23 @@ export const SUPPORTED_LOCALES: readonly LocaleInfo[] = [
   { code: 'zh-CN', label: '简体中文' },
 ];
 
-const DICTS: Record<Locale, Readonly<Record<MessageKey, string>>> = {
-  en,
-  'zh-CN': zhCN,
+// Cross-file contract: app-*.js is built with en-extras / zh-CN-extras emptied
+// (scripts/webui-client.mjs), so in the page these hold only en / zh-CN until the workbench-extras
+// chunk loads and lazy-extras.ts hands its extrasMessages to extendMessages. A key the page script
+// itself shows belongs in en.ts (page.test.ts fails otherwise).
+export const extrasMessages: Readonly<Record<Locale, Readonly<Record<string, string>>>> = {
+  en: enExtras,
+  'zh-CN': zhCNExtras,
 };
+
+const DICTS: Record<Locale, Record<string, string>> = {
+  en: { ...en, ...enExtras },
+  'zh-CN': { ...zhCN, ...zhCNExtras },
+};
+
+export function extendMessages(more: Partial<Record<Locale, Readonly<Record<string, string>>>>): void {
+  for (const { code } of SUPPORTED_LOCALES) Object.assign(DICTS[code], more[code]);
+}
 
 let currentLocale: Locale = 'en';
 const listeners = new Set<(locale: Locale) => void>();
@@ -111,8 +126,7 @@ export function onLocaleChange(cb: (locale: Locale) => void): () => void {
 }
 
 export function t(key: MessageKey, params?: Record<string, string | number>): string {
-  const dict = DICTS[currentLocale];
-  const raw = (dict && dict[key]) || en[key] || key;
+  const raw = DICTS[currentLocale][key] || DICTS.en[key] || key;
   if (!params) return raw;
   return raw.replace(/\{([a-zA-Z0-9_]+)\}/g, (match, name: string) => {
     const val = params[name];

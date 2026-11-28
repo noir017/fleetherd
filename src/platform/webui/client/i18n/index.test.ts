@@ -2,9 +2,11 @@ import { JSDOM } from 'jsdom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { en } from './en.js';
+import { enExtras } from './en-extras.js';
 import {
   applyDomI18n,
   detectLocale,
+  extendMessages,
   getLocale,
   initLocale,
   localeLabel,
@@ -18,6 +20,7 @@ import {
   type MessageKey,
 } from './index.js';
 import { zhCN } from './zh-CN.js';
+import { zhCNExtras } from './zh-CN-extras.js';
 
 function placeholdersOf(text: string): string[] {
   const matches = text.match(/\{[a-zA-Z0-9_]+\}/g) ?? [];
@@ -38,18 +41,38 @@ describe('webui client i18n', () => {
     setLocale('en');
   });
 
-  it('keeps exact key parity and placeholder parity between en and zh-CN', () => {
-    const enKeys = Object.keys(en).sort();
-    const zhKeys = Object.keys(zhCN).sort();
-    expect(zhKeys).toEqual(enKeys);
-    for (const key of enKeys as MessageKey[]) {
-      expect(en[key].length).toBeGreaterThan(0);
-      expect(zhCN[key].length).toBeGreaterThan(0);
-      const enVars = new Set(placeholdersOf(en[key]));
-      for (const v of placeholdersOf(zhCN[key])) {
-        expect(enVars.has(v)).toBe(true);
+  it.each([
+    ['en.ts / zh-CN.ts', en, zhCN],
+    ['en-extras.ts / zh-CN-extras.ts', enExtras, zhCNExtras],
+  ] as [string, Readonly<Record<string, string>>, Readonly<Record<string, string>>][])(
+    'keeps exact key parity and placeholder parity between %s',
+    (_name, enDict, zhDict) => {
+      const enKeys = Object.keys(enDict).sort();
+      const zhKeys = Object.keys(zhDict).sort();
+      expect(zhKeys).toEqual(enKeys);
+      for (const key of enKeys) {
+        expect(enDict[key]!.length).toBeGreaterThan(0);
+        expect(zhDict[key]!.length).toBeGreaterThan(0);
+        const enVars = new Set(placeholdersOf(enDict[key]!));
+        for (const v of placeholdersOf(zhDict[key]!)) {
+          expect(enVars.has(v)).toBe(true);
+        }
       }
     }
+  );
+
+  it('names each key in exactly one of the page and extras dictionaries', () => {
+    const shared = Object.keys(enExtras).filter((key) => key in en);
+    expect(shared).toEqual([]);
+  });
+
+  it('resolves extras keys from source, and from extendMessages where the build emptied them', () => {
+    setLocale('zh-CN');
+    expect(t('sched.searchTasks')).toBe(zhCNExtras['sched.searchTasks']);
+    extendMessages({ 'zh-CN': { 'sched.searchTasks': '搜索（测试）' } });
+    expect(t('sched.searchTasks')).toBe('搜索（测试）');
+    extendMessages({ 'zh-CN': { 'sched.searchTasks': zhCNExtras['sched.searchTasks'] } });
+    expect(t('sched.searchTasks')).toBe(zhCNExtras['sched.searchTasks']);
   });
 
   it('registers supported locales and cycles cleanly', () => {
