@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.52.0] - 2026-11-28
+
 ### Added
 
 - **Per-session sticky-account quota attribution via `quotaAccountHeader`.** Agents behind a
