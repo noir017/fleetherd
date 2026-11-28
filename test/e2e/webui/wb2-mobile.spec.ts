@@ -358,3 +358,77 @@ test.describe('Web UI mobile drawer navigation and cached topic open', () => {
     expect(eventUrls.some((u) => u.includes(`t=${longId}`) && u.includes('last='))).toBe(true);
   });
 });
+
+interface InputBox {
+  offsetH: number;
+  clientH: number;
+  scrollH: number;
+  gutter: number;
+}
+
+function measureInput(page: Page): Promise<InputBox> {
+  return page.locator('.wb-topic-editor #input').evaluate((el) => {
+    const cs = getComputedStyle(el);
+    const bx = parseFloat(cs.borderLeftWidth) + parseFloat(cs.borderRightWidth);
+    return {
+      offsetH: (el as HTMLElement).offsetHeight,
+      clientH: el.clientHeight,
+      scrollH: el.scrollHeight,
+      gutter: (el as HTMLElement).offsetWidth - el.clientWidth - bx,
+    };
+  });
+}
+
+function expectFits(box: InputBox): void {
+  expect(box.scrollH).toBeLessThanOrEqual(box.clientH);
+  expect(box.gutter).toBe(0);
+}
+
+const textLines = (n: number): string => Array.from({ length: n }, (_, i) => `line ${i + 1}`).join('\n');
+
+test.describe('Web UI composer auto-grow', () => {
+  // The phone input has a 1px border and the desktop one none; a height of scrollHeight alone left
+  // the bordered box 2px short, so it scrolled and showed a scrollbar from the first keystroke on.
+  for (const vp of [
+    { name: 'phone', width: 390, height: 844 },
+    { name: 'desktop', width: 1280, height: 800 },
+  ]) {
+    test(`${vp.name}: the input shows no scrollbar until it reaches its max height`, async ({ page }) => {
+      const title = `Composer grow ${vp.name}`;
+      const { topics } = await seedTopics(gateway, [{ title }]);
+      await page.setViewportSize({ width: vp.width, height: vp.height });
+      await loginViaUi(page, gateway.baseUrl, gateway.secret);
+      await page.goto(`${gateway.baseUrl}/?t=${topics[title]}`);
+      const input = page.locator('.wb-topic-editor #input');
+      await expect(input).toBeVisible();
+      expectFits(await measureInput(page));
+
+      await input.fill('hello from the composer');
+      const oneLine = await measureInput(page);
+      expectFits(oneLine);
+
+      await page.locator('.wb-topic-editor .wb-topic-send').click();
+      await expect(page.locator('.wb-topic-editor #log .m').filter({ hasText: 'hello from the composer' }).first()).toBeVisible();
+      await expect(input).toHaveValue('');
+      const afterSend = await measureInput(page);
+      expectFits(afterSend);
+      expect(afterSend.offsetH).toBe(oneLine.offsetH);
+
+      await input.fill(textLines(4));
+      const fourLines = await measureInput(page);
+      expectFits(fourLines);
+      expect(fourLines.offsetH).toBeGreaterThan(oneLine.offsetH);
+
+      await input.fill(textLines(40));
+      const capped = await measureInput(page);
+      expect(capped.scrollH).toBeGreaterThan(capped.clientH);
+      expect(capped.offsetH).toBeLessThan(vp.height / 2);
+      expect(await input.evaluate((el) => ((el.scrollTop = el.scrollHeight), el.scrollTop))).toBeGreaterThan(0);
+
+      await input.fill('');
+      const cleared = await measureInput(page);
+      expectFits(cleared);
+      expect(cleared.offsetH).toBe(oneLine.offsetH);
+    });
+  }
+});

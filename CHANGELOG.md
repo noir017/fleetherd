@@ -5,6 +5,15 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **The Web UI's message box on a phone no longer shows a scrollbar it does not need.** The box
+  grows with what is typed by setting its height to the text's height, which leaves out the
+  border. On desktop the box has none; on a narrow screen it has a 1px one, so from the first
+  keystroke, and still after sending, the box was 2px short of its own text and a grey bar sat
+  at its right edge. The height now includes the border. A long message still scrolls once the
+  box reaches its maximum height, and the desktop box is unchanged.
+
 ## [3.50.0] - 2026-11-28
 
 ### Changed

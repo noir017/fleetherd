@@ -17,6 +17,12 @@ export * from './slash-hints.js';
 export * from './clipboard.js';
 export * from './unsent.js';
 
+// base.css makes every box border-box, so a height equal to scrollHeight (which excludes borders)
+// leaves a bordered textarea short by its borders and overflow-y:auto paints a scrollbar.
+function borderY(el: HTMLElement): number {
+  return Math.max(0, el.offsetHeight - el.clientHeight);
+}
+
 class ComposerControllerImpl implements ComposerController {
   private readonly doc: Document;
   private readonly win: Window;
@@ -103,7 +109,7 @@ class ComposerControllerImpl implements ComposerController {
       const sh = input.scrollHeight;
       if (sh === this.lastGrowHeight) return;
       if (sh > this.lastGrowHeight) {
-        input.style.height = `${sh}px`;
+        input.style.height = `${sh + borderY(input)}px`;
         this.lastGrowHeight = sh;
         return;
       }
@@ -113,7 +119,7 @@ class ComposerControllerImpl implements ComposerController {
     }
     input.style.height = 'auto';
     const next = input.scrollHeight;
-    input.style.height = `${next}px`;
+    input.style.height = `${next + borderY(input)}px`;
     this.lastGrowHeight = next;
     if (len === 0 && next > 0) this.singleLineHeight = next;
   }
