@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.49.0] - 2026-11-28
+
 ### Added
 
 - **Private agents (`private: true`).** Some work should not meet what every agent shares — the
