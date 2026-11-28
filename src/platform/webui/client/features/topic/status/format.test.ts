@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { setLocale } from '../../../i18n/index.js';
 import {
+  effortChip,
   hasCountdown,
   modelChip,
   optChip,
@@ -14,6 +15,7 @@ import {
   stWindow,
   statusSegments,
 } from './format.js';
+import { EFFORT_OPT_ID } from './model-pop.js';
 import type { AgentStatus, QuotaPool } from './types.js';
 
 describe('features/topic/status/format', () => {
@@ -213,5 +215,47 @@ describe('features/topic/status/format', () => {
     );
     expect(settingsOnly).toContain('st-who');
     expect(settingsOnly).not.toContain('st-info');
+  });
+  it('draws the effort switch as a chip like the permission one, and nothing without a level', () => {
+    const chip = effortChip('high', false);
+    expect(chip).toContain('<button type="button" class="st-model st-opt st-eff" data-effort="1" aria-haspopup="dialog" aria-expanded="false"');
+    expect(chip).toContain('<span class="st-olabel">Effort</span> <span class="st-mtext">high</span>');
+    expect(effortChip('high', true)).toContain('aria-expanded="true"');
+    expect(effortChip(undefined, false)).toBe('');
+    expect(effortChip(null, false)).toBe('');
+  });
+
+  it('puts the effort switch right after the model, before the permission chip, in both strips', () => {
+    const perms = { level: 'auto' as const, offered: ['ask' as const, 'auto' as const] };
+    const full = statusSegments(
+      { agent: 'cc', model: 'opus', effort: 'default', permissions: perms },
+      Date.now(),
+      false,
+      { fallbackOptions: [], openModel: false, openOptId: EFFORT_OPT_ID },
+    );
+    const model = full.indexOf('st-mtext">opus<');
+    const effort = full.indexOf('data-effort="1"');
+    expect(model).toBeGreaterThan(-1);
+    expect(effort).toBeGreaterThan(model);
+    expect(full.indexOf('data-perm="1"')).toBeGreaterThan(effort);
+    expect(full).toContain('<span class="st-mtext">default</span>');
+    expect(full).toMatch(/data-effort="1" aria-haspopup="dialog" aria-expanded="true"/);
+    expect(full).not.toContain('st-effort');
+
+    const bare = renderBareStatus({ agent: 'cc', model: 'opus', effort: 'low', options: [], openModel: false, openOptId: null });
+    expect(bare.indexOf('data-effort="1"')).toBeGreaterThan(bare.indexOf('st-mtext">opus<'));
+    expect(bare).toContain('<span class="st-mtext">low</span>');
+  });
+
+  it('draws no effort switch for a model without levels', () => {
+    const full = statusSegments({ agent: 'cc', model: 'haiku' }, Date.now(), false, {
+      fallbackOptions: [],
+      openModel: false,
+      openOptId: null,
+    });
+    expect(full).not.toContain('data-effort');
+    expect(renderBareStatus({ agent: 'cc', model: 'haiku', options: [], openModel: false, openOptId: null })).not.toContain(
+      'data-effort',
+    );
   });
 });

@@ -104,7 +104,8 @@ describe('wb2-chat topic editor alignment', () => {
     );
     expect(html).toContain('<span class="st-agent">claude</span>');
     expect(html).toContain('<span class="st-sep"> · </span>');
-    expect(html).toContain('<span class="st-effort">high</span>');
+    expect(html).toContain('<button type="button" class="st-model st-opt st-eff" data-effort="1"');
+    expect(html).toContain('<span class="st-mtext">high</span>');
   });
 
   it('renders harness badge and mobile checkmark in new-topic launchHtml', () => {

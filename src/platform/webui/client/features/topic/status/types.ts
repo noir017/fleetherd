@@ -34,17 +34,26 @@ export interface ModelListResponse {
   readonly text?: string;
 }
 
+export interface EffortLevels {
+  readonly current?: string;
+  readonly options: readonly { readonly value: string; readonly name: string }[];
+}
+
 export interface OptionListResponse {
   readonly ok: boolean;
   readonly agent?: string;
+  readonly reason?: string;
   readonly options?: readonly SessionOption[];
   readonly permissions?: StatusPermissions;
+  /** The current model's effort levels; absent when it offers none (or the agent did not start). */
+  readonly effort?: EffortLevels;
   readonly text?: string;
 }
 
 export interface OptionPeekResponse {
   readonly agent?: string;
   readonly model?: string;
+  readonly effort?: string;
   readonly options?: readonly StatusOption[];
   readonly permissions?: StatusPermissions;
 }
@@ -57,6 +66,8 @@ export interface ModelChoiceResponse {
 
 export interface OptionChoiceResponse {
   readonly ok: boolean;
+  /** For the effort switch: the level the harness reports after the change. */
+  readonly effort?: string;
   readonly text?: string;
 }
 

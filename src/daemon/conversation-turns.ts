@@ -157,7 +157,8 @@ export class ConversationTurns {
         ctx.status.usage(id, usage);
       },
       recordModel: (id, model) => ctx.status.model(id, model),
-      recordEffort: (id, effort) => ctx.status.effort(id, effort),
+      // The footer's level drops `default`; the strip's switch shows it, so it reads the session's selector.
+      recordEffort: (id, effort) => ctx.status.effort(id, ctx.agents.peek(id)?.effortSelector?.()?.current ?? effort),
       recordOptions: (id, options) => ctx.status.options(id, options),
       recordQuota: (id, pools) => ctx.status.quota(id, pools),
       recordTool: (id, evt) => this.recordTool(id, evt),

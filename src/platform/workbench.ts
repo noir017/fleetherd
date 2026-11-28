@@ -2,6 +2,7 @@ import type { ConversationAddress, ConversationRef } from '../core/conversation.
 import type {
   AgentCatalog,
   AgentStatus,
+  EffortSelector,
   MessageRef,
   OfflineMachine,
   PendingQueueItem,
@@ -81,15 +82,36 @@ export interface PendingQueueActions {
   sendNow(ref: ConversationRef, messageId?: string, opts?: { interrupt?: boolean }): { ok: boolean; sent: number };
 }
 
-export type SessionOptionList =
-  | { ok: true; agent: string; options: SessionOption[]; permissions?: StatusPermissions }
-  | { ok: false; agent: string; reason: 'none' | 'error'; text: string; permissions?: StatusPermissions };
+/**
+ * The option id the status line's effort switch is chosen under: `/effort`'s path, not an agent's
+ * own setting. Spelled again as EFFORT_OPT_ID in webui/client/features/topic/status/model-pop.ts.
+ */
+export const EFFORT_OPTION_ID = '__effort__';
 
-export type SessionOptionResult = { ok: true; options: SessionOption[]; text: string } | { ok: false; text: string };
+/**
+ * A status line's switches before any status (`peek`). `effort` is the level a session would be on —
+ * the live one's, the conversation's `/effort`, a pin, or a fresh session's — absent when unknown.
+ */
+export interface SessionOptionPeek {
+  agent: string;
+  model?: string;
+  effort?: string;
+  options: StatusOption[];
+  permissions?: StatusPermissions;
+}
+
+/** `effort`: the current model's levels, on either answer, since an agent with no settings of its own may still have them. */
+export type SessionOptionList =
+  | { ok: true; agent: string; options: SessionOption[]; permissions?: StatusPermissions; effort?: EffortSelector }
+  | { ok: false; agent: string; reason: 'none' | 'error'; text: string; permissions?: StatusPermissions; effort?: EffortSelector };
+
+export type SessionOptionResult =
+  | { ok: true; options: SessionOption[]; text: string; effort?: string }
+  | { ok: false; text: string };
 
 /** Agent-defined custom session options (`useOptionPicker`). `peek` answers without starting a session; `list` starts it. */
 export interface SessionOptionPicker {
-  peek(ref: ConversationRef): Promise<{ agent: string; model?: string; options: StatusOption[]; permissions?: StatusPermissions }>;
+  peek(ref: ConversationRef): Promise<SessionOptionPeek>;
   list(ref: ConversationRef): Promise<SessionOptionList>;
   choose(ref: ConversationRef, id: string, value: string): Promise<SessionOptionResult>;
 }

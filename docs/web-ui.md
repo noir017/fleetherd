@@ -95,6 +95,17 @@ switch is there as soon as a topic has an agent — right after you pick one fro
 list, so the first message can already go to the model you want; until that first reply the line
 reads just *Model*. The choice stays with the topic across `/new`, `/cd` and restarts.
 
+**Switching the reasoning effort.** Right after the model, a second button names the effort level
+the topic is on — `Effort high`, or `Effort default` where the model has not been told one. It opens
+the levels the current model offers, the one in use ticked, and a tap is the same as typing
+`/effort <level>`: this topic only, kept across `/new`, `/cd` and restarts, and refused in the same
+words when the level is no longer offered. The levels belong to the model, so switching the model can
+change them, and a model with none has no button. In a new topic it appears before the first message
+when the gateway already knows the level — the topic's own choice, a level pinned in the agent's
+`options`, or, the first time an agent is used, what a fresh session of it starts at (read once, by
+starting the agent aside for a moment). Every harness that reports levels over ACP gets it: `claude`,
+`codex`, `opencode`, `agy` on its Gemini models, and a `custom` agent such as cursor-agent.
+
 **The agent's own settings.** An agent can offer settings of its own beside the model — a web
 agent's account, say — and each gets a button of the same kind next to the model, named for the
 setting and showing its current value. It opens that setting's choices, each with the agent's note

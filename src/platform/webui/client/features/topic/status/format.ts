@@ -1,5 +1,6 @@
 import { t as tr } from '../../../i18n/index.js';
 import { text } from '../../../services/api.js';
+import { EFFORT_OPT_ID } from './model-pop.js';
 import type { AgentStatus, QuotaPool, StatusOption, StatusPermissions } from './types.js';
 
 export interface StatusRenderOptions {
@@ -12,6 +13,7 @@ export interface StatusRenderOptions {
 export interface BareStatusRenderOptions {
   readonly agent: string;
   readonly model: string;
+  readonly effort?: string | null;
   readonly options: readonly StatusOption[];
   readonly permissions?: StatusPermissions | null;
   readonly openModel: boolean;
@@ -96,6 +98,16 @@ export function optChip(o: StatusOption, openOptId: string | null): string {
   return (
     `<button type="button" class="st-model st-opt" data-opt="${text(o.id)}" aria-haspopup="dialog" aria-expanded="${open ? 'true' : 'false'}"` +
     ` title="${text(tr('status.optSwitchTitle', { name: o.name, note }))}">${body}</button>`
+  );
+}
+
+/** The reasoning-effort switch, right after the model's: nothing when the current model has no levels. */
+export function effortChip(level: string | null | undefined, open: boolean): string {
+  if (!level) return '';
+  return (
+    `<span class="st-sep"> \u00b7 </span>` +
+    `<button type="button" class="st-model st-opt st-eff" data-effort="1" aria-haspopup="dialog" aria-expanded="${open ? 'true' : 'false'}"` +
+    ` title="${text(tr('status.effortTitle'))}"><span class="st-olabel">${text(tr('status.effortLabel'))}</span> <span class="st-mtext">${text(level)}</span></button>`
   );
 }
 
@@ -196,7 +208,7 @@ export function statusSegments(
   const out: string[] = [];
   const whoHtml =
     `<span class="st-agent">${text(s.agent)}</span><span class="st-sep"> \u00b7 </span>${modelChip(s.model || tr('status.model'), opts.openModel)}` +
-    `${s.effort ? `<span class="st-sep"> \u00b7 </span><span class="st-effort">${text(s.effort)}</span>` : ''}` +
+    effortChip(s.effort, opts.openOptId === EFFORT_OPT_ID) +
     permChip(s.permissions ?? opts.fallbackPermissions, opts.openOptId === '__permissions__') +
     optChips(s.options ?? opts.fallbackOptions, opts.openOptId);
   out.push(seg('st-who', '', whoHtml));
@@ -223,6 +235,7 @@ export function renderBareStatus(opts: BareStatusRenderOptions): string {
   const bareWho =
     `${opts.agent ? `<span class="st-agent">${text(opts.agent)}</span><span class="st-sep"> \u00b7 </span>` : ''}` +
     modelChip(opts.model || tr('status.model'), opts.openModel) +
+    effortChip(opts.effort, opts.openOptId === EFFORT_OPT_ID) +
     permChip(opts.permissions, opts.openOptId === '__permissions__') +
     optChips(opts.options, opts.openOptId);
   return seg('st-who', '', bareWho);

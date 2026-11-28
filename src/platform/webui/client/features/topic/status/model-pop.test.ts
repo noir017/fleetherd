@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { setLocale } from '../../../i18n/index.js';
 import {
+  EFFORT_OPT_ID,
+  effortListData,
   findSessionOption,
   matchesFilter,
   renderModelOptionsHtml,
@@ -100,5 +102,41 @@ describe('features/topic/status/model-pop', () => {
     expect(multiHtml).not.toContain('Fixed for this conversation');
     expect(multiHtml).not.toContain(' disabled>');
     expect(multiHtml).toContain('class="mp-opt on" role="option" aria-selected="true" data-v="personal"');
+  });
+  it('turns the list’s effort levels into one setting the popover draws, current level ticked', () => {
+    const data = effortListData({
+      ok: false,
+      agent: 'cc',
+      reason: 'none',
+      text: 'cc has no settings of its own to change.',
+      effort: { current: 'high', options: [{ value: 'low', name: 'Low' }, { value: 'high', name: 'High' }] },
+    });
+    expect(data).toEqual({
+      ok: true,
+      agent: 'cc',
+      options: [
+        {
+          id: EFFORT_OPT_ID,
+          name: 'Effort',
+          current: 'high',
+          options: [
+            { value: 'low', name: 'Low' },
+            { value: 'high', name: 'High' },
+          ],
+        },
+      ],
+    });
+    const html = renderSessionOptionsHtml(findSessionOption(data, EFFORT_OPT_ID), '✓');
+    expect(html).toContain('class="mp-opt on" role="option" aria-selected="true" data-v="high"');
+  });
+
+  it('says the model has no levels when the list carries none, and passes a start failure through', () => {
+    expect(effortListData({ ok: true, agent: 'cc', options: [] })).toEqual({
+      ok: false,
+      agent: 'cc',
+      text: 'The current model offers no effort levels.',
+    });
+    const failed: OptionListResponse = { ok: false, agent: 'cc', reason: 'error', text: 'cc could not start: boom' };
+    expect(effortListData(failed)).toBe(failed);
   });
 });

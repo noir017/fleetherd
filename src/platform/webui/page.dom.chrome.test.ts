@@ -47,7 +47,7 @@ describe('webui page: the model switch in the status line', () => {
   it('makes the model in the status line a button, without changing what the line says', async () => {
     const h = await ready();
     expect(chip(h)?.textContent).toBe('opencode/glm-5');
-    expect(h.el('status').textContent).toContain('oc@p · opencode/glm-5 · high');
+    expect(h.el('status').textContent).toContain('oc@p · opencode/glm-5 · Effort high');
     expect(chip(h)?.getAttribute('aria-expanded')).toBe('false');
   });
 
@@ -409,6 +409,119 @@ describe('webui page: the agent’s own settings in the status line', () => {
   });
 });
 
+describe('webui page: the effort switch in the status line', () => {
+  // The levels belong to the model: the switch is drawn only while the current one offers some, and
+  // a pick goes through `/effort`'s path on the daemon (api/options under '__effort__').
+  const T = 'a1b2c3d4';
+  const LEVELS = ['default', 'low', 'high', 'max'].map((v) => ({ value: v, name: v }));
+  const URL_O = `api/options?t=${T}`;
+  const URL_M = `api/models?t=${T}`;
+  const PEEK = `api/options?peek=1&t=${T}`;
+  const NONE = { ok: false, agent: 'cc', reason: 'none', text: 'cc has no settings of its own to change.' };
+  const eff = (h: Harness) => h.doc.querySelector('#status .st-eff') as HTMLButtonElement | null;
+  const rows = (h: Harness) => Array.from(h.doc.querySelectorAll('#mp-list .mp-opt')) as HTMLButtonElement[];
+  const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 450));
+
+  it('shows the level before the first message, right after the model, and sets another with a tap', async () => {
+    const h = await open({
+      replies: {
+        [PEEK]: { agent: 'cc', model: 'opus', effort: 'default', options: [] },
+        [URL_O]: { ...NONE, effort: { current: 'default', options: LEVELS } },
+        'api/options': { ok: true, options: [], effort: 'high', text: 'Effort set to `high` for this conversation, from the next message.' },
+      },
+    });
+    await h.emit(sync(T, [message('m1', '<p>/agent cc</p>')], [T]));
+    await settle();
+    expect(h.calls.filter((c) => c.path === PEEK)).toHaveLength(1);
+    expect(eff(h)?.textContent).toBe('Effort default');
+    const buttons = Array.from(h.doc.querySelectorAll('#status button'));
+    expect(buttons.indexOf(eff(h)!)).toBe(buttons.indexOf(h.doc.querySelector('#status .st-model')!) + 1);
+    expect(eff(h)?.classList.contains('st-opt')).toBe(true);
+    expect(eff(h)?.getAttribute('aria-expanded')).toBe('false');
+
+    await h.click('#status .st-eff');
+    expect(h.calls.find((c) => c.path === URL_O)).toBeTruthy();
+    await tick();
+    expect(h.el('model-pop').hidden).toBe(false);
+    expect(h.el('mp-heading').textContent).toBe('Effort for this topic');
+    expect(h.el('mp-foot').textContent).toContain('/effort');
+    expect(rows(h).map((r) => r.getAttribute('data-v'))).toEqual(['default', 'low', 'high', 'max']);
+    expect(rows(h).find((r) => r.classList.contains('on'))?.getAttribute('data-v')).toBe('default');
+    expect(eff(h)?.getAttribute('aria-expanded')).toBe('true');
+    expect(h.calls.some((c) => c.path.startsWith('api/models'))).toBe(false);
+
+    await h.click('#mp-list .mp-opt[data-v="high"]');
+    await tick();
+    expect(h.calls.find((c) => c.path === 'api/options')?.body).toEqual({ topic: T, id: '__effort__', value: 'high' });
+    expect(h.el('model-pop').hidden).toBe(true);
+    expect(h.el('note').textContent).toBe('Effort set to high for this conversation, from the next message.');
+    expect(eff(h)?.textContent).toBe('Effort high');
+  });
+
+  it('keeps the list open with /effort’s own sentence when the level is no longer offered', async () => {
+    const h = await open({
+      replies: {
+        [URL_O]: { ...NONE, effort: { current: 'low', options: LEVELS } },
+        'api/options': { ok: false, text: "`max` is no longer offered — the model's levels changed. Run /effort again for the current list." },
+      },
+      status: { 'api/options': 409 },
+    });
+    await h.emit(sync(T, [message('m1', '<p>hi</p>')], [T]));
+    await h.emit({ t: 'status', status: { agent: 'cc', model: 'opus', effort: 'low' } });
+    await h.click('#status .st-eff');
+    await tick();
+    await h.click('#mp-list .mp-opt[data-v="max"]');
+    await tick();
+    expect(h.el('model-pop').hidden).toBe(false);
+    expect(h.el('mp-list').querySelector('.mp-msg.err')?.textContent).toContain('is no longer offered');
+    expect(eff(h)?.textContent).toBe('Effort low');
+  });
+
+  it('follows the daemon’s status, and is not drawn while the model has no levels', async () => {
+    const h = await open();
+    await h.emit(sync(T, [message('m1', '<p>hi</p>')], [T]));
+    await h.emit({ t: 'status', status: { agent: 'cc', model: 'opus', effort: 'max' } });
+    expect(eff(h)?.textContent).toBe('Effort max');
+    expect(h.el('status').querySelector('.st-effort')).toBeNull();
+    await h.emit({ t: 'status', status: { agent: 'cc', model: 'haiku' } });
+    expect(eff(h)).toBeNull();
+  });
+
+  it('says so and takes the switch away when the list shows the model has no levels after all', async () => {
+    const h = await open({ replies: { [URL_O]: NONE } });
+    await h.emit(sync(T, [message('m1', '<p>hi</p>')], [T]));
+    await h.emit({ t: 'status', status: { agent: 'cc', model: 'opus', effort: 'high' } });
+    await h.click('#status .st-eff');
+    await tick();
+    expect(h.el('mp-list').textContent).toBe('The current model offers no effort levels.');
+    expect(eff(h)).toBeNull();
+  });
+
+  it('asks again after a model switch before the first message, so the levels follow the model', async () => {
+    const replies: Record<string, unknown> = {
+      [PEEK]: { agent: 'cc', model: 'opus', effort: 'default', options: [] },
+      [URL_M]: { ok: true, agent: 'cc', current: 'opus', options: [{ value: 'opus', name: 'opus' }, { value: 'haiku', name: 'haiku' }] },
+      'api/models': { ok: true, model: 'haiku', text: 'Model set to `haiku` for this conversation.' },
+    };
+    const h = await open({ replies });
+    await h.emit(sync(T, [message('m1', '<p>/agent cc</p>')], [T]));
+    await settle();
+    expect(eff(h)?.textContent).toBe('Effort default');
+    await h.click('#status .st-model');
+    await tick();
+    await tick();
+    // Loading the list asks once more (the session it started); only the switch changes the answer.
+    expect(eff(h)?.textContent).toBe('Effort default');
+    replies[PEEK] = { agent: 'cc', model: 'haiku', options: [] };
+    await h.click('#mp-list .mp-opt[data-v="haiku"]');
+    await tick();
+    await tick();
+    expect(h.calls.filter((c) => c.path === PEEK).length).toBeGreaterThanOrEqual(2);
+    expect(eff(h)).toBeNull();
+    expect(h.doc.querySelector('#status .st-model')?.textContent).toBe('haiku');
+  });
+});
+
 describe('webui page: the agent status strip', () => {
   const T = 'a1b2c3d4';
   const OTHER = 'b2c3d4e5';
@@ -430,7 +543,7 @@ describe('webui page: the agent status strip', () => {
     await h.emit({ t: 'status', status: CC });
     expect(strip(h).hidden).toBe(false);
     const text = strip(h).textContent ?? '';
-    expect(text).toContain('cc · claude-opus-5-5 · high');
+    expect(text).toContain('cc · claude-opus-5-5 · Effort high');
     expect(text).toContain('23%');
     // The same units as the footer under every reply, so the two can be compared.
     expect(text).toContain('230k/1M');

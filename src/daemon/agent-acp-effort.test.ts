@@ -147,6 +147,7 @@ describe('effort selector and switch', () => {
     const { session, effortWrites } = rig();
     await session.ensureSession!('tok');
     expect(session.effortSelector!()).toEqual({
+      id: 'reasoning_effort',
       current: 'high',
       options: ['low', 'medium', 'high', 'max'].map((v) => ({ value: v, name: v })),
     });

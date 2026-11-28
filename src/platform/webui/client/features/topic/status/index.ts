@@ -2,7 +2,7 @@ import { addDisposableListener } from '../../../base/dom.js';
 import { type Disposable, DisposableStore } from '../../../base/lifecycle.js';
 import { t as tr } from '../../../i18n/index.js';
 import { hasCountdown, renderBareStatus, statusSegments } from './format.js';
-import { createModelPopController, PERM_OPT_ID, type ModelPopElements } from './model-pop.js';
+import { createModelPopController, EFFORT_OPT_ID, PERM_OPT_ID, type ModelPopElements } from './model-pop.js';
 import { createPendingQueueController } from './pending-queue.js';
 import type {
   AgentStatus,
@@ -66,6 +66,7 @@ interface PeekState {
   topic: string | null;
   agent: string;
   model: string;
+  effort: string | null;
   options: StatusOption[];
   permissions: StatusPermissions | null;
   seq: number;
@@ -88,6 +89,7 @@ class TopicStatusControllerImpl implements TopicStatusController {
     topic: null,
     agent: '',
     model: '',
+    effort: null,
     options: [],
     permissions: null,
     seq: 0,
@@ -111,9 +113,10 @@ class TopicStatusControllerImpl implements TopicStatusController {
         if (t === deps.getTopic() && !this.agentStatus) this.peekOptions();
       },
       onModelChosen: (t, model) => {
-        if (t === deps.getTopic() && this.agentStatus) {
-          this.agentStatus = { ...this.agentStatus, model };
-        }
+        if (t !== deps.getTopic()) return;
+        if (this.agentStatus) this.agentStatus = { ...this.agentStatus, model };
+        // The effort levels belong to the model; a live status gets them from the daemon's next push.
+        else this.peekOptions();
       },
       onOptionChosen: (t) => {
         if (t === deps.getTopic()) this.peekOptions();
@@ -128,6 +131,7 @@ class TopicStatusControllerImpl implements TopicStatusController {
         }
         this.paintStatus();
       },
+      onEffortKnown: (t, level) => this.noteEffort(t, level),
       setNote: deps.setNote,
       fetchFn: deps.fetchFn,
       postFn: deps.postFn,
@@ -146,8 +150,19 @@ class TopicStatusControllerImpl implements TopicStatusController {
     return this.opk.topic === t ? this.opk.options : [];
   }
 
+  private noteEffort(t: string, level: string | null): void {
+    if (t !== this.deps.getTopic()) return;
+    if (this.agentStatus) {
+      const { effort: _old, ...rest } = this.agentStatus;
+      this.agentStatus = level ? { ...rest, effort: level } : rest;
+    }
+    if (this.opk.topic === t) this.opk.effort = level;
+    this.paintStatus();
+  }
+
   private resolveOptName(id: string): string {
     if (id === PERM_OPT_ID) return tr('status.permLabel');
+    if (id === EFFORT_OPT_ID) return tr('status.effortLabel');
     const list = (this.agentStatus && this.agentStatus.options) || this.opkFor(this.deps.getTopic());
     for (const item of list) {
       if (item.id === id) return item.name;
@@ -174,6 +189,7 @@ class TopicStatusControllerImpl implements TopicStatusController {
       this.opk.topic = t;
       this.opk.agent = '';
       this.opk.model = '';
+      this.opk.effort = null;
       this.opk.options = [];
       this.opk.permissions = null;
     }
@@ -184,6 +200,7 @@ class TopicStatusControllerImpl implements TopicStatusController {
           if (n !== this.opk.seq || t !== this.opk.topic || !j) return;
           this.opk.agent = j.agent || '';
           this.opk.model = j.model || '';
+          this.opk.effort = j.effort || null;
           this.opk.options = j.options ? [...j.options] : [];
           this.opk.permissions = j.permissions ?? null;
           this.paintStatus();
@@ -220,6 +237,7 @@ class TopicStatusControllerImpl implements TopicStatusController {
     return renderBareStatus({
       agent: opkSame ? this.opk.agent : '',
       model: (opkSame && this.opk.model) || tr('status.model'),
+      effort: opkSame ? this.opk.effort : null,
       options: this.opkFor(t),
       permissions: opkSame ? this.opk.permissions : null,
       openModel,
@@ -263,6 +281,7 @@ class TopicStatusControllerImpl implements TopicStatusController {
     this.opk.topic = t;
     this.opk.agent = '';
     this.opk.model = '';
+    this.opk.effort = null;
     this.opk.options = [];
     this.opk.permissions = null;
     if (this.opk.timer) {
@@ -319,6 +338,11 @@ class TopicStatusControllerImpl implements TopicStatusController {
     else this.pop.openPermissions(agent, perms);
   }
 
+  private toggleEffortPop(): void {
+    if (this.pop.isOpen() && this.pop.currentOpt() === EFFORT_OPT_ID) this.pop.close();
+    else this.pop.openEffort();
+  }
+
   private toggleOptPop(ob: HTMLButtonElement): void {
     if (ob.disabled) return;
     const oid = ob.getAttribute('data-opt');
@@ -330,6 +354,10 @@ class TopicStatusControllerImpl implements TopicStatusController {
   private handleStatusClick(target: Element): void {
     if (target.closest('.st-perm')) {
       this.togglePermPop();
+      return;
+    }
+    if (target.closest('.st-eff')) {
+      this.toggleEffortPop();
       return;
     }
     const ob = target.closest<HTMLButtonElement>('.st-opt');
