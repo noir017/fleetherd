@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.48.0] - 2026-11-28
+
 ### Changed
 
 - **The Web UI keeps a claude agent's subagents in a bar above the status line instead of in the
