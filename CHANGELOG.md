@@ -5,6 +5,16 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **Skills takes Reviews' place in the Web UI's mobile bottom tab bar.** The phone drawer's bottom
+  bar shows the first three sidebar activities, which made it Topics, Scheduled, Reviews and left
+  Skills a tap deeper under More. Skills now comes before Reviews in the activity order, so the bar
+  reads Topics, Scheduled, Skills, and More lists Preference suggestions, Reviews, History,
+  Settings. A pending suggestion is not lost from view: its count stays on the Preference
+  suggestions row and now also shows on the More tab. The desktop activity bar follows the same
+  order.
+
 ## [3.44.0] - 2026-11-27
 
 ### Changed

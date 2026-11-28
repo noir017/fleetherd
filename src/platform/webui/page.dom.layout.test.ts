@@ -74,7 +74,7 @@ describe('webui page: workbench responsive layout (desktop, tablet, mobile)', ()
     const tabIds = Array.from(tabBar.querySelectorAll('.wb-stack-tab')).map((el) =>
       el.getAttribute('data-tab-id'),
     );
-    expect(tabIds).toEqual(['topics', 'schedules', 'reviews', 'more']);
+    expect(tabIds).toEqual(['topics', 'schedules', 'skills', 'more']);
     expect((h.doc.querySelector('.wb-activity-bar') as HTMLElement).inert).toBe(true);
 
     // Topics actions (+, mark all read, clear) live in the drawer title bar, not a separate row.
@@ -85,12 +85,10 @@ describe('webui page: workbench responsive layout (desktop, tablet, mobile)', ()
     expect((h.doc.querySelector('.wb-topics-head') as HTMLElement).hidden).toBe(true);
 
     await h.click('.wb-stack-tab[data-tab-id="more"]');
-    expect(h.doc.querySelector('.wb-stack-more [data-group-item="schedules"]')).toBeNull();
-    expect(h.doc.querySelector('.wb-stack-more [data-group-item="reviews"]')).toBeNull();
-    expect(h.doc.querySelector('.wb-stack-more [data-group-item="review-prefs"]')).not.toBeNull();
-    expect(h.doc.querySelector('.wb-stack-more [data-group-item="skills"]')).not.toBeNull();
-    expect(h.doc.querySelector('.wb-stack-more [data-group-item="history"]')).not.toBeNull();
-    expect(h.doc.querySelector('.wb-stack-more [data-group-item="settings"]')).not.toBeNull();
+    const moreNav = Array.from(
+      h.doc.querySelectorAll<HTMLElement>('.wb-stack-more .fh-mgroup:first-of-type [data-group-item]'),
+    ).map((el) => el.dataset.groupItem);
+    expect(moreNav).toEqual(['review-prefs', 'reviews', 'history', 'settings']);
     await h.click('.wb-stack-tab[data-tab-id="topics"]');
 
     await h.click('.wb-sidebar [data-topic="b2c3d4e5"]');
@@ -124,7 +122,7 @@ describe('webui page: workbench activity bar and built-in views', () => {
     const items = Array.from(h.doc.querySelectorAll('.wb-activity-item')).map((el) =>
       el.getAttribute('data-activity-id'),
     );
-    expect(items).toEqual(['topics', 'schedules', 'reviews', 'skills', 'history', 'settings']);
+    expect(items).toEqual(['topics', 'schedules', 'skills', 'reviews', 'history', 'settings']);
 
     const topicsBtn = h.doc.querySelector('.wb-activity-item[data-activity-id="topics"]') as HTMLElement;
     const historyBtn = h.doc.querySelector('.wb-activity-item[data-activity-id="history"]') as HTMLElement;

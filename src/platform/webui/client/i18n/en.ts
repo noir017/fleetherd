@@ -852,7 +852,6 @@ export const en = {
   'mobile.back': 'Back',
   'mobile.reviews': 'Reviews',
   'mobile.prefs': 'Preferences',
-  'mobile.skills': 'Skills',
   'mobile.history': 'History',
   'mobile.settings': 'Settings',
   'mobile.deviceSection': 'This device',
