@@ -262,18 +262,35 @@ harness 也有（见脚注 2）。2026-11-18 实测：
 
 ## 额度命令
 
-Web 界面的状态栏会显示智能体的用量额度——前提是它的 harness 报得出来，目前只有 agy，靠 `agy -p=/usage`。
-harness 报不出来时，用 `quotaCommand` 补上：经[模型网关](#经模型网关)的 agy，或者挂在一个多账号池
-代理后面的任何智能体。它是一条 `bash -lc` 命令，在智能体所在机器上、带智能体的环境变量运行，与一轮同时
-进行，最多每分钟一次。输出与 `agy -p=/usage` 相同，每个额度池一行、用制表符分隔——池、窗口、剩余百分比、
-重置时间：
+Web 界面的状态栏会显示智能体的用量额度——前提是它的 harness 报得出来：
+
+- **agy**：靠 `agy -p=/usage`。
+- **登录 claude.ai 订阅的 claude**：边用边报 5 小时和每周两个窗口——`Claude 5h 73% (1h 30m)`、
+  `Claude wk 40% (2d 3h)`，套餐有按模型的周额度时还会有 `Claude Opus wk` 之类。它只在窗口变化时才报，
+  所以状态栏可能晚一轮。
+- **走中转的 claude**（环境里设了 `ANTHROPIC_BASE_URL`）什么也不报，于是网关去问：在智能体所在的机器上，
+  用智能体自己的地址和 key（`ANTHROPIC_API_KEY` 或 `ANTHROPIC_AUTH_TOKEN`），向
+  `ANTHROPIC_DEFAULT_HAIKU_MODEL`（默认 `claude-haiku-5-5`）发一个只要 1 个 token 的 `/v1/messages`，
+  读返回头里的 `anthropic-ratelimit-unified-*`——前面挂着订阅账号的中转会把它们原样带回来。探测在会话
+  第一次出字和每轮结束时发，两次之间至少隔 8–12 分钟（随机取）；智能体闲着时从不发，所以不会提前开启
+  5 小时窗口。返回里没有这组头的中转，在智能体配置改动之前不再问；探测失败什么也不显示，只记一次日志，
+  并从 15 分钟退避到 2 小时。需要智能体机器上有 `bash` 和 `curl`；key 经标准输入交给 curl，不出现在
+  任何命令行里。
+
+harness 报不出来时，用 `quotaCommand` 补上——经[模型网关](#经模型网关)的 agy，或者挂在一个多账号池
+代理后面的任何智能体——它会取代 harness 自己报的任何读数。它是一条 `bash -lc` 命令，在智能体所在机器上、
+带智能体的环境变量运行，与一轮同时进行，最多每分钟一次。输出与 `agy -p=/usage` 相同，每个额度池一行、
+用制表符分隔——池、窗口、剩余百分比、重置时间：
 
 ```
 Gemini Models	Five Hour Limit Remaining	54%	2026-11-14T08:13:48Z
+Claude	Weekly Limit Remaining	24%	2026-12-02T12:00:00Z
 ```
 
-池是 Gemini，或 Claude 与 GPT；窗口是每周、5 小时或每天。两者都对不上的行会被跳过并写进日志。agy
-的 `/usage` 也改由这条命令回答。命令失败或没有输出时，保留上一次的读数。
+池按第一列命名：`Gemini …` 是 Gemini，agy 的 `Claude and GPT models` 是 3P，沿用 agy 的叫法；其他名字
+照原样显示，所以 `Claude`、`Claude Opus` 和 claude 自己报的是同一批池。末尾的 `(…)` 是备注，括号里只有
+一个词时表示账号。窗口是每周、5 小时、1 小时或每天，对不上的行会被跳过并写进日志。agy 的 `/usage` 也改由
+这条命令回答。命令失败或没有输出时，保留上一次的读数。
 
 ```yaml
 agents:

@@ -309,20 +309,42 @@ file and ran a command:
 
 ## Quota command
 
-The web UI's status strip shows an agent's usage quota when its harness reports one — today agy,
-through `agy -p=/usage`. `quotaCommand` supplies it when the harness cannot: agy through a
-[model gateway](#through-a-model-gateway), or any agent behind a proxy that pools several accounts.
-It is a `bash -lc` command, run on the agent's machine with the agent's environment, beside a turn
-and at most once a minute. It prints what `agy -p=/usage` prints, one tab-separated row per pool —
-pool, window, remaining percentage, reset time:
+The web UI's status strip shows an agent's usage quota when its harness reports one:
+
+- **agy** through `agy -p=/usage`.
+- **claude signed in to a claude.ai subscription** reports its five-hour and weekly windows as it
+  spends them — `Claude 5h 73% (1h 30m)`, `Claude wk 40% (2d 3h)`, and `Claude Opus wk` or the
+  like for a plan with a per-model weekly limit. It reports a window only when it moves, so the
+  strip can be a turn behind.
+- **claude behind a relay** (`ANTHROPIC_BASE_URL` in its environment) reports nothing, so the
+  gateway asks: from the agent's machine, with the agent's own URL and key
+  (`ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN`), a one-token `/v1/messages` to
+  `ANTHROPIC_DEFAULT_HAIKU_MODEL` (default `claude-haiku-5-5`), read for the
+  `anthropic-ratelimit-unified-*` headers a relay in front of subscription accounts passes on. It
+  is sent at a session's first output and when a turn ends, at most every 8–12 minutes (at random)
+  — never while the agent is idle, so it cannot open a five-hour window early. A relay that answers
+  without those headers is not asked again until the agent is redefined; a failed probe shows
+  nothing, is logged once, and backs off from 15 minutes to 2 hours. It needs `bash` and `curl`
+  on the agent's machine; the key goes to curl on its standard input, never on a command line.
+
+`quotaCommand` supplies the quota when the harness cannot — agy through a
+[model gateway](#through-a-model-gateway), or any agent behind a proxy that pools several accounts —
+and replaces whatever the harness reports. It is a `bash -lc` command, run on the agent's machine
+with the agent's environment, beside a turn and at most once a minute. It prints what
+`agy -p=/usage` prints, one tab-separated row per pool — pool, window, remaining percentage, reset
+time:
 
 ```
 Gemini Models	Five Hour Limit Remaining	54%	2026-11-14T08:13:48Z
+Claude	Weekly Limit Remaining	24%	2026-12-02T12:00:00Z
 ```
 
-A pool is Gemini, or Claude and GPT; a window is weekly, five-hour or daily. A row that is neither
-is left out and logged. On agy the command also answers `/usage`. One that fails or prints nothing
-leaves the last reading in place.
+A pool is named by its first column: `Gemini …` is Gemini and agy's `Claude and GPT models` is 3P,
+as agy names them; any other name is shown as written, so `Claude` and `Claude Opus` are the pools
+claude reports by itself. A trailing `(…)` is a note, or with a single word in it the account. A
+window is weekly, five-hour, one-hour or daily; a row with another is left out and logged. On agy
+the command also answers `/usage`. One that fails or prints nothing leaves the last reading in
+place.
 
 ```yaml
 agents:

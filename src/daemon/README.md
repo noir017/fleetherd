@@ -43,13 +43,15 @@ session id, agy's conversation id). One conversation holds one session *per agen
 | `acp-side-question.ts` | A side question (`/btw`): `session/fork` the live session, ask the copy, delete it; which harnesses may be asked while a turn runs |
 | `agy-acp.ts` | What `agy acp` does its own way, for the ACP runtime: model ids split into model + level, the model re-applied after a reload, `⚠` warnings in the message stream, which context report to trust and against what, the quota one-shot, tool labels |
 | `agy-cli.ts` | agy as a one-shot CLI (`agy -p=/<command>`), here or on a host — used by the ACP runtime and by chat commands |
-| `agy-meters.ts` | agy's measured context-window table, the `agy -p=/usage` parser, and which quota pool the serving model spends from |
-| `quota-meter.ts` | The quota for the status strip: an agent's `quotaCommand`, else agy's `agy -p=/usage`; read at a session's first output and after each turn, one run per source shared across conversations (10 s reuse) |
+| `agy-meters.ts` | agy's measured context-window table, the `agy -p=/usage` parser (agy's Gemini / 3P names, any other family named after itself, e.g. `Claude` → `claude-5h`), and which quota pool the serving model spends from |
+| `quota-meter.ts` | The quota for the status strip, scheduled and nothing else: an agent's `quotaCommand`, else its harness's own source (`HarnessProfile.quota`), which stands down once the harness reports by itself (`record`); read at a session's first output and after each turn, one run per source shared across conversations, none sooner than the source's interval (10 s unless the profile says otherwise) |
 | `agy-relay.ts` | agy behind a relay: for `contextBudget`, rewrites the compaction point in the model list Google sends it, and remembers what each model was told for the footer; behind a model gateway, for `gatewayModels`, narrows the gateway's model list to the matches |
 | `relay.ts` | Relays: a loopback forwarder between an agent and its API that lets a harness's transform replace the responses on paths it names. Here for a local agent; on a host through fleetherd-remote (`remote/relay.go`), which hands those responses back over the link. Which harness uses one, and for what, is `harnessRelay` |
 | `agy-transcript.ts` | agy's context after a turn that ran tools, read off agy's own transcript here or on a host (its prompt usage is a sum over the turn's calls) |
 | `status-board.ts` | Each conversation's live agent status, pushed (deduped, throttled) to a platform that can show one — the web UI's strip |
 | `claude-transcript.ts` | claude's prompt-cache expiry, read off Claude Code's own transcript (headless Claude Code runs no status line) |
+| `claude-rate-limit.ts` | A Claude subscription's quota windows as `claude-5h` / `claude-weekly` / `claude-<model>-weekly` pools, from claude-agent-acp's `_claude/rateLimit` or from `anthropic-ratelimit-unified-*` response headers — one window table for both (`utilization` a 0–1 fraction, resets in epoch seconds) |
+| `claude-quota-probe.ts` | claude's quota behind a relay: a one-token `/v1/messages` with the agent's own URL and key, run on the agent's machine (`bash` + `curl`, the key on curl's stdin), its headers read by `claude-rate-limit.ts` |
 | `agent-common.ts` | Protocol-agnostic helpers shared by the ACP runtime and the one-shot CLI paths |
 | `connect-agent.ts` | `connect` agents: an ACP service that is already running, dialled per session instead of started — the connection as an `AgentChild` here (on a host, fleetherd-remote's), and the `_meta` its `initialize` carries (token, machine, instructions) |
 | `agent-reconnect.ts` | An agent whose connection is the agent (a `connect` agent, or one that declares it can pick a turn up) going away: the redial window and its backoff, what the agent declared (`reconnectTurn`, `promptId`), and whether a lost turn can be picked up |
@@ -1078,7 +1080,7 @@ Each harness reports a different subset, and an absent field is shown as nothing
 | context | `onUsage` — ACP `usage_update`; for an agy that sends none, the prompt response's per-turn `usage` after a turn of one model call (`agy-acp.ts`), else agy's transcript (`agy-transcript.ts`); agy's either way shown against the point where agy compacts (`agy-meters.ts`) or the budget its relay gave it (`agy-relay.ts`) |
 | cost | `onUsage.cost` — claude and opencode; kept across the mid-stream snapshots that carry none |
 | cache expiry | claude only: `claude-transcript.ts`, read once a moment after each model cycle ends |
-| quota | `onQuota` — an agent's `quotaCommand`, else agy's `agy -p=/usage` (`quota-meter.ts`) |
+| quota | `onQuota` — an agent's `quotaCommand`, else its harness's source (`HarnessProfile.quota`: agy's `agy -p=/usage`, claude's relay probe), scheduled by `quota-meter.ts`; claude's `_claude/rateLimit` on a `usage_update`, when it comes, replaces the probe (`claude-rate-limit.ts`) |
 
 **Why the cache expiry comes off a transcript.** Headless Claude Code runs no status line at all
 (probed on 2.1.291: zero invocations in a whole turn), so the `prompt_cache` its TUI status line is
@@ -1089,6 +1091,30 @@ the module header carries the Hyrum's Law warning, and the failure mode is a mis
 wrong one. Between reads, a `usage_update` (a request just happened) projects the expiry forward
 with the TTL the last read established, so a long turn does not show a cache expiring that it is
 renewing on every call.
+
+**claude's quota: pushed on a subscription, probed behind a relay.** On a claude.ai login Claude
+Code turns the `anthropic-ratelimit-unified-*` response headers into an SDK `rate_limit_event`, and
+claude-agent-acp forwards it as a `usage_update` with the info under `_meta["_claude/rateLimit"]`
+(`claude-rate-limit.ts`). The top level names one window (`rateLimitType` + `utilization`); Claude
+Code 2.1.x adds an `@internal` `unifiedWindows` with the five-hour and weekly ones, read when present.
+Units are taken from Claude Code's own schema text, pinned in the contract test: `utilization` is the
+fraction used, `resetsAt` epoch seconds. Those pools go to `QuotaMeter.record`, which stands the
+harness's own source down for that agent. Two lags are upstream's: Claude Code emits an event only
+when a window's rounded percentage or reset moves, and claude-agent-acp 0.81.0 drops one that arrives
+before the turn's first assistant message (it attaches the last usage snapshot and has none yet).
+
+Behind a relay (`ANTHROPIC_BASE_URL`, API key or auth token) no event ever comes, so the claude
+profile's `quota` source probes: a one-token `/v1/messages` to the agent's haiku model, sent from the
+agent's machine with its own environment, whose `anthropic-ratelimit-unified-*` headers a relay in
+front of subscription accounts passes on (`claude-quota-probe.ts`). It costs a request, so its
+interval is 8–12 minutes at random (backing off from 15 minutes to 2 hours after failures), and like
+every source it is read only when a session asks — its first output, a turn's end — so an idle agent
+is never probed: a probe after a window reset would open the next five-hour window early. Keyed per
+agent, because the relay and key are the agent's own environment. A relay answering without the
+headers, or an agent with no `ANTHROPIC_BASE_URL`, returns a `final` reading and is not asked again
+until the agent is redefined. On a host, `ANTHROPIC_BASE_URL` may come from the host's own
+environment rather than the agent's definition, which is why the script, not the gateway, decides
+whether there is a relay.
 
 ## Agent runtimes
 
@@ -1541,7 +1567,7 @@ and writes land in cwd (so `--add-dir` is unneeded). What `agy acp` 1.5.1 does i
   the others. Every figure is reported against the point where agy compacts for that model
   (`agy-meters.ts` COMPACTION_POINTS), `contextWindow` when the agent sets one, or the budget its
   relay gave it.
-- **Quota** has no ACP channel: `createQuotaMeter` (`quota-meter.ts`) runs `agy -p=/usage` (`agy-cli.ts`)
+- **Quota** has no ACP channel: `createQuotaMeter` (`quota-meter.ts`) runs the agy profile's source, `agy -p=/usage` (`agy-cli.ts`)
   — or the agent's `quotaCommand`, which through a model gateway is the only source. A turn's start
   reports the last reading only; the session's first output and the end of every turn read anew
   (`AgyMeterHelper`). Not at the start: the agent may not be up yet — a web agent's browser for the

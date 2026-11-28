@@ -9,7 +9,7 @@ import type {
   PromptResponse,
   SessionUpdate,
 } from '@agentclientprotocol/sdk';
-import type { SteerOutcome } from '../types.js';
+import type { QuotaPool, SteerOutcome } from '../types.js';
 import type { AgentDef } from '../config/schema.js';
 import type { Locale } from '../core/i18n/index.js';
 import { tRuntime } from '../core/i18n/runtime.js';
@@ -864,6 +864,13 @@ export class AgyMeterHelper {
       const scoped = scopeQuotaPools(pools, customOptionsOf(this.options.liveConfigOptions));
       handlers.onQuota?.(markActivePools(scoped, this.options.liveModel));
     }
+  }
+
+  /** The harness reported quota by itself (claude's rate-limit events): keep it with the agent's reading, and show it. */
+  recordReportedQuota(pools: QuotaPool[], handlers: AgentStreamHandlers): void {
+    if (!this.quota || this.isDisposed()) return;
+    this.quota.record(this.def, pools);
+    this.reportScopedQuota(handlers);
   }
 
   /**

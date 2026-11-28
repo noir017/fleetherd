@@ -16,6 +16,7 @@ import type {
 } from '@agentclientprotocol/sdk';
 import type { PermissionAnswer, SessionOption, SteerOutcome } from '../types.js';
 import type { AgentDef, Config } from '../config/schema.js';
+import type { HarnessQuota } from './harness/profile.js';
 import { findAgent } from '../config/schema.js';
 import { localeOf, type Locale } from '../core/i18n/index.js';
 import { tRuntime } from '../core/i18n/runtime.js';
@@ -57,7 +58,6 @@ import {
 } from './agent-common.js';
 import { PreLaunchCancelled, runPreLaunchHook } from './agent-hooks.js';
 import { remoteHosts } from './remote-hosts.js';
-import type { AgyCliRunner } from './agy-cli.js';
 import { agyTurnWatch, agyWindow } from './agy-acp.js';
 import { createQuotaMeter, hasQuotaSource, type QuotaMeter } from './quota-meter.js';
 import {
@@ -194,8 +194,8 @@ class TurnTimeoutError extends TurnFailure {
 export interface AcpFactoryOptions {
   /** Provisions delivered to each agent's machine on spawn (assembled by commands/start.ts). */
   provisions: readonly AgentProvision[];
-  /** How agy's one-shot `agy -p=/usage` is run — injectable so the tests never start a real agy. */
-  agyCli?: AgyCliRunner;
+  /** Replaces each harness's own quota source (HarnessProfile.quota) — for tests. */
+  harnessQuota?: (def: AgentDef) => HarnessQuota | undefined;
   /** How long a lost agent is tried again, and how often (agent-reconnect.ts); for the tests. */
   redial?: RedialTiming;
 }
@@ -209,8 +209,8 @@ export function createAcpAgentFactory(
   const sessions = new Map<string, AgentSession>();
   const turnTimeoutMs = cfg.session.turnTimeoutMs;
   const locale = localeOf(cfg);
-  // One reading per agy account for the whole runtime, whichever conversation asked (agy-acp.ts).
-  const quota = createQuotaMeter({ agy: opts.agyCli });
+  // One reading per quota source for the whole runtime, whichever conversation asked (quota-meter.ts).
+  const quota = createQuotaMeter({ harnessQuota: opts.harnessQuota });
 
   return {
     getOrCreate(sessionId: string, agentId: string): AgentSession {
@@ -710,6 +710,7 @@ class AcpSession implements AgentSession {
         this.agyMeter.reportScopedQuota(handlers);
       },
       onModeChanged: (modeId) => this.options.onModeChanged(modeId),
+      onQuotaReport: (pools) => this.agyMeter.recordReportedQuota(pools, handlers),
       onSessionFailure: (failure) =>
         announceSessionFailure({
           def: this.def,

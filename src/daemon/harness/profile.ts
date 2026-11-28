@@ -5,7 +5,7 @@ import type { AgentDef, Config } from '../../config/schema.js';
 import type { Locale } from '../../core/i18n/index.js';
 import type { Welcome } from '../../remote/connection.js';
 import type { RemoteHost } from '../../remote/host.js';
-import type { Harness } from '../../types.js';
+import type { Harness, QuotaPool } from '../../types.js';
 import { expandEnv, expandHome } from '../agent-common.js';
 import type { HarnessRelay } from '../relay-types.js';
 
@@ -146,6 +146,22 @@ export interface HarnessSetup {
  * Adding a harness also touches `src/core/harness-facts.ts`, `src/config/instructions.ts`, and
  * (when `reviewIsolation` is `'operator-args'`) `REVIEW_ARGS_HARNESSES` — see `AGENTS.md`.
  */
+/** What a harness's own quota source answered. */
+export type QuotaReading =
+  | { ok: true; pools: QuotaPool[] }
+  /** `final`: nothing to read for the agent as it is defined — it is not asked again until redefined. */
+  | { ok: false; reason: string; final?: boolean };
+
+/** A harness's own way to read an agent's quota (HarnessProfile.quota). */
+export interface HarnessQuota {
+  /** Read the pools where the agent runs, with its environment. Never throws. */
+  read(def: AgentDef, cwd: string): Promise<QuotaReading>;
+  /** Whose quota a reading is: agents with one key share it. Default: the agent's home. */
+  key?(def: AgentDef): string;
+  /** Least time from one read to the next, after `failures` failed in a row. Default: 10 s. */
+  interval?(failures: number): number;
+}
+
 export interface HarnessProfile {
   readonly id: Harness;
   readonly launch: (def: AgentDef, remote?: boolean) => HarnessLaunch;
@@ -174,8 +190,8 @@ export interface HarnessProfile {
   readonly forkCarriesOnRunningTurn?: boolean;
   /** True when the ACP runtime attaches `agyTurnWatch` for inline warning/context handling. */
   readonly usesAgyTurnWatch?: boolean;
-  /** True when the harness provides a built-in quota source even without `quotaCommand`. */
-  readonly hasBuiltinQuota?: boolean;
+  /** The harness's own quota source, read when the agent has no `quotaCommand` (quota-meter.ts schedules it). */
+  readonly quota?: HarnessQuota;
   /** Extra hint appended to `/context` when a turn completed without reporting context numbers. */
   readonly contextMissingHint?: string;
   /** Log probe for diagnosing silent turns (e.g. opencode rate-limit retries). */
