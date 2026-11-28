@@ -5,6 +5,27 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **Sub-agents started together report together.** Each part used to wake the agent that started
+  it as soon as its turn ended, and only ends within the same five seconds shared a card, so a
+  `/super` job of eight parts took up to eight more turns in the conversation, each one costing
+  context. Parts started within a minute of each other are now one batch. A part that ends normally
+  is held until none of its batch is still running, asking or under automatic review, and then the
+  batch arrives on one card. Failures, questions and turns the person wrote into still go at once,
+  and carry whatever the batch was holding. A result held for 30 minutes goes anyway.
+
+### Fixed
+
+- **An agent is no longer sent cards for results it has already read, or one card per result
+  queued behind its turn.** A card was written the moment a sub-agent's end was gathered, then
+  waited behind whatever the agent was doing. So a coordinator that had pulled all eight results
+  itself with `task-read` was woken eight more times afterwards to read the same replies again, a
+  thousand-odd characters each. While the agent is busy with a turn, updates now keep gathering and
+  become one card when it is free. A finished turn it has read with `task-read` is left off that
+  card. A read only counts once the turn has ended, and a turn the person wrote into is still
+  reported, because `--reply` does not show their words.
+
 ## [3.49.0] - 2026-11-28
 
 ### Added

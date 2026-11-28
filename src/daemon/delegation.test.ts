@@ -18,6 +18,8 @@ import type {
 import type { PlatformAdapter } from '../platform/adapter.js';
 import { HistoryStore } from '../history/store.js';
 import {
+  BATCH_HOLD_MS,
+  BATCH_WINDOW_MS,
   CARD_DELAY_MS,
   CARD_MAX_ENTRIES,
   CARD_SAID_CHARS,
@@ -1671,6 +1673,11 @@ describe('Delegation: [sub-agent updates]', () => {
   it('tells the agent that opened a topic when it finishes — gathered, shown folded, then run as a turn', async () => {
     const r = rig();
     await r.d.handle(P, task('cc', 'a'));
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    await settle();
+    // Past BATCH_WINDOW_MS: a batch of its own, which the first part's end does not wait for.
+    r.clock.advance(BATCH_WINDOW_MS);
     await r.d.handle(P, task('cx', 'b'));
     r.clock.advance(PROPOSAL_GATHER_MS);
     await settle();
@@ -2002,6 +2009,202 @@ describe('Delegation: [sub-agent updates]', () => {
     r.busy.add('web#main#c1000000');
     r.clock.advance(CARD_DELAY_MS);
     expect(r.calls.filter(([c]) => c === 'prompt')).toEqual([]);
+  });
+});
+
+describe('Delegation: one card per batch, none for what the agent already read', () => {
+  const C1 = 'web#main#c1000000';
+  const C2 = 'web#main#c2000000';
+  const C3 = 'web#main#c3000000';
+
+  /** `texts.length` parts on one card, every one of them working. */
+  const started = async (r: ReturnType<typeof rig>, texts: string[]): Promise<void> => {
+    for (const text of texts) await r.d.handle(P, task('cc', text));
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    await settle();
+  };
+  const working = (r: ReturnType<typeof rig>, ...keys: string[]) => keys.forEach((k) => r.busy.add(k));
+  const done = (r: ReturnType<typeof rig>, key: string, reply: string): void => {
+    r.busy.delete(key);
+    r.replies.set(key, reply);
+    r.activity.set(key, { outcome: { kind: 'done', at: 5, line: reply } });
+    r.d.childChanged(key);
+    r.clock.advance(CARD_DELAY_MS);
+  };
+  const prompts = (r: ReturnType<typeof rig>) => r.calls.filter(([c]) => c === 'prompt').map(([, v]) => (v as { prompt: string }).prompt);
+
+  it('holds an ended part until the rest of its batch has ended, then sends them on one card', async () => {
+    const r = rig();
+    await started(r, ['a', 'b', 'c']);
+    working(r, C1, C2, C3);
+    done(r, C1, 'A done.');
+    done(r, C2, 'B done.');
+    expect(prompts(r)).toEqual([]);
+    done(r, C3, 'C done.');
+    expect(prompts(r)).toHaveLength(1);
+    const card = prompts(r)[0]!;
+    expect(card).toMatch(/^\[sub-agent updates\] 3 of 3 sub-agents have ended their turn or stopped\./);
+    for (const reply of ['A done.', 'B done.', 'C done.']) expect(card).toContain(`reply: ${reply}`);
+    // Over: a later end of one of them is news on its own.
+    working(r, C1);
+    await r.d.handle(P, { kind: 'task-send', topic: 'c1000000', text: 'one more thing' });
+    done(r, C1, 'A again.');
+    expect(prompts(r)).toHaveLength(2);
+  });
+
+  it('joins parts started within BATCH_WINDOW_MS on another card, and not later ones', async () => {
+    const r = rig();
+    await started(r, ['a']);
+    r.clock.advance(BATCH_WINDOW_MS - PROPOSAL_GATHER_MS - 1_000);
+    await started(r, ['b']);
+    r.clock.advance(BATCH_WINDOW_MS);
+    await started(r, ['c']);
+    working(r, C1, C2, C3);
+    done(r, C1, 'A done.');
+    expect(prompts(r)).toEqual([]);
+    done(r, C2, 'B done.');
+    expect(prompts(r)).toHaveLength(1);
+    expect(prompts(r)[0]).not.toContain('C done.');
+    expect(prompts(r)[0]).toContain('1 still working');
+  });
+
+  it('sends a failure or a question at once, with what the batch held, and the rest when they end', async () => {
+    const r = rig();
+    await started(r, ['a', 'b', 'c']);
+    working(r, C1, C2, C3);
+    done(r, C1, 'A done.');
+    r.busy.delete(C2);
+    r.failures.set(C2, 'the harness exited');
+    r.activity.set(C2, { outcome: { kind: 'failed', at: 6, line: 'the harness exited' } });
+    r.d.childChanged(C2);
+    r.clock.advance(CARD_DELAY_MS);
+    expect(prompts(r)).toHaveLength(1);
+    expect(prompts(r)[0]).toContain('reply: A done.');
+    expect(prompts(r)[0]).toContain('failure: the harness exited');
+    r.asking.add(C3);
+    r.questions.set(C3, 'Which branch?');
+    r.d.childChanged(C3);
+    r.clock.advance(CARD_DELAY_MS);
+    expect(prompts(r)).toHaveLength(2);
+    expect(prompts(r)[1]).toContain('question: Which branch?');
+  });
+
+  it('sends at once a turn the person wrote into', async () => {
+    const r = rig();
+    await started(r, ['a', 'b']);
+    working(r, C1, C2);
+    r.d.personWrote(C1, { text: 'use the other API', attachments: [], turn: 2 });
+    done(r, C1, 'Switched.');
+    expect(prompts(r)).toHaveLength(1);
+    expect(prompts(r)[0]).toContain('use the other API');
+  });
+
+  it('sends what it held once BATCH_HOLD_MS has passed, and the batch is over', async () => {
+    const r = rig();
+    await started(r, ['a', 'b']);
+    working(r, C1, C2);
+    done(r, C1, 'A done.');
+    // The hold began when the end was gathered (`done` has advanced past CARD_DELAY_MS already).
+    r.clock.advance(BATCH_HOLD_MS - 1);
+    expect(prompts(r)).toEqual([]);
+    r.clock.advance(1);
+    r.clock.advance(CARD_DELAY_MS);
+    expect(prompts(r)).toHaveLength(1);
+    expect(prompts(r)[0]).toContain('reply: A done.');
+    done(r, C2, 'B done.');
+    expect(prompts(r)).toHaveLength(2);
+    expect(prompts(r)[1]).not.toContain('A done.');
+  });
+
+  it('stops waiting for a part that was stopped', async () => {
+    const r = rig();
+    await started(r, ['a', 'b']);
+    working(r, C1, C2);
+    done(r, C1, 'A done.');
+    r.busy.delete(C2);
+    r.d.childStopped(C2);
+    r.clock.advance(CARD_DELAY_MS);
+    expect(prompts(r)).toHaveLength(1);
+    expect(prompts(r)[0]).toContain('reply: A done.');
+  });
+
+  it('holds nothing for an ending parent, and wakes it for nothing later', async () => {
+    const r = rig();
+    await started(r, ['a', 'b']);
+    working(r, C1, C2);
+    done(r, C1, 'A done.');
+    r.d.endTopic(P);
+    r.clock.advance(BATCH_HOLD_MS);
+    r.clock.advance(CARD_DELAY_MS);
+    expect(prompts(r)).toEqual([]);
+  });
+
+  it('gathers while the agent is busy, and writes one card when it is free', async () => {
+    const r = rig();
+    await r.d.handle(P, task('cc', 'a'));
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    await settle();
+    await settle();
+    r.clock.advance(BATCH_WINDOW_MS);
+    await started(r, ['b']);
+    working(r, C1, C2, P);
+    done(r, C1, 'A done.');
+    r.clock.advance(CARD_DELAY_MS * 10);
+    done(r, C2, 'B done.');
+    expect(prompts(r)).toEqual([]);
+    r.busy.delete(P);
+    r.clock.advance(CARD_DELAY_MS);
+    expect(prompts(r)).toHaveLength(1);
+    expect(prompts(r)[0]).toContain('reply: A done.');
+    expect(prompts(r)[0]).toContain('reply: B done.');
+  });
+
+  it('leaves off the card a turn the agent read with task-read, and sends none when it read them all', async () => {
+    const r = rig();
+    await started(r, ['a', 'b']);
+    working(r, C1, C2, P);
+    const turns = new Map<string, number>();
+    for (const [key, reply] of [[C1, 'A done.'], [C2, 'B done.']] as const) {
+      turns.set(key, seedTurn(r.history, key, [{ role: 'user', text: 'go' }, { role: 'agent', text: reply }]));
+      done(r, key, reply);
+    }
+    const replyOf = r.registry.replyOf;
+    r.registry.replyOf = (k: string) => {
+      const got = replyOf(k);
+      return got && turns.has(k) ? { ...got, turn: turns.get(k) } : got;
+    };
+    // The agent, still in its turn, reads one reply whole and the other's messages.
+    await r.d.handle(P, { kind: 'task-read', topic: 'c1000000', reply: true });
+    r.busy.delete(P);
+    r.clock.advance(CARD_DELAY_MS);
+    expect(prompts(r)).toHaveLength(1);
+    expect(prompts(r)[0]).toContain('reply: B done.');
+    expect(prompts(r)[0]).not.toContain('A done.');
+    expect(r.posted.filter((p) => p.text.startsWith('🔔')).map((p) => p.text)).toEqual([expect.stringContaining('B done.')]);
+    // Read in full before its next end: nothing to tell.
+    working(r, C2);
+    turns.set(C2, seedTurn(r.history, C2, [{ role: 'agent', text: 'B again.' }]));
+    r.busy.delete(C2);
+    await r.d.handle(P, { kind: 'task-read', topic: 'c2000000' });
+    done(r, C2, 'B again.');
+    expect(prompts(r)).toHaveLength(1);
+  });
+
+  it('does not count a read of a turn still running', async () => {
+    const r = rig();
+    await started(r, ['a']);
+    working(r, C1);
+    const turn = seedTurn(r.history, C1, [{ role: 'agent', text: 'Halfway.' }], 'running');
+    await r.d.handle(P, { kind: 'task-read', topic: 'c1000000' });
+    const replyOf = r.registry.replyOf;
+    r.registry.replyOf = (k: string) => {
+      const got = replyOf(k);
+      return got && k === C1 ? { ...got, turn } : got;
+    };
+    done(r, C1, 'Finished.');
+    expect(prompts(r)).toHaveLength(1);
+    expect(prompts(r)[0]).toContain('reply: Finished.');
   });
 });
 
@@ -2612,6 +2815,30 @@ describe('Delegation: the review loop (task-new --review-by)', () => {
     expect(card).toContain('reply: Pass.');
     // Over: the reviewer's verdict has nothing left to answer.
     await expect(r.d.handle(R, { kind: 'task-verdict', verdict: 'pass' })).rejects.toThrow(/has ended \(passed in round 2\)/);
+  });
+
+  it('keeps a part under review at work for its batch: its siblings wait for the loop to end', async () => {
+    const r = rig();
+    const heads = new Map<string, string>([[W, sha('a')]]);
+    r.deps.headOf = async (k) => (heads.get(k) ? { sha: heads.get(k)!, branch: 'feat/x' } : undefined);
+    await r.d.handle(P, task('cc', 'Build it', { reviewBy: 'cx', review: REVIEW }));
+    await r.d.handle(P, task('cc', 'Write the docs'));
+    r.clock.advance(PROPOSAL_GATHER_MS);
+    for (let i = 0; i < 4; i++) await settle();
+    // c1 is the work, c2 its sibling, and the reviewer the loop opens is c3.
+    const S = 'web#main#c2000000';
+    const REV = 'web#main#c3000000';
+    await ends(r, S, 'Docs written.');
+    expect(prompts(r)).toEqual([]);
+    heads.set(W, sha('b'));
+    await ends(r, W, 'Built it.');
+    expect(r.calls.filter(([c]) => c === 'openTask')).toHaveLength(3);
+    expect(prompts(r)).toEqual([]);
+    await r.d.handle(REV, { kind: 'task-verdict', verdict: 'pass' });
+    await ends(r, REV, 'Pass.');
+    r.clock.advance(CARD_DELAY_MS);
+    expect(prompts(r)).toHaveLength(1);
+    for (const reply of ['Docs written.', 'Built it.', 'Pass.']) expect(prompts(r)[0]).toContain(`reply: ${reply}`);
   });
 
   it('acts on an end TurnRunner reports while the turn is still unwinding', async () => {

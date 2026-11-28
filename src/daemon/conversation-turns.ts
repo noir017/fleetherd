@@ -133,6 +133,7 @@ export class ConversationTurns {
       agentIdOf: (id) => ctx.boundAgentOf(id) ?? ctx.agentIdOf(id),
       runContinue: (id, text) => this.runContinue(id, text),
       onNeedsPerson: (id) => ctx.hooks?.onNeedsPerson?.(id),
+      onStopped: (id) => ctx.hooks?.onTurnStopped?.(id),
       onCooldownOver: (agentId) => ctx.hooks?.onCooldownOver?.(agentId),
     });
   }

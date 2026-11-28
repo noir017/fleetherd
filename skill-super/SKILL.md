@@ -90,7 +90,10 @@ confirms every start, and can talk to any of them directly.
 
 Updates arrive as messages beginning `[sub-agent updates]`, with how many are still working. They
 are delivered as your next turn: end this turn once the parts are handed out. Do not sleep and poll
-`tasks` in this turn, and do not start a part's work yourself while you wait for it.
+`tasks` in this turn, and do not start a part's work yourself while you wait for it. Parts started
+within a minute of each other report together, once the last of them has ended (at most 30 minutes
+after the first); a failure, a question or the person writing in a topic comes at once. A turn you
+already read with `task-read` is left off the card.
 
 - **While it works**, `fleetherd tasks` shows what each one is running now: the tool, the step it is
   on, how long the turn has gone and its context. `fleetherd task-status <topic>` is one topic in
