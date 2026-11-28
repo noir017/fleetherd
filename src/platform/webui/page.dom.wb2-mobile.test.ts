@@ -210,7 +210,7 @@ describe('wb2-mobile: login, mobile drawer, sheet, grouped form, and palette', (
     shell.dispose();
   });
 
-  it('renders mobile bottom tab bar with badges and More panel with Prefs, Skills, History, Settings, and Appearance subview', () => {
+  it('renders mobile bottom tab bar with badges and More panel with Prefs, Reviews, History, Settings, and Appearance subview', () => {
     const tabBar = new MobileTabBar({ doc: document });
     document.body.appendChild(tabBar.element);
     const selected: string[] = [];
@@ -218,7 +218,7 @@ describe('wb2-mobile: login, mobile drawer, sheet, grouped form, and palette', (
     tabBar.setTabs([
       { id: 'topics', title: 'Topics', icon: 'chat', view: 'topics', badge: () => 4 },
       { id: 'schedules', title: 'Scheduled', icon: 'clock', view: 'schedules', badge: () => 'dot' },
-      { id: 'reviews', title: 'Reviews', icon: 'eye', view: 'reviews' },
+      { id: 'skills', title: 'Skills', icon: 'book', view: 'skills' },
       { id: 'more', title: 'More', icon: 'more', view: 'more' },
     ]);
     expect(tabBar.element.querySelector('.wb-stack-tab[data-tab-id="topics"] .wb-badge')?.textContent).toBe('4');
@@ -230,7 +230,7 @@ describe('wb2-mobile: login, mobile drawer, sheet, grouped form, and palette', (
     tabBar.dispose();
 
     const onOpenPrefs = vi.fn();
-    const onOpenSkills = vi.fn();
+    const onOpenReviews = vi.fn();
     const onOpenHistory = vi.fn();
     const onOpenSettings = vi.fn();
     const onChangeTheme = vi.fn();
@@ -243,23 +243,23 @@ describe('wb2-mobile: login, mobile drawer, sheet, grouped form, and palette', (
       version: 'v3.39.0',
       prefsBadge: '2',
       onOpenPrefs,
-      onOpenSkills,
+      onOpenReviews,
       onOpenHistory,
       onOpenSettings,
       onChangeTheme,
     });
     expect(more.component.element.querySelector('[data-group-item="schedules"]')).toBeNull();
-    expect(more.component.element.querySelector('[data-group-item="reviews"]')).toBeNull();
+    expect(more.component.element.querySelector('[data-group-item="skills"]')).toBeNull();
     const navIds = Array.from(
       more.component.element.querySelectorAll<HTMLElement>('.fh-mgroup:first-of-type [data-group-item]'),
     ).map((el) => el.dataset.groupItem);
-    expect(navIds).toEqual(['review-prefs', 'skills', 'history', 'settings']);
+    expect(navIds).toEqual(['review-prefs', 'reviews', 'history', 'settings']);
     more.component.element.querySelector<HTMLButtonElement>('[data-group-item="review-prefs"]')!.click();
-    more.component.element.querySelector<HTMLButtonElement>('[data-group-item="skills"]')!.click();
+    more.component.element.querySelector<HTMLButtonElement>('[data-group-item="reviews"]')!.click();
     more.component.element.querySelector<HTMLButtonElement>('[data-group-item="history"]')!.click();
     more.component.element.querySelector<HTMLButtonElement>('[data-group-item="settings"]')!.click();
     expect(onOpenPrefs).toHaveBeenCalledTimes(1);
-    expect(onOpenSkills).toHaveBeenCalledTimes(1);
+    expect(onOpenReviews).toHaveBeenCalledTimes(1);
     expect(onOpenHistory).toHaveBeenCalledTimes(1);
     expect(onOpenSettings).toHaveBeenCalledTimes(1);
     more.component.element.querySelector<HTMLButtonElement>('[data-group-item="appearance"]')!.click();

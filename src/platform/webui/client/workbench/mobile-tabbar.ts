@@ -29,7 +29,6 @@ export interface MobileMoreExtraItem {
 
 export interface MobileMoreState {
   readonly prefsBadge?: string;
-  readonly skillsCount?: number;
   readonly extraItems?: readonly MobileMoreExtraItem[];
   readonly notificationsEnabled?: boolean;
   readonly lowAttention?: boolean;
@@ -40,7 +39,7 @@ export interface MobileMoreState {
   readonly runningCount?: number;
   readonly idleCount?: number;
   readonly onOpenPrefs?: () => void;
-  readonly onOpenSkills?: () => void;
+  readonly onOpenReviews?: () => void;
   readonly onOpenHistory?: () => void;
   readonly onOpenSettings?: () => void;
   readonly onOpenExtra?: (viewId: string) => void;
@@ -207,13 +206,12 @@ function buildMoreNavItems(
       onClick: () => state.onOpenPrefs?.(),
     },
     {
-      id: 'skills',
-      label: tr('mobile.skills'),
-      icon: iconTpl('book'),
+      id: 'reviews',
+      label: tr('mobile.reviews'),
+      icon: iconTpl('eye'),
       iconBox: true,
-      value: state.skillsCount !== undefined ? String(state.skillsCount) : undefined,
       chevron: true,
-      onClick: () => state.onOpenSkills?.(),
+      onClick: () => state.onOpenReviews?.(),
     },
     {
       id: 'history',

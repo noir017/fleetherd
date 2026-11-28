@@ -44,8 +44,8 @@ Reader, and Status):
   auto-collapses the primary sidebar when the editor becomes narrow; tablet (`640–1023px`) turns
   sidebars into slide-over drawers; mobile (`< 640px`) keeps the topic view as the main screen and
   slides the sidebar drawer in over it via the header menu button or a swipe from the left edge,
-  with a bottom tab bar (**Topics**, **History**, **Scheduled**, and **More** for **Reviews**,
-  **Skills**, **Settings**, device preferences, and gateway status). Picking a topic, tapping
+  with a bottom tab bar (**Topics**, **Scheduled**, **Skills**, and **More** for **Reviews**,
+  **History**, **Settings**, device preferences, and gateway status). Picking a topic, tapping
   outside, swiping it back, or using the phone back gesture closes the drawer; topic tools (Changes,
   Files, Terminal) stay reachable from the topic header.
 - **Drag-and-drop splits, view movement, and layout persistence**: on desktop (`≥ 1024px`), drag

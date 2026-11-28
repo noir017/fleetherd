@@ -1856,7 +1856,7 @@ function wireStreamAndCache(rt: AppRuntime): void {
   rt.readsService.attachWindowEvents(document, window);
 }
 
-const BUILTIN_MORE_IDS = new Set(['skills', 'history', 'settings']);
+const BUILTIN_MORE_IDS = new Set(['reviews', 'history', 'settings']);
 
 function syncMobileMoreState(rt: AppRuntime): void {
   const activities = rt.registry.listActivities();
@@ -1897,7 +1897,7 @@ function syncMobileMoreState(rt: AppRuntime): void {
         rt.shell.views.reveal('reviews');
       }
     },
-    onOpenSkills: () => { rt.shell.views.reveal('skills'); },
+    onOpenReviews: () => { rt.shell.views.reveal('reviews'); },
     onOpenHistory: () => { rt.shell.views.reveal('history'); },
     onOpenSettings: () => { rt.shell.views.reveal('settings'); },
     onOpenExtra: (viewId) => { rt.shell.views.reveal(viewId); },

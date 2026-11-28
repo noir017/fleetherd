@@ -200,7 +200,7 @@ describe('features/skills plugin', () => {
       id: SKILLS_ACTIVITY_ID,
       view: SKILLS_VIEW_ID,
       icon: 'book',
-      order: 40,
+      order: 30,
     });
     expect(h.registry.getEditor(SKILL_EDITOR_KIND)).toBeDefined();
     expect(h.registry.getEditor(SKILL_EDITOR_KIND)?.title({ name: 'deploy-check' })).toBe('deploy-check');

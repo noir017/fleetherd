@@ -149,7 +149,7 @@ test.describe('Web UI mobile shell, palette, and login alignment', () => {
     await expect(page.locator('.wb-stack-tabbar')).toBeVisible();
     await expect(page.locator('.wb-drawer-backdrop')).toBeVisible();
 
-    for (const id of ['topics', 'schedules', 'reviews', 'more']) {
+    for (const id of ['topics', 'schedules', 'skills', 'more']) {
       await expect(page.locator(`.wb-stack-tab[data-tab-id="${id}"]`)).toBeVisible();
     }
     // Topic actions (+, mark all read, clear) live in the drawer title bar, not a separate row
@@ -223,7 +223,7 @@ test.describe('Web UI mobile shell, palette, and login alignment', () => {
 
 test.describe('Web UI mobile drawer navigation and cached topic open', () => {
 
-  test('mobile drawer switches across History, Schedules, Reviews, Skills, Settings, and reaches topic tools', async ({
+  test('mobile drawer switches across Schedules, Skills, Reviews, History, Settings, and reaches topic tools', async ({
     page,
   }) => {
     await page.emulateMedia({ colorScheme: 'dark' });
@@ -234,21 +234,18 @@ test.describe('Web UI mobile drawer navigation and cached topic open', () => {
     await page.locator('#expand-sidebar').click();
     await expect(page.locator('.wb-sidebar')).toBeVisible();
 
-    for (const id of ['schedules', 'reviews']) {
+    for (const id of ['schedules', 'skills']) {
       await page.locator(`.wb-stack-tab[data-tab-id="${id}"]`).click();
       await expect(page.locator(`.wb-stack-tab[data-tab-id="${id}"]`)).toHaveClass(/is-active/);
       await expect(page.locator('.wb-sidebar')).toBeVisible();
       if (id === 'schedules') {
         await expect(page.locator('.wb-sidebar-head > .wb-part-actions [data-action-id="schedules.refresh"]')).toBeVisible();
         await expect(page.locator('.wb-sidebar-head > .wb-part-actions [data-action-id="schedules.new"]')).toBeVisible();
-      } else if (id === 'reviews') {
-        await expect(page.locator('.wb-sidebar-head > .wb-part-actions [data-action-id]')).toHaveCount(1);
-        await expect(page.locator('.wb-sidebar-head > .wb-part-actions [data-action-id="reviews.refresh"]')).toBeVisible();
       }
     }
 
-    // More tab reveals Skills, History, and Settings inside the drawer
-    for (const itemId of ['skills', 'history', 'settings']) {
+    // More tab reveals Reviews, History, and Settings inside the drawer
+    for (const itemId of ['reviews', 'history', 'settings']) {
       await page.locator('.wb-stack-tab[data-tab-id="more"]').click();
       await expect(page.locator('.wb-stack-tab[data-tab-id="more"]')).toHaveClass(/is-active/);
       const item = page.locator(`.wb-stack-more [data-group-item="${itemId}"]`);
@@ -256,7 +253,10 @@ test.describe('Web UI mobile drawer navigation and cached topic open', () => {
       await item.click();
       await expect(page.locator('.wb-stack-tab[data-tab-id="more"]')).toHaveClass(/is-active/);
       await expect(page.locator('.wb-sidebar')).toBeVisible();
-      if (itemId === 'history') {
+      if (itemId === 'reviews') {
+        await expect(page.locator('.wb-sidebar-head > .wb-part-actions [data-action-id]')).toHaveCount(1);
+        await expect(page.locator('.wb-sidebar-head > .wb-part-actions [data-action-id="reviews.refresh"]')).toBeVisible();
+      } else if (itemId === 'history') {
         await expect(page.locator('.wb-sidebar-head > .wb-part-actions [data-action-id]')).toHaveCount(1);
         await expect(page.locator('.wb-sidebar-head > .wb-part-actions [data-action-id="history.refresh"]')).toBeVisible();
       } else if (itemId === 'settings') {
