@@ -548,6 +548,8 @@ Do not weaken these without saying so explicitly in the PR:
   (3) `harnessKind` in `src/config/instructions.ts` (compiler-enforced);
   (4) `REVIEW_ARGS_HARNESSES` in `src/config/schema.ts` when `reviewIsolation` is `'operator-args'`
   (not compiler-enforced; caught by `src/daemon/harness/index.test.ts`).
+  Anything else that differs by harness goes into its profile or `HARNESS_FACTS`, not into an
+  `if (def.harness === …)` at the call site: `src/harness-seam.test.ts` fails on a new one.
   A harness that does not speak ACP would need a sibling runtime implementing `AgentFactory`, wired where
   `start.ts` builds the factory — nothing does today. A service with an HTTP API is neither: it is a
   backend of `src/api-agent/`, which *is* an ACP agent the daemon spawns as `custom` (see
