@@ -108,9 +108,16 @@ on the agent's default again, so pick the directory first. Only the web UI shows
 command for them.
 
 **Switching permissions from the status line.** Beside the model and agent options, the status line
-above the composer also shows the topic agent's current permission level as a clickable chip. Tapping
-it opens the same popover with the available permission levels (`ask`, `auto`, `full`) and updates
-that agent's permission level without leaving the conversation.
+above the composer also shows the topic agent's current permission level as a chip — a shield and
+the level. Tapping it opens the same popover with the available permission levels (`ask`, `auto`,
+`full`) and updates that agent's permission level without leaving the conversation. The working
+directory follows, by its last folder; the whole path is its tooltip.
+
+**The status line on a phone.** The chips stay on one line. When they do not fit, the working
+directory and then the agent's name are cut short first, and after that the line scrolls sideways.
+The readings under it — context, cache, quota, and the running cost last — are one line too and
+scroll the same way; a tap on them shows the token counts and any quota pool the current model is
+not spending from.
 
 **Topics.** The sidebar on the left lists parallel conversations and switches between them,
 the same way a Telegram forum topic or a Feishu 话题 does: each has its own agent

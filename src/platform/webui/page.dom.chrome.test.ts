@@ -541,6 +541,31 @@ describe('webui page: the agent status strip', () => {
     // …and not on the desktop, where there is room.
     expect(html.slice(0, at)).not.toContain('.st-x{display:none}');
   });
+
+  it('shows the permission level behind a shield, and the directory by its last folder', async () => {
+    const h = await open({ width: 390, height: 844 });
+    const path = '/home/me/workspace/fleetherd';
+    await h.emit(sync(T, [message('m1', '<p>hi</p>')], [T], {
+      topics: [{ id: T, title: 'Topic', lastAt: 1000, running: false, msgCount: 1, dir: { name: 'fleetherd', path } }],
+    }));
+    await h.emit({ t: 'status', status: { ...CC, permissions: { level: 'auto', offered: ['ask', 'auto', 'full'] } } });
+
+    const perm = h.doc.querySelector('#status .st-perm');
+    expect(face(perm)).toBe('[shield]auto');
+    expect(perm?.getAttribute('aria-label')).toBe('Permissions: auto');
+    expect(perm?.getAttribute('title')).toBe('Switch permission level for this agent');
+    expect(strip(h).textContent).not.toContain('Permissions');
+
+    const dir = h.doc.querySelector(`.wb-topic-editor[data-topic-id="${T}"] .wb-topic-dir`) as HTMLElement;
+    expect(dir.hidden).toBe(false);
+    expect(face(dir)).toBe(`[folder]fleetherdWorking directory: ${path}`);
+    expect(dir.querySelector('.wb-topic-dir-name')?.textContent).toBe('fleetherd');
+    expect(dir.title).toBe(path);
+    expect(dir.querySelector('.wb-sr-only')?.textContent).toBe(`Working directory: ${path}`);
+    // A tap on it still does nothing: it is not the line, so the details stay shut.
+    await h.click(`.wb-topic-editor[data-topic-id="${T}"] .wb-topic-dir`);
+    expect(strip(h).classList.contains('open')).toBe(false);
+  });
 });
 
 describe('webui page: tool bubbles fold and open', () => {

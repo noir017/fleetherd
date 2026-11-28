@@ -5,6 +5,22 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **The Web UI's status chips above the composer take one line on a phone.** On a 390 px screen
+  the agent, model, effort and permission chips and the working directory wrapped onto two rows,
+  three or four with a long agent name or an account setting, and the context / cost / cache /
+  quota readings wrapped under them: up to a fifth of the screen before the transcript got any.
+  The chips now stay on one line of shorter pills (24 px drawn, the tap target 32 px tall, taller
+  than the 28 px it replaces): when they do not fit, the working directory and then the agent's
+  name are cut short first, and only then does the line scroll sideways, with no scrollbar. The
+  readings are one line too and scroll the same way; the running cost moves to the end of it,
+  since it is the one reading nobody acts on mid-conversation, so a narrow screen loses that
+  rather than the cache countdown or a quota pool. Everywhere, desktop included, the directory
+  chip shows just the last folder — the whole path cut from the left read as `…orkspace/fleetherd`
+  — with the full path in its tooltip and for screen readers, and the permission chip shows a
+  shield instead of the word "Permissions". The desktop row keeps its layout.
+
 ## [3.45.0] - 2026-11-28
 
 ### Changed

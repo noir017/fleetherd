@@ -463,11 +463,38 @@ the account a session runs on. Decisions in it:
   when a message arrives in a topic with no status: `/cd` and `/new` end the session it described.
 - **A fixed setting is a disabled button**, dim, no caret, with its reason in the title; the
   setting's name stays in front of the value, so a bare account name is not read as something else.
-- **A finger target on a phone**: 44px, which makes the strip that tall there; the list spans the
-  composer, and the filter is not focused on open, for the reason the composer is not.
+- **A finger target on a phone**: 32px tall in the workbench — a 24px pill whose transparent 4px
+  border above and below is still the button (`composer.css`; `responsive.css`'s 44px rule is
+  older and loses to it on specificity). The list spans the composer, and the filter is not
+  focused on open, for the reason the composer is not.
 
 Its own Escape and outside click close it, rather than joining the page-wide overlay handling — it
 is a menu in the composer, not a window over the page.
+
+**On a phone the strip is two lines, and neither wraps** (`composer.css`, the 640px block). The
+chips (agent, model, effort, permissions, the agent's own settings) are one sideways-scrolling
+line with the working directory after it; the readings (context, cache, quota, cost) are a second
+one. Decisions in it:
+
+- **The directory and the agent give way before anything scrolls.** `.st-who` and `.wb-topic-dir`
+  both start from `flex-basis: 0`, so neither can push the other onto a second line of the
+  wrapping row — line breaking uses the base size, and a `max-content` basis is what wrapped the
+  directory before. They grow to `max-content`, the chips 1000 times faster, so the directory is
+  the first to sit at its 64px floor; inside `.st-who` only the agent can shrink (to 56px); only
+  then does the line scroll. The row still wraps, but only to put `.st-info` under it.
+- **Each line keeps its scroll across a repaint** (`paintStatus` restores `scrollLeft`): the strip
+  is redrawn from HTML when a switch opens or the countdown ticks, which would otherwise throw a
+  reader who had scrolled to the permission switch back to the start the moment it opened.
+- **The cost goes last** on that line (`.st-cost`, CSS `order`), as the reading nobody acts on
+  mid-conversation; the rest keep the desktop's order.
+- **The directory is its last folder** (`dir.name`, which the room already sends as the basename),
+  on the desktop too; the path is the title and a visually hidden span, since a generic span cannot
+  carry an `aria-label`. The permission switch is a shield and the level, with an `aria-label`
+  naming it.
+- Measured in Chromium on 2026-11-28 against the real `WebRoom` at 360, 390, 412 and 1280px: one
+  line at every phone width with an effort switch and two quota pools in place, a tap in the
+  transparent band opening the permission list, both lines scrolled by a real touch drag and kept
+  through the repaint that opening caused, no scrollbar drawn.
 
 **`access.allowFrom` identity is `<instance id>:owner`**, the same for every topic. An existing
 config that already lists other identities will silently ignore every message typed into this

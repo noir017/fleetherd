@@ -1,3 +1,4 @@
+import { icon } from '../../../../icons.js';
 import { t as tr } from '../../../i18n/index.js';
 import { text } from '../../../services/api.js';
 import type { AgentStatus, QuotaPool, StatusOption, StatusPermissions } from './types.js';
@@ -101,11 +102,13 @@ export function optChip(o: StatusOption, openOptId: string | null): string {
 
 export function permChip(p: StatusPermissions | null | undefined, open: boolean): string {
   if (!p || !p.level) return '';
-  const label = tr('status.permLabel');
+  // A shield stands for the word "Permissions", which took a whole chip's width on a phone; the
+  // aria-label says it again for a screen reader.
   return (
     `<span class="st-sep"> \u00b7 </span>` +
     `<button type="button" class="st-model st-opt st-perm" data-perm="1" aria-haspopup="dialog" aria-expanded="${open ? 'true' : 'false'}"` +
-    ` title="${text(tr('status.permTitle'))}"><span class="st-olabel">${text(label)}</span> <span class="st-mtext">${text(p.level)}</span></button>`
+    ` title="${text(tr('status.permTitle'))}" aria-label="${text(tr('status.permAria', { level: p.level }))}">` +
+    `${icon('shield', 'st-picon')}<span class="st-mtext">${text(p.level)}</span></button>`
   );
 }
 
@@ -140,7 +143,7 @@ function renderCostSegment(cost: { readonly amount: number; readonly currency: s
       ? `$${cost.amount.toFixed(2)}`
       : text(`${cost.amount.toFixed(2)} ${cost.currency}`);
   return seg(
-    '',
+    'st-cost',
     tr('status.costTip', { amount: cost.amount.toFixed(4), currency: cost.currency }),
     label,
   );

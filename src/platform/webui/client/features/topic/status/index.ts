@@ -21,6 +21,7 @@ export * from './model-pop.js';
 
 export const STATUS_TICK_MS = 30000;
 export const PEEK_DEBOUNCE_MS = 400;
+const SCROLLERS = ['.st-who', '.st-info'] as const;
 
 export interface TopicStatusDeps {
   readonly statusEl: HTMLElement | null;
@@ -238,7 +239,14 @@ class TopicStatusControllerImpl implements TopicStatusController {
     const html = this.renderStatusHtml(t, openModel, openOptId);
     if (html === this.statusHtml) return;
     this.statusHtml = html;
+    // On a phone both lines scroll sideways (composer.css); a repaint — a switch's list opening,
+    // the countdown ticking — must not throw the reader back to the start of either.
+    const scrolled = SCROLLERS.map((sel) => statusEl.querySelector<HTMLElement>(sel)?.scrollLeft ?? 0);
     statusEl.innerHTML = html;
+    SCROLLERS.forEach((sel, i) => {
+      const el = scrolled[i] ? statusEl.querySelector<HTMLElement>(sel) : null;
+      if (el) el.scrollLeft = scrolled[i] ?? 0;
+    });
     statusEl.hidden = !html;
   }
 

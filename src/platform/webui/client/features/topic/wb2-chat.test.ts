@@ -13,6 +13,7 @@ import {
   type TopicPanelRef,
 } from './editor/index.js';
 import { statusSegments } from './status/format.js';
+import { createTopicStatusController } from './status/index.js';
 import { launchHtml } from './transcript/banners.js';
 
 const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -79,17 +80,33 @@ describe('wb2-chat topic editor alignment', () => {
 
     expect(panel.els.statusRowEl.dataset.harness).toBe('claude');
     expect(panel.els.dirEl.hidden).toBe(false);
-    expect(panel.els.dirEl.textContent).toBe('~/work/fleetherd');
+    // The chip shows the last folder; the whole path is the title and what a screen reader hears.
+    expect(panel.els.dirNameEl.textContent).toBe('fleetherd');
+    expect(panel.els.dirNameEl.getAttribute('aria-hidden')).toBe('true');
+    expect(panel.els.dirEl.title).toBe('~/work/fleetherd');
+    expect(panel.els.dirFullEl.textContent).toBe('Working directory: ~/work/fleetherd');
+    expect(panel.els.dirFullEl.className).toBe('wb-sr-only');
+    expect(panel.els.dirEl.querySelector('svg.ic-folder')).not.toBeNull();
     expect(panel.els.powerBtn.hidden).toBe(false);
     expect(panel.els.composerForm.classList.contains('is-running')).toBe(true);
 
     panel.els.powerBtn.click();
     expect(command).toHaveBeenCalledWith('/kill');
 
+    // A directory without a short name is cut to its last folder here; one with none stays whole.
+    topic = { ...topic, dir: { name: '', path: '/srv/apps/web-store/' } };
+    panel.refreshHeader();
+    expect(panel.els.dirNameEl.textContent).toBe('web-store');
+    expect(panel.els.dirEl.title).toBe('/srv/apps/web-store/');
+    topic = { ...topic, dir: { name: '', path: '/' } };
+    panel.refreshHeader();
+    expect(panel.els.dirNameEl.textContent).toBe('/');
+
     topic = { ...topic, live: false, running: false, dir: undefined, agent: undefined };
     panel.refreshHeader();
     expect(panel.els.powerBtn.hidden).toBe(true);
     expect(panel.els.dirEl.hidden).toBe(true);
+    expect(panel.els.dirFullEl.textContent).toBe('');
     expect(panel.els.statusRowEl.dataset.harness).toBeUndefined();
     expect(panel.els.composerForm.classList.contains('is-running')).toBe(false);
     panel.dispose();
@@ -130,6 +147,46 @@ describe('wb2-chat topic editor alignment', () => {
     expect(html).not.toContain('h-custom');
   });
 
+  it('keeps where both phone lines were scrolled when the status repaints', () => {
+    const els = buildTopicEditorDom(document, DEFAULT_TOPIC_EDITOR_ICONS);
+    document.body.append(els.root);
+    const status = createTopicStatusController({
+      statusEl: els.statusEl,
+      pendingQueueEl: els.pendingQueueEl,
+      modelPopEls: els,
+      getTopic: () => 't1',
+      isSynced: () => true,
+      hasLauncher: () => false,
+      hasMessages: () => true,
+      narrow: () => true,
+      getIcons: () => ({ check: '' }) as never,
+      inl: (s) => s,
+      setNote: vi.fn(),
+      onRetireLocalNonce: vi.fn(),
+      onRecallContent: vi.fn(),
+      now: () => 1_700_000_000_000,
+    });
+    const base = {
+      agent: 'cc',
+      model: 'opus',
+      context: { used: 50_000, size: 200_000 },
+      cost: { amount: 0.25, currency: 'USD' },
+    };
+    status.setStatus(base);
+    const who = els.statusEl.querySelector<HTMLElement>('.st-who')!;
+    who.scrollLeft = 120;
+    els.statusEl.querySelector<HTMLElement>('.st-info')!.scrollLeft = 40;
+
+    status.setStatus({ ...base, cost: { amount: 0.5, currency: 'USD' } });
+    // Repainted: new elements, put back where the reader had them.
+    expect(els.statusEl.querySelector('.st-who')).not.toBe(who);
+    expect(els.statusEl.querySelector<HTMLElement>('.st-who')!.scrollLeft).toBe(120);
+    expect(els.statusEl.querySelector<HTMLElement>('.st-info')!.scrollLeft).toBe(40);
+    expect(els.statusEl.textContent).toContain('$0.50');
+    status.dispose();
+    els.root.remove();
+  });
+
   it('includes mobile duplicate-header suppression, own bubble, and model sheet rules in CSS', () => {
     const transcriptCss = fs.readFileSync(path.join(STYLES_DIR, 'transcript.css'), 'utf8');
     const composerCss = fs.readFileSync(path.join(STYLES_DIR, 'composer.css'), 'utf8');
@@ -163,22 +220,50 @@ describe('wb2-chat topic editor alignment', () => {
     expect(transcriptCss).toContain('.wb-topic-editor .b>.tools{border:1px solid var(--fh-line);');
   });
 
-  it('lays out mobile status row in two wrapping rows with folder on row 1 and .st-info on row 2', () => {
+  it('lays out the phone status row as one sideways-scrolling line of chips over one line of readings', () => {
     const composerCss = fs.readFileSync(path.join(STYLES_DIR, 'composer.css'), 'utf8');
     const statusCss = fs.readFileSync(path.join(STYLES_DIR, 'status.css'), 'utf8');
     expect(statusCss).toContain('.st-info{display:contents}');
 
     const mobileStart = composerCss.indexOf('@media (max-width: 640px) {');
     expect(mobileStart).toBeGreaterThan(-1);
-    const mobileBlock = composerCss.slice(mobileStart);
+    let depth = 0;
+    let mobileEnd = -1;
+    for (let i = composerCss.indexOf('{', mobileStart); i < composerCss.length; i++) {
+      if (composerCss[i] === '{') depth++;
+      else if (composerCss[i] === '}' && --depth === 0) {
+        mobileEnd = i + 1;
+        break;
+      }
+    }
+    const mobileBlock = composerCss.slice(mobileStart, mobileEnd);
+    const desktop = composerCss.slice(0, mobileStart) + composerCss.slice(mobileEnd);
 
-    expect(mobileBlock).toContain('.wb-topic-editor .wb-topic-status-row{flex-wrap:wrap;overflow-x:visible;');
-    expect(mobileBlock).not.toContain('overflow-x:auto');
+    // The row still wraps, but only to put the readings under the chips.
+    expect(mobileBlock).toContain('.wb-topic-editor .wb-topic-status-row{flex-wrap:wrap;');
     expect(mobileBlock).toContain('.wb-topic-editor #status:not([hidden]){display:contents;');
-    expect(mobileBlock).toContain('.wb-topic-editor .st-who{display:contents}');
-    expect(mobileBlock).toContain('.wb-topic-editor .st-who>*{order:1}');
-    expect(mobileBlock).toContain('.wb-topic-editor .wb-topic-dir{order:2;flex:0 2 auto;');
-    expect(mobileBlock).toContain('direction:rtl;text-align:left}');
-    expect(mobileBlock).toContain('.wb-topic-editor .st-info{order:3;flex:1 0 100%;display:flex;flex-wrap:wrap;');
+    // Neither line wraps; each scrolls sideways with no scrollbar drawn.
+    expect(mobileBlock).toContain(
+      '.wb-topic-editor .st-who,\n  .wb-topic-editor .st-info{display:flex;flex-wrap:nowrap;align-items:center;min-width:0;overflow-x:auto;overflow-y:hidden;scrollbar-width:none;',
+    );
+    expect(mobileBlock).toContain('.wb-topic-editor .st-info::-webkit-scrollbar{display:none}');
+    // Both start from nothing, so neither pushes the other to a new line; the chips grow first.
+    expect(mobileBlock).toContain('.wb-topic-editor .st-who{order:1;flex:1000 1 0;max-width:max-content;');
+    expect(mobileBlock).toContain('.wb-topic-editor .wb-topic-dir{order:2;flex:1 1 0;max-width:max-content;min-width:64px;');
+    expect(mobileBlock).toContain('.wb-topic-editor .st-agent{flex:0 1 auto;min-width:56px;');
+    expect(mobileBlock).toContain('.wb-topic-editor .st-info{order:3;flex:1 0 100%;');
+    expect(mobileBlock).toContain('.wb-topic-editor .st-info>.st-cost{order:1}');
+    // A 24px pill in a 32px target: the band above and below is transparent border, not margin.
+    expect(mobileBlock).toContain('height:32px;min-height:32px;margin:0;padding:0 8px;border:solid transparent;border-width:4px 0;border-radius:999px;background-clip:padding-box;');
+    expect(mobileBlock).toContain('.wb-topic-editor .st-model[aria-expanded="true"]{background-clip:padding-box}');
+    // The left-ellipsis trick for a whole path is gone with the path.
+    expect(composerCss).not.toContain('direction:rtl');
+    // None of it leaks onto the desktop row, which wraps as it did.
+    expect(desktop).not.toContain('overflow-x:auto');
+    expect(desktop).not.toContain('flex:1000 1 0');
+    expect(desktop).toContain('.wb-topic-editor .wb-topic-dir{display:flex;align-items:center;gap:4px;flex:none;max-width:30%;');
+    // The harness colour sets only the colour, so the phone's clipped pill survives it.
+    expect(desktop).toContain('.wb-topic-editor .wb-topic-status-row[data-harness="claude"] .st-agent{background-color:');
+    expect(desktop).not.toMatch(/\[data-harness="[a-z]+"\] \.st-agent\{background:/);
   });
 });

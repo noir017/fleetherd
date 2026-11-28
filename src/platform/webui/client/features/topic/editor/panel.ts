@@ -66,6 +66,12 @@ function buildMessageMenuEntries(
 
 const TOUCH_CONTEXTMENU_WINDOW_MS = 1500;
 
+/** The last folder of a path (`/a/b/` → `b`); a path with none, like `/`, is shown whole. */
+function lastFolder(path: string): string {
+  const trimmed = path.replace(/[\\/]+$/, '');
+  return trimmed.slice(Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\')) + 1) || path;
+}
+
 export class TopicEditorPanel implements TopicEditorHandle {
   readonly element: HTMLElement;
   readonly els: TopicEditorElements;
@@ -214,10 +220,11 @@ export class TopicEditorPanel implements TopicEditorHandle {
     live: boolean | undefined,
     harness: string | undefined,
   ): void {
-    const dirText = dir?.path || dir?.name || '';
-    this.els.dirEl.textContent = dirText;
-    this.els.dirEl.title = dir?.path || dirText;
-    this.els.dirEl.hidden = !dirText;
+    const full = dir?.path || dir?.name || '';
+    this.els.dirNameEl.textContent = dir?.name || lastFolder(full);
+    this.els.dirFullEl.textContent = full ? tr('status.dirAria', { path: full }) : '';
+    this.els.dirEl.title = full;
+    this.els.dirEl.hidden = !full;
     this.els.powerBtn.hidden = !live;
     if (harness) {
       this.els.statusRowEl.dataset.harness = harness;

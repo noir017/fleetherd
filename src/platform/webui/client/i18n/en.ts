@@ -598,6 +598,8 @@ export const en = {
   'reviews.revertFailed': 'Could not revert {name}: {err}',
   'status.permLabel': 'Permissions',
   'status.permTitle': 'Switch permission level for this agent',
+  'status.permAria': 'Permissions: {level}',
+  'status.dirAria': 'Working directory: {path}',
 
   // History panel
   'history.searchPlaceholder': 'Search all conversations',

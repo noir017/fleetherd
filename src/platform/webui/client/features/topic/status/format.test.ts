@@ -164,6 +164,14 @@ describe('features/topic/status/format', () => {
     );
     expect(full).toContain('data-perm="1"');
     expect(full).toContain('auto');
+    // A shield in place of the word, which a screen reader still hears; the title still explains.
+    const perm = full.slice(full.indexOf('<button type="button" class="st-model st-opt st-perm"'));
+    expect(perm).toContain('<svg class="ic ic-shield st-picon"');
+    expect(perm).toContain('aria-label="Permissions: auto"');
+    expect(perm).toContain('title="Switch permission level for this agent"');
+    expect(perm).toContain('<span class="st-mtext">auto</span></button>');
+    expect(perm).not.toContain('st-olabel');
+    expect(perm.replace(/<[^>]*>/g, '')).toBe('auto');
 
     const bare = renderBareStatus({
       agent: 'cc',
@@ -202,6 +210,8 @@ describe('features/topic/status/format', () => {
     expect(whoPart).toContain('high');
     expect(infoPart).toContain('25%');
     expect(infoPart).toContain('$0.25');
+    // Marked, so a phone can move the running cost to the end of its one line (composer.css).
+    expect(infoPart).toContain('<span class="st st-cost" title="');
     expect(infoPart).toContain('cache 10m');
     expect(infoPart).toContain('3P 5h 80%');
 

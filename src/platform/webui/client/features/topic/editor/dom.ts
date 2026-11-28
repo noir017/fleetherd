@@ -254,6 +254,13 @@ export function buildTopicEditorDom(doc: Document, icons: TopicEditorIcons): Top
   statusEl.title = tr('status.tapDetails');
   const dirEl = el(doc, 'span', 'wb-topic-dir');
   dirEl.hidden = true;
+  // The chip shows the last folder of the path; the whole path is its title, and the hidden text
+  // is what a screen reader reads (a generic span cannot carry an aria-label).
+  const dirNameEl = el(doc, 'span', 'wb-topic-dir-name');
+  dirNameEl.setAttribute('aria-hidden', 'true');
+  const dirFullEl = el(doc, 'span', 'wb-sr-only');
+  dirEl.innerHTML = icons.folder;
+  dirEl.append(dirNameEl, dirFullEl);
   const powerBtn = el(doc, 'button', 'wb-icon-btn wb-topic-power');
   powerBtn.type = 'button';
   powerBtn.hidden = true;
@@ -291,6 +298,8 @@ export function buildTopicEditorDom(doc: Document, icons: TopicEditorIcons): Top
     statusRowEl,
     statusEl,
     dirEl,
+    dirNameEl,
+    dirFullEl,
     powerBtn,
     ...popups,
     ...composer,

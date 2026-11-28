@@ -85,17 +85,18 @@ button:disabled{opacity:.5;cursor:default}
 .wb-topic-editor .wb-topic-status,
 .wb-topic-editor #status{margin:0;font-size:var(--fh-fs-sm);row-gap:2px;column-gap:10px;color:var(--fh-fg-dim);flex:0 1 auto;min-width:0}
 .wb-topic-editor .st-agent{display:inline-block;font-size:var(--fh-fs-2xs);line-height:1.45;padding:0 5px;border-radius:var(--fh-radius-ctrl);background:var(--fh-btn2);color:var(--fh-fg-hi);margin-right:2px}
-.wb-topic-editor .wb-topic-status-row[data-harness="claude"] .st-agent{background:var(--fh-hc-claude-bg);color:var(--fh-hc-claude)}
-.wb-topic-editor .wb-topic-status-row[data-harness="codex"] .st-agent{background:var(--fh-hc-codex-bg);color:var(--fh-hc-codex)}
-.wb-topic-editor .wb-topic-status-row[data-harness="opencode"] .st-agent{background:var(--fh-hc-opencode-bg);color:var(--fh-hc-opencode)}
-.wb-topic-editor .wb-topic-status-row[data-harness="agy"] .st-agent{background:var(--fh-hc-agy-bg);color:var(--fh-hc-agy)}
-.wb-topic-editor .wb-topic-status-row[data-harness="gemini"] .st-agent{background:var(--fh-hc-gemini-bg);color:var(--fh-hc-gemini)}
-.wb-topic-editor .wb-topic-status-row[data-harness="dsh"] .st-agent{background:var(--fh-hc-dsh-bg);color:var(--fh-hc-dsh)}
+.wb-topic-editor .wb-topic-status-row[data-harness="claude"] .st-agent{background-color:var(--fh-hc-claude-bg);color:var(--fh-hc-claude)}
+.wb-topic-editor .wb-topic-status-row[data-harness="codex"] .st-agent{background-color:var(--fh-hc-codex-bg);color:var(--fh-hc-codex)}
+.wb-topic-editor .wb-topic-status-row[data-harness="opencode"] .st-agent{background-color:var(--fh-hc-opencode-bg);color:var(--fh-hc-opencode)}
+.wb-topic-editor .wb-topic-status-row[data-harness="agy"] .st-agent{background-color:var(--fh-hc-agy-bg);color:var(--fh-hc-agy)}
+.wb-topic-editor .wb-topic-status-row[data-harness="gemini"] .st-agent{background-color:var(--fh-hc-gemini-bg);color:var(--fh-hc-gemini)}
+.wb-topic-editor .wb-topic-status-row[data-harness="dsh"] .st-agent{background-color:var(--fh-hc-dsh-bg);color:var(--fh-hc-dsh)}
 .wb-topic-editor .st-model{color:var(--fh-link)}
 .wb-topic-editor .st-model:hover,
 .wb-topic-editor .st-model[aria-expanded="true"]{background:var(--fh-hover);color:var(--fh-link)}
-.wb-topic-editor .wb-topic-dir{color:var(--fh-fg-dim);font-size:var(--fh-fs-sm);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
-.wb-topic-editor .wb-topic-status:not([hidden])+.wb-topic-dir::before{content:'\00b7\00a0';color:var(--fh-fg-dim)}
+.wb-topic-editor .wb-topic-dir{display:flex;align-items:center;gap:4px;flex:none;max-width:30%;color:var(--fh-fg-dim);font-size:var(--fh-fs-sm);white-space:nowrap}
+.wb-topic-editor .wb-topic-dir-name{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.wb-topic-editor .wb-topic-status:not([hidden])+.wb-topic-dir::before{content:'\00b7';color:var(--fh-fg-dim)}
 .wb-topic-editor .wb-topic-power{margin-left:auto;width:24px;height:24px;border:0;border-radius:4px;color:var(--fh-fg-dim);flex:none}
 .wb-topic-editor .wb-topic-power:hover{background:var(--fh-act-hover);color:var(--fh-fg-hi)}
 .wb-topic-editor .wb-topic-power svg{width:15px;height:15px}
@@ -148,24 +149,47 @@ button:disabled{opacity:.5;cursor:default}
   .wb-topic-editor #note{padding-left:16px;padding-right:16px}
   .wb-topic-editor .wb-topic-bar,
   .wb-topic-editor #bar{padding:8px 10px calc(8px + env(safe-area-inset-bottom,0px));background:var(--fh-bg-side);border-top:1px solid var(--fh-line)}
-  .wb-topic-editor .wb-topic-status-row{flex-wrap:wrap;overflow-x:visible;gap:6px;margin:0 2px 8px}
+  /* One line of chips, and under it one line of readings; neither wraps, and each scrolls
+     sideways when it runs out of room. Wrapped, the chips took two or three rows of a phone.
+     The directory gives way first, down to a few letters, then the agent's name; only then does
+     the line scroll. That order is the flex below: both start from a basis of 0, so neither can
+     push the other onto a second line, and the chips grow a thousand times faster, up to what
+     they need, before the directory gets any of what is left. */
+  .wb-topic-editor .wb-topic-status-row{flex-wrap:wrap;gap:0 6px;margin:-4px 0 4px}
   .wb-topic-editor .wb-topic-status-row:not(:has(> :not([hidden]):not(.wb-topic-power))){display:none}
   /* :not([hidden]) guards display:contents so hidden status strips stay display:none. */
   .wb-topic-editor .wb-topic-status:not([hidden]),
-  .wb-topic-editor #status:not([hidden]){display:contents;font-size:var(--fh-fs-sm)}
-  .wb-topic-editor .st-who{display:contents}
-  .wb-topic-editor .st-who>*{order:1}
+  .wb-topic-editor #status:not([hidden]){display:contents;font-size:var(--fh-fs-xs)}
+  .wb-topic-editor .st-who,
+  .wb-topic-editor .st-info{display:flex;flex-wrap:nowrap;align-items:center;min-width:0;overflow-x:auto;overflow-y:hidden;scrollbar-width:none;overscroll-behavior-x:contain}
+  .wb-topic-editor .st-who::-webkit-scrollbar,
+  .wb-topic-editor .st-info::-webkit-scrollbar{display:none}
+  .wb-topic-editor .st-who{order:1;flex:1000 1 0;max-width:max-content;gap:6px}
+  .wb-topic-editor .st-who>*{flex:none}
   .wb-topic-editor .st-sep{display:none}
-  .wb-topic-editor .st-effort{flex:0 0 auto;height:28px;display:inline-flex;align-items:center;padding:0 11px;border-radius:14px;background:var(--fh-btn2);color:var(--fh-fg);font-size:var(--fh-fs-sm)}
-  .wb-topic-editor .st-agent{flex:0 0 auto;height:28px;display:inline-flex;align-items:center;padding:0 11px;margin:0;border-radius:14px;font-size:var(--fh-fs-sm)}
-  .wb-topic-editor .st-model{flex:0 1 auto;min-width:0;max-width:100%;min-height:28px;height:28px;padding:0 11px;margin:0;border-radius:14px;background:var(--fh-btn2);color:var(--fh-fg);font-size:var(--fh-fs-sm)}
-  .wb-topic-editor .st-model:not(.st-opt){max-width:min(170px,100%)}
-  .wb-topic-editor .wb-topic-dir{order:2;flex:0 2 auto;min-width:64px;max-width:min(140px,100%);display:block;height:28px;line-height:28px;padding:0 11px;border-radius:14px;background:var(--fh-btn2);color:var(--fh-fg);font-size:var(--fh-fs-sm);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:rtl;text-align:left}
-  /* LRM anchors leading "/" or "~" on the left under direction:rtl so left-ellipsis shows the tail folder. */
-  .wb-topic-editor .wb-topic-dir::before{content:'\200E'}
-  .wb-topic-editor .wb-topic-status:not([hidden])+.wb-topic-dir::before{content:'\200E'}
-  .wb-topic-editor .st-info{order:3;flex:1 0 100%;display:flex;flex-wrap:wrap;align-items:center;min-width:0;row-gap:4px;column-gap:10px;font-size:var(--fh-fs-xs);line-height:1.4;color:var(--fh-fg-dim);font-variant-numeric:tabular-nums;cursor:pointer;user-select:none;-webkit-user-select:none}
-  .wb-topic-editor .st-info .st{max-width:100%}
+  /* A chip is a 24px pill in a 32px box: the clear band above and below it is still the button,
+     so it is easier to hit than the 28px pill it replaced while taking less of the screen. */
+  .wb-topic-editor .st-agent,
+  .wb-topic-editor .st-effort,
+  .wb-topic-editor .st-model,
+  .wb-topic-editor .wb-topic-dir{box-sizing:border-box;height:32px;min-height:32px;margin:0;padding:0 8px;border:solid transparent;border-width:4px 0;border-radius:999px;background-clip:padding-box;font-size:var(--fh-fs-xs);line-height:24px}
+  .wb-topic-editor .st-effort,
+  .wb-topic-editor .st-model,
+  .wb-topic-editor .wb-topic-dir{background-color:var(--fh-btn2);color:var(--fh-fg)}
+  .wb-topic-editor .st-model:hover,
+  .wb-topic-editor .st-model[aria-expanded="true"]{background-clip:padding-box}
+  .wb-topic-editor .st-model:focus-visible{outline-offset:-3px}
+  .wb-topic-editor .st-agent{flex:0 1 auto;min-width:56px;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .wb-topic-editor .st-effort,
+  .wb-topic-editor .st-model{display:inline-flex;align-items:center}
+  .wb-topic-editor .st-model:not(.st-opt){max-width:150px}
+  .wb-topic-editor .wb-topic-dir{order:2;flex:1 1 0;max-width:max-content;min-width:64px;justify-content:center}
+  .wb-topic-editor .wb-topic-status:not([hidden])+.wb-topic-dir::before{content:none}
+  .wb-topic-editor .st-info{order:3;flex:1 0 100%;column-gap:10px;height:20px;font-size:var(--fh-fs-2xs);color:var(--fh-fg-dim);font-variant-numeric:tabular-nums;cursor:pointer;user-select:none;-webkit-user-select:none}
+  .wb-topic-editor .st-info>.st{flex:none}
+  /* The running cost is the reading nobody acts on mid-conversation, so it goes last and is the
+     one a narrow screen leaves off the edge, after context, cache and quota. */
+  .wb-topic-editor .st-info>.st-cost{order:1}
   .wb-topic-editor .wb-topic-power{display:none}
 
   .wb-topic-editor .wb-topic-composer-row,

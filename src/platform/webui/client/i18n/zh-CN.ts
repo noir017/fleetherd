@@ -600,6 +600,8 @@ export const zhCN = {
   'reviews.revertFailed': '无法回滚 {name}：{err}',
   'status.permLabel': '权限',
   'status.permTitle': '切换此智能体的权限级别',
+  'status.permAria': '权限：{level}',
+  'status.dirAria': '工作目录：{path}',
 
   // History panel
   'history.searchPlaceholder': '搜索所有对话',
