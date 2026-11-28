@@ -3,14 +3,20 @@ import { ToolRenderer, type BubbleSink } from '../core/tool-renderer.js';
 import type { MessageRef, ToolEvent, ToolFinishEvent } from '../types.js';
 import { SubagentCards } from './subagent-cards.js';
 
-/** Cards over real renderers, each painting into its own message; `text(i)` is what card i shows now. */
-function setup() {
+/**
+ * Cards over real renderers, each painting into its own message; `shown[i]` is what message i shows
+ * now and `series[i]` the key it was sent under. `render()` starts the next render's cards on the
+ * same chat, the way TurnRunner makes a SubagentCards per render.
+ */
+function setup(maxMessageLength?: number) {
   let now = 0;
   const shown: string[] = [];
-  const make = (): ToolRenderer => {
+  const series: string[] = [];
+  const make = (key: string): ToolRenderer => {
     const sink: BubbleSink = {
       sendBubble: async (text): Promise<MessageRef> => {
         shown.push(text);
+        series.push(key);
         return { address: { channel: 'c' }, messageId: String(shown.length - 1) };
       },
       editBubble: async (ref, text) => {
@@ -20,7 +26,14 @@ function setup() {
       schedule: () => () => undefined,
     };
     return new ToolRenderer(
-      { mode: 'all', grouping: 'accumulate', previewLimit: 40, defaultEmoji: '⚙️', emojiMap: { Bash: '💻' } },
+      {
+        mode: 'all',
+        grouping: 'accumulate',
+        previewLimit: 40,
+        defaultEmoji: '⚙️',
+        emojiMap: { Bash: '💻' },
+        ...(maxMessageLength !== undefined ? { maxMessageLength } : {}),
+      },
       sink
     );
   };
@@ -31,7 +44,9 @@ function setup() {
   return {
     cards,
     shown,
+    series,
     flush,
+    render: () => new SubagentCards(make, () => now),
     at: (t: number) => {
       now = t;
     },
@@ -140,5 +155,44 @@ describe('SubagentCards', () => {
     cards.endAll(true);
     await flush();
     expect(shown).toEqual([]);
+  });
+
+  it('sends every message of a subagent under its key, a bubble it overflowed into included', async () => {
+    const { cards, shown, series, flush } = setup(80);
+    cards.onToolStart(sub('a', 'probe', 1, 'cat one.txt'));
+    cards.onToolFinish(done('a', 1));
+    await flush();
+    cards.onToolStart(sub('b', 'other', 2, 'ls'));
+    cards.onToolStart(sub('a', 'probe', 3, 'cat a-much-longer-file-name.txt'));
+    cards.onToolFinish(done('a', 3));
+    await flush();
+    // The first bubble filled up and the card went on in another: every one of them is subagent a's.
+    const probe = shown.flatMap((t, i) => (t.startsWith('↳ probe') ? [series[i]] : []));
+    expect(probe.length).toBeGreaterThan(1);
+    expect(probe.every((k) => k === 'a')).toBe(true);
+    expect(series[shown.findIndex((t) => t.startsWith('↳ other'))]).toBe('b');
+  });
+
+  it('keeps one key for a subagent paused with its render and resumed in the next, running again and then ✓', async () => {
+    const { cards, shown, series, flush, at, render } = setup();
+    // Render 1: the subagent runs a tool, and the render ends with it still alive (paused).
+    cards.onToolStart(sub('a', 'probe', 1, 'ls'));
+    cards.onToolFinish(done('a', 1));
+    at(4_000);
+    cards.endAll(true);
+    await flush();
+    expect(shown).toEqual(['↳ probe ✓ 4.0s\n💻 Bash: "ls" ✓ 100ms']);
+    // Render 2: it is resumed, under the same call — a new card, but the same subagent.
+    const next = render();
+    at(10_000);
+    next.onToolStart(sub('a', 'probe', 2, 'pwd'));
+    await flush();
+    expect(shown[1]).toBe('↳ probe\n💻 Bash: "pwd"');
+    at(12_500);
+    next.onToolFinish(done('a', 2));
+    next.onSubagentEnd('a', true);
+    await flush();
+    expect(shown[1]).toBe('↳ probe ✓ 2.5s\n💻 Bash: "pwd" ✓ 100ms');
+    expect(series).toEqual(['a', 'a']);
   });
 });

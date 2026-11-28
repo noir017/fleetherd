@@ -2,7 +2,8 @@ import { addDisposableListener } from '../../../base/dom.js';
 import { type Disposable, NOOP_DISPOSABLE } from '../../../base/lifecycle.js';
 import { t as tr } from '../../../i18n/index.js';
 import { text } from '../../../services/api.js';
-import { foldLines, parseSubagent, subagentHead, type ParsedSubagent } from './markup.js';
+import { foldLines, subagentHead } from './markup.js';
+import { SubagentIndex, type SubagentRow } from './subagent-series.js';
 import type { ToolOpenState, TranscriptIcons, TranscriptMessage } from './types.js';
 
 export interface SubagentTrayDeps {
@@ -14,6 +15,8 @@ export interface SubagentTrayDeps {
 export interface SubagentTrayController extends Disposable {
   /** The topic's subagent messages changed: repaint once the current task is done. */
   refresh(): void;
+  /** The subagent a message is part of (subagent-series.ts): its first message's key and its state. */
+  rowOf(key: string): SubagentRow | undefined;
   /** Open the bar on one subagent, its tools shown (the transcript's one-line message, tapped). */
   reveal(key: string): void;
   /** Another topic: folded, nothing open. */
@@ -21,18 +24,12 @@ export interface SubagentTrayController extends Disposable {
   attach(): Disposable;
 }
 
-interface Entry {
-  readonly key: string;
-  readonly at: number;
-  readonly order: number;
-  readonly p: ParsedSubagent;
-}
-
 /**
  * The bar above the status line that lists the harness's own subagents (kind `subagent`): folded to
  * how many are running, open to one row each, and each row open to its tools. The transcript keeps
  * a line where each started (markup.ts subagentMarker); the bar reads the same messages, so a
- * message's every edit reaches both.
+ * message's every edit reaches both. A subagent drawn in several messages is one row
+ * (subagent-series.ts), keyed by its first.
  */
 class SubagentTray implements SubagentTrayController {
   private expanded = false;
@@ -44,10 +41,18 @@ class SubagentTray implements SubagentTrayController {
   private list: HTMLElement | null = null;
   private headSig = '';
   private queued = false;
+  private readonly index: SubagentIndex;
 
-  constructor(private readonly deps: SubagentTrayDeps) {}
+  constructor(private readonly deps: SubagentTrayDeps) {
+    this.index = new SubagentIndex(deps.getData, () => deps.el?.ownerDocument ?? document);
+  }
+
+  rowOf(key: string): SubagentRow | undefined {
+    return this.index.rowOf(key);
+  }
 
   refresh(): void {
+    this.index.invalidate();
     if (this.queued) return;
     this.queued = true;
     queueMicrotask(() => {
@@ -66,6 +71,7 @@ class SubagentTray implements SubagentTrayController {
   }
 
   reset(): void {
+    this.index.invalidate();
     this.expanded = false;
     this.open.clear();
     for (const k of Object.keys(this.lines)) delete this.lines[k];
@@ -113,17 +119,9 @@ class SubagentTray implements SubagentTrayController {
     this.paint();
   }
 
-  /** Newest first: the ones still running are the latest the agent started. */
-  private entries(): Entry[] {
-    const out: Entry[] = [];
-    let order = 0;
-    for (const [key, m] of Object.entries(this.deps.getData())) {
-      order++;
-      if (!m || m.kind !== 'subagent') continue;
-      const p = parseSubagent(m.html);
-      if (p) out.push({ key, at: m.at, order, p });
-    }
-    return out.sort((a, b) => b.at - a.at || b.order - a.order);
+  /** Newest first: the ones still running are the latest the agent started or resumed. */
+  private entries(): SubagentRow[] {
+    return [...this.index.rows()].sort((a, b) => b.at - a.at || b.order - a.order);
   }
 
   private paint(): void {
@@ -153,7 +151,7 @@ class SubagentTray implements SubagentTrayController {
     el.replaceChildren(this.head, this.list);
   }
 
-  private paintHead(all: readonly Entry[]): void {
+  private paintHead(all: readonly SubagentRow[]): void {
     const head = this.head;
     if (!head) return;
     const icons = this.deps.getIcons();
@@ -171,7 +169,7 @@ class SubagentTray implements SubagentTrayController {
     }
   }
 
-  private paintList(all: readonly Entry[]): void {
+  private paintList(all: readonly SubagentRow[]): void {
     const list = this.list;
     if (!list) return;
     const icons = this.deps.getIcons();

@@ -130,9 +130,10 @@ export function subagentHead(p: ParsedSubagent, icons: TranscriptIcons): string 
 /**
  * Where a subagent started, in the transcript: one line that names it and says how it is doing.
  * Its tools are in the subagent bar above the status line (subagent-tray.ts), which a tap opens on it.
+ * `merged` is the subagent as all its messages tell it (subagent-series.ts), when it has several.
  */
-export function subagentMarker(key: string, html: string, icons: TranscriptIcons): string {
-  const p = parseSubagent(html);
+export function subagentMarker(key: string, html: string, icons: TranscriptIcons, merged?: ParsedSubagent): string {
+  const p = merged ?? parseSubagent(html);
   if (!p) return html;
   return (
     `<button type="button" class="sa-mark st-${p.st}" data-sa-jump="${text(key)}" title="${text(tr('subagents.show'))}">` +
@@ -387,6 +388,8 @@ export interface MsgMarkupContext {
   readonly showMessageActions?: boolean;
   readonly hasOutbox: (nonce: string) => boolean;
   readonly isBtwHeld: (key: string, m: TranscriptMessage) => boolean;
+  /** The subagent a message is part of: its first message's key, and its state across all of them. */
+  readonly subagentRow?: (key: string) => { readonly key: string; readonly p: ParsedSubagent } | undefined;
   readonly btwLineMarkup: (
     key: string,
     m: TranscriptMessage,
@@ -415,13 +418,30 @@ function msgBodyHtml(
 ): string {
   if (!hist && m.workdir) return workdirPicker(m, ctx.icons);
   let body = folded ? foldLines(key, m.html, ctx.opened) : m.html;
-  if (m.kind === 'subagent') body = subagentMarker(key, m.html, ctx.icons);
+  if (m.kind === 'subagent') body = subagentMarker(key, m.html, ctx.icons, ctx.subagentRow?.(key)?.p);
   let h = `<div class="b">${body}</div>`;
   if (m.file) h += renderFileAttachment(m, hist);
   if (m.turnChanges) h += turnChangeRow(m, ctx.icons, ctx.canOpenGit, Boolean(ctx.canOpenSideDiff));
   if (!hist && m.buttons && m.buttons.length) h += renderMenu(m, ctx.icons);
   if (m.handoff) h += handoffActionRow(key, m, ctx.icons);
   return h;
+}
+
+/**
+ * A subagent's message after its first — the rest of a card that filled its message, or the card a
+ * later turn resumed it in: its line in the transcript is the first one's, which tells all of them.
+ */
+function continuesSubagent(key: string, m: TranscriptMessage, ctx: MsgMarkupContext): boolean {
+  if (m.kind !== 'subagent' || !ctx.subagentRow) return false;
+  const row = ctx.subagentRow(key);
+  return row !== undefined && row.key !== key;
+}
+
+/** A message whose node stays in #log, empty: an answer read in #btw, a subagent's later message. */
+function heldOut(key: string, m: TranscriptMessage, ctx: MsgMarkupContext): MsgMarkupResult | null {
+  if (ctx.isBtwHeld(key, m)) return { cls: 'm aside-held', h: '' };
+  if (continuesSubagent(key, m, ctx)) return { cls: 'm sa-cont', h: '' };
+  return null;
 }
 
 export function renderMsgMarkup(
@@ -432,7 +452,8 @@ export function renderMsgMarkup(
 ): MsgMarkupResult {
   const asked = btwAsked(key, m);
   if (asked !== null) return ctx.btwLineMarkup(key, m, asked, hist);
-  if (ctx.isBtwHeld(key, m)) return { cls: 'm aside-held', h: '' };
+  const held = heldOut(key, m, ctx);
+  if (held) return held;
 
   const kind = m.kind;
   const folded = kind !== undefined && LINE_KINDS.has(kind);

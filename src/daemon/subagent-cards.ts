@@ -23,13 +23,16 @@ interface Card {
  * - the render ends, for a background one. claude-agent-acp holds a turn open until the background
  *   subagents it spawned are done (Turn.deferredSettle, 0.81), so the turn's end is theirs;
  * - the render is stopped, with ✗.
- * A tool that arrives for a card that has ended opens it again.
+ * A tool that arrives for a card that has ended opens it again. The cards are per render, so a
+ * subagent resumed after its render ended gets a new card in the next one; `make` is handed the
+ * card's key so every message of it — that one, and a bubble the card overflowed into — is sent
+ * under it (SendOptions.series), and the web UI draws them as one subagent.
  */
 export class SubagentCards {
   private readonly cards = new Map<string, Card>();
 
   constructor(
-    private readonly make: () => ToolRenderer,
+    private readonly make: (key: string) => ToolRenderer,
     private readonly now: () => number
   ) {}
 
@@ -38,7 +41,7 @@ export class SubagentCards {
     if (evt.parent === undefined) return;
     let card = this.cards.get(evt.parent);
     if (!card) {
-      card = { renderer: this.make(), name: evt.agent ?? UNNAMED, startedAt: this.now(), ended: false };
+      card = { renderer: this.make(evt.parent), name: evt.agent ?? UNNAMED, startedAt: this.now(), ended: false };
       this.cards.set(evt.parent, card);
     }
     card.ended = false;

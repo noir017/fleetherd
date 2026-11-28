@@ -86,6 +86,8 @@ export interface TranscriptMessage {
   readonly file?: MessageFile;
   readonly nonce?: string;
   readonly kind?: string;
+  /** The subagent this message is part of (protocol.ts WebMessage.series). */
+  readonly series?: string;
   readonly turnChanges?: TurnChangeEntry;
   readonly g?: number;
   _g?: number;

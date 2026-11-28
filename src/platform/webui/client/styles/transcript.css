@@ -125,6 +125,9 @@
    height, because the cache and the reading position are both read off #log's children (cacheable,
    firstVisible) and a node taken out would be lost to both. */
 .m.aside-held{margin:0;animation:none}
+/* A subagent's message after its first (markup.ts continuesSubagent): empty, for the reason above;
+   the first one's line speaks for all of them. */
+.m.sa-cont{margin:0;animation:none}
 .btw-chip{display:flex;align-items:center;gap:8px;width:100%;min-height:34px;padding:5px 10px;border:1px dashed var(--aside-border);border-radius:6px;background:var(--aside);color:var(--fg);font:inherit;font-size:var(--fh-fs-ui);text-align:left;cursor:pointer}
 .btw-chip:hover,.btw-chip[aria-expanded="true"]{border-style:solid;background:var(--aside-hover)}
 .btw-chip:focus-visible{outline:2px solid var(--aside-edge);outline-offset:1px}

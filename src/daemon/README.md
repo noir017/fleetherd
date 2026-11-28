@@ -1224,7 +1224,9 @@ starts a cycle of its own, whose text otherwise ran on from the last cycle's mid
 that sends no id is unaffected; claude-agent-acp, opencode and codex-acp all send one per message.
 A tool for a card that has ended reopens it. The cards are per render: a subagent whose tools
 outlive the render that started it — one resumed after the turn ended — gets a new card under the
-same name in the follow-up's render.
+same name in the follow-up's render. That card, like a bubble a card overflowed into, is sent under
+the card's key, the spawning call's id (`SendOptions.series`), and the web UI draws a series as one
+subagent (platform/webui README, Sub-agent bubbles).
 
 **Native subagent sessions** (`acp-native-subagents.ts`, since 3.48.0). claude's profile declares
 AIR `nativeSubagentSessions`, the one way claude-agent-acp reports each subagent's end
@@ -1240,6 +1242,15 @@ that has neither — it logs and drops them — and routes by session id, so a s
 otherwise go nowhere; and in-band so an end never overtakes the subagent's last tool in the queue.
 Shapes recorded by `project-scripts/fleetherd-subagent-end/probe.mjs` (2026-11-28), replayed in
 `acp-native-subagents.test.ts`. The draft schema is ACP PR #1992.
+
+A subagent resumed after it ended (the main agent's SendMessage to its agent id) is a new
+generation of the same task, `subagent_spawned` with `<task>:generation:N`; the resumed run's own
+updates keep the first run's call as `parentToolUseId`, so they would land on the first card's key.
+claude-agent-acp 0.81.0 drops them, though: it looks them up under the first run, finds it ended,
+and logs "ignoring late update for terminal subagent", then announces and ends the new generation
+together at the end. The relay drops that end like any subagent's that ran no tool, so a resumed run
+leaves the first card as it was. Recorded by `project-scripts/fleetherd-subagent-resume/probe.mjs`
+(2026-11-28), replayed in the same test.
 
 The `claude` adapter is **bundled** as a dependency and resolved via
 `resolveClaudeAdapterEntry`, so it needs no separate install. Every other harness —

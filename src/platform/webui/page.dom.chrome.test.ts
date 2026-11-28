@@ -881,6 +881,50 @@ describe('webui page: built-in subagents', () => {
     expect(face(head(h))).toBe('[subagent]2 built-in subagents · all ended[chevronDown]');
   });
 
+  /** One subagent's messages (SendOptions.series): the bar and the transcript draw them as one. */
+  const part = (id: string, text: string, at: number): Record<string, unknown> => ({ ...card(id, text, at), series: 'toolu_A' });
+
+  it('draws a subagent whose card went on in another message as one: one line, one row, every tool once', async () => {
+    const h = await open();
+    // The card filled its message with "b" still running; the next message carries "b" on.
+    const first = part('m1', '↳ ETF\n💻 Bash: "a" ✓ 1.0s\n💻 Bash: "b"', 1000);
+    const rest = part('m2', '↳ ETF\n💻 Bash: "b" ✓ 2.0s\n💻 Bash: "c"', 2000);
+    await h.emit(sync(T, [first, rest, card('m3', FRONT, 3000)], [T]));
+    expect(face(head(h))).toBe('2 built-in subagents running[chevronDown]');
+    expect(Array.from(h.doc.querySelectorAll('#log .sa-mark')).map(face)).toEqual([
+      '[subagent]ETF3 toolsRunning[chevronRight]',
+      '[subagent]front end1 toolRunning[chevronRight]',
+    ]);
+    expect(h.doc.querySelector('#log [data-k="1:m2"]')?.className).toBe('m sa-cont');
+    expect(h.doc.querySelector('#log [data-k="1:m2"]')?.innerHTML).toBe('');
+
+    await h.click('#subagents .sat-h');
+    expect(rows(h)).toEqual(['[subagent]front end1 toolRunning[chevronDown]', '[subagent]ETF3 toolsRunning[chevronDown]']);
+    await h.click('#subagents [data-sat="1:m1"]');
+    expect(tools(h)).toEqual(['[terminal] Bash: "a" [check] 1.0s', '[terminal] Bash: "b" [check] 2.0s', '[terminal] Bash: "c"']);
+  });
+
+  it('puts a subagent resumed in a later turn back to running on its first line, and to done when it ends', async () => {
+    const h = await open();
+    await h.emit(sync(T, [part('m1', '↳ probe ✓ 4.0s\n💻 Bash: "ls" ✓ 1.0s', 1000)], [T]));
+    expect(face(head(h))).toBe('[subagent]1 built-in subagent · ended[chevronDown]');
+
+    // Resumed: the daemon's next turn opens a card for it under the same series.
+    await h.emit({ t: 'msg', msg: part('m5', '↳ probe\n💻 Bash: "pwd"', 5000) });
+    await tick();
+    expect(face(head(h))).toBe('1 built-in subagent running[chevronDown]');
+    expect(Array.from(h.doc.querySelectorAll('#log .sa-mark')).map(face)).toEqual(['[subagent]probe2 toolsRunning[chevronRight]']);
+    expect(h.doc.querySelector('#log .sa-mark')?.getAttribute('data-sa-jump')).toBe('1:m1');
+
+    await h.emit({ t: 'msg', msg: part('m5', '↳ probe ✓ 2.5s\n💻 Bash: "pwd" ✓ 1.0s', 5000) });
+    await tick();
+    expect(face(head(h))).toBe('[subagent]1 built-in subagent · ended[chevronDown]');
+    expect(face(h.doc.querySelector('#log .sa-mark'))).toBe('[subagent]probe2 tools · 2.5s[check]Done[chevronRight]');
+    await h.click('#log [data-sa-jump="1:m1"]');
+    expect(rows(h)).toEqual(['[subagent]probe2 tools · 2.5s[check]Done[chevronDown]']);
+    expect(tools(h)).toEqual(['[terminal] Bash: "ls" [check] 1.0s', '[terminal] Bash: "pwd" [check] 1.0s']);
+  });
+
   it('opens the bar on a subagent when its line in the transcript is tapped', async () => {
     const h = await open();
     await h.emit(sync(T, [card('m1', BACK, 1000), card('m2', FRONT, 2000)], [T]));

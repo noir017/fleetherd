@@ -18,6 +18,15 @@ All notable changes to this project are documented here. The format is based on
   keystroke, and still after sending, the box was 2px short of its own text and a grey bar sat
   at its right edge. The height now includes the border. A long message still scrolls once the
   box reaches its maximum height, and the desktop box is unchanged.
+- **The web UI's subagent bar counts each subagent once.** A subagent that ran many tools listed
+  itself two or three times under the same name, and the bar counted every copy. A card that
+  outgrows one message goes on in a new message, and a subagent resumed after its turn ended gets a
+  card in the next turn, so one subagent could be several messages, and the page took each for a
+  subagent of its own. Every message of a subagent now carries the call that started it, and the
+  page draws them as one line in the transcript and one row in the bar. The row lists all its
+  tools, each once. Its state is the newest message's, so a resumed subagent reads **Running**
+  again, then **Done**. Messages kept from before this release have no such key and still show as
+  they did.
 
 ## [3.50.0] - 2026-11-28
 

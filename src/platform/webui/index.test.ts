@@ -219,8 +219,9 @@ describe('webui adapter: outbound', () => {
     // Buttons and a line-based kind together: still rows, so the page never shows a "Show all"
     // over a body that has no `.tl` to open.
     await a.sendButtons(address, '🔔 a (cc) — done.', [{ id: 'ask:r:1', label: 'OK' }], undefined, { kind: 'report' });
-    // A subagent's card: rows under the header the page builds its card from.
-    await a.sendMessage(address, '↳ back end ✓ 2.0s\n💻 Bash: "ls" ✓ 5ms', { kind: 'subagent' });
+    // A subagent's card: rows under the header the page builds its card from, and the series that
+    // ties it to the subagent's other messages.
+    await a.sendMessage(address, '↳ back end ✓ 2.0s\n💻 Bash: "ls" ✓ 5ms', { kind: 'subagent', series: 'toolu_A' });
     await a.stop();
 
     const at = path.join(dir, 'webui-transcripts-webui', `${address.thread ?? ''}.json`);
@@ -234,6 +235,8 @@ describe('webui adapter: outbound', () => {
     // And the transcript store carries the kinds across a restart, which is what a reload paints.
     const restored = diskTranscriptStore(path.dirname(at)).load().get(address.thread ?? '') ?? [];
     expect(restored.map((k) => k.msg.kind)).toEqual(['dispatch', 'report', 'dispatch', 'report', 'subagent']);
+    expect(written.map((k) => k.msg.series)).toEqual([undefined, undefined, undefined, undefined, 'toolu_A']);
+    expect(restored.map((k) => k.msg.series)).toEqual([undefined, undefined, undefined, undefined, 'toolu_A']);
   });
 
   it('quotes the message a reply answers', async () => {
