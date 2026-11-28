@@ -1,5 +1,7 @@
+import { icon } from '../../../../icons.js';
 import { t as tr } from '../../../i18n/index.js';
 import { text } from '../../../services/api.js';
+import { EFFORT_OPT_ID } from './model-pop.js';
 import type { AgentStatus, QuotaPool, StatusOption, StatusPermissions } from './types.js';
 
 export interface StatusRenderOptions {
@@ -12,6 +14,7 @@ export interface StatusRenderOptions {
 export interface BareStatusRenderOptions {
   readonly agent: string;
   readonly model: string;
+  readonly effort?: string | null;
   readonly options: readonly StatusOption[];
   readonly permissions?: StatusPermissions | null;
   readonly openModel: boolean;
@@ -73,6 +76,14 @@ export function seg(cls: string, title: string, html: string): string {
   );
 }
 
+/**
+ * The agent's name. `--n` is its length, so a phone can shrink a long name to a floor without
+ * stretching a short one up to it (composer.css: `min(56px, n ch + padding)`).
+ */
+export function agentChip(agent: string): string {
+  return `<span class="st-agent" style="--n:${[...agent].length}">${text(agent)}</span>`;
+}
+
 export function modelChip(label: string, expanded: boolean): string {
   return (
     `<button type="button" class="st-model" aria-haspopup="dialog" aria-expanded="${expanded ? 'true' : 'false'}"` +
@@ -99,13 +110,29 @@ export function optChip(o: StatusOption, openOptId: string | null): string {
   );
 }
 
+/**
+ * The reasoning-effort switch, right after the model's: nothing when the current model has no
+ * levels. A gauge stands for the word "Effort", as the shield does for "Permissions" below.
+ */
+export function effortChip(level: string | null | undefined, open: boolean): string {
+  if (!level) return '';
+  return (
+    `<span class="st-sep"> \u00b7 </span>` +
+    `<button type="button" class="st-model st-opt st-eff" data-effort="1" aria-haspopup="dialog" aria-expanded="${open ? 'true' : 'false'}"` +
+    ` title="${text(tr('status.effortTitle'))}" aria-label="${text(tr('status.effortAria', { level }))}">` +
+    `${icon('gauge', 'st-picon')}<span class="st-mtext">${text(level)}</span></button>`
+  );
+}
+
 export function permChip(p: StatusPermissions | null | undefined, open: boolean): string {
   if (!p || !p.level) return '';
-  const label = tr('status.permLabel');
+  // A shield stands for the word "Permissions", which took a whole chip's width on a phone; the
+  // aria-label says it again for a screen reader.
   return (
     `<span class="st-sep"> \u00b7 </span>` +
     `<button type="button" class="st-model st-opt st-perm" data-perm="1" aria-haspopup="dialog" aria-expanded="${open ? 'true' : 'false'}"` +
-    ` title="${text(tr('status.permTitle'))}"><span class="st-olabel">${text(label)}</span> <span class="st-mtext">${text(p.level)}</span></button>`
+    ` title="${text(tr('status.permTitle'))}" aria-label="${text(tr('status.permAria', { level: p.level }))}">` +
+    `${icon('shield', 'st-picon')}<span class="st-mtext">${text(p.level)}</span></button>`
   );
 }
 
@@ -140,7 +167,7 @@ function renderCostSegment(cost: { readonly amount: number; readonly currency: s
       ? `$${cost.amount.toFixed(2)}`
       : text(`${cost.amount.toFixed(2)} ${cost.currency}`);
   return seg(
-    '',
+    'st-cost',
     tr('status.costTip', { amount: cost.amount.toFixed(4), currency: cost.currency }),
     label,
   );
@@ -195,8 +222,8 @@ export function statusSegments(
 ): string {
   const out: string[] = [];
   const whoHtml =
-    `<span class="st-agent">${text(s.agent)}</span><span class="st-sep"> \u00b7 </span>${modelChip(s.model || tr('status.model'), opts.openModel)}` +
-    `${s.effort ? `<span class="st-sep"> \u00b7 </span><span class="st-effort">${text(s.effort)}</span>` : ''}` +
+    `${agentChip(s.agent)}<span class="st-sep"> \u00b7 </span>${modelChip(s.model || tr('status.model'), opts.openModel)}` +
+    effortChip(s.effort, opts.openOptId === EFFORT_OPT_ID) +
     permChip(s.permissions ?? opts.fallbackPermissions, opts.openOptId === '__permissions__') +
     optChips(s.options ?? opts.fallbackOptions, opts.openOptId);
   out.push(seg('st-who', '', whoHtml));
@@ -221,8 +248,9 @@ export function statusSegments(
 
 export function renderBareStatus(opts: BareStatusRenderOptions): string {
   const bareWho =
-    `${opts.agent ? `<span class="st-agent">${text(opts.agent)}</span><span class="st-sep"> \u00b7 </span>` : ''}` +
+    `${opts.agent ? `${agentChip(opts.agent)}<span class="st-sep"> \u00b7 </span>` : ''}` +
     modelChip(opts.model || tr('status.model'), opts.openModel) +
+    effortChip(opts.effort, opts.openOptId === EFFORT_OPT_ID) +
     permChip(opts.permissions, opts.openOptId === '__permissions__') +
     optChips(opts.options, opts.openOptId);
   return seg('st-who', '', bareWho);

@@ -168,7 +168,7 @@ export function effortSelectorOf(options: SessionConfigOption[] | null | undefin
     .flatMap((entry) => ('group' in entry ? entry.options : [entry]))
     .map((o) => ({ value: o.value, name: o.name || o.value }));
   if (levels.length === 0) return undefined;
-  return { current: opt.currentValue || undefined, options: levels };
+  return { id: opt.id, current: opt.currentValue || undefined, options: levels };
 }
 
 /**
@@ -592,7 +592,8 @@ export class AcpOptionState {
   reportSessionFacts(handlers: AgentStreamHandlers): void {
     if (this.liveModel) handlers.onModel?.(this.liveModel);
     const effort = liveEffortName(this.liveConfigOptions);
-    if (effort) handlers.onEffort?.(effort);
+    // Reported at `default` too (as undefined) while the model has levels: the status strip's switch shows it.
+    if (effort || effortOption(this.liveConfigOptions)) handlers.onEffort?.(effort);
     if (this.liveConfigOptions) handlers.onOptions?.(customOptionsOf(this.liveConfigOptions));
   }
 

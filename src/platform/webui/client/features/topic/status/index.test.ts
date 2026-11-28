@@ -32,6 +32,7 @@ function makeEl(): {
     },
     addEventListener: () => {},
     removeEventListener: () => {},
+    querySelector: () => null,
     querySelectorAll: () => [],
     focus: () => {},
   };

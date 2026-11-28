@@ -5,6 +5,37 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **The Web UI's status line switches the reasoning effort, the way it switches the model.** The
+  level sat beside the model as plain text, and only once the harness had reported one — so `default`
+  never showed, and a new topic had no way to pick a level before its first message short of typing
+  `/effort`. It is now a button right after the model's, drawn like the permission chip, opening the
+  current model's levels in the same popover (a bottom sheet on a phone) with the one in use ticked.
+  A tap goes through `/effort`'s own path: the same checks and sentences, and the choice is kept with
+  the topic. The levels belong to the model, so a model switch redraws the button or takes it away,
+  and a model without levels has none. Before the first message it shows what the gateway already
+  knows without starting the topic's agent — the topic's own choice, a level pinned in the agent's
+  `options`, or what a fresh session of that agent starts at, read once per agent alongside its
+  settings. Nothing is per-harness: any agent that reports a `thought_level` option over ACP gets it.
+
+### Changed
+
+- **The Web UI's status chips above the composer take one line on a phone.** On a 390 px screen
+  the agent, model, effort and permission chips and the working directory wrapped onto two rows,
+  three or four with a long agent name or an account setting, and the context / cost / cache /
+  quota readings wrapped under them: up to a fifth of the screen before the transcript got any.
+  The chips now stay on one line of shorter pills (24 px drawn, the tap target 32 px tall, taller
+  than the 28 px it replaces): when they do not fit, the working directory and then the agent's
+  name are cut short first, and only then does the line scroll sideways, with no scrollbar. The
+  readings are one line too and scroll the same way; the running cost moves to the end of it,
+  since it is the one reading nobody acts on mid-conversation, so a narrow screen loses that
+  rather than the cache countdown or a quota pool. Everywhere, desktop included, the directory
+  chip shows just the last folder — the whole path cut from the left read as `…orkspace/fleetherd`
+  — with the full path in its tooltip and for screen readers, and the permission and effort chips
+  show a shield and a gauge instead of the words "Permissions" and "Effort", which stay in their
+  tooltips and for screen readers. The desktop row keeps its layout.
+
 ## [3.45.0] - 2026-11-28
 
 ### Changed

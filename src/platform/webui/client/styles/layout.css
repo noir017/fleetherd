@@ -40,6 +40,8 @@
 /* Every icon (icons.ts) is 1em square, so it takes the size of the glyph it replaced, and sits
    on the text's baseline the way that glyph did. */
 .ic{width:1em;height:1em;vertical-align:-.14em;flex:none}
+/* Text for a screen reader only: what a chip shortened on screen (the working directory's path). */
+.wb-sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 /* A chevron is a thin mark centred in its box, so on the shared baseline it read as riding high
    beside lowercase words ("‹ Prev", "› 2"); a little lower, it sits on the line's middle. */
 .ic-chevronLeft,.ic-chevronRight,.ic-chevronDown{vertical-align:-.2em}

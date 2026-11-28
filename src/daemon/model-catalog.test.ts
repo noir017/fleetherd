@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { parseConfig, type AgentDef } from '../config/schema.js';
 import type { AgentFactory, AgentSession } from './agent.js';
-import type { ModelSelector, SessionModeSelector, SessionOption } from '../types.js';
+import type { EffortSelector, ModelSelector, SessionModeSelector, SessionOption } from '../types.js';
 import { FAILED_PROBE_COOLDOWN_MS, ModelCatalog } from './model-catalog.js';
 
 /**
@@ -20,6 +20,7 @@ function setup(
     modes?: SessionModeSelector;
     options?: SessionOption[];
     canFork?: boolean;
+    effort?: EffortSelector;
     ensure?: () => Promise<void>;
     now?: () => number;
   } = {}
@@ -36,6 +37,7 @@ function setup(
   let liveModes: SessionModeSelector | undefined;
   let liveOptions: SessionOption[] | undefined;
   let liveCanFork: boolean | undefined;
+  let liveEffort: EffortSelector | undefined;
   let warmed = false;
   const agents: AgentFactory = {
     getOrCreate(id, agentId) {
@@ -49,6 +51,7 @@ function setup(
         permissionModes: () => (warmed || !opts.ensure ? opts.modes : undefined),
         sessionOptions: () => (warmed || !opts.ensure ? opts.options : undefined),
         canFork: () => (warmed || !opts.ensure ? opts.canFork : undefined),
+        effortSelector: () => (warmed || !opts.ensure ? opts.effort : undefined),
         ...(opts.ensure
           ? {
               ensureSession: async () => {
@@ -71,6 +74,7 @@ function setup(
     liveModes: () => liveModes,
     liveOptions: () => liveOptions,
     liveCanFork: () => liveCanFork,
+    liveEffort: () => liveEffort,
     tokenFor: (sid) => `tok-${sid}`,
     forget: (sid) => forgotten.push(sid),
     now: opts.now,
@@ -85,6 +89,7 @@ function setup(
     setLiveModes: (m?: SessionModeSelector) => (liveModes = m),
     setLiveOptions: (o?: SessionOption[]) => (liveOptions = o),
     setLiveCanFork: (v?: boolean) => (liveCanFork = v),
+    setLiveEffort: (e?: EffortSelector) => (liveEffort = e),
   };
 }
 
@@ -281,5 +286,48 @@ describe('ModelCatalog: the agent’s own settings', () => {
     expect(t.catalog.canFork('oc')).toBe(true);
     t.setLiveCanFork(undefined);
     expect(t.catalog.canFork('oc')).toBe(true);
+  });
+});
+
+describe('ModelCatalog: the reasoning effort', () => {
+  const EFFORT: EffortSelector = {
+    id: 'reasoning_effort',
+    current: 'medium',
+    options: [
+      { value: 'low', name: 'low' },
+      { value: 'medium', name: 'medium' },
+      { value: 'high', name: 'high' },
+    ],
+  };
+
+  it('takes only the option from a live session elsewhere: its level is that conversation’s', () => {
+    const t = setup();
+    expect(t.catalog.effort('oc')).toBeUndefined();
+    t.setLiveEffort({ ...EFFORT, current: 'high' });
+    expect(t.catalog.effort('oc')).toEqual({ id: 'reasoning_effort', options: EFFORT.options });
+    expect(t.created).toEqual([]);
+  });
+
+  it('asks once for what a fresh session starts at, even when a live session already gave the option', async () => {
+    const t = setup({ effort: EFFORT, selector: SELECTOR, ensure: async () => {} });
+    t.setLiveEffort({ ...EFFORT, current: 'high' });
+    expect(await t.catalog.learnEffort('oc')).toEqual(EFFORT);
+    expect(await t.catalog.learnEffort('oc')).toEqual(EFFORT);
+    expect(t.catalog.effort('oc')).toEqual(EFFORT);
+    expect(t.created).toEqual(['models:oc→oc']);
+  });
+
+  it('says null when the configured model offers no levels, and shares the ask the options made', async () => {
+    const t = setup({ selector: SELECTOR, ensure: async () => {} });
+    await t.catalog.learnOptions('oc');
+    expect(await t.catalog.learnEffort('oc')).toBeNull();
+    expect(t.created).toEqual(['models:oc→oc']);
+  });
+
+  it('does not ask again inside the cooldown after a failed ask', async () => {
+    const t = setup({ effort: EFFORT, ensure: async () => Promise.reject(new Error('host offline')), now: () => 5_000 });
+    expect(await t.catalog.learnEffort('oc')).toBeUndefined();
+    expect(await t.catalog.learnEffort('oc')).toBeUndefined();
+    expect(t.created).toEqual(['models:oc→oc']);
   });
 });

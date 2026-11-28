@@ -81,6 +81,8 @@ export interface TopicEditorElements {
   readonly statusRowEl: HTMLElement;
   readonly statusEl: HTMLElement;
   readonly dirEl: HTMLElement;
+  readonly dirNameEl: HTMLElement;
+  readonly dirFullEl: HTMLElement;
   readonly powerBtn: HTMLButtonElement;
   readonly btwBox: HTMLElement;
   readonly btwQ: HTMLElement;

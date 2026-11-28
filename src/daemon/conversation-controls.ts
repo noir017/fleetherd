@@ -40,12 +40,14 @@ import {
   workdirUnreadableText,
   type WorkdirChoiceResult,
 } from '../core/workdir-menu.js';
-import type {
-  ModelPickerList,
-  ModelPickerResult,
-  SessionOptionList,
-  SessionOptionResult,
-  TopicTree,
+import {
+  EFFORT_OPTION_ID,
+  type ModelPickerList,
+  type ModelPickerResult,
+  type SessionOptionList,
+  type SessionOptionPeek,
+  type SessionOptionResult,
+  type TopicTree,
 } from '../platform/workbench.js';
 import type {
   ConversationId,
@@ -435,6 +437,8 @@ export class ConversationControls {
     try {
       const applied = await session.setModel(value);
       state.modelOverride = applied;
+      // The levels belong to the model: the new one may offer others, or none.
+      this.ctx.status.effort(session.conversationId, session.effortSelector?.()?.current);
       // Only a person's paths reach here (applyScheduledModel sets the field directly).
       this.ctx.hooks?.onModelSet?.(session.conversationId);
       // The value as offered, not `applied`: that can be a display name the selector would not take back.
@@ -520,6 +524,7 @@ export class ConversationControls {
     try {
       const effort = await session.setEffort(value);
       this.ctx.store?.setConversationChoice?.(session.conversationId, agentId, 'effort', value);
+      this.ctx.status.effort(session.conversationId, effort);
       return { kind: 'applied', effort };
     } catch (e) {
       return { kind: 'failed', reason: e instanceof Error ? e.message : String(e) };
@@ -563,6 +568,7 @@ export class ConversationControls {
     if (liveModel) this.ctx.status.model(id, liveModel);
     const liveOpts = warm.session.sessionOptions?.();
     if (liveOpts?.length) this.ctx.status.options(id, liveOpts);
+    this.ctx.status.effort(id, warm.session.effortSelector?.()?.current);
     const configured = findAgent(this.ctx.config, state.agentId)?.model;
     return {
       ok: true,
@@ -591,9 +597,7 @@ export class ConversationControls {
    * session yet may make the catalog start a throwaway session once per run: before the first
    * message is when such a setting can still change.
    */
-  async optionStatusForRef(
-    ref: ConversationRef
-  ): Promise<{ agent: string; model?: string; options: StatusOption[]; permissions?: StatusPermissions }> {
+  async optionStatusForRef(ref: ConversationRef): Promise<SessionOptionPeek> {
     const id = this.ctx.idForRef(ref);
     const agent = this.agentForRef(id, ref);
     const live = this.ctx.agents.peek(id);
@@ -601,17 +605,42 @@ export class ConversationControls {
     const permissions = this.permissionsForAgent(agent);
     if (own) {
       const model = this.peekModelFor(id, agent, live, false);
-      return { agent, ...(model ? { model } : {}), options: statusOptions(own), ...(permissions ? { permissions } : {}) };
+      const effort = live?.effortSelector?.()?.current;
+      return {
+        agent,
+        ...(model ? { model } : {}),
+        ...(effort ? { effort } : {}),
+        options: statusOptions(own),
+        ...(permissions ? { permissions } : {}),
+      };
     }
     const fresh = this.ctx.store?.agentSession(id, agent) === undefined;
     const kinds = fresh ? await this.ctx.modelCatalog.learnOptions(agent) : (this.ctx.modelCatalog.options(agent) ?? []);
     const model = this.peekModelFor(id, agent, live, fresh);
+    const effort = await this.peekEffortFor(id, agent, fresh);
     return {
       agent,
       ...(model ? { model } : {}),
+      ...(effort ? { effort } : {}),
       options: kinds.map((k) => peekOptionStatus(k, fresh)),
       ...(permissions ? { permissions } : {}),
     };
+  }
+
+  /**
+   * The level a conversation with no live session would be on, as far as known without starting it:
+   * its own `/effort`, a pin in `agents[].options`, or — new, on the configured model — a fresh
+   * session's. Undefined when none of those is known: a guessed level would be read as the real one.
+   */
+  private async peekEffortFor(id: ConversationId, agent: string, fresh: boolean): Promise<string | undefined> {
+    const chosen = this.ctx.store?.conversationChoice?.(id, agent, 'effort');
+    if (chosen) return chosen;
+    const ownModel = this.ctx.conversations.get(id)?.modelOverride ?? this.ctx.store?.conversationChoice?.(id, agent, 'model');
+    const known = fresh && !ownModel ? await this.ctx.modelCatalog.learnEffort(agent) : this.ctx.modelCatalog.effort(agent);
+    if (!known) return undefined;
+    const pinned = known.id !== undefined ? findAgent(this.ctx.config, agent)?.options[known.id] : undefined;
+    if (pinned !== undefined) return String(pinned);
+    return fresh && !ownModel ? known.current : undefined;
   }
 
   permissionsForAgent(agentId: string): StatusPermissions | undefined {
@@ -648,13 +677,16 @@ export class ConversationControls {
     if (warm.error) {
       return { ok: false, agent, reason: 'error', text: tMenus(locale, 'opt_start_failed', { agent, error: warm.error }), ...(permissions ? { permissions } : {}) };
     }
+    const effort = warm.session.effortSelector?.();
+    this.ctx.status.effort(id, effort?.current);
+    const extra = { ...(permissions ? { permissions } : {}), ...(effort ? { effort } : {}) };
     if (!warm.selector) {
-      return { ok: false, agent, reason: 'none', text: tMenus(locale, 'opt_none_to_change', { agent }), ...(permissions ? { permissions } : {}) };
+      return { ok: false, agent, reason: 'none', text: tMenus(locale, 'opt_none_to_change', { agent }), ...extra };
     }
     const liveModel = selectorModelLabel(warm.session.modelSelector?.());
     if (liveModel) this.ctx.status.model(id, liveModel);
     this.ctx.status.options(id, warm.selector);
-    return { ok: true, agent, options: warm.selector, ...(permissions ? { permissions } : {}) };
+    return { ok: true, agent, options: warm.selector, ...extra };
   }
 
   /** Set one of the agent's own settings; the agent may still refuse a listed value, in its own words. */
@@ -662,6 +694,7 @@ export class ConversationControls {
     const locale = localeOf(this.ctx.config);
     const id = this.ctx.idForRef(ref);
     const state = this.ctx.conversations.get(id);
+    if (optionId === EFFORT_OPTION_ID) return this.chooseEffortFor(id, state, value);
     if (!state) return { ok: false, text: tMenus(locale, 'opt_conv_gone') };
     const warm = await this.warmSelector(id, state.agentId, (s) => nonEmpty(s.sessionOptions?.()));
     if (warm.error) return { ok: false, text: tMenus(locale, 'opt_start_failed', { agent: state.agentId, error: warm.error }) };
@@ -683,6 +716,19 @@ export class ConversationControls {
     } catch (e) {
       return { ok: false, text: e instanceof Error ? e.message : String(e) };
     }
+  }
+
+  /** The status line's effort switch: `/effort`'s checks, memory and sentences, as a menu click has them. */
+  private async chooseEffortFor(id: ConversationId, state: ConversationState | undefined, value: string): Promise<SessionOptionResult> {
+    // As for a setting: the list survives a reclaimed child, and a change made without it would be
+    // deferred while the strip and the list went on reading the level from before. A failed start
+    // leaves it deferred, as `/effort` would.
+    await this.ctx.agents.peek(id)?.ensureSession?.(this.ctx.tokens.tokenFor(id)).catch(() => undefined);
+    const result = state ? await this.applyEffortChoice(id, state.agentId, value) : ({ kind: 'gone' } as const);
+    const text = effortChoiceText(result, localeOf(this.ctx.config));
+    if (result.kind !== 'applied') return { ok: false, text };
+    console.log(`[effort] ${id}: switched to ${result.effort} from the effort switch`);
+    return { ok: true, options: this.ctx.agents.peek(id)?.sessionOptions?.() ?? [], text, effort: result.effort };
   }
 
   private agentForRef(id: ConversationId, ref: ConversationRef): string {

@@ -86,6 +86,10 @@ const PATHS = {
     '<circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5M4 10.5h13"/>' +
     '<path d="M10.5 4c1.7 1.8 2.5 4 2.5 6.5S12.2 15.2 10.5 17c-1.7-1.8-2.5-4-2.5-6.5S8.8 5.8 10.5 4z"/>',
   folder: '<path d="M3 6.5A1.5 1.5 0 0 1 4.5 5H9l2 2.5h8.5A1.5 1.5 0 0 1 21 9v9.5a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5z"/>',
+  // The status line's permission switch, in place of the word "Permissions".
+  shield: '<path d="M12 3 4.5 6v5.5c0 4.6 3.1 8.2 7.5 9.5 4.4-1.3 7.5-4.9 7.5-9.5V6z"/>',
+  // The status line's reasoning-effort switch, in place of the word "Effort": a dial and its needle.
+  gauge: '<path d="M4.6 17.3a8.5 8.5 0 1 1 14.8 0"/><path d="m12 13 3.5-4"/><circle cx="12" cy="13" r="1.3" fill="currentColor" stroke="none"/>',
   globe:
     '<circle cx="12" cy="12" r="9"/><path d="M3 12h18"/>' +
     '<path d="M12 3c2.4 2.5 3.6 5.5 3.6 9s-1.2 6.5-3.6 9c-2.4-2.5-3.6-5.5-3.6-9S9.6 5.5 12 3z"/>',

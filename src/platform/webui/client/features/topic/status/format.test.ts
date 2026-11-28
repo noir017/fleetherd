@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { setLocale } from '../../../i18n/index.js';
 import {
+  effortChip,
   hasCountdown,
   modelChip,
   optChip,
@@ -14,6 +15,7 @@ import {
   stWindow,
   statusSegments,
 } from './format.js';
+import { EFFORT_OPT_ID } from './model-pop.js';
 import type { AgentStatus, QuotaPool } from './types.js';
 
 describe('features/topic/status/format', () => {
@@ -164,6 +166,14 @@ describe('features/topic/status/format', () => {
     );
     expect(full).toContain('data-perm="1"');
     expect(full).toContain('auto');
+    // A shield in place of the word, which a screen reader still hears; the title still explains.
+    const perm = full.slice(full.indexOf('<button type="button" class="st-model st-opt st-perm"'));
+    expect(perm).toContain('<svg class="ic ic-shield st-picon"');
+    expect(perm).toContain('aria-label="Permissions: auto"');
+    expect(perm).toContain('title="Switch permission level for this agent"');
+    expect(perm).toContain('<span class="st-mtext">auto</span></button>');
+    expect(perm).not.toContain('st-olabel');
+    expect(perm.replace(/<[^>]*>/g, '')).toBe('auto');
 
     const bare = renderBareStatus({
       agent: 'cc',
@@ -202,6 +212,8 @@ describe('features/topic/status/format', () => {
     expect(whoPart).toContain('high');
     expect(infoPart).toContain('25%');
     expect(infoPart).toContain('$0.25');
+    // Marked, so a phone can move the running cost to the end of its one line (composer.css).
+    expect(infoPart).toContain('<span class="st st-cost" title="');
     expect(infoPart).toContain('cache 10m');
     expect(infoPart).toContain('3P 5h 80%');
 
@@ -213,5 +225,53 @@ describe('features/topic/status/format', () => {
     );
     expect(settingsOnly).toContain('st-who');
     expect(settingsOnly).not.toContain('st-info');
+  });
+  it('draws the effort switch as a chip like the permission one, and nothing without a level', () => {
+    const chip = effortChip('high', false);
+    expect(chip).toContain('<button type="button" class="st-model st-opt st-eff" data-effort="1" aria-haspopup="dialog" aria-expanded="false"');
+    // A gauge in place of the word, which the title and a screen reader still carry.
+    expect(chip).toContain('<svg class="ic ic-gauge st-picon"');
+    expect(chip).toContain('aria-label="Effort: high"');
+    expect(chip).toContain('title="Switch the reasoning effort for this topic (/effort)"');
+    expect(chip).toContain('<span class="st-mtext">high</span></button>');
+    expect(chip).not.toContain('st-olabel');
+    expect(chip.replace(/<[^>]*>/g, '')).toBe(' · high');
+    expect(effortChip('high', true)).toContain('aria-expanded="true"');
+    expect(effortChip(undefined, false)).toBe('');
+    expect(effortChip(null, false)).toBe('');
+  });
+
+  it('puts the effort switch right after the model, before the permission chip, in both strips', () => {
+    const perms = { level: 'auto' as const, offered: ['ask' as const, 'auto' as const] };
+    const full = statusSegments(
+      { agent: 'cc', model: 'opus', effort: 'default', permissions: perms },
+      Date.now(),
+      false,
+      { fallbackOptions: [], openModel: false, openOptId: EFFORT_OPT_ID },
+    );
+    const model = full.indexOf('st-mtext">opus<');
+    const effort = full.indexOf('data-effort="1"');
+    expect(model).toBeGreaterThan(-1);
+    expect(effort).toBeGreaterThan(model);
+    expect(full.indexOf('data-perm="1"')).toBeGreaterThan(effort);
+    expect(full).toContain('<span class="st-mtext">default</span>');
+    expect(full).toMatch(/data-effort="1" aria-haspopup="dialog" aria-expanded="true"/);
+    expect(full).not.toContain('st-effort');
+
+    const bare = renderBareStatus({ agent: 'cc', model: 'opus', effort: 'low', options: [], openModel: false, openOptId: null });
+    expect(bare.indexOf('data-effort="1"')).toBeGreaterThan(bare.indexOf('st-mtext">opus<'));
+    expect(bare).toContain('<span class="st-mtext">low</span>');
+  });
+
+  it('draws no effort switch for a model without levels', () => {
+    const full = statusSegments({ agent: 'cc', model: 'haiku' }, Date.now(), false, {
+      fallbackOptions: [],
+      openModel: false,
+      openOptId: null,
+    });
+    expect(full).not.toContain('data-effort');
+    expect(renderBareStatus({ agent: 'cc', model: 'haiku', options: [], openModel: false, openOptId: null })).not.toContain(
+      'data-effort',
+    );
   });
 });

@@ -28,6 +28,9 @@
    setting's name dimmed in front so the value reads as a value. One the agent will not change now
    is drawn dim and inert, with no caret — it states the value and the title says why. */
 .st-opt .st-olabel{flex:none;color:var(--dim)}
+/* The permission and effort switches say their names with an icon (a shield, a gauge), dimmed
+   like a setting's name. */
+.st-opt .st-picon{color:var(--dim)}
 .st-opt.fixed{cursor:default;opacity:.6}
 .st-opt.fixed::after{content:none}
 .st-opt.fixed:hover{background:none;color:var(--fg-cool-2)}

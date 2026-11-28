@@ -14,6 +14,8 @@ import type {
 
 export const MODEL_WAIT_MS = 45000;
 export const PERM_OPT_ID = '__permissions__';
+/** The daemon's EFFORT_OPTION_ID (platform/workbench.ts): `api/options` takes the effort switch under it. */
+export const EFFORT_OPT_ID = '__effort__';
 
 export interface ModelPopElements {
   readonly modelPop: HTMLElement | null;
@@ -38,6 +40,8 @@ export interface ModelPopDeps {
   readonly onModelChosen: (topic: string, model: string | undefined) => void;
   readonly onOptionChosen: (topic: string) => void;
   readonly onPermChosen?: (topic: string, level: string) => void;
+  /** The effort level the list or a change reported; null when the current model offers none. */
+  readonly onEffortKnown?: (topic: string, level: string | null) => void;
   readonly setNote: (msg: string) => void;
   readonly fetchFn?: typeof fetch;
   readonly postFn?: (path: string, body: unknown, tries?: number, limit?: number) => Promise<Response>;
@@ -49,6 +53,7 @@ export interface ModelPopController {
   openModel(): void;
   openOption(id: string): void;
   openPermissions(agent: string, perms: StatusPermissions): void;
+  openEffort(): void;
   close(): void;
   render(): void;
   filter(): void;
@@ -94,6 +99,29 @@ export function shouldShowFilter(
   }
   const models = (data as ModelListResponse).options;
   return Array.isArray(models) && models.length > 8;
+}
+
+/**
+ * The options list as the effort switch draws it: the levels as one setting, so the popover renders
+ * them like any other. A list without levels is the model having none, unless the agent did not start.
+ */
+export function effortListData(j: OptionListResponse): OptionListResponse {
+  if (j.effort) {
+    return {
+      ok: true,
+      ...(j.agent ? { agent: j.agent } : {}),
+      options: [
+        {
+          id: EFFORT_OPT_ID,
+          name: tr('status.effortLabel'),
+          ...(j.effort.current !== undefined ? { current: j.effort.current } : {}),
+          options: j.effort.options.map((o) => ({ value: o.value, name: o.name })),
+        },
+      ],
+    };
+  }
+  if (!j.ok && j.reason === 'error') return j;
+  return { ok: false, ...(j.agent ? { agent: j.agent } : {}), text: tr('modelPop.effortNone') };
 }
 
 export function renderModelOptionsHtml(data: ModelListResponse, checkIcon: string): string {
@@ -173,6 +201,10 @@ class ModelPopControllerImpl implements ModelPopController {
     this.openPop(id);
   }
 
+  openEffort(): void {
+    this.openPop(EFFORT_OPT_ID);
+  }
+
   openPermissions(agent: string, perms: StatusPermissions): void {
     const { modelPop, mpFilter } = this.deps.els;
     const t = this.deps.getTopic();
@@ -213,7 +245,8 @@ class ModelPopControllerImpl implements ModelPopController {
       mpFilter.placeholder = opt ? tr('common.filter') : tr('modelPop.filterModels');
     }
     if (mpFoot) {
-      mpFoot.innerHTML = opt ? tr('modelPop.footOpt') : tr('modelPop.footModel');
+      mpFoot.innerHTML =
+        opt === EFFORT_OPT_ID ? tr('modelPop.footEffort') : opt ? tr('modelPop.footOpt') : tr('modelPop.footModel');
     }
   }
 
@@ -306,7 +339,7 @@ class ModelPopControllerImpl implements ModelPopController {
           if (n !== this.mp.seq) return;
           this.mp.loading = false;
           if (!r.ok) this.mp.err = tr('modelPop.httpErr', { status: r.status });
-          else this.mp.data = j;
+          else this.mp.data = opt === EFFORT_OPT_ID ? this.effortLoaded(t, j as OptionListResponse) : j;
           this.render();
           if (r.ok && j && j.ok) this.deps.onListLoaded(t);
         },
@@ -318,6 +351,14 @@ class ModelPopControllerImpl implements ModelPopController {
           this.render();
         },
       );
+  }
+
+  private effortLoaded(t: string, j: OptionListResponse): OptionListResponse {
+    const data = effortListData(j);
+    if (j.effort) {
+      if (j.effort.current) this.deps.onEffortKnown?.(t, j.effort.current);
+    } else if (data !== j) this.deps.onEffortKnown?.(t, null);
+    return data;
   }
 
   private chooseModel(button: HTMLButtonElement): void {
@@ -369,7 +410,8 @@ class ModelPopControllerImpl implements ModelPopController {
             if (!opt) this.deps.onModelChosen(t, (j as ModelChoiceResponse).model);
             this.close();
             this.deps.setNote(String(j.text || '').replace(/`/g, ''));
-            if (opt) this.deps.onOptionChosen(t);
+            if (opt === EFFORT_OPT_ID) this.deps.onEffortKnown?.(t, (j as OptionChoiceResponse).effort || v);
+            else if (opt) this.deps.onOptionChosen(t);
             return;
           }
           this.mp.err = j && j.text ? j.text : tr('modelPop.refused', { status: r.status });
