@@ -152,7 +152,7 @@ Then open `http://<host>:8787`. See [Configuration](docs/configuration.md) for m
 
 ## Contributing
 
-[AGENTS.md](AGENTS.md) holds the conventions, layering rules, testing policy, and security invariants, plus the FRAS codebase map and per-module docs ([config](src/config/README.md) · [core](src/core/README.md) · [platform](src/platform/README.md) · [daemon](src/daemon/README.md) · [ipc](src/ipc/README.md) · [commands](src/commands/README.md)). Start there before changing code.
+[AGENTS.md](AGENTS.md) holds the conventions, layering rules, testing policy, and security invariants, plus the module map and per-module docs ([config](src/config/README.md) · [core](src/core/README.md) · [platform](src/platform/README.md) · [daemon](src/daemon/README.md) · [ipc](src/ipc/README.md) · [commands](src/commands/README.md)). Start there before changing code.
 
 ## License
 

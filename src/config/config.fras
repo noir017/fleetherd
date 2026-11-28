@@ -1,8 +1,0 @@
-# src/config FRAS Map
-src/config/env-expand.ts [Infra]: F:Environment variable expansion and .env sidecar loader | A:expandEnvVars,loadDotEnv | S:See Security invariants item 4
-src/config/instructions.ts [Infra]: F:Harness instruction file path mapping and clash detection | A:instructionClashes | S:Prevents two agents from overwriting common instruction files [T:instructionClashes]
-src/config/load.ts [Core]: F:Configuration file path resolution, reading, loading, and patching | R:src/config/env-expand.ts,src/config/schema.ts | A:configDir,configPath,loadConfig,readConfig,saveConfigPatch | S:See Security invariants item 4
-src/config/migrate.ts [Infra]: F:Legacy v0 to v1 configuration format migration | A:migrateLegacyConfig
-src/config/platform-schemas.ts [Infra]: F:Credential schemas for supported chat platforms | A:ChatGateSchema,PLATFORM_SCHEMAS,PlatformConfigSchema | S:Free of Satori imports so config loading avoids heavy dependency chain
-src/config/pods.ts [Infra]: F:Remote pod agent declarations merging and podModel overrides | R:src/config/schema.ts | A:mergePodAgents,readPods | S:See Security invariants item 5
-src/config/schema.ts [Core]: F:Zod schema validation and frozen EXPERIENCE defaults | R:src/config/platform-schemas.ts | A:ConfigSchema,EXPERIENCE | S:See Security invariants item 1
