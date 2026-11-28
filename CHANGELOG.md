@@ -5,6 +5,14 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **"Cannot reach host" says why again on a busy gateway.** The reason was read from what ssh had
+  printed by the moment it exited, but a process's last output can still be in the pipe then, so
+  under load the message could lose it and say only `exit 255`. The same race could fail an upload
+  of fleetherd-remote that had succeeded, reported as `upload failed (exit 0)`. Both now wait until
+  the process's output is closed.
+
 ## [3.50.0] - 2026-11-28
 
 ### Changed

@@ -1,7 +1,9 @@
-import { spawnSync } from 'node:child_process';
+import { spawnSync, type ChildProcess } from 'node:child_process';
+import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { PassThrough } from 'node:stream';
 import { describe, expect, it } from 'vitest';
 import { HostConnection } from './connection.js';
 import { FrameDecoder, encodeFrame } from './frame.js';
@@ -98,6 +100,85 @@ describe('ssh', () => {
     expect(args).toContain('IdentityFile=/k');
     expect(args).toContain('UserKnownHostsFile=/kh');
     expect(args.slice(-5)).toEqual(['-p', '2200', '--', 'u@h', `sh -c 'echo hi'`]);
+  });
+});
+
+/**
+ * A transport process whose events come in the order the test stages. Node documents that a
+ * child's pipes may still be open at 'exit'; on a loaded machine what it printed last arrives after.
+ */
+class StagedProc extends EventEmitter {
+  readonly stdin = new PassThrough();
+  readonly stdout = new PassThrough();
+  readonly stderr = new PassThrough();
+  kill(): boolean {
+    return true;
+  }
+  async exitThenPrint(code: number, late: { stdout?: string; stderr?: string }): Promise<void> {
+    const turn = (): Promise<void> => new Promise((r) => setImmediate(r));
+    this.emit('exit', code, null);
+    if (late.stdout) this.stdout.write(late.stdout);
+    if (late.stderr) this.stderr.write(late.stderr);
+    await turn();
+    this.stdout.end();
+    this.stderr.end();
+    await turn();
+    this.emit('close', code, null);
+  }
+}
+
+describe('a transport whose output outlasts its exit', () => {
+  it('still gives the reason ssh printed for giving up', async () => {
+    const conn = new HostConnection(
+      {
+        hostId: 'nowhere',
+        ns: 'ns',
+        binary: () => undefined,
+        transport: () => {
+          const proc = new StagedProc();
+          setImmediate(() => void proc.exitThenPrint(255, { stderr: 'ssh: connect to host nowhere port 22: Connection refused\n' }));
+          return proc as unknown as ChildProcess;
+        },
+      },
+      'e'
+    );
+    try {
+      await expect(conn.ready()).rejects.toThrow('cannot reach host "nowhere": exit 255: ssh: connect to host nowhere port 22: Connection refused');
+    } finally {
+      conn.close();
+    }
+  });
+
+  it('still counts an upload whose confirmation came last', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fh-upload-'));
+    const bin = path.join(dir, 'fleetherd-remote');
+    fs.writeFileSync(bin, 'build');
+    const scripts: string[] = [];
+    const conn = new HostConnection(
+      {
+        hostId: 'h',
+        ns: 'ns',
+        binary: () => ({ path: bin, sha256: 'x', version: 'v1' }),
+        transport: (script) => {
+          const n = scripts.push(script);
+          const proc = new StagedProc();
+          setImmediate(() => {
+            if (n === 1) proc.stdout.write('TCR-NEED x86_64\n');
+            else if (n === 2) void proc.exitThenPrint(0, { stdout: 'TCR-UPLOADED\n' });
+            else proc.stdout.write('TCR-ERROR the retry after the upload\n');
+          });
+          return proc as unknown as ChildProcess;
+        },
+      },
+      'e'
+    );
+    try {
+      await expect(conn.ready()).rejects.toThrow('cannot reach host "h": the retry after the upload');
+      expect(scripts[1]).toContain('echo TCR-UPLOADED');
+    } finally {
+      conn.close();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

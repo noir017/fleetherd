@@ -316,7 +316,8 @@ export class HostConnection extends EventEmitter {
         stderr = (stderr + d.toString('utf8')).slice(-2000);
       });
       proc.on('error', (e) => finish({ kind: 'error', message: e.message }));
-      proc.on('exit', (code, signal) =>
+      // 'close', not 'exit': at 'exit' the pipes may still hold ssh's last words — the reason it gave up.
+      proc.on('close', (code, signal) =>
         finish({ kind: 'error', message: `${code !== null ? `exit ${code}` : `killed by ${signal}`}${tail(stderr)}` })
       );
     });
@@ -348,7 +349,8 @@ export class HostConnection extends EventEmitter {
         clearTimeout(timer);
         reject(e);
       });
-      proc.on('exit', (code) => {
+      // 'close' for the same reason as launch's: TCR-UPLOADED may still be in the pipe at 'exit'.
+      proc.on('close', (code) => {
         clearTimeout(timer);
         if (code === 0 && out.includes('TCR-UPLOADED')) resolve();
         else reject(new Error(`upload failed (exit ${code})${tail(stderr)}`));
