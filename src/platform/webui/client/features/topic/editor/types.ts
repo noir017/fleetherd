@@ -80,6 +80,7 @@ export interface TopicEditorElements {
   readonly machineNoteEl: HTMLElement;
   readonly statusRowEl: HTMLElement;
   readonly statusEl: HTMLElement;
+  readonly subagentTrayEl: HTMLElement;
   readonly dirEl: HTMLElement;
   readonly dirNameEl: HTMLElement;
   readonly dirFullEl: HTMLElement;

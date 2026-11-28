@@ -73,7 +73,7 @@ export interface LogEventsDeps {
   readonly discardLocal: (nonce: string) => void;
   readonly toggleAll: (key: string) => void;
   readonly toggleLine: (line: HTMLElement) => void;
-  readonly toggleCard: (key: string) => void;
+  readonly revealSubagent: (key: string) => void;
   readonly openTurnChanges: (turn: number) => void;
   readonly openTurnDiffSideBySide?: (turn: number, btn: HTMLButtonElement) => void;
   readonly onMessageAction?: (action: string, key: string, btn: HTMLButtonElement) => void;
@@ -207,10 +207,10 @@ function handleActionClick(target: Element, deps: LogEventsDeps): void {
     handleLocalAction(act as HTMLElement, deps);
     return;
   }
-  const card = target.closest('[data-sa]');
-  if (card) {
-    const key = card.getAttribute('data-sa');
-    if (key) deps.toggleCard(key);
+  const mark = target.closest('[data-sa-jump]');
+  if (mark) {
+    const key = mark.getAttribute('data-sa-jump');
+    if (key) deps.revealSubagent(key);
     return;
   }
   const all = target.closest('[data-tl-all]');
@@ -233,7 +233,7 @@ function handleActionClick(target: Element, deps: LogEventsDeps): void {
 }
 
 const ACTIONS_TAP_IGNORE_SELECTOR =
-  'a, button, input, textarea, select, label, [contenteditable="true"], [role="button"], .msg-actions, .cb-b, .tl, .sa-h, img.shot, .files, [data-jump-msg]';
+  'a, button, input, textarea, select, label, [contenteditable="true"], [role="button"], .msg-actions, .cb-b, .tl, .sa-mark, img.shot, .files, [data-jump-msg]';
 
 function isTouchClick(ev: MouseEvent, win: Window | null, lastPointerType: string): boolean {
   const pt = (ev as MouseEvent & { readonly pointerType?: string }).pointerType || lastPointerType;

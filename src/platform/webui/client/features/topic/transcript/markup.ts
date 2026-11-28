@@ -88,44 +88,59 @@ export function allToggle(
 /** The header web-markdown.ts renderWebSubagent draws: state, duration, and the escaped name. */
 const SA_HEAD = /^<div class="sa-h" data-st="(run|ok|err)" data-d="([^"]*)">([\s\S]*?)<\/div>/;
 
-/**
- * A subagent's card around what the server drew for it: a header that names the subagent, counts
- * its tools and says whether it is still running, then its tool lines — folded to the newest one
- * until the header is tapped (`ToolOpenState.card`). The name and duration arrive escaped.
- */
-export function subagentCard(
-  key: string,
-  html: string,
-  opened: Readonly<Record<string, ToolOpenState | undefined>>,
-  icons: TranscriptIcons,
-): string {
+/** One subagent as the server drew it: name and duration arrive escaped, `body` is its tool lines. */
+export interface ParsedSubagent {
+  readonly st: 'run' | 'ok' | 'err';
+  readonly dur: string;
+  readonly name: string;
+  readonly body: string;
+  readonly tools: number;
+}
+
+export function parseSubagent(html: string): ParsedSubagent | null {
   const head = SA_HEAD.exec(html);
-  if (!head) return html;
+  if (!head) return null;
   const [, st, dur, name] = head;
   const body = html.slice(head[0].length);
-  const n = (body.match(/<div class="tl[ "]/g) || []).length;
-  const open = Boolean(opened[key]?.card);
-  const count = n === 1 ? tr('msg.subagentToolsOne') : tr('msg.subagentToolsMany', { count: n });
+  return {
+    st: st as ParsedSubagent['st'],
+    dur: dur ?? '',
+    name: name ?? '',
+    body,
+    tools: (body.match(/<div class="tl[ "]/g) || []).length,
+  };
+}
+
+/** A subagent's name, tool count, duration and state, in the reader's language. */
+export function subagentHead(p: ParsedSubagent, icons: TranscriptIcons): string {
+  const count = p.tools === 1 ? tr('msg.subagentToolsOne') : tr('msg.subagentToolsMany', { count: p.tools });
   const state =
-    st === 'ok'
+    p.st === 'ok'
       ? (icons.icon.check ?? '') + text(tr('msg.subagentDone'))
-      : st === 'err'
+      : p.st === 'err'
         ? (icons.icon.cross ?? '') + text(tr('msg.subagentFailed'))
         : '<span class="sa-spin"></span>' + text(tr('msg.subagentRunning'));
-  const earlier = !open && n > 1 ? `<div class="sa-more">${text(tr('msg.subagentEarlier', { count: n - 1 }))}</div>` : '';
   return (
-    `<div class="sa st-${st}${open ? ' open' : ''}">` +
-    `<button type="button" class="sa-h" data-sa="${text(key)}" aria-expanded="${open}">` +
-    `${icons.icon.subagent ?? ''}<span class="sa-n">${name}</span>` +
-    `<span class="sa-m">${text(count)}${dur ? ' · ' + dur : ''}</span>` +
-    `<span class="sa-s">${state}</span>${icons.icon.chevronDown ?? ''}</button>` +
-    earlier +
-    body +
-    '</div>'
+    `${icons.icon.subagent ?? ''}<span class="sa-n">${p.name}</span>` +
+    `<span class="sa-m">${text(count)}${p.dur ? ' · ' + p.dur : ''}</span>` +
+    `<span class="sa-s">${state}</span>`
   );
 }
 
-/** "Show all" under a line-based message — except a subagent card, which folds by its header. */
+/**
+ * Where a subagent started, in the transcript: one line that names it and says how it is doing.
+ * Its tools are in the subagent bar above the status line (subagent-tray.ts), which a tap opens on it.
+ */
+export function subagentMarker(key: string, html: string, icons: TranscriptIcons): string {
+  const p = parseSubagent(html);
+  if (!p) return html;
+  return (
+    `<button type="button" class="sa-mark st-${p.st}" data-sa-jump="${text(key)}" title="${text(tr('subagents.show'))}">` +
+    `${subagentHead(p, icons)}${icons.icon.chevronRight ?? ''}</button>`
+  );
+}
+
+/** "Show all" under a line-based message — except a subagent's, which is one line here. */
 function linesToggle(key: string, kind: string | undefined, opened: Readonly<Record<string, ToolOpenState | undefined>>): string {
   return kind !== undefined && kind !== 'subagent' && LINE_KINDS.has(kind) ? allToggle(key, opened) : '';
 }
@@ -400,7 +415,7 @@ function msgBodyHtml(
 ): string {
   if (!hist && m.workdir) return workdirPicker(m, ctx.icons);
   let body = folded ? foldLines(key, m.html, ctx.opened) : m.html;
-  if (m.kind === 'subagent') body = subagentCard(key, body, ctx.opened, ctx.icons);
+  if (m.kind === 'subagent') body = subagentMarker(key, m.html, ctx.icons);
   let h = `<div class="b">${body}</div>`;
   if (m.file) h += renderFileAttachment(m, hist);
   if (m.turnChanges) h += turnChangeRow(m, ctx.icons, ctx.canOpenGit, Boolean(ctx.canOpenSideDiff));

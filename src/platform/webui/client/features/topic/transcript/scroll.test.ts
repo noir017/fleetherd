@@ -161,4 +161,41 @@ describe('createScrollManager', () => {
       globalThis.ResizeObserver = origRO;
     }
   });
+
+  it('keeps a log that was at its newest line there when the bar below it grows, and leaves one scrolled up alone', () => {
+    type RoCb = (entries: readonly { target: Element; contentRect: { width: number; height: number } }[]) => void;
+    const holder: { cb: RoCb | null } = { cb: null };
+    const origRO = globalThis.ResizeObserver;
+    class FakeResizeObserver {
+      constructor(cb: RoCb) {
+        holder.cb = cb;
+      }
+      observe() {}
+      unobserve() {}
+      disconnect() {
+        holder.cb = null;
+      }
+    }
+    globalThis.ResizeObserver = FakeResizeObserver as unknown as typeof ResizeObserver;
+    try {
+      const log = setupLog(3000, 600, 2400);
+      document.body.appendChild(log);
+      const scroll = createScrollManager(log);
+      log.dispatchEvent(new Event('scroll'));
+      // The subagent bar opens: the log loses 200px and the browser keeps scrollTop where it was.
+      Object.defineProperty(log, 'clientHeight', { value: 400, configurable: true });
+      holder.cb?.([{ target: log, contentRect: { width: 390, height: 400 } }]);
+      expect(log.scrollTop).toBe(3000);
+
+      log.scrollTop = 1000;
+      log.dispatchEvent(new Event('scroll'));
+      Object.defineProperty(log, 'clientHeight', { value: 250, configurable: true });
+      holder.cb?.([{ target: log, contentRect: { width: 390, height: 250 } }]);
+      expect(log.scrollTop).toBe(1000);
+      scroll.dispose();
+      log.remove();
+    } finally {
+      globalThis.ResizeObserver = origRO;
+    }
+  });
 });

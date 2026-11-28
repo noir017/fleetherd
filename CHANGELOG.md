@@ -5,6 +5,29 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **The Web UI keeps a claude agent's subagents in a bar above the status line instead of in the
+  transcript.** A card per subagent (3.42.0) put a box of tool calls wherever each one started, so a
+  run that spawned a handful of them read as a stack of cards with the agent's own words between
+  them. The transcript now keeps one line where each started — its name, tool count, state and
+  duration — and their calls sit in a bar right above the agent and model chips: folded to one line
+  saying how many are running (or that all have ended), open to a list of every subagent in the
+  topic, newest first, and each row open to its calls. The list scrolls on its own so the message
+  box stays in view, and tapping a subagent's line in the transcript opens the bar on it. A
+  transcript that was at its newest message stays there when the bar (or anything else under it)
+  grows. Chat platforms are unchanged.
+
+### Fixed
+
+- **A background subagent is marked done when it finishes, not when the agent's turn ends.** Claude
+  Code sent no per-subagent end that the gateway listened for, so every background subagent's card
+  ended with the turn that held them — one that finished in ten seconds read **Running** for as long
+  as its slowest sibling took. claude agents now ask claude-agent-acp for its native subagent
+  sessions, the only place it reports each subagent's end, and each card takes its ✓ or ✗ then. That
+  extension also moves a subagent's updates to a session of its own and hides the call that started
+  it; the gateway puts both back as they were before it reads them, so nothing else changes.
+
 ## [3.47.0] - 2026-11-28
 
 ### Added

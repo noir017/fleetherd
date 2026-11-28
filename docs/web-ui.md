@@ -307,12 +307,17 @@ screen shows as much as fits, and the ✓ and duration at its end always stay vi
 Click a row to read it in full, and again to fold it; **Show all** under the bubble
 opens every row, including the ones the agent adds after you press it.
 
-**Subagents, one card each.** When the agent starts subagents of its own — Claude Code's Agent
-tool, in the foreground or the background — each one's tool calls go into a card of its own
-instead of the agent's tool bubble, and the agent's reply is no longer split wherever a subagent
-happened to run a tool. The card names the subagent, counts its tools, and says **Running**,
-**Done** or **Did not finish**, with how long it took; it stays folded to the newest call, and
-clicking the name opens every row. The card is updated in place for as long as the subagent runs.
+**Subagents, in a bar above the status line.** When the agent starts subagents of its own —
+Claude Code's Agent tool, in the foreground or the background — their tool calls stay out of the
+agent's tool bubble, and the agent's reply is no longer split wherever a subagent happened to run
+a tool. The transcript keeps one line where each started: its name, how many tools it ran, and
+**Running**, **Done** or **Did not finish** with how long it took. The calls themselves are in a
+bar right above the agent and model chips, which stays folded to one line — **2 built-in subagents
+running**, or **… all ended** once none is — and opens upward into a list of every subagent in the
+topic, newest first, scrolling on its own so the message box stays in view. Tap a row to see that
+subagent's calls, and a call to read it in full; tapping a subagent's line in the transcript opens
+the bar on it. Each subagent is marked done the moment it finishes, not when the agent's turn ends,
+so a background one that finished early no longer reads **Running** while its siblings work.
 A chat platform gets the same thing as text: one message per subagent, `↳ {name}` on its first
 line and its tools under it, edited as it goes. Only `claude` agents say which subagent ran a
 tool; other harnesses' subagents still share the agent's bubble.

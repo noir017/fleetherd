@@ -247,6 +247,12 @@ export function buildTopicEditorDom(doc: Document, icons: TopicEditorIcons): Top
   machineNoteEl.setAttribute('role', 'status');
   machineNoteEl.hidden = true;
 
+  const subagentTrayEl = el(doc, 'div', 'wb-topic-subagents');
+  assignIdIfAbsent(doc, subagentTrayEl, 'subagents');
+  subagentTrayEl.hidden = true;
+  subagentTrayEl.setAttribute('role', 'region');
+  subagentTrayEl.setAttribute('aria-label', tr('subagents.aria'));
+
   const statusRowEl = el(doc, 'div', 'wb-topic-status-row');
   const statusEl = el(doc, 'div', 'wb-topic-status status');
   assignIdIfAbsent(doc, statusEl, 'status');
@@ -275,6 +281,7 @@ export function buildTopicEditorDom(doc: Document, icons: TopicEditorIcons): Top
   barEl.append(
     pendingQueueEl,
     machineNoteEl,
+    subagentTrayEl,
     statusRowEl,
     popups.btwBox,
     popups.modelPop,
@@ -295,6 +302,7 @@ export function buildTopicEditorDom(doc: Document, icons: TopicEditorIcons): Top
     barEl,
     pendingQueueEl,
     machineNoteEl,
+    subagentTrayEl,
     statusRowEl,
     statusEl,
     dirEl,

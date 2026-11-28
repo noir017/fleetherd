@@ -35,6 +35,7 @@ import type {
 } from './agent.js';
 import { asUndelivered, ForkRefused, SideQuestionRefused, TurnFailure } from './agent.js';
 import { forkInto, forkRefusal } from './acp-fork.js';
+import { relayNativeSubagents } from './acp-native-subagents.js';
 import {
   askOnFork,
   forkSupportOf,
@@ -654,9 +655,11 @@ class AcpSession implements AgentSession {
       () => this.resetHandles()
     );
 
-    const stream = ndJsonStream(
-      Writable.toWeb(child.stdin) as unknown as WritableStream<Uint8Array>,
-      Readable.toWeb(child.stdout) as unknown as ReadableStream<Uint8Array>
+    const stream = relayNativeSubagents(
+      ndJsonStream(
+        Writable.toWeb(child.stdin) as unknown as WritableStream<Uint8Array>,
+        Readable.toWeb(child.stdout) as unknown as ReadableStream<Uint8Array>
+      )
     );
     const app = client()
       .onRequest('session/request_permission', ({ params }): Promise<RequestPermissionResponse> => this.answerPermission(params))

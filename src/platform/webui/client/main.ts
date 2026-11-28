@@ -314,6 +314,7 @@ function resetSessionView(session: TopicEditorSession, id: string): void {
   if (editor) {
     editor.transcript?.setOlderState({ hasMore: false, loading: false });
     editor.els.log.replaceChildren();
+    editor.transcript?.subagents.reset();
     editor.status?.closeModelPop();
     editor.status?.setStatus(null);
     editor.status?.setPending([]);
@@ -921,6 +922,7 @@ function buildTranscriptDeps(rt: AppRuntime, els: TopicEditorElements, getTopicI
     btwBody: els.btwBody,
     btwClose: els.btwClose,
     machineNoteEl: els.machineNoteEl,
+    subagentTrayEl: els.subagentTrayEl,
     forkNote: els.forkNote,
     getExtraCodeRoots: () => Array.from(document.querySelectorAll<HTMLElement>('.wb-reader-editor')),
     getData: () => session.data,

@@ -6,7 +6,8 @@ import { tCli } from '../../core/i18n/cli.js';
 import { readClaudeQuota } from '../claude-quota-probe.js';
 import { claudeProjectsDir, remoteClaudeProjectsDir } from '../claude-transcript.js';
 import { claudeReferences, resolveClaudeReference } from '../instruction-imports.js';
-import { SESSION_FAILURE_CAPABILITY_META } from '../session-failure.js';
+import { SESSION_FAILURE_CAPABILITY } from '../session-failure.js';
+import { NATIVE_SUBAGENT_SESSIONS } from '../acp-native-subagents.js';
 import type { HarnessProfile, SkillHome } from './profile.js';
 
 /** Resolve the bundled `@agentclientprotocol/claude-agent-acp` entry script. Throws if node_modules is incomplete. */
@@ -54,8 +55,11 @@ export const claudeProfile: HarnessProfile = {
     remote
       ? { command: 'claude-agent-acp', args: [...def.args] }
       : { command: process.execPath, args: [resolveClaudeAdapterEntry(), ...def.args] },
-  // Advertise typed failure records only for claude; opencode validates capabilities strictly.
-  capabilityMeta: () => ({ ...SESSION_FAILURE_CAPABILITY_META }),
+  // Only claude is told of AIR: opencode validates capabilities strictly. Typed failure records
+  // (session-failure.ts), and each subagent's own end (acp-native-subagents.ts).
+  capabilityMeta: () => ({
+    jetbrains: { air: { version: 1, capabilities: [SESSION_FAILURE_CAPABILITY, NATIVE_SUBAGENT_SESSIONS] } },
+  }),
   quota: {
     read: readClaudeQuota,
     // Per agent: the relay and key it probes with are its own environment's.
