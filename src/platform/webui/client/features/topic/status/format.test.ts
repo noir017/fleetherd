@@ -57,6 +57,21 @@ describe('features/topic/status/format', () => {
     expect(poolLabel('3p-daily')).toBe('3P day');
     expect(poolLabel('custom-pool-2h')).toBe('custom-pool 2h');
     expect(poolLabel('solo')).toBe('solo');
+    expect(poolLabel('claude-5h')).toBe('Claude 5h');
+    expect(poolLabel('claude-weekly')).toBe('Claude wk');
+    expect(poolLabel('claude-opus-weekly')).toBe('Claude Opus wk');
+    expect(poolLabel('claude-sonnet-weekly')).toBe('Claude Sonnet wk');
+  });
+
+  it('renders a Claude subscription’s pools as Claude 5h / Claude wk with their countdowns', () => {
+    const now = 1_700_000_000_000;
+    const pools: QuotaPool[] = [
+      { id: 'claude-5h', remaining: 0.73, resetsAt: now + 90 * 60_000 },
+      { id: 'claude-weekly', remaining: 0.4, resetsAt: now + 2 * 86_400_000 + 3 * 3_600_000 },
+    ];
+    const segs = renderQuotaSegments(pools, now, false);
+    expect(segs[0]).toContain('Claude 5h 73% (1h 30m)');
+    expect(segs[1]).toContain('Claude wk 40% (2d 3h)');
   });
 
   it('detects whether an AgentStatus requires a countdown ticker', () => {

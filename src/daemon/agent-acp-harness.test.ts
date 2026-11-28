@@ -10,13 +10,14 @@ const POOLS: QuotaPool[] = [{ id: 'gemini-5h', remaining: 0.5 }];
 
 function rig(opts: { disposed?: () => boolean } = {}) {
   const refresh = vi.fn<QuotaMeter['refresh']>(async () => {});
-  const meter: QuotaMeter = { refresh, read: () => POOLS };
+  const record = vi.fn<QuotaMeter['record']>();
+  const meter: QuotaMeter = { refresh, read: () => POOLS, record };
   const reported: QuotaPool[][] = [];
   const handlers = { onQuota: (q: QuotaPool[]) => reported.push(q) } as unknown as AgentStreamHandlers;
   const options = { liveConfigOptions: undefined, liveModel: undefined } as unknown as AcpOptionState;
   const def = { id: 'web', harness: 'custom', env: {} } as unknown as AgentDef;
   const helper = new AgyMeterHelper(def, 'c1', options, meter, opts.disposed ?? (() => false), () => undefined);
-  return { helper, refresh, reported, handlers };
+  return { helper, refresh, record, reported, handlers };
 }
 
 describe('AgyMeterHelper: when the quota is read', () => {
@@ -48,6 +49,24 @@ describe('AgyMeterHelper: when the quota is read', () => {
     helper.quotaOnFirstOutput(handlers, '/w');
     helper.quotaAfterTurn(handlers, '/w');
     expect(refresh).not.toHaveBeenCalled();
+    expect(reported).toEqual([]);
+  });
+});
+
+describe('AgyMeterHelper: quota the harness reports by itself', () => {
+  it('keeps it with the agent and shows the reading at once, without asking the meter to run anything', () => {
+    const { helper, refresh, record, reported, handlers } = rig();
+    const pushed: QuotaPool[] = [{ id: 'claude-5h', remaining: 0.7 }];
+    helper.recordReportedQuota(pushed, handlers);
+    expect(record).toHaveBeenCalledWith(expect.objectContaining({ id: 'web' }), pushed);
+    expect(refresh).not.toHaveBeenCalled();
+    expect(reported).toEqual([POOLS]);
+  });
+
+  it('drops it for a session that has been let go', () => {
+    const { helper, record, reported, handlers } = rig({ disposed: () => true });
+    helper.recordReportedQuota([{ id: 'claude-5h', remaining: 0.7 }], handlers);
+    expect(record).not.toHaveBeenCalled();
     expect(reported).toEqual([]);
   });
 });

@@ -5,6 +5,30 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **claude agents show their Claude subscription quota in the Web UI's status strip.** agy has shown
+  its Gemini and third-party pools there for a while; claude showed nothing. A claude signed in to a
+  claude.ai subscription reports its five-hour and weekly windows as it spends them, and those are
+  now shown as `Claude 5h 73% (1h 30m)` and `Claude wk 40% (2d 3h)` — plus `Claude Opus wk` and the
+  like where a plan has a per-model weekly limit — with nothing to configure. A claude behind a relay
+  (`ANTHROPIC_BASE_URL`) reports nothing, so the gateway asks the relay itself: a one-token request
+  to the agent's haiku model, sent from the agent's machine with its own URL and key, read for the
+  rate-limit headers a relay in front of subscription accounts passes on. It goes out at most every
+  8–12 minutes and only while the agent is in use — never while it is idle, which would open a
+  five-hour window early — and a relay without those headers, or a failing one, shows nothing and
+  is logged once. A `quotaCommand` still takes precedence.
+
+### Changed
+
+- **A `quotaCommand` row whose pool is not agy's is shown under its own name.** The parser knew
+  only agy's two families: any row mentioning Claude was filed under agy's third-party pool, so
+  Claude subscription quota showed up as `3P 5h`, and any other name was dropped. Rows are now named
+  after their first column — `Claude` → `Claude 5h` / `Claude wk`, `Claude Opus` → `Claude Opus wk`,
+  anything else as written — the same pools claude reports by itself. agy's own `Gemini Models` and
+  `Claude and GPT models` read exactly as before. A reading whose reset time has passed is no longer
+  shown until the next one, since that window has refilled.
+
 ## [3.45.0] - 2026-11-28
 
 ### Changed

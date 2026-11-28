@@ -2,11 +2,24 @@ import path from 'node:path';
 import { instructionsHome } from '../../config/instructions.js';
 import { tCli } from '../../core/i18n/cli.js';
 import { agySplitModel } from '../agy-acp.js';
-import { AGY_COMMAND } from '../agy-cli.js';
+import { AGY_COMMAND, runAgyCliCommand, runAgyCliFor, type AgyCliRunner } from '../agy-cli.js';
+import { parseAgyUsagePools } from '../agy-meters.js';
 import { agyRelay } from '../agy-relay.js';
 import { agyTranscriptPath, readAgyContext } from '../agy-transcript.js';
 import { agyReferences, agyRuleNote, resolveAgyReference } from '../instruction-imports.js';
-import type { HarnessProfile, SkillHome } from './profile.js';
+import type { HarnessProfile, HarnessQuota, SkillHome } from './profile.js';
+
+/** agy's own `agy -p=/usage`, for an agy signed in to Google; `local` is injectable for tests. */
+export function agyQuota(local: AgyCliRunner = runAgyCliCommand): HarnessQuota {
+  return {
+    async read(def, cwd) {
+      const r = await runAgyCliFor(def, 'usage', cwd, local);
+      if (!r.ok) return { ok: false, reason: r.error };
+      const pools = parseAgyUsagePools(r.output);
+      return pools ? { ok: true, pools } : { ok: false, reason: 'agy -p=/usage printed no quota' };
+    },
+  };
+}
 
 /**
  * Every permission class the CLI knows, denied. `"*"` is NOT a wildcard here — measured on agy
@@ -60,7 +73,7 @@ export const agyProfile: HarnessProfile = {
   // does, the turn fails with that refusal in chat; this is the line to take out.
   takesPromptMidTurn: true,
   usesAgyTurnWatch: true,
-  hasBuiltinQuota: true,
+  quota: agyQuota(),
   contextMissingHint:
     ' agy reports usage once per turn, summed over every model call in it, so after a turn that ran tools the count comes from its transcript on the agent\'s machine, and is missing when that cannot be read; and agy never says how big its window is, so the daemon measures the context against where agy compacts, which it knows for the models it was measured on (Gemini 3.8 Flash, Claude Sonnet/Opus 4.6, GPT-OSS 120B) — any other model shows no numbers.',
   relay: agyRelay,

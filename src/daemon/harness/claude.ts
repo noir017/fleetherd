@@ -3,6 +3,7 @@ import { createRequire } from 'node:module';
 import path from 'node:path';
 import { instructionsHome } from '../../config/instructions.js';
 import { tCli } from '../../core/i18n/cli.js';
+import { readClaudeQuota } from '../claude-quota-probe.js';
 import { claudeProjectsDir, remoteClaudeProjectsDir } from '../claude-transcript.js';
 import { claudeReferences, resolveClaudeReference } from '../instruction-imports.js';
 import { SESSION_FAILURE_CAPABILITY_META } from '../session-failure.js';
@@ -22,6 +23,16 @@ export const CLAUDE_NO_TOOLS_META: Record<string, unknown> = {
   claudeCode: { options: { tools: [], settingSources: [], strictMcpConfig: true } },
   disableBuiltInTools: true,
 };
+
+/**
+ * The quota probe costs a request, so it is sent at most every 8–12 minutes, at random so that
+ * agents started together do not probe together; a failure backs off from 15 minutes to 2 hours.
+ */
+export function claudeProbeInterval(failures: number, random: () => number = Math.random): number {
+  const MIN = 60_000;
+  if (failures > 0) return Math.min(15 * MIN * 2 ** (failures - 1), 120 * MIN);
+  return (8 + random() * 4) * MIN;
+}
 
 function adapterResolves(resolve: () => string): boolean {
   try {
@@ -45,6 +56,12 @@ export const claudeProfile: HarnessProfile = {
       : { command: process.execPath, args: [resolveClaudeAdapterEntry(), ...def.args] },
   // Advertise typed failure records only for claude; opencode validates capabilities strictly.
   capabilityMeta: () => ({ ...SESSION_FAILURE_CAPABILITY_META }),
+  quota: {
+    read: readClaudeQuota,
+    // Per agent: the relay and key it probes with are its own environment's.
+    key: (def) => `agent:${def.id}`,
+    interval: (failures) => claudeProbeInterval(failures),
+  },
   reviewIsolation: {
     kind: 'acp',
     build: (_def, base) => ({ ...base, env: {}, meta: CLAUDE_NO_TOOLS_META }),

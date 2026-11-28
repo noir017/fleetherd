@@ -83,8 +83,9 @@ export function agyCompactionPoint(model: string | undefined): number | undefine
  * (tab-separated). The rows are renamed to the ids the status line used — `gemini-weekly`,
  * `3p-5h`, … — because the web UI's labels and markActivePools both key on that shape, and a pool
  * is the same pool whichever channel reported it. Sorted by id, which is also the order the status
- * line sent them in. A row whose family or window is not one of these is dropped and logged, not
- * renamed by guess: an unknown pool shown under a made-up id would be worse than one not shown.
+ * line sent them in. Any other family is named after itself (poolFamily: `Claude` → `claude-5h`,
+ * the shape claude's own rate-limit events take, claude-rate-limit.ts); a row whose window is not
+ * one of these is dropped and logged, because the window is what the reset countdown means.
  *
  * Coarser than the status line was — whole percentages, where it sent `0.7486224` — because that is
  * all this command prints.
@@ -126,16 +127,26 @@ function poolAccount(name: string): string | undefined {
   return match?.[1];
 }
 
-/** `Gemini Models` → gemini, `Claude and GPT models` → 3p: the status line's family names. */
+/**
+ * `Gemini Models` → gemini and `Claude and GPT models` → 3p, the status line's names for agy's two
+ * pools. Any other family is its own name as an id — `Claude` → claude, `Claude Opus` → claude-opus
+ * — with an account tag or aggregate summary in parentheses and the word "models" left out.
+ */
 function poolFamily(name: string): string | undefined {
   if (/gemini/i.test(name)) return 'gemini';
-  if (/claude|gpt/i.test(name)) return '3p';
-  return undefined;
+  if (/gpt/i.test(name)) return '3p';
+  const slug = name
+    .replace(/\([^()]*\)\s*$/, '')
+    .toLowerCase()
+    .replace(/\bmodels?\b/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return slug || undefined;
 }
 
 /** `Weekly Limit Remaining` → weekly, `Five Hour Limit Remaining` → 5h. */
 function poolWindow(metric: string): string | undefined {
-  if (/week/i.test(metric)) return 'weekly';
+  if (/week|seven day|\b7 ?d/i.test(metric)) return 'weekly';
   if (/five hour|\b5 ?h/i.test(metric)) return '5h';
   if (/one hour|\b1 ?h/i.test(metric)) return '1h';
   if (/day/i.test(metric)) return 'daily';
@@ -149,15 +160,22 @@ const THIRD_PARTY_MODEL = /claude|gpt|sonnet|haiku|opus|o1|o3|3p/i;
  * Mark the pools the serving model spends from.
  *
  * agy meters Gemini and third-party models (Claude, GPT) separately, and names its pools after
- * which: `gemini-*` and `3p-*`. A pool of neither family, or a turn with no known model, is left
- * unmarked — the page then shows every pool alike rather than highlighting a guess.
+ * which: `gemini-*` and `3p-*`. A Claude subscription's per-model pools (`claude-opus-weekly`,
+ * `claude-sonnet-weekly`) are spent only by that model; its `claude-5h` and `claude-weekly` by any
+ * Claude model.
+ * A pool of none of these families, or a turn with no known model, is left unmarked — the page then
+ * shows every pool alike rather than highlighting a guess.
  */
 export function markActivePools(pools: QuotaPool[], model: string | undefined): QuotaPool[] {
   if (!model) return pools;
   const thirdParty = THIRD_PARTY_MODEL.test(model);
   return pools.map((p) => {
     const family = p.id.split('-')[0]?.toLowerCase();
-    if (family === '3p' || family === 'claude') return { ...p, active: thirdParty };
+    if (family === '3p') return { ...p, active: thirdParty };
+    if (family === 'claude') {
+      const only = /^claude-(.+)-[^-]+$/i.exec(p.id)?.[1]?.toLowerCase();
+      return { ...p, active: only ? model.toLowerCase().includes(only) : thirdParty };
+    }
     if (family === 'gemini') return { ...p, active: !thirdParty };
     return p;
   });

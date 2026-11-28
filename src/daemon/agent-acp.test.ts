@@ -536,6 +536,22 @@ describe('translateUpdate usage_update (live context numbers)', () => {
     expect(usage).toEqual([]);
   });
 
+  // claude-agent-acp 0.81.0 forwards the SDK's rate_limit_event as a usage_update (acp-agent.js).
+  it('hands a claude rate-limit report to the session as quota pools, beside the context numbers', () => {
+    const { st, usage } = recorder();
+    const quota: unknown[] = [];
+    st.onQuotaReport = (pools) => quota.push(pools);
+    feed(st, {
+      sessionUpdate: 'usage_update',
+      used: 5,
+      size: 10,
+      _meta: { '_claude/rateLimit': { status: 'allowed', rateLimitType: 'seven_day', utilization: 0.25 } },
+    });
+    feed(st, { sessionUpdate: 'usage_update', used: 6, size: 10 });
+    expect(quota).toEqual([[{ id: 'claude-weekly', remaining: 0.75 }]]);
+    expect(usage.map((u) => u.used)).toEqual([5, 6]);
+  });
+
   it('a zero-token snapshot IS forwarded (a fresh session legitimately reports 0 used)', () => {
     const { st, usage } = recorder();
     feed(st, { sessionUpdate: 'usage_update', used: 0, size: 200_000 });

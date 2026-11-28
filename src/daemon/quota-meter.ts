@@ -3,31 +3,33 @@ import { execFile as execFileCb } from 'node:child_process';
 import type { AgentDef } from '../config/schema.js';
 import type { QuotaPool, SessionOption } from '../types.js';
 import { buildHarnessEnv, remoteAgentEnv } from './agent-common.js';
-import { runAgyCliCommand, runAgyCliFor, type AgyCliResult, type AgyCliRunner } from './agy-cli.js';
+import type { AgyCliResult } from './agy-cli.js';
 import { parseAgyUsagePools } from './agy-meters.js';
 import { remoteHosts } from './remote-hosts.js';
 import { HARNESS_PROFILES } from './harness/index.js';
-import { agentHome } from './harness/profile.js';
+import { agentHome, type HarnessQuota, type QuotaReading } from './harness/profile.js';
 import { shellLaunch } from './shell-run.js';
 
 const execFile = promisify(execFileCb);
 
 /**
- * An agent's usage quota, which no ACP message carries: read when a session's first output arrives
- * and after each turn (AgyMeterHelper in agent-acp-harness.ts), and shown in the conversation's
- * status strip (TurnRunner → recordQuota), never in the turn's footer.
+ * An agent's usage quota: read when a session's first output arrives and after each turn
+ * (AgyMeterHelper in agent-acp-harness.ts), and shown in the conversation's status strip
+ * (TurnRunner → recordQuota), never in the turn's footer.
  *
- * Two sources, and an agent has at most one:
+ * An agent's quota comes from one of:
  *
  *   - **`agents[].quotaCommand`**, the operator's own command. For an agent whose harness cannot say:
  *     agy signed in through a model gateway (`AGY_LLM_GATEWAY_URL`) prints nothing for `/usage`,
  *     because its quota lives with whatever is behind the gateway (measured on 1.5.8, 2026-11-14) —
  *     and the same holds for any harness on a pooled proxy. It prints the table agy prints, so the
  *     parse is the same and a pool is the same pool whichever source reported it.
- *   - **agy's own `agy -p=/usage`** (agy-cli.ts), for an agy signed in to Google.
+ *   - **the harness's own source** (HarnessProfile.quota), when it has one: agy's `agy -p=/usage`,
+ *     claude's probe of its relay.
+ *   - **what the harness reports by itself** (`record`), which stands its own source down: claude's
+ *     rate-limit events on a claude.ai login (claude-rate-limit.ts).
  *
- * Never read twice at once per source, whichever conversation asked, and a reading begun moments ago
- * answers in place of a new one: conversations whose turns end together share one run.
+ * This module only schedules: it knows no harness.
  */
 
 /** A reading begun this recently answers instead of a new run. */
@@ -85,9 +87,9 @@ export async function runQuotaCommandFor(def: AgentDef, cwd: string, local: Quot
   }
 }
 
-/** Whether an agent has a quota to read: its own command, or agy's `/usage`. */
+/** Whether an agent has a quota to read: its own command, or its harness's source. */
 export function hasQuotaSource(def: Pick<AgentDef, 'harness' | 'quotaCommand'>): boolean {
-  return Boolean(def.quotaCommand) || Boolean(HARNESS_PROFILES[def.harness].hasBuiltinQuota);
+  return Boolean(def.quotaCommand) || Boolean(HARNESS_PROFILES[def.harness].quota);
 }
 
 export interface QuotaMeter {
@@ -95,6 +97,11 @@ export interface QuotaMeter {
   refresh(def: AgentDef, cwd: string): Promise<void>;
   /** The latest reading for this agent's source. */
   read(def: AgentDef): QuotaPool[] | undefined;
+  /**
+   * Pools the harness reported by itself, merged pool by pool into what this agent reported before.
+   * Ignored for an agent with a `quotaCommand`: the operator's command is the agent's quota.
+   */
+  record(def: AgentDef, pools: readonly QuotaPool[]): void;
 }
 
 /**
@@ -200,47 +207,89 @@ function selectedAccountOf(options: readonly SessionOption[] | undefined, accoun
   return byMatch?.current?.trim();
 }
 /**
- * The quota pools, per source. Keyed by where the reading comes from: agy's quota belongs to whoever
- * agy is signed in as, so every conversation on a home shares one reading and the same HOME on two
- * hosts is two; a command is keyed by itself on top of that, since two agents on one home may ask
- * two different pools.
+ * The quota pools, per source, and when each is read. A source is whose quota a reading is: a
+ * `quotaCommand` is keyed by the agent's home and itself, since two agents on one home may ask two
+ * different pools; a harness's own source by the home, or by its `key` (agy's login is the home's,
+ * claude's relay the agent's own environment). One read per source at a time, whichever
+ * conversation asked, and none sooner than the source's interval after the last began — so
+ * conversations ending together share one. Nothing reads unless a session asks (AgyMeterHelper:
+ * its first output, the end of a turn), so an idle agent is never read.
  */
-export function createQuotaMeter(runners: { agy?: AgyCliRunner; command?: QuotaCommandRunner } = {}): QuotaMeter {
-  const agy = runners.agy ?? runAgyCliCommand;
-  const command = runners.command ?? runQuotaCommand;
-  const bySource = new Map<string, { pools?: QuotaPool[]; at: number; pending?: Promise<void>; warned?: boolean }>();
-  const sourceOf = (def: AgentDef): string =>
-    `${def.host ? `${def.host}:${def.env['HOME'] ?? '~'}` : agentHome(def)}\0${def.quotaCommand ?? ''}`;
+export function createQuotaMeter(
+  opts: { command?: QuotaCommandRunner; harnessQuota?: (def: AgentDef) => HarnessQuota | undefined } = {}
+): QuotaMeter {
+  const command = opts.command ?? runQuotaCommand;
+  const own = (def: AgentDef): HarnessQuota | undefined =>
+    def.quotaCommand ? undefined : (opts.harnessQuota ?? ((d) => HARNESS_PROFILES[d.harness].quota))(def);
+  const sources = new Map<string, QuotaSource>();
+  const sourceOf = (def: AgentDef): QuotaSource => {
+    const home = def.host ? `${def.host}:${def.env['HOME'] ?? '~'}` : agentHome(def);
+    const key = own(def)?.key?.(def) ?? `${home}\0${def.quotaCommand ?? ''}`;
+    let s = sources.get(key);
+    if (!s) sources.set(key, (s = { next: 0, failures: 0 }));
+    return s;
+  };
+  const readOnce = async (def: AgentDef, cwd: string): Promise<QuotaReading> => {
+    if (!def.quotaCommand) return (await own(def)?.read(def, cwd)) ?? { ok: false, final: true, reason: 'no quota source' };
+    const r = await runQuotaCommandFor(def, cwd, command);
+    if (!r.ok) return { ok: false, reason: r.error };
+    const pools = parseQuotaOutput(r.output);
+    return pools ? { ok: true, pools } : { ok: false, reason: 'quotaCommand printed no row in the /usage format (pool, window, remaining %, reset)' };
+  };
   return {
     refresh(def, cwd) {
-      const key = sourceOf(def);
-      let entry = bySource.get(key);
-      if (!entry) bySource.set(key, (entry = { at: 0 }));
-      if (entry.pending) return entry.pending;
+      if (!def.quotaCommand && !own(def)) return Promise.resolve();
+      const s = sourceOf(def);
+      if (s.pending) return s.pending;
+      // A harness reporting its quota by itself (record) is not asked; nor one that said there is nothing to ask.
+      if (s.pushed || s.off === def || Date.now() < s.next) return Promise.resolve();
+      const started = Date.now();
+      const gap = (): number => own(def)?.interval?.(s.failures) ?? QUOTA_REUSE_MS;
       // Stamped when the run starts, so a failing one is not retried on every turn either.
-      if (Date.now() - entry.at < QUOTA_REUSE_MS) return Promise.resolve();
-      entry.at = Date.now();
-      const e = entry;
-      const run = def.quotaCommand ? runQuotaCommandFor(def, cwd, command) : runAgyCliFor(def, 'usage', cwd, agy);
-      e.pending = run
+      s.next = started + gap();
+      s.pending = readOnce(def, cwd)
         .then((r) => {
-          if (!r.ok) {
-            console.debug(`[acp] could not read the quota (${def.id}):`, r.error);
-            return;
+          if (r.ok) {
+            s.pools = r.pools;
+            s.failures = 0;
+          } else {
+            s.failures++;
+            if (r.final) s.off = def;
+            // Once per run of failures: a source failing every turn would otherwise say so every turn.
+            (s.failures === 1 ? console.warn : console.debug)(`[acp] ${def.id}: no quota reading: ${r.reason}`);
           }
-          const pools = parseQuotaOutput(r.output);
-          if (pools) e.pools = pools;
-          else if (def.quotaCommand && !e.warned) {
-            // Once per source: a command printing the wrong shape would otherwise say so every minute.
-            e.warned = true;
-            console.warn(`[acp] ${def.id}: quotaCommand printed no row in the /usage format (pool, window, remaining %, reset)`);
-          }
+          s.next = started + gap();
         })
         .finally(() => {
-          e.pending = undefined;
+          s.pending = undefined;
         });
-      return e.pending;
+      return s.pending;
     },
-    read: (def) => bySource.get(sourceOf(def))?.pools,
+    read(def) {
+      // A window past its reset has refilled; how full it is waits for the next reading.
+      const now = Date.now();
+      return sourceOf(def).pools?.filter((p) => p.resetsAt === undefined || p.resetsAt > now);
+    },
+    record(def, pools) {
+      if (def.quotaCommand || !pools.length) return;
+      const s = sourceOf(def);
+      s.pushed = true;
+      const byKey = new Map((s.pools ?? []).map((p) => [`${p.account ?? ''}\0${p.id}`, p]));
+      for (const p of pools) byKey.set(`${p.account ?? ''}\0${p.id}`, p);
+      s.pools = [...byKey.values()].sort((a, b) => (a.account ?? '').localeCompare(b.account ?? '') || a.id.localeCompare(b.id));
+    },
   };
+}
+
+interface QuotaSource {
+  pools?: QuotaPool[];
+  /** When the next read may begin. */
+  next: number;
+  /** Reads failed in a row. */
+  failures: number;
+  pending?: Promise<void>;
+  /** The harness reports this quota by itself (record): its own source is not read. */
+  pushed?: boolean;
+  /** The definition whose source said there is nothing to read; a redefined agent is asked again. */
+  off?: AgentDef;
 }

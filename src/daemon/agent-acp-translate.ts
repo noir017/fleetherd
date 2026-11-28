@@ -15,6 +15,7 @@ import type {
   ElicitOption,
   ElicitQuestion,
   PermissionAnswer,
+  QuotaPool,
   ToolEvent,
 } from '../types.js';
 import type { AgentStreamHandlers } from './agent.js';
@@ -22,6 +23,7 @@ import { TurnFailure } from './agent.js';
 import { buildInputPreview, isNonEmptyObject, stripCode, truncateToolName } from './agent-common.js';
 import { agyAcpToolLabel, agyMcpCall, agyMcpLabel, type AgyTurnWatch } from './agy-acp.js';
 import { readPromptRefusal, readSessionFailure, type SessionFailure } from './session-failure.js';
+import { claudeRateLimitPools } from './claude-rate-limit.js';
 import { customOptionsOf, liveEffortName, liveModelName } from './agent-acp-options.js';
 
 // ───────────────────────── Update classification helpers ─────────────────────────
@@ -519,6 +521,11 @@ export interface TurnState {
    */
   onSessionFailure?(failure: SessionFailure): void;
   /**
+   * Hand quota pools the harness reported by itself (claude's `_claude/rateLimit`, one window per
+   * event) to the session, which keeps them with the agent's reading. Optional, like the others.
+   */
+  onQuotaReport?(pools: QuotaPool[]): void;
+  /**
    * Override for the context-window size (tokens) reported over `usage_update`. When set, ingestUsage
    * replaces the harness's `size` with this before forwarding — the local-config fix for a harness that
    * under-reports the window (see AgentDef.contextWindow). Absent = trust the harness's number.
@@ -643,10 +650,10 @@ export function translateUpdate(u: SessionUpdate, st: TurnState): void {
     // model's reported capabilities), so the footer never has to guess a limit. Emitted several
     // times per turn as full snapshots — the consumer keeps the latest. agy's `size` is the model's
     // window, not where it compacts, so its watch picks the window instead (AgyTurnWatch.usage).
-    case 'usage_update': {
-      ingestUsage(st, u.used, st.agy ? st.agy.usage(u.size) : u.size, u.cost);
+    // claude also rides its rate-limit windows on one (claude-rate-limit.ts).
+    case 'usage_update':
+      ingestUsageUpdate(u, st);
       break;
-    }
 
     // The agent's session config changed (model / mode / effort picker, or a setting of its own).
     // The model, the effort and the agent's own settings interest us: re-read all three so a
@@ -762,6 +769,12 @@ function lastPathSegment(uri: string): string | undefined {
  * segment" rather than a bogus "0%". Extracted from translateUpdate to keep that switch's
  * complexity within the lint budget.
  */
+function ingestUsageUpdate(u: Extract<SessionUpdate, { sessionUpdate: 'usage_update' }>, st: TurnState): void {
+  ingestUsage(st, u.used, st.agy ? st.agy.usage(u.size) : u.size, u.cost);
+  const pools = claudeRateLimitPools(u._meta);
+  if (pools) st.onQuotaReport?.(pools);
+}
+
 function ingestUsage(st: TurnState, used: unknown, size: unknown, cost: unknown): void {
   if (typeof used !== 'number') return;
   // A local override wins over the harness's window (see AgentDef.contextWindow): the harness

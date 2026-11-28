@@ -47,11 +47,16 @@ export function stClock(at: number): string {
   return `${hh < 10 ? '0' : ''}${hh}:${mm < 10 ? '0' : ''}${mm}`;
 }
 
+const POOL_FAMILIES: Readonly<Record<string, string>> = { '3p': '3P', gemini: 'Gemini', claude: 'Claude' };
+
+// `claude-opus` → `Claude Opus`: a known family's sub-pool is title-cased; any other family stays as sent.
 export function poolLabel(id: string): string {
   const cut = id.lastIndexOf('-');
   let fam = cut > 0 ? id.slice(0, cut) : id;
   let win = cut > 0 ? id.slice(cut + 1) : '';
-  fam = fam === '3p' ? '3P' : fam === 'gemini' ? 'Gemini' : fam;
+  const [head = '', ...rest] = fam.split('-');
+  const known = POOL_FAMILIES[head];
+  if (known) fam = [known, ...rest.map((w) => w.charAt(0).toUpperCase() + w.slice(1))].join(' ');
   win = win === 'weekly' ? 'wk' : win === 'daily' ? 'day' : win;
   return win ? `${fam} ${win}` : fam;
 }

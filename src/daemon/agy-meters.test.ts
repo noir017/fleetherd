@@ -62,11 +62,33 @@ describe('parseAgyUsagePools', () => {
     ]);
   });
 
-  it('drops a row it cannot name rather than inventing an id for it', () => {
+  it('drops a row whose window it cannot name rather than inventing one', () => {
     vi.spyOn(console, 'debug').mockImplementation(() => {});
     const pools = parseAgyUsagePools(`${raw}\nMystery Pool\tMonthly Limit Remaining\t50%\t2026-11-01T00:00:00Z`);
     expect(pools?.map((p) => p.id)).toEqual(['3p-5h', '3p-weekly', 'gemini-5h', 'gemini-weekly']);
     vi.restoreAllMocks();
+  });
+
+  it('names any other family after itself, and a Claude subscription’s rows as claude pools', () => {
+    const claude = [
+      'Claude (alice 12%, bob 40%)\tFive Hour Limit Remaining\t74%\t2026-11-28T15:00:00Z',
+      'Claude (alice 30%, bob 50%)\tWeekly Limit Remaining\t60%\t2026-12-02T09:00:00Z',
+      'Claude Opus\tWeekly Limit Remaining\t90%\t2026-12-02T09:00:00Z',
+      'Claude Sonnet Models\tWeekly Limit Remaining\t95%\t',
+      'Mystery Pool\tFive Hour Limit Remaining\t50%\t',
+    ].join('\n');
+    expect(parseAgyUsagePools(claude)).toEqual([
+      { id: 'claude-5h', remaining: 0.74, resetsAt: Date.parse('2026-11-28T15:00:00Z') },
+      { id: 'claude-opus-weekly', remaining: 0.9, resetsAt: Date.parse('2026-12-02T09:00:00Z') },
+      { id: 'claude-sonnet-weekly', remaining: 0.95 },
+      { id: 'claude-weekly', remaining: 0.6, resetsAt: Date.parse('2026-12-02T09:00:00Z') },
+      { id: 'mystery-pool-5h', remaining: 0.5 },
+    ]);
+    // agy's own names keep their ids: Claude next to GPT is agy's third-party pool, not a subscription.
+    expect(parseAgyUsagePools('Claude and GPT models\tWeekly Limit Remaining\t100%\t')).toEqual([{ id: '3p-weekly', remaining: 1 }]);
+    expect(parseAgyUsagePools('Claude (alice@example.com)\tFive Hour Limit Remaining\t80%\t')).toEqual([
+      { id: 'claude-5h', remaining: 0.8, account: 'alice@example.com' },
+    ]);
   });
 
   it('keeps a pool whose reset time is unreadable, without the time', () => {
@@ -115,6 +137,19 @@ describe('markActivePools', () => {
     expect(markActivePools(pools, 'Claude Opus 5.5 (Medium)').map((p) => p.active)).toEqual([false, true, undefined]);
     expect(markActivePools(pools, 'claude-opus-5-5-medium').map((p) => p.active)).toEqual([false, true, undefined]);
     expect(markActivePools(pools, 'Gemini 3.8 Flash (High)').map((p) => p.active)).toEqual([true, false, undefined]);
+  });
+
+  it('marks a Claude subscription’s per-model pool only for that model, its others for any Claude', () => {
+    const claude = [
+      { id: 'claude-5h', remaining: 1 },
+      { id: 'claude-opus-weekly', remaining: 1 },
+      { id: 'claude-sonnet-weekly', remaining: 1 },
+      { id: 'claude-fable-weekly', remaining: 1 },
+    ];
+    expect(markActivePools(claude, 'claude-opus-4-8').map((p) => p.active)).toEqual([true, true, false, false]);
+    expect(markActivePools(claude, 'sonnet').map((p) => p.active)).toEqual([true, false, true, false]);
+    expect(markActivePools(claude, 'claude-fable-5-2').map((p) => p.active)).toEqual([true, false, false, true]);
+    expect(markActivePools(claude, 'default').map((p) => p.active)).toEqual([false, false, false, false]);
   });
 
   it('marks nothing when the model is not known — a guess would be highlighted as fact', () => {

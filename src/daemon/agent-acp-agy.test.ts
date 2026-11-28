@@ -7,6 +7,7 @@ import { createAcpAgentFactory, resolveHarness } from './agent-acp.js';
 import { parseConfig, type AgentDef } from '../config/schema.js';
 import { TurnFailure, type AgentSession, type AgentStreamHandlers, type AgentUsage } from './agent.js';
 import type { AgyCliRunner } from './agy-cli.js';
+import { agyQuota } from './harness/agy.js';
 import type { QuotaPool, ToolEvent } from '../types.js';
 import { useTempDirs } from '../test-utils/temp-dir.test-helpers.js';
 
@@ -180,8 +181,8 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
 `;
 
 const QUOTA_OUTPUT = [
-  'Gemini Models\tWeekly Limit Remaining\t1%\t2026-11-07T04:24:11Z',
-  'Claude and GPT models\tWeekly Limit Remaining\t99%\t2026-11-11T13:55:21Z',
+  'Gemini Models\tWeekly Limit Remaining\t1%\t2099-11-07T04:24:11Z',
+  'Claude and GPT models\tWeekly Limit Remaining\t99%\t2099-11-11T13:55:21Z',
 ].join('\n');
 
 let live: AgentSession | undefined;
@@ -258,7 +259,7 @@ function rig(
     await opts.quotaGate;
     return name === 'usage' ? { ok: true, output: QUOTA_OUTPUT } : { ok: false, error: `unexpected /${name}` };
   };
-  const session = createAcpAgentFactory(cfg, join(dir, 'ipc.sock'), store, { agyCli: cli, provisions: [] }).getOrCreate('conv#1', 'agy');
+  const session = createAcpAgentFactory(cfg, join(dir, 'ipc.sock'), store, { harnessQuota: () => agyQuota(cli), provisions: [] }).getOrCreate('conv#1', 'agy');
   live = session;
   const log = () =>
     existsSync(logPath)

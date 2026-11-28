@@ -551,7 +551,7 @@ Do not weaken these without saying so explicitly in the PR:
 - **An agent harness** → add the literal to `Harness` (`src/types.ts`) and `HARNESSES` /
   `AgentDefSchema.harness` (`src/config/schema.ts`), then fill in four places:
   (1) `src/daemon/harness/<name>.ts` implementing `HarnessProfile` (launch, required
-  `reviewIsolation`, `doctor`, and skill/instruction/transcript/relay/option hooks) + one line in
+  `reviewIsolation`, `doctor`, and skill/instruction/transcript/relay/option/quota hooks) + one line in
   `HARNESS_PROFILES` (`src/daemon/harness/index.ts`, compiler-enforced);
   (2) `HARNESS_FACTS` in `src/core/harness-facts.ts` (compiler-enforced);
   (3) `harnessKind` in `src/config/instructions.ts` (compiler-enforced);
