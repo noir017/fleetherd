@@ -136,6 +136,7 @@ export interface ConversationHooks {
   scheduleSummary?(): string | undefined;
   onDelegationSettingChanged?(): void;
   onNeedsPerson?(id: ConversationId): void;
+  onTurnStopped?(id: ConversationId): void;
   onPersonWords?(id: ConversationId, words: PersonWords): void;
   onCooldownOver?(agentId: string): void;
 }

@@ -58,6 +58,7 @@ function rig(cfg: Config, store?: ConversationStore) {
   const pushed: Array<TopicActivity | undefined> = [];
   const continued: string[] = [];
   const needs: string[] = [];
+  const stopped: string[] = [];
   const platform = {
     sendMessage: async (_a: ConversationAddress, text: string) => {
       said.push(text);
@@ -81,8 +82,9 @@ function rig(cfg: Config, store?: ConversationStore) {
       return true;
     },
     onNeedsPerson: (id) => needs.push(id),
+    onStopped: (id) => stopped.push(id),
   });
-  return { clock, said, pushed, continued, needs, outcomes, last: () => pushed[pushed.length - 1] };
+  return { clock, said, pushed, continued, needs, stopped, outcomes, last: () => pushed[pushed.length - 1] };
 }
 
 const fail = (reason: ConstructorParameters<typeof TurnFailure>[1], message = 'upstream 503') => ({
@@ -143,11 +145,12 @@ describe('TurnOutcomes — what a turn leaves for the person', () => {
     expect(r.outcomes.activityOf(ID)).toBeUndefined();
   });
 
-  it('a stopped turn leaves nothing', () => {
+  it('a stopped turn leaves nothing for the person, and says it stopped (a sub-agent batch waits on it)', () => {
     const r = rig(config());
     r.outcomes.turnEnded(ID, { kind: 'stopped' });
     expect(r.last()).toEqual({});
     expect(r.needs).toEqual([]);
+    expect(r.stopped).toEqual([ID]);
   });
 
   it('a failure without a policy is left for the person, with its reason', () => {

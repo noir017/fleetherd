@@ -152,6 +152,16 @@ export const PROPOSAL_TIMEOUT_MS = 24 * 60 * 60 * 1000;
 export const CARD_DELAY_MS = 5_000;
 
 /**
+ * Sub-agents started within this long of the first of a burst are one batch, and the agent that
+ * started them hears of their ordinary ends together, once none of them is still at work — woken once
+ * for the lot rather than once per part (decided with the operator, 2026-11-28).
+ */
+export const BATCH_WINDOW_MS = 60_000;
+
+/** How long an end held for the rest of its batch waits before it is sent anyway, ending the batch. */
+export const BATCH_HOLD_MS = 30 * 60_000;
+
+/**
  * How much of what the person wrote in a sub-agent's topic one card entry carries, above the result.
  * Less than a reply's CARD_ITEM_CHARS: the reply is what the parent acts on, the person's words are
  * what it needs to read that reply right, and a pasted log should not crowd the reply off the card.
@@ -444,6 +454,20 @@ interface Said {
   unnumbered: boolean;
 }
 
+/** Sub-agents started together (BATCH_WINDOW_MS), whose ordinary ends reach their parent together. */
+interface Batch {
+  /** The `cardKey` of the conversation that started them. */
+  key: ConversationId;
+  at: TopicAt;
+  startedAt: number;
+  members: Set<ConversationId>;
+  /** Members (or their reviewers) whose turn ended normally, waiting for the rest. */
+  held: Set<ConversationId>;
+  cancelHold?: () => void;
+  /** BATCH_HOLD_MS ran out with members still at work: what is held goes, and the batch is over. */
+  expired?: boolean;
+}
+
 type TaskAction = Extract<IpcAction, { kind: `task-${string}` }>;
 
 export class Delegation {
@@ -515,6 +539,20 @@ export class Delegation {
    * still holds it, and so whatever it does next was asked for partly in those words.
    */
   private readonly said = new Map<ConversationId, Said>();
+  /**
+   * Batches still open, per conversation that started them, oldest first; the last one is what a
+   * part started within BATCH_WINDOW_MS joins. In memory only: after a restart every end goes as it
+   * comes, which is what it did before batches.
+   */
+  private readonly batches = new Map<ConversationId, Batch[]>();
+  /** The open batch each sub-agent topic belongs to. */
+  private readonly batchOf = new Map<ConversationId, Batch>();
+  /**
+   * The newest finished turn of each sub-agent topic its parent has read with `task-read`. A card
+   * leaves out an end the parent has already read: a coordinator that had read all eight results
+   * itself was then woken eight more times, a card each, to read them again (reported 2026-11-28).
+   */
+  private readonly readTurn = new Map<ConversationId, number>();
   /** Review loops by the work's topic (`task-new --review-by`). */
   private readonly loops = new Map<ConversationId, ReviewLoop>();
   /** A reviewer's topic → the work it reviews, the key `loops` is under. */
@@ -560,6 +598,7 @@ export class Delegation {
     for (const g of this.gathering.values()) g.cancel();
     for (const s of this.started.values()) s.cancel();
     for (const u of this.updates.values()) u.cancel();
+    for (const list of this.batches.values()) for (const b of list) b.cancelHold?.();
     for (const c of this.onScreen.values()) c.abort();
     this.gathering.clear();
     this.started.clear();
@@ -569,6 +608,9 @@ export class Delegation {
     this.onScreen.clear();
     this.owed.clear();
     this.said.clear();
+    this.batches.clear();
+    this.batchOf.clear();
+    this.readTurn.clear();
     this.loops.clear();
     this.reviewerOf.clear();
   }
@@ -1086,12 +1128,14 @@ export class Delegation {
     const header = this.headerOf(here);
     const opened: OpenedTask[] = [];
     const failed: string[] = [];
+    // Chosen once: everything one card starts is one batch, however long the opens below take.
+    const batch = this.batchToJoin(here);
     // One after another, not all at once: each is a topic created, named and bound, and the order
     // they appear in under the parent is the order on the card. Their turns run in parallel all the
     // same — handTo starts one and returns.
     for (const [i, item] of items.entries()) {
       try {
-        opened.push(await this.startOne(here, item, header));
+        opened.push(await this.startOne(here, item, header, batch));
       } catch (e) {
         const why = e instanceof Error ? e.message : String(e);
         failed.push(`- ${i + 1}. ${item.agent}: ${why}`);
@@ -1101,7 +1145,7 @@ export class Delegation {
     return { opened, failed };
   }
 
-  private async startOne(here: Place, item: Item, header: string): Promise<OpenedTask> {
+  private async startOne(here: Place, item: Item, header: string, batch: Batch | undefined): Promise<OpenedTask> {
     const created = item.worktree ? await this.createItemWorktree(item.agent, item.worktree) : undefined;
     const openOpts = {
       platform: here.platformId,
@@ -1125,6 +1169,7 @@ export class Delegation {
     }
     const { key, address, title: named } = openedTask;
     this.owed.add(key);
+    if (batch) this.joinBatch(batch, key);
     const title = subjectOf(named);
     const host = findAgent(this.deps.config, item.agent)?.host;
     const topic = topicOf(here.platformId, address);
@@ -1340,7 +1385,11 @@ export class Delegation {
     if (!history.sessionOf(c.key)) {
       return { topic: a.topic, messages: [], note: 'nothing has been recorded in this topic yet — no turn has run there' };
     }
-    if (a.reply) return this.replyOfTurn(c, a.topic, history, this.externalOf(here) !== undefined);
+    if (a.reply) {
+      const got = this.replyOfTurn(c, a.topic, history, this.externalOf(here) !== undefined);
+      if (got.reply) this.markRead(c.key, [got.reply.turn]);
+      return got;
+    }
     const current = this.deps.currentContext;
     const result = history.read(c.key, taskReadOptions(a, current));
     const { cap, total } = readCuts(a);
@@ -1371,6 +1420,11 @@ export class Delegation {
     // Only a read scoped to ONE turn has a record worth carrying: it is where a failed turn's whole
     // error lives, and what the update card points at when it cuts the error it quotes.
     const record = a.turn !== undefined ? history.turnRecord(c.key, a.turn, current) : undefined;
+    // Only while nothing runs there: a turn still going was read only up to where it had got.
+    if (!this.deps.registry.isBusy(c.key)) {
+      const turns = shaped.slice(from).flatMap((m) => (m.role === 'agent' && typeof m.turn === 'number' ? [m.turn] : []));
+      this.markRead(c.key, record ? [...turns, record.turn] : turns);
+    }
     return {
       topic: a.topic,
       messages: shaped.slice(from),
@@ -1581,6 +1635,8 @@ export class Delegation {
       this.said.delete(id);
     }
     for (const key of recipients) {
+      // A batch's hold timer would queue a card for it too.
+      for (const b of [...(this.batches.get(key) ?? [])]) this.dissolve(b);
       const u = this.updates.get(key);
       if (!u) continue;
       u.cancel();
@@ -1725,6 +1781,136 @@ export class Delegation {
   }
 
   /**
+   * A turn in conversation `id` was stopped (TurnOutcomes). Nobody is told of a stop, but a stopped
+   * part is no longer at work, so its batch may now be done. Looked at after CARD_DELAY_MS, like any
+   * end: the turn still reads as running when this is called.
+   */
+  childStopped(id: ConversationId): void {
+    const b = this.batchFor(id);
+    if (b) this.queueUpdates(b.key, [], b.at);
+  }
+
+  /** The batch a part started now from `here` joins: the last one, if it began within BATCH_WINDOW_MS. */
+  private batchToJoin(here: Place): Batch | undefined {
+    // A coordination topic runs no turn to save: its cards are only shown, and shown as they come.
+    if (this.externalOf(here)) return undefined;
+    const key = this.cardKey(here);
+    const now = this.deps.clock.now();
+    const last = this.batches.get(key)?.at(-1);
+    if (last && now - last.startedAt < BATCH_WINDOW_MS) return last;
+    return { key, at: { platform: here.platformId, address: here.address }, startedAt: now, members: new Set(), held: new Set() };
+  }
+
+  private joinBatch(b: Batch, id: ConversationId): void {
+    const list = this.batches.get(b.key) ?? [];
+    if (!list.includes(b)) list.push(b);
+    this.batches.set(b.key, list);
+    b.members.add(id);
+    this.batchOf.set(id, b);
+  }
+
+  /** A part's batch — for a reviewer the loop opened, its work's, so a loop's end is held as one. */
+  private batchFor(id: ConversationId): Batch | undefined {
+    return this.batchOf.get(id) ?? this.batchOf.get(this.reviewerOf.get(id) ?? '');
+  }
+
+  /**
+   * Still at work, for its batch: a turn running or about to be retried, a question open, or a
+   * review loop not yet over — the loop's end, not the work's, is what the parent is waiting for.
+   */
+  private atWork(id: ConversationId): boolean {
+    const c = this.place(id);
+    if (!c) return false;
+    const stage = this.stageOf(c);
+    if (stage === 'working' || stage === 'retrying' || stage === 'answer') return true;
+    const loop = this.loops.get(id);
+    return loop !== undefined && !loop.outcome;
+  }
+
+  private batchDone(b: Batch): boolean {
+    return b.expired === true || ![...b.members].some((m) => this.atWork(m));
+  }
+
+  /**
+   * News the parent is to have now, whatever its batch: anything but an ordinary end (the caller
+   * checks the stage), what the person wrote in the topic, and a review loop that needs the parent.
+   */
+  private urgent(id: ConversationId): boolean {
+    if (this.said.has(id)) return true;
+    const loop = this.loopOf(id);
+    return loop !== undefined && (loop.note !== undefined || loop.outcome?.passed === false);
+  }
+
+  private holdInBatch(b: Batch, id: ConversationId): void {
+    b.held.add(id);
+    b.cancelHold ??= this.deps.clock.schedule(() => {
+      b.cancelHold = undefined;
+      b.expired = true;
+      console.log(`[delegation] ${b.key}: ${b.held.size} update(s) waited ${BATCH_HOLD_MS / 60_000} min for the rest of their batch; sending them`);
+      this.queueUpdates(b.key, [], b.at);
+    }, BATCH_HOLD_MS);
+  }
+
+  private dissolve(b: Batch): void {
+    b.cancelHold?.();
+    b.cancelHold = undefined;
+    for (const m of b.members) if (this.batchOf.get(m) === b) this.batchOf.delete(m);
+    const list = (this.batches.get(b.key) ?? []).filter((x) => x !== b);
+    if (list.length) this.batches.set(b.key, list);
+    else this.batches.delete(b.key);
+  }
+
+  private markRead(id: ConversationId, turns: number[]): void {
+    const top = Math.max(-1, ...turns);
+    if (top > (this.readTurn.get(id) ?? -1)) this.readTurn.set(id, top);
+  }
+
+  /**
+   * The end of this turn is one the parent read itself (`readTurn`), so a card would only repeat it.
+   * Not when the person wrote there: what they wrote is what the reply answers, and `--reply` does
+   * not show it.
+   */
+  private alreadyRead(id: ConversationId, stage: TopicStage | undefined): boolean {
+    if (this.said.has(id) || (stage !== 'review' && stage !== 'failed')) return false;
+    const turn = (stage === 'review' ? this.deps.registry.replyOf(id) : this.deps.registry.failureOf(id))?.turn;
+    return turn !== undefined && turn <= (this.readTurn.get(id) ?? -1);
+  }
+
+  /**
+   * Which of these topics' news goes to conversation `key` now. An ordinary end of a part whose batch
+   * is still at work is held in the batch instead. Anything that does go wakes the agent anyway, so
+   * it takes everything its batches hold along; and a batch with nobody left at work lets go of what
+   * it held and is over.
+   */
+  private release(key: ConversationId, children: Set<ConversationId>): Set<ConversationId> {
+    const out = new Set<ConversationId>();
+    let wakes = false;
+    for (const id of children) {
+      const c = this.place(id);
+      const stage = c ? this.stageOf(c) : undefined;
+      const b = this.batchFor(id);
+      // Read already: let through, to be left off the card and settled there, waking nobody.
+      const read = this.alreadyRead(id, stage);
+      if (b && !read && stage === 'review' && !this.urgent(id)) {
+        this.holdInBatch(b, id);
+        continue;
+      }
+      out.add(id);
+      if (!read && isNews(stage)) wakes = true;
+    }
+    for (const b of [...(this.batches.get(key) ?? [])]) {
+      const done = this.batchDone(b);
+      if (!done && !wakes) continue;
+      for (const id of b.held) out.add(id);
+      b.held.clear();
+      b.cancelHold?.();
+      b.cancelHold = undefined;
+      if (done) this.dissolve(b);
+    }
+    return out;
+  }
+
+  /**
    * An agent's usage-limit cooldown is over (TurnOutcomes): the cards held for the conversations it
    * answers go now — gathered again, so a sub-agent that has since started over is left out the way
    * sendUpdates always leaves it out.
@@ -1819,31 +2005,31 @@ export class Delegation {
     const here = this.place(key, u?.at);
     if (!u || !here) return;
     this.takeLoopEnds(u.children, u.fromLoop, here);
-    if (u.children.size === 0) return;
-    const reader = this.deps.registry.boundAgentOf(key);
-    if (reader && this.deps.registry.coolingDown(reader)) {
-      this.holdUpdates(here, reader, u.children);
+    // A loop that ended just now (a review passed) has reported already: on this card, not the next,
+    // or its batch would be read as done without it.
+    const late = this.updates.get(key);
+    if (late) {
+      late.cancel();
+      this.updates.delete(key);
+      for (const id of late.children) u.children.add(id);
+      for (const id of late.fromLoop) u.fromLoop.add(id);
+    }
+    // A card sent now would wait behind the agent's turn as it reads now, and every end after it
+    // would queue one more. Gather on, and write one card once the agent is free.
+    if (!this.externalOf(here) && this.deps.registry.isBusy(here.key)) {
+      const again = [...u.children];
+      this.queueUpdates(key, again.filter((id) => !u.fromLoop.has(id)), u.at);
+      this.queueUpdates(key, again.filter((id) => u.fromLoop.has(id)), u.at, true);
       return;
     }
-    const entries: CardEntry[] = [];
-    const shown: string[] = [];
-    for (const id of u.children) {
-      const c = this.childrenOf(here).find((x) => x.key === id);
-      if (!c) continue;
-      const stage = this.stageOf(c);
-      // Started again since (someone wrote there): what it is doing now is news only when it ends.
-      // What the person wrote is kept for that card.
-      if (stage === 'working' || stage === 'idle' || stage === 'retrying') continue;
-      // A question leaves the turn open; an end closes it.
-      if (stage !== 'answer') this.owed.delete(c.key);
-      const said = this.said.get(c.key);
-      this.said.delete(c.key);
-      const row = this.row(c);
-      const locale = localeOf(this.deps.config);
-      const afterWrote = said ? tWorkflows(locale, 'delegation.report.afterWrote') : '';
-      entries.push(this.entry(c, row, stage, said));
-      shown.push(`🔔 ${row.title || row.topic} (${row.agent}) — ${describeStage(stage, locale)}${afterWrote}${row.line ? `: ${row.line}` : ''}`);
+    const children = this.release(key, u.children);
+    if (children.size === 0) return;
+    const reader = this.deps.registry.boundAgentOf(key);
+    if (reader && this.deps.registry.coolingDown(reader)) {
+      this.holdUpdates(here, reader, children);
+      return;
     }
+    const { entries, shown } = this.entriesOf(here, children);
     if (entries.length === 0) return;
     const visible = entries.slice(0, CARD_MAX_ENTRIES);
     const extra = entries.length - visible.length;
@@ -1853,6 +2039,35 @@ export class Delegation {
       folded.push(tWorkflows(locale, 'delegation.report.extra', { count: extra }));
     }
     this.tell(here, this.card(`[sub-agent updates] ${this.tally(here)}`, visible, extra), folded, entries.length);
+  }
+
+  /** The card's entries for these topics, and the folded line the person sees for each. */
+  private entriesOf(here: Place, children: Set<ConversationId>): { entries: CardEntry[]; shown: string[] } {
+    const entries: CardEntry[] = [];
+    const shown: string[] = [];
+    const locale = localeOf(this.deps.config);
+    for (const id of children) {
+      const c = this.childrenOf(here).find((x) => x.key === id);
+      if (!c) continue;
+      const stage = this.stageOf(c);
+      // Started again since (someone wrote there): what it is doing now is news only when it ends.
+      // What the person wrote is kept for that card.
+      if (!isNews(stage)) continue;
+      if (this.alreadyRead(c.key, stage)) {
+        this.owed.delete(c.key);
+        console.log(`[delegation] ${here.key}: ${c.key} left off the card — that turn was read with task-read`);
+        continue;
+      }
+      // A question leaves the turn open; an end closes it.
+      if (stage !== 'answer') this.owed.delete(c.key);
+      const said = this.said.get(c.key);
+      this.said.delete(c.key);
+      const row = this.row(c);
+      const afterWrote = said ? tWorkflows(locale, 'delegation.report.afterWrote') : '';
+      entries.push(this.entry(c, row, stage, said));
+      shown.push(`🔔 ${row.title || row.topic} (${row.agent}) — ${describeStage(stage, locale)}${afterWrote}${row.line ? `: ${row.line}` : ''}`);
+    }
+    return { entries, shown };
   }
 
   /**
@@ -2677,6 +2892,11 @@ function turnRecordOf(record: HistoryTurnRow): NonNullable<TaskReadResult['turn'
     agent: record.agent,
     ...(record.detail ? { detail: record.detail } : {}),
   };
+}
+
+/** A stage a card has something to say about; the others are skipped there (sendUpdates). */
+function isNews(stage: TopicStage | undefined): boolean {
+  return stage !== undefined && stage !== 'working' && stage !== 'idle' && stage !== 'retrying';
 }
 
 /** The library's three roles, narrowed for the result (writes are typed; nothing else is stored). */

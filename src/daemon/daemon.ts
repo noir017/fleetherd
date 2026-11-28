@@ -309,6 +309,7 @@ export class Daemon {
       supersedeVoice: (id: ConversationId) => this.voice.supersede(id),
       cancelPendingVoice: (id: ConversationId, reason: string) => this.voice.cancel(id, reason),
       onNeedsPerson: (id: ConversationId) => this.delegation.childChanged(id),
+      onTurnStopped: (id: ConversationId) => this.delegation.childStopped(id),
       onPersonWords: (
         id: ConversationId,
         words: Parameters<Delegation['personWrote']>[1]

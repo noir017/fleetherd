@@ -49,6 +49,16 @@ in parallel, and come back with one report — so you follow one topic instead o
    sends fixes where needed; it does not read the diff itself. When every part is done, it writes
    one summary with a link to each topic.
 
+Parts started within a minute of each other (the parts on one card, or parts proposed back to back
+with confirmation off) are one batch. A part whose turn ends normally is held until none of its
+batch is still at work, meaning running, asking a question, or in an automatic review. Then the
+whole batch reaches the agent on one card. A failure, a question, or a turn you wrote into goes at
+once, and carries whatever its batch was holding. A result held for 30 minutes goes anyway, and that
+batch is over. While the agent is busy with a turn of its own (talking with you, or reading the
+results itself), updates keep gathering and become one card when it is free. A turn it has already
+read with `task-read` is left off that card. Batches live in the gateway's memory, so after a
+restart each end is reported as it comes.
+
 ## Talking to a sub-agent
 
 A sub-agent's topic is an ordinary topic: open it, read it, write in it, `/stop` it. When a turn you

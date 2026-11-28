@@ -1047,6 +1047,20 @@ of it: the daemon keeps none, so deleting a topic on the page is what ends it. T
   carries only the error's opening. A question names no turn and no command: the ask is the
   gateway's own message, not a row the library keeps. The stage is read
   without `seenAt`: the person having read a reply does not mean the parent agent has.
+  **Batches** (since 2026-11-28, decided with the operator): parts `start` opens within
+  `BATCH_WINDOW_MS` of a batch's first are one `Batch`, and everything one card starts is one batch
+  however long the opens take. `release` holds an ordinary end (`review`, not `urgent`) in its batch
+  until no member is `atWork` (a turn running or retrying, a question open, or a review loop with no
+  outcome; a reviewer counts under its work), or `BATCH_HOLD_MS` passes. Anything else that goes
+  wakes the parent anyway, so it carries what the batch holds. A stop tells nobody, so TurnOutcomes'
+  `onStopped` → `childStopped` re-checks the batch after `CARD_DELAY_MS`. A loop that finishes inside
+  `takeLoopEnds` reports synchronously, and that report is folded into the same card, or the batch
+  would be read as done without it. Batches are memory only, and a coordination topic gets none.
+  **While the parent is busy** `sendUpdates` re-queues instead of writing: a card is a solo turn that
+  waits behind the running one, so writing it early queued one card per end, and each was stale by
+  the time it ran. **Read dedupe**: `task-read` records the newest finished turn it returned
+  (`readTurn`; `--reply`'s turn, or agent rows of a topic not busy at the time), and a `review` or
+  `failed` end whose kept turn is no later is settled off the card, unless the person wrote there.
 - `task-read` reads the library, not the platform's own history: the same rows and the same
   `READ_FILTER_OPTIONS` as `sessions read`, plus its own `--tail` (the last lines of each message)
   and `--reply` (the last normally-ended turn's reply, whole). `--turn` carries that turn's record,

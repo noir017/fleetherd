@@ -65,6 +65,8 @@ export interface TurnOutcomesDeps {
    * continued). Delegation listens here, for a sub-agent's topic (daemon/delegation.ts); absent = nobody does.
    */
   onNeedsPerson?(id: ConversationId): void;
+  /** A turn was stopped: nothing for the person, but a sub-agent's batch may be done (delegation.ts). */
+  onStopped?(id: ConversationId): void;
   /**
    * An agent's usage-limit cooldown is over (see Cooldown): whatever waited on it may go. Delegation
    * listens, for the update cards it held for a parent answered by that agent.
@@ -234,6 +236,7 @@ export class TurnOutcomes {
         this.failures.delete(id);
         this.leaveCooldown(id);
         this.set(id, {});
+        this.deps.onStopped?.(id);
         return;
       case 'failed': {
         const error = end.error instanceof Error ? end.error.message : String(end.error);
