@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.47.0] - 2026-11-28
+
 ### Added
 
 - **claude agents show their Claude subscription quota in the Web UI's status strip.** agy has shown
