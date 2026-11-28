@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.51.0] - 2026-11-28
+
 ### Changed
 
 - **The web UI keeps recent topics current with `?since=` deltas instead of full reloads.** The
