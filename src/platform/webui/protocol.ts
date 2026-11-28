@@ -772,6 +772,16 @@ export interface TopicSnapshot {
   hasMore?: boolean;
   oldestSeq?: number;
   recentNonces?: string[];
+  /**
+   * The answer to `?since=<last>`: `messages` are only those added, edited or reacted to after
+   * `since`, as the room holds them now and in its order, and `gone` the ids removed since. The
+   * page merges them into its copy by id instead of replacing it. Absent when the room could not
+   * say (another run, or past its backlog), and the answer is then the plain snapshot.
+   */
+  delta?: true;
+  gone?: string[];
+  /** On a delta: each message's room-local seq (the `oldestSeq` cursor), in `messages` order. */
+  seqs?: number[];
 }
 
 /** One older page returned by `GET /api/messages?t=<topic>&before=<seq>&limit=<n>`. */

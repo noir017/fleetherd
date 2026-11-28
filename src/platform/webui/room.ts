@@ -1916,19 +1916,73 @@ export class WebRoom {
    * stream with `?last=` and be handed only what was said after them. `lastAt` is the row's, read
    * in the same turn as the messages, so a copy can be told apart from one missing a later reply.
    */
-  snapshot(topicId: string): TopicSnapshot | undefined {
+  snapshot(topicId: string, since?: string): TopicSnapshot | undefined {
     const topic = this.topics.get(topicId);
     if (!topic) return undefined;
     // `rooms.get`, not `roomOf`: the latter creates an empty room, which would be this request
     // changing the daemon's state. An absent room is an empty one here, which is what a sync
     // would find too.
     const room = this.rooms.get(topicId);
+    const last = `${topicId}.${this.run}.${room?.seq ?? 0}`;
+    const delta = room && since ? this.deltaSince(room, topicId, since) : undefined;
+    if (delta) {
+      return {
+        topic: topicId,
+        epoch: this.startedAt,
+        last,
+        lastAt: topic.lastAt,
+        delta: true,
+        ...delta,
+        ...(this.isStale(topicId, room) ? { stale: true as const } : {}),
+      };
+    }
     return {
       topic: topicId,
       ...this.roomState(topicId, room),
-      last: `${topicId}.${this.run}.${room?.seq ?? 0}`,
+      last,
       lastAt: topic.lastAt,
     };
+  }
+
+  /**
+   * What changed in a room after `since`, as message state rather than events: the messages any
+   * event after it touched, as the room holds them now, and the ids removed. Undefined when the
+   * backlog cannot say (the same test a resume makes), or when the change is wider than a sync's
+   * window, where the plain snapshot is no larger.
+   *
+   * Edits still held in the queue are included: their stored body is already newer than the
+   * backlog, and `last` is the room's seq as of now — the flush that follows replays them again,
+   * which the page applies as the same message.
+   */
+  private deltaSince(
+    room: Room,
+    topicId: string,
+    since: string
+  ): Pick<TopicSnapshot, 'messages' | 'gone' | 'seqs'> | undefined {
+    const missed = this.replayFrom(room, topicId, since);
+    if (!missed) return undefined;
+    const touched = new Set<string>(room.queue);
+    const gone = new Set<string>();
+    for (const { ev } of missed) {
+      if (ev.t === 'msg') {
+        touched.add(ev.msg.id);
+        gone.delete(ev.msg.id);
+      } else if (ev.t === 'del') {
+        touched.delete(ev.id);
+        gone.add(ev.id);
+      } else if (ev.t === 'react') {
+        touched.add(ev.id);
+      }
+    }
+    if (touched.size > SYNC_WINDOW_MESSAGES) return undefined;
+    const messages: WebMessage[] = [];
+    const seqs: number[] = [];
+    for (const rec of room.stored.values()) {
+      if (!touched.has(rec.msg.id)) continue;
+      messages.push(rec.msg);
+      seqs.push(rec.seq);
+    }
+    return { messages, seqs, ...(gone.size > 0 ? { gone: [...gone] } : {}) };
   }
 
   /** Return up to `limit` messages strictly older than `before` (by room-local `seq`) in chronological order. */
