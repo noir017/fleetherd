@@ -182,7 +182,9 @@ FR10 Web UI     X   .   X   X   X   X   X   X   X   X
 - 一次 Web UI 实测：话题树、子代理话题、git/文件/定时/技能面板都能打开；关掉 `files.enabled` 后对应路由 404。
 - 更新 `platform/README.md`、`platform/webui/README.md`。
 
-### WP5 `HarnessProfile` 接缝（3–4 天，中风险，在 WP3 之后做）
+### WP5 `HarnessProfile` 接缝（3–4 天，中风险，在 WP3 之后做）——已完成
+
+> 第三批（`refactor-batch-3`）落地，下面的 grep 验收在 2026-11-28 变成了棘轮测试 `src/harness-seam.test.ts`，见 §8。注册表叫 `HARNESS_PROFILES`：`HARNESSES` 已经是 `config/schema.ts` 里 harness 名字的列表。
 
 参照 `PlatformProfile`：每个 harness 一个文件，注册表穷举所有 harness，新增 harness 时编译器会逼着它把每一项都填上。
 
@@ -296,7 +298,7 @@ WP6 随时可做（解环 D、E 的两项在 WP0 之后做）
 - `PlatformAdapter`：56 个成员（32 个可选）→ 3 个只读字段 + 22 个通用方法 + `topics`、`presence`、`workbench` 三个能力子对象。`daemon.ts` 不再 import 任何 `*-panel.ts`。
 - `connect-agent.ts` 不再 import 技能、指令模块；agent 运行时（`agent*.ts`、`acp-*.ts`、`harness/`）不再 import `conversation-store`。
 - `config/` 只 import `types.ts` 和 `legacy-name.ts`，config 与 platform 之间不再有双向依赖，`layering.test.ts` 同时禁止 `config/` import Satori 包。
-- harness 分支只剩在 `daemon/harness/`、`core/harness-facts.ts` 和 `config/` 里。新增 harness 要动的地方见 AGENTS.md「Adding things → An agent harness」。
+- harness 分支只剩在 `daemon/harness/`、`core/harness-facts.ts` 和下面列出的有意保留的例外里。新增 harness 要动的地方见 AGENTS.md「Adding things → An agent harness」。`src/harness-seam.test.ts`（2026-11-28）用 TypeScript AST 找按 harness 名字的比较、`switch` 分支和 `[...].includes(harness)`，例外按文件记处数，多一处少一处都失败，名单只会变短。
 
 **与方案的出入**
 - 吸收了另一份对比方案里的一项：`commands/doctor.ts` 不再穿透 `platform/webui/` 内部文件。
