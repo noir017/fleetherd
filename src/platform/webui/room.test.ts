@@ -1038,6 +1038,69 @@ describe('WebRoom: a topic handed over without attaching', () => {
     expect(room.snapshot('not-a-topic')).toBeUndefined();
   });
 
+  it('answers ?since= with only the messages changed after it, as the room holds them now', () => {
+    const { room, topic } = attached();
+    const kept = room.post(topic, { own: false, html: '<p>kept</p>' }, 'kept');
+    const edited = room.post(topic, { own: false, html: '<p>old</p>' }, 'old');
+    const reacted = room.post(topic, { own: true, html: '<p>ask</p>' }, 'ask');
+    const dropped = room.post(topic, { own: false, html: '<p>drop</p>' }, 'drop');
+    const since = room.snapshot(topic)!.last;
+
+    room.revise(topic, edited.id, 'new');
+    room.react(topic, reacted.id, '✅', true);
+    room.remove(topic, dropped.id);
+    const added = room.post(topic, { own: false, html: '<p>reply</p>' }, 'reply');
+
+    const d = room.snapshot(topic, since)!;
+    expect(d.delta).toBe(true);
+    expect(d.last).toBe(room.snapshot(topic)!.last);
+    // Room order, one copy each, the latest body: never `kept`, never the removed one.
+    expect(d.messages.map((m) => m.id)).toEqual([edited.id, reacted.id, added.id]);
+    expect(d.messages[0]?.html).toContain('new');
+    expect(d.messages[1]?.reactions).toEqual(['✅']);
+    expect(d.gone).toEqual([dropped.id]);
+    expect(d.seqs).toHaveLength(3);
+    expect(d.seqs![0]).toBeLessThan(d.seqs![2]!);
+    expect(d.messages.map((m) => m.id)).not.toContain(kept.id);
+  });
+
+  it('carries an edit still held in the queue, and answers nothing changed with an empty delta', () => {
+    const { room, topic } = attached();
+    const msg = room.post(topic, { own: false, html: '<p>a</p>' }, 'a');
+    const since = room.snapshot(topic)!.last;
+    expect(room.snapshot(topic, since)).toMatchObject({ delta: true, messages: [] });
+
+    room.revise(topic, msg.id, 'streaming on'); // held: no event yet
+    const d = room.snapshot(topic, since)!;
+    expect(d.last).toBe(since);
+    expect(d.messages.map((m) => m.html)).toEqual([expect.stringContaining('streaming on')]);
+  });
+
+  it('falls back to the whole snapshot when it cannot vouch for the gap', () => {
+    const { room, topic } = attached();
+    room.post(topic, { own: false, html: '<p>a</p>' }, 'a');
+    const snap = room.snapshot(topic)!;
+    const [, run] = snap.last.split('.');
+    for (const since of [`${topic}.zz.1`, `${topic}.${run}.999`, 'garbage', `deadbeef.${run}.1`]) {
+      const d = room.snapshot(topic, since)!;
+      expect(d.delta, since).toBeUndefined();
+      expect(d.messages.map((m) => m.html)).toEqual(['<p>a</p>']);
+    }
+    // Past the backlog: what was said before the oldest kept event cannot be told apart.
+    for (let i = 0; i < 320; i += 1) room.post(topic, { own: false, html: `<p>${i}</p>` }, String(i));
+    expect(room.snapshot(topic, snap.last)?.delta).toBeUndefined();
+  });
+
+  it('answers a change wider than a sync window with the window instead', () => {
+    const { room, topic } = attached();
+    room.post(topic, { own: false, html: '<p>a</p>' }, 'a');
+    const since = room.snapshot(topic)!.last;
+    for (let i = 0; i < SYNC_WINDOW_MESSAGES + 1; i += 1) room.post(topic, { own: false, html: `<p>${i}</p>` }, String(i));
+    const d = room.snapshot(topic, since)!;
+    expect(d.delta).toBeUndefined();
+    expect(d.hasMore).toBe(true);
+  });
+
   it('leaves the seen mark and the stage exactly where they were', () => {
     // A fetch nobody is waiting on is not the person looking: if it marked the topic seen, the
     // green row would go grey before it was ever opened.

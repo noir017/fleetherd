@@ -919,7 +919,11 @@ function stream({ req, res, url }: Req, ctx: Ctx): void {
 async function topicSnapshot({ req, res, url }: Req, ctx: Ctx): Promise<void> {
   const id = url.searchParams.get('t') ?? '';
   if (!TOPIC_ID.test(id)) return send(req, res, 400, { error: 'not a topic id' });
-  const snapshot = ctx.room.snapshot(id);
+  // `since` is a copy's `last`; the room checks it like a resume point and answers the whole
+  // snapshot when it cannot vouch for the gap. Only its length is bounded here.
+  const since = url.searchParams.get('since') ?? '';
+  if (since.length > 64) return send(req, res, 400, { error: 'invalid since' });
+  const snapshot = ctx.room.snapshot(id, since || undefined);
   if (!snapshot) return send(req, res, 404, { error: 'no such topic' });
   await sendAsyncGzip(req, res, 200, snapshot);
 }

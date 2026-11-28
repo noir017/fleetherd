@@ -200,6 +200,10 @@ export interface TopicSnapshotPayload {
   readonly messages?: readonly unknown[];
   readonly hasMore?: boolean;
   readonly oldestSeq?: number;
+  /** An answer to `?since=`: `messages` are only what changed, `gone` what was removed. */
+  readonly delta?: boolean;
+  readonly gone?: readonly string[];
+  readonly seqs?: readonly number[];
 }
 
 export interface ScheduleTaskLike {

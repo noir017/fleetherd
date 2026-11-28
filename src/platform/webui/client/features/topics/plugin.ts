@@ -1381,6 +1381,17 @@ export function createTopicsPlugin(deps: TopicsPluginDeps = {}): WebuiPlugin {
         rt.schedulePrefetch();
       });
 
+      // The prefetch gives up while the stream is down or the tab is hidden, and neither a quiet
+      // resume (unchanged list) nor a brief tab switch (< parkMs) emits a list event to wake it.
+      ctx.events.on('stream.state', ({ state }) => {
+        if (state === 'open') rt.schedulePrefetch();
+      });
+      ctx.subscriptions.add(
+        addDisposableListener(doc, 'visibilitychange', () => {
+          if (doc.visibilityState !== 'hidden') rt.schedulePrefetch();
+        }),
+      );
+
       ctx.events.on('topic.active', ({ id }) => {
         rt.activeTopicId = id ?? '';
         rt.paintAll();

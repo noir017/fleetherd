@@ -8,6 +8,8 @@ import {
   message,
   face,
   open,
+  readRecord,
+  IDBFactory,
   type Harness,
   type Call,
 } from './page.dom.test-helpers.js';
@@ -195,6 +197,76 @@ describe('webui page: a composer per topic', () => {
     expect(touched).toEqual([]);
   });
 
+});
+
+/**
+ * A recent topic the page is not in is kept current in the background: its row's `last` says the
+ * copy is behind, and only what changed after the copy is fetched and merged into it.
+ */
+describe('webui page: keeping recent topics current', () => {
+  const A = 'a1b2c3d4';
+  const B = 'b2c3d4e5';
+
+  function putRecord(idb: IDBFactory | null, rec: Record<string, unknown>): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const rq = idb!.open('aa_cache', 1);
+      rq.onupgradeneeded = () => rq.result.createObjectStore('topics', { keyPath: 'topic' }).createIndex('at', 'at');
+      rq.onerror = () => reject(rq.error);
+      rq.onsuccess = () => {
+        const t = rq.result.transaction('topics', 'readwrite');
+        t.objectStore('topics').put(rec);
+        t.oncomplete = () => {
+          rq.result.close();
+          resolve();
+        };
+      };
+    });
+  }
+
+  it('merges what changed since its copy, asking with ?since=', async () => {
+    const idb = new IDBFactory();
+    const old = [
+      { ...message('w1', '<p>question</p>', true), _g: 1 },
+      { ...message('w2', '<p>half an answer</p>'), _g: 1 },
+    ];
+    await putRecord(idb, { topic: B, at: 1, json: JSON.stringify(old), epoch: 1, last: `${B}.1.3` });
+    const deltaPath = `api/topic?t=${B}&since=${encodeURIComponent(`${B}.1.3`)}`;
+    const h = await open({
+      url: `http://localhost:8787/?t=${A}`,
+      idb,
+      replies: {
+        [deltaPath]: {
+          topic: B,
+          epoch: 1,
+          last: `${B}.1.9`,
+          lastAt: Date.now(),
+          delta: true,
+          messages: [message('w2', '<p>the whole answer</p>'), message('w3', '<p>and a footnote</p>')],
+          seqs: [2, 3],
+        },
+      },
+    });
+    const now = Date.now();
+    await h.emit(
+      sync(A, [], [A, B], {
+        topics: [
+          { id: A, title: 'here', lastAt: now, running: false },
+          { id: B, title: 'just finished', lastAt: now - 5000, running: false, last: `${B}.1.9` },
+        ],
+      }),
+    );
+
+    // The prefetch waits out its debounce (PRE_DEBOUNCE_MS) before it asks.
+    await within('the delta is asked for', 2000, () => h.calls.some((c) => c.path.startsWith('api/topic')));
+    expect(h.calls.filter((c) => c.path.startsWith('api/topic')).map((c) => c.path)).toEqual([deltaPath]);
+    let rec = await readRecord(idb, B);
+    for (let i = 0; i < 50 && rec?.last !== `${B}.1.9`; i += 1) {
+      await tick();
+      rec = await readRecord(idb, B);
+    }
+    expect(rec?.last).toBe(`${B}.1.9`);
+    expect(rec?.list.map((m) => m.html)).toEqual(['<p>question</p>', '<p>the whole answer</p>', '<p>and a footnote</p>']);
+  });
 });
 
 describe('webui page: a topic the daemon no longer has', () => {

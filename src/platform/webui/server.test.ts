@@ -1200,6 +1200,24 @@ describe('webui server: one topic, fetched before it is opened', () => {
     stream.close();
   });
 
+  it('answers ?since= with what changed after it, and refuses an oversized one', async () => {
+    const { base, room, topic } = await boot();
+    const cookie = await signIn(base);
+    room.post(topic, { own: false, html: '<p>before</p>' }, 'before');
+    const snap = (await (await fetch(`${base}/api/topic?t=${topic}`, { headers: { cookie } })).json()) as { last: string };
+    room.post(topic, { own: false, html: '<p>after</p>' }, 'after');
+
+    const res = await fetch(`${base}/api/topic?t=${topic}&since=${encodeURIComponent(snap.last)}`, { headers: { cookie } });
+    expect(res.status).toBe(200);
+    const d = (await res.json()) as { delta?: boolean; last: string; messages: Array<{ html: string }> };
+    expect(d.delta).toBe(true);
+    expect(d.messages.map((m) => m.html)).toEqual(['<p>after</p>']);
+    expect(d.last).not.toBe(snap.last);
+
+    const bad = await fetch(`${base}/api/topic?t=${topic}&since=${'x'.repeat(65)}`, { headers: { cookie } });
+    expect(bad.status).toBe(400);
+  });
+
   it('announces nothing to the clients already attached', async () => {
     const { base, port, room, topic } = await boot();
     const cookie = await signIn(base);
