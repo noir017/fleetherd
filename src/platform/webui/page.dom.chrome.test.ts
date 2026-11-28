@@ -800,66 +800,117 @@ describe('webui page: tool bubbles fold and open', () => {
 });
 
 /**
- * A subagent's card (kind `subagent`, markup.ts subagentCard): the server draws its header and rows,
- * the page builds the card — the count and state in the reader's language, and a fold to the newest
- * row that the header opens.
+ * The harness's own subagents (kind `subagent`): one line in the transcript where each started
+ * (markup.ts subagentMarker), and a bar above the status line (subagent-tray.ts) — folded to how many
+ * run, open to a row each, a row open to its tools. Both read the same messages.
  */
-describe('webui page: subagent cards', () => {
+describe('webui page: built-in subagents', () => {
   const T = 'a1b2c3d4';
+  const OTHER = 'b2c3d4e5';
 
-  function card(id: string, text: string): Record<string, unknown> {
-    return { ...message(id, webMessageHtml('subagent', text)), kind: 'subagent' };
+  function card(id: string, text: string, at = 1758240000000): Record<string, unknown> {
+    return { ...message(id, webMessageHtml('subagent', text)), kind: 'subagent', at };
   }
+  const BACK = '↳ back end\n💻 Bash: "grep 401" ✓ 1.2s\n📖 Read: "auth.go"';
+  const FRONT = '↳ front end\n💻 Bash: "npm test"';
 
-  const head = (h: Harness): HTMLElement | null => h.doc.querySelector<HTMLElement>('#log .sa-h');
-  /** The rows the stylesheet leaves in view: a folded card hides all but its last (asserted below). */
-  const shown = (h: Harness): string[] =>
-    Array.from(h.doc.querySelectorAll<HTMLElement>('#log .sa .tl'))
-      .filter((r) => !(r.closest('.sa')?.classList.contains('open') === false && r !== r.parentElement?.lastElementChild))
-      .map(face);
+  const tray = (h: Harness): HTMLElement => h.el('subagents');
+  const head = (h: Harness): HTMLElement | null => tray(h).querySelector<HTMLElement>('.sat-h');
+  const rows = (h: Harness): string[] => Array.from(tray(h).querySelectorAll('.sat-list .sa-h')).map(face);
+  const tools = (h: Harness): string[] => Array.from(tray(h).querySelectorAll('.sat-list .tl')).map(face);
 
-  it('names the subagent, counts its tools, and shows the newest one while it runs', async () => {
+  it('leaves one line in the transcript where each subagent started, and none of its tools', async () => {
     const h = await open();
-    await h.emit(sync(T, [card('m1', '↳ back end\n💻 Bash: "grep 401" ✓ 1.2s\n📖 Read: "auth.go"')], [T]));
-
-    expect(face(head(h))).toBe('[subagent]back end2 toolsRunning[chevronDown]');
-    expect(head(h)?.getAttribute('aria-expanded')).toBe('false');
-    expect(shown(h)).toEqual(['[book] Read: "auth.go"']);
-    expect(h.doc.querySelector('#log .sa-more')?.textContent).toBe('1 earlier — tap the name to show all');
-    // The card folds by its header, so the tool bubble's own "Show all" is not offered on it.
+    await h.emit(sync(T, [card('m1', BACK)], [T]));
+    expect(face(h.doc.querySelector('#log .sa-mark'))).toBe('[subagent]back end2 toolsRunning[chevronRight]');
+    expect(h.doc.querySelector('#log .tl')).toBeNull();
     expect(h.doc.querySelector('#log [data-tl-all]')).toBeNull();
   });
 
-  it('opens to every row on a tap of the header, and stays open as the card is edited', async () => {
-    const h = await open();
-    await h.emit(sync(T, [card('m1', '↳ back end\n💻 Bash: "grep 401" ✓ 1.2s\n📖 Read: "auth.go"')], [T]));
-
-    await h.click('#log .sa-h');
-    expect(head(h)?.getAttribute('aria-expanded')).toBe('true');
-    expect(shown(h)).toEqual(['[terminal] Bash: "grep 401" [check] 1.2s', '[book] Read: "auth.go"']);
-    expect(h.doc.querySelector('#log .sa-more')).toBeNull();
-    // Answered in the page, as a row's fold is.
-    expect(h.calls.filter((c) => c.path === 'api/click')).toEqual([]);
-
-    await h.emit({ t: 'msg', msg: card('m1', '↳ back end ✓ 13.0s\n💻 Bash: "grep 401" ✓ 1.2s\n📖 Read: "auth.go" ✓ 90ms') });
-    expect(h.doc.querySelector('#log .sa')?.className).toBe('sa st-ok open');
-    expect(face(head(h))).toBe('[subagent]back end2 tools · 13.0s[check]Done[chevronDown]');
-
-    await h.click('#log .sa-h');
-    expect(shown(h)).toEqual(['[book] Read: "auth.go" [check] 90ms']);
-  });
-
-  it('says a subagent that ended badly did not finish', async () => {
+  it('says in that line when a subagent ended badly', async () => {
     const h = await open();
     await h.emit(sync(T, [card('m1', '↳ back end ✗ 3.0s\n💻 Bash: "go test"')], [T]));
-    expect(h.doc.querySelector('#log .sa')?.classList.contains('st-err')).toBe(true);
-    expect(face(head(h))).toBe('[subagent]back end1 tool · 3.0s[cross]Did not finish[chevronDown]');
+    expect(h.doc.querySelector('#log .sa-mark')?.classList.contains('st-err')).toBe(true);
+    expect(face(h.doc.querySelector('#log .sa-mark'))).toBe('[subagent]back end1 tool · 3.0s[cross]Did not finish[chevronRight]');
   });
 
-  it('folds by the stylesheet: a closed card shows its newest row only', () => {
-    // Served text, not the CSSOM (see the README); without the rule `shown` above would be a fiction.
+  it('counts the running ones in a folded bar right above the status line', async () => {
+    const h = await open();
+    await h.emit(sync(T, [card('m1', BACK), card('m2', FRONT)], [T]));
+    expect(tray(h).hidden).toBe(false);
+    expect(tray(h).nextElementSibling?.classList.contains('wb-topic-status-row')).toBe(true);
+    expect(face(head(h))).toBe('2 built-in subagents running[chevronDown]');
+    expect(head(h)?.getAttribute('aria-expanded')).toBe('false');
+    expect(tray(h).querySelector<HTMLElement>('.sat-list')?.hidden).toBe(true);
+  });
+
+  it('opens to a row per subagent, newest first, and a row to its tools', async () => {
+    const h = await open();
+    await h.emit(sync(T, [card('m1', BACK, 1000), card('m2', FRONT, 2000)], [T]));
+    await h.click('#subagents .sat-h');
+    expect(head(h)?.getAttribute('aria-expanded')).toBe('true');
+    expect(rows(h)).toEqual(['[subagent]front end1 toolRunning[chevronDown]', '[subagent]back end2 toolsRunning[chevronDown]']);
+    expect(tools(h)).toEqual([]);
+
+    await h.click('#subagents [data-sat="1:m1"]');
+    expect(tools(h)).toEqual(['[terminal] Bash: "grep 401" [check] 1.2s', '[book] Read: "auth.go"']);
+    await h.click('#subagents .sat-list .tl');
+    expect(tray(h).querySelector('.sat-list .tl')?.classList.contains('open')).toBe(true);
+    // Answered in the page, as the transcript's folds are.
+    expect(h.calls.filter((c) => c.path === 'api/click')).toEqual([]);
+
+    await h.click('#subagents [data-sat="1:m1"]');
+    expect(tools(h)).toEqual([]);
+  });
+
+  it('follows every edit: an open row stays open, and a subagent that ends is counted out', async () => {
+    const h = await open();
+    await h.emit(sync(T, [card('m1', BACK, 1000), card('m2', FRONT, 2000)], [T]));
+    await h.click('#subagents .sat-h');
+    await h.click('#subagents [data-sat="1:m1"]');
+
+    await h.emit({ t: 'msg', msg: card('m1', '↳ back end ✓ 13.0s\n💻 Bash: "grep 401" ✓ 1.2s\n📖 Read: "auth.go" ✓ 90ms', 1000) });
+    await tick();
+    expect(face(head(h))).toBe('1 built-in subagent running[chevronDown]');
+    expect(rows(h)[1]).toBe('[subagent]back end2 tools · 13.0s[check]Done[chevronDown]');
+    expect(tools(h)).toEqual(['[terminal] Bash: "grep 401" [check] 1.2s', '[book] Read: "auth.go" [check] 90ms']);
+    expect(face(h.doc.querySelector('#log [data-sa-jump="1:m1"]'))).toBe('[subagent]back end2 tools · 13.0s[check]Done[chevronRight]');
+
+    await h.emit({ t: 'msg', msg: card('m2', '↳ front end ✗ 4.0s\n💻 Bash: "npm test" ✗ 3.9s', 2000) });
+    await tick();
+    expect(face(head(h))).toBe('[subagent]2 built-in subagents · all ended[chevronDown]');
+  });
+
+  it('opens the bar on a subagent when its line in the transcript is tapped', async () => {
+    const h = await open();
+    await h.emit(sync(T, [card('m1', BACK, 1000), card('m2', FRONT, 2000)], [T]));
+    await h.click('#log [data-sa-jump="1:m1"]');
+    expect(head(h)?.getAttribute('aria-expanded')).toBe('true');
+    expect(tray(h).querySelector('[data-sat-k="1:m1"]')?.classList.contains('open')).toBe(true);
+    expect(tray(h).querySelector('[data-sat-k="1:m2"]')?.classList.contains('open')).toBe(false);
+    expect(tools(h)).toEqual(['[terminal] Bash: "grep 401" [check] 1.2s', '[book] Read: "auth.go"']);
+  });
+
+  it('is not there in a topic without subagents, and starts folded again in the next topic', async () => {
+    const h = await open({ url: `http://localhost:8787/?t=${T}` });
+    await h.emit(
+      sync(T, [card('m1', BACK), message('w1', `<p>see <a href="?t=${OTHER}" data-goto="${OTHER}">other</a></p>`)], [T, OTHER])
+    );
+    await h.click('#subagents .sat-h');
+    await h.click('#log a[data-goto]');
+    await opens(h, `api/events?t=${OTHER}`);
+    await h.emit(sync(OTHER, [message('w2', '<p>hi</p>')], [T, OTHER]));
+    expect(tray(h).hidden).toBe(true);
+    await h.emit(sync(OTHER, [message('w2', '<p>hi</p>'), card('m9', FRONT)], [T, OTHER]));
+    await tick();
+    expect(tray(h).hidden).toBe(false);
+    expect(head(h)?.getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('keeps the open list from pushing the composer off the screen', () => {
+    // Served text, not the CSSOM (see the README).
     const html = renderPage('Chat', false, true, false);
-    expect(html).toContain('.sa:not(.open) .tl:not(:last-child){display:none}');
+    expect(html).toContain('.sat-list{position:relative;display:flex;flex-direction:column;gap:6px;max-height:min(40vh,360px);overflow-y:auto');
   });
 });
 

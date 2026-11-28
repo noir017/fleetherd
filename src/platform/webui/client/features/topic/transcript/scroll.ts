@@ -94,7 +94,9 @@ class ScrollManagerImpl implements ScrollManager {
             this._applyViewOrBottom(this._pendingView);
             this._pendingLand = false;
             this._pendingView = null;
-          } else if (this._lastClientHeight === 0 && this._pinned && !this.atBottom()) {
+          } else if (this._pinned && !this.atBottom()) {
+            // Shown again, or shrunk under a bottom bar that grew (the subagent bar, the queue): a
+            // log that was at its newest line stays there.
             this.toBottom();
           }
         }

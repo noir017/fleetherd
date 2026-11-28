@@ -144,8 +144,6 @@ export interface CodeViewModule {
 export interface ToolOpenState {
   all: boolean;
   lines: Record<string, boolean>;
-  /** A subagent card shows all its lines, not only the newest (markup.ts subagentCard). */
-  card?: boolean;
 }
 
 export interface ViewPosition {

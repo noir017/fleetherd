@@ -216,7 +216,7 @@ export interface PlatformAdapter {
  *   and not prose — by the time it reaches an adapter, a bubble is otherwise just text.
  * - `subagent` — one subagent's card (daemon/subagent-cards.ts): the same tool lines, all of one
  *   subagent the harness started, under a `↳ {name}` header that takes ✓ / ✗ when it ends. The web
- *   UI draws it as a card, folded to its newest line.
+ *   UI draws it as one line in the transcript, its tools in the subagent bar above the status line.
  * - `dispatch` — work handed to a sub-agent (`daemon/delegation.ts`): the confirmation card and
  *   the "started" card in the parent topic, and the task text a sub-agent's topic is handed
  *   (whose first message opens with `↳ From …`). The web UI marks these so a hand-off does not

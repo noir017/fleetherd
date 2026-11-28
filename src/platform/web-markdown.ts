@@ -146,7 +146,7 @@ export function renderWebToolLines(src: string, glyph?: ToolGlyph): string {
  * has ended (core/tool-renderer.ts subagentHeader), so it is read back with the same pattern.
  *
  * Only what the header says is drawn here, escaped — the state and duration as attributes, the name
- * as text; the page builds the card around it (client transcript/markup.ts subagentCard), in the
+ * as text; the page builds its line and its row around it (client transcript/markup.ts parseSubagent), in the
  * reader's language. `.sa-h` and its two attributes are that file's to parse; change them together.
  */
 export function renderWebSubagent(src: string, glyph?: ToolGlyph): string {

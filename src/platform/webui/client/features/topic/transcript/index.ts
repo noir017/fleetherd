@@ -1,6 +1,7 @@
 import { type Disposable, DisposableStore } from '../../../base/lifecycle.js';
 import { t as tr } from '../../../i18n/index.js';
 import { createBannersController, type BannersController } from './banners.js';
+import { createSubagentTray, type SubagentTrayController } from './subagent-tray.js';
 import { btwAsked, createBtwController, seqOf, type BtwController } from './btw.js';
 import { text } from '../../../services/api.js';
 import { createCodeBlocksController, type CodeBlocksController } from './code-blocks.js';
@@ -37,6 +38,7 @@ export interface TranscriptDeps {
   readonly btwBody: HTMLElement;
   readonly btwClose: HTMLElement | null;
   readonly machineNoteEl: HTMLElement;
+  readonly subagentTrayEl?: HTMLElement | null;
   readonly forkNote: HTMLElement;
   readonly getExtraCodeRoots: () => readonly (HTMLElement | null | undefined)[];
   readonly getData: () => Record<string, TranscriptMessage | undefined>;
@@ -97,12 +99,12 @@ export interface TranscriptController extends Disposable {
   readonly codeBlocks: CodeBlocksController;
   readonly btw: BtwController;
   readonly banners: BannersController;
+  readonly subagents: SubagentTrayController;
   getMessage(key: string): TranscriptMessage | undefined;
   paint(key: string, before?: Node | null): void;
   msgMarkup(key: string, m: TranscriptMessage, hist: boolean): MsgMarkupResult;
   toggleAll(key: string): void;
   toggleLine(line: HTMLElement): void;
-  toggleCard(key: string): void;
   repaintKey(key: string): void;
   forgetOpenedPrefix(prefix: string): void;
   upsert(m: TranscriptMessage): void;
@@ -154,6 +156,7 @@ class TranscriptControllerImpl implements TranscriptController {
   readonly codeBlocks: CodeBlocksController;
   readonly btw: BtwController;
   readonly banners: BannersController;
+  readonly subagents: SubagentTrayController;
 
   constructor(deps: TranscriptDeps) {
     this._deps = deps;
@@ -188,6 +191,11 @@ class TranscriptControllerImpl implements TranscriptController {
       isNarrow: deps.isNarrow,
       setSidebar: deps.setSidebar,
       onLaunchShown: deps.onLaunchShown,
+    });
+    this.subagents = createSubagentTray({
+      el: deps.subagentTrayEl ?? null,
+      getData: deps.getData,
+      getIcons: deps.getIcons,
     });
     this.btw = createBtwController({
       btwBox: deps.btwBox,
@@ -252,6 +260,7 @@ class TranscriptControllerImpl implements TranscriptController {
       els[key] = el;
     }
     const out = this.msgMarkup(key, m, this._deps.isHistory(m));
+    if (m.kind === 'subagent') this.subagents.refresh();
     if (!this.btw.isNesting()) this.btw.link(key, m);
     const cls = key === this._actionsOpenKey ? `${out.cls} actions-open` : out.cls;
     if (this._sig[key] === out.h && el.className === cls) return;
@@ -277,14 +286,6 @@ class TranscriptControllerImpl implements TranscriptController {
     if (!this._msgAt(key)) return;
     const st = this._opened[key];
     this._opened[key] = { all: !(st && st.all), lines: {} };
-    this.repaintKey(key);
-  }
-
-  /** Unfold a subagent card to all its lines, or fold it back to the newest. Line state is kept. */
-  toggleCard(key: string): void {
-    if (!this._msgAt(key)) return;
-    const st = this._opened[key] || (this._opened[key] = { all: false, lines: {} });
-    st.card = !st.card;
     this.repaintKey(key);
   }
 
@@ -332,6 +333,7 @@ class TranscriptControllerImpl implements TranscriptController {
     delete this._opened[key];
     if (this._actionsOpenKey === key) this._actionsOpenKey = null;
     this.btw.onMessageDropped(key, m);
+    if (m?.kind === 'subagent') this.subagents.refresh();
     this.banners.syncEmptyNote();
   }
 
@@ -727,6 +729,7 @@ class TranscriptControllerImpl implements TranscriptController {
     store.add(this.codeBlocks.attachDocumentEvents(doc));
     store.add(this.btw.attachCloseButton(this._deps.btwClose));
     store.add(this.banners.attachForkNoteClick());
+    store.add(this.subagents.attach());
     store.add(
       attachLogEvents(this._deps.log, {
         getTopic: this._deps.getTopic,
@@ -750,7 +753,7 @@ class TranscriptControllerImpl implements TranscriptController {
         discardLocal: this._deps.discardLocal,
         toggleAll: (key) => this.toggleAll(key),
         toggleLine: (line) => this.toggleLine(line),
-        toggleCard: (key) => this.toggleCard(key),
+        revealSubagent: (key) => this.subagents.reveal(key),
         openTurnChanges: (turn) => this.openTurnChanges(turn),
         openTurnDiffSideBySide: (turn, btn) => {
           void this.openTurnDiffSideBySide(turn, btn);
@@ -791,6 +794,7 @@ class TranscriptControllerImpl implements TranscriptController {
     this.codeBlocks.dispose();
     this.btw.dispose();
     this.banners.dispose();
+    this.subagents.dispose();
     this._disposables.dispose();
   }
 }

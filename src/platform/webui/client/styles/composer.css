@@ -80,6 +80,22 @@ button:disabled{opacity:.5;cursor:default}
 .wb-topic-editor .wb-topic-bar,
 .wb-topic-editor #bar{max-width:none;width:100%;margin:0;border-top:1px solid var(--fh-line);padding:8px max(24px,calc((100% - 760px)/2)) 14px;background:var(--fh-bg)}
 
+/* The harness's own subagents (transcript/subagent-tray.ts): one line above the status row saying
+   how many run, opening upward into a list that scrolls on its own so the composer stays in view. */
+.wb-topic-subagents{margin:0 0 8px;border:1px solid var(--fh-line);border-radius:var(--fh-radius-card);background:var(--fh-bg-side);font-size:var(--fh-fs-sm)}
+.wb-topic-subagents[hidden]{display:none}
+.sat-h{display:flex;align-items:center;gap:8px;width:100%;min-height:30px;padding:4px 10px;border:0;border-radius:var(--fh-radius-card);background:none;color:var(--fh-fg-dim);font:inherit;line-height:1.4;text-align:left;cursor:pointer}
+.sat-h.st-run{color:var(--fh-running)}
+.sat-h:hover{background:var(--fh-hover)}
+.sat-h:focus-visible{outline:1px solid var(--fh-accent);outline-offset:-1px}
+.sat-h .ic{width:14px;height:14px;flex:none}
+.sat-h .ic-subagent{color:var(--fh-hc-claude)}
+.sat-h .ic-chevronDown{margin-left:auto;color:var(--fh-fg-dim);transition:transform .15s}
+.wb-topic-subagents.open .sat-h .ic-chevronDown{transform:rotate(180deg)}
+.sat-t{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sat-list{position:relative;display:flex;flex-direction:column;gap:6px;max-height:min(40vh,360px);overflow-y:auto;overscroll-behavior:contain;padding:6px;border-top:1px solid var(--fh-line)}
+.sat-list[hidden]{display:none}
+.sat-list>.sa{flex:none;background:var(--fh-bg)}
 .wb-topic-editor .wb-topic-status-row{display:flex;align-items:center;gap:8px;margin:0 0 8px;min-width:0;font-size:var(--fh-fs-sm);color:var(--fh-fg-dim)}
 .wb-topic-editor .wb-topic-status-row:not(:has(> :not([hidden]))){display:none}
 .wb-topic-editor .wb-topic-status,
@@ -156,6 +172,8 @@ button:disabled{opacity:.5;cursor:default}
      push the other onto a second line, and the chips grow a thousand times faster, up to what
      they need, before the directory gets any of what is left. Each floor is min(fixed, the name's
      own width), from the --n length format.ts and panel.ts set, so a short name is never padded. */
+  .wb-topic-subagents{margin:-2px 0 6px}
+  .sat-h{min-height:32px;font-size:var(--fh-fs-xs)}
   .wb-topic-editor .wb-topic-status-row{flex-wrap:wrap;gap:0 6px;margin:-4px 0 4px}
   .wb-topic-editor .wb-topic-status-row:not(:has(> :not([hidden]):not(.wb-topic-power))){display:none}
   /* :not([hidden]) guards display:contents so hidden status strips stay display:none. */
