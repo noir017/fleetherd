@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [3.50.0] - 2026-11-28
+
 ### Changed
 
 - **Sub-agents started together report together.** Each part used to wake the agent that started
