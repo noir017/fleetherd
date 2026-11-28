@@ -77,6 +77,7 @@ export const agyProfile: HarnessProfile = {
   contextMissingHint:
     ' agy reports usage once per turn, summed over every model call in it, so after a turn that ran tools the count comes from its transcript on the agent\'s machine, and is missing when that cannot be read; and agy never says how big its window is, so the daemon measures the context against where agy compacts, which it knows for the models it was measured on (Gemini 3.8 Flash, Claude Sonnet/Opus 4.6, GPT-OSS 120B) — any other model shows no numbers.',
   relay: agyRelay,
+  gatewayEnvVar: 'AGY_LLM_GATEWAY_URL',
   skillHomes: (home) => agySkillHomes(home),
   skillReaders: [{ name: 'agy', homes: agySkillHomes }],
   skillScanDirs: (opts) => [

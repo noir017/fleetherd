@@ -198,6 +198,8 @@ export interface HarnessProfile {
   readonly logProbe?: HarnessLogProbe;
   /** Loopback API relay transform for this harness, if the agent's settings require one. */
   readonly relay?: (def: AgentDef) => HarnessRelay | undefined;
+  /** Default env var holding this harness's gateway base URL (used by `quotaAccountHeader` when `env` is omitted). */
+  readonly gatewayEnvVar?: string;
   readonly skillHomes: (home: string, command?: string) => SkillHome[];
   readonly skillReaders?: readonly SkillReaderSpec[];
   readonly skillHarnessName?: (def: Pick<AgentDef, 'harness' | 'command'>) => string;

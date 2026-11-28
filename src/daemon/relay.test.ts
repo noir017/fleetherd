@@ -3,7 +3,7 @@ import { gzipSync } from 'node:zlib';
 import type { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { AgentDefSchema } from '../config/schema.js';
-import { harnessRelay, openLocalRelay, relayEnv } from './relay.js';
+import { harnessRelay, openAgentRelay, openLocalRelay, relayEnv } from './relay.js';
 import type { RelaySpec } from './relay-types.js';
 
 /**
@@ -136,5 +136,43 @@ describe('relayEnv', () => {
     expect(await relayEnv(def)).toEqual({});
     expect(warn.mock.calls[0]?.[0]).toMatch(/could not open its relay/);
     warn.mockRestore();
+  });
+
+  it('tags session URLs and reports observed response headers for quotaAccountHeader', async () => {
+    const seen: Array<Record<string, string>> = [];
+    const def = AgentDefSchema.parse({
+      id: 'ag-hdr',
+      harness: 'agy',
+      env: { AGY_LLM_GATEWAY_URL: base },
+      quotaAccountHeader: { header: 'X-CPA-TRACE-ID', pattern: '^[^-]+-([^-]+)-' },
+    });
+    const opened = await openAgentRelay(def, undefined, (h) => seen.push(h));
+    const tagged = opened.env.AGY_LLM_GATEWAY_URL;
+    expect(tagged).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/__s\/[0-9a-f]+$/);
+
+    // Upstream returns the header; relay strips /__s/<tag> and notifies only this session.
+    const hdrUpstream = http.createServer((req, res) => {
+      res.writeHead(200, { 'x-cpa-trace-id': '20261128-abc123-req1' });
+      res.end(req.url ?? '');
+    });
+    await new Promise<void>((r) => hdrUpstream.listen(0, '127.0.0.1', r));
+    const addr = hdrUpstream.address();
+    const hdrBase = `http://127.0.0.1:${typeof addr === 'object' && addr ? addr.port : 0}/agy-gw`;
+    try {
+      const def2 = AgentDefSchema.parse({
+        id: 'ag-hdr2',
+        harness: 'agy',
+        env: { AGY_LLM_GATEWAY_URL: hdrBase },
+        quotaAccountHeader: { header: 'X-CPA-TRACE-ID', pattern: '^[^-]+-([^-]+)-' },
+      });
+      const o2 = await openAgentRelay(def2, undefined, (h) => seen.push(h));
+      const r = await fetch(`${o2.env.AGY_LLM_GATEWAY_URL}/v1beta/models/gemini-4-neon:generateContent?alt=sse`);
+      expect(await r.text()).toBe('/agy-gw/v1beta/models/gemini-4-neon:generateContent?alt=sse');
+      expect(seen).toEqual([{ 'x-cpa-trace-id': '20261128-abc123-req1' }]);
+      o2.dispose();
+      opened.dispose();
+    } finally {
+      hdrUpstream.close();
+    }
   });
 });

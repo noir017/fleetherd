@@ -134,10 +134,13 @@ function parseJsonQuotaPools(raw: string): QuotaPool[] | undefined {
   const byKey = new Map<string, QuotaPool>();
   for (const item of list) {
     const pool = parseJsonQuotaItem(item);
-    if (pool) byKey.set(`${pool.account ?? ''}\0${pool.id}`, pool);
+    if (pool) byKey.set(`${pool.accountKey ?? pool.account ?? ''}\0${pool.id}`, pool);
   }
   const pools = [...byKey.values()];
-  pools.sort((a, b) => (a.account ?? '').localeCompare(b.account ?? '') || a.id.localeCompare(b.id));
+  pools.sort(
+    (a, b) =>
+      (a.account ?? a.accountKey ?? '').localeCompare(b.account ?? b.accountKey ?? '') || a.id.localeCompare(b.id)
+  );
   return pools.length ? pools : undefined;
 }
 
@@ -151,16 +154,18 @@ function extractJsonPoolList(parsed: unknown): unknown[] | undefined {
 
 function parseJsonQuotaItem(item: unknown): QuotaPool | undefined {
   if (!item || typeof item !== 'object') return undefined;
-  const { id, remaining, resetsAt, account, profile } = item as Record<string, unknown>;
+  const { id, remaining, resetsAt, account, profile, accountKey } = item as Record<string, unknown>;
   if (typeof id !== 'string' || !id.trim() || typeof remaining !== 'number' || !Number.isFinite(remaining)) return undefined;
   const rawAcct = typeof account === 'string' ? account : typeof profile === 'string' ? profile : undefined;
   const acct = rawAcct?.trim() || undefined;
+  const key = typeof accountKey === 'string' ? accountKey.trim() || undefined : undefined;
   const resetMs = parseResetTimestamp(resetsAt);
   return {
     id: id.trim(),
     remaining: Math.min(1, Math.max(0, remaining)),
     ...(resetMs !== undefined ? { resetsAt: resetMs } : {}),
     ...(acct ? { account: acct } : {}),
+    ...(key ? { accountKey: key } : {}),
   };
 }
 
@@ -183,15 +188,42 @@ function parseResetTimestamp(value: unknown): number | undefined {
  * rather than a wrong account's numbers if its own account has not reported yet. Single-account
  * or already-aggregated readings pass through untouched.
  */
-export function scopeQuotaPools(pools: readonly QuotaPool[], options?: readonly SessionOption[]): QuotaPool[] {
+/** Extract an account identifier from observed upstream response headers using `quotaAccountHeader`. */
+export function extractAccountFromHeaders(
+  headers: Record<string, string>,
+  cfg: NonNullable<AgentDef['quotaAccountHeader']>
+): string | undefined {
+  const raw = headers[cfg.header.trim().toLowerCase()];
+  if (!raw) return undefined;
+  if (!cfg.pattern) return raw.trim() || undefined;
+  try {
+    const match = new RegExp(cfg.pattern).exec(raw);
+    const extracted = match?.[1] ?? match?.[0];
+    return extracted?.trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function scopeQuotaPools(
+  pools: readonly QuotaPool[],
+  options?: readonly SessionOption[],
+  observedAccount?: string,
+  requireObservedAccount = false
+): QuotaPool[] {
   const accounts = new Set<string>();
   for (const p of pools) {
     if (p.account) accounts.add(p.account);
+    if (p.accountKey) accounts.add(p.accountKey);
   }
   if (accounts.size === 0) return [...pools];
+  if (observedAccount) {
+    return pools.filter((p) => (!p.account && !p.accountKey) || p.accountKey === observedAccount || p.account === observedAccount);
+  }
+  if (requireObservedAccount) return [];
   const selected = selectedAccountOf(options, accounts);
   if (!selected) return [...pools];
-  return pools.filter((p) => !p.account || p.account === selected);
+  return pools.filter((p) => (!p.account && !p.accountKey) || p.account === selected || p.accountKey === selected);
 }
 
 function selectedAccountOf(options: readonly SessionOption[] | undefined, accounts: ReadonlySet<string>): string | undefined {
@@ -274,9 +306,12 @@ export function createQuotaMeter(
       if (def.quotaCommand || !pools.length) return;
       const s = sourceOf(def);
       s.pushed = true;
-      const byKey = new Map((s.pools ?? []).map((p) => [`${p.account ?? ''}\0${p.id}`, p]));
-      for (const p of pools) byKey.set(`${p.account ?? ''}\0${p.id}`, p);
-      s.pools = [...byKey.values()].sort((a, b) => (a.account ?? '').localeCompare(b.account ?? '') || a.id.localeCompare(b.id));
+      const byKey = new Map((s.pools ?? []).map((p) => [`${p.accountKey ?? p.account ?? ''}\0${p.id}`, p]));
+      for (const p of pools) byKey.set(`${p.accountKey ?? p.account ?? ''}\0${p.id}`, p);
+      s.pools = [...byKey.values()].sort(
+        (a, b) =>
+          (a.account ?? a.accountKey ?? '').localeCompare(b.account ?? b.accountKey ?? '') || a.id.localeCompare(b.id)
+      );
     },
   };
 }

@@ -5,6 +5,16 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **Per-session sticky-account quota attribution via `quotaAccountHeader`.** Agents behind a
+  multi-account proxy (such as CLIProxyAPI with sticky sessions) previously had to average all pool
+  accounts in `quotaCommand`. Setting `quotaAccountHeader` (`header`, optional `pattern` and `env`)
+  routes each session through the host's loopback relay with a stripped session prefix, observes
+  the configured upstream response header without buffering streams, and scopes `quotaCommand` JSON
+  pools (`account` / `accountKey`) to whichever account actually handled that conversation —
+  automatically following upstream failover when the header changes.
+
 ## [3.51.1] - 2026-11-28
 
 ### Fixed

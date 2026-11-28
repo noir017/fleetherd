@@ -508,6 +508,11 @@ export interface QuotaPool {
    * (e.g. a multi-account driver). Absent for single-account or already-aggregated readings.
    */
   account?: string;
+  /**
+   * Opaque upstream account identifier (e.g. a proxy's `auth_index`) matched against an observed
+   * response header (`quotaAccountHeader`) while keeping `account` human-readable for tooltips.
+   */
+  accountKey?: string;
 }
 
 /**

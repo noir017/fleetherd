@@ -183,3 +183,31 @@ func TestANewGatewayClosesTheOldOnesRelays(t *testing.T) {
 		t.Fatal("the old gateway's relay still answers")
 	}
 }
+
+func TestRelayStripsSessionTagAndObservesHeaders(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-CPA-TRACE-ID", "20261128-79275454af114a4a-req1")
+		fmt.Fprintf(w, "path=%s?%s", r.URL.Path, r.URL.RawQuery)
+	}))
+	t.Cleanup(up.Close)
+	d := testDaemon(t, "relay6")
+	g := dialGateway(t, d.sockPath, "E1", 0, 0)
+	r, res, _ := rpc(t, g, &Header{
+		Op:             "relay",
+		ID:             "agy.hdr",
+		Upstream:       up.URL + "/agy-gw",
+		ObserveHeaders: []string{"X-CPA-TRACE-ID"},
+	}, nil)
+	if r.T != "rpc-ok" {
+		t.Fatalf("relay: %+v", r)
+	}
+	url, _ := res["url"].(string)
+	body := get(t, url+"/__s/sess42/v1beta/models/gemini-4-neon:generateContent?alt=sse")
+	if body != "path=/agy-gw/v1beta/models/gemini-4-neon:generateContent?alt=sse" {
+		t.Fatalf("forwarded path = %q", body)
+	}
+	h, _, _ := g.until("relay-hdr", "agy.hdr", 5*time.Second)
+	if h.Tag != "sess42" || h.Headers["x-cpa-trace-id"] != "20261128-79275454af114a4a-req1" {
+		t.Fatalf("relay-hdr = %+v", h)
+	}
+}

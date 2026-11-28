@@ -248,6 +248,30 @@ const AgentDefFields = z
      * it. Not in the `/setting` table: a chat-side edit here would be remote shell execution.
      */
     quotaCommand: z.string().min(1).optional(),
+    /**
+     * Match a multi-account `quotaCommand` reading to whichever upstream account actually handled
+     * this conversation's requests, read from an upstream HTTP response header through a loopback
+     * relay (e.g. `X-CPA-TRACE-ID` on CLIProxyAPI).
+     */
+    quotaAccountHeader: z
+      .object({
+        header: z.string().min(1),
+        pattern: z
+          .string()
+          .min(1)
+          .refine((s) => {
+            try {
+              new RegExp(s);
+              return true;
+            } catch {
+              return false;
+            }
+          }, 'invalid regular expression')
+          .optional(),
+        env: z.string().min(1).optional(),
+      })
+      .strict()
+      .optional(),
     /** Env vars injected into the subprocess (credentials etc.); supports ${VAR} expansion. */
     env: z.record(z.string()).default({}),
     /**

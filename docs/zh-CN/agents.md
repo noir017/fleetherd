@@ -332,6 +332,18 @@ agents:
   - id: ag
     harness: agy
     quotaCommand: ~/.local/bin/pool-quota
+
+如果代理把多个账号做成粘性会话池（例如 CLIProxyAPI），可以配 `quotaAccountHeader`，让每个对话只显示实际粘到的那个账号的额度，而不是全池平均值。让 `quotaCommand` 输出 JSON 数组，每条带 `account`（可读名）和可选的 `accountKey`（上游不透明 ID）；守护进程通过本机回环 relay 无缓冲地观测指定响应头，并自动把状态栏过滤到当前会话对应的账号（上游 failover 换号时自动跟随）：
+
+```yaml
+agents:
+  - id: ag
+    harness: agy
+    quotaCommand: ~/.local/bin/cpa-antigravity-quota --json
+    quotaAccountHeader:
+      header: X-CPA-TRACE-ID
+      pattern: '^[^-]+-([^-]+)-'
+```
 ```
 
 ## Antigravity（`agy`）

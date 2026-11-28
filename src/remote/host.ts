@@ -92,6 +92,9 @@ export type CliBridge = (req: CliRequest, io: CliIO) => CliSession;
  */
 export type RelayTransform = (path: string, body: Buffer) => Buffer | undefined | Promise<Buffer | undefined>;
 
+/** Called when a tagged request through a relay receives any observed response header. */
+export type RelayHeaderObserver = (tag: string, headers: Record<string, string>) => void;
+
 export interface RemoteHostOptions {
   id: string;
   ns: string;
@@ -115,6 +118,8 @@ export class RemoteHost extends EventEmitter {
   private readonly clis = new Map<string, CliSession>();
   /** The transform each relay id answers its `relay-req` frames with (see relay()). */
   private readonly relayTransforms = new Map<string, RelayTransform>();
+  /** Header observers per relay id for `relay-hdr` notifications. */
+  private readonly relayHeaderObservers = new Map<string, RelayHeaderObserver>();
   /** New processes and requests waiting for a connection to go out on (see whenUp). */
   private readonly unsent: Array<() => void> = [];
   private seq = 0;
@@ -457,9 +462,22 @@ export class RemoteHost extends EventEmitter {
    * never crosses the link. Asking again with the same id and spec returns the same relay, so this is
    * called at every spawn rather than remembered — a restarted daemon has none until asked.
    */
-  async relay(id: string, upstream: string, paths: readonly string[], transform: RelayTransform): Promise<string> {
+  async relay(
+    id: string,
+    upstream: string,
+    paths: readonly string[],
+    transform: RelayTransform,
+    opts?: { observeHeaders?: readonly string[]; onHeaders?: RelayHeaderObserver }
+  ): Promise<string> {
     this.relayTransforms.set(id, transform);
-    const { res } = await this.rpc('relay', { id, upstream, paths: [...paths] });
+    if (opts?.onHeaders) this.relayHeaderObservers.set(id, opts.onHeaders);
+    else this.relayHeaderObservers.delete(id);
+    const { res } = await this.rpc('relay', {
+      id,
+      upstream,
+      paths: [...paths],
+      ...(opts?.observeHeaders?.length ? { observeHeaders: [...opts.observeHeaders] } : {}),
+    });
     const url = res.url;
     if (typeof url !== 'string' || !url) throw new Error(`relay on host "${this.id}" answered without a URL`);
     return url;
@@ -479,6 +497,12 @@ export class RemoteHost extends EventEmitter {
     } catch (e) {
       this.conn.send({ t: 'relay-res', xid, error: (e as Error).message || String(e) });
     }
+  }
+
+  private handleRelayHeaders(h: FrameHeader): void {
+    const observer = this.relayHeaderObservers.get(h.id ?? '');
+    if (!observer || !h.tag || !h.headers) return;
+    observer(h.tag, h.headers);
   }
 
   // ── frames from the host ────────────────────────────────────────────────────────────────────
@@ -501,6 +525,7 @@ export class RemoteHost extends EventEmitter {
       s.kill();
     },
     'relay-req': (h, body) => void this.answerRelay(h, body),
+    'relay-hdr': (h) => this.handleRelayHeaders(h),
   };
 
   private onFrame(h: FrameHeader, body: Buffer): void {

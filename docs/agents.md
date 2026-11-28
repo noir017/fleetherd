@@ -391,6 +391,22 @@ agents:
   - id: ag
     harness: agy
     quotaCommand: ~/.local/bin/pool-quota
+
+When a proxy pools several accounts with sticky sessions (such as CLIProxyAPI), set
+`quotaAccountHeader` so each conversation shows only the account that actually handled its requests
+instead of an average across the pool. Have `quotaCommand` print JSON rows with `account` (human
+label) and optional `accountKey` (opaque upstream id); the daemon observes the named response header
+through a loopback relay without buffering streams and scopes the status strip to that account:
+
+```yaml
+agents:
+  - id: ag
+    harness: agy
+    quotaCommand: ~/.local/bin/cpa-antigravity-quota --json
+    quotaAccountHeader:
+      header: X-CPA-TRACE-ID
+      pattern: '^[^-]+-([^-]+)-'
+```
 ```
 
 ## Antigravity (`agy`)

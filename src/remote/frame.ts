@@ -75,7 +75,10 @@ export interface FrameHeader {
   // relays (remote/relay.go)
   upstream?: string;
   paths?: string[];
+  observeHeaders?: string[];
   xid?: string;
+  tag?: string;
+  headers?: Record<string, string>;
 }
 
 export interface Frame {

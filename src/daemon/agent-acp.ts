@@ -329,6 +329,7 @@ class AcpSession implements AgentSession {
   /** Composed collaborators for options/modes and agy/quota metering. */
   private readonly options: AcpOptionState;
   private readonly agyMeter: AgyMeterHelper;
+  private disposeRelay: (() => void) | undefined;
 
   constructor(
     private readonly def: AgentDef,
@@ -454,6 +455,8 @@ class AcpSession implements AgentSession {
     this.conn = undefined;
     this.active = undefined;
     this.pump = undefined;
+    this.disposeRelay?.();
+    this.disposeRelay = undefined;
     void this.closeFollowUp('stopped');
     this.promptedYet = false;
     this.clearReplayFence();
@@ -471,6 +474,8 @@ class AcpSession implements AgentSession {
 
   private teardown(): void {
     this.launchHook?.abort();
+    this.disposeRelay?.();
+    this.disposeRelay = undefined;
     const child = this.proc;
     const [session, connection, cancel] = [this.active, this.conn, this.cancelSent];
     this.cancelSent = undefined;
@@ -655,7 +660,7 @@ class AcpSession implements AgentSession {
 
     await this.runPreLaunchIfConfigured();
 
-    const { command, args, initExtra, child, mcpServers } = await launchAcpChild({
+    const { command, args, initExtra, child, mcpServers, disposeRelay } = await launchAcpChild({
       def: this.def,
       cwd: this.cwd,
       socketPath: this.socketPath,
@@ -663,8 +668,10 @@ class AcpSession implements AgentSession {
       place,
       topic,
       provisions,
+      onRelayHeaders: this.def.quotaAccountHeader ? (h) => this.agyMeter.observeRelayHeaders(h) : undefined,
     });
     this.proc = child;
+    this.disposeRelay = disposeRelay;
     const { spawnError, stderrTail } = adoptAcpChild(
       this.def,
       child,

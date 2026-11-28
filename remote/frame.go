@@ -97,9 +97,12 @@ type Header struct {
 	Token string `json:"token,omitempty"`
 
 	// relays (relay.go)
-	Upstream string   `json:"upstream,omitempty"`
-	Paths    []string `json:"paths,omitempty"`
-	Xid      string   `json:"xid,omitempty"`
+	Upstream       string            `json:"upstream,omitempty"`
+	Paths          []string          `json:"paths,omitempty"`
+	ObserveHeaders []string          `json:"observeHeaders,omitempty"`
+	Xid            string            `json:"xid,omitempty"`
+	Tag            string            `json:"tag,omitempty"`
+	Headers        map[string]string `json:"headers,omitempty"`
 }
 
 func intPtr(v int) *int { return &v }

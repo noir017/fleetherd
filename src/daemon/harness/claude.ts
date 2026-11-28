@@ -50,6 +50,7 @@ function claudeSkillHomes(home: string): SkillHome[] {
 
 export const claudeProfile: HarnessProfile = {
   id: 'claude',
+  gatewayEnvVar: 'ANTHROPIC_BASE_URL',
   launch: (def, remote = false) =>
     // Remote hosts run their own global install; the bundled adapter carries a platform-specific native build.
     remote

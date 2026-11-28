@@ -12,6 +12,7 @@ function codexSkillHomes(home: string): SkillHome[] {
 
 export const codexProfile: HarnessProfile = {
   id: 'codex',
+  gatewayEnvVar: 'OPENAI_BASE_URL',
   // PATH command (@agentclientprotocol/codex-acp), not bundled (~284 MB native binary).
   launch: (def) => ({ command: 'codex-acp', args: [...def.args] }),
   reviewIsolation: {

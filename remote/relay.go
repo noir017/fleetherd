@@ -47,6 +47,7 @@ type relay struct {
 	gen      uint64
 	upstream string
 	paths    map[string]bool
+	observe  map[string]bool
 	url      string
 	srv      *http.Server
 }
@@ -59,6 +60,34 @@ type relayAnswer struct {
 // relayPathKey marks an outbound request whose response the gateway asked to see, with the path it
 // asked by (the outbound URL may carry the upstream's base path in front).
 type relayPathKey struct{}
+
+// relayTagKey carries the session tag stripped from a `/__s/<tag>/...` request prefix.
+type relayTagKey struct{}
+
+const relayTagPrefix = "/__s/"
+
+func stripRelayTag(p string) (tag, rest string) {
+	if !strings.HasPrefix(p, relayTagPrefix) {
+		return "", p
+	}
+	tail := p[len(relayTagPrefix):]
+	i := strings.IndexByte(tail, '/')
+	if i < 0 {
+		return tail, "/"
+	}
+	return tail[:i], tail[i:]
+}
+
+func joinRelayPath(base, sub string) string {
+	b := strings.TrimSuffix(base, "/")
+	if !strings.HasPrefix(sub, "/") {
+		sub = "/" + sub
+	}
+	if b == "" {
+		return sub
+	}
+	return b + sub
+}
 
 // relayUpstream checks where a relay may forward to.
 func relayUpstream(s string) (*url.URL, error) {
@@ -96,23 +125,29 @@ func (d *daemon) opRelay(h *Header) (any, []byte, error) {
 		}
 		paths[p] = true
 	}
+	observe := map[string]bool{}
+	for _, name := range h.ObserveHeaders {
+		if n := strings.ToLower(strings.TrimSpace(name)); n != "" {
+			observe[n] = true
+		}
+	}
 	gen := d.link.currentGen()
 
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if r := d.relays[h.ID]; r != nil {
-		if r.gen == gen && r.upstream == target.String() && samePaths(r.paths, paths) {
+		if r.gen == gen && r.upstream == target.String() && samePaths(r.paths, paths) && samePaths(r.observe, observe) {
 			return map[string]any{"url": r.url}, nil, nil
 		}
 		delete(d.relays, h.ID)
 		go r.close()
 	}
-	r, err := d.startRelay(h.ID, gen, target, paths)
+	r, err := d.startRelay(h.ID, gen, target, paths, observe)
 	if err != nil {
 		return nil, nil, err
 	}
 	d.relays[h.ID] = r
-	logf("relay %s: %s → %s (gateway sees %d path(s))", r.id, r.url, r.upstream, len(paths))
+	logf("relay %s: %s → %s (gateway sees %d path(s), observes %d header(s))", r.id, r.url, r.upstream, len(paths), len(observe))
 	return map[string]any{"url": r.url}, nil, nil
 }
 
@@ -128,22 +163,28 @@ func samePaths(a, b map[string]bool) bool {
 	return true
 }
 
-func (d *daemon) startRelay(id string, gen uint64, target *url.URL, paths map[string]bool) (*relay, error) {
+func (d *daemon) startRelay(id string, gen uint64, target *url.URL, paths, observe map[string]bool) (*relay, error) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, err
 	}
-	r := &relay{id: id, gen: gen, upstream: target.String(), paths: paths, url: "http://" + ln.Addr().String()}
+	r := &relay{id: id, gen: gen, upstream: target.String(), paths: paths, observe: observe, url: "http://" + ln.Addr().String()}
 	proxy := &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			// SetURL also sets the Host header to the upstream's. No X-Forwarded-* is added: the
 			// request goes out as the agent made it.
+			tag, reqPath := stripRelayTag(pr.In.URL.Path)
 			pr.SetURL(target)
-			if r.paths[pr.In.URL.Path] {
+			if tag != "" {
+				pr.Out.URL.Path = joinRelayPath(target.Path, reqPath)
+				pr.Out.URL.RawPath = ""
+				pr.Out = pr.Out.WithContext(context.WithValue(pr.Out.Context(), relayTagKey{}, tag))
+			}
+			if r.paths[reqPath] {
 				// Without an Accept-Encoding of the agent's, Go's transport asks for gzip itself and
 				// undoes it, so what the gateway is shown is the body, not its compression.
 				pr.Out.Header.Del("Accept-Encoding")
-				pr.Out = pr.Out.WithContext(context.WithValue(pr.Out.Context(), relayPathKey{}, pr.In.URL.Path))
+				pr.Out = pr.Out.WithContext(context.WithValue(pr.Out.Context(), relayPathKey{}, reqPath))
 			}
 		},
 		// Flush every write: the agent's model calls are server-sent events, and a buffered relay
@@ -162,6 +203,22 @@ func (r *relay) close() { _ = r.srv.Close() }
 // that goes wrong on the way passes the response on as it came: the agent then runs on its own
 // settings, which is what it would have done without a relay.
 func (d *daemon) relayIntercept(r *relay, resp *http.Response) error {
+	if len(r.observe) > 0 {
+		if tag, _ := resp.Request.Context().Value(relayTagKey{}).(string); tag != "" {
+			var found map[string]string
+			for name := range r.observe {
+				if v := resp.Header.Get(name); v != "" {
+					if found == nil {
+						found = map[string]string{}
+					}
+					found[name] = v
+				}
+			}
+			if len(found) > 0 {
+				d.link.send(r.gen, &Header{T: "relay-hdr", ID: r.id, Tag: tag, Headers: found}, nil, false)
+			}
+		}
+	}
 	path, _ := resp.Request.Context().Value(relayPathKey{}).(string)
 	if path == "" || resp.StatusCode != http.StatusOK || resp.Header.Get("Content-Encoding") != "" {
 		return nil

@@ -5,7 +5,7 @@ import { agyQuota } from './harness/agy.js';
 import { claudeProbeInterval } from './harness/claude.js';
 import type { HarnessQuota, QuotaReading } from './harness/profile.js';
 import { createQuotaMeter, hasQuotaSource, runQuotaCommand, runQuotaCommandFor, type QuotaCommandRunner } from './quota-meter.js';
-import { parseQuotaOutput, scopeQuotaPools } from './quota-meter.js';
+import { extractAccountFromHeaders, parseQuotaOutput, scopeQuotaPools } from './quota-meter.js';
 
 const def = (over: Partial<AgentDef> = {}) => ({ id: 'agy', harness: 'agy', env: { HOME: '/h' }, ...over }) as unknown as AgentDef;
 const RESET = '2099-11-07T04:24:11Z';
@@ -292,5 +292,30 @@ describe('scopeQuotaPools', () => {
     const plain = [{ id: 'gemini-5h', remaining: 0.5 }];
     expect(scopeQuotaPools(plain, [])).toEqual(plain);
     expect(scopeQuotaPools(POOLS, [])).toEqual(POOLS);
+  });
+
+  it('matches observed upstream accountKey/account and hides multi-account pools before first observation when required', () => {
+    const keyed = parseQuotaOutput(
+      JSON.stringify([
+        { id: 'gemini-5h', remaining: 0.65, account: 'alice@example.com', accountKey: 'idx-a' },
+        { id: 'gemini-5h', remaining: 0.88, account: 'bob@example.com', accountKey: 'idx-b' },
+      ])
+    )!;
+    expect(scopeQuotaPools(keyed, [], undefined, true)).toEqual([]);
+    expect(scopeQuotaPools(keyed, [], 'idx-a', true)).toEqual([
+      { id: 'gemini-5h', remaining: 0.65, account: 'alice@example.com', accountKey: 'idx-a' },
+    ]);
+    expect(
+      extractAccountFromHeaders(
+        { 'x-cpa-trace-id': '20261128220431-idx-a-01a22278' },
+        { header: 'X-CPA-TRACE-ID', pattern: '^[^-]+-([^-]+-[^-]+)-' }
+      )
+    ).toBe('idx-a');
+    expect(
+      extractAccountFromHeaders(
+        { 'x-cpa-trace-id': '20261128220431-79275454af114a4a-01a22278' },
+        { header: 'X-CPA-TRACE-ID', pattern: '^[^-]+-([^-]+)-' }
+      )
+    ).toBe('79275454af114a4a');
   });
 });

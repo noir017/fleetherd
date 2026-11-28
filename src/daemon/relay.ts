@@ -1,7 +1,9 @@
 import http from 'node:http';
+import { createHash, randomBytes } from 'node:crypto';
 import https from 'node:https';
 import type { AgentDef } from '../config/schema.js';
-import type { RelayTransform, RemoteHost } from '../remote/host.js';
+import type { RelayHeaderObserver, RelayTransform, RemoteHost } from '../remote/host.js';
+import { expandEnv } from './agent-common.js';
 import { HARNESS_PROFILES } from './harness/index.js';
 import type { HarnessRelay, RelaySpec } from './relay-types.js';
 
@@ -21,8 +23,94 @@ import type { HarnessRelay, RelaySpec } from './relay-types.js';
  */
 
 /** The relay an agent runs behind, if its harness and settings call for one. */
+const headerWatchers = new Map<string, (headers: Record<string, string>) => void>();
+const relayHeaderDispatch: RelayHeaderObserver = (tag, headers) => {
+  headerWatchers.get(tag)?.(headers);
+};
+const relayWarnings = new Set<string>();
+
+function warnRelayOnce(key: string, message: string): void {
+  if (relayWarnings.has(key)) return;
+  relayWarnings.add(key);
+  console.warn(message);
+}
+
+function quotaHeaderRelay(def: AgentDef, existing: HarnessRelay | undefined): HarnessRelay | undefined {
+  const cfg = def.quotaAccountHeader;
+  if (!cfg) return existing;
+  const header = cfg.header.trim().toLowerCase();
+  const envVar = cfg.env ?? HARNESS_PROFILES[def.harness].gatewayEnvVar;
+  if (!envVar) {
+    warnRelayOnce(`${def.id}:noenv`, `[relay] ${def.id}: quotaAccountHeader needs env (no default gateway env var for harness "${def.harness}")`);
+    return existing;
+  }
+  if (existing && existing.envVar === envVar) {
+    const merged = [...new Set([...(existing.spec.observeHeaders ?? []), header])].sort();
+    return {
+      envVar,
+      spec: { ...existing.spec, observeHeaders: merged, onHeaders: relayHeaderDispatch },
+    };
+  }
+  const raw = def.env[envVar];
+  if (!raw) {
+    warnRelayOnce(`${def.id}:nourl`, `[relay] ${def.id}: quotaAccountHeader needs ${envVar} in agent env; no relay started`);
+    return existing;
+  }
+  const upstream = expandEnv(raw).replace(/\/$/, '');
+  const id = `hdr.${createHash('sha256').update(`${envVar}\n${upstream}\n${header}`).digest('hex').slice(0, 8)}`;
+  return {
+    envVar,
+    spec: {
+      id,
+      upstream,
+      paths: [],
+      transform: () => undefined,
+      observeHeaders: [header],
+      onHeaders: relayHeaderDispatch,
+    },
+  };
+}
+
 export function harnessRelay(def: AgentDef): HarnessRelay | undefined {
-  return HARNESS_PROFILES[def.harness].relay?.(def);
+  const base = HARNESS_PROFILES[def.harness].relay?.(def);
+  return quotaHeaderRelay(def, base);
+}
+
+export interface OpenedRelay {
+  env: Record<string, string>;
+  dispose: () => void;
+}
+
+export async function openAgentRelay(
+  def: AgentDef,
+  host?: RemoteHost,
+  onHeaders?: (headers: Record<string, string>) => void
+): Promise<OpenedRelay> {
+  const r = harnessRelay(def);
+  if (!r) return { env: {}, dispose: () => {} };
+  const { id, upstream, paths, transform, observeHeaders, onHeaders: relayObserver } = r.spec;
+  try {
+    const observer = observeHeaders?.length ? (relayObserver ?? relayHeaderDispatch) : undefined;
+    const url = host
+      ? await host.relay(id, upstream, paths, transform, observer ? { observeHeaders, onHeaders: observer } : undefined)
+      : await openLocalRelay(observer ? { ...r.spec, onHeaders: observer } : r.spec);
+    if (observeHeaders?.length && onHeaders) {
+      const tag = randomBytes(8).toString('hex');
+      headerWatchers.set(tag, onHeaders);
+      return {
+        env: { [r.envVar]: `${url}/__s/${tag}` },
+        dispose: () => {
+          headerWatchers.delete(tag);
+        },
+      };
+    }
+    return { env: { [r.envVar]: url }, dispose: () => {} };
+  } catch (e) {
+    console.warn(
+      `[relay] agent "${def.id}": could not open its relay to ${upstream} (${(e as Error).message}); it starts without one, on its harness's own settings`
+    );
+    return { env: {}, dispose: () => {} };
+  }
 }
 
 /**
@@ -30,18 +118,7 @@ export function harnessRelay(def: AgentDef): HarnessRelay | undefined {
  * it has none, or one could not be opened.
  */
 export async function relayEnv(def: AgentDef, host?: RemoteHost): Promise<Record<string, string>> {
-  const r = harnessRelay(def);
-  if (!r) return {};
-  const { id, upstream, paths, transform } = r.spec;
-  try {
-    const url = host ? await host.relay(id, upstream, paths, transform) : await openLocalRelay(r.spec);
-    return { [r.envVar]: url };
-  } catch (e) {
-    console.warn(
-      `[relay] agent "${def.id}": could not open its relay to ${upstream} (${(e as Error).message}); it starts without one, on its harness's own settings`
-    );
-    return {};
-  }
+  return (await openAgentRelay(def, host)).env;
 }
 
 // ───────────────────────── the local listener ─────────────────────────
@@ -56,6 +133,7 @@ interface LocalRelay {
   key: string;
   url: Promise<string>;
   transform: RelayTransform;
+  onHeaders?: RelayHeaderObserver;
   server: http.Server;
 }
 
@@ -68,6 +146,35 @@ function endToEnd(headers: http.IncomingHttpHeaders): http.OutgoingHttpHeaders {
   return out;
 }
 
+const RELAY_TAG_PREFIX = '/__s/';
+
+function stripRelayTag(rawUrl: string): { tag: string | undefined; strippedUrl: string; strippedPath: string } {
+  const q = rawUrl.indexOf('?');
+  const rawPath = q >= 0 ? rawUrl.slice(0, q) : rawUrl;
+  const query = q >= 0 ? rawUrl.slice(q) : '';
+  if (!rawPath.startsWith(RELAY_TAG_PREFIX)) {
+    return { tag: undefined, strippedUrl: rawUrl, strippedPath: rawPath };
+  }
+  const tail = rawPath.slice(RELAY_TAG_PREFIX.length);
+  const slash = tail.indexOf('/');
+  const tag = slash >= 0 ? tail.slice(0, slash) : tail;
+  const rest = slash >= 0 ? tail.slice(slash) : '/';
+  return { tag: tag || undefined, strippedUrl: rest + query, strippedPath: rest };
+}
+
+function collectObservedHeaders(headers: http.IncomingHttpHeaders, observe: readonly string[]): Record<string, string> | undefined {
+  let found: Record<string, string> | undefined;
+  for (const name of observe) {
+    const raw = headers[name];
+    const val = Array.isArray(raw) ? raw[0] : raw;
+    if (val) {
+      found ??= {};
+      found[name] = val;
+    }
+  }
+  return found;
+}
+
 /** A relay on this machine, for an agent that runs here; resolves to its URL. */
 export function openLocalRelay(spec: RelaySpec): Promise<string> {
   const target = new URL(spec.upstream);
@@ -75,10 +182,12 @@ export function openLocalRelay(spec: RelaySpec): Promise<string> {
   if (target.protocol !== 'https:' && !(target.protocol === 'http:' && loopback)) {
     return Promise.reject(new Error(`relay upstream ${spec.upstream}: scheme must be https (or http on loopback)`));
   }
-  const key = `${target.href}\n${[...spec.paths].sort().join('\n')}`;
+  const observe = [...new Set((spec.observeHeaders ?? []).map((h) => h.trim().toLowerCase()).filter(Boolean))].sort();
+  const key = `${target.href}\n${[...spec.paths].sort().join('\n')}\n${observe.join('\n')}`;
   const have = localRelays.get(spec.id);
   if (have?.key === key) {
     have.transform = spec.transform;
+    have.onHeaders = spec.onHeaders;
     return have.url;
   }
   have?.server.close();
@@ -87,17 +196,21 @@ export function openLocalRelay(spec: RelaySpec): Promise<string> {
   const agent = new client.Agent({ keepAlive: true });
   const base = target.pathname.replace(/\/$/, '');
   const named = new Set(spec.paths);
-  const entry = { key, transform: spec.transform } as LocalRelay;
+  const entry = { key, transform: spec.transform, onHeaders: spec.onHeaders } as LocalRelay;
 
   entry.server = http.createServer((req, res) => {
-    const path = (req.url ?? '/').split('?')[0] ?? '/';
+    const { tag, strippedUrl, strippedPath: path } = stripRelayTag(req.url ?? '/');
     const intercept = named.has(path);
     const headers = { ...endToEnd(req.headers), host: target.host };
     // Without it the upstream answers uncompressed, and the transform is shown the body itself.
     if (intercept) delete headers['accept-encoding'];
     const up = client.request(
-      { protocol: target.protocol, hostname: target.hostname, port: target.port || undefined, path: base + (req.url ?? '/'), method: req.method, headers, agent },
+      { protocol: target.protocol, hostname: target.hostname, port: target.port || undefined, path: base + strippedUrl, method: req.method, headers, agent },
       (ur) => {
+        if (tag && observe.length > 0 && entry.onHeaders) {
+          const found = collectObservedHeaders(ur.headers, observe);
+          if (found) entry.onHeaders(tag, found);
+        }
         if (!intercept || ur.statusCode !== 200 || ur.headers['content-encoding']) {
           res.writeHead(ur.statusCode ?? 502, endToEnd(ur.headers));
           ur.pipe(res);

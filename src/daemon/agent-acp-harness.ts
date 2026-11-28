@@ -34,8 +34,8 @@ import { AGY_CONTEXT_REFRESH_MS, readAgyContext } from './agy-transcript.js';
 import { connectAddress, connectHere, connectMeta } from './connect-agent.js';
 import { HARNESS_PROFILES } from './harness/index.js';
 import { harnessLogProbe, readHarnessErrors } from './harness-log.js';
-import { scopeQuotaPools, type QuotaMeter } from './quota-meter.js';
-import { relayEnv } from './relay.js';
+import { extractAccountFromHeaders, scopeQuotaPools, type QuotaMeter } from './quota-meter.js';
+import { openAgentRelay } from './relay.js';
 import { remoteHosts } from './remote-hosts.js';
 import { selfInvocation } from './reverse-cli-shim.js';
 import {
@@ -300,20 +300,28 @@ export async function launchAcpChild(opts: {
   place: RemotePlace | undefined;
   topic?: string;
   provisions: readonly AgentProvision[];
+  onRelayHeaders?: (headers: Record<string, string>) => void;
 }): Promise<{
   command: string;
   args: string[];
   initExtra: { _meta?: Record<string, unknown> };
   child: AgentChild;
   mcpServers: () => McpServer[];
+  disposeRelay: () => void;
 }> {
-  const { def, cwd, socketPath, sessionToken, place, topic, provisions } = opts;
+  const { def, cwd, socketPath, sessionToken, place, topic, provisions, onRelayHeaders } = opts;
   const initExtra = def.connect ? { _meta: await connectMeta(def, def.connect, place, provisions, topic) } : {};
   const { command, args } = def.connect
     ? { command: def.connect.url, args: [] }
     : resolveHarness(def, place !== undefined);
-  const relay = await relayEnv(def, place?.host);
-  return { command, args, initExtra, ...spawnChild(def, command, args, cwd, socketPath, sessionToken, place, relay, provisions) };
+  const relay = await openAgentRelay(def, place?.host, onRelayHeaders);
+  return {
+    command,
+    args,
+    initExtra,
+    disposeRelay: relay.dispose,
+    ...spawnChild(def, command, args, cwd, socketPath, sessionToken, place, relay.env, provisions),
+  };
 }
 
 function spawnChild(
@@ -841,6 +849,8 @@ export class AgyMeterHelper {
   private contextReadAt = 0;
   /** Whether this session has asked for the quota yet (quotaOnFirstOutput). */
   private quotaRead = false;
+  private observedAccount: string | undefined;
+  private lastHandlers: AgentStreamHandlers | undefined;
 
   constructor(
     private readonly def: AgentDef,
@@ -859,11 +869,27 @@ export class AgyMeterHelper {
 
   /** Report the cached quota pools scoped to this session's active model/options. */
   reportScopedQuota(handlers: AgentStreamHandlers): void {
+    this.lastHandlers = handlers;
     const pools = this.quota?.read(this.def);
     if (!this.isDisposed() && pools) {
-      const scoped = scopeQuotaPools(pools, customOptionsOf(this.options.liveConfigOptions));
+      const scoped = scopeQuotaPools(
+        pools,
+        customOptionsOf(this.options.liveConfigOptions),
+        this.observedAccount,
+        Boolean(this.def.quotaAccountHeader)
+      );
       handlers.onQuota?.(markActivePools(scoped, this.options.liveModel));
     }
+  }
+
+  /** Record the upstream account observed on a relay response header and refresh scoped quota. */
+  observeRelayHeaders(headers: Record<string, string>): void {
+    const cfg = this.def.quotaAccountHeader;
+    if (!cfg || this.isDisposed()) return;
+    const acct = extractAccountFromHeaders(headers, cfg);
+    if (!acct || acct === this.observedAccount) return;
+    this.observedAccount = acct;
+    if (this.lastHandlers) this.reportScopedQuota(this.lastHandlers);
   }
 
   /** The harness reported quota by itself (claude's rate-limit events): keep it with the agent's reading, and show it. */
